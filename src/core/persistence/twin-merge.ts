@@ -26,6 +26,7 @@ import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
 import { noteBelief } from '../belief/ledger.ts';
 import { recordRenameAlias } from '../page-state/rename-alias.ts';
+import { dropRekeyDuplicates } from '../facts/ontology-rekey.ts';
 import { refreshRelationships, type RelationshipKey } from '../link-relationships.ts';
 import { SYNC_IMPORT_PROVENANCE_OP } from './sync-holds.ts';
 import { ORIGIN_TWIN_REASON } from './origin-twins.ts';
@@ -125,6 +126,7 @@ export async function mergeTwinInto(tx: BrainEngine, input: { sourceId: string; 
   for (const [sql, values] of statements) await tx.executeRaw(sql, values);
   const tagsMoved = (await tx.executeRaw<{ tag: string }>(`UPDATE tags s SET page_id=$2 WHERE s.page_id=$1 AND s.tag_source IS DISTINCT FROM 'frontmatter'
     AND NOT EXISTS (SELECT 1 FROM tags o WHERE o.page_id=$2 AND o.tag=s.tag) RETURNING tag`, params)).map(row => row.tag);
+  await dropRekeyDuplicates(tx, sourceId, { where: 'f.entity_slug = $2 AND f.source_markdown_slug IS DISTINCT FROM $2', entity: '$3::text', sms: 'f.source_markdown_slug', params: [twin.slug, survivor.slug] });
   const factIds = (await tx.executeRaw<{ id: number }>(`UPDATE facts SET entity_slug=$3 WHERE source_id=$1 AND entity_slug=$2
     AND source_markdown_slug IS DISTINCT FROM $2 RETURNING id`, [sourceId, twin.slug, survivor.slug])).map(row => Number(row.id));
   await recordRenameAlias(tx, sourceId, twin.slug, survivor.slug);

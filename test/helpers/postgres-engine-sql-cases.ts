@@ -42,17 +42,98 @@ const OOS = {
   dream: 'out-of-scope:dream-verdicts',
   raw: 'out-of-scope:raw-data',
   stub: 'out-of-scope:no-sql-stub',
+  importGuards: 'out-of-scope:import-guards (born in engine-sql/persistence-state.ts, transaction-settings.ts, belief.ts, access-control.ts; pinned by test/engine-parity/import-path.test.ts)',
+  searchReads: 'out-of-scope:search-reads (born in engine-sql/search-reads.ts; pinned by test/engine-parity/search-reads.test.ts)',
+  importWrites: 'out-of-scope:import-writes (born in engine-sql/chunks.ts, tags.ts, pages.ts; pinned by test/engine-parity/import-writes.test.ts)',
+  largePage: 'out-of-scope:large-page (born in engine-sql/large-page.ts; pinned by test/engine-parity/large-page.test.ts and test/large-page-sql-pin.test.ts)',
   pageBody: 'out-of-scope:page-body (Wave B segmented storage, born in engine-sql/page-body.ts; pinned by test/engine-sql-page-body.test.ts)',
+  cycleLocks: 'out-of-scope:cycle-locks (gbrain_cycle_locks leases, born in engine-sql/cycle-locks.ts; pinned by test/engine-parity/cycle-locks.test.ts)',
+  withdrawalFence: 'out-of-scope:withdrawal-fence (born in engine-sql/withdrawal-fence.ts; pinned by test/withdrawal-fence-sql-pin.test.ts)',
+  withdrawalPages: 'out-of-scope:withdrawal-pages (born in engine-sql/withdrawal-pages.ts; pinned by test/withdrawal-pages-sql-pin.test.ts)',
+  fieldUsage: 'out-of-scope:field-usage (born in engine-sql/field-usage.ts; pinned by test/engine-parity/field-usage.test.ts and test/schema-field-usage-typed-members.test.ts)',
+  identityDecisions: 'out-of-scope:identity-decisions (duplicate people PR 2, born in engine-sql/identity-decisions.ts; pinned by test/engine-parity/pages.test.ts and test/entity-dedupe-decisions.test.ts)',
+  decideProposals: 'out-of-scope:decide-proposals (born in engine-sql/decide-proposals.ts; pinned by test/engine-parity/decide-proposals.test.ts)',
+  decideStore: 'out-of-scope:decide-store (born in engine-sql/decide-store.ts; pinned by test/engine-parity/decide-store.test.ts)',
+  ownerOnly: 'out-of-scope:owner-only-marks (catalog and trigger DDL, born in engine-sql/owner-only-marks.ts; pinned by test/engine-parity/owner-only-marks.test.ts)',
+  wantedLinks: 'out-of-scope:wanted-links (born in engine-sql/wanted-links.ts; pinned by test/engine-parity/wanted-links.test.ts)',
+  pageWriteRows: 'out-of-scope:page-write-rows (born in engine-sql/timeline.ts and takes.ts; pinned by test/engine-parity/timeline.test.ts and takes.test.ts)',
 } as const;
 
 export const DOMAIN_OF: Record<string, string> = {
+  'applyDecideReviewQueue': OOS.decideProposals,
+  'applyDecideSweepDeferred': OOS.decideProposals,
+  'getDecideProposal': OOS.decideProposals,
+  'getDecideReviewProposal': OOS.decideProposals,
+  'insertDecideProposal': OOS.decideProposals,
+  'insertDecideReviewProposal': OOS.decideProposals,
+  'listDecideProposalIds': OOS.decideProposals,
+  'listDecideProposals': OOS.decideProposals,
+  'listDecideProposedPairs': OOS.decideProposals,
+  'listDecideReviewProposalIds': OOS.decideProposals,
+  'listDecideReviewProposals': OOS.decideProposals,
+  'listDueDecideReviewQueue': OOS.decideProposals,
+  'listDueDecideSweepDeferred': OOS.decideProposals,
+  'readProposalReviewRates': OOS.decideProposals,
+  'transitionDecideProposal': OOS.decideProposals,
+  'transitionDecideReviewProposal': OOS.decideProposals,
+  'dailyDecideSpend': OOS.decideStore,
+  'decideConflictNoEntityCounts': OOS.decideStore,
+  'decideSlotUsage': OOS.decideStore,
+  'deleteDecideState': OOS.decideStore,
+  'ensureDecideState': OOS.decideStore,
+  'getDecideCalibration': OOS.decideStore,
+  'insertDecideCalibration': OOS.decideStore,
+  'insertDecideReceipts': OOS.decideStore,
+  'insertDecideSpend': OOS.decideStore,
+  'listDecideCalibrations': OOS.decideStore,
+  'listDecideMixedModelDecisions': OOS.decideStore,
+  'listDecideReceiptStats': OOS.decideStore,
+  'listDecideReplayReceipts': OOS.decideStore,
+  'listDecideResolvedModels': OOS.decideStore,
+  'listDecideSpendBySlot': OOS.decideStore,
+  'pruneDecideReceipts': OOS.decideStore,
+  'readDecideState': OOS.decideStore,
+  'setDecideCalibrationRetired': OOS.decideStore,
+  'storeDecideQualification': OOS.decideStore,
+  'upsertDecideState': OOS.decideStore,
+  'hasWithdrawnFenceClaim': OOS.withdrawalFence,
+  'invalidateWithdrawnPages': OOS.withdrawalPages,
+  'listSegmentedPages': OOS.withdrawalPages,
+  'searchRead': OOS.helper,
+  'decideRead': OOS.helper,
+  'countOnboardSignal': OOS.stats,
+  'readFieldUsageSamples': OOS.fieldUsage,
+  'cosinesByChunkIds': OOS.searchReads,
+  'hasSupersedeEdges': OOS.searchReads,
+  'supersedingPageSlugs': OOS.searchReads,
+  'pagesLinkingTo': OOS.searchReads,
+  'aliasCanonicalRefs': OOS.searchReads,
+  'pageCollapseFacts': OOS.searchReads,
+  'slugsEndingIn': OOS.searchReads,
+  'generatedPagesIn': OOS.searchReads,
+  'livePageIdsAt': OOS.searchReads,
+  'deleteChunksExcept': OOS.importWrites,
+  'setChunkerVersion': OOS.importWrites,
+  'writeTextProjectionSeal': OOS.importWrites,
+  'moveChunkIndexes': OOS.importWrites,
+  'getChunkReuseRows': OOS.importWrites,
+  'pruneFrontmatterTags': OOS.importWrites,
+  'addPageTagsById': OOS.importWrites,
+  'getPageSealState': OOS.importWrites,
+  'replaceDerivedAliases': OOS.importWrites,
+  'refreshPageOrigin': OOS.importWrites,
+  'readPageBodySizes': OOS.largePage,
+  'readStoredBodyBytes': OOS.largePage,
   'constructor': OOS.lifecycle,
   'registerBeforeDisconnect': OOS.lifecycle,
   'sql': OOS.lifecycle,
   'engineSql': OOS.helper,
+  'directEngineSql': OOS.helper,
   'engineSqlOn': OOS.helper,
+  'autocommitSql': OOS.helper,
   'rlsScopeBindingEnabled': OOS.helper,
   'withScopedReadTransaction': OOS.helper,
+  'preparationRead': OOS.helper,
   'jitOffRead': OOS.helper,
   'readTransaction': OOS.helper,
   'connect': OOS.lifecycle,
@@ -61,6 +142,16 @@ export const DOMAIN_OF: Record<string, string> = {
   'disconnectInternal': OOS.helper,
   'initSchema': OOS.lifecycle,
   'holdSchemaMigrationLock': OOS.lifecycle,
+  'ownerOnlyMarkTriggers': OOS.ownerOnly,
+  'lockRegisteredSourceIds': OOS.wantedLinks,
+  'replaceWantedLinkRows': OOS.wantedLinks,
+  'removeTimelineRows': OOS.pageWriteRows,
+  'updateTimelineDetails': OOS.pageWriteRows,
+  'matchTakeRows': OOS.pageWriteRows,
+  'deleteTakeRows': OOS.pageWriteRows,
+  'listIdentityDecisions': OOS.identityDecisions,
+  'listRestrictedIdentityMembers': OOS.identityDecisions,
+  'applyIdentityDecisions': OOS.identityDecisions,
   'applyForwardReferenceBootstrap': OOS.helper,
   'transaction': OOS.lifecycle,
   'transactionDirect': OOS.lifecycle,
@@ -91,7 +182,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'softDeletePage': 'pages', 'softDeletePages': 'pages', 'restorePage': 'pages', 'purgeDeletedPages': 'pages',
   'refreshPageBody': 'pages', 'updatePageContextualRetrievalState': 'pages', 'listPages': 'pages',
   'findPages': 'pages', 'countPagesBy': 'pages',
-  'getAllSlugs': 'pages', 'listAllPageRefs': 'pages', 'listPrefixSampledPages': 'pages', 'listCorpusSample': 'pages',
+  'getAllSlugs': 'pages', 'listAllPageRefs': 'pages', 'listEntityKeyRows': 'pages', 'listPrefixSampledPages': 'pages', 'listCorpusSample': 'pages',
   'resolveSlugs': 'pages', 'findByTitleFuzzy': 'pages', 'getPageTimestamps': 'pages',
   'createVersion': 'pages', 'getVersions': 'pages', 'revertToVersion': 'pages', 'updateSlug': 'pages',
   'resolveSlugWithAlias': 'pages', 'resolveSlugWithAliasDetailed': 'pages', 'setPageAliases': 'pages',
@@ -109,17 +200,20 @@ export const DOMAIN_OF: Record<string, string> = {
   'addTimelineEntry': 'timeline', 'addTimelineEntriesBatch': 'timeline', 'getTimeline': 'timeline',
   'getTimelineForDate': 'timeline', 'getSince': 'timeline', 'getOnThisDay': 'timeline', 'getLastSeen': 'timeline',
   'upsertEventProjection': 'timeline',
+  // cycle locks (retry/direct-pool transport differs per method; the lease statements are pinned by the parity cases)
+  'acquireCycleLock': OOS.cycleLocks, 'refreshCycleLock': OOS.cycleLocks, 'releaseCycleLock': OOS.cycleLocks,
+  'readCycleLocks': OOS.cycleLocks, 'deleteCycleLock': OOS.cycleLocks, 'deleteCycleLockIfStale': OOS.cycleLocks,
   // sources
-  'listAllSources': 'sources', 'updateSourceConfig': 'sources',
+  'listAllSources': 'sources', 'listSourceLocalPaths': 'sources', 'updateSourceConfig': 'sources', 'getSource': 'sources',
   // files
-  'upsertFile': 'files', 'getFile': 'files', 'listFilesForPage': 'files',
+  'upsertFile': 'files', 'getFile': 'files', 'listFilesForPage': 'files', 'listFiles': 'files',
   // chunks
-  'upsertChunks': 'chunks', 'getChunks': 'chunks', 'getChunkPage': 'chunks', 'getChunkWindows': 'chunks', 'countStaleChunks': 'chunks', 'sumStaleChunkChars': 'chunks',
+  'upsertChunks': 'chunks', 'sealChunks': 'chunks', 'getChunks': 'chunks', 'getChunkPage': 'chunks', 'getChunkWindows': 'chunks', 'countStaleChunks': 'chunks', 'sumStaleChunkChars': 'chunks',
   'setPageEmbeddingSignature': 'chunks', 'invalidateStaleSignatureEmbeddings': 'chunks',
   'invalidateContentDriftEmbeddings': 'chunks', 'listStaleChunks': 'chunks',
   'countChunklessPagesWithContent': 'chunks', 'listChunklessPagesWithContent': 'chunks', 'deleteChunks': 'chunks',
   'readEmbeddingStateCounts': 'chunks', 'listEmbeddingStateRows': 'chunks',
-  'allocateBodyOccurrenceIds': OOS.pageBody, 'stageSegmentTexts': OOS.pageBody, 'readSegmentTexts': OOS.pageBody, 'stageManifestRows': OOS.pageBody, 'readManifest': OOS.pageBody, 'stageSegmentChunks': OOS.pageBody, 'createSegmentedPageShell': OOS.pageBody, 'flipBodyGeneration': OOS.pageBody, 'openBodyStaging': OOS.pageBody, 'setBodyStagingState': OOS.pageBody, 'sweepSegments': OOS.pageBody,
+  'allocateBodyOccurrenceIds': OOS.pageBody, 'stageSegmentTexts': OOS.pageBody, 'readSegmentTexts': OOS.pageBody, 'stageManifestRows': OOS.pageBody, 'readManifest': OOS.pageBody, 'stageSegmentChunks': OOS.pageBody, 'createSegmentedPageShell': OOS.pageBody, 'flipBodyGeneration': OOS.pageBody, 'sealSegmentedPage': OOS.pageBody, 'openBodyStaging': OOS.pageBody, 'setBodyStagingState': OOS.pageBody, 'sweepSegments': OOS.pageBody,
   'readSegmentDerivations': OOS.pageBody, 'upsertSegmentDerivations': OOS.pageBody, 'retireSegmentDerivations': OOS.pageBody,
   'getEmbeddingsByChunkIds': 'chunks', 'getChunksWithEmbeddings': 'chunks',
   // facts (incl. the ontology rows of the facts table)
@@ -141,6 +235,7 @@ export const DOMAIN_OF: Record<string, string> = {
   // code-edges
   'addCodeEdges': 'code-edges', 'deleteCodeEdgesForChunks': 'code-edges', 'getCallersOf': 'code-edges',
   'getCalleesOf': 'code-edges', 'getEdgesByChunk': 'code-edges',
+  'getCodeTraversalCache': 'code-edges', 'putCodeTraversalCache': 'code-edges', 'clearCodeTraversalCache': 'code-edges',
   // cjk-search: the CJK branch of the two keyword methods (cases tagged #cjk)
   'searchKeyword': 'cjk-search', 'searchKeywordChunks': 'cjk-search',
 
@@ -150,7 +245,11 @@ export const DOMAIN_OF: Record<string, string> = {
   'getContentFlagsByPageIds': OOS.enrichment, 'getUnverifiedExtractionPageIds': OOS.enrichment,
   'getEffectiveDates': OOS.enrichment, 'getSalienceScores': OOS.enrichment, 'resolveAliases': OOS.enrichment,
   'getStats': OOS.stats, 'getHealth': OOS.stats,
-  'getConfig': OOS.config, 'setConfig': OOS.config, 'unsetConfig': OOS.config, 'listConfigKeys': OOS.config, 'getAllConfig': OOS.config,
+  'getConfig': OOS.config, 'setConfig': OOS.config, 'unsetConfig': OOS.config, 'listConfigKeys': OOS.config, 'getAllConfig': OOS.config, 'getConfigValues': OOS.config,
+  // import guards (typed reads and writes the default import path runs)
+  'readManagedModeRows': OOS.importGuards, 'getSourceStrictness': OOS.importGuards, 'readPersistenceBrainId': OOS.importGuards,
+  'readLocalWriterRow': OOS.importGuards, 'insertLocalWriterRow': OOS.importGuards, 'readTransactionSettings': OOS.importGuards,
+  'applyTransactionSettings': OOS.importGuards, 'readLedgerSource': OOS.importGuards, 'isFolderRestricted': OOS.importGuards,
   'logIngest': OOS.ingest, 'getIngestLog': OOS.ingest,
   'logEvalCandidate': OOS.eval, 'listEvalCandidates': OOS.eval, 'deleteEvalCandidatesBefore': OOS.eval,
   'logEvalCaptureFailure': OOS.eval, 'listEvalCaptureFailures': OOS.eval,
@@ -272,6 +371,8 @@ const EMB = new Float32Array([0.1, 0.2, 0.3]);
 const page = { type: 'person', title: 'Alice Example', compiled_truth: 'Alice Example body.', timeline: '', frontmatter: { tags: [] } };
 const pageRet: Rule = [/^\s*INSERT INTO pages \(source_id, slug/, [PAGE_ROW]];
 const pageId: Rule = [/SELECT id FROM pages/i, [{ id: 1 }]];
+/** The sealing chunk insert stamps the page's chunker version and needs the page row back. */
+const sealedPage: Rule = [/UPDATE pages SET chunker_version/, [{ id: 1 }]];
 
 function variants(method: string, list: Array<[string, (e: any) => Promise<unknown>, Rule[]?]>): SqlCase[] {
   return list.map(([variant, run, rows]) => ({ method, variant, run, rows }));
@@ -352,6 +453,10 @@ export const SQL_CASES: SqlCase[] = [
     ['sourceId', (e) => e.getAllSlugs({ sourceId: SRC })],
   ]),
   ...variants('listAllPageRefs', [['default', (e) => e.listAllPageRefs()]]),
+  ...variants('listEntityKeyRows', [
+    ['default', (e) => e.listEntityKeyRows({ types: ['person', 'company'], keys: ['email'], limit: 10 })],
+    ['after', (e) => e.listEntityKeyRows({ types: ['person'], keys: ['email', 'external_id'], after: { source_id: SRC, slug: 'people/alice-example' }, limit: 10 })],
+  ]),
   ...variants('listPrefixSampledPages', [
     ['default', (e) => e.listPrefixSampledPages({ prefixes: ['people/alice-example'] })],
     ['sourceIds', (e) => e.listPrefixSampledPages({ prefixes: ['people/alice-example'], sourceIds: SRCS, staleBias: true })],
@@ -525,7 +630,9 @@ export const SQL_CASES: SqlCase[] = [
 
   // ── sources ──
   ...variants('listAllSources', [['default', (e) => e.listAllSources()]]),
+  ...variants('listSourceLocalPaths', [['default', (e) => e.listSourceLocalPaths()]]),
   ...variants('updateSourceConfig', [['default', (e) => e.updateSourceConfig(SRC, { federated: true })]]),
+  ...variants('getSource', [['default', (e) => e.getSource(SRC)]]),
 
   // ── files ──
   ...variants('upsertFile', [
@@ -533,6 +640,7 @@ export const SQL_CASES: SqlCase[] = [
   ]),
   ...variants('getFile', [['default', (e) => e.getFile(SRC, 'attachments/a.png')]]),
   ...variants('listFilesForPage', [['default', (e) => e.listFilesForPage(1)]]),
+  ...variants('listFiles', [['default', (e) => e.listFiles({ limit: 100 })], ['page_slug', (e) => e.listFiles({ pageSlug: 'people/alice-example', limit: 100 })]]),
 
   // ── chunks ──
   ...variants('upsertChunks', [
@@ -541,6 +649,10 @@ export const SQL_CASES: SqlCase[] = [
     ['empty', (e) => e.upsertChunks(SLUG, []), [pageId]],
     ['expectedRevision', (e) => e.upsertChunks(SLUG, [{ chunk_index: 0, chunk_text: 'x', chunk_source: 'compiled_truth' }], { sourceId: SRC, expectedRevision: REVISION }), [pageId]],
     ['embeddingColumn', (e) => e.upsertChunks(SLUG, [{ chunk_index: 0, chunk_text: 'x', chunk_source: 'compiled_truth', embedding: EMB }], { embeddingColumn: { name: 'embedding_voyage', dimensions: 3, embeddingModel: 'voyage-test', vectorType: 'halfvec' } }), [pageId]],
+  ]),
+  ...variants('sealChunks', [
+    ['default', (e) => e.sealChunks(SLUG, [{ chunk_index: 0, chunk_text: 'Alice Example body.', chunk_source: 'compiled_truth' }]), [pageId, sealedPage]],
+    ['expectedRevision', (e) => e.sealChunks(SLUG, [], { sourceId: SRC, expectedRevision: REVISION }), [pageId, sealedPage]],
   ]),
   ...variants('getChunks', [
     ['default', (e) => e.getChunks(SLUG)],
@@ -784,6 +896,18 @@ export const SQL_CASES: SqlCase[] = [
     ['in+edgeType', (e) => e.getEdgesByChunk(1, { direction: 'in', edgeType: 'calls' })],
     ['out', (e) => e.getEdgesByChunk(1, { direction: 'out' })],
   ]),
+  ...variants('getCodeTraversalCache', [
+    ['default', (e) => e.getCodeTraversalCache({ symbol_qualified: 'A.f', depth: 2, source_id: SRC, cluster_generation: 3 })],
+  ]),
+  ...variants('putCodeTraversalCache', [
+    ['default', (e) => e.putCodeTraversalCache(
+      { symbol_qualified: 'A.f', depth: 2, source_id: SRC, cluster_generation: 3 }, { nodes: ['A.f'] }, '2026-01-02T00:00:00.000Z', 7,
+    )],
+  ]),
+  ...variants('clearCodeTraversalCache', [
+    ['sourceId', (e) => e.clearCodeTraversalCache({ sourceId: SRC })],
+    ['allSources', (e) => e.clearCodeTraversalCache({ allSources: true })],
+  ]),
 
   // ── cjk-search (CJK branch only) ──
   ...variants('searchKeyword', [
@@ -815,4 +939,22 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('getRawData', [['default', (e) => e.getRawData(SLUG)]]),
   ...variants('getIngestLog', [['default', (e) => e.getIngestLog()]]),
   ...variants('getConfig', [['default', (e) => e.getConfig('embedding_model')]]),
+  ...variants('getConfigValues', [['default', (e) => e.getConfigValues(['embedding_model', 'auto_link'])]]),
+  ...variants('readManagedModeRows', [['default', (e) => e.readManagedModeRows()]]),
+  ...variants('getSourceStrictness', [['default', (e) => e.getSourceStrictness(SRC)]]),
+  ...variants('readPersistenceBrainId', [['default', (e) => e.readPersistenceBrainId()]]),
+  ...variants('readLocalWriterRow', [
+    ['default', (e) => e.readLocalWriterRow('writer-1')],
+    ['lock', (e) => e.transaction((tx: any) => tx.readLocalWriterRow('writer-1', { lock: true }))],
+  ]),
+  ...variants('insertLocalWriterRow', [
+    ['default', (e) => e.insertLocalWriterRow({ id: 'writer-1', lane: 'maintenance', credentialHash: 'hash', grant: { sourceIds: ['default'], operations: null, scopes: [], slugPrefixes: null } })],
+  ]),
+  ...variants('readTransactionSettings', [['default', (e) => e.transaction((tx: any) => tx.readTransactionSettings(['gbrain.write_attribution']))]]),
+  ...variants('applyTransactionSettings', [['default', (e) => e.transaction((tx: any) => tx.applyTransactionSettings(['gbrain.write_attribution'], ['x']))]]),
+  ...variants('readLedgerSource', [
+    ['default', (e) => e.readLedgerSource(SRC)],
+    ['batch', (e) => e.readLedgerSource(SRC, { batch: true })],
+  ]),
+  ...variants('isFolderRestricted', [['default', (e) => e.isFolderRestricted(SRC, SLUG)]]),
 ];

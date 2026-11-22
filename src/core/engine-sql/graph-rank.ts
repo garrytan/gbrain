@@ -22,6 +22,11 @@
  * nothing at all. The chain walks only retired pages and stops at the hop
  * cap, so a cycle terminates.
  *
+ * Count once (duplicate people PR 2): a page that gbrain dedupe confirm linked into an identity group
+ * (entity_identities.established_by 'dedupe:confirm', or 'dedupe:auto' for companies the sync linked) hands its edges, after the retirement fold, to its group's
+ * canonical page when both are readable, so a person kept as one page per source ranks once. Hand-made groups
+ * (entity_identity_link) do not fold. A caller who cannot read the canonical page sees the member unfolded.
+ *
  * Visibility: with `remote` set, every endpoint, chain hop and fold target
  * must be in `sourceIds`, live, unquarantined, in an unarchived source and
  * (with `excludePrivate`) not private; a row's origin page, when set, must
@@ -43,7 +48,7 @@ import { quarantineFilterFragment } from '../quarantine.ts';
 import { rankingLinkSql } from '../link-ranking-policy.ts';
 import { MAX_RETIREMENT_HOPS, retiredPageSql } from '../entities/resolve.ts';
 import { staleForExtractionSql } from './pages.ts';
-import { ALIAS_DERIVATION_VERSION, MENTION_EXTRACTOR_VERSION } from '../mentions/pass.ts';
+import { ALIAS_DERIVATION_VERSION, MENTION_EXTRACTOR_VERSION } from '../mentions/versions.ts';
 
 export type RankDirection = 'in' | 'out' | 'both';
 
@@ -146,8 +151,16 @@ export function rankEntitiesStatement(opts: RankEntitiesStatementOpts): { text: 
        WHERE t.id <> c.start_id AND NOT ${trustedSql(retiredPageSql('t'))}
        ORDER BY c.start_id, c.hop
     ),
-    edges AS MATERIALIZED (
-      SELECT DISTINCT COALESCE(ff.target_id, l.from_page_id) AS src, COALESCE(ft.target_id, l.to_page_id) AS dst, l.link_type
+    ident AS MATERIALIZED (
+      SELECT ei.page_id AS member_id, c.page_id AS target_id
+        FROM entity_identities ei
+        JOIN entity_identities c ON c.entity_id = ei.entity_id AND c.canonical
+        JOIN readable mv ON mv.id = ei.page_id
+        JOIN readable cv ON cv.id = c.page_id
+       WHERE ei.established_by IN ('dedupe:confirm', 'dedupe:auto') AND ei.page_id <> c.page_id
+    ),
+    folded AS (
+      SELECT COALESCE(ff.target_id, l.from_page_id) AS src, COALESCE(ft.target_id, l.to_page_id) AS dst, l.link_type
         FROM links l
         JOIN readable a ON a.id = l.from_page_id
         JOIN readable b ON b.id = l.to_page_id
@@ -155,6 +168,12 @@ export function rankEntitiesStatement(opts: RankEntitiesStatementOpts): { text: 
         LEFT JOIN fold ft ON ft.retired_id = l.to_page_id
        WHERE l.from_page_id <> l.to_page_id
          AND ${trustedSql(rankingLinkSql('l'))}${mentions}${linkType}${origin}
+    ),
+    edges AS MATERIALIZED (
+      SELECT DISTINCT COALESCE(is_.target_id, f.src) AS src, COALESCE(id_.target_id, f.dst) AS dst, f.link_type
+        FROM folded f
+        LEFT JOIN ident is_ ON is_.member_id = f.src
+        LEFT JOIN ident id_ ON id_.member_id = f.dst
     ),
     ends AS (
       SELECT e.dst AS node, e.src AS other, 1 AS inb, 0 AS outb FROM edges e WHERE e.src <> e.dst

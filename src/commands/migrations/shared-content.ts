@@ -7,6 +7,7 @@ import { exportDatabaseContent } from '../../core/shared-skills/migration-export
 import { PgliteBusyError } from '../../core/pglite-lock.ts';
 import { shellQuote } from '../../core/agent-output.ts';
 import { MIGRATION_OPT_OUT_KEYS } from '../../core/migration-ledger.ts';
+import { sharedSkillsHostWork } from '../../core/shared-skills/migration-host-work.ts';
 
 export const SHARED_CONTENT_MIGRATION_VERSION = '0.53.0';
 /** #6466: `gbrain config set shared_skills.migration.enabled false` declines this migration (brain-level, every machine). */
@@ -17,12 +18,21 @@ export const SHARED_CONTENT_INSPECT_ARGV = ['gbrain', 'apply-migrations', '--mig
 
 export async function inspectSharedContentMigration(dryRun: boolean, exportOptions?: OrchestratorOpts['dbOnlyExport'],
   acceptReviewedInventory?: OrchestratorOpts['acceptReviewedInventory']): Promise<SharedMigrationReport | null> {
+  return (await inspectWithHostWork(dryRun, exportOptions, acceptReviewedInventory))?.report ?? null;
+}
+
+/**
+ * The report plus the sources that owe host work by the ledger's rule (sharedSkillsHostWork, read from the report this
+ * run stored), or null on a dry run, which stores nothing.
+ */
+async function inspectWithHostWork(dryRun: boolean, exportOptions?: OrchestratorOpts['dbOnlyExport'],
+  acceptReviewedInventory?: OrchestratorOpts['acceptReviewedInventory']): Promise<{ report: SharedMigrationReport; owing: string[] | null } | null> {
   const config = loadConfig();
   if (!config) return null;
-  if (isThinClient(config)) return {
+  if (isThinClient(config)) return { owing: null, report: {
     version: 1, brain_id: null, dry_run: dryRun, status: 'action_required', sources: [], permission_changes: [],
     pending_actions: ['Run content migration on the host brain, then reconnect with an upgraded shared-skills adapter. No client-side host repository was created.'],
-  };
+  } };
   const { engine, close } = await connectMigrationEngine(config);
   try {
     const ctx = { engine, config, sourceId: exportOptions?.sourceId ?? 'default', remote: false, dryRun,
@@ -34,7 +44,7 @@ export async function inspectSharedContentMigration(dryRun: boolean, exportOptio
       if (exported.status !== 'complete') report.status = exported.status === 'conflict' ? 'conflict' : 'action_required';
       report.pending_actions.push(...exported.pending_actions);
     }
-    return report;
+    return { report, owing: dryRun ? null : (await sharedSkillsHostWork(engine)).sources };
   } finally { await close(); }
 }
 
@@ -50,13 +60,22 @@ export const sharedContentMigration: Migration = {
   sharesRunEngine: true,
   orchestrator: async options => {
     try {
-      const report = await inspectSharedContentMigration(options.dryRun, options.dbOnlyExport, options.acceptReviewedInventory);
-      if (!report) return { version: SHARED_CONTENT_MIGRATION_VERSION, status: 'complete', phases: [{ name: 'inventory', status: 'skipped', detail: 'No brain configured.' }] };
+      const inspected = await inspectWithHostWork(options.dryRun, options.dbOnlyExport, options.acceptReviewedInventory);
+      if (!inspected) return { version: SHARED_CONTENT_MIGRATION_VERSION, status: 'complete', phases: [{ name: 'inventory', status: 'skipped', detail: 'No brain configured.' }] };
+      const { report, owing } = inspected;
       const pending = report.status === 'action_required' || report.status === 'conflict';
-      console.error(`[shared-skills] ${report.status}. ${report.sources.filter(source => source.status !== 'complete').length} source(s) need host action; no grants or bundle consent changed.`
-        + (pending ? ` Inspect each source's next step: ${shellQuote(SHARED_CONTENT_INSPECT_ARGV)}` : ''));
-      for (const source of report.sources) for (const phase of source.stages) {
-        if (phase.status === 'action_required' || phase.status === 'conflict') console.error(`[shared-skills] ${source.source_id}: ${phase.reason}`);
+      const open = report.sources.filter(source => source.status !== 'complete');
+      // The ledger's rule (#6796): an unverified client enrollment (`members`) or a projection the source's own policy
+      // keeps out is information, not host work, so it never counts as a source that needs host action.
+      const owed = owing === null ? open : open.filter(source => source.status === 'conflict' || owing.includes(source.source_id));
+      const inspect = ` Inspect each source's next step: ${shellQuote(SHARED_CONTENT_INSPECT_ARGV)}`;
+      console.error(pending && owed.length === 0 && report.pending_actions.length === 0
+        ? `[shared-skills] No source needs host action; no grants or bundle consent changed. Not verified here: client enrollment and native activation, and sources whose own policy keeps shared skills out.${inspect}`
+        : `[shared-skills] ${report.status}. ${owed.length} source(s) need host action; no grants or bundle consent changed.${pending ? inspect : ''}`);
+      for (const source of open) for (const phase of source.stages) {
+        if (phase.status === 'action_required' || phase.status === 'conflict') {
+          console.error(`[shared-skills] ${source.source_id}${owed.includes(source) ? '' : ' (no host action owed)'}: ${phase.reason}`);
+        }
       }
       for (const action of report.pending_actions) console.error(`[shared-skills] ${action}`);
       return { version: SHARED_CONTENT_MIGRATION_VERSION, status: report.status === 'conflict' ? 'partial' : 'complete',

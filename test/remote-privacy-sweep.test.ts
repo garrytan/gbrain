@@ -271,6 +271,8 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   storage_find: 'ok',
   storage_get: 'error',
   storage_list: 'ok',
+  // GST-2988: no token in the sweep holds the by-name reveal grant, so the op refuses.
+  reveal_secret: 'error',
   search: 'data',
   search_exact: 'data',
   query: 'data',

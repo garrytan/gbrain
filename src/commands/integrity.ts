@@ -44,6 +44,7 @@ import { isSegmentedPage } from '../core/page-body/page-shape.ts';
 import type { BodyStorage } from '../core/page-body/types.ts';
 import { bodyLines } from '../core/page-body/segment-lines.ts';
 import { detachedValue } from '../core/page-body/segment-blocks.ts';
+import { HANDLE_FRONTMATTER_KEYS } from '../core/by-mention.ts';
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -833,8 +834,7 @@ function logSkip(args: SkipArgs): void {
 
 export function extractXHandleFromFrontmatter(fm: Record<string, unknown> | undefined): string | null {
   if (!fm) return null;
-  const keys = ['x_handle', 'twitter', 'twitter_handle', 'x'];
-  for (const k of keys) {
+  for (const k of HANDLE_FRONTMATTER_KEYS) {
     const v = fm[k];
     if (typeof v === 'string' && v.trim().length > 0) {
       return v.trim().replace(/^@/, '');

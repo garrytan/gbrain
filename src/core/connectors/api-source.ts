@@ -107,6 +107,8 @@ export interface ConnectorPublishCtx {
   /** The kind as people name it in messages ("Meetings", "Slack"), and the lower-case tag in commit subjects and logs. */
   label: string; tag: string;
   record: 'git' | 'database'; dir: string | null;
+  /** An unmanaged import passes the external-untrusted write gate, as every managed connector import does. */
+  gated?: boolean;
 }
 
 export interface ConnectorPage {
@@ -152,7 +154,8 @@ export async function publishConnectorPage(ctx: ConnectorPublishCtx, page: Conne
       }
     }
     const { importFromContent } = await import('../import-file.ts');
-    const result = await importFromContent(engine, slug, markdown, { noEmbed: true, sourceId, sourcePath: relPath, preserveGateMarkers: true, holdNoncanonicalPrivate: true });
+    const result = await importFromContent(engine, slug, markdown, { noEmbed: true, sourceId, sourcePath: relPath, preserveGateMarkers: true, holdNoncanonicalPrivate: true,
+      ...(ctx.gated ? { writeGate: { tier: 'external_untrusted' as const, origin: { channel: `connector:${ctx.tag}`, connector: ctx.tag, source_uri: relPath }, requestId: null } } : {}) });
     if (result.status === 'error' || result.error) throw new Error(result.error ?? `Import failed for ${relPath}`);
     status = result.status === 'imported' ? 'imported' : 'skipped';
     created = !existing;
@@ -167,8 +170,11 @@ export async function publishConnectorPage(ctx: ConnectorPublishCtx, page: Conne
   return 'modified';
 }
 
-/** Deletes one page whose item was deleted upstream, after retiring its facts. */
-export async function deleteConnectorPage(ctx: ConnectorPublishCtx, relPath: string, commitMessage: string, retireReason: string): Promise<void> {
+/**
+ * Deletes one page whose item was deleted upstream, after retiring its facts. `soft` (apple-contacts) soft-deletes the
+ * database row, so `gbrain restore` brings it back within the purge window; the default removes it.
+ */
+export async function deleteConnectorPage(ctx: ConnectorPublishCtx, relPath: string, commitMessage: string, retireReason: string, opts: { soft?: boolean } = {}): Promise<void> {
   const { engine, sourceId, managed, summary } = ctx;
   const slug = slugifyPath(relPath);
   const retired = await retireFactsFromPage(engine, { sourceId, slug, reason: retireReason, managed: !!managed });
@@ -188,25 +194,45 @@ export async function deleteConnectorPage(ctx: ConnectorPublishCtx, relPath: str
     }
   }
   const rows = await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, slug]);
-  if (rows.length) { await engine.deletePages([slug], { sourceId }); summary.deleted++; }
+  if (rows.length) {
+    if (opts.soft) {
+      const { maintenanceTransaction } = await import('../persistence/attribution.ts');
+      await maintenanceTransaction(engine, tx => tx.softDeletePages([slug], { sourceId }));
+    }
+    else await engine.deletePages([slug], { sourceId });
+    summary.deleted++;
+  }
 }
+
+/** A connector run queues fact extraction for at most this many pages; the cycle's backfill covers the rest. */
+export const CONNECTOR_FACTS_PAGE_LIMIT = 50;
 
 /** Facts and embeddings for the pages a run published (the connector path has no sync finalize). */
 export async function afterConnectorPublish(ctx: Pick<ConnectorPublishCtx, 'engine' | 'sourceId' | 'summary' | 'managed' | 'tag'>, opts: SyncOpts): Promise<void> {
   const { engine, sourceId, summary, managed } = ctx;
   if (!summary.pagesAffected.length) return;
-  if (!opts.noExtract && summary.pagesAffected.length <= 50) {
+  const overLimit = summary.pagesAffected.length > CONNECTOR_FACTS_PAGE_LIMIT;
+  // #9552: on a managed brain each import's publication queued its own fact extraction (connector-sync.ts).
+  if (!opts.noExtract && !overLimit && !managed) {
     const { runFactsBackstop } = await import('../facts/backstop.ts');
+    let failed = 0;
+    let firstError = '';
     for (const slug of summary.pagesAffected) {
       try {
         const page = await engine.getPage(slug, { sourceId });
         if (!page || isSegmentedPage(page)) continue;
         await runFactsBackstop({ slug, type: page.type, compiled_truth: page.compiled_truth ?? '', frontmatter: page.frontmatter ?? {} },
           { engine, sourceId, sessionId: connectorFactsSession(sourceId, slug), source: 'sync:import', mode: 'queue', notabilityFilter: 'high-only', sourceSlug: slug });
-      } catch { /* per-page enqueue is best-effort, as in sync */ }
+      } catch (error) {
+        failed++;
+        firstError ||= error instanceof Error ? error.message : String(error);
+        const { writeFactsAbsorbFailure } = await import('../facts/absorb-log.ts');
+        await writeFactsAbsorbFailure(engine, slug, error, sourceId);
+      }
     }
-  } else if (!opts.noExtract) {
-    process.stderr.write(`[${ctx.tag}] ${summary.pagesAffected.length} pages changed; facts are extracted by the cycle's backfill\n`);
+    if (failed) process.stderr.write(`[${ctx.tag}] ${sourceId}: fact extraction was not queued for ${failed} page(s): ${firstError}\n`);
+  } else if (!opts.noExtract && overLimit) {
+    process.stderr.write(`[${ctx.tag}] ${summary.pagesAffected.length} pages changed; ${managed ? `facts were queued for the first ${CONNECTOR_FACTS_PAGE_LIMIT}, the rest` : 'facts'} are extracted by the cycle's backfill\n`);
   }
   if (managed || opts.noEmbed || summary.pagesAffected.length > 100) return;
   try {

@@ -60,6 +60,16 @@ export function connectorAccountChanged(sourceId: string, kind: ConnectorKind, c
     replace = `add a new source for the new workspace (gbrain sources add <new-id> --kind slack --channels ${slack.channels.join(',')}), then archive this one: gbrain sources archive ${sourceId}`;
     break;
   }
+  case 'imessage': {
+    restore = `restore the GBrain Helper token GBrain reads for ${show(recorded)}, then retry: gbrain sync --source ${sourceId}`;
+    replace = `add a new source (gbrain sources add <new-id> --kind imessage), then archive this one: gbrain sources archive ${sourceId}`;
+    break;
+  }
+  case 'apple-contacts': {
+    restore = `restore the read:contacts token in the source's token file (ac_token_file) for ${show(recorded)}, then retry: gbrain sync --source ${sourceId}`;
+    replace = `add a new source (gbrain sources add <new-id> --kind apple-contacts --helper-host <host> --token-file <path>), then archive this one: gbrain sources archive ${sourceId}`;
+    break;
+  }
   default: return assertNever(kind);
   }
   // Account emails and installation ids stay in the local suggestion: job records persist and serve the message remotely.

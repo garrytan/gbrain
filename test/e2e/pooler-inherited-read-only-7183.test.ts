@@ -81,6 +81,20 @@ describeDb(`writes on read-only-default server connections (${pooled ? 'pgbounce
     expect(await engine!.executeRaw('SELECT 1 FROM sources WHERE id = $1', [id])).toHaveLength(1);
   });
 
+  test('typed autocommit writes outside any transaction write: writer registration and page upkeep', async () => {
+    const id = randomUUID();
+    const grant = { sourceIds: ['*'], operations: null, scopes: ['read', 'write'], slugPrefixes: null };
+    expect(await engine!.insertLocalWriterRow({ id, lane: 'cli', credentialHash: 'e'.repeat(64), grant })).toBe(true);
+    expect(await engine!.executeRaw('SELECT 1 FROM persistence_local_writers WHERE id = $1', [id])).toHaveLength(1);
+    const slug = `notes/ro-${randomUUID().slice(0, 8)}`;
+    await engine!.transaction(tx => tx.putPage(slug, { type: 'note', title: 'ro probe', compiled_truth: 'body' }));
+    await engine!.setChunkerVersion(slug, 7, { sourceId: 'default' });
+    await engine!.refreshPageOrigin(slug, { sourceId: 'default', sourcePath: `${slug}.md` });
+    const [page] = await engine!.executeRaw<{ chunker_version: string | null; source_path: string | null }>(
+      "SELECT chunker_version::text AS chunker_version, source_path FROM pages WHERE slug = $1 AND source_id = 'default'", [slug]);
+    expect(page).toEqual({ chunker_version: '7', source_path: `${slug}.md` });
+  });
+
   test('a deliberately read-only transaction still refuses a write', async () => {
     await expect(engine!.sql.begin('read only', tx => tx.unsafe("INSERT INTO sources(id, name) VALUES ('ro-never', 'ro-never')")))
       .rejects.toMatchObject({ code: '25006' });

@@ -39,6 +39,7 @@ import type { Action } from '../agent-output.ts';
 import { bindOrigin } from './origin-guard.ts';
 import { segmentedOutcome } from './searchable.ts';
 import { isQuarantined } from '../quarantine.ts';
+import { READERS_FIX_EFFECT } from './readers-request.ts';
 
 export type ImportPack = { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string>; aliases?: ReadonlyArray<string> }> };
 /** A Markdown file over the single-string ceiling, journaled by reference: the preparer streams and verifies it (Wave B). */
@@ -91,6 +92,7 @@ function managedImportRefusal(refusal: ContentRefusal, sourcePath: string): Oper
     : refusal.code === 'content_rejected' ? `Remove the matched junk from ${sourcePath}, then import it again.`
     : refusal.code === 'write_gate_rejected' ? `The write gate refuses ${sourcePath} (external instruction-like content under write_gate.external_mode=reject); tell the user, the decision is theirs.`
     : refusal.code === 'visibility_noncanonical' ? `Write visibility: private on its own frontmatter line of ${sourcePath} (lowercase key and value), then import it again.`
+    : refusal.code === 'readers_noncanonical' ? `Write the readers key of ${sourcePath} as readable_by (lowercase, with an underscore) on its own frontmatter line, remove any other spelling, then import it again. ${READERS_FIX_EFFECT}`
     : refusal.code === 'tag_too_long' ? `Shorten the tag the message names in ${sourcePath}, or split it into shorter tags, then import it again.`
     : `Fix line ${refusal.line ?? '?'} of ${sourcePath}${refusal.key ? ` (key "${refusal.key}")` : ''}: one line per key with its whole value quoted. Run gbrain frontmatter validate on the file to see every problem, then import it again.`;
   return contentRefusalError(refusal, suggestion, { legacy_error: 'invalid_params' });
@@ -304,10 +306,15 @@ export async function prepareManagedImportMutation(engine: BrainEngine, row: Wri
   return mutation;
 }
 
+/** Two source paths name the same file; on Windows either separator spelling matches (#9118). */
+export function sameSourcePath(a: string, b: string, separator: string = sep): boolean {
+  return separator === '\\' ? a.replaceAll('\\', '/') === b.replaceAll('\\', '/') : a === b;
+}
+
 /** The admitted page is still the import's base: its revision, its id and the file it maps to. */
 function assertImportBaseSnapshot(row: WriteRequest, p: ManagedImportIntent, snapshot: PageSnapshot | null): void {
   assertPageRevision(snapshot, { expectedRevision: p.expected_revision ?? null }); // null: admitted against an absent page; still a revision_conflict if one appeared (#5385)
-  if ((snapshot?.page.id ?? null) !== row.page_id || snapshot?.page.source_path && snapshot.page.source_path !== p.sourcePath) {
+  if ((snapshot?.page.id ?? null) !== row.page_id || snapshot?.page.source_path && !sameSourcePath(snapshot.page.source_path, p.sourcePath)) {
     throw opError('page_identity_changed', 'The imported path no longer names the accepted page.',
       `Page ${row.slug} in source ${row.source_id} was replaced, removed, or now maps to a different file than ${p.sourcePath}, so import request ${row.request_id} published nothing. Read the page before importing the file again.`,
       { fix: readFix(`Shows which page holds ${row.slug} in source ${row.source_id} now, with its source path and revision.`,

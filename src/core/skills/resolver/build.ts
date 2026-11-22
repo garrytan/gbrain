@@ -107,6 +107,13 @@ export function chooseVariant(skills: readonly SkillRecord[], previous: Variant 
   return { variant: share >= T_SHARE_ON || (previous === 'T' && share >= T_SHARE_KEEP) ? 'T' : 'D', share: Math.round(share * 1e4) / 1e4 };
 }
 
+/** The --routing table a receipt's rebuild argv names, so a rebuild keeps it (#9332). */
+export function routingFromArgv(argv: readonly string[] | null | undefined): { routing?: string } {
+  const at = argv?.indexOf('--routing') ?? -1;
+  const routing = at >= 0 ? argv![at + 1] : undefined;
+  return routing ? { routing } : {};
+}
+
 /** The argv that rebuilds a catalog from what the receipt recorded (null for a stdin source: the adapter owns it). */
 export function buildArgs(input: BuildInput): { args: string[]; fix: string[] | null } {
   const args = ['gbrain', 'skills', 'index', 'build', '--catalog', input.catalog];

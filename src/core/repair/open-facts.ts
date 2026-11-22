@@ -37,9 +37,7 @@ import { serializePageToMarkdown } from '../markdown.ts';
 import { strikeFenceRow } from '../facts/forget.ts';
 import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
 import { trustedCliRequired } from '../ops/op-fix.ts';
-import { MEMBER_PAGE_PREFIX } from '../access/member-facts.ts';
-import { quarantineFilterFragment } from '../quarantine.ts';
-import { derivationPrivateSql } from '../search/private-visibility.ts';
+import { factOnMemberPageSql, factPageReasons, factProvenanceSlugSql, unpagedFactSql } from '../facts/private-fact-pages.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { authorizeWrite } from '../persistence/authority.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
@@ -51,7 +49,7 @@ import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { maintenancePreflight, publishMaintenancePage, submitDatabaseMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { filesInCheckout, importAtRevision, labelFileRefusal, writeLabelFile } from './label-write.ts';
-import { factProvenanceSlugSql, PLAN_STATEMENT_MS } from './visibility.ts';
+import { PLAN_STATEMENT_MS } from './visibility.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope } from './core.ts';
 
 export const OPEN_FACTS_INTENT = 'managed_maintenance_open_fact_visibility';
@@ -80,18 +78,9 @@ interface Group { mode: 'open' | 'close'; source_id: string; slug: string; fence
 interface OpenItem extends RepairItem { group: Group; hash: string; ledger: OpenFactsLedger; brain_id: string }
 interface PlannedRow extends FactRef { cls: string; fence: boolean }
 
-const TRANSCRIPT_LANES = (f: string) => `(${f}.source LIKE 'cli:extract-conversation-facts%' OR ${f}.source IN ('hook:writeback', 'hook:compact', 'sweep:corpus')
-  OR ${f}.source LIKE 'transcript:%' OR ${f}.source LIKE 'connector:%')`;
-
 /** A fact's class: unpaged:<lane> (no holding page, or a transcript lane), fenced, or unfenced. */
-export const openFactClassSql = (f: string) => `(CASE WHEN ${f}.source_markdown_slug IS NULL OR ${TRANSCRIPT_LANES(f)} THEN 'unpaged:' || COALESCE(NULLIF(${f}.source, ''), 'unknown')
+export const openFactClassSql = (f: string) => `(CASE WHEN ${unpagedFactSql(f)} THEN 'unpaged:' || COALESCE(NULLIF(${f}.source, ''), 'unknown')
   WHEN ${f}.row_num IS NOT NULL THEN 'fenced' ELSE 'unfenced' END)`;
-
-/** Any page row with the slug (deleted or not) that is derivation-private. */
-const anyPrivatePage = (f: string, slug: string, alias: string) =>
-  `EXISTS (SELECT 1 FROM pages ${alias} WHERE ${alias}.source_id = ${f}.source_id AND ${alias}.slug = ${slug} AND ${derivationPrivateSql(alias)})`;
-const livePage = (f: string, slug: string, alias: string, extra = 'true') =>
-  `EXISTS (SELECT 1 FROM pages ${alias} WHERE ${alias}.source_id = ${f}.source_id AND ${alias}.slug = ${slug} AND ${alias}.deleted_at IS NULL AND ${extra})`;
 
 /**
  * Why a private fact `f` stays private, or NULL when it may open: the one exclusion expression the preview, the reason
@@ -99,25 +88,18 @@ const livePage = (f: string, slug: string, alias: string, extra = 'true') =>
  * or a widening (`before_state.visibility`) the owner rejected or undid: an owner's decision is never overridden.
  */
 export function openFactsReasonSql(f: string): string {
-  const prov = `(${factProvenanceSlugSql(f)})`;
-  const member = (expr: string) => `left(${expr}, ${MEMBER_PAGE_PREFIX.length}) = '${MEMBER_PAGE_PREFIX}'`;
   return `(CASE
     WHEN ${f}.expired_at IS NOT NULL THEN 'expired'
     WHEN ${f}.superseded_by IS NOT NULL THEN 'superseded'
-    WHEN ${member(`${f}.source_markdown_slug`)} OR ${member(`${f}.entity_slug`)} OR ${member(prov)} THEN 'member_page'
+    WHEN ${f}.valid_until IS NOT NULL AND ${f}.valid_until <= now() THEN 'lapsed'
+    WHEN ${factOnMemberPageSql(f)} THEN 'member_page'
     WHEN EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = ${f}.source_id
         AND w.fact_hash IN (gbrain_fact_fingerprint(${f}.fact), gbrain_fact_fingerprint_v1(${f}.fact)) AND (w.subject = '*' OR w.subject = ${f}.entity_slug))
       OR EXISTS (SELECT 1 FROM fact_purges x WHERE x.source_id = ${f}.source_id AND x.fact_hash = gbrain_fact_fingerprint(${f}.fact)
         AND (x.subject = '*' OR x.subject = ${f}.entity_slug)) THEN 'withdrawn'
     WHEN EXISTS (SELECT 1 FROM trust_proposals tp WHERE ((tp.target_table = 'facts' AND tp.target_id = ${f}.id) OR (tp.related_table = 'facts' AND tp.related_id = ${f}.id))
-        AND (tp.status = 'pending' OR (tp.action = 'supersede_fact' AND tp.status IN ('rejected', 'undone') AND tp.before_state->'visibility' IS NOT NULL))) THEN 'contested'
-    WHEN ${f}.source_markdown_slug IS NOT NULL AND ${anyPrivatePage(f, `${f}.source_markdown_slug`, 'oh')} THEN 'holding_page_private'
-    WHEN ${f}.source_markdown_slug IS NOT NULL AND NOT ${livePage(f, `${f}.source_markdown_slug`, 'oh')} THEN 'holding_page_missing'
-    WHEN ${f}.source_markdown_slug IS NOT NULL AND ${livePage(f, `${f}.source_markdown_slug`, 'oh', `NOT ${quarantineFilterFragment('oh')}`)} THEN 'holding_page_quarantined'
-    WHEN ${prov} IS NOT NULL AND ${anyPrivatePage(f, prov, 'op')} THEN 'provenance_private'
-    WHEN ${prov} IS NOT NULL AND NOT ${livePage(f, prov, 'op')} THEN 'provenance_unresolved'
-    WHEN ${prov} IS NOT NULL AND ${livePage(f, prov, 'op', `NOT ${quarantineFilterFragment('op')}`)} THEN 'provenance_quarantined'
-    WHEN ${f}.entity_slug IS NOT NULL AND ${anyPrivatePage(f, `${f}.entity_slug`, 'oe')} THEN 'entity_page_private'
+        AND (tp.status = 'pending' OR (tp.action IN ('supersede_fact', 'confirm') AND tp.status IN ('rejected', 'undone') AND tp.before_state->'visibility' IS NOT NULL))) THEN 'contested'
+    ${factPageReasons(f).map(([reason, condition]) => `WHEN ${condition} THEN '${reason}'`).join('\n    ')}
     ELSE NULL END)`;
 }
 
@@ -325,6 +307,8 @@ export const openFactsRepair: RepairHandler = {
       warnings: [
         'Opening a fact widens what remote callers that are not the brain owner can read, and that is one-way for anything they read before an undo. '
           + `Each opened fact is recorded in ${request.ledger.path}; undo with: gbrain repair open-facts --source ${sel.source_id} --undo ${request.ledger.path}`,
+        'A fact someone saved private on purpose before the cut looks the same as a legacy one and is opened with them. Read the samples and the listing, '
+          + 'and when some must stay private, list the ids to open in a file (one per line) and pass --ids-file <file>.',
         ...(next ? [`This preview lists one window of ${window.length} fact(s); more may follow it. Apply this window (or decide not to), then preview the next one: ${next}`] : []),
         ...(counts ? [] : [`The counts by reason did not finish within the ${PLAN_STATEMENT_MS} ms statement bound and are not listed; the window is.`]),
         ...(notNamed.length ? [`${notNamed.map(([cls, n]) => `${n} ${cls}`).join(', ')} fact(s) are not in this preview: they come from no page the brain can judge, or from a class not named. `
@@ -474,17 +458,20 @@ async function applyFence(ctx: OperationContext, item: OpenItem): Promise<Repair
   const snapshot = await ctx.engine.readPageSnapshot(group.slug, { sourceId: group.source_id });
   if (!snapshot) return settle(item, '', [], 'its page is gone');
   if (isSegmentedPage(snapshot.page)) return settle(item, '', [], 'its page is stored in segments, which this repair does not rewrite; edit the facts fence by hand on the brain host');
-  let body = snapshot.page.compiled_truth ?? '';
+  const sections: { compiled_truth: string; timeline?: string } = { compiled_truth: snapshot.page.compiled_truth ?? '' };
   const struck: FactRef[] = [];
   for (const fact of group.facts) {
-    let hit = false;
-    const next = strikeFenceRow(body, fact.row_num!, row => row.claim === fact.fact && row.visibility === from ? (hit = true, { ...row, visibility: to }) : row);
-    if (next === null || !hit) continue;
-    body = next;
-    struck.push(fact);
+    for (const key of ['compiled_truth', 'timeline'] as const) {
+      let hit = false;
+      const next = strikeFenceRow(sections[key] ?? snapshot.page[key] ?? '', fact.row_num!, row => row.claim === fact.fact && row.visibility === from ? (hit = true, { ...row, visibility: to }) : row);
+      if (next === null || !hit) continue;
+      sections[key] = next;
+      struck.push(fact);
+      break;
+    }
   }
   if (!struck.length) return settle(item, '', [], 'its rows were not found in the page\'s facts fence as previewed, or the fence does not parse cleanly');
-  const content = serializePageToMarkdown({ ...snapshot.page, compiled_truth: body }, snapshot.tags);
+  const content = serializePageToMarkdown({ ...snapshot.page, ...sections }, snapshot.tags);
   const edit = { set: {}, remove: [] };
   const rows = pinned(struck);
   const requestId = requestIdOf(item, snapshot.revision);

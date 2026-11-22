@@ -40,6 +40,18 @@ import { PENDING_WRITE_EXIT_CODE } from '../core/exit-codes.ts';
 import { cliRenderContext } from '../core/agent-output.ts';
 import { TERMINAL_STATES } from '../core/persistence/model.ts';
 import type { WriteReceipt } from '../core/persistence/types.ts';
+import { callReadersFor, parseCallAttendees, type CallAttendee } from '../core/meetings/attendees.ts';
+import { callScopeGate, type CallScopeGate, type CallsNotScopedReason, type UnboundStdio } from '../core/access/call-scope.ts';
+import { claudeUserMcpConfigPath, codexConfigPath } from '../core/bootstrap/host-specs.ts';
+import { readCodexTomlTable } from '../core/bootstrap/codex-toml.ts';
+import { localSetupRecords } from '../core/setup/local-receipts.ts';
+import { sharedStdioHarness } from './setup-serves.ts';
+import { registeredStdioMember } from '../core/stdio-member-flag.ts';
+import { normalizeReaders } from '../core/access/principals.ts';
+import { raisePageLabelGuard } from '../core/trust/page-write.ts';
+import { maintenanceTransaction } from '../core/persistence/attribution.ts';
+import { noticeBlock, renderNotice } from '../core/agent-output.ts';
+import { opError } from '../core/ops/contract.ts';
 
 export const CALL_FILE_RE = /\.(txt|md)$/i;
 export const DEFAULT_CALL_PREFIX = 'calls';
@@ -59,6 +71,8 @@ export interface CallPage {
   content: string;
   redactions: number;
   hash: string;
+  /** GST-2904: the attendees the call's header names (redacted), or null. */
+  attendees: CallAttendee[] | null;
 }
 
 export interface CallFileResult {
@@ -72,6 +86,41 @@ export interface CallFileResult {
   /** A pending write: its request and the command that reads its receipt. */
   request_id?: string;
   poll?: string;
+  /** GST-2904, on a brain that serves two or more people: whether the call is kept to the owner and its attendees. */
+  scoped?: boolean;
+  /** Why it is not: --readers source, or the calls_not_scoped reason. */
+  reason?: CallsNotScopedReason | 'readers_source';
+  /** Who reads the call by its page (member ids), or null when its source's readers do. */
+  readers?: string[] | null;
+  /** computed by this import, stored on the page already, or pending in a write still being made. */
+  readers_from?: 'computed' | 'stored' | 'pending';
+  matched_by?: Record<string, 'email' | 'id' | 'name'>;
+  unmatched?: string[];
+}
+
+/**
+ * The local stdio connections on this machine bound to nobody: each claude-code or codex entry `gbrain setup` installed
+ * for this brain home without --stdio-member (a plugin-served entry counts as unbound), and a harness several people talk
+ * to (OpenClaw, Hermes), which no --stdio-member can bind. An entry that cannot be read counts as unbound.
+ */
+export function callScopeStdio(): UnboundStdio[] {
+  const out: UnboundStdio[] = [];
+  for (const record of localSetupRecords().filter(r => r.status === 'installed')) {
+    let entry: unknown;
+    try {
+      if (record.harness === 'claude-code') {
+        const cfg = JSON.parse(readFileSync(claudeUserMcpConfigPath(), 'utf8')) as { mcpServers?: Record<string, unknown>; projects?: Record<string, { mcpServers?: Record<string, unknown> }> };
+        entry = (record.scope === 'project' && record.projectDir ? cfg.projects?.[record.projectDir]?.mcpServers : cfg.mcpServers)?.[record.name];
+      } else if (record.harness === 'codex') entry = readCodexTomlTable(codexConfigPath(), ['mcp_servers', record.name]);
+      else continue;
+    } catch { entry = undefined; }
+    if (registeredStdioMember(entry) !== undefined) continue;
+    out.push({ harness: record.harness, name: record.name,
+      argv: ['gbrain', 'setup', record.harness, ...(record.name === 'gbrain' ? [] : ['--name', record.name]), ...(record.scope === 'project' ? ['--scope', 'project'] : [])] });
+  }
+  const shared = sharedStdioHarness();
+  if (shared) out.push({ harness: shared, argv: null });
+  return out;
 }
 
 /** .txt and .md files under `dir`, sorted; dot entries and symlinks are skipped. */
@@ -148,7 +197,24 @@ export function callPageFor(rel: string, text: string, mtimeMs: number, prefix: 
     '  embedding_hold: call_import',
     '---',
   ].join('\n');
-  return { rel, file: path.file, ...(pathId ? { path: pathId } : {}), slug: `${prefix}/${date}-${slugTitle}`, title, date, date_from: fromName ? 'file_name' : fromLine ? 'first_line' : 'modified', content: `${frontmatter}\n${body}\n`, redactions: redacted.redactionCount + path.redactions, hash };
+  return { rel, file: path.file, ...(pathId ? { path: pathId } : {}), slug: `${prefix}/${date}-${slugTitle}`, title, date, date_from: fromName ? 'file_name' : fromLine ? 'first_line' : 'modified', content: `${frontmatter}\n${body}\n`, redactions: redacted.redactionCount + path.redactions, hash,
+    attendees: callAttendees(text, redacted.session.messages[0]!.text) };
+}
+
+/**
+ * GST-2904: the header's attendees, printed as redacted (a redaction pattern may cover an address) but matched by the
+ * address the file gives, which is compared and never stored. A header the redaction reshaped is read redacted only.
+ */
+function callAttendees(raw: string, redacted: string): CallAttendee[] | null {
+  const shown = parseCallAttendees(redacted);
+  const given = parseCallAttendees(raw);
+  if (!shown || !given || shown.length !== given.length) return shown;
+  return shown.map((a, i) => (given[i]!.email ? { entry: a.entry, email: given[i]!.email } : a));
+}
+
+/** GST-2904: the call page kept to `readers` (member ids, the owner first): its readable_by line rides the one put_page write. */
+export function withCallReaders(content: string, readers: readonly string[]): string {
+  return content.replace('\nfacts_backstop: false\n', `\nreadable_by: ${JSON.stringify(readers)}\nfacts_backstop: false\n`);
 }
 
 const callImportOf = (frontmatter: unknown): { file?: unknown; root?: unknown; path?: unknown; hash?: unknown } | null => {
@@ -183,9 +249,14 @@ function flagValue(args: string[], name: string): string | undefined {
 }
 
 /** Import every call file under `dir` (or the one call file `dir` names, as its folder would) once, into `sourceId` (default when unset). */
-export async function runCallImport(engine: BrainEngine, dir: string, args: string[], opts: { sourceId?: string; json: boolean }): Promise<RunImportResult> {
+export async function runCallImport(engine: BrainEngine, dir: string, args: string[], opts: { sourceId?: string; json: boolean; unboundStdio?: () => UnboundStdio[] }): Promise<RunImportResult> {
   const prefix = (flagValue(args, '--prefix') ?? DEFAULT_CALL_PREFIX).split('/').map(slugifySegment).filter(Boolean).join('/') || DEFAULT_CALL_PREFIX;
   const sourceId = opts.sourceId ?? 'default';
+  const readersFlag = flagValue(args, '--readers') ?? 'attendees';
+  if (readersFlag !== 'attendees' && readersFlag !== 'source') {
+    throw opError('invalid_params', `--readers must be attendees or source, not "${readersFlag}"; nothing was imported.`,
+      'Use --readers attendees (the default: on a brain that serves several people each call is kept to the owner and its attendees) or --readers source (each call is readable by everyone who reads its source).');
+  }
   const patterns = loadImportRedactionPatterns();
   const { operations } = await import('../core/operations.ts');
   const putPage = operations.find(op => op.name === 'put_page')!;
@@ -196,19 +267,45 @@ export async function runCallImport(engine: BrainEngine, dir: string, args: stri
   const folder = single ? dirname(dir) : dir;
   const files = single ? [dir] : listCallFiles(dir);
   const root = callRootId(folder);
+  const gate: CallScopeGate = await callScopeGate(engine, opts.unboundStdio ?? callScopeStdio);
+  const scope = gate.applies ? (readersFlag === 'source' ? { scoped: false as const, reason: 'readers_source' as const } : gate.scoped ? { scoped: true as const } : { scoped: false as const, reason: gate.reason }) : null;
+  const scopeOf = (readers: string[] | null, from: 'computed' | 'stored' | 'pending', extra: Partial<CallFileResult> = {}): Partial<CallFileResult> =>
+    scope ? { ...scope, readers, readers_from: from, ...extra } : {};
+  const memberIds = (frontmatter: unknown): string[] | null => {
+    const normalized = normalizeReaders(frontmatter);
+    if (!normalized) return null;
+    const raw = (frontmatter as { readable_by?: unknown }).readable_by;
+    const listed = Array.isArray(raw) ? raw.map(String) : [String(raw)];
+    const ids = listed.map(r => r.trim().replace(/^member:/i, ''));
+    return JSON.stringify([...new Set(ids.map(r => normalizeReaders({ readable_by: r })?.[0]))].sort()) === JSON.stringify(normalized) ? ids : normalized;
+  };
+  /** A scoped call's readers are guarded as soon as its page row lands (its git commit may still be queued), so a later write below the operator's tier cannot drop them. */
+  const guard = async (slug: string, readers: string[] | null): Promise<void> => {
+    if (!scope?.scoped || !readers) return;
+    await maintenanceTransaction(engine, async tx => {
+      await tx.lockPageKeys([{ sourceId, slug }]);
+      const [page] = await tx.executeRaw<{ id: number; frontmatter: Record<string, unknown> | null; guarded: boolean }>(
+        'SELECT p.id, p.frontmatter, EXISTS (SELECT 1 FROM page_label_guards g WHERE g.page_id = p.id) AS guarded FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL FOR UPDATE', [sourceId, slug]);
+      if (!page || page.guarded === true || JSON.stringify(normalizeReaders(page.frontmatter)) !== JSON.stringify(normalizeReaders({ readable_by: readers }))) return;
+      await raisePageLabelGuard(tx, sourceId, slug);
+    });
+  };
   const prior = await engine.executeRaw<{ slug: string; root: string | null; file: string; path: string | null }>(
     `SELECT slug, frontmatter->'call_import'->>'root' AS root, frontmatter->'call_import'->>'file' AS file, frontmatter->'call_import'->>'path' AS path FROM pages
       WHERE source_id = $1 AND deleted_at IS NULL AND starts_with(slug, $2) AND frontmatter->'call_import'->>'file' IS NOT NULL`,
     [sourceId, `${prefix}/`]);
   const byPath = new Map(prior.filter(r => r.path).map(r => [r.path, r.slug]));
   const byFile = new Map(prior.filter(r => !r.path && r.root === root).map(r => [r.file, r.slug]));
-  const pendingByPath = new Map<string, { slug: string; request_id: string }>();
+  const pendingByPath = new Map<string, { slug: string; request_id: string; readers: string[] | null }>();
   for (const row of await engine.executeRaw<{ slug: string; request_id: string; content: string | null }>(
     `SELECT slug, request_id::text AS request_id, intent->>'content' AS content FROM persistence_requests
       WHERE source_id = $1 AND operation = 'put_page' AND starts_with(slug, $2) AND NOT (state = ANY($3::text[])) ORDER BY sequence`,
     [sourceId, `${prefix}/`, [...TERMINAL_STATES]])) {
     const id = /^ {2}path: "([0-9a-f]{16})"$/m.exec(row.content ?? '')?.[1];
-    if (id && !pendingByPath.has(id)) pendingByPath.set(id, { slug: row.slug, request_id: row.request_id });
+    const readersLine = /^readable_by: (\[.*\])$/m.exec(row.content ?? '')?.[1];
+    let readers: string[] | null = null;
+    try { readers = readersLine ? JSON.parse(readersLine) as string[] : null; } catch { readers = null; }
+    if (id && !pendingByPath.has(id)) pendingByPath.set(id, { slug: row.slug, request_id: row.request_id, readers });
   }
   const sameImport = (frontmatter: unknown, page: CallPage, ids: Set<string>): boolean => {
     const ci = callImportOf(frontmatter);
@@ -240,7 +337,7 @@ export async function runCallImport(engine: BrainEngine, dir: string, args: stri
       const receipt = await getWriteRequest.handler(ctx, { request_id: held.request_id }).catch(() => null) as WriteReceipt | null;
       if (!receipt || !acceptPendingCovers(receipt)) uncovered++;
       results.push({ file: page.file, slug: held.slug, date_from: page.date_from, redactions: page.redactions, status: 'pending', request_id: held.request_id,
-        poll: pollCommand(held.request_id, undefined, cliRenderContext().routing) });
+        poll: pollCommand(held.request_id, undefined, cliRenderContext().routing), ...scopeOf(held.readers, 'pending') });
       continue;
     }
     let slug = priorSlug ?? (used.has(page.slug) ? suffixed : page.slug);
@@ -253,16 +350,24 @@ export async function runCallImport(engine: BrainEngine, dir: string, args: stri
     const base = { file: page.file, slug, date_from: page.date_from, redactions: page.redactions };
     if (existing) {
       if (!sameImport(existing.page.frontmatter, page, ids)) results.push({ ...base, status: 'error', error: `${slug} already holds another page; rename the file to import it` });
-      else results.push({ ...base, status: callImportOf(existing.page.frontmatter)?.hash === page.hash ? 'unchanged' : 'kept' });
+      else {
+        const stored = memberIds(existing.page.frontmatter);
+        await guard(slug, stored);
+        results.push({ ...base, status: callImportOf(existing.page.frontmatter)?.hash === page.hash ? 'unchanged' : 'kept', ...scopeOf(stored, 'stored') });
+      }
       continue;
     }
+    const kept = scope?.scoped && gate.applies && gate.scoped ? callReadersFor(page.attendees, gate.owner, gate.members) : null;
+    const fields = kept ? scopeOf(kept.readers, 'computed', { matched_by: kept.matched_by, unmatched: kept.unmatched }) : scopeOf(null, 'computed');
     try {
-      const receipt = await putPage.handler(ctx, { slug, content: page.content, request_id: randomUUID() }) as { persistence?: { git_state?: string } } | null;
-      results.push({ ...base, status: 'imported', ...(receipt?.persistence?.git_state ? { git_state: receipt.persistence.git_state } : {}) });
+      const receipt = await putPage.handler(ctx, { slug, content: kept ? withCallReaders(page.content, kept.readers) : page.content, request_id: randomUUID() }) as { persistence?: { git_state?: string } } | null;
+      const gitState = receipt?.persistence?.git_state;
+      if (kept) await guard(slug, kept.readers);
+      results.push({ ...base, status: 'imported', ...(gitState ? { git_state: gitState } : {}), ...fields });
     } catch (e) {
       const receipt = pendingReceiptOf(e);
       if (receipt && !acceptPendingCovers(receipt)) uncovered++;
-      if (receipt) results.push({ ...base, status: 'pending', request_id: receipt.request_id, poll: pollCommand(receipt.request_id, (e as { fix?: { argv?: readonly string[] } }).fix, cliRenderContext().routing) });
+      if (receipt) results.push({ ...base, status: 'pending', request_id: receipt.request_id, poll: pollCommand(receipt.request_id, (e as { fix?: { argv?: readonly string[] } }).fix, cliRenderContext().routing), ...(kept ? scopeOf(kept.readers, 'pending', { matched_by: kept.matched_by, unmatched: kept.unmatched }) : fields) });
       else results.push({ ...base, status: 'error', error: e instanceof Error ? e.message : String(e) });
     }
   }
@@ -272,14 +377,27 @@ export async function runCallImport(engine: BrainEngine, dir: string, args: stri
   const pending = count('pending');
   const redactions = results.filter(r => r.status === 'imported').reduce((n, r) => n + (r.redactions ?? 0), 0);
   const failures = results.filter(r => r.status === 'error').map(r => ({ path: r.file, error: r.error ?? 'unknown error' }));
+  const notice = gate.applies && !gate.scoped && readersFlag === 'attendees' ? gate.notice : null;
+  const placed = results.filter(r => r.status !== 'error');
+  const scopedSummary = scope ? {
+    scoped: placed.filter(r => r.scoped && (r.readers?.length ?? 0) > 1).length,
+    owner_only: placed.filter(r => r.scoped && r.readers?.length === 1).length,
+    not_scoped: placed.filter(r => !r.scoped).length,
+  } : null;
   if (opts.json) {
     await writeJsonDocument(JSON.stringify({
       status: errors > 0 ? 'partial' : pending > 0 ? 'pending' : 'success', mode: 'calls', source_id: sourceId, prefix, total_files: files.length,
-      imported, unchanged: count('unchanged'), kept: count('kept'), pending, errors, redactions, pages: results, failures,
+      imported, unchanged: count('unchanged'), kept: count('kept'), pending, errors, redactions, ...(scopedSummary ? { readers: scopedSummary } : {}), pages: results, failures,
+      ...(notice ? { notices: [renderNotice(notice, cliRenderContext())] } : {}),
     }));
   } else {
     console.log(`Call import into source ${sourceId} under ${prefix}/: ${imported} imported, ${count('unchanged')} unchanged, ${count('kept')} kept (changed since import, not overwritten), ${pending} pending (accepted, still being written), ${errors} error(s); ${redactions} credential(s) redacted.`);
-    for (const r of results) console.log(`  ${r.status.padEnd(9)} ${r.slug || '-'}  <- ${r.file}${r.error ? ` (${r.error})` : ''}${r.poll ? ` (still being written; check with ${r.poll} before importing again)` : ''}`);
+    if (scopedSummary) console.log(`  readers  ${scopedSummary.scoped} kept to the owner and their attendees, ${scopedSummary.owner_only} kept to the owner only, ${scopedSummary.not_scoped} readable by everyone who reads source ${sourceId}.`);
+    for (const r of results) {
+      const who = r.readers ? ` [readers: ${r.readers.join(', ')}${r.unmatched?.length ? `; not matched: ${r.unmatched.map(u => JSON.stringify(u)).join(', ')}` : ''}]` : '';
+      console.log(`  ${r.status.padEnd(9)} ${r.slug || '-'}  <- ${r.file}${who}${r.error ? ` (${r.error})` : ''}${r.poll ? ` (still being written; check with ${r.poll} before importing again)` : ''}`);
+    }
+    if (notice) process.stderr.write(noticeBlock(renderNotice(notice, cliRenderContext())) + '\n');
   }
   if (!errors && pending && (!acceptPendingRequested(getCliOptions().acceptPending) || uncovered > 0)) setCliExitVerdict(PENDING_WRITE_EXIT_CODE);
   return { imported, skipped: results.length - imported, errors, chunksCreated: 0, failures };

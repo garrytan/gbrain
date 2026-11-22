@@ -48,6 +48,7 @@ import {
   type ExposeReceipt, type ServiceState, type ServiceTarget, type UninstallServiceResult,
 } from '../core/serve-service.ts';
 import { registrationAdvertise, shellQuote } from '../core/mcp-registration.ts';
+import { connectorInstallLinks, installLinkLines, printInstallLinks, type ConnectorInstallLinks } from '../core/connector-install-links.ts';
 import { cliRenderContext, renderNotice } from '../core/agent-output.ts';
 import { EXPOSE_FRICTION_REASONS, hostedOptionLine, hostedOptionMuted, hostedOptionNotice } from '../core/onboard/hosted-option.ts';
 
@@ -323,7 +324,7 @@ class Session {
     this.checks.push(c);
     return c;
   }
-  finish(status: ExposeStatus, code: number, extra: { receipt?: ExposeReceipt | null; reason?: string; message?: string; plan?: string[]; consent?: Record<string, unknown> } = {}): number {
+  finish(status: ExposeStatus, code: number, extra: { receipt?: ExposeReceipt | null; reason?: string; message?: string; plan?: string[]; consent?: Record<string, unknown>; installLinks?: ConnectorInstallLinks } = {}): number {
     const where = EXPOSE_FRICTION_REASONS.has(extra.reason ?? '') ? 'mcp_expose_friction'
       : this.firstPublish && (status === 'exposed' || status === 'pending') ? 'mcp_expose' : null;
     const hosted = where ? hostedOptionNotice(where, this.d.mutedNotices()) : null;
@@ -333,7 +334,7 @@ class Session {
       this.d.out(JSON.stringify({
         status, receipt: extra.receipt ?? null, checks: this.checks, next_actions: this.nextActions,
         ...(extra.reason ? { reason: extra.reason } : {}), ...(extra.message ? { message: extra.message } : {}), ...(extra.plan ? { plan: extra.plan } : {}),
-        ...(extra.consent ?? {}), ...(hosted ? { notices: [renderNotice(hosted, cliRenderContext())] } : {}),
+        ...(extra.consent ?? {}), ...(hosted ? { notices: [renderNotice(hosted, cliRenderContext())] } : {}), ...(extra.installLinks?.cursor ? { install_links: extra.installLinks } : {}),
       }));
     }
     return code;
@@ -1044,6 +1045,7 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
   const local = localAgentGuidance(engine, opts.port, ownerCredential);
   s.say(`  Local agents     ${local.lines[0]}`);
   for (const line of local.lines.slice(1)) s.say(`                   ${line}`);
+  const installLinks = printInstallLinks(receipt.mcp_url, mode === 'funnel', (line) => s.say(line));
   s.say('  Check            gbrain mcp expose --status');
   s.nextActions.push(
     `gbrain mcp grant <name> --harness <id> --profile memory-writer --source default --url ${receipt.mcp_url} --admin-token-file ${ownerCredential} --credentials-out /private/<name>.json`,
@@ -1053,7 +1055,7 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
     'gbrain mcp expose --status',
   );
   const pending = tailnetHealth === 'pending' || localHealth === 'timeout';
-  return s.finish(pending ? 'pending' : 'exposed', pending ? 2 : 0, { receipt, ...(pending ? { reason: tailnetHealth === 'pending' ? 'tailnet_health_pending' : 'local_health_timeout' } : {}) });
+  return s.finish(pending ? 'pending' : 'exposed', pending ? 2 : 0, { receipt, installLinks, ...(pending ? { reason: tailnetHealth === 'pending' ? 'tailnet_health_pending' : 'local_health_timeout' } : {}) });
 }
 
 /** The user's publish flags, for a re-run hint or the approved command (never --yes/--json/--dry-run). */
@@ -1141,7 +1143,10 @@ async function runStatus(d: Resolved, s: Session, opts: ExposeOptions): Promise<
   // certificate is reported as `pending` (not `error`) so callers can tell
   // "wait a minute" from "broken", but it is still a non-zero exit.
   if (pending) { s.nextActions.push('gbrain mcp expose --status'); return s.finish('pending', 1, { receipt, reason: 'tailnet_health_pending', message: 'tailnet health still pending (first certificate issuance can take a minute) — re-run --status shortly.' }); }
-  return s.finish('exposed', 0, { receipt });
+  const installLinks = connectorInstallLinks(receipt.mcp_url, receipt.mode === 'funnel');
+  const linkLines = installLinkLines(installLinks, receipt.mode === 'funnel');
+  for (const line of linkLines.length ? ['', ...linkLines] : []) s.say(line);
+  return s.finish('exposed', 0, { receipt, installLinks });
 }
 
 interface Leftovers {

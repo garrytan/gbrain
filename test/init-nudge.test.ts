@@ -32,29 +32,25 @@ interface ProbeCounts {
 }
 
 /**
- * Stub engine shaped like { executeRaw: async (sql) => [...] }. Routes each
- * of runInitNudge's 6 COUNT queries by a distinctive SQL fragment. Order
- * matters: the linked/timeline queries also contain "type IN ('person'",
- * so they are matched first.
+ * Stub engine: the six counts come from countOnboardSignal, routed by signal
+ * kind. executeRaw answers only the pack-resolution config read.
  */
 function stubEngine(counts: ProbeCounts): BrainEngine {
-  const route = (sql: string): number | Error => {
-    if (sql.includes('content_chunks')) return counts.stale ?? 0;
-    if (sql.includes('FROM takes')) return counts.takes ?? 0;
-    if (sql.includes('FROM links')) return counts.linked ?? 0;
-    if (sql.includes('timeline_entries')) return counts.timeline ?? 0;
-    if (sql.includes('p.type = ANY(')) return counts.entities ?? 0;
-    // 6th probe: SELECT COUNT(*) FROM pages WHERE deleted_at IS NULL
-    return counts.pages ?? 0;
+  const route: Record<string, number | Error | undefined> = {
+    stale_chunks: counts.stale, entities: counts.entities, linked_entities: counts.linked,
+    timeline_entities: counts.timeline, takes: counts.takes, pages: counts.pages,
   };
   return {
     // #4772: the entity counts resolve the active pack first (no overrides: gbrain-base).
     getConfig: async () => null,
     executeRaw: async (sql: string) => {
       if (sql.includes('FROM config c')) return [];
-      const r = route(sql);
+      throw new Error(`unexpected raw read: ${sql}`);
+    },
+    countOnboardSignal: async (signal: string) => {
+      const r = route[signal] ?? 0;
       if (r instanceof Error) throw r;
-      return [{ count: r }];
+      return r;
     },
   } as unknown as BrainEngine;
 }
@@ -177,6 +173,14 @@ describe('shared collector (collectOnboardOpportunities)', () => {
     expect(yields).toBe(6);
     expect(parallel).toMatchObject({ staleChunks: 3, entities: 10, linkedEntities: null, linkCoverage: null, timelineCoverage: 0.2, takes: 0, pages: 20, partial: true, checksRan: 5, checksAttempted: 6 });
     expect(onboardGaps(parallel)).toEqual({ stale_chunks: true, link_coverage: false, timeline_coverage: true, no_takes: true });
+  });
+
+  test('a refused engine capability propagates instead of reading as a partial count', async () => {
+    const { collectOnboardOpportunities } = await import('../src/core/onboard/mcp-onboarding.ts');
+    const refusal = Object.assign(new Error('health not served'), { code: 'engine_capability_missing' });
+    const engine = stubEngine({ stale: 1, entities: 2, linked: refusal, timeline: 1, takes: 0, pages: 2 });
+    await expect(collectOnboardOpportunities(engine, new AbortController().signal)).rejects.toBe(refusal);
+    await expect(collectOnboardOpportunities(engine, new AbortController().signal, async () => {})).rejects.toBe(refusal);
   });
 
   test('an aborted sequential run stops issuing counts', async () => {

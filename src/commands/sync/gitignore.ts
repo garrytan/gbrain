@@ -14,7 +14,7 @@ import { discoverGitRoot } from '../../core/sync-git.ts';
  * consult for the repo-level db_only rules. Best-effort: falls back to the
  * given path when git discovery fails (manageGitignore no-ops on non-repos).
  */
-export function manageGitignoreAtGitRoot(path: string, engineKind?: 'pglite' | 'postgres'): void {
+export function manageGitignoreAtGitRoot(path: string, engineKind?: 'pglite' | 'postgres' | 'rust'): void {
   let root = path;
   try { root = discoverGitRoot(path); } catch { /* best-effort */ }
   try { manageGitignore(root, engineKind); }
@@ -59,7 +59,7 @@ export function __resetPGLiteTierWarn(): void {
 
 export function manageGitignore(
   repoPath: string,
-  engineKind?: 'pglite' | 'postgres',
+  engineKind?: 'pglite' | 'postgres' | 'rust',
 ): void {
   if (process.env.GBRAIN_NO_GITIGNORE === '1') {
     return;

@@ -16,7 +16,7 @@ import { adminHostConfig } from './persistence-admin.ts';
 import type { AddSourceOpts } from '../core/sources-ops.ts';
 
 export const SOURCE_LIFECYCLE_HELP = `Managed source administration:
-  gbrain sources add <id> [--path <directory> | --url <https-url> | --kind github|google|meetings|slack]
+  gbrain sources add <id> [--path <directory> | --url <https-url> | --kind github|google|meetings|slack|imessage]
   gbrain sources archive <id>
   gbrain sources restore <id> [--no-federate]
   gbrain sources remove <id> --confirm-destructive

@@ -47,16 +47,36 @@ const DIM = 1536;
  * method) is asserted separately on the instance in the smoke block.
  */
 const INTERFACE_METHODS: readonly string[] = [
+  // Cycle-lock leases
+  'acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'readCycleLocks', 'deleteCycleLock', 'deleteCycleLockIfStale',
   // Lifecycle
   'connect', 'disconnect', 'reconnect', 'initSchema', 'transaction', 'transactionDirect', 'registerBeforeDisconnect', 'withReservedConnection',
   // Pages CRUD
   'getPage', 'readPageSnapshot', 'readPageSnapshotsBatch', 'lockPageKeys', 'putPage', 'findDuplicatePage', 'findDuplicatePages', 'deletePage', 'deletePages', 'resolveSlugsByPaths',
   'softDeletePage', 'softDeletePages', 'restorePage', 'purgeDeletedPages', 'listPages', 'findPages', 'countPagesBy', 'resolveSlugs', 'getAllSlugs',
-  'listAllPageRefs', 'listAllSources', 'updateSourceConfig', 'listPrefixSampledPages', 'listCorpusSample',
+  'listAllPageRefs', 'listEntityKeyRows', 'listIdentityDecisions', 'listRestrictedIdentityMembers', 'applyIdentityDecisions', 'listAllSources', 'listSourceLocalPaths', 'updateSourceConfig', 'getSource', 'listPrefixSampledPages', 'listCorpusSample',
+  // Hybrid search reads (engine-sql/search-reads.ts) and the onboarding signal count (engine-sql/health.ts)
+  'cosinesByChunkIds', 'hasSupersedeEdges', 'supersedingPageSlugs', 'aliasCanonicalRefs', 'pageCollapseFacts', 'slugsEndingIn',
+  'generatedPagesIn', 'livePageIdsAt', 'pagesLinkingTo', 'countOnboardSignal',
+  'readFieldUsageSamples',
+  // schema detect --fields page samples (engine-sql/field-usage.ts; covered by test/engine-parity/field-usage.test.ts)
+  'hasWithdrawnFenceClaim',
+  // Withdrawal fence check (engine-sql/withdrawal-fence.ts; SQL text pinned by test/withdrawal-fence-sql-pin.test.ts)
+  'listSegmentedPages', 'invalidateWithdrawnPages',
+  // Withdrawal page statements (engine-sql/withdrawal-pages.ts; SQL text pinned by test/withdrawal-pages-sql-pin.test.ts)
+  // Import writes (engine-sql/chunks.ts, tags.ts, pages.ts)
+  'deleteChunksExcept', 'setChunkerVersion', 'writeTextProjectionSeal', 'moveChunkIndexes', 'getChunkReuseRows', 'pruneFrontmatterTags',
+  'addPageTagsById', 'replaceDerivedAliases', 'getPageSealState', 'refreshPageOrigin',
+  'readPageBodySizes',
+  'readStoredBodyBytes',
+  // The large-page write guard's stored body size read (engine-sql/large-page.ts).
+  // Wanted-link, timeline-write, take-fence and code-traversal-cache members (engine-sql/wanted-links.ts, timeline.ts, takes.ts, code-traversal-cache.ts)
+  'lockRegisteredSourceIds', 'replaceWantedLinkRows', 'removeTimelineRows', 'updateTimelineDetails', 'matchTakeRows', 'deleteTakeRows',
+  'getCodeTraversalCache', 'putCodeTraversalCache', 'clearCodeTraversalCache',
   // Search
   'searchKeyword', 'countKeywordPages', 'searchKeywordPages', 'searchTitles', 'searchVector', 'getEmbeddingsByChunkIds',
   // Chunks
-  'upsertChunks', 'getChunks', 'getChunkPage', 'getChunkWindows', 'countStaleChunks', 'sumStaleChunkChars', 'setPageEmbeddingSignature',
+  'upsertChunks', 'sealChunks', 'getChunks', 'getChunkPage', 'getChunkWindows', 'countStaleChunks', 'sumStaleChunkChars', 'setPageEmbeddingSignature',
   'invalidateStaleSignatureEmbeddings', 'invalidateContentDriftEmbeddings', 'listStaleChunks',
   'countChunklessPagesWithContent', 'listChunklessPagesWithContent', 'readEmbeddingStateCounts', 'listEmbeddingStateRows', 'deleteChunks',
   // Extraction watermark
@@ -76,7 +96,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Ontology
   'mergeOntologyFact', 'getOntology', 'discoverOntologyDimensions', 'findOntologyConflicts',
   // Raw data + files
-  'putRawData', 'getRawData', 'upsertFile', 'getFile', 'listFilesForPage',
+  'putRawData', 'getRawData', 'upsertFile', 'getFile', 'listFilesForPage', 'listFiles',
   // Takes
   'addTakesBatch', 'listTakes', 'searchTakes', 'searchTakesVector', 'getTakeEmbeddings',
   'countStaleTakes', 'listStaleTakes', 'updateTake', 'supersedeTake', 'resolveTake',
@@ -104,7 +124,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // v0.46.28-34 master waves (classified at the test-gap-wave merge):
   // #3980 bulk config read, #3776 takes-embedding update, #3674 scoped
   // link removal.
-  'getAllConfig', 'updateTakeEmbeddings', 'removeLinksByPagesAndSource',
+  'getAllConfig', 'getConfigValues', 'readManagedModeRows', 'getSourceStrictness', 'readPersistenceBrainId', 'readLocalWriterRow', 'insertLocalWriterRow', 'readTransactionSettings', 'applyTransactionSettings', 'readLedgerSource', 'isFolderRestricted', 'updateTakeEmbeddings', 'removeLinksByPagesAndSource',
   // Code edges
   'addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk',
   'searchKeywordChunks',
@@ -116,9 +136,22 @@ const INTERFACE_METHODS: readonly string[] = [
   'findAnomalies',
   // Wave B segmented page bodies (src/core/engine-sql/page-body.ts; covered by test/large-pages/ and test/engine-sql-page-body.test.ts)
   'allocateBodyOccurrenceIds', 'stageSegmentTexts', 'readSegmentTexts', 'stageManifestRows', 'readManifest', 'stageSegmentChunks',
-  'createSegmentedPageShell', 'flipBodyGeneration', 'openBodyStaging', 'setBodyStagingState', 'sweepSegments',
+  'createSegmentedPageShell', 'flipBodyGeneration', 'sealSegmentedPage', 'openBodyStaging', 'setBodyStagingState', 'sweepSegments',
   // Wave B PR 4 per-segment derivation rows (same SQL module; covered by test/engine-sql-segment-derivations.test.ts and its Postgres arm)
   'readSegmentDerivations', 'upsertSegmentDerivations', 'retireSegmentDerivations',
+  // GST-3032 owner-only delete triggers (src/core/engine-sql/owner-only-marks.ts; covered by test/owner-only-removal-lineage.test.ts)
+  'ownerOnlyMarkTriggers',
+  // Decide proposal tables (src/core/engine-sql/decide-proposals.ts; covered by test/engine-parity/decide-proposals.test.ts)
+  'applyDecideReviewQueue', 'applyDecideSweepDeferred', 'getDecideProposal', 'getDecideReviewProposal',
+  'insertDecideProposal', 'insertDecideReviewProposal', 'listDecideProposalIds', 'listDecideProposals',
+  'listDecideProposedPairs', 'listDecideReviewProposalIds', 'listDecideReviewProposals', 'listDueDecideReviewQueue',
+  'listDueDecideSweepDeferred', 'readProposalReviewRates', 'transitionDecideProposal', 'transitionDecideReviewProposal',
+  // Decide state, spend, receipts and calibrations (src/core/engine-sql/decide-store.ts; covered by test/engine-parity/decide-store.test.ts)
+  'dailyDecideSpend', 'decideConflictNoEntityCounts', 'decideSlotUsage', 'deleteDecideState', 'ensureDecideState',
+  'getDecideCalibration', 'insertDecideCalibration', 'insertDecideReceipts', 'insertDecideSpend',
+  'listDecideCalibrations', 'listDecideMixedModelDecisions', 'listDecideReceiptStats', 'listDecideReplayReceipts',
+  'listDecideResolvedModels', 'listDecideSpendBySlot', 'pruneDecideReceipts', 'readDecideState',
+  'setDecideCalibrationRetired', 'storeDecideQualification', 'upsertDecideState',
 ];
 
 /**
@@ -138,6 +171,10 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'codeEdgesDeps',
   // refactor wave 1 C9: per-call engine-sql executor getter (EO1).
   'engineSql',
+  // Cycle-lock leases: the engine-sql executor the lease statements run through (the methods themselves are in INTERFACE_METHODS).
+  'cycleLockSql',
+  // Hybrid search reads: the unscoped engine-sql executor the search-read methods run through.
+  'searchRead',
   // Engine graduation: PGLite close/open that keeps the kernel lock across the custody window.
   'closeRetainingLock',
   'connectWithHeldLock',
@@ -163,10 +200,11 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
  *     list in refactor wave 1 W0: the Postgres SQL-text goldens
  *     (test/helpers/postgres-engine-sql-cases.ts) call them. Their PGLite
  *     smokes stay below, unchanged, as ex-UNCALLED shape pins.
+ *   - rewriteLinks left the list when the BrainEngine parity suite
+ *     (test/engine-parity/sync-aliases.test.ts) began calling it on every
+ *     engine arm. Its PGLite smoke stays below as an ex-UNCALLED shape pin.
  */
-const UNCALLED: readonly string[] = [
-  'rewriteLinks',           // documented no-op stub; callers exist (migrate.ts, cycle/phantom-redirect.ts)
-];
+const UNCALLED: readonly string[] = [];
 
 function methodNames(): string[] {
   return Object.getOwnPropertyNames(PGLiteEngine.prototype).filter((n) => n !== 'constructor');
@@ -219,12 +257,16 @@ describe('BrainEngine surface — mechanical enumeration (D9)', () => {
     let corpus = '';
     for (const f of files) corpus += readFileSync(f, 'utf8') + '\n';
 
-    const referenced = (name: string): boolean =>
-      // `.name(` / `.name!(` call sites, `.name?.(` optional-chain calls,
-      // or `name:` stub-property definitions on engine test doubles.
-      new RegExp(`[.]${name}\\s*!?\\s*\\(|[.]${name}\\?\\.\\(|\\b${name}\\s*:`).test(corpus);
+    // One pass over the corpus collects every referenced identifier:
+    // `.name(` / `.name!(` call sites, `.name?.(` optional-chain calls,
+    // or `name:` stub-property definitions on engine test doubles.
+    // One regex per method instead scans the corpus up to that method's first
+    // reference, so its cost depended on readdir order and drifted past the
+    // 5 s default when a checkout reordered test/.
+    const seen = new Set<string>();
+    for (const m of corpus.matchAll(/[.](\w+)(?:\s*!?\s*\(|\?\.\()|\b(\w+)\s*:/g)) seen.add(m[1] ?? m[2]!);
 
-    const unreferenced = INTERFACE_METHODS.filter((n) => !referenced(n));
+    const unreferenced = INTERFACE_METHODS.filter((n) => !seen.has(n));
 
     // Two-direction diff for actionable failure output:
     //  - newlyUncovered: add a real test, or allowlist + smoke it here.
@@ -303,10 +345,8 @@ const EX_UNCALLED_SHAPE_PINS: Record<string, () => Promise<void>> = {
     // Empty input short-circuits to an empty map.
     expect((await engine.getPageTimestamps([])).size).toBe(0);
   },
-};
-
-const SMOKES: Record<string, () => Promise<void>> = {
   rewriteLinks: async () => {
+    // Ex-UNCALLED: test/engine-parity/sync-aliases.test.ts calls it on every arm.
     // Documented no-op stub on PGLite: links key on integer page_id FKs, so
     // they are already correct after updateSlug. Pin the no-op contract —
     // resolves undefined and leaves the link table untouched.
@@ -318,6 +358,8 @@ const SMOKES: Record<string, () => Promise<void>> = {
     expect(after.map((l) => l.to_slug)).toEqual(before.map((l) => l.to_slug));
   },
 };
+
+const SMOKES: Record<string, () => Promise<void>> = {};
 
 describe('uncovered-method smokes (seeded PGLite)', () => {
   beforeAll(async () => {

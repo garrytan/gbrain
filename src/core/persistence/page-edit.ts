@@ -29,9 +29,10 @@ import type { StoredRegion } from '../page-body/segmenter.ts';
 import type { BodyReplacement, SplicePage } from '../page-body/splice.ts';
 import { spliceWork } from '../page-body/splice.ts';
 import { isSegmentedPage, withoutBody } from '../page-body/page-shape.ts';
-import { STAGE_BATCH_BYTES } from '../page-body/limits.ts';
+import { stageBatchBytes } from '../page-body/limits.ts';
 import { readEntryState } from '../page-body/entry-state.ts';
-import { hiddenBefore, openSegmentedBody, trustedSegments, type SegmentedBody } from '../page-body/read-range.ts';
+import { hiddenBefore, openSegmentedBody, projectedLayout, trustedSegments, type SegmentedBody } from '../page-body/read-range.ts';
+import { storedWriterReadsHeld } from './page-visibility.ts';
 import { ledgerApplies, type BodyLedger } from '../page-body/segment-ledger.ts';
 import { TIMELINE_SEPARATOR } from '../page-window/document.ts';
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
@@ -63,6 +64,12 @@ function editError(code: string, message: string, suggestion: string, detail?: s
   const error = new OperationError(code, message, suggestion, EDIT_PAGE_DOCS);
   if (detail !== undefined) error.detail = detail;
   return error;
+}
+
+/** GST-3170: an old_text holding U+0000 matches no stored page text; refused as written, before anything is journaled. */
+export function nulSelectorError(index: number): OperationError {
+  return editError('edit_no_match', `Edit ${index}'s old_text was not found in the page: it holds U+0000, which stored page text never contains.`,
+    'Read get_page with include_content:true and copy old_text exactly, without U+0000 characters.', `edit_index=${index} match_count=0`);
 }
 
 /** Validates the wire shape: 1-50 `{ old_text, new_text }` objects, `old_text` non-empty. */
@@ -118,7 +125,7 @@ async function assertSegmentedWithinVisible(engine: BrainEngine, page: { pageId:
   if (await hiddenBefore(engine, await openSegmentedBody(engine, page), within.byte_end, 'stored')) throw hiddenWithinError();
 }
 
-function bodySegments(body: string, remote: boolean, segmented: boolean): Segment[] {
+function bodySegments(body: string, remote: boolean, segmented: boolean, omitRows?: ReadonlySet<number>): Segment[] {
   if (remote && sanitizeText(body) !== body) {
     throw editError('edit_invalid', 'This page contains bytes the remote view cannot reproduce.',
       'Edit it from the brain host with put_page or the local CLI.');
@@ -137,7 +144,7 @@ function bodySegments(body: string, remote: boolean, segmented: boolean): Segmen
     if (marker !== open.end) throw unrepairedFence();
     cursor = token.index + marker.length;
     const fence = body.slice(open.start, cursor);
-    segments.push({ canonical: fence, view: remote ? sanitizeRemoteBody(fence, segmented ? SEGMENTED_REMOTE_VIEW : REMOTE_VIEW) : fence, editable: false });
+    segments.push({ canonical: fence, view: remote ? sanitizeRemoteBody(fence, { ...(segmented ? SEGMENTED_REMOTE_VIEW : REMOTE_VIEW), omitRows }) : fence, editable: false });
     open = undefined;
   }
   if (open) throw unrepairedFence();
@@ -156,14 +163,14 @@ function unrepairedFence(): OperationError {
  * `content`; adjacent editable pieces coalesce so a match may span the
  * frontmatter, body and timeline sentinel like any ordinary text.
  */
-function pageSegments(page: Page, tags: string[], remote: boolean): Segment[] {
+function pageSegments(page: Page, tags: string[], remote: boolean, omitRows?: ReadonlySet<number>): Segment[] {
   const head = serializePageToMarkdown({ ...page, compiled_truth: '', timeline: '' }, tags).slice(0, -1);
   const segmented = isSegmentedPage(page);
-  const timeline = bodySegments(page.timeline ?? '', remote, segmented);
+  const timeline = bodySegments(page.timeline ?? '', remote, segmented, omitRows);
   const sentinel = '\n\n<!-- timeline -->\n\n';
   // A remote view whose whole timeline is protected has no sentinel either.
   const sentinelSegment = timeline.some(segment => segment.view.length > 0) ? text(sentinel) : { canonical: sentinel, view: '', editable: false };
-  const pieces = [text(head), ...bodySegments(page.compiled_truth ?? '', remote, segmented),
+  const pieces = [text(head), ...bodySegments(page.compiled_truth ?? '', remote, segmented, omitRows),
     ...(page.timeline ? [sentinelSegment, ...timeline] : needsEmptyTimelineSentinel(page.compiled_truth ?? '') ? [text('\n\n<!-- timeline -->')] : []), text('\n')];
   return pieces.reduce<Segment[]>((out, piece) => {
     const last = out[out.length - 1];
@@ -175,7 +182,11 @@ function pageSegments(page: Page, tags: string[], remote: boolean): Segment[] {
 
 const join = (segments: Segment[], key: 'canonical' | 'view') => segments.map(segment => segment[key]).join('');
 
-/** The text a caller matches against: get_page `content` for that caller. */
+/**
+ * The text a caller matches against: get_page `content` for that caller. A remote caller bound to the brain owner
+ * (GST-3058) reads its fences as stored in get_page but still matches against the remote fence view here; fences are
+ * never editable, so only text inside a fence differs.
+ */
 export function editableView(page: Page, tags: string[], remote: boolean): string {
   return join(pageSegments(page, tags, remote), 'view');
 }
@@ -189,13 +200,14 @@ function occurrences(haystack: string, needle: string): number[] {
 /**
  * Applies the edits in order, each to the text produced by the previous one,
  * all or nothing. Returns the canonical content to publish and the caller's
- * view before and after (the only text a diff or receipt may show).
+ * view before and after (the only text a diff or receipt may show). `omitRows` are the fence rows held from a
+ * world-only caller (GST-2891), left out of its view as get_page leaves them out.
  */
-export function applyPageEdits(page: Page, tags: string[], remote: boolean, edits: PageEdit[], within?: EditWithin): { content: string; before: string; after: string } {
+export function applyPageEdits(page: Page, tags: string[], remote: boolean, edits: PageEdit[], within?: EditWithin, omitRows?: ReadonlySet<number>): { content: string; before: string; after: string } {
   // #6188 (D19): edit_page never rewrites a fence; a stored fence that does not compile refuses typed, location only.
   const [defect] = scanCanonicalFences(page).defects;
   if (defect) throw targetFenceRefusal(defect, page.slug, page.source_id);
-  let segments = pageSegments(page, tags, remote);
+  let segments = pageSegments(page, tags, remote, omitRows);
   const before = join(segments, 'view');
   // `within` is in stored-body bytes of the page as read: canonical positions map back through the edits applied so far.
   const head = serializePageToMarkdown({ ...page, compiled_truth: '', timeline: '' }, tags).slice(0, -1).length;
@@ -396,7 +408,7 @@ interface TextSource { sourceId: string; body?: SegmentedBody }
 async function* rowTexts(engine: BrainEngine, sourceId: string, rows: readonly ManifestRow[]): AsyncIterable<[ManifestRow, Uint8Array]> {
   for (let i = 0; i < rows.length;) {
     let j = i, bytes = 0;
-    while (j < rows.length && (j === i || bytes + rows[j]!.byteLen <= STAGE_BATCH_BYTES[engine.kind])) bytes += rows[j++]!.byteLen;
+    while (j < rows.length && (j === i || bytes + rows[j]!.byteLen <= stageBatchBytes(engine.kind))) bytes += rows[j++]!.byteLen;
     const batch = rows.slice(i, j);
     const texts = await engine.readSegmentTexts(sourceId, batch.map(row => row.sha256));
     for (const row of batch) {
@@ -520,7 +532,7 @@ function hiddenRuns(rows: readonly ManifestRow[]): Array<{ start: number; end: n
  * line counts, the separator before the timeline and the containing row's prefix. A remote view renders each hidden
  * run before `at` as sanitizeRemoteBody does, so only those runs are read, never the ordinary text before `at`.
  */
-async function viewNewlinesBefore(engine: BrainEngine, input: TextSource & { remote: boolean; head: string }, rows: readonly ManifestRow[],
+async function viewNewlinesBefore(engine: BrainEngine, input: TextSource & { remote: boolean; head: string; omitRows?: ReadonlySet<number> }, rows: readonly ManifestRow[],
   timeline: boolean, at: number): Promise<number> {
   const count = (b: Uint8Array) => { let n = 0; for (let i = b.indexOf(0x0a); i !== -1; i = b.indexOf(0x0a, i + 1)) n++; return n; };
   const before = rows.filter(row => Number(row.byteStart) < at && (timeline || row.region === 'truth'));
@@ -533,7 +545,7 @@ async function viewNewlinesBefore(engine: BrainEngine, input: TextSource & { rem
     const text: Buffer[] = [];
     let stored = 0;
     for await (const piece of virtualPieces(engine, input, rows, [], run.start, run.end)) { text.push(Buffer.from(piece.bytes)); stored += count(piece.withdrawn ?? piece.bytes); }
-    lines += count(Buffer.from(sanitizeRemoteBody(Buffer.concat(text).toString('utf8'), SEGMENTED_REMOTE_VIEW), 'utf8')) - stored;
+    lines += count(Buffer.from(sanitizeRemoteBody(Buffer.concat(text).toString('utf8'), { ...SEGMENTED_REMOTE_VIEW, omitRows: input.omitRows }), 'utf8')) - stored;
   }
   return lines;
 }
@@ -605,7 +617,7 @@ export interface LocatedSegmentedEdits {
  * head, or (without `within`, within the whole-body limit) one the body does not hold, which that path settles exactly.
  */
 export async function locateSegmentedEdits(engine: BrainEngine, input: { sourceId: string; slug: string; page: SplicePage; edits: PageEdit[]; within?: EditWithin;
-  remote: boolean; head: string; ledger: BodyLedger }): Promise<LocatedSegmentedEdits | null> {
+  remote: boolean; head: string; ledger: BodyLedger; omitRows?: ReadonlySet<number> }): Promise<LocatedSegmentedEdits | null> {
   const { page, within } = input;
   const rows = await engine.readManifest(page.id, { generation: page.generation });
   spliceWork.rows += rows.length;
@@ -660,7 +672,7 @@ export async function locateSegmentedEdits(engine: BrainEngine, input: { sourceI
  * editDiff over the touched range (line-rounded, with context), in the caller's view: the text after the withdrawal
  * overlay, and for a remote caller sanitized as its windows show it.
  */
-async function segmentedEditDiff(engine: BrainEngine, input: TextSource & { slug: string; remote: boolean; head: string }, rows: readonly ManifestRow[],
+async function segmentedEditDiff(engine: BrainEngine, input: TextSource & { slug: string; remote: boolean; head: string; omitRows?: ReadonlySet<number> }, rows: readonly ManifestRow[],
   regions: ReadonlyArray<{ lo: number; hi: number; rows: ManifestRow[] }>, reps: readonly BodyReplacement[]): Promise<Record<string, unknown>> {
   let scoped = reps;
   if (reps[reps.length - 1]!.end - reps[0]!.start > DIFF_SCOPE_MAX_BYTES || regions.some(r => reps[0]!.start < r.hi && reps[reps.length - 1]!.end > r.hi)) scoped = reps.slice(0, 1);
@@ -698,7 +710,7 @@ async function segmentedEditDiff(engine: BrainEngine, input: TextSource & { slug
   for (const r of scoped) { after.push(raw.subarray(cur, viewAt(r.start)), Buffer.from(r.bytes)); cur = viewAt(r.end); }
   after.push(raw.subarray(cur, b));
   raw = raw.subarray(a, b);
-  const view = (bytes: Buffer) => { const text = bytes.toString('utf8'); return input.remote ? sanitizeRemoteBody(text, SEGMENTED_REMOTE_VIEW) : text; };
+  const view = (bytes: Buffer) => { const text = bytes.toString('utf8'); return input.remote ? sanitizeRemoteBody(text, { ...SEGMENTED_REMOTE_VIEW, omitRows: input.omitRows }) : text; };
   const lineOffset = await viewNewlinesBefore(engine, input, rows, region !== regions[0], storedAt(a));
   return { ...editDiff(input.slug, view(raw), view(Buffer.concat(after)), lineOffset), ...(scoped.length < reps.length ? { diff_truncated: true as const } : {}),
     ...(input.remote ? {} : { diff_scope: { byte_start: storedAt(a), byte_end: storedAt(b) } }) };
@@ -715,8 +727,12 @@ export async function prepareSegmentedEditMutation(engine: BrainEngine, row: Wri
   const within = parseEditWithin(row.intent?.within);
   const [{ prepareSegmentedSpliceMutation }, { snapshotLedger }] = await Promise.all([import('./page-append.ts'), import('./page-prepare.ts')]);
   const head = serializePageToMarkdown({ ...withoutBody(stored.page), compiled_truth: '', timeline: '' } as Page, stored.tags).slice(0, -1);
+  const readsHeld = await storedWriterReadsHeld(engine, row.authority);
   return prepareSegmentedSpliceMutation(engine, row, stored, { replacements: async page => {
-    const located = await locateSegmentedEdits(engine, { sourceId: row.source_id, slug: row.slug, page, edits, within, remote: row.authority.remote, head, ledger: snapshotLedger(stored) });
+    const ledger = snapshotLedger(stored);
+    const omitRows = readsHeld ? undefined
+      : (await projectedLayout(engine, await openSegmentedBody(engine, { pageId: page.id, generation: page.generation, ledger, hideHeld: true }))).overlay?.held;
+    const located = await locateSegmentedEdits(engine, { sourceId: row.source_id, slug: row.slug, page, edits, within, remote: row.authority.remote, head, ledger, omitRows });
     return located && { replacements: located.replacements, outcome: located.diff };
   } });
 }

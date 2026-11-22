@@ -1,0 +1,5685 @@
+{
+ "generated_by": "rust/scripts/graph-parity-golden.ts",
+ "engine": "pglite",
+ "cases": [
+  {
+   "name": "addLink round-trip with provenance; duplicates are idempotent",
+   "steps": [
+    [
+     "putPage",
+     [
+      "people/alice",
+      {
+       "type": "note",
+       "title": "people/alice",
+       "compiled_truth": "people/alice body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "companies/acme",
+      {
+       "type": "note",
+       "title": "companies/acme",
+       "compiled_truth": "companies/acme body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "notes/memo",
+      {
+       "type": "note",
+       "title": "notes/memo",
+       "compiled_truth": "notes/memo body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "addLink",
+     [
+      "people/alice",
+      "companies/acme",
+      "Alice works at Acme",
+      "works_at",
+      "manual"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "people/alice",
+      "companies/acme",
+      "Alice works at Acme",
+      "works_at",
+      "manual"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "people/alice",
+      "companies/acme",
+      "invested",
+      "invested_in",
+      "manual"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "notes/memo",
+      "people/alice",
+      "memo mentions alice"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "companies/acme",
+      "people/alice",
+      "fm",
+      "key_people",
+      "frontmatter",
+      "companies/acme",
+      "key_people"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "people/alice",
+      "companies/acme",
+      "updated context",
+      "works_at",
+      "manual"
+     ]
+    ],
+    [
+     "getLinks",
+     [
+      "people/alice"
+     ]
+    ],
+    [
+     "getBacklinks",
+     [
+      "people/alice"
+     ]
+    ],
+    [
+     "getBacklinks",
+     [
+      "notes/memo"
+     ]
+    ],
+    [
+     "getLinks",
+     [
+      "companies/nobody"
+     ]
+    ],
+    [
+     "getLinks",
+     [
+      "PEOPLE/ALICE"
+     ]
+    ]
+   ],
+   "results": [
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "people/alice",
+       "from_source_id": "default",
+       "to_slug": "companies/acme",
+       "to_source_id": "default",
+       "link_type": "works_at",
+       "context": "updated context",
+       "link_source": "manual",
+       "origin_slug": null,
+       "origin_source_id": null,
+       "origin_field": null
+      },
+      {
+       "from_slug": "people/alice",
+       "from_source_id": "default",
+       "to_slug": "companies/acme",
+       "to_source_id": "default",
+       "link_type": "invested_in",
+       "context": "invested",
+       "link_source": "manual",
+       "origin_slug": null,
+       "origin_source_id": null,
+       "origin_field": null
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "notes/memo",
+       "from_source_id": "default",
+       "to_slug": "people/alice",
+       "to_source_id": "default",
+       "link_type": "",
+       "context": "memo mentions alice",
+       "link_source": "markdown",
+       "origin_slug": null,
+       "origin_source_id": null,
+       "origin_field": null
+      },
+      {
+       "from_slug": "companies/acme",
+       "from_source_id": "default",
+       "to_slug": "people/alice",
+       "to_source_id": "default",
+       "link_type": "key_people",
+       "context": "fm",
+       "link_source": "frontmatter",
+       "origin_slug": "companies/acme",
+       "origin_source_id": "default",
+       "origin_field": "key_people"
+      }
+     ]
+    },
+    {
+     "ok": []
+    },
+    {
+     "ok": []
+    },
+    {
+     "ok": []
+    }
+   ]
+  },
+  {
+   "name": "addLink refuses missing pages and bad provenance; a missing origin is dropped",
+   "steps": [
+    [
+     "putPage",
+     [
+      "p/a",
+      {
+       "type": "note",
+       "title": "p/a",
+       "compiled_truth": "p/a body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "p/b",
+      {
+       "type": "note",
+       "title": "p/b",
+       "compiled_truth": "p/b body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "addLink",
+     [
+      "p/none",
+      "p/b",
+      "",
+      "t",
+      "manual"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "p/a",
+      "p/none",
+      "",
+      "t",
+      "manual"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "p/none",
+      "p/b",
+      "",
+      "t",
+      "Bad_Source"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "p/a",
+      "p/b",
+      "",
+      "t",
+      "Bad_Source"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "p/a",
+      "p/b",
+      "",
+      "t",
+      ""
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "p/a",
+      "p/b",
+      "o",
+      "t",
+      "frontmatter",
+      "p/ghost",
+      "field"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "p/a",
+      "p/b",
+      "",
+      "t",
+      "markdown",
+      "$undef",
+      "$undef",
+      {
+       "fromSourceId": "nope"
+      }
+     ]
+    ],
+    [
+     "getLinks",
+     [
+      "p/a"
+     ]
+    ]
+   ],
+   "results": [
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "error": "page_not_found",
+     "message": "addLink failed: from page \"p/none\" (source=default) not found"
+    },
+    {
+     "error": "page_not_found",
+     "message": "addLink failed: to page \"p/none\" (source=default) not found"
+    },
+    {
+     "error": "page_not_found",
+     "message": "addLink failed: from page \"p/none\" (source=default) not found"
+    },
+    {
+     "error": "constraint_violation",
+     "message": "new row for relation \"links\" violates check constraint \"links_link_source_check\""
+    },
+    {
+     "error": "constraint_violation",
+     "message": "new row for relation \"links\" violates check constraint \"links_link_source_check\""
+    },
+    {
+     "ok": null
+    },
+    {
+     "error": "page_not_found",
+     "message": "addLink failed: from page \"p/a\" (source=nope) not found"
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "p/a",
+       "from_source_id": "default",
+       "to_slug": "p/b",
+       "to_source_id": "default",
+       "link_type": "t",
+       "context": "o",
+       "link_source": "frontmatter",
+       "origin_slug": null,
+       "origin_source_id": null,
+       "origin_field": "field"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "addLinksBatch inserts new edges, dedups conflicts and drops edges to missing pages",
+   "steps": [
+    [
+     "putPage",
+     [
+      "b/one",
+      {
+       "type": "note",
+       "title": "b/one",
+       "compiled_truth": "b/one body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "b/two",
+      {
+       "type": "note",
+       "title": "b/two",
+       "compiled_truth": "b/two body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "b/three",
+      {
+       "type": "note",
+       "title": "b/three",
+       "compiled_truth": "b/three body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "addLinksBatch",
+     [
+      [
+       {
+        "from_slug": "b/one",
+        "to_slug": "b/two",
+        "link_type": "cites",
+        "context": "c1",
+        "link_source": "manual"
+       },
+       {
+        "from_slug": "b/one",
+        "to_slug": "b/three",
+        "link_type": "cites",
+        "context": "c2",
+        "link_source": "manual"
+       },
+       {
+        "from_slug": "b/one",
+        "to_slug": "b/missing",
+        "link_type": "cites",
+        "link_source": "manual"
+       },
+       {
+        "from_slug": "b/two",
+        "to_slug": "b/three"
+       }
+      ]
+     ]
+    ],
+    [
+     "addLinksBatch",
+     [
+      [
+       {
+        "from_slug": "b/one",
+        "to_slug": "b/two",
+        "link_type": "cites",
+        "context": "c1",
+        "link_source": "manual"
+       },
+       {
+        "from_slug": "b/one",
+        "to_slug": "b/three",
+        "link_type": "cites",
+        "context": "c2",
+        "link_source": "manual"
+       },
+       {
+        "from_slug": "b/one",
+        "to_slug": "b/missing",
+        "link_type": "cites",
+        "link_source": "manual"
+       },
+       {
+        "from_slug": "b/two",
+        "to_slug": "b/three"
+       }
+      ]
+     ]
+    ],
+    [
+     "addLinksBatch",
+     [
+      []
+     ]
+    ],
+    [
+     "addLinksBatch",
+     [
+      [
+       {
+        "from_slug": "b/none",
+        "to_slug": "b/two",
+        "link_source": "Bad_Source"
+       }
+      ]
+     ]
+    ],
+    [
+     "addLinksBatch",
+     [
+      [
+       {
+        "from_slug": "b/one",
+        "to_slug": "b/two",
+        "link_source": "Bad_Source"
+       }
+      ]
+     ]
+    ],
+    [
+     "getLinks",
+     [
+      "b/one"
+     ]
+    ],
+    [
+     "getLinks",
+     [
+      "b/two"
+     ]
+    ]
+   ],
+   "results": [
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": 3
+    },
+    {
+     "ok": 0
+    },
+    {
+     "ok": 0
+    },
+    {
+     "ok": 0
+    },
+    {
+     "error": "constraint_violation",
+     "message": "new row for relation \"links\" violates check constraint \"links_link_source_check\""
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "b/one",
+       "from_source_id": "default",
+       "to_slug": "b/two",
+       "to_source_id": "default",
+       "link_type": "cites",
+       "context": "c1",
+       "link_source": "manual",
+       "origin_slug": null,
+       "origin_source_id": null,
+       "origin_field": null
+      },
+      {
+       "from_slug": "b/one",
+       "from_source_id": "default",
+       "to_slug": "b/three",
+       "to_source_id": "default",
+       "link_type": "cites",
+       "context": "c2",
+       "link_source": "manual",
+       "origin_slug": null,
+       "origin_source_id": null,
+       "origin_field": null
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "b/two",
+       "from_source_id": "default",
+       "to_slug": "b/three",
+       "to_source_id": "default",
+       "link_type": "",
+       "context": "",
+       "link_source": "markdown",
+       "origin_slug": null,
+       "origin_source_id": null,
+       "origin_field": null
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "removeLink honors link type and provenance and returns the deleted row count",
+   "steps": [
+    [
+     "putPage",
+     [
+      "r/from",
+      {
+       "type": "note",
+       "title": "r/from",
+       "compiled_truth": "r/from body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "r/to",
+      {
+       "type": "note",
+       "title": "r/to",
+       "compiled_truth": "r/to body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "addLink",
+     [
+      "r/from",
+      "r/to",
+      "x",
+      "cites",
+      "manual"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "r/from",
+      "r/to",
+      "y",
+      "cites",
+      "markdown"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "r/from",
+      "r/to",
+      "z",
+      "mentions",
+      "manual"
+     ]
+    ],
+    [
+     "removeLink",
+     [
+      "r/from",
+      "r/typo"
+     ]
+    ],
+    [
+     "removeLink",
+     [
+      "r/from",
+      "r/to",
+      "nope"
+     ]
+    ],
+    [
+     "removeLink",
+     [
+      "r/from",
+      "r/to",
+      "cites",
+      "frontmatter"
+     ]
+    ],
+    [
+     "removeLink",
+     [
+      "r/from",
+      "r/to",
+      null
+     ]
+    ],
+    [
+     "removeLink",
+     [
+      "r/from",
+      "r/to",
+      "$undef",
+      null
+     ]
+    ],
+    [
+     "removeLink",
+     [
+      "r/from",
+      "r/to",
+      "cites",
+      "manual"
+     ]
+    ],
+    [
+     "getLinks",
+     [
+      "r/from"
+     ]
+    ],
+    [
+     "removeLink",
+     [
+      "r/from",
+      "r/to"
+     ]
+    ],
+    [
+     "getLinks",
+     [
+      "r/from"
+     ]
+    ],
+    [
+     "removeLink",
+     [
+      "r/from",
+      "r/to"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "r/from",
+      "r/to",
+      "x",
+      "cites",
+      "manual"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "r/from",
+      "r/to",
+      "y",
+      "cites",
+      "markdown"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "r/from",
+      "r/to",
+      "z",
+      "mentions",
+      "manual"
+     ]
+    ],
+    [
+     "removeLink",
+     [
+      "r/from",
+      "r/to",
+      "$undef",
+      "manual"
+     ]
+    ],
+    [
+     "getLinks",
+     [
+      "r/from"
+     ]
+    ]
+   ],
+   "results": [
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": 0
+    },
+    {
+     "ok": 0
+    },
+    {
+     "ok": 0
+    },
+    {
+     "ok": 0
+    },
+    {
+     "ok": 0
+    },
+    {
+     "ok": 1
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "r/from",
+       "from_source_id": "default",
+       "to_slug": "r/to",
+       "to_source_id": "default",
+       "link_type": "cites",
+       "context": "y",
+       "link_source": "markdown",
+       "origin_slug": null,
+       "origin_source_id": null,
+       "origin_field": null
+      },
+      {
+       "from_slug": "r/from",
+       "from_source_id": "default",
+       "to_slug": "r/to",
+       "to_source_id": "default",
+       "link_type": "mentions",
+       "context": "z",
+       "link_source": "manual",
+       "origin_slug": null,
+       "origin_source_id": null,
+       "origin_field": null
+      }
+     ]
+    },
+    {
+     "ok": 2
+    },
+    {
+     "ok": []
+    },
+    {
+     "ok": 0
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": 2
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "r/from",
+       "from_source_id": "default",
+       "to_slug": "r/to",
+       "to_source_id": "default",
+       "link_type": "cites",
+       "context": "y",
+       "link_source": "markdown",
+       "origin_slug": null,
+       "origin_source_id": null,
+       "origin_field": null
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "getLinks/getBacklinks hide soft-deleted endpoints and respect source scope",
+   "steps": [
+    [
+     "createSource",
+     [
+      "alt"
+     ]
+    ],
+    [
+     "putPage",
+     [
+      "s/from",
+      {
+       "type": "note",
+       "title": "s/from",
+       "compiled_truth": "s/from body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "s/to",
+      {
+       "type": "note",
+       "title": "s/to",
+       "compiled_truth": "s/to body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "s/alt-doc",
+      {
+       "type": "note",
+       "title": "s/alt-doc",
+       "compiled_truth": "s/alt-doc body",
+       "timeline": ""
+      },
+      {
+       "sourceId": "alt"
+      }
+     ],
+     "quiet"
+    ],
+    [
+     "addLink",
+     [
+      "s/from",
+      "s/to",
+      "ctx",
+      "wikilink"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "s/from",
+      "s/alt-doc",
+      "cross",
+      "cites",
+      "manual",
+      "$undef",
+      "$undef",
+      {
+       "fromSourceId": "default",
+       "toSourceId": "alt"
+      }
+     ]
+    ],
+    [
+     "getLinks",
+     [
+      "s/from"
+     ]
+    ],
+    [
+     "getLinks",
+     [
+      "s/from",
+      {
+       "sourceId": "default"
+      }
+     ]
+    ],
+    [
+     "getLinks",
+     [
+      "s/from",
+      {
+       "sourceIds": [
+        "default"
+       ]
+      }
+     ]
+    ],
+    [
+     "getBacklinks",
+     [
+      "s/alt-doc",
+      {
+       "sourceId": "alt"
+      }
+     ]
+    ],
+    [
+     "getBacklinks",
+     [
+      "s/alt-doc",
+      {
+       "sourceIds": [
+        "alt"
+       ]
+      }
+     ]
+    ],
+    [
+     "getBacklinks",
+     [
+      "s/alt-doc",
+      {
+       "sourceIds": [
+        "alt",
+        "default"
+       ]
+      }
+     ]
+    ],
+    [
+     "softDeletePage",
+     [
+      "s/from"
+     ],
+     "quiet"
+    ],
+    [
+     "getLinks",
+     [
+      "s/from"
+     ]
+    ],
+    [
+     "getBacklinks",
+     [
+      "s/to"
+     ]
+    ],
+    [
+     "restorePage",
+     [
+      "s/from"
+     ]
+    ],
+    [
+     "getBacklinks",
+     [
+      "s/to"
+     ]
+    ]
+   ],
+   "results": [
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "s/from",
+       "from_source_id": "default",
+       "to_slug": "s/to",
+       "to_source_id": "default",
+       "link_type": "wikilink",
+       "context": "ctx",
+       "link_source": "markdown",
+       "origin_slug": null,
+       "origin_source_id": null,
+       "origin_field": null
+      },
+      {
+       "from_slug": "s/from",
+       "from_source_id": "default",
+       "to_slug": "s/alt-doc",
+       "to_source_id": "alt",
+       "link_type": "cites",
+       "context": "cross",
+       "link_source": "manual",
+       "origin_slug": null,
+       "origin_source_id": null,
+       "origin_field": null
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "s/from",
+       "from_source_id": "default",
+       "to_slug": "s/to",
+       "to_source_id": "default",
+       "link_type": "wikilink",
+       "context": "ctx",
+       "link_source": "markdown",
+       "origin_slug": null,
+       "origin_source_id": null,
+       "origin_field": null
+      },
+      {
+       "from_slug": "s/from",
+       "from_source_id": "default",
+       "to_slug": "s/alt-doc",
+       "to_source_id": "alt",
+       "link_type": "cites",
+       "context": "cross",
+       "link_source": "manual",
+       "origin_slug": null,
+       "origin_source_id": null,
+       "origin_field": null
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "s/from",
+       "from_source_id": "default",
+       "to_slug": "s/to",
+       "to_source_id": "default",
+       "link_type": "wikilink",
+       "context": "ctx",
+       "link_source": "markdown",
+       "origin_slug": null,
+       "origin_source_id": null,
+       "origin_field": null
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "s/from",
+       "from_source_id": "default",
+       "to_slug": "s/alt-doc",
+       "to_source_id": "alt",
+       "link_type": "cites",
+       "context": "cross",
+       "link_source": "manual",
+       "origin_slug": null,
+       "origin_source_id": null,
+       "origin_field": null
+      }
+     ]
+    },
+    {
+     "ok": []
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "s/from",
+       "from_source_id": "default",
+       "to_slug": "s/alt-doc",
+       "to_source_id": "alt",
+       "link_type": "cites",
+       "context": "cross",
+       "link_source": "manual",
+       "origin_slug": null,
+       "origin_source_id": null,
+       "origin_field": null
+      }
+     ]
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": []
+    },
+    {
+     "ok": []
+    },
+    {
+     "ok": true
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "s/from",
+       "from_source_id": "default",
+       "to_slug": "s/to",
+       "to_source_id": "default",
+       "link_type": "wikilink",
+       "context": "ctx",
+       "link_source": "markdown",
+       "origin_slug": null,
+       "origin_source_id": null,
+       "origin_field": null
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "deletePage removes its links and nulls the origin of links it derived",
+   "steps": [
+    [
+     "putPage",
+     [
+      "o/a",
+      {
+       "type": "note",
+       "title": "o/a",
+       "compiled_truth": "o/a body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "o/b",
+      {
+       "type": "note",
+       "title": "o/b",
+       "compiled_truth": "o/b body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "o/c",
+      {
+       "type": "note",
+       "title": "o/c",
+       "compiled_truth": "o/c body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "o/origin",
+      {
+       "type": "note",
+       "title": "o/origin",
+       "compiled_truth": "o/origin body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "addLink",
+     [
+      "o/a",
+      "o/b",
+      "kept",
+      "rel",
+      "frontmatter",
+      "o/origin",
+      "field"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "o/c",
+      "o/a",
+      "gone",
+      "rel",
+      "manual"
+     ]
+    ],
+    [
+     "deletePage",
+     [
+      "o/origin"
+     ],
+     "quiet"
+    ],
+    [
+     "getLinks",
+     [
+      "o/a"
+     ]
+    ],
+    [
+     "deletePage",
+     [
+      "o/c"
+     ],
+     "quiet"
+    ],
+    [
+     "getBacklinks",
+     [
+      "o/a"
+     ]
+    ]
+   ],
+   "results": [
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "o/a",
+       "from_source_id": "default",
+       "to_slug": "o/b",
+       "to_source_id": "default",
+       "link_type": "rel",
+       "context": "kept",
+       "link_source": "frontmatter",
+       "origin_slug": null,
+       "origin_source_id": null,
+       "origin_field": "field"
+      }
+     ]
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": []
+    }
+   ]
+  },
+  {
+   "name": "deletePage refuses when nulling an origin collides with an existing link",
+   "steps": [
+    [
+     "putPage",
+     [
+      "p/a",
+      {
+       "type": "note",
+       "title": "p/a",
+       "compiled_truth": "p/a body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "p/b",
+      {
+       "type": "note",
+       "title": "p/b",
+       "compiled_truth": "p/b body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "p/o",
+      {
+       "type": "note",
+       "title": "p/o",
+       "compiled_truth": "p/o body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "addLink",
+     [
+      "p/a",
+      "p/b",
+      "c1",
+      "rel",
+      "manual"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "p/a",
+      "p/b",
+      "c2",
+      "rel",
+      "manual",
+      "p/o",
+      "field"
+     ]
+    ],
+    [
+     "deletePage",
+     [
+      "p/o"
+     ],
+     "quiet"
+    ],
+    [
+     "getLinks",
+     [
+      "p/a"
+     ]
+    ],
+    [
+     "traverseGraph",
+     [
+      "p/o",
+      0
+     ]
+    ]
+   ],
+   "results": [
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "error": "constraint_violation",
+     "message": "duplicate key value violates unique constraint \"links_from_to_type_source_origin_unique\""
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "p/a",
+       "from_source_id": "default",
+       "to_slug": "p/b",
+       "to_source_id": "default",
+       "link_type": "rel",
+       "context": "c1",
+       "link_source": "manual",
+       "origin_slug": null,
+       "origin_source_id": null,
+       "origin_field": null
+      },
+      {
+       "from_slug": "p/a",
+       "from_source_id": "default",
+       "to_slug": "p/b",
+       "to_source_id": "default",
+       "link_type": "rel",
+       "context": "c2",
+       "link_source": "manual",
+       "origin_slug": "p/o",
+       "origin_source_id": "default",
+       "origin_field": "field"
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "slug": "p/o",
+       "source_id": "default",
+       "title": "p/o",
+       "type": "note",
+       "depth": 0,
+       "links": []
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "traverseGraph returns identical nodes for depth 0..3 and survives a cycle",
+   "steps": [
+    [
+     "putPage",
+     [
+      "tg/a",
+      {
+       "type": "note",
+       "title": "tg/a",
+       "compiled_truth": "tg/a body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "tg/b",
+      {
+       "type": "note",
+       "title": "tg/b",
+       "compiled_truth": "tg/b body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "tg/c",
+      {
+       "type": "note",
+       "title": "tg/c",
+       "compiled_truth": "tg/c body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "tg/d",
+      {
+       "type": "note",
+       "title": "tg/d",
+       "compiled_truth": "tg/d body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "addLink",
+     [
+      "tg/a",
+      "tg/b",
+      "fwd-ctx",
+      "cycle-fwd",
+      "manual"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "tg/b",
+      "tg/a",
+      "back-ctx",
+      "cycle-back",
+      "manual"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "tg/b",
+      "tg/c",
+      "step-ctx",
+      "step",
+      "manual"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "tg/c",
+      "tg/d",
+      "deep-ctx",
+      "deep",
+      "manual"
+     ]
+    ],
+    [
+     "traverseGraph",
+     [
+      "tg/a",
+      0
+     ]
+    ],
+    [
+     "traverseGraph",
+     [
+      "tg/a",
+      1
+     ]
+    ],
+    [
+     "traverseGraph",
+     [
+      "tg/a",
+      2
+     ]
+    ],
+    [
+     "traverseGraph",
+     [
+      "tg/a",
+      3
+     ]
+    ],
+    [
+     "traverseGraph",
+     [
+      "tg/a",
+      10
+     ]
+    ],
+    [
+     "traverseGraph",
+     [
+      "tg/a"
+     ]
+    ],
+    [
+     "traverseGraph",
+     [
+      "tg/nope",
+      3
+     ]
+    ],
+    [
+     "traverseGraph",
+     [
+      "tg/a",
+      3,
+      {
+       "frontierCap": 1
+      }
+     ]
+    ]
+   ],
+   "results": [
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": [
+      {
+       "slug": "tg/a",
+       "source_id": "default",
+       "title": "tg/a",
+       "type": "note",
+       "depth": 0,
+       "links": [
+        {
+         "to_slug": "tg/b",
+         "link_type": "cycle-fwd"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "slug": "tg/a",
+       "source_id": "default",
+       "title": "tg/a",
+       "type": "note",
+       "depth": 0,
+       "links": [
+        {
+         "to_slug": "tg/b",
+         "link_type": "cycle-fwd"
+        }
+       ]
+      },
+      {
+       "slug": "tg/b",
+       "source_id": "default",
+       "title": "tg/b",
+       "type": "note",
+       "depth": 1,
+       "links": [
+        {
+         "to_slug": "tg/a",
+         "link_type": "cycle-back"
+        },
+        {
+         "to_slug": "tg/c",
+         "link_type": "step"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "slug": "tg/a",
+       "source_id": "default",
+       "title": "tg/a",
+       "type": "note",
+       "depth": 0,
+       "links": [
+        {
+         "to_slug": "tg/b",
+         "link_type": "cycle-fwd"
+        }
+       ]
+      },
+      {
+       "slug": "tg/b",
+       "source_id": "default",
+       "title": "tg/b",
+       "type": "note",
+       "depth": 1,
+       "links": [
+        {
+         "to_slug": "tg/a",
+         "link_type": "cycle-back"
+        },
+        {
+         "to_slug": "tg/c",
+         "link_type": "step"
+        }
+       ]
+      },
+      {
+       "slug": "tg/c",
+       "source_id": "default",
+       "title": "tg/c",
+       "type": "note",
+       "depth": 2,
+       "links": [
+        {
+         "to_slug": "tg/d",
+         "link_type": "deep"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "slug": "tg/a",
+       "source_id": "default",
+       "title": "tg/a",
+       "type": "note",
+       "depth": 0,
+       "links": [
+        {
+         "to_slug": "tg/b",
+         "link_type": "cycle-fwd"
+        }
+       ]
+      },
+      {
+       "slug": "tg/b",
+       "source_id": "default",
+       "title": "tg/b",
+       "type": "note",
+       "depth": 1,
+       "links": [
+        {
+         "to_slug": "tg/a",
+         "link_type": "cycle-back"
+        },
+        {
+         "to_slug": "tg/c",
+         "link_type": "step"
+        }
+       ]
+      },
+      {
+       "slug": "tg/c",
+       "source_id": "default",
+       "title": "tg/c",
+       "type": "note",
+       "depth": 2,
+       "links": [
+        {
+         "to_slug": "tg/d",
+         "link_type": "deep"
+        }
+       ]
+      },
+      {
+       "slug": "tg/d",
+       "source_id": "default",
+       "title": "tg/d",
+       "type": "note",
+       "depth": 3,
+       "links": []
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "slug": "tg/a",
+       "source_id": "default",
+       "title": "tg/a",
+       "type": "note",
+       "depth": 0,
+       "links": [
+        {
+         "to_slug": "tg/b",
+         "link_type": "cycle-fwd"
+        }
+       ]
+      },
+      {
+       "slug": "tg/b",
+       "source_id": "default",
+       "title": "tg/b",
+       "type": "note",
+       "depth": 1,
+       "links": [
+        {
+         "to_slug": "tg/a",
+         "link_type": "cycle-back"
+        },
+        {
+         "to_slug": "tg/c",
+         "link_type": "step"
+        }
+       ]
+      },
+      {
+       "slug": "tg/c",
+       "source_id": "default",
+       "title": "tg/c",
+       "type": "note",
+       "depth": 2,
+       "links": [
+        {
+         "to_slug": "tg/d",
+         "link_type": "deep"
+        }
+       ]
+      },
+      {
+       "slug": "tg/d",
+       "source_id": "default",
+       "title": "tg/d",
+       "type": "note",
+       "depth": 3,
+       "links": []
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "slug": "tg/a",
+       "source_id": "default",
+       "title": "tg/a",
+       "type": "note",
+       "depth": 0,
+       "links": [
+        {
+         "to_slug": "tg/b",
+         "link_type": "cycle-fwd"
+        }
+       ]
+      },
+      {
+       "slug": "tg/b",
+       "source_id": "default",
+       "title": "tg/b",
+       "type": "note",
+       "depth": 1,
+       "links": [
+        {
+         "to_slug": "tg/a",
+         "link_type": "cycle-back"
+        },
+        {
+         "to_slug": "tg/c",
+         "link_type": "step"
+        }
+       ]
+      },
+      {
+       "slug": "tg/c",
+       "source_id": "default",
+       "title": "tg/c",
+       "type": "note",
+       "depth": 2,
+       "links": [
+        {
+         "to_slug": "tg/d",
+         "link_type": "deep"
+        }
+       ]
+      },
+      {
+       "slug": "tg/d",
+       "source_id": "default",
+       "title": "tg/d",
+       "type": "note",
+       "depth": 3,
+       "links": []
+      }
+     ]
+    },
+    {
+     "ok": []
+    },
+    {
+     "ok": [
+      {
+       "slug": "tg/a",
+       "source_id": "default",
+       "title": "tg/a",
+       "type": "note",
+       "depth": 0,
+       "links": [
+        {
+         "to_slug": "tg/b",
+         "link_type": "cycle-fwd"
+        }
+       ]
+      },
+      {
+       "slug": "tg/b",
+       "source_id": "default",
+       "title": "tg/b",
+       "type": "note",
+       "depth": 1,
+       "links": [
+        {
+         "to_slug": "tg/a",
+         "link_type": "cycle-back"
+        },
+        {
+         "to_slug": "tg/c",
+         "link_type": "step"
+        }
+       ]
+      },
+      {
+       "slug": "tg/c",
+       "source_id": "default",
+       "title": "tg/c",
+       "type": "note",
+       "depth": 2,
+       "links": [
+        {
+         "to_slug": "tg/d",
+         "link_type": "deep"
+        }
+       ]
+      },
+      {
+       "slug": "tg/d",
+       "source_id": "default",
+       "title": "tg/d",
+       "type": "note",
+       "depth": 3,
+       "links": []
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "traverseGraph source scope keeps cross-source nodes out of a scoped walk",
+   "steps": [
+    [
+     "createSource",
+     [
+      "tg-alt"
+     ]
+    ],
+    [
+     "putPage",
+     [
+      "tg/a",
+      {
+       "type": "note",
+       "title": "tg/a",
+       "compiled_truth": "tg/a body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "tg/b",
+      {
+       "type": "note",
+       "title": "tg/b",
+       "compiled_truth": "tg/b body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "tg/c",
+      {
+       "type": "note",
+       "title": "tg/c",
+       "compiled_truth": "tg/c body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "tg/d",
+      {
+       "type": "note",
+       "title": "tg/d",
+       "compiled_truth": "tg/d body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "addLink",
+     [
+      "tg/a",
+      "tg/b",
+      "fwd-ctx",
+      "cycle-fwd",
+      "manual"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "tg/b",
+      "tg/a",
+      "back-ctx",
+      "cycle-back",
+      "manual"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "tg/b",
+      "tg/c",
+      "step-ctx",
+      "step",
+      "manual"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "tg/c",
+      "tg/d",
+      "deep-ctx",
+      "deep",
+      "manual"
+     ]
+    ],
+    [
+     "putPage",
+     [
+      "tg/x",
+      {
+       "type": "note",
+       "title": "tg/x",
+       "compiled_truth": "tg/x body",
+       "timeline": ""
+      },
+      {
+       "sourceId": "tg-alt"
+      }
+     ],
+     "quiet"
+    ],
+    [
+     "addLink",
+     [
+      "tg/b",
+      "tg/x",
+      "x-ctx",
+      "xsrc",
+      "manual",
+      "$undef",
+      "$undef",
+      {
+       "fromSourceId": "default",
+       "toSourceId": "tg-alt"
+      }
+     ]
+    ],
+    [
+     "traverseGraph",
+     [
+      "tg/a",
+      3
+     ]
+    ],
+    [
+     "traverseGraph",
+     [
+      "tg/a",
+      3,
+      {
+       "sourceId": "default"
+      }
+     ]
+    ],
+    [
+     "traverseGraph",
+     [
+      "tg/a",
+      3,
+      {
+       "sourceIds": [
+        "default"
+       ]
+      }
+     ]
+    ],
+    [
+     "traverseGraph",
+     [
+      "tg/a",
+      3,
+      {
+       "sourceIds": [
+        "default",
+        "tg-alt"
+       ]
+      }
+     ]
+    ],
+    [
+     "traverseGraph",
+     [
+      "tg/x",
+      2,
+      {
+       "sourceId": "tg-alt"
+      }
+     ]
+    ]
+   ],
+   "results": [
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": [
+      {
+       "slug": "tg/a",
+       "source_id": "default",
+       "title": "tg/a",
+       "type": "note",
+       "depth": 0,
+       "links": [
+        {
+         "to_slug": "tg/b",
+         "link_type": "cycle-fwd"
+        }
+       ]
+      },
+      {
+       "slug": "tg/b",
+       "source_id": "default",
+       "title": "tg/b",
+       "type": "note",
+       "depth": 1,
+       "links": [
+        {
+         "to_slug": "tg/a",
+         "link_type": "cycle-back"
+        },
+        {
+         "to_slug": "tg/c",
+         "link_type": "step"
+        },
+        {
+         "to_slug": "tg/x",
+         "link_type": "xsrc"
+        }
+       ]
+      },
+      {
+       "slug": "tg/c",
+       "source_id": "default",
+       "title": "tg/c",
+       "type": "note",
+       "depth": 2,
+       "links": [
+        {
+         "to_slug": "tg/d",
+         "link_type": "deep"
+        }
+       ]
+      },
+      {
+       "slug": "tg/x",
+       "source_id": "tg-alt",
+       "title": "tg/x",
+       "type": "note",
+       "depth": 2,
+       "links": []
+      },
+      {
+       "slug": "tg/d",
+       "source_id": "default",
+       "title": "tg/d",
+       "type": "note",
+       "depth": 3,
+       "links": []
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "slug": "tg/a",
+       "source_id": "default",
+       "title": "tg/a",
+       "type": "note",
+       "depth": 0,
+       "links": [
+        {
+         "to_slug": "tg/b",
+         "link_type": "cycle-fwd"
+        }
+       ]
+      },
+      {
+       "slug": "tg/b",
+       "source_id": "default",
+       "title": "tg/b",
+       "type": "note",
+       "depth": 1,
+       "links": [
+        {
+         "to_slug": "tg/a",
+         "link_type": "cycle-back"
+        },
+        {
+         "to_slug": "tg/c",
+         "link_type": "step"
+        }
+       ]
+      },
+      {
+       "slug": "tg/c",
+       "source_id": "default",
+       "title": "tg/c",
+       "type": "note",
+       "depth": 2,
+       "links": [
+        {
+         "to_slug": "tg/d",
+         "link_type": "deep"
+        }
+       ]
+      },
+      {
+       "slug": "tg/d",
+       "source_id": "default",
+       "title": "tg/d",
+       "type": "note",
+       "depth": 3,
+       "links": []
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "slug": "tg/a",
+       "source_id": "default",
+       "title": "tg/a",
+       "type": "note",
+       "depth": 0,
+       "links": [
+        {
+         "to_slug": "tg/b",
+         "link_type": "cycle-fwd"
+        }
+       ]
+      },
+      {
+       "slug": "tg/b",
+       "source_id": "default",
+       "title": "tg/b",
+       "type": "note",
+       "depth": 1,
+       "links": [
+        {
+         "to_slug": "tg/a",
+         "link_type": "cycle-back"
+        },
+        {
+         "to_slug": "tg/c",
+         "link_type": "step"
+        }
+       ]
+      },
+      {
+       "slug": "tg/c",
+       "source_id": "default",
+       "title": "tg/c",
+       "type": "note",
+       "depth": 2,
+       "links": [
+        {
+         "to_slug": "tg/d",
+         "link_type": "deep"
+        }
+       ]
+      },
+      {
+       "slug": "tg/d",
+       "source_id": "default",
+       "title": "tg/d",
+       "type": "note",
+       "depth": 3,
+       "links": []
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "slug": "tg/a",
+       "source_id": "default",
+       "title": "tg/a",
+       "type": "note",
+       "depth": 0,
+       "links": [
+        {
+         "to_slug": "tg/b",
+         "link_type": "cycle-fwd"
+        }
+       ]
+      },
+      {
+       "slug": "tg/b",
+       "source_id": "default",
+       "title": "tg/b",
+       "type": "note",
+       "depth": 1,
+       "links": [
+        {
+         "to_slug": "tg/a",
+         "link_type": "cycle-back"
+        },
+        {
+         "to_slug": "tg/c",
+         "link_type": "step"
+        },
+        {
+         "to_slug": "tg/x",
+         "link_type": "xsrc"
+        }
+       ]
+      },
+      {
+       "slug": "tg/c",
+       "source_id": "default",
+       "title": "tg/c",
+       "type": "note",
+       "depth": 2,
+       "links": [
+        {
+         "to_slug": "tg/d",
+         "link_type": "deep"
+        }
+       ]
+      },
+      {
+       "slug": "tg/x",
+       "source_id": "tg-alt",
+       "title": "tg/x",
+       "type": "note",
+       "depth": 2,
+       "links": []
+      },
+      {
+       "slug": "tg/d",
+       "source_id": "default",
+       "title": "tg/d",
+       "type": "note",
+       "depth": 3,
+       "links": []
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "slug": "tg/x",
+       "source_id": "tg-alt",
+       "title": "tg/x",
+       "type": "note",
+       "depth": 0,
+       "links": []
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "traversePaths returns ordered edges across depth and direction, with link type filter",
+   "steps": [
+    [
+     "putPage",
+     [
+      "tg/a",
+      {
+       "type": "note",
+       "title": "tg/a",
+       "compiled_truth": "tg/a body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "tg/b",
+      {
+       "type": "note",
+       "title": "tg/b",
+       "compiled_truth": "tg/b body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "tg/c",
+      {
+       "type": "note",
+       "title": "tg/c",
+       "compiled_truth": "tg/c body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "tg/d",
+      {
+       "type": "note",
+       "title": "tg/d",
+       "compiled_truth": "tg/d body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "addLink",
+     [
+      "tg/a",
+      "tg/b",
+      "fwd-ctx",
+      "cycle-fwd",
+      "manual"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "tg/b",
+      "tg/a",
+      "back-ctx",
+      "cycle-back",
+      "manual"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "tg/b",
+      "tg/c",
+      "step-ctx",
+      "step",
+      "manual"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "tg/c",
+      "tg/d",
+      "deep-ctx",
+      "deep",
+      "manual"
+     ]
+    ],
+    [
+     "traversePaths",
+     [
+      "tg/b",
+      {
+       "depth": 1,
+       "direction": "in"
+      }
+     ]
+    ],
+    [
+     "traversePaths",
+     [
+      "tg/b",
+      {
+       "depth": 1,
+       "direction": "out"
+      }
+     ]
+    ],
+    [
+     "traversePaths",
+     [
+      "tg/b",
+      {
+       "depth": 1,
+       "direction": "both"
+      }
+     ]
+    ],
+    [
+     "traversePaths",
+     [
+      "tg/b",
+      {
+       "depth": 2,
+       "direction": "in"
+      }
+     ]
+    ],
+    [
+     "traversePaths",
+     [
+      "tg/b",
+      {
+       "depth": 2,
+       "direction": "out"
+      }
+     ]
+    ],
+    [
+     "traversePaths",
+     [
+      "tg/b",
+      {
+       "depth": 2,
+       "direction": "both"
+      }
+     ]
+    ],
+    [
+     "traversePaths",
+     [
+      "tg/b",
+      {
+       "depth": 3,
+       "direction": "in"
+      }
+     ]
+    ],
+    [
+     "traversePaths",
+     [
+      "tg/b",
+      {
+       "depth": 3,
+       "direction": "out"
+      }
+     ]
+    ],
+    [
+     "traversePaths",
+     [
+      "tg/b",
+      {
+       "depth": 3,
+       "direction": "both"
+      }
+     ]
+    ],
+    [
+     "traversePaths",
+     [
+      "tg/a",
+      {
+       "depth": 5,
+       "direction": "out",
+       "linkType": "cycle-fwd"
+      }
+     ]
+    ],
+    [
+     "traversePaths",
+     [
+      "tg/a",
+      {
+       "depth": 5,
+       "direction": "out",
+       "linkType": "no-such-type"
+      }
+     ]
+    ],
+    [
+     "traversePaths",
+     [
+      "tg/c",
+      {
+       "depth": 1,
+       "direction": "out"
+      }
+     ]
+    ],
+    [
+     "traversePaths",
+     [
+      "tg/a"
+     ]
+    ],
+    [
+     "traversePaths",
+     [
+      "tg/a",
+      {
+       "depth": 0
+      }
+     ]
+    ]
+   ],
+   "results": [
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "tg/a",
+       "from_source_id": "default",
+       "to_slug": "tg/b",
+       "to_source_id": "default",
+       "link_type": "cycle-fwd",
+       "context": "fwd-ctx",
+       "depth": 1
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/a",
+       "to_source_id": "default",
+       "link_type": "cycle-back",
+       "context": "back-ctx",
+       "depth": 1
+      },
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/c",
+       "to_source_id": "default",
+       "link_type": "step",
+       "context": "step-ctx",
+       "depth": 1
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "tg/a",
+       "from_source_id": "default",
+       "to_slug": "tg/b",
+       "to_source_id": "default",
+       "link_type": "cycle-fwd",
+       "context": "fwd-ctx",
+       "depth": 1
+      },
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/a",
+       "to_source_id": "default",
+       "link_type": "cycle-back",
+       "context": "back-ctx",
+       "depth": 1
+      },
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/c",
+       "to_source_id": "default",
+       "link_type": "step",
+       "context": "step-ctx",
+       "depth": 1
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "tg/a",
+       "from_source_id": "default",
+       "to_slug": "tg/b",
+       "to_source_id": "default",
+       "link_type": "cycle-fwd",
+       "context": "fwd-ctx",
+       "depth": 1
+      },
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/a",
+       "to_source_id": "default",
+       "link_type": "cycle-back",
+       "context": "back-ctx",
+       "depth": 2
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/a",
+       "to_source_id": "default",
+       "link_type": "cycle-back",
+       "context": "back-ctx",
+       "depth": 1
+      },
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/c",
+       "to_source_id": "default",
+       "link_type": "step",
+       "context": "step-ctx",
+       "depth": 1
+      },
+      {
+       "from_slug": "tg/a",
+       "from_source_id": "default",
+       "to_slug": "tg/b",
+       "to_source_id": "default",
+       "link_type": "cycle-fwd",
+       "context": "fwd-ctx",
+       "depth": 2
+      },
+      {
+       "from_slug": "tg/c",
+       "from_source_id": "default",
+       "to_slug": "tg/d",
+       "to_source_id": "default",
+       "link_type": "deep",
+       "context": "deep-ctx",
+       "depth": 2
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "tg/a",
+       "from_source_id": "default",
+       "to_slug": "tg/b",
+       "to_source_id": "default",
+       "link_type": "cycle-fwd",
+       "context": "fwd-ctx",
+       "depth": 1
+      },
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/a",
+       "to_source_id": "default",
+       "link_type": "cycle-back",
+       "context": "back-ctx",
+       "depth": 1
+      },
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/c",
+       "to_source_id": "default",
+       "link_type": "step",
+       "context": "step-ctx",
+       "depth": 1
+      },
+      {
+       "from_slug": "tg/c",
+       "from_source_id": "default",
+       "to_slug": "tg/d",
+       "to_source_id": "default",
+       "link_type": "deep",
+       "context": "deep-ctx",
+       "depth": 2
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "tg/a",
+       "from_source_id": "default",
+       "to_slug": "tg/b",
+       "to_source_id": "default",
+       "link_type": "cycle-fwd",
+       "context": "fwd-ctx",
+       "depth": 1
+      },
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/a",
+       "to_source_id": "default",
+       "link_type": "cycle-back",
+       "context": "back-ctx",
+       "depth": 2
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/a",
+       "to_source_id": "default",
+       "link_type": "cycle-back",
+       "context": "back-ctx",
+       "depth": 1
+      },
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/c",
+       "to_source_id": "default",
+       "link_type": "step",
+       "context": "step-ctx",
+       "depth": 1
+      },
+      {
+       "from_slug": "tg/a",
+       "from_source_id": "default",
+       "to_slug": "tg/b",
+       "to_source_id": "default",
+       "link_type": "cycle-fwd",
+       "context": "fwd-ctx",
+       "depth": 2
+      },
+      {
+       "from_slug": "tg/c",
+       "from_source_id": "default",
+       "to_slug": "tg/d",
+       "to_source_id": "default",
+       "link_type": "deep",
+       "context": "deep-ctx",
+       "depth": 2
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "tg/a",
+       "from_source_id": "default",
+       "to_slug": "tg/b",
+       "to_source_id": "default",
+       "link_type": "cycle-fwd",
+       "context": "fwd-ctx",
+       "depth": 1
+      },
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/a",
+       "to_source_id": "default",
+       "link_type": "cycle-back",
+       "context": "back-ctx",
+       "depth": 1
+      },
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/c",
+       "to_source_id": "default",
+       "link_type": "step",
+       "context": "step-ctx",
+       "depth": 1
+      },
+      {
+       "from_slug": "tg/c",
+       "from_source_id": "default",
+       "to_slug": "tg/d",
+       "to_source_id": "default",
+       "link_type": "deep",
+       "context": "deep-ctx",
+       "depth": 2
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "tg/a",
+       "from_source_id": "default",
+       "to_slug": "tg/b",
+       "to_source_id": "default",
+       "link_type": "cycle-fwd",
+       "context": "fwd-ctx",
+       "depth": 1
+      }
+     ]
+    },
+    {
+     "ok": []
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "tg/c",
+       "from_source_id": "default",
+       "to_slug": "tg/d",
+       "to_source_id": "default",
+       "link_type": "deep",
+       "context": "deep-ctx",
+       "depth": 1
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "tg/a",
+       "from_source_id": "default",
+       "to_slug": "tg/b",
+       "to_source_id": "default",
+       "link_type": "cycle-fwd",
+       "context": "fwd-ctx",
+       "depth": 1
+      },
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/a",
+       "to_source_id": "default",
+       "link_type": "cycle-back",
+       "context": "back-ctx",
+       "depth": 2
+      },
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/c",
+       "to_source_id": "default",
+       "link_type": "step",
+       "context": "step-ctx",
+       "depth": 2
+      },
+      {
+       "from_slug": "tg/c",
+       "from_source_id": "default",
+       "to_slug": "tg/d",
+       "to_source_id": "default",
+       "link_type": "deep",
+       "context": "deep-ctx",
+       "depth": 3
+      }
+     ]
+    },
+    {
+     "ok": []
+    }
+   ]
+  },
+  {
+   "name": "traversePaths source scope: scalar and federated grants stop at the source boundary",
+   "steps": [
+    [
+     "createSource",
+     [
+      "tg-alt"
+     ]
+    ],
+    [
+     "putPage",
+     [
+      "tg/a",
+      {
+       "type": "note",
+       "title": "tg/a",
+       "compiled_truth": "tg/a body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "tg/b",
+      {
+       "type": "note",
+       "title": "tg/b",
+       "compiled_truth": "tg/b body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "tg/c",
+      {
+       "type": "note",
+       "title": "tg/c",
+       "compiled_truth": "tg/c body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "tg/d",
+      {
+       "type": "note",
+       "title": "tg/d",
+       "compiled_truth": "tg/d body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "addLink",
+     [
+      "tg/a",
+      "tg/b",
+      "fwd-ctx",
+      "cycle-fwd",
+      "manual"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "tg/b",
+      "tg/a",
+      "back-ctx",
+      "cycle-back",
+      "manual"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "tg/b",
+      "tg/c",
+      "step-ctx",
+      "step",
+      "manual"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "tg/c",
+      "tg/d",
+      "deep-ctx",
+      "deep",
+      "manual"
+     ]
+    ],
+    [
+     "putPage",
+     [
+      "tg/x",
+      {
+       "type": "note",
+       "title": "tg/x",
+       "compiled_truth": "tg/x body",
+       "timeline": ""
+      },
+      {
+       "sourceId": "tg-alt"
+      }
+     ],
+     "quiet"
+    ],
+    [
+     "addLink",
+     [
+      "tg/b",
+      "tg/x",
+      "x-ctx",
+      "xsrc",
+      "manual",
+      "$undef",
+      "$undef",
+      {
+       "fromSourceId": "default",
+       "toSourceId": "tg-alt"
+      }
+     ]
+    ],
+    [
+     "traversePaths",
+     [
+      "tg/a",
+      {
+       "depth": 3,
+       "direction": "out"
+      }
+     ]
+    ],
+    [
+     "traversePaths",
+     [
+      "tg/a",
+      {
+       "depth": 3,
+       "direction": "out",
+       "sourceId": "default"
+      }
+     ]
+    ],
+    [
+     "traversePaths",
+     [
+      "tg/a",
+      {
+       "depth": 3,
+       "direction": "out",
+       "sourceIds": [
+        "default"
+       ]
+      }
+     ]
+    ],
+    [
+     "traversePaths",
+     [
+      "tg/a",
+      {
+       "depth": 3,
+       "direction": "both",
+       "sourceIds": [
+        "default",
+        "tg-alt"
+       ]
+      }
+     ]
+    ],
+    [
+     "traversePaths",
+     [
+      "tg/x",
+      {
+       "depth": 2,
+       "direction": "in"
+      }
+     ]
+    ]
+   ],
+   "results": [
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "tg/a",
+       "from_source_id": "default",
+       "to_slug": "tg/b",
+       "to_source_id": "default",
+       "link_type": "cycle-fwd",
+       "context": "fwd-ctx",
+       "depth": 1
+      },
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/a",
+       "to_source_id": "default",
+       "link_type": "cycle-back",
+       "context": "back-ctx",
+       "depth": 2
+      },
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/c",
+       "to_source_id": "default",
+       "link_type": "step",
+       "context": "step-ctx",
+       "depth": 2
+      },
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/x",
+       "to_source_id": "tg-alt",
+       "link_type": "xsrc",
+       "context": "x-ctx",
+       "depth": 2
+      },
+      {
+       "from_slug": "tg/c",
+       "from_source_id": "default",
+       "to_slug": "tg/d",
+       "to_source_id": "default",
+       "link_type": "deep",
+       "context": "deep-ctx",
+       "depth": 3
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "tg/a",
+       "from_source_id": "default",
+       "to_slug": "tg/b",
+       "to_source_id": "default",
+       "link_type": "cycle-fwd",
+       "context": "fwd-ctx",
+       "depth": 1
+      },
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/a",
+       "to_source_id": "default",
+       "link_type": "cycle-back",
+       "context": "back-ctx",
+       "depth": 2
+      },
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/c",
+       "to_source_id": "default",
+       "link_type": "step",
+       "context": "step-ctx",
+       "depth": 2
+      },
+      {
+       "from_slug": "tg/c",
+       "from_source_id": "default",
+       "to_slug": "tg/d",
+       "to_source_id": "default",
+       "link_type": "deep",
+       "context": "deep-ctx",
+       "depth": 3
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "tg/a",
+       "from_source_id": "default",
+       "to_slug": "tg/b",
+       "to_source_id": "default",
+       "link_type": "cycle-fwd",
+       "context": "fwd-ctx",
+       "depth": 1
+      },
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/a",
+       "to_source_id": "default",
+       "link_type": "cycle-back",
+       "context": "back-ctx",
+       "depth": 2
+      },
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/c",
+       "to_source_id": "default",
+       "link_type": "step",
+       "context": "step-ctx",
+       "depth": 2
+      },
+      {
+       "from_slug": "tg/c",
+       "from_source_id": "default",
+       "to_slug": "tg/d",
+       "to_source_id": "default",
+       "link_type": "deep",
+       "context": "deep-ctx",
+       "depth": 3
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "tg/a",
+       "from_source_id": "default",
+       "to_slug": "tg/b",
+       "to_source_id": "default",
+       "link_type": "cycle-fwd",
+       "context": "fwd-ctx",
+       "depth": 1
+      },
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/a",
+       "to_source_id": "default",
+       "link_type": "cycle-back",
+       "context": "back-ctx",
+       "depth": 1
+      },
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/c",
+       "to_source_id": "default",
+       "link_type": "step",
+       "context": "step-ctx",
+       "depth": 2
+      },
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/x",
+       "to_source_id": "tg-alt",
+       "link_type": "xsrc",
+       "context": "x-ctx",
+       "depth": 2
+      },
+      {
+       "from_slug": "tg/c",
+       "from_source_id": "default",
+       "to_slug": "tg/d",
+       "to_source_id": "default",
+       "link_type": "deep",
+       "context": "deep-ctx",
+       "depth": 3
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/x",
+       "to_source_id": "tg-alt",
+       "link_type": "xsrc",
+       "context": "x-ctx",
+       "depth": 1
+      },
+      {
+       "from_slug": "tg/a",
+       "from_source_id": "default",
+       "to_slug": "tg/b",
+       "to_source_id": "default",
+       "link_type": "cycle-fwd",
+       "context": "fwd-ctx",
+       "depth": 2
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "traversePathsDetailed reports the paths and an untruncated walk",
+   "steps": [
+    [
+     "putPage",
+     [
+      "tg/a",
+      {
+       "type": "note",
+       "title": "tg/a",
+       "compiled_truth": "tg/a body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "tg/b",
+      {
+       "type": "note",
+       "title": "tg/b",
+       "compiled_truth": "tg/b body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "tg/c",
+      {
+       "type": "note",
+       "title": "tg/c",
+       "compiled_truth": "tg/c body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "tg/d",
+      {
+       "type": "note",
+       "title": "tg/d",
+       "compiled_truth": "tg/d body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "addLink",
+     [
+      "tg/a",
+      "tg/b",
+      "fwd-ctx",
+      "cycle-fwd",
+      "manual"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "tg/b",
+      "tg/a",
+      "back-ctx",
+      "cycle-back",
+      "manual"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "tg/b",
+      "tg/c",
+      "step-ctx",
+      "step",
+      "manual"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "tg/c",
+      "tg/d",
+      "deep-ctx",
+      "deep",
+      "manual"
+     ]
+    ],
+    [
+     "traversePathsDetailed",
+     [
+      "tg/a",
+      {
+       "depth": 1,
+       "direction": "both"
+      }
+     ]
+    ],
+    [
+     "traversePathsDetailed",
+     [
+      "tg/a",
+      {
+       "depth": 4,
+       "direction": "out"
+      }
+     ]
+    ],
+    [
+     "traversePathsDetailed",
+     [
+      "tg/a",
+      {
+       "depth": 4,
+       "direction": "out",
+       "sourceIds": [
+        "default"
+       ],
+       "linkType": "step"
+      }
+     ]
+    ],
+    [
+     "traversePathsDetailed",
+     [
+      "tg/a",
+      {
+       "depth": 0
+      }
+     ]
+    ]
+   ],
+   "results": [
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": {
+      "paths": [
+       {
+        "from_slug": "tg/a",
+        "from_source_id": "default",
+        "to_slug": "tg/b",
+        "to_source_id": "default",
+        "link_type": "cycle-fwd",
+        "context": "fwd-ctx",
+        "depth": 1
+       },
+       {
+        "from_slug": "tg/b",
+        "from_source_id": "default",
+        "to_slug": "tg/a",
+        "to_source_id": "default",
+        "link_type": "cycle-back",
+        "context": "back-ctx",
+        "depth": 1
+       }
+      ],
+      "truncated": false
+     }
+    },
+    {
+     "ok": {
+      "paths": [
+       {
+        "from_slug": "tg/a",
+        "from_source_id": "default",
+        "to_slug": "tg/b",
+        "to_source_id": "default",
+        "link_type": "cycle-fwd",
+        "context": "fwd-ctx",
+        "depth": 1
+       },
+       {
+        "from_slug": "tg/b",
+        "from_source_id": "default",
+        "to_slug": "tg/a",
+        "to_source_id": "default",
+        "link_type": "cycle-back",
+        "context": "back-ctx",
+        "depth": 2
+       },
+       {
+        "from_slug": "tg/b",
+        "from_source_id": "default",
+        "to_slug": "tg/c",
+        "to_source_id": "default",
+        "link_type": "step",
+        "context": "step-ctx",
+        "depth": 2
+       },
+       {
+        "from_slug": "tg/c",
+        "from_source_id": "default",
+        "to_slug": "tg/d",
+        "to_source_id": "default",
+        "link_type": "deep",
+        "context": "deep-ctx",
+        "depth": 3
+       }
+      ],
+      "truncated": false
+     }
+    },
+    {
+     "ok": {
+      "paths": [],
+      "truncated": false
+     }
+    },
+    {
+     "ok": {
+      "paths": [],
+      "truncated": false
+     }
+    }
+   ]
+  },
+  {
+   "name": "traversal hides soft-deleted pages and recovers them after restore",
+   "steps": [
+    [
+     "putPage",
+     [
+      "tg/a",
+      {
+       "type": "note",
+       "title": "tg/a",
+       "compiled_truth": "tg/a body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "tg/b",
+      {
+       "type": "note",
+       "title": "tg/b",
+       "compiled_truth": "tg/b body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "tg/c",
+      {
+       "type": "note",
+       "title": "tg/c",
+       "compiled_truth": "tg/c body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "tg/d",
+      {
+       "type": "note",
+       "title": "tg/d",
+       "compiled_truth": "tg/d body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "addLink",
+     [
+      "tg/a",
+      "tg/b",
+      "fwd-ctx",
+      "cycle-fwd",
+      "manual"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "tg/b",
+      "tg/a",
+      "back-ctx",
+      "cycle-back",
+      "manual"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "tg/b",
+      "tg/c",
+      "step-ctx",
+      "step",
+      "manual"
+     ]
+    ],
+    [
+     "addLink",
+     [
+      "tg/c",
+      "tg/d",
+      "deep-ctx",
+      "deep",
+      "manual"
+     ]
+    ],
+    [
+     "softDeletePage",
+     [
+      "tg/b"
+     ],
+     "quiet"
+    ],
+    [
+     "traverseGraph",
+     [
+      "tg/a",
+      3
+     ]
+    ],
+    [
+     "traversePaths",
+     [
+      "tg/a",
+      {
+       "depth": 3,
+       "direction": "both"
+      }
+     ]
+    ],
+    [
+     "traversePaths",
+     [
+      "tg/b",
+      {
+       "depth": 3,
+       "direction": "out"
+      }
+     ]
+    ],
+    [
+     "getLinks",
+     [
+      "tg/a"
+     ]
+    ],
+    [
+     "restorePage",
+     [
+      "tg/b"
+     ]
+    ],
+    [
+     "traversePaths",
+     [
+      "tg/a",
+      {
+       "depth": 3,
+       "direction": "out"
+      }
+     ]
+    ]
+   ],
+   "results": [
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": [
+      {
+       "slug": "tg/a",
+       "source_id": "default",
+       "title": "tg/a",
+       "type": "note",
+       "depth": 0,
+       "links": []
+      }
+     ]
+    },
+    {
+     "ok": []
+    },
+    {
+     "ok": []
+    },
+    {
+     "ok": []
+    },
+    {
+     "ok": true
+    },
+    {
+     "ok": [
+      {
+       "from_slug": "tg/a",
+       "from_source_id": "default",
+       "to_slug": "tg/b",
+       "to_source_id": "default",
+       "link_type": "cycle-fwd",
+       "context": "fwd-ctx",
+       "depth": 1
+      },
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/a",
+       "to_source_id": "default",
+       "link_type": "cycle-back",
+       "context": "back-ctx",
+       "depth": 2
+      },
+      {
+       "from_slug": "tg/b",
+       "from_source_id": "default",
+       "to_slug": "tg/c",
+       "to_source_id": "default",
+       "link_type": "step",
+       "context": "step-ctx",
+       "depth": 2
+      },
+      {
+       "from_slug": "tg/c",
+       "from_source_id": "default",
+       "to_slug": "tg/d",
+       "to_source_id": "default",
+       "link_type": "deep",
+       "context": "deep-ctx",
+       "depth": 3
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "addTimelineEntry inserts, dedups on (date, summary) and reports whether a row was written",
+   "steps": [
+    [
+     "putPage",
+     [
+      "people/alice",
+      {
+       "type": "note",
+       "title": "people/alice",
+       "compiled_truth": "people/alice body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "addTimelineEntry",
+     [
+      "people/alice",
+      {
+       "date": "2026-01-02",
+       "source": "cal",
+       "summary": "Joined Acme",
+       "detail": "day one"
+      }
+     ]
+    ],
+    [
+     "addTimelineEntry",
+     [
+      "people/alice",
+      {
+       "date": "2026-01-02",
+       "source": "cal",
+       "summary": "Joined Acme",
+       "detail": "day one"
+      }
+     ]
+    ],
+    [
+     "addTimelineEntry",
+     [
+      "people/alice",
+      {
+       "date": "2026-01-02",
+       "source": "other",
+       "summary": "Joined Acme",
+       "detail": "other source"
+      }
+     ]
+    ],
+    [
+     "addTimelineEntry",
+     [
+      "people/alice",
+      {
+       "date": "2026-03-04",
+       "summary": "Promoted"
+      }
+     ]
+    ],
+    [
+     "addTimelineEntry",
+     [
+      "people/alice",
+      {
+       "date": "2025-12-31",
+       "source": "note",
+       "summary": "Interviewed",
+       "detail": "phone screen"
+      }
+     ]
+    ],
+    [
+     "addTimelineEntry",
+     [
+      "people/nobody",
+      {
+       "date": "2026-01-01",
+       "summary": "ghost"
+      }
+     ]
+    ],
+    [
+     "addTimelineEntry",
+     [
+      "people/nobody",
+      {
+       "date": "2026-01-01",
+       "summary": "ghost"
+      },
+      {
+       "skipExistenceCheck": true
+      }
+     ]
+    ],
+    [
+     "getTimeline",
+     [
+      "people/alice"
+     ]
+    ]
+   ],
+   "results": [
+    {
+     "ok": null
+    },
+    {
+     "ok": true
+    },
+    {
+     "ok": false
+    },
+    {
+     "ok": true
+    },
+    {
+     "ok": true
+    },
+    {
+     "ok": true
+    },
+    {
+     "error": "page_not_found",
+     "message": "addTimelineEntry failed: page \"people/nobody\" (source=default) not found"
+    },
+    {
+     "ok": false
+    },
+    {
+     "ok": [
+      {
+       "id": 4,
+       "page_id": 1,
+       "date": "2026-03-04",
+       "source": "",
+       "summary": "Promoted",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      },
+      {
+       "id": 3,
+       "page_id": 1,
+       "date": "2026-01-02",
+       "source": "other",
+       "summary": "Joined Acme",
+       "detail": "other source",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      },
+      {
+       "id": 1,
+       "page_id": 1,
+       "date": "2026-01-02",
+       "source": "cal",
+       "summary": "Joined Acme",
+       "detail": "day one",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      },
+      {
+       "id": 5,
+       "page_id": 1,
+       "date": "2025-12-31",
+       "source": "note",
+       "summary": "Interviewed",
+       "detail": "phone screen",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "addTimelineEntry date formats and refusals",
+   "steps": [
+    [
+     "putPage",
+     [
+      "p/a",
+      {
+       "type": "note",
+       "title": "p/a",
+       "compiled_truth": "p/a body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "addTimelineEntry",
+     [
+      "p/none",
+      {
+       "date": "not-a-date",
+       "summary": "x"
+      }
+     ]
+    ],
+    [
+     "addTimelineEntry",
+     [
+      "p/none",
+      {
+       "date": "not-a-date",
+       "summary": "x"
+      },
+      {
+       "skipExistenceCheck": true
+      }
+     ]
+    ],
+    [
+     "addTimelineEntry",
+     [
+      "p/a",
+      {
+       "date": "not-a-date",
+       "summary": "x"
+      }
+     ]
+    ],
+    [
+     "addTimelineEntry",
+     [
+      "p/a",
+      {
+       "date": "2026-02-30",
+       "summary": "x"
+      }
+     ]
+    ],
+    [
+     "addTimelineEntry",
+     [
+      "p/a",
+      {
+       "date": "2026-01-05T23:30:00-05:00",
+       "summary": "iso"
+      }
+     ]
+    ],
+    [
+     "addTimelineEntry",
+     [
+      "p/a",
+      {
+       "date": "2026/01/07",
+       "summary": "slash"
+      }
+     ]
+    ],
+    [
+     "addTimelineEntry",
+     [
+      "p/a",
+      {
+       "date": "2024-02-29",
+       "summary": "leap"
+      }
+     ]
+    ],
+    [
+     "getTimeline",
+     [
+      "p/a"
+     ]
+    ],
+    [
+     "getTimeline",
+     [
+      "p/a",
+      {
+       "limit": -1
+      }
+     ]
+    ],
+    [
+     "getTimeline",
+     [
+      "p/a",
+      {
+       "after": "nope"
+      }
+     ]
+    ]
+   ],
+   "results": [
+    {
+     "ok": null
+    },
+    {
+     "error": "invalid_argument",
+     "message": "invalid input syntax for type date: \"not-a-date\""
+    },
+    {
+     "error": "invalid_argument",
+     "message": "invalid input syntax for type date: \"not-a-date\""
+    },
+    {
+     "error": "invalid_argument",
+     "message": "invalid input syntax for type date: \"not-a-date\""
+    },
+    {
+     "error": "invalid_argument",
+     "message": "date/time field value out of range: \"2026-02-30\""
+    },
+    {
+     "ok": true
+    },
+    {
+     "ok": true
+    },
+    {
+     "ok": true
+    },
+    {
+     "ok": [
+      {
+       "id": 2,
+       "page_id": 1,
+       "date": "2026-01-07",
+       "source": "",
+       "summary": "slash",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      },
+      {
+       "id": 1,
+       "page_id": 1,
+       "date": "2026-01-05",
+       "source": "",
+       "summary": "iso",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      },
+      {
+       "id": 3,
+       "page_id": 1,
+       "date": "2024-02-29",
+       "source": "",
+       "summary": "leap",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      }
+     ]
+    },
+    {
+     "error": "invalid_argument",
+     "message": "LIMIT must not be negative"
+    },
+    {
+     "error": "invalid_argument",
+     "message": "invalid input syntax for type date: \"nope\""
+    }
+   ]
+  },
+  {
+   "name": "getTimeline orders newest first and applies limit and the after/before window",
+   "steps": [
+    [
+     "putPage",
+     [
+      "people/bob",
+      {
+       "type": "note",
+       "title": "people/bob",
+       "compiled_truth": "people/bob body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "addTimelineEntry",
+     [
+      "people/bob",
+      {
+       "date": "2026-01-10",
+       "summary": "jan"
+      }
+     ]
+    ],
+    [
+     "addTimelineEntry",
+     [
+      "people/bob",
+      {
+       "date": "2026-02-10",
+       "summary": "feb"
+      }
+     ]
+    ],
+    [
+     "addTimelineEntry",
+     [
+      "people/bob",
+      {
+       "date": "2026-03-10",
+       "summary": "mar"
+      }
+     ]
+    ],
+    [
+     "addTimelineEntry",
+     [
+      "people/bob",
+      {
+       "date": "2026-04-10",
+       "summary": "apr"
+      }
+     ]
+    ],
+    [
+     "addTimelineEntry",
+     [
+      "people/bob",
+      {
+       "date": "2026-02-10",
+       "summary": "feb-2"
+      }
+     ]
+    ],
+    [
+     "getTimeline",
+     [
+      "people/bob"
+     ]
+    ],
+    [
+     "getTimeline",
+     [
+      "people/bob",
+      {
+       "limit": 2
+      }
+     ]
+    ],
+    [
+     "getTimeline",
+     [
+      "people/bob",
+      {
+       "limit": 0
+      }
+     ]
+    ],
+    [
+     "getTimeline",
+     [
+      "people/bob",
+      {
+       "after": "2026-02-10"
+      }
+     ]
+    ],
+    [
+     "getTimeline",
+     [
+      "people/bob",
+      {
+       "before": "2026-03-10"
+      }
+     ]
+    ],
+    [
+     "getTimeline",
+     [
+      "people/bob",
+      {
+       "after": "2026-01-15",
+       "before": "2026-04-01"
+      }
+     ]
+    ],
+    [
+     "getTimeline",
+     [
+      "people/bob",
+      {
+       "after": "2026-04-01",
+       "before": "2026-01-15"
+      }
+     ]
+    ],
+    [
+     "getTimeline",
+     [
+      "people/bob",
+      {
+       "sourceId": "no-such-source"
+      }
+     ]
+    ],
+    [
+     "getTimeline",
+     [
+      "people/nobody"
+     ]
+    ]
+   ],
+   "results": [
+    {
+     "ok": null
+    },
+    {
+     "ok": true
+    },
+    {
+     "ok": true
+    },
+    {
+     "ok": true
+    },
+    {
+     "ok": true
+    },
+    {
+     "ok": true
+    },
+    {
+     "ok": [
+      {
+       "id": 4,
+       "page_id": 1,
+       "date": "2026-04-10",
+       "source": "",
+       "summary": "apr",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      },
+      {
+       "id": 3,
+       "page_id": 1,
+       "date": "2026-03-10",
+       "source": "",
+       "summary": "mar",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      },
+      {
+       "id": 5,
+       "page_id": 1,
+       "date": "2026-02-10",
+       "source": "",
+       "summary": "feb-2",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      },
+      {
+       "id": 2,
+       "page_id": 1,
+       "date": "2026-02-10",
+       "source": "",
+       "summary": "feb",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      },
+      {
+       "id": 1,
+       "page_id": 1,
+       "date": "2026-01-10",
+       "source": "",
+       "summary": "jan",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "id": 4,
+       "page_id": 1,
+       "date": "2026-04-10",
+       "source": "",
+       "summary": "apr",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      },
+      {
+       "id": 3,
+       "page_id": 1,
+       "date": "2026-03-10",
+       "source": "",
+       "summary": "mar",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "id": 4,
+       "page_id": 1,
+       "date": "2026-04-10",
+       "source": "",
+       "summary": "apr",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      },
+      {
+       "id": 3,
+       "page_id": 1,
+       "date": "2026-03-10",
+       "source": "",
+       "summary": "mar",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      },
+      {
+       "id": 5,
+       "page_id": 1,
+       "date": "2026-02-10",
+       "source": "",
+       "summary": "feb-2",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      },
+      {
+       "id": 2,
+       "page_id": 1,
+       "date": "2026-02-10",
+       "source": "",
+       "summary": "feb",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      },
+      {
+       "id": 1,
+       "page_id": 1,
+       "date": "2026-01-10",
+       "source": "",
+       "summary": "jan",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "id": 4,
+       "page_id": 1,
+       "date": "2026-04-10",
+       "source": "",
+       "summary": "apr",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      },
+      {
+       "id": 3,
+       "page_id": 1,
+       "date": "2026-03-10",
+       "source": "",
+       "summary": "mar",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      },
+      {
+       "id": 5,
+       "page_id": 1,
+       "date": "2026-02-10",
+       "source": "",
+       "summary": "feb-2",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      },
+      {
+       "id": 2,
+       "page_id": 1,
+       "date": "2026-02-10",
+       "source": "",
+       "summary": "feb",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "id": 3,
+       "page_id": 1,
+       "date": "2026-03-10",
+       "source": "",
+       "summary": "mar",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      },
+      {
+       "id": 5,
+       "page_id": 1,
+       "date": "2026-02-10",
+       "source": "",
+       "summary": "feb-2",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      },
+      {
+       "id": 2,
+       "page_id": 1,
+       "date": "2026-02-10",
+       "source": "",
+       "summary": "feb",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      },
+      {
+       "id": 1,
+       "page_id": 1,
+       "date": "2026-01-10",
+       "source": "",
+       "summary": "jan",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "id": 3,
+       "page_id": 1,
+       "date": "2026-03-10",
+       "source": "",
+       "summary": "mar",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      },
+      {
+       "id": 5,
+       "page_id": 1,
+       "date": "2026-02-10",
+       "source": "",
+       "summary": "feb-2",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      },
+      {
+       "id": 2,
+       "page_id": 1,
+       "date": "2026-02-10",
+       "source": "",
+       "summary": "feb",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      }
+     ]
+    },
+    {
+     "ok": []
+    },
+    {
+     "ok": []
+    },
+    {
+     "ok": []
+    }
+   ]
+  },
+  {
+   "name": "addTimelineEntriesBatch counts inserted rows, drops missing pages and replays as no-ops",
+   "steps": [
+    [
+     "createSource",
+     [
+      "alt"
+     ]
+    ],
+    [
+     "putPage",
+     [
+      "batch/one",
+      {
+       "type": "note",
+       "title": "batch/one",
+       "compiled_truth": "batch/one body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "batch/two",
+      {
+       "type": "note",
+       "title": "batch/two",
+       "compiled_truth": "batch/two body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "putPage",
+     [
+      "batch/one",
+      {
+       "type": "note",
+       "title": "batch/one",
+       "compiled_truth": "batch/one body",
+       "timeline": ""
+      },
+      {
+       "sourceId": "alt"
+      }
+     ],
+     "quiet"
+    ],
+    [
+     "addTimelineEntriesBatch",
+     [
+      [
+       {
+        "slug": "batch/one",
+        "date": "2026-05-01",
+        "summary": "one-a",
+        "detail": "x",
+        "source": "import"
+       },
+       {
+        "slug": "batch/one",
+        "date": "2026-05-02",
+        "summary": "one-b"
+       },
+       {
+        "slug": "batch/two",
+        "date": "2026-05-01",
+        "summary": "two-a"
+       },
+       {
+        "slug": "batch/missing",
+        "date": "2026-05-01",
+        "summary": "ghost"
+       },
+       {
+        "slug": "batch/one",
+        "date": "2026-05-03",
+        "summary": "alt-only",
+        "source_id": "alt"
+       }
+      ]
+     ]
+    ],
+    [
+     "addTimelineEntriesBatch",
+     [
+      [
+       {
+        "slug": "batch/one",
+        "date": "2026-05-01",
+        "summary": "one-a",
+        "detail": "x",
+        "source": "import"
+       },
+       {
+        "slug": "batch/one",
+        "date": "2026-05-02",
+        "summary": "one-b"
+       },
+       {
+        "slug": "batch/two",
+        "date": "2026-05-01",
+        "summary": "two-a"
+       },
+       {
+        "slug": "batch/missing",
+        "date": "2026-05-01",
+        "summary": "ghost"
+       },
+       {
+        "slug": "batch/one",
+        "date": "2026-05-03",
+        "summary": "alt-only",
+        "source_id": "alt"
+       }
+      ]
+     ]
+    ],
+    [
+     "addTimelineEntriesBatch",
+     [
+      []
+     ]
+    ],
+    [
+     "addTimelineEntriesBatch",
+     [
+      [
+       {
+        "slug": "batch/missing",
+        "date": "not-a-date",
+        "summary": "ghost"
+       }
+      ]
+     ]
+    ],
+    [
+     "addTimelineEntriesBatch",
+     [
+      [
+       {
+        "slug": "batch/two",
+        "date": "not-a-date",
+        "summary": "bad"
+       }
+      ]
+     ]
+    ],
+    [
+     "getTimeline",
+     [
+      "batch/one",
+      {
+       "sourceId": "default"
+      }
+     ]
+    ],
+    [
+     "getTimeline",
+     [
+      "batch/one",
+      {
+       "sourceId": "alt"
+      }
+     ]
+    ],
+    [
+     "getTimeline",
+     [
+      "batch/one"
+     ]
+    ],
+    [
+     "getTimeline",
+     [
+      "batch/one",
+      {
+       "sourceIds": [
+        "alt",
+        "default"
+       ]
+      }
+     ]
+    ],
+    [
+     "getTimeline",
+     [
+      "batch/two"
+     ]
+    ]
+   ],
+   "results": [
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": 4
+    },
+    {
+     "ok": 0
+    },
+    {
+     "ok": 0
+    },
+    {
+     "ok": 0
+    },
+    {
+     "error": "invalid_argument",
+     "message": "invalid input syntax for type date: \"not-a-date\""
+    },
+    {
+     "ok": [
+      {
+       "id": 2,
+       "page_id": 1,
+       "date": "2026-05-02",
+       "source": "",
+       "summary": "one-b",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      },
+      {
+       "id": 1,
+       "page_id": 1,
+       "date": "2026-05-01",
+       "source": "import",
+       "summary": "one-a",
+       "detail": "x",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "id": 4,
+       "page_id": 3,
+       "date": "2026-05-03",
+       "source": "",
+       "summary": "alt-only",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "id": 4,
+       "page_id": 3,
+       "date": "2026-05-03",
+       "source": "",
+       "summary": "alt-only",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      },
+      {
+       "id": 2,
+       "page_id": 1,
+       "date": "2026-05-02",
+       "source": "",
+       "summary": "one-b",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      },
+      {
+       "id": 1,
+       "page_id": 1,
+       "date": "2026-05-01",
+       "source": "import",
+       "summary": "one-a",
+       "detail": "x",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "id": 4,
+       "page_id": 3,
+       "date": "2026-05-03",
+       "source": "",
+       "summary": "alt-only",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      },
+      {
+       "id": 2,
+       "page_id": 1,
+       "date": "2026-05-02",
+       "source": "",
+       "summary": "one-b",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      },
+      {
+       "id": 1,
+       "page_id": 1,
+       "date": "2026-05-01",
+       "source": "import",
+       "summary": "one-a",
+       "detail": "x",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      }
+     ]
+    },
+    {
+     "ok": [
+      {
+       "id": 3,
+       "page_id": 2,
+       "date": "2026-05-01",
+       "source": "",
+       "summary": "two-a",
+       "detail": "",
+       "event_page_id": null,
+       "write_request_id": null,
+       "write_principal_kind": null,
+       "write_principal_id": null,
+       "last_write_request_id": null,
+       "last_write_principal_kind": null,
+       "last_write_principal_id": null,
+       "last_written_at": null,
+       "trust_tier": "unknown",
+       "write_origin": null
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "searchKeyword marks a page stale when a timeline entry is newer than the page",
+   "steps": [
+    [
+     "putPage",
+     [
+      "st/one",
+      {
+       "type": "note",
+       "title": "st/one",
+       "compiled_truth": "st/one body",
+       "timeline": ""
+      },
+      "$undef"
+     ],
+     "quiet"
+    ],
+    [
+     "sealChunks",
+     [
+      "st/one",
+      [
+       {
+        "chunk_index": 0,
+        "chunk_text": "zebra crossing notes",
+        "chunk_source": "compiled_truth"
+       }
+      ]
+     ],
+     "quiet"
+    ],
+    [
+     "searchKeyword",
+     [
+      "zebra"
+     ],
+     "stale"
+    ],
+    [
+     "addTimelineEntry",
+     [
+      "st/one",
+      {
+       "date": "2020-01-01",
+       "summary": "old event"
+      }
+     ]
+    ],
+    [
+     "searchKeyword",
+     [
+      "zebra"
+     ],
+     "stale"
+    ],
+    [
+     "putPage",
+     [
+      "st/one",
+      {
+       "type": "note",
+       "title": "st/one",
+       "compiled_truth": "zebra rewritten",
+       "timeline": ""
+      }
+     ],
+     "quiet"
+    ],
+    [
+     "sealChunks",
+     [
+      "st/one",
+      [
+       {
+        "chunk_index": 0,
+        "chunk_text": "zebra rewritten",
+        "chunk_source": "compiled_truth"
+       }
+      ]
+     ],
+     "quiet"
+    ],
+    [
+     "searchKeyword",
+     [
+      "zebra"
+     ],
+     "stale"
+    ],
+    [
+     "addTimelineEntry",
+     [
+      "st/one",
+      {
+       "date": "2030-01-01",
+       "summary": "future-dated event"
+      }
+     ]
+    ],
+    [
+     "searchKeyword",
+     [
+      "zebra"
+     ],
+     "stale"
+    ]
+   ],
+   "results": [
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": [
+      {
+       "slug": "st/one",
+       "stale": false
+      }
+     ]
+    },
+    {
+     "ok": true
+    },
+    {
+     "ok": [
+      {
+       "slug": "st/one",
+       "stale": true
+      }
+     ]
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": null
+    },
+    {
+     "ok": [
+      {
+       "slug": "st/one",
+       "stale": false
+      }
+     ]
+    },
+    {
+     "ok": true
+    },
+    {
+     "ok": [
+      {
+       "slug": "st/one",
+       "stale": true
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

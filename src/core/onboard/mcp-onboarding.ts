@@ -17,9 +17,9 @@ import type { Action, Notice, RenderContext } from '../agent-output.ts';
 import { gbrainPath, type GBrainConfig } from '../config.ts';
 import { configReadiness } from '../readiness.ts';
 import { recallStagesFor } from '../interop-notices.ts';
-import { EMBED_SKIP_FILTER_FRAGMENT } from '../embed-skip.ts';
-import { renderFragment, sqlFragment, type SqlFragment } from '../engine-sql/fragment.ts';
-import { entityTypePredicateSql, resolveEntityTypes, type EntityTypeFilter } from '../schema-pack/entity-types.ts';
+import { resolveEntityTypes } from '../schema-pack/entity-types.ts';
+import type { OnboardSignal } from '../engine-sql/health.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 export const LINK_COVERAGE_MIN = 0.7;
 export const TIMELINE_COVERAGE_MIN = 0.9;
@@ -44,20 +44,8 @@ export interface OnboardCounts {
   entityTypesStatus?: 'resolved' | 'pack_unavailable';
 }
 
-/** The six counts; the three entity counts bind the active pack's entity types per source (#4772, the get_health predicate). */
-function countSql(filter: EntityTypeFilter): Array<{ text: string; params: unknown[] }> {
-  const isEntity = entityTypePredicateSql('p', filter);
-  const entity = (extra: SqlFragment) => renderFragment(sqlFragment`SELECT COUNT(*) AS count FROM pages p WHERE ${isEntity} AND p.deleted_at IS NULL${extra}`);
-  return [
-    { text: `SELECT COUNT(*) AS count FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
-           WHERE cc.embedding IS NULL AND p.deleted_at IS NULL AND ${EMBED_SKIP_FILTER_FRAGMENT}`, params: [] },
-    entity(sqlFragment``),
-    entity(sqlFragment` AND EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)`),
-    entity(sqlFragment` AND EXISTS (SELECT 1 FROM timeline_entries t WHERE t.page_id = p.id)`),
-    { text: `SELECT COUNT(*) AS count FROM takes`, params: [] },
-    { text: `SELECT COUNT(*) AS count FROM pages WHERE deleted_at IS NULL`, params: [] },
-  ];
-}
+/** The six counts, in OnboardCounts order (SQL: engine-sql/health.ts countOnboardSignal; #4772 entity predicate). */
+const COUNT_SIGNALS: readonly OnboardSignal[] = ['stale_chunks', 'entities', 'linked_entities', 'timeline_entities', 'takes', 'pages'];
 const ENTITY_COUNT_INDEXES = new Set([1, 2, 3]);
 
 /** Whether `type` is an entity type in `sourceId` (or brain-wide) under the active pack(s); false when a pack did not load. */
@@ -79,23 +67,24 @@ export async function collectOnboardOpportunities(
 ): Promise<OnboardCounts> {
   const entityTypes = await resolveEntityTypes(engine, null);
   const unavailable = entityTypes.status === 'pack_unavailable';
-  const run = async (sql: { text: string; params: unknown[] }, i: number): Promise<PromiseSettledResult<{ count: string | number }[]>> => {
+  const run = async (kind: OnboardSignal, i: number): Promise<PromiseSettledResult<number>> => {
     if (unavailable && ENTITY_COUNT_INDEXES.has(i)) return { status: 'rejected', reason: new Error('entity types unknown: a schema pack did not load') };
-    return engine.executeRaw<{ count: string | number }>(sql.text, sql.params, { signal })
+    return engine.countOnboardSignal(kind, entityTypes.filter, { signal })
       .then(value => ({ status: 'fulfilled' as const, value }), reason => ({ status: 'rejected' as const, reason }));
   };
-  const statements = countSql(entityTypes.filter);
-  let results: PromiseSettledResult<{ count: string | number }[]>[];
+  let results: PromiseSettledResult<number>[];
   if (between) {
     results = [];
-    for (const [i, sql] of statements.entries()) {
+    for (const [i, kind] of COUNT_SIGNALS.entries()) {
       await between();
-      results.push(signal.aborted ? { status: 'rejected', reason: new Error('onboard count budget exceeded') } : await run(sql, i));
+      results.push(signal.aborted ? { status: 'rejected', reason: new Error('onboard count budget exceeded') } : await run(kind, i));
     }
   } else {
-    results = await Promise.all(statements.map(run));
+    results = await Promise.all(COUNT_SIGNALS.map(run));
   }
-  const n = results.map(r => (r.status === 'fulfilled' ? (r.value.length > 0 ? Number(r.value[0].count) : 0) : null));
+  // A refused engine capability is not a failed count: it propagates instead of reading as a partial result.
+  for (const r of results) if (r.status === 'rejected') rethrowCapabilityRefusal(r.reason);
+  const n = results.map(r => (r.status === 'fulfilled' ? r.value : null));
   const [staleChunks, entities, linkedEntities, timelineEntities, takes, pages] = n;
   const coverage = (part: number | null) => (entities === null || part === null ? null : entities > 0 ? part / entities : 1);
   const checksRan = n.filter(v => v !== null).length;

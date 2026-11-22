@@ -19,6 +19,8 @@ export interface DelegationSnapshot {
   scopes: string[];
   maxConcurrent: number;
   budgetUsdPerDay: string | null;
+  /** The client's stored takes holders list, read fresh with the grant (GST-3058); never stored with the job. */
+  takesHolders?: string[] | null;
   /** Legacy payloads consult any ceiling frozen by in-place grant repair. */
   legacy?: boolean;
 }
@@ -157,5 +159,5 @@ export async function effectiveDelegation(engine: BrainEngine, snapshot: Delegat
     : current.budgetUsdPerDay === null ? snapshot.budgetUsdPerDay
     : String(Math.min(Number(snapshot.budgetUsdPerDay), Number(current.budgetUsdPerDay)));
   return { ...snapshot, tools, slugPrefixes, readSources, scopes,
-    maxConcurrent: Math.min(snapshot.maxConcurrent, current.boundMaxConcurrent), budgetUsdPerDay };
+    maxConcurrent: Math.min(snapshot.maxConcurrent, current.boundMaxConcurrent), budgetUsdPerDay, takesHolders: current.takesHolders };
 }

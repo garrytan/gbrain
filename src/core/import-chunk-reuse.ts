@@ -41,13 +41,7 @@ export async function reuseStoredChunkVectors(
   const reused = new Map<number, KeptChunkRow | null>();
   const target = await embeddingWriteTarget(exec);
   const provenance = embeddingInputContext(target, title, corpusGeneration, into);
-  const rows = await exec.executeRaw<{ chunk_index: number; embedding_input_hash: string | null; contextual_retrieval_mode: string | null; text_only: boolean; unembedded: boolean }>(
-    `SELECT c.chunk_index, c.embedding_input_hash, p.contextual_retrieval_mode,
-        c.embedding_image IS NULL AND c.embedding_multimodal IS NULL AND c.embedded_text_hash = md5(c.chunk_text) AS text_only,
-        c.embedding IS NULL AND c.embedding_image IS NULL AND c.embedding_multimodal IS NULL
-          AND c.embedding_input_hash IS NULL AND c.embedded_text_hash IS NULL AS unembedded
-      FROM content_chunks c JOIN pages p ON p.id = c.page_id
-      WHERE p.source_id = $1 AND p.slug = $2`, [sourceId, slug]);
+  const rows = await exec.getChunkReuseRows(slug, { sourceId });
   if (rows.length === 0) return reused;
   // A page stored under per-chunk synopsis re-embeds every chunk on its next
   // prepared edit: its vectors carry synopses this import does not recompute.

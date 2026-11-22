@@ -37,6 +37,7 @@
  * restores exactly that set.
  */
 import type { BrainEngine } from '../engine.ts';
+import { NOT_CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
 import { OperationError } from '../ops/contract.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { coordinatedDatabaseWrite } from '../persistence/database-write.ts';
@@ -84,7 +85,7 @@ export async function classifyOntologyFacts(db: BrainEngine, sourceIds: string[]
            ${DUPLICATE_SQL('f')} AS duplicate
       FROM facts f
      WHERE f.source_id=ANY($1::text[]) AND f.dimension IS NOT NULL AND f.entity_slug IS NOT NULL AND f.source IS NOT NULL
-       AND (f.row_num IS NOT NULL OR f.source_markdown_slug IS DISTINCT FROM f.source)
+       AND (f.row_num IS NOT NULL OR f.source_markdown_slug IS DISTINCT FROM f.source) AND ${NOT_CONVERSATION_SLOT_SQL}
      ORDER BY f.id`, [sourceIds]);
   return rows.map(row => {
     const [klass, reason] = row.withdrawn ? ['excluded', 'withdrawn'] as const
@@ -153,7 +154,7 @@ export const ontologyFactsRepair: RepairHandler = {
     const { fact, hash, last } = entry as FactItem;
     const restore = (tx: BrainEngine) => tx.executeRaw<{ id: number | string; expired: boolean }>(
       `UPDATE facts f SET row_num=NULL, source_markdown_slug=f.source, expired_at=NULL
-        WHERE f.id=$1 AND f.source_id=$2 AND f.dimension IS NOT NULL
+        WHERE f.id=$1 AND f.source_id=$2 AND f.dimension IS NOT NULL AND ${NOT_CONVERSATION_SLOT_SQL}
           AND f.row_num IS NOT DISTINCT FROM $3::integer AND f.source_markdown_slug IS NOT DISTINCT FROM $4::text
           AND ${EXPIRY_TEXT('f.expired_at')} IS NOT DISTINCT FROM $5::text AND NOT ${DUPLICATE_SQL('f')}
         RETURNING f.id, f.expired_at IS NOT NULL AS expired`,

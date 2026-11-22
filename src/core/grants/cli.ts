@@ -1,4 +1,4 @@
-import { GRANT_PROFILES, GrantError, validatePrincipalGrant, type GrantPatch, type GrantProfileId, type PrivatePagesGrant } from './model.ts';
+import { GRANT_PROFILES, GrantError, validatePrincipalGrant, type GrantPatch, type GrantProfileId, type PrivateFactsGrant, type PrivatePagesGrant } from './model.ts';
 import { parseScopeString, assertAllowedScopes } from '../scope.ts';
 import { isValidHolder } from '../takes-fence.ts';
 
@@ -67,6 +67,8 @@ function parseRescopeGrantFlags(args: string[]): RescopeGrantArgs {
         result.expectedRevision = Number(value);
         break;
       case '--private-pages': result.patch.privatePages = parsePrivatePagesFlag(value); break;
+      case '--read-shared': result.patch.readShared = parseReadSharedFlag(value); break;
+      case '--private-facts': result.patch.privateFacts = parsePrivateFactsFlag(value); break;
       default: throw new GrantError('invalid_grant', `Unknown flag: ${flag}`);
     }
   }
@@ -74,11 +76,28 @@ function parseRescopeGrantFlags(args: string[]): RescopeGrantArgs {
   return result;
 }
 
+/**
+ * GST-2898: `--read-shared on|off`, also read every shared source, now and later. A required value, so the rescope
+ * parser (which takes the next argument for every non-boolean flag) never misreads what follows.
+ */
+export function parseReadSharedFlag(value: string): boolean {
+  if (value === 'on') return true;
+  if (value === 'off') return false;
+  throw new GrantError('invalid_grant', '--read-shared must be on or off');
+}
+
 /** `--private-pages granted-sources|none` (GBRA-156). */
 export function parsePrivatePagesFlag(value: string): PrivatePagesGrant {
   if (value === 'granted-sources') return 'granted_sources';
   if (value === 'none') return 'none';
   throw new GrantError('invalid_grant', '--private-pages must be granted-sources or none', ['private_pages_invalid']);
+}
+
+/** `--private-facts granted-sources|none` (GBRA-575): local CLI only; no MCP operation or admin HTTP edit parses it. */
+export function parsePrivateFactsFlag(value: string): PrivateFactsGrant {
+  if (value === 'granted-sources') return 'granted_sources';
+  if (value === 'none') return 'none';
+  throw new GrantError('invalid_grant', '--private-facts must be granted-sources or none', ['private_facts_invalid']);
 }
 
 /**
@@ -190,7 +209,7 @@ export function parseClientRescopeArgs(clientId: string, args: string[]): Rescop
   const result = parseRescopeGrantFlags(legacy);
   if (sources !== undefined) {
     validatePrincipalGrant({
-      principal: { kind: 'oauth_client', id: clientId }, scopes: [], allowedOperations: null, takesHolders: null, privatePages: 'none', revision: 0,
+      principal: { kind: 'oauth_client', id: clientId }, scopes: [], allowedOperations: null, takesHolders: null, privatePages: 'none', privateFacts: 'none', revision: 0,
       shape: 'unified', drift: [], permissionsMalformed: false,
       sources: sources.length === 0 ? { kind: 'none' } : { kind: 'federated', writeSource: sources[0], readSources: sources },
     }, { operationNames: new Set() });

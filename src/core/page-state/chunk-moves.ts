@@ -78,14 +78,6 @@ export function planImportChunkWrites(fresh: readonly ChunkInput[], kept: Readon
 }
 
 /** One UPDATE per wave; a landed row takes its new chunk's span, a parked row keeps its own until it lands. */
-export async function applyMoveWaves(tx: Pick<BrainEngine, 'executeRaw'>, pageId: number, waves: readonly ChunkMove[][]): Promise<void> {
-  for (const wave of waves) {
-    await tx.executeRaw(`UPDATE content_chunks c SET chunk_index = m.target,
-        projected_byte_start = CASE WHEN m.target < 0 THEN c.projected_byte_start ELSE m.byte_start END,
-        projected_byte_end = CASE WHEN m.target < 0 THEN c.projected_byte_end ELSE m.byte_end END
-      FROM unnest($2::int[], $3::int[], $4::bigint[], $5::bigint[]) AS m(id, target, byte_start, byte_end)
-      WHERE c.page_id = $1 AND c.id = m.id`,
-    [pageId, wave.map(move => move.id), wave.map(move => move.to),
-      wave.map(move => move.projected_byte_start ?? null), wave.map(move => move.projected_byte_end ?? null)]);
-  }
+export async function applyMoveWaves(tx: Pick<BrainEngine, 'moveChunkIndexes'>, pageId: number, waves: readonly ChunkMove[][]): Promise<void> {
+  await tx.moveChunkIndexes(pageId, waves);
 }

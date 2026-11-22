@@ -1003,6 +1003,10 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // reads them, and grant reads treat a missing column as 'none'.
   'access_tokens.private_pages',
   'oauth_clients.private_pages',
+  // GBRA-575 access_tokens/oauth_clients.private_facts (migration
+  // principal_private_facts): the same shape and rationale as private_pages.
+  'access_tokens.private_facts',
+  'oauth_clients.private_facts',
   // T7 — search_telemetry rank-1 drift columns (migration v111). search_telemetry
   // is created entirely by migration v57 (not in the schema blob), so the v57+v111
   // chain handles fresh + upgrade; no CREATE INDEX references these columns, so
@@ -1262,6 +1266,10 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // check and bindCredential read it, all after migrations have run.
   'access_tokens.reads_unscoped',
   'oauth_clients.reads_unscoped',
+  // GST-2898 (migration token_read_shared) - the read-shared switch stamp. Same posture as reads_unscoped: absent from
+  // both schema blobs, so no index or function references it; the verifiers read it through to_jsonb after migrations.
+  'access_tokens.read_shared_revision',
+  'oauth_clients.read_shared_revision',
   // Wakeshift PR 2 (migration v313) - the persistence_requests row a write.settled watch points at. Same posture as
   // v301: wake_subscriptions exists only through migrations (v290), so no index or function in either blob references it.
   'wake_subscriptions.target_ref',
@@ -1305,6 +1313,9 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   'persistence_consumers.capabilities',
   // GST-1582 (v291): migration-only like the PR B columns above, for the same reason.
   'persistence_requests.deferred_import_from',
+  // GST-3127 (v330): entity_identity_reviews is a migration-only table (v325; no CREATE TABLE in the schema blob)
+  // and no blob index, view or trigger reads evidence, so there is no forward reference; the chain adds it.
+  'entity_identity_reviews.evidence',
 ]);
 
 test('every ALTER TABLE ADD COLUMN in MIGRATIONS is covered by applyForwardReferenceBootstrap (column-only class)', async () => {

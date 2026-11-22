@@ -88,6 +88,13 @@ function makeStubEngine(): { engine: BrainEngine; calls: RecordedCall[]; getTxCo
       calls.push({ method: 'executeRaw', onTx: this.isTx, sql, params });
       return [];
     },
+    async readTransactionSettings(names: readonly string[]) {
+      calls.push({ method: 'readTransactionSettings', onTx: this.isTx, params: [...names] });
+      return names.map(() => null);
+    },
+    async applyTransactionSettings(names: readonly string[], values: readonly string[]) {
+      calls.push({ method: 'applyTransactionSettings', onTx: this.isTx, params: [...names, ...values] });
+    },
     async getPage(_slug: string, _opts?: unknown) {
       calls.push({ method: 'getPage', onTx: this.isTx });
       return null; // desired slug is free — fast path, no disambiguation

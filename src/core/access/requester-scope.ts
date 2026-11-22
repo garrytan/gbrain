@@ -121,13 +121,23 @@ export function requesterScopeGate(op: Pick<Operation, 'name' | 'mutating'> | un
     return { state: 'not_enforced', connection: c.handle, refuses_at: null, fix: fixFor(c, transport),
       message: `This brain serves several people (${why(serves)}) and ${c.handle} is bound to nobody, so it reads every page no rule restricts for whoever is asking. ${alternatives(c)}` };
   }
-  const old = since !== null && (created === null || created < since);
+  const old = mintedBeforeServing(created, since, auth?.principal?.kind === 'legacy_token');
   if (old && refusesAt !== null && now < refusesAt) {
     const date = new Date(refusesAt * 1000).toISOString();
     return { state: 'grace', connection: c.handle, refuses_at: date, fix: fixFor(c, transport),
       message: `This brain serves several people (${why(serves)}) and ${c.handle} is bound to nobody. From ${date} its reads are refused (requester_scope_required). ${alternatives(c)}` };
   }
   throw requesterScopeRequired(op!.name, c, serves, transport, old ? 'grace_ended' : since === null ? 'since_unknown' : 'created_after');
+}
+
+/**
+ * Whether a credential predates the switch to several people, so it gets the grace. GST-3199: only a legacy token's
+ * created_at (kept to the millisecond) is compared against the sub-second access.serves_since; every other credential,
+ * an OAuth client's whole-second client_id_issued_at included, is compared against its whole second, as before v329.
+ */
+function mintedBeforeServing(created: number | null, since: number | null, subSecond: boolean): boolean {
+  if (since === null) return false;
+  return created === null || created < (subSecond ? since : Math.floor(since));
 }
 
 /** Whether requesterScopeGate would refuse a read from this connection, for the ops it does not gate. */
@@ -269,15 +279,15 @@ export async function unscopedConnections(engine: Pick<BrainEngine, 'executeRaw'
   ]);
   const refusesAt = serves.since === null ? null : serves.since + GRACE_SECONDS;
   const now = Math.floor(nowMs / 1000);
-  const entry = (c: Connection, row: { created: unknown; reads_unscoped: unknown }): UnscopedConnection => {
+  const entry = (c: Connection, row: { created: unknown; reads_unscoped: unknown }, subSecond: boolean): UnscopedConnection => {
     const { readsUnscoped, createdAt } = credentialScopeFields(row.reads_unscoped, row.created);
-    const old = serves.since !== null && (createdAt === null || createdAt < serves.since);
+    const old = mintedBeforeServing(createdAt, serves.since, subSecond);
     const state = readsUnscoped ? 'reads_unscoped' : !serves.enforce ? 'not_enforced' : old && refusesAt !== null && now < refusesAt ? 'grace' : 'refused';
     return { connection: c.handle, state, refuses_at: state === 'grace' ? new Date(refusesAt! * 1000).toISOString() : null, argv: c.argv };
   };
   return { serves, connections: [
-    ...tokens.map(t => entry(connectionOf({ principal: { kind: 'legacy_token', id: t.id }, clientName: t.name }), t)),
-    ...clients.map(c => entry(connectionOf({ principal: { kind: 'oauth_client', id: c.id } }), c)),
+    ...tokens.map(t => entry(connectionOf({ principal: { kind: 'legacy_token', id: t.id }, clientName: t.name }), t, true)),
+    ...clients.map(c => entry(connectionOf({ principal: { kind: 'oauth_client', id: c.id } }), c, false)),
   ] };
 }
 

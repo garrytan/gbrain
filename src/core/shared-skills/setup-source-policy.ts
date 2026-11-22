@@ -7,7 +7,7 @@ export const SHARED_SKILLS_OPT_OUT_DOCS = 'docs/guides/shared-brain-skills.md#ch
 
 export type SharedSkillSourcePolicy =
   | { mode: 'content'; reason?: never }
-  | { mode: 'explicit_pack_required' | 'preserve_files'; reason: string };
+  | { mode: 'explicit_pack_required' | 'preserve_files'; reason: string; unverified?: true };
 
 export async function sharedSkillSourcePolicy(engine: BrainEngine, sourceId: string): Promise<SharedSkillSourcePolicy> {
   const company = await getCompanyBrainProfile(engine, sourceId);
@@ -34,7 +34,7 @@ export async function sharedSkillSourcePolicy(engine: BrainEngine, sourceId: str
 
 /** The policy as the migration applies it: a policy that cannot be verified preserves files. */
 export async function sharedSkillSourcePolicyOrPreserve(engine: BrainEngine, sourceId: string): Promise<SharedSkillSourcePolicy> {
-  return sharedSkillSourcePolicy(engine, sourceId).catch(error => ({ mode: 'preserve_files' as const,
+  return sharedSkillSourcePolicy(engine, sourceId).catch(error => ({ mode: 'preserve_files' as const, unverified: true as const,
     reason: error instanceof OperationError ? `${error.code}: ${error.message}` : 'profile_incompatible: the source writeback policy could not be verified; no repository changes were attempted.' }));
 }
 

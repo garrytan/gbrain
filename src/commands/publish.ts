@@ -125,6 +125,17 @@ const CSS = `
   a:hover { text-decoration: underline; }
   strong { font-weight: 600; }
   code { background: var(--code-bg); padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem; margin: 1rem 0; overflow-x: auto; line-height: 1.5; }
+  pre code { background: none; padding: 0; border-radius: 0; font-size: 0.85em; }
+  .code-block { position: relative; margin: 1rem 0; }
+  .code-block pre { margin: 0; padding-right: 4.5rem; }
+  .copy-btn {
+    position: absolute; top: 0.5rem; right: 0.5rem;
+    font: inherit; font-size: 12px; line-height: 1; padding: 0.35rem 0.6rem;
+    color: var(--muted); background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
+  }
+  .copy-btn:hover, .copy-btn:focus-visible { color: var(--fg); border-color: var(--accent); }
+  .copy-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
   table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 14px; }
   th, td { padding: 8px 12px; border: 1px solid var(--border); text-align: left; }
@@ -210,7 +221,7 @@ async function unlock(pw, remember) {
       try { localStorage.setItem(STORAGE_KEY, pw); } catch {}
     }
     document.getElementById('pw-overlay').remove();
-    document.getElementById('content').innerHTML = marked.parse(result);
+    renderPage(result);
     return true;
   }
   return false;
@@ -245,6 +256,62 @@ async function unlock(pw, remember) {
     document.getElementById('pw-error').style.display = 'none';
   });
 })();
+`;
+
+// Runs in the published page. Renders markdown through the sanitizer, then adds
+// a copy button to every code block. The buttons are built with DOM calls and
+// wired with addEventListener after sanitizing, so no page content can reach
+// them and the sanitizer never has to allow an inline handler.
+const RENDER_JS = `
+function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+  return new Promise((resolve, reject) => {
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.appendChild(area);
+    area.select();
+    let copied = false;
+    try { copied = document.execCommand('copy'); } catch {}
+    area.remove();
+    copied ? resolve() : reject(new Error('copy failed'));
+  });
+}
+
+function addCopyButtons(root) {
+  for (const pre of root.querySelectorAll('pre')) {
+    const code = pre.querySelector('code');
+    if (!code) continue;
+    const block = document.createElement('div');
+    block.className = 'code-block';
+    pre.replaceWith(block);
+    block.appendChild(pre);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'copy-btn';
+    const show = (text, label) => { button.textContent = text; button.setAttribute('aria-label', label); };
+    show('Copy', 'Copy code block');
+    let reset;
+    button.addEventListener('click', () => {
+      copyText(code.textContent.replace(/\\n$/, '')).then(
+        () => show('Copied', 'Copied'),
+        () => show('Select and copy', 'Copy failed, select the text and copy it'),
+      ).finally(() => {
+        clearTimeout(reset);
+        reset = setTimeout(() => show('Copy', 'Copy code block'), 1500);
+      });
+    });
+    block.appendChild(button);
+  }
+}
+
+function renderPage(markdown) {
+  const content = document.getElementById('content');
+  content.innerHTML = sanitizeHtml(marked.parse(markdown));
+  addCopyButtons(content);
+}
 `;
 
 function escapeHtml(str: string): string {
@@ -298,13 +365,9 @@ export function generateHtml({ title, markdown, encrypted }: GenerateHtmlOptions
   `;
 
   const contentScript = encrypted
-    ? `<script>${sanitizeScript}${DECRYPT_JS.replace(
-        'document.getElementById(\'content\').innerHTML = marked.parse(result)',
-        'document.getElementById(\'content\').innerHTML = sanitizeHtml(marked.parse(result))'
-      )}<\/script>`
-    : `<script>${sanitizeScript}
-        const md = ${JSON.stringify(markdown)};
-        document.getElementById('content').innerHTML = sanitizeHtml(marked.parse(md));
+    ? `<script>${sanitizeScript}${RENDER_JS}${DECRYPT_JS}<\/script>`
+    : `<script>${sanitizeScript}${RENDER_JS}
+        renderPage(${JSON.stringify(markdown).replace(/</g, '\\u003c')});
       <\/script>`;
 
   return `<!DOCTYPE html>

@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { GBrainConfig } from '../../src/core/config.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
+import { sqlEngineKind } from '../../src/core/sql-engine-kind.ts';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { disposePersistenceConsumer, startPersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { installFaultHook, type FaultDetail, type FaultPoint } from '../../src/core/persistence/fault-points.ts';
@@ -94,7 +95,7 @@ export async function settlePending(world: World, model: ReferenceModel): Promis
 }
 
 /** Finish a schedule: drain, check drained invariants, prove a fresh write still admits, and drain that write's effects. */
-export async function finish(world: World, model: ReferenceModel, label: string, drainMs: number = DRAIN_BOUND_MS[world.engine.kind]): Promise<void> {
+export async function finish(world: World, model: ReferenceModel, label: string, drainMs: number = DRAIN_BOUND_MS[sqlEngineKind(world.engine.kind, 'crash robot')]): Promise<void> {
   const drained = await drain(world.engine, world, drainMs);
   if (!drained) model.violate({ class: 'wedge', detail: `${label}: requests or effects did not drain within ${drainMs / 1000} s` });
   await settlePending(world, model);
@@ -490,7 +491,7 @@ export async function robotWorker(role: 'count' | 'run' | 'recover', config: Rob
     model.beginStep(inFlight.length > 1);
     model.allowInFlight(inFlight); model.relaxInFlight(inFlight);
     await model.checkGlobal('after SIGKILL, before recovery');
-    const bound = DRAIN_BOUND_MS[engine.kind];
+    const bound = DRAIN_BOUND_MS[sqlEngineKind(engine.kind, 'crash robot')];
     const drained = await drain(engine, world, bound);
     if (!drained) model.violate({ class: 'wedge', detail: `recovery: requests or effects did not drain within ${bound / 1000} s after restart` });
     await model.checkDrained('recovered');

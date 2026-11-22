@@ -60,11 +60,19 @@ gbrain setup claude-code --shape both --notes ~/notes --docs ~/acme-example/docs
   files setup prints the import command instead (`gbrain import DIR --calls --prefix
   company/calls --no-embed --source company`). It needs the company part on this brain,
   so it does not go with `--team`.
-- **Who reads the call pages.** They carry no readers of their own, so whoever can read
-  the `company` source reads them, and no one else. Setup prints who that is, for example
-  `readable by: everyone who can read source company (this brain serves one person)`, or
-  on a brain that serves several people, the members the source's access rules allow
-  (`gbrain access who-can-read <slug> --source company` shows the same). These are not
+- **Who reads the call pages.** On a brain that serves one person they carry no readers
+  of their own, so whoever can read the `company` source reads them, and setup prints
+  `readable by: everyone who can read source company (this brain serves one person)`.
+  On a brain that serves several people, `gbrain import --calls` keeps each call to the
+  brain owner plus the teammates its header names (`readable_by`), so a member reads only
+  the calls they were on, and setup prints one line per call with its readers and any
+  names it could not match. When the owner's own connections can't read such pages yet,
+  the import stays open as before and prints `calls_not_scoped` with the command that
+  fixes it ([repair guide](repair.md#calls-not-scoped)); `--readers source` keeps calls
+  open on purpose. Other keys read the `company` source only when their grant names it,
+  and `company` stays out of default search. With `--labelled-only`,
+  setup adds one `company/` rule, so the line names that rule's readers (the owner and the
+  members) instead. These are not
   your agent conversations: those go to `conversations/` through the
   [conversation archive](conversation-archive.md), which `--transcripts` never touches.
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Durable-flush guard (#5595, #5475; docs/TESTING.md#durable-flush-guard).
+ * Durable-flush guard (#5595, #5475; docs/ci-guards.md#durable-flush-guard).
  *
  * Windows `FlushFileBuffers` needs write access and Windows has no directory
  * flush, so the POSIX idiom `fsyncSync(openSync(path, 'r'))` fails with EPERM
@@ -22,7 +22,7 @@ import { join, relative } from 'node:path';
 import ts from 'typescript';
 
 const ROOT = process.env.GBRAIN_GUARD_ROOT ?? join(import.meta.dir, '..');
-const ANCHOR = 'docs/TESTING.md#durable-flush-guard';
+const ANCHOR = 'docs/ci-guards.md#durable-flush-guard';
 const HELPER = 'src/core/fs-durable.ts';
 
 /** Files allowed to keep a read-only-handle flush until they migrate. Each entry names its reason; a stale entry fails. */

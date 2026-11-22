@@ -10,7 +10,7 @@ import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { REVISION_BACKFILL_PENDING, type PageSnapshot } from '../page-state/types.ts';
 import { revisionBackfillExhausted, REVISION_BACKFILL_RESUME_COMMAND } from '../page-state/revision-backfill-schema.ts';
-import { isWriteTargetContained } from '../path-confine.ts';
+import { isWriteTargetContained, relativeEscapesRoot } from '../path-confine.ts';
 import { recordedPathFromFileUri, scannerSlugRootMode, scannerSourcePath } from '../write-through.ts';
 import { absentCanonicalPath, findLiveFileClaimants, recordedReconcilePath, type FileClaimTarget } from './file-claims.ts';
 import { wholeBodySnapshot } from './segmented-apply.ts';
@@ -109,7 +109,7 @@ export function canonicalDeletionState(root: string, path: string): 'in_head' | 
   if (!head.ok) return head.reason === 'exit' && head.status === 1 ? 'gone' : 'unknown';
   let repoPath: string;
   try { repoPath = relative(realpathSync(top.stdout.toString('utf8').trim()), absentCanonicalPath(path)).split(sep).join('/'); } catch { return 'unknown'; }
-  if (!repoPath || repoPath.startsWith('..')) return 'unknown';
+  if (!repoPath || relativeEscapesRoot(repoPath)) return 'unknown';
   const listed = hardenedGitSync(root, ['ls-tree', '-z', '--full-tree', 'HEAD', '--', repoPath], limits);
   if (!listed.ok) return 'unknown';
   return listed.stdout.toString('utf8').split('\0').some(entry => entry.split('\t')[1] === repoPath) ? 'in_head' : 'gone';

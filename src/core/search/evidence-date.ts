@@ -7,6 +7,9 @@
  *
  *   page block:  [observed 2026-03-05]
  *   fact:        [observed unknown; valid 2026-03-01 to unknown]
+ *   fact, asked about one date (GBRA-574 B3, the query facts block):
+ *                [observed 2026-06-30; valid 2026-02-15 to unknown; told after 2026-04-01]
+ *                [observed unknown; valid 2026-03-01 to unknown; learn date unknown]
  *
  * Each date is YYYY-MM-DD or the literal `unknown`. `observed` is when the
  * source text was written or said (date grounding's observation time,
@@ -72,18 +75,23 @@ const WRITE_TIME_DEFAULT_MS = 60_000;
  * came from, when the caller supplies it. `valid FROM` is the fact's
  * valid_from, except a valid_from that only records the write time (the
  * default when `remember` gets no date) renders `unknown`: the header never
- * presents when a fact was written as when it became true.
+ * presents when a fact was written as when it became true. With `askedDate`
+ * (the one day a question names, YYYY-MM-DD), a fact said after it ends
+ * `; told after <askedDate>` and one whose saying date is unknown ends
+ * `; learn date unknown`, so neither reads as known on that day.
  */
 export function factDateHeader(
   fact: { valid_from?: Date | string | null; valid_until?: Date | string | null; created_at?: Date | string | null },
   timeZone?: string | null,
   observed?: string | null,
+  askedDate?: string | null,
 ): string {
   const writeTimeDefault = fact.valid_from && fact.created_at
     && Math.abs(new Date(fact.valid_from).getTime() - new Date(fact.created_at).getTime()) < WRITE_TIME_DEFAULT_MS;
   const from = (writeTimeDefault ? null : formatBrainDay(fact.valid_from, timeZone)) ?? UNKNOWN_DATE;
   const until = formatBrainDay(fact.valid_until, timeZone) ?? UNKNOWN_DATE;
-  return `[observed ${observed ?? UNKNOWN_DATE}; valid ${from} to ${until}]`;
+  const told = !askedDate ? '' : !observed ? '; learn date unknown' : observed > askedDate ? `; told after ${askedDate}` : '';
+  return `[observed ${observed ?? UNKNOWN_DATE}; valid ${from} to ${until}${told}]`;
 }
 
 /**

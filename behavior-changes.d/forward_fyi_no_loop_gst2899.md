@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+A forwarded email whose own note asks nothing ("FYI, see below.") no longer opens a waiting-on-them loop just because the forwarded message contains a question. Since #8941 a forward keeps its whole body, and the loop detector read a question mark anywhere in it as your ask; it now reads only the note above the forward separator (Gmail's "Forwarded message" line or Apple Mail's "Begin forwarded message:"). The same rule applies to mail sent to you, so your "Thanks!" to someone's FYI forward counts as the reply again. A forward whose note does ask ("Can you take this one?") still opens a loop, and forwards still keep their full content in the brain. A loop that opened this way before the upgrade stays open until the other person replies or you close it yourself with gbrain loops drop <id> (gbrain waiting lists it).

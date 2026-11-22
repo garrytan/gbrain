@@ -82,6 +82,20 @@ returns the rendered bullet, and editing or deleting that bullet in the page's
 Timeline section through `edit_page` (with `expected_revision`) refreshes or
 removes its row, because the page is the system of record for timeline rows.
 
+<a id="remote-writes-private-facts"></a>
+## Remote writes and private fact rows
+
+A remote `put_page` never deletes a page's private Facts rows or rewords their claims, the brain owner's included:
+a stored private row its content leaves out comes back, a row it rewords is kept beside the new text, and a row written
+with the same number and claim takes the other cells it writes. So a writer that cannot see those rows cannot lose them,
+whichever view it read, unless either Facts fence fails to parse cleanly: then nothing is merged, rows the content leaves
+out can be lost, and the server logs a warning. The owner withdraws or replaces a claim by naming its row: `recall`
+with `entity: <slug>` and `source_id` looks up the facts filed under that entity with their ids,
+`forget_fact` withdraws one along with every row of that entity stating the same claim, and a `put_page` that
+adds a new `private` row with a different statement adds its replacement. `forget_fact` refuses a fact on or
+about a private page and a row more trusted than remote writes; for those, use the local CLI (`gbrain forget <id>`),
+which also writes a page as given.
+
 <a id="large-pages"></a>
 ## Large pages
 
@@ -397,6 +411,26 @@ candidate passages; expansion receives the query; synthesis and LLM extraction
 receive the relevant retrieved content or source text. Self-hosted providers have
 their own deployment boundary. The connected agent's own model also receives
 whatever memory its harness includes in context, even on a keyless GBrain setup.
+
+Access designations decide who reads a page, not which configured providers
+process it, and they do not exclude a page from processing that is turned on.
+A page with `readable_by`, a folder rule or `visibility: private` is embedded
+like every other page, so the configured embedding provider receives its text.
+Private facts and takes are embedded on their own, so the provider receives
+their text too. When contextual retrieval runs at the synopsis tier, the chat
+model also receives the page's title and text (with private fact rows and takes
+removed). GBrain cannot tell a local endpoint from a remote one, because a
+recipe's base URL can point anywhere. A self-hosted embedding provider (and
+synopsis model) on hardware you control keeps restricted text in house for
+embedding and contextual retrieval only. Every other enabled provider, such as
+a reranker or a chat model, can still receive restricted text, so self-host or
+turn off each one that must not. The decision provider is stricter by default:
+while `decide.egress.private` is `deny` (the default), System One calls to
+TypeSafe withhold restricted pages, private facts and conversation text, except
+for the reranking slot and the fact and conversation items of a slot turned on
+by the key-aware default. An `llm:` decision provider, or setting
+`decide.egress.private allow`, removes that guard.
+
 Reporting back through Wakeshift (off by default, owner opt-in) sends a watched
 job's, write request's or cron's id, status and times (and a removed member's
 hashed id to forget), never page text, titles or slugs; see
@@ -441,13 +475,27 @@ in a form the scanner does not match (split it, or describe it) or move the
 mention after the real fence. Pinned by `test/fence-marker-code-context.test.ts`
 ("remote privacy boundary" and "remote page replacement").
 
+<a id="full-backup"></a>
 Markdown export is a portable view of pages, **not a full database backup**.
 DB-only facts and pages (extract receipts included), revision history, the belief ledger (what the brain
 had recorded, and when; `gbrain beliefs`), withdrawal state, jobs, settings,
-and authentication records may not be recoverable from Markdown. Use the engine's
-full backup/restore path and verify a restore into a separate location. Treat
-database backups as sensitive. See the [system-of-record contract](../architecture/system-of-record.md)
-and [isolated local backup guide](in-agent-setup.md#6-back-up-the-complete-local-database).
+and authentication records may not be recoverable from Markdown. On a brain with
+several sources or members, an import of an export puts every page in one source
+with no members, tokens or facts, so a page from a personal source comes back
+readable by everyone in that source. Use the engine's full backup/restore path
+and verify a restore into a separate location:
+
+- **PGLite:** `gbrain backup create --output <absolute path>`, restored with
+  `gbrain backup restore` ([isolated local backup guide](in-agent-setup.md#6-back-up-the-complete-local-database)).
+- **Postgres:** a dump of the brain's database, `pg_dump --format=custom --file <dump> --dbname <database>`,
+  restored into a new, empty database with `pg_restore --no-owner --dbname <new database> <dump>`;
+  `gbrain init --url <new database>` under a separate `GBRAIN_HOME` then opens it with its
+  sources, members, tokens, folder rules and facts. `gbrain backup create` refuses on Postgres.
+  The restored brain's sources still name the original's content folders, so keep
+  only one of the two brains writing to them. See [embedding migrations](../embedding-migrations.md)
+  for a quiesced dump with service files that keep the password off the command line.
+
+Treat database backups as sensitive. See the [system-of-record contract](../architecture/system-of-record.md).
 
 <a id="purge"></a>
 ## Expire versus purge
@@ -573,6 +621,8 @@ An edited file imports normally. Its response carries the same store-by-store
 the purged page's facts. A write refused because it carries purged content,
 or accepted as a no-op after its purged rows were dropped, keeps no copy of
 that content in its stored write request.
+
+The automatic purge of expired deleted pages does the same for the write journal on a brain without a write owner, in the transaction that deletes the page: the page's timeline entry text, edit diffs and stored write intents are removed from its journal entries, including entries written while the brain had a write owner. A write still pending keeps its intent and then fails on the missing page. Other pages' journal entries that quote the purged text are not swept. An explicit `gbrain delete --purge` now also removes the diff kept in the page's compacted edit receipts.
 
 An owner purge held to keep a derived page private (`derived_origin_parked`)
 stays owed until its page is removed or restored: whichever purge later removes

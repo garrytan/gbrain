@@ -81,6 +81,9 @@ function buildMockEngine(state: Partial<MockEngineState>): { engine: BrainEngine
     },
     // The take un-resolution runs in a maintenance transaction; the mock is its own transaction engine.
     async transaction<T>(fn: (tx: BrainEngine) => Promise<T>): Promise<T> { return fn(engine); },
+    // The maintenance attribution reads and sets transaction settings through typed methods; nothing is set yet.
+    async readTransactionSettings(names: readonly string[]) { return names.map(() => null); },
+    async applyTransactionSettings() {},
   } as unknown as BrainEngine;
   return { engine, sqls };
 }

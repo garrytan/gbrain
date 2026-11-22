@@ -16,7 +16,7 @@
  *
  * All-off: every helper is a no-op when no slot is on or shadow.
  */
-import type { PGLiteEngine } from '../../core/pglite-engine.ts';
+import type { BrainEngine } from '../../core/engine.ts';
 import type { HybridSearchMeta } from '../../core/types.ts';
 import type { ReaderAnswer } from './reader.ts';
 import { EVAL_POOL_DEPTH_MAX, setEvalPoolDepth } from '../../core/search/eval-pool-depth.ts';
@@ -70,7 +70,7 @@ export function prepareLmeDecide<Q extends { question_id: string }>(opts: LmeDec
 }
 
 /** decide_spend totals before a question's search (null when no arm is active). */
-export async function lmeSpendBefore(engine: PGLiteEngine, run: DecideEvalRun | null | undefined): Promise<DecideSpend | null> {
+export async function lmeSpendBefore(engine: BrainEngine, run: DecideEvalRun | null | undefined): Promise<DecideSpend | null> {
   return run ? decideSpendTotals(engine) : null;
 }
 
@@ -80,7 +80,7 @@ export function lmeDecideSearchOpts(run: DecideEvalRun | null | undefined): { de
 }
 
 /** The row's `decide` field (absent on all-off rows). */
-export async function lmeDecideRow(engine: PGLiteEngine, run: DecideEvalRun | null | undefined, meta: HybridSearchMeta | undefined, before: DecideSpend | null): Promise<Record<string, unknown>> {
+export async function lmeDecideRow(engine: BrainEngine, run: DecideEvalRun | null | undefined, meta: HybridSearchMeta | undefined, before: DecideSpend | null): Promise<Record<string, unknown>> {
   if (!run || !before) return {};
   const receipt = decideRowReceipt(run, meta?.decide, spendDelta(before, await decideSpendTotals(engine)));
   return { decide: { ...receipt, ...(meta?.answerability ? { answerability: meta.answerability } : {}), ...(lmeAbstention(run, meta) ? { reader_abstained: true } : {}) } };

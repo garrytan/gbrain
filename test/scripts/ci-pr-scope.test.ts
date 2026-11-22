@@ -14,7 +14,7 @@ const load = (name: string) => loadYaml(readFileSync(join(root, '.github/workflo
 // A job gated by Trunk Dynamic CI reads needs['dynamic-ci']: no verdict (the filter skipped off pull requests) runs it.
 const evaluate = (expression: string, context: Record<string, unknown>) =>
   runInNewContext(expression.replace(/^\$\{\{\s*|\s*\}\}$/g, '').replace(/needs\.dynamic-ci\.outputs\.([\w-]+)/g, "needs['dynamic-ci'].outputs['$1']"),
-    { fromJSON: JSON.parse, cancelled: () => false, needs: { 'dynamic-ci': { outputs: {} } }, ...context }, { timeout: 100 });
+    { fromJSON: JSON.parse, cancelled: () => false, needs: { 'dynamic-ci': { outputs: {} }, changes: { result: 'success', outputs: {} } }, ...context }, { timeout: 100 });
 
 function cells(job: Job, context: Record<string, unknown>): string[] {
   if (job.if && !evaluate(job.if, context)) return [];
@@ -30,13 +30,16 @@ const native = load('native-locks.yml').jobs;
 /** The primary (pinned) Bun and the oldest supported one: matrices run every supported version (one cell today: the floor is the primary). */
 const PRIMARY_BUN = '1.4.4';
 const SUPPORTED_BUN = [...new Set([MINIMUM_BUN_VERSION, PRIMARY_BUN])];
-const nativeCells = (scope: string) => ({
-  native: cells(native.native, { inputs: { scope } }),
-  musl: cells(native.musl, { inputs: { scope } }),
-  console: cells(native['windows-backup-console'], { inputs: { scope } }),
-  dotnet: cells(native['windows-backup-dotnet'], { inputs: { scope } }),
-  openclaw: evaluate(native.openclaw.if!, { inputs: { scope } }),
-});
+const nativeCells = (scope: string, event_name = 'push') => {
+  const context = { github: { event_name }, inputs: { scope } };
+  return {
+    native: cells(native.native, context),
+    musl: cells(native.musl, context),
+    console: cells(native['windows-backup-console'], context),
+    dotnet: cells(native['windows-backup-dotnet'], context),
+    openclaw: evaluate(native.openclaw.if!, context),
+  };
+};
 
 function classify(files: string): string {
   const result = spawnSync('bash', [join(root, 'scripts/ci-native-scope.sh')], { input: files, encoding: 'utf8' });
@@ -46,17 +49,20 @@ function classify(files: string): string {
 
 describe('pull-request CI scope', () => {
   test('pushes, schedules and manual runs keep every Bun version on every native target', () => {
-    const full = nativeCells('full');
-    expect(full.native).toHaveLength(6 * SUPPORTED_BUN.length);
-    expect(full.musl).toHaveLength(2 * SUPPORTED_BUN.length);
-    expect(full.console).toHaveLength(2 * SUPPORTED_BUN.length);
-    expect(full.dotnet).toHaveLength(2 * SUPPORTED_BUN.length);
-    expect(full.openclaw).toBe(true);
+    for (const event_name of ['push', 'schedule', 'workflow_dispatch', 'merge_group']) {
+      const full = nativeCells('full', event_name);
+      expect(full.native).toHaveLength(6 * SUPPORTED_BUN.length);
+      expect(full.musl).toHaveLength(2 * SUPPORTED_BUN.length);
+      expect(full.console).toHaveLength(2 * SUPPORTED_BUN.length);
+      expect(full.dotnet).toHaveLength(2 * SUPPORTED_BUN.length);
+      expect(full.openclaw).toBe(true);
+    }
   });
 
-  test('a pull request touching native paths runs every target on the primary Bun version', () => {
-    const primary = nativeCells('primary');
-    expect(primary.native.sort()).toEqual(['darwin-arm64', 'darwin-x64', 'linux-arm64-glibc', 'linux-x64-glibc', 'win32-arm64', 'win32-x64'].map(target => `1.4.4/${target}`));
+  // macOS cells run in the full run, not on a pull request (docs/ci-event-parity.md#macos-runners).
+  test('a pull request touching native paths runs every non-macOS target on the primary Bun version', () => {
+    const primary = nativeCells('primary', 'pull_request');
+    expect(primary.native.sort()).toEqual(['linux-arm64-glibc', 'linux-x64-glibc', 'win32-arm64', 'win32-x64'].map(target => `1.4.4/${target}`));
     expect(primary.musl).toEqual(['1.4.4/linux-x64-musl', '1.4.4/linux-arm64-musl']);
     expect(primary.console).toEqual(['windows-2022/1.4.4', 'windows-11-arm/1.4.4']);
     expect(primary.dotnet).toEqual(['windows-2022/1.4.4', 'windows-11-arm/1.4.4']);
@@ -64,7 +70,7 @@ describe('pull-request CI scope', () => {
   });
 
   test('other pull requests keep one Linux smoke cell that runs the whole native step list', () => {
-    const smoke = nativeCells('smoke');
+    const smoke = nativeCells('smoke', 'pull_request');
     expect(smoke).toEqual({ native: ['1.4.4/linux-x64-glibc'], musl: [], console: [], dotnet: [], openclaw: false });
   });
 
@@ -164,16 +170,18 @@ esac
     const cheap = [security, persistence['crash-robot']!, persistence.convergence!];
     const fullOnly = ['read-performance', 'deployment-matrix', 'unit-postgres-arms', 'invariants', 'reconciliation'].map(name => persistence[name]!);
     for (const job of [...cheap, ...fullOnly]) {
-      expect(job.strategy!.matrix.exclude).toBeUndefined();
+      if (job !== security) expect(job.strategy!.matrix.exclude).toBeUndefined();
       const push = cells(job, { github: { event_name: 'push' }, inputs: {} });
       expect(push.length).toBeGreaterThan(0);
       for (const event_name of ['merge_group', 'schedule', 'workflow_dispatch']) {
         expect(cells(job, { github: { event_name }, inputs: {} })).toEqual(push);
       }
-      expect(cells(job, { github: { event_name: 'pull_request' }, inputs: {} })).toEqual(cheap.includes(job) ? push : []);
+      const prCells = job === security ? push.filter(cell => !cell.startsWith('macos-26/')) : push;
+      expect(cells(job, { github: { event_name: 'pull_request' }, inputs: {} })).toEqual(cheap.includes(job) ? prCells : []);
       for (const bun of SUPPORTED_BUN) expect(push.filter(cell => cell.split('/').includes(bun)).length).toBe(push.length / SUPPORTED_BUN.length);
     }
-    expect(cells(security, { github: { event_name: 'pull_request' }, inputs: {} })).toHaveLength(3 * SUPPORTED_BUN.length);
+    expect(cells(security, { github: { event_name: 'push' }, inputs: {} })).toHaveLength(3 * SUPPORTED_BUN.length);
+    expect(cells(security, { github: { event_name: 'pull_request' }, inputs: {} })).toHaveLength(2 * SUPPORTED_BUN.length);
   });
 
   // Every event-conditional behavior in a test workflow is classified beside

@@ -453,6 +453,26 @@ export interface AuthInfo {
    * private-readable set of each non-mutating call. Undefined = `none`.
    */
   privatePages?: { mode: 'granted_sources'; sources: string[] };
+  /**
+   * GST-2898: the credential's read-shared switch is on, so `allowedSources` already holds its stored list plus every
+   * shared source (grants/read-shared.ts). `readSharedUnresolved`: the shared set could not be read, so it reads its
+   * stored list only and read results carry the `read_shared_unresolved` degraded notice.
+   */
+  readShared?: boolean;
+  readSharedUnresolved?: boolean;
+  /**
+   * GST-3163: sources a token's grant names that are archived now. They are left out of `sourceId`/`allowedSources`,
+   * so no unqualified read reaches them; an explicit `source_id` naming one passes the grant check and then answers
+   * unknown_source from the liveness check (`assertExplicitSourceLive`), as it did before archiving narrowed the grant.
+   */
+  archivedSources?: string[];
+  /**
+   * GBRA-575: the grant's `private_facts: granted_sources` axis, set at token
+   * verification from the live row, with the same explicitly named sources.
+   * MCP dispatch makes them the private-fact sources of each non-mutating call
+   * (CallerAccess.privateFactSources). Undefined = `none`.
+   */
+  privateFacts?: { mode: 'granted_sources'; sources: string[] };
   /** Current transport ceiling applied to this authenticated request. */
   effectiveSurface?: 'verbs' | 'starter' | 'full';
   /**
@@ -558,6 +578,8 @@ export interface OperationContext {
    * treated as 'full'.
    */
   surfaceCeiling?: 'verbs' | 'starter' | 'full';
+  /** #9669: the tool surface MCP dispatch served this call on; a remote agent job records it. Unset for the local CLI. */
+  surface?: 'verbs' | 'starter' | 'full';
   /**
    * GBRA-218 local `--as <member>`: the member identity a trusted local read previews. Set only by the
    * CLI with `applyRemoteReadPolicy`; `remote` stays false, so upload confinement and write trust are unchanged.
@@ -677,7 +699,7 @@ export interface OperationContext {
    * callable. Unset on local and in-process callers. Shape only, never
    * authority: dispatch enforces callability itself.
    */
-  isCallable?: (opName: string) => boolean;
+  isCallable?: (opName: string, args?: Record<string, unknown>) => boolean;
   /**
    * Resolved global CLI options (--quiet / --progress-json / --progress-interval).
    * CLI callers populate this from `getCliOptions()`. MCP / library callers
@@ -781,6 +803,11 @@ export interface OperationContext {
    * command. Ignored unless `remote === false`; a grant always wins.
    */
   localSourceImplicit?: boolean;
+  /**
+   * pages-02 — true when the trusted local CLI's source came from the cwd checkout tier (local_path), which names a
+   * source as a flag does: an unsourced put there is not a silent fork. Set only with `localSourceImplicit`.
+   */
+  localSourceFromCheckout?: boolean;
   /**
    * #5081 — explicit-read admission for a stdio connection bound by an
    * explicit tier (`GBRAIN_SOURCE` or a `.gbrain-source` pin). Set ONLY by

@@ -336,7 +336,7 @@ branches ... fail loudly").
   Fix:  move the query to src/core/engine-sql/facts.ts and make both engine methods one-line delegations
         (example: PGLiteEngine.listFacts). If the SQL is genuinely dialect-specific, add a row with a reason to
         scripts/engine-sql-baseline.tsv.
-  See:  docs/TESTING.md#engine-sql-ratchet
+  See:  docs/ci-guards.md#engine-sql-ratchet
   ```
 
 **Path C: `/admin` route without `requireAdmin`** (existing test's message today names the route and the allowlist file,

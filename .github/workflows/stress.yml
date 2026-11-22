@@ -93,7 +93,8 @@ jobs:
     needs: plan
     if: needs.plan.outputs.run == 'true'
     runs-on: ubicloud-standard-4-ubuntu-2404
-    # Gate shards are planned under 25 minutes and race-hunt shards under 55;
+    # Gate shards are planned under 12 minutes (25 when a 12-minute plan would pass
+    # GitHub's 256-job matrix limit) and race-hunt shards under 55;
     # the margin covers checkout, install and the snapshot build.
     timeout-minutes: ${{ fromJSON(inputs.mode == 'gate' && '35' || '65') }}
     strategy:

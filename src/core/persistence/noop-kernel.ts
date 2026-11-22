@@ -123,7 +123,7 @@ export async function inspectUnchanged(engine: Pick<BrainEngine, 'kind' | 'execu
  * strict pass); a page with projection work, a chunk never embedded, or one embedded for other text still gets one, as
  * before. A model change keeps the column's vectors until `gbrain embed --stale`, as for any page that was not written.
  */
-export async function chunksEmbeddedAsIs(engine: Pick<BrainEngine, 'kind' | 'executeRaw'>, pageId: number): Promise<boolean> {
+export async function chunksEmbeddedAsIs(engine: Pick<BrainEngine, 'kind' | 'executeRaw' | 'getConfigValues'>, pageId: number): Promise<boolean> {
   const { column } = await embeddingWriteTarget(engine);
   const [row] = await engine.executeRaw<{ current: boolean }>(`SELECT p.text_projection_revision IS NOT DISTINCT FROM p.knowledge_revision
       AND COALESCE(p.chunker_version, 0) >= ${SAFE_FENCE_CHUNKER_VERSION}

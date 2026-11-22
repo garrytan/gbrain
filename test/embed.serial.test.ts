@@ -940,6 +940,10 @@ describe('#3374 — transient network retry branch', () => {
           return async (slug: string, page: any) => { pageStore.set(slug, page); };
         }
         // Like a real engine, executeRaw always resolves to a row array (#6482: one well-formed unmanaged mode row).
+        // The typed import-guard reads, as a real engine answers them on an empty brain.
+        if (prop === 'readManagedModeRows') return () => Promise.resolve([{ enabled: false }]);
+        if (prop === 'readTransactionSettings') return (names: readonly string[]) => Promise.resolve(names.map(() => ''));
+        if (prop === 'getConfigValues') return () => Promise.resolve([]);
         if (prop === 'executeRaw') return (sql?: unknown) => Promise.resolve(String(sql).includes('FROM persistence_brain') ? [{ enabled: false }] : []);
         return () => Promise.resolve(null);
       },
@@ -1422,33 +1426,23 @@ describe('#4599 stall watchdog (runEmbedCore --stale)', () => {
   ];
 
   /**
-   * Emulated gbrain_cycle_locks table speaking the exact SQL shapes
-   * db-lock.ts's PGLite branch issues, so tryAcquireDbLock / release run the
-   * REAL lock code against an inspectable table.
+   * Emulated gbrain_cycle_locks table behind the typed cycle-lock engine
+   * methods, so tryAcquireDbLock / release run the REAL lock code against an
+   * inspectable table.
    */
   function lockTableEmulator() {
     const table = new Map<string, { fence: string }>();
-    const db = {
-      query: async (sql: string, params?: unknown[]) => {
-        if (/^\s*INSERT INTO gbrain_cycle_locks/i.test(sql)) {
-          const id = String(params?.[0]);
-          if (table.has(id)) return { rows: [] }; // held; steal predicate not emulated
-          const fence = `${Date.now()}.${Math.random()}`;
-          table.set(id, { fence });
-          return { rows: [{ id, fence }] };
-        }
-        if (/^\s*UPDATE gbrain_cycle_locks/i.test(sql)) {
-          const id = String(params?.[1]);
-          return { rows: table.has(id) ? [{ id }] : [] };
-        }
-        if (/^\s*DELETE FROM gbrain_cycle_locks/i.test(sql)) {
-          table.delete(String(params?.[0]));
-          return { rows: [] };
-        }
-        return { rows: [] };
+    const locks = {
+      acquireCycleLock: async (lockId: string) => {
+        if (table.has(lockId)) return null; // held; steal predicate not emulated
+        const fence = `${Date.now()}.${Math.random()}`;
+        table.set(lockId, { fence });
+        return { id: lockId, fence };
       },
+      refreshCycleLock: async (lockId: string) => table.has(lockId),
+      releaseCycleLock: async (lockId: string) => table.delete(lockId),
     };
-    return { table, db };
+    return { table, locks };
   }
 
   test('stall fires: single-flight locks released via the lock table, summary flushed, reason surfaces', async () => {
@@ -1456,10 +1450,10 @@ describe('#4599 stall watchdog (runEmbedCore --stale)', () => {
     // The #4599 wedge: never settles, ignores the abort signal entirely.
     embedBatchBehavior = () => new Promise<Float32Array[]>(() => {});
 
-    const { table, db } = lockTableEmulator();
+    const { table, locks } = lockTableEmulator();
     const engine = mockEngine({
       kind: 'pglite',
-      db,
+      ...locks,
       listAllSources: async () => [{ id: 'default' }],
       countStaleChunks: async () => 1,
       listStaleChunks: async () => [staleRow],

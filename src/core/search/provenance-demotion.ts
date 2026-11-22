@@ -22,7 +22,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { SearchResult } from '../types.ts';
 import { parseFactsFence } from '../facts-fence.ts';
-import { rankingLinkSql } from '../link-ranking-policy.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { resolveQueryEntity } from './alias-fanout.ts';
 
 export const GENERATED_FACTOR = 0.5;
@@ -47,16 +47,20 @@ const pageIds = (list: SearchResult[]) => [...new Set(list.map(r => r.page_id).f
  * The generated pages among `list`; null when the read failed. It reads only the
  * pool's page ids, so callers start it before stages that change scores but not membership.
  */
-export async function readGeneratedPages(engine: BrainEngine, list: SearchResult[]): Promise<GeneratedPage[] | null> {
-  try {
-    const ids = pageIds(list);
-    if (!ids.length) return [];
-    return await engine.executeRaw<GeneratedPage>(
-      `SELECT id, frontmatter, compiled_truth FROM pages
-        WHERE id = ANY($1::int[]) AND (frontmatter->>'dream_generated' = 'true' OR type = 'extract_receipt')`, [ids]);
-  } catch {
-    return null;
-  }
+export function readGeneratedPages(engine: BrainEngine, list: SearchResult[]): Promise<GeneratedPage[] | null> {
+  const read = (async () => {
+    try {
+      const ids = pageIds(list);
+      if (!ids.length) return [];
+      return await engine.generatedPagesIn(ids);
+    } catch (err) {
+      rethrowCapabilityRefusal(err);
+      return null;
+    }
+  })();
+  // Started before the stages that run ahead of demotion: a refusal counts as handled until demotion awaits it.
+  read.catch(() => undefined);
+  return read;
 }
 
 export async function applyGeneratedDemotion(engine: BrainEngine, list: SearchResult[], query: string,
@@ -72,14 +76,9 @@ export async function applyGeneratedDemotion(engine: BrainEngine, list: SearchRe
     if (!demotable.size) return;
     const entity = await resolveQueryEntity(engine, query, { ...scope, excludePrivate: scope.excludePrivate ?? true });
     if (!entity) return;
-    const targets = await engine.executeRaw<{ id: number }>(
-      `SELECT id FROM pages WHERE deleted_at IS NULL AND (source_id, slug) IN (SELECT * FROM unnest($1::text[], $2::text[]))`,
-      [entity.pages.map(p => p.source_id), entity.pages.map(p => p.slug)]);
-    const targetIds = targets.map(t => Number(t.id));
+    const targetIds = await engine.livePageIdsAt(entity.pages);
     if (!targetIds.length) return;
-    const linking = new Set((await engine.executeRaw<{ id: number }>(
-      `SELECT DISTINCT l.from_page_id AS id FROM links l WHERE l.from_page_id = ANY($1::int[]) AND l.to_page_id = ANY($2::int[]) AND ${rankingLinkSql('l')}`,
-      [ids, targetIds])).map(r => Number(r.id)));
+    const linking = new Set(await engine.pagesLinkingTo(ids, targetIds));
     const primaryPresent = list.some(r => !generatedIds.has(r.page_id) && (targetIds.includes(r.page_id) || linking.has(r.page_id)));
     if (!primaryPresent) return;
     for (const r of list) {
@@ -87,7 +86,8 @@ export async function applyGeneratedDemotion(engine: BrainEngine, list: SearchRe
       r.score *= GENERATED_FACTOR;
       r.generated_demotion = GENERATED_FACTOR;
     }
-  } catch {
+  } catch (err) {
+    rethrowCapabilityRefusal(err);
     /* ranking-only: never break the search */
   }
 }

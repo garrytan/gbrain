@@ -6,7 +6,8 @@ import { assertManagedFilesystemWrite } from './filesystem-guard.ts';
 import { opError } from '../ops/contract.ts';
 import type { Action } from '../agent-output.ts';
 import type { SqlEngine } from './model.ts';
-import { readManagedMode } from './ownership.ts';
+import { managedModeFromRows } from './ownership.ts';
+import type { BrainEngine } from '../engine.ts';
 import { DEFAULT_TARGET_URL_ENV, planArgv } from './graduation-errors.ts';
 
 // Every facts-family bulk writer now publishes through the coordinator on a
@@ -53,8 +54,9 @@ function engineMigrationFix(m: EngineMigrationSide, why: string): Action {
 }
 
 /** Refuse unsupported multi-stage writers before providers, files or git change. */
-export async function assertUnmanagedCanonicalWriter(engine: SqlEngine, operation: string, opts: { migration?: EngineMigrationSide; sourceId?: string } = {}): Promise<void> {
-  if (!await readManagedMode(engine)) {
+export async function assertUnmanagedCanonicalWriter(engine: Pick<BrainEngine, 'readManagedModeRows' | 'getSourceStrictness'>, operation: string, opts: { migration?: EngineMigrationSide; sourceId?: string } = {}): Promise<void> {
+  // The typed read returns the stored rows; a malformed singleton refuses `storage_error` here exactly as `readManagedMode` does.
+  if (!managedModeFromRows(await engine.readManagedModeRows()).enabled) {
     if (opts.sourceId !== undefined) await assertNotStrictSource(engine, opts.sourceId, operation);
     return;
   }
@@ -77,9 +79,8 @@ export async function assertUnmanagedCanonicalWriter(engine: SqlEngine, operatio
  * commits each file before its row and runs in managed persistence. The legacy writer of an unmanaged brain writes the
  * row first, so it refuses such a source instead of putting content in the database that git does not have.
  */
-async function assertNotStrictSource(engine: SqlEngine, sourceId: string, operation: string): Promise<void> {
-  const [row] = await engine.executeRaw<{ strict: boolean }>(`SELECT COALESCE(config->>'canonical','')='git' AS strict FROM sources WHERE id=$1`, [sourceId]);
-  if (row?.strict !== true) return;
+async function assertNotStrictSource(engine: Pick<BrainEngine, 'getSourceStrictness'>, sourceId: string, operation: string): Promise<void> {
+  if (!await engine.getSourceStrictness(sourceId)) return;
   const why = `Source ${sourceId} is git-canonical: its pages are committed to Git before the database indexes them, and only managed persistence (the writer coordinator) does that. This brain is not managed, so ${operation} would write the database first.`;
   throw opError('strict_requires_managed', `${operation} cannot write git-canonical source ${sourceId} on an unmanaged brain.`,
     `Nothing was written. Ask the user whether to turn on managed persistence for this brain (the supported way to make a source git-canonical), or to remove canonical: git from source ${sourceId}.`,

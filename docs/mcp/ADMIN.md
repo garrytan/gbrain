@@ -227,7 +227,8 @@ revision refuses the edit; inspect and preview again.
 Removed scopes and source/path/operation restrictions apply to subsequent
 requests. Added scopes require a fresh token; refresh cannot widen the original
 token's scope ceiling. Native OAuth clients must reconnect and obtain fresh
-owner approval. TTL changes affect future tokens only.
+owner approval; a self-registered connector that asks for its old scope again
+is granted its whole widened scope. TTL changes affect future tokens only.
 
 For one bot acting for several members of a shared brain, give each member a
 separate client or token restricted to that member's sources. The grant is the
@@ -260,7 +261,9 @@ read back only by that member, written remotely by no one else); an attested cal
 `share: true` or `visibility: "world"` is refused (`attested_share_refused`), while a credential
 bound to a member may pass `share: true` to save on the subject's page for everyone who reads
 the source (refused with `share_target_restricted` on a page whose facts are kept private;
-only the brain host withdraws a shared fact); the reply names the `page` and `visibility`. `delta` cursors, write receipts
+a share about another member is held private until the brain owner confirms it with
+`gbrain trust confirm tp<N>`; only the brain host, or the member a shared fact is about,
+withdraws a shared fact); the reply names the `page` and `visibility`. `delta` cursors, write receipts
 (`get_write_request`, `list_write_requests`, `cancel_write_request`) and agent
 jobs (`submit_agent`, `get_agent_job`) belong to the person they were made for.
 QM's memory pair, `memory_recall` and `memory_write`, reads and saves that
@@ -313,7 +316,10 @@ declares it and makes the same link `link ID` makes, and an unknown email is
 (text fenced, one request id per decision, `decided_by: admin-api`; an approve whose write did
 not commit reports `outcome: failed` and exits 1). They call `/admin/api/access/attest`,
 `/admin/api/access/members`, `/admin/api/access/member-links` and
-`/admin/api/memory-proposals`. These routes accept only the owner session:
+`/admin/api/memory-proposals`. A leaver's handover runs over
+`/admin/api/access/handover` (preview, apply, undo) and
+`/admin/api/access/handover/<id>` (status); see
+[member handover](../guides/member-handover.md#from-the-admin-page-no-shell-on-the-server). These routes accept only the owner session:
 no OAuth token and no MCP tool reaches them. They refuse exactly what the
 local commands refuse, and each applied change is logged as `access_admin` in
 the request log. Removing a member stays a brain-host command
@@ -515,7 +521,8 @@ Fix it by binding first:
   The fix is per-person access.
 - Per-person access: give each person's agent its own credential bound to
   them (`gbrain access member add <id>`, then
-  `gbrain auth create <name> --member <id>`) and put `readable_by` on pages
+  `gbrain auth create <name> --member <id>`, which mints read and write only
+  unless you pass `--scopes`) and put `readable_by` on pages
   only some people may read. One agent in a shared channel instead uses a
   credential made with `gbrain auth create <name> --may-act-for <members>`,
   and its harness names each request's audience on every call (see
@@ -599,16 +606,22 @@ gbrain auth rescope --client CLIENT_ID --takes-holders world,brain
 gbrain auth rescope --client CLIENT_ID --sources none          # deny-all, secret unchanged
 gbrain auth rescope --token agent-example --private-pages granted-sources  # private pages in its granted sources
 gbrain auth rescope --client CLIENT_ID --private-pages none    # hide them again
+gbrain auth rescope --token agent-example --read-shared on       # also read every shared source, now and later
+gbrain auth rescope --token agent-example --sources none --read-shared off  # narrow a switched key to no source
+gbrain auth rescope --token agent-example --private-facts granted-sources  # private facts in its granted sources
+gbrain auth rescope --client CLIENT_ID --private-facts none    # world-only facts again
 ```
 
 | Flag | Value | Effect |
 | --- | --- | --- |
 | `--sources` | `a,b` or `none` | Source grant; the first id is the write source, the list is the read set. `default` is the source named `default`; to restore the no-grant floor use `--reset-default sources`. `none` grants no source, so reads and writes to every source are refused (`permission_denied`, `fence=no_source_grant`), including writes accepted before the change; the token or client keeps its scopes and secret. A client with `none` takes no `--read-sources`, and a delegating agent client cannot hold it. |
 | `--read-sources` | `a,b` | Client only: a read set that differs from `--sources`. |
-| `--takes-holders` | `a,b` or `none` | Takes-holder allow-list for a token or client (default `world`); `none` hides every take. |
+| `--takes-holders` | `a,b` or `none` | Takes-holder allow-list for a token or client (default `world`); `none` hides every take. A client with no list that is bound to the brain owner reads every holder in its own direct calls with no room declared; its agent jobs and group-chat calls read world takes until GST-3066. |
 | `--operations` | `op,...`, `none` or `all` | Operation snapshot; `none` refuses every operation. Client only: `all` stores no snapshot and clears the profile, so the scopes and the surface alone decide, including operations later upgrades add (tokens: `--reset-default operations`). |
 | `--scopes` | `read,write,...` | Replaces the scopes. |
 | `--private-pages` | `granted-sources` or `none` | Whether remote reads see `visibility: private` pages. `none` (the default for every token and client) hides them, as before. `granted-sources` shows them only in the sources this grant names: a token's `--sources` list, or a client's write source plus its read sources. The no-grant floor, federated sources the grant does not name, a client's bound source and a request's `source_id` / `source_ids` never add a source. The grant applies to `search`, `query`, `recall`, `entity`, `get_page`, `list_pages`, `get_chunks`, `get_versions`, `get_timeline`, `get_links`, `get_backlinks`, `traverse_graph` and `resolve_slugs`. `context_pack`, `delta`, `think`, recorded-time reads (`get_page` and `get_versions` with `known_as_of`) and every write keep hiding private pages even in a granted source, so a page `get_page` returns can read as missing there. In a named source it also opens privacy-alias pages (`access`, `confidentiality`), atoms, concepts and events derived from private or unknown origins, and pages with private declared lineage; pinned questions stay owner-only. Stored in its own column, not in the legacy permissions JSON, so a harness token rotation does not carry it; the rotation prints the rescope that grants it again. |
+| `--private-facts` | `granted-sources` or `none` | Whether remote reads see facts saved with `visibility = 'private'` (facts saved before `facts.default_visibility world`, for example). `none` (the default for every token and client, and what an upgrade leaves every existing one at) keeps remote fact reads world-only, as before. `granted-sources` makes the key read every private fact in the sources its grant lists, including facts saved private on purpose. A source opens only when the grant lists it by id (a token's `--sources` list, or a client's write source plus its read sources); a source the key merely reaches never opens: not the no-grant floor, not a source federated before or after the grant was written, not a client's bound source, not a request's `source_id` / `source_ids`, and not a source the key reads through `--read-shared on`. No fact is rewritten, so `none` takes effect on the next request. It never opens a fact held on, provenanced from or about a private, privacy-alias, `readable_by`, folder-ruled, quarantined, missing or member page (the pages `gbrain repair open-facts` refuses to open), nor a fact with no page to check: one with no holding page, or from a transcript lane (conversation extraction, the conversation archive, capture hooks, transcripts, connectors). Every other fact rule (provenance and entity page gates, trust floor, withdrawals) still applies. It applies to a credential's own non-mutating reads (`recall`, `search`, `query`, `entity` and the other fact reads); `context_pack`, `delta`, writes, an asserted audience, an attested actor and a scope read stay world-only. A credential that lists `--attest-sources` cannot hold it. Only the local CLI on the brain host sets it: no MCP operation and no admin HTTP route does. Stored in its own column; a harness token rotation does not carry it. |
+| `--read-shared` | `on` or `off` | Also read every shared source, now and later: `default` plus every federated source, never a guest source or, for a key bound to a member other than the brain owner, another member's own source. A source federated later is read on the next request with no re-grant. Writes stay in the write source. `off` (the default for every token and client, and what an upgrade leaves every existing one at) reads only the grant's sources. A token needs a source list: a token with no `--sources` already reads every shared source. A switched token or client cannot also hold `--sources none`, so narrow it with `--sources none --read-shared off` in one command (`read_shared_needs_source`). It never opens private pages or private facts in a source the key reaches only through it. `gbrain auth create` and `gbrain auth register-client` take it too; the admin grant API takes `read_shared: true\|false`. Stored in its own column, apart from the source list; a grant edit by an older build turns it off rather than widening the key. |
 | `--reset-default` | `sources,takes-holders,operations` | Token only: restores the `auth create` default for those axes: no source grant (the historical `default` floor), holders `world`, no operation snapshot. |
 | `--refresh-operations` | with optional `--add op,...` or `--all-new` | Token only: previews operations added since the snapshot. Without `--add` or `--all-new` nothing is widened. |
 | `--if-version` | `N` | Refuses unless the stored grant revision is `N`; the refusal names the current revision. |

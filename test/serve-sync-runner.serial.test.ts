@@ -113,11 +113,12 @@ describe('serve-sync-runner delegated jobs', () => {
     let preflight = true;
     const crossingActivation = new Proxy(engine, { get(target, key) {
       const value = Reflect.get(target, key, target);
-      if (key === 'executeRaw') return async (sql: string, params?: unknown[]) => {
-        if (preflight && sql === 'SELECT enabled FROM persistence_brain WHERE singleton=1') {
+      // The managed-mode read is the typed `readManagedModeRows` method.
+      if (key === 'readManagedModeRows') return async () => {
+        if (preflight) {
           preflight = false; return [{ enabled: false }]; // activation occurs after this earlier snapshot
         }
-        return target.executeRaw(sql, params);
+        return target.readManagedModeRows();
       };
       return typeof value === 'function' ? value.bind(target) : value;
     } });

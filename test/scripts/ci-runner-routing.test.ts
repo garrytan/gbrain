@@ -34,7 +34,7 @@ describe('CI runner routing', () => {
     expect(load('osv-scanner.yml').jobs['osv-scan']['runs-on']).toBeUndefined();
   });
 
-  test('single-process lanes and soaks use 4 vCPUs, pooled lanes 8, and the label-gated heavy suite keeps 30', () => {
+  test('single-process lanes use 4 vCPUs, persistence soak and reconciliation 2, pooled lanes 8, and the label-gated heavy suite keeps 30', () => {
     // Measured: a unit shard is one bun process (1.1-1.5 busy cores on average)
     // and took the same time on 4, 8 and 16 vCPUs; verify matches 16 vCPUs at 8.
     for (const name of ['slow-brainbench-e2e', 'brainbench', 'slow-entity-resolve-perf', 'admin-browser', 'shared-skills-compatibility']) {
@@ -51,11 +51,13 @@ describe('CI runner routing', () => {
     // Graduation files run one at a time: 712-958 s whole on 8 vCPUs vs 751-770 s on 16 (GBRA-135 pilot).
     expect(load('e2e.yml').jobs['tier1-graduation']['runs-on']).toBe(pooled);
     expect(load('persistence-validation.yml').jobs['read-performance']['runs-on']).toBe(single);
-    expect(load('persistence-validation.yml').jobs.invariants['runs-on']).toBe(single);
-    expect(load('persistence-validation.yml').jobs.reconciliation['runs-on']).toBe(single);
+    // Three paired runs (GST-3002): on 2 vCPUs the soak and reconciliation lanes peaked under 25% of
+    // 8 GB and stayed shorter than convergence; PgBouncer/RLS on 4 vCPUs peaked at 18% of 16 GB.
+    expect(load('persistence-validation.yml').jobs.invariants['runs-on']).toBe(small);
+    expect(load('persistence-validation.yml').jobs.reconciliation['runs-on']).toBe(small);
     expect(load('persistence-validation.yml').jobs.convergence['runs-on']).toBe(single);
     expect(load('convergence-nightly.yml').jobs.convergence['runs-on']).toBe(single);
-    expect(load('persistence-validation.yml').jobs['deployment-matrix']['runs-on']).toBe(pooled);
+    expect(load('persistence-validation.yml').jobs['deployment-matrix']['runs-on']).toBe(single);
     expect(load('heavy-tests.yml').jobs.heavy['runs-on']).toBe(heavy);
   });
 

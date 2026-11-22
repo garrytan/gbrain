@@ -7,6 +7,7 @@
 
 import { homedir } from 'node:os';
 import { join, relative, resolve, sep } from 'node:path';
+import { relativeEscapesRoot } from '../path-confine.ts';
 
 /**
  * Whether a workspace belongs to OpenClaw, from OpenClaw's own layout: the
@@ -27,7 +28,7 @@ export function detectOpenClawWorkspace(
   const underWorkspaceOf = (stateDir: string): boolean => {
     const rel = relative(resolve(stateDir), ws);
     const first = rel.split(sep)[0] ?? '';
-    return rel !== '' && !rel.startsWith('..') && /^workspace(-.+)?$/.test(first);
+    return rel !== '' && !relativeEscapesRoot(rel) && /^workspace(-.+)?$/.test(first);
   };
   if (env.OPENCLAW_STATE_DIR && underWorkspaceOf(env.OPENCLAW_STATE_DIR)) return true;
   const profile = relative(resolve(home), ws).split(sep)[0] ?? '';

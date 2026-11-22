@@ -42,7 +42,7 @@ const missingTable = (table: string) => Object.assign(new Error(`relation "${tab
 function failingEngine(error: Error): BrainEngine {
   return new Proxy(real, {
     get(target, prop, receiver) {
-      if (prop === 'executeRaw' || prop === 'countStalePagesForExtraction') return async () => { throw error; };
+      if (prop === 'executeRaw' || prop === 'countStalePagesForExtraction' || prop === 'readCycleLocks') return async () => { throw error; };
       if (prop === 'db') return { query: async () => { throw error; } };
       const value = Reflect.get(target, prop, receiver);
       return typeof value === 'function' ? value.bind(target) : value;

@@ -32,19 +32,8 @@ import type { SegmentChunkInput, BodyRegion } from './types.ts';
 import type { StoredRegion } from './segmenter.ts';
 import { projectSegment } from './segment-projection.ts';
 
-/**
- * `pages.chunker_version` of a sealed segmented page whose live chunks were all made by this chunker. Segments are
- * chunked by the markdown pipeline (chunkProjectedText, fencedCodeChunks) under the same safe-fence contract, so it
- * stays at or above SAFE_FENCE_CHUNKER_VERSION, but it is its own identity: inline pages keep MARKDOWN_CHUNKER_VERSION.
- *
- * 5: the hard cap's forced cuts land on a sentence or line end (chunkProjectedText `boundaryCuts`), so a sentence the
- * cap used to split now sits whole in one chunk; and a timeline segment with bullet lines breaks only at bullet starts
- * chosen by the bullet itself (chunkers/bullet-chunks.ts), so an entry added at the top changes only the passage it joins.
- * Pages sealed at 4 keep serving their chunks until
- * `gbrain reindex --segmented --apply` re-chunks them (page-body/rechunk.ts). A change to the cuts or the stored
- * per-segment metadata bumps SEGMENTER_VERSION instead.
- */
-export const SEGMENTED_CHUNKER_VERSION = 5;
+// Defined beside SAFE_FENCE_CHUNKER_VERSION so the engines can read it without loading the chunkers (see that module).
+export { SEGMENTED_CHUNKER_VERSION } from '../search/safe-chunks.ts';
 
 export type SegmentChunk = Omit<SegmentChunkInput, 'occurrence_id'>;
 

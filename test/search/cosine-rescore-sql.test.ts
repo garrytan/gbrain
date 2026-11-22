@@ -38,9 +38,8 @@ function vectors(dims: number) {
 }
 
 const literal = (v: Float32Array) => `[${Array.from(v).join(',')}]`;
-const failingSql = (engine: BrainEngine): BrainEngine => Object.assign(Object.create(engine), {
-  executeRaw: async () => { throw Object.assign(new Error('forced'), { code: 'XX000' }); },
-}) as BrainEngine;
+const failingSql = (engine: BrainEngine, error: Error = Object.assign(new Error('forced'), { code: 'XX000' })): BrainEngine =>
+  Object.assign(Object.create(engine), { cosinesByChunkIds: async () => { throw error; } }) as BrainEngine;
 
 for (const kind of testBackends()) {
   describe(`cosine re-score in SQL keeps the JavaScript rules (${kind})`, () => {
@@ -170,6 +169,14 @@ for (const kind of testBackends()) {
       expect(fallbacks).toBe(2);
       expect(messages.filter(m => m.includes('cosine re-score in SQL failed'))).toEqual([expect.stringContaining('SQLSTATE XX000')]);
       expect(first.find(r => r.slug === 'notes/random-a')!.cosine).toBeCloseTo(cosineSimilarity(v.query, v.a), 6);
+    });
+
+    test('a refused engine capability propagates instead of falling back to JavaScript', async () => {
+      const refusal = Object.assign(new Error('vector_search not served'), { code: 'engine_capability_missing' });
+      let fallbacks = 0;
+      await expect(cosineReScore(failingSql(engine, refusal), rows(['notes/random-a']), v.query, 'embedding', undefined, false, () => { fallbacks++; }))
+        .rejects.toBe(refusal);
+      expect(fallbacks).toBe(0);
     });
   });
 }

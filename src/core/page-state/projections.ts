@@ -8,7 +8,7 @@ import { prepareMarkdownChunks } from '../markdown-chunks.ts';
 import { loadFenceChunkOverlay, type FenceChunkOverlay } from '../eligibility/fence-overlay.ts';
 import { prepareCodeChunks, installCodeChunkEdges } from '../code-chunks.ts';
 import { resolveMaxChunkTokens } from '../embedding-input-limit.ts';
-import { assertPageRevision, PageRevisionConflictError, type PageSnapshot } from './types.ts';
+import { assertPageRevision, PageProjectionConflictError, PageRevisionConflictError, type PageSnapshot, type ProjectionConflictField } from './types.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { digest } from '../persistence/digest.ts';
 import { quoteIdentifier, resolveWriteColumnFromConfigRows, vectorCastSuffix } from '../search/embedding-column.ts';
@@ -30,19 +30,8 @@ import { chunkModelMatchesSql } from '../embedding-invalidation.ts';
 import { isRetryableConnError } from '../retry-matcher.ts';
 import { ACTIVATION_SERVED_REVISION } from '../search/safe-chunks.ts';
 
-/**
- * Complete the searchable snapshot only after its sanitized chunks are installed.
- * `guarded` is this transaction's own read of the page under its guard, when
- * the caller has one and has not changed the page's revision or timeline since.
- */
-export async function sealPageTextProjection(engine: BrainEngine, slug: string, sourceId: string, guarded?: PageSnapshot): Promise<void> {
-  const current = guarded ?? await engine.readPageSnapshot(slug, { sourceId });
-  if (!current) return;
-  await engine.executeRaw(`UPDATE pages SET text_projection_revision=knowledge_revision,
-    search_vector=${pageSearchVectorSql('title', '$3')}
-    WHERE source_id=$1 AND slug=$2 AND knowledge_revision=$4::uuid`,
-  [sourceId, slug, sanitizeRemoteBody(current.page.timeline), current.revision]);
-}
+export { sealPageTextProjection } from './text-seal.ts';
+import { sealPageTextProjection } from './text-seal.ts';
 
 /**
  * A coordinated import's one closing page write: the chunker version its apply
@@ -74,16 +63,7 @@ export interface ProjectionSnapshot {
   fenceOverlay?: FenceChunkOverlay;
 }
 
-export type ProjectionConflictField = 'text_projection_revision' | 'chunk_digest' | 'indexing_context';
-
-/** Canonical state can stay unchanged while another worker replaces its projection. */
-export class PageProjectionConflictError extends PageRevisionConflictError {
-  constructor(expected: string, current: string, readonly changed: readonly ProjectionConflictField[], readonly slug: string, readonly sourceId: string) {
-    super(expected, current);
-    this.name = 'PageProjectionConflictError';
-    this.message = `The search projection of ${slug} (source ${sourceId}) changed during preparation (${changed.join(', ')}) at the same page revision; nothing was installed. Re-read its current snapshot before retrying.`;
-  }
-}
+export { PageProjectionConflictError, type ProjectionConflictField } from './types.ts';
 
 /**
  * The loser of a concurrent projection installation re-reads and prepares
@@ -101,10 +81,10 @@ export async function retryProjectionConflict<T>(attempt: () => Promise<T>, rand
 }
 
 /** The vector column and model a write targets; `model` is what a stored chunk's label and provenance are compared to. */
-export async function embeddingWriteTarget(engine: Pick<BrainEngine, 'executeRaw'>): Promise<{ config: Array<{ key: string; value: string }>; model: string | null; column: ResolvedColumn; provenanceModel: string | null }> {
+export async function embeddingWriteTarget(engine: Pick<BrainEngine, 'getConfigValues'>): Promise<{ config: Array<{ key: string; value: string }>; model: string | null; column: ResolvedColumn; provenanceModel: string | null }> {
   // A missing config table reads as defaults, as upsertChunks' own resolution does.
-  const config = await engine.executeRaw<{ key: string; value: string }>(
-    "SELECT key,value FROM config WHERE key IN ('search_embedding_column','embedding_columns','embedding_model','embedding_dimensions','contextual_retrieval.mode') ORDER BY key") ?? [];
+  const config = await engine.getConfigValues(
+    ['search_embedding_column', 'embedding_columns', 'embedding_model', 'embedding_dimensions', 'contextual_retrieval.mode']) ?? [];
   let model = config.find(row => row.key === 'embedding_model')?.value ?? null;
   try { model = getEmbeddingModel(); } catch { /* Unconfigured gateway: retain the brain's recorded model. */ }
   const column = resolveWriteColumnFromConfigRows({
@@ -126,7 +106,7 @@ export function embeddingInputContext(target: { column: ResolvedColumn; provenan
  * `tier`, and return the column the hash names so the write targets it
  * (undefined when nothing was freshly embedded). Reused vectors stay unrecorded.
  */
-export async function stampEmbeddingInputs(engine: Pick<BrainEngine, 'executeRaw'>, chunks: ChunkInput[], fresh: ReadonlySet<number> | null,
+export async function stampEmbeddingInputs(engine: Pick<BrainEngine, 'getConfigValues'>, chunks: ChunkInput[], fresh: ReadonlySet<number> | null,
   page: { title: string; tier: EmbeddingTier; corpusGeneration: string | null }): Promise<ResolvedColumn | undefined> {
   if (!chunks.some((chunk, i) => chunk.embedding && (!fresh || fresh.has(i)))) return undefined;
   const target = await embeddingWriteTarget(engine);
@@ -485,13 +465,13 @@ export async function queuePageProjection(engine: Pick<BrainEngine, 'executeRaw'
     ON CONFLICT(source_incarnation,slug) DO UPDATE SET revision=EXCLUDED.revision,reason=EXCLUDED.reason,updated_at=now()`, [sourceId, slug, reason]);
 }
 
-/** A live, unsegmented page's chunker version (`projectionBelowSafeFence`). */
-export const SAFE_FENCE_SQL = "SELECT chunker_version FROM pages WHERE id=$1 AND deleted_at IS NULL AND body_storage IS DISTINCT FROM 'segmented'";
+/** A live, unsegmented page's chunker version (`projectionBelowSafeFence`); the text lives in engine-sql/pages.ts with `getPageSealState`. */
+export { SAFE_FENCE_SQL } from '../engine-sql/pages.ts';
 
 /** #5050/#5247: whether a live page's installed chunks predate the safe-chunk fence. */
-export async function projectionBelowSafeFence(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number): Promise<boolean> {
-  const [row] = await engine.executeRaw<{ chunker_version: number | null }>(SAFE_FENCE_SQL, [pageId]) ?? [];
-  return row !== undefined && belowSafeChunkFence(row.chunker_version === null ? null : Number(row.chunker_version));
+export async function projectionBelowSafeFence(engine: Pick<BrainEngine, 'getPageSealState'>, pageId: number): Promise<boolean> {
+  const row = await engine.getPageSealState(pageId);
+  return row !== null && belowSafeChunkFence(row.chunker_version === null ? null : Number(row.chunker_version));
 }
 
 /**

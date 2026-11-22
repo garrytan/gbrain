@@ -267,3 +267,31 @@ export async function upsertEventProjection(exec: SqlExecutor, opts: { depthSlug
       RETURNING id`)).rows;
     return { projected: rows.length > 0 };
   }
+
+
+/** One stored non-event timeline row a write removes, as it was read: the row goes only while every field still matches. `removed` marks a bullet the writer dropped (a row a heal replaces is not one). */
+export interface TimelineRowRemoval { id: number; date: string; source: string; summary: string; detail: string; removed: boolean }
+
+/** One stored non-event timeline row whose detail a write refreshes: `detail` is the preimage, `next` the new text. */
+export interface TimelineDetailRefresh { id: number; detail: string; next: string | undefined }
+
+const REMOVE_TIMELINE_ROWS_SQL = `DELETE FROM timeline_entries t USING jsonb_to_recordset($2::text::jsonb) AS d(id integer,date date,source text,summary text,detail text,removed boolean)
+        WHERE t.page_id=$1 AND t.event_page_id IS NULL AND t.id=d.id AND t.date=d.date AND t.source=d.source
+          AND t.summary=d.summary AND t.detail=d.detail RETURNING t.date::text AS date, d.removed`;
+
+const UPDATE_TIMELINE_DETAILS_SQL = `UPDATE timeline_entries t SET detail=r.next FROM jsonb_to_recordset($2::text::jsonb) AS r(id integer,detail text,next text)
+        WHERE t.page_id=$1 AND t.event_page_id IS NULL AND t.id=r.id AND t.detail=r.detail`;
+
+/**
+ * Deletes the page's own (non-event) timeline rows that `rows` name and that still match them field for field, and
+ * returns each deleted row's date and `removed` mark (`BrainEngine.removeTimelineRows`). Event projections
+ * (`event_page_id` set) are never touched, and a row changed since it was read stays.
+ */
+export async function removeTimelineRows(exec: SqlExecutor, pageId: number, rows: readonly TimelineRowRemoval[]): Promise<Array<{ date: string; removed: boolean }>> {
+  return exec.executeRaw<{ date: string; removed: boolean }>(REMOVE_TIMELINE_ROWS_SQL, [pageId, JSON.stringify(rows)]);
+}
+
+/** Replaces the detail of the page's own (non-event) rows named in `rows` with `next` when the stored detail still equals `detail` (`BrainEngine.updateTimelineDetails`). */
+export async function updateTimelineDetails(exec: SqlExecutor, pageId: number, rows: readonly TimelineDetailRefresh[]): Promise<void> {
+  await exec.executeRaw(UPDATE_TIMELINE_DETAILS_SQL, [pageId, JSON.stringify(rows)]);
+}

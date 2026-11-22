@@ -10,7 +10,7 @@ import { withFolderRestricted } from '../src/core/search/private-visibility.ts';
 test('withFolderRestricted never reads the page body', async () => {
   const page = { source_id: 'source-a', slug: 'notes/segmented', type: 'note', frontmatter: { visibility: 'world' } };
   Object.defineProperty(page, 'compiled_truth', { enumerable: true, get() { throw new Error('segmented body read'); } });
-  const engine = { executeRaw: async () => [] } as never;
+  const engine = { isFolderRestricted: async () => false } as never;
   const out = await withFolderRestricted(engine, page);
   expect(out).toEqual({ type: 'note', frontmatter: { visibility: 'world' }, folder_restricted: false });
 });

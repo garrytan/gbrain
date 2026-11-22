@@ -237,7 +237,7 @@ describe('buildConnectBlock', () => {
     expect(block).toContain("claude mcp add gbrain -t http https://h/mcp -H 'Authorization: Bearer TOK'");
     expect(block).toContain(LEARN_INSTRUCTION);
     expect(block).not.toContain(PLACEHOLDER_TOKEN);
-    expect(block).toMatch(/long-lived, full-access secret/);
+    expect(block).toMatch(/long-lived secret that carries whatever its grant allows/);
   });
   test('claude-code without a token emits a placeholder + replace hint', () => {
     const block = buildConnectBlock({ agent: 'claude-code', name: 'gbrain', url: 'https://h/mcp', token: null });

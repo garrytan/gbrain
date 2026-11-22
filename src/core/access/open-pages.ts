@@ -2,8 +2,8 @@
  * GST-2670 (GBRA-502): the pages every member's key can read on a brain that serves several people. A page is open
  * when no readable_by names readers and no applied or pending folder or page rule covers it: a key bound to a member
  * reads it like an unbound one (requester-scope.ts gates who may ask; only labels decide what a member reads). The
- * count is the read path's own floor (accessAllowedSql with an empty identity, built outside any caller record, so it
- * never depends on who asks), split into the pages members read and the visibility: private pages they do not
+ * count is the read path's own floor (accessAllowedSql with an empty identity, built outside any caller record except
+ * the brain's schema version, so it never depends on who asks), split into the pages members read and the visibility: private pages they do not
  * (unless this process sees remote privacy relaxed, or a reading member's grant opens that source's private pages). "Members" are the enabled members other than the owner;
  * a labelled-only member reads no open page, and each other member reads the sources its bound tokens and OAuth
  * clients read. Read-only and best effort everywhere it is shown: access serves several (preview and receipt),
@@ -13,7 +13,7 @@
  * withOpenScope, openPageSql and membersReadOpen.
  */
 import type { BrainEngine } from '../engine.ts';
-import { accessAllowedSql, privacyPartSql, readHonorAliases, remotePrivacyRelaxed, withoutCallerAccess } from '../search/private-visibility.ts';
+import { accessAllowedSql, privacyPartSql, readHonorAliases, remotePrivacyRelaxed, schemaVersionNow, withCallerAccess, withoutCallerAccess } from '../search/private-visibility.ts';
 import { credentialReadSources, SENSITIVE_PAGE_TYPES, stdioReadSources } from '../grants/shared-exposure.ts';
 import { grantFromClient, grantFromRow, grantFromTokenRow, privatePagesSources, type PrincipalGrant } from '../grants/model.ts';
 import { stdioMemberId } from './caller.ts';
@@ -40,6 +40,8 @@ export interface OpenPages {
   sensitive: number;
   /** Open pages that visibility: private (or a privacy alias) keeps from members; counted in total instead where remote privacy is relaxed or a reading member's grant opens private pages. */
   private: number;
+  /** GBRA-585 C: open pages in the conversation archive (conversations/), also counted in total. */
+  archive: number;
   folders: OpenFolder[];
   other: { folders: number; pages: number; sensitive: number };
   top_sensitive: { source: string; type: string; pages: number } | null;
@@ -48,16 +50,24 @@ export interface OpenPagesError { code: string; message: string; retry: string }
 export interface OpenPagesRead { open_pages: OpenPages | null; open_pages_error?: OpenPagesError }
 
 export interface OpenPagesOptions {
-  /** Members a run is about to add or keep, the source their new keys write (access serves several), and whether it marks them labelled-only. */
-  planned?: { members: readonly string[]; source: string; labelledOnly: boolean };
+  /** Members a run is about to add or keep, the source their new keys write (access serves several), whether it marks them labelled-only, and the owner once the run is done. */
+  planned?: { members: readonly string[]; source: string; labelledOnly: boolean; owner?: string | null };
   /** Prefixes a rule the run adds will cover, left out of the count. */
   exclude?: ReadonlyArray<{ source: string; prefix: string }>;
 }
 
-/** The sources a key minted for `source` reads: that source, or for default the default source and every federated one. */
-async function mintedReadSources(engine: BrainEngine, source: string): Promise<string[]> {
-  if (source !== 'default') return [source];
-  return await localFederatedSourceIds(engine, 'default', 'seed_default').catch(() => undefined) ?? ['default'];
+/** The source the company shape adds (setup-brain-layout.ts COMPANY_SOURCE). */
+export const COMPANY_SOURCE_ID = 'company';
+
+/**
+ * GBRA-585 A: the sources a member key `gbrain access serves several` mints for `source` reads, as a fixed list (the
+ * federated grant kind, readSources[0] = the write source): that source, the `company` source when it exists, and
+ * every source federated now. A source federated later is added only by a re-run (labelSeveral adds, never removes).
+ */
+export async function memberKeyReadSources(engine: BrainEngine, source: string): Promise<string[]> {
+  const federated = await localFederatedSourceIds(engine, source, 'seed_default').catch(() => undefined) ?? [source];
+  const company = source !== COMPANY_SOURCE_ID && (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id = $1 AND archived IS NOT TRUE', [COMPANY_SOURCE_ID])).length > 0;
+  return [...new Set([source, ...(company ? [COMPANY_SOURCE_ID] : []), ...federated])];
 }
 
 /**
@@ -76,9 +86,9 @@ async function memberReads(engine: BrainEngine, owner: string | null, planned: O
     if (m.labelled_only === true) labelledOnly.add(m.id);
   }
   const memo = new Map<string, Promise<string[]>>();
-  const sourcesOf = (grant: PrincipalGrant) => {
-    const key = JSON.stringify([grant.principal.kind, grant.scopes, grant.sources]);
-    if (!memo.has(key)) memo.set(key, credentialReadSources(engine, grant));
+  const sourcesOf = (grant: PrincipalGrant, member: string) => {
+    const key = JSON.stringify([grant.principal.kind, grant.scopes, grant.sources, grant.readShared === true ? member : false]);
+    if (!memo.has(key)) memo.set(key, credentialReadSources(engine, grant, member));
     return memo.get(key)!;
   };
   const credentials: Array<{ member: string; grant: PrincipalGrant }> = [
@@ -90,7 +100,7 @@ async function memberReads(engine: BrainEngine, owner: string | null, planned: O
   for (const { member, grant } of credentials) {
     const set = reads.get(member);
     if (!set) continue;
-    for (const s of await sourcesOf(grant)) set.add(s);
+    for (const s of await sourcesOf(grant, member)) set.add(s);
     const priv = privateOf.get(member) ?? new Set<string>();
     privateOf.set(member, priv);
     for (const s of privatePagesSources(grant)) priv.add(s);
@@ -99,7 +109,7 @@ async function memberReads(engine: BrainEngine, owner: string | null, planned: O
   const stdioSet = stdio ? reads.get(stdio) : undefined;
   if (stdioSet) for (const s of await stdioReadSources(engine)) stdioSet.add(s);
   if (planned) {
-    const minted = await mintedReadSources(engine, planned.source);
+    const minted = await memberKeyReadSources(engine, planned.source);
     for (const id of planned.members) {
       if (id === owner) continue;
       const set = reads.get(id) ?? new Set<string>();
@@ -150,7 +160,7 @@ export async function withOpenScope<T>(engine: BrainEngine, opts: OpenPagesOptio
     if (state?.unreadable === true) {
       throw Object.assign(new Error('the folder-rule state cannot be read, so every page reads as covered and a count would say 0'), { code: 'open_pages_unknown' });
     }
-    const owner = await ownerMemberId(engine);
+    const owner = opts.planned?.owner !== undefined ? opts.planned.owner : await ownerMemberId(engine);
     const { reads, privateSources } = await memberReads(engine, owner, opts.planned);
     const reading = [...reads.values()].filter(s => s.size > 0);
     const readSources = [...new Set(reading.flatMap(s => [...s]))].sort();
@@ -158,7 +168,10 @@ export async function withOpenScope<T>(engine: BrainEngine, opts: OpenPagesOptio
     if (sources.length) await readHonorAliases(engine);
     const relaxed = sources.length ? await remotePrivacyRelaxed(engine) : false;
     const scope: OpenScope = { owner, members: { reading: reading.length, counted: reads.size }, sources, relaxed, privateSources: [...privateSources].sort() };
-    return read(scope, fn => bounded(engine, fn));
+    // Only the brain's schema version, as a remote read carries it: without it the owner-only test takes its closed form,
+    // and on a brain that has (or once had) an owner-only source every page would read as owner-only, unlike real reads.
+    const remotePolicy = { privacyRelaxed: false, restricted: true, ...await schemaVersionNow(engine) };
+    return withCallerAccess({ remotePolicy }, () => read(scope, fn => bounded(engine, fn)));
   });
 }
 
@@ -166,7 +179,7 @@ export async function withOpenScope<T>(engine: BrainEngine, opts: OpenPagesOptio
 export async function openPages(engine: BrainEngine, opts: OpenPagesOptions = {}): Promise<OpenPages> {
   return withOpenScope(engine, opts, async (scope, boundedRead) => {
     const { owner, sources } = scope;
-    const result: OpenPages = { owner, members: scope.members, sources, total: 0, sensitive: 0, private: 0,
+    const result: OpenPages = { owner, members: scope.members, sources, total: 0, sensitive: 0, private: 0, archive: 0,
       folders: [], other: { folders: 0, pages: 0, sensitive: 0 }, top_sensitive: null };
     if (!sources.length) return result;
     const params: unknown[] = [sources];
@@ -190,6 +203,7 @@ export async function openPages(engine: BrainEngine, opts: OpenPagesOptions = {}
       folders.set(key, f);
       f.pages += n;
       result.total += n;
+      if (row.folder === 'conversations') result.archive += n;
       if (!row.type || !SENSITIVE_PAGE_TYPES.includes(row.type)) continue;
       f.sensitive += n;
       result.sensitive += n;

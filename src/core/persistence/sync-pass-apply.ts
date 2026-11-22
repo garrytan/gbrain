@@ -402,7 +402,8 @@ async function writeHolds(engine: BrainEngine, level: ShadowLevel, input: Pick<P
     await writeGitHold(tx, { source_id: level.sourceId, incarnation: level.incarnation, path, source_path: sourcePath, slug: hold.slug,
       page_id: hold.pageId !== undefined ? hold.pageId : hold.entry.state.page?.live ? hold.entry.pageId : null,
       code: hold.code, message: hold.message, upstream_version: hold.entry.state.levelSha256, observed_at: input.observedAt, run_id: input.passId, mode: 'managed',
-      meta: { recovery_version: RECOVERY_VERSION, ...levelMeta(level, hold.entry), ...hold.meta, ...(hold.entry.state.hold?.moved ? { basis_moved: true as const } : {}) } });
+      meta: { recovery_version: RECOVERY_VERSION, ...levelMeta(level, hold.entry), ...hold.meta, ...(hold.entry.state.hold?.moved ? { basis_moved: true as const } : {}),
+        ...(hold.entry.state.hold?.retryOnly ? { retry_only: true as const } : {}) } });
   }, slice => {
     for (const hold of slice) {
       state.holds[hold.kind]++;

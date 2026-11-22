@@ -400,3 +400,66 @@ describe('checkBackupCoverage — localOnly catch branch', () => {
     expect(check.message).not.toBe('backup coverage unreadable');
   });
 });
+
+// ── GBRA-585 item 7: the young-brain count and the full-backup fix per engine ─
+
+/** Engine stub answering the maturity count before the sources/pages listings (its SQL names both tables). */
+function makeCountingEngine(kind: 'pglite' | 'postgres', sources: Array<{ id: string; local_path: string }>, pages: number, facts: number): BrainEngine {
+  const listing = makeEngine(sources, pages);
+  return {
+    kind,
+    executeRaw: async (sql: string) => {
+      if (/AS pages/i.test(sql)) return [{ pages, facts, since: new Date(Date.now() - 60_000).toISOString() }];
+      return listing.executeRaw(sql);
+    },
+  } as unknown as BrainEngine;
+}
+
+/** A verdict cached when the brain was empty (init), with remote evidence fresh enough to be reused. */
+function cacheFromEmptyBrain(assetId: string): BackupStatus {
+  const now = new Date().toISOString();
+  return {
+    ...makeWarnCache(assetId),
+    checked_at: now,
+    remote_check_at: now,
+    totals: { assets: 1, no_remote: 0, unpushed: 0, failing: 0, recoverable_repos: 0, pages_at_risk: 0 },
+    assets: [{ kind: 'source_repo', id: assetId, state: 'unknown', detail: 'not_a_git_repo', fix_argv: null }],
+    maturity: { items: 0, since: new Date(Date.now() - 60_000).toISOString() },
+  };
+}
+
+describe('checkBackupCoverage — GBRA-585 item 7', () => {
+  test('a cached verdict from the empty brain reports the current page+fact count, not 0', async () => {
+    const plain = join(tmp, 'default');
+    mkdirSync(plain, { recursive: true });
+    saveBackupStatus(cacheFromEmptyBrain('default'));
+
+    const young = await checkBackupCoverage(makeCountingEngine('pglite', [{ id: 'default', local_path: plain }], 20, 3), { localOnly: true });
+    expect(young.message).toContain('the brain holds 23 page(s)+fact(s)');
+
+    const full = await checkBackupCoverage(makeCountingEngine('pglite', [{ id: 'default', local_path: plain }], 27, 7), { localOnly: true });
+    expect(full.status).toBe('warn');
+    expect(full.message).not.toContain('holds 0 page(s)');
+  });
+
+  test('PGLite: a content directory with no git repo is fixed by gbrain backup create, never gbrain export', async () => {
+    const plain = join(tmp, 'default');
+    mkdirSync(plain, { recursive: true });
+    const check = await checkBackupCoverage(makeCountingEngine('pglite', [{ id: 'default', local_path: plain }], 27, 7), { localOnly: true });
+    expect(check.status).toBe('warn');
+    expect(check.fix?.argv).toEqual(['gbrain', 'backup', 'create', '--output', '<BACKUP_FILE>']);
+  });
+
+  test('Postgres: the same asset is fixed by a pg_dump of the brain database, never gbrain export', async () => {
+    const plain = join(tmp, 'default');
+    mkdirSync(plain, { recursive: true });
+    const check = await checkBackupCoverage(makeCountingEngine('postgres', [{ id: 'default', local_path: plain }], 27, 7), { localOnly: true });
+    expect(check.status).toBe('warn');
+    expect(check.fix?.argv?.[0]).toBe('pg_dump');
+    expect(check.fix?.actor).toBe('host_admin');
+    expect(check.fix?.user_message).toContain('pg_restore');
+    expect(check.fix?.user_message).toContain('`gbrain export` is not a backup');
+    expect(check.fix?.argv).not.toContain('export');
+  });
+});
+

@@ -50,7 +50,7 @@ export const ARTIFACTS: Artifact[] = [
   { name: 'skills manifest', regen: ['bun', 'run', 'scripts/generate-skills-manifest.ts'], check: ['bash', 'scripts/check-skills-manifest-fresh.sh'] },
   { name: 'bundled skills module', regen: ['bun', 'run', 'scripts/generate-bundled-skills.ts'], check: ['bun', 'run', 'scripts/generate-bundled-skills.ts', '--check'] },
   { name: 'eval metric glossary', regen: ['bun', 'run', 'scripts/generate-metric-glossary.ts'], check: ['bash', 'scripts/check-eval-glossary-fresh.sh'] },
-  { name: 'CLI flag registry', regen: ['bun', 'run', 'scripts/generate-flag-registry.ts'], check: [...BUN_TEST, 'test/generate-flag-registry.test.ts'] },
+  { name: 'CLI flag registry', regen: ['bun', 'run', 'scripts/generate-flag-registry.ts'], check: ['bun', 'run', 'scripts/generate-flag-registry.ts', '--check'] },
   { name: 'plugin tree + persona variants', regen: ['bun', 'run', 'scripts/generate-plugin-tree.ts', '--out', 'plugin', '--variants-out', 'plugin-variants'], check: ['bash', 'scripts/check-plugin-tree.sh'] },
   { name: 'structural suites manifest', regen: ['bun', 'scripts/classify-tests.ts'], check: ['bun', 'scripts/classify-tests.ts', '--check'] },
   { name: 'QM memory-provider contract', regen: ['bun', 'scripts/build-qm-memory-contract.ts'], check: ['bun', 'scripts/build-qm-memory-contract.ts', '--check'] },
@@ -69,6 +69,7 @@ export const CONTRACT_GOLDENS = [
 export const POSTGRES_GOLDENS = [
   'GBRAIN_TEST_UPDATE_GOLDENS=1 DATABASE_URL=<test db> bun test --timeout=60000 test/e2e/schema-catalog-golden.test.ts',
   'GBRAIN_TEST_UPDATE_GOLDENS=1 DATABASE_URL=<test db> bun test --timeout=60000 test/e2e/doctor-json-golden.test.ts',
+  'GBRAIN_TEST_UPDATE_GOLDENS=1 DATABASE_URL=<test db> bun test --timeout=60000 test/e2e/doctor-hot-checks-golden.test.ts',
 ];
 
 export const goldenArgv = (file: string): string[] => [...BUN_TEST, file];

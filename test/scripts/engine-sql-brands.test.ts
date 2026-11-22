@@ -35,7 +35,7 @@ function expectFail(files: Record<string, string>, where: string, what: string) 
   const r = run(files);
   expect(r.code).toBe(1);
   expect(r.out.split('\n').find((l) => l.startsWith(`FAIL: ${where} `))).toContain(what);
-  for (const label of ['Fix:', 'Why:', 'See:  docs/TESTING.md#engine-sql-brands']) expect(r.out).toContain(label);
+  for (const label of ['Fix:', 'Why:', 'See:  docs/ci-guards.md#engine-sql-brands']) expect(r.out).toContain(label);
 }
 
 describe('check-engine-sql-brands.ts: brand keys', () => {

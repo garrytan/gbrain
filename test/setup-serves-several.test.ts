@@ -242,11 +242,14 @@ describe('labelling refuses or reports what it cannot make safe (pglite, repo-le
     expect(again.keys[0]!.action).toBe('mint');
   }, 60_000);
 
-  test('keys minted for a named source are granted that source', async () => {
+  test('keys minted for a named source write to it and read it first (GBRA-585 A: a fixed source list)', async () => {
     await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', ['team']);
     const r = await label(['pat-example'], undefined, 'team');
     expect(r.error).toBeUndefined();
-    expect(await liveToken('member-pat-example')).toMatchObject({ source_grant: 'scalar' });
+    expect(await liveToken('member-pat-example')).toMatchObject({ source_grant: 'federated' });
+    const [row] = await engine.executeRaw<{ source_id: string; federated_read: unknown }>("SELECT source_id, federated_read FROM access_tokens WHERE name = 'member-pat-example' AND revoked_at IS NULL");
+    expect(row!.source_id).toBe('team');
+    expect(String(row!.federated_read).replace(/[{}]/g, '').split(',')[0]).toBe('team');
   }, 60_000);
 
   test('people folders no rule covers are reported, and the run is not ok', async () => {
@@ -268,13 +271,13 @@ describe('gbrain setup --serves (spawned, PGLite)', () => {
   test('--serves several labels each person, proves it with bound reads, prints key paths never values; a re-run keeps it all', async () => {
     const b = box();
     await brainWithPages(b);
-    const preview = await setup(b, ['claude-code', '--serves', 'several', '--members', 'alice-example,bob-example', '--stdio-member', 'alice-example', '--dry-run']);
+    const preview = await setup(b, ['claude-code', '--serves', 'several', '--members', 'alice-example,bob-example', '--stdio-member', 'alice-example', '--open-history', '--dry-run']);
     expect(preview.exitCode).toBe(0);
     expect(preview.stdout).toContain('stdio      this claude-code entry would start serve --stdio-member alice-example: only its sessions read as alice-example');
     expect(preview.stdout).toContain('serve --surface starter --advertise verbs --stdio-member alice-example');
     expect(existsSync(join(b.home, '.claude.json'))).toBe(false);
     expect(await stdioKey(b)).toBe('');
-    const first = await setup(b, ['claude-code', '--serves', 'several', '--members', 'alice-example,bob-example']);
+    const first = await setup(b, ['claude-code', '--serves', 'several', '--members', 'alice-example,bob-example', '--open-history']);
     expect(first.exitCode).toBe(0);
     for (const m of ROSTER) {
       const key = readFileSync(join(b.home, '.gbrain', 'member-keys', `${m}.key`), 'utf8').trim();

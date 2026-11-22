@@ -140,7 +140,7 @@ import { resolveModel } from '../core/model-config.ts';
 import type { ThinkLLMClient } from '../core/think/index.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
-import type { PGLiteEngine } from '../core/pglite-engine.ts';
+import type { BrainEngine } from '../core/engine.ts';
 import type { HybridSearchMeta, SearchResult } from '../core/types.ts';
 import { classifyIntent, type Intent } from '../eval/longmemeval/intent.ts';
 import { makeGatewayThinkClient } from '../eval/longmemeval/gateway-client.ts';
@@ -509,10 +509,10 @@ export interface RunOpts {
    * call (tests amortize the PGLite cold-create across many runs). MUST be
    * the result of createBenchmarkBrain(); the caller owns lifecycle.
    */
-  engine?: PGLiteEngine;
+  engine?: BrainEngine;
   /** #5092 test seams: brain recycle interval and factory (harness-owned brain only). */
   brainRecycleEvery?: number;
-  createBrain?: () => Promise<PGLiteEngine>;
+  createBrain?: () => Promise<BrainEngine>;
   /**
    * Live nightly-probe search-mode/reranker settings copied into the isolated
    * benchmark brain (#3676). Explicit pin flags (--mode/--reranker/--autocut/
@@ -528,7 +528,7 @@ export interface RunOpts {
    */
   embedTransport?: EmbedTransportFn | null;
   /** Test seam: reranker readiness probe behind `--reranker on` (default rerankerReadinessForEngine). */
-  rerankerReadiness?: (engine: PGLiteEngine, model: string) => Promise<EngineReadiness>;
+  rerankerReadiness?: (engine: BrainEngine, model: string) => Promise<EngineReadiness>;
   /** Test seam: directory for the `--record` ledger (default <repo>/.gbrain-evals/). */
   recordDir?: string;
   /** Test seam: the judge chat client behind `--judge` (default: the gateway `chat`). */
@@ -1145,7 +1145,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     embedTxn: (fn) => fn(),
   };
 
-  const configureBrain = async (engine: PGLiteEngine): Promise<void> => {
+  const configureBrain = async (engine: BrainEngine): Promise<void> => {
     // #3676: nightly probe callers may copy audited live search config into
     // this isolated engine. Data tables stay hermetic.
     for (const [key, value] of Object.entries(runOpts.searchConfigSnapshot ?? {})) {
@@ -1167,7 +1167,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     if (decideRun) await decideLane.configureDecideBrain(engine, decideRun);
   };
 
-  const work = async (engine: PGLiteEngine): Promise<void> => {
+  const work = async (engine: BrainEngine): Promise<void> => {
     await configureBrain(engine);
 
     // Resolved reranker pin on (flag, --search-pin, snapshot or bundle):
@@ -1362,7 +1362,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
 
 
 async function runOneQuestion(
-  engine: PGLiteEngine,
+  engine: BrainEngine,
   q: DatasetQuestion,
   ctx: RunContext,
 ): Promise<QuestionOutcome> {

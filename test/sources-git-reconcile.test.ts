@@ -22,8 +22,11 @@ import { runSources } from '../src/commands/sources.ts';
 import { REFRESH_PUBLISH_DIVERGED_KEY } from '../src/core/persistence/worktree-refresh.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
-import { withEnv } from './helpers/with-env.ts';
+import { withEnv, envForFile } from './helpers/with-env.ts';
 import { page, withRefreshFixture } from './helpers/worktree-refresh-fixture.ts';
+
+/** GST-2988: these tests pin the publish refusal, which secrets.on_push refuse keeps. */
+envForFile({ GBRAIN_SECRETS_ON_PUSH: 'refuse' });
 
 const dir = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-reconcile-')));
 const identity = { GIT_AUTHOR_NAME: 'Example', GIT_AUTHOR_EMAIL: 'example@example.invalid', GIT_COMMITTER_NAME: 'Example', GIT_COMMITTER_EMAIL: 'example@example.invalid' };

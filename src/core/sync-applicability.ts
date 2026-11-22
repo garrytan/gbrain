@@ -15,13 +15,13 @@
  * whatever directory gbrain runs from.
  */
 import { existsSync, realpathSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import type { BrainEngine } from './engine.ts';
 import { gbrainPath, loadConfig } from './config.ts';
 import { opError, type OperationError } from './ops/contract.ts';
 import { readSyncAnchor } from './sync-anchor.ts';
 import { contentSetupKey } from './shared-skills/setup.ts';
-import { isForeignAbsolutePath, isHostAbsolutePath } from './path-confine.ts';
+import { isForeignAbsolutePath, isHostAbsolutePath, relativeEscapesRoot } from './path-confine.ts';
 
 /** A source whose sync root is a gbrain-owned content directory with no Git checkout. */
 export interface SyncContentDirectory {
@@ -38,7 +38,7 @@ function canonical(path: string): string {
 
 function underGbrainContent(root: string): boolean {
   const rel = relative(canonical(gbrainPath('content')), canonical(root));
-  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+  return rel !== '' && !relativeEscapesRoot(rel);
 }
 
 async function ownedByContentReceipt(engine: BrainEngine, sourceId: string, root: string): Promise<boolean> {

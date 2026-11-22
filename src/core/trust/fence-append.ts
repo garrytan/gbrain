@@ -18,7 +18,7 @@ import type { BrainEngine } from '../engine.ts';
 import { withTrustPromotion } from '../persistence/context.ts';
 import { compareTrust, isTrustTier } from './tier.ts';
 
-type Exec = Pick<BrainEngine, 'executeRaw'>;
+type Exec = Pick<BrainEngine, 'executeRaw' | 'readTransactionSettings' | 'applyTransactionSettings'>;
 
 interface StoredPageTrust { id: number; trust_tier: string; write_origin: unknown }
 

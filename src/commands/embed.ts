@@ -1,3 +1,4 @@
+import { sqlEngineKind } from '../core/sql-engine-kind.ts';
 import { jsonRequested } from '../core/cli-force-exit.ts';
 import { prepareProseChunks } from '../core/markdown-chunks.ts';
 import type { FenceChunkOverlay } from '../core/eligibility/fence-overlay.ts';
@@ -26,7 +27,7 @@ import {
 import { createProgress, type ProgressReporter } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { StaleChunkProgress } from '../core/embed-stale-progress.ts';
-import { assertEmbeddingEnabled } from '../core/embedding-dim-check.ts';
+import { assertBrainRowEmbeddingEnabled } from '../core/embedding-dim-check.ts';
 import { writeCliError } from '../cli/cli-error.ts';
 import { countRestampOnlyChunks, hasSignatureDrift, invalidateStaleSignatureEmbeddingsGuarded } from '../core/embedding-invalidation.ts';
 import { contentDriftSweepLine, runContentDriftSweep, type ContentDriftSweepStatus } from '../core/content-drift-sweep.ts';
@@ -441,7 +442,7 @@ async function preflightDimMismatch(engine: BrainEngine, dryRun: boolean): Promi
     requestedDims: resolvedDims,
     requestedModel: resolvedModel,
     source: 'embed',
-    engineKind: engine.kind,
+    engineKind: sqlEngineKind(engine.kind, 'gbrain embed'),
     databasePath,
   });
   throw new EmbeddingDimMismatchError(recipe);
@@ -451,7 +452,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
   // v0.37.10.0 T7 (D9): refuse cleanly when init persisted the deferred-setup
   // sentinel. Skipped in dryRun mode so plan-mode introspection still works.
   if (!opts.dryRun) {
-    assertEmbeddingEnabled(loadConfig());
+    await assertBrainRowEmbeddingEnabled(engine, loadConfig());
   }
 
   // v0.41.6.0 D1: preflight embedding credentials. Skipped in dryRun mode

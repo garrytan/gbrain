@@ -40,7 +40,7 @@ describe('check-durable-flush.ts', () => {
     expect(r.code).toBe(1);
     expect(r.out).toContain('FAIL [durable_flush_read_handle]: src/core/persistence/writer.ts:');
     expect(r.out).toContain('Fix: fsync the descriptor you wrote through before closing it, or call flushFile/flushDirectory from src/core/fs-durable.ts');
-    expect(r.out).toContain('See:  docs/TESTING.md#durable-flush-guard');
+    expect(r.out).toContain('See:  docs/ci-guards.md#durable-flush-guard');
   });
 
   test('write-descriptor flushes, fs-durable itself and same-named descriptors in other functions pass', () => {

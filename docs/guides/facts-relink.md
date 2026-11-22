@@ -146,6 +146,57 @@ re-extraction for it: facts still unlinked there are listed for linking by
 hand (forget each one and remember it again with `--entity`). Editing the
 page's content offers the re-extraction again.
 
+### Name tags for people and companies with no page
+
+A brain built only from conversations usually has no person or company pages.
+So that a person's facts can still be grouped (their job titles, employers and
+cities in date order), conversation extraction gives a fact a **name tag** when
+the extractor named someone in full and no page matches: the name in slug form,
+without a folder. "Alice Example", "alice-example" and "people/alice-example"
+all give the tag `alice-example`. A single word ("Alice", "travel") gives no
+tag, and the fact is stored without an entity as before. No page is created,
+lists of pages never show a tag, and a tag is per source. Only new extractions
+get tags; existing facts are not changed. A fact on a tag gets a slot (role,
+employer or city) from the same small tagging call that person pages get.
+
+When you later write a page for that person (`people/alice-example`), reads
+of the page include the tag's facts, because the tag is the page's file name.
+To move them onto the page for good, preview and then run:
+
+```bash
+gbrain facts relink --conversation --unbacked --dry-run   # what would move; writes nothing
+gbrain facts relink --conversation --unbacked             # move them
+```
+
+A tag moves to the one page its name resolves to: the exact file name in a
+people, companies, hosts, projects or concepts folder, a unique alias, or the
+same name ignoring a company suffix ("Acme Example" and `companies/acme-example-inc`
+titled "Acme Example Inc"). A page that was merged into another
+(`superseded_by`) hands its facts to that page. A world fact never moves onto
+a private page. A tag that still matches no page, or matches two, keeps its
+facts.
+
+Forgetting or purging a fact on a tag applies to that claim across the whole
+source, and a claim forgotten or purged for any person never comes back on a
+tag, so writing a page or moving a tag never brings a forgotten fact back.
+
+Two different people with the same full name in one source share one name tag
+until a page or alias tells them apart. Today their facts share nothing because
+they have no entity at all, so this only matters once both are talked about in
+the same brain, which is rare for full two-word names. When it happens, a
+history question about that name lists both people's values in one timeline,
+and a newer value of one can end the other's stint. To separate them, write a
+page for each (for example `people/alice-example` and `people/alice-example-2`
+with an alias that tells them apart), then run `gbrain facts relink
+--conversation --unbacked` to move the facts whose page resolves; facts that
+still cannot be told apart need `extract-conversation-facts --force` on the
+pages that mention them (paid; preview with `--dry-run`). A page written later
+at the same file name adopts the tag's facts on reads.
+
+Turn name tags off with `gbrain config set facts.unbacked_entity_keys false`.
+New extractions then store such facts without an entity, as before; facts
+already on a tag keep it.
+
 Neither relink attaches what the assistant or a named third party said (a
 fact saved with `attributed_to` assistant or other) to an entity page. Such a
 fact is counted as `not_user_attributed` and left where it was saved: recall

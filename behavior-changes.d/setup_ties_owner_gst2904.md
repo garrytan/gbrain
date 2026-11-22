@@ -1,0 +1,4 @@
+---
+kind: default
+---
+gbrain setup claude-code|codex --serves several --members <ids> --shape company (or both) now writes serve --stdio-member <owner> into the harness entry it installs when no member is named for it, so that assistant reads as the brain owner and imported calls can be kept to the people on them. The owner is the one the brain already has, else the one this run names (--owner, default your login name). Setup says so in a note and in the mcp step. It never ties an entry that already names a member, an entry a plugin serves, or one on a host where OpenClaw or Hermes is installed. With --transcripts, setup now prints one line per imported call with its readers, and the names it could not match with the command that adds a reader. Pass --no-stdio-member to leave the entry unbound as before; imported calls then stay open to the company source's readers, with the calls_not_scoped notice.

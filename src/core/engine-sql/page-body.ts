@@ -26,7 +26,7 @@ import type { ResolvedColumn } from '../types.ts';
 import { BODY_STAGING_HARD_MS, BODY_STAGING_IDLE_MS, SEGMENT_TEXT_GC_GRACE_MS, STAGE_BATCH_BYTES } from '../page-body/limits.ts';
 import { jsonRowBatches, sanitizeText } from '../batch-rows.ts';
 import { normalizeEngineColumn, quoteIdentifier, resolveWriteColumnFromConfigRows, vectorCastSuffix } from '../search/embedding-column.ts';
-import { SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
+import { SAFE_FENCE_CHUNKER_VERSION, SEGMENTED_CHUNKER_VERSION } from '../search/safe-chunks.ts';
 import { validateSlug } from '../utils.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
@@ -37,6 +37,9 @@ import { compileRowNormalizer } from './normalize.ts';
 import { liveTilingSql, stagingNeedsTextSql, untiledSql } from '../page-body/schema.ts';
 import { DerivationWriteRefused, type SegmentDerivationInput, type SegmentDerivationKind, type SegmentDerivationRow, type SegmentDerivationState } from '../page-body/derivations.ts';
 import { RELEASE_STAGED_CTE } from '../persistence/limits.ts';
+import { pageSearchVectorSql } from '../fts-language.ts';
+import { sanitizeRemoteBody } from '../remote-body.ts';
+import { overlayCanonicalBodies, readPageSnapshot } from '../page-state/snapshot.ts';
 
 export const LIVE_STAGING_STATES = ['open', 'sealed', 'prepared'];
 const TERMINAL_STAGING_STATES = ['committed', 'aborted', 'expired'];
@@ -388,6 +391,31 @@ export async function openBodyStaging(exec: SqlExecutor, input: BodyStagingInput
  * write moving it on (to prepared or committed) refuses body_staging_expired instead of reviving it, and an abort or expiry
  * of it changes nothing. A move to the state it already holds (a retried commit) is a no-op.
  */
+/**
+ * `sealSegmentedPage`: seal a segmented page's text projection at its current revision (chunks visible, title + timeline
+ * lead searchable). The lead is indexed as the inline seal indexes a snapshot's timeline: after the page's withdrawal
+ * overlay, sanitized. `chunker_version` is the oldest segmented chunker among the live chunks: a page sealed at an older
+ * one keeps it while any chunk row from before this generation is still stored (a write re-chunks only the occurrences
+ * it changed), so `gbrain reindex --segmented` still lists it. A missing page is a no-op.
+ */
+export async function sealSegmentedPage(exec: SqlExecutor, pageId: number, timelineLead?: string): Promise<void> {
+  const { rows: [page] } = await exec.run<{ slug: string; source_id: string; timeline_lead: string | null; chunker_version: number | null; body_generation: number | string }>(
+    sqlFragment`SELECT slug, source_id, timeline_lead, chunker_version, body_generation FROM pages WHERE id = ${pageId}`);
+  if (!page) return;
+  const stamped = Number(page.chunker_version ?? 0);
+  const older = stamped >= SAFE_FENCE_CHUNKER_VERSION && stamped < SEGMENTED_CHUNKER_VERSION && (await exec.run(sqlFragment`
+    -- chunk-visibility-ok: a sealing page stores only live rows; any one older than this generation predates the write
+    SELECT 1 FROM content_chunks WHERE page_id = ${pageId} AND body_generation < ${page.body_generation} LIMIT 1`)).rows.length > 0;
+  const query = <T>(text: string, params?: unknown[]) => exec.executeRaw<T>(text, params);
+  const ledger = await readPageSnapshot(query, page.slug, { sourceId: page.source_id, includeDeleted: true });
+  const { timeline } = await overlayCanonicalBodies(query, '', timelineLead ?? page.timeline_lead ?? '', ledger?.withdrawals ?? [],
+    { sourceId: page.source_id, marker: ledger?.globalPurges });
+  await exec.run(sqlFragment`UPDATE pages SET text_projection_revision = knowledge_revision,
+    chunker_version = ${older ? stamped : SEGMENTED_CHUNKER_VERSION}::smallint,
+    search_vector = ${trustedSql(pageSearchVectorSql('pages.title', 'seal.lead'))}
+    FROM (SELECT ${sanitizeRemoteBody(timeline)}::text AS lead) seal WHERE pages.id = ${pageId}`);
+}
+
 export async function setBodyStagingState(exec: SqlExecutor, id: string, state: BodyStagingState, opts: { commitRequestId?: string | null } = {}): Promise<void> {
   const { rows } = await exec.run<{ id: string }>(sqlFragment`UPDATE page_body_stagings SET state = ${state}, updated_at = now(),
       idle_expires_at = CASE WHEN ${state} = ANY(${LIVE_STAGING_STATES}::text[])

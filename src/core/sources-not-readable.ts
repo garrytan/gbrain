@@ -2,8 +2,9 @@
  * GBRA-156: `sources_not_readable`, the refusal of an unscoped remote read
  * that came back empty because its readable sources hold no page it may read
  * (and, for recall and query, no active world fact) while other sources hold
- * such pages. Quarantined pages count on neither side, nor private pages when
- * remote reads exclude them. The check is one query-independent yes/no about
+ * such pages. Quarantined pages count on neither side, nor private pages or
+ * pages kept to named readers when remote reads exclude them, so the message
+ * says which pages it counted. The check is one query-independent yes/no about
  * the brain; it never says another source matches the question.
  *
  * A connection with no source grant (a legacy token minted without --sources,
@@ -61,7 +62,7 @@ export async function assertUnscopedReadReachesPages(op: string, params: Record<
   }
   if (!refuse) return;
   throw opError('sources_not_readable',
-    `This connection reads only the default source and federated sources, and none of them holds a page, so this ${op} could only come back empty.`,
+    `This connection reads only the default source and federated sources, none of them holds a page every reader of its source can read (pages kept to named readers, or private, do not count), and other sources hold pages, so this ${op} came back empty.`,
     'Other sources on this brain hold pages, but they are not federated and this connection has no source grant. Ask the user which source these connections should read; '
       + 'the brain host\'s operator federates it (command in fix) or grants this connection its sources (`gbrain auth rescope --token <name> --sources <ids>`).',
     {

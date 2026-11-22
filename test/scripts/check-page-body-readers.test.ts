@@ -97,7 +97,7 @@ describe('check-page-body-readers.ts: baseline rules', () => {
       ['src/core/reader.ts\treadBody\tfield\tINLINE\t']));
     expect(r.code).toBe(1);
     expect(r.out).toContain('src/core/new.ts:2 new page body reader in grow (field)');
-    expect(r.out).toContain('See:  docs/TESTING.md#page-body-readers');
+    expect(r.out).toContain('See:  docs/ci-guards.md#page-body-readers');
   });
 
   test('a removed reader leaves a stale row that fails; --prune drops it and nothing else', () => {

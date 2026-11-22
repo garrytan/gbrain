@@ -37,7 +37,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:net';
-import type { PGLiteEngine } from '../../../core/pglite-engine.ts';
+import type { BrainEngine } from '../../../core/engine.ts';
 import type { GBrainConfig } from '../../../core/config.ts';
 import { runHook } from '../../../commands/hook.ts';
 import {
@@ -88,7 +88,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
   readonly name = 'claude-code' as const;
   readonly seam = 'production' as const;
 
-  private engine: PGLiteEngine | null = null;
+  private engine: BrainEngine | null = null;
   private sourceId = 'default';
   private sessionId = '';
   private fixtureSeq = 0;
@@ -164,7 +164,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
     }
   }
 
-  async beginConversation(engine: PGLiteEngine, fixture: AdapterFixtureView): Promise<void> {
+  async beginConversation(engine: BrainEngine, fixture: AdapterFixtureView): Promise<void> {
     if (!this.server) {
       // Legacy single-fixture construction (tests) — own the run lifecycle.
       await this.setupRun();

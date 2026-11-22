@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Page body reader ratchet (Wave B segmented storage, spec 1.5 layer 4;
- * docs/TESTING.md#page-body-readers).
+ * docs/ci-guards.md#page-body-readers).
  *
  * A segmented page keeps its body in segments: `pages.compiled_truth` and
  * `pages.timeline` are NULL, and `rowToPage` / the snapshot readers give the
@@ -57,7 +57,7 @@ import { isSqlText } from './check-engine-sql-ratchet.ts';
 
 const ROOT = process.env.GBRAIN_GUARD_ROOT ?? join(import.meta.dir, '..');
 const BASELINE_REL = 'scripts/page-body-readers-baseline.tsv';
-const ANCHOR = 'docs/TESTING.md#page-body-readers';
+const ANCHOR = 'docs/ci-guards.md#page-body-readers';
 const BODY_FIELDS = new Set(['compiled_truth', 'timeline']);
 const BODY_CALLS = new Set(['serializePageToMarkdown', 'serializeMarkdown', 'contentHash', 'prepareMarkdownChunks', 'pageDocument',
   'refreshPageBody', 'putPage']);

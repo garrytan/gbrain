@@ -73,6 +73,23 @@ describe('archive default resolution', () => {
     expect(await archiveEnabled(broken)).toBe(false);
   });
 
+  test('GBRA-585: on a brain that serves several people, an explicit personal audience is not reported as unset or as switching itself off', async () => {
+    await engine.setConfig('access.serves', 'several');
+    const heuristic = await resolveArchiveEnabled(engine, { config: null });
+    expect(heuristic).toMatchObject({ enabled: true, source: 'default', audience: 'personal', serves_several: true });
+    expect(heuristic.reason).toContain('brain.audience is unset');
+    expect(heuristic.reason).toContain('turns off');
+    expect(heuristic.reason).toContain('gbrain config set brain.audience shared');
+
+    await engine.setConfig('brain.audience', 'personal');
+    const declared = await resolveArchiveEnabled(engine, { config: null });
+    expect(declared).toMatchObject({ enabled: true, source: 'default', audience: 'personal', serves_several: true });
+    expect(declared.reason).toContain('brain.audience is set to personal');
+    expect(declared.reason).not.toContain('unset');
+    expect(declared.reason).not.toContain('turns off');
+    expect(declared.reason).toContain('gbrain config set brain.audience shared');
+  });
+
   test('a thin client and a remote caller resolve off, even with the switch on', async () => {
     await engine.setConfig('brain.audience', 'personal');
     await engine.setConfig(ARCHIVE_ENABLED_KEY, 'true');

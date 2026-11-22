@@ -40,6 +40,7 @@ import {
   isRemoteTimeout,
   isRepoAsset,
   assetBlocksRecovery,
+  backupCoachingDue,
   BACKUP_VERIFICATION_MAX_AGE_MS,
   BACKUP_RECOVERY_SCOPE,
   type BackupAssetVerdict,
@@ -370,7 +371,7 @@ export async function computeBackupCoverage(
         state: 'info',
         detail:
           `Postgres contains ${pageCount} pages; database placement and external backups were not verified — ` +
-          'add a source repo (gbrain sources add) or dump with gbrain export',
+          'add a source repo (gbrain sources add) and back up the database with pg_dump (gbrain export is not a backup)',
         fix_argv: ['gbrain', 'bootstrap', 'repo'],
       });
     } else {
@@ -460,7 +461,15 @@ export async function getBackupStatus(
   const remoteDue = opts.localGitProbes === true && opts.verifyRemoteRefs === true
     && (!Number.isFinite(remoteAge) || remoteAge < 0 || remoteAge > BACKUP_VERIFICATION_MAX_AGE_MS
       || (remoteAge >= BACKUP_CONTINUATION_THROTTLE_MS && hasPendingRepoEvidence(cached, nowMs)));
-  if (!opts.forceRefresh && cached && !isBackupStatusStale(cached, nowMs) && !remoteDue) return currentBackupEvidence(cached, nowMs);
+  if (!opts.forceRefresh && cached && !isBackupStatusStale(cached, nowMs) && !remoteDue) {
+    const current = currentBackupEvidence(cached, nowMs);
+    // The cache keeps git evidence for its interval, but the page+fact count it
+    // took (often at init, on an empty brain) decides whether coaching is due:
+    // re-read it while the cached count still says "too young to coach".
+    if (!current.maturity || backupCoachingDue(current, nowMs)) return current;
+    const maturity = await brainMaturity(engine);
+    return maturity ? { ...current, maturity } : current;
+  }
   try {
     const fresh = await computeBackupCoverage(engine, { ...opts, previousStatus: cached ?? undefined });
     if (fresh.degraded && cached) return currentBackupEvidence({ ...cached, degraded: true }, nowMs);

@@ -9,7 +9,7 @@ import { claimLocalIpcBinding, localIpcSocketPath, prepareLocalIpcPath, UNIX_SOC
 import { ipcSecretPathForConfig, resolveSocketPathForConfig, resolveViaIpc, socketHasLiveListener, startResolveIpcServer } from '../src/core/context/resolve-ipc.ts';
 import { persistenceSocketPathForConfig, requestPersistenceCapabilities, requestPersistenceOperation, startPersistenceIpcServer } from '../src/core/persistence/ipc.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { waitFor } from './helpers/wait-for.ts';
+import { testWaitMs, waitFor } from './helpers/wait-for.ts';
 import { windowsPipeName } from '../src/core/context/windows-ipc.ts';
 import { tryAcquireNativeIpcMutex } from '../src/core/persistence/native-lock.ts';
 
@@ -109,13 +109,19 @@ describe.skipIf(process.platform === 'win32')('portable private Unix IPC', () =>
       expect([...outcomes].sort()).toEqual(['bound', 'busy']);
       const winner = outcomes.indexOf('bound'), inode = statSync(selected).ino;
       expect(await claimLocalIpcBinding(path)).toBeNull();
+      if (role === 'resolve') expect(await startResolveIpcServer(path, async () => null)).toBeNull();
+      else expect(await startPersistenceIpcServer(path, { brainId: BRAIN, dispatch: async () => ({}) })).toBeNull();
+      // A loaded runner can deschedule the elected provider past resolve's 250ms
+      // production budget. Pause it for longer than that so the slow case runs
+      // every time; the election is still proven by who answers.
+      pair[winner].kill('SIGSTOP');
+      const resumed = Bun.sleep(400).then(() => pair[winner].kill('SIGCONT'));
       if (role === 'resolve') {
-        expect(await startResolveIpcServer(path, async () => null)).toBeNull();
-        expect(await resolveViaIpc(path, { candidates: [] })).toEqual({ pointers: [], text: results[winner] });
+        expect(await resolveViaIpc(path, { candidates: [] }, { timeoutMs: testWaitMs(5000) })).toEqual({ pointers: [], text: results[winner] });
       } else {
-        expect(await startPersistenceIpcServer(path, { brainId: BRAIN, dispatch: async () => ({}) })).toBeNull();
         expect(await requestPersistenceOperation(path, request)).toEqual({ owner: results[winner] });
       }
+      await resumed;
       expect(statSync(selected).ino).toBe(inode);
       pair[winner].kill(9); await pair[winner].exited;
       expect(existsSync(selected)).toBe(true); // The actual killed process left its socket behind.

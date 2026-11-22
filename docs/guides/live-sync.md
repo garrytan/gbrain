@@ -104,6 +104,7 @@ The run ends in exactly one outcome:
 | --- | --- | --- | --- |
 | `synced` | 0 | The pass converged and stamped (a company-brain source: the cursor reached its target). A pass at a selection other than the configured one adds `selection_scoped` and does not advance `last_commit`; a pass that held files a person must decide adds `held_needs_human` (their count in `held_needs_human`). | Nothing; held files wait on a person (`gbrain sync status --source <id>`). |
 | `resumable` | 0 | A deadline, `--timeout` or Ctrl-C stopped it; accepted writes are intact. | Rerun `next.command`; safe in a loop. |
+| `resumable` / `terminated` | 143 (129 for SIGHUP) | A SIGTERM or SIGHUP (an outer `timeout`, a supervisor stop, a closed terminal) reached `gbrain sync` during a managed pass, which recorded its stop first; accepted writes are intact. A second signal, or a run still saving the pass 3 s after the handler starts, exits as before and leaves the pass open (`gbrain sync status` reads `pass_interrupted`); a run that saved the pass but is still printing its result then exits without it, and the pass reads `pass_terminated`; on PGLite the handler can start tens of seconds after the signal, so a supervisor that kills the process sooner leaves the pass open the same way. | Rerun `next.command`; either way the plain sync resumes it. |
 | `resumable` / `not_converged` | 0 | The pass used its four rounds while another writer kept changing the level; everything it admitted stands. | Rerun `next.command`. After three in a row `next` is a report (`gbrain doctor --json`), not another sync. |
 | `resumable` / `admission_paused` | 0 | `sync.admission` is `imports_only` or `classify_only`. | Ask the user; `gbrain config set sync.admission normal` ends the pause. |
 | `blocked` / `reconcile_host_required` or `grant_scope` | 1 | A remote caller or a partial grant admitted what it could; the rest (holds, markers, keep_db writes, the stamp) needs the owner host. | Tell the user to run `gbrain sync --source <id> --no-pull` on the brain host. |
@@ -666,6 +667,27 @@ vars — incident-time escape hatches, not everyday knobs.
    consumer claims) is reported in `sync_blocked` as
    [`refresh_sync_timeout`](write-refusals.md#refresh_sync_timeout) and
    catches up on its next sync.
+   While it holds the refresh lock, a member's sync derives links only for the
+   pages that refresh imported. Once every lock is released, the same run spends
+   the rest of the sync's link budget (1,000 pages and 5 minutes, less what the
+   imports used) on the source's stale-link backlog. So an uncontended run drains
+   as much backlog as a plain `gbrain sync` does, but other refreshes of the
+   checkout no longer wait on it. Refreshes drain a source's backlog one at a time
+   per brain: a refresh that finds another refresh's drain of the same brain's
+   source running skips its own (a plain
+   `gbrain sync` derives its own share without that lock). `--json` lists each
+   member's drain in `link_backlog`: `outcome` is `drained` (with `pages`
+   derived and `remaining`), `skipped` or `failed` (with `message`). A failed
+   drain never fails the refresh, and `gbrain extract --stale --source-id <id>`
+   runs the backlog on demand (`--dry-run --json` reports its size as
+   `stale_pages`).
+   `--json` also reports where the run's time went. `phase_ms` holds whole
+   milliseconds for each phase the run reached: `fetch`, `precheck` (which
+   includes `fetch`), `drain` (waiting for queued writes), `merge` (the fence
+   and fast-forward), `sync` (the member imports), `tail` (their post-import
+   step) and `backlog` (the drain after the lock). `lock_held_ms` is how long
+   the run held the refresh lock, and is absent when the run never took it.
+   `GBRAIN_DEBUG=1` prints the same line on stderr.
    A refresh whose process died (a crash, a replaced container) does not
    wedge the checkout: the owner finishes what it can on its own, and the next
    `gbrain sources refresh <source-id>` on the owner host finishes the rest

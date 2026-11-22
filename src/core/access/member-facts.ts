@@ -12,7 +12,9 @@
  */
 import { createHash } from 'node:crypto';
 import type { OperationContext } from '../ops/contract.ts';
-import { currentCallerAccess, folderRestrictedSql, isDerivationPrivate, privatePagesFilterForCaller, withFolderRestricted } from '../search/private-visibility.ts';
+import { currentCallerAccess, folderRestrictedSql, isDerivationPrivate, privateFactSources, privatePagesFilterForCaller, withFolderRestricted } from '../search/private-visibility.ts';
+import { factPagesOpenSql, unpagedFactSql } from '../facts/private-fact-pages.ts';
+import { ownedMemorySubjectSql, unbackedEntitySql } from '../facts/withdrawal-schema.ts';
 import type { BrainEngine } from '../engine.ts';
 import { ACCESS_ID_RE, MEMBER_PAGE_PREFIX, normalizeReaders, SCOPE_PAGE_SLUG } from './principals.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
@@ -32,6 +34,20 @@ export function callerMember(): string | null {
   if (access.audienceIdentities.length) return null;
   const member = access.identity.find(p => p.startsWith('member:'))?.slice('member:'.length) ?? null;
   return member && ACCESS_ID_RE.test(member) ? member : null;
+}
+
+/** GST-2897 B: the member a people page names: `people/<member>` or a page under it. */
+export function peoplePageMember(slug: string | null | undefined): string | null {
+  const id = /^people\/([^/]+)/.exec(slug ?? '')?.[1];
+  return id && ACCESS_ID_RE.test(id) ? id : null;
+}
+
+/** GST-2897 B: the enabled member other than the caller whose people page `entitySlug` is, else null. */
+export async function otherMemberSubject(engine: Pick<BrainEngine, 'executeRaw'>, entitySlug: string | null): Promise<string | null> {
+  const id = peoplePageMember(entitySlug);
+  if (!id || id === callerMember()) return null;
+  const rows = await engine.executeRaw('SELECT 1 FROM access_members WHERE id = $1 AND disabled_at IS NULL AND tombstoned_at IS NULL', [id]);
+  return rows.length ? id : null;
 }
 
 /**
@@ -110,7 +126,7 @@ export function assertScopePageWriter(ctx: Pick<OperationContext, 'remote' | 'at
 }
 
 /** Whether a scope page is shared with its whole source: no readers, no privacy and no folder rule narrow it (a squatted page is not). */
-export async function scopePageIsShared(engine: Pick<BrainEngine, 'executeRaw'>, page: { source_id: string; slug: string; type?: string | null; frontmatter?: unknown }): Promise<boolean> {
+export async function scopePageIsShared(engine: Pick<BrainEngine, 'executeRaw' | 'isFolderRestricted'>, page: { source_id: string; slug: string; type?: string | null; frontmatter?: unknown }): Promise<boolean> {
   return normalizeReaders(page.frontmatter) === null && !isDerivationPrivate(await withFolderRestricted(engine, page));
 }
 
@@ -155,13 +171,41 @@ export async function ownMemberFactIds(engine: Pick<BrainEngine, 'executeRaw'>, 
   return new Set(rows.map(r => Number(r.id)));
 }
 
-/** A remote fact read's visibility list as SQL: the listed values, widened only by memberFactAdmitSql. */
+/**
+ * GBRA-575: the private facts the current caller's private-facts grant admits: a fact stamped private in a source the
+ * grant lists by id (privateFactSources) whose holding, provenance and entity pages are none of member,
+ * derivation-private (private, privacy alias, readable_by, folder rule), missing or quarantined (factPagesOpenSql, the
+ * same pages `gbrain repair open-facts` refuses to open), and that has a page to check: never an unpaged or
+ * transcript-lane fact (unpagedFactSql), conversation archive included. FALSE outside such a grant. Source ids passed
+ * isValidSourceId, so they embed as literals. GST-2979: a held row (a restatement with a visibility proposal) is admitted
+ * only when the grant also reads every copy its proposals name, and a copy that is itself a held row counts only when the
+ * grant reads it by this same rule (the hold chain, followed to its end), so no fact read hands a grant text the page
+ * overlay holds from it (fence-overlay.ts heldRowSql uses this same predicate).
+ */
+export function grantedPrivateFactSql(alias: string): string {
+  const sources = privateFactSources();
+  if (!sources.length) return 'FALSE';
+  const opens = (a: string) => `(${a}.visibility = 'private' AND ${a}.source_id IN (${sources.map(s => `'${s}'`).join(', ')}) AND NOT COALESCE(${unpagedFactSql(a)}, false) AND ${factPagesOpenSql(a)})`;
+  const holds = (p: string) => `${p}.related_table = 'facts' AND ${p}.action IN ('supersede_fact', 'confirm') AND ${p}.before_state->'visibility' IS NOT NULL`;
+  return `(${opens(alias)} AND ${alias}.id NOT IN (WITH RECURSIVE held_refused(id) AS (
+      SELECT held_prop.related_id FROM trust_proposals held_prop
+        LEFT JOIN facts held_copy ON held_prop.target_table = 'facts' AND held_copy.id = held_prop.target_id
+        WHERE ${holds('held_prop')} AND (held_copy.id IS NULL OR NOT (${memberFactAdmitSql('held_copy')} OR ${opens('held_copy')}))
+      UNION
+      SELECT held_next.related_id FROM held_refused
+        JOIN trust_proposals held_next ON held_next.target_table = 'facts' AND held_next.target_id = held_refused.id
+        JOIN facts held_via ON held_via.id = held_refused.id
+        WHERE ${holds('held_next')} AND NOT ${memberFactAdmitSql('held_via')})
+    SELECT id FROM held_refused WHERE id IS NOT NULL))`;
+}
+
+/** A remote fact read's visibility list as SQL: the listed values, widened only by memberFactAdmitSql and grantedPrivateFactSql. */
 export function factVisibilitySql(alias: string, visibility: readonly string[]): string {
   const known = (['world', 'private'] as const).filter(v => visibility.includes(v));
   const listed = known.length ? `${alias}.visibility IN (${known.map(v => `'${v}'`).join(', ')})` : 'FALSE';
   if (known.includes('private')) return listed;
-  const own = memberFactAdmitSql(alias);
-  return own === 'FALSE' ? listed : `(${listed} OR ${own})`;
+  const widened = [memberFactAdmitSql(alias), grantedPrivateFactSql(alias)].filter(sql => sql !== 'FALSE');
+  return widened.length ? `(${[listed, ...widened].join(' OR ')})` : listed;
 }
 
 /**
@@ -175,10 +219,11 @@ export function onOwnedMemoryPageSql(alias: string): string {
 /**
  * GST-359 D: the withdrawal-ledger subject of a fact, as SQL. A fact on an owned memory page (a member page, GST-1113 a
  * scope page) is withdrawn for that page alone (its slug), so forgetting it never reaches another copy of the same claim;
- * any other fact keeps its entity ('*' without one).
+ * any other fact keeps its entity ('*' without one, and GBRA-574 '*' for an unbacked entity).
  */
 export function factWithdrawalSubjectSql(alias: string): string {
-  return `CASE WHEN ${onOwnedMemoryPageSql(alias)} THEN ${alias}.source_markdown_slug ELSE COALESCE(${alias}.entity_slug, '*') END`;
+  return `CASE WHEN ${onOwnedMemoryPageSql(alias)} THEN ${alias}.source_markdown_slug WHEN ${unbackedEntitySql(alias)} THEN '*'
+    ELSE COALESCE(${alias}.entity_slug, '*') END`;
 }
 
 /**
@@ -192,9 +237,9 @@ export function withdrawalCoversFactSql(w: string, f: string): string {
     ELSE ${withdrawalReachedFactSql(w, f)} END)`;
 }
 
-/** Whether withdrawal row `w` expired fact `f` when it was made (recordFactWithdrawal's reach), as SQL: every subject ('*'), the fact's entity, or the owned memory page it sits on. */
+/** Whether withdrawal row `w` expired fact `f` when it was made (recordFactWithdrawal's reach), as SQL: every subject ('*'), the fact's entity, any subject but an owned memory page for an unbacked entity, or the owned memory page it sits on. */
 export function withdrawalReachedFactSql(w: string, f: string): string {
-  return `(${w}.subject = '*' OR ${w}.subject = COALESCE(${f}.entity_slug, '*') OR (${onOwnedMemoryPageSql(f)} AND ${w}.subject = ${f}.source_markdown_slug))`;
+  return `(${w}.subject = '*' OR ${w}.subject = COALESCE(${f}.entity_slug, '*') OR (${unbackedEntitySql(f)} AND NOT ${ownedMemorySubjectSql(`${w}.subject`)}) OR (${onOwnedMemoryPageSql(f)} AND ${w}.subject = ${f}.source_markdown_slug))`;
 }
 
 /** The owned memory page a claim is checked on for withdrawals, or null: `slug` when it is one, so a page-scoped withdrawal applies there alone. */

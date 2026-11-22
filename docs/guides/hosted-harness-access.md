@@ -11,6 +11,7 @@ does not configure your laptop or Bot. First select the connection method:
 | Harness has native OAuth/PKCE settings | [Native OAuth path](#native-oauth-path) below |
 | Managed bearer configuration or a thin CLI adapter | The [machine handoff path](#1-grant-access-on-the-brain-host) below |
 | Open the dashboard, inspect clients, change permissions, or end access | [MCP administration](../mcp/ADMIN.md) |
+| A member key `gbrain setup --serves several` minted (`member-keys/<member>.key`) | [A member's key into their harness](setup.md#a-members-key-into-their-harness) |
 
 An endpoint URL, ordinary OAuth token, client secret, or MCP `admin` scope does
 not grant owner administration. The owner uses a separately protected bootstrap

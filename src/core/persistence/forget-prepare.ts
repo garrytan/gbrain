@@ -28,6 +28,7 @@ import { materializedPage } from './segmented-apply.ts';
 import { prepareFileTarget, snapshotLedger, unreadPageFile } from './page-prepare.ts';
 import { pageIdentityError } from './page-identity.ts';
 import { MEMBER_PAGE_PREFIX, onOwnedMemoryPageSql } from '../access/member-facts.ts';
+import { unbackedEntitySql } from '../facts/withdrawal-schema.ts';
 import { storedOwnerSpeaksForItself } from './page-visibility.ts';
 import type { CompanionPage, PageMutationFile, PreparedMutation } from './coordinator.ts';
 import type { WriteAuthority, WriteRequest } from './model.ts';
@@ -40,15 +41,18 @@ interface ForgetTarget { id: number; entity_slug: string | null; trust_tier?: st
  * A fact saved without an entity says nothing about whom it concerns, so its
  * withdrawal reaches the claim under every entity. When that claim is active
  * on entity-linked facts, forgetting the unlinked copy would silently withdraw
- * them too, and a withdrawn claim cannot be remembered again; refuse and name them.
+ * them too, and a withdrawn claim cannot be remembered again; refuse and name them. GBRA-574: a fact on an unbacked
+ * name key withdraws source-wide the same way, so it is checked against every other entity's copy.
  * A caller that cannot read private pages never withdraws an active copy it
  * cannot see: the refusal is then one fixed text that names no fact.
  */
 export async function refuseForgetReachingOtherCopies(tx: BrainEngine, sourceId: string, fact: ForgetTarget, remote: boolean, excludePrivate: boolean): Promise<void> {
   const id = fact.id;
-  if (fact.entity_slug === null) {
+  const unbacked = fact.entity_slug !== null && (await tx.executeRaw<{ unbacked: boolean }>(
+    `SELECT ${unbackedEntitySql('u')} AS unbacked FROM facts u WHERE u.id=$1 AND u.source_id=$2`, [id, sourceId]))[0]?.unbacked === true;
+  if (fact.entity_slug === null || unbacked) {
     const linked = await tx.executeRaw<{ id: number; entity_slug: string }>(`SELECT l.id,l.entity_slug FROM facts u
-      JOIN facts l ON l.source_id=u.source_id AND l.visibility=u.visibility AND l.entity_slug IS NOT NULL AND l.id<>u.id
+      JOIN facts l ON l.source_id=u.source_id AND l.visibility=u.visibility AND l.entity_slug IS NOT NULL AND l.entity_slug IS DISTINCT FROM u.entity_slug AND l.id<>u.id
         AND l.expired_at IS NULL AND (l.valid_until IS NULL OR l.valid_until > now())
         AND gbrain_fact_fingerprint(l.fact)=gbrain_fact_fingerprint(u.fact)
       WHERE u.id=$1 AND u.source_id=$2 AND ($3::boolean=false OR l.visibility='world')${excludePrivate ? ` AND ${remoteProvenanceFloorSql('l')}` : ''}
@@ -56,14 +60,14 @@ export async function refuseForgetReachingOtherCopies(tx: BrainEngine, sourceId:
     if (linked.length) {
       const named = linked.map(row => `#${row.id} (${row.entity_slug})`).join(', ');
       throw verbError('invalid_params',
-        `claim_linked: fact #${id} was saved without an entity, and the same claim is active as ${named}. Forgetting #${id} would withdraw those facts too, so nothing was forgotten.`,
+        `claim_linked: fact #${id} was saved ${unbacked ? `on the name tag ${fact.entity_slug}, which has no page` : 'without an entity'}, and the same claim is active as ${named}. Forgetting #${id} would withdraw those facts too, so nothing was forgotten.`,
         `Keep the linked ${linked.length === 1 ? 'fact' : 'facts'}: the copy without an entity needs no cleanup (remember the claim with entity and replaces: "${id}" retires it). To withdraw the claim everywhere, forget ${linked.map(row => `#${row.id}`).join(', ')} first, then #${id}.`);
     }
   }
   if (!excludePrivate) return;
   const hidden = await tx.executeRaw(`SELECT 1 FROM facts u
     JOIN facts l ON l.source_id=u.source_id AND l.visibility=u.visibility AND l.id<>u.id
-      AND (u.entity_slug IS NULL OR l.entity_slug=u.entity_slug)
+      AND (u.entity_slug IS NULL OR ${unbackedEntitySql('u')} OR l.entity_slug=u.entity_slug)
       AND l.expired_at IS NULL AND (l.valid_until IS NULL OR l.valid_until > now())
       AND gbrain_fact_fingerprint(l.fact)=gbrain_fact_fingerprint(u.fact)
     WHERE u.id=$1 AND u.source_id=$2 AND NOT (${remoteProvenanceFloorSql('l')}) LIMIT 1`, [id, sourceId]);

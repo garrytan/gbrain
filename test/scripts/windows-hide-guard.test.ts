@@ -45,7 +45,7 @@ describe('check-windows-hide.ts', () => {
     expect(r.out).toContain(`FAIL [windows_hide_direct_child_process]: src/commands/new-command.ts:`);
     expect(r.out).toContain(what);
     expect(r.out).toContain('Fix: import it from src/core/spawn.ts, which defaults windowsHide: true');
-    expect(r.out).toContain('See:  docs/TESTING.md#windows-hidden-console-guard');
+    expect(r.out).toContain('See:  docs/ci-guards.md#windows-hidden-console-guard');
   });
 
   test.each([

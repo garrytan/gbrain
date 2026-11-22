@@ -11,7 +11,8 @@
  *
  * Not scanned: CHANGELOG.md and TODOS.md (history and backlog), and dated
  * records that describe the tree at the time: docs/test-audit/<date>/,
- * docs/designs/ (plans) and docs/fix-wave-notes/.
+ * docs/designs/ (plans), docs/fix-wave-notes/ and docs/research/rust-engine/ (research
+ * maps that also name files in garrytan/gbrain-evals and earlier tree states).
  *
  * Escape hatches, in order of preference:
  *  - fix or delete the reference;
@@ -28,7 +29,7 @@ import { join, resolve } from 'node:path';
 
 const REPO = resolve(import.meta.dir, '..');
 const ROOT_DOCS = new Set(['README.md', 'CLAUDE.md', 'AGENTS.md', 'CONTRIBUTING.md', 'INSTALL_FOR_AGENTS.md']);
-const EXEMPT_PREFIXES = ['docs/test-audit/', 'docs/designs/', 'docs/fix-wave-notes/'];
+const EXEMPT_PREFIXES = ['docs/test-audit/', 'docs/designs/', 'docs/fix-wave-notes/', 'docs/research/rust-engine/'];
 const PATH_RE = /(?<![\w./~-])((?:scripts|test)\/[A-Za-z0-9_./-]*[A-Za-z0-9_])/g;
 const FILE_EXT = /\.(ts|mts|mjs|js|sh|tsv|txt|json|jsonl|md|yml)$/;
 const PLACEHOLDER = /^(foo|bar|baz|x|y|z|your-[\w-]+)\.[a-z.]+$/;
@@ -36,6 +37,9 @@ const HISTORICAL = '<!-- repo-paths: historical -->';
 
 /** file -> path -> reason. Paths that live outside this repository. */
 const ALLOWLIST: Record<string, Record<string, string>> = {
+  'docs/plans/PLAN.md': {
+    'scripts/generate-v0.41-launch.ts': 'a gbrain-evals script (garrytan/gbrain-evals), named by the Rust engine plan gate 1a',
+  },
   '.github/workflows/harness-check.yml': {
     'scripts/gbrain-check.ts': 'a harness-evals script (garrytan/harness-evals), run by the advisory harness-check workflow',
     'scripts/build-gbrain-image.sh': 'a harness-evals script (garrytan/harness-evals), run by the advisory harness-check workflow',

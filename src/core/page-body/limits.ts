@@ -12,6 +12,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { PAGE_INLINE_MAX_BYTES, PAGE_MAX_BYTES } from '../page-size-policy.ts';
 import type { SegmentedGateWriter } from '../persistence/writer-versions.ts';
+import { sqlEngineKind, type EngineKind } from '../sql-engine-kind.ts';
 
 export { PAGE_INLINE_MAX_BYTES };
 
@@ -66,6 +67,11 @@ export const STAGE_BATCH_BYTES: Readonly<Record<'postgres' | 'pglite', number>> 
   postgres: 4 * 1024 ** 2,
   pglite: 4 * 1024 ** 2,
 };
+
+/** STAGE_BATCH_BYTES for the engine's kind; a Rust brain stages no SQL rows, so it is refused (`engine_capability_missing`). */
+export function stageBatchBytes(kind: EngineKind): number {
+  return STAGE_BATCH_BYTES[sqlEngineKind(kind, 'page body staging')];
+}
 
 /**
  * Segment bytes one projection transaction chunks into rows while it holds the page's key lock (ingest.ts

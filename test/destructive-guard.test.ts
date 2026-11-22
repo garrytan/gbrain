@@ -566,6 +566,7 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
       if (sql.trimStart().startsWith('SELECT')) return [{ id: 'boom' }];
       throw Object.assign(new Error(message), { code }); // NOT the FK class
     },
+    readManagedModeRows: async () => [{ enabled: false }], // the typed guard read: the same unmanaged row
   }) as never;
 
   test('gbrain#4115 — a NON-FK error re-raises instead of reading as blocked (review gap G8)', async () => {
@@ -585,6 +586,7 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
         if (sql.trimStart().startsWith('SELECT')) return [{ id: 'restored-mid-sweep' }];
         return []; // per-id DELETE re-checks the expiry predicate → 0 rows
       },
+      readManagedModeRows: async () => [{ enabled: false }], // the typed guard read: the same unmanaged row
     } as never;
     const { purged, blocked } = await purgeExpiredSources(stub);
     expect(purged).toEqual([]);
@@ -800,6 +802,7 @@ describe('FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)', () => 
         if (sql.includes('oauth_clients')) sawOauthQuery = true;
         return sql.includes('FROM persistence_brain') ? [{ enabled: false }] : []; // #6482: one well-formed unmanaged row
       },
+      readManagedModeRows: async () => [{ enabled: false }], // the typed guard read: the same unmanaged row
     } as any;
     expect(await purgeExpiredSources(purgeStub)).toEqual({ purged: [], blocked: [] });
     expect(sawOauthQuery).toBe(false);
@@ -891,6 +894,7 @@ describe('purgeExpiredSources — clone cleanup containment', () => {
         }
         return [{ id }];
       },
+      readManagedModeRows: async () => [{ enabled: false }], // the typed guard read: the same unmanaged row
     } as never;
   }
 

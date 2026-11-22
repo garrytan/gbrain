@@ -18,6 +18,15 @@ const TMP = mkdtempSync(join(tmpdir(), 'gbrain-import-file-test-'));
 // "page not found after write" path. This is the correct loud-failure
 // behavior for a real desync, but for the existing unit tests we need the
 // mock to behave like a working DB where writes are readable.
+const GUARD_READS: Record<string, (...args: any[]) => unknown> = {
+  readManagedModeRows: () => [{ enabled: false }],
+  getSourceStrictness: () => false,
+  getConfigValues: () => [],
+  readTransactionSettings: (names: string[]) => names.map(() => null),
+  applyTransactionSettings: () => undefined,
+  isFolderRestricted: () => false,
+};
+
 function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
   const calls: { method: string; args: any[] }[] = [];
   // In-memory page store: slug → page row (simulates a real DB index).
@@ -32,6 +41,8 @@ function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
     get(_, prop: string) {
       if (prop === '_calls') return calls;
       if (prop === 'getTags') return overrides.getTags || (() => Promise.resolve([]));
+      // Like a real engine, the reuse read resolves to a row array (no stored chunks).
+      if (prop === 'getChunkReuseRows') return overrides.getChunkReuseRows || (() => Promise.resolve([]));
       if (prop === 'getPage') {
         return async (slug: string, opts?: { sourceId?: string }) => {
           // If the test provides a custom getPage, call it first (for the
@@ -80,6 +91,8 @@ function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
       // Like a real engine, executeRaw always resolves to a row array.
       // #6482: the strict mode reader needs one well-formed unmanaged row.
       if (prop === 'executeRaw' && !overrides.executeRaw) return (...args: any[]) => { calls.push({ method: prop, args }); return Promise.resolve(String(args[0]).includes('FROM persistence_brain') ? [{ enabled: false }] : []); };
+      // The import guards read through typed methods; a page-less mock engine answers them like a fresh unmanaged brain.
+      if (!overrides[prop] && prop in GUARD_READS) return (...args: any[]) => { calls.push({ method: prop, args }); return Promise.resolve(GUARD_READS[prop]!(...args)); };
       return track(prop);
     },
   });

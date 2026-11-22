@@ -70,17 +70,19 @@ export const google: Recipe = {
       safety_factor: 0.8,
     },
     expansion: {
-      models: ['gemini-2.5-flash', 'gemini-2.5-flash-lite'],
+      models: ['gemini-3.5-flash-lite', 'gemini-2.5-flash-lite'],
       cost_per_1m_tokens_usd: 0.30,
-      price_last_verified: '2026-08-02',
+      price_last_verified: '2026-11-19',
     },
     chat: {
       // Retired by Google and deliberately NOT listed: gemini-1.5-pro
-      // (#3510) and the whole gemini-2.0 family — flash, flash-lite, and
-      // flash-exp all answer 404 on generateContent. Default-slot guard
-      // tests validate hardcoded defaults against this list, so re-adding a
-      // dead model here masks dead defaults.
-      models: ['gemini-2.5-flash', 'gemini-2.5-flash-lite'],
+      // (#3510), the whole gemini-2.0 family — flash, flash-lite, and
+      // flash-exp all answer 404 on generateContent — and gemini-2.5-flash,
+      // which Google retires on 2026-12-01 and routes to gemini-3.5-flash-lite
+      // (#9776). gemini-2.5-flash-lite is not deprecated and stays. Default-slot
+      // guard tests validate hardcoded defaults against this list, so
+      // re-adding a dead model here masks dead defaults.
+      models: ['gemini-3.5-flash-lite', 'gemini-2.5-flash-lite'],
       supports_tools: true,
       supports_subagent_loop: true,
       // Per-model: implicit caching is a 2.5+ capability, and this recipe
@@ -88,10 +90,10 @@ export const google: Recipe = {
       // list above), so a recipe-wide boolean mislabels whichever side it
       // picks.
       supports_prompt_cache: googleSupportsPromptCache,
-      max_context_tokens: 1000000, // Gemini 2.5 Flash
+      max_context_tokens: 1000000, // Gemini 3.5 Flash-Lite
       cost_per_1m_input_usd: 0.30,
       cost_per_1m_output_usd: 2.50,
-      price_last_verified: '2026-08-02',
+      price_last_verified: '2026-11-19',
     },
   },
   setup_hint: 'Get an API key at https://aistudio.google.com/apikey, then `export GOOGLE_GENERATIVE_AI_API_KEY=...`',

@@ -19,13 +19,15 @@
 
 import type { BrainEngine } from '../engine.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
-import { privateFactFilterForCaller } from './private-visibility.ts';
+import { privateFactFilterForReader, worldOnlyFacts } from './private-visibility.ts';
+import { grantedPrivateFactSql } from '../access/member-facts.ts';
 import { factEntitySlugs } from '../mentions/siblings.ts';
 import { resolveQueryEntities, type ResolvedEntity } from './alias-fanout.ts';
 import { collapseFactReads } from '../facts/capture-dedup.ts';
 import type { FactAttribution } from '../engine.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import type { TrustTier } from '../trust/tier.ts';
+import { applySlotEnds } from './slot-ends.ts';
 
 export const ENTITY_FACTS_CAP = 5;
 export const LINKED_FACTS_CAP = 3;
@@ -46,8 +48,8 @@ export function stripCollapseColumns<T extends CollapseColumns & { collapsed_ids
   return rest;
 }
 
-async function newestFacts(engine: BrainEngine, sourceId: string, slugs: string[], opts: { remote: boolean; minTrust?: TrustTier }, limit: number): Promise<Array<EntityFact & CollapseColumns>> {
-  const visibility = opts.remote ? `AND f.visibility = 'world' AND ${privateFactFilterForCaller('f')}` : '';
+async function newestFacts(engine: BrainEngine, sourceId: string, slugs: string[], opts: { remote: boolean; excludePrivate: boolean; minTrust?: TrustTier }, limit: number): Promise<Array<EntityFact & CollapseColumns>> {
+  const visibility = opts.remote ? `${worldOnlyFacts(opts.remote) ? `AND (f.visibility = 'world' OR ${grantedPrivateFactSql('f')})` : ''} AND ${privateFactFilterForReader('f')}` : '';
   const rows = await engine.executeRaw<EntityFact & CollapseColumns>(
     `SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source, ${SAVED_FACT_COLLAPSE_COLUMNS}
        FROM facts f
@@ -56,10 +58,13 @@ async function newestFacts(engine: BrainEngine, sourceId: string, slugs: string[
         AND f.source != ALL($3::text[])
         ${visibility}
         AND ${projectionEligibleSql('facts', 'f', { floor: opts.minTrust })}
-      ORDER BY f.valid_from DESC, f.id DESC
+      ORDER BY (CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC
       LIMIT ${SAVED_FACTS_COLLAPSE_WINDOW}`,
     [sourceId, slugs, [...AUDIT_ROW_SOURCES]]);
-  return (await collapseFactReads(engine, rows.map(r => ({ ...r, id: Number(r.id) })))).slice(0, limit);
+  // GST-3170: a slot value a later one ended at read time is no longer current (slot-ends.ts).
+  const current = await applySlotEnds(engine, { sourceId, worldOnly: worldOnlyFacts(opts.remote), excludePrivate: opts.remote || opts.excludePrivate, minTrust: opts.minTrust },
+    rows.map(r => ({ ...r, id: Number(r.id) })), { activeOnly: true, entities: [{ source_id: sourceId, slugs }] });
+  return (await collapseFactReads(engine, current)).slice(0, limit);
 }
 
 /** The named entity's newest facts, then those of entities its facts name, with the collapse columns. Fail-soft: errors return []. */

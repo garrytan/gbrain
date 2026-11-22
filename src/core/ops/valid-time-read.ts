@@ -14,16 +14,17 @@ import type { OperationContext, ParamDef } from './contract.ts';
 import { opError } from './contract.ts';
 import { hostFix, opTransport, readFix } from './op-fix.ts';
 import { renderAction, type Action } from '../agent-output.ts';
-import { assertExplicitSourceLive, federatedSearchScope, pageNotFoundError, parseSourceIdParam, validatePageSlug } from './context.ts';
+import { assertExplicitSourceLive, federatedSearchScope, pageNotFoundError, parseSourceIdParam, readHolders, validatePageSlug } from './context.ts';
 import { inlineBodyBytes } from './get-page-body.ts';
 import { pageTrustForRead, readQuarantined } from './get-page-projection.ts';
 import { admitsTrust, type TrustTier } from '../trust/tier.ts';
 import { isCalendarDate } from '../link-validity.ts';
 import { replacedBecauseSql } from '../engine-sql/pages.ts';
-import { callerReadersAllowedSql, privacyForCaller, privateLinkOriginFilterFragment, privatePagesFilterForCaller, privatePagesFilterFragment, privateSnapshotFilterFragment, remoteReadFloorSql, resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { callerReadersAllowedSql, ownerFenceView, privacyForCaller, privateLinkOriginFilterFragment, privatePagesFilterForCaller, privatePagesFilterFragment, privateSnapshotFilterFragment, remoteReadFloorSql, resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
 import { fenceTranscriptText, isQuotedPageType, neutralizeToolCalls, quotesStored } from '../search/transcript-quote.ts';
 import { quotedPageMeta } from './get-page-projection.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
+import { heldRowsForCaller } from '../eligibility/fence-overlay.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { pageDocument } from '../page-window/document.ts';
 import { DEFAULT_WINDOW_BYTES, MAX_WINDOW_BYTES, decodeCursor, encodeCursor, totalLines, windowFrom, type WindowSlice } from '../page-window/window.ts';
@@ -35,6 +36,7 @@ import { LARGE_PAGE_VERSIONS_KEPT } from '../page-body/limits.ts';
 import { validDateSql, validTimeVerdict, type ValidTimeVerdict, type ValidTimeWhy } from '../valid-time.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { Page } from '../types.ts';
+import { noteReturnedPages } from '../access/read-log.ts';
 
 export const AS_OF_PARAM: ParamDef = { type: 'string', description: 'YYYY-MM-DD: edition in force then. No valid_time in reply: current page.' };
 
@@ -256,9 +258,10 @@ async function loadEdition(tx: BrainEngine, identity: Identity, row: PickRow): P
  */
 async function editionView(ctx: OperationContext, identity: Identity, e: Edition, asOf: string, offset: number | null, maxBytes: number, quote: boolean): Promise<Record<string, unknown> | 'gone'> {
   const neutralize = quote && ctx.thinClient !== true && isQuotedPageType(e.type);
+  const omitRows = e.segmented ? undefined : await heldRowsForCaller(ctx.engine, ctx.remote, { sourceId: identity.source_id, slug: identity.slug, compiled_truth: e.compiled_truth, timeline: e.timeline });
   const clean = (s: string) => {
     if (ctx.remote === false) return s;
-    const safe = sanitizeRemoteBody(s, { includeWithdrawn: true, keepMaterializedMarkers: true });
+    const safe = sanitizeRemoteBody(s, { includeWithdrawn: true, keepMaterializedMarkers: true, omitRows, owner: ownerFenceView(readHolders(ctx)) });
     return neutralize ? neutralizeToolCalls(safe) : safe;
   };
   const fence = (s: string) => quote && s ? fenceTranscriptText(s, identity.slug) : s;
@@ -270,7 +273,7 @@ async function editionView(ctx: OperationContext, identity: Identity, e: Edition
   let total: number, slice: WindowSlice, lines: number | undefined;
   if (e.segmented) {
     try {
-      const body = await openSegmentedBody(ctx.engine, { pageId: identity.id, ...(e.generation !== undefined ? { generation: e.generation } : {}) });
+      const body = await openSegmentedBody(ctx.engine, { pageId: identity.id, ...(e.generation !== undefined ? { generation: e.generation } : {}), hideHeld: worldOnlyFacts(ctx.remote) });
       const seg = await segmentedReadDocument(ctx.engine, body);
       total = seg.total;
       slice = await seg.from(offset ?? 0, maxBytes);
@@ -342,6 +345,7 @@ export async function getPageAsOf(ctx: OperationContext, p: Record<string, unkno
   }
   if (excludePrivate && !row.visible) throw missing();
   if (!loaded) throw missing();
+  noteReturnedPages([identity.id]);
   // #6259: a quarantined page (now, or in the chosen edition) keeps its body from a remote reader, as the plain read does.
   const quarantined = readQuarantined(ctx, loaded.current.page, false)
     ?? readQuarantined(ctx, { slug: identity.slug, source_id: identity.source_id, frontmatter: loaded.edition.frontmatter }, false);

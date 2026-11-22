@@ -133,6 +133,8 @@ const passCostScopes = new Map<string, PassCostScope>();
 
 export function registerPassCost(passId: string, scope: PassCostScope): void { passCostScopes.set(passId, scope); }
 export function unregisterPassCost(passId: string): void { passCostScopes.delete(passId); }
+/** GST-2869: a managed pass is running in this process (registered after its pin, until it ends); `gbrain sync` owns a signal only then. */
+export const managedPassLive = (): boolean => passCostScopes.size > 0;
 
 const costPrefix = (sourceId: string, incarnation: string, scope?: string) => `${sourceId}:${incarnation}:${scope === undefined ? '' : `${scope}:`}`;
 

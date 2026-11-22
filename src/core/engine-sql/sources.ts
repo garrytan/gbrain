@@ -5,7 +5,7 @@
  * (docs/designs/refactor-wave-1/w1-inventory.md). `listAllSources` was
  * unscoped on master (EO4 inventory), so it takes `LegacyUnscopedRead`.
  */
-import type { SourceRow } from '../engine.ts';
+import type { SourceDetailRow, SourceRow } from '../engine.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from '../source-config-sql.ts';
 import { jsonbParam, type SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
@@ -79,3 +79,23 @@ export async function updateSourceConfig(exec: SqlExecutor, sourceId: string, pa
     `);
     return affectedRows > 0;
   }
+
+/** One source with the columns import and contextual retrieval read, or null for an unknown id. Rows come back as the driver returns them. */
+export async function getSource(exec: LegacyUnscopedRead, sourceId: string): Promise<SourceDetailRow | null> {
+  const rows = await exec.executeRaw<SourceDetailRow>(
+    `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at,
+            contextual_retrieval_mode, trust_frontmatter_overrides
+     FROM sources WHERE id = $1`,
+    [sourceId],
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Local paths of every source that has one, unscoped on master (`withSourceFilesystemLock` read it through
+ * `executeRaw`). Empty strings are dropped as well as NULLs.
+ */
+export async function listSourceLocalPaths(exec: LegacyUnscopedRead): Promise<string[]> {
+  const { rows } = await exec.query<{ local_path: string }>(`SELECT local_path FROM sources WHERE local_path IS NOT NULL AND local_path <> ''`);
+  return rows.map(r => r.local_path);
+}

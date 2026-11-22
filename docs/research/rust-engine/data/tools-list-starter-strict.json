@@ -1,0 +1,1928 @@
+[
+  {
+    "name": "remember",
+    "description": "Save {fact, provenance (required), `entity` (subject; recall needs it)} or items[]. Branch on `status`; write_pending: poll get_write_request.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "description": "Write source."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Reuse only to retry."
+        },
+        "fact": {
+          "type": "string",
+          "description": "One claim."
+        },
+        "items": {
+          "type": "array",
+          "description": "≤20 of {fact,entity,provenance,kind,ttl,visibility}",
+          "items": {
+            "type": "object"
+          }
+        },
+        "provenance": {
+          "type": "string",
+          "description": "Source (≤500 chars)."
+        },
+        "ttl": {
+          "type": "string",
+          "description": "\"30d\", \"12h\", ISO; omit = never."
+        },
+        "entity": {
+          "type": "string",
+          "description": "Name or slug."
+        },
+        "kind": {
+          "type": "string",
+          "description": "Default fact.",
+          "enum": [
+            "event",
+            "preference",
+            "commitment",
+            "belief",
+            "fact"
+          ]
+        },
+        "share": {
+          "type": "boolean",
+          "description": "Members save privately, owner shared; true: all source readers recall it. Not for facts about a person."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "title": "remember (memory write)",
+      "idempotentHint": true
+    }
+  },
+  {
+    "name": "entity",
+    "description": "Person/company/account card, zero LLM. Previews are not evidence: fetch the page before stating status or dates. Miss: found:false with near matches (create_safety). Facts: recall.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name, alias or slug."
+        },
+        "names": {
+          "type": "array",
+          "description": "Or up to 50 names/codes at once: compact rows.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "title": "entity (card lookup, zero LLM)",
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "synthesize",
+    "description": "[EXPENSIVE / SLOW: LLM calls] Cited answer to a broad question across pages. Lookups: recall or entity.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "question": {
+          "type": "string",
+          "description": "The question."
+        },
+        "since": {
+          "type": "string",
+          "description": "Window start (ISO 8601)."
+        },
+        "until": {
+          "type": "string",
+          "description": "Window end (ISO 8601)."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [
+        "question"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "title": "synthesize (slow, costly — LLM-backed)",
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "forget",
+    "description": "Expire a remembered fact by its fact_id (never a page slug). Idempotent; the audit trail is kept.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "description": "Reuse only to retry."
+        },
+        "id": {
+          "type": "string",
+          "description": "fact_id from remember or recall."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Audit note (default \"forgotten\")."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "title": "forget (expire a fact)",
+      "destructiveHint": true,
+      "idempotentHint": true
+    }
+  },
+  {
+    "name": "get_page",
+    "description": "Read a page; `section`/`grep` reads one part. Window selector order: cursor, around_chunk_id, lines, bytes (context only with grep). Edit: include_content:true, `content` to put_page, or edit_page. >256 KB: outline+window, then `next`.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "slug": {
+          "type": "string",
+          "description": "Page slug."
+        },
+        "include_content": {
+          "type": "boolean",
+          "description": "Markdown + revision."
+        },
+        "source_id": {
+          "type": "string",
+          "description": "One source, or '__all__'."
+        },
+        "as_of": {
+          "type": "string",
+          "description": "YYYY-MM-DD: edition in force then. No valid_time in reply: current page."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [
+        "slug"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "put_page",
+    "description": "Complete content REPLACES the whole page: read get_page include_content:true; its revision is expected_revision. Keep a request_id UUID; retry with identical arguments. Remote callers: existing-page [[links]] become mentions; typed links are skipped (stdio `gbrain serve` sweeps later, `gbrain serve --http` does not self-sweep). Edits: edit_page; appends: append_page; >3 pages: put_pages.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "description": "Write source."
+        },
+        "expected_revision": {
+          "type": "string",
+          "description": "Revision read; omit to create."
+        },
+        "force": {
+          "type": "boolean",
+          "description": "Ignore the revision."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Reuse only to retry."
+        },
+        "slug": {
+          "type": "string",
+          "description": "Page slug."
+        },
+        "content": {
+          "type": "string",
+          "description": "Complete markdown (get_page include_content:true)."
+        },
+        "wait_ms": {
+          "type": "number",
+          "description": "Commit wait ms (0-30000, default 5000)."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [
+        "slug",
+        "content"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "idempotentHint": true
+    }
+  },
+  {
+    "name": "list_pages",
+    "description": "List pages by type, slug_prefix, frontmatter where; what did I touch this week: sort=updated_desc. Default 50; truncated: continue with updated_after + updated_after_slug from the last row.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Page type."
+        },
+        "tag": {
+          "type": "string",
+          "description": "Tag."
+        },
+        "limit": {
+          "type": "number",
+          "description": "Remote max 100."
+        },
+        "updated_after": {
+          "type": "string",
+          "description": "ISO time."
+        },
+        "updated_after_slug": {
+          "type": "string",
+          "description": "Last row's slug (with updated_after)."
+        },
+        "sort": {
+          "type": "string",
+          "description": "Default updated_desc.",
+          "enum": [
+            "updated_desc",
+            "updated_asc",
+            "created_desc",
+            "slug"
+          ]
+        },
+        "source_id": {
+          "type": "string",
+          "description": "One source, or '__all__'."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "capture",
+    "description": "Quick note (\"just remember this\"): slugged under inbox/ by date + content hash, so recapturing is idempotent. put_page controls slug or type; remember is for facts about entities.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "description": "Write source."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Reuse only to retry."
+        },
+        "content": {
+          "type": "string",
+          "description": "Markdown or text (not a file path)."
+        },
+        "slug": {
+          "type": "string",
+          "description": "Default inbox/<date>-<hash>."
+        },
+        "type": {
+          "type": "string",
+          "description": "Page type (default note)."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [
+        "content"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "idempotentHint": true
+    }
+  },
+  {
+    "name": "edit_page",
+    "description": "Change part of a page: prefer this over put_page for small changes. expected_revision: from get_page include_content:true. Each old_text must match exactly once (in `within` if set); applied in order, all or none. Stale revision: revision_conflict.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "slug": {
+          "type": "string",
+          "description": "Page slug."
+        },
+        "expected_revision": {
+          "type": "string",
+          "description": "From get_page include_content:true."
+        },
+        "edits": {
+          "type": "array",
+          "description": "1-50 replacements.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "old_text": {
+                "type": "string",
+                "description": "Exact text to replace."
+              },
+              "new_text": {
+                "type": "string",
+                "description": "Replacement; empty deletes."
+              }
+            },
+            "required": [
+              "old_text",
+              "new_text"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "source_id": {
+          "type": "string",
+          "description": "Write source."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Reuse only to retry."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [
+        "slug",
+        "expected_revision",
+        "edits"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "idempotentHint": true
+    }
+  },
+  {
+    "name": "get_write_request",
+    "description": "Your write's receipt by request_id (after write_pending or a lost reply). Poll at retry_after_ms until final.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "description": "The id you sent, or the receipt's."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [
+        "request_id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "list_write_requests",
+    "description": "Your write receipts in one source, newest first (for a lost request_id).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "description": "Default: yours."
+        },
+        "before": {
+          "type": "string",
+          "description": "Previous page's next cursor."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "cancel_write_request",
+    "description": "Cancel your accepted write before it publishes; returns the receipt.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "description": "The id you sent, or the receipt's."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [
+        "request_id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "idempotentHint": true
+    }
+  },
+  {
+    "name": "search",
+    "description": "Cheap hybrid search, no LLM expansion, top 20: exact tokens, names, field values. NOT proof of coverage; match: \"keyword\" pages every keyword match and takes OR across quoted names or codes (\"A\" OR \"B\" OR …): one call lists every page matching any. Name lists: entity names. Concepts/landscape or people/companies/projects by topic: `query`; lists: list_pages; personal: get_recent_salience. return_unit: sections or conversations. fields: \"full\" adds diagnostics.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Exact tokens or names, e.g. 'acme-example series A'."
+        },
+        "limit": {
+          "type": "number",
+          "description": "Default 20."
+        },
+        "offset": {
+          "type": "number",
+          "description": "Rows to skip."
+        },
+        "match": {
+          "type": "string",
+          "description": "keyword: every match, paged.",
+          "enum": [
+            "hybrid",
+            "keyword"
+          ]
+        },
+        "cursor": {
+          "type": "string",
+          "description": "From next."
+        },
+        "source_id": {
+          "type": "string",
+          "description": "One source, or '__all__'."
+        },
+        "source_ids": {
+          "type": "array",
+          "description": "Narrow to these sources (omit or [] for all you can read).",
+          "items": {
+            "type": "string"
+          }
+        },
+        "types": {
+          "type": "array",
+          "description": "Page types, e.g. ['person'].",
+          "items": {
+            "type": "string"
+          }
+        },
+        "return_unit": {
+          "type": "string",
+          "description": "Default auto: whole conversations.",
+          "enum": [
+            "chunk",
+            "window",
+            "section",
+            "page",
+            "auto"
+          ]
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "query",
+    "description": "Hybrid search for concept/landscape questions and people/companies/projects by topic; adds fact rows. expand: one LLM call (expansion recovers synonyms; rarely helps). Still top-K; return_unit: sections or conversations. Lists: list_pages. Exact tokens: `search` is cheaper. Personal: get_recent_salience, find_anomalies; transcripts: `gbrain transcripts recent`. Do NOT assume 'crazy' means impressive (often difficult or emotionally charged). Needs an embedding key (else keyword-only); expansion needs a chat key. Fact rows: use follow_up. fields: \"full\" adds diagnostics.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Question or topic (required unless image)."
+        },
+        "limit": {
+          "type": "number",
+          "description": "Default 10/25/50 by search mode."
+        },
+        "offset": {
+          "type": "number",
+          "description": "Rows to skip."
+        },
+        "types": {
+          "type": "array",
+          "description": "Page types, e.g. ['person'].",
+          "items": {
+            "type": "string"
+          }
+        },
+        "return_unit": {
+          "type": "string",
+          "description": "Default auto: whole conversations.",
+          "enum": [
+            "chunk",
+            "window",
+            "section",
+            "page",
+            "auto"
+          ]
+        },
+        "expand": {
+          "type": "boolean",
+          "description": "Default off; one LLM call, rarely helps."
+        },
+        "since": {
+          "type": "string",
+          "description": "On/after: YYYY-MM-DD or 7d/2w/1y."
+        },
+        "until": {
+          "type": "string",
+          "description": "On/before."
+        },
+        "source_id": {
+          "type": "string",
+          "description": "One source, or '__all__'."
+        },
+        "source_ids": {
+          "type": "array",
+          "description": "Narrow to these sources (omit or [] for all you can read).",
+          "items": {
+            "type": "string"
+          }
+        },
+        "cross_modal": {
+          "type": "string",
+          "description": "Default auto.",
+          "enum": [
+            "text",
+            "image",
+            "both",
+            "auto"
+          ]
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "get_backlinks",
+    "description": "Links to a page, ≤500/call; group:\"page\" by referrer, newest first.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "slug": {
+          "type": "string",
+          "description": "Page slug."
+        },
+        "status": {
+          "type": "string",
+          "description": "Default live.",
+          "enum": [
+            "live",
+            "all"
+          ]
+        },
+        "as_of": {
+          "type": "string",
+          "description": "YYYY-MM-DD"
+        },
+        "source_id": {
+          "type": "string",
+          "description": "One source, or '__all__'."
+        },
+        "type": {
+          "type": "string",
+          "description": "Referrer type."
+        },
+        "group": {
+          "type": "string",
+          "description": "Per page.",
+          "enum": [
+            "page"
+          ]
+        },
+        "limit": {
+          "type": "number",
+          "description": "≤5000"
+        },
+        "cursor": {
+          "type": "string",
+          "description": "Next."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [
+        "slug"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "list_link_sources",
+    "description": "Link provenances (e.g. markdown, manual) with their edge counts.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "traverse_graph",
+    "description": "Walk the link graph from a page. Remote default: both directions, depth 2.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "slug": {
+          "type": "string",
+          "description": "Start page slug."
+        },
+        "depth": {
+          "type": "number",
+          "description": "Max depth (cap 10)."
+        },
+        "link_type": {
+          "type": "string",
+          "description": "Only this link type."
+        },
+        "direction": {
+          "type": "string",
+          "description": "Remote default both.",
+          "enum": [
+            "in",
+            "out",
+            "both"
+          ]
+        },
+        "source_id": {
+          "type": "string",
+          "description": "One source, or '__all__'."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [
+        "slug"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "add_timeline_entry",
+    "description": "Append a dated entry to a page timeline. Replays change nothing; the Timeline section needs no call. To change or remove one, edit its bullet via edit_page with expected_revision.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "description": "Reuse only to retry."
+        },
+        "slug": {
+          "type": "string",
+          "description": "Page slug."
+        },
+        "date": {
+          "type": "string",
+          "description": "YYYY-MM-DD."
+        },
+        "summary": {
+          "type": "string",
+          "description": "One line."
+        },
+        "detail": {
+          "type": "string",
+          "description": "Details."
+        },
+        "source": {
+          "type": "string",
+          "description": "Source slug or URL."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [
+        "slug",
+        "date",
+        "summary"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "idempotentHint": true
+    }
+  },
+  {
+    "name": "list_skills",
+    "description": "Skills: prose instruction sets (NOT executable code) for tasks with this server's tools, with triggers, usable_tools and unavailable_tools. Use one via get_skill.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "number",
+          "description": "Page size or rank cap (1-100)."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "get_skill",
+    "description": "Fetch a skill's prose and follow it: when it says search or store, call the same-named MCP tool here. There is nothing to execute. unavailable_tools won't work for you.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Skill name from list_skills."
+        },
+        "source_id": {
+          "type": "string",
+          "description": "Brain-resident pack skill from this source."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "list_brain_skillpack",
+    "description": "Skillpacks this brain ships: skills and a scaffold spec to offer the user.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "get_skill_asset",
+    "description": "Read an approved file from an exact skill revision (data, never executed).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "description": "Exactly one granted source."
+        },
+        "name": {
+          "type": "string",
+          "description": "Skill name."
+        },
+        "revision": {
+          "type": "string",
+          "description": "Revision from get_skill."
+        },
+        "path": {
+          "type": "string",
+          "description": "Path in that revision manifest."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [
+        "revision",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "put_skill",
+    "description": "Publish a complete file-canonical skill revision with CAS and a durable receipt. Requires explicit skill editor authority; cannot expand publication policy.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "description": "Exactly one granted source."
+        },
+        "source_incarnation": {
+          "type": "string",
+          "description": "From the qualified catalog."
+        },
+        "pack_id": {
+          "type": "string",
+          "description": "Canonical pack identifier."
+        },
+        "name": {
+          "type": "string",
+          "description": "Canonical skill name."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Durable idempotency UUID; reuse only with identical intent."
+        },
+        "expected_revision": {
+          "type": "string",
+          "description": "Current revision UUID; JSON null for creation."
+        },
+        "description": {
+          "type": "string",
+          "description": "Compact routing description."
+        },
+        "triggers": {
+          "type": "array",
+          "description": "Routing phrases.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "requirements": {
+          "type": "array",
+          "description": "Approved runtime and tool requirement tokens.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "private": {
+          "type": "boolean",
+          "description": "Exclude this skill from remote publication."
+        },
+        "files": {
+          "type": "array",
+          "description": "Complete closure: path, content, encoding (utf8/base64), file_class, audience, media_type, depends_on.",
+          "items": {
+            "type": "object"
+          }
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [
+        "pack_id",
+        "name",
+        "request_id",
+        "files"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "idempotentHint": true
+    }
+  },
+  {
+    "name": "delete_skill",
+    "description": "CAS-delete a canonical shared skill and revoke future managed activation. Previously downloaded bytes are not recalled.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "description": "Exactly one granted source."
+        },
+        "source_incarnation": {
+          "type": "string",
+          "description": "From the qualified catalog."
+        },
+        "pack_id": {
+          "type": "string",
+          "description": "Canonical pack identifier."
+        },
+        "name": {
+          "type": "string",
+          "description": "Canonical skill name."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Durable idempotency UUID; reuse only with identical intent."
+        },
+        "expected_revision": {
+          "type": "string",
+          "description": "Current revision UUID; JSON null for creation."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [
+        "pack_id",
+        "name",
+        "request_id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "idempotentHint": true
+    }
+  },
+  {
+    "name": "join_brain",
+    "description": "Enroll this authenticated principal to follow approved shared skills. Shared credentials are one principal. Never grants memory-write or editor authority.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "adapter": {
+          "type": "string",
+          "description": "Registered harness adapter ID for this authenticated installation."
+        },
+        "follow_policy": {
+          "type": "object",
+          "description": "Explicit approved:true and optional source_ids narrowing."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [
+        "adapter",
+        "follow_policy"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "sync_brain_skills",
+    "description": "Get a complete authorized shared-skills view and optionally record an own issued-batch delivery acknowledgment. Unavailable is never an empty catalog.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "installation_id": {
+          "type": "string",
+          "description": "Own server-issued installation UUID returned by join_brain."
+        },
+        "enrollment_epoch": {
+          "type": "number",
+          "description": "Current enrollment epoch returned by join_brain; stale epochs cannot reactivate membership."
+        },
+        "acknowledgment": {
+          "type": "object",
+          "description": "Optional issued batch token and exact delivery evidence for this installation, never proof of native use."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [
+        "installation_id",
+        "enrollment_epoch"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "leave_brain",
+    "description": "Stop only this principal’s enrollment. Does not revoke credentials or prove native cached instructions were disabled.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "installation_id": {
+          "type": "string",
+          "description": "Own server-issued installation UUID to leave."
+        },
+        "enrollment_epoch": {
+          "type": "number",
+          "description": "Current enrollment epoch; a previous installation cannot leave its replacement."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [
+        "installation_id",
+        "enrollment_epoch"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "resolve_slugs",
+    "description": "Fuzzy-match a partial slug or title to page slugs. Use when a slug is uncertain. Needs read scope.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "partial": {
+          "type": "string",
+          "description": "Partial slug or title."
+        },
+        "source_id": {
+          "type": "string",
+          "description": "One source, or '__all__'."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [
+        "partial"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "get_ingest_log",
+    "description": "Recent ingestion log entries: what was already imported, and when.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "number",
+          "description": "Default 20."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "cancel_job",
+    "description": "Cancel a waiting, active or delayed job you may manage. Needs admin scope.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "number",
+          "description": "Job id."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "submit_agent",
+    "description": "Submit an agent job (agent scope; tools and budget bound to your client). Poll get_agent_job.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "prompt": {
+          "type": "string",
+          "description": "Task prompt."
+        },
+        "allowed_tools": {
+          "type": "array",
+          "description": "Subset of your bound tools.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [
+        "prompt"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "get_agent_job",
+    "description": "Poll a submit_agent job: status, result, queue_position. Needs agent scope.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "number",
+          "description": "Job id."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "whoami",
+    "description": "Your identity: transport, scopes and, over OAuth, client, source_id and federated_read.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "request_tools",
+    "description": "More tools and params: no arguments lists your catalog; {tools: [names]} returns full schemas, every optional param included; {surface} widens it (per client or stdio session).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "tools": {
+          "type": "array",
+          "description": "Tool names to fetch.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "surface": {
+          "type": "string",
+          "description": "stdio: this session only.",
+          "enum": [
+            "verbs",
+            "starter",
+            "full"
+          ]
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "get_recent_salience",
+    "description": "Recently touched pages ranked by salience. Use this when the user asks what's been going on, what's notable, anything crazy happening. Do NOT run a semantic search for these.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "days": {
+          "type": "number",
+          "description": "Default 14."
+        },
+        "limit": {
+          "type": "number",
+          "description": "Default 20."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "find_anomalies",
+    "description": "Anomalies in recent page activity, grouped by cohort (tag or type) against a baseline. Use for what stood out, what's unusual or changed. Cohort kinds: tag, type.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "since": {
+          "type": "string",
+          "description": "YYYY-MM-DD (default today)."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "recall",
+    "description": "Read facts by entity, since or session_id; `query` also searches pages. Remote callers: world facts only. One card: entity; reasoning: synthesize.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "entity": {
+          "type": "string",
+          "description": "Entity slug; its facts."
+        },
+        "question": {
+          "type": "string",
+          "description": "Rank facts by relevance to it."
+        },
+        "query": {
+          "type": "string",
+          "description": "Also search pages (results[])."
+        },
+        "budget_tokens": {
+          "type": "number",
+          "description": "Token budget; facts pack first."
+        },
+        "source_id": {
+          "type": "string",
+          "description": "One readable source."
+        },
+        "since": {
+          "type": "string",
+          "description": "ISO 8601 or \"8 hours ago\"."
+        },
+        "session_id": {
+          "type": "string",
+          "description": "This session's facts."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "title": "recall (memory read)",
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "context_pack",
+    "description": "Core memory, budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "entities": {
+          "type": "string",
+          "description": "Comma-separated names or slugs (max 8)."
+        },
+        "budget_tokens": {
+          "type": "number",
+          "description": "Token budget; cards pack first."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "title": "context_pack (boundary bundle)",
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "delta",
+    "description": "Pages, facts, thread events changed since a cursor, zero LLM. Pass session_id, cursor or since.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "since": {
+          "type": "string",
+          "description": "ISO 8601 start time."
+        },
+        "cursor": {
+          "type": "string",
+          "description": "next_cursor.cursor (exact)."
+        },
+        "budget_tokens": {
+          "type": "number",
+          "description": "Token budget; pages pack first."
+        },
+        "session_id": {
+          "type": "string",
+          "description": "Session id; keeps a cursor."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "title": "delta (what changed since)",
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "memory_conversation_mode",
+    "description": "Use when the user says \"save everything from here\" (all) or \"stop saving\" (off): returns this conversation's memory rule. Stores nothing.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "description": "all | salient | off (explicit saves only) | brain (this brain's mode).",
+          "enum": [
+            "brain",
+            "off",
+            "salient",
+            "all"
+          ]
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "idempotentHint": true
+    }
+  },
+  {
+    "name": "mute_notice",
+    "description": "Mute a coaching or info notice (or first_run_decisions) for this client.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "The word after `[gbrain notice` in the block."
+        },
+        "muted": {
+          "type": "boolean",
+          "description": "false unmutes. Default true."
+        },
+        "_meta": {
+          "type": "object",
+          "description": "MCP client metadata passthrough (e.g. session id); not an operation parameter."
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "room": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read."
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "idempotentHint": true
+    }
+  }
+]

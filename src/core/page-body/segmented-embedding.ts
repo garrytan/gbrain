@@ -81,7 +81,7 @@ export async function readSealedSegmentedEmbedPage(engine: BrainEngine,
 }
 
 /** A dry run's counts: the page's live rows and those without a vector in the write column. */
-export async function countSegmentedEmbedRows(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number): Promise<{ total: number; stale: number }> {
+export async function countSegmentedEmbedRows(engine: Pick<BrainEngine, 'executeRaw' | 'getConfigValues'>, pageId: number): Promise<{ total: number; stale: number }> {
   const col = quoteIdentifier((await embeddingWriteTarget(engine)).column.name);
   const [row] = await engine.executeRaw<{ total: number; stale: number }>(
     `SELECT count(*)::int AS total, count(*) FILTER (WHERE cc.${col} IS NULL)::int AS stale

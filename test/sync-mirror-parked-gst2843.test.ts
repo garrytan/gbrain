@@ -8,13 +8,15 @@
  *     and only a file that is gone reads no_drift / database_only. It still writes nothing, and sync holds the same paths.
  *   - The held comparison is not complete while held pages remain past its window.
  *   - sources status counts every hold per code, not only the listed ones.
+ * GST-2869: on a mirror the comparison names no file-drift preview (each reads the page as database-only) but the writable
+ * route; a re-hold that a requested retry alone caused, or that brought a transient hold to its attempt cap, is not saved work.
  * PGLite always; Postgres when DATABASE_URL is set (managedBrain). Synthetic content only.
  */
 import { describe, expect, setSystemTime, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import * as gitStream from '../src/core/persistence/sync-git-stream.ts';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
@@ -24,7 +26,9 @@ import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { PASS_BATCH_KEY_PREFIX, readPassBatch } from '../src/core/persistence/sync-pass-batch.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/persistence/identity.ts';
-import { FILE_DRIFT_VERSION, writeGitHold } from '../src/core/persistence/sync-holds.ts';
+import { FILE_DRIFT_VERSION, requestGitHoldRetry, writeGitHold } from '../src/core/persistence/sync-holds.ts';
+import { HOLD_ATTEMPTS_NEEDS_HUMAN } from '../src/core/persistence/sync-fault-class.ts';
+import { VERSION } from '../src/version.ts';
 import { readPassRow } from '../src/core/persistence/sync-pass-row.ts';
 import { passBanked } from '../src/core/persistence/sync-pass-status.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
@@ -52,7 +56,7 @@ const coordinated = (engine: BrainEngine, sql: string, params: unknown[] = []) =
   engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.executeRaw(sql, params), TEST_WRITE_ATTRIBUTION));
 const mirror = (engine: BrainEngine) => engine.executeRaw(`UPDATE sources SET config = config || '{"mirror_read_only": true}'::jsonb WHERE id='default'`);
 const incarnation = async (engine: BrainEngine) => (await engine.executeRaw<{ i: string }>("SELECT incarnation::text AS i FROM sources WHERE id='default'"))[0]!.i;
-const holdRows = async (engine: BrainEngine) => (await engine.executeRaw<{ r: { path: string; code: string; upstream_version: string | null; meta: Record<string, unknown> } }>(
+const holdRows = async (engine: BrainEngine) => (await engine.executeRaw<{ r: { path: string; code: string; upstream_version: string | null; held_at: string; meta: Record<string, unknown> } }>(
   "SELECT completed_keys->0 AS r FROM op_checkpoints WHERE op='sync-hold' ORDER BY fingerprint")).map(({ r }) => r);
 /** Pages as an older gbrain left them: no import record, and a revision no import or write request produced. */
 const legacy = async (engine: BrainEngine) => {
@@ -211,6 +215,85 @@ describe.each(testBackends())('GST-2843: the held comparison on a read-only mirr
     expect(await revisions()).toBe(pages);
     expect(git(root, 'status', '--porcelain')).toBe('');
   }, { databaseUrl, setup: heldSetup }), 240_000);
+
+  test('GST-2869 / whole-class: on a mirror the comparison names the whole-class preview of the side, and a page still resolves once the source is writable', () => managedBrain(async ({ engine, root }) => {
+    await heldPages(engine, root);
+    const compared = await repair(engine, { held: true }) as Plan;
+    const why = Object.fromEntries((compared.details!.pages as Array<{ slug: string; would: string; why: string }>).map(page => [page.slug, page.why]));
+    for (const slug of ['notes/newer-file', 'notes/newer-page']) {
+      expect(why[slug]).toContain('gbrain repair file-drift --source default --held --side unknown --prefer file --whole-class');
+      expect(why[slug]).toContain('database-only');
+    }
+    expect(why['notes/newer-page']).toContain('kept_newer_page');
+    const next = (compared.details!.next_actions ?? []) as string[];
+    expect(next.join('\n')).toContain('--prefer file --whole-class');
+    await engine.executeRaw(`UPDATE sources SET config = config || '{"mirror_read_only": false}'::jsonb WHERE id='default'`);
+    expect(classes(await repair(engine, { slugs: ['notes/newer-file'], prefer: 'file' }))).toEqual({ 'notes/newer-file': 'prefer_file' });
+  }, { databaseUrl, setup: heldSetup }), 240_000);
+  test('GST-2869: on a mirror a held deleted page whose file differs names keeping the deletion first and the writable route second, never a --prefer file preview', () => managedBrain(async ({ engine }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    await mirror(engine);
+    await seedHold(engine, 'notes/same', { side: 'deleted', state: 'tombstone_edited' });
+    const compared = await repair(engine, { held: true }) as Plan;
+    const [page] = (compared.details!.pages as Array<{ slug: string; would: string; why: string }>).filter(found => found.slug === 'notes/same');
+    expect(page!.would).toBe('needs_human');
+    const keep = 'this source is a read-only mirror: to keep the deletion, preview gbrain repair file-drift --source default --held --side deleted --state tombstone_edited --prefer database ';
+    expect(page!.why).toContain(`so a person decides; ${keep}`);
+    expect(page!.why).not.toContain('--prefer file');
+    expect(page!.why).not.toContain('--whole-class');
+    expect(page!.why.indexOf('gbrain sources mirror-writable default')).toBeGreaterThan(page!.why.indexOf(keep));
+  }, { databaseUrl, setup: heldSetup }), 240_000);
+});
+
+describe.each(testBackends())('GST-2869: a re-hold that settled nothing is not saved work (%s)', backend => {
+  const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
+  test('a stopped pass that re-checked a hold only because a retry was requested, and held it again, does not count as progress', () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    files(root, { 'notes/broken': '---\ntype: concept\ntitle: [unclosed\n---\n\nBody.\n' });
+    commitAll(root, 'a file sync cannot import');
+    await performManagedSync(engine, OPTS);
+    const held = (await holdRows(engine)).find(h => h.path === 'notes/broken.md')!;
+    expect(held).toBeDefined();
+    const inc = await incarnation(engine);
+    await requestGitHoldRetry(engine, 'default', inc, ['notes/broken.md']);
+    await stoppedSync(engine, 0);
+    const telemetry = (await readPassRow(engine, 'default', inc))!.value.telemetry;
+    const again = (await holdRows(engine)).find(h => h.path === 'notes/broken.md')!;
+    expect([again.code, again.meta.attempts, again.meta.retry_only]).toEqual([held.code, 2, true]);
+    expect(await passBanked(engine, 'default', inc, telemetry)).toBe(false);
+  }, { databaseUrl, setup: notes(1) }), 240_000);
+
+  test('a retry whose re-check changed the hold restarts it, so that pass still counts as progress once', () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    files(root, { 'notes/broken': '---\ntype: concept\ntitle: [unclosed\n---\n\nBody.\n' });
+    commitAll(root, 'a file sync cannot import');
+    await performManagedSync(engine, OPTS);
+    const held = (await holdRows(engine)).find(h => h.path === 'notes/broken.md')!;
+    const inc = await incarnation(engine);
+    files(root, { 'notes/broken': '---\ntype: concept\ntitle: [still unclosed\n---\n\nOther body.\n' });
+    commitAll(root, 'still broken, other bytes');
+    await requestGitHoldRetry(engine, 'default', inc, ['notes/broken.md']);
+    await stoppedSync(engine, 0);
+    const telemetry = (await readPassRow(engine, 'default', inc))!.value.telemetry;
+    const again = (await holdRows(engine)).find(h => h.path === 'notes/broken.md')!;
+    expect([again.meta.retry_only, again.held_at === held.held_at]).toEqual([true, false]);
+    expect(await passBanked(engine, 'default', inc, telemetry)).toBe(true);
+    const row = readFileSync(join(import.meta.dir, '..', 'docs', 'guides', 'sync-unblock-runbook.md'), 'utf8').split('\n').find(line => line.startsWith('| `pass_abandoned` |'))!;
+    expect(row).toContain('a retry whose re-check changed the hold\'s code or file bytes restarts the hold, so that pass still counts once');
+  }, { databaseUrl, setup: notes(1) }), 240_000);
+  test('a re-hold that brought a transient hold to its attempt cap does not count as progress', () => managedBrain(async ({ engine }) => {
+    const inc = await incarnation(engine);
+    const before = '2026-01-01T00:00:00.000Z', started = '2026-01-02T00:00:00.000Z', during = '2026-01-02T00:05:00.000Z';
+    const hold = (path: string, attempts: number) => [`default:${inc}:${path}`, JSON.stringify([{ version: 1, source_id: 'default', incarnation: inc, path, source_path: path, slug: null,
+      page_id: null, code: 'preparation_stalled', message: 'synthetic', upstream_version: null, observed_at: during, held_at: before, updated_at: during, run_id: 'pass-1', mode: 'managed',
+      meta: { recovery_version: RECOVERY_VERSION, attempts, stall: { request_id: 'r', step: null, attempts: 1, gbrain_version: VERSION } } }])];
+    const insert = (rows: string[][]) => coordinated(engine, "INSERT INTO op_checkpoints(op,fingerprint,completed_keys) SELECT 'sync-hold', f, k::jsonb FROM unnest($1::text[], $2::text[]) AS t(f, k)",
+      [rows.map(([fingerprint]) => fingerprint), rows.map(([, keys]) => keys)]);
+    await insert([hold('a/capped.md', HOLD_ATTEMPTS_NEEDS_HUMAN)]);
+    expect(await passBanked(engine, 'default', inc, { pass_id: 'pass-1', started_at: started })).toBe(false);
+    await insert([hold('b/past-cap.md', HOLD_ATTEMPTS_NEEDS_HUMAN + 1)]);
+    expect(await passBanked(engine, 'default', inc, { pass_id: 'pass-1', started_at: started })).toBe(true);
+  }, { databaseUrl }), 120_000);
 });
 
 describe.each(testBackends())('GST-2843: counts past a window or a listing limit (%s)', backend => {

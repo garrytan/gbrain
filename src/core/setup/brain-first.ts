@@ -22,7 +22,7 @@
  */
 import { existsSync, lstatSync, readFileSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, isAbsolute, join, relative } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 import { parse as parseJsonc, type ParseError } from 'jsonc-parser';
 import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
 import { acquireNativeLockSync } from '../persistence/native-lock.ts';
@@ -31,6 +31,7 @@ import { configDir } from '../config.ts';
 import { probeBlock, removeBlock, spliceBlock, type BlockMarkers } from '../managed-block.ts';
 import { ensureGitExcluded } from '../context/compiled-core.ts';
 import type { McpSurface } from '../../mcp/surface.ts';
+import { relativeEscapesRoot } from '../path-confine.ts';
 
 export const BRAIN_FIRST_VERSION = 2;
 export const BRAIN_FIRST_BEGIN = '<!-- gbrain:brain-first:begin -->';
@@ -140,7 +141,7 @@ function projectRootOf(harness: string, path: string): string {
 
 function isInside(cwd: string, root: string): boolean {
   const rel = relative(root, cwd);
-  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+  return !relativeEscapesRoot(rel);
 }
 
 export const CURSOR_HEAD = '---\ndescription: GBrain memory, managed by gbrain\nalwaysApply: true\n---\n';

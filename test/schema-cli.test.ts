@@ -98,7 +98,7 @@ describe('gbrain schema CLI (Phase C)', () => {
     // v0.42.56.0 (#2390): extended to 27 by adding the Life Chronicle
     // `event` + `diary` temporal types (life/events/, life/diary/).
     // GST-2731: extended to 29 by adding the `facts` annotation type.
-    expect(r.stdout).toContain('Page types (29)');
+    expect(r.stdout).toContain('Page types (30)');
     expect(r.stdout).toContain('facts :: annotation');
     expect(r.stdout).toContain('event :: temporal');
     expect(r.stdout).toContain('diary :: temporal');

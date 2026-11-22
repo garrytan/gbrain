@@ -28,12 +28,8 @@ import { materializeSegmentedBody, prepareSegmentedBody, segmentWriteScope, stri
 import { buildSegmentedProjection } from '../page-body/projection.ts';
 import { maintenanceAttribution } from './attribution.ts';
 import { readPageBodyPolicy, chooseBodyStorage, SEGMENTED_DEMOTE_AT_OR_BELOW_BYTES, type PageBodyPolicy } from '../page-body/limits.ts';
-import { SEGMENTED_CHUNKER_VERSION } from '../page-body/segment-chunks.ts';
-import { SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
-import { pageSearchVectorSql } from '../fts-language.ts';
-import { sanitizeRemoteBody } from '../remote-body.ts';
-import { overlayCanonicalBodies, readPageSnapshot } from '../page-state/snapshot.ts';
+import { overlayCanonicalBodies } from '../page-state/snapshot.ts';
 import { faultPoint } from './fault-points.ts';
 import { bodyStagingGoneError, LIVE_STAGING_STATES } from '../engine-sql/page-body.ts';
 import { segmentedPageSearchable } from './searchable.ts';
@@ -155,26 +151,12 @@ export interface SegmentedApplyInput {
 export interface SegmentedApplied { pageId: number; complete: boolean; retireDeferred: boolean }
 
 /**
- * Seal a segmented page's text projection at its current revision (chunks visible, title + timeline lead searchable).
- * The lead is indexed as the inline seal indexes a snapshot's timeline: after the page's withdrawal overlay, sanitized.
- * `chunker_version` is the oldest segmented chunker among the live chunks: a page sealed at an older one keeps it while
- * any chunk row from before this generation is still stored (a write re-chunks only the occurrences it changed), so
- * `gbrain reindex --segmented` still lists it.
+ * Seal a segmented page's text projection at its current revision through the engine's `sealSegmentedPage` (chunks
+ * visible, title + timeline lead searchable; contract in `BrainEngine.sealSegmentedPage`). Kept as a function so the
+ * write paths read the same as the inline seal.
  */
-export async function sealSegmentedPage(tx: Pick<BrainEngine, 'executeRaw'>, pageId: number, timelineLead?: string): Promise<void> {
-  const [page] = await tx.executeRaw<{ slug: string; source_id: string; timeline_lead: string | null; chunker_version: number | null; body_generation: number | string }>(
-    'SELECT slug, source_id, timeline_lead, chunker_version, body_generation FROM pages WHERE id=$1', [pageId]);
-  if (!page) return;
-  const stamped = Number(page.chunker_version ?? 0);
-  const older = stamped >= SAFE_FENCE_CHUNKER_VERSION && stamped < SEGMENTED_CHUNKER_VERSION && (await tx.executeRaw(
-    `-- chunk-visibility-ok: a sealing page stores only live rows; any one older than this generation predates the write
-    SELECT 1 FROM content_chunks WHERE page_id=$1 AND body_generation < $2 LIMIT 1`, [pageId, page.body_generation])).length > 0;
-  const query = <T>(sql: string, params?: unknown[]) => tx.executeRaw<T>(sql, params);
-  const ledger = await readPageSnapshot(query, page.slug, { sourceId: page.source_id, includeDeleted: true });
-  const { timeline } = await overlayCanonicalBodies(query, '', timelineLead ?? page.timeline_lead ?? '', ledger?.withdrawals ?? [],
-    { sourceId: page.source_id, marker: ledger?.globalPurges });
-  await tx.executeRaw(`UPDATE pages SET text_projection_revision=knowledge_revision, chunker_version=$3,
-    search_vector=${pageSearchVectorSql('title', '$2')} WHERE id=$1`, [pageId, sanitizeRemoteBody(timeline), older ? stamped : SEGMENTED_CHUNKER_VERSION]);
+export async function sealSegmentedPage(tx: Pick<BrainEngine, 'sealSegmentedPage'>, pageId: number, timelineLead?: string): Promise<void> {
+  await tx.sealSegmentedPage(pageId, timelineLead === undefined ? undefined : { timelineLead });
 }
 
 /** The segmented branch of a page write's apply, inside the publication transaction. */

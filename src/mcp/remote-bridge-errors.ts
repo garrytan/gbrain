@@ -69,6 +69,13 @@ function reasonFix(e: RemoteMcpError, opts: { clientId?: string; timeoutMs: numb
     }
     case 'auth':
     case 'auth_after_refresh': {
+      if (e.detail?.code === 'access_member_disabled') {
+        return { code: 'access_member_disabled', retryable: false, recovery: 'Retrying will not help until the host operator acts.',
+          why: 'The brain host refused this client because the member its credential is bound to is disabled, removed or missing; the client itself is still valid.',
+          suggestion: 'Ask the brain host\'s operator to enable the member, or to bind this client to an enabled member.',
+          fix: action({ argv: ['gbrain', 'access', 'member', 'list', '--all'], actor: 'host_admin', why: 'Read-only, on the brain host: shows each member and whether it is disabled or removed.',
+            user_message: 'The gbrain brain host refuses this client because the member it is bound to is disabled or removed. Can you ask the host\'s owner to enable that member, or bind this client to an enabled one?' }) };
+      }
       const client = opts.clientId ? `OAuth client ${opts.clientId}` : "this thin client's OAuth client";
       return { code: 'invalid_client', retryable: false, recovery: 'Retrying will not help until the host owner acts.',
         why: `The brain host rejected ${client}: it was revoked, its secret changed, or it expired.`,

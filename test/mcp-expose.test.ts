@@ -1388,6 +1388,69 @@ describe('--status edges', () => {
   });
 });
 
+describe('one-click client links', () => {
+  const MCP = `https://${DNS}/mcp`;
+  const CLAUDE_LINE = `  Claude           https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=GBrain&connectorUrl=${encodeURIComponent(MCP)}`;
+  const CURSOR_LINK = `cursor://anysphere.cursor-deeplink/mcp/install?name=gbrain&config=${encodeURIComponent(Buffer.from(JSON.stringify({ url: MCP })).toString('base64'))}`;
+  const CLAUDE_LINK = CLAUDE_LINE.trim().slice('Claude'.length).trim();
+  test('a Funnel publish prints the Claude and Cursor lines in the Next block', async () => {
+    const f = fakeTailnet();
+    expect(await runMcpExpose(['--yes', '--funnel'], f.deps)).toBe(0);
+    const out = f.stdout.join('\n');
+    const next = out.slice(out.indexOf('Next — choose the connection method'));
+    expect(next).toContain(CLAUDE_LINE);
+    expect(next).toContain(`  Cursor           ${CURSOR_LINK}`);
+    expect(next).not.toContain('must be on your tailnet');
+    expect(out).not.toContain(TOKEN);
+  });
+  test('a tailnet-only publish prints the Cursor line only, with the tailnet note', async () => {
+    const f = fakeTailnet();
+    expect(await runMcpExpose(['--yes'], f.deps)).toBe(0);
+    const out = f.stdout.join('\n');
+    expect(out).toContain(`  Cursor           ${CURSOR_LINK}`);
+    expect(out).toContain('the Cursor machine must be on your tailnet');
+    expect(out).not.toContain('claude.ai/customize');
+  });
+  test('--json carries install_links (Claude only with Funnel), and --status --json repeats them', async () => {
+    const f = fakeTailnet();
+    expect(await runMcpExpose(['--yes', '--funnel', '--json'], f.deps)).toBe(0);
+    expect(jsonDoc(f).install_links).toEqual({ claude: CLAUDE_LINK, cursor: CURSOR_LINK });
+    f.stdout.length = 0;
+    expect(await runMcpExpose(['--status', '--json'], f.deps)).toBe(0);
+    expect(jsonDoc(f).install_links).toEqual({ claude: CLAUDE_LINK, cursor: CURSOR_LINK });
+    const g = fakeTailnet();
+    expect(await runMcpExpose(['--yes', '--json'], g.deps)).toBe(0);
+    expect(jsonDoc(g).install_links).toEqual({ cursor: CURSOR_LINK });
+    g.stdout.length = 0;
+    expect(await runMcpExpose(['--status', '--json'], g.deps)).toBe(0);
+    expect(jsonDoc(g).install_links).toEqual({ cursor: CURSOR_LINK });
+  });
+  test('human --status prints the link lines when everything verifies', async () => {
+    const f = fakeTailnet();
+    expect(await runMcpExpose(['--yes', '--funnel'], f.deps)).toBe(0);
+    f.stdout.length = 0;
+    expect(await runMcpExpose(['--status'], f.deps)).toBe(0);
+    const out = f.stdout.join('\n');
+    expect(out).toContain(CLAUDE_LINE);
+    expect(out).toContain(`  Cursor           ${CURSOR_LINK}`);
+  });
+  test('a non-https receipt URL (--no-tailscale) prints no link lines and no install_links key', async () => {
+    const f = fakeTailnet();
+    expect(await runMcpExpose(['--yes', '--no-tailscale'], f.deps)).toBe(0);
+    expect(f.stdout.join('\n')).not.toMatch(/cursor:\/\/|claude\.ai|^ {2}(Claude|Cursor) /m);
+    f.stdout.length = 0;
+    expect(await runMcpExpose(['--status'], f.deps)).toBe(0);
+    expect(f.stdout.join('\n')).not.toMatch(/cursor:\/\/|claude\.ai/);
+    const g = fakeTailnet();
+    expect(await runMcpExpose(['--yes', '--no-tailscale', '--json'], g.deps)).toBe(0);
+    expect(jsonDoc(g).receipt.mcp_url).toBe('http://127.0.0.1:3131/mcp');
+    expect('install_links' in jsonDoc(g)).toBe(false);
+    g.stdout.length = 0;
+    expect(await runMcpExpose(['--status', '--json'], g.deps)).toBe(0);
+    expect('install_links' in jsonDoc(g)).toBe(false);
+  });
+});
+
 describe('--remove edges', () => {
   test('binary gone → handler left with a warning; a --no-tailscale receipt has nothing to undo; a skipped receipt with no service → none installed (interactive yes); an undeletable wrapper is a note', async () => {
     const f = fakeTailnet();

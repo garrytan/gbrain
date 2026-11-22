@@ -34,7 +34,7 @@ import {
 export const AGENT_WRITE_OPERATIONS: readonly string[] = [
   'put_page', 'put_pages', 'capture', 'edit_page', 'append_page', 'delete_page', 'restore_page', 'revert_version', 'remember',
   'add_tag', 'remove_tag', 'add_timeline_entry', 'add_link', 'remove_link', 'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve',
-  'takes_remove', 'loops_close', 'relink_facts', 'decide_proposal',
+  'takes_remove', 'loops_close', 'relink_facts', 'retire_connector_facts', 'decide_proposal',
 ];
 
 /**
@@ -243,12 +243,15 @@ export async function ownerGateInput(engine: Pick<BrainEngine, 'executeRaw'>, ro
   return { tier: trust.tier, origin: { channel: trust.origin?.channel ?? null, source_uri: trust.origin?.source_uri ?? null }, requestId: row.id };
 }
 
-/** The write-gate input of an unmanaged owner file import (direct sync / import of a source's files): the source default lowered by markers. */
-export async function ownerSourceGateInput(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, frontmatter: Record<string, unknown> | null | undefined) {
+/**
+ * The write-gate input of an unmanaged owner file import (direct sync / import of a source's files): the source default
+ * lowered by markers. `sourceUri` (the file's source path) lets an owner allow rule scoped by URI prefix apply.
+ */
+export async function ownerSourceGateInput(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, frontmatter: Record<string, unknown> | null | undefined, sourceUri?: string | null) {
   const [source] = await engine.executeRaw<{ config: Record<string, unknown> | string | null }>('SELECT config FROM sources WHERE id = $1', [sourceId]);
   const config = typeof source?.config === 'string' ? JSON.parse(source.config) as Record<string, unknown> : source?.config ?? null;
   const trust = ownerPageTrust({ frontmatter, sourceConfig: config, channel: 'import' });
-  return { tier: trust.tier, origin: { channel: 'import' }, requestId: null };
+  return { tier: trust.tier, origin: { channel: 'import', ...(sourceUri ? { source_uri: sourceUri } : {}) }, requestId: null };
 }
 
 /**

@@ -45,6 +45,8 @@ const REFUSED_OPS = [
   'schema_lint', 'schema_review_orphans', 'schema_stats', 'search_by_image', 'search_modes', 'sync_brain_skills',
   'synthesize', 'takes_calibration', 'takes_list', 'takes_scorecard', 'takes_search', 'volunteer_chronicle',
   'volunteer_context', 'wanted_pages', 'storage_find', 'storage_get', 'storage_list',
+  // GST-2988: originals of redacted secrets are the brain owner's, never an enforced member's
+  'reveal_secret',
   // hidden operations: no CLI path reaches them (their CLI names are CLI-only commands or gbrain call)
   'advisor', 'code_blast', 'code_callees', 'code_callers', 'code_def', 'code_flow', 'code_refs', 'find_anomalies',
   'find_experts', 'find_orphans', 'get_recent_salience', 'sources_list', 'sources_resolve_path', 'sources_status', 'think',
@@ -112,11 +114,11 @@ export const CLI_COMMAND_CLASSES: Readonly<Record<string, EnforcedClass | Enforc
     'export', 'files', 'embed', 'serve', 'sweep', 'config', 'pricing', 'migrate', 'retrieval-upgrade', 'eval', 'jobs', 'agent',
     'book-mirror', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query',
     'reconcile-links', 'repair', 'diag', 'orphans', 'maintain', 'reindex', 'salience', 'anomalies', 'feedback', 'status',
-    'advisor', 'conversation-parser', 'edges-backfill', 'whoknows', 'brainstorm', 'lsd', 'skillopt', 'calibration',
+    'advisor', 'conversation-parser', 'edges-backfill', 'whoknows', 'identity', 'brainstorm', 'lsd', 'skillopt', 'calibration',
     'transcripts', 'models', 'takes', 'onboard', 'founder', 'think', 'notability-eval', 'waiting', 'loops',
     'questions', 'edge-proposals', 'memory-proposals', 'core', 'connectors', 'wakeshift', 'pages', 'quarantine', 'beliefs',
-    'trust', 'guests', 'watch', 'storage', 'code-def', 'code-refs', 'reindex-code', 'reindex-search-vector', 'reindex-frontmatter',
-    'backfill', 'code-callers', 'code-callees', 'repos',
+    'trust', 'guests', 'dedupe', 'watch', 'storage', 'code-def', 'code-refs', 'reindex-code', 'reindex-search-vector', 'reindex-frontmatter',
+    'backfill', 'code-callers', 'code-callees', 'repos', 'secrets', 'apple-contacts',
   ].map(n => [n, 'refused' as const])),
 };
 

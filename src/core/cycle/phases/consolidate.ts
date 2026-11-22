@@ -32,7 +32,7 @@ import { sameInstantTies, type SameInstantTie } from '../../facts/claim-ties.ts'
 import { createHash } from 'node:crypto';
 import { isAborted } from '../../abort-check.ts';
 import { classifyItemFailure, ItemRun } from '../../item-failure.ts';
-import { maintenancePreflight, submitMaintenanceConsolidation, type MaintenanceAuthority } from '../../persistence/prepared-maintenance.ts';
+import { consolidationCloses, maintenancePreflight, submitMaintenanceConsolidation, type MaintenanceAuthority } from '../../persistence/prepared-maintenance.ts';
 import { clearConsolidationTies, consolidationRestored, factPreimages, holdConsolidationTie, recordConsolidationGeneration } from '../../generations/adapters/fact-rows.ts';
 import { managedPersistenceEnabled } from '../../persistence/ownership.ts';
 import { DreamWriteDeferralPass } from '../dream-write-deferral.ts';
@@ -118,9 +118,10 @@ export const DEFAULT_CLUSTER_THRESHOLD = 0.85;
 
 /**
  * v0.35.4 (D-CDX-4 part 2) — chronological valid_until writeback.
- * Sort the cluster by (valid_from ASC, id ASC); walk consecutive
- * pairs; stamp the older fact's valid_until = next_newer.valid_from.
- * The newest fact keeps valid_until = NULL. This makes the facts
+ * Sort the cluster by (valid_from ASC, id ASC); stamp each fact's
+ * valid_until = the valid_from of the next fact that says something
+ * else, by claim text and typed value (consolidationCloses). A restatement of the same claim does not
+ * end the fact before it; the newest value keeps valid_until = NULL. This makes the facts
  * table a proper bitemporal record without the contradiction probe
  * having to mutate it (preserves auto-supersession.ts:4 invariant —
  * see also R8 test guard).
@@ -135,9 +136,9 @@ async function writeValidUntilChain(tx: BrainEngine, cluster: FactRow[]): Promis
     if (t !== 0) return t;
     return a.id - b.id;
   });
-  for (let i = 0; i < chronological.length - 1; i++) {
-    const older = chronological[i];
-    const newer = chronological[i + 1];
+  const values = new Map((await tx.executeRaw<{ id: number; claim_value: number | string | null }>(
+    'SELECT id, claim_value FROM facts WHERE id = ANY($1::bigint[])', [cluster.map(f => f.id)])).map(r => [Number(r.id), r.claim_value]));
+  for (const { member: older, next: newer } of consolidationCloses(chronological, f => ({ text: f.fact, value: values.get(f.id) }))) {
     await tx.executeRaw(
       // Only UPDATE when the new value would actually change. Avoids
       // touching updated_at on no-op rewrites and keeps idempotency
@@ -199,8 +200,8 @@ export async function runPhaseConsolidate(
   // #5575 write gate: unmanaged takes are gated here (managed ones in takes-prepare); read once per run.
   let gateConfig: WriteGateConfig | undefined;
 
-  // Pull every (source_id, entity_slug) bucket of unconsolidated facts.
-  // Uses the partial idx_facts_unconsolidated index.
+  // Pull every (source_id, entity_slug) bucket of unconsolidated facts whose entity is a live page (a take needs one, and
+  // GBRA-574: an unbacked name key has none, so its bucket is never read). Uses the partial idx_facts_unconsolidated index.
   let buckets: Array<{ source_id: string; entity_slug: string; count: number }>;
   try {
     buckets = await engine.executeRaw<{
@@ -212,6 +213,7 @@ export async function runPhaseConsolidate(
         AND expired_at IS NULL
         AND (valid_until IS NULL OR valid_until > now())
         AND entity_slug IS NOT NULL
+        AND EXISTS (SELECT 1 FROM pages bucket_page WHERE bucket_page.source_id = facts.source_id AND bucket_page.slug = facts.entity_slug AND bucket_page.deleted_at IS NULL)
         AND (attributed_to IS NULL OR attributed_to = 'user')
         AND ($2::boolean=false OR visibility='world')
         AND ($1::text IS NULL OR source_id=$1) AND NOT ${readersSourcedFactSql('facts')}

@@ -54,6 +54,16 @@ describe('pendingUpgradeMigrationsNotice', () => {
     expect(notice!.why).toContain(latest);
   });
 
+  test('a wedged migration a newer migration ran past is history, as apply-migrations says, so it gets no notice', async () => {
+    const older = MIGRATION_VERSIONS[MIGRATION_VERSIONS.length - 3]!;
+    const notice = await inHome(async () => {
+      for (const version of MIGRATION_VERSIONS) if (version !== older) appendCompletedMigration({ version, status: 'complete' } as never);
+      for (let i = 0; i < 3; i++) appendCompletedMigration({ version: older, status: 'partial' } as never);
+      return pendingUpgradeMigrationsNotice(engine, 'query', latest);
+    });
+    expect(notice).toBeNull();
+  });
+
   test('no ledger yet (a fresh brain) means no notice', async () => {
     expect(await inHome(() => pendingUpgradeMigrationsNotice(engine, 'query', latest))).toBeNull();
   });

@@ -41,7 +41,7 @@ describe('image query retains date and readiness contracts outside hybrid search
       expect(decodeDeepResearchId((results as Array<{ id: string }>)[0].id))
         .toEqual({ sourceId: 'default', slug: 'images/synthetic' });
     }
-    expect(options).toMatchObject({ afterDate: '2030-06-15', afterDateInclusive: true,
+    expect(options).toMatchObject({ afterDate: '2030-06-15T00:00:00.000Z', afterDateInclusive: true,
       beforeDate: '2030-06-16T00:00:00.000Z', beforeDateInclusive: false,
       sourceId: 'default', excludePrivate: true, requireSafeChunks: true });
     expect(meta.degraded).toContainEqual({ stage: 'vector_candidates_incomplete', reason: 'timeout' });

@@ -17,18 +17,21 @@ export interface ManagedBrain { engine: BrainEngine; ctx: OperationContext; root
 /**
  * An activated managed brain whose default source is a claimed worktree; PGLite unless a database URL is given.
  * `open` supplies the migrated engine instead, e.g. a clone of a per-file Postgres template, so each test skips the migrations.
+ * `sourceDir` roots the source at that folder of `root` (a page root below the checkout), set up by `setup` first.
  */
 export async function managedBrain(run: (brain: ManagedBrain) => Promise<void>,
-  opts: { databaseUrl?: string; open?: () => Promise<{ engine: BrainEngine; close(): Promise<void> }>; setup?: (brain: { engine: BrainEngine; root: string }) => Promise<void> | void } = {}): Promise<void> {
+  opts: { databaseUrl?: string; open?: () => Promise<{ engine: BrainEngine; close(): Promise<void> }>; setup?: (brain: { engine: BrainEngine; root: string }) => Promise<void> | void; sourceDir?: string } = {}): Promise<void> {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-managed-brain-'));
   try {
     await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
       const { engine, close } = await (opts.open ?? (() => isolatedSharedSkillsEngine(opts.databaseUrl)))();
       try {
         const root = join(home, 'content'); mkdirSync(root);
-        await engine.executeRaw("UPDATE sources SET local_path=$1 WHERE id='default'", [root]);
+        const sourceRoot = opts.sourceDir ? join(root, opts.sourceDir) : root;
+        if (opts.sourceDir) mkdirSync(sourceRoot, { recursive: true });
+        await engine.executeRaw("UPDATE sources SET local_path=$1 WHERE id='default'", [sourceRoot]);
         await opts.setup?.({ engine, root });
-        await claimWorktree(engine, 'default', root);
+        await claimWorktree(engine, 'default', sourceRoot);
         await activateSharedSkillPersistence(engine, { confirmQuiesced: true });
         const ctx: OperationContext = { engine, config: { engine: engine.kind, embedding_disabled: true }, sourceId: 'default',
           remote: false, dryRun: false, logger: { info() {}, warn() {}, error() {} } };

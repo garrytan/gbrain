@@ -79,7 +79,7 @@ describe('check-bash32.sh reporting (parser shim)', () => {
     expect(r.stderr).not.toContain('also-bad.sh');
     expect(r.stderr).toMatch(/^Why: {2}macOS \/bin\/bash is GNU bash 3\.2/m);
     expect(r.stderr).toContain("Fix:  read heredoc text with IFS= read -r -d '' VAR <<'EOF' || true");
-    expect(r.stderr).toContain('See:  docs/TESTING.md#bash-32-parse-guard');
+    expect(r.stderr).toContain('See:  docs/ci-guards.md#bash-32-parse-guard');
   });
 
   it('refuses an explicit GBRAIN_BASH32 that is not bash 3.x', () => {

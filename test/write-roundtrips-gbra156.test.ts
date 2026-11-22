@@ -41,6 +41,24 @@ async function recordStatements<T>(engine: BrainEngine, fn: () => Promise<T>): P
   }
 }
 
+/** The typed identity reads a call makes, in order: `readPersistenceBrainId`, `readLocalWriterRow` or `readLocalWriterRow(lock)`. */
+async function recordIdentityReads<T>(engine: BrainEngine, fn: () => Promise<T>): Promise<{ result: T; reads: string[] }> {
+  const reads: string[] = [];
+  const target = engine as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
+  const wrap = (name: string, label: (args: unknown[]) => string) => {
+    const original = target[name]!;
+    target[name] = function (this: unknown, ...args: unknown[]) { reads.push(label(args)); return original.apply(this, args); };
+  };
+  wrap('readPersistenceBrainId', () => 'brain');
+  wrap('readLocalWriterRow', args => ((args[1] as { lock?: boolean } | undefined)?.lock ? 'writer(lock)' : 'writer'));
+  try {
+    return { result: await fn(), reads };
+  } finally {
+    delete target.readPersistenceBrainId;
+    delete target.readLocalWriterRow;
+  }
+}
+
 const configReads = (statements: string[]) => statements.filter(s => /FROM config\b/.test(s));
 
 type Gate = { upkeepAllowed(): Promise<boolean>; sweepAllowed(direct: boolean): Promise<boolean>; housekeepingTurn: boolean;
@@ -199,25 +217,25 @@ for (const kind of testBackends()) {
       }
     }, 120_000);
 
-    const identity = (statements: string[]) => ({
-      brain: statements.filter(s => s.startsWith('SELECT brain_id FROM persistence_brain')).length,
-      writer: statements.filter(s => s.startsWith('SELECT lane,credential_hash,grant_ceiling,revoked_at FROM persistence_local_writers')).length });
+    const identity = (reads: string[]) => ({
+      brain: reads.filter(r => r === 'brain').length,
+      writer: reads.filter(r => r === 'writer').length });
 
     test('one request reads the brain identity and verifies a local writer once for its pre-submission checks', async () => {
       const engine = await factory.fresh();
       await withEnv({ GBRAIN_HOME: mkdtempSync(join(tmpdir(), 'gbra156-identity-')) }, async () => {
         await registerLocalWriter(engine, 'cli');
-        const { statements } = await recordStatements(engine, () => withRequestIdentityMemo(async () => {
+        const { reads } = await recordIdentityReads(engine, () => withRequestIdentityMemo(async () => {
           const local = await readLocalWriter(engine, 'cli');
           await verifyLocalWriter(engine, await readLocalWriter(engine, 'cli'));
           await verifyLocalWriter(engine, local);
         }));
-        expect(identity(statements)).toEqual({ brain: 1, writer: 1 });
-        const locked = await recordStatements(engine, () => withRequestIdentityMemo(async () => {
+        expect(identity(reads)).toEqual({ brain: 1, writer: 1 });
+        const locked = await recordIdentityReads(engine, () => withRequestIdentityMemo(async () => {
           const local = await readLocalWriter(engine, 'cli');
           await verifyLocalWriter(engine, local, true);
         }));
-        expect(locked.statements.filter(s => /persistence_local_writers WHERE id=\$1::uuid FOR SHARE$/.test(s))).toHaveLength(1);
+        expect(locked.reads.filter(r => r === 'writer(lock)')).toHaveLength(1);
       });
     }, 120_000);
 

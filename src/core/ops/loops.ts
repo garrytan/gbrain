@@ -26,6 +26,7 @@ import { resolveRequestedScope, sourceScopeOpts } from './context.ts';
 import { validateSourceId } from '../utils.ts';
 import { isGmailHoldKey } from '../google/types.ts';
 import { closedLoopWithActiveFact, retireLoopFact } from '../persistence/loop-fact-retirement.ts';
+import { readsButWritesOnly } from '../persistence/write-grant.ts';
 import {
   addSuppression,
   closeMutedLoops,
@@ -680,7 +681,7 @@ function muteScopeError(ctx: OperationContext, verb: 'mute' | 'unmute', p: Recor
   const value = typeof p.value === 'string' && MUTE_VALUE.test(p.value) ? p.value : undefined;
   return opError('permission_denied', `loops_${verb}: source "${sourceId}" is outside the caller's write scope`,
     writeSource
-      ? `Nothing changed. This connection writes only to source '${writeSource}': pass source_id '${writeSource}', or have the user run the ${verb} from the trusted local CLI (command in fix).`
+      ? `Nothing changed. ${readsButWritesOnly(ctx, sourceId, writeSource)}This connection writes only to source '${writeSource}': pass source_id '${writeSource}', or have the user run the ${verb} from the trusted local CLI (command in fix).`
       : `Nothing changed. This connection has no bound write source; the user can run the ${verb} from the trusted local CLI (command in fix).`,
     kind && value ? { fix: hostFix(ctx, ['gbrain', 'loops', verb, kind, value, '--source', sourceId],
       'A suppression is a write; remote callers write only inside their bound source.') } : {});
@@ -740,7 +741,7 @@ const loops_close: Operation = {
         throw opError(
           'permission_denied',
           `loops_close: source "${requested}" is outside the caller's write scope`,
-          `Nothing was closed. This connection writes only to source '${writeSource}': omit source_id to close there, or have the user close it from the trusted local CLI (command in fix).`,
+          `Nothing was closed. ${readsButWritesOnly(ctx, requested, writeSource)}This connection writes only to source '${writeSource}': omit source_id to close there, or have the user close it from the trusted local CLI (command in fix).`,
           closeFix(ctx, p),
         );
       }

@@ -86,6 +86,9 @@ import { applyGateDecision, derivedGateConfig, derivedGateInput } from '../trust
 import { decideFactWrite, recordFlaggedRow } from '../write-gate-store.ts';
 import { sourceWindowKey, type SourceWindow } from '../page-body/derivations.ts';
 import { findCaptureDuplicate } from './capture-dedup.ts';
+import { normalizeSlot } from './slots.ts';
+import { unbackedEntitySql } from './withdrawal-schema.ts';
+import { CONVERSATION_SLOT_SQL, valueHash } from '../chronicle/ontology.ts';
 
 export const CONVERSATION_FACTS_INTENT = 'managed_maintenance_conversation_facts';
 export const CONVERSATION_FACTS_PROTOCOL = 1;
@@ -130,8 +133,12 @@ export type ConversationFactRow = NewFact & { row_num: number; source_markdown_s
  */
 export type ConversationScope = 'full' | 'window' | 'partial';
 const SCOPES: ReadonlySet<string> = new Set<ConversationScope>(['full', 'window', 'partial']);
-/** A frozen row: no source, page or row number (the request pins them) and no visibility (one per entry). */
-export type FrozenConversationFact = Omit<FrozenExtractedFact, 'visibility' | 'entity_inferred'>;
+/**
+ * A frozen row: no source, page or row number (the request pins them). Visibility is one per entry; a row carries
+ * `visibility: 'private'` only when it is narrower than its world entry (a claim the speaker asked to keep quiet), and
+ * no other value. A binary that predates the key publishes such a row at the entry's visibility, as before.
+ */
+export type FrozenConversationFact = Omit<FrozenExtractedFact, 'visibility' | 'entity_inferred'> & { visibility?: 'private' };
 
 /** One page's frozen batch inside a batch request. */
 export interface ConversationPageEntry {
@@ -345,8 +352,9 @@ async function plannedAdmissions(engine: BrainEngine, sourceId: string,
   return requests(opts.limit ? Math.min(opts.limit, backlog) : backlog);
 }
 
-function freezeRow(row: ConversationFactRow): FrozenConversationFact {
+function freezeRow(row: ConversationFactRow, entryVisibility: 'private' | 'world'): FrozenConversationFact {
   return {
+    ...(row.visibility === 'private' && entryVisibility === 'world' && !OUTCOME_SOURCES.has(row.source) ? { visibility: 'private' as const } : {}),
     fact: row.fact, kind: row.kind ?? 'fact', entity_slug: row.entity_slug ?? null, context: row.context ?? null,
     valid_from: (row.valid_from ?? new Date()).toISOString(), valid_until: row.valid_until ? row.valid_until.toISOString() : null,
     source: row.source, source_session: row.source_session ?? null, confidence: row.confidence ?? 1.0,
@@ -354,6 +362,7 @@ function freezeRow(row: ConversationFactRow): FrozenConversationFact {
     embedding_model: row.embedding ? row.embedding_model ?? null : null,
     claim_metric: row.claim_metric ?? null, claim_value: row.claim_value ?? null, claim_unit: row.claim_unit ?? null,
     claim_period: row.claim_period ?? null, event_type: row.event_type ?? null, attributed_to: row.attributed_to ?? null,
+    ...(row.dimension ? { dimension: row.dimension, value: row.value ?? null } : {}),
   };
 }
 
@@ -372,7 +381,7 @@ export async function buildConversationPage(engine: BrainEngine, config: GBrainC
     extractor_version: CONVERSATION_EXTRACTOR_VERSION, generation: input.generation.key, attempt: input.attempt,
     selectors: { since: input.since, segment_limit: input.segmentLimit }, complete: rows.some(row => OUTCOME_SOURCES.has(row.source)), scope: input.scope,
     newest_end: opts.newestEnd, visibility: opts.visibility, embedding: signature,
-    rows: rows.map(row => freezeRow(keep(row) ? { ...row, embedding_model: signature!.model } : { ...row, embedding: null })),
+    rows: rows.map(row => freezeRow(keep(row) ? { ...row, embedding_model: signature!.model } : { ...row, embedding: null }, opts.visibility)),
   };
 }
 
@@ -424,6 +433,8 @@ function entryProblem(entry: ConversationPageEntry): string | null {
       return 'a row falls outside the conversation extractor\'s provenance or fact kinds';
     }
     if (OUTCOME_SOURCES.has(fact.source) && fact.source_session !== `${fact.source}:${entry.slug}:${entry.version_token}`) return 'it carries an outcome for another page version';
+    if ((fact.dimension != null && typeof fact.dimension !== 'string') || (fact.value != null && typeof fact.value !== 'string')) return 'a row carries a malformed slot';
+    if (Object.hasOwn(fact, 'visibility') && fact.visibility !== 'private') return 'a row names a fact visibility other than private';
     if (fact.embedding && (!entry.embedding || fact.embedding.length !== entry.embedding.dimensions || !fact.embedding.every(Number.isFinite))) {
       return 'a vector does not match its embedding signature';
     }
@@ -497,7 +508,9 @@ async function stampSourceWindows(tx: BrainEngine, ids: readonly number[], windo
  * the prior ones, and a partial run's facts are not published over them.
  * #7043: a fact an active row of the source already states is not stored
  * again (the capture lane's fingerprint, entity and visibility rule with no
- * time bound); the page's own rows a replacement clears do not count.
+ * time bound); the page's own rows a replacement clears do not count. A slot
+ * fact whose value differs from the slot's latest value at its date is a
+ * change (GBRA-574 B2: a return to an earlier value) and is stored.
  */
 export async function publishConversationFacts(tx: BrainEngine, sourceId: string, slug: string, rows: UnnumberedFact[],
   opts: { scope: ConversationScope; requestId?: string; segments?: ConversationSegmentsPublication }): Promise<{ deleted: number; facts_inserted: number; duplicates_skipped: number; purged_skipped: number }> {
@@ -517,7 +530,10 @@ export async function publishConversationFacts(tx: BrainEngine, sourceId: string
   let duplicates = 0;
   for (const entry of retire || opts.scope === 'window' || segments ? kept : kept.filter(({ row }) => OUTCOME_SOURCES.has(row.source))) {
     const { row } = entry;
-    if (OUTCOME_SOURCES.has(row.source) || !await findCaptureDuplicate(scope, { fact: row.fact, entitySlug: row.entity_slug ?? null,
+    const [prior] = row.dimension && row.value && row.entity_slug && row.valid_from != null ? await tx.executeRaw<{ value_hash: string }>(`SELECT value_hash FROM facts
+      WHERE source_id=$1 AND entity_slug=$2 AND dimension=$3 AND value_hash IS NOT NULL AND expired_at IS NULL AND superseded_by IS NULL AND ${CONVERSATION_SLOT_SQL}
+        AND valid_from <= $4::timestamptz ORDER BY valid_from DESC, id DESC LIMIT 1`, [sourceId, row.entity_slug, row.dimension, new Date(row.valid_from).toISOString()]) : [];
+    if (OUTCOME_SOURCES.has(row.source) || (prior && prior.value_hash !== valueHash(row.value!)) || !await findCaptureDuplicate(scope, { fact: row.fact, entitySlug: row.entity_slug ?? null,
       visibility: row.visibility ?? 'private', attributedTo: row.attributed_to ?? null })) published.push(entry);
     else duplicates++;
   }
@@ -558,19 +574,20 @@ export async function replaceConversationFacts(tx: BrainEngine, sourceId: string
 
 /**
  * Inserts `rows` numbered above every fact row of the page; a lost insert throws, rolling the publication back.
- * #7438: a row whose claim matches a purge tombstone (under the entity it carries after relink inheritance) is left
- * out and its index returned in `purged`; the facts insert guard would otherwise refuse the whole statement.
+ * #7438: a row whose claim matches a purge tombstone (under the entity it carries after relink inheritance; under any
+ * subject for an unbacked name key, GBRA-574) is left out and its index returned in `purged`; the facts insert guard
+ * would otherwise refuse the whole statement.
  * #7778: never the page outcome row, which no tombstone applies to (the guard exempts it too).
  */
 async function insertConversationFacts(tx: BrainEngine, sourceId: string, slug: string, rows: UnnumberedFact[]): Promise<{ inserted: number; ids: number[]; purged: Set<number> }> {
   if (!rows.length) return { inserted: 0, ids: [], purged: new Set() };
   rows = await inheritRelinkedEntities(tx, sourceId, slug, rows);
-  const matches = await tx.executeRaw<{ ord: number | string }>(`SELECT n.ord FROM unnest($2::text[], $3::text[], $4::text[], $5::text[]) WITH ORDINALITY AS n(fact, visibility, subject, source, ord)
-    WHERE NOT ${outcomeMarkerSql('n')} AND EXISTS (SELECT 1 FROM fact_purges p WHERE p.source_id=$1 AND p.visibility=n.visibility AND p.subject IN ('*', n.subject)
-      AND p.fact_hash=gbrain_fact_fingerprint(n.fact))`,
+  const matches = await tx.executeRaw<{ ord: number | string }>(`SELECT n.ord FROM unnest($2::text[], $3::text[], $4::text[], $5::text[]) WITH ORDINALITY AS n(fact, visibility, entity_slug, source, ord)
+    WHERE NOT ${outcomeMarkerSql('n')} AND EXISTS (SELECT 1 FROM fact_purges p WHERE p.source_id=$1 AND p.visibility=n.visibility
+      AND (p.subject IN ('*', n.entity_slug) OR ${unbackedEntitySql('n', '$1')}) AND p.fact_hash=gbrain_fact_fingerprint(n.fact))`,
   [sourceId, rows.map(row => ensureWellFormed(row.fact)), rows.map(row => row.visibility ?? 'private'), rows.map(row => row.entity_slug ? ensureWellFormed(row.entity_slug) : null), rows.map(row => row.source ?? null)]);
   const purged = new Set(matches.map(match => Number(match.ord) - 1));
-  rows = rows.filter((_, i) => !purged.has(i));
+  rows = await insertableSlots(tx, sourceId, slug, rows.filter((_, i) => !purged.has(i)));
   if (!rows.length) return { inserted: 0, ids: [], purged };
   const [top] = await tx.executeRaw<{ n: number | string | null }>(
     'SELECT max(row_num) AS n FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [sourceId, slug]);
@@ -581,6 +598,29 @@ async function insertConversationFacts(tx: BrainEngine, sourceId: string, slug: 
       `Only ${inserted} of ${rows.length} fact rows of ${slug} in source ${sourceId} were inserted, so the replacement rolled back. Run the extraction for the page again; report this if it repeats.`);
   }
   return { inserted, ids, purged };
+}
+
+/**
+ * GBRA-574 B2: the rows' slots as the facts unique slot index (source, entity, dimension, value_hash, page, valid_from)
+ * admits them, so it never fails the insert. A slot outside the vocabulary or on a row without an entity (after subject
+ * inference, merges and relink inheritance) is dropped, and so is a slot whose key a row of the page already holds or an
+ * earlier row of the batch takes; the fact itself is always kept.
+ */
+async function insertableSlots(tx: BrainEngine, sourceId: string, slug: string, rows: UnnumberedFact[]): Promise<UnnumberedFact[]> {
+  if (!rows.some(row => row.dimension)) return rows;
+  const key = (entity: string, dimension: string, hash: string, validFrom: Date | string | null | undefined) =>
+    [entity, dimension, hash, validFrom == null ? 'now' : new Date(validFrom).getTime()].join('\u0000');
+  const held = await tx.executeRaw<{ entity_slug: string; dimension: string; value_hash: string; valid_from: Date | string }>(
+    'SELECT entity_slug, dimension, value_hash, valid_from FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND dimension IS NOT NULL', [sourceId, slug]);
+  const taken = new Set(held.map(h => key(h.entity_slug, h.dimension, h.value_hash, h.valid_from)));
+  return rows.map(({ dimension, value, ...row }) => {
+    const slot = normalizeSlot(dimension, value, row.entity_slug);
+    if (!slot) return row;
+    const k = key(row.entity_slug!, slot.dimension, valueHash(slot.value), row.valid_from);
+    if (taken.has(k)) return row;
+    taken.add(k);
+    return { ...row, ...slot };
+  });
 }
 
 /** Context marker `gbrain repair conversation-labels` appends to the rows it retires. */
@@ -628,10 +668,13 @@ export async function clearConversationFacts(db: BrainEngine, sourceId: string, 
     ? ` AND NOT (f.source = ANY($3::text[])) AND (CASE WHEN f.source_window IS NULL THEN $4::boolean ELSE (${WINDOW_KEY_SQL} = ANY($5::text[])) <> $6::boolean END)` : '');
   const params = windows ? [sourceId, slug, [...AUDIT_ROW_SOURCES], windows.unanchored, [...windows.keys], windows.keep] : [sourceId, slug];
   const referenced = 'EXISTS (SELECT 1 FROM open_loops o WHERE o.fact_id=f.id) OR EXISTS (SELECT 1 FROM facts g WHERE g.superseded_by=f.id)';
+  // GBRA-574 B2: a row kept expired gives up its slot, so the replacement can hold the same slot key.
+  const unslot = 'dimension=NULL, value=NULL, value_hash=NULL, dim_status=NULL';
   await db.executeRaw(`DELETE FROM facts f WHERE ${page} AND f.expired_at IS NOT NULL AND ${RELINKED_DERIVED_ROW} AND NOT (${referenced})`, params);
-  const [relinked] = await db.executeRaw<{ count: string }>(`WITH up AS (UPDATE facts f SET expired_at=now()
+  await db.executeRaw(`UPDATE facts f SET ${unslot} WHERE ${page} AND f.expired_at IS NOT NULL AND f.dimension IS NOT NULL`, params);
+  const [relinked] = await db.executeRaw<{ count: string }>(`WITH up AS (UPDATE facts f SET expired_at=now(), ${unslot}
     WHERE ${page} AND f.expired_at IS NULL AND ${RELINKED_DERIVED_ROW} RETURNING 1) SELECT COUNT(*)::text AS count FROM up`, params);
-  const [expired] = await db.executeRaw<{ count: string }>(`WITH up AS (UPDATE facts f SET expired_at=now()
+  const [expired] = await db.executeRaw<{ count: string }>(`WITH up AS (UPDATE facts f SET expired_at=now(), ${unslot}
     WHERE ${page} AND f.expired_at IS NULL AND (${referenced}) RETURNING 1) SELECT COUNT(*)::text AS count FROM up`, params);
   const [deleted] = await db.executeRaw<{ count: string }>(`WITH del AS (DELETE FROM facts f
     WHERE ${page} AND NOT (${referenced}) AND COALESCE(f.context,'') NOT LIKE '%${LABEL_RETIRED_MARKER}%' AND NOT (${RELINKED_DERIVED_ROW}) RETURNING 1)
@@ -671,7 +714,7 @@ async function applyEntry(tx: BrainEngine, row: WriteRequest, entry: Conversatio
   const vectors = !!signature && !!entry.embedding && signature.model === entry.embedding.model && signature.dimensions === entry.embedding.dimensions;
   const merges = await mergedEntities(tx, row.source_id, entry.rows.map(fact => fact.entity_slug).filter((s): s is string => !!s));
   const rows = entry.rows.map(fact => ({
-    ...fact, visibility: OUTCOME_SOURCES.has(fact.source) ? 'private' as const : entry.visibility, entity_slug: fact.entity_slug ? merges.get(fact.entity_slug) ?? fact.entity_slug : null,
+    ...fact, visibility: OUTCOME_SOURCES.has(fact.source) || fact.visibility === 'private' ? 'private' as const : entry.visibility, entity_slug: fact.entity_slug ? merges.get(fact.entity_slug) ?? fact.entity_slug : null,
     valid_from: new Date(fact.valid_from), valid_until: fact.valid_until ? new Date(fact.valid_until) : null,
     embedding: vectors && fact.embedding ? new Float32Array(fact.embedding) : null,
     embedding_model: vectors && fact.embedding ? entry.embedding!.model : null,

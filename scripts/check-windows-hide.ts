@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Windows hidden-console guard (#4992; docs/TESTING.md#windows-hidden-console-guard).
+ * Windows hidden-console guard (#4992; docs/ci-guards.md#windows-hidden-console-guard).
  *
  * On Windows a detached gbrain child has no console, so every console program
  * it launches without `windowsHide` opens a visible console window that takes
@@ -26,7 +26,7 @@ import { join, relative } from 'node:path';
 import ts from 'typescript';
 
 const ROOT = process.env.GBRAIN_GUARD_ROOT ?? join(import.meta.dir, '..');
-const ANCHOR = 'docs/TESTING.md#windows-hidden-console-guard';
+const ANCHOR = 'docs/ci-guards.md#windows-hidden-console-guard';
 const SEAM = 'src/core/spawn.ts';
 const MODULES = new Set(['child_process', 'node:child_process']);
 

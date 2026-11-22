@@ -29,7 +29,10 @@ export interface RemoteAgentAuthority {
    */
   grant: { scopes: string[]; sourceId: string; sourceCreatedAt: string; allowedTools: string[]; allowedSlugPrefixes: string[]; actingFor?: string[];
     /** GST-359 C1: the attested actor the job was submitted for; every tool call re-resolves it through actorCoverage. */
-    actor?: { system: string; external_id: string; member: string } };
+    actor?: { system: string; external_id: string; member: string };
+    /** #9669: the tool surface of the connection that submitted the job; every tool call is confined to it. Absent on a
+     *  job accepted before it was recorded, which keeps the full surface it was accepted under. */
+    surface?: 'verbs' | 'starter' | 'full' };
   payloadHash: string;
 }
 export interface RemoteJobAuthority {
@@ -88,6 +91,7 @@ export function parseSubmissionAuthority(value: unknown): SubmissionAuthority | 
         !Array.isArray(g.allowedSlugPrefixes) || !g.allowedSlugPrefixes.every(v => typeof v === 'string') ||
         (g.actingFor !== undefined && (!Array.isArray(g.actingFor) || !g.actingFor.length || g.actingFor.length > 50 || !g.actingFor.every(v => typeof v === 'string' && v.length))) ||
         (g.actor !== undefined && (g.actingFor !== undefined || !parseStoredActor(g.actor))) ||
+        (g.surface !== undefined && !['verbs', 'starter', 'full'].includes(g.surface as string)) ||
         typeof a.payloadHash !== 'string' || !/^[a-f0-9]{64}$/.test(a.payloadHash)) return null;
     return structuredClone(a) as unknown as RemoteAgentAuthority;
   }
@@ -270,7 +274,7 @@ export async function prepareRemoteAgent(ctx: OperationContext, data: Record<str
     version: 1, kind: 'remote_agent', principal: { kind: 'oauth_client', id: principal.id },
     grant: { scopes: [...ctx.auth!.scopes], sourceId: data.source_id, sourceCreatedAt: new Date(source.created_at as string).toISOString(),
       allowedTools: [...data.allowed_tools as string[]], allowedSlugPrefixes: [...data.allowed_slug_prefixes as string[]],
-      ...(actor ? { actor: { ...actor } } : actingFor?.length ? { actingFor: [...actingFor] } : {}) },
+      ...(actor ? { actor: { ...actor } } : actingFor?.length ? { actingFor: [...actingFor] } : {}), surface: ctx.surface ?? 'full' },
     payloadHash: authorityDigest(data),
   };
   if (!parseSubmissionAuthority(authority)) deny('invalid agent grant', 'Send allowed_tools as a non-empty list of tool names and allowed_slug_prefixes as a list of strings.');

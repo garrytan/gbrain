@@ -85,6 +85,11 @@ writer list. Every `init` previews first and writes nothing without `--yes`.
    gbrain guests init --writer oauth_client:<client id> --yes
    ```
 
+   An `oauth_client` writer must name a client registered on this brain
+   (`gbrain auth clients --json` lists them). An unknown or deleted id is
+   refused with `client_not_found` and nothing is written; `sources writers
+   --add` checks the same way.
+
 Plain `gbrain auth rescope --client <client id>` prints the client's operations
 and slug prefixes but not who it may act for. `gbrain auth rescope --client
 <client id> --json` prints the whole grant, and `gbrain access check --client

@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+Files in a folder whose name starts with two dots, such as ..drafts or ..., are now treated as inside the brain by the path checks this release fixes. Before, gbrain refused or skipped them, or called them outside, at those checks. Remote file uploads into such a folder are still refused; a separate fix covers that check. Three outputs change for such folders. First, gbrain frontmatter now expects the slug ..drafts/note for ..drafts/note.md (the same rule as any other folder) instead of note. Second, an extract-atoms transcript under meetings/..drafts/ gets the meetings label instead of corpus. Third, the LongMemEval call plan records a tracked, unchanged input under a ..inputs/ folder as a pinned INPUT line instead of a PRECONDITION. A gbrain.sourceRoot of ..drafts now scopes git commit-push to that folder instead of the whole checkout. Paths that really leave the brain are still refused.

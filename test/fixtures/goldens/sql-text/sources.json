@@ -2,6 +2,18 @@
   "golden": {
     "domain": "sources",
     "methods": {
+      "getSource": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT id, name, local_path, last_commit, last_sync_at, config, created_at, contextual_retrieval_mode, trust_frontmatter_overrides FROM sources WHERE id = $1",
+            "textSha256": "62f0fbc57b866ec35d27b204bffed68c8c0fe2b01b0f1c9d762645e14d571356"
+          }
+        ]
+      },
       "listAllSources": {
         "default": [
           {
@@ -12,6 +24,16 @@
             ],
             "sql": "SELECT id, name, local_path, last_sync_at, config FROM sources WHERE ($1 OR archived IS NOT TRUE) AND ($2 OR (local_path IS NOT NULL AND config->>'role' IS DISTINCT FROM 'storage_manifest')) ORDER BY (id = 'default') DESC, id",
             "textSha256": "7a9f40530ae88bb9c1d059fb6b47a75e864c4e3a9579d0145dfdff0bfdae61ce"
+          }
+        ]
+      },
+      "listSourceLocalPaths": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT local_path FROM sources WHERE local_path IS NOT NULL AND local_path <> ''",
+            "textSha256": "c7ffb048a4fd728fc6ccb9ec8d9f4dd3eb3d14173d5a73c101a2cb8eb6449c91"
           }
         ]
       },

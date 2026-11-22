@@ -20,7 +20,8 @@
 import type { BrainEngine } from '../engine.ts';
 import type { PageReadScope, SearchResult } from '../types.ts';
 import { resolveExcludePrivatePages, worldOnlyFacts } from './private-visibility.ts';
-import { admitted, collectFactCandidates, FACTS_ARM_COSINE_MIN, queryTerms, scoreFactCandidates, type FactCandidate as PoolCandidate, type FactPoolScope } from './fact-relevance.ts';
+import { admitted, collectFactCandidates, FACTS_ARM_COSINE_MIN, laterRetractions, queryTerms, scoreFactCandidates, type FactCandidate as PoolCandidate, type FactPoolScope } from './fact-relevance.ts';
+import { readSlotHistory, slotWindows } from './slot-history.ts';
 import { pageReadFilter } from './read-policy-sql.ts';
 import { enforceTokenBudget, resultTokens } from './token-budget.ts';
 import { configFlagOn, factDateHeader, factObservationDates } from './evidence-date.ts';
@@ -28,6 +29,9 @@ import { collapseFactReads } from '../facts/capture-dedup.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import { conversationSignal } from './evidence-delivery.ts';
 import { factsFromQuotedPages } from './transcript-quote.ts';
+import { findTimeMentions } from '../temporal-grammar.ts';
+import { withDecideContested, type ContestedLookup } from '../facts/contested-claims.ts';
+import type { Contested } from '../eligibility/labels.ts';
 
 export { queryTerms } from './fact-relevance.ts';
 
@@ -66,6 +70,23 @@ const TEMPORAL_CUE = new RegExp(`\\b(when|before|after|since|until|till|during|a
 /** Whether `query` carries a deterministic temporal cue (the preregistered word, phrase, ISO date and month-name list). */
 export function hasTemporalCue(query: string): boolean {
   return TEMPORAL_CUE.test(query);
+}
+
+const HISTORY_CUE = /\b(before|earlier|earliest|previous(ly)?|prior|former(ly)?|used to|originally|first|history|historically|ever|over time|in order|chronolog\w*|sequence|ago|back then|at the time|no longer|any ?more|in the past)\b/i;
+const today = () => new Date().toISOString().slice(0, 10);
+
+/**
+ * GBRA-574 B1: whether `query` asks about the past, by a plain-English history word or a time it names (the shared
+ * temporal grammar, temporal-grammar.ts) that ended before `asOf` (today by default).
+ */
+export function hasHistoryCue(query: string, asOf = today()): boolean {
+  return HISTORY_CUE.test(query) || findTimeMentions(query, asOf, 'past').some(m => m.end < asOf);
+}
+
+/** GBRA-574 B3: the one date `query` names (the last day of it, YYYY-MM-DD, by the shared temporal grammar), or null for none or several. */
+export function questionDate(query: string, asOf = today()): string | null {
+  const ends = [...new Set(findTimeMentions(query, asOf, 'past').filter(m => m.kind === 'absolute').map(m => m.end))];
+  return ends.length === 1 ? ends[0]! : null;
 }
 
 export interface FactsArmScope {
@@ -214,10 +235,12 @@ interface ReservePolicy {
   rowShare: number | null;
   /** Where the facts go: after the pages (temporal reserve) or ahead of them (facts block). */
   position: 'after' | 'before';
+  /** GBRA-574 B1, B3, G1 and B5: ended facts on a history cue, the asked date in each header, contested labels and later retractions. */
+  dated: boolean;
 }
 
-const TEMPORAL_RESERVE: ReservePolicy = { share: TEMPORAL_RESERVE_SHARE, maxRows: MAX_RESERVE_ROWS, rowShare: TEMPORAL_RESERVE_ROW_SHARE, position: 'after' };
-const FACTS_BLOCK: ReservePolicy = { share: QUERY_FACTS_BLOCK_SHARE, maxRows: MAX_FACTS_BLOCK_ROWS, rowShare: null, position: 'before' };
+const TEMPORAL_RESERVE: ReservePolicy = { share: TEMPORAL_RESERVE_SHARE, maxRows: MAX_RESERVE_ROWS, rowShare: TEMPORAL_RESERVE_ROW_SHARE, position: 'after', dated: false };
+const FACTS_BLOCK: ReservePolicy = { share: QUERY_FACTS_BLOCK_SHARE, maxRows: MAX_FACTS_BLOCK_ROWS, rowShare: null, position: 'before', dated: true };
 
 /**
  * Temporal fact reserve: for a query with a temporal cue and a token budget,
@@ -240,7 +263,15 @@ export function applyTemporalFactReserve(engine: BrainEngine, query: string, res
  * never more rows than the caller's row count (#8411), oldest first ahead of
  * the pages. Copies of one claim take one row, dated as first stated with
  * "(stated N times, last D)" after the fact (GBRA-574 A2), and each row's date
- * header carries when the fact was said (A1). Block rows take the top page's
+ * header carries when the fact was said (A1). On a history cue (`hasHistoryCue`)
+ * the pool also takes the named entity's ended facts with their windows (B1;
+ * never a withdrawn or forgotten one); when the question names one date each
+ * header says whether the fact was told after it (B3); and a fact in a pending
+ * supersede proposal ends "(contested by #<id>)" when the caller can read the
+ * other fact, as recall labels it (G1). A later fact of the same entity that retracts a shown fact or calls it off (a
+ * plain-English cue not negated just before it, whose non-name terms are all in the fact or share two with it, or
+ * carrying the fact's slot; fact-relevance.ts `laterRetractions`) follows it with
+ * its own date, inside the same share and row count (B5). Block rows take the top page's
  * score: they are placed, not ranked against the pages, and never outscore them. The facts add rows
  * (every page row stays) and pages fill the rest of the budget. No match or
  * any error: the results unchanged.
@@ -251,9 +282,16 @@ export function applyFactsBlock(engine: BrainEngine, query: string, results: Sea
 
 async function applyFactReserve(engine: BrainEngine, query: string, results: SearchResult[], opts: FactsArmOpts & { budget: number }, policy: ReservePolicy): Promise<SearchResult[]> {
   try {
-    const { candidates, stems } = await collectFactCandidates(engine, query, await poolScope(engine, opts), opts.queryEmbedding,
-      { depth: { keyword: 50, cosine: 50, entity: policy.maxRows }, cosineForAll: true });
-    const scored = scoreFactCandidates(query, candidates, queryTerms(query), stems).filter(s => admitted(s, 'reserve')).map(s => s.candidate);
+    const scope = await poolScope(engine, opts);
+    const readScope: PageReadScope = opts.readScope ?? { sourceId: opts.sourceId, sourceIds: opts.sourceIds, excludePrivate: scope.excludePrivate };
+    // GBRA-574 F: a history question about one slot dimension of one named entity takes every value it has had, first in line (slot-history.ts).
+    let historyUnavailable = false;
+    const history = policy.dated ? await readSlotHistory(engine, query, scope, readScope).catch(() => { historyUnavailable = true; return null; }) : null;
+    const pinned = new Set((history?.rows ?? []).map(c => Number(c.id)));
+    const { candidates, stems } = await collectFactCandidates(engine, query, scope, opts.queryEmbedding,
+      { depth: { keyword: 50, cosine: 50, entity: policy.maxRows }, cosineForAll: true, history: policy.dated && hasHistoryCue(query) });
+    const scored = [...(history?.rows ?? []), ...scoreFactCandidates(query, candidates, queryTerms(query), stems)
+      .filter(s => admitted(s, 'reserve') && !pinned.has(Number(s.candidate.id))).map(s => s.candidate)];
     if (!scored.length) return results;
     const callerRows = (await opts.rowCap?.().catch(() => 0)) ?? 0;
     const rowCap = Math.max(results.length, callerRows);
@@ -262,36 +300,87 @@ async function applyFactReserve(engine: BrainEngine, query: string, results: Sea
     const byId = new Map(scored.map(c => [Number(c.id), c]));
     const collapsed = await collapseFactReads(engine, scored.map(c => ({ ...c, id: Number(c.id), created_at: c.created_at ?? c.valid_from, visibility: c.visibility ?? '', attributed_to: c.attributed_to ?? null })));
     const members = collapsed.map(r => (r.collapsed_ids ?? [r.id]).map(id => byId.get(id)!));
-    const { dates } = await observedDates(engine, members.flat(), opts.readScope);
+    // GBRA-574 B5: later facts that retract or call off a pooled fact, read under the same policy.
+    const answers = policy.dated ? await laterRetractions(engine, scope, members.flat()).catch(() => new Map<number, FactCandidate[]>()) : new Map<number, FactCandidate[]>();
+    const retracting = [...new Map([...answers.values()].flat().filter(r => !byId.has(r.id)).map(r => [r.id, r])).values()];
+    const { dates } = await observedDates(engine, [...members.flat(), ...retracting], opts.readScope);
     const said = (c: FactCandidate) => dates?.get(Number(c.id)) ?? day(c.created_at ?? c.valid_from) ?? '';
     const groups = members.map(g => g.sort((a, b) => said(a).localeCompare(said(b)) || Number(a.id) - Number(b.id)));
     const shown = groups.map(g => g[0]!);
+    // GBRA-574 B2/G4 and F: a slot value's window ends at read time, from the rows the caller may read under every key of its entity (slot-history.ts).
+    const ends = await slotWindows(engine, scope, readScope, shown, history?.keys ?? null)
+      .catch(() => { historyUnavailable ||= history !== null; return new Map<number, Date>(); });
     const pageSlugs = await readableEntityPages(engine, shown, opts.readScope).catch(() => new Set<string>());
-    const fromQuoted = await factsFromQuotedPages(engine, shown.map(c => Number(c.id)));
+    const fromQuoted = await factsFromQuotedPages(engine, [...shown, ...retracting].map(c => Number(c.id)));
+    const asked = policy.dated ? questionDate(query) : null;
+    const lookup: ContestedLookup = {};
+    const contested = policy.dated
+      ? new Map((await withDecideContested<{ id: number; contested?: Contested }>(engine, shown.map(c => ({ id: Number(c.id) })),
+        { remote: opts.remote, excludePrivate: scope.excludePrivate, eligibility: { floor: opts.minTrust, suppressFlagged: opts.suppressFlagged } }, lookup))
+        .flatMap(r => (r.contested ? [[r.id, r.contested.fact_id] as const] : [])))
+      : new Map<number, string>();
     let left = Math.floor(opts.budget * policy.share);
-    const chosen: Array<{ c: FactCandidate; row: SearchResult }> = [];
-    for (const group of groups) {
-      if (chosen.length >= maxRows) break;
+    const render = (group: FactCandidate[]) => {
       const c = group[0]!;
       const restated = group.length > 1 ? ` (stated ${group.length} times, last ${said(group[group.length - 1]!)})` : '';
       const row = factRow(c, 0, c.entity_slug && pageSlugs.has(`${c.source_id}\u0000${c.entity_slug}`) ? c.entity_slug : undefined, fromQuoted.has(Number(c.id)), dates);
-      row.chunk_text = `${factDateHeader(c, undefined, dates?.get(Number(c.id)))}\n${c.fact}${restated}`;
+      const window = c.valid_until ? c : { ...c, valid_until: ends.get(Number(group[group.length - 1]!.id)) ?? null };
+      const label = contested.has(Number(c.id)) ? ` (contested by #${contested.get(Number(c.id))})` : '';
+      row.chunk_text = `${factDateHeader(window, undefined, dates?.get(Number(c.id)), asked)}\n${c.fact}${restated}${label}`;
+      if (lookup.degraded) row.fact_row = { ...row.fact_row!, contested_unavailable: true };
+      if (historyUnavailable) row.fact_row = { ...row.fact_row!, history_unavailable: true };
+      return row;
+    };
+    type Shown = { c: FactCandidate; row: SearchResult; after: Array<{ c: FactCandidate; row: SearchResult }> };
+    const chosen: Shown[] = [];
+    const groupOf = new Map(groups.flatMap(g => g.map(m => [Number(m.id), g] as const)));
+    const attached = new Set<number>();
+    let count = 0;
+    for (const group of groups) {
+      if (count >= maxRows) break;
+      const c = group[0]!;
+      if (attached.has(Number(c.id))) continue;
+      const row = render(group);
       const cost = resultTokens(row);
       if (cost > left) continue;
       left -= cost;
-      chosen.push({ c, row });
+      const entry: Shown = { c, row, after: [] };
+      chosen.push(entry);
+      count++;
+      // GBRA-574 B5: each later retraction goes right after the fact it answers; one already shown moves there.
+      for (const r of answers.get(Number(c.id)) ?? []) {
+        const g = groupOf.get(r.id) ?? [r];
+        const head = Number(g[0]!.id);
+        if (head === Number(c.id) || attached.has(head)) continue;
+        const at = chosen.findIndex(x => Number(x.c.id) === head);
+        if (at >= 0) {
+          const [moved] = chosen.splice(at, 1);
+          entry.after.push({ c: moved!.c, row: moved!.row }, ...moved!.after);
+          attached.add(head);
+          continue;
+        }
+        if (count >= maxRows) break;
+        const answer = render(g);
+        const answerCost = resultTokens(answer);
+        if (answerCost > left) continue;
+        left -= answerCost;
+        entry.after.push({ c: g[0]!, row: answer });
+        attached.add(head);
+        count++;
+      }
     }
     if (!chosen.length) return results;
     chosen.sort((a, b) => new Date(a.c.valid_from).getTime() - new Date(b.c.valid_from).getTime() || Number(a.c.id) - Number(b.c.id));
     const pagesFloor = results.reduce((m, r) => (Number.isFinite(r.score) && r.score < m ? r.score : m), results[0]?.score ?? 1);
     const pagesTop = results.reduce((m, r) => (Number.isFinite(r.score) && r.score > m ? r.score : m), results[0]?.score ?? 1);
+    const placed = chosen.flatMap(({ c, row, after }) => [{ c, row }, ...after]);
     const rows = policy.position === 'after'
-      ? chosen.map(({ row }, i) => ({ ...row, score: pagesFloor - (i + 1) * 1e-6 }))
-      : chosen.map(({ row }) => ({ ...row, score: pagesTop }));
+      ? placed.map(({ row }, i) => ({ ...row, score: pagesFloor - (i + 1) * 1e-6 }))
+      : placed.map(({ row }) => ({ ...row, score: pagesTop }));
     let pages = (policy.rowShare === null ? results : results.slice(0, Math.max(0, Math.min(results.length, rowCap - rows.length)))).map(r => ({ ...r }));
     if (opts.tokenBudget) pages = enforceTokenBudget(pages, Math.max(1, opts.tokenBudget - rows.reduce((n, r) => n + resultTokens(r), 0))).results;
     const merged = policy.position === 'after' ? [...pages, ...rows] : [...rows, ...pages];
-    await stampSupersededClaims(engine, merged, chosen.map(x => x.c)).catch(() => undefined);
+    await stampSupersededClaims(engine, merged, placed.map(x => x.c)).catch(() => undefined);
     return merged;
   } catch {
     return results;

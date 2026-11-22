@@ -15,6 +15,7 @@ import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { accessAllowedSql, withCallerAccess } from '../src/core/search/private-visibility.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
+import { ownerOnlyPageSql } from '../src/core/access/owner-only.ts';
 
 const SRC = 'fast-src';
 let engine: PGLiteEngine;
@@ -47,7 +48,9 @@ describe('unrestricted fast path (pglite, repo-less)', () => {
     const short = withCallerAccess({ restricted: false }, () => accessAllowedSql('p', ['member:alice-example']));
     expect(full).toContain('gbrain_access_origin_restricted');
     expect(short).not.toContain('gbrain_access_origin_restricted');
-    expect(short).toBe('(p.page_readers IS NULL AND p.folder_rule_ids IS NULL)');
+    // Owner-only sources (access/owner-only.ts) stay mandatory on the short form. With no schema version in scope it is the
+    // fail-closed form: one uncorrelated EXISTS.
+    expect(short).toBe(`(p.page_readers IS NULL AND p.folder_rule_ids IS NULL AND NOT ${ownerOnlyPageSql('p', 'closed')})`);
     expect(accessAllowedSql('p', [])).toContain('gbrain_access_origin_restricted');
   });
 

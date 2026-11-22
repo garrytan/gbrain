@@ -16,7 +16,7 @@ import { quarantineSharedSkillRestore, validateSharedSkillRestoreMode, type Shar
 import { isPhysicalRootMetadata } from '../persistence/physical-root-record.ts';
 import { protectNewBackupPath } from './private-path.ts';
 import { PURGE_MIRROR_FILE, readPurgeMirror, replayPurgesInRestore, type PurgeReplayResult } from '../belief/purge-mirror.ts';
-import { pgliteBackupPreflight } from './preflight.ts';
+import { pgliteBackupPreflight, postgresBackupRefusal } from './preflight.ts';
 
 interface SourceInventory { id: string; local_path: string | null; managed_relative_path: string | null }
 interface BackupMetadata {
@@ -136,6 +136,7 @@ export async function createPgliteBackup(options: { output: string; root?: strin
   if (!existsSync(dirname(output))) throw new AgentInstallError('output_parent_missing', 'Create a private backup destination directory first.');
   const state = readFileConfigState(join(root, '.gbrain', 'config.json'));
   if (state.kind !== 'present' || state.config.engine !== 'pglite' || state.config.remote_mcp || state.config.database_url) {
+    if (state.kind === 'present' && !state.config.remote_mcp && (state.config.engine === 'postgres' || state.config.database_url)) throw postgresBackupRefusal();
     throw new AgentInstallError('pglite_required', 'Full local snapshots require an existing file-configured PGLite brain.');
   }
   const dbPath = state.config.database_path;

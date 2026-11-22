@@ -6,7 +6,7 @@
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { isValidSourceId } from '../core/source-id.ts';
-import { GUEST_TRUST_CEILING, GUEST_WRITER_FORMAT, GuestSourceHoldsPages, initGuestSource, isGuestWriter, planGuestSource } from '../core/guests/sources.ts';
+import { GUEST_TRUST_CEILING, GUEST_WRITER_FORMAT, GuestSourceHoldsPages, initGuestSource, isGuestWriter, planGuestSource, unregisteredClientWriters } from '../core/guests/sources.ts';
 import { grantOwnerCredentials, ownerCredentials } from '../core/guests/owner-credentials.ts';
 import { exitCliError } from '../cli/cli-error.ts';
 import { loadConfig } from '../core/config.ts';
@@ -80,6 +80,8 @@ async function runInit(engine: BrainEngine, rest: string[]): Promise<void> {
     console.error(`Not a writer principal: ${malformed.join(', ')}. Name each writer as ${GUEST_WRITER_FORMAT}, for example oauth_client:<client id>.`);
     process.exit(2);
   }
+  const unregistered = await unregisteredClientWriters(engine, writers);
+  if (unregistered) exitCliError(unregistered, 'guests');
 
   const plan = await planGuestSource(engine, sourceId, writers);
   if (plan.localPath) {

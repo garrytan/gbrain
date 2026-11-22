@@ -66,6 +66,25 @@ export function resolvedPrefixContained(
 }
 
 /**
+ * True when a `path.relative(root, x)` result leaves `root`: it is exactly
+ * `..`, starts with a `..` path component (`../` or `..` + the platform
+ * separator), or is absolute (another drive on Windows). A bare
+ * `startsWith('..')` is wrong: it also matches a legal first folder such as
+ * `..drafts`, `..x` or `...`, which sits inside the root.
+ *
+ * Accepts both native and `/`-joined relative paths, because several callers
+ * normalize to `/` before checking. `pathOps` lets tests pass `path.win32` to
+ * check backslash and drive-letter shapes on POSIX CI. The empty string (the
+ * root itself) is NOT an escape; callers keep their own policy for it.
+ */
+export function relativeEscapesRoot(
+  rel: string,
+  pathOps: { sep: string; isAbsolute(p: string): boolean } = { sep, isAbsolute },
+): boolean {
+  return rel === '..' || rel.startsWith('../') || rel.startsWith('..' + pathOps.sep) || pathOps.isAbsolute(rel);
+}
+
+/**
  * Trust gate for a walk-up routing dotfile, given its `lstatSync` Stats.
  *
  * The caller MUST pass an `lstatSync` result, never `statSync` — `lstat` does
@@ -214,5 +233,5 @@ export function isWriteTargetContained(target: string, root: string): boolean {
   const base = realpathOrResolve(existing);
   const finalPath = tail.length ? join(base, ...tail) : base;
   const rel = relative(resolvedRoot, finalPath);
-  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+  return !relativeEscapesRoot(rel);
 }

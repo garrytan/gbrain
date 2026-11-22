@@ -60,6 +60,7 @@ const CASES: Array<[string, RemoteMcpError, string]> = [
   ['rate_limited', new RemoteMcpError('rate_limited', 'slow down', { mcp_url: SECRET_URL }), 'rate_limited'],
   ['auth', new RemoteMcpError('auth', 'bad creds', { mcp_url: SECRET_URL }), 'invalid_client'],
   ['auth_after_refresh', new RemoteMcpError('auth_after_refresh', 'still 401', { mcp_url: SECRET_URL }), 'invalid_client'],
+  ['auth_after_refresh, member disabled', new RemoteMcpError('auth_after_refresh', 'member disabled', { mcp_url: SECRET_URL, status: 401, code: 'access_member_disabled' }), 'access_member_disabled'],
   ['network timeout', new RemoteMcpError('network', `timed out ${SECRET_URL}`, { mcp_url: SECRET_URL, kind: 'timeout' }), 'timeout'],
   ['network aborted', new RemoteMcpError('network', 'aborted', { mcp_url: SECRET_URL, kind: 'aborted' }), 'cancelled'],
   ['network unreachable', new RemoteMcpError('network', `ECONNREFUSED ${SECRET_URL}`, { mcp_url: SECRET_URL, kind: 'unreachable' }), 'unavailable'],

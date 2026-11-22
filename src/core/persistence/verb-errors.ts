@@ -314,6 +314,14 @@ export async function runMemoryWrite<T>(run: () => Promise<T>): Promise<T> {
       Object.assign(guest, { canonical: error.code, docs: error.docs });
       throw guest;
     }
+    // GBRA-585: an entity page this connection cannot read or write keeps the frozen code; page_not_found is the canonical
+    // code (a caller refusal, not an outage, so no doctor step), and the next step is the save this connection can make.
+    if (error.code === 'page_not_found') {
+      const hidden = verbError('unavailable', error.message, 'The entity page is not readable or writable by this connection: it may not exist for it, or another member may keep that slug. '
+        + 'Nothing was saved. Do not retry with share: true or as a create; remember the fact without share to keep it on your own member page, or ask the user who can read that page.');
+      Object.assign(hidden, { canonical: 'page_not_found', writeError: 'page_not_found' });
+      throw hidden;
+    }
     const code = ['permission_denied','scope_denied','source_changed','writer_registration_required'].includes(error.code)
       ? 'scope_denied' : ['revision_required','revision_conflict','idempotency_conflict','invalid_params','page_identity_changed'].includes(error.code)
         ? 'invalid_params' : 'unavailable';

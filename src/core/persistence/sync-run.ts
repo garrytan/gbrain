@@ -581,8 +581,8 @@ async function managedDryRun(engine: BrainEngine, value: Cursor, base: Cursor, r
 const holdClear = (cursor: Cursor, path: string | null | undefined, observedAt: string) => path
   ? (tx: BrainEngine) => clearGitHold(tx, { sourceId: cursor.sourceId, incarnation: cursor.incarnation, path, observedAt }) : undefined;
 /** #5988: the hold write that commits with the cursor step passing a held entry. */
-const heldWrite = (held: Cursor, hold: HeldEntry, observedAt: string, entry: { basisMoved?: true } | undefined) => (tx: BrainEngine) => writeGitHold(tx, { source_id: held.sourceId,
-  incarnation: held.incarnation, ...hold, ...(entry?.basisMoved ? { meta: { ...hold.meta, basis_moved: true as const } } : {}), observed_at: observedAt, run_id: held.runId, mode: 'managed' });
+const heldWrite = (held: Cursor, hold: HeldEntry, observedAt: string, entry: { basisMoved?: true; retryOnly?: true } | undefined) => (tx: BrainEngine) => writeGitHold(tx, { source_id: held.sourceId,
+  incarnation: held.incarnation, ...hold, meta: { ...hold.meta, ...(entry?.basisMoved ? { basis_moved: true as const } : {}), ...(entry?.retryOnly ? { retry_only: true as const } : {}) }, observed_at: observedAt, run_id: held.runId, mode: 'managed' });
 
 /** #6278: the terminal code an owner stamps on a request whose preparation never settled within its attempts (Lane A, consumer.ts). */
 export const PREPARATION_STALLED = 'preparation_stalled';
@@ -1477,6 +1477,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
       if (opts.capacityPreflight && !cursor.done) await preflightSyncCapacity(engine, { root: cursor.root, writer: cursor.authority.writer, entries: cursor.entries.slice(cursor.index) });
       opts.onProgress?.({ phase: 'managed_sync.start', bankedFiles: cursor.index, total: cursor.entries.length });
       while (!cursor.done) {
+        if (engine.kind === 'pglite') await new Promise(resolve => setImmediate(resolve));
         assertActive();
         // #6712 PR 4b: a pass's batch ends at its last entry; its stamp is its own batch or rides the last import (#6926, `folded`).
         if (cursor.passId && (!cursor.stamp || cursor.entries.length > 0) && !cursor.pending && cursor.index >= cursor.entries.length && !cursor.deferred?.length) return cursor;

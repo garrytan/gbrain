@@ -38,15 +38,17 @@
 import type { OperationContext } from './../operations.ts';
 import type { BrainEngine, FactRow } from './../engine.ts';
 import { effectiveConfidence } from './decay.ts';
+import { readHolders } from '../ops/context.ts';
 import { collapseHotFacts } from './capture-dedup.ts';
 import { proactiveEligibility } from '../eligibility/registry.ts';
 import { partitionForActivation, suppressionSummary } from '../eligibility/activation.ts';
 import { trustFields } from '../eligibility/labels.ts';
 import { quoteFacts } from '../search/transcript-quote.ts';
 import { eligibilityCacheField, readTrustGeneration } from '../eligibility/generation.ts';
-import { callerRelaxesPrivacy, resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
+import { callerRelaxesPrivacy, privateFactSources, resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
 import { isConfigTruthy } from '../config.ts';
 import { callerIdentityKey } from '../access/member-facts.ts';
+import { applySlotEnds } from '../search/slot-ends.ts';
 
 const DEFAULT_TTL_MS = 30_000;
 const DEFAULT_TOP_K = 10;
@@ -150,7 +152,7 @@ export async function getBrainHotMemoryMeta(
   const sessionId = ctx.sessionId
     ?? (ctx as { source_session?: string }).source_session
     ?? null;
-  const allowListHash = hashAllowList(ctx.takesHoldersAllowList);
+  const allowListHash = hashAllowList(readHolders(ctx));
   // v0.45.7 (ambient-recall adversarial review, P1): the visibility TIER is part
   // of the key. Without it, a trusted-local call (remote:false → all rows,
   // private included) warms the cache and a later remote/world-only call with
@@ -163,7 +165,9 @@ export async function getBrainHotMemoryMeta(
   // GST-2089: the brain owner reads private facts too, so its remote tier is marked apart from every world-only tier.
   const worldOnly = worldOnlyFacts(ctx.remote);
   const pageTier = !excludePrivate ? 'world+private-pages' : callerRelaxesPrivacy() ? 'world+private-pages-readers' : 'world';
-  const tier = ctx.remote === false ? 'all' : worldOnly ? pageTier : `private-facts+${pageTier}`;
+  // GBRA-575: a world-only read under a private-facts grant admits private facts in the granted sources, so it has its own tier.
+  const granted = worldOnly ? [...privateFactSources()].sort().join(',') : '';
+  const tier = ctx.remote === false ? 'all' : !worldOnly ? `private-facts+${pageTier}` : granted ? `${pageTier}+xpf=${granted}` : pageTier;
   // encodeCacheField (F5): source_id / session_id are caller-controlled and
   // may contain the '::' delimiter; percent-encode ':' so bumpHotMemoryCache's
   // split('::') can never mis-slice a component.
@@ -239,6 +243,8 @@ export async function getBrainHotMemoryMeta(
       activeOnly: true, limit: topK * 3, visibility, excludePrivate, fingerprint: true, eligibility,
     });
   }
+  // GST-3170: a slot value a later one ended at read time is no longer current (slot-ends.ts).
+  fetched = await applySlotEnds(ctx.engine, { sourceId, worldOnly, excludePrivate, minTrust: policy.floor, suppressFlagged: policy.suppressFlagged }, fetched, { activeOnly: true });
   if (fetched.length === 0) {
     store({ expiresAt: Date.now() + ttl, payload: undefined });
     return undefined;

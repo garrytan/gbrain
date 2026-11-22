@@ -65,25 +65,26 @@ async function driftTo(slug: string, stalePath: string, sourceId = 'default'): P
 }
 
 /**
- * Run one import while counting the skip path's `UPDATE pages SET source_path`
- * statements. The spy shadows the prototype method on the instance for the
- * duration of the call only, so the drift/readback helpers above never count.
+ * Run one import while counting the skip path's source_path refreshes (the
+ * typed `refreshPageOrigin` write that issues `UPDATE pages SET source_path`).
+ * The spy shadows the prototype method on the instance for the duration of the
+ * call only, so the drift/readback helpers above never count.
  */
 async function importCountingRefreshes(slug: string, body: string, opts: ImportOpts) {
-  const orig = engine.executeRaw;
+  const orig = engine.refreshPageOrigin;
   const updates: string[] = [];
-  Object.defineProperty(engine, 'executeRaw', {
+  Object.defineProperty(engine, 'refreshPageOrigin', {
     configurable: true,
-    value: function(this: PGLiteEngine, sql: string, params?: unknown[]) {
-      if (/UPDATE pages SET source_path/.test(sql)) updates.push(sql);
-      return orig.call(this, sql, params);
+    value: function(this: PGLiteEngine, ...args: Parameters<PGLiteEngine['refreshPageOrigin']>) {
+      updates.push(`UPDATE pages SET source_path ${args[1].sourceId}/${args[0]}`);
+      return orig.apply(this, args);
     },
   });
   try {
     const result = await importFromContent(engine, slug, body, opts);
     return { result, updates };
   } finally {
-    Reflect.deleteProperty(engine, 'executeRaw');
+    Reflect.deleteProperty(engine, 'refreshPageOrigin');
   }
 }
 

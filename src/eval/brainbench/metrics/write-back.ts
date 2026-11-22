@@ -29,7 +29,7 @@ import {
   runExtractConversationFactsCore,
 } from '../../../commands/extract-conversation-facts.ts';
 import { importFromContent } from '../../../core/import-file.ts';
-import type { PGLiteEngine } from '../../../core/pglite-engine.ts';
+import type { BrainEngine } from '../../../core/engine.ts';
 import type { BrainBenchFixture, FixtureGold, GoldFactSpec } from '../types.ts';
 import { SeedError } from '../seed.ts';
 
@@ -136,7 +136,7 @@ interface StoredFactRow {
 }
 
 export async function runWriteBack(
-  engine: PGLiteEngine,
+  engine: BrainEngine,
   fixture: BrainBenchFixture,
   gold: FixtureGold,
   opts: {

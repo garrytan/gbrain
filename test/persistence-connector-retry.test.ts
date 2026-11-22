@@ -204,10 +204,13 @@ test('checkpoint replay keeps its originally admitted page dependencies when ano
     await disposePersistenceConsumer(engine);
     await engine.executeRaw("UPDATE persistence_worktrees SET state='draining' WHERE id=$1::uuid", [f.binding.worktree_id]);
     const state = { cursor: 'same-logical-checkpoint' };
-    await expect(withPausedOwnerBudget(() => first.saveState(state, true))).rejects.toMatchObject({ code: 'write_pending' });
+    // #9681: a cursor save still pending after its wait is kept in flight instead of stopping the sweep.
+    await withPausedOwnerBudget(() => first.saveState(state, true));
+    expect(first.deferred).toBe(true);
     const [accepted] = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='connector_v2_checkpoint'", [f.id]);
     const [dependency] = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND slug='notes/first'", [f.id]);
     expect(accepted.intent?.receipts).toEqual([dependency.id]);
+    // A save replayed from another run is not this run's to hold in flight: the sweep stops, so its later page writes are never refused.
     await expect(withPausedOwnerBudget(() => second.saveState(state, true))).rejects.toMatchObject({ code: 'write_pending', writeRequest: { request_id: accepted.request_id } });
     expect(await engine.executeRaw("SELECT id FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='connector_v2_checkpoint'", [f.id])).toHaveLength(1);
     expect((await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [accepted.id]))[0].intent?.receipts).toEqual([dependency.id]);

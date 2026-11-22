@@ -2,9 +2,9 @@
  * Code edges (v0.20 Cathedral II call graph): one SQL implementation for both
  * engines (refactor wave 1, W1-core C13). Statement text is PostgresEngine's
  * master text (SQL-text golden `sql-text/code-edges.json`); PGLite runs the
- * same statements, except `getEdgesByChunk`, whose PGLite form differs in
- * behavior on master (one UNION with a shared LIMIT) and stays dialect-specific
- * in src/core/pglite-engine/code-edges.ts (docs/designs/refactor-wave-1/w1-inventory.md).
+ * same statements, except `getEdgesByChunk`, which PGLite runs on its own query
+ * API with the same filters, id order and per-table LIMIT, in
+ * src/core/pglite-engine/code-edges.ts (docs/designs/refactor-wave-1/w1-inventory.md).
  *
  * Capability `maxBindParamsPerStatement`: PGLite's parameter bridge corrupts
  * the session past 32,767 binds, so bulk inserts split below 30,000 binds
@@ -95,7 +95,7 @@ export async function getCallersOf(
         WHERE ${byChunk ? sqlFragment`(edge_metadata->>'resolved_chunk_id')::int = ${opts!.chunkId as number}::int` : sqlFragment`to_symbol_qualified = ${qualifiedName}`}
         AND ${trustedSql(currentCodeEdgeFilter('code_edges_symbol', false))}
         ${scopedSource ? sqlFragment`AND source_id = ${scopedSource}` : sqlFragment``}
-      LIMIT ${limit}
+      ORDER BY resolved DESC, id LIMIT ${limit}
     `)).rows;
     return rows.map(r => rowToCodeEdge(r as Record<string, unknown>));
   }
@@ -123,7 +123,7 @@ export async function getCalleesOf(
         WHERE ${fromPredicate}
         AND ${trustedSql(currentCodeEdgeFilter('code_edges_symbol', false))}
         ${scopedSource ? sqlFragment`AND source_id = ${scopedSource}` : sqlFragment``}
-      LIMIT ${limit}
+      ORDER BY resolved DESC, id LIMIT ${limit}
     `)).rows;
     if (typeof opts?.chunkId === 'number') {
       return (await run(sqlFragment`from_chunk_id = ${opts.chunkId}::int`)).map(r => rowToCodeEdge(r as Record<string, unknown>));
@@ -156,7 +156,7 @@ export async function getEdgesByChunk(
             : direction === 'out' ? sqlFragment`from_chunk_id = ${chunkId}`
             : sqlFragment`(from_chunk_id = ${chunkId} OR to_chunk_id = ${chunkId})`}
           ${typeFilter ? sqlFragment`AND edge_type = ${typeFilter}` : sqlFragment``}
-        LIMIT ${limit}
+        ORDER BY id LIMIT ${limit}
     `)).rows;
     let symbolRows: unknown[] = [];
     if (direction !== 'in') {
@@ -166,7 +166,7 @@ export async function getEdgesByChunk(
           FROM code_edges_symbol
           WHERE from_chunk_id = ${chunkId}
             ${typeFilter ? sqlFragment`AND edge_type = ${typeFilter}` : sqlFragment``}
-          LIMIT ${limit}
+          ORDER BY id LIMIT ${limit}
       `)).rows;
       symbolRows = [...sRows];
     }

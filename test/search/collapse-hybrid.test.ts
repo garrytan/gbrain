@@ -231,10 +231,10 @@ describe('look-alikes the review found (no false folds, no private slug)', () =>
 });
 
 describe('GBRA-156: page facts read ahead of the collapse', () => {
-  const factReads = (sent: string[]) => sent.filter(sql => sql.includes("frontmatter->>'redirect_to'")).length;
+  const factReads = (sent: string[]) => sent.filter(name => name === 'pageCollapseFacts').length;
   const recording = (sent: string[]) => new Proxy(engine, {
     get(target, key, receiver) {
-      if (key === 'executeRaw') return (sql: string, params?: unknown[]) => { sent.push(sql); return target.executeRaw(sql, params); };
+      if (key === 'pageCollapseFacts') return (...a: Parameters<PGLiteEngine['pageCollapseFacts']>) => { sent.push(key); return target.pageCollapseFacts(...a); };
       const value = Reflect.get(target, key, receiver);
       return typeof value === 'function' ? value.bind(target) : value;
     },

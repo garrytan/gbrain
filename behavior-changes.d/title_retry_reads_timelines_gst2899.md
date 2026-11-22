@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+Keyword search finds the people behind a reworded relationship question again. When no page holds every word of a question, the title step retries with any word; since v0.60.338.0 (#7135) that retry read page titles only, so a question that names a company in words its people's pages don't use ("Who is on the payroll at Acme?") lost the people whose timeline names the company. For a local caller the retry now reads titles and timelines while at most 5,000 pages match the question's words, and titles only past that, so a date or a very common word in a question still doesn't pull every dated timeline into ranking. Remote MCP callers still match titles only. Results for such questions can change order, and on a very large brain the retry adds one bounded statement (0.03 to 0.14 s measured at 1,000,000 pages).

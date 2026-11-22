@@ -41,7 +41,7 @@ export interface ChronicleDepthPin {
   visibility: Visibility;
 }
 
-export async function pinDepth(engine: Pick<BrainEngine, 'executeRaw'>, snapshot: PageSnapshot): Promise<ChronicleDepthPin> {
+export async function pinDepth(engine: Pick<BrainEngine, 'executeRaw' | 'isFolderRestricted'>, snapshot: PageSnapshot): Promise<ChronicleDepthPin> {
   return {
     slug: snapshot.page.slug, pageId: Number(snapshot.page.id), revision: snapshot.revision,
     contentHash: String(snapshot.page.content_hash ?? ''), incarnation: snapshot.sourceIncarnation,

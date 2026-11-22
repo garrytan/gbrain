@@ -116,6 +116,9 @@ export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
   // #7848: the file asks for visibility: private in a spelling page privacy does not read; only an edit to the file clears it.
   { code: 'visibility_noncanonical', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only an edit to the file clears it',
     human_reason: 'The file asks for visibility: private in a spelling page privacy does not read; write visibility: private on its own frontmatter line (lowercase) and commit.' },
+  // The file's frontmatter names its readers with a key page access does not read (`Readable_By`, `readable-by`); only an edit to the file clears it.
+  { code: 'readers_noncanonical', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only an edit to the file clears it',
+    human_reason: 'The file names its readers with a key page access does not read, so the page would be readable by every member; write the key as readable_by (lowercase, with an underscore) on its own frontmatter line and commit.' },
   // GBRA-133 S-39: the file's text holds NUL bytes (a UTF-16 save, a binary file, a padded file); only an edit or its removal clears it.
   { code: 'content_null_bytes', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only an edit to the file or its removal clears it',
     human_reason: 'The file holds NUL bytes, which page text cannot store; save a UTF-16 file as UTF-8, remove the NUL bytes, or remove a binary file (or exclude it with sync.exclude), and commit.' },
@@ -142,6 +145,8 @@ export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
     human_reason: 'The file and the database page differ, and sync has no import record to tell which one changed since the last import, so it held the file instead of overwriting the page; a person chooses which version wins (gbrain repair file-drift --source <source> --slug <slug> --prefer database|file previews it and writes nothing until applied).' },
   // GBRA-542: a deleted-side `file_drift` hold on a read-only mirror (sync-holds.ts mirrorDatabaseOnlyHold): the page stays live and database-only by design.
   { code: 'file_drift_mirror_database_only', class: 'page', safe_actions: ['none'], needs_human: false, escalate: 'never: the page stays live and database-only because gbrain never writes a read-only mirror' },
+  // A deleted-side `file_drift` hold on a read-only mirror the user decided to keep deleted (sync-holds.ts mirrorKeepDeletedHold).
+  { code: 'mirror_keep_deleted', class: 'page', safe_actions: ['none'], needs_human: false, escalate: 'never: the user kept the deletion; a new upstream edit of the file or a restore asks again' },
   { code: 'origin_conflict_decision', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: the pages differ, their ids conflict or none is the page the path names',
     human_reason: 'Several live pages record this file as their origin and sync cannot prove they are one document; a person keeps the page that is the file\'s and soft-deletes the others (gbrain repair origin-twins --source <source> lists them with the commands), then syncs.' },
   // GBRA-130 A-17/B-3/B-4: a held `page_identity_changed` path (sync-status.ts holdVerdict): several tombstones, a spelling twin or a takeover whose ids differ.

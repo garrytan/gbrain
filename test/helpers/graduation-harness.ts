@@ -20,7 +20,7 @@ import { withEnv } from './with-env.ts';
 import { assertSafeE2eDatabaseUrl } from './db-guard.ts';
 
 export const PROBE: InventoryEntry = {
-  relation: 'grad_probe', kind: 'table', class: 'carry', engines: { pglite: true, postgres: true },
+  relation: 'grad_probe', kind: 'table', class: 'carry', engines: { pglite: true, postgres: true, rust: false },
   lossKind: 'user_data', transforms: [], reason: 'harness probe table',
 };
 const PROBE_DDL = 'CREATE TABLE IF NOT EXISTS grad_probe (id integer PRIMARY KEY, v text NOT NULL)';
@@ -44,7 +44,7 @@ export async function probeRows(engine: BrainEngine): Promise<Array<{ id: number
 }
 
 export const TOKENS: InventoryEntry = {
-  relation: 'access_tokens', kind: 'table', class: 'carry', engines: { pglite: true, postgres: true },
+  relation: 'access_tokens', kind: 'table', class: 'carry', engines: { pglite: true, postgres: true, rust: false },
   lossKind: 'security', transforms: [], reason: 'harness security table',
 };
 

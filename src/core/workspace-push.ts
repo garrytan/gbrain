@@ -76,10 +76,11 @@ import {
   type SecretFinding,
 } from './secret-scan.ts';
 import { scanTextStream } from './secret-scan-stream.ts';
+import { withoutRuleAllowed, type AllowlistProblem } from './secret-scan-allowlist.ts';
 import { shellQuote } from './mcp-registration.ts';
 import { gitChildEnv } from './git-env.ts';
 import { recordCommit, recordIntent } from './git/commit-ledger.ts';
-import { stagedScanPublishRefusal } from './git/range-secret-scan.ts';
+import { scanAllowProblems, stagedScanPublishRefusal } from './git/range-secret-scan.ts';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -113,6 +114,8 @@ export interface WorkspacePushResult {
   findings?: PushSecretFinding[];
   /** Staged paths the secret scan could not read (fail-closed block reason). */
   unscannable?: string[];
+  /** blocked_secrets: `.gbrain-scan-allow` lines that allow nothing (a malformed rule entry, an unknown rule name). */
+  allowlistProblems?: AllowlistProblem[];
   /** blocked_history: the refusal's code, what to do (a longer `--scan-timeout` after a timeout) and its findings JSON (never a value). */
   code?: string;
   suggestion?: string;
@@ -1081,6 +1084,8 @@ export async function workspacePush(opts: WorkspacePushOpts): Promise<WorkspaceP
     const allowlist = loadWorkspaceAllowlist(root);
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- fixed filename under the resolved workspace root (same path loadWorkspaceAllowlist reads); used only in printed guidance.
     const allowlistPath = join(root, SCAN_ALLOW_FILENAME);
+    const allowlistProblems = scanAllowProblems(allowlist);
+    for (const p of allowlistProblems) log(`${SCAN_ALLOW_FILENAME} line ${p.entry}: ${p.problem}`);
     const retryCommand = pushRetryCommand(opts);
     const findings: PushSecretFinding[] = [];
     const unscannable: string[] = [];
@@ -1093,8 +1098,9 @@ export async function workspacePush(opts: WorkspacePushOpts): Promise<WorkspaceP
         unscannable.push(fileFindings);
         continue;
       }
-      if (fileFindings.length === 0) continue;
-      for (const f of buildPushFindings({ file: rel, findings: fileFindings, allowlist, allowlistPath, retryCommand })) {
+      const blocking = withoutRuleAllowed(fileFindings, rel, allowlist, hit => log(`${rel}:${hit.line} ${hit.pattern} allowed by ${SCAN_ALLOW_FILENAME} line: ${hit.entry}`));
+      if (blocking.length === 0) continue;
+      for (const f of buildPushFindings({ file: rel, findings: blocking, allowlist, allowlistPath, retryCommand })) {
         findings.push(f);
       }
     }
@@ -1106,6 +1112,7 @@ export async function workspacePush(opts: WorkspacePushOpts): Promise<WorkspaceP
       log(`PUSH BLOCKED: ${reason}`);
       return finish({
         ok: false, status: 'blocked_secrets', repoRoot: root, branch, findings, reason,
+        ...(allowlistProblems.length ? { allowlistProblems } : {}),
       });
     }
     if (unscannable.length > 0) {

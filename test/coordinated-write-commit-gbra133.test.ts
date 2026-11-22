@@ -12,7 +12,6 @@ import { freshBrainFactory } from './helpers/persistence-request-fixture.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 
-const RESTORE = "SELECT set_config('gbrain.write_sources',$1,true)";
 const databaseUrl = process.env.DATABASE_URL;
 
 for (const kind of testBackends()) {
@@ -37,8 +36,10 @@ for (const kind of testBackends()) {
       const engine = await factory.fresh();
       const outcome = await engine.transaction(async tx => {
         const failing = Object.create(tx) as BrainEngine;
-        failing.executeRaw = ((sql: string, params?: unknown[], opts?: never) =>
-          sql.startsWith(RESTORE) ? tx.executeRaw('SELECT 1/(SELECT 0 FROM pg_sleep(0.2)) AS never') : tx.executeRaw(sql, params, opts)) as BrainEngine['executeRaw'];
+        // The restore is the typed `applyTransactionSettings` call; make it fail after a delay.
+        failing.applyTransactionSettings = (async () => {
+          await tx.executeRaw('SELECT 1/(SELECT 0 FROM pg_sleep(0.2)) AS never');
+        }) as BrainEngine['applyTransactionSettings'];
         await withCoordinatedWrite(failing, ['default'], () => failing.executeRaw("INSERT INTO config(key,value) VALUES('gbra133-rolled-back','lost')"), TEST_WRITE_ATTRIBUTION);
       }).then(() => null, (error: { code?: string }) => error.code ?? String(error));
       expect(outcome).toBe('22012');

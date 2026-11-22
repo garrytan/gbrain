@@ -18,7 +18,8 @@ GBrain is MIT-licensed and free to self-host, and it starts with no API keys: se
 | How it connects | Agents |
 |---|---|
 | One command wires memory, hooks and instructions | [Claude Code](docs/mcp/CLAUDE_CODE.md) (`gbrain setup claude-code`), [Codex](docs/mcp/CODEX.md) (`gbrain setup codex`) |
-| MCP from its guide, then `gbrain setup <name>` adds the brain-first instructions | [OpenClaw](docs/mcp/OPENCLAW.md), [Hermes](docs/mcp/HERMES.md), [opencode](docs/mcp/OPENCODE.md), [Cursor](#connect-gbrain-to-your-ai-client-mcp) |
+| `gbrain setup hermes` registers MCP through Hermes's own CLI and adds the brain-first instructions | [Hermes](#hermes) |
+| MCP from its guide, then `gbrain setup <name>` adds the brain-first instructions | [OpenClaw](docs/mcp/OPENCLAW.md), [opencode](docs/mcp/OPENCODE.md), [Cursor](#connect-gbrain-to-your-ai-client-mcp) |
 | MCP from its guide | [ChatGPT](docs/mcp/CHATGPT.md), [Claude Desktop](docs/mcp/CLAUDE_DESKTOP.md), [Claude Cowork](docs/mcp/CLAUDE_COWORK.md), [Perplexity](docs/mcp/PERPLEXITY.md), [Grok Build](docs/mcp/GROK.md), [Grok Bot](docs/guides/grok-bot.md), [Muse](docs/guides/muse.md), [Windsurf and other stdio clients](#connect-gbrain-to-your-ai-client-mcp) |
 | Any other coding agent | Paste the [install prompt](#heres-how-to-self-host-it) below |
 
@@ -43,6 +44,8 @@ New releases come out many times a day, but the install command below gives you 
 > # Codex (an existing gbrain entry is kept):
 > (codex mcp get gbrain >/dev/null 2>&1 || codex mcp add gbrain --url https://gbrain.io/mcp) && gbrain setup codex --instructions-only
 > ```
+>
+> Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](INSTALL_FOR_AGENTS.md#no-unzip), not an improvised one. A command scanner (Hermes) refuses the Bun installer or `bun install -g`? Use the [release binary route](INSTALL_FOR_AGENTS.md#release-binary).
 >
 > `gbrain setup <harness> --instructions-only` tells the agent the brain is there; agents seldom call an MCP server nobody told them about. It writes the [brain-first block](docs/guides/setup.md#brain-first-instructions) into `~/.claude/CLAUDE.md` or Codex's `AGENTS.md` (a non-empty `AGENTS.override.md` instead when Codex has one) with a per-turn rule hook, and leaves the MCP entry alone; the same command with `--no-instructions` added takes them out.
 >
@@ -75,6 +78,19 @@ https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
 Keep my current identity and instructions, start keyless, and show me the
 search-mode choice. Verify a remember/recall round trip with real GBrain calls.
 ```
+
+### Hermes
+
+Hermes checks every shell command before it runs it, and with nobody there to approve (`hermes chat -q`, a gateway or cron run) it refuses the Bun installer and `bun install -g`. Install the release binary instead, one file that needs no Bun and no package install, and let setup register it through Hermes's own `hermes mcp add`. Run each line as its own command (Linux x64; on an Apple Silicon Mac use `gbrain-darwin-arm64`):
+
+```bash
+curl -fL --create-dirs -o ~/.local/bin/gbrain https://github.com/garrytan/gbrain/releases/latest/download/gbrain-linux-x64
+chmod +x ~/.local/bin/gbrain
+~/.local/bin/gbrain init --pglite --no-embedding
+~/.local/bin/gbrain setup hermes
+```
+
+Then start a new Hermes session. Setup registers the MCP server (`hermes mcp test gbrain` checks it) and adds the brain-first rule to `~/.hermes/SOUL.md` with a per-turn hook. Hermes's approval and command-scanner settings stay as they are; setup only records the approval for its own per-turn hook. If setup prints a `hermes mcp add` command instead of registering, run that command as printed. To paste it to Hermes instead, use the prompt above. Details: [docs/mcp/HERMES.md](docs/mcp/HERMES.md).
 
 Postgres, thin clients, API keys and upgrades: [docs/INSTALL.md](docs/INSTALL.md). Agents: [INSTALL_FOR_AGENTS.md](INSTALL_FOR_AGENTS.md). Memory-only walkthrough: [give your coding agent a memory](docs/tutorials/connect-coding-agent.md).
 
@@ -323,7 +339,7 @@ Data flowing into the brain. Each integration is a recipe — markdown + setup h
 - **Voice**: talk to your brain from a browser or phone with [`recipes/agent-voice.md`](recipes/agent-voice.md) (`gbrain integrations install agent-voice`); the older Twilio recipe is deprecated. Voice notes and chat transcripts you already have come in as files: put their Markdown in a folder and import it, or bring ChatGPT and Claude exports in with `gbrain transcripts ingest` ([chat connectors](docs/guides/chat-connectors.md)).
 - **A second folder** (for example a company notes folder beside your personal one): `gbrain sources add company --path ~/company-notes`, then `gbrain sync --source company`. A plain folder works without Git. On a brain only you use, the new folder joins default search; on a shared brain, `gbrain sources federate company` adds it. More: [multi-source brains](docs/guides/multi-source-brains.md).
 - **Gmail + Calendar + Contacts (native)**: the google source kind syncs threads, events, and contacts through your own OAuth client and runs the open-loop engine on top (`gbrain waiting`). Setup: [`docs/guides/google-connect.md`](docs/guides/google-connect.md); recipes: [`recipes/email-to-brain.md`](recipes/email-to-brain.md), [`recipes/calendar-to-brain.md`](recipes/calendar-to-brain.md).
-- **Meeting notes + Slack channels (native)**: the `meetings` source kind (Fireflies first) writes one page per meeting and the `slack` source kind one page per channel per day, synced on a schedule, on brains with or without a Git repository. Setup: [`docs/guides/meeting-and-slack-sources.md`](docs/guides/meeting-and-slack-sources.md).
+- **Meeting notes + Slack channels (native)**: the `meetings` source kind (Fireflies first) writes one page per meeting and the `slack` source kind one page per channel per day, synced on a schedule, on brains with or without a Git repository. Setup: [`docs/guides/meeting-and-slack-sources.md`](docs/guides/meeting-and-slack-sources.md). The `imessage` source kind imports Messages from a Mac, one private, owner-only page per chat per day: [`docs/guides/apple-setup.md`](docs/guides/apple-setup.md).
 - **Email + calendar (webhooks)**: webhook handlers that route to brain signals. [`docs/integrations/meeting-webhooks.md`](docs/integrations/meeting-webhooks.md).
 - **Embedding providers**: Voyage (new-install default: `voyage-4` @ 1024d), OpenAI, OpenRouter, Google Gemini, Azure OpenAI, MiniMax, Alibaba DashScope, Zhipu, Ollama (local), llama.cpp llama-server (local), LM Studio, Together, and LiteLLM proxy. Pricing matrix + decision tree in [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md). Existing vectors are never converted by changing the default; use the explicitly approved [embedding migration](docs/guides/embedding-migration.md).
 - **Rerankers**: Voyage `rerank-3-lite` hosted (the default unless `search.reranker.model` is set; on in `balanced` and `tokenmax`, same `VOYAGE_API_KEY` as embeddings; `gbrain config set search.reranker.model voyage:rerank-2.5` restores the previous default), plus the `llama-server-reranker` recipe for fully-local cross-encoder rerank via llama.cpp running Qwen3-Reranker against the same `gateway.rerank()` seam. Setup walkthrough in [`docs/ai-providers/llama-server-reranker.md`](docs/ai-providers/llama-server-reranker.md).
@@ -390,6 +406,7 @@ Start with `gbrain doctor`. For database access failures, use `gbrain engine sta
 - [MCP task guide](docs/mcp/README.md) — deployment and per-client setup (Claude Desktop, Code, Cursor, ChatGPT, Perplexity, Cowork)
 - [MCP administration](docs/mcp/ADMIN.md) — owner dashboard access, client registration, OAuth, permissions, and token recovery
 - [Evals](docs/eval/) and [research](docs/research/) — methods and results
+- [Rust engine plan](docs/designs/RUST_ENGINE.md) — design for a third storage engine; the experimental Rust store already serves keyword search, title search, chunk reads, vector search, embeddings, links, takes, salience, facts, page operations, raw data and file records, ontology claims, chronicle projections, eval capture, dream verdicts, contradiction runs and the code call graph, and a second process on the same brain reaches it through the owner process, but nothing selects it yet; its [research maps](docs/designs/rust-engine/research/README.md) and [review record](docs/designs/rust-engine/review-record.md)
 - [`docs/ethos/`](docs/ethos/) — philosophy (thin harness, fat skills, markdown as recipes, origin story)
 - [`AGENTS.md`](AGENTS.md) — entry point for non-Claude agents
 - [`CLAUDE.md`](CLAUDE.md) — entry point for Claude Code (deep operating context)

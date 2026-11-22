@@ -142,15 +142,15 @@ describe('hybridSearch unified routing (Phase 3)', () => {
     );
     const columns: string[] = [];
     const original = engine.getEmbeddingsByChunkIds.bind(engine);
-    const originalRaw = engine.executeRaw.bind(engine);
+    const originalCosines = engine.cosinesByChunkIds.bind(engine);
     (engine as any).getEmbeddingsByChunkIds = async (ids: number[], column?: string) => {
       columns.push(column ?? 'embedding');
       return original(ids, column);
     };
-    (engine as any).executeRaw = async (sql: string, params?: unknown[], opts?: unknown) => {
-      const rescore = /vector_dims\(cc\."?(\w+)"?::vector\)/.exec(sql);
-      if (rescore) columns.push(rescore[1]);
-      return (originalRaw as any)(sql, params, opts);
+    // The SQL rescore (engine-sql/search-reads.ts cosinesByChunkIds) names its column.
+    (engine as any).cosinesByChunkIds = async (ids: number[], column: string, query: Float32Array) => {
+      columns.push(column);
+      return originalCosines(ids, column, query);
     };
     try {
       const results = await hybridSearch(engine, 'multimodal body', { limit: 5 });
@@ -160,7 +160,7 @@ describe('hybridSearch unified routing (Phase 3)', () => {
       expect(hit.cosine).toBeCloseTo(1, 5);
     } finally {
       (engine as any).getEmbeddingsByChunkIds = original;
-      (engine as any).executeRaw = originalRaw;
+      (engine as any).cosinesByChunkIds = originalCosines;
     }
   });
 

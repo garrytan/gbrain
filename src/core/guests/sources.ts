@@ -6,6 +6,7 @@
  * so owner reads that widen to federated sources include it.
  */
 import type { BrainEngine } from '../engine.ts';
+import { opError, type OperationError } from '../ops/contract.ts';
 import type { Principal } from '../persistence/model.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { addSource } from '../sources-ops.ts';
@@ -21,6 +22,23 @@ export const GUEST_WRITER_FORMAT = `<${PRINCIPAL_KINDS.join('|')}>:<id>`;
 export function isGuestWriter(value: string): boolean {
   const at = value.indexOf(':');
   return at > 0 && (PRINCIPAL_KINDS as readonly string[]).includes(value.slice(0, at)) && /^[\x21-\x7e]{1,200}$/.test(value.slice(at + 1));
+}
+
+/**
+ * The oauth_client writers in `writers` that name no live registered OAuth client, refused as client_not_found with
+ * nothing written: a mistyped or deleted client id would sit on the list and let nobody write.
+ */
+export async function unregisteredClientWriters(engine: Pick<BrainEngine, 'executeRaw'>, writers: readonly string[]): Promise<OperationError | null> {
+  const clientId = (w: string) => w.startsWith('oauth_client:') ? w.slice('oauth_client:'.length) : null;
+  const ids = writers.map(clientId).filter((id): id is string => id !== null);
+  if (!ids.length) return null;
+  const live = new Set((await engine.executeRaw<{ client_id: string }>(
+    'SELECT client_id FROM oauth_clients WHERE client_id = ANY($1::text[]) AND deleted_at IS NULL', [ids])).map(r => r.client_id));
+  const unknown = writers.filter(w => { const id = clientId(w); return id !== null && !live.has(id); });
+  if (!unknown.length) return null;
+  return opError('client_not_found', `No registered OAuth client matches writer ${unknown.join(', ')}; nothing was written.`,
+    'List the clients with gbrain auth clients --json and name each writer as oauth_client:<client id> from that list (register the broker first with gbrain auth register-client).',
+    { fix: { argv: ['gbrain', 'auth', 'clients', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Read-only: lists the OAuth clients registered on this brain.' } });
 }
 
 export interface GuestSource { source_id: string; writers: string[]; trust_ceiling: string }

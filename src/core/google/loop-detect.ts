@@ -25,7 +25,8 @@
  *  - self-threads (all participants are my addresses) never open loops
  *  - CC-only inbound does not owe a reply (must be in To:)
  *  - outbound without a question mark is FYI, not an ask; a question mark
- *    inside a link (?id=42) is not a question
+ *    inside a link (?id=42) is not a question, and neither is one in the
+ *    message a forward carries: only the note above the separator counts
  *  - my acknowledgement-only reply ("Thanks!", "Got it") to a question is
  *    not an answer: it neither closes the reply-owed loop nor flips the turn
  *    ("Will do" is a commitment and still counts as the reply)
@@ -49,7 +50,7 @@ import {
   type SuppressionSet,
 } from '../loops/loops-store.ts';
 import { resolveCounterparty, type ResolvedCounterparty } from './counterparty.ts';
-import { isCalendarSystemMail, isNoiseSender, isPositivelyAutomated } from './google-render.ts';
+import { isCalendarSystemMail, isNoiseSender, isPositivelyAutomated, textAboveForward } from './google-render.ts';
 export { isPositivelyAutomated } from './google-render.ts';
 import { hasBulkCategory } from './gmail-categories.ts';
 import { isExcludedByLabels, NO_EXCLUSION, pageLabelIds, type LoopsExclusionPolicy } from './loops-exclusion.ts';
@@ -114,9 +115,13 @@ function ageHours(ms: number, now: Date): number {
 
 const URL_RE = /\b(?:https?:\/\/|www\.)\S+/gi;
 
-/** A question mark outside any link. */
+/**
+ * A question mark outside any link, in the sender's own words: the message a
+ * forward carries below its separator is someone else's, so its question is
+ * not this sender's ask.
+ */
 export function asksQuestion(text: string): boolean {
-  return text.replace(URL_RE, '').includes('?');
+  return textAboveForward(text).replace(URL_RE, '').includes('?');
 }
 
 const ACK_ONLY_RE =

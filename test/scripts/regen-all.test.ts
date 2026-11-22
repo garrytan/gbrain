@@ -27,6 +27,12 @@ describe('regen:all', () => {
     expect(readFileSync(join(ROOT, 'docs/RELEASING.md'), 'utf8')).toContain('## Generated artifacts');
   });
 
+  test('the CLI flag registry check compares the committed file with a fresh render (#9019)', async () => {
+    const registry = ARTIFACTS.find(a => a.name === 'CLI flag registry')!;
+    expect(registry.check).toEqual(['bun', 'run', 'scripts/generate-flag-registry.ts', '--check']);
+    expect(await checkArtifacts([registry])).toEqual([]);
+  }, 60_000);
+
   test('the public surface is built after the operation manifest it reads', () => {
     const names = ARTIFACTS.map(a => a.name);
     expect(names.indexOf('public surface (docs/contracts/public-surface.json)')).toBeGreaterThan(names.indexOf('operation manifest'));
@@ -42,6 +48,15 @@ describe('regen:all', () => {
     expect(ARTIFACTS.at(-1)!.name).toContain('llms');
     for (const f of CONTRACT_GOLDENS) expect(existsSync(join(ROOT, f)), f).toBe(true);
     for (const c of POSTGRES_GOLDENS) expect(existsSync(join(ROOT, /bun test (?:--timeout=\d+ )?(\S+)/.exec(c)![1]!)), c).toBe(true);
+  });
+
+  test('every golden that only a Postgres E2E file writes is named in POSTGRES_GOLDENS', () => {
+    const written = (file: string) => [...readFileSync(join(ROOT, file), 'utf8').matchAll(/expectGolden\(\s*'([^']+)'/g)].map(m => m[1]!);
+    const files = [...new Bun.Glob('test/**/*.test.ts').scanSync(ROOT)];
+    const offline = new Set(files.filter(f => !f.startsWith('test/e2e/')).flatMap(written));
+    const postgresOnly = files.filter(f => f.startsWith('test/e2e/') && written(f).some(name => !offline.has(name)));
+    expect(postgresOnly.length).toBeGreaterThan(0);
+    for (const f of postgresOnly) expect(POSTGRES_GOLDENS.some(c => c.includes(` ${f}`)), f).toBe(true);
   });
 
   test('every bun test it spawns passes an explicit --timeout (bunfig\'s [test] timeout is not applied, #6187)', () => {

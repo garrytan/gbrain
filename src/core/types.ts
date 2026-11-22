@@ -758,6 +758,19 @@ export interface ChunklessPageRow {
 }
 
 /**
+ * One stored chunk of a page as the import's vector-reuse planner sees it:
+ * its index, the recorded embedding input, the page's contextual-retrieval
+ * mode, and whether it holds a text-only embedding or no embedding at all.
+ */
+export interface ChunkReuseRow {
+  chunk_index: number;
+  embedding_input_hash: string | null;
+  contextual_retrieval_mode: string | null;
+  text_only: boolean;
+  unembedded: boolean;
+}
+
+/**
  * v0.42.7 (#1696) — a page that needs link/timeline extraction, returned by
  * `listStalePagesForExtraction`. Carries the page CONTENT (compiled_truth +
  * timeline + frontmatter) so `gbrain extract --stale` extracts in ~1 query per
@@ -1131,8 +1144,8 @@ export interface SearchResult {
    * entity's page, or a page that links to it or names it (newest first).
    */
   entity_anchored?: 'entity' | 'linked';
-  /** Set on a saved-fact row the `search.query_facts_arm` arm added (search/facts-arm.ts); page_id is 0. `observed`: when it was said; `observed_unavailable`: that read failed. */
-  fact_row?: { id: number; valid_from: string; valid_until: string | null; source?: string; from_quoted_page?: true; observed?: string; observed_unavailable?: true };
+  /** Set on a saved-fact row the `search.query_facts_arm` arm added (search/facts-arm.ts); page_id is 0. `observed`: when it was said; `observed_unavailable`: that read failed; `contested_unavailable`: the facts block's contested lookup failed; `history_unavailable`: its slot-history read failed. */
+  fact_row?: { id: number; valid_from: string; valid_until: string | null; source?: string; from_quoted_page?: true; observed?: string; observed_unavailable?: true; contested_unavailable?: true; history_unavailable?: true };
   /** Fact rows only, and what callers see of them: never a page (no slug or id); follow with `follow_up`, read `page_slug` when the entity page exists. */
   result_type?: 'fact'; fact_id?: string; page_slug?: string; follow_up?: { op: 'recall'; args: Record<string, string> };
   /** #7600, #8042: a row of third-party text (a chat page or a fact saved from one), returned fenced as quoted source material with its tool-call blocks summarized (search/transcript-quote.ts). */
@@ -1273,11 +1286,11 @@ export interface SearchOpts extends PageReadPolicy {
    */
   adaptiveReturn?: import('./search/return-policy.ts').AdaptiveReturnInput;
   /**
-   * v0.42.3.0 — autocut (score-discontinuity result-sizing). Default-ON in
-   * reranked modes (the floor). Pass `false` to force the full top-K for breadth
-   * / exploration (the ceiling override). Cuts the ranked set at the largest
-   * cross-encoder rerank-score cliff; no-op without a reranker. Only fires when
-   * offset===0. See src/core/search/autocut.ts.
+   * v0.42.3.0 — autocut (score-discontinuity result-sizing). OFF in every mode
+   * bundle; `true` (or config `search.autocut true`) cuts the ranked set at the
+   * steepest rerank-score drop, which can drop relevant hits on multi-part
+   * questions. `false` forces the full top-K. No-op without a reranker; only
+   * fires when offset===0. See src/core/search/autocut.ts.
    */
   autocut?: import('./search/autocut.ts').AutocutInput;
   type?: PageType;
@@ -1866,6 +1879,8 @@ export interface OntologyReadOpts extends PageReadScope {
   sourceIds?: string[];
   /** Fact visibility tiers the caller may read; undefined reads every tier. */
   visibility?: Array<'private' | 'world'>;
+  /** Leave out observations whose provenance is a life/diary/ page, before each dimension resolves (remote callers). */
+  excludeDiary?: boolean;
 }
 
 // Raw data
@@ -2105,7 +2120,7 @@ export const DEGRADED_STAGES = [
   'keyword_candidates_incomplete',
   'projection_pending', 'projection_by_design',
   'projection_status_unknown',
-  'keyword_count_unavailable', 'saved_facts_withheld', 'fact_observed_date_unavailable',
+  'keyword_count_unavailable', 'saved_facts_withheld', 'fact_observed_date_unavailable', 'contested_unavailable', 'facts_history_unavailable',
 ] as const;
 export type DegradedStage = (typeof DEGRADED_STAGES)[number];
 

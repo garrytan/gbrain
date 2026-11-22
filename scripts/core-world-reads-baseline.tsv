@@ -6,6 +6,8 @@ src/core/access/policy-git.ts	fs_import	1	W7: filesystem boundary moves to the l
 src/core/access/policy-git.ts	process_env	4	W6: settings plane out of the core
 src/core/access/policy-git.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/access/policy-transfer.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/access/read-log.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context (GST-2476 gap 1: the page ids one dispatched read returns)
+src/core/access/read-log.ts	module_collection	2	W6: per-engine state, or mark as a constant table (GST-2476 gap 1: per-engine read log buffers, like search/telemetry.ts)
 src/core/access/scope-read.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context (GST-1158 E1 read mode per attested call)
 src/core/advisor/collect-setup-smells.ts	process_env	1	W6: settings plane out of the core
 src/core/advisor/collect-uninstalled-brain-pack.ts	fs_import	1	W7: filesystem boundary moves to the local app
@@ -67,6 +69,9 @@ src/core/ai/recipes/llama-server.ts	process_env	1	W3: AI settings arrive on the 
 src/core/ai/recipes/lmstudio.ts	process_env	1	W3: AI settings arrive on the engine
 src/core/ai/reranker-readiness-engine.ts	load_config	1	W3: AI settings arrive on the engine
 src/core/ai/reranker-readiness-engine.ts	process_env	1	W3: AI settings arrive on the engine
+src/core/apple-contacts/apple-contacts-source.ts	fs_import	1	W7: filesystem boundary moves to the local app (GST-3256: a Git-recorded source checks its checkout for a hand-authored page, as people-calendar-sweep.ts does)
+src/core/apple/contacts-client.ts	fs_import	1	W7: filesystem boundary moves to the local app (GST-3256: lstat and read of the 0600 token file the source names)
+src/core/apple/contacts-write-client.ts	fs_import	1	W7: filesystem boundary moves to the local app (GST-3278: lstat and read of the 0600 owner key and write token files, the same check as contacts-client.ts)
 src/core/archive-crawler-config.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/atomic-write.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/attendance-repair.ts	process_env	1	W6: settings plane out of the core
@@ -441,6 +446,9 @@ src/core/git-transport.ts	process_env	2	W6: settings plane out of the core
 src/core/git-visible-files.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
 src/core/git-visible-files.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/git-visible-files.ts	spawn_import	1	W7: process-wide effects move to src/cli
+src/core/git/background-publish.ts	fs_import	1	W7: filesystem boundary moves to the local app (the background publish record and its output beside the checkout git dir)
+src/core/git/background-publish.ts	process_env	1	W6: settings plane out of the core (the detached publish child inherits the environment, with longer publish lock waits)
+src/core/git/background-publish.ts	spawn_import	1	W7: git boundary moves to the local app (starts the detached gbrain git commit-push child)
 src/core/git/commit-guard.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/git/commit-guard.ts	spawn_import	1	W7: process-wide effects move to src/cli; PR B owner-path guard reads git version and hook paths of the worktree it installs into
 src/core/git/commit-ledger.ts	fs_import	1	W7: filesystem boundary moves to the local app; PR B commit ledger appends to <git common dir>/gbrain/commit-ledger.jsonl
@@ -449,11 +457,20 @@ src/core/git/commit-ledger.ts	spawn_import	1	W7: process-wide effects move to sr
 src/core/git/commit-push.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/git/commit-push.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/git/commit-push.ts	process_env	6	W6: settings plane out of the core
+src/core/git/push-credential.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-2961 reads and writes the 0600 push-refusal record under the checkout git dir, like commit-push.ts conflict state
+src/core/git/push-credential.ts	process_env	2	W6: settings plane out of the core; GST-2961 reads GIT_ASKPASS only to say an askpass program may have answered, shown by its shape-checked program name, never its value
+src/core/git/push-credential.ts	spawn_import	1	W7: process-wide effects move to src/cli; GST-2961 runs git credential fill under GIT_TRACE once after a refused push to name the helper that answered (stdout password dropped in place)
 src/core/git/git-run.ts	spawn_import	1	W7: process-wide effects move to src/cli; GST-2767 moved commit-push's git runner here unchanged
 src/core/git/range-secret-scan.ts	fs_import	1	W7: filesystem boundary moves to the local app (the publish scan streams git output through a private temp file)
 src/core/git/range-secret-scan.ts	spawn_import	1	W7: process-wide effects move to src/cli (the publish scan runs git plumbing)
 src/core/git/reconcile.ts	process_env	2	W6: settings plane out of the core; the commit-push child inherits this process environment (GBRAIN_HOME, Git credentials) and resolves its CLI from it, like refresh's publish child
+src/core/git/redact-finish.ts	fs_import	1	W7: filesystem boundary moves to the local app (the redaction journal beside the checkout git dir)
+src/core/git/redact-finish.ts	spawn_import	1	W7: git boundary moves to the local app (backup refs are deleted with git update-ref)
+src/core/git/redact-unpushed.ts	fs_import	1	W7: filesystem boundary moves to the local app (rewrites the checkout files and index of a publish)
+src/core/git/redact-unpushed.ts	process_env	2	W6: settings plane out of the core (GBRAIN_SECRETS_ON_PUSH and the publish lock wait, read by engine-free publishers)
+src/core/git/redact-unpushed.ts	spawn_import	1	W7: git boundary moves to the local app (rebuilds unpushed commits with git plumbing)
 src/core/git/skipped-paths.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-2767 moved commit-push's skipped-path checks here unchanged
+src/core/git/untrack-admission.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-2964 moved commit-push's untrack admission here unchanged in kind: its readFileSync of the source's gbrain.yml and its lstatSync symlink checks left src/core/git/commit-push.ts, whose fs_import row stays 1 because this lint counts one node:fs import per file and commit-push.ts still imports node:fs for its own reads; no new filesystem read beyond the brain-recorded source root's gbrain.yml and a realpath of that root
 src/core/git/upstream-history.ts	fs_import	1	W7: filesystem boundary moves to the local app; reads the tail of the checkout reflog to tell a rewritten upstream from a fast-forward (lifted out of worktree-refresh.ts)
 src/core/github-app-token.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/github-source.ts	fs_import	2	W7: filesystem boundary moves to the local app
@@ -878,6 +895,7 @@ src/core/remote-token-cache.ts	fs_import	1	W7: filesystem boundary moves to the 
 src/core/repair/agent-session-facts.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/repair/captured-facts.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/repair/fences.ts	process_env	2	W6: settings plane out of the core
+src/core/repair/file-drift-class.ts	fs_import	1	W7: filesystem boundary moves to the local app (class manifest under the config dir)
 src/core/repair/file-drift-compare.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/repair/file-drift.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/repair/frontmatter.ts	fs_import	1	W7: filesystem boundary moves to the local app
@@ -909,6 +927,13 @@ src/core/retry.ts	process_env	1	W6: settings plane out of the core
 src/core/routing-eval.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/runtime-build.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/runtime-version.ts	process_global	2	W7: process-wide effects move to src/cli
+src/core/rust-engine/addon-loader.ts	fs_import	1	Rust engine addon: reads the cached manifest and checks the cached addon file under GBRAIN_HOME/engines/rust (writes nothing); stays until the Rust engine's own storage settles (plan PR 8)
+src/core/rust-engine/addon-loader.ts	process_env	1	Rust engine addon: the default deps read GBRAIN_RUST_ENGINE_ADDON once; every other path takes env from the deps; stays until the Rust engine's own storage settles (plan PR 8)
+src/core/rust-engine/owner-ipc/client.ts	fs_import	1	Rust owner IPC: lstat of the owner socket file and its directory before connecting (socket owner and mode check); the socket is a filesystem object, so this stays with the local app (W7)
+src/core/rust-engine/owner-ipc/client.ts	module_collection	3	Rust owner IPC: WeakMaps keyed by engine object (its owner connection), by connection (its engine's election rerun after the owner exits) and by grouper function (its countPagesBy table); entries die with the engine, connection or call; stays until engine state moves per engine (W6)
+src/core/rust-engine/owner-ipc/election.ts	fs_import	1	Rust owner IPC: creates the parent directory of the owner lock (beside the store directory); filesystem boundary moves to the local app (W7)
+src/core/rust-engine/owner-ipc/protocol.ts	fs_import	1	Rust owner IPC: resolves symlinks in the store path (realpath) so every alias of one brain names one owner lock and socket, as pglite-lock.ts does; filesystem boundary moves to the local app (W7)
+src/core/rust-engine/owner-ipc/server.ts	fs_import	1	Rust owner IPC: removes only a stale socket file and sets 0600 on the owner socket, like persistence/ipc.ts; filesystem boundary moves to the local app (W7)
 src/core/schema-events.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/schema-migration-lock.ts	als_store	1	stays: GBRA-467 reentrancy scope of the schema migration lock held by this process (coordination state, not a setting)
 src/core/schema-migration-lock.ts	module_collection	1	stays: GBRA-467 per-engine in-process queue for engines without a cross-process schema lock (PGLite); coordination state, not a setting
@@ -965,6 +990,11 @@ src/core/secret-scan-allowlist.ts	fs_import	1	W7: filesystem boundary moves to t
 src/core/secret-scan-allowlist.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/secret-scan.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/secret-scan.ts	module_collection	1	W6: per-engine state, or mark as a constant table
+src/core/secret-store/backup.ts	fs_import	1	W7: filesystem boundary moves to the local app (the backup status file lives on the machine beside the keyring)
+src/core/secret-store/backup.ts	load_config	1	W6: settings plane out of the core (reads the configured storage backend for the secret store backup)
+src/core/secret-store/keyring.ts	fs_import	1	W7: filesystem boundary moves to the local app (the secret store key file lives on the machine)
+src/core/secret-store/keyring.ts	process_env	1	W6: settings plane out of the core (GBRAIN_SECRET_STORE_KEY override)
+src/core/secret-store/spool.ts	fs_import	1	W7: filesystem boundary moves to the local app (the encrypted spool lives on the machine)
 src/core/self-upgrade-recovery.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/self-upgrade-recovery.ts	load_config	1	W6: settings plane out of the core
 src/core/self-upgrade-swap.ts	fs_import	1	W7: filesystem boundary moves to the local app
@@ -1216,8 +1246,7 @@ src/core/skills/resolver/hook-lane.ts	process_env	2	GBRA-377 PR B skill-resolver
 src/core/skills/resolver/hook-lane.ts	spawn_import	1	GBRA-377 PR B skill-resolver hook lane: runs in the hook process with no brain or engine, reading config.json, harness settings and the skill index; env carries GBRAIN_HOME and its test seams; it spawns the detached catalog build; stays
 src/core/skills/resolver/hook-lane.ts	process_global	1	GBRA-377 PR B skill-resolver hook lane: at its 50 ms deadline the hook process exits at once without waiting on the abandoned worker (the lane is the whole process); stays
 src/core/setup/openclaw-skill-plugin.ts	fs_import	1	GBRA-435 OpenClaw skill-resolver plugin: setup writes the plugin files, its state and the library under GBRAIN_HOME and reads openclaw.json directly (no brain or engine is opened); stays
-src/core/setup/openclaw-skill-plugin.ts	process_env	3	GBRA-435 OpenClaw skill-resolver plugin: PATH to find openclaw and node, and the env handed to the openclaw child and the self-test; stays
-src/core/setup/openclaw-skill-plugin.ts	spawn_import	1	GBRA-435 OpenClaw skill-resolver plugin: setup runs the openclaw CLI (install, enable, allow, inspect) and the Node self-test; stays
+src/core/setup/openclaw-skill-plugin.ts	process_env	2	GBRA-435 OpenClaw skill-resolver plugin: PATH to find openclaw and node, and the env handed to the openclaw child and the self-test; stays
 src/core/setup/skill-pins.ts	fs_import	1	GBRA-435 skill pins: reads a catalog's receipt under GBRAIN_HOME/skill-index to check pin names (no brain or engine is opened); stays
 src/core/setup/hermes-skill-pins.ts	fs_import	1	GBRA-435 Hermes skill pins: reads SOUL.md under HERMES_HOME to place or remove the pinned-skills block (no brain or engine is opened); stays
 src/core/setup/pi-skill-extension.ts	fs_import	1	GBRA-435 Pi skill-resolver extension: setup writes the extension files under the Pi agent dir and its state under GBRAIN_HOME (no brain or engine is opened); stays
@@ -1226,3 +1255,11 @@ src/core/setup/pi-skill-extension.ts	spawn_import	1	GBRA-435 Pi skill-resolver e
 src/core/setup/cursor-skill-pins.ts	fs_import	1	GBRA-435 Cursor pinned skills: setup writes the project's pinned-skills rule, its git exclude line and the project record under GBRAIN_HOME (no brain or engine is opened); stays
 src/core/setup/cursor-skill-pins.ts	process_env	1	GBRA-435 Cursor pinned skills: HOME locates the user-level skill directories Cursor loads; stays
 src/core/setup/cursor-skill-pins.ts	spawn_import	1	GBRA-435 Cursor pinned skills: setup runs git rev-parse to find the repository's info/exclude; stays
+src/core/entities/identity-decisions.ts	fs_import	1	W7: filesystem boundary moves to the local app (decision files under .gbrain/identity/, same door as access/policy-git.ts)
+src/core/entities/identity-decisions.ts	process_env	4	W7: the commit-lock marker (COMMIT_LOCK_ENV) exported to commitAndPush while the lock is held, as in access/policy-git.ts; it moves with the filesystem boundary
+src/core/entities/identity-decisions.ts	spawn_import	1	W7: process-wide effects move to src/cli (git show of the committed decision file)
+src/core/owned-folder/destination.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-3022 owned folders: checks the default source checkout exists and resolves its real top level before any file is written there
+src/core/owned-folder/paths.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-3022 owned folders: realpath of a sync root, import target or uploaded file, so a symlink cannot reach .gbrain-owned/
+src/core/owned-folder/remove.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-3022 owned folders: checks OWNER.json and prunes the directories a source removal leaves empty, never following a symlink
+src/core/owned-folder/writer.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-3022 owned folders: the one writer of the folder: OWNER.json, the README and the day files, with lstat symlink checks
+src/core/remote-caller.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context; marks an MCP handler's caller remote so the Rust owner client keeps its writes off the owner socket

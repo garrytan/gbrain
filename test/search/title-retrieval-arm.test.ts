@@ -28,6 +28,7 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import { hybridSearch } from '../../src/core/search/hybrid.ts';
+import { __setTitleWholeVectorCandidatesForTests, titleWholeVectorCandidates } from '../../src/core/search/title-statement.ts';
 import {
   MAX_WEBSEARCH_QUERY_CHARS,
   MAX_WEBSEARCH_QUERY_TERMS,
@@ -154,7 +155,10 @@ describe('searchTitles — D1 title candidate arm', () => {
     expect(tlHit.chunk_index).toBe(2); // lowest index when no compiled_truth chunk
   });
 
-  test('a local OR re-run matches the title only: a timeline word is not a relaxed title hit (#7135)', async () => {
+  // #7135 made the local OR re-run title-only so a date in a question could not pull every dated timeline into
+  // ranking. GST-2899 keeps that bound by size instead: the re-run reads timelines while every matching page fits
+  // the title cap, and titles only past it.
+  test('a local OR re-run reads timelines only while the matches fit the cap: past it a timeline word is not a relaxed title hit (#7135, GST-2899)', async () => {
     await engine.putPage('people/dated-entity', {
       type: 'person',
       title: 'Cobalt Meridian Atlas',
@@ -169,9 +173,23 @@ describe('searchTitles — D1 title candidate arm', () => {
     );
     expect(inVector.rows[0].hit).toBe(true);
 
+    for (const n of [1, 2]) {
+      await engine.putPage('notes/dated-' + n, { type: 'note', title: 'Dated note ' + n, compiled_truth: 'unrelated body', timeline: '- 2026-10-07: zircon quarry visit' });
+      await installFixtureChunks(engine, 'notes/dated-' + n, [{ chunk_index: 0, chunk_text: 'unrelated body', chunk_source: 'compiled_truth' }]);
+    }
     const slugs = async (q: string) => (await engine.searchTitles(q, { limit: 10 })).map(r => r.slug);
-    expect(await slugs('zircon nebulith')).not.toContain('people/dated-entity');
-    expect(await slugs('quarry nebulith')).not.toContain('people/dated-entity');
+    // Three pages hold the timeline words: under the cap the re-run returns them.
+    expect((await slugs('zircon nebulith')).sort()).toEqual(['notes/dated-1', 'notes/dated-2', 'people/dated-entity']);
+    const cap = titleWholeVectorCandidates();
+    __setTitleWholeVectorCandidatesForTests(2);
+    try {
+      // Three matches do not fit a cap of two, so the re-run matches titles only, as #7135 left it.
+      expect(await slugs('zircon nebulith')).toEqual([]);
+      expect(await slugs('quarry nebulith')).toEqual([]);
+      expect(await slugs('Cobalt nebulith')).toEqual(['people/dated-entity']);
+    } finally {
+      __setTitleWholeVectorCandidatesForTests(cap);
+    }
     expect(await slugs('Cobalt Meridian')).toContain('people/dated-entity');
     expect(await slugs('Cobalt zircon')).toContain('people/dated-entity');
   });

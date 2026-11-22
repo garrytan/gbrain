@@ -17,7 +17,8 @@ import { cutLinkPage, finishLinkPage, linkId, parseLinkListing, reportLinkPage }
 
 import { opError, type Operation } from './contract.ts';
 import type { Action } from '../agent-output.ts';
-import { presentEdgeContext, resolveChainAnchors, runRelationalChain, validateChainHops, type ChainEvidenceEdge, type ChainPlan } from '../search/relational-chain.ts';
+import { chainStoredEdge, presentEdgeContext, resolveChainAnchors, runRelationalChain, validateChainHops, type ChainEvidenceEdge, type ChainPlan } from '../search/relational-chain.ts';
+import { storedEdge, worldLinkContexts } from '../eligibility/fence-overlay.ts';
 import { invalidParam, paramUse, readFix } from './op-fix.ts';
 import {
   assertExplicitSourceLive,
@@ -370,7 +371,8 @@ async function readLinkEdges(
   } while ((listing.all || kept.length === 0) && nextId !== undefined);
   reportTemporal(ctx, opName, p, temporal, hidden);
   if (kept.length === 0 && hidden === 0 && listing.afterId === undefined && !fromType) await hintScopedLinkMiss(ctx, p, requested, policy, direction);
-  return { links: kept, nextCursor: reportLinkPage(ctx, opName, p, listing, { returned: kept.length, nextId }) };
+  const links = await worldLinkContexts(ctx.engine, ctx.remote, kept, storedEdge);
+  return { links, nextCursor: reportLinkPage(ctx, opName, p, listing, { returned: kept.length, nextId }) };
 }
 
 /**
@@ -530,15 +532,18 @@ async function traverseChain(ctx: OperationContext, p: Record<string, unknown>, 
   const remote = ctx.remote !== false;
   const edge = (e: ChainEvidenceEdge) => ({ ...e, context: presentEdgeContext(e.context, remote) });
   const answers = rows.filter(r => r.role === 'answer');
+  const contexts = (await worldLinkContexts(ctx.engine, ctx.remote,
+    answers.flatMap(r => r.best_path.edges.map(e => ({ ...e, source_id: r.source_id }))), chainStoredEdge)).map(e => e.context);
+  let next = 0;
   const rawHops = p.hops as Array<Record<string, unknown>>;
   const status = diagnostics.status;
-  const fix = chainFix(slug, status, rawHops, diagnostics.empty_hop);
+  const fix = chainFix(slug, status, rawHops, readScopeArgs(p), diagnostics.empty_hop);
   if (status !== 'fired' && fix) ctx.emitNotice?.({ code: 'relational_chain', kind: 'degraded', why: fix.why, fix });
   const ignored = (['depth', 'link_type', 'direction'] as const).filter(k => p[k] !== undefined);
   return {
     anchor: slug,
     answers: answers.map(r => ({ slug: r.slug, source_id: r.source_id, path_count: r.path_count, score: r.score })),
-    paths: answers.map(r => ({ nodes: r.best_path.nodes, edges: r.best_path.edges.map(edge) })),
+    paths: answers.map(r => ({ nodes: r.best_path.nodes, edges: r.best_path.edges.map(e => edge({ ...e, context: contexts[next++] ?? null })) })),
     diagnostics,
     ...(ignored.length ? { set_aside: { ignored, note: `Walked the hops chain; ignored ${ignored.length > 1 ? `${ignored.slice(0, -1).join(', ')} and ${ignored[ignored.length - 1]}` : ignored[0]}: each hop names its link type and direction (toward), and the chain length is the number of hops.` } } : {}),
   };
@@ -547,19 +552,23 @@ async function traverseChain(ctx: OperationContext, p: Record<string, unknown>, 
 /** A CLI flag token built at runtime (the flag-registry generator scans literal flag strings per command). */
 const cliFlag = (name: string) => `--${name}`;
 
-function chainFix(slug: string, status: string, hops: Array<Record<string, unknown>>, emptyHop?: number): Action | undefined {
+const readScopeArgs = (p: Record<string, unknown>) => ({
+  ...(p.source_id !== undefined ? { source_id: p.source_id } : {}), ...(p.all_sources === true ? { all_sources: true } : {}),
+});
+
+function chainFix(slug: string, status: string, hops: Array<Record<string, unknown>>, scope: Record<string, unknown>, emptyHop?: number): Action | undefined {
   const hopArgs = (hs: Array<Record<string, unknown>>) => hs.flatMap(h => [cliFlag('hop'), `${String(h.link_type)}:${String(h.toward)}`]);
   if (status === 'anchor_not_found') return readFix(`No page "${slug}" is visible in the searched sources; search for the entity to find its exact slug, then retry the chain with that slug.`,
     { argv: ['gbrain', 'search', slug], mcp: { tool: 'search', arguments: { query: slug } } });
   if (status === 'no_edges') return readFix(`"${slug}" has no typed ${String(hops[0]?.link_type)} edges in the needed direction; the relationship may only be written as plain mentions. A depth-1 walk shows what is linked.`,
-    { argv: ['gbrain', 'graph-query', slug, cliFlag('depth'), '1'], mcp: { tool: 'traverse_graph', arguments: { slug, depth: 1 } } });
+    { argv: ['gbrain', 'graph-query', slug, cliFlag('depth'), '1'], mcp: { tool: 'traverse_graph', arguments: { slug, depth: 1, ...scope } } });
   if (status === 'empty_hop' && emptyHop && emptyHop > 1) {
     const prefix = hops.slice(0, emptyHop - 1);
     return readFix(`Hop ${emptyHop} (${String(hops[emptyHop - 1]?.link_type)}) found no typed edges from the pages hop ${emptyHop - 1} reached; the shorter chain lists those pages so you can inspect them.`,
-      { argv: ['gbrain', 'graph-query', slug, ...hopArgs(prefix)], mcp: { tool: 'traverse_graph', arguments: { slug, hops: prefix } } });
+      { argv: ['gbrain', 'graph-query', slug, ...hopArgs(prefix)], mcp: { tool: 'traverse_graph', arguments: { slug, hops: prefix, ...scope } } });
   }
   if (status === 'truncated') return readFix('A chain cap was hit (diagnostics.cap_hit names the cap and hop), so lower-ranked answers were dropped; narrow the chain or start from a more specific page for a complete list.',
-    { argv: ['gbrain', 'graph-query', slug, ...hopArgs(hops)], mcp: { tool: 'traverse_graph', arguments: { slug, hops } } });
+    { argv: ['gbrain', 'graph-query', slug, ...hopArgs(hops)], mcp: { tool: 'traverse_graph', arguments: { slug, hops, ...scope } } });
   return undefined;
 }
 
@@ -635,11 +644,13 @@ const traverse_graph: Operation = {
       );
       const why = `The walk stopped at its cap (${TRAVERSE_WALK_ROW_CAP} pages, ${TRAVERSE_PATH_ROW_CAP} edge rows; shallowest first), so deeper edges are missing; walk one level shallower or narrow with link_type or direction for a complete walk.`;
       const fix = depth > 1 ? readFix(why, {
-        mcp: { tool: 'traverse_graph', arguments: { slug, depth: depth - 1, ...(linkType ? { link_type: linkType } : {}), direction } },
+        mcp: { tool: 'traverse_graph', arguments: {
+          slug, depth: depth - 1, ...(linkType ? { link_type: linkType } : {}), direction, ...readScopeArgs(p),
+        } },
       }) : undefined;
       ctx.emitNotice?.({ code: 'graph_walk_truncated', kind: 'degraded', why, ...(fix ? { fix } : {}) });
     }
-    return paths;
+    return worldLinkContexts(ctx.engine, ctx.remote, paths, storedEdge);
   },
   scope: 'read',
   cliHints: { name: 'graph', positional: ['slug'] },

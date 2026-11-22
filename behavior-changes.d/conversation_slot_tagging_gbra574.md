@@ -1,0 +1,4 @@
+---
+kind: add
+---
+`gbrain extract-conversation-facts` tags slots again (where a person lives, who employs them or their role), now with a second small call after extraction instead of in the extraction call itself, so the facts it saves are the same as without slots. The call reads only the facts the extraction produced about a person whose page it named exactly, at most 10 per conversation window, so a brain whose conversation facts name no person page makes no extra call. It is counted in the run's cost cap, the per-page cap and the `--dry-run` estimate. A window whose tagging call fails keeps its facts without slots, the run's summary counts it, and `--force` tags it again. Pages extracted before this release keep their facts without slots until that part of the page is extracted again; to tag them now, preview the paid run with `gbrain extract-conversation-facts --force --dry-run`, then run it with `--force`.

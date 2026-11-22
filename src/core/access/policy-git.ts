@@ -25,7 +25,7 @@ import { opError, OperationError } from '../ops/contract.ts';
 import { readSyncAnchor } from '../sync-anchor.ts';
 import { gitChildEnv } from '../git-env.ts';
 import { execFileBounded } from '../bounded-child-exec.ts';
-import { HARDENED_GIT_ARGS, NO_LAZY_FETCH_ENV } from '../hardened-git.ts';
+import { HARDENED_GIT_ARGS, NO_LAZY_FETCH_ENV, unbornHead } from '../hardened-git.ts';
 import { acquireCommitLock, checkoutRoot, commitAndPush, COMMIT_LOCK_ENV, type CommitPushResult } from '../git/commit-push.ts';
 import { parsePolicyYaml, rulebookDigest, serializePolicyYaml, type FolderRule, type PolicyProblem } from './folder-rules.ts';
 import { clearPolicyInvalid, coverageRows, getRevision, listRevisions, markPolicyInvalid, proposeRevision, readAccessStore, writeAccessStore, type ProposalResult, type RestampProgress } from './policy.ts';
@@ -113,7 +113,7 @@ export async function syncGitPolicy(engine: BrainEngine, sourceId: string, root:
   const files = await readCommittedPolicy(root, opts.rev ?? 'HEAD');
   const rev = opts.rev ?? 'HEAD';
   if (files.yml === null && files.approved === null && !files.unreadable.length && store !== 'git'
-    && !(await policyGit(root, ['log', '-1', '--first-parent', '--format=%H', rev, '--', POLICY_FILE]).catch(() => 'unknown'))
+    && !(await policyGit(root, ['log', '-1', '--first-parent', '--format=%H', rev, '--', POLICY_FILE]).catch(() => rev === 'HEAD' && unbornHead(root) ? '' : 'unknown'))
     && !(await coverageRows(engine, sourceId)).some(c => c.reason === 'invalid')) {
     return { source_id: sourceId, state: 'skipped', reason: 'no_policy' };
   }
@@ -176,6 +176,7 @@ async function rebuildPending(engine: BrainEngine, sourceId: string): Promise<bo
  * refuses: a shallow checkout cannot show the history, and a partial clone may lack a tree or a version of access.yml
  * (GST-2331: sync fetches nothing). GST-2638: a rebuild with nothing to replay installs one rulebook and needs no
  * whole-source mark; one with history reads as nobody from its start until it finishes (the next sync resumes it).
+ * GBRA-706: an unborn HEAD (a fresh `git init`, no commit yet) has no history: the empty tree, nothing to replay.
  */
 async function policyHistory(root: string, rev: string, fromApproved: boolean): Promise<{ versions: Array<{ commit: string; yml: string | null }> } | { refusal: 'shallow' | 'partial' }> {
   if (await policyGit(root, ['rev-parse', '--is-shallow-repository']) === 'true') return { refusal: 'shallow' };
@@ -185,7 +186,7 @@ async function policyHistory(root: string, rev: string, fromApproved: boolean): 
     const anchor = fromApproved ? await log(['-1', rev, '--', APPROVED_FILE]) : '';
     commits = [...(anchor ? [anchor] : []), ...(await log(['--reverse', anchor ? `${anchor}..${rev}` : rev, '--', POLICY_FILE])).split('\n').filter(Boolean)];
   } catch {
-    return { refusal: 'partial' };
+    return rev === 'HEAD' && unbornHead(root) ? { versions: [] } : { refusal: 'partial' };
   }
   const versions: Array<{ commit: string; yml: string | null }> = [];
   for (const commit of commits) {
@@ -249,6 +250,13 @@ export async function commitPolicyFile(root: string, relPath: string, edit: (cur
       } catch (e) {
         if (e instanceof OperationError && (e.code === 'push_unconfirmed' || (e as { canonical?: string }).canonical === 'push_unconfirmed') && e.detail) {
           return { outcome: 'committed_not_pushed', commit: String(e.detail), path: relPath, note: 'Committed locally; the push is unconfirmed. Rerun gbrain git commit-push --push-only --scan-secrets to publish it.' };
+        }
+        if (e instanceof OperationError && e.code === 'push_credential_refused' && gitShow(root, 'HEAD', relPath) === next) {
+          let commit: string | null = null;
+          try { commit = String(JSON.parse(String(e.detail ?? '{}')).commit ?? '') || null; } catch { /* fall back to HEAD */ }
+          commit ??= spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', env: gitChildEnv() }).stdout.trim() || null;
+          return { outcome: 'committed_not_pushed', commit, path: relPath,
+            note: `Committed locally; nothing was pushed. ${e.code}: ${e.message} Fix: ${e.suggestion}` };
         }
         if (e instanceof OperationError && (e.code === 'publish_secret_found' || e.code === 'publish_scan_unreadable') && gitShow(root, 'HEAD', relPath) === next) {
           const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', env: gitChildEnv() }).stdout.trim();

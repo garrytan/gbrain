@@ -67,7 +67,7 @@ export type SubmitEmbedBackfillResult =
   | { status: 'spend_capped'; spend24hUsd: number; spendCapUsd: number }
   /** #6803: the last EMBED_BACKFILL_STALL_LIMIT backfills failed identically with nothing embedded, and nothing has changed since. */
   | { status: 'stalled'; failures: number; remaining: number; blocked: number; lastFailedAt: string }
-  | { status: 'no_worker_surface'; engineKind: 'pglite' | 'unknown' }
+  | { status: 'no_worker_surface'; engineKind: 'pglite' | 'rust' | 'unknown' }
   /** The brain is keyless by choice: nothing to embed. `notice` is set only the first time for this brain state. */
   | { status: 'embedding_disabled'; notice: Notice | null };
 

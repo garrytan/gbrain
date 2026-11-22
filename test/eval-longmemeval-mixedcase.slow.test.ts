@@ -48,6 +48,7 @@ import { rerankerReadiness } from '../src/core/ai/reranker-readiness.ts';
 import { __setEmbedTransportForTests, configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { fnv1a } from '../src/eval/deterministic-embed.ts';
 import type { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 
 const FIXTURE = join(import.meta.dir, 'fixtures', 'longmemeval-mixedcase.jsonl');
 const BASE = ['--keyword-only', '--retrieval-only', '--no-trajectory', '--by-type', '--top-k', '5'];
@@ -538,7 +539,7 @@ describe('silent vector-arm / expansion degradation is a gate (mirrors --reranke
 
 describe('reranker preflight keys on the RESOLVED pin', () => {
   const NON_KW = [FIXTURE, '--retrieval-only', '--no-trajectory', '--by-type', '--top-k', '5'];
-  const notReady = async (_engine: PGLiteEngine, model: string) => ({ plane: 'config' as const, readiness: rerankerReadiness(model, {}) }); // no provider key → not ready
+  const notReady = async (_engine: BrainEngine, model: string) => ({ plane: 'config' as const, readiness: rerankerReadiness(model, {}) }); // no provider key → not ready
 
   test('--reranker on + a not-ready reranker exits 2 with the fix text before any question runs', async () => {
     const out = join(tmp, 'preflight.jsonl');
@@ -550,7 +551,7 @@ describe('reranker preflight keys on the RESOLVED pin', () => {
   test('NO --reranker flag: the balanced bundle turns the reranker on → the same preflight fires (exit 2); --reranker off skips it', async () => {
     const out = join(tmp, 'preflight-bundle.jsonl');
     let probes = 0;
-    const probe = async (e: PGLiteEngine, model: string) => { probes++; return notReady(e, model); };
+    const probe = async (e: BrainEngine, model: string) => { probes++; return notReady(e, model); };
     const code = await runCapturingExit([...NON_KW, '--mode', 'balanced', '--output', out], { engine, rerankerReadiness: probe });
     expect(code).toBe(2);
     expect(probes).toBe(1);

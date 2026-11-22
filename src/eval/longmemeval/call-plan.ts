@@ -27,7 +27,7 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from '../../core/spawn.ts';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { basename, isAbsolute, relative, resolve } from 'node:path';
+import { basename, relative, resolve } from 'node:path';
 import { haystackToPages } from './adapter.ts';
 import { EXTRACTOR_MAX_TOKENS, EXTRACTOR_SYSTEM_PROMPT } from './extract.ts';
 import { buildJudgePrompt, JUDGE_MAX_TOKENS } from './judge.ts';
@@ -63,6 +63,7 @@ import { INJECTION_PATTERNS } from '../../core/think/sanitize.ts';
 import { formatTrajectoryBlock } from '../../core/trajectory-format.ts';
 import type { ThinkLLMClient } from '../../core/think/index.ts';
 import type { ChunkInput } from '../../core/types.ts';
+import { relativeEscapesRoot } from '../../core/path-confine.ts';
 
 /** The ONE token rule: no provider tokenizer exists in the repo, so every lane counts `ceil(chars / 3)`. */
 export const CALL_PLAN_CHARS_PER_TOKEN = 3;
@@ -165,11 +166,11 @@ function envState(names: string[]): string {
   return names.map(n => `${n} ${process.env[n]?.trim() ? 'set' : 'unset'}`).join(', ');
 }
 
-/** An INPUT line for a tracked, unmodified repo file; otherwise a PRECONDITION with its sha256 and basename. */
-function bindInput(root: string, path: string, label: string, plan: CallPlan): void {
+/** An INPUT line for a tracked, unmodified repo file; otherwise a PRECONDITION with its sha256 and basename. Exported for tests. */
+export function bindInput(root: string, path: string, label: string, plan: CallPlan): void {
   const abs = resolve(path);
   const rel = relative(root, abs);
-  if (rel && !rel.startsWith('..') && !isAbsolute(rel)) {
+  if (rel && !relativeEscapesRoot(rel)) {
     try {
       git(root, ['ls-files', '--error-unmatch', '--', rel]);
       git(root, ['diff', '--quiet', 'HEAD', '--', rel]);

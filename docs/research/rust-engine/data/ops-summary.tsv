@@ -1,0 +1,205 @@
+name	cli	aliases	scope	mutating	localOnly	cliOnly	verb	starter	publishGate	area	hidden	readonly
+remember	remember		write	mut			verb	starter		memory-verbs		rw
+entity	entity		read				verb	starter		memory-verbs		ro
+synthesize	synthesize		read				verb	starter		memory-verbs		ro
+forget			write	mut			verb	starter		memory-verbs		rw
+get_page	get		read					starter		pages		ro
+put_page	put		write	mut				starter		pages		rw
+delete_page	delete		write	mut						pages		rw
+list_pages	list		read					starter		pages		ro
+restore_page	restore		write	mut						pages		rw
+purge_deleted_pages	purge-deleted		admin	mut	localOnly	cliOnly				pages	hidden	rw
+capture	capture		write	mut				starter		pages	hidden	rw
+fetch	fetch		read							pages		ro
+find_pages	find		read							pages		ro
+edit_page			write	mut				starter		pages		rw
+append_page			write	mut						pages		rw
+put_pages	put-pages		write	mut						pages		rw
+begin_page_upload			write	mut						pages		rw
+upload_page_part			write	mut						pages		rw
+get_page_upload			write							pages		rw
+commit_page_upload			write	mut						pages		rw
+abort_page_upload			write	mut						pages		rw
+get_write_request	write-request		write					starter		pages		rw
+list_write_requests	write-requests		write					starter		pages		rw
+list_write_conflicts	write-conflicts		read							pages		ro
+cancel_write_request	cancel-write-request		write	mut				starter		pages		rw
+search	search		read					starter		search		ro
+query	query		read					starter		search		ro
+assemble_evidence			read							search		ro
+search_stats			admin							search		rw
+search_modes			read							search		ro
+search_tune			admin							search		rw
+cache_stats			admin							search		rw
+search_exact	search-exact		read							search		ro
+rate_answer	rate		write	mut						search		rw
+search_by_image	search-by-image		read							search		ro
+add_tag	tag		write	mut						tags		rw
+remove_tag	untag		write	mut						tags		rw
+get_tags	tags		read							tags		ro
+add_link	link	link-add	write	mut						links		rw
+remove_link	unlink	link-rm	write	mut						links		rw
+get_links	links	get_links	read							links		ro
+get_backlinks	backlinks		read					starter		links		ro
+list_link_sources	link-sources		read					starter		links		ro
+traverse_graph	graph		read					starter		links		ro
+wanted_pages	wanted		read							links		ro
+add_timeline_entry	timeline-add		write	mut				starter		timeline		rw
+get_timeline	timeline		read							timeline		ro
+get_stats	stats		admin							admin		rw
+get_health	health		admin							admin		rw
+run_doctor			admin							admin		rw
+get_brain_health			read							admin		ro
+get_versions	history		read							pages		ro
+revert_version	revert		write	mut						pages		rw
+get_brain_identity			read							identity		ro
+quarantine_list			admin							admin		rw
+get_write_attribution	attribution		admin							admin		rw
+confirm_memory			write	mut						memory		rw
+promote_guest_note	promote_guest_note		write	mut						pages	hidden	rw
+list_skills	skills		read					starter	mcp.publish_skills	skills		ro
+get_skill	skill		read					starter	mcp.publish_skills	skills		ro
+list_brain_skillpack	brain-skillpack		read					starter	mcp.publish_skills	skills		ro
+advisor	advisor		read						mcp.publish_advisor	advisor	hidden	ro
+get_status_snapshot			admin							admin		rw
+get_skill_asset	skill-asset		read					starter	mcp.publish_skills	skills		ro
+put_skill	put-skill		write	mut				starter		skills		rw
+delete_skill	delete-skill		write	mut				starter		skills		rw
+set_skill_policy	set-skill-policy		admin	mut						skills		rw
+get_skill_policy	skill-policy		admin							skills		rw
+get_skill_retention	skill-retention		admin		localOnly	cliOnly				skills		rw
+prune_skill_revisions	prune-skill-revisions		admin	mut	localOnly	cliOnly				skills		rw
+retain_skill_revision	retain-skill-revision		admin	mut	localOnly	cliOnly				skills		rw
+import_skill_proposal			admin	mut	localOnly	cliOnly				skills		rw
+join_brain	join-brain		read	mut				starter		skills		rw
+sync_brain_skills	sync-brain-skills		read	mut				starter		skills		rw
+leave_brain	leave-brain		read	mut				starter		skills		rw
+sync_brain	sync		admin	mut	localOnly					sync	hidden	rw
+put_raw_data			write	mut						pages		rw
+get_raw_data			read							pages		ro
+resolve_slugs			read					starter		pages		ro
+get_chunks			read							pages		ro
+whois	whois		read							pages		ro
+log_ingest			write	mut						ingest		rw
+get_ingest_log			read					starter		ingest		ro
+get_usage			admin							admin		rw
+file_list			admin		localOnly					files		rw
+file_upload			admin	mut	localOnly					files		rw
+file_url			admin		localOnly					files		rw
+file_register			admin	mut	localOnly	cliOnly				files		rw
+file_verify			admin		localOnly	cliOnly				files		rw
+storage_find	storage-find		read							storage		ro
+storage_get	storage-get		read							storage		ro
+storage_list	storage-list		read							storage		ro
+storage_register	storage-register		write	mut	localOnly	cliOnly						rw
+storage_update	storage-update		write	mut	localOnly	cliOnly						rw
+submit_job			admin	mut						jobs		rw
+get_job			admin							jobs		rw
+wait_job			admin							jobs		rw
+list_jobs			admin							jobs		rw
+cancel_job			admin	mut				starter		jobs		rw
+retry_job			admin	mut						jobs		rw
+get_job_progress			admin							jobs		rw
+pause_job			admin	mut						jobs		rw
+resume_job			admin	mut						jobs		rw
+replay_job			admin	mut						jobs		rw
+send_job_message			admin	mut						jobs		rw
+submit_agent			agent	mut				starter		jobs		rw
+get_agent_job			agent					starter		jobs		rw
+get_job_stats			admin							jobs		rw
+watch_job			admin	mut					mcp.publish_wakeshift	jobs	hidden	rw
+watch_write_request			write	mut					mcp.publish_wakeshift	jobs	hidden	rw
+watch_cron			admin	mut					mcp.publish_wakeshift	jobs	hidden	rw
+accept_wakeshift_terms			write	mut					mcp.publish_wakeshift	jobs	hidden	rw
+list_watches			write						mcp.publish_wakeshift	jobs	hidden	rw
+unwatch			write	mut					mcp.publish_wakeshift	jobs	hidden	rw
+find_orphans	orphans		read							links	hidden	ro
+rank_entities	rank-entities		read							links		ro
+get_calibration_profile			read							insights		ro
+takes_list	takes-list		read							takes		ro
+takes_search	takes-search		read							takes		ro
+think	think		read	mut						takes	hidden	rw
+takes_scorecard	takes-scorecard		read							takes		ro
+takes_calibration	takes-calibration		read							takes		ro
+takes_add			write	mut						takes		rw
+takes_update			write	mut						takes		rw
+takes_resolve			write	mut						takes		rw
+takes_supersede			write	mut						takes		rw
+takes_remove			write	mut	localOnly					takes		rw
+takes_rebuild			write	mut	localOnly					takes		rw
+whoami	whoami		read					starter		identity		ro
+sources_add	sources_add		sources_admin	mut						sources	hidden	rw
+sources_list	sources_list		read							sources	hidden	ro
+sources_remove	sources_remove		sources_admin	mut						sources	hidden	rw
+sources_status	sources_status		read							sources	hidden	ro
+sources_inspect	sources_inspect		read		localOnly	cliOnly					hidden	ro
+sources_resolve_path	sources_resolve_path		read							sources	hidden	ro
+request_tools			read	mut				starter		discovery		rw
+get_recent_salience	salience		read					starter		insights	hidden	ro
+find_anomalies	anomalies		read					starter		insights	hidden	ro
+get_recent_transcripts	transcripts		read		localOnly	cliOnly				insights	hidden	ro
+connectors_status	connectors_status		read		localOnly	cliOnly					hidden	ro
+connector_sync	connector_sync		write	mut	localOnly	cliOnly					hidden	rw
+chronicle_day	day		read							chronicle		ro
+chronicle_on_this_day	on-this-day		read							chronicle		ro
+chronicle_since	since		read							chronicle		ro
+chronicle_last_seen	last-seen		read							chronicle		ro
+ontology_get	ontology		read							ontology		ro
+ontology_propose	ontology-add		write	mut						ontology		rw
+ontology_dimensions	ontology-dimensions		read							ontology		ro
+ontology_conflicts	ontology-contradictions		read							ontology		ro
+volunteer_chronicle	orient		read							chronicle		ro
+chronicle_backfill	chronicle-backfill		admin	mut	localOnly					chronicle		rw
+volunteer_context	volunteer-context		read							insights		ro
+extract_entities	extract-entities		write	mut						entities		rw
+extraction_pending	extraction-pending		read							entities		ro
+extraction_review	extraction-review		write	mut	localOnly	cliOnly				entities		rw
+entity_identity_link	entity-identity-link		write	mut	localOnly					entities		rw
+entity_identity_unlink	entity-identity-unlink		write	mut	localOnly					entities		rw
+entity_identity_list	entity-identity-list		read							entities		ro
+extract_facts			write	mut						memory		rw
+recall			read				verb	starter		memory-verbs		ro
+context_pack	context-pack		read				verb	starter		memory-verbs		ro
+delta	delta		read				verb	starter		memory-verbs		ro
+forget_fact			write	mut						memory		rw
+purge_fact	purge-fact		admin	mut		cliOnly				facts	hidden	rw
+list_page_purges	list-page-purges		admin			cliOnly				pages	hidden	rw
+unpurge_page	unpurge-page		admin	mut		cliOnly				pages	hidden	rw
+memory_recall			read							memory		ro
+memory_write			write	mut						memory		rw
+memory_propose			write	mut						memory		rw
+get_memory_settings	memory-settings		read							memory-settings		ro
+set_memory_writeback			admin	mut					mcp.publish_memory_settings	memory-settings		rw
+memory_conversation_mode			write	mut				starter		memory-settings		rw
+find_contradictions	find-contradictions		read							insights		ro
+find_experts	whoknows		read							insights	hidden	ro
+find_trajectory	find-trajectory		read							insights		ro
+code_callers	code_callers		read							code	hidden	ro
+code_callees	code_callees		read							code	hidden	ro
+code_def	code_def		read							code	hidden	ro
+code_refs	code_refs		read							code	hidden	ro
+code_blast	code_blast		read							code	hidden	ro
+code_flow	code_flow		read							code	hidden	ro
+code_traversal_cache_clear	code_traversal_cache_clear		admin	mut	localOnly					admin	hidden	rw
+migrate_embeddings	migrate-embeddings		admin	mut	localOnly	cliOnly				admin	hidden	rw
+get_active_schema_pack			read							schema		ro
+list_schema_packs			read							schema		ro
+schema_stats			read							schema		ro
+schema_lint			read							schema		ro
+schema_graph			read							schema		ro
+schema_explain_type			read							schema		ro
+schema_review_orphans			read							schema		ro
+schema_apply_mutations			admin	mut						schema		rw
+reload_schema_pack			admin							schema		rw
+run_onboard			admin	mut						admin		rw
+run_skillopt			admin	mut						admin		rw
+open_loops			read							loops		ro
+loops_close			write	mut						loops		rw
+loops_mute			write	mut						loops		rw
+loops_unmute			write	mut						loops		rw
+questions_pin			write	mut						questions		rw
+questions_list			read							questions		ro
+questions_status			read							questions		ro
+questions_refresh			write	mut						questions		rw
+questions_unpin			write	mut						questions		rw
+mute_notice			write	mut				starter		admin		rw

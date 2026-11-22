@@ -179,6 +179,12 @@ describe('traverse_graph', () => {
       expect(deep).toContain('"depth":1');
       expect(deep).toContain('"link_type":"works_at"');
       expect(await notice(1)).not.toContain('fix: traverse_graph');
+      const scoped = (args: Record<string, unknown>) => call('traverse_graph', { slug: 'alice-example', depth: 2, link_type: 'works_at', direction: 'out', ...args })
+        .then(o => o.content.find(c => c.text.startsWith('[gbrain notice graph_walk_truncated'))!.text);
+      expect(await scoped({ source_id: 'default' })).toContain('"source_id":"default"');
+      expect(await scoped({ all_sources: true })).toContain('"all_sources":true');
+      expect(deep).not.toContain('source_id');
+      expect(deep).not.toContain('all_sources');
     } finally {
       (engine as unknown as { traversePathsDetailed: unknown }).traversePathsDetailed = original;
     }

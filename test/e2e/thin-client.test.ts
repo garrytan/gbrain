@@ -412,6 +412,29 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
     expect(r.stderr).toMatch(/OAuth (auth|\/token) failed/);
   });
 
+  test('a client bound to a disabled member is told so by the real host, not that its credentials were revoked', async () => {
+    const host = async (args: string[]) => {
+      const r = await spawn(args, hostHome);
+      expect(r.exitCode, cliDiagnostic(`host ${args.join(' ')}`, r)).toBe(0);
+    };
+    await host(['access', 'member', 'add', 'alice-example']);
+    await host(['auth', 'rescope', '--client', clientId, '--member', 'alice-example']);
+    await host(['access', 'member', 'disable', 'alice-example']);
+    try {
+      const r = await spawn(['search', G3_MARKER, '--json'], clientHome);
+      expect(r.exitCode, cliDiagnostic('thin-client CLI', r)).toBe(1);
+      expect(r.stderr).toContain('bound to a member who is disabled, removed or missing (access_member_disabled)');
+      expect(r.stderr).not.toContain('Credentials may have been revoked');
+      expect(r.stderr).not.toContain('gbrain remote doctor');
+    } finally {
+      await host(['auth', 'rescope', '--client', clientId, '--member', 'none']);
+      await host(['access', 'member', 'enable', 'alice-example']);
+      // The refused call dropped the cached token; the stopped-host test below needs one again.
+      const warm = await spawn(['search', G3_MARKER, '--json'], clientHome);
+      expect(warm.exitCode, cliDiagnostic('thin-client CLI', warm)).toBe(0);
+    }
+  });
+
   test('stopped host: routed verbs fail fast with the canonical unreachable error, not a hang', async () => {
     // Kill the live serve. This test is LAST in the file by design (see the
     // ordering note above); afterAll's kill is a no-op afterwards.

@@ -39,6 +39,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { loadActivePackBestEffort } from '../core/schema-pack/best-effort.ts';
 import { getExtractableSpec } from '../core/schema-pack/extractable.ts';
 import { locateMutablePackFile } from '../core/schema-pack/mutate.ts';
+import { relativeEscapesRoot } from '../core/path-confine.ts';
 
 export interface BenchmarkFixture {
   fixture_id: string;
@@ -119,7 +120,7 @@ export function validateFixturePath(
   // Resolve() collapses .., but we already rejected those above. Confirm
   // the resolved path is within packRoot.
   const rel = relative(packRoot, absolute);
-  if (rel.startsWith('..') || isAbsolute(rel)) {
+  if (relativeEscapesRoot(rel)) {
     throw new Error(
       `pack fixture_corpus path resolves OUTSIDE the pack root. ` +
       `Pack root: ${packRoot}. Resolved: ${absolute}. ` +
@@ -142,7 +143,7 @@ export function validateFixturePath(
       const real = realpathSync(absolute);
       const realRoot = realpathSync(packRoot);
       const realRel = relative(realRoot, real);
-      if (realRel.startsWith('..') || isAbsolute(realRel)) {
+      if (relativeEscapesRoot(realRel)) {
         throw new Error(
           `pack fixture_corpus realpath resolves outside the pack root ` +
           `(an intermediate symlink may be redirecting). ` +

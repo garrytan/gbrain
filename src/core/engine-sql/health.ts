@@ -48,9 +48,10 @@ import { QUARANTINE_FILTER_FRAGMENT } from '../quarantine.ts';
 import { loadOrphanPolicyOverrides, orphanExclusionSql } from '../orphan-policy.ts';
 import { loadTimelineGradedPredicate } from '../timeline-grading.ts';
 import { quoteIdentifier } from '../search/embedding-column.ts';
-import { entityTypePredicateSql, type EntityTypeResolution } from '../schema-pack/entity-types.ts';
+import { entityTypePredicateSql, type EntityTypeFilter, type EntityTypeResolution } from '../schema-pack/entity-types.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
-import { sqlFragment, trustedSql } from './fragment.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
+import { EMBED_SKIP_FILTER_FRAGMENT } from '../embed-skip.ts';
 import { compileRowNormalizer } from './normalize.ts';
 
 /** What getHealth needs from its engine besides the executor. */
@@ -270,4 +271,31 @@ export async function getHealth(
     no_orphans_score: noOrphansScore,
     no_dead_links_score: noDeadLinksScore,
   };
+}
+
+/** The six brain-wide counts the MCP onboarding coach reads (onboard/mcp-onboarding.ts). */
+export type OnboardSignal = 'stale_chunks' | 'entities' | 'linked_entities' | 'timeline_entities' | 'takes' | 'pages';
+
+/**
+ * One onboarding count, brain-wide and unscoped (master's statements):
+ * chunks with no embedding on live pages outside embed_skip; live entity
+ * pages (types from `entityTypes`), those with an inbound link, those with a
+ * timeline entry; takes; live pages.
+ */
+export async function countOnboardSignal(
+  exec: LegacyUnscopedRead, signal: OnboardSignal, entityTypes: EntityTypeFilter, opts: { signal?: AbortSignal } = {},
+): Promise<number> {
+  const entity = (extra: ReturnType<typeof sqlFragment>) =>
+    sqlFragment`SELECT COUNT(*) AS count FROM pages p WHERE ${entityTypePredicateSql('p', entityTypes)} AND p.deleted_at IS NULL${extra}`;
+  const statement = signal === 'stale_chunks'
+    ? sqlFragment`SELECT COUNT(*) AS count FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+           WHERE cc.embedding IS NULL AND p.deleted_at IS NULL AND ${trustedSql(EMBED_SKIP_FILTER_FRAGMENT)}`
+    : signal === 'entities' ? entity(sqlFragment``)
+    : signal === 'linked_entities' ? entity(sqlFragment` AND EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)`)
+    : signal === 'timeline_entities' ? entity(sqlFragment` AND EXISTS (SELECT 1 FROM timeline_entries t WHERE t.page_id = p.id)`)
+    : signal === 'takes' ? sqlFragment`SELECT COUNT(*) AS count FROM takes`
+    : sqlFragment`SELECT COUNT(*) AS count FROM pages WHERE deleted_at IS NULL`;
+  const { text, params } = renderFragment(statement);
+  const rows = await exec.executeRaw<{ count: string | number }>(text, params, { signal: opts.signal });
+  return rows.length > 0 ? Number(rows[0].count) : 0;
 }

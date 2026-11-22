@@ -45,7 +45,7 @@
 
 import { noteInterrupted } from './read-heartbeat.ts';
 
-const CLEANUP_DEADLINE_MS = 3_000;
+export const CLEANUP_DEADLINE_MS = 3_000;
 
 interface CleanupEntry {
   name: string;
@@ -57,7 +57,7 @@ const registry = new Map<symbol, CleanupEntry>();
  *  recent registration wins; while one is registered, termination signals
  *  and a broken stdout/stderr pipe go to it instead of the generic
  *  cleanup-then-exit pass. */
-const signalOwners: Array<{ key: symbol; onSignal: (signal: NodeJS.Signals) => void }> = [];
+const signalOwners: Array<{ key: symbol; onSignal: (signal: NodeJS.Signals) => void; signals?: readonly NodeJS.Signals[] }> = [];
 let installed = false;
 let cleanupPass: Promise<void> | null = null;
 /** Refs to every listener attached by installSignalHandlers, keyed by
@@ -112,20 +112,26 @@ export function abortOnCleanupPass(name: string): { signal: AbortSignal; release
  * then calls `triggerCleanupAndExit` (or exits) itself. Repeated signals are
  * forwarded again, so `onSignal` must be idempotent. Crashes
  * (uncaughtException / unhandledRejection) keep the generic path.
+ * GST-2869: `signals` narrows the claim; a signal it leaves out (a broken pipe for `gbrain sync`) takes the generic path.
  *
  * Returns a deregister handle (idempotent).
  */
-export function registerSignalOwner(name: string, onSignal: (signal: NodeJS.Signals) => void): () => void {
+export function registerSignalOwner(name: string, onSignal: (signal: NodeJS.Signals) => void, signals?: readonly NodeJS.Signals[]): () => void {
   const key = Symbol(name);
-  signalOwners.push({ key, onSignal });
+  signalOwners.push({ key, onSignal, ...(signals ? { signals } : {}) });
   return () => {
     const i = signalOwners.findIndex((o) => o.key === key);
     if (i >= 0) signalOwners.splice(i, 1);
   };
 }
 
+/** Whether a command already claimed the termination signals (`registerSignalOwner`). */
+export function hasSignalOwner(): boolean {
+  return signalOwners.length > 0;
+}
+
 function forwardToSignalOwner(signal: NodeJS.Signals): boolean {
-  const owner = signalOwners[signalOwners.length - 1];
+  const owner = signalOwners.findLast(o => !o.signals || o.signals.includes(signal));
   if (!owner) return false;
   try { owner.onSignal(signal); }
   catch (err) {

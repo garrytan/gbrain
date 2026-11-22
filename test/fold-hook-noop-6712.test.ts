@@ -4,7 +4,8 @@
  *
  * Protects: the publication transaction of a `put_page` and of a canonical one-file import whose stamp folds into its
  * apply runs the same SQL statements, in the same order, as the golden sequence recorded on the commit before the hook
- * (c64799845, the pre-hook side of the merge with master v0.60.300.0; test/fixtures/fold-hook-noop-6712.json). Statements are the publication's own round trips (begin to
+ * (c64799845, the pre-hook side of the merge with master v0.60.300.0; test/fixtures/fold-hook-noop-6712.json; since #9646 the fold's
+ * fence-trend read also takes the imports its pre-read found open, by sequence). Statements are the publication's own round trips (begin to
  * commit), captured through the statement seam (PGLite: `countPgliteStatements`; Postgres: the `GBRAIN_SQL_TRACE` wire
  * trace), with whitespace collapsed and the per-call statement timeout masked. A hook that adds, drops or reorders a
  * statement for any other write fails here.
@@ -21,6 +22,9 @@
  * page_versions insert (null when the commit carries no reason trailer) and adds the valid-time advisory's read of the
  * written page after put_page's apply (persistence/valid-time-advisory.ts). #8194 adds the open-facts clause
  * (`gbrain.write_open_facts`, trust/fence-guard.ts) to the fence guard's two fact reads; same statements, same order.
+ * The typed engine methods of the import path rewrite three statement texts one-for-one: the config read
+ * (getConfigValues, `key = ANY($1::text[])`), the write-settings set_config (applyTransactionSettings, one unnest)
+ * and the managed-rows coverage read (parameters renumbered); same statements, same order.
  * CAPTURE_FOLD_NOOP=1 rewrites the fixture for the engine under test (only ever from the pre-hook commit).
  */
 import { describe, expect, test } from 'bun:test';

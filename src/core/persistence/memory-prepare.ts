@@ -16,7 +16,7 @@ import { requestChannelTrust } from '../trust/channel.ts';
 import { gateField, gateInput, heldOutcome, loadWriteGateConfig } from '../trust/gate-outcomes.ts';
 import { decideFactWrite, recordFlaggedRow, recordWriteGateHold } from '../write-gate-store.ts';
 import { writeGateRejectedError } from '../write-gate.ts';
-import { lexicalContestCandidate, recordContestedFact, restatedPrivateCopy, supersessionGuarded } from '../trust/supersede-handlers.ts';
+import { lexicalContestCandidate, recordContestedFact, recordHeldShare, restatedPrivateCopy, supersessionGuarded } from '../trust/supersede-handlers.ts';
 import { storedTrustTier } from '../trust/tier.ts';
 import { fenceAppendPendingTier } from '../eligibility/fence-overlay.ts';
 import { prepareFenceFactAppend, prepareFenceFactCreate, prepareFenceRowRetirement, requestReceiptFix, type FenceFactAppend } from '../facts/fence-fact-append.ts';
@@ -129,7 +129,10 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   // #5575 I3: a lower-tier write never supersedes; it is inserted contested and the owner decides (re-checked under lock by validate).
   const writerTier = requestChannelTrust(row)?.tier ?? 'unknown';
   const contested = decision.status === 'superseded' && supersessionGuarded(writerTier, decision.candidate!.trust_tier);
-  const status = contested ? 'inserted' : decision.status;
+  // GST-2897 B: a member's share about another member (submitRememberMutation records the member) is stored private and
+  // supersedes nothing until the brain owner confirms it.
+  const heldFor = p.share === true && typeof p.share_held === 'string' && input.visibility === 'world' ? p.share_held : null;
+  const status = contested || heldFor ? 'inserted' : decision.status;
   // Without a fact vector the slot has no cosine; a lexical same-subject match still contests a more trusted fact (never supersedes).
   const lexical = (tx: BrainEngine) => decision.status === 'inserted' && !dedupEmbedding && replaces === null ? lexicalContestCandidate(tx, row.source_id, input, writerTier) : Promise.resolve(null);
   const lexicalOld = await lexical(engine);
@@ -137,7 +140,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   // GST-2875: a world write restating a more trusted private claim is stored private; its proposal carries the widening.
   const restated = (tx: BrainEngine) => decision.status !== 'duplicate' && input.visibility === 'world' ? restatedPrivateCopy(tx, row.source_id, input.fact, input.entity_slug, writerTier) : Promise.resolve(null);
   const restatedOld = await restated(engine);
-  const widening = restatedOld ? { from: restatedOld.visibility, to: 'world' } : null;
+  const widening = restatedOld ? { from: restatedOld.visibility, to: 'world' } : heldFor ? { from: 'private', to: 'world' } : null;
   const validate = async (tx: BrainEngine) => {
     await assertFactNotWithdrawn(tx, row.source_id, input, { excludePrivate, remote: row.authority.remote === true });
     if (embedding && JSON.stringify(await tx.executeRaw(`${embeddingConfigSql} FOR SHARE`)) !== observedEmbeddingConfig) conflict(row);
@@ -204,14 +207,16 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     const contestedBy = contestedOld ? await recordContestedFact(tx, { sourceId: row.source_id, oldId: contestedOld.id,
       oldTier: storedTrustTier(contestedOld.trust_tier), newId: id, newTier: writerTier,
       guard: replaces !== null ? 'remember.replaces' : contested ? 'conflict_slot' : 'conflict_slot_lexical',
-      ...(widening && restatedOld!.id === contestedOld.id ? { visibility: widening, pageless: !fence } : {}) }) : null;
+      ...(widening && restatedOld?.id === contestedOld.id ? { visibility: widening, pageless: !fence } : {}) }) : null;
     const widenedBy = restatedOld && restatedOld.id !== contestedOld?.id ? await recordContestedFact(tx, { sourceId: row.source_id, oldId: restatedOld.id,
       oldTier: restatedOld.trust_tier, newId: id, newTier: writerTier, guard: 'remember.restated_private', visibility: widening!, pageless: !fence }) : null;
+    const held = heldFor && !restatedOld ? await recordHeldShare(tx, { sourceId: row.source_id, factId: id, tier: writerTier, member: heldFor, pageless: !fence }) : null;
     const flagged = gateField(gate.assessment, `f${id}`, await recordFlaggedRow(tx, gate, { table: 'facts', id, sourceId: row.source_id }));
     const superseded = status === 'superseded' ? decision.candidate! : undefined;
     return { ...outcome(id, status, input.entity_slug, validUntil, degraded, p, superseded?.id,
       superseded !== undefined && superseded.entity_slug == null && input.entity_slug !== null), ...claimColumns(p), ...fence?.fencesNormalized,
       ...(contestedBy ?? widenedBy ? { contested: contestedBy ?? widenedBy } : {}), ...(flagged ? { gate: flagged } : {}),
+      ...(held ? { status_text: `held as fact #${id}: it is about member ${held.member}, so it stays private until the brain owner shares it (gbrain trust confirm ${held.proposal_ref})`, held } : {}),
       ...(pageReceipt?.size_state ? { size_state: pageReceipt.size_state } : {}) };
   } };
 }

@@ -12,7 +12,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
-import { buildSearchTitlesStatement } from '../../src/core/search/title-statement.ts';
+import { __setTitleWholeVectorCandidatesForTests, buildSearchTitlesStatement, titleWholeVectorCandidates } from '../../src/core/search/title-statement.ts';
 import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { KEYWORD_STATEMENT_TIMEOUT_DEFAULT_MS } from '../../src/core/postgres-engine/keyword-statement-timeout.ts';
@@ -22,6 +22,7 @@ await registerPostgresTests(() => import('../search/title-arm-exact.test.ts'));
 
 const POSTGRES_DIALECT = { statementTimeout: `${KEYWORD_STATEMENT_TIMEOUT_DEFAULT_MS}ms`, relaxedPrefersIndex: true, staleProbe: false };
 const REMOTE = { requireSafeChunks: true, excludePrivate: true, sourceId: 'default', limit: 50 };
+const DEFAULT_CAP = titleWholeVectorCandidates();
 
 describe('remote title arm plan (postgres)', () => {
   let engine: PostgresEngine;
@@ -85,5 +86,80 @@ describe('remote title arm plan (postgres)', () => {
     const viaEngine = await engine.searchTitles('acme', REMOTE);
     expect(viaEngine.map((r) => r.slug)).toEqual(direct.map((r) => r.slug));
     expect(viaEngine.length).toBe(4);
+  });
+
+  // #7082: a local caller's whole-vector attempt ranks at most titleWholeVectorCandidates() pages, chosen by page id.
+  test('a cut local attempt keeps the lowest page ids, reports candidate_budget and leads with the title rows', async () => {
+    const local = async () => {
+      const cut: string[] = [];
+      const rows = await engine.searchTitles('acme', { limit: 50, onKeywordIncomplete: r => { cut.push(r); } });
+      return { slugs: rows.map(r => r.slug), cut };
+    };
+    // Fold page-1's timeline_entries row (it names acme) into its search_vector, as the next title write does.
+    await engine.executeRaw("UPDATE pages SET title = title WHERE slug = 'notes/page-1'");
+    const titled = (await engine.searchTitles('acme', REMOTE)).map(r => r.slug);
+    const whole = await local();
+    expect(whole.cut).toEqual([]);
+    expect(whole.slugs.sort()).toEqual([...titled, 'notes/page-1'].sort());
+    __setTitleWholeVectorCandidatesForTests(2);
+    try {
+      const first = await local();
+      expect(first.cut).toEqual(['candidate_budget']);
+      expect(first.slugs).toEqual([...titled, 'notes/page-1']);
+      for (let i = 0; i < 3; i++) expect((await local()).slugs).toEqual(first.slugs);
+    } finally {
+      __setTitleWholeVectorCandidatesForTests(DEFAULT_CAP);
+    }
+  });
+});
+
+// #7082: the local cut's candidates CTE (`search_vector @@ q ORDER BY p.id LIMIT cap + 1`) has two good plans. A rare
+// term's few matches come from the GIN index idx_pages_search and are sorted, never by walking pages_pkey through every
+// page; a term on nearly every page walks pages_pkey and stops at cap + 1 matches, never bitmapping every match first.
+// Statistics come from ANALYZE on a 12,000-page fixture, with no planner setting changed.
+describe('local title cut plan (postgres)', () => {
+  let engine: PostgresEngine;
+  let close: () => Promise<void>;
+
+  beforeAll(async () => {
+    ({ engine, close } = await isolatedPersistencePostgres(requirePostgresTestDatabase()));
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, type, title, compiled_truth)
+       SELECT 'notes/filler-' || g, 'note', CASE WHEN g % 3000 = 0 THEN 'Zorbex ledger ' || g ELSE 'Filler page ' || g END, 'Common body ' || g
+       FROM generate_series(1, 12000) g`);
+    // A page is searchable once its text projection matches its knowledge revision, as the projection worker leaves it.
+    await engine.executeRaw('UPDATE pages SET text_projection_revision = knowledge_revision');
+    await engine.executeRaw('ANALYZE pages');
+  }, 180_000);
+
+  afterAll(async () => { await close?.(); });
+
+  async function candidatesPlan(query: string): Promise<string> {
+    const statement = buildSearchTitlesStatement(query, { limit: 50 }, POSTGRES_DIALECT);
+    expect(statement.sql).toContain('ORDER BY p.id');
+    const rows = await engine.executeRaw<{ 'QUERY PLAN': string }>(`EXPLAIN ${statement.sql}`, statement.params);
+    const lines = rows.map((r) => r['QUERY PLAN']);
+    const start = lines.findIndex((l) => /CTE candidates/.test(l));
+    expect(start).toBeGreaterThanOrEqual(0);
+    const indent = lines[start].search(/\S/);
+    const end = lines.findIndex((l, i) => i > start && l.search(/\S/) <= indent && !/^\s*->/.test(l) && /\S/.test(l));
+    return lines.slice(start, end < 0 ? undefined : end).join('\n');
+  }
+
+  test('a rare term takes its candidates from idx_pages_search, not a pages_pkey walk', async () => {
+    expect((await engine.searchTitles('zorbex', { limit: 50 })).length).toBe(4);
+    const plan = await candidatesPlan('zorbex');
+    expect(plan).toContain('idx_pages_search');
+    expect(plan).not.toContain('pages_pkey');
+  });
+
+  test('a term on every page walks pages_pkey and stops at the cap', async () => {
+    const cut: string[] = [];
+    await engine.searchTitles('filler', { limit: 50, onKeywordIncomplete: r => { cut.push(r); } });
+    expect(cut).toEqual(['candidate_budget']);
+    const plan = await candidatesPlan('filler');
+    expect(plan).toMatch(/Limit/);
+    expect(plan).toContain('pages_pkey');
+    expect(plan).not.toContain('idx_pages_search');
   });
 });

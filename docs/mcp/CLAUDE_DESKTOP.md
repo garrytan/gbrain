@@ -20,6 +20,22 @@ host, the `remote-mcp` skill publishes with `gbrain mcp expose` when needed,
 then [MCP administration](ADMIN.md) supplies the URL and setup for your chosen
 authentication method. You finish in the Claude Desktop GUI below.
 
+## Shortcut: one link
+
+If your brain has a public HTTPS address, one link opens Claude's **Add custom
+connector** form with the address filled in. Check it, click **Add**, then sign
+in. The connector lands in your Claude account, so Claude Desktop and claude.ai
+both get it.
+
+- Hosted GBrain: `https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=GBrain&connectorUrl=https%3A%2F%2Fgbrain.io%2Fmcp`
+- Your own brain: `gbrain mcp expose --funnel` prints the link for your URL
+  (the `Claude` line under `Next`).
+
+A tailnet-only brain (plain `gbrain mcp expose`) gets no Claude link, because
+claude.ai connects from Anthropic's servers. If the form opens empty (today
+the filled-in values are lost after a sign-in redirect and on iPhone Safari),
+use the manual steps below.
+
 ## 1. Publish the brain (host side)
 
 Claude Desktop runs on your own device, so the tailnet-only default is enough

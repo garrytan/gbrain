@@ -91,9 +91,21 @@ const CCR_BRIDGE_POINTER = 'bridge-pointer.json';
 
 /** True for Claude Code Remote Control state files (never transcripts). */
 export function isClaudeCodeRemoteControlStateFile(path: string): boolean {
-  const base = path.split(/[/\\]/).pop() ?? '';
-  return base.endsWith(CCR_TIP_SUFFIX) || base === CCR_BRIDGE_POINTER;
+  const segs = path.split(/[/\\]/);
+  const base = segs[segs.length - 1] ?? '';
+  if (base.endsWith(CCR_TIP_SUFFIX) || base === CCR_BRIDGE_POINTER) return true;
+  // Per-session layout (Claude Code 2.1.x): side files live INSIDE the
+  // `<session-uuid>/` directory.
+  const isSession = (s: string | undefined) => !!s && SESSION_DIR_RE.test(s);
+  const parent = segs[segs.length - 2];
+  if ((base === 'ccr-tip.json' || base === 'custom-title.json') && isSession(parent)) return true;
+  if (/^agent-[^/\\]+\.meta\.json$/.test(base) && parent === 'subagents' && isSession(segs[segs.length - 3])) {
+    return true;
+  }
+  return /^wf_[^/\\]+\.json$/.test(base) && parent === 'workflows' && isSession(segs[segs.length - 3]);
 }
+
+const SESSION_DIR_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** True for Claude Code's per-project session index (`sessions-index.json`), which lists sessions and holds no turns. */
 export function isClaudeCodeSessionsIndexFile(path: string): boolean {
@@ -204,6 +216,7 @@ export const claudeCodeAdapter: TranscriptAdapter = {
           cwd: r.cwd,
           startedAt: utcTimestamp(r.startedAt) || undefined,
           raw: { sessionId, cwd: r.cwd ?? null, source_path: path },
+          ...(r.interactive ? { ownerBasis: 'session_user' as const } : {}),
         },
         messages: r.turns.map((t) => ({
           role: t.role,

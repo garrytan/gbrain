@@ -1,0 +1,190 @@
+{
+ "unknown_tool": {
+  "isError": true,
+  "text_block_count": 1,
+  "text": {
+   "error": "unknown_tool",
+   "code": "unknown_tool",
+   "message": "Unknown tool: no_such_tool",
+   "suggestion": "List the tools this connection can call (tools/list) and use one of those names.",
+   "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unknown_tool",
+   "docs_cmd": [
+    "gbrain",
+    "errors",
+    "unknown_tool"
+   ],
+   "class": "caller",
+   "retryable": false,
+   "contract_version": 1
+  },
+  "_meta_keys": [
+   "access"
+  ]
+ },
+ "invalid_params_type": {
+  "isError": true,
+  "text_block_count": 1,
+  "text": {
+   "error": "invalid_params",
+   "code": "invalid_params",
+   "message": "Parameter \"slug\" must be a string",
+   "suggestion": "Pass `slug` as a string (Page slug). Example: get_page {\"slug\": \"value\"}.",
+   "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#invalid_params",
+   "docs_cmd": [
+    "gbrain",
+    "errors",
+    "invalid_params"
+   ],
+   "class": "caller",
+   "retryable": false,
+   "contract_version": 1
+  },
+  "_meta_keys": [
+   "access"
+  ]
+ },
+ "invalid_params_enum": {
+  "isError": true,
+  "text_block_count": 1,
+  "text": {
+   "error": "invalid_params",
+   "code": "invalid_params",
+   "message": "Parameter \"match\" must be one of: hybrid, keyword",
+   "suggestion": "Pass `match` as one of: hybrid, keyword. Example: search {\"match\": \"hybrid\"}. Next: search {\"query\":\"x\",\"match\":\"hybrid\"}",
+   "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#invalid_params",
+   "fix": {
+    "mcp": {
+     "tool": "search",
+     "arguments": {
+      "query": "x",
+      "match": "hybrid"
+     }
+    },
+    "consent": [],
+    "actor": "agent",
+    "next": "run",
+    "why": "The call failed validation before it ran, so nothing changed. This is the same call with your other arguments kept and `match` set to \"hybrid\".",
+    "requires_exclusive": false
+   },
+   "docs_cmd": [
+    "gbrain",
+    "errors",
+    "invalid_params"
+   ],
+   "class": "caller",
+   "retryable": false,
+   "contract_version": 1
+  },
+  "_meta_keys": [
+   "access"
+  ]
+ },
+ "unknown_param_mutating": {
+  "isError": true,
+  "text_block_count": 1,
+  "text": {
+   "error": "invalid_params",
+   "code": "invalid_params",
+   "message": "1 unknown parameter not declared in the put_page tool schema (write operations always reject unknown parameters; nothing was written). See suggestion for the submitted name.",
+   "suggestion": "Unknown parameter \"contentt\" — did you mean \"content\"?",
+   "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#invalid_params",
+   "docs_cmd": [
+    "gbrain",
+    "errors",
+    "invalid_params"
+   ],
+   "class": "caller",
+   "retryable": false,
+   "contract_version": 1
+  },
+  "_meta_keys": [
+   "access"
+  ]
+ },
+ "unknown_param_read_narrowing": {
+  "isError": true,
+  "text_block_count": 1,
+  "text": {
+   "error": "invalid_params",
+   "code": "invalid_params",
+   "message": "1 unknown parameter not declared in the search tool schema (a read rejects an unknown scope or filter parameter, which would otherwise return unnarrowed results; nothing was read). See suggestion for the submitted name.",
+   "suggestion": "Unknown parameter \"source\" — did you mean \"source_id\"?",
+   "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#invalid_params",
+   "docs_cmd": [
+    "gbrain",
+    "errors",
+    "invalid_params"
+   ],
+   "class": "caller",
+   "retryable": false,
+   "contract_version": 1
+  },
+  "_meta_keys": [
+   "access"
+  ]
+ },
+ "trusted_local_only": {
+  "isError": true,
+  "text_block_count": 1,
+  "text": {
+   "error": "permission_denied",
+   "code": "trusted_local_only",
+   "message": "purge_fact runs only from the trusted local CLI on the brain host, not over MCP.",
+   "suggestion": "Ask the user to run `gbrain forget <id> --purge` on the brain host. Next: gbrain forget '<id>' --purge",
+   "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#trusted_local_only",
+   "fix": {
+    "argv": [
+     "gbrain",
+     "forget",
+     "<id>",
+     "--purge"
+    ],
+    "command": "gbrain forget '<id>' --purge",
+    "consent": [],
+    "actor": "user",
+    "next": "tell_user_to_run",
+    "why": "purge_fact is owner-only (filesystem, credentials or review authority), so no MCP connection can call it.",
+    "requires_exclusive": false,
+    "inputs": [
+     {
+      "name": "id",
+      "how": "The id value from your purge_fact call."
+     }
+    ]
+   },
+   "docs_cmd": [
+    "gbrain",
+    "errors",
+    "trusted_local_only"
+   ],
+   "class": "host_only",
+   "retryable": false,
+   "contract_version": 1
+  },
+  "_meta_keys": [
+   "access"
+  ]
+ },
+ "localOnly_over_http": {
+  "isError": true,
+  "text_block_count": 1,
+  "text": {
+   "error": "unknown_tool",
+   "code": "unknown_tool",
+   "message": "Unknown tool: sync_brain",
+   "suggestion": "List the tools this connection can call (tools/list) and use one of those names.",
+   "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unknown_tool",
+   "docs_cmd": [
+    "gbrain",
+    "errors",
+    "unknown_tool"
+   ],
+   "class": "caller",
+   "retryable": false,
+   "contract_version": 1
+  },
+  "_meta_keys": [
+   "access"
+  ]
+ }
+}

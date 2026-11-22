@@ -6,28 +6,21 @@
  *  - access_shared_source_unread: on a brain that serves several people (access serves), a live source no member is
  *    bound to (not personal) holds pages, yet no enabled member's live token or OAuth client reads it, through federation
  *    or a source grant (credentialReadSources, as dispatch resolves an unqualified read), nor config mcp.stdio_member.
- *  - access_pages_unreadable: pages that name readers or sit under a folder rule that no enabled member reads (readers
- *    and every rule met by one member's identity) and the owner does not read either (access.owner_reads_restricted on
- *    reads past them, except another member's own member page). Malformed readers and pages waiting for derived readers
- *    have their own checks (member-access.ts) and are left out. One bounded read: a 30 s statement limit on Postgres.
  *  - access_disabled_member_credentials: live tokens and OAuth clients bound to a disabled, removed or missing member;
  *    their reads are refused (access_member_disabled), yet gbrain auth list still shows them active.
+ * Pages no enabled member reads are access_pages_read_by_nobody's (access-pages-read-by-nobody.ts).
  */
 import type { Check } from '../../doctor.ts';
 import type { BrainEngine } from '../../../core/engine.ts';
 import { agentFix, checkError, infoCheck } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { brainServes } from '../../../core/access/serves.ts';
-import { accessRestrictionsPresent } from '../../../core/search/private-visibility.ts';
 import { credentialReadSources, stdioReadSources } from '../../../core/grants/shared-exposure.ts';
 import { grantFromClient, grantFromRow, grantFromTokenRow, type PrincipalGrant } from '../../../core/grants/model.ts';
 import { stdioMemberId } from '../../../core/access/caller.ts';
-import { ownerMemberId, ownerReadsRestrictedOn } from '../../../core/access/owner.ts';
-import { ACCESS_ID_RE, MEMBER_PAGE_PREFIX } from '../../../core/access/principals.ts';
 
 const SAMPLE = 20;
 const SHOWN = 5;
-const TIMEOUT_MS = 30_000;
 const DOCS = 'docs/guides/troubleshooting.md#access-reach';
 const ENABLED = 'm.disabled_at IS NULL AND m.tombstoned_at IS NULL';
 
@@ -76,58 +69,6 @@ async function sharedSourceUnread(engine: BrainEngine, remote: boolean): Promise
       { ask_user: true, docs: DOCS }) };
 }
 
-async function bounded<T>(engine: BrainEngine, fn: (e: BrainEngine) => Promise<T>): Promise<T> {
-  if (engine.kind !== 'postgres') return fn(engine);
-  return engine.transaction(async tx => {
-    await tx.executeRaw(`SET LOCAL statement_timeout = ${TIMEOUT_MS}`);
-    return fn(tx);
-  }, { readOnly: true });
-}
-
-async function pagesUnreadable(engine: BrainEngine, remote: boolean): Promise<Omit<Check, 'name'>> {
-  const name = 'access_pages_unreadable';
-  if (!(await accessRestrictionsPresent(engine))) {
-    return infoCheck(name, 'Not applicable: no page names readers and no member exists.', 'not_applicable');
-  }
-  const owner = await ownerReadsRestrictedOn(engine) ? await ownerMemberId(engine) : null;
-  const ownerLive = owner !== null && (await engine.executeRaw(`SELECT 1 FROM access_members m WHERE m.id = $1 AND ${ENABLED}`, [owner])).length > 0;
-  const audience = ownerLive ? await engine.executeRaw<{ id: string }>(`SELECT m.id FROM access_members m WHERE m.kind = 'audience' AND ${ENABLED}`) : [];
-  const ownPages = ownerLive ? [owner!, ...audience.map(a => a.id).filter(id => ACCESS_ID_RE.test(id))].map(id => `${MEMBER_PAGE_PREFIX}${id}`) : [];
-  const rows = await bounded(engine, e => e.executeRaw<{ source_id: string; slug: string; readers: string[] | null; rules: string[] | null; total: number }>(
-    `WITH readers AS MATERIALIZED (
-       SELECT ARRAY['member:' || m.id] || COALESCE((SELECT array_agg('group:' || gm.group_id) FROM access_group_members gm WHERE gm.member_id = m.id), '{}'::text[]) AS identity
-         FROM access_members m WHERE ${ENABLED}),
-     reach AS MATERIALIZED (
-       SELECT r.identity, COALESCE((SELECT array_agg(ar.source_id || ':' || ar.rule_id) FROM access_rules ar WHERE ar.readable_by && r.identity), '{}'::text[]) AS satisfied
-         FROM readers r)
-     SELECT p.source_id, p.slug, p.page_readers AS readers, p.folder_rule_ids AS rules, count(*) OVER ()::int AS total
-       FROM pages p
-      WHERE p.deleted_at IS NULL
-        AND ((p.page_readers IS NOT NULL AND p.page_readers <> ARRAY['!nobody']::text[])
-          OR (p.page_readers IS NULL AND p.folder_rule_ids IS NOT NULL AND p.frontmatter->'readable_by' IS NULL))
-        AND NOT EXISTS (SELECT 1 FROM reach r
-          WHERE (p.page_readers IS NULL OR p.page_readers && r.identity) AND (p.folder_rule_ids IS NULL OR p.folder_rule_ids <@ r.satisfied))
-        ${ownerLive ? 'AND starts_with(p.slug, $1) AND NOT (p.slug = ANY($2::text[]))' : ''}
-      ORDER BY p.source_id, p.slug LIMIT ${SAMPLE}`, ownerLive ? [MEMBER_PAGE_PREFIX, ownPages] : []));
-  const total = rows[0]?.total ?? 0;
-  if (!total) return { status: 'ok', details: { count: 0 }, message: 'Every page that names readers or sits under a folder rule is readable by an enabled member or the owner.' };
-  if (remote) {
-    return { status: 'warn', details: { count: total },
-      message: `${total} page(s) are readable by no enabled member and not by the owner. Ask the brain host's operator to run gbrain doctor --only ${name}.` };
-  }
-  const ref = (r: { source_id: string; slug: string }) => `${r.source_id}:${r.slug}`;
-  const first = rows[0]!;
-  return { status: 'warn',
-    details: { count: total, truncated: total > rows.length, samples: rows.map(r => ({ page: ref(r), readers: r.readers, rules: r.rules })) },
-    message: `${total} page(s) are readable by no enabled member and not by the owner (e.g. ${rows.slice(0, SHOWN).map(ref).join(', ')}). `
-      + 'Usual causes: the members a page names were disabled or removed (a leaver), or a folder rule\'s readers exclude the readers the page names '
-      + '(a page written into people/<x>/ before x\'s rule existed). Show who reads one, then ask the user who should: name a live member in its readable_by, '
-      + 'or change the rule (gbrain access rule add, which previews first). Nothing was changed.',
-    fix: agentFix(['gbrain', 'access', 'who-can-read', first.slug, '--source', first.source_id],
-      'Read-only: shows the page\'s readers, its folder rules and which enabled members read it, so the user can say who should.', name,
-      { ask_user: true, docs: DOCS }) };
-}
-
 async function disabledMemberCredentials(engine: BrainEngine, remote: boolean): Promise<Omit<Check, 'name'>> {
   const name = 'access_disabled_member_credentials';
   const state = `CASE WHEN m.id IS NULL THEN 'missing' WHEN m.tombstoned_at IS NOT NULL THEN 'removed' ELSE 'disabled' END`;
@@ -165,13 +106,12 @@ async function runAccessReach(ctx: DoctorContext): Promise<Check[]> {
   const remote = ctx.remote === true;
   const checks: Check[] = [];
   checks.push({ name: 'access_shared_source_unread', ...await sharedSourceUnread(engine, remote).catch(e => checkError('access_shared_source_unread', 'run access_shared_source_unread', e)) });
-  checks.push({ name: 'access_pages_unreadable', ...await pagesUnreadable(engine, remote).catch(e => checkError('access_pages_unreadable', 'run access_pages_unreadable', e)) });
   checks.push({ name: 'access_disabled_member_credentials', ...await disabledMemberCredentials(engine, remote).catch(e => checkError('access_disabled_member_credentials', 'run access_disabled_member_credentials', e)) });
   return checks;
 }
 
 export const accessReachEntry: DoctorEntry = {
   name: 'access_shared_source_unread',
-  emits: ['access_shared_source_unread', 'access_pages_unreadable', 'access_disabled_member_credentials'],
+  emits: ['access_shared_source_unread', 'access_disabled_member_credentials'],
   run: runAccessReach,
 };

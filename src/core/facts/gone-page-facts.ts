@@ -5,7 +5,8 @@
  *
  * - the facts filed on the page (`source_markdown_slug` is the page). Ontology observations (`dimension` set) are not
  *   filed there: their `source_markdown_slug` is provenance, so an observation about a live entity sourced from the
- *   purged page stays;
+ *   purged page stays. A conversation fact's slot (GBRA-574 B2: `dimension` set on a row with a row number) is filed
+ *   there: the row is expired and gives up its slot;
  * - the facts extracted from the page and filed on none (#8859: the backstop's database-only rows, which name the page
  *   only as their context head; extractedFromPageSql);
  * - the facts about the page (`entity_slug` is the page) that no page row holds. A fact held by another page, live or
@@ -13,6 +14,7 @@
  *
  * Each case is its own update, so each uses its slug index.
  */
+import { CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
 
 /** facts.source values written by page-extraction paths, whose context head is the source page slug. */
 export const PAGE_EXTRACTION_SOURCE_LIST = ['mcp:put_page', 'sync:import', 'file_upload', 'code_import'] as const;
@@ -40,6 +42,8 @@ export function contextHeadSql(alias: string): string {
 const GONE = 'unnest($1::text[], $2::text[]) AS g(source_id, slug)';
 const EXPIRE_FILED_SQL = `UPDATE facts f SET expired_at = now(), row_num = NULL FROM ${GONE}
   WHERE f.source_id = g.source_id AND f.source_markdown_slug = g.slug AND f.expired_at IS NULL AND f.dimension IS NULL`;
+const EXPIRE_FILED_SLOT_SQL = `UPDATE facts f SET expired_at = now(), row_num = NULL, dimension = NULL, value = NULL, value_hash = NULL, dim_status = NULL
+  FROM ${GONE} WHERE f.source_id = g.source_id AND f.source_markdown_slug = g.slug AND f.expired_at IS NULL AND f.dimension IS NOT NULL AND f.row_num IS NOT NULL AND ${CONVERSATION_SLOT_SQL}`;
 const EXPIRE_EXTRACTED_SQL = `UPDATE facts f SET expired_at = now(), row_num = NULL FROM ${GONE}
   WHERE f.source_id = g.source_id AND f.expired_at IS NULL AND ${extractedFromPageSql('f', 'g.slug')}`;
 const EXPIRE_ABOUT_SQL = `UPDATE facts f SET expired_at = now(), row_num = NULL FROM ${GONE}
@@ -54,6 +58,7 @@ export async function expireGonePageFacts(
   if (!pages.length) return;
   const params = [pages.map(p => p.source_id), pages.map(p => p.slug)];
   await exec.executeRaw(EXPIRE_FILED_SQL, params);
+  await exec.executeRaw(EXPIRE_FILED_SLOT_SQL, params);
   await exec.executeRaw(EXPIRE_EXTRACTED_SQL, params);
   await exec.executeRaw(EXPIRE_ABOUT_SQL, params);
 }

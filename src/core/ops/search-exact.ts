@@ -9,10 +9,66 @@ import { invalidParam } from './op-fix.ts';
 import { assertExplicitSourceLive, federatedSearchScope, parseSourceIdParam } from './context.ts';
 import { MIN_TRUST_PARAM, resolveReadEligibility } from '../eligibility/policy.ts';
 import {
-  EXACT_DEFAULT_LIMIT, EXACT_DEFAULT_SECONDS, EXACT_MAX_LIMIT, EXACT_MAX_PHRASE_CHARS, EXACT_MAX_SECONDS, runExactScan,
+  EXACT_DEFAULT_LIMIT, EXACT_DEFAULT_SECONDS, EXACT_MAX_LIMIT, EXACT_MAX_PHRASE_CHARS, EXACT_MAX_SECONDS, EXACT_SNIPPET_CONTEXT, EXACT_SNIPPETS_PER_PAGE,
+  phrasePattern, runExactScan,
 } from '../search/exact-scan.ts';
+import type { ExactMatch } from '../search/exact-scan.ts';
+import type { BrainEngine } from '../engine.ts';
+import { heldFenceLines } from '../eligibility/stamp.ts';
+import { chunkVisibleFilter, safeChunksFilter } from '../search/safe-chunks.ts';
 
 const TYPE_NAME = /^[A-Za-z0-9_.:/-]+$/;
+
+/**
+ * GST-2891: a caller whose fact reads are world-only gets no snippet text from a fence row held from it (heldFenceLines,
+ * read on the stored chunk the snippet was cut from, so a snippet that starts or stops inside a row is placed). A page
+ * whose snippets all read as stored, one per matching chunk, keeps them. Any other page is scanned again over every
+ * visible chunk with its held lines taken out, so a public hit after a held one is still found and a held hit is
+ * neither shown nor counted; a page left without a hit goes, since its presence alone would confirm the phrase.
+ */
+async function withoutHeldSnippets<M extends ExactMatch>(engine: BrainEngine, matches: M[], find: (text: string) => [number, number] | null): Promise<M[]> {
+  const keys = matches.flatMap(m => m.snippets.map(s => ({ m, s })));
+  if (!keys.length) return matches;
+  const found = await engine.executeRaw<{ i: number; chunk_text: string }>(
+    `SELECT k.i, cc.chunk_text FROM unnest($1::int[], $2::int[], $3::text[]) WITH ORDINALITY AS k(page_id, chunk_index, snippet, i)
+      JOIN pages p ON p.id = k.page_id JOIN content_chunks cc ON cc.page_id = k.page_id AND cc.chunk_index = k.chunk_index
+      WHERE ${chunkVisibleFilter('p', 'cc')} AND strpos(cc.chunk_text, k.snippet) > 0`,
+    [keys.map(k => k.m.page_id), keys.map(k => k.s.chunk_index), keys.map(k => k.s.text)]);
+  const chunks = found.map(f => ({ key: keys[Number(f.i) - 1]!, text: f.chunk_text }));
+  const held = await heldFenceLines(engine, chunks.map(c => ({ source_id: c.key.m.source_id, slug: c.key.m.slug, chunk_text: c.text })));
+  const touched = new Set<ExactMatch['snippets'][number]>(keys.map(k => k.s));
+  chunks.forEach((c, n) => {
+    let at = 0;
+    const ranges: Array<[number, number]> = [];
+    c.text.split('\n').forEach((line, l) => { if (held[n]!.has(l)) ranges.push([at, at + line.length + 1]); at += line.length + 1; });
+    for (let o = c.text.indexOf(c.key.s.text); o !== -1; o = c.text.indexOf(c.key.s.text, o + 1)) {
+      if (ranges.some(([a, b]) => a < o + c.key.s.text.length && b > o)) return;
+    }
+    touched.delete(c.key.s);
+  });
+  const rescan = matches.filter(m => m.matching_chunks !== m.snippets.length || m.snippets.some(s => touched.has(s)));
+  if (!rescan.length) return matches;
+  const rows = await engine.executeRaw<{ page_id: number; chunk_index: number; chunk_source: string; chunk_text: string }>(
+    `SELECT cc.page_id, cc.chunk_index, cc.chunk_source, cc.chunk_text FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+      WHERE cc.page_id = ANY($1::int[]) AND ${chunkVisibleFilter('p', 'cc')} AND ${safeChunksFilter('p')} ORDER BY cc.page_id, cc.chunk_index`,
+    [rescan.map(m => m.page_id)]);
+  const owner = new Map(rescan.map(m => [m.page_id, m] as const));
+  const lines = await heldFenceLines(engine, rows.map(r => ({ source_id: owner.get(Number(r.page_id))?.source_id, slug: owner.get(Number(r.page_id))?.slug ?? '', chunk_text: r.chunk_text })));
+  const hits = new Map<number, ExactMatch['snippets']>();
+  rows.forEach((r, n) => {
+    const text = r.chunk_text.split('\n').map((line, l) => (lines[n]!.has(l) ? '\u0000' : line)).join('\n');
+    const at = find(text);
+    if (!at) return;
+    const id = Number(r.page_id);
+    hits.set(id, [...(hits.get(id) ?? []), { chunk_index: Number(r.chunk_index), chunk_source: r.chunk_source,
+      text: text.slice(Math.max(0, at[0] - EXACT_SNIPPET_CONTEXT), at[1] + EXACT_SNIPPET_CONTEXT).split('\u0000').join('') }]);
+  });
+  return matches.flatMap(m => {
+    if (!owner.has(m.page_id)) return [m];
+    const page = hits.get(m.page_id) ?? [];
+    return page.length ? [{ ...m, matching_chunks: page.length, snippets: page.slice(0, EXACT_SNIPPETS_PER_PAGE) }] : [];
+  });
+}
 
 function parseParams(ctx: OperationContext, p: Record<string, unknown>) {
   const bad = (param: string, message: string, example: unknown) =>
@@ -70,7 +126,7 @@ const search_exact: Operation = {
     const scope = federatedSearchScope(ctx, sourceIdParam);
     const { floor } = await resolveReadEligibility(ctx, { minTrust: p.min_trust });
     await assertExplicitSourceLive(ctx, sourceIdParam);
-    const { resolveExcludePrivatePages } = await import('../search/private-visibility.ts');
+    const { resolveExcludePrivatePages, worldOnlyFacts } = await import('../search/private-visibility.ts');
     const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
     const { resolveHardExcludes } = await import('../search/source-boost.ts');
     const excludeSlugPrefixes = resolveHardExcludes();
@@ -89,7 +145,25 @@ const search_exact: Operation = {
       deadlineMs: startedAt + params.seconds * 1000,
     });
     const { stampPageTrust } = await import('../eligibility/stamp.ts');
-    const matches = await stampPageTrust(ctx.engine, result.matches.map(m => ({ ...m, chunk_text: m.snippets.map(s => s.text).join('\n') })), floor);
+    const pattern = phrasePattern(params.phrase);
+    const needle = (params.caseSensitive ? params.phrase.trim() : params.phrase.trim().toLowerCase()).replace(/\s+/g, ' ');
+    const find = (text: string): [number, number] | null => {
+      let folded = '';
+      const at: number[] = [];
+      for (let x = 0; x < text.length; x++) {
+        const space = /\s/.test(text[x]!);
+        if (space && folded.endsWith(' ')) continue;
+        const ch = space ? ' ' : params.caseSensitive ? text[x]! : text[x]!.toLowerCase();
+        folded += ch;
+        for (let k = 0; k < ch.length; k++) at.push(x);
+      }
+      const o = folded.indexOf(needle);
+      return o === -1 ? null : [at[o]!, at[o + needle.length - 1]! + 1];
+    };
+    const visible = worldOnlyFacts(ctx.remote)
+      ? pattern ? await withoutHeldSnippets(ctx.engine, result.matches, find) : []
+      : result.matches;
+    const matches = await stampPageTrust(ctx.engine, visible.map(m => ({ ...m, chunk_text: m.snippets.map(s => s.text).join('\n') })), floor);
     // GST-687: an untrusted reader gets a chat page's snippets, or snippets below the owner's tier, quoted (tool calls summarized on a chat page).
     const { quotePageText, quotesStored } = await import('../search/transcript-quote.ts');
     const quoted = <M extends Omit<(typeof matches)[number], 'chunk_text'>>(m: M) => ctx.remote !== false && quotesStored(m.type, (m as { trust_tier?: unknown }).trust_tier)

@@ -43,21 +43,28 @@ export interface SynopsisTierConfig {
   kill_switch: boolean;
   /** Sources whose own contextual_retrieval_mode is per_chunk_synopsis. */
   synopsis_sources: string[];
-  /** True when any page can resolve to the synopsis tier (page frontmatter overrides aside). */
+  /** True when any page can resolve to the synopsis tier: the global tier, a source row, or a trusted page frontmatter override. */
   configured: boolean;
 }
 
 export async function readSynopsisTierConfig(engine: BrainEngine): Promise<SynopsisTierConfig> {
   const knobs = resolveSearchMode(await loadSearchModeConfig(engine));
-  const rows = await engine.executeRaw<{ id: string }>(
-    `SELECT id FROM sources WHERE contextual_retrieval_mode = 'per_chunk_synopsis' AND NOT archived ORDER BY id`);
-  const synopsisSources = rows.map(r => r.id);
   const killSwitch = knobs.contextual_retrieval_disabled === true;
+  // #9683: the NULL row says a page's trusted frontmatter picks the tier (the trust rule of eligiblePagesSql).
+  const rows = await engine.executeRaw<{ id: string | null }>(
+    `SELECT id FROM sources WHERE contextual_retrieval_mode = 'per_chunk_synopsis' AND NOT archived
+     UNION ALL
+     SELECT NULL WHERE NOT $1::boolean AND EXISTS (SELECT 1 FROM pages p LEFT JOIN sources s ON s.id = p.source_id
+       WHERE p.deleted_at IS NULL AND p.page_kind = 'markdown' AND NOT COALESCE(s.archived, false)
+         AND p.frontmatter @> '{"contextual_retrieval":"per_chunk_synopsis"}'::jsonb
+         AND (p.source_id = 'default' OR COALESCE(s.trust_frontmatter_overrides, false)))
+     ORDER BY id`, [killSwitch || knobs.contextual_retrieval === 'per_chunk_synopsis']);
+  const synopsisSources = rows.flatMap(r => r.id === null ? [] : [r.id]);
   return {
     global_tier: knobs.contextual_retrieval,
     kill_switch: killSwitch,
     synopsis_sources: synopsisSources,
-    configured: !killSwitch && (knobs.contextual_retrieval === 'per_chunk_synopsis' || synopsisSources.length > 0),
+    configured: !killSwitch && (knobs.contextual_retrieval === 'per_chunk_synopsis' || rows.length > 0),
   };
 }
 

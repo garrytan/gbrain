@@ -20,15 +20,20 @@ export async function tokenMemberBinding(sql: SqlQuery, row: { member_id?: unkno
   }
 }
 
-/** A stored creation time as epoch seconds: a Date or timestamp string (created_at), or seconds (client_id_issued_at); null when absent or unreadable. */
+/**
+ * A stored creation time as epoch seconds: a Date or timestamp string (created_at) to the millisecond, or whole seconds
+ * (client_id_issued_at); null when absent or unreadable. GST-3199: the millisecond part lets the requester-scope gate
+ * tell a credential minted just before the brain started serving several people from one minted just after it in the
+ * same second; against a whole-second access.serves_since it answers exactly as a floored value would.
+ */
 export function epochSeconds(value: unknown): number | null {
   if (value == null) return null;
   if (typeof value === 'number' || typeof value === 'bigint') return Number.isFinite(Number(value)) ? Math.floor(Number(value)) : null;
-  if (value instanceof Date) return Number.isFinite(value.getTime()) ? Math.floor(value.getTime() / 1000) : null;
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.getTime() / 1000 : null;
   if (typeof value !== 'string') return null;
   if (/^\d+$/.test(value.trim())) return Number(value.trim());
   const ms = Date.parse(value);
-  return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+  return Number.isFinite(ms) ? ms / 1000 : null;
 }
 
 /** GST-363: the AuthInfo fields the requester-scope gate reads, from a credential row's reads_unscoped and creation time. */

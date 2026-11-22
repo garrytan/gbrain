@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleDisplayName</key>
+    <string>GBrain Helper</string>
+    <key>CFBundleExecutable</key>
+    <string>gbrain-apple-helper</string>
+    <key>CFBundleIdentifier</key>
+    <string>io.gbrain.apple-helper</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>GBrain Helper</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>GBrain Helper sends iMessages your agent sends for you, only when you turn sending on.</string>
+    <key>NSContactsUsageDescription</key>
+    <string>GBrain Helper lets your agent read and update your contacts' names, emails, phones, company, title and groups. It saves a copy before each change, and every change can be undone.</string>
+</dict>
+</plist>

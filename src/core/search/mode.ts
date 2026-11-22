@@ -27,7 +27,7 @@ import { normalizeChainSlots } from './relational-chain.ts';
 import { createHash } from 'crypto';
 import { CR_MODES, type CRMode } from '../types.ts';
 import { getFtsLanguage } from '../fts-language.ts';
-import { privateReadableSources, currentCallerAccess } from './private-visibility.ts';
+import { privateFactSources, privateReadableSources, currentCallerAccess } from './private-visibility.ts';
 import { loadConfigSnapshot, type BulkConfigReader } from '../config-snapshot.ts';
 import { pickDecideConfig } from '../ai/decide/config.ts';
 import { getRecipe } from '../ai/recipes/index.ts';
@@ -1330,9 +1330,9 @@ export function knobsHash(
   // a part, so every row written without one keeps its key.
   if (ctx?.queryPrefix) parts.push(`qp=${createHash('sha256').update(ctx.queryPrefix).digest('hex').slice(0, 16)}`);
   // GBRA-156 (append-only, no bump): a read granted private pages keys on its sorted private-readable
-  // set (read here so every knobsHash() caller is covered); an empty set adds no part and keeps the key.
+  // set (read here so every knobsHash() caller is covered); an empty set adds no part and keeps the key. GBRA-575: xpf= likewise, its private-fact sources.
   const privateReadable = ctx?.excludePrivate === true ? privateReadableSources() : [];
-  if (privateReadable.length) parts.push(`xpr=${[...privateReadable].sort().join(',')}`);
+  for (const [key, ids] of [['xpr', privateReadable], ['xpf', privateFactSources()]] as const) if (ids.length) parts.push(`${key}=${[...ids].sort().join(',')}`);
   // GBRA-218 (append-only, no bump): a read under the read policy keys on its member identity (sorted at
   // record time) and on a privacy relaxation (operator or, GST-2059, owner); an unbound, unrelaxed read adds no part.
   if (ctx?.excludePrivate === true) {

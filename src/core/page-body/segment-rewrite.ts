@@ -18,7 +18,7 @@ import { maintenanceAttribution } from '../persistence/attribution.ts';
 import { applySegmentedBody, sealSegmentedPage } from '../persistence/segmented-apply.ts';
 import { withPageTierKept } from '../trust/fence-append.ts';
 import { prepareSegmentedBody, readSegmentedBody, type SegmentedStagingOwner } from './ingest.ts';
-import { FENCE_MAX_BYTES, readPageBodyPolicy, STAGE_BATCH_BYTES } from './limits.ts';
+import { FENCE_MAX_BYTES, readPageBodyPolicy, stageBatchBytes } from './limits.ts';
 import { fenceTooLargeError } from './read-range.ts';
 import { pageBodySegmentedError } from './page-shape.ts';
 import { readEntryState } from './entry-state.ts';
@@ -106,7 +106,7 @@ async function changedUnits(engine: BrainEngine, sourceId: string, rows: readonl
 /** One region of a generation's stored stream with the changed units replaced, read one segment batch at a time. */
 async function* rewrittenRegion(engine: BrainEngine, sourceId: string, rows: readonly ManifestRow[], units: readonly FenceUnit[], region: BodyRegion): AsyncIterable<Uint8Array> {
   const unitAt = new Map(units.map(unit => [unit.from, unit]));
-  const batchBytes = STAGE_BATCH_BYTES[engine.kind];
+  const batchBytes = stageBatchBytes(engine.kind);
   let batch: ManifestRow[] = [], bytes = 0;
   async function* flush(): AsyncIterable<Uint8Array> {
     const texts = await engine.readSegmentTexts(sourceId, batch.map(row => row.sha256));

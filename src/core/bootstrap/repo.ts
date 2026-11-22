@@ -38,7 +38,7 @@ import { invalidateBackupStatus } from '../backup/status-file.ts';
 import { realpathOrResolve } from '../path-confine.ts';
 import { defaultRunner, isProxyBlocked403, parseGithubOwnerRepo, type ExecRunner } from '../repo-visibility.ts';
 import { detectExecutionEnvironment } from '../execution-env.ts';
-import { stagedScanPublishRefusal } from '../git/range-secret-scan.ts';
+import { scanAllowProblems, stagedScanPublishRefusal } from '../git/range-secret-scan.ts';
 import type { OperationError } from '../ops/contract.ts';
 import { loadWorkspaceAllowlist, scanFiles, SCAN_ALLOW_FILENAME, type SecretFinding } from '../secret-scan.ts';
 import { SECRET_SCAN_REFUSAL_DOCS } from '../workspace-push.ts';
@@ -429,7 +429,8 @@ function secretScanOrThrow(workspaceDir: string, relFiles: string[]): void {
       `secret scan found ${findings.length} finding(s) before the first push: ${sample}` +
         `${findings.length > 5 ? '; …' : ''} — nothing was committed or pushed. ` +
         'Remove a real credential first; allowlist only a reviewed false positive by appending its fingerprint to ' +
-        `${shellQuote(resolve(workspaceDir, SCAN_ALLOW_FILENAME))} (${SECRET_SCAN_REFUSAL_DOCS}), then re-run \`gbrain bootstrap repo\`.`,
+        `${shellQuote(resolve(workspaceDir, SCAN_ALLOW_FILENAME))} (${SECRET_SCAN_REFUSAL_DOCS}), then re-run \`gbrain bootstrap repo\`.` +
+        scanAllowProblems(allowlist).map((p) => ` ${SCAN_ALLOW_FILENAME} line ${p.entry}: ${p.problem}.`).join(''),
       { details: { findings: findings.length } },
     );
   }

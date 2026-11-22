@@ -16,8 +16,16 @@
  * (`preadmitRecheckFailed`), the caller drops this engine's entries and runs
  * the whole pre-admission again uncached, once, so the write refuses (or
  * routes) exactly as without the cache.
+ *
+ * The brain identity and the writer registration are also read through typed
+ * engine methods (`readPersistenceBrainId`, an unlocked `readLocalWriterRow`);
+ * the cache answers those the same way as their SQL text. A locked read always
+ * goes to the database. A replay of a committed request_id never reaches the
+ * locked recheck, so submitPageMutation prepares it once more without the cache
+ * before it returns the stored receipt.
  */
 import type { BrainEngine } from '../engine.ts';
+import type { LocalWriterRow } from '../engine-sql/persistence-state.ts';
 import { OperationError } from '../ops/contract.ts';
 import { registerEngineView, writeSwitchOn } from './switches.ts';
 import { GUEST_SOURCES_HIDDEN_SQL } from '../guests/note.ts';
@@ -64,15 +72,16 @@ export async function preadmitReads(engine: BrainEngine, now: () => number = Dat
   let cache = caches.get(engine);
   if (!cache) { cache = { reads: new Map() }; caches.set(engine, cache); }
   const held = cache;
+  const noteBrain = (id: string) => {
+    if (held.brainId && held.brainId.id !== id) held.reads.clear();
+    held.brainId = { id, at: now() };
+  };
   const read = async (sql: string, params: unknown[] | undefined, opts: { signal?: AbortSignal } | undefined): Promise<unknown[]> => {
     if (caches.get(engine) !== held) return engine.executeRaw(sql, params, opts);
     if (sql === BRAIN_SQL) {
       if (held.brainId && now() - held.brainId.at < PREADMIT_TTL_MS) return [{ brain_id: held.brainId.id }];
       const rows = await engine.executeRaw<Record<string, unknown>>(sql, params, opts);
-      if (present(sql, rows) && caches.get(engine) === held) {
-        if (held.brainId && held.brainId.id !== rows[0]!.brain_id) held.reads.clear();
-        held.brainId = { id: String(rows[0]!.brain_id), at: now() };
-      }
+      if (present(sql, rows) && caches.get(engine) === held) noteBrain(String(rows[0]!.brain_id));
       return rows;
     }
     const key = JSON.stringify([held.brainId?.id ?? null, sql, params ?? null]);
@@ -83,6 +92,23 @@ export async function preadmitReads(engine: BrainEngine, now: () => number = Dat
     else held.reads.delete(key);
     return rows;
   };
+  const brainRead = async (): Promise<string | null> => {
+    if (caches.get(engine) !== held) return engine.readPersistenceBrainId();
+    if (held.brainId && now() - held.brainId.at < PREADMIT_TTL_MS) return held.brainId.id;
+    const id = await engine.readPersistenceBrainId();
+    if (typeof id === 'string' && caches.get(engine) === held) noteBrain(id);
+    return id;
+  };
+  const writerRead = async (id: string): Promise<LocalWriterRow | undefined> => {
+    if (caches.get(engine) !== held) return engine.readLocalWriterRow(id);
+    const key = JSON.stringify([held.brainId?.id ?? null, 'readLocalWriterRow', id]);
+    const hit = held.reads.get(key);
+    if (hit && now() - hit.at < PREADMIT_TTL_MS) return { ...(hit.rows[0] as LocalWriterRow) };
+    const row = await engine.readLocalWriterRow(id);
+    if (held.brainId && row && row.revoked_at == null && caches.get(engine) === held) held.reads.set(key, { at: now(), rows: [{ ...row }] });
+    else held.reads.delete(key);
+    return row;
+  };
   // Every cached read is filed under the brain it was taken for, which admission checks.
   if (!held.brainId || now() - held.brainId.at >= PREADMIT_TTL_MS) await read(BRAIN_SQL, undefined, undefined);
   return registerEngineView(new Proxy(engine, { get(target, key) {
@@ -90,6 +116,8 @@ export async function preadmitReads(engine: BrainEngine, now: () => number = Dat
       const text = flat(sql);
       return text === BRAIN_SQL || text === ADMISSION_SOURCE_SQL || text === BINDING_SQL || WRITER_SQL.has(text) ? read(text, params, opts) : target.executeRaw(sql, params, opts);
     };
+    if (key === 'readPersistenceBrainId') return brainRead;
+    if (key === 'readLocalWriterRow') return (id: string, opts?: { lock?: boolean }) => opts?.lock ? target.readLocalWriterRow(id, opts) : writerRead(id);
     const value = Reflect.get(target, key, target);
     return typeof value === 'function' ? value.bind(target) : value;
   } }), engine);

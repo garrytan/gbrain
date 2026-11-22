@@ -10,7 +10,7 @@
 import type { Operation, OperationContext } from './contract.ts';
 import type { ChronicleTimelineRow, OntologyValue } from '../types.ts';
 import { readPolicyOpts, requireWritablePage, sourceScopeOpts } from './context.ts';
-import { withFolderRestricted } from '../search/private-visibility.ts';
+import { withFolderRestricted, worldOnlyFacts } from '../search/private-visibility.ts';
 import { invalidParam } from './op-fix.ts';
 import { quoteTimelineRows } from './timeline-quote.ts';
 import { quoteFacts, quotePageText, quotesStored, unquoteAnyTranscriptText, unquoteFactText } from '../search/transcript-quote.ts';
@@ -184,10 +184,11 @@ const ontology_get: Operation = {
       asof: typeof p.asof === 'string' ? p.asof : undefined,
       minConfidence: typeof p.min_confidence === 'number' ? p.min_confidence : undefined,
       includeQuarantined: p.include_quarantined === true,
-      visibility: ctx.remote === false ? undefined : ['world'],
+      visibility: worldOnlyFacts(ctx.remote) ? ['world'] : undefined,
+      excludeDiary: ctx.remote !== false,
       ...await readPolicyOpts(ctx),
     });
-    // Remote redaction: world-visibility rows only (as recall), resolved before
+    // Remote redaction: the visibility recall reads (worldOnlyFacts), resolved before
     // DISTINCT ON; never surface diary-sourced ontology to untrusted callers.
     return ctx.remote !== false ? remoteOntology(ctx, rows.filter((r) => !(r.source ?? '').startsWith('life/diary/'))) : rows;
   },
@@ -296,7 +297,8 @@ const ontology_conflicts: Operation = {
   handler: async (ctx, p) => {
     const conflicts = await ctx.engine.findOntologyConflicts({
       minConfidence: typeof p.min_confidence === 'number' ? p.min_confidence : undefined,
-      visibility: ctx.remote === false ? undefined : ['world'],
+      visibility: worldOnlyFacts(ctx.remote) ? ['world'] : undefined,
+      excludeDiary: ctx.remote !== false,
       ...await readPolicyOpts(ctx),
     });
     if (ctx.remote === false) return conflicts;

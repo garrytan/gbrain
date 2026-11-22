@@ -25,6 +25,8 @@
 import type { BrainEngine, LinkBatchInput } from '../engine.ts';
 import type { OperationContext } from '../operations.ts';
 import { parseMarkdown } from '../markdown.ts';
+import { stripFactsFence } from '../facts-fence.ts';
+import { stripTakesFence } from '../takes-fence.ts';
 import { loadActivePackBestEffort } from './best-effort.ts';
 import type { PackResolverSpec } from './manifest-v1.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
@@ -197,7 +199,7 @@ export async function runPageToLinkCore(
           from_slug: sourceSlug,
           to_slug: targetSlug,
           link_type: rule.link_type,
-          context: rule.preserve_notes ? r.compiled_truth.slice(0, 240) : undefined,
+          context: rule.preserve_notes ? stripTakesFence(stripFactsFence(r.compiled_truth)).slice(0, 240) : undefined,
           link_source: 'manual',
           from_source_id: sourceId ?? 'default',
           to_source_id: sourceId ?? 'default',

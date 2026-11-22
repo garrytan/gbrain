@@ -65,7 +65,7 @@ async function seed(target: BrainEngine): Promise<void> {
 }
 
 const PROBE: InventoryEntry = {
-  relation: 'graduation_digest_probe', kind: 'table', class: 'carry', engines: { pglite: true, postgres: true },
+  relation: 'graduation_digest_probe', kind: 'table', class: 'carry', engines: { pglite: true, postgres: true, rust: false },
   lossKind: 'user_data', transforms: [], reason: 'test probe',
 };
 

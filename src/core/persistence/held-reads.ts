@@ -26,6 +26,7 @@ import { ALL_SOURCES } from '../source-id.ts';
 import { outOfAttemptsHold, GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP, contentRepairArgv, fenceAutoRepairFor, gitHoldDocs, gitHoldFix, holdRepairSteps, type GitHoldCode, type GitHoldReason, type GitHoldRecord, type HoldRepairRoute } from './sync-holds.ts';
 import { fenceHoldLocation, fenceHoldRelay, type FenceAutoRepair, type FenceHoldLocation } from '../fence-repair/hold-fix.ts';
 import { COVERAGE_COUNT_CAP, type CoverageRelevance } from '../search/retrieval-coverage.ts';
+import { READERS_FIX_EFFECT } from './readers-request.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 
@@ -142,6 +143,7 @@ export function hostOperatorFix(sources: ReadonlyArray<{ source_id: string; rout
   const stalled = sources.filter(source => source.route?.stalled).map(source => source.source_id);
   const dirty = sources.filter(source => source.route?.dirty).map(source => source.source_id);
   const drift = sources.filter(source => source.route?.drift).map(source => source.source_id);
+  const readers = sources.filter(source => source.route?.readers).map(source => source.source_id);
   const first = sources[0]!;
   const parts = [
     ...(frontmatter.length ? [`Please run ${frontmatter.join(', ')} on the brain host to preview the fixes, then apply them.`] : []),
@@ -149,7 +151,8 @@ export function hostOperatorFix(sources: ReadonlyArray<{ source_id: string; rout
       + `to see each one's state and repair the rest now, run ${fences.join(', ')} on the brain host (a read-only preview that prints the apply command).`] : []),
     ...(concurrent.length ? [`Some notes changed in their files while an agent saved a different version to the brain, so both were kept: on the brain host run ${concurrent.map(id => `'gbrain sources status ${id}'`).join(', ')} and reconcile each named note with 'gbrain sources reconcile <source> <slug> --preview'.`] : []),
     ...(stalled.length ? [`Some files are held because the brain's write owner could not finish preparing them (the files themselves are fine): on the brain host run ${stalled.map(id => `'gbrain sources writer status --source ${id} --json'`).join(', ')} to see what the owner was stuck on, fix that or upgrade gbrain, then 'gbrain sources retry-held <source>' and the same sync.`] : []),
-    ...(drift.length ? [`Some notes were edited in the brain after their files were last imported, so sync kept the brain's version instead of overwriting it: on the brain host run ${drift.map(id => `'gbrain sources status ${id}'`).join(', ')} and preview each named note with 'gbrain repair file-drift --source <source> --slug <slug> --prefer database' (or '--prefer file'), which names what it would overwrite; the apply asks for the user's consent.`] : []),
+    ...(drift.length ? [`Some notes differ from their files and sync could not prove which side changed, so it kept the brain's version instead of overwriting it: on the brain host run ${drift.map(id => `'gbrain repair file-drift --source ${id} --held'`).join(', ')}, a preview that writes nothing and lists each note with what settles it (a re-screen with 'gbrain sources retry-held <source>' when the note equals an earlier version of its file, else the user's choice of side); the apply asks for the user's consent.`] : []),
+    ...(readers.length ? [`Some files name their readers with a key page access does not read, which no repair rewrites: on the brain host edit each so the key is readable_by with its readers listed, commit, then run ${readers.map(id => `'gbrain sync --source ${id} --no-pull'`).join(', ')} (${readers.map(id => `'gbrain sources status ${id}'`).join(', ')} names each file). ${READERS_FIX_EFFECT}`] : []),
     ...(dirty.length ? [`Some files have uncommitted edits in the brain's checkout that sync would not overwrite: on the brain host commit them, then run ${dirty.map(id => `'gbrain sync unblock --source ${id} --apply'`).join(', ')} (or 'gbrain sources retry-held <source>') and the same sync.`] : []),
   ];
   return { argv: holdRepairSteps(first.source_id, first.route ?? { fences: 0, others: 1 }).argv, consent: [], actor: 'host_admin', requires_exclusive: false, why,
@@ -160,7 +163,7 @@ export function hostOperatorFix(sources: ReadonlyArray<{ source_id: string; rout
 export function recordRoute(record: Pick<GitHoldRecord, 'code'>): HoldRepairRoute {
   return record.code === 'invalid_fence' ? { fences: 1, others: 0 } : record.code === 'concurrent_write' ? { fences: 0, others: 0, concurrent: 1 }
     : outOfAttemptsHold(record.code) ? { fences: 0, others: 0, stalled: 1 } : record.code === 'worktree_dirty' ? { fences: 0, others: 0, dirty: 1 } : record.code === 'file_drift' ? { fences: 0, others: 0, drift: 1 }
-      : record.code === 'frontmatter_slug_conflict' ? { fences: 0, others: 0, slug_conflicts: 1 } : { fences: 0, others: 1 };
+      : record.code === 'frontmatter_slug_conflict' ? { fences: 0, others: 0, slug_conflicts: 1 } : record.code === 'readers_noncanonical' ? { fences: 0, others: 0, readers: 1 } : { fences: 0, others: 1 };
 }
 
 /**

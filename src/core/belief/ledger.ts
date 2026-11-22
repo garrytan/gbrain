@@ -15,8 +15,9 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import { assertHeldPageKeys } from '../page-state/guards.ts';
-import { MANAGED_MODE_ROWS_JSON_SQL, managedModeFromRows } from '../persistence/managed-mode.ts';
-import { COVERAGE_KEY, heldKey, lifetimeRef, pageKey, sha256Hex, canonicalJson, factKeySubject, slugRef } from './keys.ts';
+import { managedModeFromRows } from '../persistence/managed-mode.ts';
+import type { LedgerSource } from '../engine-sql/belief.ts';
+import { heldKey, lifetimeRef, pageKey, sha256Hex, canonicalJson, factKeySubject, slugRef } from './keys.ts';
 import { readBeliefState, readFactsById, type RawPage, type RawState } from './state.ts';
 import { keyedSubjects, keyFact, pageNeeds, type KeyContext, type Subject } from './subjects.ts';
 import { endLifetime, mintLifetime, readOpenLifetimes, renameLifetime, resolveLifetimes } from './lifetimes.ts';
@@ -89,20 +90,8 @@ export const insideBeliefBatch = (): boolean => !!store.getStore();
  * `batch` (a batch beginning) also reads the managed mode and, when coverage is active, switches the transaction to
  * generic plans for the state read that follows, returning the mode to restore (`readBeliefState`'s `planModePrev`).
  */
-export async function readLedgerSource(tx: Pick<BrainEngine, 'executeRaw'>, sourceId: string, opts: { batch?: boolean } = {}): Promise<{ incarnation: string; purgeEpoch: number;
-  coverage: string | null; purgesPossible: boolean; managedRows?: Array<{ enabled: unknown }>; planModePrev?: string } | null> {
-  const [row] = await tx.executeRaw<Record<string, unknown>>(`${opts.batch ? `SELECT q.*, ${MANAGED_MODE_ROWS_JSON_SQL} AS managed_rows, current_setting('plan_cache_mode') AS plan_mode_prev,
-      set_config('plan_cache_mode', CASE WHEN q.coverage IS NOT NULL AND q.coverage <> 'coverage.stopped' THEN 'force_generic_plan'
-        ELSE current_setting('plan_cache_mode') END, true) FROM (` : ''}SELECT s.incarnation::text AS incarnation, s.purge_epoch,
-      (SELECT e.event_type FROM belief_events e WHERE e.source_id = s.id AND e.subject_kind = 'coverage' AND e.subject_key = $2
-        AND e.source_incarnation = s.incarnation AND e.event_type <> 'coverage.restored' ORDER BY e.id DESC LIMIT 1) AS coverage,
-      (s.purge_epoch > 0 OR EXISTS (SELECT 1 FROM fact_purges WHERE source_id = s.id) OR EXISTS (SELECT 1 FROM take_purges WHERE source_id = s.id)
-        OR EXISTS (SELECT 1 FROM page_purges WHERE source_id = s.id)) AS purges
-    FROM sources s WHERE s.id = $1${opts.batch ? ') q' : ''}`, [sourceId, COVERAGE_KEY]);
-  if (!row) return null;
-  return { incarnation: String(row.incarnation), purgeEpoch: Number(row.purge_epoch), coverage: (row.coverage as string | null) ?? null,
-    purgesPossible: row.purges === true,
-    ...(opts.batch ? { managedRows: row.managed_rows as Array<{ enabled: unknown }>, planModePrev: String(row.plan_mode_prev) } : {}) };
+export function readLedgerSource(tx: Pick<BrainEngine, 'readLedgerSource'>, sourceId: string, opts: { batch?: boolean } = {}): Promise<LedgerSource | null> {
+  return tx.readLedgerSource(sourceId, opts);
 }
 
 export const coverageActive = (coverage: string | null) => coverage != null && coverage !== 'coverage.stopped';

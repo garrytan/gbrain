@@ -43,7 +43,9 @@ export const PINNED_FUNCTION_NAMES = [
   'gbrain_clear_atom_page_state', 'gbrain_concept_inputs_private', 'gbrain_count_git_canonical_sources', 'gbrain_count_modifications', 'gbrain_forget_page_retrievals',
   'gbrain_fts_input', 'gbrain_graduation_fence', 'gbrain_guard_deferred_request', 'gbrain_guard_effect_protocol', 'gbrain_guard_guest_records', 'gbrain_guard_inserted_facts',
   'gbrain_guard_protocol_activation', 'gbrain_guard_request_protocol', 'gbrain_guard_skill_publication',
-  'gbrain_lease_shared_skill_delivery', 'gbrain_mark_derivation_scope_entry', 'gbrain_preserve_fact_withdrawal',
+  'gbrain_lease_shared_skill_delivery', 'gbrain_mark_derivation_scope_entry', 'gbrain_owner_only_held', 'gbrain_owner_only_hold', 'gbrain_owner_only_lineage', 'gbrain_owner_only_lineage_strict',
+  'gbrain_owner_only_mark_derived', 'gbrain_owner_only_marks_denied', 'gbrain_owner_only_read_mode', 'gbrain_owner_only_reads_complete', 'gbrain_owner_only_row_deleted',
+  'gbrain_owner_only_source_changed', 'gbrain_preserve_fact_withdrawal',
   'gbrain_queue_page_projection', 'gbrain_refuse_purged_fact', 'gbrain_refuse_purged_page',
   'gbrain_refuse_purged_take', 'gbrain_refuse_purging_derivation', 'gbrain_release_refresh_barrier', 'gbrain_require_managed_writer',
   'gbrain_require_persistence_protocol', 'gbrain_snapshot_version_trust', 'gbrain_stamp_revision_attribution',
@@ -89,16 +91,71 @@ function isConcurrentCatalogUpdate(error: unknown): boolean {
 }
 
 /**
+ * A failure to re-create a purge or withdrawal guard other than another role owning it. It carries no `code` of its own,
+ * so a lock timeout in the re-create never reads as the migration run's lock refusal; the database error is its cause.
+ */
+export class LedgerGuardRecreateError extends Error {
+  constructor(cause: unknown) {
+    super(`purge or withdrawal guards not re-created (${cause instanceof Error ? cause.message : String(cause)}); gbrain doctor (guard_ledger_checks) names the ones left without their ledger check`, { cause });
+    this.name = 'LedgerGuardRecreateError';
+  }
+}
+
+/**
+ * Re-creates every purge or withdrawal guard left without its ledger check that the role owns (guard-ledger-checks.ts,
+ * #7659) and returns the failure, or null. Only a guard another role owns stays silent (SQLSTATE 42501): v318 and doctor's
+ * guard_ledger_checks name it, and every later migration run retries it. A concurrent update of the same pg_proc row is
+ * retried like the hardening's.
+ */
+async function recreateLedgerGuards(engine: BrainEngine, attempt = 1): Promise<LedgerGuardRecreateError | null> {
+  try {
+    await failClosedLedgerGuards(engine);
+    return null;
+  } catch (error) {
+    if ((error as { code?: string } | null)?.code === '42501') return null;
+    if (isConcurrentCatalogUpdate(error) && attempt < CONCURRENT_UPDATE_ATTEMPTS) {
+      await new Promise(resolve => setTimeout(resolve, 100 * attempt));
+      return recreateLedgerGuards(engine, attempt + 1);
+    }
+    return new LedgerGuardRecreateError(error);
+  }
+}
+
+/** The stderr line a migration run prints when hardenFunctionSearchPaths throws, naming the doctor check that lists what is left. */
+export function hardenFailureLine(error: unknown): string {
+  if (error instanceof LedgerGuardRecreateError) return `  guards: ${error.message}\n`;
+  const guardFailure = (error as { guardFailure?: unknown } | null)?.guardFailure;
+  return `  search_path: pg_temp not restored on gbrain functions (${error instanceof Error ? error.message : String(error)}); gbrain doctor (function_search_path) names them\n`
+    + (guardFailure instanceof LedgerGuardRecreateError ? `  guards: ${guardFailure.message}\n` : '');
+}
+
+/**
+ * Re-creates the guards (recreateLedgerGuards), then puts pg_temp back (pinTempLast) and returns what that left. A
+ * failed re-create never skips the pg_temp hardening: it is thrown as a LedgerGuardRecreateError once the hardening has
+ * run. When the hardening fails too, its own error is thrown (a lock refusal keeps its meaning for the migration run)
+ * with the re-create failure attached as `guardFailure`, which hardenFailureLine prints as well.
+ */
+export async function hardenFunctionSearchPaths(engine: BrainEngine): Promise<string[] | null> {
+  const guardFailure = await recreateLedgerGuards(engine);
+  let left: string[] | null;
+  try {
+    left = await pinTempLast(engine);
+  } catch (error) {
+    if (guardFailure && error instanceof Error) Object.assign(error, { guardFailure });
+    throw error;
+  }
+  if (guardFailure) throw guardFailure;
+  return left;
+}
+
+/**
  * Runs the hardening in one short transaction with the migration statement and lock timeouts and returns the
  * functions it had to leave (owned by another role), [] when none needed it, or null when the hardening committed but
  * listing what it left failed. A pg_proc row lock it cannot take
  * becomes `schema_lock_blocked`; a concurrent update of the same pg_proc row (`apply-migrations --force-schema` beside
- * another process's boot) is retried, since the step is idempotent. Prints nothing: the caller decides who is told.
- * It first re-creates any purge or withdrawal guard left without its ledger check that the role owns (guard-ledger-checks.ts,
- * #7659), best-effort and silent: v318 names the ones another role owns, and every later migration run retries them.
+ * another process's boot) is retried, since the step is idempotent.
  */
-export async function hardenFunctionSearchPaths(engine: BrainEngine, attempt = 1): Promise<string[] | null> {
-  if (attempt === 1) await failClosedLedgerGuards(engine).catch(() => undefined);
+async function pinTempLast(engine: BrainEngine, attempt = 1): Promise<string[] | null> {
   if ((await legacySearchPathFunctions(engine)).length === 0) return [];
   const lockTimeoutMs = resolveSchemaLockTimeoutMs();
   try {
@@ -115,7 +172,7 @@ export async function hardenFunctionSearchPaths(engine: BrainEngine, attempt = 1
     }
     if (isConcurrentCatalogUpdate(error) && attempt < CONCURRENT_UPDATE_ATTEMPTS) {
       await new Promise(resolve => setTimeout(resolve, 100 * attempt));
-      return hardenFunctionSearchPaths(engine, attempt + 1);
+      return pinTempLast(engine, attempt + 1);
     }
     throw error;
   }

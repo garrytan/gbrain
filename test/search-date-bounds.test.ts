@@ -26,13 +26,22 @@ describe('public search date bounds preserve their comparison contract', () => {
 
   test('legacy after/before remain strict and public fields win', () => {
     const legacy = resolveSearchDateBounds({ afterDate: '2030-06-01', beforeDate: '2030-06-15' });
+    expect(legacy.afterDate).toBe('2030-06-01');
     expect(legacy.afterDateInclusive).not.toBe(true);
     expect(legacy.beforeDateInclusive).not.toBe(true);
     expect(legacy.beforeDate).toBe('2030-06-15T23:59:59.999Z');
     expect(resolveSearchDateBounds({ afterDate: '2030-01-01', since: '2030-06-15' })).toMatchObject({
-      afterDate: '2030-06-15', afterDateInclusive: true,
+      afterDate: '2030-06-15T00:00:00.000Z', afterDateInclusive: true,
     });
   });
+
+  test.each(['2030-06-15', ' 2032-02-29 ', '2030-12-31'])(
+    'date-only since %s starts at UTC midnight', since => {
+      expect(resolveSearchDateBounds({ since })).toMatchObject({
+        afterDate: `${since.trim()}T00:00:00.000Z`, afterDateInclusive: true,
+      });
+    },
+  );
 
   test('invalid calendar dates are rejected instead of shifting into the next month', () => {
     expect(() => resolveSearchDateBounds({ until: '2030-02-30' })).toThrow('Invalid until');

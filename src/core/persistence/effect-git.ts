@@ -16,6 +16,9 @@ import { proveIndexLockAbandoned, reclaimIndexLock, type IndexLockReclaim } from
 import { recordCommitAsync, recordIntentAsync } from '../git/commit-ledger.ts';
 import { supersededBy } from './import-deferral.ts';
 import { rangeSecretRefusal, scanRange } from '../git/range-secret-scan.ts';
+import { pushableHead } from '../git/commit-ledger.ts';
+import { onPushMode } from '../git/redact-unpushed.ts';
+import { BACKGROUND_BUDGET_FACTOR, backgroundPublish, clearBackgroundPublish, overBudget, startBackgroundPublish } from '../git/background-publish.ts';
 
 /** An index lock younger than this is contention; an older one is reported as stale. */
 const INDEX_LOCK_GRACE_MS = 10 * 60 * 1000;
@@ -655,9 +658,16 @@ const OWNER_SCAN_BUDGET_MS = 10_000;
  * runs synchronously on the owner's event loop, so it gets `scanBudgetMs` (well inside the consumer heartbeat's live
  * window); a range it cannot finish in that time goes to the shared publish, whose child process scans with the full budget,
  * except a whole history for a missing branch, which holds the effect with `publish_scan_unreadable` naming the upstream.
+ * GST-2988: with `secrets.on_push` redact (the default) a `publish_secret_found` range goes to the shared publish too,
+ * whose child rebuilds the unpushed commits with store markers (git/redact-unpushed.ts) and pushes them; the result
+ * carries `redaction` so the caller drains the spool into the store. The push target stays below a held commit (D10).
+ * A redaction or scan that runs past its budget there is retried once in a detached child with 4x the budget
+ * (git/background-publish.ts); meanwhile this root's effects wait as a dependency and other roots go on.
  */
-export async function pushGitRoot(root: string, signal?: AbortSignal, scanBudgetMs = OWNER_SCAN_BUDGET_MS): Promise<{ push: 'committed'; integrated?: number } | { push: 'skipped'; reason: 'no_tracking_remote' }> {
-  return withSession(root, signal, undefined, false, async session => {
+export type PushRedaction = { values: number; rebuilt: number; notices?: unknown[] } & Record<string, unknown>;
+export async function pushGitRoot(root: string, signal?: AbortSignal, scanBudgetMs = OWNER_SCAN_BUDGET_MS): Promise<{ push: 'committed'; integrated?: number; redaction?: PushRedaction } | { push: 'skipped'; reason: 'no_tracking_remote' }> {
+  let fromBackground: PushRedaction | undefined;
+  const result = await withSession(root, signal, undefined, false, async session => {
     const branch = await git(session, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
     if (branch.code !== 0) return { push: 'skipped', reason: 'no_tracking_remote' } as const;
     const remote = await git(session, ['config', '--get', `branch.${branch.stdout.trim()}.remote`]);
@@ -665,22 +675,27 @@ export async function pushGitRoot(root: string, signal?: AbortSignal, scanBudget
     if (remote.code !== 0 || merge.code !== 0 || !remote.stdout.trim() || remote.stdout.trim() === '.') return { push: 'skipped', reason: 'no_tracking_remote' } as const;
     const head = await git(session, ['rev-parse', '--verify', 'HEAD']);
     if (head.code !== 0) throw gitFailure('Cannot read the canonical checkout\'s HEAD.', 'git rev-parse HEAD failed, so nothing was scanned or pushed.');
-    const sha = head.stdout.trim(), short = merge.stdout.trim().replace(/^refs\/heads\//, ''), ref = `refs/heads/${short}`;
+    const sha = pushableHead(root, head.stdout.trim()), short = merge.stdout.trim().replace(/^refs\/heads\//, ''), ref = `refs/heads/${short}`;
+    const redact = onPushMode() === 'redact';
+    if (redact && backgroundPublish(root).state === 'running') throw backgroundRunning(root);
     const unavailable = () => opError('git_push_unavailable', 'The canonical commit is durable locally; its push will retry.',
       `git push to ${remote.stdout.trim()} failed (network, credentials or a remote that refused it). Nothing is lost locally and the worker pushes again on a later pass; gbrain never pulls or rebases the checkout. If it keeps failing, check the remote and its credentials with git push on the brain host.`,
       { fix: effectStatusFix });
     const listed = await git(session, ['ls-remote', '--', remote.stdout.trim(), ref]);
     if (listed.code !== 0) throw unavailable();
     const tip = listed.stdout.split('\n').map(line => line.split('\t')).find(([, name]) => name === ref)?.[0] ?? '';
+    if (redact) fromBackground = settleBackground(root, tip);
     if (!tip || (await git(session, ['merge-base', '--is-ancestor', tip, sha])).code === 0) {
       const scan = scanRange(root, tip, sha, scanBudgetMs);
       if (!scan.timed_out) {
         const refusal = rangeSecretRefusal(root, tip, sha, scan);
-        if (refusal) throw heldSecret(root, refusal);
-        signal?.throwIfAborted();
-        const push = await git(session, ['push', `--force-with-lease=${ref}:${tip}`, '--', remote.stdout.trim(), `${sha}:${ref}`]);
-        if (push.code === 0) return { push: 'committed' } as const;
-        if (!NON_FAST_FORWARD.test(push.stderr) && !STALE_LEASE.test(push.stderr)) throw unavailable();
+        if (refusal && (refusal.code !== 'publish_secret_found' || onPushMode() !== 'redact')) throw heldSecret(root, refusal);
+        if (!refusal) {
+          signal?.throwIfAborted();
+          const push = await git(session, ['push', `--force-with-lease=${ref}:${tip}`, '--', remote.stdout.trim(), `${sha}:${ref}`]);
+          if (push.code === 0) return { push: 'committed' } as const;
+          if (!NON_FAST_FORWARD.test(push.stderr) && !STALE_LEASE.test(push.stderr)) throw unavailable();
+        }
       } else if (!tip) throw heldSecret(root, opError('publish_scan_unreadable',
         `${remote.stdout.trim()} has no branch ${short}, and the secret scan of the whole history a first push would create it with ran past its in-process budget. Nothing was pushed.`,
         `Check that the checkout's upstream (branch.${branch.stdout.trim()}.merge) names a branch the remote should have (git ls-remote --heads ${remote.stdout.trim()}). If the branch was deleted or renamed on purpose, point the upstream at the right branch, or review the history and push the branch yourself; gbrain never creates a remote branch from history it has not scanned.`,
@@ -691,8 +706,40 @@ export async function pushGitRoot(root: string, signal?: AbortSignal, scanBudget
           docs: 'docs/guides/shared-checkout-git.md#publish_scan_unreadable' } }));
     }
     signal?.throwIfAborted();
-    return publishKeepingCheckout(root, signal);
+    return publishKeepingCheckout(root, signal, sha, tip);
   });
+  return fromBackground && result.push === 'committed' && !('redaction' in result && result.redaction) ? { ...result, redaction: fromBackground } : result;
+}
+
+/**
+ * GST-2988: the background publish this root started, if any. Running: this root's effects wait (a dependency retry).
+ * Ended over budget again, or racing new commits: final, held as publish_scan_unreadable while the remote branch is
+ * where it was when the run started (`remoteTip`; new local commits do not lift it, a publish by hand does).
+ * Otherwise its record is cleared and the push goes on; a redaction it made is returned so the caller settles it.
+ */
+function settleBackground(root: string, remoteTip: string): PushRedaction | undefined {
+  const background = backgroundPublish(root);
+  if (background.state === 'none') return undefined;
+  if (background.state === 'running') throw backgroundRunning(root);
+  const doc = background.doc;
+  const detail = typeof doc?.detail === 'string' ? doc.detail : null;
+  if (doc && typeof doc.code === 'string' && (overBudget(doc.code, detail) || doc.code === 'publish_secret_rebuild_race') && background.remote_tip === remoteTip) {
+    throw heldSecret(root, opError('publish_scan_unreadable', `Publishing ${root} did not finish in the background either, with ${BACKGROUND_BUDGET_FACTOR} times the budget (${String(doc.message ?? doc.code).slice(0, 300)}). Nothing was pushed, and the pushes stay held until the remote branch moves.`,
+      `Run gbrain git commit-push --push-only --keep-checkout --scan-secrets --scan-timeout <seconds> --path ${root} by hand with a longer budget, or fetch the remote so a remote-tracking ref bounds the unpushed range.`,
+      { ...(detail ? { detail } : {}), fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
+        argv: ['gbrain', 'git', 'redact-unpushed', '--path', root],
+        why: 'Read-only: shows how many commits and values the publish covers.',
+        user_message: `Publishing ${root} keeps running past its time budget (or racing new commits), even with ${BACKGROUND_BUDGET_FACTOR} times the budget in the background, so nothing was pushed. Run it by hand with a longer --scan-timeout? The held pushes go on once the remote branch moves.`,
+        docs: 'docs/guides/shared-checkout-git.md#publish_secret_rebuild_unbounded' } }));
+  }
+  clearBackgroundPublish(root);
+  return doc?.outcome === 'pushed' && doc.redaction && typeof doc.redaction === 'object'
+    ? { ...(doc.redaction as PushRedaction), ...(Array.isArray(doc.notices) ? { notices: doc.notices } : {}) } : undefined;
+}
+
+function backgroundRunning(root: string): OperationError {
+  return opError('publish_secret_rebuild_unbounded', `Publishing ${root} ran past its budget, so it is running again in the background with ${BACKGROUND_BUDGET_FACTOR} times the budget; this root's Git backups wait for it.`,
+    'Nothing to do: the effects retry on their own once the background publish finishes. Other roots are not held.', { retryable: true });
 }
 
 /** #7010: the bound on one keep-checkout publish (a fetch, an in-memory merge and a push, repeated while the remote keeps moving). */
@@ -704,7 +751,7 @@ const KEEP_CHECKOUT_PUBLISH_TIMEOUT_MS = 600_000;
  * would stall lease renewals. The child is this process's own executable, never a `gbrain` found on PATH (an older
  * install would not know the flag); a busy publish lock fails at once and the effect retries.
  */
-async function publishKeepingCheckout(root: string, signal?: AbortSignal): Promise<{ push: 'committed'; integrated?: number }> {
+async function publishKeepingCheckout(root: string, signal?: AbortSignal, head?: string, remoteTip = ''): Promise<{ push: 'committed'; integrated?: number; redaction?: PushRedaction }> {
   const { CHILD_ENV, resolveChildCliInvocation } = await import('../minions/job-isolation.ts');
   const cli = resolveChildCliInvocation(process.env, process.execPath, process.argv[1], () => null);
   if (!cli) throw opError('git_push_unavailable', 'The canonical commit is durable locally; its push will retry.',
@@ -717,8 +764,13 @@ async function publishKeepingCheckout(root: string, signal?: AbortSignal): Promi
   signal?.throwIfAborted();
   let doc: Record<string, unknown> | null = null;
   try { doc = JSON.parse(child.stdout.trim()); } catch { /* reported below */ }
-  if (!child.error && doc?.outcome === 'pushed') return { push: 'committed', ...(Number(doc.integrated) ? { integrated: Number(doc.integrated) } : {}) };
+  if (!child.error && doc?.outcome === 'pushed') return { push: 'committed', ...(Number(doc.integrated) ? { integrated: Number(doc.integrated) } : {}),
+    ...(doc.redaction && typeof doc.redaction === 'object' ? { redaction: { ...(doc.redaction as PushRedaction), ...(Array.isArray(doc.notices) ? { notices: doc.notices } : {}) } } : {}) };
   if (doc && typeof doc.code === 'string' && typeof doc.message === 'string') {
+    if (head && onPushMode() === 'redact' && overBudget(doc.code, typeof doc.detail === 'string' ? doc.detail : null)) {
+      startBackgroundPublish(root, head, remoteTip, cli);
+      throw backgroundRunning(root);
+    }
     const error = opError(doc.code as Parameters<typeof opError>[0], doc.message, typeof doc.suggestion === 'string' ? doc.suggestion : '',
       { ...(typeof doc.detail === 'string' ? { detail: doc.detail } : {}), ...(doc.fix ? { fix: doc.fix as Action } : {}), retryable: doc.retryable === true });
     throw error.code === 'integrate_conflict' ? heldConflict(root, error) : error.code === 'publish_secret_found' || error.code === 'publish_scan_unreadable' ? heldSecret(root, error) : error;

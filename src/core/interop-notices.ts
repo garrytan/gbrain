@@ -60,6 +60,8 @@ export const DEGRADED_STAGE_GUIDANCE: Readonly<Record<RecallStage, StageGuidance
   keyword_count_unavailable: { why: 'the keyword match count did not finish, so how many pages match the query is unknown', fix: null },
   saved_facts_withheld: { why: 'saved facts could not be checked for third-party text to quote, so they were withheld; the page results are complete', fix: 'doctor' },
   fact_observed_date_unavailable: { why: 'when saved facts were said could not be read, so their date headers show observed unknown; that is not evidence the date is unknown', fix: 'doctor' },
+  contested_unavailable: { why: 'whether saved facts are disputed by another saved fact could not be checked, so no fact row carries a contested label; that is not evidence none is disputed', fix: 'doctor' },
+  facts_history_unavailable: { why: 'the saved values a history question asks about (every job title, employer or city of the named person or company) could not be read, so the facts block may be missing some; that is not evidence the brain has none', fix: 'doctor' },
   deadline: { why: 'the pack hit its time limit and is partial', fix: null },
   server_budget: { why: 'the server ran out of time budget for this pack', fix: null },
   no_query_terms: { why: 'the question has no searchable words and semantic search did not run, so no saved fact could be ranked against it', fix: 'embeddings' },

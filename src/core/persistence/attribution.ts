@@ -1,4 +1,4 @@
-import { currentVerifiedLocalWriter, existingHostIdFor, readLocalWriter } from './identity.ts';
+import { currentVerifiedLocalWriter, existingHostIdFor, readLocalWriter, type LocalWriterEngine } from './identity.ts';
 import type { Principal, SqlEngine, WriteRequest } from './model.ts';
 import type { BrainEngine } from '../engine.ts';
 import { withWriteAttribution } from './context.ts';
@@ -63,7 +63,7 @@ export function principalAttribution(principal: Principal): WriteAttribution {
  * naming the registration this process started with): per-page maintenance
  * loops would otherwise repeat a file read and two queries for every page.
  */
-export async function maintenanceAttribution(engine: SqlEngine): Promise<WriteAttribution> {
+export async function maintenanceAttribution(engine: LocalWriterEngine): Promise<WriteAttribution> {
   const verified = currentVerifiedLocalWriter();
   if (verified) return principalAttribution(verified.principal);
   let registration = installationRegistration.get(engine);
@@ -77,7 +77,7 @@ export async function maintenanceAttribution(engine: SqlEngine): Promise<WriteAt
     return principalAttribution({ kind: 'application', id: `host:${existingHostIdFor(engine) ?? 'unregistered'}` });
   }
 }
-const installationRegistration = new WeakMap<SqlEngine, Promise<string>>();
+const installationRegistration = new WeakMap<object, Promise<string>>();
 
 /**
  * One unmanaged legacy transaction (direct import, extract_facts, extract-takes,

@@ -73,7 +73,7 @@ describe('check-engine-sql-ratchet.ts: SQL structure detection', () => {
       'truncate', 'updateAliasSet', 'withCte',
     ]);
     expect(r.out).toContain('FAIL: src/core/pglite-engine/facts.ts:1 new SQL-bearing engine member selectAcrossPieces');
-    for (const label of ['Fix:  put the SQL in src/core/engine-sql/facts.ts and delegate', 'Why:', 'See:  docs/TESTING.md#engine-sql-ratchet']) {
+    for (const label of ['Fix:  put the SQL in src/core/engine-sql/facts.ts and delegate', 'Why:', 'See:  docs/ci-guards.md#engine-sql-ratchet']) {
       expect(r.out).toContain(label);
     }
   });

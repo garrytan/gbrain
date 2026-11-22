@@ -12,6 +12,7 @@
  */
 
 import type { BrainEngine } from '../../core/engine.ts';
+import type { CliDispatchContext } from '../../cli/command-table.ts';
 import { setCliExitVerdict } from '../../core/cli-force-exit.ts';
 import { createProgress } from '../../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../../core/cli-options.ts';
@@ -84,7 +85,7 @@ function syncUsageError(message: string, fix: { argv: string[]; inputs: Array<{ 
   });
 }
 
-export async function runConnectorSyncCmd(engine: BrainEngine, args: string[]): Promise<void> {
+export async function runConnectorSyncCmd(engine: BrainEngine, args: string[], dispatch: Pick<CliDispatchContext, 'makeContext'> = {}): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(`Usage: ${SYNC_USAGE}`);
     return;
@@ -138,6 +139,7 @@ export async function runConnectorSyncCmd(engine: BrainEngine, args: string[]): 
     reporter.start(`connector.sync.${p}`);
     try {
       const r = await runConnectorSync(engine, {
+        context: flags.dryRun ? undefined : await dispatch.makeContext?.(engine, { source: sourceId }),
         provider: p,
         sourceId,
         full: flags.full,

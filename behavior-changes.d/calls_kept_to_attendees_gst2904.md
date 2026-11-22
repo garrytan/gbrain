@@ -1,0 +1,4 @@
+---
+kind: default
+---
+gbrain import --calls on a brain that serves two or more people (two or more enabled person members, and config access.serves is not one) now keeps each new call to the brain owner plus the teammates its Attendees or Participants line names, matched exactly by email, member id or a display name only one person holds. A teammate who was not on a call gets not_found for it. A call with no attendee list goes to the owner only, and names that match nobody are listed in the import output, never guessed. The import stays open as before, with the calls_not_scoped notice and the command to run, when no owner is named, the owner is not enabled, or any connection bound to no person still reads the brain, so the owner's own assistants never lose a call. Pass --readers source to import open as before. Calls imported earlier are not changed. A one-person brain, including one whose assistant sits in group chats, imports exactly as before.

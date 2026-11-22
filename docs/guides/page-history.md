@@ -199,6 +199,11 @@ reaches every copy of a reason that quotes the claim:
   The receipt counts these in `removed.reason_purge_tombstones` and lists the
   commits under the `git_commit_messages` residual.
 
+Before #8635 was fixed, a sync that read a reason just before a purge could
+still save it afterwards. `gbrain repair purged-change-reasons` finds those
+versions and, after you agree, sets them to `[purged]`
+([purged change reasons](repair.md#purged-change-reasons)).
+
 Purge refuses before it changes anything when it cannot read that history:
 
 - `reason_purge_scan_failed`: reading the trailers failed: the source's folder

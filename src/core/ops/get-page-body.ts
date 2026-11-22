@@ -33,6 +33,11 @@
  * 'full', anything else 'auto'.
  */
 import type { Page } from '../types.ts';
+import { storedFactsShown, worldOnlyFacts } from '../search/private-visibility.ts';
+import { remoteReadStrips } from '../remote-body.ts';
+import { loadFenceChunkOverlay } from '../eligibility/fence-overlay.ts';
+import { readHolders } from './context.ts';
+import { dropHeldFenceRows } from '../eligibility/stamp.ts';
 import type { OperationContext, ParamDef } from './contract.ts';
 import { opError, OperationError } from './contract.ts';
 import { invalidParam, readFix } from './op-fix.ts';
@@ -47,7 +52,7 @@ import {
   type PageOutline, type WindowSlice, type WindowView,
 } from '../page-window/window.ts';
 import {
-  markdownDigest, markdownHead, readViewLines, segmentedMarkdownDocument, segmentedOutline, segmentedReadDocument, tailDigest, type SegmentedDocument,
+  markdownDigest, markdownHead, readViewLines, segmentedBodyStrips, segmentedMarkdownDocument, segmentedOutline, segmentedReadDocument, tailDigest, type SegmentedDocument,
 } from '../page-window/segmented.ts';
 import { confirmBodyPin, hiddenBefore, openSegmentedBody, type BodyPin } from '../page-body/read-range.ts';
 import { inlineRegions, inlineTailDigest } from '../page-body/tail-digest.ts';
@@ -256,7 +261,7 @@ export async function assertFullReadFits(ctx: OperationContext, page: Pick<Page,
 export async function segmentedFullReadError(ctx: OperationContext, page: Page, req: BodyRequest, pin: BodyPin): Promise<OperationError> {
   let total = pageBodyBytes(page);
   if (ctx.remote !== false) {
-    const body = await openSegmentedBody(ctx.engine, { pageId: page.id, pin });
+    const body = await openSegmentedBody(ctx.engine, { pageId: page.id, pin, hideHeld: worldOnlyFacts(ctx.remote) });
     total = (await segmentedReadDocument(ctx.engine, body)).total;
     await confirmBodyPin(ctx.engine, body);
   }
@@ -340,19 +345,23 @@ async function aroundChunk(ctx: OperationContext, page: Page, doc: WindowDocumen
       { legacy_error: 'invalid_params', detail: JSON.stringify({ revision, chunk_id: chunkId }),
         fix: sizeFix(page.slug, page.source_id, "Returns the current revision and outline; search again for a current chunk_id.") });
   }
+  // GST-2891: a caller whose fact reads are world-only reads the chunk without the fence rows held from it.
+  const chunkText = worldOnlyFacts(ctx.remote)
+    ? (await dropHeldFenceRows(ctx.engine, [{ source_id: page.source_id, slug: page.slug, chunk_text: row.chunk_text }]))[0]?.chunk_text ?? ''
+    : row.chunk_text;
   const chunk = { chunk_source: row.chunk_source,
     projected_byte_start: row.projected_byte_start == null ? null : Number(row.projected_byte_start),
     projected_byte_end: row.projected_byte_end == null ? null : Number(row.projected_byte_end) };
   if (doc.segments) {
     const found = await doc.segments.aroundChunk({ ...chunk, occurrence_id: Number(row.occurrence_id), chunk_text: row.chunk_text }, contextLines, maxBytes);
     return found
-      ? { window: found.window, chunkText: row.chunk_text, anchor: 'stored_span', span: { byte_start: found.span.start, byte_end: found.span.end } }
-      : { window: null, chunkText: row.chunk_text, anchor: 'chunk_only' };
+      ? { window: found.window, chunkText, anchor: 'stored_span', span: { byte_start: found.span.start, byte_end: found.span.end } }
+      : { window: null, chunkText, anchor: 'chunk_only' };
   }
   const inline = doc.inline!;
   const stored = chunkDocumentSpan(inline, chunk);
   if (stored && spanHoldsChunk(inline, stored, row.chunk_text)) {
-    return { window: windowAround(inline.bytes, stored, contextLines, maxBytes), chunkText: row.chunk_text, anchor: 'stored_span', span: { byte_start: stored.start, byte_end: stored.end } };
+    return { window: windowAround(inline.bytes, stored, contextLines, maxBytes), chunkText, anchor: 'stored_span', span: { byte_start: stored.start, byte_end: stored.end } };
   }
   // No stored span (a chunk written before spans were recorded) or a stale one: accept a text match only when it is unique.
   const needle = Buffer.from(row.chunk_text.trim(), 'utf8');
@@ -360,10 +369,10 @@ async function aroundChunk(ctx: OperationContext, page: Page, doc: WindowDocumen
     const at = inline.bytes.indexOf(needle);
     if (at !== -1 && inline.bytes.indexOf(needle, at + 1) === -1) {
       const span = { start: at, end: at + needle.length };
-      return { window: windowAround(inline.bytes, span, contextLines, maxBytes), chunkText: row.chunk_text, anchor: 'located', span: { byte_start: span.start, byte_end: span.end } };
+      return { window: windowAround(inline.bytes, span, contextLines, maxBytes), chunkText, anchor: 'located', span: { byte_start: span.start, byte_end: span.end } };
     }
   }
-  return { window: null, chunkText: row.chunk_text, anchor: 'chunk_only' };
+  return { window: null, chunkText, anchor: 'chunk_only' };
 }
 
 /** What a partial read cuts: an inline page's document bytes, or a segmented page's stored sums and segments. */
@@ -392,6 +401,31 @@ function inlineDocument(doc: PageDocument): WindowDocument {
   };
 }
 
+/** Who a segmented page's markdown view is paged for: the stored body for the local CLI and (GST-3058) the owner's own credential reading every holder, else the read projection. */
+function markdownAudienceFor(ctx: OperationContext): 'trusted' | 'remote' {
+  return ctx.remote === false || storedFactsShown(readHolders(ctx), true) ? 'trusted' : 'remote';
+}
+
+/** GST-3058: the room marker's check (keepRoomBody) for a whole body this caller reads: remoteReadStrips over each column, with the rows held from world-only readers. */
+export function bodyStripsFor(ctx: OperationContext, page: Pick<Page, 'source_id' | 'slug'>, body: { compiled_truth: string; timeline?: string | null }): () => Promise<boolean> {
+  return async () => {
+    const held = (await loadFenceChunkOverlay(ctx.engine, { sourceId: page.source_id, slug: page.slug, compiled_truth: body.compiled_truth, timeline: body.timeline ?? '' }, { hideHeld: true }))?.held;
+    return remoteReadStrips(body.compiled_truth, held) || remoteReadStrips(body.timeline ?? '', held);
+  };
+}
+
+/**
+ * The room marker's check for a partial read: view 'markdown' is judged on the whole body it pages (the mark is per
+ * page), the caller's visible body inline or the stored body when markdownAudienceFor gives the stored one. The read
+ * view needs none: it is sanitizeRemoteBody's output for every caller, the local CLI included.
+ */
+export function partialBodyStrips(ctx: OperationContext, input: Pick<PartialReadInput, 'page' | 'visibleBody' | 'pin' | 'revision'>, req: BodyRequest): (() => Promise<boolean>) | undefined {
+  if (req.view !== 'markdown') return undefined;
+  if (!isSegmentedPage(input.page)) return bodyStripsFor(ctx, input.page, input.visibleBody);
+  if (markdownAudienceFor(ctx) === 'remote') return undefined;
+  return async () => segmentedBodyStrips(ctx.engine, await openSegmentedBody(ctx.engine, { pageId: input.page.id, pin: { ...input.pin, revision: input.revision } }));
+}
+
 /**
  * A segmented page's document and size (spec 7.2): read-view totals from the stored sums (the line count cached
  * per revision), for a trusted caller the stored body size, and for `none` the tail digest; a markdown view's size
@@ -399,14 +433,15 @@ function inlineDocument(doc: PageDocument): WindowDocument {
  */
 async function segmentedWindows(ctx: OperationContext, input: PartialReadInput, req: BodyRequest, mode: BodyMode): Promise<{ doc: WindowDocument; size: Record<string, unknown> }> {
   const { page, revision, tags } = input;
-  const body = await openSegmentedBody(ctx.engine, { pageId: page.id, pin: { ...input.pin, revision } });
+  const body = await openSegmentedBody(ctx.engine, { pageId: page.id, pin: { ...input.pin, revision }, hideHeld: worldOnlyFacts(ctx.remote) });
   const audience = ctx.remote === false ? 'trusted' : 'remote';
   const stored = audience === 'trusted' ? { body_bytes: body.bodyBytes, body_lines: body.bodyLines } : {};
   let seg: SegmentedDocument;
   let size: Record<string, unknown>;
   if (req.view === 'markdown') {
-    seg = await segmentedMarkdownDocument(ctx.engine, body, markdownHead(page, tags), audience);
-    size = { ...await markdownDigest(seg, revision, audience), ...stored };
+    const markdownAudience = markdownAudienceFor(ctx);
+    seg = await segmentedMarkdownDocument(ctx.engine, body, markdownHead(page, tags), markdownAudience);
+    size = { ...await markdownDigest(seg, revision, markdownAudience), ...stored };
   } else {
     seg = await segmentedReadDocument(ctx.engine, body);
     size = { total_bytes: seg.total, total_lines: await readViewLines(seg, revision), ...(seg.timelineByte >= 0 ? { timeline_byte_start: seg.timelineByte } : {}),
@@ -507,7 +542,7 @@ export async function readPartialBody(ctx: OperationContext, input: PartialReadI
   else {
     const whole: PageDocument = markdown
       ? { bytes: Buffer.from(serializePageToMarkdown(input.visibleBody, tags), 'utf8'), timelineByte: -1 }
-      : await readPageDocument(ctx.engine, page);
+      : await readPageDocument(ctx.engine, page, { hideHeld: worldOnlyFacts(ctx.remote) });
     size = {
       total_bytes: whole.bytes.length, total_lines: totalLines(whole.bytes),
       ...(whole.timelineByte >= 0 ? { timeline_byte_start: whole.timelineByte } : {}),

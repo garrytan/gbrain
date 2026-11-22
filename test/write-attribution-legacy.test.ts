@@ -171,7 +171,7 @@ describe('write attribution inventory', () => {
   const WRITER = new RegExp(`\\.(?:${WRITER_METHODS})\\s*(?:\\?\\.)?\\s*\\(`
     + '|\\b(?:INSERT\\s+INTO|UPDATE)\\s+(?:page_versions|facts|takes|timeline_entries)\\b'
     + '|\\bUPDATE\\s+pages\\s+(?:\\w+\\s+)?SET\\s+(?:\\w+\\.)?(?:frontmatter|compiled_truth|timeline|title|type|deleted_at|slug|content_hash)\\b', 'gi');
-  const LAYER = /^src\/(?:eval\/|core\/engine-sql\/|core\/schema-migrations\/|commands\/migrations\/)|(?:^|\/)(?:engine|pglite-engine|postgres-engine)\.ts$|(?:^|[/-])schema\.ts$|\.generated\.ts$/;
+  const LAYER = /^src\/(?:eval\/|core\/engine-sql\/|core\/rust-engine\/store-members\/|core\/schema-migrations\/|commands\/migrations\/)|(?:^|\/)(?:engine|pglite-engine|postgres-engine)\.ts$|(?:^|[/-])schema\.ts$|\.generated\.ts$/;
   const root = join(import.meta.dir, '..');
   function sourceFiles(directory: string): string[] {
     return readdirSync(directory, { withFileTypes: true }).flatMap(entry => entry.isDirectory()

@@ -84,6 +84,7 @@ const file_upload: Operation = {
     // Default is strict when ctx.remote is undefined (defense-in-depth).
     const strict = ctx.remote !== false;
     validateUploadPath(filePath, hookSessionCwd(), strict);
+    (await import('../owned-folder/paths.ts')).assertNotOwnedRoot(filePath, 'file_upload refuses');
     if (pageSlug) validatePageSlug(pageSlug);
     const filename = basename(filePath);
     validateFilename(filename);

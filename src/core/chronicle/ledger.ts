@@ -178,8 +178,12 @@ export async function recordChronicleDecision(tx: BrainEngine, row: DecidingRequ
   outcome: Record<string, unknown>): Promise<void> {
   if (!snapshot || snapshot.page.deleted_at || !snapshot.page.content_hash || !row.operation) return;
   const kind = typeof row.intent?.kind === 'string' ? row.intent.kind : null;
-  if (!DECIDING_OPERATIONS.has(row.operation) && !(row.operation === 'submit_job' && kind && DECIDING_INTENTS.has(kind))) return;
   const page = snapshot.page;
+  if (!DECIDING_OPERATIONS.has(row.operation) && !(row.operation === 'submit_job' && kind && DECIDING_INTENTS.has(kind))) {
+    // #9636: add_link authors no content; it only carries a still-pending automatic decision to the revision it publishes.
+    if (row.operation !== 'add_link' || !(await tx.executeRaw(`SELECT 1 FROM chronicle_page_state WHERE source_id=$1 AND page_id=$2 AND state='pending'
+      AND trigger='auto' AND no_extract=false AND extractor_version=$3 LIMIT 1`, [row.source_id, Number(page.id), CHRONICLE_EXTRACTOR_VERSION])).length) return;
+  }
   const base = { sourceId: row.source_id, pageId: Number(page.id), contentHash: String(page.content_hash), slug: page.slug,
     trigger: 'auto' as const, principalKind: row.principal_kind ?? null, principalId: row.principal_id ?? null, requestId: row.id };
   if (!isChronicleShaped(page.type, page.slug)) {

@@ -3,7 +3,7 @@
  * lives once in src/core/engine-sql/code-edges.ts. `getEdgesByChunk` stays
  * dialect-specific because it runs on the PGLite query API, but it applies the
  * same filters as the shared Postgres read: the edge-type filter covers every
- * direction arm and is bound, and each table gets its own LIMIT.
+ * direction arm and is bound, and each table is read in id order with its own LIMIT.
  */
 import type { PGlite } from '@electric-sql/pglite';
 import { rowToCodeEdge } from '../engine-sql/code-edges.ts';
@@ -35,7 +35,7 @@ export async function getEdgesByChunk(
               edge_type, edge_metadata, source_id, true as resolved
          FROM code_edges_chunk
         WHERE ${chunkFilter} ${typeClause}
-        LIMIT $2`,
+        ORDER BY id LIMIT $2`,
       params,
     );
     let symbolRows: unknown[] = [];
@@ -45,7 +45,7 @@ export async function getEdgesByChunk(
                 edge_type, edge_metadata, source_id, false as resolved
            FROM code_edges_symbol
           WHERE from_chunk_id = $1 ${typeClause}
-          LIMIT $2`,
+          ORDER BY id LIMIT $2`,
         params,
       );
       symbolRows = rows;

@@ -50,10 +50,30 @@ export const FACT_FINGERPRINT_FUNCTION_STATEMENTS = [
  * matching through gbrain_fact_fingerprint_v1.
  */
 /**
+ * GBRA-574 A1: whether row `r`'s entity is unbacked, as SQL: a bare name key (no directory, the form conversation
+ * extraction keeps for a full name with no page, entities/resolve-on-save.ts) with no live page at that slug in the
+ * row's source (`source`, default `r.source_id`). Withdrawal and purge treat such a fact as subject '*': forgetting or
+ * purging it is source-wide, and a withdrawal or tombstone of its claim under any subject reaches it, so a later page or
+ * re-key never brings a forgotten claim back. Spelled here so the guards import no module outside the schema inputs.
+ */
+export function unbackedEntitySql(r: string, source = `${r}.source_id`): string {
+  return `COALESCE(strpos(${r}.entity_slug, '/') = 0 AND NOT EXISTS (SELECT 1 FROM pages unbacked_page
+    WHERE unbacked_page.source_id = ${source} AND unbacked_page.slug = ${r}.entity_slug AND unbacked_page.deleted_at IS NULL), false)`;
+}
+
+/**
+ * GBRA-574: whether withdrawal subject `subject` (SQL) is an owned memory page (a member page or the scope page). Such a
+ * withdrawal stays on that page (GST-359 D, GST-2346), so it never reaches a row on an unbacked name key.
+ */
+export function ownedMemorySubjectSql(subject: string): string {
+  return `(starts_with(${subject}, 'memory/members/') OR ${subject} = 'memory/scope')`;
+}
+
+/**
  * The insert and update guard that stamps a row matching a withdrawal as withdrawn. GST-2346: a row on a member page
  * (memory/members/<id>) matches only that page's own withdrawals: it is its member's own, a withdrawal made later still expires it, and the member's
  * save checks the withdrawals of claims that member reads (facts/single-prepare.ts), so a claim it never read cannot
- * expire the row it saves. #7632/#7659: a writing role that RLS keeps from reading fact_withdrawals is refused
+ * expire the row it saves. GBRA-574: a row on an unbacked name key matches a withdrawal of its claim under any subject but an owned memory page. #7632/#7659: a writing role that RLS keeps from reading fact_withdrawals is refused
  * (derived-state-maintainers.ts requireLedgerPoliciesSql) instead of saving the row active. Re-created alone by the
  * member_page_withdrawal_scope and guard_ledgers_fail_closed migrations.
  */
@@ -69,7 +89,7 @@ export const FACT_WITHDRAWAL_PRESERVE_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION
         SELECT min(withdrawn_at) INTO withdrawn FROM fact_withdrawals
           WHERE source_id = NEW.source_id AND visibility = NEW.visibility
             AND (CASE WHEN starts_with(COALESCE(NEW.source_markdown_slug, ''), 'memory/members/') THEN subject = NEW.source_markdown_slug
-              ELSE subject = '*' OR subject = NEW.entity_slug END)
+              ELSE subject = '*' OR subject = NEW.entity_slug OR (${unbackedEntitySql('NEW')} AND NOT ${ownedMemorySubjectSql('subject')}) END)
             AND fact_hash IN (gbrain_fact_fingerprint(NEW.fact), gbrain_fact_fingerprint_v1(NEW.fact));
         IF withdrawn IS NOT NULL THEN
           NEW.expired_at := withdrawn;

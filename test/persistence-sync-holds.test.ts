@@ -145,12 +145,12 @@ test('dry run lists every would-be hold, writes nothing, and leaves hold rows by
   await s.sync();
   s.write('notes/a.md', '---\ntitle: still broken\nmore broken text\n---\nBody.\n'); s.write('notes/new.md', FOLDED); commit(s.root, 'more');
   const before = await s.holdRows();
-  const requests = await engine.executeRaw('SELECT id FROM persistence_requests WHERE source_id=$1', [s.id]);
+  const requests = await engine.executeRaw('SELECT * FROM persistence_requests WHERE source_id=$1 ORDER BY id', [s.id]);
   const dry = await s.sync({ dryRun: true });
   expect(dry).toMatchObject({ status: 'dry_run', dry_run: true, would_hold_count: 2 });
   expect(dry.would_hold!.map(item => item.path).sort()).toEqual(['notes/a.md', 'notes/new.md']);
   expect(await s.holdRows()).toEqual(before);
-  expect(await engine.executeRaw('SELECT id FROM persistence_requests WHERE source_id=$1', [s.id])).toEqual(requests);
+  expect(await engine.executeRaw('SELECT * FROM persistence_requests WHERE source_id=$1 ORDER BY id', [s.id])).toEqual(requests);
   expect(printed(dry)).toContain('Would hold notes/new.md');
 }), 180_000);
 

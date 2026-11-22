@@ -23,6 +23,7 @@ import {
 import type { SuppressionSet } from '../src/core/loops/loops-store.ts';
 import { BULK_CATEGORY_LABELS } from '../src/core/google/gmail-categories.ts';
 import { BULK_CATEGORY_LABELS as EXTRACT_LANE_BULK_CATEGORY_LABELS } from '../src/core/google/loops-extract.ts';
+import { trimQuotedReply } from '../src/core/google/google-render.ts';
 import type { GmailMessageMeta, GmailThreadData } from '../src/core/google/types.ts';
 
 // Frozen clock — every age below is relative to this instant, so the corpus
@@ -988,5 +989,95 @@ describe('#5012 positively automated mail and the opt-in Updates reciprocity rul
       msg({ from: 'billing@vendor-example.test', to: ['me@example.com'], ageHours: 48, labels: ['CATEGORY_UPDATES'], body: 'Attached. Can you approve it?' }),
     ]), MY, NOW, sup(), { ownerWroteTo: new Set() });
     expect(v.open.map((o) => o.counterpartyEmail)).toEqual(['billing@vendor-example.test']);
+  });
+});
+
+describe('forwarded mail is judged by the note above the forward (#8941 keeps the forwarded body)', () => {
+  // Bodies go through the same trim the Gmail client applies, so these rows
+  // pin both halves: the forward keeps its whole body, and only the sender's
+  // own note decides whether it asks anything.
+  const GMAIL_FORWARD = [
+    '---------- Forwarded message ---------',
+    'From: Carol Example <carol@example.com>',
+    'Date: Mon, Aug 17, 2026 at 9:00 AM',
+    'Subject: Venue for the offsite',
+    'To: Me Example <me@example.com>',
+    '',
+    'Which venue did we settle on for the offsite? I need a headcount by Friday.',
+  ].join('\n');
+  const APPLE_FORWARD = [
+    'Begin forwarded message:',
+    '',
+    'From: Carol Example <carol@example.com>',
+    'Subject: Venue for the offsite',
+    '',
+    'Which venue did we settle on for the offsite?',
+  ].join('\n');
+  const forwardBody = (note: string, forwarded = GMAIL_FORWARD) => trimQuotedReply(note ? `${note}\n\n${forwarded}` : forwarded);
+  const myForward = (note: string, ageHours = 96, forwarded = GMAIL_FORWARD) =>
+    msg({ from: 'me@example.com', to: ['bob@example.com'], ageHours, sent: true, subject: 'Fwd: Venue for the offsite', body: forwardBody(note, forwarded) });
+
+  test('the forward keeps the forwarded message in its body', () => {
+    expect(forwardBody('FYI, see below.')).toContain('Which venue did we settle on');
+    expect(forwardBody('See below.', APPLE_FORWARD)).toContain('Which venue did we settle on');
+  });
+
+  for (const [name, m] of [
+    ['a Gmail forward with an FYI note over someone else\'s question', myForward('FYI, see below.')],
+    ['an Apple Mail forward with a "See below." note', myForward('See below.', 96, APPLE_FORWARD)],
+    ['a forward with no note at all', myForward('')],
+    ['an FYI note that only shares a link', myForward('FYI, context here: https://docs.example.com/view?id=42')],
+  ] as const) {
+    test(`${name} opens no waiting-on-them loop`, () => {
+      const v = detectThreadLoop(thread([m]), MY, NOW);
+      expect(v.open).toEqual([]);
+      expect(v.held).toBeUndefined();
+    });
+  }
+
+  test('a forward whose own note asks a question still opens the loop', () => {
+    const v = detectThreadLoop(thread([myForward('Can you take this one?')]), MY, NOW);
+    expect(v.open).toHaveLength(1);
+    expect(v.open[0].loopType).toBe('unanswered_outbound');
+    expect(v.open[0].counterpartyEmail).toBe('bob@example.com');
+  });
+
+  test('my question after an FYI forward opens at the question, not at the forward', () => {
+    const ask = msg({ from: 'me@example.com', to: ['bob@example.com'], ageHours: 80, sent: true, body: 'Did you get a chance to look?' });
+    const v = detectThreadLoop(thread([myForward('FYI, see below.', 400), ask]), MY, NOW);
+    expect(v.open).toHaveLength(1);
+    expect(v.open[0].openedMs).toBe(ask.internalDateMs);
+  });
+
+  test('their FYI forward to me is answered by my "Thanks!"', () => {
+    const v = detectThreadLoop(
+      thread([
+        msg({ from: 'bob@example.com', to: ['me@example.com'], ageHours: 40, subject: 'Fwd: Venue for the offsite', body: forwardBody('FYI, see below.') }),
+        msg({ from: 'me@example.com', to: ['bob@example.com'], ageHours: 30, sent: true, body: 'Thanks!' }),
+      ]),
+      MY,
+      NOW,
+    );
+    expect(v.open).toEqual([]);
+    expect(v.close).toEqual(['unanswered_inbound']);
+  });
+
+  test('their forward that asks me in its note still owes a real answer', () => {
+    const v = detectThreadLoop(
+      thread([
+        msg({ from: 'bob@example.com', to: ['me@example.com'], ageHours: 40, subject: 'Fwd: Venue for the offsite', body: forwardBody('Can you answer Carol?') }),
+        msg({ from: 'me@example.com', to: ['bob@example.com'], ageHours: 30, sent: true, body: 'Thanks!' }),
+      ]),
+      MY,
+      NOW,
+    );
+    expect(v.open).toHaveLength(1);
+    expect(v.open[0].loopType).toBe('unanswered_inbound');
+  });
+
+  test('asksQuestion reads only the text above a forward separator', () => {
+    expect(asksQuestion(forwardBody('FYI, see below.'))).toBe(false);
+    expect(asksQuestion(forwardBody('Thoughts?'))).toBe(true);
+    expect(asksQuestion('Is "---------- Forwarded message ---------" the separator Gmail writes?')).toBe(true);
   });
 });

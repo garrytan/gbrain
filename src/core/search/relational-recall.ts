@@ -38,7 +38,8 @@ import { parseRelationalQuery, type RelationalQuery, type RelationVocab } from '
 import { edgeValidityEnabled, type EdgeTemporalOpts } from '../link-validity.ts';
 import { stampEvidence, type EvidenceOpts } from './evidence.ts';
 import { parseRelationalPlan } from './relational-plan.ts';
-import { LINK_SIGNATURES, presentEdgeContext, resolveChainAnchors, runRelationalChain, type ChainAnchor, type ChainDiagnostics, type ChainStatus, type RelationalChainRow } from './relational-chain.ts';
+import { chainStoredEdge, LINK_SIGNATURES, presentEdgeContext, resolveChainAnchors, runRelationalChain, type ChainAnchor, type ChainDiagnostics, type ChainStatus, type RelationalChainRow } from './relational-chain.ts';
+import { worldLinkContexts } from '../eligibility/fence-overlay.ts';
 import { requiresSafeChunks } from './safe-chunks.ts';
 
 export interface RelationalArmOpts extends PageReadPolicy {
@@ -533,13 +534,17 @@ async function hydrateChain(
   const hydrated = await hydrate(engine, fanoutShaped, seed, opts);
   const remote = requiresSafeChunks(opts);
   const byKey = new Map(picked.map(r => [`${r.source_id}:${r.slug}`, r] as const));
-  return hydrated.map(h => {
-    const r = byKey.get(`${h.source_id}:${h.slug}`)!;
+  const shown = hydrated.map(h => byKey.get(`${h.source_id}:${h.slug}`)!);
+  const contexts = (await worldLinkContexts(engine, remote,
+    shown.flatMap(r => r.best_path.edges.slice(-3).map(e => ({ ...e, source_id: r.source_id }))), chainStoredEdge)).map(e => e.context);
+  let next = 0;
+  return hydrated.map((h, i) => {
+    const r = shown[i]!;
     return {
       ...h,
       relational: {
         role: r.role, seed, hop: r.hop, path_count: r.path_count,
-        edges: r.best_path.edges.slice(-3).map(e => ({ ...e, context: presentEdgeContext(e.context, remote) })),
+        edges: r.best_path.edges.slice(-3).map(e => ({ ...e, context: presentEdgeContext(contexts[next++] ?? null, remote) })),
       },
     };
   });

@@ -3085,28 +3085,36 @@ async function writeSummaryPage(
     : (await engine.readPageSnapshot(summarySlug, { sourceId, includeDeleted: true }))?.revision ?? null;
   const completed = childOutcomes.filter(c => c.status === 'completed').length;
   const failed = childOutcomes.length - completed;
+  // #9598: the summary is per date and synthesize can run more than once a day, so keep earlier runs' links to live pages.
+  const linked = new Set(writtenSlugs);
+  const earlierRuns = (await engine.getPage(summarySlug, { sourceId }))?.compiled_truth ?? '';
+  for (const [, slug] of earlierRuns.matchAll(/^- \[\[([^\]|#]+)\]\]$/gm)) {
+    if (slug !== summarySlug && !linked.has(slug!) && await engine.getPage(slug!, { sourceId })) linked.add(slug!);
+  }
+  const fromEarlierRuns = linked.size - new Set(writtenSlugs).size;
 
   const lines: string[] = [];
   lines.push(`# Dream cycle ${summaryDate}`);
   lines.push('');
   lines.push(`**Children:** ${completed} completed, ${failed} failed/timeout.`);
   lines.push(`**Pages written:** ${writtenSlugs.length}.`);
+  if (fromEarlierRuns > 0) lines.push(`**Pages from earlier runs today:** ${fromEarlierRuns}.`);
   lines.push('');
-  if (writtenSlugs.length > 0) {
+  if (linked.size > 0) {
     // #4337: deterministic, lexicographically sorted sample — small cycles
     // stay fully linked; large cycles list exactly SUMMARY_LINK_SAMPLE_LIMIT
     // links while keeping exact totals above. The provenance section below
     // names the frontmatter query and what it misses (#6642).
-    const sampledSlugs = [...writtenSlugs].sort().slice(0, SUMMARY_LINK_SAMPLE_LIMIT);
+    const sampledSlugs = [...linked].sort().slice(0, SUMMARY_LINK_SAMPLE_LIMIT);
     lines.push(
-      writtenSlugs.length > SUMMARY_LINK_SAMPLE_LIMIT
-        ? `## Page sample (${sampledSlugs.length} of ${writtenSlugs.length})`
+      linked.size > SUMMARY_LINK_SAMPLE_LIMIT
+        ? `## Page sample (${sampledSlugs.length} of ${linked.size})`
         : '## Pages',
       '',
       ...sampledSlugs.map(slug => `- [[${slug}]]`),
       '',
     );
-    if (writtenSlugs.length > SUMMARY_LINK_SAMPLE_LIMIT) {
+    if (linked.size > SUMMARY_LINK_SAMPLE_LIMIT) {
       lines.push(...await summaryProvenanceLines(engine, { sourceId, cycleDate: summaryDate, summarySlug, writtenSlugs }));
     }
   }

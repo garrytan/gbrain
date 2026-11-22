@@ -25,6 +25,12 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import type { GraphNode, GraphPath, Link } from '../src/core/types.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
+import { sqlQueryForEngine } from '../src/core/sql-query.ts';
+import { mintLegacyToken } from '../src/core/token-mint.ts';
+import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
+import { setOwner } from '../src/core/access/owner.ts';
+import { bindCredential } from '../src/core/access/members.ts';
 
 const A = 'source-a';
 const B = 'source-b';
@@ -58,7 +64,9 @@ for (const kind of testBackends()) {
         [B, 'notes/bob-example', 'note'], [B, 'companies/beta-example', 'company'],
       ];
       for (const [sourceId, slug, type] of pages) {
-        await engine.putPage(slug, { type: type as never, title: slug, compiled_truth: `${slug} body.`, timeline: '', frontmatter: {} }, { sourceId });
+        // GST-2957: a body-excerpt context reaches a world-only caller only while its page holds it.
+        const body = slug === ALICE ? `${slug} body. CTX-NO-ORIGIN` : `${slug} body.`;
+        await engine.putPage(slug, { type: type as never, title: slug, compiled_truth: body, timeline: '', frontmatter: {} }, { sourceId });
       }
       const edges: Array<[string, string, string, string, string, string, string, [string, string] | null, string | null]> = [
         [A, ALICE, A, ACME, 'references', 'foreign-origin', 'CTX-FOREIGN-ORIGIN', [B, 'notes/bob-example'], 'key_people'],
@@ -139,6 +147,8 @@ for (const kind of testBackends()) {
       expect(result.card.backlink_count).toBe(2);
       const pack = await remoteDispatch('context_pack', { entities: `${ACME},${ALICE}` });
       expect(pack).toContain('CTX-NO-ORIGIN');
+      const packCard = (JSON.parse(pack) as { cards: Array<{ slug: string; edges: Array<{ direction: string; context: string | null }> }> }).cards.find(c => c.slug === ACME)!;
+      expect(packCard.edges.filter(e => e.direction === 'in').map(e => e.context).sort()).toEqual(['CTX-LIVE-ORIGIN', 'CTX-NO-ORIGIN']);
       for (const marker of HIDDEN) expect(pack).not.toContain(marker);
     }, 60_000);
 
@@ -161,6 +171,44 @@ for (const kind of testBackends()) {
       expect(await remote('inbound')).toContain(FOREIGN_AUTHORED);
       expect((await engine.findOrphanPages({ sourceId: A })).map(r => r.slug)).not.toContain(ISLAND);
       expect((await engine.findOrphanPages({ sourceId: A, mode: 'inbound' })).map(r => r.slug)).not.toContain(FOREIGN_AUTHORED);
+    }, 60_000);
+
+    test('GST-2957: a markdown link with no origin whose context is not in its from page is empty for a world-only caller, stored for the owner and local', async () => {
+      const FROM = 'notes/stale-excerpt-from-example';
+      const TO = 'companies/stale-excerpt-to-example';
+      const STALE = 'CTX-STALE-EXCERPT';
+      for (const slug of [FROM, TO]) await engine.putPage(slug, { type: 'note' as never, title: slug, compiled_truth: `${slug} body.`, timeline: '', frontmatter: {} }, { sourceId: 'default' });
+      await engine.executeRaw(
+        `INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source)
+         SELECT f.id, t.id, 'related', $3, 'markdown' FROM pages f JOIN pages t ON t.source_id = 'default' AND t.slug = $2
+          WHERE f.source_id = 'default' AND f.slug = $1`, [FROM, TO, STALE]);
+      for (const id of ['owner-example', 'other-example']) await engine.executeRaw('INSERT INTO access_members (id) VALUES ($1) ON CONFLICT DO NOTHING', [id]);
+      const tokens: Record<string, string> = {};
+      for (const [name, member] of [['owner', 'owner-example'], ['other', 'other-example']]) {
+        const m = await mintLegacyToken(engine, { name: `stale-${name}`, scopes: ['read'], takesHolders: ['world'] });
+        tokens[name] = m.token;
+        await bindCredential(engine, { kind: 'token', id: m.id }, { member });
+      }
+      await setOwner(engine, 'owner-example');
+      const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+      const read = async (who: string, op: string, params: Record<string, unknown>) => {
+        __resetPrivateVisibilityCacheForTests();
+        const tokenAuth = who === 'local' ? null : await provider.verifyAccessToken(tokens[who]!) as unknown as AuthInfo;
+        const result = tokenAuth
+          ? await dispatchToolCall(engine, op, params, { remote: true, transport: 'http', auth: tokenAuth, sourceId: 'default' })
+          : await dispatchToolCall(engine, op, params, { remote: false, sourceId: 'default' });
+        expect(result.isError, result.content[0].text.slice(0, 300)).toBeFalsy();
+        return result.content[0].text;
+      };
+      const reads: Array<[string, Record<string, unknown>]> = [['get_links', { slug: FROM }], ['get_backlinks', { slug: TO }], ['traverse_graph', { slug: FROM, depth: 1, direction: 'out' }], ['entity', { name: TO }]];
+      for (const [op, params] of reads) {
+        const shown = await read('other', op, params);
+        expect(shown, `other ${op}`).toContain(FROM);
+        expect(shown, `other ${op}`).not.toContain(STALE);
+        for (const who of ['owner', 'local']) expect(await read(who, op, params), `${who} ${op}`).toContain(STALE);
+      }
+      const stored = await engine.getLinks(FROM, { sourceId: 'default' });
+      expect(stored.map(l => l.context)).toEqual([STALE]);
     }, 60_000);
   });
 }

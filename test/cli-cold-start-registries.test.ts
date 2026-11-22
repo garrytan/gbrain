@@ -39,6 +39,7 @@ const REGISTRATIONS: Record<string, Kind> = {
   'src/core/ai/decide/injection.ts': 'cli-only',
   'src/core/ai/decide/intent.ts': 'cli-only',
   'src/core/ai/decide/recall-needed.ts': 'cli-only',
+  'src/core/access/read-log.ts': 'owns-queue',
   'src/core/ai/decide/runtime.ts': 'owns-queue',
   'src/core/ai/decide/store.ts': 'owns-queue',
   'src/core/context/volunteer-events.ts': 'owns-queue',
@@ -122,6 +123,6 @@ describe('load-time registries under per-op loading', () => {
     };
     const alone = probe('');
     expect(alone).toEqual(probe("await import('./src/core/operations.ts');"));
-    expect(alone).toEqual(['forget', 'lower_page', 'supersede_fact', 'supersede_take']);
+    expect(alone).toEqual(['confirm', 'forget', 'lower_page', 'supersede_fact', 'supersede_take']);
   });
 });

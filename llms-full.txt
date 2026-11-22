@@ -7,935 +7,6 @@ For the link-only index, see `llms.txt`. Source of truth: https://github.com/gar
 
 # Choose your agent setup
 
-## docs/guides/remote-mcp.md
-
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/remote-mcp.md
-
-# Use your brain from anywhere over MCP
-
-Your brain runs on your own computer. `gbrain mcp expose` publishes its MCP
-server on your [Tailscale](https://tailscale.com) tailnet with HTTPS, keeps
-it running as a user service, and prints the URL your other devices, apps and
-cloud agents connect to. Tailscale is the recommended path; ngrok and cloud
-hosts stay as [alternatives](#alternatives).
-
-> **Rather not keep a computer online?** [gbrain.io](https://gbrain.io/?ref=remote-mcp) is hosted GBrain: always on, and reachable from ChatGPT, Claude and Cursor without Tailscale or a user service.
-
-**Say to your agent:** *"use my brain over mcp"* — *"put my brain on
-tailscale"* — *"connect grok bot to my brain"* / *"connect claude desktop to
-my brain"* — *"reach my brain from my phone"*. The `remote-mcp` skill
-(`skills/remote-mcp/SKILL.md`) walks the agent through publishing, choosing
-native OAuth or a private machine handoff, and verifying the intended client;
-the exact commands are below.
-
-## Who reaches what
-
-| Client | Shape | Why |
-| --- | --- | --- |
-| Your own devices — Claude Desktop, Claude Code / Codex / opencode on another laptop, phone apps on the tailnet | `tailscale serve` (tailnet-only HTTPS) — the **default** | Nothing on the public internet; Tailscale ACLs plus gbrain auth |
-| Cloud agents that run in a vendor's cloud — Grok Bot, Muse, ChatGPT connector, Claude.ai / Cowork, Perplexity Computer | `tailscale funnel` (public HTTPS on the same `*.ts.net` name) — explicit `--funnel` | Their runtime is not on your tailnet; gbrain's OAuth/bearer auth plus scoped grants protect the endpoint |
-| A cloud agent whose runtime you can join to your tailnet (userspace `tailscaled`, ephemeral auth key) | tailnet-only | Advanced; not automated and not verified against a real vendor runtime |
-
-`gbrain mcp expose` never publishes to the public internet unless you pass
-`--funnel`. Both shapes keep `gbrain serve --http` on its default loopback
-bind (`127.0.0.1`); Tailscale terminates TLS and forwards to it. The
-"`--public-url` is set but `--bind` is not" warning at startup is expected
-in this shape.
-
-## What `gbrain mcp expose` does
-
-```bash
-gbrain mcp expose                # tailnet-only, port 3131, full surface listing the memory verbs, service installed
-gbrain mcp expose --funnel       # also reachable by cloud agents (public HTTPS)
-gbrain mcp expose --dry-run      # print the plan, change nothing
-```
-
-Run it **on the brain host** (a thin client is refused: "run on the brain
-host"). It never opens the database, so it works while `gbrain serve` holds a
-PGLite brain's single-writer lock. Every step is reported as a named check
-(`--json` lists them):
-
-| Step | What happens |
-| --- | --- |
-| `plan` | Resolves options; detects platform, execution environment and engine kind (PGLite vs Postgres); prints what will be installed or changed. A host with **no brain config** (no `gbrain init` yet, or an unreadable config) is refused here with `no_brain_config` — a service there would only crash-loop — unless you pass `--no-service` to publish a server you run yourself (`--dry-run` still prints the plan, with the refusal marked, and exits 0). On a PGLite brain it also reads the lock file: a live process that is not gbrain's own running service adds a `Lock` line and a `pglite_lock` **warning** (the service cannot start until that process exits — stop it, or move to Postgres); the run proceeds. `--no-tailscale` while the receipt says the brain is published on the tailnet (it records a MagicDNS name) is refused with `tailscale_receipt_present` — rewriting the receipt to loopback would leave the live Serve/Funnel mapping unfindable; run `gbrain mcp expose --remove --yes` first, or drop the flag. Then it probes `127.0.0.1:<port>`: **anything listening there** — a TCP connect that is accepted (a non-HTTP service too) or an HTTP answer of any status on `/health` (a 404 or 500 counts — the port is occupied) — with no receipt claiming that port stops the run with `foreign_listener` ("Something already answers on 127.0.0.1:<port> and no expose receipt claims it. Stop it, pick another --port, or pass --no-service to only publish it. If this is a gbrain server left behind by an interrupted `gbrain mcp expose`, run `gbrain mcp expose --remove --yes` first.") **before** anything is published. `--dry-run` stops here. |
-| `consent` | Installing Tailscale, running `tailscale up`, writing the serve/funnel config and creating a user service change system state (effects `persistent_install`, plus `egress` unless `--no-tailscale`). Interactive: one y/N prompt; declining is `pending` / exit 2 with "Nothing changed: the confirmation was declined." Non-interactive without `--yes` (no terminal, `CI`, or an agent process): prints the plan and an `[AGENT]` block with the words to ask the user, and exits 2; under `--json` the `pending` document also carries the consent fields (`code: confirmation_required`, `effects`, `user_message`, `fix` with `next: ask_user`). |
-| `tailscale.binary` | Finds `tailscale` on PATH or in the usual macOS/Homebrew/Linux locations. Missing: macOS installs `brew install --cask tailscale-app`; Linux runs the official `curl -fsSL https://tailscale.com/install.sh \| sh` installer (it prompts for sudo itself). `--no-install` prints the plan and exits 1 instead. Other platforms: exit 1 with https://tailscale.com/download. |
-| `tailscale.login` | Reads `tailscale status --json`. Not logged in: Linux runs `sudo tailscale set --operator=$USER` first (so you can run `serve` without root afterwards; a failure is noted, not fatal) and then a flagless `sudo tailscale up`; macOS runs the app CLI's `tailscale up` (after a fresh `brew` install it opens the app and gives it a moment first). Linux puts `sudo` in front of the binary **only when it is a system install** (`/usr/bin`, `/usr/local/bin`, `/opt/homebrew/bin`, or a symlink resolving there); a `tailscale` found elsewhere on `PATH` (say `~/.local/bin`) is never run as root — the step stops with `tailscale_login_manual` (exit 2) and, if you trust that binary, asks you to run `sudo <that path> set --operator=$USER && sudo <that path> up` yourself (the full path, because a binary outside sudo's `secure_path` is exactly this case), then re-run. Shows the login URL. Waits up to five minutes; still not running: exit 2 (`tailscale_login_pending`) with the exact re-run command. |
-| `tailscale.identity` | Takes your MagicDNS name → `https://your-machine.your-tailnet.ts.net`, then pre-checks the tailnet features `serve`/`funnel` need — the Tailscale CLI does not fail when they are missing, it prints an enablement URL and waits for you interactively, so `expose` never starts it blind. `CertDomains` empty (HTTPS certificates not enabled) → `pending`, exit 2, reason `tailscale_https_not_enabled`, with https://login.tailscale.com/admin/dns and the re-run command. `--funnel` on a node without the Funnel capability → `pending`, exit 2, reason `tailscale_funnel_not_enabled`, with https://login.tailscale.com/admin/acls and the [Funnel docs](https://tailscale.com/kb/1223/funnel). In both cases nothing has been published yet. |
-| `tailscale.publish` | Reads `tailscale serve status --json` — including other terminals' foreground serve sessions and a raw TCP forward on `:443` — and refuses to overwrite a `/` handler that already proxies a different local port unless `--force` (`foreign_serve_config`; a foreground session has to be stopped in its own terminal, `--force` cannot replace it). That read **fails closed**: a non-zero or killed exit, or output that is not a JSON object, is never treated as "nothing configured" — the run stops with the classified reason (`tailscale_needs_operator`, `tailscale_daemon_not_running`, `tailscale_unknown`, …) and nothing is published; only an empty document from a clean exit is an empty config. Then `tailscale serve --bg <port>` (or `tailscale funnel --bg <port>`) with a 60s timeout; a hang is reported as `unknown` with the command to run by hand. Stderr failures are classified as a second line of defense (see [Troubleshooting](#troubleshooting)). Re-reads the status to confirm the port is proxied. Switching your own handler from Funnel back to tailnet-only turns Funnel off first (`tailscale funnel --https=443 --set-path=/ off` — `--set-path=/` scopes `off` to gbrain's one mount; without it the CLI removes every mount under `:443` and prompts when several exist); if the following `serve --bg` then fails, times out or cannot be confirmed, the previous Funnel handler is re-published and the check says whether that restore worked, and the existing receipt is kept. The other direction is one atomic `funnel --bg`. |
-| `admin_token` | Ensures `~/.gbrain/serve/admin-token` (0600, 64 hex chars). Reused on later runs; never printed. The expose-managed service wrapper loads it as `GBRAIN_ADMIN_BOOTSTRAP_TOKEN`, so `gbrain mcp admin` and `gbrain mcp grant --admin-token-file` work headlessly. With `--no-service`, the independently running server must already use the matching credential; creating this file does not configure that process. |
-| `service` | Writes the wrapper `~/.gbrain/serve/gbrain-serve.sh`, then installs a **launchd user agent** (`com.gbrain.serve`; `launchctl bootout gui/$(id -u)` then `launchctl bootstrap gui/$(id -u)`, so a re-run relaunches the regenerated wrapper — a bootstrap that fails while launchd is still unloading the previous job ("Input/output error", "already in progress") is retried up to five times a second apart; the legacy `unload`/`load` pair is used only when that launchctl does not know the modern verbs) on macOS or a **systemd user unit** (`gbrain-serve.service`) on Linux with a user bus (`daemon-reload` → `enable` → `restart`, so a re-run's regenerated wrapper takes effect) and starts it. The receipt is written **right after this step** (before verify), so an interrupted run always leaves something `--status` / `--remove` can find. No supervisor (cloud sandbox, ephemeral container): `service: manual` — the wrapper is written and the exact foreground and `nohup … &` commands are printed. `--no-service` only publishes an already-running server; on a re-run it keeps the service block of the existing receipt and leaves the wrapper alone. If the install fails (`service_install_failed`, exit 1) the receipt is still written with `service.state: stopped` so `--status` and `--remove` can see and clean up the published handler. |
-| `verify.local` / `verify.tailnet` | `verify.local` polls `http://127.0.0.1:<port>/health` (20s wall clock; a timeout is a `warn` and exit 2 with `verify.tailnet` skipped). `verify.tailnet` polls `https://<your name>/health` (30s); `pending` is exit 2 (first certificate issuance can take a while), never a hard failure. When **this host cannot resolve its own MagicDNS name** the check is a `warn`, not `pending`, and the run exits 0: MagicDNS is probably off on this machine (`tailscale set --accept-dns=true`), and devices that do resolve the name may already reach the server. Bun's `fetch` reports an unresolvable name and a refused connection with the same error, so after a rejected probe `expose` asks the system resolver directly — `ENOTFOUND`, `EAI_AGAIN`, `EAI_NONAME`, `EAI_NODATA` mean "unresolved here" (a rejection whose message already names one of those counts too); a name that resolves but does not answer stays `pending`. |
-| `receipt` | Rewrites `~/.gbrain/serve/expose.json` (0600) with the settled service state (the early copy from the `service` step is updated; `created_at` is kept): port, URLs, mode, surface, service target and paths, engine kind. No secrets. |
-
-Exit codes: `0` done, `1` failed, `2` needs confirmation (`--yes`, or you
-declined the prompt) or a step is still pending (a tailnet feature to enable,
-Tailscale login, certificate issuance). Exit 2 for "needs confirmation" is a documented
-contract v1 legacy: every other gbrain command uses exit 3 for
-`confirmation_required` ([exit codes](exit-codes.md)), and `mcp expose` moves to 3
-in a future contract version. Read the JSON `reason` rather than the exit code
-alone. Which exit 2 it is matters:
-
-- A **pre-check** exit 2 — `consent` (`confirmation_required`, `declined`),
-  `tailscale.login` (`tailscale_daemon_not_running`, `tailscale_login_manual`,
-  `tailscale_login_pending`) or `tailscale.identity`
-  (`tailscale_https_not_enabled`, `tailscale_funnel_not_enabled`) — happens
-  before anything is published, so it adds no serve/funnel handler, no service
-  and no receipt. The login step may already have changed node state on the
-  way there, though: on Linux `sudo tailscale set --operator=$USER` records a
-  persistent preference (your user may configure `serve` without root from
-  then on; `--remove` does not revoke it — `sudo tailscale set --operator=`
-  resets it) and `sudo tailscale up` may have joined the machine to your
-  tailnet.
-- A **`pending`** exit 2 from `verify.local` / `verify.tailnet`
-  (`local_health_timeout`, `tailnet_health_pending`) happens AFTER the handler
-  was published, the service installed and the receipt written. Nothing is
-  missing — the server just has not answered yet; `--status` re-probes it and
-  `--remove` finds everything.
-
-The wrapper reads the admin token from its file at run time, sources your
-shell profile and `~/.gbrain/env`, prepends the Bun directory to `PATH`, and
-`exec`s `gbrain serve --http --port N --public-url URL [--surface X]
-[--advertise verbs] [--enable-dcr]`. The token never lands in the plist, unit or wrapper.
-
-Paths above use the default GBrain home. Use the receipt's `admin_token_file`
-and `mcp_url` for the intended server, especially with a custom `GBRAIN_HOME`.
-The owner credential authorizes administration; an ordinary MCP token, client
-secret, or OAuth `admin` scope does not. For `--no-service`, use that existing
-server's actual protected owner credential, or follow its normal maintenance
-procedure to configure one. A generated file or healthy endpoint alone does
-not prove owner access.
-
-### Success output
-
-Example for a managed service; command paths use the actual resolved home:
-
-```
-GBrain MCP server published on your tailnet
-  MCP URL   https://your-machine.your-tailnet.ts.net/mcp
-  Admin     https://your-machine.your-tailnet.ts.net/admin   (owner session required)
-  Owner     ~/.gbrain/serve/admin-token (protected service credential)
-  Reach     tailnet only — your devices. Cloud agents (Grok Bot, Muse, ChatGPT) need `--funnel`.
-  Service   launchd com.gbrain.serve, running   (log: ~/.gbrain/serve/serve.log)
-  Engine    PGLite (single-writer): host-side commands that open the database fail with `live_serve` —
-            administer through the running server (--admin-token-file; `gbrain sync` delegates to it),
-            or move to Postgres for concurrent local use.
-
-Next — choose the connection method supported by the intended client
-  Owner login      gbrain mcp admin login-link --url https://your-machine.your-tailnet.ts.net/mcp --admin-token-file '/home/example/.gbrain/serve/admin-token'
-  Native OAuth     gbrain mcp admin register --help (public/confidential PKCE; exact client redirect URIs)
-                   The native client starts authorization; the owner separately reviews consent.
-  Machine client   gbrain mcp grant <name> --harness <id> --profile memory-writer --source default \
-                     --url https://your-machine.your-tailnet.ts.net/mcp \
-                     --admin-token-file '/home/example/.gbrain/serve/admin-token' --credentials-out /private/<name>.json
-  Machine install  gbrain connect https://your-machine.your-tailnet.ts.net/mcp --harness <id> --credentials-file /private/<name>.json --install
-  Local agents     PGLite: mint before the service runs (gbrain auth create local-agents --scopes read,write),
-                   then gbrain bootstrap harness --yes --port 3131 --token <value>; or grant a scoped client with
-                   gbrain mcp grant … --url http://127.0.0.1:3131/mcp --admin-token-file ~/.gbrain/serve/admin-token
-                   and gbrain connect http://127.0.0.1:3131/mcp --harness <id> --credentials-file … --install
-  Check            gbrain mcp expose --status
-```
-
-The `Engine` and `Local agents` lines depend on the engine the receipt
-recorded: a Postgres brain prints `Local agents     gbrain bootstrap harness
---yes --port 3131` because minting works while the server runs.
-
-The displayed machine grant/connect example is the **private machine handoff** path.
-For a native OAuth client, use the registration/setup path below instead.
-Tailnet versus Funnel controls reachability, not which authentication flow a
-client supports. The printed admin URL opens a login page; it does not sign in.
-
-## Command surface
-
-```
-gbrain mcp expose [--port N] [--funnel] [--surface verbs|starter|full] [--enable-dcr]
-                  [--no-tailscale] [--no-service] [--no-install] [--force]
-                  [--dry-run] [--yes] [--json]
-gbrain mcp expose --status [--json]
-gbrain mcp expose --remove [--yes] [--json]
-```
-
-| Flag | Meaning |
-| --- | --- |
-| `--port N` | Local port for `gbrain serve --http` (default `3131`). Tailscale proxies `:443` on your MagicDNS name to it. With `--status` or `--remove` and no receipt, the port whose leftover `:443` handler is looked for and cleaned up. |
-| `--funnel` | Public HTTPS via Tailscale Funnel instead of tailnet-only Serve. Required for cloud agents. |
-| `--surface verbs\|starter\|full` | Tool surface, listed in full. Default: `full` with `--advertise verbs` (lists the memory verbs and `request_tools`; all stays callable). Older exposures keep their listing. |
-| `--enable-dcr` | Turn on self-service client registration on the served server (off by default; every self-registered connection still stops for your approval in the admin dashboard). |
-| `--no-tailscale` | Skip Tailscale entirely: install the service on loopback only, publish nothing. Exclusive with `--funnel`. |
-| `--no-service` | Do not create a user service; only publish a server you run yourself. Also the way to publish from a host with no brain config (`no_brain_config`). |
-| `--no-install` | Never install Tailscale; print the install plan and exit 1 when it is missing. |
-| `--force` | Replace a `/` handler on `:443` that already proxies another local port. With `--remove`: also delete the admin token file, and — without a receipt — turn off a `:443` handler for `--port` that no wrapper, unit or service of gbrain's corroborates. |
-| `--dry-run` | Print the plan and stop (exit 0). Exclusive with `--status`. |
-| `--yes` | Skip the consent prompt (required for non-interactive runs). |
-| `--json` | One JSON document on stdout: `{ status, receipt, checks: [{name, status, detail}], next_actions, reason?, message? }`; prose goes to stderr. |
-
-`--status` and `--remove` are exclusive with each other. Defaults: port
-3131, tailnet-only, `--surface full --advertise verbs`, DCR off, service installed whenever a
-supervisor exists.
-
-### `--status`
-
-Reads the receipt, re-probes the Tailscale serve/funnel config, the service
-state (`launchctl print gui/$(id -u)/com.gbrain.serve` or `systemctl --user
-is-active gbrain-serve.service`) and the local and tailnet health endpoints.
-Exit 0 when everything verifies, 1 otherwise. A `tailscale serve status` that
-cannot be read (non-zero exit, killed, or non-JSON output) is a **failed**
-`tailscale.publish` check, never "handler present". A tailnet `/health` that
-fails only because this host cannot resolve the name is a `warn`, not
-`pending`, and still exits 0 (see `verify.tailnet` above).
-
-**No receipt:** `--status` does not just say "not exposed" — it looks for the
-leftovers an interrupted run can leave behind (the wrapper, a
-`com.gbrain.serve` / `gbrain-serve.service` unit or live service, a `:443`
-handler proxying `--port`, default 3131). Anything found is one `warn` check
-per artifact, the recovery command goes into `next_actions`
-(`gbrain mcp expose --remove --yes`, plus `--force` when only a handler stands
-and nothing else of gbrain's corroborates it), and the exit is 1 with reason
-`leftovers_without_receipt` (also under `--json`). Nothing found: "not
-exposed", exit 0 — with `--json` exit 2 so scripts can tell.
-
-### `--remove`
-
-Asks for consent (or `--yes`; declining is `pending` / exit 2, nothing
-changed), then stops and removes the user service (it probes the supervisor
-and removes a `com.gbrain.serve` / `gbrain-serve.service` that exists even
-when the receipt says the service was skipped), clears **only gbrain's own**
-serve/funnel handler (the one whose proxied port matches the receipt; Funnel
-is switched off first when it was on) with
-`tailscale serve --https=443 --set-path=/ off` — the `--set-path=/` scopes the
-command to gbrain's one mount, so other mounts under `:443` are never touched
-and the CLI never falls into its several-mounts prompt — and deletes the
-wrapper and receipt. It never runs `tailscale serve reset`, never uninstalls
-Tailscale and never logs you out; the Linux operator preference the login step
-set stays as well (`sudo tailscale set --operator=` resets it). The admin
-token file is kept unless you pass `--force` (a dashboard session may still be
-using it). It prints what was left in place. On macOS a `launchctl bootout`
-that fails for a reason other than "not loaded" is a `service` **warn** and
-"the launchd job (bootout failed)" is named as left in place — check
-`launchctl print gui/$(id -u)/com.gbrain.serve`.
-
-If `tailscale serve status` cannot be read, `--remove` **fails closed**: the
-`tailscale.publish` check fails with "could not read tailscale serve status;
-handler left as is", the receipt and the wrapper are kept so a re-run can
-finish the job, and the exit code is 1. The same holds after the `off`
-attempt: `--remove` never reports success while gbrain's handler survives.
-When the re-read still shows the handler (or cannot be read at all), the
-service is already uninstalled but the receipt and the wrapper are kept, the
-exit is 1 with reason `handler_not_removed`, and the message tells you to run
-`tailscale serve status` and re-run `gbrain mcp expose --remove --yes`.
-
-**No receipt** (an interrupted `gbrain mcp expose` — killed between
-`tailscale serve --bg` and the receipt write): `--remove` recovers from what
-is on disk. It looks for the wrapper, the launchd plist / systemd unit (or a
-loaded service) and a `/` handler on `:443` that proxies to `--port` (default
-3131 — pass the port you published with), prints a "Recovering without a
-receipt" plan, asks for consent as usual, and removes exactly those artifacts
-(Funnel off first when it was on). The handler is turned off only when
-something else of gbrain's corroborates it — the wrapper, the unit/plist, or
-the supervisor reporting the service — because another tool may proxy `:443`
-to the same port; a handler standing alone is reported and left in place
-(exit 0) until you pass `--force`. A handler that survives the `off` attempt
-is `handler_not_removed` here too (exit 1); the wrapper is kept as the
-corroboration the re-run needs. When `tailscale serve status` cannot be read
-while the wrapper or the service is there, this path fails closed exactly like
-the receipt path: the service (when found) is still stopped and removed, but
-the wrapper is **kept** — it is the corroboration the re-run needs — the
-`tailscale.publish` check fails with "could not read tailscale serve status;
-handler state unknown", and the exit is 1 with reason
-`tailscale_serve_status_unreadable`; fix Tailscale and re-run the printed
-command to finish. The admin token file is left alone. When nothing of
-gbrain's is found the answer stays "not exposed — nothing to remove", exit 0
-(reason `not_exposed`; an unreadable serve status is then only a caveat, since
-there is nothing to keep and a handler alone would not be touched anyway). A
-completed recovery exits 0 with reason `recovered_without_receipt`.
-
-## Grant, connect, verify
-
-The published server accepts the same clients as any `gbrain serve --http`.
-Choose the connection method supported by the intended harness before creating
-its least-privilege registration. Native OAuth/PKCE and private machine
-handoffs are different paths. A cloud/tailnet choice or vendor name does not
-select between them.
-
-Run owner actions on the host or in a separately authorized administrator
-harness through the running server's API. This uses the existing connection
-while a PGLite service holds its lock. The default expose credential file below
-is valid for the expose-managed service; substitute the actual receipt path
-and configured URL. An ordinary connecting client without owner authority must
-hand these actions to that administrator, not request broader OAuth scopes.
-
-### Open the owner panel
-
-```bash
-gbrain mcp admin login-link \
-  --url https://your-machine.your-tailnet.ts.net/mcp \
-  --admin-token-file ~/.gbrain/serve/admin-token --json
-```
-
-Deliver the returned single-use link privately without fetching or opening it
-to test it. The plain admin URL does not authenticate the browser. During
-native OAuth, preserve the exact opaque pending request with
-`login-link --oauth-request REQUEST_ID`. The owner then reviews and approves
-consent separately. Expired requests or a server restart require restarting
-authorization in the native client. See [MCP administration](../mcp/ADMIN.md)
-for owner login, client inspection, permission edits, and lifecycle actions.
-
-### Native OAuth/PKCE
-
-Get the exact callback and token authentication method from the native client's
-settings or guide. Public PKCE uses `none` and has no secret; confidential PKCE
-uses the client's actual `client_secret_post` or `client_secret_basic` method.
-Replace `CLIENT_REDIRECT_URI` below with that actual callback, then preview:
-
-```bash
-gbrain mcp admin register native-example --redirect-uri 'CLIENT_REDIRECT_URI' \
-  --token-endpoint-auth-method none --profile memory-writer --source default \
-  --url https://your-machine.your-tailnet.ts.net/mcp \
-  --admin-token-file ~/.gbrain/serve/admin-token --dry-run --json
-```
-
-Use `memory-reader` when only reading is requested. Review the result and repeat
-without `--dry-run`. Confidential creation uses the actual POST/Basic method
-and requires `--credentials-out /absolute/private/oauth-setup.json`; keep that
-export private. Registration creates authorization-code and refresh grants
-without minting a machine token. Retrieve setup using the returned client ID:
-
-```bash
-gbrain mcp admin setup CLIENT_ID --harness generic --flow authorization-code \
-  --url https://your-machine.your-tailnet.ts.net/mcp \
-  --admin-token-file ~/.gbrain/serve/admin-token --json
-```
-
-Use the actual supported adapter when known; `generic` supplies manual native
-settings guidance. Enter the registration's live method, callbacks, and client
-metadata in the intended harness. The native client starts OAuth and retains
-its PKCE verifier; the owner signs in and approves its consent request. An
-`OAuthClientSetup` document is **not** a private machine handoff for
-`gbrain connect` or `gbrain mcp verify`. If manual client configuration is not
-available, follow that client's guide; do not substitute machine credentials.
-DCR remains opt-in, and manual owner registration works with DCR disabled.
-
-### Private machine handoff
-
-For a harness using machine credentials or managed bearer configuration,
-preview a scoped grant through the owner API:
-
-```bash
-# On the authorized host/admin harness — one grant per client
-gbrain mcp grant bot-example --harness grok-bot --profile memory-writer --source default \
-  --url https://your-machine.your-tailnet.ts.net/mcp \
-  --admin-token-file ~/.gbrain/serve/admin-token \
-  --credentials-out /private/bot-example.json --dry-run --json
-```
-
-After reviewing it, repeat without `--dry-run`. Then, inside the client's
-environment after moving the machine credential file through a private channel:
-
-```bash
-gbrain connect https://your-machine.your-tailnet.ts.net/mcp --harness grok-bot \
-  --credentials-file /private/bot-example.json --install --root /workspace/gbrain
-gbrain mcp verify --client CLIENT_ID --harness grok-bot \
-  --url https://your-machine.your-tailnet.ts.net/mcp \
-  --credentials-file /private/bot-example.json --json
-```
-
-Profiles (`memory-reader`, `memory-writer`, `coding-agent`, `operator`,
-`delegating-agent`, `full`), private handoff, repair and the honest
-verification bar are in [hosted harness access](hosted-harness-access.md).
-Per-client notes:
-
-- **Grok Bot / Muse** — the runtime lives in the vendor cloud, so publish
-  with explicit `--funnel`. Select native OAuth when that is the intended
-  connector; the commands above apply to the separate private machine path.
-  For that path, Grok Bot's root is `/workspace/gbrain`; Muse needs a verified
-  durable root first. See the [Grok Bot](grok-bot.md) and [Muse](muse.md) guides.
-- **Claude Desktop** — follow its [current connection guide](../mcp/CLAUDE_DESKTOP.md)
-  for the supported native OAuth or local adapter mode. Native settings need
-  a native registration, not credentials from a machine grant. Tailnet-only
-  is enough when the actual connection runs on your tailnet laptop.
-- **Local coding agents on the host** — on a Postgres brain,
-  `gbrain bootstrap harness --yes --port 3131` wires Claude Code / Codex /
-  opencode to the running server. On a PGLite brain `bootstrap harness`
-  refuses to mint while the service holds the database: either mint **before**
-  the service runs (`gbrain auth create local-agents --scopes read,write`,
-  run ahead of `gbrain mcp expose` or while the service is briefly stopped)
-  and pass `gbrain bootstrap harness --yes --port 3131 --token <value>`, or
-  grant a scoped client through the running server —
-  `gbrain mcp grant <name> --harness <id> --profile memory-writer --source default --url http://127.0.0.1:3131/mcp --admin-token-file ~/.gbrain/serve/admin-token --credentials-out /private/<name>.json`
-  then `gbrain connect http://127.0.0.1:3131/mcp --harness <id> --credentials-file /private/<name>.json --install`
-  (MCP wiring only, no per-turn hooks; `http://` is accepted on loopback).
-- **Coding agents on another tailnet machine** — for the private machine
-  path, use `gbrain connect <url> --harness <id> --credentials-file <private-file> --install`.
-  Native OAuth uses the native registration/settings path instead
-  ([Claude Code](../mcp/CLAUDE_CODE.md), [Codex](../mcp/CODEX.md)).
-- **ChatGPT, Perplexity, Claude Cowork** — cloud connectors: `--funnel`, then
-  the client guide ([ChatGPT](../mcp/CHATGPT.md),
-  [Perplexity](../mcp/PERPLEXITY.md), [Cowork](../mcp/CLAUDE_COWORK.md)).
-
-### Verify the selected connection
-
-A passing `gbrain mcp verify` checks the private machine handoff's permitted
-server access; writable grants also exercise write/readback and cleanup. For
-native OAuth, use the intended harness's authenticated MCP connection to read
-`gbrain://capabilities` and perform an allowed call. Do not feed the OAuth setup
-export to the machine verifier. Registration, configuration delivery, server
-probes, and observed native activation remain separate results.
-
-Inspect advertised tool schemas before proposing a memory test. For an
-authorized writable grant, use a harmless synthetic fact with provenance and
-explicit `visibility: "world"` within the client's source grant. Keep its ID,
-observe recall in a fresh conversation, correct it, then withdraw it and check
-active recall. Private facts cannot be recalled or withdrawn by these remote
-operations; never widen real private content to pass a test. Read-only clients
-verify authenticated read access without adding write permission. Keep failed
-cleanup visible, and do not promise erasure from history or backups.
-
-Removing the exposure/service does not revoke client registrations or erase
-brain data. To end one client's access, follow the distinct preview/revision
-flows for token invalidation, revocation, or deletion in
-[MCP administration](../mcp/ADMIN.md#invalidate-tokens-revoke-or-delete).
-
-## Writing many pages
-
-Say to your agent: *"When you save more than three pages to gbrain, use
-put_pages with one request_id per batch and wait_ms 25000."*
-
-- **`put_pages`** writes 1-50 complete pages (8 MB of content at most) in one
-  call. Every page is an ordinary `put_page` write with the same fences,
-  revision checks and receipts; the pages are admitted together, so the
-  writer queue has room for the whole batch or the call refuses with
-  `queue_capacity` and admits none of them. Keep 5-8 large pages per call:
-  the model has to write every page into the tool arguments.
-- **One receipt per batch.** The reply lists each page's state, revision or
-  error (with its own `fix`), counts, and `next`: `done`, `poll` or
-  `fix_pages`. A page refused for its own reason (an invalid slug, a slug
-  outside the grant, a revision conflict) does not stop the others.
-- **Replays and progress.** Replaying the identical call with the same
-  `request_id` never writes twice. Calling `put_pages` with only the
-  `request_id` reads the batch's progress without resending the pages. A
-  replay with different pages refuses with `idempotency_conflict` and names
-  the pages that changed.
-- **`wait_ms`** (put_page and put_pages, 0-30000 ms) holds the reply until
-  the commit. It is not part of the write, so changing it on a replay is
-  safe. When a reply is still pending, follow `next` no sooner than
-  `retry_after_ms`.
-- **Links.** For remote writes, `[[wikilinks]]` in a page body that point at
-  pages already in the same source become plain `mentions` links after the
-  commit, and a batch links pages to each other once its last page commits.
-  `append_page` links what the appended text mentions the same way, without
-  re-reading the rest of the page.
-  The batch receipt's `links` field shows when they have landed; agents do
-  not add them by hand. Typed links still need `add_link`. Turn this off with
-  `gbrain config set mcp.remote_auto_links false`.
-- **Embedding** runs after the commit. New text is searchable by keyword
-  immediately and by meaning once its embedding effect finishes.
-- **Request size.** HTTP carries less than the 24 MiB page ceiling:
-  `gbrain serve --http` reads at most 4 MiB per request (the MCP SDK
-  default) and the simpler HTTP transport 1 MiB; `GBRAIN_HTTP_MAX_BODY_BYTES`
-  sets either cap. A batch goes in smaller `put_pages` calls; a
-  page over the transport limit goes by file on the brain host (sync,
-  `gbrain import` or `gbrain put`), never split by hand. Every limit is in
-  [limits per entry point](memory-boundaries.md#large-page-limits).
-
-## PGLite brains
-
-PGLite is single-writer. While the service runs, host-side commands that open
-the database (`gbrain doctor`, `gbrain import`, `gbrain auth create`, a second
-`gbrain serve`) fail fast with `live_serve` — they do not wait. `gbrain sync`
-and `gbrain sweep --once` are the exceptions: they delegate into the live
-serve automatically. Administer the brain through the running server instead
-(`gbrain mcp admin … --admin-token-file`, `gbrain mcp grant … --admin-token-file`,
-or an authenticated owner dashboard), or move to
-Postgres for concurrent local use ([ENGINES.md](../ENGINES.md)). The success
-banner says which engine the receipt recorded.
-
-Local agents on a PGLite host: `gbrain bootstrap harness` refuses to mint
-under the live serve. Mint **before** the service runs
-(`gbrain auth create local-agents --scopes read,write` — run it ahead of
-`gbrain mcp expose`, or stop the service briefly) and pass
-`gbrain bootstrap harness --yes --port 3131 --token <value>`; or skip
-bootstrap and use the scoped grant path against the loopback URL
-(`gbrain mcp grant … --url http://127.0.0.1:3131/mcp --admin-token-file ~/.gbrain/serve/admin-token`
-then `gbrain connect http://127.0.0.1:3131/mcp … --install`). Postgres
-brains mint fine while the server runs: `gbrain bootstrap harness --yes --port 3131`.
-
-## Troubleshooting
-
-A served `gbrain serve --http` that cannot open its brain stays up in
-[status-only mode](../mcp/DEPLOY.md#status-only-mode): `/health` answers 503
-with `Retry-After: 5`, remote clients get a `serve_status_only` envelope whose
-fix is `gbrain doctor` on this host, and the server opens the brain on the same
-port once the cause is fixed. `--fail-fast` (or `GBRAIN_SERVE_FAIL_FAST=1`)
-exits instead.
-
-`gbrain mcp expose --status` re-runs the probes; `--json` names the failing
-check. Logs: `~/.gbrain/serve/serve.log` and `serve.err`. Serve rotates each
-of them at 10 MiB and keeps 5 copies (`serve.log.1` to `serve.log.5`), and a
-line repeated within 10 minutes is written once, followed by one
-`[gbrain serve-log] repeated N more time(s)` line. The same applies to any
-`gbrain serve` whose output you redirect to a file with `>>`. Tune it with
-`GBRAIN_SERVE_LOG_MAX_BYTES` (0 turns rotation off),
-`GBRAIN_SERVE_LOG_MAX_FILES` and `GBRAIN_SERVE_LOG_DEDUPE_SECONDS` (0 turns
-dedupe off) in the serve wrapper's environment.
-
-<a id="remote-mcp-symptoms"></a>
-
-| Symptom / classified error | Fix | Who acts | Consent | Verify |
-| --- | --- | --- | --- | --- |
-| `tailscale_https_not_enabled` (exit 2, `tailscale.identity` pending) — the tailnet has no HTTPS certificates (`CertDomains` empty); nothing was published | Enable **MagicDNS** and **HTTPS Certificates** for your tailnet at https://login.tailscale.com/admin/dns, then run the printed re-run command. | user | none | `gbrain mcp expose --status --json` |
-| `tailscale_funnel_not_enabled` (exit 2, `tailscale.identity` pending) — the node lacks the Funnel capability; nothing was published | Enable the `funnel` node attribute in your tailnet policy at https://login.tailscale.com/admin/acls ([Funnel docs](https://tailscale.com/kb/1223/funnel)), then re-run with `--funnel`. | user | `egress` (Funnel makes the server public) | `gbrain mcp expose --status --json` |
-| `tailscale_https_not_enabled` / `tailscale_funnel_not_enabled` / `tailscale_needs_login` (exit 1) — the classified kinds: a `tailscale serve status` read or the `tailscale serve` / `funnel` call itself refused after the pre-checks passed | Same fixes as the rows above (for `tailscale_needs_login`: finish the login, macOS via the Tailscale app); the classifier reads the CLI's stderr as a second line of defense. `tailscale_unknown` (exit 1) after 60s means the CLI is waiting on you — run the printed `tailscale serve --bg <port>` by hand to see its prompt. | user | none | `gbrain mcp expose --status --json` |
-| `tailscale_needs_operator` (exit 1) — "Access denied" from `tailscale serve` (or its `status` read) on Linux | `sudo tailscale set --operator=$USER`, then re-run. `expose` runs that `set --operator` itself before its flagless `sudo tailscale up` (a failure there is noted, not fatal); a tailnet joined earlier by other means may not have it. | user | none | `gbrain mcp expose --status --json` |
-| `tailscale_login_pending` (exit 2) — after the login URL, `tailscale status` still is not `Running` | Finish the login in the browser (macOS: open the Tailscale app and sign in), then run the printed re-run command. Nothing was published. | user | `credentials` (Tailscale login) | `gbrain mcp expose --status --json` |
-| `tailscale_login_manual` (exit 2) — "tailscale at <path> is not a system install, so gbrain will not run it with sudo" | The `tailscale` on your `PATH` lives outside the system install locations, and gbrain never hands root to a user-writable binary. If you trust that binary, sign in yourself with the printed command — `sudo <that path> set --operator=$USER && sudo <that path> up`, the full path because sudo's `secure_path` would not find it — then re-run the printed command. | user | none | `gbrain mcp expose --status --json` |
-| `tailscale_receipt_present` (exit 1, `plan` fails) — "This brain is already published on your tailnet at <url>" | You passed `--no-tailscale` while the receipt records a live Serve/Funnel mapping. Run `gbrain mcp expose --remove --yes` first, or re-run without `--no-tailscale`. | agent, after the user agrees | none | `gbrain mcp expose --status --json` |
-| `tailscale_daemon_not_running` — "failed to connect to local Tailscale service" (exit 2 from the login step, nothing published; exit 1 when a `serve status` read or the publish itself is classified this way) | macOS: `open -a Tailscale`. Linux: `sudo systemctl enable --now tailscaled`. Then re-run. | user | none | `gbrain mcp expose --status --json` |
-| `confirmation_required` / `declined` (exit 2, `consent` pending) | Not a TTY without `--yes`, or you answered no at the prompt. Nothing changed; relay `user_message` and run `fix.command` (it adds `--yes`) once the user agrees to the printed plan. | agent, after the user agrees | `persistent_install`; `egress` unless `--no-tailscale` | `gbrain mcp expose --status --json` |
-| `invalid_arguments` (exit 1) | An unknown, duplicate, conflicting or malformed flag; the message names it. `gbrain mcp expose --help`. | agent | none | `gbrain mcp expose --help` |
-| `tailscale_missing` (exit 1, `--no-install`) / `tailscale_unsupported_platform` (exit 1) / `tailscale_install_failed` (exit 1) | Tailscale is not installed and `expose` would not (or could not) install it: run the printed install command, or install from https://tailscale.com/download, sign in, then re-run. | user | `persistent_install` (installs Tailscale) | `gbrain mcp expose --status --json` |
-| `tailscale_no_dns_name` (exit 1, `tailscale.identity` fails) — the node has no MagicDNS name | Enable **MagicDNS** and **HTTPS Certificates** at https://login.tailscale.com/admin/dns, then re-run. Nothing was published. | user | none | `gbrain mcp expose --status --json` |
-| `tailscale_publish_unconfirmed` (exit 1) — `tailscale serve --bg` exited 0 but the re-read does not show the handler (or could not be read) | Run `tailscale serve status` to see what Tailscale holds; `gbrain mcp expose --remove --yes` clears a handler for the port without a receipt (add `--force` when no wrapper or service of gbrain's is on the host yet), then re-run. | agent | none | `gbrain mcp expose --status --json` |
-| `service_install_failed` (exit 1) — the supervisor refused the unit | The handler IS published and the receipt written with `service.state: stopped`. Read the error (and `~/.gbrain/serve/serve.err`), fix it, and re-run; or `gbrain mcp expose --remove --yes` to take the handler down. | brain host | `persistent_install` | `gbrain mcp expose --status --json` |
-| `verify.tailnet: pending` / `tailnet_health_pending` (publish exit 2; `--status` exit 1) | The first certificate for your MagicDNS name is being issued. The handler, the service and the receipt are already in place — `gbrain mcp expose --status` in a minute. Local health `ok` means the server itself is fine. | agent | none | `gbrain mcp expose --status --json` |
-| `status_unhealthy` (`--status`, exit 1) — one of the checks failed | The failing check is named (`tailscale.publish`, `service`, `verify.local`); apply its row here and re-run `gbrain mcp expose --yes` to repair. | agent, after the user agrees | `persistent_install` | `gbrain mcp expose --status --json` |
-| `not_exposed` (`--status` / `--remove` without a receipt and without leftovers; exit 0, `--status --json` exit 2) / `recovered_without_receipt` (`--remove`, exit 0) | Informational: nothing of gbrain's is published on this host, or the receipt-less recovery removed what an interrupted run left behind. | agent | none | `gbrain mcp expose --status --json` |
-| `mcp_expose_failed` (exit 1) — an unexpected error | The `internal` check carries the message, and it says whether a handler published by this run was turned off again or left in place (a written receipt is never torn down — `--status` / `--remove --yes`). Re-run; report it if it repeats. | agent | none | `gbrain mcp expose --status --json` |
-| `verify.tailnet: warn` — "this host cannot resolve your-machine.your-tailnet.ts.net" (exit 0) | The brain host itself cannot resolve its MagicDNS name, usually because MagicDNS is off on this machine: `tailscale set --accept-dns=true`, then `gbrain mcp expose --status`. Devices that do resolve the name may already reach the server; this is not a certificate wait. | user | none | `gbrain mcp expose --status --json` |
-| Another device cannot resolve `your-machine.your-tailnet.ts.net` | Resolution needs **MagicDNS** on the tailnet (https://login.tailscale.com/admin/dns) and "Use Tailscale DNS settings" turned on in that device's Tailscale client. Reaching the name over HTTPS additionally needs the tailnet's **HTTPS Certificates** toggle on the same page (the `tailscale_https_not_enabled` pre-check catches that on the host). | user | none | the other device resolves the name |
-| Service not starting (`--status` reports the service stopped) | Read `~/.gbrain/serve/serve.err`. Typical causes: `gbrain` not on `PATH` for a login-less shell (the wrapper falls back to `type -P gbrain`; install into `~/.bun/bin` or reinstall), a key missing from `~/.gbrain/env`, or the port already taken. `launchctl print gui/$(id -u)/com.gbrain.serve` / `systemctl --user status gbrain-serve.service` show the supervisor's view. | brain host | none | `gbrain mcp expose --status --json` |
-| `foreign_listener` — "Something already answers on 127.0.0.1:<port> and no expose receipt claims it. Stop it, pick another --port, or pass --no-service to only publish it. If this is a gbrain server left behind by an interrupted `gbrain mcp expose`, run `gbrain mcp expose --remove --yes` first." | **Anything** listening on `127.0.0.1:<port>` counts as occupied — an accepted TCP connect (a database, a non-HTTP service) as much as a 404 or 500 on `/health` — and no receipt claims that port. Refused during `plan`, before anything is published. Stop it, choose another `--port`, or pass `--no-service` to only publish the server you already run. A gbrain server left behind by an interrupted run is cleaned up by `gbrain mcp expose --remove --yes` (receipt-less recovery, see [`--remove`](#--remove)). | user | none | `gbrain mcp expose --status --json` |
-| `no_brain_config` (exit 1, `plan` fails) — "No brain is configured on this host (gbrain init first), so a service would only crash-loop; pass --no-service to publish a server you run yourself." | This host has no `gbrain` config (or it cannot be read), so `gbrain serve` would have nothing to open and the supervisor would restart it forever. Run `gbrain init` on this host first, then re-run; or pass `--no-service` to only publish a server you start yourself. `--dry-run` still shows the plan. | agent, after the user agrees | none | `gbrain doctor --only connection --json` |
-| `pglite_lock` warn — "a live process holds this PGLite brain (pid N, …): the service cannot start until it exits" | PGLite is single-writer and a process other than gbrain's own running service holds the lock, so the freshly installed service will crash-loop until it exits. Stop that process (or let it finish), then `gbrain mcp expose --status`; for concurrent local use move to Postgres ([ENGINES.md](../ENGINES.md)). The publish itself still completes. | user | none | `gbrain mcp expose --status --json` |
-| "could not read tailscale serve status" — `tailscale.publish` fails during publish (exit 1, reason `tailscale_<kind>`), `--status` (exit 1) or `--remove` (exit 1, `tailscale_serve_status_unreadable`: with a receipt, receipt and wrapper kept; without one, the service is still removed but the wrapper is kept as the corroboration the re-run needs) | `tailscale serve status --json` exited non-zero, was killed, or printed something that is not JSON. The command fails closed rather than guess: nothing is published over, removed from, or reported about a config it could not read. Run `tailscale serve status --json` by hand and apply the classified fix (operator, daemon, login), then re-run the same command. | user | none | `gbrain mcp expose --status --json` |
-| An interrupted `gbrain mcp expose` (no receipt, but a handler / service / wrapper is left behind) — `gbrain mcp expose --status` reports `leftovers_without_receipt` (exit 1) naming each artifact | Run the command `--status` prints: `gbrain mcp expose --remove --yes` (add `--port N` if you published a non-default port; `--force` when only a handler stands) recovers without a receipt: it removes the service, the wrapper and the `:443` handler proxying that port, and leaves the admin token. A handler with no wrapper, unit or service next to it is left in place until you add `--force`. See [`--remove`](#--remove). | agent, after the user agrees | none | `gbrain mcp expose --status --json` |
-| `handler_not_removed` (exit 1) — "--remove" stopped with "the tailscale handler for port <port> is still present" (or "could not be confirmed gone") | `tailscale serve --https=443 --set-path=/ off` ran but the re-read still shows gbrain's handler (or the serve status could not be re-read). The service was already uninstalled; the receipt and the wrapper were kept on purpose so the re-run finds everything. Run `tailscale serve status`, fix what it reports (operator, daemon), then `gbrain mcp expose --remove --yes` again. | user | none | `gbrain mcp expose --status --json` |
-| `foreign_serve_config` — "tailscale serve already proxies :443 to <target>. Re-run with --force to take it over, or pick another local port for that service." | A `/` handler on `:443` (a background config, another terminal's foreground `tailscale serve` session, or a raw TCP forward) already points somewhere else. Inspect it with `tailscale serve status` (the suggested next action), move that service, or — for a background handler only — re-run with `--force`; a foreground session must be stopped in its own terminal. | user | none | `gbrain mcp expose --status --json` |
-| `verify.local` warn — "status-only (<reason>): the server runs but cannot open its brain" (publish exit 2; `--status` exit 1) | The served `gbrain serve --http` is up on the port but in [status-only mode](../mcp/DEPLOY.md#status-only-mode): `/health` answers 503 and clients get the `serve_status_only` envelope. `gbrain doctor --only harness_wiring` names the reason's fix (for `lock_held`, stop the other process holding the PGLite brain). The server opens the brain within 5 s of the fix; no restart. | brain host | none | `gbrain mcp expose --status --json` |
-| `verify.local` warn / `local_health_timeout` (exit 2) | The service was installed but `http://127.0.0.1:<port>/health` did not answer within 20s; `verify.tailnet` is skipped. Read `~/.gbrain/serve/serve.err`, then `gbrain mcp expose --status`. | brain host | none | `gbrain mcp expose --status --json` |
-| `service: manual` (cloud sandbox, ephemeral container, no user bus) | There is no supervisor to keep the server alive. Run the printed foreground command, or the `nohup ~/.gbrain/serve/gbrain-serve.sh &` line, and re-run `--status`. On Linux without a user bus, `loginctl enable-linger $USER` may enable one. | brain host | none | `gbrain mcp expose --status --json` |
-| `thin_client` (exit 1) — "run on the brain host" | This install is a thin client; `expose` publishes the machine that holds the database. Run it there. | brain host | none | run `--status --json` on the brain host |
-| Clients see `needsAuth` while tool calls succeed | Spec discovery, not a failed login — see [DEPLOY.md troubleshooting](../mcp/DEPLOY.md#troubleshooting). | agent | none | one tool call through the client |
-| A connector (ChatGPT, claude.ai) keeps asking to reconnect, or OAuth returns `invalid_target` naming an accepted URL | The connector's MCP URL does not match the server's `/mcp` resource, which comes from the published URL (`expose` sets `--public-url` to your MagicDNS name). Use the accepted URL from the message, then reconnect once. Details in [CHATGPT.md troubleshooting](../mcp/CHATGPT.md#troubleshooting). | user | none | one tool call through the connector |
-
-## Security posture
-
-- **Tailnet-only is the default.** Only devices in your tailnet, subject to
-  your Tailscale ACLs, can reach the name at all; every request still needs a
-  gbrain OAuth token or bearer.
-- **Funnel is public exposure.** Use it only for clients that cannot join
-  your tailnet, and give each one its own least-privilege grant (a
-  `memory-writer` profile scoped to one source, not `operator`). Revoke the
-  client on the host when it should stop. Self-service registration stays
-  off unless you pass `--enable-dcr`, and even then every new connection waits
-  for your approval in the admin dashboard.
-- **Remote `think` runs your think model.** Every `think` answer is a paid
-  call on the host's key, so a connected client's `model` is used only when it
-  is your think model (`models.think`) or you allow it with
-  `gbrain config set think.remote_models <model>,<model>`. Any other model
-  answers on your think model, with a `model_override_ignored` notice instead
-  of an error.
-- **Loopback bind.** The server keeps `127.0.0.1`; never pass
-  `--bind 0.0.0.0` for this shape. Tailscale is the only way in.
-- **No secrets in chat or config.** The admin token lives in a 0600 file the
-  wrapper reads at run time; the receipt carries none. Credential handoffs go
-  through private files (`--credentials-out`), never pasted into a
-  conversation.
-- **Removal is scoped.** `--remove` touches only gbrain's own handler (the
-  `--set-path=/` mount) and service; your Tailscale login, other serve
-  configs and the Linux operator preference the login step set stay as they
-  were (`sudo tailscale set --operator=` resets the latter).
-- **Keep `GBRAIN_HTTP_TRUST_PROXY` at its default for this shape.** Tailscale
-  is a loopback proxy and the default (`loopback`) trusts exactly that hop, so
-  every tailnet or Funnel client keeps its own rate-limit bucket; turning
-  trust off makes every request look like `127.0.0.1` and collapses the
-  per-client limits into one bucket, and a wider setting trusts hops Tailscale
-  does not vouch for.
-
-See [SECURITY.md](../../SECURITY.md) for the HTTP server's hardening knobs
-(CORS allowlist, trust-proxy, rate limits, body cap).
-
-## Alternatives
-
-**ngrok.** Public tunnel with a fixed domain on the paid tier. Run the server
-yourself and point `--public-url` at the ngrok domain:
-
-```bash
-gbrain serve --http --port 3131 --public-url https://your-brain.ngrok.app
-ngrok http 3131 --url your-brain.ngrok.app
-```
-
-ngrok connects to loopback on the same machine, so the default bind is right.
-The [ngrok-tunnel recipe](../../recipes/ngrok-tunnel.md) covers the auth
-token and fixed domain; [ALTERNATIVES.md](../mcp/ALTERNATIVES.md) compares
-the options.
-
-**Cloud hosts (Fly.io, Railway, your own VM).** For a brain that must answer
-while your laptop is closed, run `gbrain serve --http` on the host with a
-Postgres engine and a real HTTPS front, and set `GBRAIN_ADMIN_BOOTSTRAP_TOKEN`
-through the platform's secret store ([DEPLOY.md](../mcp/DEPLOY.md)). The
-owner-administration and native-OAuth/private-machine paths above still apply;
-use that host's configured URL and owner credential.
-
-**No Tailscale, no tunnel.** `gbrain mcp expose --no-tailscale` installs the
-user service on loopback only. Local agents on the same machine use
-`gbrain bootstrap harness --yes --port 3131` on a Postgres brain; on PGLite,
-pre-mint before the service runs and pass `--token <value>`, or use the scoped
-`gbrain mcp grant … --url http://127.0.0.1:3131/mcp --admin-token-file …` +
-`gbrain connect … --install` path (see [PGLite brains](#pglite-brains)).
-
----
-
-## docs/guides/hosted-harness-access.md
-
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/hosted-harness-access.md
-
-# Connect your agent to an existing hosted GBrain
-
-Use this guide when your memory already lives on another machine. If you want to run GBrain inside your current agent instead, start with [Grok Bot](grok-bot.md), [Muse](muse.md), or the [coding-agent walkthrough](../tutorials/connect-coding-agent.md).
-
-The brain owner grants access on the running server; the connecting harness
-configures access in its own environment. Installing configuration on the host
-does not configure your laptop or Bot. First select the connection method:
-
-| Intended connection | Follow |
-| --- | --- |
-| Harness has native OAuth/PKCE settings | [Native OAuth path](#native-oauth-path) below |
-| Managed bearer configuration or a thin CLI adapter | The [machine handoff path](#1-grant-access-on-the-brain-host) below |
-| Open the dashboard, inspect clients, change permissions, or end access | [MCP administration](../mcp/ADMIN.md) |
-
-An endpoint URL, ordinary OAuth token, client secret, or MCP `admin` scope does
-not grant owner administration. The owner uses a separately protected bootstrap
-credential. Local stdio connections do not create an HTTP admin panel.
-
-## One setup prompt
-
-Paste this into the agent that should use the hosted brain:
-
-```text
-Connect this existing agent to my hosted GBrain. Follow:
-https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/hosted-harness-access.md
-Keep my identity and unrelated configuration. Use memory-writer unless I explicitly
-request another capability. Select this harness's native OAuth/PKCE flow when
-available; otherwise have the owner provision a private machine handoff and
-install it here. Keep secrets out of chat, command arguments, and Git.
-Use the actual harness adapter, verify a unique memory round trip, and report
-server checks separately from observed recall in a new harness conversation.
-Explain that a new machine grant through mcp grant follows the brain's published
-skills by default; offer --skills memory-only. Preserve existing grants and publication opt-outs. Shared
-skills do not authorize scripts, additional tools, spending, or automatic capture.
-Do not claim that generated instructions or a job ID prove a working integration.
-```
-
-## Native OAuth path
-
-1. Obtain the intended harness's actual redirect URI and supported client
-   authentication method from its settings/current guide. Public PKCE uses
-   `none` and has no client secret; confidential PKCE uses its documented
-   `client_secret_post` or `client_secret_basic` method.
-2. The owner follows [native registration](../mcp/ADMIN.md#native-oauth-with-pkce)
-   with `gbrain mcp admin register NAME --redirect-uri URI`. Select the desired
-   source and permissions explicitly; the native CLI default is read access.
-   This creates authorization-code/refresh registration, not a machine token.
-3. The owner runs `gbrain mcp admin setup CLIENT_ID --harness ID --flow
-   authorization-code` against that server. It returns live endpoint,
-   registration, and setup instructions. Confidential delivery additionally
-   requires `--credentials-out PRIVATE_FILE`. An `OAuthClientSetup` export is
-   not the machine handoff accepted by `gbrain connect --credentials-file`.
-4. Enter the setup fields in the actual harness and start its OAuth connection.
-   The native harness generates and retains the PKCE verifier. When the browser
-   asks for owner approval, the authorized administrator issues a login link
-   with `--oauth-request REQUEST_ID` from that browser URL. The owner can use
-   the link in a fresh browser and return to the same consent request.
-5. Approve the displayed client, callback, scopes, and source access. Verify an
-   authenticated call inside the actual harness, then perform the harmless
-   cross-conversation memory check described below. Registration and downloaded
-   instructions alone do not verify a native connection.
-
-If consent expires or the server restarts, start the connection again in the
-native harness. Enabling DCR is an owner choice, not a required repair: manual
-registration works with DCR disabled when the client supports entered client
-metadata. DCR never bypasses owner approval.
-
-The remaining numbered steps describe **machine handoffs**. Do not install one
-as a substitute when the native client requires OAuth/PKCE.
-
-## 1. Grant access on the brain host
-
-The owner needs a current GBrain runtime and an initialized brain. Stop older servers and workers while applying the grant migration; do not run mixed authorization implementations. Use your normal upgrade and maintenance procedure before restarting them.
-
-**Get the HTTPS endpoint.** Use the configured endpoint if the brain is already served over HTTPS; do not republish it. When the brain runs on the owner's own computer and needs publishing, `gbrain mcp expose` publishes `gbrain serve --http` on the owner's Tailscale tailnet with HTTPS, keeps it running as a user service, and writes the admin bootstrap token to `~/.gbrain/serve/admin-token`. Tailnet-only reach (the default) serves the owner's own devices; agents that run in a vendor's cloud — Grok Bot, Muse, ChatGPT, Claude.ai, Perplexity — need `gbrain mcp expose --funnel`. The printed MCP URL looks like `https://your-machine.your-tailnet.ts.net/mcp`. Steps, flags and troubleshooting: [Use your brain from anywhere over MCP](remote-mcp.md). Other HTTPS fronts (ngrok, a cloud host) come from your [server deployment](../mcp/DEPLOY.md); substitute the intended server's configured URL in every example below.
-
-**Say to your agent:** *"use my brain over mcp"* — *"connect grok bot to my brain"* — the `remote-mcp` skill publishes, then grants.
-
-For ordinary memory, choose `memory-writer`:
-
-```bash
-gbrain mcp grant agent-example --harness codex --profile memory-writer \
-  --source default --url https://your-machine.your-tailnet.ts.net/mcp \
-  --admin-token-file ~/.gbrain/serve/admin-token \
-  --credentials-out /absolute/private/agent-example.json --json
-```
-
-Replace `codex` with the actual adapter identifier. The protected owner file
-provisions through the running server's authenticated admin API and existing
-database connection. `~/.gbrain/serve/admin-token` is the file `gbrain mcp
-expose` maintains; for another deployment, use the private file holding that
-server's configured owner credential. Without the flag,
-`GBRAIN_ADMIN_BOOTSTRAP_TOKEN` supplies the credential. An ordinary OAuth token
-or the endpoint URL cannot provision access. A local maintenance CLI can omit
-both owner credential mechanisms only when it can safely open the intended
-brain. Do not open the live PGLite database from a second process.
-
-Use `--dry-run` first to inspect a proposed grant without creating a client. Default output is redacted. The credential handoff is written with private permissions before any optional client installation or verification. Transfer it through a private file channel, then retain only the copies you need. Uploading credentials or backups is never automatic.
-
-New grants default to **`--skills follow`** within their approved read sources.
-Use **`--skills memory-only`** to opt out of enrollment; catalog reads can still
-be available. Following adds the explicit `skills_member_self` scope and
-catalog/membership operations, not `skill_editor` or `skill_publisher` authority.
-Fresh owned-root setup approves a limited prose-only follow policy for the
-packaged memory skills when publication is enabled. Existing brains still need
-owner approval of their source's follow/disclosure policy; migration and grant
-creation do not expand existing publication consent. Give each independent harness,
-including the parent, its own principal and private handoff. Shared credentials
-are one principal. See [shared brain skills](shared-brain-skills.md).
-
-| Profile | Access | Native MCP surface |
-| --- | --- | --- |
-| `memory-reader` | Read selected memory | Full, lists verbs |
-| `memory-writer` | Read and write selected memory | Full, lists verbs |
-| `coding-agent` | Isolated project writes and explicit project reads | Full, lists verbs |
-| `operator` | Read, write, and eligible brain administration operations | Full |
-| `delegating-agent` | Memory plus explicitly bound delegation | Starter |
-| `full` | All eligible remote capabilities at grant time, including bound delegation | Full |
-
-A **profile grants authority**. A **surface selects visible tools**. Full surface does not bypass a grant, and `admin` does not imply delegation, the named shared-skill scopes, or owner dashboard/client-management authority. Starter includes authorized skill discovery and membership; the exact seven-tool `verbs` surface is memory-only. `rescope-client <client_id> --surface full` lists every tool. Thin CLI adapters use the full surface while retaining their source, operation, and write restrictions. Direct local CLI access is trusted access to the local computer; OAuth profiles do not confine a local shell.
-
-Clients granted a memory profile before the full-surface default keep their stored `starter` surface; no migration or repair widens it, and only an explicit `--profile` application regrants it. New grants snapshot operation names and source access. A later server upgrade does not silently give a snapshot-bound client new operations. The connection's own `whoami` reports `grant_diagnosis`: which blocker applies (scope, operation snapshot, client pin or server ceiling) and how many operations it hides, without naming them; `gbrain doctor` on the host reports the same as `grant_new_ops_available` with the commands. The connection is also told once per session, in band, by the `grant_blocked_operations` notice (same blockers and counts, the owner's preview-then-apply command as `fix`, `next: tell_user_to_run`; once per grant revision for stateless HTTP calls), and a read that left out takes a hidden tool serves carries `hidden_tool_content` with the next step that connection can actually take ([connection notices](repair.md#connection-notices)). Neither notice changes what the connection can call. A grant written before snapshots recorded their operation catalog says "original intent unknown" rather than claiming it predates the operations. Explicitly regrant to include them: `gbrain auth rescope --client <client_id> --operations <op,...> --surface full --dry-run` (then without `--dry-run`; `--surface full` only when the stored surface also blocks) for OAuth clients, or `gbrain auth rescope-token <name> --refresh-operations` (preview) then `--add <op,...>` for legacy tokens ([grants that cannot reach new operations](../mcp/ADMIN.md#grants-that-cannot-reach-new-operations)). `gbrain auth rescope --client <client_id> --operations all` (alias: `gbrain auth rescope-client <client_id> --allowed-operations all`) stores no snapshot and clears the profile instead, so the scopes and the surface alone decide, including operations later upgrades add. `gbrain auth clients` marks su... (line truncated to 2000 chars)
-
-Snapshot-bound clients write through approved MCP operations such as `remember`, `capture`, or `put_page`. They cannot use the legacy `POST /ingest` webhook, whose queued writes do not yet enforce operation snapshots. Existing webhook clients with a `NULL` snapshot keep their legacy behavior.
-
-## 2. Install inside the intended harness
-
-Install GBrain there if needed, using the documented GitHub/Bun distribution. Then:
-
-```bash
-gbrain connect https://your-machine.your-tailnet.ts.net/mcp --harness codex \
-  --credentials-file /absolute/private/agent-example.json --install
-```
-
-For Grok Bot, Muse, or another supported thin CLI adapter, also supply `--root /absolute/verified/persistent-root`. Grok Bot's recommended root is `/workspace/gbrain`. Discover and verify Muse's durable location before choosing a root. Use the generated **absolute launcher** for every later GBrain call; it pins routing and isolates inherited configuration.
-
-The installer preserves unrelated configuration and refuses an unowned or edited connection. Codex, Claude Code, and opencode receive private managed configuration (mode 0600) with the bearer token stored **inline** in that file: `~/.codex/config.toml`, Claude Code's user MCP config, or opencode's global config. The receipt names it with `token_storage: "inline"` and `config_path`, gives the `renew_command` that exchanges and writes a fresh token (`--install --fresh-token`), and lists `if_exposed`: preview and apply `gbrain mcp admin invalidate-tokens <client_id>` on the brain host ([invalidate tokens](../mcp/ADMIN.md#invalidate-tokens-revoke-or-delete)), run the renew command, which exchanges a new token instead of reusing the cached invalidated one (a handoff without a client secret needs a new handoff from the owner), then reload the harness. Neither the receipt nor the output prints the token. Treat that config file as a secret: when it sits in a Git working tree that does not ignore it, the receipt adds `token_warning`; add the file to the repository's `.gitignore` or move it, and follow `if_exposed` if it was already committed. Rotating the client secret does not invalidate issued access tokens. Generic adapters supply endpoint/authentication guidance; there is no universal configuration file. [Adapter reference](harness-adapters.md) lists supported mechanisms and reload steps.
-
-A configured server is only one step. Follow the adapter's reload instructions and enable the GBrain standing instruction through the harness's actual controls. Thin CLI installations write that instruction to `<ROOT>/GBRAIN-INSTRUCTIONS.md`. Grok Bot/Muse native skill activation remains a separate, visible step until observed in that harness. Generated files alone do not activate a skill.
-
-With an approved follow handoff, managed Claude Code, Codex, and opencode
-connections also install an owned, namespaced shared-brain router. Successful
-installation reports `restart_required` and `native: unverified`, not universal
-activation. Manual clients remain pending native registration. Read the
-`shared_skills` result and its `next_action`; a policy, grant, server-version,
-or ownership conflict can leave memory working while skill enrollment is pending.
-The router's freshness instruction is advisory, not a vendor-enforced hook.
-
-Inspect this connection's local skill receipt without credentials or a live
-host using `gbrain connect --harness codex --status --json`. Supply the actual
-adapter, connection `--name`, and the recorded `--root` for thin CLI adapters.
-It reports desired/installed/acknowledged views and pending cleanup, but keeps
-`current_authority: unprobed` and `native_use: unverified`; reconnect and test
-the native session separately.
-
-### Harnesses that only speak stdio
-
-A harness that can launch a command but cannot reach an HTTP MCP server uses
-a thin client's `gbrain serve`: install the CLI there, run `gbrain init
---mcp-only` with the client from step 1, then register
-`gbrain serve --surface starter --advertise verbs` (absolute path from
-`command -v gbrain`) as the harness's stdio server. It relays to the brain
-host with that client's grant and adds nothing to it
-([stdio bridge](../architecture/thin-client.md#stdio-bridge)). For a narrower
-harness, register its own client (`--scopes read` for read-only) and init it
-under a separate `GBRAIN_HOME`, set in the harness entry's env as well;
-`serve --access read-only` is refused on a thin client because only the
-host can enforce it.
-
-## 3. Prove a memory round trip
-
-Save durable facts and preferences, not local harness/configuration state. A
-remote `put_page` does not extract graph edges inline: stdio has best-effort
-startup/idle sweeps, but HTTP needs explicit host maintenance or authorized
-`add_link` calls. Configured providers can receive text, and Markdown export is
-not a full database backup. See [memory boundaries](memory-boundaries.md).
-
-Run the server verifier from the harness environment:
-
-```bash
-gbrain mcp verify --client CLIENT_ID --harness codex \
-  --url https://your-machine.your-tailnet.ts.net/mcp \
-  --credentials-file /absolute/private/agent-example.json --json
-```
-
-It checks transport, authentication, effective permissions, reading, a randomized write/readback, and cleanup separately. Memory profiles use `remember` and `recall`; isolated coding grants use pages inside their fence. The capabilities resource works even on the exact seven-tool surface.
-
-`server_status: "passed"` proves those server checks. Overall `status: "partial"` and exit code **2** mean actual harness evidence is still missing; exit **1** means a failed stage. A fluent response or an SDK probe is not proof that your Bot loaded its standing instructions.
-
-Now ask the actual agent to remember a unique harmless fact, with provenance, and note the observed GBrain call and returned ID. Start a new conversation and ask for it without repeating the fact. Observe `recall`. Correct it, read it back, then withdraw it and check active recall again. Keep the result in your private setup receipt. The harness must identify uncertainty if it cannot load the tool or retrieve the record.
-
-For native OAuth, make these calls through the harness's authenticated MCP
-connection; the private-handoff verifier above is for machine credentials.
-Inspect the advertised tool schemas before proposing arguments. Remote `recall`
-and `forget` operate on facts marked `visibility: "world"`, still restricted by
-the client's source grant. Use that explicit visibility only for the nonsensitive
-synthetic test fact and keep its returned ID for cleanup. A private test fact
-cannot be recalled or withdrawn through these remote operations. Never change
-real private facts' visibility to make verification pass. With read-only access,
-verify an authenticated capabilities/read call without adding write authority.
-
-`forget` withdraws a fact from active memory. History, source material, and backup copies may remain; it is not a promise of physical erasure. Verifier cleanup uses the same withdrawal semantics. Failed cleanup stays visible with the fixture identifier.
-
-## Delegation is a separate capability
-
-Only grant delegation when you want this client to start work on the brain host. Supply a nonempty set of tools from the running registry:
-
-```bash
-gbrain mcp grant research-example --harness grok-bot \
-  --profile delegating-agent --source default \
-  --bound-tools search,get_page --delegated-namespace job \
-  --url https://brain.example.com/mcp \
-  --admin-token-file /absolute/private/admin-token \
-  --credentials-out /absolute/private/research-example.json --json
-```
-
-**New delegation has unlimited spending and concurrency 1.** Unlimited means no client spending cap; provider charges still apply, and usage remains attributed to the client. To impose a finite cap, explicitly add `--budget-usd-per-day 5`. Existing finite caps are preserved during repair and profile changes unless explicitly changed. A cap of `0` prevents paid work. Finite clients refuse paid calls whose maximum cost or pricing is unknown; unresolved liability stays reserved across midnight and reservation expiry until reconciled.
-
-The default job namespace isolates delegated writes per job. To use another allowed fence, supply `--delegated-slug-prefixes agents/research-example/`. Direct writes and delegated writes have separate fences. The delegated source must also belong to the parent's read grant, and bound tools must fit its operation snapshot. Local-only tools and cross-brain delegation are unsupported.
-
-Delegation verification first checks configuration with a dry run. Add `--delegate` to `mcp verify` only when you want a real worker challenge that may incur API charges. A queued job ID does not pass: the verifier requires terminal completion with the randomized result. An unavailable worker or failed cancellation remains visibly incomplete.
-
-Queued and running work stays restricted by both its submitted policy and the current grant. A changed source invalidates the original target; it does not move the job to another source. Revocation stops newly forbidden work at the next execution boundary and cannot undo an external operation already running.
-
-## Repair permissions without replacing credentials
-
-Inspect `whoami` or the authenticated `gbrain://capabilities` resource. It reports the effective profile, revision, scopes, source access, direct/delegated policies, spending mode, and repair reasons. Worker readiness is reported separately from grant validity.
-
-Preview an explicit profile update:
-
-```bash
-gbrain mcp grant agent-example --client CLIENT_ID --if-version REVISION \
-  --harness codex --profile memory-reader --source default \
-  --url https://brain.example.com/mcp \
-  --admin-token-file /absolute/private/admin-token --dry-run --json
-```
-
-Get the current revision with `gbrain mcp admin client CLIENT_ID` using the
-same server URL and owner credential. Review the before/after grant, then repeat
-without `--dry-run`. `--if-version` rejects a stale edit. The client ID and secret
-remain unchanged. When updating a client, omit `--profile` to preserve its
-profile, scopes, operation snapshot, and bindings while changing only the fields
-you supply. An explicit profile selection regrants its eligible operations.
-Advanced local-maintenance repairs remain available through `gbrain auth
-rescope-client CLIENT_ID --help`; omitted restrictions are retained.
-
-Omitting `--skills` preserves the existing follow choice, including previously
-approved membership when reapplying a profile. Explicit custom scope/operation
-lists are respected instead of silently repaired. To explicitly
-enroll an old memory client, preview `mcp grant` with its client ID, current
-revision, and `--skills follow`, without `--profile`. Apply the reviewed change.
-For a machine client, recover its private handoff, issue a token carrying the
-added scope, and reconnect. For native OAuth, restart authorization in the
-harness to request the added scope. Exact follow and dedicated-editor examples are
-in [shared-skills permissions](shared-brain-skills.md#connect-each-installation).
-Do not grant editing merely because the client can write memory.
-
-Scope removals affect existing tokens immediately. Added scopes need a newly issued access token; refresh cannot expand its original scope grant. Source, operation, fence, binding, and surface changes apply on the next authenticated request. Repairing bindings benefits an existing token that already carries `agent`. TTL changes apply only to newly issued tokens. New renewable connections use one-hour access tokens; static-token adapters use 30 days. Check the receipt for the selected expiry.
-
-## Recover an interrupted handoff
-
-The host retains a private delivery journal before committing a new client. If the response or destination write is lost, recover the original handoff without duplicating the client:
-
-```bash
-gbrain mcp grant agent-example --client CLIENT_ID --resume --harness codex \
-  --url https://brain.example.com/mcp \
-  --admin-token-file /absolute/private/admin-token \
-  --credentials-out /absolute/private/recovered-agent.json --json
-```
-
-Resume changes no permissions and rotates no secret. If the client ID was lost,
-use `gbrain mcp admin clients` with the same URL and owner credential and inspect
-the existing registration before retrying. A lost response can follow a
-committed mutation; it does not prove that creation failed.
-
-In the admin dashboard, use the existing client's setup/delivery action. New
-confidential clients use the same private host journal. If registration loses
-its response, inspect the existing client before recovery. Machine clients
-receive a machine handoff; native OAuth clients receive their distinct OAuth
-setup. Keep any secret-bearing download private and set its permissions to
-`0600` on the target computer. Recovery refuses a revoked client or a journal
-whose secret has since been rotated.
-
-An expired or lost machine **access token** can be reissued using the existing
-client secret. For native OAuth, reconnect in the harness. A lost **client
-secret** requires journal/handoff recovery or an explicit maintenance decision;
-see [legacy rotation limits](../mcp/ADMIN.md#recover-a-failed-step). The local
-`agent register --reissue` path supports confidential machine clients and leaves
-outstanding access tokens valid; it is not a general remote/native-PKCE recovery
-command. Protect or remove the host's `.gbrain/credential-deliveries` files
-deliberately after secure delivery; they contain credentials and are excluded
-from default backups.
-
-## Maintenance, removal, and troubleshooting
-
-Keep the host runtime and schema current together. Keep native instructions enabled for each harness, check token expiry for static adapters, and periodically repeat a harmless memory round trip. The host's normal maintenance schedule serves its connected clients; installing a remote connection does not silently create another server or paid routine.
-
-For a hosted thin CLI connection, a removed runtime is repaired by reinstalling
-GBrain in the harness, then repeating `gbrain connect ... --install` with the
-existing private handoff, endpoint, harness identifier, and root. The installer
-updates its owned launcher while preserving the host's memory and client
-identity. This connection has no local database backup or `bin/gbrain-setup`
-helper; complete backups belong on the brain host. If the handoff was lost,
-recover it through the host's delivery procedure first.
-
-Before applying the grant migration, stop old servers and workers and take a protected backup. Start only runtimes that enforce the migrated grants. If rollout fails, disable the affected entry points and restore a compatible runtime while preserving memory and the tightened grants; do not run an older authorization implementation against the migrated database. Local installations can be released independently of hosted delegation.
-
-Remove a managed configuration with the same private handoff and `gbrain connect
-... --remove`, or remove the native OAuth connection through its harness
-settings. Disable saved skills/routines through the harness controls. Use
-[token invalidation, revocation, or deletion](../mcp/ADMIN.md#invalidate-tokens-revoke-or-delete)
-when server authority should change. Removing configuration alone does not
-revoke access or delete memory.
-
-Managed removal also attempts to leave its shared-skills enrollment and removes
-only unchanged owned artifacts. `left_with_retained_files` requires review of
-the preserved edits and a native restart/disable step. A server-side
-`leave_brain` alone cannot remove files on the client. Offline or revoked access
-does not prevent local following from being disabled: inspect
-`remote_membership_pending` to distinguish local cleanup from host-acknowledged
-departure and retry the latter when possible. Back up operational DB
-state as well as canonical content; Git alone cannot restore memberships,
-policy history, revocations, or receipts. See
-[shared-skills recovery limits](shared-brain-skills.md#troubleshoot-leave-and-recover).
-
-<a id="hosted-harness-troubleshooting"></a>
-
-| Symptom | Next action | Who acts | Consent | Verify |
-| --- | --- | --- | --- | --- |
-| PGLite is busy | Use authenticated host administration (`--admin-token-file ~/.gbrain/serve/admin-token` against the running server) or wait for the current owner to close. Never remove a live lock. | brain host | none | `gbrain doctor --only connection --json` on the host |
-| Published URL unreachable from the agent | On the host, `gbrain mcp expose --status`. A cloud agent needs `--funnel`; tailnet-only reach serves only the owner's own devices. Certificate issuance can leave tailnet health `pending` for a minute. See the [remote MCP troubleshooting table](remote-mcp.md#troubleshooting). | brain host | `egress` when switching to `--funnel` | `gbrain mcp expose --status --json` |
-| Configuration conflict | Select a fresh connection name/root or inspect the changed entry; do not overwrite unrelated settings. | agent | none | re-read the harness's MCP configuration |
-| `grant_conflict` | Fetch the new revision and preview again. | agent, after the user agrees | none | preview the grant again |
-| Delegation missing | Inspect repair reasons and explicitly bind supported tools, an active source, path policy, and positive concurrency. | brain host | none | the harness's tool list |
-| Read works, writes fail | Check issued/current scopes, operation snapshot, source grant, and direct fence. Full surface alone adds no authority. | brain host | none | `whoami` (where callable) or `gbrain doctor --json` on the host |
-| Work queues but never finishes | Check the host worker and terminal job status; queue admission is not worker verification. | brain host | none | `gbrain jobs stats` on the host |
-| Finite cap blocks a call | Inspect unresolved reservations and provider pricing/bounds; do not treat unknown usage as zero. | user (sets or raises the cap) | `paid` | `gbrain doctor --json` on the host |
-| Server checks pass, new conversation fails | Verify native instruction activation, reload, absolute launcher, and observed GBrain calls inside that harness. | user (restarts or reloads the harness) | none | a `recall` from a new conversation |
-
-## Evidence and release gates
-
-As of **2026-09-09**, repository tests exercise private configuration writers, credential recovery, grant enforcement, owner consent, and server probes. Exact tests and observed results belong in the change's validation record. **Actual Grok Bot/Muse sessions have not been verified by these tests.** Native Grok Bot OAuth additionally requires confidential-client PKCE/resource checks, authenticated owner approval, and a successful real connector test. Muse personal-agent native MCP configuration remains unverified and is not an advertised installation path.
-
-[Validation evidence and actual-harness acceptance](harness-validation.md).
-
----
-
 # Core entry points
 
 ## AGENTS.md
@@ -967,6 +38,7 @@ start here.
    export PATH="$HOME/.bun/bin:$PATH"
    bun install -g github:garrytan/gbrain#stable
    ```
+   Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](INSTALL_FOR_AGENTS.md#no-unzip), not an improvised one. A command scanner (Hermes) refuses the Bun installer or `bun install -g`? Use the [release binary route](INSTALL_FOR_AGENTS.md#release-binary).
    If `bun install -g` aborts or `gbrain doctor` reports `schema_version: 0`
    ([#218](https://github.com/garrytan/gbrain/issues/218)), run `gbrain apply-migrations --yes --no-autopilot-install`.
    Exit 1 with `migrations_pending` means the schema is still behind and another `--yes` repeats the failure:
@@ -1875,6 +947,8 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGE
 > (codex mcp get gbrain >/dev/null 2>&1 || codex mcp add gbrain --url https://gbrain.io/mcp) && gbrain setup codex --instructions-only
 > ```
 >
+> Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](#no-unzip), not an improvised one.
+>
 > `gbrain setup <harness> --instructions-only` tells the agent the brain is there; agents seldom call an MCP server nobody told them about. It writes the [brain-first block](docs/guides/setup.md#brain-first-instructions) into `~/.claude/CLAUDE.md` or Codex's `AGENTS.md` (a non-empty `AGENTS.override.md` instead when Codex has one) with a per-turn rule hook, and leaves the MCP entry alone; the same command with `--no-instructions` added takes them out.
 >
 > The installer is a shell script for macOS and Linux; read it before you run it. Nothing is created until a person picks the plan and pays. Mention this once in the reply that starts or reports the install, and never wait on an answer before continuing a local install the user already asked for.
@@ -1931,8 +1005,39 @@ bun install -g github:garrytan/gbrain#stable
 Verify: `gbrain --version` should print a version number. If `gbrain` is not found,
 restart the shell or add the PATH export to the shell profile.
 
+Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](#no-unzip), not an improvised one.
+
+<a id="no-unzip"></a>
+
+**No `unzip` and no way to install packages (Linux).** This route puts the same Bun build the official installer would fetch, taken from Bun's own npm package `@oven/bun-linux-<arch>`, into `~/.bun/bin`, the directory the official installer uses, and adds that directory to the PATH of every new login shell. It needs only `curl` and `tar`:
+
+```bash
+arch=$(uname -m); [ "$arch" = x86_64 ] && arch=x64; [ "$arch" = arm64 ] && arch=aarch64
+mkdir -p ~/.bun/bin
+curl -fsSL "https://registry.npmjs.org/@oven/bun-linux-$arch/-/bun-linux-$arch-1.4.4.tgz" | tar -xzO package/bin/bun > ~/.bun/bin/bun.new && chmod +x ~/.bun/bin/bun.new && ~/.bun/bin/bun.new --version && mv ~/.bun/bin/bun.new ~/.bun/bin/bun
+echo 'export PATH="$HOME/.bun/bin:$PATH"' >> ~/.profile
+export PATH="$HOME/.bun/bin:$PATH"
+bun install -g github:garrytan/gbrain#stable
+bash -lc 'gbrain --version'
+```
+
+The PATH line goes in `~/.profile`, which new login shells read. Bash skips `~/.profile` when `~/.bash_profile` or `~/.bash_login` exists, so append the line to that file instead; zsh reads `~/.zprofile`. On Alpine or another musl system, run `arch=$arch-musl` after the first line; on an x64 CPU without AVX2, run `arch=x64-baseline`. The last command must print a version from a fresh shell. Don't install Bun with `npm install -g bun` or run gbrain from a git clone instead: gbrain starts with `#!/usr/bin/env bun`, so it fails in any new shell that can't find `bun` on its PATH.
+
 Next, on Claude Code or Codex: `gbrain setup claude-code` (or `gbrain setup codex`), which needs no API
 key ([Step 3](#step-3-create-the-brain)). On any other harness, `gbrain init --pglite --no-embedding` (Step 3).
+
+<a id="release-binary"></a>
+
+**A command scanner blocks the Bun installer or `bun install` (Hermes).** Some harnesses check each shell command before running it and refuse what they can't approve without a person. Hermes in single-query mode refuses `curl … | bash`, `bun install -g github:…` (its scanner, Tirith, can't finish a package lookup for a `github:` spec) and commands that append to a dotfile such as `~/.profile`. Install the release binary instead: one file built from the same release, which needs no Bun, no git and no package install. Run each line as its own command, exactly as written (Linux x64; on an Apple Silicon Mac use `gbrain-darwin-arm64`):
+
+```bash
+curl -fL --create-dirs -o ~/.local/bin/gbrain https://github.com/garrytan/gbrain/releases/latest/download/gbrain-linux-x64
+chmod +x ~/.local/bin/gbrain
+~/.local/bin/gbrain --version
+~/.local/bin/gbrain init --pglite --no-embedding
+```
+
+`releases/latest` is the stable release. Use the absolute path `~/.local/bin/gbrain` in every command and MCP registration instead of editing shell profiles. Run each line as written: an added `2>&1`, `$(…)` or `{ …; }` group can make the scanner refuse a line it would otherwise pass. Then run `~/.local/bin/gbrain setup hermes`: it registers gbrain through Hermes's own `hermes mcp add` (no hand edit of Hermes's protected `config.yaml`), adds the brain-first rule and its per-turn hook, and checks the server with `hermes mcp test gbrain`. If it prints a `hermes mcp add` command instead, or (an older gbrain) says setup does not register Hermes's MCP server, run the registration command from [docs/mcp/HERMES.md](docs/mcp/HERMES.md#register-by-hand) with `~/.local/bin/gbrain` as the command. If the user would rather keep the Bun install, Hermes's own refusal names its setting for this: `approvals.single_query_mode: approve` in Hermes's config, which is the user's call. `gbrain upgrade` updates a release binary in place.
 
 > **If `bun install -g` aborts or `gbrain doctor` reports `schema_version: 0`**
 > ([#218](https://github.com/garrytan/gbrain/issues/218)), run `gbrain apply-migrations --yes --no-autopilot-install`.
@@ -2406,15 +1511,34 @@ model gbrain removed in v0.33, needs `gbrain skillpack migrate-fence` once.)
 > Postgres/Supabase engine, which tolerates concurrent connections. Details:
 > [docs/architecture/serve-sync-concurrency.md](docs/architecture/serve-sync-concurrency.md).
 
-**If you are Hermes:** register gbrain as your MCP server:
+**If you are Hermes:** run setup by the path you installed gbrain at:
 
 ```bash
-printf 'Y\n' | hermes mcp add gbrain --env GBRAIN_HOME=$HOME --connect-timeout 60 --command $(which gbrain) --args serve --surface starter --advertise verbs
+~/.local/bin/gbrain setup hermes
 ```
 
-Keep `--args` last (everything after it becomes server argv) and verify with
-`hermes mcp test gbrain` — the add exits 0 even on failure. Full reference:
-[docs/mcp/HERMES.md](docs/mcp/HERMES.md).
+It registers gbrain as your MCP server through Hermes's own `hermes mcp add`, so
+you never edit `config.yaml` yourself (Hermes refuses that edit), adds the
+brain-first rule and its per-turn hook (without them a new session seldom calls
+gbrain), and checks the server with `hermes mcp test gbrain`. If it prints a
+`hermes mcp add` command instead of registering, or (an older gbrain) says it does
+not register Hermes's MCP server, run the command in
+[Register by hand](docs/mcp/HERMES.md#register-by-hand) and verify with
+`hermes mcp test gbrain`. Full reference: [docs/mcp/HERMES.md](docs/mcp/HERMES.md).
+
+**If you are OpenClaw:** register gbrain as your MCP server, then add the
+brain-first rule:
+
+```bash
+openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg starter --arg --advertise --arg verbs --env GBRAIN_HOME=$HOME
+gbrain setup openclaw
+```
+
+Run both lines. With only the first, the tools are registered but a new session
+answers from OpenClaw's own memory and chat history instead of gbrain. Once the
+gateway runs `gbrain serve`, use the MCP tools rather than the `gbrain` CLI on a
+PGLite brain (the CLI stops with `pglite_busy`). Full reference:
+[docs/mcp/OPENCLAW.md](docs/mcp/OPENCLAW.md).
 
 **If you are Grok Build** (xAI's `grok` CLI): register gbrain as your MCP server:
 
@@ -2764,6 +1888,8 @@ grants.
   writing/originals page content to your configured chat model (default
   Anthropic Haiku). Refuses to run unless `takes.bootstrap_enabled=true`
   is set in config AND `--yes` is passed. Two-gate opt-in by design.
+  `--dry-run` without `--yes` only lists the candidate pages and sends
+  nothing to the model.
 - Autopilot's auto-apply tier for takes-bootstrap is `manual_only`
   (do not bypass).
 
@@ -4561,7 +3687,8 @@ GBrain is MIT-licensed and free to self-host, and it starts with no API keys: se
 | How it connects | Agents |
 |---|---|
 | One command wires memory, hooks and instructions | [Claude Code](docs/mcp/CLAUDE_CODE.md) (`gbrain setup claude-code`), [Codex](docs/mcp/CODEX.md) (`gbrain setup codex`) |
-| MCP from its guide, then `gbrain setup <name>` adds the brain-first instructions | [OpenClaw](docs/mcp/OPENCLAW.md), [Hermes](docs/mcp/HERMES.md), [opencode](docs/mcp/OPENCODE.md), [Cursor](#connect-gbrain-to-your-ai-client-mcp) |
+| `gbrain setup hermes` registers MCP through Hermes's own CLI and adds the brain-first instructions | [Hermes](#hermes) |
+| MCP from its guide, then `gbrain setup <name>` adds the brain-first instructions | [OpenClaw](docs/mcp/OPENCLAW.md), [opencode](docs/mcp/OPENCODE.md), [Cursor](#connect-gbrain-to-your-ai-client-mcp) |
 | MCP from its guide | [ChatGPT](docs/mcp/CHATGPT.md), [Claude Desktop](docs/mcp/CLAUDE_DESKTOP.md), [Claude Cowork](docs/mcp/CLAUDE_COWORK.md), [Perplexity](docs/mcp/PERPLEXITY.md), [Grok Build](docs/mcp/GROK.md), [Grok Bot](docs/guides/grok-bot.md), [Muse](docs/guides/muse.md), [Windsurf and other stdio clients](#connect-gbrain-to-your-ai-client-mcp) |
 | Any other coding agent | Paste the [install prompt](#heres-how-to-self-host-it) below |
 
@@ -4586,6 +3713,8 @@ New releases come out many times a day, but the install command below gives you 
 > # Codex (an existing gbrain entry is kept):
 > (codex mcp get gbrain >/dev/null 2>&1 || codex mcp add gbrain --url https://gbrain.io/mcp) && gbrain setup codex --instructions-only
 > ```
+>
+> Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](INSTALL_FOR_AGENTS.md#no-unzip), not an improvised one. A command scanner (Hermes) refuses the Bun installer or `bun install -g`? Use the [release binary route](INSTALL_FOR_AGENTS.md#release-binary).
 >
 > `gbrain setup <harness> --instructions-only` tells the agent the brain is there; agents seldom call an MCP server nobody told them about. It writes the [brain-first block](docs/guides/setup.md#brain-first-instructions) into `~/.claude/CLAUDE.md` or Codex's `AGENTS.md` (a non-empty `AGENTS.override.md` instead when Codex has one) with a per-turn rule hook, and leaves the MCP entry alone; the same command with `--no-instructions` added takes them out.
 >
@@ -4618,6 +3747,19 @@ https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
 Keep my current identity and instructions, start keyless, and show me the
 search-mode choice. Verify a remember/recall round trip with real GBrain calls.
 ```
+
+### Hermes
+
+Hermes checks every shell command before it runs it, and with nobody there to approve (`hermes chat -q`, a gateway or cron run) it refuses the Bun installer and `bun install -g`. Install the release binary instead, one file that needs no Bun and no package install, and let setup register it through Hermes's own `hermes mcp add`. Run each line as its own command (Linux x64; on an Apple Silicon Mac use `gbrain-darwin-arm64`):
+
+```bash
+curl -fL --create-dirs -o ~/.local/bin/gbrain https://github.com/garrytan/gbrain/releases/latest/download/gbrain-linux-x64
+chmod +x ~/.local/bin/gbrain
+~/.local/bin/gbrain init --pglite --no-embedding
+~/.local/bin/gbrain setup hermes
+```
+
+Then start a new Hermes session. Setup registers the MCP server (`hermes mcp test gbrain` checks it) and adds the brain-first rule to `~/.hermes/SOUL.md` with a per-turn hook. Hermes's approval and command-scanner settings stay as they are; setup only records the approval for its own per-turn hook. If setup prints a `hermes mcp add` command instead of registering, run that command as printed. To paste it to Hermes instead, use the prompt above. Details: [docs/mcp/HERMES.md](docs/mcp/HERMES.md).
 
 Postgres, thin clients, API keys and upgrades: [docs/INSTALL.md](docs/INSTALL.md). Agents: [INSTALL_FOR_AGENTS.md](INSTALL_FOR_AGENTS.md). Memory-only walkthrough: [give your coding agent a memory](docs/tutorials/connect-coding-agent.md).
 
@@ -4866,7 +4008,7 @@ Data flowing into the brain. Each integration is a recipe — markdown + setup h
 - **Voice**: talk to your brain from a browser or phone with [`recipes/agent-voice.md`](recipes/agent-voice.md) (`gbrain integrations install agent-voice`); the older Twilio recipe is deprecated. Voice notes and chat transcripts you already have come in as files: put their Markdown in a folder and import it, or bring ChatGPT and Claude exports in with `gbrain transcripts ingest` ([chat connectors](docs/guides/chat-connectors.md)).
 - **A second folder** (for example a company notes folder beside your personal one): `gbrain sources add company --path ~/company-notes`, then `gbrain sync --source company`. A plain folder works without Git. On a brain only you use, the new folder joins default search; on a shared brain, `gbrain sources federate company` adds it. More: [multi-source brains](docs/guides/multi-source-brains.md).
 - **Gmail + Calendar + Contacts (native)**: the google source kind syncs threads, events, and contacts through your own OAuth client and runs the open-loop engine on top (`gbrain waiting`). Setup: [`docs/guides/google-connect.md`](docs/guides/google-connect.md); recipes: [`recipes/email-to-brain.md`](recipes/email-to-brain.md), [`recipes/calendar-to-brain.md`](recipes/calendar-to-brain.md).
-- **Meeting notes + Slack channels (native)**: the `meetings` source kind (Fireflies first) writes one page per meeting and the `slack` source kind one page per channel per day, synced on a schedule, on brains with or without a Git repository. Setup: [`docs/guides/meeting-and-slack-sources.md`](docs/guides/meeting-and-slack-sources.md).
+- **Meeting notes + Slack channels (native)**: the `meetings` source kind (Fireflies first) writes one page per meeting and the `slack` source kind one page per channel per day, synced on a schedule, on brains with or without a Git repository. Setup: [`docs/guides/meeting-and-slack-sources.md`](docs/guides/meeting-and-slack-sources.md). The `imessage` source kind imports Messages from a Mac, one private, owner-only page per chat per day: [`docs/guides/apple-setup.md`](docs/guides/apple-setup.md).
 - **Email + calendar (webhooks)**: webhook handlers that route to brain signals. [`docs/integrations/meeting-webhooks.md`](docs/integrations/meeting-webhooks.md).
 - **Embedding providers**: Voyage (new-install default: `voyage-4` @ 1024d), OpenAI, OpenRouter, Google Gemini, Azure OpenAI, MiniMax, Alibaba DashScope, Zhipu, Ollama (local), llama.cpp llama-server (local), LM Studio, Together, and LiteLLM proxy. Pricing matrix + decision tree in [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md). Existing vectors are never converted by changing the default; use the explicitly approved [embedding migration](docs/guides/embedding-migration.md).
 - **Rerankers**: Voyage `rerank-3-lite` hosted (the default unless `search.reranker.model` is set; on in `balanced` and `tokenmax`, same `VOYAGE_API_KEY` as embeddings; `gbrain config set search.reranker.model voyage:rerank-2.5` restores the previous default), plus the `llama-server-reranker` recipe for fully-local cross-encoder rerank via llama.cpp running Qwen3-Reranker against the same `gateway.rerank()` seam. Setup walkthrough in [`docs/ai-providers/llama-server-reranker.md`](docs/ai-providers/llama-server-reranker.md).
@@ -4933,6 +4075,7 @@ Start with `gbrain doctor`. For database access failures, use `gbrain engine sta
 - [MCP task guide](docs/mcp/README.md) — deployment and per-client setup (Claude Desktop, Code, Cursor, ChatGPT, Perplexity, Cowork)
 - [MCP administration](docs/mcp/ADMIN.md) — owner dashboard access, client registration, OAuth, permissions, and token recovery
 - [Evals](docs/eval/) and [research](docs/research/) — methods and results
+- [Rust engine plan](docs/designs/RUST_ENGINE.md) — design for a third storage engine; the experimental Rust store already serves keyword search, title search, chunk reads, vector search, embeddings, links, takes, salience, facts, page operations, raw data and file records, ontology claims, chronicle projections, eval capture, dream verdicts, contradiction runs and the code call graph, and a second process on the same brain reaches it through the owner process, but nothing selects it yet; its [research maps](docs/designs/rust-engine/research/README.md) and [review record](docs/designs/rust-engine/review-record.md)
 - [`docs/ethos/`](docs/ethos/) — philosophy (thin harness, fat skills, markdown as recipes, origin story)
 - [`AGENTS.md`](AGENTS.md) — entry point for non-Claude agents
 - [`CLAUDE.md`](CLAUDE.md) — entry point for Claude Code (deep operating context)
@@ -5403,6 +4546,93 @@ segmented chunk (`test/e2e/segmented-switch-off-write-role.test.ts`). With the
 policies above it creates segmented pages and sees only its sources' rows
 (`test/e2e/segmented-rls-scope.test.ts`).
 
+<a id="owner-only-delete-triggers"></a>
+**Owner-only delete triggers.** Rows derived from an owner-only source (an `imessage` source, or
+one with `owner_only: true`) stay owner-only after their origin is gone. Since migration v322
+(GST-3032) a `BEFORE DELETE` trigger on `sources`, `pages`, `facts`, `takes` and
+`timeline_entries` records the deleted row and every row derived from it in `owner_only_marks`,
+and reads treat a marked row, or one derived from a marked row, as owner-only. Nothing derived
+is deleted. A take or timeline row counts as owner-only by its own lineage as well as its page's.
+The first owner-only source (or mark) sets a one-way flag, a comment on `owner_only_marks`;
+from then on the guard stays on even after the last owner-only source is removed. A brain that
+never held owner-only data never reads `owner_only_marks`, so its logins need no new grant.
+The triggers run as the deleting role. A role whose reads row-level security limits (a scoped
+writer, or `FORCE ROW LEVEL SECURITY` on a table it owns) could miss derived rows: its delete
+of a row it sees as owner-only is refused with `owner_only_lineage_unreadable` (delete it as
+the table owner without `FORCE`, or as a `BYPASSRLS` login, and the derived rows are marked),
+and its delete of a row it sees as open goes through but sets the `('*', 'row_security')`
+mark, which closes owner-only lineage the way a missing trigger does. `CREATE TRIGGER` needs the table's owner: a table another role owns gets
+no trigger, the migration run and `gbrain doctor` (`owner_only_marks_triggers`) name it with
+`ALTER TABLE ... OWNER TO`, and `gbrain apply-migrations --force-schema` run by its owner
+creates it. While a trigger is missing or disabled on a brain that holds an owner-only source or
+a mark, owner-only lineage reads closed: every row with a recorded derivation input and every
+synthesized concept or question counts as owner-only. It stays closed after the triggers are
+back (a delete in the gap left no marks) until the owner, having checked what was deleted in
+the gap, deletes the `('*', 'unguarded')` row by hand; the closed mode itself never adds a mark.
+
+A scoped writer that keeps making permanent deletes (the recipe above) keeps owner-only lineage
+closed: while a login whose reads row-level security limits makes permanent deletes on a brain
+that holds owner-only data, every derived row and synthesized concept stays owner-only for
+everyone but the owner. Deleting the `('*', 'row_security')` row does not end it, because that
+login's next permanent delete sets it again. The ways out are to run permanent deletes as the
+table owner (without `FORCE`) or a `BYPASSRLS` login, or to stop holding owner-only data:
+remove the owner-only source and, once the rows derived from it may be read by others again,
+its marks.
+
+<a id="owner-only-marks-privileges"></a>**Privileges on `owner_only_marks`.** The table follows
+the sibling pattern: row-level security on and no policy, so a role with only table privileges
+(Supabase's `anon` and `authenticated`) neither reads nor adds a mark. No migration grants
+anything. On a brain that has held owner-only data, every non-owner login that reads `sources`
+needs `SELECT` (to read owner-only lineage exactly) and, if it makes permanent deletes,
+`INSERT` on `owner_only_marks`, each with a permissive policy in the shape below (`USING (true)`,
+and `WITH CHECK (true)` to add) and no restrictive policy that applies to it; any other policy
+counts as none. Without them the login reads
+owner-only lineage closed, never open and never an error, and its permanent deletes are
+refused with `owner_only_marks_unwritable`, which names the grant. Nobody but the owner
+removes a mark, and only the owner of `owner_only_marks` sets the flag, so the first
+owner-only source is added by that role. `gbrain doctor` (`owner_only_marks_triggers`) names
+each login that still needs the statements and prints them; the owner runs:
+
+<!-- gbrain:owner-only-marks-recipe:begin (applied verbatim by test/e2e/owner-only-marks-scoped-login.test.ts) -->
+```sql
+-- A login that reads and makes permanent deletes (the writer role above):
+GRANT SELECT, INSERT ON owner_only_marks TO <writer-role>;
+CREATE POLICY owner_only_marks_read_<writer-role> ON owner_only_marks FOR SELECT TO <writer-role> USING (true);
+CREATE POLICY owner_only_marks_add_<writer-role> ON owner_only_marks FOR INSERT TO <writer-role> WITH CHECK (true);
+-- A read-only login (the reader role above) needs the read half only:
+GRANT SELECT ON owner_only_marks TO <reader-role>;
+CREATE POLICY owner_only_marks_read_<reader-role> ON owner_only_marks FOR SELECT TO <reader-role> USING (true);
+```
+<!-- gbrain:owner-only-marks-recipe:end -->
+
+Owner-only lineage is read exactly only by a login whose reads of the lineage tables (`sources`,
+`facts`, `derivation_inputs`, `links`, `pages`, `takes`, `timeline_entries`) are complete: the
+table owner without `FORCE`, a `BYPASSRLS` login, or a login with a permissive `USING (true)`
+policy and no restrictive one on each. On a brain that has held owner-only data any other login
+reads it closed, never open and never an error: every row with a recorded derivation input,
+every synthesized concept or question, every row in an owner-only source and every page or
+fact whose source row the login cannot read counts as owner-only for it. So the scoped writer above, whose `pages` and `sources` policies read
+`app.scopes`, sees every derived row as owner-only. A login that cannot read `derivation_inputs`
+in full (the reader role above has no grant on it) sees every row as owner-only, also after the
+last owner-only source is removed.
+
+**Who must act.** Nobody has to: such a login reads closed, so owner-only data stays hidden
+from it and nothing errors. An operator who runs a scoped login (the writer or reader role
+above) on a brain that has held owner-only data, and wants that login to read derived rows
+exactly again, so that a row derived only from open rows reads as open, gives it complete reads
+of each lineage table `gbrain doctor` names for it (`owner_only_marks_triggers`, details
+`closed_logins` and `lineage_sql`). As the table owner, for each named table:
+
+```sql
+GRANT SELECT ON public.<table> TO <login>;
+DROP POLICY IF EXISTS gbrain_lineage_read_<login> ON public.<table>;
+CREATE POLICY gbrain_lineage_read_<login> ON public.<table> FOR SELECT TO <login> USING (true);
+```
+
+Then drop any restrictive policy on those tables that applies to the login. This gives the
+login every row of those tables, so it undoes the source scoping its own policies give it. That
+trade is the operator's to make: no migration grants anything or adds a policy.
+
 <a id="purge-and-withdrawal-guards"></a>
 **Purge and withdrawal guards.** The guards that refuse purged content and keep withdrawn
 facts withdrawn run as the writing role (`SECURITY INVOKER`) and read their ledgers
@@ -5445,12 +4675,20 @@ CREATE POLICY page_segment_derivation_purge_pages_writer_note ON page_segment_de
 ```
 <!-- gbrain:ledger-rls-recipe:end -->
 
-**Check that the upgrade replaced every guard.** Migration v318 can only replace a guard function
-the role running it owns. A guard owned by another role is left as it was, so it still lets a
-scoped writer without ledger policies through, and v318 only names it in one stderr line
-(`guards: N purge or withdrawal guard(s) still read their ledgers as empty ...`). After upgrading,
-run this as any role that can read the catalog. Every one of the seven rows must show
-`fails_closed = t`:
+A bulk fact insert (the fence import in `src/core/engine-sql/facts.ts`) defers the withdrawal
+stamp to the end of its statement, so when one of its rows matches a withdrawal the guard
+updates that row in `facts`, and the write role then needs a permissive `UPDATE` policy on
+`facts` covering the row, beside its `SELECT` policy, or the guard refuses the insert with the
+same `writer_coordinator_required` error.
+
+**Check that the upgrade replaced every guard.** Migrations v318 and v321 can only replace a guard
+function the role running them owns. A guard owned by another role is left as it was, and each
+migration only names it in one stderr line. Left by v318, it still lets a scoped writer without
+ledger policies through (`guards: N purge or withdrawal guard(s) still read their ledgers as empty ...`).
+Left by v321, a facts guard still lacks the name-tag rule, so a claim forgotten or
+purged under another subject can come back on a name tag (`guards: N purge or withdrawal guard(s)
+keep their body from before name keys ...`). After upgrading, run this as any role that can read
+the catalog. Every one of the seven rows must show `fails_closed = t`:
 
 ```sql
 SELECT p.proname, pg_get_userbyid(p.proowner) AS owner,
@@ -5465,8 +4703,14 @@ ORDER BY 1;
 For a row with `fails_closed = f`, connect as the role in its `owner` column and run
 `ALTER FUNCTION public.<proname>() OWNER TO <the role gbrain migrates as>;`. Then run
 `gbrain apply-migrations --yes`, or start gbrain: every migration run re-creates a guard that
-is missing its check, provided the migrating role owns it. You can also run gbrain once as the
-owning role instead. Run the query again to confirm.
+is missing its check or its current body, provided the migrating role owns it. You can also run
+gbrain once as the owning role instead. Run the query again to confirm. The query sees only the
+ledger check, so a facts guard v321 left still shows `fails_closed = t`. On Postgres, `gbrain doctor`
+(`guard_ledger_checks`) runs the same check, also checks the current body of the three facts guards
+(`unbacked_page` in `gbrain_refuse_purged_fact`, `memory/scope` in `gbrain_preserve_fact_withdrawal`
+and `gbrain_guard_inserted_facts`), and names each guard left behind with its owner, and the fix:
+`gbrain apply-migrations --yes` when the doctor's role may re-create it, else the
+`ALTER FUNCTION ... OWNER TO` SQL to run as the owning role first.
 
 The segmented storage recipe above already covers the two derivation purge tables for a
 role it applies to. A policy that filters out ledger rows of a source the role writes hides
@@ -5769,6 +5013,30 @@ version bump changes it.
 to connect: it diagnoses the dir from disk, names the repair command, reports
 retained repair backups, and escalates when repairs keep recurring (that
 means the unclean-shutdown genesis is still active — see the ladder's rung 4).
+
+<a id="pglite-live-serve"></a>
+### PGLite while `gbrain serve` runs (`pglite_busy` reason `live_serve`)
+
+One gbrain process opens a PGLite brain at a time. While `gbrain serve` (stdio
+or `--http`) holds it, page and fact writes from the CLI (`gbrain put`,
+`gbrain remember`) go through the running server and work. Commands that need
+the database to themselves, which includes the admin commands
+(`gbrain access …`, `gbrain sources …`, `gbrain auth …`) and most reads,
+refuse with `pglite_busy` reason `live_serve`. The refusal names the server's
+PID, and its fix is two steps: stop that server, then run the command again.
+Never remove the lock of a server that is still running.
+
+On a brain that serves one person this is a short pause: quit the agent
+session (a stdio serve) or stop `gbrain serve --http`, run the command, and
+start it again. On a brain that serves several people over
+`gbrain serve --http`, every member's connection drops while the server is
+stopped, for every admin step. Move such a brain to Postgres, where the server
+and the admin commands run side by side: preview with the read-only
+`gbrain migrate --to postgres --url-env GBRAIN_TARGET_URL --plan --json`,
+then follow [Move a PGLite brain to Postgres](guides/move-to-postgres.md). The
+move carries members, tokens, `readable_by` and facts across.
+`gbrain setup <harness> --serves several` on PGLite says this in its
+`engine` line.
 
 <a id="legacy-pglite-lock"></a>
 ### Legacy PGLite lock (`pglite_busy` reason `legacy_owner_unverified`)
@@ -6528,6 +5796,167 @@ The real backstop is `test/e2e/op-checkpoint-jsonb-parity.test.ts` +
 `test/e2e/jsonb-roundtrip.test.ts`, which round-trip writes through real Postgres
 and assert `jsonb_typeof` — the assertion PGLite cannot make.
 
+## The Rust engine shell
+
+The opt-in Rust engine (`docs/designs/RUST_ENGINE.md`) is under construction. PGLite and Postgres behave exactly
+as before, and an install needs no Rust toolchain and no addon. `openRustEngine({ addon, databasePath })`
+(`src/core/rust-engine.ts`) is the one seam: the addon loader calls it after it has loaded and verified the native
+addon, and gets back the engine: every `BrainEngine` member, with `kind` `'rust'`. `BrainEngine.kind` admits `'rust'`
+when the `rust` config value lands; no config value selects the Rust engine yet. Finding, checking and loading the
+addon, and refusing a missing or mismatched one, belong to the loader (below), not the shell.
+
+- **Capabilities.** The engine reports a capability only when it serves every `BrainEngine` member of that
+  capability (`src/core/rust-engine/store-capabilities.ts`). Today that is `schema`, `sources`, `config`, `page_versions`, `tags`, `embeddings`, `keyword_search`, `vector_search`,
+  `links`, `timeline`, `graph`, `facts`, `takes`, `files`, `code_edges`, `salience`, `raw_data`, `eval_capture`,
+  `ingest_log`, `dream_verdicts`, `contradictions` and `ontology`.
+  Each member it does not serve refuses `engine_capability_missing` with the capability as `reason` (`raw_sql`,
+  `pages`, `search`, ...), the member in `detail`, and `written=nothing`, before any work.
+  `src/core/rust-engine/members.ts` maps every member to its capability; the type fails when a new `BrainEngine`
+  member is not classified. What each capability still lacks is under "What a Rust brain serves now".
+- **One owner process per brain.** `connect()` takes the kernel lock `<database_path>.gbrain-owner.lock`; its
+  holder opens the store and serves it on `<database_path>/.gbrain-owner.sock` (`ownerRole` `'owner'`). Any other
+  process is a `'client'` that forwards each call; transactions refuse there. Limits and errors:
+  `docs/designs/RUST_ENGINE.md` ("Process model").
+- **SQL-only paths.** Code that only works through SQL (migrations, cycle locks, engine migration and graduation,
+  embed backfill, page-body staging) takes the kind as `EngineKind`, narrows it with `sqlEngineKind` or
+  `isRustEngineKind` (`src/core/sql-engine-kind.ts`), and refuses a Rust brain with `engine_capability_missing` reason `raw_sql` instead of treating it as Postgres.
+- **The addon loader.** `loadRustEngineAddon()` (`src/core/rust-engine/addon-loader.ts`) returns the loaded addon,
+  or the refusal `rust_engine_addon_missing` or `rust_engine_addon_mismatch` with its `reason` (`gbrain errors
+  <code>`), before the brain is touched. It uses `GBRAIN_RUST_ENGINE_ADDON` (an absolute path to a build from `bun run
+  rust:build`; it skips only the release checksum pin) first, then an addon cached at
+  `<gbrain home>/engines/rust/<engine_build>/<target>.node` whose SHA-256 equals the cached manifest of this gbrain
+  version. It never reaches the network and writes nothing: with no cached addon it refuses with reason
+  `not_installed`, and a cached file that fails a check stays as it was. Fetching the release's addon into that cache
+  arrives with the capability gate. Only the Rust engine's open path may import the loader, lazily, so a PGLite or
+  Postgres brain never loads the addon or creates `<gbrain home>/engines/`.
+- **Shared memory.** The addon refuses a typed array whose buffer the runtime (`napi_is_arraybuffer`) does not call a
+  plain `ArrayBuffer`, so a `SharedArrayBuffer` view is refused with `InvalidArg` however JavaScript globals or
+  prototypes have been changed (`rust/README.md`).
+
+### What a Rust brain serves now
+
+`connect()` opens the brain directory through the addon's store (`rust/README.md`, "The brain store") and
+`disconnect()` closes it. A second engine on an open directory becomes the owner's client; a second direct store
+open refuses `rust_store_locked`; a directory the
+store cannot read refuses `rust_store_unreadable` with its reason (`gbrain errors <code>`). A served member on an engine
+that is not connected refuses `engine_closed`. These members run on the store (`src/core/rust-engine/store-members/`):
+
+- Contradictions, dream, raw files and code edges: `writeContradictionsRun`, `loadContradictionsTrend`,
+  `getContradictionCacheEntry`, `putContradictionCacheEntry`, `sweepContradictionCache`, `getDreamVerdict`,
+  `putDreamVerdict`, `sweepDreamVerdicts`, `putRawData`, `getRawData`, `upsertFile`, `getFile`, `listFilesForPage`,
+  `addCodeEdges`, `deleteCodeEdgesForChunks`, `getCallersOf`, `getCalleesOf` and `getEdgesByChunk`. They make the
+  `contradictions`, `dream_verdicts`, `raw_data`, `files` and `code_edges` capabilities complete. `getRawData` and the
+  code-edge reads refuse `excludePrivate: true` with `engine_capability_missing` instead of ignoring it. Each store
+  write is one transaction, so a refusal leaves nothing written. Per-member contracts are in
+  `rust/docs/store/` (`contradictions.md`, `dream.md`, `raw_files.md`, `code_edges.md`).
+- Config, sources and tags: `getConfig`, `setConfig`, `unsetConfig`, `listConfigKeys`, `getAllConfig`,
+  `getConfigValues`, `listAllSources`, `updateSourceConfig`, `getSource`, `listSourceLocalPaths`,
+  `getSourceStrictness`, `addTag`, `removeTag`, `getTags`, `pruneFrontmatterTags`, `addPageTagsById`. These are the
+  members that make the `config`, `sources`, `tags` and `schema` capabilities complete. The store keeps each tag's
+  claim (`added` or `frontmatter`) as PGLite's `tags.tag_source` does, so an import prune removes only the tags the
+  import claimed. `getSource` reads `last_commit`, `contextual_retrieval_mode` and `trust_frontmatter_overrides` as
+  null, null and false: only the sync anchor and source admin SQL write those columns, and neither runs on a Rust brain.
+- Pages: `getPage`, `readPageSnapshot`, `putPage`, `deletePage`, `softDeletePage`, `restorePage`, `listPages`,
+  `resolveSlugs`. A stale `expectedRevision` refuses with `PageRevisionConflictError`, as on PGLite.
+- Versions, chunks and timeline: `createVersion`, `getVersions`, `revertToVersion`, `upsertChunks`, `sealChunks`,
+  `getChunks`, `getChunkPage`, `getChunkWindows`, `countChunklessPagesWithContent`, `listChunklessPagesWithContent`,
+  `deleteChunks`, `addTimelineEntry`, `addTimelineEntriesBatch`, `getTimeline`, `getTimelineForDate`, `getSince`,
+  `getOnThisDay`, `getLastSeen` and `upsertEventProjection`. `page_versions` and `timeline` are reported. `chunks`
+  stays unreported, because `deleteChunksExcept`, `setChunkerVersion`, `writeTextProjectionSeal`, `moveChunkIndexes` and
+  `getChunkReuseRows` still refuse. Reads: `rust/docs/store/chunk_queries.md` and `timeline_queries.md`.
+- Links and graph: `addLink`, `addLinksBatch`, `removeLink`, `getLinks`, `getBacklinks`, `traverseGraph`,
+  `traversePaths`, `traversePathsDetailed`, and the link reads in `rust/docs/store/link_queries.md` (`getBacklinkCounts`,
+  `getAdjacencyBoosts`, `relationalFanout`, `findOrphanPages`, `supersedingPageSlugs`, `pagesLinkingTo`, ...). Every
+  member of `links` and `graph` is served, so both capabilities are reported.
+- Vectors and embeddings: `searchVector` and `searchTakesVector` (an exact scan over the stored vectors, scored as
+  pgvector scores them), the embedding state members (`getEmbeddingsByChunkIds`, `cosinesByChunkIds`, `listStaleChunks`,
+  `setPageEmbeddingSignature`, `updateTakeEmbeddings`, ...) and `upsertChunks` and `sealChunks` with the vector a chunk
+  carries (`rust/docs/store/vectors.md`, `rust/docs/store/embeddings.md`). The `vector_search` and `embeddings`
+  capabilities are reported. The store has one vector column, PGLite's `embedding`.
+- Facts, ontology and eval capture: `insertFact`, `insertFacts`, `deleteFactsForPage`, `expireFact`, `listFactsByEntity`,
+  `listFactsSince`, `listFactsKeyset`, `listFactsBySession`, `listSupersessions`, `countUnconsolidatedFacts`,
+  `findCandidateDuplicates`, `consolidateFact`, `findTrajectory`, `getFactsHealth`, `pageCollapseFacts` and
+  `migrateFactsToCanonical` (the `facts` capability); `mergeOntologyFact`, `getOntology`, `discoverOntologyDimensions`
+  and `findOntologyConflicts` (`ontology`); `logEvalCandidate`, `listEvalCandidates`, `deleteEvalCandidatesBefore`,
+  `logEvalCaptureFailure` and `listEvalCaptureFailures` (`eval_capture`). A caller policy these members cannot honour
+  refuses `engine_capability_missing`. Contracts: `rust/docs/store/facts.md`, `ontology.md`, `eval_capture.md`.
+- Takes, salience, stats and the ingest log, alias and slug members, and the extraction and page-listing reads:
+  `rust/docs/store/takes.md`, `salience.md`, `stats.md`, `aliases.md`, `extraction.md` and `page_ops.md`. The `takes`,
+  `salience` and `ingest_log` capabilities are reported.
+- Facts and ontology claims, page operations, raw data and files, eval capture, dream verdicts, contradiction runs and
+  the code call graph: `rust/docs/store/facts.md`, `ontology.md`, `page_ops.md`, `raw_files.md`, `eval_capture.md`,
+  `dream.md`, `contradictions.md` and `code_edges.md`. The `facts`, `raw_data`, `files`, `eval_capture`,
+  `dream_verdicts`, `contradictions` and `code_edges` capabilities are reported; `pages` is not (`page_ops.md` says why).
+- Keyword and title search: `searchKeyword`, `searchKeywordChunks`, `countKeywordPages`, `searchKeywordPages`,
+  `searchTitles` and `findByTitleFuzzy`. They rank with a port of PostgreSQL's `ts_rank`, `ts_rank_cd` and
+  `websearch_to_tsquery` (english), so their answers match PGLite's (`rust/docs/store/keyword.md`). Every member of
+  `keyword_search` is served, so the capability is reported.
+- Segmented pages (a page over 1 MiB, stored in segments): `allocateBodyOccurrenceIds`, `stageSegmentTexts`,
+  `readSegmentTexts`, `stageManifestRows`, `readManifest`, `stageSegmentChunks`, `createSegmentedPageShell`,
+  `flipBodyGeneration`, `openBodyStaging`, `setBodyStagingState`, `readSegmentDerivations`, `upsertSegmentDerivations`,
+  `retireSegmentDerivations`, `sealSegmentedPage` and `refreshPageBody`. `sweepSegments` still refuses, and so does
+  a segmented page written inside `transaction` (the store has none), so the `page_body` capability stays unreported.
+  A whole-body `putPage` over a segmented page refuses, as on PGLite (`rust/docs/store/page_body.md`).
+
+A served member never drops what it cannot keep. An option or input the store has no home for, or cannot answer the
+way PGLite does, refuses `engine_capability_missing` and writes nothing. These are refused today:
+
+- a chunk that carries an image vector, and a Rust brain whose config sets `search_embedding_column` or
+  `embedding_columns` to another column (the store keeps PGLite's `embedding` column only; every member that reads the
+  active column refuses, `rust/docs/store/embeddings.md`);
+- a `putPage` with a `source_path` into a source in source-root slug mode whose directory is below its repository root
+  (only the files on disk can say whether another page already holds that file, and the store cannot read them);
+- `listPages` with `listColumnsOnly`;
+- `resolveSlugs` when no live page has exactly that slug, because PGLite goes on to a fuzzy title match the store does
+  not have, so an empty answer would be wrong to give;
+- a `getChunks` or `getChunkPage` over more than one distinct `sourceIds` entry;
+- a vector search with `where`, a date bound, `minTrust` or `suppressFlagged` (`rust/docs/store/vectors.md`);
+- an input of a raw-data, page-operation, salience, facts, ontology, chronicle or code-edge read the store cannot
+  reproduce, including a privacy policy wider than the store's (each `rust/docs/store/*.md` page lists them);
+- a keyword or title search with a CJK query, a text search configuration other than `english`, a truthy
+  `requireSafeChunks`, `minTrust` or `suppressFlagged`, a date bound that is not an ISO date, a malformed `where`, or a
+  truthy `excludePrivate` on `searchKeywordChunks`, `countKeywordPages` or `searchKeywordPages` (`searchKeyword` and
+  `searchTitles` serve it; `rust/docs/store/keyword.md`, "Refusals"), and a link
+  batch that sets a link kind or resolution.
+
+A `putPage` that carries a `source_path` keeps it, and refuses `page_identity_changed` (detail
+`origin_already_claimed`) when another live page of the same source already records that path, as PGLite does.
+
+What the Rust members do the way PGLite does: `putPage` writes the page alone. It does not chunk and does not seal,
+and `upsertChunks` does not seal either; only `sealChunks` replaces the chunks outright and seals them to the page's
+revision, so a page is searchable only after `sealChunks`. `getChunks` returns `[]` for a page that is not sealed at its
+current revision. `deletePage` hard-deletes from the default source. `softDeletePage` and `restorePage` with no
+`sourceId` act on every source. Slugs are matched as written. A cancelled `AbortSignal` stops `upsertChunks`,
+`addLinksBatch` and `addTimelineEntriesBatch` before anything is written, but a write already running in the native
+store cannot be cancelled, which is a difference from PGLite. Overlapping `connect()` calls share one open, and a
+`disconnect()` during a connect wins: the connect rejects `engine_closed` and the store it opened is closed.
+
+A scope that names no source (an empty string `sourceId` or `sourceIds` entry) is never widened: `getChunks` and `getTags` answer it as PGLite does, with nothing, instead of reading every source. A keyword hit always carries `effective_date` and `effective_date_source`, null when the page has no date.
+
+Keyword search hides what PGLite hides: soft-deleted pages, archived sources, pages that carry a `quarantine` or
+`pinned_question` frontmatter key, whatever its value, and the slug prefixes `test/`, `attachments/` and `.raw/` plus any
+that `GBRAIN_SEARCH_EXCLUDE` names (`include_slug_prefixes` opts back in). Keyword and title search rank with a port of `ts_rank` and
+`ts_rank_cd` over a port of PostgreSQL's english text search, and match PGLite's scores and order. No keyword case is
+listed in `test/rust-expected-divergence/` (`search.tsv` is empty).
+
+The parity suite checks this: with `GBRAIN_TEST_RUST_ARM=1` each `test/engine-parity/` file adds a Rust arm. A case that
+reaches a member or an option Rust refuses must end on that typed refusal (a refusal the case caught on the way to
+another outcome does not count); any other case must return what PGLite returns, or differ only as its row in
+`test/rust-expected-divergence/` (one file per family) names with a normaliser, and Rust must still return a value (a thrown error never
+passes, and a row that stops being true fails the run). The suite
+runs on PGLite alone without the flag.
+
+**Transactions and the belief ledger.** Both stay refused on the Rust engine, on purpose.
+
+- `transaction`, `transactionDirect` and `lockPageKeys` refuse `transactions`. The store makes each write atomic on
+  its own, but it has no handle that spans several calls, and `lockPageKeys` throws outside a transaction on PGLite, so
+  there is nothing for it to hold. Code that passes settings into a transaction (the write attribution, trust and
+  maintenance settings in `src/core/persistence/context.ts`) does it with `set_config` and `current_setting` through
+  `tx.executeRaw`, which needs SQL. A Rust transaction would carry those values on a typed context instead.
+- `belief_ledger` is a subsystem, not a `BrainEngine` member: `src/core/belief/` appends and reads belief events through
+  `executeRaw`. The Rust engine never reports `raw_sql` (design D18), so the ledger refuses until its reads and appends
+  have typed members. Nothing in the Rust engine writes belief events today.
+
 ## Adding a new engine
 
 1. Create `src/core/<name>-engine.ts` implementing `BrainEngine`
@@ -6541,7 +5970,9 @@ and assert `jsonb_typeof` — the assertion PGLite cannot make.
    engines do. Declare its capabilities honestly. The binding matrix
    (`test/helpers/executor-binding-matrix.ts`) and the engine-sql contract
    tests tell you whether the adapter binds, counts, fails and cancels like the
-   others. A non-SQL engine implements every method itself.
+   others. A non-SQL engine implements typed methods instead of a `SqlExecutor`:
+   it declares no `raw_sql` capability, and each member it cannot serve yet
+   refuses `engine_capability_missing` (see "The Rust engine shell" above).
 4. Store engine type in `~/.gbrain/config.json`: `{ "engine": "myengine", ... }`
 5. Add tests. The test suite should be engine-agnostic where possible... same test cases, different engine constructor.
 6. Document in this file + add a design doc in `docs/`
@@ -6693,6 +6124,7 @@ The run ends in exactly one outcome:
 | --- | --- | --- | --- |
 | `synced` | 0 | The pass converged and stamped (a company-brain source: the cursor reached its target). A pass at a selection other than the configured one adds `selection_scoped` and does not advance `last_commit`; a pass that held files a person must decide adds `held_needs_human` (their count in `held_needs_human`). | Nothing; held files wait on a person (`gbrain sync status --source <id>`). |
 | `resumable` | 0 | A deadline, `--timeout` or Ctrl-C stopped it; accepted writes are intact. | Rerun `next.command`; safe in a loop. |
+| `resumable` / `terminated` | 143 (129 for SIGHUP) | A SIGTERM or SIGHUP (an outer `timeout`, a supervisor stop, a closed terminal) reached `gbrain sync` during a managed pass, which recorded its stop first; accepted writes are intact. A second signal, or a run still saving the pass 3 s after the handler starts, exits as before and leaves the pass open (`gbrain sync status` reads `pass_interrupted`); a run that saved the pass but is still printing its result then exits without it, and the pass reads `pass_terminated`; on PGLite the handler can start tens of seconds after the signal, so a supervisor that kills the process sooner leaves the pass open the same way. | Rerun `next.command`; either way the plain sync resumes it. |
 | `resumable` / `not_converged` | 0 | The pass used its four rounds while another writer kept changing the level; everything it admitted stands. | Rerun `next.command`. After three in a row `next` is a report (`gbrain doctor --json`), not another sync. |
 | `resumable` / `admission_paused` | 0 | `sync.admission` is `imports_only` or `classify_only`. | Ask the user; `gbrain config set sync.admission normal` ends the pause. |
 | `blocked` / `reconcile_host_required` or `grant_scope` | 1 | A remote caller or a partial grant admitted what it could; the rest (holds, markers, keep_db writes, the stamp) needs the owner host. | Tell the user to run `gbrain sync --source <id> --no-pull` on the brain host. |
@@ -7255,6 +6687,27 @@ vars — incident-time escape hatches, not everyday knobs.
    consumer claims) is reported in `sync_blocked` as
    [`refresh_sync_timeout`](write-refusals.md#refresh_sync_timeout) and
    catches up on its next sync.
+   While it holds the refresh lock, a member's sync derives links only for the
+   pages that refresh imported. Once every lock is released, the same run spends
+   the rest of the sync's link budget (1,000 pages and 5 minutes, less what the
+   imports used) on the source's stale-link backlog. So an uncontended run drains
+   as much backlog as a plain `gbrain sync` does, but other refreshes of the
+   checkout no longer wait on it. Refreshes drain a source's backlog one at a time
+   per brain: a refresh that finds another refresh's drain of the same brain's
+   source running skips its own (a plain
+   `gbrain sync` derives its own share without that lock). `--json` lists each
+   member's drain in `link_backlog`: `outcome` is `drained` (with `pages`
+   derived and `remaining`), `skipped` or `failed` (with `message`). A failed
+   drain never fails the refresh, and `gbrain extract --stale --source-id <id>`
+   runs the backlog on demand (`--dry-run --json` reports its size as
+   `stale_pages`).
+   `--json` also reports where the run's time went. `phase_ms` holds whole
+   milliseconds for each phase the run reached: `fetch`, `precheck` (which
+   includes `fetch`), `drain` (waiting for queued writes), `merge` (the fence
+   and fast-forward), `sync` (the member imports), `tail` (their post-import
+   step) and `backlog` (the drain after the lock). `lock_held_ms` is how long
+   the run held the refresh lock, and is absent when the run never took it.
+   `GBRAIN_DEBUG=1` prints the same line on stderr.
    A refresh whose process died (a crash, a replaced container) does not
    wedge the checkout: the owner finishes what it can on its own, and the next
    `gbrain sources refresh <source-id>` on the owner host finishes the rest
@@ -8248,7 +7701,10 @@ Save ONE fact with mandatory attribution.
   operator set `facts.default_visibility` to private; a save never lands wider
   than the page it is written into. In gbrain, a remote credential bound to
   one member saves `private` on its own member page unless it passes
-  `share: true`, and its `visibility: "world"` is refused; the brain owner's
+  `share: true`, and its `visibility: "world"` is refused; a `share: true`
+  fact about another enabled member (`people/<member>`) is saved `private` with
+  a pending proposal the brain owner confirms (`gbrain trust confirm tp<N>`),
+  and the reply carries a `held` field naming it; the brain owner's
   own credential saves as above (shared by default, `private` on its member
   page when it asks or the page or default keeps facts private). The response
   names the `page` and `visibility` the fact got. Facts saved `private` before
@@ -8732,8 +8188,8 @@ says to keep them, or to forget them first to withdraw the claim everywhere.
 A forget never withdraws an active fact the caller cannot read; when one
 would be reached, the refusal keeps the `claim_linked:` prefix and names no fact.
 In gbrain, a credential bound to one member withdraws only facts on its own
-member page (another fact it reads is refused naming the brain host); the
-brain owner's own credential also withdraws a shared fact it reads, and any
+member page, and a shared fact about itself (another fact it reads is refused
+naming the brain host); the brain owner's own credential also withdraws a shared fact it reads, and any
 other fact it reads on a page that credential can write, such as a page whose
 `readable_by` names the owner.
 
@@ -8764,7 +8220,8 @@ provider for comparison.
 The response carries `similar_active`: `{ state, candidates, semantic_review,
 next }`. `state` is `checked`, `not_checked_no_embedding` or
 `not_checked_pending`. `candidates` lists up to five other active facts about
-the same entity, with the same visibility (world only for remote callers),
+the same entity, with the same visibility (world only for remote callers
+other than the brain owner),
 whose embedding is at cosine 0.80 or higher to the withdrawn claim, as
 `{ fact_id, similarity }` (no stored text; zero model calls). `semantic_review`
 is `scheduled`, `off`, `unavailable` or `opted_out`; `next` tells the agent
@@ -8966,7 +8423,8 @@ source and `scope_entity` match an accepted card's `(source_id, slug)`.
 
 `entity_facts[]` holds the packed entities' own facts: up to 5 per card, newest
 first, read in the card's own source with the card's visibility (world-only
-unless a trusted-local caller passed `include_private`) and eligibility. Each
+unless a trusted-local caller passed `include_private` or the caller is the
+brain owner's own remote credential) and eligibility. Each
 row is `{ source_id, slug, fact_id, fact, kind, entity_slug, valid_from?,
 context, confidence, attributed_to, provenance, trust_tier?, origin? }`, where
 `(source_id, slug)` names the card. `facts[]` is unchanged hot memory, so a
@@ -9280,6 +8738,7 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 
 | Symptom | Next step | Who acts | Consent | Verify |
 |---|---|---|---|---|
+| `curl -fsSL https://bun.sh/install \| bash` stops with `error: unzip is required to install bun` | install `unzip` (`apt-get update && apt-get install -y unzip`, `dnf install -y unzip` or `apk add unzip`, with `sudo` unless root) and rerun the installer; with no way to install packages, follow the [no-unzip route](../../INSTALL_FOR_AGENTS.md#no-unzip), never `npm install -g bun` or a bare git clone, which leave `bun` off a new shell's PATH | agent; the user when only they can install packages | `persistent_install` | `bash -lc 'gbrain --version'` prints a version |
 | `gbrain doctor --alert` exits 17 (`doctor_alert_act`, `alert.level: act`) | follow each `alert.items[].fix` in the `--json` document; it is that check's own fix, with its consent and actor ([doctor alert](#doctor-alert-act)) | the item's `fix.actor` | the item's `fix.consent` | `gbrain doctor --alert --json` exits 0 |
 | `gbrain doctor --alert` exits 18 (`doctor_alert_unknown`, `alert.level: unknown`), or an agent cron pages "health unknown twice in a row" | run each `alert.unknown[].fix` (it measures that check alone); a check that keeps running out of time needs `--budget-ms` raised or `gbrain doctor --alert --tier standard --json` ([doctor alert](#doctor-alert-unknown)) | agent | none | `gbrain doctor --alert --json` exits 0 and `alert.consecutive_unknown` is 0 |
 | Doctor's score drops (resolver_health fails, skill_currency warns "new built-in skill(s) available") only when run from an agent's own workspace | nothing to fix: since the W4 scoping both report `not a gbrain skills folder (<path>)` for a skills folder gbrain did not install; to grade it on purpose pass `--skills-dir <path>` ([doctor alert](#doctor-alert)) | agent | none | `gbrain doctor --only resolver_health --json` |
@@ -9433,7 +8892,7 @@ Turning the `preparation_deadlines` switch off (`gbrain config set persistence.p
 <a id="access-reach"></a>**Doctor warns who can no longer reach what (`access_*`)?** By count and a few ids (remote callers get counts only); doctor changes nothing.
 
 - `access_shared_source_unread`: a source bound to no member holds pages no enabled member's live key reads. See `gbrain sources list --json`; then `gbrain sources federate <id>` (every key with no source grant), `gbrain auth rescope --token <name> --sources <ids>` (named keys), or `gbrain access member source add <member> <id>` when it is one person's.
-- `access_pages_unreadable`: pages no enabled member or the owner can read, usually a leaver's pages. `gbrain access who-can-read <slug> --source <id>` shows why; then name a live member in `readable_by` or change the rule (`gbrain access rule add` previews first).
+- `access_pages_read_by_nobody`: pages no enabled member reads, usually a leaver's pages. `gbrain access member handover <member>` previews giving them back ([member handover](member-handover.md)).
 - `access_disabled_member_credentials`: live tokens or OAuth clients of a disabled or removed member: refused on every read, yet active in `gbrain auth list`. `gbrain access check --token <name>` shows the binding; then `gbrain auth revoke <name>`, or `gbrain access member enable <member>` if they are back.
 
 <a id="keyless-by-choice-search"></a>**Search on a brain keyless on purpose carries no degraded stamp?** Intended: with embeddings turned off on purpose (`gbrain init --no-embedding`), search is keyword-only, so an empty result means no page this caller can read holds these words ([details](../protocol/AGENT_OPERATOR_v1.md#degraded-stamp)). `no_provider`, timeouts and failed arms still stamp. **Say to your agent:** *"Is my brain's search keyword-only on purpose?"*
@@ -9474,7 +8933,7 @@ Turning the `preparation_deadlines` switch off (`gbrain config set persistence.p
 
 <a id="session-timeouts-not-applied"></a>**Doctor warns `persistence_session_timeouts` with `session_timeouts_not_applied`?** gbrain sets `statement_timeout` (`GBRAIN_STATEMENT_TIMEOUT`, default 5min) and `idle_in_transaction_session_timeout` as connection startup parameters, and a transaction-mode pooler (PgBouncer with `ignore_startup_parameters`, Supavisor) drops them: `SHOW statement_timeout` through the configured URL reads `0`, so a statement outside a transaction has no server-side bound and a relation lock held in another session (a migration's `ALTER TABLE pages` queued behind a long transaction, for example) holds it for as long as the lock lasts. Managed write *preparation* reads are not affected since v0.60.108: they run under a transaction-local `statement_timeout` of the write's remaining preparation budget, so a lock-blocked read ends at the budget and the member is released `preparation_deadline` with no statement left on the server (#6278). For every other autocommit statement, set the default on the role instead of the connection: `ALTER ROLE <gbrain role> SET statement_timeout = '5min'` (read-only to check: `gbrain doctor --only persistence_session_timeouts --json`). Setting `GBRAIN_STATEMENT_TIMEOUT` has no effect through such a pooler.
 
-<a id="managed-sync-blocked"></a>**A managed sync run is blocked (doctor `managed_sync_blocked`, a freshness `sync` job ended `dead`, or get_brain_health reports `sync_blocked`)?** The source's unfinished run stopped on a page request that did not commit and recorded the stop, so it resumes nothing by itself while the other sources keep syncing (#6858: one source stopped for 21 hours while every freshness job reported `completed`). Such a job now ends `dead`: its error names the stop and the run's `next` command, and `gbrain jobs get <id> --json` carries `outcome`, `drain` and `next` in its progress. Doctor warns as soon as a run is blocked and fails once it has been blocked for more than an hour; get_brain_health turns to `attention` past the same hour, with a count band and no source names. A sync pass that stopped before it finished (in discovery, path `<discovery>`, or on one file) counts as blocked too, until a later sync of the source succeeds. So does an open pass whose process was killed or crashed with no process left holding its drain lease (code `pass_interrupted`, aged from the pass row's last write), and passes that keep stopping that way or on a transient stop such as a statement timeout (`pass_abandoned`). Run `gbrain sync status --source <id> --json` (read-only): it names the page, its fault class and its exit. Clear the cause it names and run the step it prints; the next freshness job resumes the run once the cause is gone. A page publication that `gbrain repair stuck-recovery --keep disk` abandoned is not a blocker: the next plain sync retries that page after the rest of its run, imports it when the kept file is committed, and holds it `worktree_dirty` otherwise.
+<a id="managed-sync-blocked"></a>**A managed sync run is blocked (doctor `managed_sync_blocked`, a freshness `sync` job ended `dead`, or get_brain_health reports `sync_blocked`)?** The source's unfinished run stopped on a page request that did not commit and recorded the stop, so it resumes nothing by itself while the other sources keep syncing (#6858: one source stopped for 21 hours while every freshness job reported `completed`). Such a job now ends `dead`: its error names the stop and the run's `next` command, and `gbrain jobs get <id> --json` carries `outcome`, `drain` and `next` in its progress. Doctor warns as soon as a run is blocked and fails once it has been blocked for more than an hour; get_brain_health turns to `attention` past the same hour, with a count band and no source names. A sync pass that stopped before it finished (in discovery, path `<discovery>`, or on one file) counts as blocked too, until a later sync of the source succeeds. So does an open pass whose process was killed or crashed with no process left holding its drain lease (code `pass_interrupted`, aged from the pass row's last write), and passes that keep stopping that way, on a termination signal (a pass a SIGTERM or SIGHUP stopped records it and reads `pass_terminated`) or on a transient stop such as a statement timeout (`pass_abandoned`). Run `gbrain sync status --source <id> --json` (read-only): it names the page, its fault class and its exit. Clear the cause it names and run the step it prints; the next freshness job resumes the run once the cause is gone. A page publication that `gbrain repair stuck-recovery --keep disk` abandoned is not a blocker: the next plain sync retries that page after the rest of its run, imports it when the kept file is committed, and holds it `worktree_dirty` otherwise.
 
 <a id="managed-sync-not-moving"></a>**The catch-up is parked (`sources status --json` says `data_moving: false`, doctor warns `managed_sync_not_moving`, `gbrain sources writer movement` exited 1), or the drain stopped `drain_stalled` with `cause: owner_wedged_here`?** Liveness is not movement: `/health` can be ok, the pid alive and `sync_running: true` while no page has committed for weeks. A managed source is *not moving* when an unfinished `managed-sync` cursor has had neither a committed `managed_sync_*` receipt nor a head step advance for longer than `persistence.preparation_ceiling_ms` (600 s) while a drain or a full consumer is live on the owner host; with nothing live it is `movement_state: parked` (a cursor left between cron runs; informational, not scored). A parked cursor whose write queue still holds admitted requests while no consumer runs and nothing has moved for longer than that ceiling is stranded: nothing will ever drain it, so doctor `managed_sync_not_moving` fails (#6552, #6712 PR 2) and its fix is the resume sync with the cursor's stored options (`gbrain sync --source <id> …`), which consumes the queue itself; `details.stranded` counts such sources. When the sync backlog itself cannot be read, every surface says `movement_state: unknown` (`unknown.reason: backlog_read_failed`) instead of `nothing_pending`: doctor warns with `details.health: unknown`, `sources status` prints a `movement UNKNOWN` line, and `gbrain sources writer movement` exits 1 with code `movement_unknown` (`--warn-only` exits 0); rerun the movement command, and run `gbrain doctor --json` if the read keeps failing. Every surface routes to the same two read-only calls, so the agent reaches the owner, the step and the next action without SQL:
 
@@ -9584,6 +9043,7 @@ Refused writes a caller never saw land (`lost_caller_writes`) have their own rep
 | `local_path_missing` | This host owns the worktree but has no checkout path registered. | Register the checkout again on the brain host. |
 | `coordination_path_missing` | This host's registration has no coordination directory. | Repair the registration on the brain host. |
 | `not_sent`, `outcome_unknown` | The local owner's IPC lane did not take the write, or lost its acknowledgment. | `gbrain sources writer status --probe --json`; for `outcome_unknown` read the receipt (`gbrain write-request -- <id>`) before resubmitting. |
+| `earlier_call_running` | Rust brain only: the owner held this read back because an earlier write it would confirm is still running. Nothing ran, and the read tells nothing about that write. | Wait for the earlier call to end, then run the read again. Do not rerun the earlier write before the read answers. |
 
 A running sync is not one of these: `gbrain repair fences` now runs during a catch-up for every candidate the sync does not still name ([fence repair during a sync](repair.md#fence-repair-during-a-sync)), and a candidate it does name is `sync_in_progress`, not `owner_unavailable`.
 
@@ -9814,8 +9274,14 @@ seconds and comes back with only vector hits; search metadata carries
 statement timeout` (SQLSTATE 57014). Keyword-mode paging and the strict page
 count rank every matching page, so their cost grows with how common the terms
 are. Hybrid search's keyword arm ranks at most 50,000 matching chunks (its metadata
-carries `keyword_candidates_incomplete` when that bound applies). A local
-caller's statement usually stops reading matches at that bound. A remote MCP
+carries `keyword_candidates_incomplete` when that bound applies). For a local
+caller, hybrid search's title step ranks at most 5,000 of the pages whose title
+or timeline matches (the lowest page ids) and reports the same
+`keyword_candidates_incomplete` when it cuts; a remote caller's title step
+matches titles only. When no page holds every word of the question, a local
+caller's title step retries with any word: it reads titles and timelines while
+at most 5,000 pages match, and titles only past that. A local
+caller's keyword statement usually stops reading matches at the 50,000 bound. A remote MCP
 caller's arm stops there when the call sets no type, frontmatter or date filter
 and no source scope narrower than every live source; with such a filter it
 can still read every match before ranking. (A remote caller's arm used to read

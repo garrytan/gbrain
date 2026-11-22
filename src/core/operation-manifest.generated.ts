@@ -1699,7 +1699,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "autocut": {
         "type": "boolean",
-        "description": "Default on (never empty); false: full top-K for breadth.",
+        "description": "Off by default in every mode. true (or config search.autocut true) trims at the steepest score drop; can drop relevant hits on multi-part questions.",
         "fullSurfaceOnly": true
       },
       "relational": {
@@ -2791,7 +2791,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "no_stored_text",
-    "description": "Admin read: who created and who last changed a page, or one of its facts, takes or timeline entries. Each attribution names the request id, operation, principal (kind, id, current name), time and origin (request, maintenance or unrecorded), plus the row's trust_tier and write_origin (for derived rows, the inputs that set the tier). Remote callers stay inside their source grant and see only world facts.",
+    "description": "Admin read: who created and who last changed a page, or one of its facts, takes or timeline entries. Each attribution names the request id, operation, principal (kind, id, current name), time and origin (request, maintenance or unrecorded), plus the row's trust_tier and write_origin (for derived rows, the inputs that set the tier). Remote callers stay inside their source grant and see only world facts, except credentials bound to the brain owner.",
     "params": {
       "slug": {
         "type": "string",
@@ -3689,12 +3689,12 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "idempotent": true,
     "outputRedaction": "retrieval",
     "scope": "read",
-    "description": "Exact identity lookup: entity pages whose email, title or declared alias equals an email address or name, ignoring case, accents and quotes. Never fuzzy: empty matches means no exact match; ambiguous means several.",
+    "description": "Exact identity lookup: entity pages whose email, phone, title or declared alias equals an email address, phone number or name, ignoring case, accents and quotes; phones compare in one canonical form (+, country code, digits). Never fuzzy: empty matches means no exact match; ambiguous means several.",
     "params": {
       "query": {
         "type": "string",
         "required": true,
-        "description": "Email address or name, e.g. 'alice@acme-example.com'."
+        "description": "Email address, phone number or name, e.g. 'alice@acme-example.com' or '+1 555 555 0123'."
       },
       "types": {
         "type": "array",
@@ -4099,6 +4099,28 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "positional": [
         "id"
       ]
+    }
+  },
+  {
+    "name": "reveal_secret",
+    "idempotent": true,
+    "outputRedaction": {
+      "exempt": "returns the original value of a secret-store entry by design; gated by an explicit grant and page read access, and audited"
+    },
+    "description": "Return the original value behind a <REDACTED:rule:ss_...> marker. Needs a token whose operation list names reveal_secret and read access to a page holding the marker; every call is audited.",
+    "params": {
+      "id": {
+        "type": "string",
+        "required": true,
+        "description": "Entry id from the marker (ss_ followed by 12 hex)."
+      }
+    },
+    "scope": "read",
+    "mutating": false,
+    "area": "secrets",
+    "cliHints": {
+      "name": "reveal-secret",
+      "hidden": true
     }
   },
   {
@@ -5504,7 +5526,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "request_tools",
     "idempotent": false,
     "outputRedaction": "no_stored_text",
-    "description": "More tools and params: no arguments lists your catalog; {tools: [names]} returns full schemas, every optional param included; {surface} widens it (per client or stdio session).",
+    "description": "More tools and params: no arguments lists your catalog; {tools: [names]} returns schemas with every param you may pass; {surface} widens it (per client or stdio session).",
     "area": "discovery",
     "agentCallable": true,
     "params": {

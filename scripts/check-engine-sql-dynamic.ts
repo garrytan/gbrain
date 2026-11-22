@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Engine-sql dynamic-SQL guard (refactor wave 1, A2b / CQ3 / EO8 / EO17;
- * docs/TESTING.md#engine-sql-dynamic-sql).
+ * docs/ci-guards.md#engine-sql-dynamic-sql).
  *
  * In src/core/engine-sql/** every value reaches SQL as a bound parameter
  * (`sqlFragment`), and only constant text is spliced. This guard parses each
@@ -35,7 +35,7 @@ import ts from 'typescript';
 
 const ROOT = process.env.GBRAIN_GUARD_ROOT ?? join(import.meta.dir, '..');
 const SCAN_DIR = 'src/core/engine-sql';
-const ANCHOR = 'docs/TESTING.md#engine-sql-dynamic-sql';
+const ANCHOR = 'docs/ci-guards.md#engine-sql-dynamic-sql';
 
 const EXEMPT_FILES: Record<string, string> = {
   'fragment.ts': 'the renderer itself: it writes the $n placeholders and splices trustedSql text by design',
@@ -59,6 +59,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   privatePagesFilterForCaller: 'src/core/search/private-visibility.ts: privatePagesFilterFragment ORed with the private-readable source ids, each checked by isValidSourceId (alphabet [a-z0-9-], no quote) before it is quoted in',
   privateLinkOriginFilterForCaller: 'src/core/search/private-visibility.ts: constant link-origin predicate ORed with isValidSourceId-checked private-readable source ids',
   privateTimelineEventFilterForCaller: 'src/core/search/private-visibility.ts: constant timeline-event predicate ORed with isValidSourceId-checked private-readable source ids',
+  ownerOnlyTakeAllowedSql: 'src/core/search/private-visibility.ts: empty for the owner, else NOT the owner-only lineage test (access/owner-only.ts) on a code-provided take alias: constant function names and table literal, no values',
   orPrivateReadableSource: 'src/core/search/private-visibility.ts: wraps a caller predicate with isValidSourceId-checked private-readable source ids quoted as literals',
   replacedBecauseSql: 'src/core/engine-sql/pages.ts: constant GBRA-217 reason projection over a caller alias, with callerReadersAllowedSql on the successor (identities checked by validIdentity before they are quoted in); the boolean picks one of two constant texts',
   validDateSql: 'src/core/valid-time.ts: constant GBRA-217 date normaliser over a caller column expression; engine-sql passes only constant pv.frontmatter keys',
@@ -97,7 +98,9 @@ const VETTED_BUILDERS: Record<string, string> = {
   atomRetirementPurgeHold: 'src/core/persistence/atom-retirement-hold.ts: constant #7013 restorable-atom purge-hold predicate over a caller pages alias; no values',
   derivedRetirementPurgeHold: 'src/core/persistence/derived-retirement-hold.ts: constant GBRA-161 derived-retirement purge-hold predicate over a caller pages alias; no values',
   derivedOriginPurgeHold: 'src/core/persistence/derived-origin-hold.ts: constant GST-2689 parked-origin purge-hold predicate over a caller pages alias; no values',
+  pageSearchVectorSql: 'src/core/fts-language.ts: constant page search_vector expression (setweight/to_tsvector) over caller SQL expressions; the language passes VALID_CONFIG_NAME ([a-z][a-z0-9_]*) or falls back to the default, and PAGE_TIMELINE_FTS_MAX_CHARS is a code constant',
   rankingLinkSql: 'src/core/link-ranking-policy.ts: constant non-ranking link-type predicate (code-constant type names) over a caller alias',
+  boundedBodyPrefixSql: 'src/core/page-window/bounded-lead.ts: constant bounded body-prefix expression (BOUNDED_PREFIX_BYTES literal) over a caller page alias; no values',
   retiredPageSql: 'src/core/entities/resolve.ts: constant retired-page frontmatter predicate over a caller alias; no values',
   vectorLiteralSql: 'src/core/engine-sql/facts.ts: master\'s inlined vector literal; toPgVectorLiteral output (numbers joined by commas) + a ::vector/::halfvec constant',
   temporalLinkJoinSql: 'src/core/link-validity.ts: constant LEFT JOIN onto link_relationships over a caller alias; scope is one of two literals',

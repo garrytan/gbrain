@@ -43,7 +43,7 @@ import { OPEN_AT_STAMP_CAP, readPassRow, type ManagedSyncPassValue } from './syn
 import { emptySyncScope } from './sync-slug-mode.ts';
 import { faultPoint } from './fault-points.ts';
 import { supersessionSql } from './terminal-classify.ts';
-import { publishPassStamp, syncGitTopLevel, type SyncIntent } from './sync-prepare.ts';
+import { publishPassStamp, syncGitTopLevel, type FenceTrendPrefix, type SyncIntent } from './sync-prepare.ts';
 
 /** What a folded stamp's proof needs of its round: S1's mark, page count and largest page id, and the round's imports. */
 export interface PassFold {
@@ -64,7 +64,7 @@ export interface PassFold {
  * `prepared` (the round's last import) with the stamp folded into its publication: into its apply, or, for a writeback
  * (the import rewrites its file), into its post-effects hook, so the stamp sees and records the import's own Git effect.
  */
-export function foldPassCheckpoint<T extends PreparedMutation>(prepared: T, input: { row: WriteRequest; p: SyncIntent; root: string }): T {
+export function foldPassCheckpoint<T extends PreparedMutation>(prepared: T, input: { row: WriteRequest; p: SyncIntent; root: string; trend?: FenceTrendPrefix }): T {
   if (prepared.noop) return prepared;
   prepared.sourceExclusive = true;
   if (prepared.file) {
@@ -124,7 +124,7 @@ class StampSkipped extends Error { constructor(readonly reason: string) { super(
  * not enough on Postgres: postgres.js rethrows a failed statement when its transaction scope ends even after the caller
  * caught it, so a stamp's checkpoint validation timeout would fail the whole import (#5762 recovery journey).
  */
-async function foldedStamp(tx: BrainEngine, input: { row: WriteRequest; p: SyncIntent; root: string }, outcome: Record<string, unknown>, writeback?: string): Promise<string | null> {
+async function foldedStamp(tx: BrainEngine, input: { row: WriteRequest; p: SyncIntent; root: string; trend?: FenceTrendPrefix }, outcome: Record<string, unknown>, writeback?: string): Promise<string | null> {
   try {
     await tx.transaction(async stamp => {
       const skipped = await provenStamp(stamp, input, outcome, writeback);
@@ -136,7 +136,7 @@ async function foldedStamp(tx: BrainEngine, input: { row: WriteRequest; p: SyncI
   }
 }
 
-async function provenStamp(tx: BrainEngine, { row, p, root }: { row: WriteRequest; p: SyncIntent; root: string }, outcome: Record<string, unknown>, writeback?: string): Promise<string | null> {
+async function provenStamp(tx: BrainEngine, { row, p, root, trend }: { row: WriteRequest; p: SyncIntent; root: string; trend?: FenceTrendPrefix }, outcome: Record<string, unknown>, writeback?: string): Promise<string | null> {
   const stamp = p.stamp!, fold = stamp.fold!, postgres = tx.kind === 'postgres';
   const scope = { worktreeId: row.worktree_id!, sourceId: row.source_id, incarnation: row.source_incarnation };
   await faultPoint('sync:pass_fold', { requestId: row.request_id, writeId: row.id, sourceId: row.source_id });
@@ -168,6 +168,6 @@ async function provenStamp(tx: BrainEngine, { row, p, root }: { row: WriteReques
   const prior = pass.value.obligations.converged?.writeback;
   const read = prior?.length ? await readConvergedWatermark(tx, scope, row.request_id, OPEN_AT_STAMP_CAP, { own: writeback, prior }) : watermark;
   await publishPassStamp(tx, row, p, root, async () => {}, fold.obligations ? { value: { ...pass.value, obligations: fold.obligations } } : pass,
-    { changed: stamp.changed + (outcome.noop === true ? 0 : fold.batch ?? 1), watermark: read, ...(emptyScope === undefined ? {} : { emptyScope }) });
+    { changed: stamp.changed + (outcome.noop === true ? 0 : fold.batch ?? 1), watermark: read, ...(emptyScope === undefined ? {} : { emptyScope }), ...(trend ? { trend } : {}) });
   return null;
 }

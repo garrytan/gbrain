@@ -36,7 +36,7 @@ function git(args: string[], cwd?: string): string {
 
 interface Harness { root: string; home: string; shims: string; argvLog: string }
 
-function harness(label: string): Harness {
+function harness(label: string, selfUpgrade: Record<string, unknown> = {}): Harness {
   const root = mkdtempSync(join(tmpdir(), `gbrain-ap-floor-${label}-`));
   dirs.push(root);
   const home = join(root, 'home');
@@ -46,7 +46,7 @@ function harness(label: string): Harness {
   writeFileSync(join(dotG, 'config.json'), JSON.stringify({
     engine: 'pglite',
     database_path: join(dotG, 'brain.pglite'),
-    self_upgrade: { mode: 'auto', channel: 'alpha', quiet_hours: { start: hour, end: (hour + 2) % 24, tz: 'UTC' } },
+    self_upgrade: { mode: 'auto', channel: 'alpha', quiet_hours: { start: hour, end: (hour + 2) % 24, tz: 'UTC' }, ...selfUpgrade },
   }));
   writeChannelCache(dotG, `UPGRADE_AVAILABLE ${VERSION} ${TARGET}`);
   const shims = join(root, 'bin');
@@ -71,7 +71,7 @@ function writeDriver(path: string, h: Harness): void {
     'const realExit = process.exit.bind(process);',
     "process.exit = ((code?: number) => { console.log('FETCHED ' + JSON.stringify(fetched)); console.log('EXIT_CALLED ' + code); realExit(code); }) as typeof process.exit;",
     `const { attemptAutopilotSelfUpgrade } = await import(${JSON.stringify(AUTOPILOT_TS)});`,
-    `await attemptAutopilotSelfUpgrade({ kind: 'pglite', db: { query: async () => ({ rows: [] }) } } as never, 'pglite', ${JSON.stringify(join(h.root, 'autopilot.lock'))});`,
+    `await attemptAutopilotSelfUpgrade({ kind: 'pglite', db: { query: async () => ({ rows: [] }) }, readCycleLocks: async () => [] } as never, 'pglite', ${JSON.stringify(join(h.root, 'autopilot.lock'))});`,
     "console.log('FETCHED ' + JSON.stringify(fetched));",
     "console.log('RETURNED');",
     '',
@@ -155,10 +155,20 @@ describe('autopilot self-upgrade Bun floor gate (#5855)', () => {
   }, 60_000);
 
   test('bun-link: a met floor swaps and exits for relaunch', async () => {
-    const h = harness('link-met');
+    // A declared launcher relaunches this daemon, so it only exits (#8840: an unsupervised one relaunches itself, below).
+    const h = harness('link-met', { autopilot_launcher: 'external' });
     const r = await tick(h, bunLinkInstall(h, '>=1.4.0'), { FAKE_BUN_VERSION: Bun.version });
     expect(r.out).toContain('EXIT_CALLED 0');
     expect(r.swaps).toEqual(['gbrain upgrade --swap-only']);
+    expect(r.su.attempting_version).toBe(TARGET);
+  }, 60_000);
+
+  test('#8840: with nothing to relaunch it (an ephemeral-container start script, a daemon started by hand) the swapped daemon starts itself again', async () => {
+    const h = harness('link-unsupervised');
+    const r = await tick(h, bunLinkInstall(h, '>=1.4.0'), { FAKE_BUN_VERSION: Bun.version });
+    expect(r.out).toContain('EXIT_CALLED 0');
+    expect(r.out).toContain(`no supervisor relaunches this daemon, so it starts itself again once it exits: ${join(h.shims, 'gbrain')}`);
+    expect(r.swaps).toEqual(['gbrain upgrade --swap-only', 'gbrain ']);
     expect(r.su.attempting_version).toBe(TARGET);
   }, 60_000);
 

@@ -77,7 +77,7 @@ import { fileWinsContent } from '../persistence/file-wins-content.ts';
 import { ABSENT_FILE_HASH, canonicalDeletionState, missingFileRoute, readCanonicalFileText, readDeletedDriftTarget, readReconcileState, assertReconcileRevision, validateReconcileArtifact, type DeletedDriftChange, type DeletedDriftTarget, type ReconcileArtifact } from '../persistence/reconcile-state.ts';
 import { sourceDbOnlyVerdict } from '../persistence/source-storage.ts';
 import { readMovedPage } from '../persistence/moved-pages.ts';
-import { clearGitHold, movedPagesPreviewArgv, readGitHold, fileDriftActionVerb, fileDriftSide, FILE_DRIFT_DELETED_STATES, FILE_DRIFT_SIDES, GIT_HOLD_OP, heldDriftPreviewArgv, requestGitHoldRetry, type FileDriftDeletedState, type FileDriftSide, type GitHoldRecord } from '../persistence/sync-holds.ts';
+import { clearGitHold, movedPagesPreviewArgv, readGitHold, recordKeepDeleted, fileDriftActionVerb, fileDriftSide, FILE_DRIFT_DELETED_STATES, FILE_DRIFT_SIDES, GIT_HOLD_OP, heldDriftPreviewArgv, requestGitHoldRetry, type FileDriftDeletedState, type FileDriftSide, type GitHoldRecord } from '../persistence/sync-holds.ts';
 import { prepareRepairPublication, repairScreenConfig, submitManagedFileRepair } from '../persistence/file-repair.ts';
 import { maintenancePreflight, submitDatabaseMaintenanceIntent, submitMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import type { PreparedMutation } from '../persistence/coordinator.ts';
@@ -93,12 +93,12 @@ import { DATABASE_AHEAD_CODE, databaseAheadDetail, ghostFileBacked, GHOST_PURGE_
 import { prepareReconcileResult } from '../persistence/reconcile-prepare.ts';
 import { canonicalOriginPage, originConflictMessage, originTwinsFix } from '../persistence/origin-guard.ts';
 import { assertReconcileOutputPath, assertReconcileSize } from '../persistence/reconcile-backup.ts';
-import { authorizeReconcile, runReconcileApply } from '../persistence/reconcile.ts';
+import { authorizeReconcile, authorizeReconcileGrant, runReconcileApply } from '../persistence/reconcile.ts';
 import { discardedFilePaths, unimportedFile, unimportedFileText, type UnimportedFile } from '../persistence/unimported-file.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
 import { recordsNoFileOrigin } from '../persistence/unbound-pages.ts';
 import { sourceMirrorReadOnly } from '../persistence/mirror-read-only.ts';
-import { comparedListing, comparePage, linesNotCarried, newerPageParagraph, readDriftEvidence, type ComparedPage } from './file-drift-compare.ts';
+import { comparedListing, comparePage, heldLiveDrift, linesNotCarried, mirrorDriftRoute, newerPageParagraph, readDriftEvidence, type ComparedPage } from './file-drift-compare.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope } from './core.ts';
 
@@ -142,7 +142,12 @@ export interface DetachPage { slug: string; prefer: 'database'; exceptions: Drif
  */
 export interface ReleasePin { path: string; incarnation: string; revision: string; file_hash: string | null; observed_at: string }
 export interface ReleasePage { slug: string; prefer: DriftSide; exceptions: DriftException[]; release_hold: ReleasePin }
-type PlannedPage = ArtifactPage | SoftDeletePage | RemoveFilePage | ImportFilePage | DetachPage | ReleasePage;
+/**
+ * `--prefer database` on a read-only mirror's `tombstone_edited` hold: gbrain never writes the mirror, so instead of removing
+ * the file the apply records the decision on the hold (`meta.keep_deleted`), bound to the same pin; nothing else is written.
+ */
+export interface KeepDeletedPage { slug: string; prefer: 'database'; exceptions: DriftException[]; keep_deleted: DeletedDriftPin }
+type PlannedPage = ArtifactPage | SoftDeletePage | RemoveFilePage | ImportFilePage | DetachPage | ReleasePage | KeepDeletedPage;
 /** #6712 PR 4b: one held `file_drift` page a `--held` selection resolves. */
 interface HeldTarget { hold: GitHoldRecord; side: FileDriftSide; state?: FileDriftDeletedState; provenance?: DeletionProvenance }
 
@@ -163,7 +168,7 @@ const ALL_DRIFTED_LIMIT = 1000;
  * and it starts no page after the window's time budget (or the run's deadline) has passed. Each page costs a few dozen
  * database round trips, so a whole large held set in one preview ran for an hour against a remote database with no output.
  */
-const HELD_WINDOW_PAGES = 200;
+export const HELD_WINDOW_PAGES = 200;
 const HELD_WINDOW_BUDGET_MS = 60_000;
 const HELD_CURSOR_PREFIX = 'h1.';
 const heldCursor = (path: string) => HELD_CURSOR_PREFIX + Buffer.from(path, 'utf8').toString('base64url');
@@ -174,7 +179,7 @@ function heldCursorPath(sourceId: string, cursor: string): string {
   return path;
 }
 const TOP_FIELDS = ['title', 'type', 'compiled_truth', 'timeline'] as const;
-const artifactDirectory = () => join(canonicalFilesystemPath(configDir()), 'repair-previews', 'file-drift');
+export const artifactDirectory = () => join(canonicalFilesystemPath(configDir()), 'repair-previews', 'file-drift');
 const escapePointer = (key: string) => key.replace(/~/g, '~0').replace(/\//g, '~1');
 
 function previewCommand(sourceId: string, opts: RepairPlanOptions): string {
@@ -186,7 +191,7 @@ function previewCommand(sourceId: string, opts: RepairPlanOptions): string {
 }
 
 /** Whether a canonical file path passes the `--only` / `--skip` globs (no `--only`: every path; an unknown path only then). */
-const selectedByGlobs = (path: string | undefined, opts: Pick<RepairPlanOptions, 'only' | 'skip'>) =>
+export const selectedByGlobs = (path: string | undefined, opts: Pick<RepairPlanOptions, 'only' | 'skip'>) =>
   path === undefined ? !opts.only?.length && !opts.skip?.length
     : (!opts.only?.length || matchesRepairPath(path, opts.only)) && !matchesRepairPath(path, opts.skip);
 
@@ -224,7 +229,7 @@ export function driftExceptions(result: ParsedPage, preferred: ParsedPage): Drif
   return exceptions;
 }
 
-async function asLocalCli<T>(engine: BrainEngine, run: () => Promise<T>): Promise<T> {
+export async function asLocalCli<T>(engine: BrainEngine, run: () => Promise<T>): Promise<T> {
   const verified = currentVerifiedLocalWriter();
   if (verified) {
     if (verified.remote || verified.principal.kind !== 'local_cli') throw trustedCliRequired('gbrain repair file-drift runs only for the trusted local CLI.');
@@ -243,14 +248,15 @@ function requestIdFor(hash: string, page: Pick<ApprovedPage, 'source_id' | 'slug
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
 
-function writeArtifact(hash: string, value: unknown): string {
+/** Writes a private preview file (`<name>.json`) under the file-drift preview directory, atomically; the whole-class manifest uses it too. */
+export function writeArtifact(name: string, value: unknown): string {
   const directory = artifactDirectory();
   if (!existsSync(directory)) mkdirSync(directory, { recursive: true, mode: 0o700 });
   const stat = lstatSync(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw opError('permission_denied', 'The file-drift preview directory must be a private real directory.',
     `Nothing was written. Make ${directory} a real directory owned by the user with mode 0700 (not a symlink), then preview again.`);
-  const path = join(directory, `${hash}.json`);
-  const temporary = join(directory, `.${hash}.${randomUUID()}.tmp`);
+  const path = join(directory, `${name}.json`);
+  const temporary = join(directory, `.${name}.${randomUUID()}.tmp`);
   const fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
   try { writeFileSync(fd, stableJson(value)); fsyncSync(fd); } finally { closeSync(fd); }
   renameSync(temporary, path);
@@ -601,15 +607,19 @@ async function fileGonePage(engine: BrainEngine, sourceId: string, slug: string,
  * deletion and removes the file through a coordinated publication; `--prefer file` imports the file's bytes through the
  * managed file repair, which restores the tombstone or creates a new page and leaves the marker for sync to retire.
  */
-async function deletedPage(engine: BrainEngine, sourceId: string, target: HeldTarget & { state: 'tombstone_edited' | 'purged_differs' }, prefer: DriftSide):
+async function deletedPage(engine: BrainEngine, sourceId: string, target: HeldTarget & { state: 'tombstone_edited' | 'purged_differs' }, prefer: DriftSide, mirror: boolean):
   Promise<{ page: PlannedPage; detail: string } | { skip: string; detail: string }> {
   const { hold, state } = target;
+  if (mirror && prefer === 'database' && hold.meta.keep_deleted) return { skip: 'mirror_keep_deleted',
+    detail: `the user already kept this deletion (${hold.meta.keep_deleted.decided_at}); the hold is carried (mirror_keep_deleted) until the upstream edits ${hold.path} again` };
   const live = await readDeletedDriftTarget(engine, sourceId, { path: hold.path, sourcePath: hold.source_path, pageId: hold.page_id });
   if ('changed' in live) return { skip: `resolved_${live.changed}`, detail: DELETED_CHANGES[live.changed] };
   if (live.state !== state) return { skip: 'state_changed', detail: `it is ${live.state} now; preview it with ${shellQuote(heldDriftPreviewArgv(sourceId, 'deleted', live.state, prefer, hold.path))}` };
   const slug = live.tombstone?.slug ?? hold.slug ?? resolveSlugForPath(hold.source_path);
   const pin: DeletedDriftPin = { state, path: hold.path, source_path: hold.source_path, raw_file_hash: live.raw_file_hash, page_id: live.tombstone?.page_id ?? null,
     revision: live.tombstone?.revision ?? null, marker_digest: live.marker_digest, observed_at: hold.observed_at };
+  if (mirror && prefer === 'database' && state === 'tombstone_edited') return { page: { slug, prefer, exceptions: [], keep_deleted: pin },
+    detail: `${KEEP_DELETED_VERB}: ${hold.path}` };
   const detail = `${fileDriftActionVerb('deleted', state, prefer)}: ${hold.path}`;
   if (prefer === 'database') return { page: { slug, prefer, exceptions: [], remove_file: pin }, detail };
   const snapshot = await engine.readPageSnapshot(slug, { sourceId, includeDeleted: true });
@@ -623,6 +633,31 @@ async function deletedPage(engine: BrainEngine, sourceId: string, target: HeldTa
   if (publication.status !== 'ready') throw opError('invalid_params', `${hold.path} does not import as written (${publication.status === 'refused' ? publication.refusal.code : 'it would store a canonical overlay'}).`,
     `Nothing changed. Fix the file, commit it and sync, or preview --prefer database to keep the deletion: ${shellQuote(heldDriftPreviewArgv(sourceId, 'deleted', state, 'database', hold.path))}`);
   return { page: { slug, prefer, exceptions: [], import_file: { ...pin, result_digest: publication.digest } }, detail };
+}
+
+const KEEP_DELETED_VERB = 'keep the deletion and record it on the hold (the read-only mirror keeps its file)';
+
+/**
+ * Records a mirror's kept deletion on its hold, bound to the previewed pin: the file's bytes, the tombstone's id and revision
+ * and the hold the preview observed. Writes no file and no page; a source that is no longer a read-only mirror is refused, and
+ * the caller's CLI grant must cover the page as it does for every other file-drift page.
+ */
+async function applyKeepDeleted(ctx: OperationContext, page: ApprovedPage, artifact: KeepDeletedPage, requestId: string): Promise<RepairItemOutcome> {
+  const pin = artifact.keep_deleted;
+  const changed = (why: string): RepairItemOutcome => ({ applied: false, outcome: 'changed_since_preview', reason: 'changed_since_preview',
+    detail: { request_id: requestId, action: 'keep_deleted', message: `${pin.path} changed since its keep-the-deletion was previewed: ${why}.`,
+      fix: repreviewFix(page, heldDriftPreviewArgv(page.source_id, 'deleted', pin.state, 'database', pin.path)) } });
+  if (!await sourceMirrorReadOnly(ctx.engine, page.source_id)) return changed('the source is no longer a read-only mirror');
+  await asLocalCli(ctx.engine, () => authorizeReconcileGrant(ctx.engine, page.source_id, page.slug));
+  try { await assertDeletedPin(ctx.engine, page.source_id, pin); } catch (error) {
+    if (error instanceof OperationError && error.code === 'changed_since_preview') return changed(error.message);
+    throw error;
+  }
+  const [source] = await ctx.engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [page.source_id]);
+  const recorded = await ctx.engine.transaction(tx => recordKeepDeleted(tx, { sourceId: page.source_id, incarnation: source!.incarnation, path: pin.path, observedAt: pin.observed_at,
+    state: pin.state, decision: { request_id: requestId, decided_at: new Date().toISOString(), page_id: pin.page_id, revision: pin.revision } }));
+  if (!recorded) return changed('its hold was re-checked or cleared');
+  return { applied: true, outcome: 'repaired', detail: { request_id: requestId, prefer: 'database', action: 'keep_deleted', state: pin.state } };
 }
 
 /** #6712 PR 4b: the deleted-side pin as the preview hash and the publication read it again. */
@@ -758,13 +793,22 @@ async function releaseAgreedHold(engine: BrainEngine, page: ApprovedPage, pin: R
     return { applied: false, outcome: 'changed_since_preview', reason: 'hold_changed',
       detail: { request_id: requestId, action: 'release_hold', message: `The hold on ${pin.path} changed since the preview; preview it again.` } };
   }
-  const live = await liveFileDrift(engine, page.source_id, page.slug);
+  const live = await heldLiveDrift(engine, page.source_id, page.slug, { hold, mirror: await sourceMirrorReadOnly(engine, page.source_id) });
   if (live.reason !== 'agrees' || live.db_revision !== pin.revision || (live.file_hash ?? null) !== pin.file_hash) {
     return { applied: false, outcome: 'changed_since_preview', reason: 'revision_conflict',
       detail: { request_id: requestId, action: 'release_hold', message: `The page or ${pin.path} changed since the preview (${live.reason}); preview it again.` } };
   }
   await requestGitHoldRetry(engine, page.source_id, pin.incarnation, [pin.path]);
   return { applied: true, outcome: 'repaired', detail: { request_id: requestId, action: 'release_hold', path: pin.path } };
+}
+
+/**
+ * Whole-class C1: why a held page on a read-only mirror is kept when letting its file win would append gbrain's protected parts
+ * (protected keys, takes, private facts, database-only timeline rows) to the file, and its next step.
+ */
+export function keptProtectedPartsDetail(sourceId: string, slug: string): string {
+  return `kept: letting the file win would append gbrain's protected parts of page ${slug} (protected keys, takes, private facts or timeline rows) to its file, and this read-only mirror's checkout is never written, so the page stays held with nothing written. `
+    + `Carry those parts into the upstream file and commit it there, then run gbrain sync --source ${sourceId}; the comparison shows what differs: gbrain repair file-drift --source ${sourceId} --slug ${slug} --json`;
 }
 
 /** GBRA-133: one held gone file's provenance, as the preview lists it. */
@@ -816,7 +860,8 @@ async function compareSelection(engine: BrainEngine, sourceId: string, opts: Rep
   const nextCursor = remaining > 0 && windowed > 0 ? heldCursor(held!.targets[windowed - 1]!.hold.path) : undefined;
   if (remaining > 0) residuals.after_window = remaining;
   const filesNewer = pages.filter(page => page.would === 'prefer_file').length;
-  const next = [...(filesNewer ? [`Preview the file side for the ${filesNewer} page(s) whose file is newer: ${previewCommand(sourceId, { ...opts, prefer: 'file' })} (pages newer than their file are left held, kept_newer_page)`] : []),
+  const next = [...(filesNewer ? [mirror ? `${filesNewer} page(s) have a newer file; ${mirrorDriftRoute(sourceId, opts.side)}`
+      : `Preview the file side for the ${filesNewer} page(s) whose file is newer: ${previewCommand(sourceId, { ...opts, prefer: 'file' })} (pages newer than their file are left held, kept_newer_page)`] : []),
     ...(nextCursor ? [`Compare the next window: ${shellQuote(compareArgv(sourceId, { ...opts, cursor: nextCursor }).slice(0, -1))}`] : [])];
   return { items: [], residuals, listing, ...(held ? { complete: remaining === 0 } : {}), details: { compare: true, writes: 'none',
     pages: pages.map(({ item: _item, ...page }) => ({ evidence: null, ...page })), ...(next.length ? { next_actions: next } : {}),
@@ -833,8 +878,12 @@ export function fileDriftConsentText(hash: string, sourceId: string | undefined)
   let discards: UnimportedFile[] = [];
   let removals: string[] = [];
   let losing: number[] = [];
+  let kept: string[] = [];
+  let total = 0;
   try {
     const pages = [...readArtifact(hash, `gbrain repair file-drift --source ${sourceId ?? '<source>'}`).values()];
+    total = pages.length;
+    kept = pages.flatMap(page => 'keep_deleted' in page ? [page.keep_deleted.path] : []);
     discards = pages.flatMap(page => 'discards' in page && page.discards ? [page.discards] : []);
     removals = pages.flatMap(page => 'remove_file' in page ? [page.remove_file.path] : []);
     losing = pages.flatMap(page => 'lost_lines' in page && page.lost_lines ? [page.lost_lines] : []);
@@ -843,6 +892,12 @@ export function fileDriftConsentText(hash: string, sourceId: string | undefined)
   const named = list(discards.map(unimportedFileText));
   const lost = losing.reduce((sum, lines) => sum + lines, 0);
   const dropping = lost ? ` It drops ${lost} line(s) that the copies it overwrites hold and the result does not carry, across ${losing.length} page(s).` : '';
+  if (kept.length && kept.length === total) return {
+    what: 'Record that the user keeps the deletion of each listed page on the read-only mirror.',
+    why: `The preview ${hash} listed each deleted page whose file the mirror's upstream edited (${kept.length}).`,
+    risk: 'Each hold stays and reads as decided (mirror_keep_deleted); no file, page or tombstone changes. A new upstream edit of a file or a restore asks again; a page that changed since the preview is skipped.',
+    user_message: `Keep the deletion of ${kept.length} page(s) on the read-only mirror? Each hold records the decision and stops asking; nothing is deleted, restored or written: ${list(kept)}.`,
+  };
   const removing = removals.length ? ` It also removes ${removals.length} file(s) that changed after their page was deleted, and the page does not hold what they say: ${list(removals)}.` : '';
   return {
     what: 'Apply the previewed file-drift resolutions: each listed page takes the preferred side, so either the canonical file is rewritten from the database copy or the page is replaced from the file.',
@@ -890,6 +945,8 @@ export const fileDriftRepair: RepairHandler = {
       return { items: items.filter(entry => afterCursor(entry.cursor, after)), preview_hash: opts.expect, residuals: {} };
     }
     const held = opts.held ? await selectHeld(engine, sourceId, opts) : null;
+    const mirror = held ? await sourceMirrorReadOnly(engine, sourceId) : false;
+    const mirrorFile = mirror && opts.prefer === 'file';
     const { slugs, classes, notSelected, unknown } = held
       ? { slugs: [], classes: new Map<string, DriftClass>(), notSelected: held.notSelected, unknown: [] as UnknownDrift[] } : await selectSlugs(engine, sourceId, opts);
     const assessmentAt = new Date().toISOString();
@@ -921,9 +978,9 @@ export const fileDriftRepair: RepairHandler = {
         const label = targetSlug ?? target?.hold.path ?? '';
         try {
           if (target?.state === 'tombstone_edited' || target?.state === 'purged_differs') {
-            const resolved = await deletedPage(engine, sourceId, { ...target, state: target.state }, opts.prefer);
+            const resolved = await deletedPage(engine, sourceId, { ...target, state: target.state }, opts.prefer, mirror);
             if ('skip' in resolved) { count(resolved.skip); listing.push({ item: `${sourceId}:${label}`, class: resolved.skip, detail: resolved.detail }); continue; }
-            await authorizeReconcile(engine, sourceId, resolved.page.slug);
+            await ('keep_deleted' in resolved.page ? authorizeReconcileGrant : authorizeReconcile)(engine, sourceId, resolved.page.slug);
             pages.push(resolved.page);
             listing.push({ item: `${sourceId}:${resolved.page.slug}`, class: `prefer_${opts.prefer}`, detail: resolved.detail });
             continue;
@@ -931,7 +988,7 @@ export const fileDriftRepair: RepairHandler = {
           if (targetSlug === null) { count('no_page'); listing.push({ item: `${sourceId}:${label}`, class: 'no_page', detail: 'the hold names no page; the next sync re-classifies it' }); continue; }
           const slug = targetSlug;
           await authorizeReconcile(engine, sourceId, slug);
-          const found = await liveFileDrift(engine, sourceId, slug);
+          const found = await heldLiveDrift(engine, sourceId, slug, { hold: target?.hold, mirror: mirrorFile });
           const live = opts.slugs?.length && found.reason === 'database_only' ? await unboundCollisionDrift(engine, sourceId, slug) ?? found : found;
           if (target && (target.state === 'file_gone') !== (live.reason === 'canonical_file_missing')) {
             count('side_changed');
@@ -981,6 +1038,12 @@ export const fileDriftRepair: RepairHandler = {
           }
           const page = await prepareDriftPage(engine, sourceId, slug, opts.prefer, assessmentAt);
           if (classes.has(slug)) page.class = classes.get(slug);
+          // Whole-class C1: a read-only mirror's file is never written, so a page whose file-wins result needs protected parts appended stays held.
+          if (mirrorFile && page.file_appended) {
+            count('kept_protected_parts');
+            listing.push({ item: `${sourceId}:${slug}`, class: 'kept_protected_parts', detail: keptProtectedPartsDetail(sourceId, slug) });
+            continue;
+          }
           // GST-2579: in bulk a newer file is kept (its hold stays); only an exact --slug selection may discard it, named here and in the consent.
           if (page.discards && !opts.slugs?.length) {
             count('kept_newer_file');
@@ -1009,6 +1072,7 @@ export const fileDriftRepair: RepairHandler = {
         : 'soft_delete' in page ? [page.slug, page.soft_delete.ghost.revision, ABSENT_FILE_HASH, 'soft_delete']
         : 'detach_page' in page ? [page.slug, page.detach_page.revision, ABSENT_FILE_HASH, 'detach_page', page.detach_page.page_id, page.detach_page.observed_at]
         : 'remove_file' in page ? [page.slug, page.remove_file.revision, page.remove_file.raw_file_hash, 'remove_file', page.remove_file.state, page.remove_file.marker_digest]
+        : 'keep_deleted' in page ? [page.slug, page.keep_deleted.revision, page.keep_deleted.raw_file_hash, 'keep_deleted', page.keep_deleted.state, page.keep_deleted.page_id, page.keep_deleted.observed_at]
         : 'import_file' in page ? [page.slug, page.import_file.revision, page.import_file.raw_file_hash, page.import_file.result_digest, page.import_file.state, page.import_file.marker_digest]
         : [page.slug, page.preview.preconditions.revision, page.preview.preconditions.raw_file_hash, page.preview.result_digest]) });
     // #6712 wave: a recreated file stays only once committed; without Git durability the next sync imports the committed deletion again.
@@ -1062,6 +1126,7 @@ export const fileDriftRepair: RepairHandler = {
         pages: pages.map(page => ({ ...('release_hold' in page ? { slug: page.slug, action: 'release_hold', path: page.release_hold.path, verb: 're-screen the held file (the page and the file agree)', exceptions: page.exceptions }
           : 'soft_delete' in page ? { slug: page.slug, action: 'soft_delete', path: page.soft_delete.ghost.path, verb: fileDriftActionVerb('deleted', 'file_gone', 'file'), exceptions: page.exceptions }
           : 'detach_page' in page ? { slug: page.slug, action: 'detach_page', path: page.detach_page.path, verb: 'keep the page database-only (no file)', exceptions: page.exceptions }
+          : 'keep_deleted' in page ? { slug: page.slug, action: 'keep_deleted', state: page.keep_deleted.state, path: page.keep_deleted.path, verb: KEEP_DELETED_VERB, exceptions: page.exceptions }
           : 'remove_file' in page ? { slug: page.slug, action: 'remove_file', state: page.remove_file.state, path: page.remove_file.path, verb: fileDriftActionVerb('deleted', page.remove_file.state, 'database'), exceptions: page.exceptions }
           : 'import_file' in page ? { slug: page.slug, action: 'import_file', state: page.import_file.state, path: page.import_file.path, verb: fileDriftActionVerb('deleted', page.import_file.state, 'file'), exceptions: page.exceptions, result_digest: page.import_file.result_digest }
           : { slug: page.slug, ...(page.file_gone ? { action: 'recreate_file' } : {}), ...(page.class ? { class: page.class } : {}),
@@ -1078,6 +1143,7 @@ export const fileDriftRepair: RepairHandler = {
     const requestId = requestIdFor(hash, page);
     let outcome: RepairItemOutcome;
     if ('release_hold' in artifact) outcome = await releaseAgreedHold(ctx.engine, page, artifact.release_hold, requestId);
+    else if ('keep_deleted' in artifact) outcome = await applyKeepDeleted(ctx, page, artifact, requestId);
     else if ('remove_file' in artifact || 'import_file' in artifact || 'detach_page' in artifact) outcome = await applyDeletedSide(ctx, page, artifact, requestId, opts?.embed !== false);
     else if ('soft_delete' in artifact) {
       const retired = await retireGhost(ctx, artifact.soft_delete.ghost, artifact.soft_delete.owner, async () => requestId);

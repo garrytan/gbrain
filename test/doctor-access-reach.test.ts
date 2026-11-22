@@ -4,9 +4,6 @@
  * 1. Protects: on a brain several people use, doctor warns, read-only, when
  *    - access_shared_source_unread: a shared source (no member bound to it) holds pages that no enabled member's live
  *      token or OAuth client reads, through federation or a source grant;
- *    - access_pages_unreadable: pages that name readers or sit under a folder rule are readable by no enabled member and
- *      not by the owner (a leaver's pages after disable, a page written into people/<x>/ before x's rule, readers that
- *      name only disabled or removed members);
  *    - access_disabled_member_credentials: live tokens or OAuth clients are bound to a disabled or removed member.
  *    Each names the count, a few slugs or credential names (never content) and a read-only next step; a remote caller
  *    gets counts only. Nothing is written.
@@ -21,9 +18,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
 import { addMember, disableMember, removeMember } from '../src/core/access/members.ts';
-import { setOwner, setOwnerReadsRestricted } from '../src/core/access/owner.ts';
 import { bindMemberSource } from '../src/core/access/member-sources.ts';
-import { proposeRevision } from '../src/core/access/policy.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { accessReachEntry } from '../src/commands/doctor/checks/access-reach.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
@@ -69,7 +64,7 @@ for (const kind of testBackends()) {
     test('a one-person brain with no members: every check is not applicable or ok, and nothing is written', async () => {
       const before = await stateHash(engine);
       const checks = await run();
-      expect(checks.map(c => c.name).sort()).toEqual(['access_disabled_member_credentials', 'access_pages_unreadable', 'access_shared_source_unread']);
+      expect(checks.map(c => c.name).sort()).toEqual(['access_disabled_member_credentials', 'access_shared_source_unread']);
       for (const c of checks) expect(c.status).toBe('ok');
       expect((await check('access_shared_source_unread')).readiness_state).toBe('not_applicable');
       expect(await stateHash(engine)).toBe(before);
@@ -117,43 +112,9 @@ for (const kind of testBackends()) {
       expect((await check('access_shared_source_unread')).status).toBe('warn');
     }, 60_000);
 
-    test('pages readable by no one: a leaver after disable, a people folder rule that excludes the writer, removed readers', async () => {
-      await importFromContent(engine, 'notes/alice-plan', page(['alice-example']), { sourceId: 'default', noEmbed: true });
-      await importFromContent(engine, 'notes/bob-plan', page(['bob-example']), { sourceId: 'default', noEmbed: true });
-      await importFromContent(engine, 'people/erin-example/onboarding', page(['bob-example']), { sourceId: 'default', noEmbed: true });
-      await importFromContent(engine, 'notes/carol-plan', page(['carol-example']), { sourceId: 'default', noEmbed: true });
-      expect((await check('access_pages_unreadable')).status).toBe('ok');
-
-      await disableMember(engine, 'bob-example');
-      await addMember(engine, 'erin-example');
-      await proposeRevision(engine, 'default', [{ id: 'erin', prefix: 'people/erin-example/', readable_by: ['member:erin-example'] }] as never, { origin: 'cli', store: 'database' });
-      await removeMember(engine, 'carol-example');
-      const before = await stateHash(engine);
-      const c = await check('access_pages_unreadable');
-      expect(c.status).toBe('warn');
-      expect(c.details!.count).toBe(3);
-      expect(c.details!.samples.map((s: { page: string }) => s.page)).toEqual(['default:notes/bob-plan', 'default:notes/carol-plan', 'default:people/erin-example/onboarding']);
-      expect(c.message).toContain('default:notes/bob-plan');
-      expect(c.message).not.toContain('Harbor ledger');
-      expect(c.fix!.argv).toEqual(['gbrain', 'access', 'who-can-read', 'notes/bob-plan', '--source', 'default']);
-      const remote = await check('access_pages_unreadable', true);
-      expect(remote.details).toEqual({ count: 3 });
-      expect(JSON.stringify(remote)).not.toMatch(/bob-plan|carol-plan|onboarding/);
-      expect(await stateHash(engine)).toBe(before);
-    }, 60_000);
-
-    test("the owner reads them when the owner opt-in is on, except another member's own member page", async () => {
-      await setOwner(engine, 'alice-example');
-      await importFromContent(engine, 'memory/members/bob-example', page(['bob-example']), { sourceId: 'default', noEmbed: true });
-      expect((await check('access_pages_unreadable')).details!.count).toBe(4);
-      await setOwnerReadsRestricted(engine, true, { remote: false });
-      const c = await check('access_pages_unreadable');
-      expect(c.details!.count).toBe(1);
-      expect(c.details!.samples.map((s: { page: string }) => s.page)).toEqual(['default:memory/members/bob-example']);
-      await setOwnerReadsRestricted(engine, false, { remote: false });
-    }, 60_000);
-
     test('live credentials bound to a disabled or removed member are named; revoked ones are not', async () => {
+      await disableMember(engine, 'bob-example');
+      await removeMember(engine, 'carol-example');
       await token('carol-old', 'carol-example');
       await token('bob-revoked', 'bob-example');
       await engine.executeRaw("UPDATE access_tokens SET revoked_at = now() WHERE name = 'bob-revoked'");
@@ -180,17 +141,5 @@ for (const kind of testBackends()) {
       expect(await stateHash(engine)).toBe(before);
     }, 60_000);
 
-    test('a larger brain: 4,000 restricted pages are counted with a bounded sample', async () => {
-      await engine.executeRaw(`INSERT INTO pages (source_id, slug, type, title, frontmatter)
-        SELECT 'default', 'bulk/p' || g, 'note', 't', jsonb_build_object('readable_by', jsonb_build_array(CASE WHEN g % 2 = 0 THEN 'alice-example' ELSE 'bob-example' END))
-          FROM generate_series(1, 4000) g`);
-      const started = Date.now();
-      const c = await check('access_pages_unreadable');
-      const elapsed = Date.now() - started;
-      expect(c.details!.count).toBe(2_000 + 4);
-      expect(c.details!.samples.length).toBeLessThanOrEqual(20);
-      expect(c.details!.truncated).toBe(true);
-      expect(elapsed).toBeLessThan(15_000);
-    }, 180_000);
   });
 }

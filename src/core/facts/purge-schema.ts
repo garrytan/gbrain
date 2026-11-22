@@ -25,6 +25,7 @@
  */
 
 import { requireLedgerPoliciesSql } from '../derived-state-maintainers.ts';
+import { unbackedEntitySql } from './withdrawal-schema.ts';
 
 const RLS = (table: string) => `DO $rls$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
@@ -128,7 +129,7 @@ export const REFUSE_PURGED_FACT_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION gbrai
     PERFORM id FROM sources WHERE id = NEW.source_id FOR SHARE;
     IF EXISTS (SELECT 1 FROM fact_purges
       WHERE source_id = NEW.source_id AND visibility = NEW.visibility
-        AND (subject = '*' OR subject = NEW.entity_slug)
+        AND (subject = '*' OR subject = NEW.entity_slug OR ${unbackedEntitySql('NEW')})
         AND fact_hash = gbrain_fact_fingerprint(NEW.fact)) THEN
       RAISE EXCEPTION USING ERRCODE = 'P0001',
         MESSAGE = 'purged_content: this claim was purged from this source and cannot be saved again',

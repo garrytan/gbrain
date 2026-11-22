@@ -11,7 +11,9 @@
  * event-time since, escaped grep) inside the SQL. Three arms fill it: keyword
  * (FTS over fact text and entity), cosine (nearest by the question embedding,
  * cast to the facts column type) and the facts of the one entity page the
- * question names, constrained to that page's source.
+ * question names, constrained to that page's source. With `history` (GBRA-574
+ * B1) that last arm also takes the entity's ended facts (ENDED_FACT_SQL),
+ * under the same read policy.
  *
  * Score: cosine + term share + DATED_BONUS when the writer supplied the date.
  * Term share matches words on their stems under the brain's full-text config
@@ -29,10 +31,12 @@
 import type { BrainEngine } from '../engine.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
+import { CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
+import { PAGE_EXTRACTION_SOURCE_LIST, contextHeadSql } from '../facts/gone-page-facts.ts';
 import { factsFtsDocument, getFtsLanguage } from '../fts-language.ts';
 import { getEmbeddingModel } from '../ai/gateway.ts';
 import { privateProvenanceFilterUnderPolicy } from './private-visibility.ts';
-import { factVisibilitySql } from '../access/member-facts.ts';
+import { factVisibilitySql, withdrawalCoversFactSql } from '../access/member-facts.ts';
 import { quarantinedProvenanceFilterFragment } from '../quarantine.ts';
 import { namedEntity } from './entity-anchor.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
@@ -41,6 +45,8 @@ import { supportsHnswIterativeScan } from '../vector-index.ts';
 import { VECTOR_EXTENSION_VERSION_SQL } from './vector-statement.ts';
 import { withVectorSettings } from './vector-settings.ts';
 import type { HnswIterativeScanMode } from './hnsw-iterative-scan.ts';
+import { RETRACTION } from './saved-facts-match.ts';
+import type { SlotRow } from '../facts/slots.ts';
 
 const STOPWORDS = new Set(['the', 'and', 'for', 'who', 'what', 'when', 'where', 'which', 'with', 'from', 'that', 'this', 'are', 'was', 'were', 'our', 'your', 'their',
   'now', 'current', 'currently', 'should', 'does', 'did', 'has', 'have', 'how', 'any', 'all', 'about', 'into', 'its', 'next', 'use', 'uses', 'tell']);
@@ -122,6 +128,8 @@ export interface FactPoolOpts {
   hnswIterativeScan?: HnswIterativeScanMode;
   /** Search a question over MAX_QUERY_TERMS content terms on its last SEARCH_TERMS and score it on those its candidates hold (recall). */
   distinctiveTerms?: boolean;
+  /** GBRA-574 B1: the named-entity arm also pools that entity's ended facts (ENDED_FACT_SQL), the most recent first. */
+  history?: boolean;
 }
 
 export interface FactCandidate {
@@ -129,6 +137,8 @@ export interface FactCandidate {
   valid_from: Date | string; valid_until: Date | string | null; created_at?: Date | string | null; claim_metric: string | null; claim_period: string | null;
   /** The page the fact was taken from (its observation date) and the columns copies collapse on (capture-dedup.ts). */
   source_markdown_slug?: string | null; visibility?: string; attributed_to?: import('../engine.ts').FactAttribution | null;
+  /** GBRA-574 B2: the fact's slot (facts/slots.ts), when it carries one. */
+  dimension?: string | null; value_hash?: string | null;
   similarity?: number;
   /** Found by the named-entity arm. */
   entity: boolean;
@@ -165,7 +175,22 @@ async function wordStems(engine: BrainEngine, words: string[]): Promise<WordStem
   }
 }
 
-const COLS = 'f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to';
+/**
+ * An ended fact a history read may show: superseded by a successor, or closed by a valid_until in the past while still
+ * unexpired. A fact expired with no successor (forgotten or withdrawn) never matches, nor does any fact whose claim the
+ * withdrawal ledger covers, nor one whose page a purge removed: a purge expires only the page's unexpired facts
+ * (gone-page-facts.ts), so a superseded fact filed on or extracted from that page would otherwise come back. Only an
+ * ontology observation's page is provenance; a conversation fact's slot (GBRA-574 B2) is filed on its page.
+ */
+const ENDED_FACT_SQL = `(f.superseded_by IS NOT NULL OR (f.expired_at IS NULL AND f.valid_until <= now()))
+  AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = f.source_id AND w.visibility = f.visibility
+    AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact)) AND ${withdrawalCoversFactSql('w', 'f')})
+  AND (f.source_markdown_slug IS NULL OR (f.dimension IS NOT NULL AND NOT ${CONVERSATION_SLOT_SQL})
+    OR EXISTS (SELECT 1 FROM pages hp WHERE hp.source_id = f.source_id AND hp.slug = f.source_markdown_slug))
+  AND (f.source_markdown_slug IS NOT NULL OR f.source NOT IN (${PAGE_EXTRACTION_SOURCE_LIST.map(s => `'${s}'`).join(', ')})
+    OR EXISTS (SELECT 1 FROM pages hp WHERE hp.source_id = f.source_id AND hp.slug = ${contextHeadSql('f')}))`;
+
+const COLS = 'f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to, f.dimension, f.value_hash';
 
 /** The facts embedding column's type and declared dimensions, or null when there is none. */
 async function factsEmbeddingColumn(engine: BrainEngine): Promise<{ type: string; dims: number } | null> {
@@ -286,10 +311,20 @@ export async function collectFactCandidates(engine: BrainEngine, question: strin
     const named = await namedEntity(engine, question, { sourceIds, excludePrivate: scope.excludePrivate });
     if (!named) return [];
     const p = armParams(allSim ? simParams : []);
-    return engine.executeRaw<Row>(
-      `SELECT ${COLS}, ${allSim ? simSql : 'NULL::float8 AS similarity'} FROM facts f WHERE ${where} AND f.source_id = $${p.length + 1} AND f.entity_slug = $${p.length + 2}
-       ORDER BY f.valid_from DESC, f.id DESC LIMIT $${p.length + 3}`,
+    // GST-3170: a future-dated fact ranks as of when it was written; each branch keeps an index-ordered scan.
+    const arm = (order: string, from: string) => `(SELECT ${COLS}, ${allSim ? simSql : 'NULL::float8 AS similarity'} FROM facts f WHERE ${where}
+       AND f.source_id = $${p.length + 1} AND f.entity_slug = $${p.length + 2} AND ${from} ORDER BY ${order} DESC, f.id DESC LIMIT $${p.length + 3})`;
+    const active = await engine.executeRaw<Row>(
+      `SELECT * FROM (${arm('f.valid_from', 'f.valid_from <= now()')} UNION ALL ${arm('f.created_at', 'f.valid_from > now()')}) f
+       ORDER BY (CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC LIMIT $${p.length + 3}`,
       [...p, named.source_id, named.slug, opts.depth.entity]);
+    if (!opts.history) return active;
+    const ended = poolPredicate(scope, { ...opts.filters, includeExpired: true });
+    const e = [...ended.params, ...(allSim ? simParams : [])];
+    return [...active, ...await engine.executeRaw<Row>(
+      `SELECT ${COLS}, ${allSim ? simSql : 'NULL::float8 AS similarity'} FROM facts f WHERE ${ended.where} AND ${ENDED_FACT_SQL} AND f.source_id = $${e.length + 1} AND f.entity_slug = $${e.length + 2}
+       ORDER BY (CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC LIMIT $${e.length + 3}`,
+      [...e, named.source_id, named.slug, opts.depth.entity])];
   };
   // Independent arms run concurrently (separate connections on Postgres); merged in a fixed order.
   const [byKeyword, byCosine, byEntity] = await Promise.all([keyword(), nearest(), entityFacts()]);
@@ -324,6 +359,90 @@ export async function countUncomparableFacts(engine: BrainEngine, scope: FactPoo
      SELECT f.source_id, count(*) AS n FROM facts f WHERE f.id IN (SELECT id FROM u) AND ${where}
      GROUP BY f.source_id ORDER BY count(*) DESC, f.source_id`, [...params, getEmbeddingModel(), ...(declared ? [] : [dims])]);
   return rows.map(r => ({ source_id: r.source_id, n: Number(r.n) }));
+}
+
+/**
+ * GBRA-574 B2: every active conversation slot row (dim_status active; ontology observations never shape a window) of the given (source, entity, dimension) slots under exactly
+ * the pool's read policy, so a row the caller cannot see never shapes a window the caller sees; ordered by valid_from, id.
+ * A row whose stored valid_until has passed still ends the value before it; withdrawn and superseded rows never do.
+ */
+export async function readSlotRows(engine: BrainEngine, scope: FactPoolScope, slots: ReadonlyArray<{ source_id: string; entity_slug: string; dimension: string }>): Promise<Array<SlotRow & Omit<FactCandidate, 'entity'>>> {
+  if (!slots.length) return [];
+  const { where, params } = poolPredicate(scope, { includeExpired: true });
+  const n = params.length;
+  return engine.executeRaw<SlotRow & Omit<FactCandidate, 'entity'>>(
+    `SELECT ${COLS} FROM facts f
+     WHERE ${where} AND f.expired_at IS NULL AND f.superseded_by IS NULL AND f.dimension IS NOT NULL AND f.value_hash IS NOT NULL AND COALESCE(f.dim_status, 'active') = 'active' AND ${CONVERSATION_SLOT_SQL}
+       AND (f.source_id, f.entity_slug, f.dimension) IN (SELECT * FROM unnest($${n + 1}::text[], $${n + 2}::text[], $${n + 3}::text[]))
+     ORDER BY f.valid_from, f.id`,
+    [...params, slots.map(s => s.source_id), slots.map(s => s.entity_slug), slots.map(s => s.dimension)]);
+}
+
+/**
+ * GBRA-574 F (D1): the distinct (source_id, entity_slug) pairs among `keys` that hold an active fact in the pool under
+ * its read policy and have no live page at that slug (an unbacked name key), at most `limit`, by source then slug.
+ */
+export async function poolUnbackedKeys(engine: BrainEngine, scope: FactPoolScope, keys: readonly string[], limit: number): Promise<Array<{ source_id: string; entity_slug: string }>> {
+  if (!keys.length) return [];
+  const { where, params } = poolPredicate(scope, undefined);
+  const n = params.length;
+  return engine.executeRaw<{ source_id: string; entity_slug: string }>(
+    `SELECT DISTINCT f.source_id, f.entity_slug FROM facts f WHERE ${where} AND f.entity_slug = ANY($${n + 1}::text[])
+       AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)
+     ORDER BY f.source_id, f.entity_slug LIMIT $${n + 2}`, [...params, [...keys], limit]);
+}
+
+/** GBRA-574 B5: what marks a later fact as calling an earlier one off: saved-facts-match.ts's RETRACTION plus plain cancellation words. Fixed, never configurable. */
+const CALLED_OFF = String.raw`rumour|rumor|called off|cancelled|canceled|fell through|not happening|never happened|no longer planned`;
+const CALL_OFF_SQL = String.raw`\m(${RETRACTION}|${CALLED_OFF})\M`;
+const CALL_OFF_WORDS = new RegExp(String.raw`\b(${RETRACTION}|${CALLED_OFF})\b`, 'gi');
+/** A cue a word or two after one of these is negated ("not cancelled", "wasn't called off", "isn't a rumour"). Fixed, never configurable. */
+const NEGATED = /(?:^|[^\p{L}\p{N}'’])(?:not|never|no|[\p{L}]+n['’]t)\s+(?:[\p{L}\p{N}'’-]+\s+)?$/iu;
+/** Cue facts read per entity at most, the newest first. */
+const CALL_OFF_DEPTH = 50;
+
+/**
+ * GBRA-574 B5: for each fact, the later facts that retract it or call it off, oldest first. One read of the cue facts
+ * about the facts' entities, the newest CALL_OFF_DEPTH per entity, under exactly the pool's read policy (active rows
+ * only, so a withdrawn, forgotten or superseded fact never comes back, nor one the caller cannot read). A cue fact
+ * answers a fact when it is about the same entity in the same source, is dated strictly after it, carries a cue no
+ * negation sits a word or two before (NEGATED; a cue that starts with one, "not happening", still counts), and either
+ * carries the same slot (dimension and value_hash) or, on content terms other than the entity's name and the cue words,
+ * has all of its terms (at least one) in the fact or shares at least two with it.
+ */
+export async function laterRetractions(engine: BrainEngine, scope: FactPoolScope, facts: readonly FactCandidate[]): Promise<Map<number, FactCandidate[]>> {
+  const out = new Map<number, FactCandidate[]>();
+  const keyed = facts.filter(f => f.entity_slug);
+  if (!keyed.length) return out;
+  const pairs = [...new Map(keyed.map(f => [`${f.source_id}\u0000${f.entity_slug}`, f])).values()];
+  const { where, params } = poolPredicate(scope, undefined);
+  const n = params.length;
+  const cues = await engine.executeRaw<FactCandidate>(
+    `SELECT ${COLS} FROM (SELECT f.*, row_number() OVER (PARTITION BY f.source_id, f.entity_slug ORDER BY (CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC) AS call_off_rank
+       FROM facts f WHERE ${where} AND f.fact ~* $${n + 1}
+         AND (f.source_id, f.entity_slug) IN (SELECT * FROM unnest($${n + 2}::text[], $${n + 3}::text[]))) f
+     WHERE f.call_off_rank <= $${n + 4}`,
+    [...params, CALL_OFF_SQL, pairs.map(f => f.source_id), pairs.map(f => f.entity_slug), CALL_OFF_DEPTH]);
+  const time = (v: Date | string) => new Date(v).getTime();
+  const calledOff = (text: string) => [...text.matchAll(CALL_OFF_WORDS)].some(m => !NEGATED.test(text.slice(0, m.index)));
+  const terms = (slug: string, text: string) => {
+    const name = new Set(slug.toLowerCase().split(/[^\p{L}\p{N}]+/u));
+    return new Set(contentTerms(text).flatMap(w => w.replace(/'s$/, '').split('-')).filter(w => w.length >= 3 && !STOPWORDS.has(w) && !neutralWord(w) && !name.has(w)));
+  };
+  for (const f of keyed) {
+    const own = terms(f.entity_slug!, f.fact);
+    const answers = cues.filter(r => {
+      if (r.source_id !== f.source_id || r.entity_slug !== f.entity_slug || time(r.valid_from) <= time(f.valid_from) || !calledOff(r.fact)) return false;
+      if (f.dimension && f.value_hash && r.dimension === f.dimension && r.value_hash === f.value_hash) return true;
+      const theirs = [...terms(f.entity_slug!, r.fact.replace(CALL_OFF_WORDS, ' '))];
+      const shared = theirs.filter(t => own.has(t)).length;
+      return shared >= 2 || (theirs.length > 0 && shared === theirs.length);
+    })
+      .map(r => ({ ...r, id: Number(r.id), entity: false }))
+      .sort((a, b) => time(a.valid_from) - time(b.valid_from) || a.id - b.id);
+    if (answers.length) out.set(Number(f.id), answers);
+  }
+  return out;
 }
 
 /** The distinct (source_id, entity_slug) pairs with a fact in the authorized, filtered pool (the namesake check runs on these before any ranking). */

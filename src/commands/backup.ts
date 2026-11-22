@@ -208,6 +208,11 @@ export async function runBackupCli(
         writeCliError(error, 'backup', { json, legacy: { ok: false, reason: error.code, message: error.message } });
         return { exitCode: 1 };
       }
+      if (error instanceof OperationError && error.reason === 'pglite_required') {
+        const { writeCliError } = await import('../cli/cli-error.ts');
+        writeCliError(error, 'backup', { json, legacy: { ok: false, reason: error.reason, message: error.message } });
+        return { exitCode: 1 };
+      }
       const detail = (typeof error === 'object' && error !== null ? error : {}) as { code?: unknown; retryable?: unknown };
       const reason = typeof detail.code === 'string' && SAFE_ERROR_FIELD.test(detail.code) ? detail.code : 'backup_failed';
       const message = backupFailureMessage(error);

@@ -79,10 +79,11 @@ jobs:
       matrix:
         bun: ['1.4.4']
         target: [linux-x64-glibc, linux-arm64-glibc, darwin-arm64, darwin-x64, win32-x64, win32-arm64]
-        # Pull requests: primary Bun on every target (native paths changed) or
-        # the Linux x64 glibc smoke cell. Runners map from the target above.
-        # Named exception: PR scope reduction, covered by scope=full runs (docs/TESTING.md#event-parity).
-        exclude: ${{ fromJSON(inputs.scope == 'smoke' && '[{"target":"linux-arm64-glibc"},{"target":"darwin-arm64"},{"target":"darwin-x64"},{"target":"win32-x64"},{"target":"win32-arm64"}]' || '[]') }}
+        # Pull requests: primary Bun on every target but macOS (native paths
+        # changed) or the Linux x64 glibc smoke cell. Runners map from the target above.
+        # Named exception: PR scope reduction, covered by scope=full runs (docs/TESTING.md#event-parity);
+        # a pull request runs no darwin cell (docs/ci-event-parity.md#macos-runners).
+        exclude: ${{ fromJSON(inputs.scope == 'smoke' && '[{"target":"linux-arm64-glibc"},{"target":"darwin-arm64"},{"target":"darwin-x64"},{"target":"win32-x64"},{"target":"win32-arm64"}]' || github.event_name == 'pull_request' && '[{"target":"darwin-arm64"},{"target":"darwin-x64"}]' || '[]') }}
     steps:
       # The data-safety step stops its suites before this job's timeout: a timeout cancel keeps no log.
       - name: Record the job deadline
@@ -221,12 +222,12 @@ jobs:
   # post timed out), so its diag/native-heartbeat/<cell> status stays pending on a job that passed. This Linux job runs
   # after every cell and posts success, naming the cell's real conclusion and last heartbeat, on any cell context still
   # pending (scripts/native/heartbeat-finalize.ts). Nothing on a fork's pull request, whose token cannot write.
-  # Named exception: PR scope reduction, covered by scope=full runs (docs/TESTING.md#event-parity); scope=smoke runs
+  # Named exception: PR scope reduction, covered by scope=full runs (docs/TESTING.md#event-parity); a pull request runs
   # no darwin-x64 cell, so there is nothing to finalize.
   heartbeat-finalize:
     name: darwin-x64 heartbeat finalize
     needs: [native]
-    if: ${{ always() && inputs.scope != 'smoke' }}
+    if: ${{ always() && inputs.scope != 'smoke' && github.event_name != 'pull_request' }}
     runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 5
     # statuses: the darwin-x64 cells' diag/native-heartbeat/<cell> contexts; actions: read the run's jobs and conclusions.

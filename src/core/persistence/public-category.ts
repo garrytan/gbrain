@@ -33,7 +33,7 @@ export const PUBLIC_BY_TERMINAL: Readonly<Record<TerminalCategory, PublicCategor
 
 /** Fault codes (holds, run stops, receipts) by name; a test pins that every `SYNC_FAULT_TABLE` code is here. */
 export const PUBLIC_BY_CODE: Readonly<Record<string, PublicCategory>> = {
-  worktree_dirty: 'drift', file_drift: 'drift', file_drift_unknown: 'drift', file_drift_mirror_database_only: 'drift', source_changed: 'drift', pinned_git_worktree_conflict: 'drift',
+  worktree_dirty: 'drift', file_drift: 'drift', file_drift_unknown: 'drift', file_drift_mirror_database_only: 'drift', mirror_keep_deleted: 'drift', source_changed: 'drift', pinned_git_worktree_conflict: 'drift',
   concurrent_write: 'conflict', revision_conflict: 'conflict', page_identity_changed: 'conflict', legacy_slug_conflict: 'conflict', origin_conflict: 'conflict', origin_conflict_decision: 'conflict', page_identity_decision: 'conflict',
   settle_mismatch: 'defect', page_write_failed: 'defect', freeze_page_body_segmented: 'defect', freeze_page_body_rows_unreadable: 'storage',
   invalid_fence: 'content_refused', invalid_frontmatter: 'content_refused', frontmatter_slug_conflict: 'content_refused', rename_held: 'content_refused',
@@ -55,7 +55,7 @@ export const PUBLIC_BY_CODE: Readonly<Record<string, PublicCategory>> = {
   slug_root_mode_mismatch: 'config', invalid_params: 'config',
   // GBRA-133 (#6712 PR 4b lane F): a file whose text holds NUL bytes, and a committed file whose Git object is gone.
   content_null_bytes: 'content_refused', content_filter_owned: 'content_refused', git_object_missing: 'storage', path_not_utf8: 'content_refused',
-  visibility_noncanonical: 'content_refused', tag_too_long: 'content_refused',
+  visibility_noncanonical: 'content_refused', readers_noncanonical: 'content_refused', tag_too_long: 'content_refused',
 };
 
 /** A registry code's class, for a code neither table names. */

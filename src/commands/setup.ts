@@ -25,6 +25,7 @@
 import { realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { removeHermesTurnHook, syncHermesTurnHook } from '../core/setup/hermes-turn-hook.ts';
+import { hermesMcpStep } from './setup-hermes-mcp.ts';
 import { removeOpenclawTurnPlugin, syncOpenclawTurnPlugin } from '../core/setup/openclaw-turn-plugin.ts';
 import { describeOpenclawSkill, readOpenclawSkillState, removeOpenclawSkillPlugin, syncOpenclawSkillPlugin, type OpenclawSkillResult } from '../core/setup/openclaw-skill-plugin.ts';
 import { describePiSkill, readPiSkillState, removePiSkillExtension, syncPiSkillExtension } from '../core/setup/pi-skill-extension.ts';
@@ -53,13 +54,14 @@ import { describeCursorPins, readCursorPinsState, removeCursorSkillPins, syncCur
 import { describeResolverSetup, removeSkillResolverSetup, syncSkillResolverSetup, type ResolverSetupResult } from '../core/setup/skill-resolver-setup.ts';
 import type { ResolverHarness } from '../core/setup/skill-resolver-hook.ts';
 import { isValidSourceId } from '../core/source-id.ts';
+import { ACCESS_ID_RE } from '../core/access/principals.ts';
 import { peekLock } from '../core/pglite-lock.ts';
 import { claudePluginProvidesName, codexPluginProvidesName } from '../core/bootstrap/plugin-lanes.ts';
 import { claudeUserSettingsPath, type ClaudeHookEvent } from '../core/bootstrap/host-specs.ts';
 import { readHarnessReceiptState } from '../core/bootstrap/format.ts';
 import { smokeStdioRegistration } from './doctor/checks/harness-wiring.ts';
 import { finishFreshSetupMigrations } from './setup-migrations.ts';
-import { readServesStatus, sharedStdioHarness, servesApply, servesLines, servesOk, servesPreflight, type EntryBinding, type ServesOutcome } from './setup-serves.ts';
+import { readServesStatus, sharedStdioHarness, servesAfterLayout, servesApply, servesLines, servesOk, servesPreflight, type EntryBinding, type ServesOutcome, type ServesPlan } from './setup-serves.ts';
 import type { McpSurface } from '../mcp/surface.ts';
 import {
   SETUP_CAPABILITIES,
@@ -132,6 +134,10 @@ export const SETUP_HELP = `gbrain setup <harness> — give an agent harness memo
 
 Usage: gbrain setup claude-code [flags]
        gbrain setup codex [flags]
+       gbrain setup hermes [flags]   (registers MCP through hermes mcp add, then the rule and hook)
+       gbrain setup openclaw|opencode|cursor [flags]   (after the harness's own
+         MCP registration: writes the brain-first rule and per-turn hook; without it
+         agents in a new session seldom call gbrain)
 
 Resolves the brain, source, transport, launcher and registration owner first and
 prints them; refuses before writing anything when another owner holds the target.
@@ -170,14 +176,23 @@ Flags:
   --members IDS        The people of --serves several, comma-separated (e.g. alice-example,bob-example).
   --labelled-only      With --serves several: each member's key reads only pages labelled for
                        that member (readable_by or a rule), never the owner's. Opt-in.
+  --open-history       With --serves several on a brain that serves one person and already holds
+                       pages: let the members read them. Without it or --labelled-only, setup
+                       refuses (setup_history_choice_required) and writes nothing.
   --members-file PATH  The same, one id per line.
+  --owner ID           With --serves several: the brain owner, added as a member and named with
+                       gbrain access owner set when the brain has none (default: your login name
+                       as a member id). An existing owner is kept. No key is rebound: setup lists
+                       the keys bound to no member with the auth rescope command for each.
   --stdio-member ID    claude-code or codex: write serve --stdio-member ID into this harness's
                        MCP entry, so only its sessions read as ID (an enabled member, or one
                        of --members). Other harnesses on this host are unchanged. Use it for a
                        harness only ID uses; refused where OpenClaw or Hermes is installed
                        (give each person their own HTTP key there). A re-run keeps the entry's
-                       member; setup never adds one on its own.
-  --no-stdio-member    Remove --stdio-member from this harness's entry.
+                       member. With --serves several and --shape company or both, an entry
+                       with no member is tied to the brain owner.
+  --no-stdio-member    Remove --stdio-member from this harness's entry, or leave it unbound.
+
   --remove             Remove exactly what setup wrote (unchanged entries only), the
                        brain-first instruction block included. The brain and your
                        notes stay. Combine with --dry-run to preview.
@@ -268,9 +283,10 @@ Refusals: setup never starts a second owner or a second brain. A hosted brain is
 wired with gbrain connect <url> --harness <harness> --install; a running
 serve --http owner with gbrain bootstrap harness --harness <harness> --yes.
 
-Supported harnesses: claude-code, codex (MCP, hooks and instructions). opencode,
-openclaw, hermes and cursor: setup writes the instruction block and prints the MCP
-registration step from their guide.
+Supported harnesses: claude-code, codex (MCP, hooks and instructions). hermes: setup
+registers MCP through Hermes's own hermes mcp add and writes the instruction block
+and hook. opencode, openclaw and cursor: setup writes the instruction block and
+prints the MCP registration step from their guide.
 setup and onboard differ: setup wires a harness to a brain; onboard (post-connect)
 improves an existing brain's content.
 `;
@@ -309,6 +325,10 @@ interface SetupFlags {
   membersFile?: string;
   /** GST-2670: --labelled-only, passed to access serves several. */
   labelledOnly?: boolean;
+  /** GBRA-585 C: --open-history, the members read the pages a one-person brain already holds. */
+  openHistory?: boolean;
+  /** GBRA-585 D: --owner, the brain owner --serves several names when none is set (default: the login name). */
+  owner?: string;
   /** GST-363: written into this harness's MCP entry as serve --stdio-member; never into config. */
   stdioMember?: string;
   noStdioMember: boolean;
@@ -324,7 +344,7 @@ interface SetupFlags {
   team?: boolean;
 }
 
-const VALUE_FLAGS = new Set(['--shape', '--notes', '--docs', '--transcripts', '--surface', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--agent', '--live-fraction', '--pins-route', '--owner-sender', '--serves', '--members', '--members-file', '--stdio-member']);
+const VALUE_FLAGS = new Set(['--shape', '--notes', '--docs', '--transcripts', '--surface', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--agent', '--live-fraction', '--pins-route', '--owner-sender', '--serves', '--members', '--members-file', '--stdio-member', '--owner']);
 
 function parseFlags(args: string[]): SetupFlags | string {
   const value = (flag: string): string | undefined => {
@@ -347,6 +367,11 @@ function parseFlags(args: string[]): SetupFlags | string {
   if (serves !== undefined && serves !== 'one' && serves !== 'several') return `unknown --serves '${serves}'; pass one or several`;
   if ((args.includes('--members') || args.includes('--members-file')) && serves !== 'several') return '--members and --members-file name the people of --serves several';
   if (args.includes('--labelled-only') && serves !== 'several') return '--labelled-only applies to the people of --serves several';
+  if (args.includes('--open-history') && serves !== 'several') return '--open-history applies to the people of --serves several';
+  if (args.includes('--open-history') && args.includes('--labelled-only')) return 'pass --labelled-only (keep the history private) or --open-history (members read it), not both';
+  const owner = value('--owner');
+  if (owner !== undefined && serves !== 'several') return '--owner names the brain owner of --serves several';
+  if (owner !== undefined && !ACCESS_ID_RE.test(owner)) return `invalid --owner '${owner}'; a member id is lower-case letters, digits, '.', '_' and '-' (1-64 characters, starting with a letter or digit)`;
   let stdioMember: string | undefined;
   try { stdioMember = parseStdioMemberFlag(args); } catch (e) { return `${(e as Error).message}; nothing was written`; }
   const noStdioMember = args.includes('--no-stdio-member');
@@ -411,6 +436,8 @@ function parseFlags(args: string[]): SetupFlags | string {
     ...(value('--members') !== undefined ? { members: value('--members') } : {}),
     ...(value('--members-file') !== undefined ? { membersFile: value('--members-file') } : {}),
     ...(args.includes('--labelled-only') ? { labelledOnly: true } : {}),
+    ...(args.includes('--open-history') ? { openHistory: true } : {}),
+    ...(owner !== undefined ? { owner } : {}),
     ...(stdioMember !== undefined ? { stdioMember } : {}),
     noStdioMember,
     ...layout,
@@ -599,7 +626,7 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
       const again = inspectClaudeSetup(listed);
       if (again.mcp.state === 'current') { plan = listed; found = again; }
     }
-    const binding = entryBinding(flags, found.mcp.stdioMember);
+    let binding = entryBinding(flags, found.mcp.stdioMember);
     if (binding.member) { plan = { ...plan, stdioMember: binding.member }; found = inspectClaudeSetup(plan); }
     if (found.mcp.state === 'remote') return refuse(hostedConnection(found.mcp.url ?? 'a hosted brain', true, flags), out);
 
@@ -634,6 +661,8 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
     }
     const servesPlan = servesPreflight(flags, launcher, 'claude-code', !!cfg, !!liveOwner?.ours, binding);
     if (servesPlan instanceof OperationError) return refuse(servesPlan, out);
+    const tie = ownerTie(flags, servesPlan, binding, !!pluginOwner);
+    if (tie) { binding = { member: tie, previous: binding.previous }; plan = { ...plan, stdioMember: tie }; found = inspectClaudeSetup(plan); target.stdio_member = tie; say(out, `note: ${tieNote(tie)}`); }
 
     const brainCreate = !cfg;
     const initArgv = [launcher, 'init', '--pglite', ...(consent.providers.value === 'accepted' ? [] : ['--no-embedding']), '--json'];
@@ -650,7 +679,8 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
       const skills = skillsFor('claude-code', flags, launcher, { scope, projectDir }, instructions);
       const resolver = await resolverFor('claude-code', flags, launcher);
       const layout = await layoutFor('claude-code', flags, launcher, instructions, brainCreate);
-      return finish(out, { dryRun: true, target, consent, steps, states: [], verify: null, notices: layout.notices([]), notes, instructions, skills, resolver, serves, launcher, layout: layout.outcome });
+      const servesDone = servesAfterLayout(serves, flags, launcher, servesPlan, layout.outcome);
+      return finish(out, { dryRun: true, target, consent, steps, states: [], verify: null, notices: layout.notices([]), notes, instructions, skills, resolver, serves: servesDone, launcher, layout: layout.outcome });
     }
 
     let notices: Notice[] = [];
@@ -675,8 +705,9 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
     const states = ['configured', ...(verify.ok ? ['connection-verified', 'native-pending'] : [])];
     const turnHook = plan.events.includes('UserPromptSubmit') && instructions?.decision.value === 'accepted' ? verifyTurnHook('claude-code', { projectDir }) : null;
     const layout = await layoutFor('claude-code', flags, launcher, instructions, brainCreate);
+    const servesDone = servesAfterLayout(serves, flags, launcher, servesPlan, layout.outcome);
     const code = await finish(out, { dryRun: false, target: { ...target, registration_owner: pluginOwner ? 'plugin' : 'setup' }, consent: result.receipt.consent, steps: result.steps, states, verify, notices: layout.notices(notices), notes,
-      preserved: Object.keys(result.edited).map((event) => ({ kind: 'hook', event, reason: 'edited' })), instructions, skills, turnHook, resolver, serves, launcher, layout: layout.outcome });
+      preserved: Object.keys(result.edited).map((event) => ({ kind: 'hook', event, reason: 'edited' })), instructions, skills, turnHook, resolver, serves: servesDone, launcher, layout: layout.outcome });
     if (turnHook && !turnHook.ok) return out.json ? 1 : refuse(turnHookNotLoaded('claude-code', turnHook, ['gbrain', 'setup', 'claude-code', ...(scope === 'project' ? ['--scope', 'project'] : [])]), out);
     return verify.ok || pluginOwner ? code : 1;
   } catch (e) {
@@ -798,7 +829,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
       const again = inspectCodexSetup(listed);
       if (again.mcp.state === 'current') { plan = listed; found = again; }
     }
-    const binding = entryBinding(flags, found.mcp.stdioMember);
+    let binding = entryBinding(flags, found.mcp.stdioMember);
     if (binding.member) { plan = { ...plan, stdioMember: binding.member }; found = inspectCodexSetup(plan); }
     if (found.mcp.state === 'remote') return refuse(hostedConnection(found.mcp.url ?? 'a hosted brain', true, flags, 'codex'), out);
 
@@ -833,6 +864,8 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     }
     const servesPlan = servesPreflight(flags, launcher, 'codex', !!cfg, !!liveOwner?.ours, binding);
     if (servesPlan instanceof OperationError) return refuse(servesPlan, out);
+    const tie = ownerTie(flags, servesPlan, binding, !!pluginOwner);
+    if (tie) { binding = { member: tie, previous: binding.previous }; plan = { ...plan, stdioMember: tie }; found = inspectCodexSetup(plan); target.stdio_member = tie; say(out, `note: ${tieNote(tie)}`); }
 
     const brainCreate = !cfg;
     const initArgv = [launcher, 'init', '--pglite', ...(consent.providers.value === 'accepted' ? [] : ['--no-embedding']), '--json'];
@@ -851,7 +884,8 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
       const skills = skillsFor('codex', flags, launcher, {}, instructions);
       const resolver = await resolverFor('codex', flags, launcher);
       const layout = await layoutFor('codex', flags, launcher, instructions, brainCreate);
-      return finish(out, { harness: 'codex', dryRun: true, target, consent, steps, states: [], verify: null, notices: layout.notices([]), notes, instructions, skills, resolver, serves, layout: layout.outcome });
+      const servesDone = servesAfterLayout(serves, flags, launcher, servesPlan, layout.outcome);
+      return finish(out, { harness: 'codex', dryRun: true, target, consent, steps, states: [], verify: null, notices: layout.notices([]), notes, instructions, skills, resolver, serves: servesDone, layout: layout.outcome });
     }
 
     let notices: Notice[] = [];
@@ -878,8 +912,9 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     const states = ['configured', ...(verify.ok ? ['connection-verified', push === 'native-verified' && result.receipt.trust.owned.UserPromptSubmit ? 'native-verified' : 'native-pending'] : [])];
     const turnHook = plan.events.includes('UserPromptSubmit') && instructions?.decision.value === 'accepted' ? verifyTurnHook('codex') : null;
     const layout = await layoutFor('codex', flags, launcher, instructions, brainCreate);
+    const servesDone = servesAfterLayout(serves, flags, launcher, servesPlan, layout.outcome);
     const code = await finish(out, { harness: 'codex', dryRun: false, target: { ...target, registration_owner: pluginOwner ? 'plugin' : 'setup' }, consent: result.receipt.consent,
-      steps: result.steps, states, verify, notices: layout.notices(notices), notes: [...notes, ...result.notes], preserved: result.preserved, instructions, skills, turnHook, resolver, serves, layout: layout.outcome });
+      steps: result.steps, states, verify, notices: layout.notices(notices), notes: [...notes, ...result.notes], preserved: result.preserved, instructions, skills, turnHook, resolver, serves: servesDone, layout: layout.outcome });
     if (turnHook && !turnHook.ok) return out.json ? 1 : refuse(turnHookNotLoaded('codex', turnHook, ['gbrain', 'setup', 'codex']), out);
     return verify.ok || pluginOwner ? code : 1;
   } catch (e) {
@@ -952,6 +987,18 @@ function pluginBindingRefusal(plugin: string, harness: SetupHarnessId, member: s
 function entryBinding(flags: SetupFlags, previous: string | undefined): EntryBinding {
   return { member: flags.noStdioMember ? null : flags.stdioMember ?? previous ?? null, previous: previous ?? null };
 }
+
+/**
+ * GST-2904 (P1): a company setup for several people with no member named for this entry ties the entry it installs to
+ * the brain owner, so the owner's local assistant reads as the owner and imported calls can be kept to their
+ * attendees. Never where a plugin serves the entry, a shared-stdio harness is installed, or --no-stdio-member is given.
+ */
+function ownerTie(flags: SetupFlags, plan: ServesPlan, entry: EntryBinding, plugin: boolean): string | null {
+  if (flags.serves !== 'several' || (flags.brain !== 'company' && flags.brain !== 'both') || flags.noStdioMember || entry.member || plugin || !plan.tie) return null;
+  return sharedStdioHarness() ? null : plan.tie;
+}
+
+const tieNote = (owner: string): string => `this connection reads as the brain owner ${owner} (serve --stdio-member ${owner}), so it reads every call; --no-stdio-member leaves it unbound`;
 
 /** The access the brain-first block names; a brain that serves several people says the connection is already scoped. */
 function mcpAccess(server: string, surface: McpSurface, serves: ServesOutcome | null): BrainFirstAccess {
@@ -1084,7 +1131,11 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
   const envSurface = process.env.GBRAIN_SURFACE;
   const surface = flags.surface ?? (isRegistrationSurface(envSurface) ? envSurface : undefined);
   const access: BrainFirstAccess = { kind: 'mcp', server: flags.name, ...(surface ? { surface } : {}), ...(flags.serves === 'several' && servesBound(flags) ? { serves: 'several' as const } : {}) };
-  const mcp = { setup: flags.instructionsOnly ? 'unchanged' as const : 'manual' as const, docs: adapter.guide };
+  const hermesMcp = harness === 'hermes' && !flags.instructionsOnly
+    ? hermesMcpStep({ hermesHome: dirname((brainFirstTarget('hermes', {}) as { path: string }).path), name: flags.name, surface, gbrainBin: flags.gbrainBin ?? resolveGbrainBin(), remove: flags.remove, dryRun: flags.dryRun })
+    : null;
+  const mcp = hermesMcp ? { setup: hermesMcp.action, docs: adapter.guide, detail: hermesMcp.detail, ...(hermesMcp.command ? { command: hermesMcp.command } : {}) }
+    : { setup: flags.instructionsOnly ? 'unchanged' as const : 'manual' as const, docs: adapter.guide };
   const exposure = flags.remove || !BOT_HARNESSES.includes(harness) ? null
     : sharedTokenNotice({ kind: 'stdio', harness }, { harness, serves: exposureServesVia(flags.gbrainBin ?? resolveGbrainBin()) });
   const notices = renderedExposure(exposure);
@@ -1132,11 +1183,11 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
       : isTurnRuleHarness(harness) ? turnRuleHookFor(harness, off, flags, projectDir, rerun.join(' ')) : null;
   // Loud failure: an accepted install whose per-turn hook does not load exits non-zero and names the harness's own check.
   // A 'print' outcome installed nothing and already names the step that does, so it is reported, not verified.
-  const check = !off && !flags.dryRun && instructions?.decision.value === 'accepted' && !flags.noHooks && process.env.GBRAIN_HOOKS !== '0' && turnHook && turnHook.action !== 'print' && turnHook.action !== 'remove' ? verifyTurnHook(harness, { projectDir }) : null;
+  const check = !off && !flags.dryRun && instructions?.decision.value === 'accepted' && !flags.noHooks && process.env.GBRAIN_HOOKS !== '0' && turnHook && turnHook.action !== 'print' && turnHook.action !== 'remove' && !('unchanged' in turnHook && turnHook.unchanged) ? verifyTurnHook(harness, { projectDir }) : null;
   const resolver = harness === 'claude-code' || harness === 'codex' || harness === 'hermes' ? await resolverFor(harness, flags, flags.gbrainBin ?? resolveGbrainBin() ?? '') : null;
   const skillPlugin = harness === 'openclaw' ? await openclawSkillFor(flags) : null;
   const cursorPins = harness === 'cursor' && projectDir ? await cursorPinsFor(flags, projectDir) : null;
-  const code = instructions?.action === 'preserve' || skillsFailed(skills) || (check && !check.ok) || resolver?.error || cursorPins?.error ? 1 : 0;
+  const code = instructions?.action === 'preserve' || hermesMcp?.action === 'error' || skillsFailed(skills) || (check && !check.ok) || resolver?.error || cursorPins?.error ? 1 : 0;
   if (out.json) {
     await writeJsonDocument(`${JSON.stringify({ harness, dry_run: flags.dryRun, remove: flags.remove, instructions_only: true, instructions, ...(turnHook ? { turn_hook: turnHook } : {}), ...(check ? { turn_hook_check: check } : {}), skills, ...(resolver ? { skill_resolver: resolver } : {}), ...(skillPlugin ? { skill_resolver: skillPlugin } : {}), ...(cursorPins ? { skill_pins: cursorPins } : {}), mcp, notices }, null, 2)}\n`, (t) => process.stdout.write(t));
     return skillPlugin?.error ? exitCodeForCode(skillPlugin.error.code) : code;
@@ -1152,6 +1203,7 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
   if (cursorPins) for (const line of describeCursorPins(cursorPins, flags.dryRun)) say(out, line);
   if (check?.ok) say(out, `  verify   ${'turn hook'.padEnd(7)} ${check.message}`);
   if (mcp.setup === 'manual' && !flags.remove) say(out, `MCP: setup does not register ${adapter.label}'s MCP server. Follow ${adapter.guide} (one command), then start a new session.`);
+  if (hermesMcp) say(out, `  ${hermesMcp.action.padEnd(8)} ${'MCP'.padEnd(7)} ${hermesMcp.detail}${hermesMcp.command && hermesMcp.action !== 'write' ? `:\n    ${hermesMcp.command}` : ''}`);
   if (!flags.remove && instructions?.decision.value === 'accepted') say(out, 'Next: start a new session; the harness reads its instruction file at session start.');
   if (resolver?.error) return refuse(resolverRefusal(resolver), out);
   if (skillPlugin?.error) return refuse(openclawSkillRefusal(skillPlugin), out);

@@ -54,6 +54,9 @@ import { VERSION } from '../../version.ts';
 import { MARKDOWN_CHUNKER_VERSION } from '../chunkers/recursive.ts';
 import { chunkerStamp } from '../chunkers/code.ts';
 import { gitBlobOid, sha256 } from './digest.ts';
+import { READERS_FIX_EFFECT, readersHoldSteps } from './readers-request.ts';
+import { carriedKeepDeleted, heldDriftPreviewArgv, mirrorDatabaseOnlyHold, mirrorKeepDeletedHold, type KeepDeletedDecision } from './sync-holds-carried.ts';
+export { CARRIED_SAMPLE, carriedHolds, heldDriftPreviewArgv, mirrorDatabaseOnlyHold, mirrorKeepDeletedHold, type CarriedHolds, type KeepDeletedDecision } from './sync-holds-carried.ts';
 import { HOLD_ATTEMPTS_NEEDS_HUMAN, HOLD_ESCALATE_MS } from './sync-fault-class.ts';
 import { retiredSyncSetting, type RetiredSyncKeyName } from '../sync-config-keys.ts';
 
@@ -154,10 +157,14 @@ export interface GitHoldMeta {
   page_revision?: string;
   /** GST-2843: the pass rewrote this hold because its basis or drift moved, not because a re-screen came due; a later rewrite that is not a move drops it. */
   basis_moved?: true;
+  /** GST-2869: the pass rewrote this hold only because a retry was requested, with no re-screen due and nothing moved; a later rewrite that is not one drops it. */
+  retry_only?: true;
   /** #6712 PR 1 `file_drift`: which side moved since the page's last recorded import (`unknown`: no usable record); `page_revision` is the page's revision when held. */
   sides?: 'database' | 'both' | 'unknown';
   /** GBRA-133 `file_drift`: the drift screen that held it; an unknown-side hold from an older screen is re-screened (#7340). */
   drift_version?: number;
+  /** GST-3328 follow-up `file_drift`: the pass's history budget ran out before it read this file's earlier versions in full, so the next sync screens it again. */
+  history_unread?: true;
   /**
    * #6712 PR 4b `file_drift`: which side a Decision is about (design v3.2 §4): `both` (the file and the page moved), `unknown`
    * (no import record says which), `deleted` (one side is a deletion, named by `state`). Absent on holds an older gbrain
@@ -215,6 +222,8 @@ export interface GitHoldMeta {
   identity_ids?: { page: string; file: string };
   /** #8072 `file_too_large`: the streamed (segmented) preparation read the whole file to refuse it, under this gbrain; it re-screens when the file changes, on retry, or under another gbrain. */
   streamed?: { gbrain_version: string };
+  /** A read-only mirror's deleted-side `file_drift` hold whose deletion the user kept (sync-holds-carried.ts): decided and carried for the pinned `blob_oid`. */
+  keep_deleted?: KeepDeletedDecision;
 }
 
 /** #6188: why the last fence repair left a hold in place, and when the maintenance run tries it again (null: it does not). */
@@ -297,6 +306,8 @@ export interface GitHoldItem {
   /** #6712 PR 4b `file_drift`: the Decision's side, and for a deleted side its state (`GitHoldMeta.side` / `state`). */
   side?: FileDriftSide;
   state?: FileDriftDeletedState;
+  /** A read-only mirror's deleted-side hold the user decided to keep deleted (`GitHoldMeta.keep_deleted`). */
+  keep_deleted?: KeepDeletedDecision;
   message: string;
   slug: string | null;
   /** True when a page exists and keeps its last good revision; false when the file's page is missing. */
@@ -357,16 +368,6 @@ async function readRow(tx: Exec, sourceId: string, incarnation: string, path: st
 const READ_HOLD_RECORD_SQL = `CASE WHEN COALESCE(s.config->>'mirror_read_only','false')='true' THEN jsonb_set(h.completed_keys->0,'{read_only_checkout}','true'::jsonb) ELSE h.completed_keys->0 END`;
 
 /**
- * GBRA-542: a deleted-side `file_drift` hold on a read-only mirror whose file Git committed and the upstream removed while the
- * page changed in the database (or has no import record). gbrain never writes the mirror's files, so the page stays live and
- * database-only: the hold is carried by design (class `mirror_database_only`), never re-screened by a plain sync and never a
- * person's to clear. Deleting the page as the upstream did stays the owner's explicit `--prefer file` repair.
- */
-export function mirrorDatabaseOnlyHold(record: Pick<GitHoldRecord, 'code' | 'meta' | 'read_only_checkout'>): boolean {
-  return record.read_only_checkout === true && record.code === 'file_drift' && record.meta.side === 'deleted' && record.meta.state === 'file_gone' && !record.meta.reason;
-}
-
-/**
  * Records or replaces a hold. Call it inside the transaction that advances the
  * run past the file. Idempotent on (path, upstream_version); returns `skipped`
  * when a newer run already wrote this path's hold.
@@ -380,9 +381,10 @@ export async function writeGitHold(tx: Exec, input: Omit<GitHoldRecord, 'version
   const attempts = existing && existing.code === input.code ? (existing.meta.attempts ?? 1) + 1 : 1;
   // #6188/#6377: a re-screen of the same bytes under the same code keeps the last repair verdict; a changed file drops it.
   const sameBytes = existing && existing.code === input.code && existing.upstream_version === input.upstream_version;
+  const keepDeleted = existing && !input.meta.keep_deleted ? await carriedKeepDeleted(tx, existing, input) : undefined;
   const kept = sameBytes ? { ...(existing.meta.fence_repair && !input.meta.fence_repair ? { fence_repair: existing.meta.fence_repair } : {}),
     ...(existing.meta.content_repair && !input.meta.content_repair ? { content_repair: existing.meta.content_repair } : {}) } : {};
-  const record: GitHoldRecord = { version: 1, ...input, meta: { ...kept, ...input.meta, attempts, ...escalationStamps(existing, input, now) },
+  const record: GitHoldRecord = { version: 1, ...input, meta: { ...kept, ...(keepDeleted ? { keep_deleted: keepDeleted } : {}), ...input.meta, attempts, ...escalationStamps(existing, input, now) },
     held_at: existing && existing.upstream_version === input.upstream_version && existing.code === input.code ? existing.held_at : now, updated_at: now };
   await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
     ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
@@ -449,6 +451,15 @@ async function rewriteHoldMeta(tx: Exec, input: { sourceId: string; incarnation:
       WHERE op=$1 AND fingerprint=$2 AND completed_keys=$4::text::jsonb RETURNING 1`,
   [GIT_HOLD_OP, gitHoldFingerprint(input.sourceId, input.incarnation, input.path), JSON.stringify([record]), JSON.stringify([existing])]);
   return rows.length ? record : null;
+}
+
+/**
+ * Records the user's keep-the-deletion decision on the mirror hold at `path`, guarded on the hold the preview observed
+ * (`observedAt`) still being that deleted-side `file_drift` hold in `state`; false when it moved meanwhile. The hold stays.
+ */
+export function recordKeepDeleted(tx: Exec, input: { sourceId: string; incarnation: string; path: string; observedAt: string; state: FileDriftDeletedState; decision: KeepDeletedDecision }): Promise<boolean> {
+  return rewriteHoldMeta(tx, { ...input, code: 'file_drift' }, existing => existing.observed_at === input.observedAt && existing.meta.side === 'deleted' && existing.meta.state === input.state
+    ? { keep_deleted: input.decision } : null).then(record => record !== null);
 }
 
 /**
@@ -620,13 +631,21 @@ export async function readGitHoldCodeCounts(engine: Exec, sourceIds: string[]): 
  */
 export async function holdBasisMoved(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, holds: ReadonlyMap<string, Pick<GitHoldRecord, 'code' | 'page_id' | 'meta'>>,
   paths: readonly string[]): Promise<Set<string>> {
-  const watched = paths.flatMap(path => { const hold = holds.get(path); return hold?.code === 'concurrent_write' && hold.page_id != null && hold.meta.page_revision ? [Number(hold.page_id)] : []; });
-  const revisions = new Map(watched.length ? (await engine.executeRaw<{ id: number; revision: string }>('SELECT id, knowledge_revision::text AS revision FROM pages WHERE source_id=$1 AND id=ANY($2::int[])',
-    [sourceId, watched])).map(row => [Number(row.id), row.revision]) : []);
+  const kept = (hold: Pick<GitHoldRecord, 'code' | 'meta'> | undefined) => hold?.code === 'file_drift' && hold.meta.state === 'tombstone_edited' && hold.meta.keep_deleted?.page_id != null
+    ? hold.meta.keep_deleted : undefined;
+  const watched = paths.flatMap(path => { const hold = holds.get(path); return hold?.code === 'concurrent_write' && hold.page_id != null && hold.meta.page_revision ? [Number(hold.page_id)]
+    : kept(hold) ? [Number(kept(hold)!.page_id)] : []; });
+  const rows = watched.length ? await engine.executeRaw<{ id: number; revision: string; deleted: boolean }>('SELECT id, knowledge_revision::text AS revision, deleted_at IS NOT NULL AS deleted FROM pages WHERE source_id=$1 AND id=ANY($2::int[])',
+    [sourceId, watched]) : [];
+  const revisions = new Map(rows.map(row => [Number(row.id), row.revision]));
+  const tombstones = new Map(rows.filter(row => row.deleted).map(row => [Number(row.id), row.revision]));
   return new Set(paths.filter(path => {
     const hold = holds.get(path);
     if (!hold) return false;
     if (hold.meta.blocked_on && !holds.has(hold.meta.blocked_on)) return true;
+    // A kept deletion rests on its tombstone: a restore, a purge or another write to it re-checks the hold.
+    const decision = kept(hold);
+    if (decision) return tombstones.get(Number(decision.page_id)) !== decision.revision;
     return hold.code === 'concurrent_write' && hold.page_id != null && !!hold.meta.page_revision && revisions.get(Number(hold.page_id)) !== hold.meta.page_revision;
   }));
 }
@@ -675,7 +694,7 @@ export function holdRescreenDue(record: Pick<GitHoldRecord, 'code' | 'meta'>, re
     || (record.code === 'invalid_fence' && (record.meta.quote_version ?? 0) < QUOTE_SCREEN_VERSION)
     // GBRA-133: an unknown-side drift held before #7340's baseline rule (a Git edit to a page with no import record) imports
     // now when the page still holds its file at the baseline commit, so it is screened once more.
-    || (record.code === 'file_drift' && fileDriftSide(record.meta) === 'unknown' && (record.meta.drift_version ?? 0) < FILE_DRIFT_VERSION)
+    || (record.code === 'file_drift' && fileDriftSide(record.meta) === 'unknown' && ((record.meta.drift_version ?? 0) < FILE_DRIFT_VERSION || record.meta.history_unread === true))
     // GST-2568: a live page's drift held before version 3 may differ from its file only by a schema-pack retype's stamp, so it is screened once more.
     || (record.code === 'file_drift' && fileDriftSide(record.meta) !== 'deleted' && (record.meta.drift_version ?? 0) < 3)
     // #8007: a deletion held while gbrain.yml's storage section was invalid is decided again by every sync, so a fixed file settles it.
@@ -691,11 +710,12 @@ export function holdRescreenDue(record: Pick<GitHoldRecord, 'code' | 'meta'>, re
  * to the content-repair lane's preview (#6377), #6194 concurrent-write holds
  * to the reconcile preview and a re-screen, #6278 preparation-stalled holds to
  * writer status and a re-screen (never a file repair), every other hold to the
- * frontmatter repair preview; a source with several kinds names each.
+ * frontmatter repair preview; a source with several kinds names each. `readers` (`readers_noncanonical`, a file edit no repair does) routes to a status read, the edit and a sync.
  */
 export interface HoldRepairRoute { fences: number; others: number; concurrent?: number; stalled?: number; dirty?: number;
   /** #6712 `file_drift` holds: a database edit sync would have overwritten; each routes to `gbrain repair file-drift`. */
   drift?: number;
+  readers?: number;
   /** #6377 `frontmatter_slug_conflict` holds, counted apart from `others` by callers that read codes (summary counts leave them in `others`). */
   slug_conflicts?: number;
   /** GBRA-542: the source is a read-only mirror, so its drift holds are carried and never resolved toward the database. */
@@ -736,9 +756,11 @@ export function holdRepairSteps(sourceId: string, route: HoldRepairRoute, auto?:
   const unblock = ['gbrain', 'sync', 'unblock', '--source', sourceId, '--apply'];
   const dirtyText = `the ${route.dirty ?? 0} worktree-dirty hold(s) are uncommitted edits in the checkout that sync would not overwrite: commit them (gbrain sources status ${sourceId} names each file), `
     + `then run ${unblock.join(' ')}, which re-screens every held file that is now committed, and the same sync`;
-  const driftText = route.mirror ? `the file-drift holds are on a read-only mirror, which gbrain never writes, so their pages stay live and database-only: list them with ${heldDriftPreviewArgv(sourceId, 'deleted', 'file_gone', 'file').join(' ')} (a preview that writes nothing), and turn the mirror flag off only if gbrain should write the checkout`
-    : `for each file-drift hold, preview the resolution with gbrain repair file-drift --source ${sourceId} --slug <slug> --prefer database (or --prefer file) `
-    + `(gbrain sources status ${sourceId} names each slug and the database write sync did not overwrite) and decide with the user. ${FILE_DRIFT_APPLY_STEP} Then run gbrain sync --source ${sourceId} --no-pull`;
+  const fileWins = route.mirror ? `the source is a read-only mirror, whose checkout is never written: gbrain repair file-drift --source ${sourceId} --held --side unknown --prefer file --whole-class previews every page whose file is newer for one approval and imports each into its page database-only`
+    : `a page whose file was committed after it changed is the user's call with --prefer file (gbrain repair file-drift --source ${sourceId} --held --side unknown --prefer file --whole-class previews them all for one approval). ${FILE_DRIFT_APPLY_STEP}`;
+  const driftText = `the ${route.drift ?? 0} file-drift hold(s) are pages that differ from their file where sync could not prove which side moved (a database edit, or no import record), so it kept each page: preview them all with gbrain repair file-drift --source ${sourceId} --held (writes nothing; --cursor pages through the rest) and relay what it lists. `
+    + `A page that equals an earlier committed version of its file needs no repair: gbrain sources retry-held ${sourceId} and the next sync import the file; ${fileWins}. A page that changed after its file, a file with uncommitted bytes (commit or restore it first) and a file that is gone stay held until the user decides. Then run gbrain sync --source ${sourceId} --no-pull`;
+  if (route.readers && !route.others && !content && !route.concurrent && !route.stalled && !route.dirty && !route.drift) return readersHoldSteps(sourceId);
   if (route.stalled && !route.others && !content && !route.concurrent && !route.dirty && !route.drift) {
     return { argv: stalled.status, commands: [stalled.status.join(' '), stalled.retry.join(' '), stalled.sync.join(' ')], text: stalledText };
   }
@@ -773,23 +795,6 @@ export function fileDriftActionVerb(side: FileDriftSide, state: FileDriftDeleted
   return prefer === 'database' ? 'recreate the file' : 'soft-delete the page';
 }
 
-/** GBRA-542: one class of holds carried by design, with a sample of its paths and the read-only command that lists them. */
-export interface CarriedHolds { class: 'mirror_database_only'; count: number; sample: string[]; list: string[] }
-export const CARRIED_SAMPLE = 5;
-
-/** GBRA-542: the carried classes among one source's holds (empty when there are none). */
-export function carriedHolds(records: ReadonlyArray<Pick<GitHoldRecord, 'source_id' | 'path' | 'code' | 'meta' | 'read_only_checkout'>>): CarriedHolds[] {
-  const mirror = records.filter(mirrorDatabaseOnlyHold);
-  return mirror.length ? [{ class: 'mirror_database_only', count: mirror.length, sample: mirror.slice(0, CARRIED_SAMPLE).map(record => record.path),
-    list: heldDriftPreviewArgv(mirror[0]!.source_id, 'deleted', 'file_gone', 'file') }] : [];
-}
-
-/** #6712 PR 4b: the bulk preview of the held `file_drift` pages of one side (and deleted state), narrowed to `path` when given. */
-export function heldDriftPreviewArgv(sourceId: string, side: FileDriftSide, state: FileDriftDeletedState | undefined, prefer: 'file' | 'database', path?: string): string[] {
-  return ['gbrain', 'repair', 'file-drift', '--source', sourceId, '--held', '--side', side, ...(side === 'deleted' && state ? ['--state', state] : []),
-    ...(path ? ['--only', path] : []), '--prefer', prefer];
-}
-
 /** GST-2584: the read-only preview of `gbrain repair moved-pages`, which folds a page whose file moved into the moved page. */
 export function movedPagesPreviewArgv(sourceId: string, slug?: string | null): string[] {
   return ['gbrain', 'repair', 'moved-pages', '--source', sourceId, ...(slug ? ['--slug', slug] : [])];
@@ -815,6 +820,11 @@ function deletedDriftFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'met
       why: `${record.path} is gone from the read-only mirror's last commit, and page ${slug}${revision} changed in the database or has no import record, so sync keeps the page. gbrain never writes this mirror's files, so the page stays live and database-only: the hold is carried by design (mirror_database_only), never re-screened by a plain sync, and needs nothing. Only if the owner wants the page gone as the upstream did, this preview (writes nothing) shows what --prefer file deletes; its apply needs the user's consent.`,
       verify };
   }
+  if (mirrorKeepDeletedHold({ ...record, code: 'file_drift' })) {
+    return { argv: preview('file'), consent: [], actor: 'user', requires_exclusive: false, docs: 'docs/guides/repair.md#mirror-keep-deleted',
+      why: `The user kept the deletion of page ${slug} although the read-only mirror's upstream edited ${record.path}, so the hold is decided and carried (mirror_keep_deleted) and needs nothing: sync leaves the page deleted and gbrain never writes this mirror's files. A new upstream edit of the file, or restoring the page, asks again. Only if the user changes their mind, this preview (writes nothing) shows --prefer file: ${fileDriftActionVerb('deleted', state, 'file')}; its apply needs the user's consent.`,
+      verify };
+  }
   const uncommitted = state === 'file_gone' && (record.meta.reason === 'never_committed' || record.meta.reason === 'ignored');
   const what = state === 'file_gone' && record.meta.reason === 'origin_unknown' ? `${record.path} is gone, and Git could not show whether a commit held it (its history read did not finish), so sync kept page ${slug} instead of deleting it (#7130). The --held preview reads the whole history and names the file's provenance. `
     : uncommitted ? `${record.path} is gone, but Git never committed it${record.meta.reason === 'ignored' ? ' (.gitignore excludes it)' : ''}, so its absence is no evidence of a deletion and sync kept page ${slug} instead of deleting it (#7130). Put the file back and commit it (un-ignore it first) to keep the page file-backed. `
@@ -825,10 +835,12 @@ function deletedDriftFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'met
   // GST-2584: a file that moved left its page behind; the --held preview lists it moved_to and names the fold.
   const moved = state === 'file_gone' ? `If the file moved, the preview lists the page moved_to <slug> and names ${shellQuote(movedPagesPreviewArgv(source, record.slug))}, which folds it into the moved page. ` : '';
   const readOnly = record.read_only_checkout === true;
-  const options = readOnly ? `${moved}The source is a read-only mirror, so gbrain never rewrites its files and keeping the database copy needs no repair; this preview (writes nothing) shows --prefer file: ${fileDriftActionVerb('deleted', state, 'file')}. `
+  const keepOnMirror = readOnly && state === 'tombstone_edited';
+  const options = keepOnMirror ? `The source is a read-only mirror, so its files are never written: this preview (writes nothing) shows --prefer database, which keeps the deletion and records it on the hold (mirror_keep_deleted; no file is removed, and a new upstream edit asks again); ${preview('file').join(' ')} previews --prefer file: ${fileDriftActionVerb('deleted', state, 'file')}. `
+    : readOnly ? `${moved}The source is a read-only mirror, so gbrain never rewrites its files and keeping the database copy needs no repair; this preview (writes nothing) shows --prefer file: ${fileDriftActionVerb('deleted', state, 'file')}. `
     : `${moved}This preview (writes nothing) shows --prefer database: ${fileDriftActionVerb('deleted', state, 'database')}; ${preview('file').join(' ')} previews --prefer file: `
     + `${fileDriftActionVerb('deleted', state, 'file')}. `;
-  return { argv: preview(readOnly ? 'file' : 'database'), consent: [], actor: 'agent', requires_exclusive: false, docs: 'docs/guides/repair.md#deleted-canonical-files',
+  return { argv: preview(readOnly && !keepOnMirror ? 'file' : 'database'), consent: [], actor: 'agent', requires_exclusive: false, docs: keepOnMirror ? 'docs/guides/repair.md#mirror-keep-deleted' : 'docs/guides/repair.md#deleted-canonical-files',
     why: `${what}${options}Decide with the user. ${FILE_DRIFT_APPLY_STEP} Then sync again. The rest of the source is not blocked.`,
     then: { argv: ['gbrain', 'sync', '--source', source, '--no-pull'], consent: [], actor: 'agent', requires_exclusive: false, verify,
       why: `Re-screens ${record.path} after the repair (a changed file or page revision re-screens it by itself).` },
@@ -1004,6 +1016,9 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
         user_message: `${record.path} asks for visibility: private in a spelling page privacy does not read (another case, a block scalar, a list, a flow mapping or a merge key), so sync holds it instead of storing a world-readable page, and the rest of source ${source} keeps syncing. Write visibility: private on its own frontmatter line (lowercase key and value), commit, then run gbrain sync --source ${source} --no-pull.`,
         why: 'Page privacy reads only the exact lowercase visibility: private; no frontmatter repair rewrites a privacy request, and the hold re-screens when the file changes.',
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
+    case 'readers_noncanonical': return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
+        user_message: `${record.path} names its readers with a key page access does not read (another case, a hyphen or space instead of the underscore, or readableBy), so sync holds it instead of storing a page every member can read, and the rest of source ${source} keeps syncing. Write the key as readable_by (lowercase, with an underscore) on its own frontmatter line, remove any other spelling of it, commit, then run gbrain sync --source ${source} --no-pull. ${READERS_FIX_EFFECT}`,
+        why: 'Page access reads only the exact lowercase readable_by key; no frontmatter repair rewrites who may read a page, and the hold re-screens when the file changes.', verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'content_null_bytes':
       return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
         user_message: `${record.path} holds NUL bytes (U+0000${record.meta.line !== undefined ? `, first on line ${record.meta.line}` : ''}), so sync holds it and the rest of source ${source} keeps syncing. A UTF-16 file (a Windows "Unicode" save) looks like this: save it as UTF-8. Otherwise remove the NUL bytes, or remove a binary file (or leave it out with sync.exclude), then commit and run gbrain sync --source ${source} --no-pull.`,
@@ -1128,6 +1143,7 @@ export function gitHoldItem(record: GitHoldRecord, auto?: FenceAutoRepair): GitH
     ...(record.code === 'frontmatter_slug_conflict' && record.meta.content_repair ? { content_repair: record.meta.content_repair } : {}),
     ...(record.code === 'file_drift' && fileDriftSide(record.meta) ? { side: fileDriftSide(record.meta) } : {}),
     ...(record.code === 'file_drift' && record.meta.side === 'deleted' && record.meta.state ? { state: record.meta.state } : {}),
+    ...(record.code === 'file_drift' && record.meta.keep_deleted ? { keep_deleted: record.meta.keep_deleted } : {}),
     message: record.message, slug: record.slug, stale: record.page_id !== null, held_since: record.held_at,
     fix: gitHoldFix(record, auto), docs: gitHoldDocs(record.code, record.meta.reason, record.meta) };
 }

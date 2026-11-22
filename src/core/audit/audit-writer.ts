@@ -128,6 +128,11 @@ export interface AuditWriterOpts {
    * (no trailer).
    */
   errorTrailer?: string;
+  /**
+   * Permission bits for the audit file, for trails about secrets (0o600). A new file is created with them, and an
+   * existing file with looser bits is tightened on the next write. Unset keeps the process umask.
+   */
+  fileMode?: number;
 }
 
 export interface AuditWriter<T extends { ts: string }> {
@@ -203,10 +208,18 @@ export function createAuditWriter<T extends { ts: string }>(
     const file = path.join(dir, computeFilename(fileDate));
     try {
       fs.mkdirSync(dir, { recursive: true });
-      fs.appendFileSync(file, JSON.stringify(row) + '\n', { encoding: 'utf8' });
+      fs.appendFileSync(file, JSON.stringify(row) + '\n', { encoding: 'utf8', ...(opts.fileMode === undefined ? {} : { mode: opts.fileMode }) });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       process.stderr.write(`[${errorLabel}] ${errorMessagePrefix}write failed (${msg})${errorTrailer}\n`);
+      return;
+    }
+    if (opts.fileMode === undefined || process.platform === 'win32') return;
+    try {
+      if ((fs.statSync(file).mode & 0o777 & ~opts.fileMode) !== 0) fs.chmodSync(file, opts.fileMode);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`[${errorLabel}] ${errorMessagePrefix}could not tighten ${file} to ${opts.fileMode.toString(8)} (${msg})${errorTrailer}\n`);
     }
   }
 

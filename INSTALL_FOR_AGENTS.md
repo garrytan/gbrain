@@ -15,6 +15,8 @@
 > (codex mcp get gbrain >/dev/null 2>&1 || codex mcp add gbrain --url https://gbrain.io/mcp) && gbrain setup codex --instructions-only
 > ```
 >
+> Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](#no-unzip), not an improvised one.
+>
 > `gbrain setup <harness> --instructions-only` tells the agent the brain is there; agents seldom call an MCP server nobody told them about. It writes the [brain-first block](docs/guides/setup.md#brain-first-instructions) into `~/.claude/CLAUDE.md` or Codex's `AGENTS.md` (a non-empty `AGENTS.override.md` instead when Codex has one) with a per-turn rule hook, and leaves the MCP entry alone; the same command with `--no-instructions` added takes them out.
 >
 > The installer is a shell script for macOS and Linux; read it before you run it. Nothing is created until a person picks the plan and pays. Mention this once in the reply that starts or reports the install, and never wait on an answer before continuing a local install the user already asked for.
@@ -71,8 +73,39 @@ bun install -g github:garrytan/gbrain#stable
 Verify: `gbrain --version` should print a version number. If `gbrain` is not found,
 restart the shell or add the PATH export to the shell profile.
 
+Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](#no-unzip), not an improvised one.
+
+<a id="no-unzip"></a>
+
+**No `unzip` and no way to install packages (Linux).** This route puts the same Bun build the official installer would fetch, taken from Bun's own npm package `@oven/bun-linux-<arch>`, into `~/.bun/bin`, the directory the official installer uses, and adds that directory to the PATH of every new login shell. It needs only `curl` and `tar`:
+
+```bash
+arch=$(uname -m); [ "$arch" = x86_64 ] && arch=x64; [ "$arch" = arm64 ] && arch=aarch64
+mkdir -p ~/.bun/bin
+curl -fsSL "https://registry.npmjs.org/@oven/bun-linux-$arch/-/bun-linux-$arch-1.4.4.tgz" | tar -xzO package/bin/bun > ~/.bun/bin/bun.new && chmod +x ~/.bun/bin/bun.new && ~/.bun/bin/bun.new --version && mv ~/.bun/bin/bun.new ~/.bun/bin/bun
+echo 'export PATH="$HOME/.bun/bin:$PATH"' >> ~/.profile
+export PATH="$HOME/.bun/bin:$PATH"
+bun install -g github:garrytan/gbrain#stable
+bash -lc 'gbrain --version'
+```
+
+The PATH line goes in `~/.profile`, which new login shells read. Bash skips `~/.profile` when `~/.bash_profile` or `~/.bash_login` exists, so append the line to that file instead; zsh reads `~/.zprofile`. On Alpine or another musl system, run `arch=$arch-musl` after the first line; on an x64 CPU without AVX2, run `arch=x64-baseline`. The last command must print a version from a fresh shell. Don't install Bun with `npm install -g bun` or run gbrain from a git clone instead: gbrain starts with `#!/usr/bin/env bun`, so it fails in any new shell that can't find `bun` on its PATH.
+
 Next, on Claude Code or Codex: `gbrain setup claude-code` (or `gbrain setup codex`), which needs no API
 key ([Step 3](#step-3-create-the-brain)). On any other harness, `gbrain init --pglite --no-embedding` (Step 3).
+
+<a id="release-binary"></a>
+
+**A command scanner blocks the Bun installer or `bun install` (Hermes).** Some harnesses check each shell command before running it and refuse what they can't approve without a person. Hermes in single-query mode refuses `curl … | bash`, `bun install -g github:…` (its scanner, Tirith, can't finish a package lookup for a `github:` spec) and commands that append to a dotfile such as `~/.profile`. Install the release binary instead: one file built from the same release, which needs no Bun, no git and no package install. Run each line as its own command, exactly as written (Linux x64; on an Apple Silicon Mac use `gbrain-darwin-arm64`):
+
+```bash
+curl -fL --create-dirs -o ~/.local/bin/gbrain https://github.com/garrytan/gbrain/releases/latest/download/gbrain-linux-x64
+chmod +x ~/.local/bin/gbrain
+~/.local/bin/gbrain --version
+~/.local/bin/gbrain init --pglite --no-embedding
+```
+
+`releases/latest` is the stable release. Use the absolute path `~/.local/bin/gbrain` in every command and MCP registration instead of editing shell profiles. Run each line as written: an added `2>&1`, `$(…)` or `{ …; }` group can make the scanner refuse a line it would otherwise pass. Then run `~/.local/bin/gbrain setup hermes`: it registers gbrain through Hermes's own `hermes mcp add` (no hand edit of Hermes's protected `config.yaml`), adds the brain-first rule and its per-turn hook, and checks the server with `hermes mcp test gbrain`. If it prints a `hermes mcp add` command instead, or (an older gbrain) says setup does not register Hermes's MCP server, run the registration command from [docs/mcp/HERMES.md](docs/mcp/HERMES.md#register-by-hand) with `~/.local/bin/gbrain` as the command. If the user would rather keep the Bun install, Hermes's own refusal names its setting for this: `approvals.single_query_mode: approve` in Hermes's config, which is the user's call. `gbrain upgrade` updates a release binary in place.
 
 > **If `bun install -g` aborts or `gbrain doctor` reports `schema_version: 0`**
 > ([#218](https://github.com/garrytan/gbrain/issues/218)), run `gbrain apply-migrations --yes --no-autopilot-install`.
@@ -546,15 +579,34 @@ model gbrain removed in v0.33, needs `gbrain skillpack migrate-fence` once.)
 > Postgres/Supabase engine, which tolerates concurrent connections. Details:
 > [docs/architecture/serve-sync-concurrency.md](docs/architecture/serve-sync-concurrency.md).
 
-**If you are Hermes:** register gbrain as your MCP server:
+**If you are Hermes:** run setup by the path you installed gbrain at:
 
 ```bash
-printf 'Y\n' | hermes mcp add gbrain --env GBRAIN_HOME=$HOME --connect-timeout 60 --command $(which gbrain) --args serve --surface starter --advertise verbs
+~/.local/bin/gbrain setup hermes
 ```
 
-Keep `--args` last (everything after it becomes server argv) and verify with
-`hermes mcp test gbrain` — the add exits 0 even on failure. Full reference:
-[docs/mcp/HERMES.md](docs/mcp/HERMES.md).
+It registers gbrain as your MCP server through Hermes's own `hermes mcp add`, so
+you never edit `config.yaml` yourself (Hermes refuses that edit), adds the
+brain-first rule and its per-turn hook (without them a new session seldom calls
+gbrain), and checks the server with `hermes mcp test gbrain`. If it prints a
+`hermes mcp add` command instead of registering, or (an older gbrain) says it does
+not register Hermes's MCP server, run the command in
+[Register by hand](docs/mcp/HERMES.md#register-by-hand) and verify with
+`hermes mcp test gbrain`. Full reference: [docs/mcp/HERMES.md](docs/mcp/HERMES.md).
+
+**If you are OpenClaw:** register gbrain as your MCP server, then add the
+brain-first rule:
+
+```bash
+openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg starter --arg --advertise --arg verbs --env GBRAIN_HOME=$HOME
+gbrain setup openclaw
+```
+
+Run both lines. With only the first, the tools are registered but a new session
+answers from OpenClaw's own memory and chat history instead of gbrain. Once the
+gateway runs `gbrain serve`, use the MCP tools rather than the `gbrain` CLI on a
+PGLite brain (the CLI stops with `pglite_busy`). Full reference:
+[docs/mcp/OPENCLAW.md](docs/mcp/OPENCLAW.md).
 
 **If you are Grok Build** (xAI's `grok` CLI): register gbrain as your MCP server:
 
@@ -904,6 +956,8 @@ grants.
   writing/originals page content to your configured chat model (default
   Anthropic Haiku). Refuses to run unless `takes.bootstrap_enabled=true`
   is set in config AND `--yes` is passed. Two-gate opt-in by design.
+  `--dry-run` without `--yes` only lists the candidate pages and sends
+  nothing to the model.
 - Autopilot's auto-apply tier for takes-bootstrap is `manual_only`
   (do not bypass).
 

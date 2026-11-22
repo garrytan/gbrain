@@ -201,7 +201,8 @@ add it to a read grant, so its memory is read only by naming it in `memory_recal
 credential. A person read (no sources named) never reads a scope source. A source others already read,
 `default`, a federated source and the credential's own write source cannot be listed; a credential with
 scope sources keeps its attested ops within `forget,forget_fact,get_write_request,memory_recall,memory_write` and cannot
-hold `--private-pages granted-sources`. A leaked scope credential secret reads and writes every listed scope:
+hold `--private-pages granted-sources` or `--private-facts granted-sources` (and a credential holding either cannot
+list scope sources). A leaked scope credential secret reads and writes every listed scope:
 restrict it with `--operations` to the memory tools. Remote writes to `memory/scope` other than a scope
 `memory_write` are refused, and a `memory/scope` page that names readers, is private or sits under a folder
 rule takes no scope fact (`scope_page_not_shared`). On a repo-backed scope source, anyone who can push to its

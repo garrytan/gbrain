@@ -64,7 +64,7 @@ describe('data-safety native CI coverage', () => {
   test('a Linux job after every cell finalizes a darwin-x64 heartbeat its cell left pending, never on a fork pull request', () => {
     const finalize = (workflow.jobs as unknown as Record<string, { needs: string[]; if: string; 'runs-on': string; permissions: Record<string, string>; steps: Step[] }>)['heartbeat-finalize']!;
     expect(finalize.needs).toEqual(['native']);
-    expect(finalize.if).toBe("${{ always() && inputs.scope != 'smoke' }}");
+    expect(finalize.if).toBe("${{ always() && inputs.scope != 'smoke' && github.event_name != 'pull_request' }}");
     expect(finalize['runs-on']).toBe('ubicloud-standard-2-ubuntu-2404');
     expect(finalize.permissions).toEqual({ actions: 'read', contents: 'read', statuses: 'write' });
     const step = finalize.steps.at(-1)!;

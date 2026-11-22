@@ -1,6 +1,6 @@
 import type { BrainEngine } from '../../engine.ts';
 import type { PageReadPolicy, SearchResult } from '../../types.ts';
-import { pageReadFilter } from '../read-policy-sql.ts';
+import { rethrowCapabilityRefusal } from '../../engine-capability-refusal.ts';
 
 /**
  * v0.42 (T19) — apply 1.05x boost to results whose slug is a canonical_slug
@@ -21,23 +21,11 @@ export async function readAliasCanonicals(
   policy?: PageReadPolicy,
 ): Promise<Set<string>> {
   if (refs.length === 0) return new Set();
-  // Find which refs are canonical of any slug_aliases row.
-  // Two-array unnest for source-scoped composite lookup.
-  const sourceIds = refs.map(r => r.source_id);
-  const slugs = refs.map(r => r.slug);
-  const params: unknown[] = [sourceIds, slugs];
-  const filter = pageReadFilter('p', policy, params, !!policy);
   let rows: Array<{ source_id: string; canonical_slug: string }> = [];
   try {
-    rows = await engine.executeRaw<{ source_id: string; canonical_slug: string }>(
-      `SELECT DISTINCT a.source_id, a.canonical_slug
-       FROM slug_aliases a JOIN pages p ON p.source_id = a.source_id AND p.slug = a.canonical_slug
-       WHERE (a.source_id, a.canonical_slug) IN (
-         SELECT * FROM unnest($1::text[], $2::text[])
-       ) AND ${filter}`,
-      params,
-    );
-  } catch {
+    rows = await engine.aliasCanonicalRefs(refs, policy);
+  } catch (err) {
+    rethrowCapabilityRefusal(err);
     // Pre-v104 brain or other SQL miss; no-op.
     return new Set();
   }

@@ -4,6 +4,7 @@
  * under its original name (tests and external callers import them from
  * doctor.ts) and buildChecks / doctorReportRemote consume them.
  */
+import { sqlEngineKind } from '../../../core/sql-engine-kind.ts';
 import { loadConfigFileOnly } from '../../../core/config.ts';
 import { DEFAULT_MAX_COST_USD, findUnpricedBrainstormChatModel } from '../../../core/brainstorm/cost-gate.ts';
 import { pricingSetCommand } from '../../../core/budget/no-pricing.ts';
@@ -312,7 +313,7 @@ export async function checkEmbeddingWidthConsistency(engine: BrainEngine): Promi
         requestedDims: configDim,
         requestedModel: resolvedModel,
         source: 'doctor',
-        engineKind: engine.kind,
+        engineKind: sqlEngineKind(engine.kind, 'doctor embedding check'),
         databasePath,
       });
       return {

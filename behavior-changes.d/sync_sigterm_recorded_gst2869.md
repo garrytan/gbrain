@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+gbrain sync stopped by SIGTERM or SIGHUP during a managed pass (an outer timeout, a supervisor stop, a closed terminal) now records the stop before it exits. The pass ends resumable with stop reason terminated, the drain stops terminated, gbrain sync status reads pass_terminated with the plain sync as its next step, and the run exits 143 (129 for SIGHUP). Before, the row was left open and status read pass_interrupted. A pass stopped this way that committed nothing still counts toward pass_abandoned, as a killed pass did. A second signal, or a run still saving or printing its result 3 seconds after the handler starts, exits as before. On PGLite the handler can start tens of seconds after the signal, as it already did before this change, so a supervisor that kills the process sooner leaves the pass open as before: it reads pass_interrupted and the plain sync resumes it. Ctrl-C and a sync job inside jobs work are unchanged.

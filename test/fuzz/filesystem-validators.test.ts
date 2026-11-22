@@ -100,14 +100,27 @@ describe('validateUploadPath fuzz (fs-backed)', () => {
         } catch {
           threw = true;
         }
-        // For probes that explicitly contain `..` we expect a throw. The test
-        // is the contract: confinement holds against directly-malicious input.
-        if (probe.includes('..') && !threw) {
+        // A probe with a `..` path SEGMENT is a traversal and must throw. A name
+        // that only contains two dots (`...`, `..drafts`) is not a traversal and
+        // is judged by the inside-the-box test below.
+        if (probe.split(/[\\/]/).includes('..') && !threw) {
           throw new Error(`validateUploadPath did not reject traversal probe: ${JSON.stringify(probe)}`);
         }
       }),
       { numRuns: 200 },
     );
+  });
+
+  test('a folder whose name starts with two dots is not a traversal', () => {
+    // Pins the probe above to "escape", not "name contains `..`": an existing
+    // file under `<box>/..drafts/` and `<box>/.../` is inside the box.
+    const realBox = realpathSync(confinementDir);
+    for (const dir of ['..drafts', '...']) {
+      mkdirSync(join(confinementDir, dir), { recursive: true });
+      writeFileSync(join(confinementDir, dir, 'report.txt'), 'r');
+      expect(validateUploadPath(join(confinementDir, dir, 'report.txt'), confinementDir))
+        .toBe(join(realBox, dir, 'report.txt'));
+    }
   });
 
   // Symlink creation is platform / permission gated (Windows without dev mode,

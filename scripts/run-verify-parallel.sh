@@ -157,6 +157,7 @@ CHECKS=(
   "check:fixture-privacy"
   "check:source-scope-onboard"
   "check:getpage-scope"
+  "check:relative-dotdot"
   "check:origin-assignment"
   "check:no-double-retry"
   "check:batch-audit-site"
@@ -205,6 +206,11 @@ CHECKS=(
   # Goal (a) (refactor wave 1): engine SQL only shrinks; baseline
   # scripts/engine-sql-baseline.tsv.
   "check:engine-sql-ratchet"
+  # D6 (docs/designs/RUST_ENGINE.md): raw SQL outside the engines and two-way
+  # pglite/postgres branches only fall; baselines scripts/engine-raw-sql-baseline.tsv
+  # and scripts/engine-kind-branches-baseline.tsv.
+  "check:engine-raw-sql-ratchet"
+  "check:engine-kind-branches"
   # GBRA-248 W1: world reads in src/core (loadConfig, env, fs, module state,
   # spawn, process hooks) only fall; baseline scripts/core-world-reads-baseline.tsv.
   "check:core-world-reads"

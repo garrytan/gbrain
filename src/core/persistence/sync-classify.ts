@@ -65,7 +65,7 @@ export interface SyncPathState {
    * GST-2201 `deletionSide`: a `file_drift` hold on the deletion side (`tombstone_edited`, `purged_differs`, `file_gone`).
    * GST-2843 `moved`: the hold's basis or drift moved since it was written (`holdBasisMoved`, `movedDriftHolds`).
    */
-  hold: { atLevel: boolean; rescreenDue: boolean; retried: boolean; unscreened?: boolean; deletionSide?: boolean; moved?: boolean } | null;
+  hold: { atLevel: boolean; rescreenDue: boolean; retried: boolean; unscreened?: boolean; deletionSide?: boolean; moved?: boolean; retryOnly?: boolean } | null;
   /**
    * A deletion marker at the origin: `deleted` (with the blob ids it held) or `legacy` (the baseline blob of a page deleted
    * before PR 4; `deletion` is the committed deleting request that proves it, and a legacy marker without one settles nothing).
@@ -138,6 +138,13 @@ export interface SyncClassified {
   /** G3, a strict source: the class this path gets on a source that is not strict, when Git's verdict differs from it. */
   gitWins?: SyncClass;
 }
+
+/**
+ * #7199 / GST-3328: how many of its file's earlier committed versions a side-`unknown` page is compared with (sync and the
+ * `repair file-drift` preview), and how many distinct blobs of the file's history are read for them: those versions plus
+ * the two a caller can leave out (sync: the imported level and the baseline; the preview: the file at HEAD).
+ */
+export const DRIFT_HISTORY_VERSIONS = 3, DRIFT_HISTORY_DEPTH = DRIFT_HISTORY_VERSIONS + 2;
 
 const CLEAN = new Set<SyncDirtiness | null>(['clean', 'clean_eol', 'clean_lfs']);
 

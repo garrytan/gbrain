@@ -9,6 +9,7 @@ import { assertLegacyEngineMigration, assertUnmanagedCanonicalWriter } from '../
  */
 
 import { opError } from '../core/ops/contract.ts';
+import { sqlEngineKind } from '../core/sql-engine-kind.ts';
 import { ItemRun } from '../core/item-failure.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import { loadConfig, saveConfig, toEngineConfig, gbrainPath, effectiveEnvDatabaseUrl, type GBrainConfig } from '../core/config.ts';
@@ -910,8 +911,9 @@ function reportLoopRowFailures(tables: Record<string, MigrateSimpleTableResult>,
 
 export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]): Promise<void> {
   const opts = parseArgs(args);
+  const sourceKind = sqlEngineKind(sourceEngine.kind, 'gbrain migrate'); // SQL on both sides: a Rust source refuses before any read.
   await assertWindowsGraduationPlatform(sourceEngine, opts);
-  const migration = { from: sourceEngine.kind, to: opts.targetEngine };
+  const migration = { from: sourceKind, to: opts.targetEngine };
   await assertUnmanagedCanonicalWriter(sourceEngine, 'engine migration', { migration: { side: 'source', ...migration } });
   await assertLegacyEngineMigration(sourceEngine, { side: 'source', ...migration });
   const config = loadConfig();

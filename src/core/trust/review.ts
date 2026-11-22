@@ -25,7 +25,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
 import { currentHoldStore, trustKillSwitchState } from './owner-actions.ts';
-import { getTrustProposal, listTrustProposals, pendingTrustProposalsFor, trustProposalRef, type TrustProposalAction, type TrustProposalRow } from './proposals.ts';
+import { getTrustProposal, listTrustProposals, pendingTrustProposalsFor, SHARE_HELD_GUARD, trustProposalRef, type TrustProposalAction, type TrustProposalRow } from './proposals.ts';
 import { lowerPageState, readPageTrustState } from './page-handlers.ts';
 import { heldLabelsText } from './page-write.ts';
 import { TRUST_MARKER_REPAIR_COMMAND } from './marker-repair.ts';
@@ -158,6 +158,7 @@ function proposalItem(p: TrustProposalRow, page: string | null, markerRepair = f
   const related = rowRef(p.related_table, p.related_id);
   const held = p.action === 'forget' ? HELD_VERBS[String(p.before_state.change)] : undefined;
   const what = held ? `A lower-trust write would ${held} ${target}` : p.action === 'forget' ? `An agent asked to forget ${target}`
+    : p.before_state.guard === SHARE_HELD_GUARD ? `A member shared ${target} about member ${String(p.before_state.member)}; it stays private until you confirm it`
     : `${related || 'A lower-trust write'} would ${p.action === 'confirm' ? 'confirm' : 'supersede'} ${target}`;
   return {
     ref, kind: 'proposal', detail: p.action, source_id: p.source_id, page, day: day(p.created_at), created_at: p.created_at,

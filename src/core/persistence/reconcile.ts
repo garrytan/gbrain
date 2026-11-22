@@ -33,6 +33,16 @@ function grantFix(): Action {
 }
 /** The trusted CLI grant check every reconcile entry point (and `gbrain repair file-drift`'s preview) runs per page. */
 export async function authorizeReconcile(engine: BrainEngine, sourceId: unknown, slug: unknown) {
+  const granted = await authorizeReconcileGrant(engine, sourceId, slug);
+  const authority = await submissionAuthority({ engine, remote: false, sourceId: granted.sourceId } as OperationContext, 'put_page', granted.sourceId, granted.incarnation, granted.slug);
+  return { sourceId: granted.sourceId, slug: granted.slug, authority };
+}
+
+/**
+ * The CLI grant and source checks of `authorizeReconcile` without its write authority: a decision recorded only on a hold
+ * (a read-only mirror's kept deletion) writes no page or file, so it needs the caller's grant on the page but no submission.
+ */
+export async function authorizeReconcileGrant(engine: BrainEngine, sourceId: unknown, slug: unknown): Promise<{ sourceId: string; slug: string; incarnation: string }> {
   const verified = currentVerifiedLocalWriter();
   if (!verified || verified.remote || verified.principal.kind !== 'local_cli') throw trustedCliRequired('Reconciliation requires a verified trusted local CLI caller.');
   if (typeof sourceId !== 'string' || !isValidSourceId(sourceId) || typeof slug !== 'string' || !slug) throw opError('invalid_params', 'One explicit source ID and page slug are required.',
@@ -55,8 +65,7 @@ export async function authorizeReconcile(engine: BrainEngine, sourceId: unknown,
   if (!source || source.archived) throw opError('source_changed', 'The explicit source is missing or archived.',
     `Source '${sourceId}' is missing or archived. Check it with the command in fix, and restore an archived source before reconciling its pages.`,
     { fix: readFix('Lists registered sources, archived ones included.', { argv: ['gbrain', 'sources', 'list', '--json'] }) });
-  const authority = await submissionAuthority({ engine, remote: false, sourceId } as OperationContext, 'put_page', sourceId, source.incarnation, slug);
-  return { sourceId, slug, authority };
+  return { sourceId, slug, incarnation: source.incarnation };
 }
 function assertPreimages(artifact: ReconcileArtifact, state: ReconcileState): void {
   assertReconcilePins(artifact.preconditions, state.pins);

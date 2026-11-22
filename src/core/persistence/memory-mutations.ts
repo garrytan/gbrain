@@ -23,11 +23,11 @@ import { assertPersistenceAccepting, registerMutationPreparer, waitForWrite, wri
 import { claimWorktree, getWorktreeBinding } from './ownership.ts';
 import { resolveFactWriteTarget } from './fact-write-target.ts';
 import { clientRequestIdOf, parseMutationPrecondition } from './preconditions.ts';
-import { grantedWriteSource, writeGrantRefusal } from './write-grant.ts';
+import { grantedWriteSource, readsButWritesOnly, writeGrantRefusal } from './write-grant.ts';
 import type { WriteRequest } from './model.ts';
 import { prepareMemoryMutation } from './memory-prepare.ts';
 import { ownerReachesFact, readForgetTarget, refuseForgetReachingOtherCopies } from './forget-prepare.ts';
-import { callerIsOwner, currentCallerAccess, privateProvenanceFilterUnderPolicy, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
+import { callerIsOwner, currentCallerAccess, privateProvenanceFilterUnderPolicy, resolveExcludePrivatePages, withFolderRestricted, worldOnlyFacts } from '../search/private-visibility.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { resolveReadEligibility } from '../eligibility/policy.ts';
 import { callerMember, factVisibilitySql, memberFactPage, memberPageIsOwn, memberPageNotOwned, memberPageSlug, ownMemberFactIds, scopePageIsShared, scopePageNotShared, SCOPE_PAGE_SLUG } from '../access/member-facts.ts';
@@ -35,7 +35,7 @@ import { perCallWriteSource } from '../access/attest-sources.ts';
 import { isGitCheckoutRoot } from '../git-checkout.ts';
 import { entityPageMissingNotice } from '../interop-notices.ts';
 
-import { ownerSpeaksForItself } from '../access/member-facts.ts';
+import { otherMemberSubject, ownerSpeaksForItself, peoplePageMember } from '../access/member-facts.ts';
 import { isDerivationPrivate } from '../search/private-visibility.ts';
 import { refuseGuestSourceWrite } from '../guests/admission.ts';
 
@@ -60,7 +60,7 @@ async function submission(ctx: OperationContext, operation: string, params: Reco
   const granted = grantedWriteSource(ctx);
   if (ctx.remote !== false && sourceId !== granted && !perCallWriteSource(ctx, sourceId)) {
     throw writeGrantRefusal(ctx,
-      `This connection may write only to source ${granted}. Omit source_id to write there, or ask the brain host's operator to grant source ${sourceId}.`,
+      `${readsButWritesOnly(ctx, sourceId, granted)}This connection may write only to source ${granted}. Omit source_id to write there, or ask the brain host's operator to grant source ${sourceId}.`,
       retryArguments ? { tool: operation, arguments: retryArguments } : undefined);
   }
   await initializeLocalPersistence(ctx);
@@ -277,6 +277,8 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
       p.share === true ? 'Share it on a page every reader of this source can read, or drop share to keep the fact on your own page.'
         : 'Share it on a page every reader of this source can read, or pass visibility "private" to keep the fact on your own page.'), { reason: 'share_target_restricted' });
   }
+  // GST-2897 B: a member's share about another enabled member is stored private until the brain owner confirms it.
+  const heldFor = p.share === true && ownPage !== null && !ownerSpeaksForItself(ctx) ? await otherMemberSubject(ctx.engine, entitySlug) : null;
   const factIntent = { fact: String(p.fact).trim(), kind: (p.kind ?? 'fact') as never, visibility, entity_slug: entitySlug, ...(memberPage ? { page_slug: memberPage } : {}) };
   // Fail fast on an invalid target or a withdrawn claim; the coordinator re-checks both under its locks before publishing.
   if (p.replaces !== undefined && p.replaces !== null) {
@@ -292,7 +294,7 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
     intent: { ...callerIntent, entity_slug: entitySlug, fence, valid_from: typeof p.valid_from === 'string' ? new Date(p.valid_from).toISOString() : new Date().toISOString(), valid_until: validUntil?.toISOString() ?? null,
       visibility, ...(call.visibilityDefaulted ? { visibility_defaulted: true } : {}), ...(scopePage ? { scope_page: true } : memberPage ? { member_page: true } : {}),
       ...(linked ? { entity_inferred: linked.via } : {}), ...(inference && 'warning' in inference ? { entity_warning: inference.warning } : {}),
-      session_id: ctx.sessionId ?? null },
+      session_id: ctx.sessionId ?? null, share_held: heldFor ?? undefined },
     authority, worktreeId: writeThrough ? binding?.worktree_id : null, topologyGeneration: writeThrough ? binding?.topology_generation : null, deferrable: true });
   const written = await waitForWrite(ctx.engine, row, ctx.config, waitMs ?? ctx.writeWaitMs);
   const response = throwIfHeld(withRememberTarget(row, () => writeResponse(written)));
@@ -320,7 +322,7 @@ async function rememberLanded<T extends Record<string, unknown>>(ctx: OperationC
       ctx.emitNotice?.(entityPageMissingNotice(row.source_id, intent.entity_slug));
     }
   }
-  return { ...response, ...(intent?.fence === true ? { page: row.slug } : {}), ...(intent?.visibility === 'world' || intent?.visibility === 'private' ? { visibility: intent.visibility } : {}) };
+  return { ...response, ...(intent?.fence === true ? { page: row.slug } : {}), ...(response.held ? { visibility: 'private' } : intent?.visibility === 'world' || intent?.visibility === 'private' ? { visibility: intent.visibility } : {}) };
 }
 
 /**
@@ -405,7 +407,7 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
     : `Fact #${rawId} is not on your member page ${ownPage}, so this credential cannot withdraw it. Nothing was forgotten.`,
   ownerSpeaksForItself(ctx)
     ? `The brain owner's credential withdraws shared facts, facts on its member page and other facts it reads on pages it can write. The brain host withdraws this one with gbrain forget ${rawId}.`
-    : `A member credential withdraws only the facts on its own member page. The brain host withdraws this one with gbrain forget ${rawId}.`);
+    : `A member credential withdraws the facts on its own member page and the shared facts about itself (its people/${member} page). The brain host withdraws this one with gbrain forget ${rawId}.`);
   let ownerReach = false;
   if (ownPage && !mine) {
     // #9101: a fact the caller reads (one it shared, or a teammate's shared fact) is refused by name; a fact it cannot read stays not_found.
@@ -422,7 +424,10 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
     ownerReach = ownerSpeaksForItself(ctx) && await ownerReachesFact(ctx.engine, id, sourceId, { identity: access.identity, satisfied: access.satisfiedRuleIds })
       && (reads || await readsUnder(''));
     if (!reads && !ownerReach) throw missing();
-    if (!ownerReach) throw hostWithdraws();
+    // GST-2897 B: a member withdraws a shared fact it reads about itself (its people page), as any remote caller does.
+    const subject = !ownerReach && reads && peoplePageMember((await ctx.engine.executeRaw<{ entity_slug: string | null }>(
+      'SELECT entity_slug FROM facts WHERE id=$1 AND source_id=$2', [id, sourceId]))[0]?.entity_slug) === member;
+    if (!ownerReach && !subject) throw hostWithdraws();
     ownPage = null;
   }
   // The owner's withdrawal judged the fact itself (ownerReachesFact) and never reaches a copy on a page kept from remote writers.
@@ -493,7 +498,7 @@ async function withSimilarActive(ctx: OperationContext, operation: 'forget' | 'f
     const { similarActiveAfterForget } = await import('../facts/similar-active.ts');
     const committed = (response.write_request as { state?: string } | undefined)?.state === 'committed' || response.state === 'committed';
     return { ...response, similar_active: await similarActiveAfterForget(ctx.engine, {
-      sourceId, factId, remote: ctx.remote !== false, committed, semanticReview: p.semantic_review !== false,
+      sourceId, factId, remote: worldOnlyFacts(ctx.remote), committed, semanticReview: p.semantic_review !== false,
       excludePrivate: await resolveExcludePrivatePages(ctx.engine, ctx.remote) }) };
   } catch { return response; }
 }

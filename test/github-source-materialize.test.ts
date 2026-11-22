@@ -762,6 +762,56 @@ describe('github-source materialize', () => {
     }
   });
 
+  test('#9968: a repo whose first sweep stops at the deadline is not state-listed and bootstraps on the next run', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ghsrc-deadline-repo-'));
+    const calls: string[] = [];
+    const deadline = new AbortController();
+    const json = (body: unknown, status = 200): Response => new Response(JSON.stringify(body), {
+      status,
+      headers: { 'x-ratelimit-remaining': '4900', 'x-ratelimit-reset': '9999999999' },
+    });
+    const issue = { number: 7, title: 'Historical issue', state: 'open', updated_at: '2026-08-01T00:00:00Z', body: 'Listed before the deadline.',
+      html_url: 'https://github.com/acme/two/issues/7', created_at: '2026-07-01T00:00:00Z', labels: [], assignees: [], milestone: null, user: { login: 'alice' } };
+    const fetchImpl = async (url: string, init?: RequestInit): Promise<Response> => {
+      init?.signal?.throwIfAborted();
+      const u = new URL(url);
+      const path = u.pathname;
+      calls.push(url);
+      if (path === '/repos/acme/one/issues' || path === '/repos/acme/one/pulls') return json([]);
+      if (path === '/repos/acme/one') return json({ full_name: 'acme/one', private: false, archived: false, default_branch: 'main', description: null });
+      if (path === '/repos/acme/two') return json({ full_name: 'acme/two', private: false, archived: false, default_branch: 'main', description: null });
+      if (path === '/repos/acme/two/issues') {
+        return json(u.searchParams.has('since') ? [] : [issue]);
+      }
+      if (path === '/repos/acme/two/pulls') {
+        if (!u.searchParams.has('since')) deadline.abort();
+        return json([]);
+      }
+      if (path === '/repos/acme/two/issues/7') return json({ ...issue, state_reason: null, closed_at: null });
+      if (path === '/repos/acme/two/issues/7/comments') return json([]);
+      return json({ message: 'unexpected ' + path }, 404);
+    };
+    const cfg = { ...makeCfg(dir), repos: ['acme/one', 'acme/two'] };
+    try {
+      await insertSource(engine, dir);
+      await withEnv({ GH_TOKEN: 'test-token' }, async () => {
+        await runGitHubSync(engine, 'ghsrc', { ...cfg, repos: ['acme/one'] }, { sourceId: 'ghsrc', full: true, noExtract: true, noEmbed: true }, fetchImpl);
+        const stopped = await runGitHubSync(engine, 'ghsrc', cfg, { sourceId: 'ghsrc', noExtract: true, noEmbed: true, signal: deadline.signal }, fetchImpl);
+        expect(stopped.status).toBe('partial');
+        expect(await pageSlugs(engine)).not.toContain('gh/acme/two/7');
+        const state1 = JSON.parse(readFileSync(join(dir, '.github-source.json'), 'utf-8')) as { repos: string[] };
+        expect(state1.repos).toEqual(['acme/one']);
+
+        await runGitHubSync(engine, 'ghsrc', cfg, { sourceId: 'ghsrc', noExtract: true, noEmbed: true }, fetchImpl);
+        expect(await pageSlugs(engine)).toContain('gh/acme/two/7');
+        const state2 = JSON.parse(readFileSync(join(dir, '.github-source.json'), 'utf-8')) as { repos: string[] };
+        expect(state2.repos).toEqual(['acme/one', 'acme/two']);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('webhook single-item refresh does not persist discovered scope', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ghsrc-webhook-scope-'));
     const fx = makeFixture();

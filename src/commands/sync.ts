@@ -5,7 +5,7 @@ import { DEFAULT_PARALLEL_SOURCES } from '../core/sync-concurrency.ts';
 import { withHumanLogsToStderr, withSourcePrefix } from '../core/console-prefix.ts';
 import { msysToNativePath } from '../core/path-confine.ts';
 import { performSync } from './sync/perform.ts';
-import { runSyncInner } from './sync/run.ts';
+import { clearTerminationFallback, runSyncInner } from './sync/run.ts';
 
 // Refactor wave 1 (W4 sync): the implementation lives in src/commands/sync/.
 // This file keeps the SyncResult / SyncOpts types and every export, so
@@ -441,7 +441,7 @@ export {
   composeAbortSignals,
 } from '../core/sync-reconcile.ts';
 
-export async function runSync(engine: BrainEngine, args: string[]) {
+export async function runSync(engine: BrainEngine, args: string[], opts: { ownSignals?: boolean } = {}) {
   // #4888: under --json, stdout is reserved for the ONE JSON envelope (#4684:
   // the cost-gate status object rides inside it as `cost_gate`); every slog()
   // human line from performSync and its callees routes to stderr instead.
@@ -449,7 +449,7 @@ export async function runSync(engine: BrainEngine, args: string[]) {
   // `sync status|unblock --json` (sync/operator.ts) write through
   // writeJsonDocument, the guard's only stdout path.
   const stopTrace = startMemoryTrace('sync');
-  try { const out = await (args.includes('--json') ? withHumanLogsToStderr(() => runSyncInner(engine, args)) : runSyncInner(engine, args)); await (await import('./sources-add-next.ts')).noteSyncOutOfSearch(engine, args); return out; } finally { stopTrace(); }
+  try { const out = await (args.includes('--json') ? withHumanLogsToStderr(() => runSyncInner(engine, args, opts)) : runSyncInner(engine, args, opts)); await (await import('./sources-add-next.ts')).noteSyncOutOfSearch(engine, args); return out; } finally { stopTrace(); clearTerminationFallback(); }
 }
 
 /**

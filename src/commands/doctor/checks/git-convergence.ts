@@ -46,6 +46,8 @@ import { boundUnknownDetails } from '../bounded-unknown.ts';
 import { isSyncDisabledConfig } from '../../../core/sync-policy.ts';
 import { sourceMirrorReadOnly } from '../../../core/persistence/mirror-read-only.ts';
 import { APPROVED_FILE, POLICY_FILE } from '../../../core/access/policy-git.ts';
+import { readCredentialRefusal } from '../../../core/git/commit-push.ts';
+import { CREDENTIAL_HELPER_KEYS_WHY, credentialHelperKeysArgv, describeHelpers, type CredentialRefusalState } from '../../../core/git/push-credential.ts';
 
 export const GIT_CONVERGENCE_WARN_MS = 6 * 3_600_000;
 export const GIT_CONVERGENCE_FAIL_MS = 24 * 3_600_000;
@@ -55,7 +57,9 @@ const MAX_DIRTY_PATHS = 200;
 
 interface RootReport { root: string; source_ids: string[]; branch: string | null; ahead: number; behind: number; dirty: number;
   oldest_unpushed_at: string | null; oldest_dirty_at: string | null; status: 'ok' | 'warn' | 'fail'; stranded?: true; uncommitted_pages?: string[];
-  managed?: true; diverged?: true; unpushed_commits?: CheckoutCommit[]; porcelain?: CheckoutPorcelain; mirror_read_only?: true; policy_only_mirror?: true }
+  managed?: true; diverged?: true; unpushed_commits?: CheckoutCommit[]; porcelain?: CheckoutPorcelain; mirror_read_only?: true; policy_only_mirror?: true;
+  /** GST-2961: the last push was refused for the credential git used, and no push has landed since. */
+  credential_refused?: CredentialRefusalState }
 
 const canonicalPath = (path: string) => { try { return realpathSync(path); } catch { return path; } };
 
@@ -211,6 +215,13 @@ export async function gitConvergenceCheck(engine: BrainEngine, now = Date.now())
     if (pages.length) report.uncommitted_pages = pages;
     if (report.status === 'ok') report.status = 'warn';
   }
+  // GST-2961: a push the host refused for the credential git used is reported at once; no retry will land it.
+  for (const report of reports) {
+    const refused = readCredentialRefusal(report.root);
+    if (!refused) continue;
+    report.credential_refused = refused;
+    if (report.status === 'ok') report.status = 'warn';
+  }
   const skipped = [...byTop.values()].filter((r): r is { root: string; source_ids: string[]; skipped: string } => 'skipped' in r);
   const details = { roots: reports, skipped, ...(roots.size > MAX_ROOTS ? { not_probed: roots.size - MAX_ROOTS } : {}),
     warn_after_hours: GIT_CONVERGENCE_WARN_MS / 3_600_000, fail_after_hours: GIT_CONVERGENCE_FAIL_MS / 3_600_000, fetched: false };
@@ -247,8 +258,22 @@ export async function gitConvergenceCheck(engine: BrainEngine, now = Date.now())
   const remedy = [!publishable.length ? '' : publishable.some(r => isManagedFilesystemPath(r.root))
     ? 'Commit and push them: on a managed canonical worktree the persistence owner commits and pushes page writes (gbrain sources writer status <source> --json shows parked pushes; gbrain sources writer git-durability <source> --enable turns them on), and files that are not pages are committed with gbrain git commit-push -m <msg> -- <paths> in the checkout, never pulled or rebased; elsewhere gbrain sources push --path <root> for a bootstrap workspace, or git push in the checkout'
     : 'Commit and push them (gbrain sources push --path <root> for a bootstrap workspace, or git push in the checkout)', mirrorNote].filter(Boolean).join('. ');
-  const stranded = publishable.filter(r => r.stranded);
   const status = bad.some(r => r.status === 'fail') ? 'fail' : 'warn';
+  const refused = bad.find(r => r.credential_refused);
+  if (refused) {
+    const c = refused.credential_refused!;
+    const answered = c.helpers.find(h => h.answered);
+    const who = answered ? `the credential from ${answered.helper}${answered.scope ? ` (${answered.scope} config)` : ''}${c.username ? ` for ${c.username}` : ''}` : 'the credential git used';
+    const others = bad.filter(r => r.credential_refused && r !== refused).length;
+    return { name: 'git_convergence', status, details,
+      message: `Git checkouts have not converged with their upstream: ${lines.join(' | ')}. ${refused.root}: ${c.url} has refused every push since ${c.since} (${c.attempts} attempt(s), push_credential_refused: ${c.kind === 'not_found' ? '"Repository not found", HTTP 404' : 'HTTP 403'}) for ${who}, so its commits stay on this machine until git uses a credential for an account that can push there. ${describeHelpers(c)}${others ? ` ${others} other checkout(s) are refused the same way, see details.roots (credential_refused).` : ''} This compares with the last fetched upstream and does not fetch.${boundNote}`,
+      fix: { actor: 'user', consent: [], requires_exclusive: false,
+        argv: credentialHelperKeysArgv(refused.root),
+        why: CREDENTIAL_HELPER_KEYS_WHY,
+        user_message: `Pushes from ${refused.root} to ${c.url} have been refused since ${c.since} for ${who}, so ${refused.ahead} commit(s) are only on this machine (nothing is lost). ${describeHelpers(c)} Please make git use a credential for an account that can push to this repository: the read-only command in this fix lists each credential helper key (such as credential.helper) with the file that sets it, so change the key in the file whose helper answered, then run gbrain git commit-push --push-only --path ${refused.root}.`,
+        verify: doctorVerify('git_convergence') } };
+  }
+  const stranded = publishable.filter(r => r.stranded);
   const uncommitted = stranded.find(r => r.uncommitted_pages);
   if (uncommitted) {
     const pages = uncommitted.uncommitted_pages!;

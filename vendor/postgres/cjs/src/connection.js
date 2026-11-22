@@ -638,7 +638,14 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
     if (socket) {
       socket.removeListener('data', data)
       socket.removeListener('connect', connected)
-      socket.readyState === 'open' && socket.end(b().X().end())
+      // GBrain (#8155 follow-up): a peer that never answers the Terminate never sends the FIN that closes the socket, and
+      // the pool counts the connection as open until it closes. Destroy it once the grace for a clean close has passed.
+      if (socket.readyState === 'open') {
+        const closing = socket
+        closing.end(b().X().end())
+        const grace = setTimeout(() => closing.destroyed || closing.destroy(), 2000)
+        grace && grace.unref && grace.unref()
+      }
     }
     ended && (ended(), ending = ended = null)
   }

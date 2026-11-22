@@ -166,7 +166,11 @@ describe('runPostFusionStages — skipMetadataBoosts threads through as ONE bloc
       getBacklinkCounts: async (ids: number[]) => { calls.push('backlinks'); return new Map(ids.map((id) => [id, 50])); },
       getSalienceScores: async () => { calls.push('salience'); return new Map([['default::hub', 10]]); },
       getEffectiveDates: async () => { calls.push('dates'); return new Map([['default::hub', new Date()]]); },
-      executeRaw: async (sql: string) => { calls.push(`raw:${/slug_aliases/.test(sql) ? 'alias' : /supersedes/.test(sql) ? 'supersede' : 'other'}`); return []; },
+      // Typed ranking-stage reads (engine-sql/search-reads.ts): the alias boost
+      // and the supersede-edge probe.
+      aliasCanonicalRefs: async () => { calls.push('alias'); return []; },
+      hasSupersedeEdges: async () => { calls.push('supersede'); return false; },
+      executeRaw: async () => { calls.push('raw'); return []; },
       // Graph-signals stage (applyGraphSignals → engine.getAdjacencyBoosts). Without
       // this the stub throws and BOTH paths fail open, so the assertions below
       // could not tell a skipped stage from a broken one.
@@ -192,10 +196,10 @@ describe('runPostFusionStages — skipMetadataBoosts threads through as ONE bloc
     expect(calls).not.toContain('backlinks');
     expect(calls).not.toContain('salience');
     expect(calls).not.toContain('dates');
-    expect(calls).not.toContain('raw:alias');
+    expect(calls).not.toContain('alias');
     expect(calls).not.toContain('graph');
     // Correctness stage untouched: the supersede-edge probe still fires.
-    expect(calls).toContain('raw:supersede');
+    expect(calls).toContain('supersede');
   });
 
   test('skipMetadataBoosts false / undefined → today\'s behavior (backlink boost fires, engine consulted)', async () => {
@@ -209,7 +213,7 @@ describe('runPostFusionStages — skipMetadataBoosts threads through as ONE bloc
       expect(calls).toContain('salience');
       expect(calls).toContain('dates');
       expect(calls).toContain('graph');
-      expect(calls).toContain('raw:alias');
+      expect(calls).toContain('alias');
     }
   });
 });

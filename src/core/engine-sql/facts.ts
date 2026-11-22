@@ -33,6 +33,7 @@ import { privateProvenanceFilterUnderPolicy } from '../search/private-visibility
 import { factVisibilitySql, onOwnedMemoryPageSql } from '../access/member-facts.ts';
 import { storedTrustTier } from '../trust/tier.ts';
 import { ensureWellFormed } from '../text-safe.ts';
+import { valueHash } from '../chronicle/ontology.ts';
 
 export type EmbeddingCast = '::vector' | '::halfvec';
 
@@ -220,7 +221,11 @@ async function insertFactRows(tx: SqlExecutor, castSuffix: EmbeddingCast,
         hash_text: embedding && input.embedding_model ? wellFormed(input.fact) : null,
         row_num: input.row_num, source_markdown_slug: wellFormed(input.source_markdown_slug),
         claim_metric: wellFormed(input.claim_metric ?? null), claim_value: input.claim_value ?? null, claim_unit: wellFormed(input.claim_unit ?? null),
-        claim_period: wellFormed(input.claim_period ?? null), event_type: wellFormed(input.event_type ?? null), attributed_to: input.attributed_to ?? null, ord,
+        claim_period: wellFormed(input.claim_period ?? null), event_type: wellFormed(input.event_type ?? null), attributed_to: input.attributed_to ?? null,
+        ...(input.dimension && input.value != null
+          ? { dimension: wellFormed(input.dimension), value: wellFormed(input.value), value_hash: valueHash(input.value), dim_status: 'active' }
+          : { dimension: null, value: null, value_hash: null, dim_status: null }),
+        ord,
       };
     });
     const inserted = (await tx.run<{ id: number; source_markdown_slug: string; row_num: number | null }>(sqlFragment`
@@ -230,21 +235,24 @@ async function insertFactRows(tx: SqlExecutor, castSuffix: EmbeddingCast,
         embedding, embedded_at, embedding_model, embedded_text_hash,
         row_num, source_markdown_slug,
         claim_metric, claim_value, claim_unit, claim_period,
-        event_type, attributed_to
+        event_type, attributed_to,
+        dimension, value, value_hash, dim_status
       )
       SELECT ${sourceId}, r.entity_slug, r.fact, r.kind, r.visibility, r.notability, r.context,
         r.valid_from::timestamptz, r.valid_until::timestamptz, r.expired_at::timestamptz, r.source, r.source_session, r.confidence,
         ${castSuffix === '::halfvec' ? trustedSql('r.embedding::halfvec') : trustedSql('r.embedding::vector')}, r.embedded_at::timestamptz, r.embedding_model, md5(r.hash_text),
         r.row_num, r.source_markdown_slug,
         r.claim_metric, r.claim_value, r.claim_unit, r.claim_period,
-        r.event_type, r.attributed_to
+        r.event_type, r.attributed_to,
+        r.dimension, r.value, r.value_hash, r.dim_status
       FROM jsonb_to_recordset(${JSON.stringify(chunk)}::text::jsonb) AS r(
         entity_slug text, fact text, kind text, visibility text, notability text, context text,
         valid_from text, valid_until text, expired_at text, source text, source_session text, confidence real,
         embedding text, embedded_at text, embedding_model text, hash_text text,
         row_num integer, source_markdown_slug text,
         claim_metric text, claim_value double precision, claim_unit text, claim_period text,
-        event_type text, attributed_to text, ord integer)
+        event_type text, attributed_to text,
+        dimension text, value text, value_hash text, dim_status text, ord integer)
       ORDER BY r.ord
       ON CONFLICT (source_id, source_markdown_slug, row_num)
       WHERE row_num IS NOT NULL
@@ -425,8 +433,9 @@ export async function listFactsByEntity(
     // (valid_until <= now()) at read time — exact-time, zero-maintenance.
     // History readers pass activeOnly:false and stay unfiltered. Parity with
     // the pglite engine's _listFacts predicate.
-    const rows = (await exec.run<FactRowSqlShape>(sqlFragment`
-      SELECT * FROM facts
+    // GST-3170: a fact dated in the future ranks as of when it was written. Each branch keeps an index-ordered scan
+    // (idx_facts_entity_active), so the merge sorts at most 2 x (limit + offset) rows.
+    const where = sqlFragment`
       WHERE source_id = ${source_id}
         AND entity_slug = ${entitySlug}${opts?.sessionId ? sqlFragment` AND source_session = ${opts.sessionId}` : sqlFragment``}
         ${activeOnly ? sqlFragment`AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())` : sqlFragment``}
@@ -434,8 +443,11 @@ export async function listFactsByEntity(
         ${kinds ? sqlFragment`AND kind = ANY(${kinds}::text[])` : sqlFragment``}
         ${visibilityClause(visibility)}${privacyClause(opts)}
         ${excludeAuditRows ? sqlFragment`AND source != ALL(${AUDIT_ROW_SOURCES}::text[])` : sqlFragment``}
-        ${grepPat ? sqlFragment`AND fact ILIKE ${grepPat} ESCAPE '\\'` : sqlFragment``}${eligibilityClause(opts)}
-      ORDER BY valid_from DESC, id DESC
+        ${grepPat ? sqlFragment`AND fact ILIKE ${grepPat} ESCAPE '\\'` : sqlFragment``}${eligibilityClause(opts)}`;
+    const rows = (await exec.run<FactRowSqlShape>(sqlFragment`
+      SELECT * FROM ((SELECT * FROM facts ${where} AND valid_from <= now() ORDER BY valid_from DESC, id DESC LIMIT ${limit + offset})
+        UNION ALL (SELECT * FROM facts ${where} AND valid_from > now() ORDER BY created_at DESC, id DESC LIMIT ${limit + offset})) f
+      ORDER BY (CASE WHEN valid_from > now() THEN created_at ELSE valid_from END) DESC, id DESC
       LIMIT ${limit} OFFSET ${offset}
     `)).rows;
     return rows.map(rowToFact);
@@ -683,9 +695,10 @@ export async function findTrajectory(exec: LegacyUnscopedRead, opts: import('../
     const useArray = Array.isArray(opts.sourceIds) && opts.sourceIds.length > 0;
     const sourceIds = useArray ? opts.sourceIds! : null;
     const sourceId = opts.sourceId ?? 'default';
-    // Fail-closed (CV6 / v0.26.9 F7b posture): anything not strictly local
-    // is remote. An omitted flag (cast-bypassed context, caller that forgot
-    // to thread it) degrades to world-only reads, never to a private-fact leak.
+    // Fail-closed (CV6 / v0.26.9 F7b posture): `remote` means world-only facts here
+    // (callers pass worldOnlyFacts(ctx.remote), so the brain owner's remote read passes
+    // false); it gates only the visibility clause. An omitted flag degrades to
+    // world-only reads, never to a private-fact leak.
     const remoteFilter = opts.remote !== false;
 
     // Source-scope predicate: array path (federated) wins over scalar.

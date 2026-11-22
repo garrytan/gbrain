@@ -26,6 +26,7 @@ import { classifyRulebook, coversDerived, folderRulesAllow, normalizeRule, ruleC
 import { folderHoldingSlug, UNATTRIBUTED_MEMORY_SLUG } from '../core/facts-fence.ts';
 import { heldRowsInVersions } from '../core/facts/fence-fact-append.ts';
 import { identityFor } from '../core/access/principals.ts';
+import { ruleReadByNobodyLines } from './access-read-by-nobody.ts';
 import { openTwins, openTwinsLines, OPEN_TWINS_PAGES, type OpenTwins } from '../core/access/open-twins.ts';
 import { boundCredentials, listGroups, listMembers } from '../core/access/members.ts';
 import { ownerReadsRestrictedOn, ownerView, readersOmitOwnerError, readersOwner } from '../core/access/owner.ts';
@@ -337,6 +338,29 @@ export async function currentFolderRules(engine: BrainEngine, sourceId: string):
   return baseRules(engine, sourceId, store, root);
 }
 
+/**
+ * GBRA-582 item 9: writes a rulebook a caller already previewed and the operator approved as a whole (the member
+ * handover), approving the widening half in the same step. The caller refuses first when the source had a change held
+ * before, so the only held change approved here is its own.
+ */
+export async function writeApprovedRules(engine: BrainEngine, sourceId: string, desired: FolderRule[], message: string): Promise<{ result: EditResult; commits: string[] }> {
+  const result = await writeRules(engine, sourceId, desired, { message, json: true });
+  const commits = result.git?.commit ? [result.git.commit] : [];
+  if (!result.held.length) return { result, commits };
+  const plan = await previewApply(engine, sourceId);
+  if (!plan.plan_hash) return { result, commits };
+  const r = await applyApproved(engine, sourceId, { expect: plan.plan_hash });
+  if ((await readAccessStore(engine, sourceId)) === 'git') {
+    const root = await sourcePolicyRoot(engine, sourceId);
+    if (root && isGitWorkTree(root)) {
+      const git = await writeApprovedFile(root, (await getRevision(engine, sourceId, r.revision ?? undefined))?.rules ?? [], message + ' (approved)');
+      if (git.commit) commits.push(git.commit);
+      await syncGitPolicy(engine, sourceId, root);
+    }
+  }
+  return { result: { ...result, applied: true, held: r.held }, commits };
+}
+
 async function ruleCmd(engine: BrainEngine, sub: string | undefined, args: string[], json: boolean): Promise<void> {
   const sourceId = flag(args, '--source') ?? 'default';
   const yes = args.includes('--yes');
@@ -386,14 +410,21 @@ async function ruleCmd(engine: BrainEngine, sub: string | undefined, args: strin
       } else {
         const file = flag(args, '--file');
         if (!file) throw usageError('rule import needs --file <access.yml>.', 'gbrain access rule import --file access.yml --source <id>');
-        const parsed = parsePolicyYaml(readFileSync(file, 'utf8'));
+        let text: string;
+        try { text = readFileSync(file, 'utf8'); } catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+          throw usageError(`rule import: ${file} does not exist.`, 'Nothing was written. Pass --file the path of an existing access.yml (gbrain access rule export writes one).');
+        }
+        const parsed = parsePolicyYaml(text);
         if (!parsed.ok) throw opError('access_policy_invalid', `${file} does not validate: ${parsed.problems.map(p => `${p.line ? `line ${p.line}: ` : ''}${p.message}`).join('; ')}.`, 'Nothing was written. Fix the file and run the import again.');
         desired = parsed.rules;
         message = `access: import folder rules`;
       }
       const preview = await previewRules(engine, sourceId, store, persisted, desired);
       if (!yes) {
-        return print(json, { ...preview, applied: false }, () => previewLines(preview, `gbrain access rule ${[sub, ...args.filter(a => a !== '--json')].join(' ')} --yes`));
+        const stranded = json ? [] : await ruleReadByNobodyLines(engine, sourceId, desired, Object.keys(preview.matched_pages));
+        const kept = args.filter((a, i) => a !== '--json' && a !== '--expect' && args[i - 1] !== '--expect');
+        return print(json, { ...preview, applied: false }, () => previewLines(preview, `gbrain access rule ${[sub, ...kept].join(' ')} --yes --expect ${preview.expect}`).toSpliced(-2, 0, ...stranded));
       }
       const r = await writeRules(engine, sourceId, desired, { expect, operation, message, json });
       if (r.state === 'invalid') setCliExitVerdict(1);

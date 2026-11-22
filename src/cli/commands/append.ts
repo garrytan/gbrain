@@ -456,6 +456,7 @@ async function streamLocalPage(connect: () => Promise<BrainEngine>, path: string
   assertPageRevision(await engine.readPageSnapshot(slug, { sourceId, includeDeleted: true }), engineMutationPrecondition(parseMutationPrecondition(params)));
   const result = await importStreamedMarkdownFile(engine, resolve(path), relativePath, { sourceId, inferFrontmatter: false, content }, stat, policy);
   if (result.status === 'skipped' && result.error) {
+    if (result.refusal?.code === 'readers_noncanonical') throw (await import('../../core/persistence/readers-request.ts')).readersNoncanonicalRefusal({ slug, source_id: sourceId }, []);
     if (result.refusal?.code === 'visibility_noncanonical') throw (await import('../../core/persistence/visibility-request.ts')).privateRequestRefusal({ slug, source_id: sourceId }, undefined);
     throw opError(result.refusal?.code === 'invalid_frontmatter' ? 'invalid_frontmatter' : 'invalid_params', result.error,
       `${path} was not written as ${slug}: fix what the message names (or split the file into smaller pages) and run the command again.`);
@@ -494,7 +495,7 @@ export async function normalizedFileHash(path: string): Promise<string | null> {
 }
 
 /** A capture's receipt fields, for capture.ts printReceipt. */
-export interface StreamedCapture { slug: string; status?: string; chunks?: number; content_hash: string }
+export interface StreamedCapture { slug: string; status?: string; chunks?: number; content_hash: string; captured_at: string }
 
 /**
  * `gbrain capture --file` over the page ceiling on the trusted local CLI:
@@ -524,13 +525,14 @@ export async function streamLocalCapture(path: string, input: CaptureUploadInput
   if (!contentHash) throw opError('invalid_params', 'Capture requires nonempty text.', `${path} is empty or whitespace, so nothing was captured.`);
   const { explicitCaptureType, mergeCaptureFrontmatter, slugPrefixForType } = await import('../../core/capture-content.ts');
   const type = explicitCaptureType(headText, input.type) ?? 'note';
-  const slug = input.slug?.toLowerCase() ?? `${slugPrefixForType(type)}/${new Date().toISOString().slice(0, 10)}-${contentHash.slice(0, 8)}`;
+  const capturedAt = new Date().toISOString();
+  const slug = input.slug?.toLowerCase() ?? `${slugPrefixForType(type)}/${capturedAt.slice(0, 10)}-${contentHash.slice(0, 8)}`;
   const merged = mergeCaptureFrontmatter(headText, { type, capturedVia: 'capture-cli',
     ...Object.fromEntries((['who', 'what', 'where', 'kind', 'depth'] as const).filter(key => input[key] !== undefined).map(key => [key, input[key]])) });
   const result = await streamLocalPage(connect, path, slug, input.source ?? null,
     { ...(input.expected_revision ? { expected_revision: input.expected_revision } : {}), ...(input.force ? { force: true } : {}) },
     { head: { skip: lineEnd + 1 - bom, bytes: Buffer.from(merged, 'utf8') }, provenance: { source_kind: null, source_uri: 'cli-file', ingested_via: null } });
-  return result && { slug: result.slug, status: result.status, chunks: result.chunks, content_hash: contentHash };
+  return result && { slug: result.slug, status: result.status, chunks: result.chunks, content_hash: contentHash, captured_at: capturedAt };
 }
 
 /** The capture options an upload of a large capture honors (capture.ts RunOpts). */

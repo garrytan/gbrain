@@ -221,10 +221,10 @@ export function redactJson<T>(value: T, needles: readonly string[], exact?: Read
   return walk(value) as T;
 }
 
-/** Requests in `sourceId` that target one of `slugs` and still hold an intent (page purge). */
-export async function findRequestsForSlugs(engine: BrainEngine, sourceId: string, slugs: readonly string[], limit = 10_000): Promise<IntentRedactionTarget[]> {
-  return engine.executeRaw<IntentRedactionTarget>(`SELECT id::text AS id,principal_kind,principal_id FROM persistence_requests
-    WHERE source_id=$1 AND slug=ANY($2::text[]) AND NOT compacted AND intent IS NOT NULL ORDER BY sequence LIMIT $3`, [sourceId, [...slugs], limit]);
+/** Requests in `sourceId` that target one of `slugs` and still hold an intent (page purge), in sequence order after `after`. */
+export async function findRequestsForSlugs(engine: BrainEngine, sourceId: string, slugs: readonly string[], limit = 10_000, after = '0'): Promise<Array<IntentRedactionTarget & { sequence: string }>> {
+  return engine.executeRaw<IntentRedactionTarget & { sequence: string }>(`SELECT id::text AS id,principal_kind,principal_id,sequence::text AS sequence FROM persistence_requests
+    WHERE source_id=$1 AND slug=ANY($2::text[]) AND NOT compacted AND intent IS NOT NULL AND sequence > $4::bigint ORDER BY sequence LIMIT $3`, [sourceId, [...slugs], limit, after]);
 }
 
 /**

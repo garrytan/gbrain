@@ -29,6 +29,7 @@ import { contentHash, rowToPage } from '../utils.ts';
 import { rewriteLiveSegmentedFences, rewriteSegmentedGeneration, segmentedBodyContains } from '../page-body/segment-rewrite.ts';
 import { continueDerivationPurges, derivationPurgeState, recordDerivationPurge } from '../page-body/segment-derive.ts';
 import { discoverWithdrawalTargets, withdrawalDiscoveryFailure } from './withdrawal-discovery.ts';
+import { unbackedEntitySql } from './withdrawal-schema.ts';
 import { dropPurgedFenceRows } from './purge-overlay.ts';
 import { derivedRowsFrom, hideDerivedRows, type DerivationRef } from './derivation-inputs.ts';
 import { initializeLocalPersistence, requestPrincipalForContext } from '../persistence/page-mutations.ts';
@@ -167,9 +168,12 @@ export async function stagingsHoldingClaim(engine: BrainEngine, sourceId: string
 
 /** Read-only: everything a purge of `target` would touch. Inside the purge transaction it runs under the source lock. */
 export async function planFactPurge(engine: BrainEngine, target: PurgeTarget, allSubjects: boolean): Promise<PurgePlan> {
-  const subject = allSubjects ? '*' : target.entity_slug ?? '*';
+  // GBRA-574 A1: a fact on an unbacked name key (no live page) purges source-wide, and every purge of the claim reaches such rows.
+  const unbacked = !allSubjects && !!target.entity_slug && !target.entity_slug.includes('/') && (await engine.executeRaw(
+    'SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL LIMIT 1', [target.source_id, target.entity_slug])).length === 0;
+  const subject = allSubjects || unbacked ? '*' : target.entity_slug ?? '*';
   const facts = await engine.executeRaw<{ id: number }>(`SELECT id FROM facts WHERE source_id=$1 AND visibility=$2
-    AND gbrain_fact_fingerprint(fact)=$3 AND ($4='*' OR entity_slug=$4) AND NOT ${outcomeMarkerSql('facts')} ORDER BY id`, [target.source_id, target.visibility, target.fact_hash, subject]);
+    AND gbrain_fact_fingerprint(fact)=$3 AND ($4='*' OR entity_slug=$4 OR ${unbackedEntitySql('facts')}) AND NOT ${outcomeMarkerSql('facts')} ORDER BY id`, [target.source_id, target.visibility, target.fact_hash, subject]);
   const factIds = facts.map(f => Number(f.id));
   const takes = (await engine.executeRaw<{ id: number; page_id: number }>(`SELECT DISTINCT k.id,k.page_id FROM takes k JOIN pages p ON p.id=k.page_id
     WHERE p.source_id=$1 AND (k.id IN (SELECT consolidated_into FROM facts WHERE id=ANY($2::bigint[]) AND consolidated_into IS NOT NULL)

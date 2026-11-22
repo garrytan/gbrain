@@ -72,12 +72,12 @@ describe('readMentionPolicy', () => {
     const statements: string[] = [];
     const engine = {
       kind: 'postgres',
-      executeRaw: async (sql: string) => { statements.push(sql); return Object.entries(config).map(([key, value]) => ({ key, value })); },
+      getConfigValues: async (keys: readonly string[]) => { statements.push(`getConfigValues(${keys.length})`); return Object.entries(config).map(([key, value]) => ({ key, value })); },
       getAllConfig: async () => { throw new Error('whole-table read not expected'); },
       getConfig: async () => { throw new Error('per-key read not expected'); },
     } as unknown as BrainEngine;
     const policy = await readMentionPolicy(engine);
-    expect(statements).toEqual(['SELECT key, value FROM config WHERE key = ANY($1::text[])']);
+    expect(statements).toEqual(['getConfigValues(8)']);
     expect(policy).toMatchObject({ enabled: true, typeAdds: ['product'], typeRemoves: ['person'], ignore: ['Acme'] });
   });
 

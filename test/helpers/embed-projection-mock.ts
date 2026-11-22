@@ -12,6 +12,15 @@ export function mockEmbedProjectionEngine(overrides: Partial<Record<string, any>
     executeRaw: async (sql: string) => sql.startsWith('SELECT count(*)::int AS n FROM pages p')
       && sql.includes('p.text_projection_revision IS DISTINCT FROM p.knowledge_revision') ? [{ n: 0 }] : [],
     getConfigKeys: async () => [],
+    // One well-formed unmanaged mode row (#6482), read through the typed import guard method.
+    readManagedModeRows: async () => [{ enabled: false }],
+    // The cycle lock (src/core/db-lock.ts) is always free and always held by us in this single-process mock.
+    acquireCycleLock: async (lockId: string) => ({ id: lockId, fence: '1' }),
+    refreshCycleLock: async () => true,
+    releaseCycleLock: async () => true,
+    readCycleLocks: async () => [],
+    deleteCycleLock: async () => true,
+    deleteCycleLockIfStale: async () => ({ deleted: false, lastRefreshedAt: null }),
     transaction: async (run: (tx: BrainEngine) => Promise<unknown>) => run(engine),
     readPageSnapshot: async (slug: string, opts?: { sourceId?: string }) => {
       const page = overrides.getPage ? await overrides.getPage(slug, opts) : { slug, compiled_truth: 'Fixture body', timeline: '' };

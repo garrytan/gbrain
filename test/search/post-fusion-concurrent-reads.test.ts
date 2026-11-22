@@ -70,7 +70,7 @@ const adjacency = new Map<number, AdjacencyRow>([
   [7, { hits: 5, cross_source_hits: 3 } as AdjacencyRow],
 ]);
 const aliasRows = [{ source_id: 'default', canonical_slug: 'people/alice-example' }];
-const supersedeRows = [{ to_page_id: 8, by_slug: 'people/alice-example' }];
+const supersedeRows = new Map([[8, 'people/alice-example']]);
 
 const answers: Record<ReadName, unknown> = {
   backlinks: backlinkCounts,
@@ -78,28 +78,22 @@ const answers: Record<ReadName, unknown> = {
   dates,
   graph: adjacency,
   alias: aliasRows,
-  'supersede-probe': [{ one: 1 }],
+  'supersede-probe': true,
   supersede: supersedeRows,
 };
-
-function classify(sql: string): ReadName {
-  if (/slug_aliases/.test(sql)) return 'alias';
-  if (/SELECT 1 AS one FROM links/.test(sql)) return 'supersede-probe';
-  if (/supersedes/.test(sql)) return 'supersede';
-  throw new Error(`unexpected executeRaw: ${sql}`);
-}
 
 /**
  * Fake engine. `mode(name)` decides per read: 'resolve' answers at once,
  * 'defer' parks the read until release(), 'reject' fails it immediately.
  */
-function fakeEngine(mode: (name: ReadName) => 'resolve' | 'defer' | 'reject' = () => 'resolve') {
+function fakeEngine(mode: (name: ReadName) => 'resolve' | 'defer' | 'reject' | 'refuse' = () => 'resolve') {
   const issued: ReadName[] = [];
   const parked: Array<() => void> = [];
   const read = (name: ReadName) => {
     issued.push(name);
     const how = mode(name);
     if (how === 'reject') return Promise.reject(new Error(`${name} failed`));
+    if (how === 'refuse') return Promise.reject(Object.assign(new Error(`${name} not served`), { code: 'engine_capability_missing' }));
     if (how === 'resolve') return Promise.resolve(answers[name]);
     return new Promise(resolve => parked.push(() => resolve(answers[name])));
   };
@@ -108,7 +102,9 @@ function fakeEngine(mode: (name: ReadName) => 'resolve' | 'defer' | 'reject' = (
     getSalienceScores: () => read('salience'),
     getEffectiveDates: () => read('dates'),
     getAdjacencyBoosts: () => read('graph'),
-    executeRaw: (sql: string) => read(classify(sql)),
+    aliasCanonicalRefs: () => read('alias'),
+    hasSupersedeEdges: () => read('supersede-probe'),
+    supersedingPageSlugs: () => read('supersede'),
   };
   return { engine, issued, release: () => { while (parked.length) parked.shift()!(); } };
 }
@@ -207,6 +203,14 @@ describe('runPostFusionStages — id-keyed reads run concurrently', () => {
       const { engine, release } = fakeEngine(name => (name === failing ? 'reject' : 'defer'));
       await settle(runPostFusionStages(engine as never, actual, opts()), release);
       expect(actual).toEqual(expected);
+    });
+  }
+
+  for (const refused of ['alias', 'supersede-probe', 'supersede'] as const) {
+    test(`a refused engine capability on the ${refused} read propagates`, async () => {
+      setSystemTime(NOW);
+      const { engine } = fakeEngine(name => (name === refused ? 'refuse' : 'resolve'));
+      await expect(runPostFusionStages(engine as never, fixture(), opts())).rejects.toMatchObject({ code: 'engine_capability_missing' });
     });
   }
 });
