@@ -114,7 +114,7 @@ test/engine-parity/pages.test.ts	39	1
 test/engine-parity/persistence-declaration.test.ts	7	3
 test/engine-parity/persistence.test.ts	51	1
 test/engine-parity/private-page-reads.test.ts	23	0
-test/engine-parity/projection-drain-reads.test.ts	4	0
+test/engine-parity/projection-drain-reads.test.ts	5	0
 test/engine-parity/projection-rebuild-steps.test.ts	14	0
 test/engine-parity/purge-dry-run.test.ts	2	0
 test/engine-parity/purge-plan.test.ts	12	0

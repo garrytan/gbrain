@@ -1400,6 +1400,11 @@ export class PostgresEngine implements BrainEngine {
   releaseDeferredReplacementClaim(slug: string, claim: string) { return projectionRebuildImpl.releaseDeferredReplacementClaim(this.executeRaw.bind(this), slug, claim); }
   readProjectionBacklog(scope: PageReadScope = {}) { return projectionRebuildImpl.readProjectionBacklog(this.executeRaw.bind(this), scope); }
   listProjectionDrainPreview(limit: number) { return projectionRebuildImpl.listProjectionDrainPreview(this.executeRaw.bind(this), limit); }
+  listImageSealWindow(after: { sourceIncarnation: string; slug: string }, limit: number, notAfter?: string) { return projectionRebuildImpl.listImageSealWindow(this.executeRaw.bind(this), after, limit, notAfter); }
+  readImageSealPages(rows: ReadonlyArray<{ source_id: string; slug: string; revision: string }>) { return projectionRebuildImpl.readImageSealPages(this.executeRaw.bind(this), rows); }
+  listImageSealChunks(pageIds: readonly number[], column: projectionRebuildImpl.KeepColumn, provenanceModel: string | null) { return projectionRebuildImpl.listImageSealChunks(this.executeRaw.bind(this), pageIds, column, provenanceModel); }
+  clearImageSealVectors(column: projectionRebuildImpl.KeepColumn, chunks: ReadonlyArray<{ id: number; page_id: number }>) { return projectionRebuildImpl.clearImageSealVectors(this.executeRaw.bind(this), column, chunks); }
+  sealImagePages(pages: ReadonlyArray<{ id: number; revision: string }>) { return projectionRebuildImpl.sealImagePages(this.executeRaw.bind(this), pages); }
   hasQueuedProjectionWork(opts: { media?: boolean } = {}) { return projectionRebuildImpl.hasQueuedProjectionWork(this.executeRaw.bind(this), opts); }
   readPagesRowEstimate() { return projectionRebuildImpl.readPagesRowEstimate(this.executeRaw.bind(this)); }
   readDrainRunStart() { return projectionRebuildImpl.readDrainRunStart(this.executeRaw.bind(this)); }

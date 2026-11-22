@@ -63,12 +63,32 @@ The projection drain's own statements (src/core/page-state/projections.ts, SQL i
 | `brain.queuePageProjectionJob(sourceId, slug, reason)` | `null`; queues the live page at its knowledge revision with `reason` at now, or moves its queued job there. A missing or deleted page queues nothing | `queuePageProjectionJob` |
 | `brain.readDrainRunStart()` | the store clock as `now()::text` (`2026-11-18 02:37:05.215+00`); in a transaction, its start | `readDrainRunStart` |
 | `brain.isDrainClockPast(runStart)` | whether the store clock is past `runStart` (`now()::text` or ISO); other text is `invalid_argument` | `isDrainClockPast` |
-| `brain.hasQueuedProjectionWork()` | whether any job, whatever its reason, names a live Markdown or code page or a live segmented page of an active source; the TypeScript member refuses `media` | `hasQueuedProjectionWork` |
-| `brain.readProjectionBacklog({ sourceId?, sourceIds? })` | the class counts of the jobs of live pages in scope (`pending`, `failed`, `protected`, `archived`; `sealable`, `sealable_with_visual`, `reimport` and `ocr_required` 0), `oldest` (seconds since the oldest job that needs work, or null), `as_of` (`now()::text`) and `undecided` | `readProjectionBacklog` |
-| `brain.listProjectionDrainPreview(limit)` | `{ rows, undecided }`: the jobs of live Markdown and code pages of active sources, pages answered from their pre-upgrade index last, then by time, incarnation and slug (byte order), at most `limit` | `listProjectionDrainPreview` |
+| `brain.hasQueuedProjectionWork(media)` | whether any job, whatever its reason, names a live Markdown or code page (with `media`, or a sealable image page) or a live segmented page of an active source | `hasQueuedProjectionWork` |
+| `brain.readProjectionBacklog({ sourceId?, sourceIds? })` | the class counts of the jobs of live pages in scope (`pending`, `failed`, `sealable`, `sealable_with_visual`, `reimport`, `ocr_required`, `protected`, `archived`), `oldest` (seconds since the oldest job that needs work, or null) and `as_of` (`now()::text`) | `readProjectionBacklog` |
+| `brain.listProjectionDrainPreview(limit)` | the jobs of live Markdown and code pages and sealable image pages of active sources, image pages next, pages answered from their pre-upgrade index last, then by time, incarnation and slug (byte order), at most `limit` | `listProjectionDrainPreview` |
 
-- An image page that is neither protected nor in an archived source is `sealable` or `reimport`, which the store
-  cannot tell apart. The backlog and the preview count it in `undecided`, and the TypeScript members refuse an answer
-  that has one, as `hasDrainableProjectionJob` refuses `media`.
-- `readPagesRowEstimate` has no store method: the store keeps no planner statistics, so the TypeScript member answers 0.
+- The store classes an image page as `projectionClassSql` does (`persistence/projection_rebuild.rs` `page_class`): a
+  live inline image page is `protected` when either body column holds a protected marker; else `sealable` when its
+  chunker version is at least 4 (the safe fence) and its live chunks are exactly one `image_asset` chunk of modality
+  `image` at index 0, shorter than 65,536 characters and equal to the first 65,536 characters of its body (its title
+  when the body is empty); else `reimport` (`ocr_required` when its chunker version is below 0). `sealable_with_visual`
+  is 0: the store keeps no image vector.
+- `hasDrainableProjectionJob({ media })`, `hasQueuedProjectionWork({ media })` and the preview admit a sealable image
+  page as `projectionJobProbes({ media: true })` does.
+- `readPagesRowEstimate` answers the live page count (`countBrainLivePages`): the store keeps no planner statistics.
 - The backlog's scope is `pageReadFilter`'s source clause; a privacy, trust or flag filter refuses in TypeScript.
+
+## The image seal (`persistence/image_seal.rs`)
+
+`gbrain projections drain --images` (page-state/image-seal.ts `sealImageProjections`) restores the importer's own
+seal on sealable image pages.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.listImageSealWindow(afterIncarnation, afterSlug, limit, notAfter)` | the queue jobs after the key (incarnation, then slug in byte order), last queued at or before `notAfter` when given, at most `limit`: `{ source_id (null for an archived or missing source), source_incarnation, slug, revision, sealable }` | `listImageSealWindow` |
+| `brain.readImageSealPages(rows)` | the pages of `{ source_id, slug, revision }` rows still live at that revision and still sealable images of an active source: `{ id, revision, title, mode, corpus_generation }` | `readImageSealPages` |
+| `brain.listImageSealChunks(pageIds, provenanceModel)` | the live chunks of the pages that hold a vector: `{ id, page_id, chunk_text, chunk_source, embedding_input_hash, current }`, `current` when the vector is its text's and its model label is `provenanceModel` | `listImageSealChunks` |
+| `brain.clearImageSealVectors(chunks)` | `null`; clears the vector of each `{ id, page_id }` chunk and marks it pending | `clearImageSealVectors` |
+| `brain.sealImagePages(pages)` | one `{ has_visual: false }` per `{ id, revision }` page still at that revision, which is sealed; the queue hook drops its job | `sealImagePages` |
+
+The TypeScript members refuse a write column other than `embedding`.

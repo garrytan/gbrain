@@ -4152,6 +4152,16 @@ export interface BrainEngine {
   readProjectionBacklog(scope?: PageReadScope): Promise<ProjectionRebuildSql.ProjectionBacklogRow | undefined>;
   /** The rows a media drain takes, images last, then pages answered from their pre-upgrade index, oldest first, at most `limit`. */
   listProjectionDrainPreview(limit: number): Promise<ProjectionRebuildSql.ProjectionDrainPreviewRow[]>;
+  /** The image seal's window: queue rows after `after` (incarnation, slug in the C collation), at most `limit`, each with whether its page is a sealable image at the row's revision. */
+  listImageSealWindow(after: { sourceIncarnation: string; slug: string }, limit: number, notAfter?: string): Promise<ProjectionRebuildSql.ImageSealCandidate[]>;
+  /** The pages of a seal group still live at their queued revision and still sealable images of an active source. */
+  readImageSealPages(rows: ReadonlyArray<{ source_id: string; slug: string; revision: string }>): Promise<ProjectionRebuildSql.ImageSealPage[]>;
+  /** The live chunks of `pageIds` holding a vector in `column`, each with whether it is its text's and of `provenanceModel`. */
+  listImageSealChunks(pageIds: readonly number[], column: ProjectionRebuildSql.KeepColumn, provenanceModel: string | null): Promise<ProjectionRebuildSql.ImageSealChunk[]>;
+  /** Clears and marks pending the vector in `column` of the chunks `chunks`. */
+  clearImageSealVectors(column: ProjectionRebuildSql.KeepColumn, chunks: ReadonlyArray<{ id: number; page_id: number }>): Promise<void>;
+  /** Seals each page still at its revision; one row per sealed page, with whether a live chunk holds a visual vector. */
+  sealImagePages(pages: ReadonlyArray<{ id: number; revision: string }>): Promise<Array<{ has_visual: boolean }>>;
   /** Whether a queue row of any reason names a live inline page (with `media`, or a sealable image) or a live segmented page of an active source. */
   hasQueuedProjectionWork(opts?: { media?: boolean }): Promise<boolean>;
   /** The planner's estimate of the pages table's rows (0 before statistics, and on an engine without planner statistics). */

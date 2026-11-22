@@ -70,6 +70,7 @@ mod effect_worker;
 mod effects;
 mod housekeeping;
 mod idle_probe;
+mod image_seal;
 #[cfg(test)]
 mod lease_order_tests;
 mod noop_settle;
@@ -94,6 +95,7 @@ pub(crate) use effects::all_effects;
 pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn, TrueUpReservation};
 pub use idle_probe::IdleProbeSpec;
+pub use image_seal::{ImageSealChunkRef, ImageSealPageRef, ImageSealRow};
 pub use noop_settle::NoopSettleCandidateSpec;
 pub(crate) use notifier::remove_source_rows as remove_notifier_source_rows;
 pub use notifier::{

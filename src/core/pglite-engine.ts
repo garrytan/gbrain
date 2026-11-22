@@ -1724,6 +1724,11 @@ export class PGLiteEngine implements BrainEngine {
   releaseDeferredReplacementClaim(slug: string, claim: string) { return projectionRebuildImpl.releaseDeferredReplacementClaim(this.rawRead, slug, claim); }
   readProjectionBacklog(scope: PageReadScope = {}) { return projectionRebuildImpl.readProjectionBacklog(this.rawRead, scope); }
   listProjectionDrainPreview(limit: number) { return projectionRebuildImpl.listProjectionDrainPreview(this.rawRead, limit); }
+  listImageSealWindow(after: { sourceIncarnation: string; slug: string }, limit: number, notAfter?: string) { return projectionRebuildImpl.listImageSealWindow(this.rawRead, after, limit, notAfter); }
+  readImageSealPages(rows: ReadonlyArray<{ source_id: string; slug: string; revision: string }>) { return projectionRebuildImpl.readImageSealPages(this.rawRead, rows); }
+  listImageSealChunks(pageIds: readonly number[], column: projectionRebuildImpl.KeepColumn, provenanceModel: string | null) { return projectionRebuildImpl.listImageSealChunks(this.rawRead, pageIds, column, provenanceModel); }
+  clearImageSealVectors(column: projectionRebuildImpl.KeepColumn, chunks: ReadonlyArray<{ id: number; page_id: number }>) { return projectionRebuildImpl.clearImageSealVectors(this.rawRead, column, chunks); }
+  sealImagePages(pages: ReadonlyArray<{ id: number; revision: string }>) { return projectionRebuildImpl.sealImagePages(this.rawRead, pages); }
   hasQueuedProjectionWork(opts: { media?: boolean } = {}) { return projectionRebuildImpl.hasQueuedProjectionWork(this.rawRead, opts); }
   readPagesRowEstimate() { return projectionRebuildImpl.readPagesRowEstimate(this.rawRead); }
   readDrainRunStart() { return projectionRebuildImpl.readDrainRunStart(this.rawRead); }

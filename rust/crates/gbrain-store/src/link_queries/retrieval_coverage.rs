@@ -14,7 +14,7 @@
 //! (`servedTextProjectionFilter`); otherwise it waits. Its class is `projectionClassSql`: `archived`
 //! for an archived source, `text` for a page that is not an image or is a segmented shell, `protected`
 //! for an image whose body holds a protected fence, else an image that a seal or a re-import fixes.
-//! The store does not tell `sealable` from `reimport`: no read here needs to.
+//! No read here tells `sealable` from `reimport` (the projection drain's reads do: `persistence/projection_rebuild.rs`).
 //!
 //! The relevance of the pending count is `CoverageRelevance` with its POSIX patterns given back as the
 //! query words (`terms`); the TypeScript member refuses a pattern of another shape. A word matches the

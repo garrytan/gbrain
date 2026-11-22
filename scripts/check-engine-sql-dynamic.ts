@@ -172,6 +172,8 @@ const VETTED_BUILDERS: Record<string, string> = {
   waitingTextProjectionFilter: 'src/core/search/safe-chunks.ts: constant waiting-projection predicate over a caller alias with the constant v153 served-index marker, the v317 index predicate (#9192)',
   chunkVisibleFilter: 'src/core/search/safe-chunks.ts: constant projection + live body generation predicate over caller page/chunk aliases (Wave B)',
   chunkGenerationFilter: 'src/core/search/safe-chunks.ts: constant live body generation predicate over caller page/chunk aliases (Wave B)',
+  chunkGenerationProbe: 'src/core/search/safe-chunks.ts: chunkGenerationFilter as an EXISTS over the chunk\'s page, for a statement with no page row joined; constant text over a caller chunk alias',
+  sealableImageSql: 'src/core/page-state/projection-class.ts: constant sealable-image predicate (safe fence, protected-marker filter and the importer chunk probe) over a caller page alias; no values',
   chunkManifestJoin: 'src/core/search/safe-chunks.ts: constant LEFT JOIN onto the live page_body_manifest row over caller aliases (Wave B)',
   chunkDocumentOrder: 'src/core/search/safe-chunks.ts: constant ORDER BY column list over caller chunk/manifest aliases (Wave B)',
   quoteIdentifier: 'src/core/search/embedding-column.ts: double-quoted identifier (embedded quotes doubled); callers pass registry-resolved or COLUMN_NAME_REGEX-checked embedding column names',

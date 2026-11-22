@@ -1027,8 +1027,14 @@ impl Brain {
 
     /// `hasDrainableProjectionJob()`: whether a drainable job is queued.
     #[napi]
-    pub fn has_drainable_projection_job<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.has_drainable_projection_job())
+    pub fn has_drainable_projection_job<'env>(
+        &self,
+        env: &'env Env,
+        media: Option<bool>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.has_drainable_projection_job(media.unwrap_or(false))
+        })
     }
 
     /// `readChunkRowsFingerprint(pageId)`: the store's opaque value of the page's chunk rows.
@@ -1149,7 +1155,7 @@ impl Brain {
         })
     }
 
-    /// `readProjectionBacklog(scope)`: the class counts, `oldest`, `as_of` and `undecided`.
+    /// `readProjectionBacklog(scope)`: the class counts, `oldest` and `as_of`.
     #[napi]
     pub fn read_projection_backlog<'env>(
         &self,
@@ -1163,7 +1169,7 @@ impl Brain {
         })
     }
 
-    /// `listProjectionDrainPreview(limit)`: `{ rows, undecided }`.
+    /// `listProjectionDrainPreview(limit)`: the preview rows.
     #[napi]
     pub fn list_projection_drain_preview<'env>(
         &self,
@@ -1175,8 +1181,84 @@ impl Brain {
 
     /// `hasQueuedProjectionWork()`.
     #[napi]
-    pub fn has_queued_projection_work<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.has_queued_projection_work())
+    pub fn has_queued_projection_work<'env>(
+        &self,
+        env: &'env Env,
+        media: Option<bool>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.has_queued_projection_work(media.unwrap_or(false))
+        })
+    }
+
+    /// `listImageSealWindow(afterIncarnation, afterSlug, limit, notAfter)`.
+    #[napi]
+    pub fn list_image_seal_window<'env>(
+        &self,
+        env: &'env Env,
+        after_incarnation: String,
+        after_slug: String,
+        limit: f64,
+        not_after: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_image_seal_window(&after_incarnation, &after_slug, limit, not_after.as_deref())
+        })
+    }
+
+    /// `readImageSealPages(rows)`.
+    #[napi]
+    pub fn read_image_seal_pages<'env>(
+        &self,
+        env: &'env Env,
+        rows: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let rows: Vec<gbrain_store::persistence::ImageSealRow> =
+                required(rows, "readImageSealPages rows")?;
+            s.read_image_seal_pages(&rows)
+        })
+    }
+
+    /// `listImageSealChunks(pageIds, provenanceModel)`.
+    #[napi]
+    pub fn list_image_seal_chunks<'env>(
+        &self,
+        env: &'env Env,
+        page_ids: Vec<f64>,
+        provenance_model: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_image_seal_chunks(&page_ids, provenance_model.as_deref())
+        })
+    }
+
+    /// `clearImageSealVectors(chunks)`.
+    #[napi]
+    pub fn clear_image_seal_vectors<'env>(
+        &self,
+        env: &'env Env,
+        chunks: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let chunks: Vec<gbrain_store::persistence::ImageSealChunkRef> =
+                required(chunks, "clearImageSealVectors chunks")?;
+            s.clear_image_seal_vectors(&chunks)
+        })
+    }
+
+    /// `sealImagePages(pages)`.
+    #[napi]
+    pub fn seal_image_pages<'env>(
+        &self,
+        env: &'env Env,
+        pages: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let pages: Vec<gbrain_store::persistence::ImageSealPageRef> =
+                required(pages, "sealImagePages pages")?;
+            s.seal_image_pages(&pages)
+        })
     }
 
     /// `readDrainRunStart()`: the store clock as `now()::text`.
