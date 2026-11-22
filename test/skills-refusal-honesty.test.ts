@@ -10,13 +10,14 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
-const DIRS = ['skills', 'recipes', 'docs/integrations'];
+const DIRS = ['skills', 'plugin/skills', 'plugin-variants', 'recipes', 'docs/integrations'];
 
 const BANNED: Array<[string, RegExp]> = [
   ['silent model switch', /switch(es|ing)? silently|silently switch|silent[ _]switch/i],
   ['hidden switch', /(don'?t|do not|never) announce the switch/i],
   ['hidden refusal', /(don'?t|do not|never) show (the )?refusals?( to the user)?|never show refusal/i],
   ['over-broad access', /be expansive|expansive (scope|purpose)|must be expansive/i],
+  ['filter stop retried as a plain failure', /just a failed chapter/i],
 ];
 
 function files(dir: string): string[] {

@@ -423,10 +423,12 @@ If any chapter failed, the CLI exits 1 and the user can re-run — idempotency
 keys (`book-mirror:<slug>:ch-<N>`) deduplicate completed chapters at the
 queue level, so retry is cheap. Note that reproducing verbatim book quotes
 plus the reader's verbatim words can occasionally trip a provider output
-filter. Record a chapter stopped that way as that chapter's result, a
-provider filter stop rather than a model failure, and tell the user which
-chapters it hit. Retry, with the same or a different `--model`, only if the
-user chooses to.
+filter. The CLI reports a failed chapter only as `job <id> status=<status>`;
+read the cause with `gbrain jobs get <id>`. When it shows a provider filter
+stop, record that as the chapter's result, a provider filter stop rather than
+a model failure; otherwise quote the error as it is. Tell the user which
+chapters failed and why, and retry, with the same or a different `--model`,
+only if the user chooses to.
 
 ### Model: Opus by default
 
