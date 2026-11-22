@@ -1,16 +1,21 @@
 /**
  * BrainEngine parity — the writer-version reads (engine-sql/writer-versions.ts): `readWriterVersionCutoff` (doctor
  * writer_version check), `listWriterVersions` (persistence/administration.ts writer status) and `recentWriterVersions`
- * (doctor writer_version check, repair/extractor-facts.ts mixed-version warnings).
+ * (doctor writer_version check, repair/extractor-facts.ts mixed-version warnings), and `readSegmentedGateEvidence` (the
+ * segmented-storage gate, page-body/limits.ts and persistence/segmented-gate-hold.ts).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: the cutoff is an ISO time no later than the first request admitted after it. listWriterVersions names,
  *    per role, the latest version each host and principal stamped (a consumer only for a committed request), newest
  *    first, at most `limit`. recentWriterVersions groups the committed requests published in the window per role, host,
- *    principal and version, with a count, newest first; an empty window reads no row. On every engine arm (PGLite
+ *    principal and version, with a count, newest first; an empty window reads no row. readSegmentedGateEvidence groups
+ *    every admitted request (any state), every published request and every ingest-log row in the window per role,
+ *    host, principal, version and segment-reader mark, newest first; an ingest row carries this binary's version and
+ *    the mark. On every engine arm (PGLite
  *    always; Postgres with DATABASE_URL; the Rust arm through test/engine-parity/harness.ts).
  *  - Regression: an engine that refuses these reads leaves `gbrain doctor` reporting writer health unknown and hides
- *    an older writer still publishing; one that groups or orders differently names the wrong host as out of date.
+ *    an older writer still publishing; one that groups or orders differently names the wrong host as out of date. A
+ *    Rust gate that reads no writer turns segmented storage on while an older binary still writes the brain.
  *  - Why existing coverage misses it: the reads were raw SQL in persistence/writer-versions.ts and the doctor check,
  *    which the parity cases cannot call (D18), so the Rust engine refused them and no case compared them.
  *  - Seam: none. Typed journal members only (no executeRaw: D18). Times differ per arm, so the cases compare the rows
@@ -20,6 +25,7 @@ import { describe, expect } from 'bun:test';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { VERSION } from '../../src/version.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -132,6 +138,41 @@ describe('engine parity: writer-version reads', () => {
         { role: 'admitter', host_id: ADMITTER, principal: 'local_cli:parity-writer-a', version: 'a1', requests: 2 },
         { role: 'consumer', host_id: null, principal: 'local_cli:parity-writer-b', version: 'c3', requests: 1 },
         { role: 'admitter', host_id: null, principal: 'local_cli:parity-writer-b', version: 'b1', requests: 1 },
+      ],
+      window: [],
+    });
+    return answers;
+  });
+
+  parityTest('readSegmentedGateEvidence groups admitters, consumers and importers with their segment-reader mark', {
+    methods: ['readSegmentedGateEvidence', 'logIngest', 'insertWriteRequest', 'lockPersistenceCounters', 'stampWriteClaim', 'completeWriteRow', 'readSourceMembership'],
+    timeout: 60_000,
+  }, async (engine) => {
+    const empty = await engine.readSegmentedGateEvidence(7);
+    await seed(engine);
+    await engine.logIngest({ source_type: 'parity-import', source_ref: 'parity', pages_updated: ['notes/a'], summary: 'one' });
+    await engine.logIngest({ source_type: 'parity-import', source_ref: 'parity', pages_updated: ['notes/b'], summary: 'two' });
+    const rows = await engine.readSegmentedGateEvidence(7);
+    for (const row of rows) {
+      expect(row.first_seen).toMatch(ISO);
+      expect(Date.parse(row.first_seen!)).toBeLessThanOrEqual(Date.parse(row.last_seen!));
+    }
+    // The importer's host is this process's identity, which differs per arm; it is checked as a uuid or null.
+    const importer = rows.find(row => row.role === 'importer');
+    expect(importer?.host_id === null || /^[0-9a-f-]{36}$/.test(importer?.host_id ?? '')).toBe(true);
+    const week = untimed(rows.map(({ first_seen: _, ...row }) => row.role === 'importer' ? { ...row, host_id: 'this-host' } : row));
+    const window = await engine.readSegmentedGateEvidence(0);
+    const answers = { empty, week: [...week].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))), window };
+    const writerA = 'local_cli:parity-writer-a', writerB = 'local_cli:parity-writer-b';
+    expect(answers).toEqual({
+      empty: [],
+      week: [
+        { role: 'admitter', host_id: ADMITTER, principal: writerA, version: 'a1', segment_reader: true, requests: 2 },
+        { role: 'admitter', host_id: ADMITTER, principal: writerA, version: 'a2', segment_reader: true, requests: 1 },
+        { role: 'admitter', host_id: null, principal: writerB, version: 'b1', segment_reader: true, requests: 1 },
+        { role: 'consumer', host_id: CONSUMER, principal: writerA, version: 'c1', segment_reader: true, requests: 2 },
+        { role: 'consumer', host_id: null, principal: writerB, version: 'c3', segment_reader: true, requests: 1 },
+        { role: 'importer', host_id: 'this-host', principal: 'ingest:parity-import', version: VERSION, segment_reader: true, requests: 2 },
       ],
       window: [],
     });

@@ -27,9 +27,10 @@
  * change no row, so resending such a read repeats nothing. The reads that only take locks, as the scan finds them, are
  * LOCK_ONLY_READS below and this test checks the list is complete, so the header stays true:
  * getTrustProposal, listFenceFactRows, listGitEffectsCarryingReason, listGuardedTakeRows, listHeldRows,
- * listPageGitEffectsForStrip, readAccessTokenWriteGrant, readFactWithdrawalClaim, readForgetTarget, readLiveStoredBody,
- * readNoopEmbeddingCandidates, readOAuthClientWriteGrant, readPairFactRow, readReplacementTarget, readSourceMembership,
- * readSourceState, selectClaimableEffect, selectClaimableWrite.
+ * listConnectorSources, listPageGitEffectsForStrip, lockBodyStagingState, lockLivePagesByKey, readConfigForUpdate, readFactSnapshots, readLoopFactState, readAccessTokenWriteGrant, readFactWithdrawalClaim, readForgetTarget,
+ * readLiveStoredBody, readNoopEmbeddingCandidates, readOAuthClientWriteGrant, readPairFactRow, readReplacementTarget,
+ * readSourceMembership, readSourceState, readWorktreeAdmission, readWriterAdminState, selectClaimableEffect,
+ * selectClaimableWrite.
  *
  * Limits (no_claim): a write behind a call this scan cannot resolve (a function passed as an argument, three or more
  * same-named functions in other files) is not seen; names decide nothing, but resolution does.
@@ -46,16 +47,28 @@ const ROOT = join(import.meta.dir, '..');
 /** Reads that only take row or advisory locks, found by the scan; the header names them too. */
 const LOCK_ONLY_READS: readonly string[] = [
   'getTrustProposal', 'listFenceFactRows', 'listGitEffectsCarryingReason', 'listGuardedTakeRows', 'listHeldRows',
-  'listPageGitEffectsForStrip', 'readAccessTokenWriteGrant', 'readFactWithdrawalClaim', 'readForgetTarget', 'readLiveStoredBody',
-  'readNoopEmbeddingCandidates', 'readOAuthClientWriteGrant', 'readPairFactRow', 'readReplacementTarget', 'readSourceMembership',
-  'readSourceState', 'selectClaimableEffect', 'selectClaimableWrite',
+  'listConnectorSources', 'listPageGitEffectsForStrip', 'lockBodyStagingState', 'lockLivePagesByKey', 'readConfigForUpdate', 'readFactSnapshots', 'readLoopFactState', 'readAccessTokenWriteGrant', 'readFactWithdrawalClaim', 'readForgetTarget',
+  'readLiveStoredBody', 'readNoopEmbeddingCandidates', 'readOAuthClientWriteGrant', 'readPairFactRow', 'readReplacementTarget',
+  'readSourceMembership', 'readSourceState', 'readWorktreeAdmission', 'readWriterAdminState', 'selectClaimableEffect',
+  'selectClaimableWrite',
 ];
 
 /**
  * Members the scan cannot follow to the end, each with the reason it is still a read. Empty unless a reason is written
  * here; a member added to this list must be read by hand first.
  */
-const UNRESOLVED_OK: Readonly<Record<string, string>> = {};
+const UNRESOLVED_OK: Readonly<Record<string, string>> = {
+  // Only the Rust store implements it; the SQL engines answer the same rows with the one SELECT in search/dedup.ts
+  // `segmentRegions`, so no engine-sql function of that name exists. The Rust store function is scanned by the test below.
+  readSegmentRegions: 'a Rust-store-only member; the SQL engines run the caller\'s SELECT in search/dedup.ts, which writes nothing',
+  // Store members that read through the Snapshot helper of store-members/managed-sync-orphans.ts (one read-only snapshot of the
+  // source list and the checkpoint rows: brain.listSourceRecords, brain.readSourceIncarnation, the checkpoint row reads); hand-read.
+  listArchivedSourceIds: 'reads the source list through the read-only Snapshot helper',
+  listManagedSyncFailureKeys: 'reads checkpoint rows through the read-only Snapshot helper',
+  listManagedSyncOrphanRows: 'reads the source list and checkpoint rows through the read-only Snapshot helper',
+  // The napi function is list_source_oauth_clients; the test's snake-case rule splits `OAuth` into o_auth.
+  listSourceOAuthClients: 'its napi function list_source_oauth_clients only lists the source\'s OAuth clients',
+};
 
 // ------------------------------------------------------------------------------------------------ source walking
 

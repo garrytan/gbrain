@@ -9,6 +9,9 @@
 //! addon method and each `StoreError::code` into a JavaScript `Error.code`.
 
 mod access_flag;
+pub mod access_migrations;
+pub mod access_policy;
+pub mod access_rules;
 mod cascade;
 pub mod chunks;
 pub mod cli_reads;
@@ -29,6 +32,7 @@ mod owner_only_marks;
 mod page_columns;
 mod page_index;
 mod page_projection;
+mod page_withdrawals;
 pub mod pages;
 pub mod redb_kv;
 pub mod search;
@@ -47,31 +51,48 @@ pub mod code_edges;
 pub mod contradictions;
 pub mod dream;
 pub mod dream_config;
+pub mod drift_conflicts;
 pub mod embedding_catalog;
+pub mod embedding_holds;
 pub mod embedding_install;
 pub mod embeddings;
+pub mod engine_migration;
 pub mod entity_identities;
 pub mod eval_capture;
 pub mod extraction;
 pub mod facts;
 pub mod field_usage;
 pub mod generations;
+pub mod identity_auto;
+pub mod identity_reviews;
 pub mod import_members;
 pub mod jobs;
 pub mod keyword;
 pub mod large_page;
 pub mod link_queries;
 pub mod memory_mutation_reads;
+pub mod moved_page_reads;
 pub mod ontology;
 pub mod page_body;
 pub mod page_embedding_budget;
 pub mod page_ops;
 pub mod page_visibility;
 pub mod persistence;
+pub mod purge_version_bodies;
 pub mod raw_files;
+pub mod reason_tombstones;
 pub mod relations;
+pub mod remote_links;
+pub mod repair_attribution;
+pub mod repair_failed_writes;
+pub mod repair_fence_scans;
+pub mod repair_plan_scans;
+pub mod repair_scans;
+pub mod repair_versions;
 pub mod salience;
+pub mod source_cr_mode;
 pub mod stats;
+pub mod synopsis_tier;
 pub mod takes;
 pub mod telemetry;
 pub mod timeline_queries;
@@ -427,7 +448,8 @@ impl Store {
                 self.env.clone(),
             )),
             // The cache holds committed snapshots only; a transaction reads its own uncommitted
-            // writes, so its store starts with an empty cache of its own.
+            // writes, so its store starts with an empty cache of its own, which a savepoint or
+            // transaction rollback clears (`transactions.rs`).
             vectors: vectors::VectorCache::default(),
             // The write trust context belongs to the transaction's handle, not the shared store: it
             // starts empty and ends with the handle (`write_trust.rs`, "Lifetime").
@@ -466,10 +488,17 @@ impl Store {
     /// A consistent state to read: a snapshot, or the bound transaction's own view (its writes
     /// included).
     pub(crate) fn read(&self) -> Result<Box<dyn KvRead>> {
-        if let Some(tx) = &self.bound {
-            return Ok(tx.reader());
-        }
-        self.kv.snapshot()
+        let read = match &self.bound {
+            Some(tx) => tx.reader(),
+            None => self.kv.snapshot()?,
+        };
+        // A process whose open-time scan could not store the member-access flag reads it as '1'
+        // everywhere, the privacy policies' own reads of it included (`access_flag.rs`).
+        Ok(if self.flag_assumed {
+            access_flag::AssumedFlagRead::wrap(read)
+        } else {
+            read
+        })
     }
 
     /// Runs `f` in a write transaction and commits when it returns `Ok`. An `Err` rolls back.

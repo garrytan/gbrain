@@ -56,6 +56,8 @@ import { corpusFileSessionId, corpusTextForExtraction } from '../context/corpus-
 import { pruneDir } from '../sync.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { sortSourcesById } from '../source-rows.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 export const CAPTURE_LANES = ['hook:writeback', 'hook:compact', 'sweep:corpus'] as const;
 const CORPUS_KEY = 'dream.synthesize.session_corpus_dir';
@@ -235,7 +237,7 @@ function previewCommand(scope: RepairScope, all: string[], includeAmbiguous: boo
 }
 
 async function activeSources(engine: BrainEngine): Promise<string[]> {
-  return (await engine.listActiveSourceIds()).map(row => row.id);
+  return sortSourcesById(await engine.listAllSources()).map(row => row.id);
 }
 
 function pageItem(page: CapturedFactsPage, hash: string, index: number, last: boolean): PageItem {
@@ -251,8 +253,8 @@ export const capturedFactsRepair: RepairHandler = {
     const command = previewCommand(scope, await activeSources(engine), includeAmbiguous);
     if (!opts?.apply) {
       const { candidates, unclassifiable, not_suspect, unreadable_corpus_files } = await classifyCapturedFacts(engine, scope.source_ids);
-      const brainId = (await engine.readRepairBrainId().catch(() => null)) ?? 'host';
-      const hash = previewHash(['captured-facts-v1', brainId, scope.source_ids, includeAmbiguous,
+      const brainId = await engine.readPersistenceBrainId().catch(() => null);
+      const hash = previewHash(['captured-facts-v1', brainId ?? 'host', scope.source_ids, includeAmbiguous,
         candidates.map(c => [c.id, c.class, c.reason, c.fact_hash])]);
       const pages = new Map<string, CapturedFactsPage>();
       for (const fact of candidates) {
@@ -280,8 +282,8 @@ export const capturedFactsRepair: RepairHandler = {
     }
     const approved = await loadApprovedSet<CapturedFactsPage>(engine, { command: 'captured-facts', hash: opts.expect, previewCommand: command,
       emptyHash: async () => {
-        const brainId = (await engine.readRepairBrainId().catch(() => null)) ?? 'host';
-        return previewHash(['captured-facts-v1', brainId, scope.source_ids, includeAmbiguous, []]);
+        const brainId = await engine.readPersistenceBrainId().catch(() => null);
+        return previewHash(['captured-facts-v1', brainId ?? 'host', scope.source_ids, includeAmbiguous, []]);
       } });
     const scopeKey = JSON.stringify(scope.source_ids);
     if (approved.items.some(page => page.include_ambiguous !== includeAmbiguous || JSON.stringify(page.scope) !== scopeKey)) {
@@ -295,6 +297,9 @@ export const capturedFactsRepair: RepairHandler = {
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const { page, hash, last } = entry as PageItem;
     const engine = ctx.engine;
+    // The expiry and the page strike read and write facts through raw SQL, and the strike publishes the page through the page
+    // write door (raw too), so a Rust brain stops here by name, before its first write.
+    requireRawSql(engine, 'repair captured-facts page write');
     // Recheck each approved fact against its live row: same class, evidence and row.
     const live = new Map((await classifyCapturedFacts(engine, [page.source_id], { ids: page.facts.map(f => f.id) })).candidates.map(c => [c.id, c]));
     const unchanged = page.facts.filter(f => {

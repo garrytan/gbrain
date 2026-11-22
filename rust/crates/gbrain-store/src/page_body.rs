@@ -47,6 +47,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+pub(crate) mod purge_scan;
+
 const TEXT: u8 = 0x01;
 const MANIFEST: u8 = 0x02;
 const STAGING: u8 = 0x03;
@@ -415,6 +417,17 @@ pub struct DerivationRetireOptions {
     pub kind: Option<String>,
 }
 
+/// `deleteRewrittenSegmentDerivations`' argument (engine-sql/segmented-purge-writes.ts).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct RewrittenDerivationsDelete {
+    pub page_id: i64,
+    pub touched_occurrence_ids: Vec<i64>,
+    pub link_reach_occurrence_ids: Vec<i64>,
+    pub pipelines: Vec<String>,
+    pub live_occurrence_ids: Vec<i64>,
+}
+
 /// `SegmentSweepOptions`; `now` as an ISO string.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -427,6 +440,18 @@ pub struct SegmentSweepOptions {
 }
 
 /// `SegmentSweepResult`.
+/// What `sealSegmentedPage` reads before it seals ([`Store::read_segmented_seal_lead`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SealLead {
+    /// The stored timeline lead, `""` when none was published.
+    pub lead: String,
+    /// The page's `knowledge_revision`.
+    pub revision: String,
+    pub slug: String,
+    pub source_id: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SegmentSweepResult {
@@ -612,7 +637,7 @@ fn derivation_key(page_id: u64, kind: &str, occurrence: i64) -> Vec<u8> {
     key
 }
 
-fn body_key(page_id: u64) -> Vec<u8> {
+pub(crate) fn body_key(page_id: u64) -> Vec<u8> {
     let mut key = kind_key(BODY);
     key.extend_from_slice(&page_id.to_be_bytes());
     key
@@ -772,7 +797,7 @@ fn meta_type(meta: &SegmentedPageMeta) -> Result<String> {
 
 /// `liveTilingSql` and `untiledSql`: the generation's published rows, by seq, start each at the
 /// sum of the lengths before it, and their lengths sum to `body_bytes`.
-fn tiling(rows: &[&ManifestRow]) -> (i64, i64, bool) {
+pub(crate) fn tiling(rows: &[&ManifestRow]) -> (i64, i64, bool) {
     let mut sorted: Vec<&&ManifestRow> = rows.iter().collect();
     sorted.sort_by_key(|r| r.seq);
     let mut prior = 0i64;
@@ -1417,6 +1442,7 @@ impl Store {
                 import_filename: meta.import_filename.clone(),
                 source_kind: meta.source_kind.clone(),
                 source_uri: meta.source_uri.clone(),
+                database_only_reason: None,
                 ingested_via: meta.ingested_via.clone(),
                 ingested_at_us: meta_ingested(meta).then_some(now),
                 tags: Vec::new(),
@@ -1690,10 +1716,11 @@ impl Store {
     }
 
     /// The stored timeline lead of page `page_id` (`""` when none was published) with the page's
-    /// `knowledge_revision`, or `None` for a missing page. Not a member: `sealSegmentedPage`'s
-    /// TypeScript side reads it, sanitizes the lead, and passes the revision back to
+    /// `knowledge_revision`, slug and source, or `None` for a missing page. Not a member:
+    /// `sealSegmentedPage`'s TypeScript side reads it, overlays the lead with the page's ledger rows
+    /// (read by slug and source), sanitizes it, and passes the revision back to
     /// [`Store::seal_segmented_page`].
-    pub fn read_segmented_seal_lead(&self, page_id: i64) -> Result<Option<(String, String)>> {
+    pub fn read_segmented_seal_lead(&self, page_id: i64) -> Result<Option<SealLead>> {
         let read = self.read()?;
         let Some(page) = page_u64(page_id)
             .map(|id| read_page_by_id(&*read, id))
@@ -1703,7 +1730,12 @@ impl Store {
             return Ok(None);
         };
         let lead = timeline_lead(&*read, page.id)?.unwrap_or_default();
-        Ok(Some((lead, page.knowledge_revision)))
+        Ok(Some(SealLead {
+            lead,
+            revision: page.knowledge_revision,
+            slug: page.slug,
+            source_id: page.source_id,
+        }))
     }
 
     /// `sealSegmentedPage(pageId, opts)`: seals the page's text projection at its current revision
@@ -2104,6 +2136,79 @@ impl Store {
                         .as_deref()
                         .is_none_or(|want| want.as_bytes() == kind);
                     if kind_matches && occurrence.is_some_and(|o| !live.contains(&o)) {
+                        doomed.push(k.to_vec());
+                    }
+                }
+                true
+            })?;
+            for key in &doomed {
+                tx.delete(key)?;
+            }
+            Ok(doomed.len() as u64)
+        })
+    }
+
+    /// `lockBodyStagingState(stagingId)`: the staging's state, or `None` when no staging has that
+    /// id (PGLite's `SELECT state ... FOR UPDATE`; a store write already holds the brain). A value
+    /// that is not a uuid is refused, as the `::uuid` cast refuses it.
+    pub fn lock_body_staging_state(&self, staging_id: &str) -> Result<Option<String>> {
+        let id = staging_id_arg(staging_id)?;
+        let read = self.read()?;
+        let record: Option<StagingRecord> = get_json(&*read, &staging_key(&id))?;
+        Ok(record.map(|r| r.state))
+    }
+
+    /// `deleteUnstagedSegmentChunks(pageId, generation, keepChunkIndexes)`: deletes the page's
+    /// chunk rows at `generation` whose chunk index is not kept (the rows a dead preparation
+    /// staged), with their postings and the rows that hang off them.
+    pub fn delete_unstaged_segment_chunks(
+        &self,
+        page_id: i64,
+        generation: i64,
+        keep_chunk_indexes: &[i64],
+    ) -> Result<()> {
+        let (Some(page), Ok(generation)) = (page_u64(page_id), u64::try_from(generation)) else {
+            return Ok(());
+        };
+        let keep: HashSet<i64> = keep_chunk_indexes.iter().copied().collect();
+        self.write(|tx| {
+            crate::chunks::delete_chunks_matching(tx, page, &|c| {
+                c.segment
+                    .is_some_and(|place| place.body_generation == generation)
+                    && !keep.contains(&i64::from(c.chunk_index))
+            })?;
+            Ok(())
+        })
+    }
+
+    /// `deleteRewrittenSegmentDerivations({ pageId, touchedOccurrenceIds, linkReachOccurrenceIds,
+    /// pipelines, liveOccurrenceIds })`: deletes the page's rows of a touched occurrence, its
+    /// `links` rows of an occurrence in reach, and its rows of a listed pipeline whose occurrence
+    /// is not live; returns how many.
+    pub fn delete_rewritten_segment_derivations(
+        &self,
+        spec: &RewrittenDerivationsDelete,
+    ) -> Result<u64> {
+        let Some(page) = page_u64(spec.page_id) else {
+            return Ok(0);
+        };
+        let touched: HashSet<i64> = spec.touched_occurrence_ids.iter().copied().collect();
+        let reach: HashSet<i64> = spec.link_reach_occurrence_ids.iter().copied().collect();
+        let live: HashSet<i64> = spec.live_occurrence_ids.iter().copied().collect();
+        self.write(|tx| {
+            let prefix = derivation_prefix(page);
+            let mut doomed = Vec::new();
+            scan_prefix(&*tx, &prefix, false, &mut |k, _| {
+                let rest = &k[prefix.len()..];
+                if let Some(split) = rest.iter().position(|b| *b == 0) {
+                    let kind = &rest[..split];
+                    if let Some(o) =
+                        keys::be8(&rest[split + 1..]).map(|v| (v ^ (1u64 << 63)) as i64)
+                        && (touched.contains(&o)
+                            || (kind == b"links" && reach.contains(&o))
+                            || (spec.pipelines.iter().any(|p| p.as_bytes() == kind)
+                                && !live.contains(&o)))
+                    {
                         doomed.push(k.to_vec());
                     }
                 }
@@ -2834,6 +2939,38 @@ mod segment_chunk_tests {
         id
     }
 
+    /// A published segmented page renames: its version references the live generation and keeps no
+    /// body copy, and the moved page reads the same body under its new slug.
+    #[test]
+    fn update_slug_moves_a_segmented_page_and_versions_it_by_reference() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        assert_eq!(store.update_slug("notes/a", "notes/b", None).unwrap(), 1);
+        let read = store.read().unwrap();
+        let page = read_page_by_id(&*read, id as u64).unwrap().unwrap();
+        assert_eq!(page.slug, "notes/b");
+        assert!(page.compiled_truth.is_null());
+        assert_eq!(
+            segmented_reference(&*read, id as u64).unwrap(),
+            Some((1, Some(8)))
+        );
+        drop(read);
+        let versions = store
+            .get_versions("notes/b", &crate::pages::VersionsOptions::default())
+            .unwrap();
+        assert_eq!(versions.len(), 1);
+        let v = &versions[0];
+        assert_eq!(
+            (
+                &v["body_storage"],
+                &v["body_generation"],
+                &v["body_bytes"],
+                &v["compiled_truth"]
+            ),
+            (&json!("segmented"), &json!(1), &json!(8), &Value::Null)
+        );
+    }
+
     #[test]
     fn a_retention_purge_deletes_the_texts_only_the_purged_page_needed() {
         // PGLite's purgeDeletedPages deletes the purged pages' segment texts in the same
@@ -3275,8 +3412,14 @@ mod segment_chunk_tests {
             .unwrap();
         assert!(sealed_texts(&store).is_empty());
         // The fixture flip publishes an empty lead.
-        let (lead, revision) = store.read_segmented_seal_lead(id).unwrap().unwrap();
+        let SealLead {
+            lead,
+            revision,
+            slug,
+            source_id,
+        } = store.read_segmented_seal_lead(id).unwrap().unwrap();
         assert_eq!(lead, "");
+        assert_eq!((slug.as_str(), source_id.as_str()), ("notes/a", "default"));
         store
             .seal_segmented_page(id, "lead\0 text", Some(&revision))
             .unwrap();
@@ -3380,6 +3523,60 @@ mod segment_chunk_tests {
         );
         // Deferred rows stay until a later delete. Rows without a live offset read last.
         assert_eq!(visible(&store, id), vec!["one", "TWO!", "two", "orphan"]);
+    }
+
+    #[test]
+    fn a_frozen_hit_on_a_chunk_a_deferred_retire_left_reads_no_chunk() {
+        use crate::chunk_queries::{ChunkReadScope, FrozenHit, FrozenHitsInput};
+        let store = crate::test_support::store();
+        let id = published(&store);
+        store
+            .stage_segment_chunks(id, 1, &[chunk(1, 0, "one"), chunk(2, 0, "two")])
+            .unwrap();
+        second_generation(&store, id);
+        let result = store
+            .flip_body_generation(&flip(
+                id,
+                1,
+                STAGING_2,
+                9,
+                json!({"closeOccurrences": [2], "retireChunkOccurrences": [2], "retireMaxRows": 1}),
+            ))
+            .unwrap();
+        assert!(result.retire_deferred);
+        // The page serves its projection, so a frozen hit on it resolves.
+        store
+            .write(|tx| {
+                let mut page = crate::pages::read_page_by_id(&*tx, id as u64)?.unwrap();
+                page.text_projection_revision = Some(page.knowledge_revision.clone());
+                crate::pages::write_page(tx, &page)
+            })
+            .unwrap();
+        let chunk_id = |text: &str| {
+            crate::chunks::read_chunks(&*store.read().unwrap(), id as u64)
+                .unwrap()
+                .into_iter()
+                .find(|c| c.chunk_text == text)
+                .unwrap()
+                .id as i64
+        };
+        let hit = |chunk_id: i64, ord: i64| FrozenHit {
+            source_id: "default".into(),
+            slug: "notes/a".into(),
+            chunk_id,
+            ord,
+        };
+        let rows = store
+            .resolve_frozen_hits(&FrozenHitsInput {
+                hits: vec![hit(chunk_id("two"), 1), hit(chunk_id("one"), 2)],
+                scope: ChunkReadScope::default(),
+            })
+            .unwrap();
+        // The retired occurrence's chunk is not part of the live body: its hit keeps the page row with no chunk.
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["ord"], json!(1));
+        assert_eq!(rows[0]["chunk_text"], Value::Null);
+        assert_eq!(rows[1]["chunk_text"], json!("one"));
     }
 
     #[test]

@@ -82,22 +82,11 @@ export async function findAtomFenceRows(engine: BrainEngine, sourceIds: string[]
   let originUnread = 0;
   let after = 0;
   for (;;) {
-    const rows = await engine.executeRaw<{ id: number; source_id: string; slug: string; revision: string; text: string; origin_id: number; origin_slug: string;
-      origin_hash: string | null; origin_unread: boolean }>(
-      `SELECT a.id, a.source_id, a.slug, a.knowledge_revision::text AS revision,
-              concat_ws(E'\\n', a.title, a.compiled_truth, a.frontmatter->>'source_quote') AS text,
-              o.id AS origin_id, o.slug AS origin_slug, o.content_hash AS origin_hash, o.compiled_truth IS NULL AS origin_unread
-         FROM pages a
-         JOIN pages o ON o.source_id=a.source_id AND o.slug=a.frontmatter->>'source_slug' AND o.deleted_at IS NULL
-        WHERE a.source_id=ANY($1::text[]) AND a.type='atom' AND a.deleted_at IS NULL AND a.frontmatter->>'visibility'='world'
-          AND ($2::int IS NULL OR a.id=$2::int) AND a.id>$3
-          AND (o.compiled_truth IS NULL OR strpos(o.compiled_truth, 'gbrain:facts:begin')>0 OR strpos(o.compiled_truth, 'gbrain:takes:begin')>0)
-        ORDER BY a.id LIMIT $4`, [sourceIds, opts.atomId ?? null, after, BATCH], opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : undefined);
+    const rows = await engine.listAtomFenceCandidates(sourceIds, { atomId: opts.atomId ?? null, afterId: after, limit: BATCH, ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}) });
     if (!rows.length) break;
     const unseen = [...new Set(rows.filter(r => !r.origin_unread).map(r => Number(r.origin_id)))].filter(id => !origins.has(id));
     if (unseen.length) {
-      const bodies = await engine.executeRaw<{ id: number; body: string | null }>('SELECT id, compiled_truth AS body FROM pages WHERE id=ANY($1::int[])',
-        [unseen], opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : undefined);
+      const bodies = await engine.listPageTruths(unseen, opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : undefined);
       for (const page of bodies) origins.set(Number(page.id), hiddenRows(page.body ?? ''));
     }
     for (const row of rows) {
@@ -133,8 +122,7 @@ function item(atom: AtomFenceRow, hash: string, last: boolean): AtomFenceRowItem
 }
 
 async function hashParts(engine: BrainEngine, scope: RepairScope, atoms: AtomFenceRow[]) {
-  const sources = await engine.executeRaw<{ id: string; incarnation: string }>(
-    'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+  const sources = await engine.listSourceIncarnations(scope.source_ids);
   return { kind: 'atom-fence-rows-v1', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids }, atoms };
 }
 

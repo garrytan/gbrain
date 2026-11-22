@@ -11,8 +11,10 @@
  *
  * Transaction-local settings (`set_config(name, value, true)`): the six write trust settings go to the store's write
  * trust context on the transaction's handle (`applyWriteTrust` / `readWriteTrust`), which the trust fence reads and
- * the stamp will read; the attribution and source-scope settings stay on the transaction (`RustTransactionScope
- * .settings`). Both end with the transaction; a savepoint rollback restores both. Any other name refuses.
+ * the stamp will read; the attribution, source-scope and quiescence settings stay on the transaction
+ * (`RustTransactionScope.settings`), and so does the one planner setting the belief batch switches (`plan_cache_mode`;
+ * the store has no planner, so it changes nothing else, and an unset one reads PGLite's default). Both end with the
+ * transaction; a savepoint rollback restores both. Any other name refuses.
  *
  * Export only BrainEngine members from this file: index.ts spreads the whole module into STORE_MEMBERS.
  */
@@ -39,9 +41,19 @@ const TRUST_SETTINGS: ReadonlySet<string> = new Set([
   'gbrain.write_trust_backfill', 'gbrain.write_trust_keep', 'gbrain.write_open_facts',
   'gbrain.write_request', 'gbrain.write_principal_kind', 'gbrain.write_principal_id',
 ]);
-/** The settings the transaction keeps in TypeScript (`RustTransactionScope.settings`): source scope and protocols. */
+/**
+ * The settings the transaction keeps in TypeScript (`RustTransactionScope.settings`): source scope, protocols and the
+ * writer quiescence declaration skill activation sets (`gbrain.writer_quiesced`).
+ */
 const SCOPE_SETTINGS: ReadonlySet<string> = new Set([
-  'gbrain.write_sources', 'gbrain.git_protocol', 'gbrain.persistence_protocol',
+  'gbrain.write_sources', 'gbrain.git_protocol', 'gbrain.persistence_protocol', 'gbrain.writer_quiesced',
+]);
+/**
+ * Planner settings the transaction keeps in TypeScript, as PGLite reads them when unset and the values it accepts
+ * (case-insensitive, kept in lower case). The belief batch (`readLedgerSource` with `batch`) sets `plan_cache_mode`.
+ */
+const PLANNER_SETTINGS: ReadonlyMap<string, { unset: string; values: ReadonlySet<string> }> = new Map([
+  ['plan_cache_mode', { unset: 'auto', values: new Set(['auto', 'force_generic_plan', 'force_custom_plan']) }],
 ]);
 /** engine-sql/transaction-settings.ts `SETTING_NAME`: the same check and the same error, before any work. */
 const SETTING_NAME = /^[a-z_][a-z0-9_.]*$/;
@@ -58,7 +70,7 @@ function seen(engine: RustEngine): Set<string> {
 function checkSettingNames(member: string, names: readonly string[]): void {
   for (const name of names) if (!SETTING_NAME.test(name)) throw new Error(`Invalid transaction setting name: ${name}`);
   for (const name of names) {
-    if (TRUST_SETTINGS.has(name) || SCOPE_SETTINGS.has(name)) continue;
+    if (TRUST_SETTINGS.has(name) || SCOPE_SETTINGS.has(name) || PLANNER_SETTINGS.has(name)) continue;
     throw opError('engine_capability_missing',
       `This brain's engine does not keep the transaction setting ${name} yet (${member} needs the transactions capability for it), so nothing ran.`,
       'Run it on a pglite or postgres brain, or wait for a gbrain release whose Rust engine keeps that setting.',
@@ -76,7 +88,7 @@ export const readTransactionSettings = async function readTransactionSettings(th
   if (names.length === 0) return [];
   const scope = this._txScope;
   const known = seen(this);
-  const unset = (name: string) => known.has(name) ? '' : null;
+  const unset = (name: string) => PLANNER_SETTINGS.get(name)?.unset ?? (known.has(name) ? '' : null);
   if (!scope) return names.map(unset);
   if (scope.ended) throw mapStoreError({ code: 'store_closed' }, { member: 'readTransactionSettings' });
   const trustNames = names.filter((name) => TRUST_SETTINGS.has(name));
@@ -95,6 +107,10 @@ export const readTransactionSettings = async function readTransactionSettings(th
 export const applyTransactionSettings = async function applyTransactionSettings(this: RustEngine, brain: StoreBrain, names: readonly string[], values: readonly string[]): Promise<void> {
   checkSettingNames('applyTransactionSettings', names);
   if (names.length === 0) return;
+  const planner = names.map((name, index) => [name, (values[index] ?? '').toLowerCase()] as const).filter(([name]) => PLANNER_SETTINGS.has(name));
+  for (const [name, value] of planner) {
+    if (!PLANNER_SETTINGS.get(name)!.values.has(value)) throw new Error(`invalid value for parameter "${name}": "${values[names.indexOf(name)] ?? ''}"`);
+  }
   const scope = this._txScope;
   if (scope) {
     if (scope.ended) throw mapStoreError({ code: 'store_closed' }, { member: 'applyTransactionSettings' });
@@ -103,6 +119,7 @@ export const applyTransactionSettings = async function applyTransactionSettings(
       await storeCall({ member: 'applyTransactionSettings' }, () => brain.applyWriteTrust(trust.map(([n]) => n), trust.map(([, v]) => v)));
     }
     names.forEach((name, index) => { if (SCOPE_SETTINGS.has(name)) scope.settings.set(name, values[index] ?? ''); });
+    for (const [name, value] of planner) scope.settings.set(name, value);
   }
   const known = seen(this);
   for (const name of names) known.add(name);

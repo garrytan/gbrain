@@ -50,8 +50,13 @@ pub(crate) fn mem_kv() -> Arc<dyn crate::kv::Kv> {
 
 /// A fresh brain on an in-memory file, with the `default` source.
 pub(crate) fn store() -> Store {
+    store_on(Arc::new(SystemEnv))
+}
+
+/// `store()` with the given clock and identifier source.
+pub(crate) fn store_on(env: Arc<dyn crate::env::Env>) -> Store {
     let kv = RedbKv::open_backend(Box::<MemFile>::default()).unwrap();
-    Store::open_kv(Arc::new(kv), Arc::new(SystemEnv), OpenOptions::default()).unwrap()
+    Store::open_kv(Arc::new(kv), env, OpenOptions::default()).unwrap()
 }
 
 /// The concurrent-writer engine (`OccKv`) on an in-memory file, with no brain in it.
@@ -69,4 +74,42 @@ pub(crate) fn occ_store() -> Store {
         OpenOptions::default(),
     )
     .unwrap()
+}
+
+/// An in-memory file whose next `sync` fails once `fail_sync` is set, so a commit fails on its
+/// durability step. Clones share the bytes and the switch, so a test can arm it and reopen on it.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct FlakyFile {
+    file: Arc<MemFile>,
+    pub(crate) fail_sync: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl FileBackend for FlakyFile {
+    fn size(&self) -> std::io::Result<u64> {
+        self.file.size()
+    }
+    fn read_at(&self, offset: u64, out: &mut [u8]) -> std::io::Result<()> {
+        self.file.read_at(offset, out)
+    }
+    fn write_at(&self, offset: u64, bytes: &[u8]) -> std::io::Result<()> {
+        self.file.write_at(offset, bytes)
+    }
+    fn set_len(&self, len: u64) -> std::io::Result<()> {
+        self.file.set_len(len)
+    }
+    fn sync(&self) -> std::io::Result<()> {
+        if self
+            .fail_sync
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(std::io::Error::other("injected sync failure"));
+        }
+        Ok(())
+    }
+}
+
+/// A brain on `file`: created on first open, opened again on the same bytes after that.
+pub(crate) fn store_on_file(file: &FlakyFile) -> Store {
+    let kv = RedbKv::open_backend(Box::new(file.clone())).unwrap();
+    Store::open_kv(Arc::new(kv), Arc::new(SystemEnv), OpenOptions::default()).unwrap()
 }

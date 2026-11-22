@@ -10,8 +10,7 @@
  * The reads and the delete of `gbrain extract takes` (readLivePageIdBySlug through findTakeId) refuse a page, take or
  * row id that is not an integer, as the SQL's integer casts refuse it.
  */
-import { checkTakePreimageRead, type HeldFenceTakeRow, type HeldFenceTakeSpec, type McpResolvedSpec, type PageTierRef, type PurgeTakesSpec, type TakePreimage, type TakePreimageRead,
-  type TakesLeavingFence } from '../../engine-sql/takes-reads.ts';
+import { checkTakePreimageRead, type HeldFenceTakeRow, type HeldFenceTakeSpec, type McpResolvedSpec, type PageTierRef, type PurgeTakesSpec, type TakePreimage, type TakePreimageRead, type TakesLeavingFence, type AcceptedTakeRemoval } from '../../engine-sql/takes-reads.ts';
 import { storedTrustTier } from '../../trust/tier.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
@@ -60,6 +59,35 @@ export const countMcpResolvedTakes: StoreMember<[spec: McpResolvedSpec], number>
 
 export const listTakeSupersessionCandidates: StoreMember<[sourceIds: readonly string[]], Array<{ id: number; source_id: string; slug: string }>> =
   (brain, sourceIds) => storeCall({ member: 'listTakeSupersessionCandidates' }, () => brain.listTakeSupersessionCandidates([...sourceIds]));
+
+export const listTakePointers: StoreMember<[pageId: number], Array<{ row_num: number; superseded_by: number | null }>> = (brain, pageId) => {
+  if (!Number.isSafeInteger(pageId)) refuseMember('listTakePointers', 'a page id that is not an integer');
+  return storeCall({ member: 'listTakePointers' }, () => brain.listTakePointers(pageId));
+};
+
+export const listTakeSupersedeReceipts: StoreMember<[sourceId: string, pageId: number, slug: string], Array<{ old_row: string | null; new_row: string | null }>> =
+  (brain, sourceId, pageId, slug) => {
+    if (!Number.isSafeInteger(pageId)) refuseMember('listTakeSupersedeReceipts', 'a page id that is not an integer');
+    return storeCall({ member: 'listTakeSupersedeReceipts' }, () => brain.listTakeSupersedeReceipts(sourceId, pageId, slug));
+  };
+
+export const setTakeSupersededBy: StoreMember<[pageId: number, rowNum: number, supersededBy: number | null], void> = (brain, pageId, rowNum, supersededBy) => {
+  if (!Number.isSafeInteger(pageId) || !Number.isSafeInteger(rowNum) || (supersededBy !== null && !Number.isSafeInteger(supersededBy))) {
+    refuseMember('setTakeSupersededBy', 'a page id or row number that is not an integer');
+  }
+  return storeCall({ member: 'setTakeSupersededBy' }, () => brain.setTakeSupersededBy(pageId, rowNum, supersededBy));
+};
+
+/** The accepted take removals of the sources, by proposal id (trust/proposals.rs, read with the journal's committed requests). */
+export const listAcceptedTakeRemovals: StoreMember<[sourceIds: readonly string[], proposalId: number | null], AcceptedTakeRemoval[]> = (brain, sourceIds, proposalId) => {
+  if (proposalId !== null && !Number.isSafeInteger(proposalId)) refuseMember('listAcceptedTakeRemovals', 'a proposal id that is not an integer');
+  return storeCall({ member: 'listAcceptedTakeRemovals' }, () => brain.listAcceptedTakeRemovals({ sourceIds: [...sourceIds], proposalId }));
+};
+
+export const readTakeRowTier: StoreMember<[pageId: number, rowNum: number], { id: number; trust_tier: string } | null> = (brain, pageId, rowNum) => {
+  if (!Number.isSafeInteger(pageId) || !Number.isSafeInteger(rowNum)) refuseMember('readTakeRowTier', 'a page id or row number that is not an integer');
+  return storeCall({ member: 'readTakeRowTier' }, () => brain.readTakeRowTier(pageId, rowNum));
+};
 
 export const countZeroWeightWithTakes: StoreMember<[], { zero_weight_with_takes: number; nonzero_weight: number }> = (brain) =>
   storeCall({ member: 'countZeroWeightWithTakes' }, () => brain.countZeroWeightWithTakes());

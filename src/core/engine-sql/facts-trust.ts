@@ -494,7 +494,7 @@ export async function countClaimConflictPairs(raw: EngineRawRead, sourceId: stri
 }
 
 /** The ids of every source that is not archived, in id order (the claim-conflict sweep's default scope). */
-export async function listUnarchivedSourceIds(raw: EngineRawRead): Promise<Array<{ id: string }>> {
+export async function listUnarchivedSourceRows(raw: EngineRawRead): Promise<Array<{ id: string }>> {
   return raw<{ id: string }>('SELECT id FROM sources WHERE NOT archived ORDER BY id');
 }
 
@@ -756,7 +756,11 @@ export async function expireFactSuperseded(raw: EngineRawRead, factId: number, v
       WHERE id = $1 AND expired_at IS NULL`, [factId, validUntil]);
 }
 
-/** Ends an active fact on `today` (a date) and expires it. Runs in the caller's transaction. */
+/**
+ * Ends an active fact on `today` (a date) and expires it, as master's forget file-mirror stamp did. Runs in the caller's
+ * transaction. PGLite casts the day text to midnight in the session TimeZone; postgres.js turns it into a Date
+ * (`new Date(text)`), so Postgres stores UTC midnight; the Rust store stores UTC midnight.
+ */
 export async function expireFactAtDate(raw: EngineRawRead, factId: number, today: string): Promise<void> {
   await raw(`UPDATE facts SET valid_until = $1, expired_at = now()
          WHERE id = $2 AND expired_at IS NULL`, [today, factId]);

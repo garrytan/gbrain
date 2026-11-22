@@ -49,6 +49,19 @@ export async function readSourceIncarnation(exec: LegacyUnscopedRead, sourceId: 
   return row ?? null;
 }
 
+/**
+ * #9968: the ids among `sourceIds` whose bound worktree still holds a recovery record (a request on the source's
+ * worktree with `recovery IS NOT NULL`; several sources can share one worktree). Master's RETAINED_SQL scope.
+ */
+export async function readRetainedSources(exec: LegacyUnscopedRead, sourceIds: readonly string[]): Promise<string[]> {
+  if (sourceIds.length === 0) return [];
+  const rows = await exec.executeRaw<{ id: string }>(
+    `SELECT id FROM sources WHERE id=ANY($1::text[]) AND EXISTS (SELECT 1 FROM persistence_source_bindings b
+       JOIN persistence_requests r ON r.worktree_id=b.worktree_id WHERE b.source_id=sources.id AND r.recovery IS NOT NULL)
+     ORDER BY id COLLATE "C"`, [[...sourceIds]]);
+  return rows.map(r => r.id);
+}
+
 /** Whether the source's current incarnation has a company-brain ingestion receipt. */
 export async function hasCompanyBrainReceipt(exec: LegacyUnscopedRead, sourceId: string): Promise<boolean> {
   const rows = await exec.executeRaw(`SELECT r.id FROM source_ingestion_receipts r JOIN sources s ON s.id=r.source_id AND s.incarnation=r.source_incarnation
@@ -140,6 +153,24 @@ export async function readDatabaseClock(exec: LegacyUnscopedRead): Promise<strin
 export async function listLinkPageMetadata(exec: LegacyUnscopedRead, sourceId?: string): Promise<LinkPageMetadataRow[]> {
   return exec.executeRaw<LinkPageMetadataRow>(`SELECT slug, source_id, type, title, frontmatter->'aliases' AS aliases, knowledge_revision FROM pages
     WHERE deleted_at IS NULL${sourceId ? ' AND source_id=$1' : ''} ORDER BY source_id, slug`, sourceId ? [sourceId] : []);
+}
+
+/** The live pages of one source whose slug is in `slugs`, by slug (a sync's link extraction). */
+export async function listLinkPageMetadataForSlugs(exec: LegacyUnscopedRead, sourceId: string, slugs: readonly string[]): Promise<LinkPageMetadataRow[]> {
+  return exec.executeRaw<LinkPageMetadataRow>(`SELECT slug, source_id, type, title, frontmatter->'aliases' AS aliases, knowledge_revision
+        FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[]) ORDER BY slug`, [sourceId, [...slugs]]);
+}
+
+/**
+ * The slugs of one source's pages (only those in `slugs` when given) that authored a body or frontmatter `attended`
+ * link to themselves, in no set order: the attendance origins link extraction reconciles.
+ */
+export async function listAttendedOriginSlugs(exec: LegacyUnscopedRead, sourceId: string, slugs?: readonly string[]): Promise<string[]> {
+  const scoped = slugs ? sqlFragment` AND o.slug = ANY(${[...slugs]}::text[])` : sqlFragment``;
+  const { text, params } = renderFragment(sqlFragment`SELECT DISTINCT o.slug FROM links l
+    JOIN pages o ON o.id=l.origin_page_id WHERE o.source_id=${sourceId} AND l.link_source IN ('markdown','wikilink-resolved','frontmatter')
+      AND l.link_type='attended' AND l.to_page_id=l.origin_page_id${scoped}`);
+  return (await exec.executeRaw<{ slug: string }>(text, params)).map(row => row.slug);
 }
 
 /** Every stored non-event timeline row of one page, the date as `YYYY-MM-DD`, in no particular order. */

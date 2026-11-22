@@ -381,3 +381,40 @@ fn the_list_is_every_row_by_name_then_id_in_byte_order() {
         b.read_oauth_client("c-alpha").unwrap().unwrap()
     );
 }
+
+#[test]
+fn a_source_delete_is_refused_while_a_client_names_it_and_clears_a_bound_source_that_names_it() {
+    let b = brain("oauth-source-delete");
+    sources(&b);
+    insert(
+        &b,
+        json!({ "client_id": "owner", "client_name": "owner", "source_id": "src-a" }),
+    )
+    .unwrap();
+    insert(
+        &b,
+        json!({ "client_id": "bound", "client_name": "bound", "bound_source_id": "src-b" }),
+    )
+    .unwrap();
+
+    let e = b
+        .delete_source_record("src-a", false)
+        .expect_err("a refusal");
+    assert_eq!(e.code, "constraint_violation");
+    assert_eq!(
+        e.message,
+        "update or delete on table \"sources\" violates foreign key constraint \"oauth_clients_source_id_fkey\" on table \"oauth_clients\""
+    );
+    assert!(b.get_source("src-a").unwrap().is_some());
+    assert_eq!(
+        b.read_oauth_client("owner").unwrap().unwrap()["source_id"],
+        json!("src-a")
+    );
+
+    assert!(b.delete_source_record("src-b", false).unwrap());
+    assert!(b.get_source("src-b").unwrap().is_none());
+    assert_eq!(
+        b.read_oauth_client("bound").unwrap().unwrap()["bound_source_id"],
+        Value::Null
+    );
+}

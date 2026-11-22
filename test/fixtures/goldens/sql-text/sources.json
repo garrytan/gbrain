@@ -2,6 +2,43 @@
   "golden": {
     "domain": "sources",
     "methods": {
+      "advanceSourceCommit": {
+        "clearNewest": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "null",
+              "string"
+            ],
+            "sql": "UPDATE sources SET last_commit = $1, last_sync_at = now(), newest_content_at = $2 WHERE id = $3",
+            "textSha256": "9402e122e8f0e545238e2fbbd0f193041b349d67b1f031d7d85a79b7f1e27602"
+          }
+        ],
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE sources SET last_commit = $1, last_sync_at = now() WHERE id = $2",
+            "textSha256": "e08954b8645774987704b5860cd2d5d760ed91d5d41ade4de5c89ebf6b72e498"
+          }
+        ],
+        "newest": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE sources SET last_commit = $1, last_sync_at = now(), newest_content_at = $2 WHERE id = $3",
+            "textSha256": "9402e122e8f0e545238e2fbbd0f193041b349d67b1f031d7d85a79b7f1e27602"
+          }
+        ]
+      },
       "countDefaultSourceSplit": {
         "default": [
           {
@@ -9,6 +46,16 @@
             "params": [],
             "sql": "SELECT COALESCE(SUM(CASE WHEN source_id = 'default' THEN 1 ELSE 0 END), 0) AS default_pages, COALESCE(SUM(CASE WHEN source_id <> 'default' THEN 1 ELSE 0 END), 0) AS non_default_pages, COUNT(DISTINCT source_id) FILTER (WHERE source_id <> 'default') AS non_default_sources FROM pages WHERE deleted_at IS NULL",
             "textSha256": "a6b4777ef6df7355cf421077a62b9c88c47ebc510ed7355cfd0aab1717f6c809"
+          }
+        ]
+      },
+      "countRepoBoundSources": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT count(*)::int AS n FROM sources WHERE NOT archived AND local_path IS NOT NULL AND local_path <> ''",
+            "textSha256": "9fabf9b72a59d5c4f620b34b5a5b2f3e4445b06c71da3fe79e0d2b71d9182cf2"
           }
         ]
       },
@@ -34,6 +81,50 @@
           }
         ]
       },
+      "deleteSourceRecord": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "WITH stranded AS (SELECT count(*)::int AS n FROM pages WHERE source_id = $1 AND NOT EXISTS ( SELECT 1 FROM pg_constraint c JOIN pg_trigger t ON t.tgconstraint = c.oid AND t.tgrelid = c.confrelid WHERE c.contype = 'f' AND c.conrelid = 'pages'::regclass AND c.confrelid = 'sources'::regclass AND c.confdeltype = 'c' AND c.conkey = ARRAY[(SELECT a.attnum FROM pg_attribute a WHERE a.attrelid = 'pages'::regclass AND a.attname = 'source_id')] AND t.tgfoid = 'pg_catalog.\"RI_FKey_cascade_del\"'::regproc AND (t.tgenabled = 'A' OR (t.tgenabled = 'O' AND current_setting('session_replication_role') <> 'replica')))), gone AS (DELETE FROM sources WHERE id = $2 AND (SELECT n FROM stranded) = 0 RETURNING id, incarnation), unbound AS (DELETE FROM persistence_source_bindings b USING gone WHERE b.source_id = gone.id AND b.source_incarnation = gone.incarnation), cursors AS (DELETE FROM op_checkpoints c USING gone WHERE c.op = 'managed-sync' AND c.completed_keys->0->>'sourceId' = gone.id), scrub_retrieval_event_pages AS (DELETE FROM retrieval_event_pages WHERE source_id = $3 AND EXISTS (SELECT 1 FROM gone)), scrub_retrieval_event_links AS (DELETE FROM retrieval_event_links WHERE source_id = $4 AND EXISTS (SELECT 1 FROM gone)), scrub_retrieval_feedback AS (DELETE FROM retrieval_feedback WHERE source_id = $5 AND EXISTS (SELECT 1 FROM gone)), scrub_context_volunteer_events AS (DELETE FROM context_volunteer_events WHERE source_id = $6 AND EXISTS (SELECT 1 FROM gone)), scrub_core_edit_notices AS (DELETE FROM core_edit_notices WHERE source_id = $7 AND EXISTS (SELECT 1 FROM gone)), scrub_write_gate_holds AS (DELETE FROM write_gate_holds WHERE source_id = $8 AND EXISTS (SELECT 1 FROM gone) RETURNING id::text AS id), scrub_write_gate_receipts AS (DELETE FROM write_gate_receipts r USING scrub_write_gate_holds h WHERE r.target_table = 'write_gate_holds' AND r.target_id = h.id), scrub_eval_candidates AS (UPDATE eval_candidates c SET retrieved_slugs = ARRAY(SELECT u.s FROM unnest(c.retrieved_slugs) WITH ORDINALITY AS u(s, n) WHERE EXISTS (SELECT 1 FROM pages pg WHERE pg.slug = u.s AND pg.source_id = ANY(c.source_ids) AND pg.source_id <> $9) ORDER BY u.n) WHERE $10 = ANY(c.source_ids) AND EXISTS (SELECT 1 FROM unnest(c.retrieved_slugs) AS r(s) WHERE NOT EXISTS (SELECT 1 FROM pages pg WHERE pg.slug = r.s AND pg.source_id = ANY(c.source_ids) AND pg.source_id <> $11)) AND EXISTS (SELECT 1 FROM gone)) SELECT id, 0 AS stranded FROM gone UNION ALL SELECT NULL, n FROM stranded WHERE n > 0 AND EXISTS (SELECT 1 FROM sources WHERE id = $12 )",
+            "textSha256": "63425311434a3e930de06eef87730ddb64ae5ea109c1d32d724e9b3032a6a992"
+          }
+        ],
+        "expiredArchiveOnly": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "WITH stranded AS (SELECT count(*)::int AS n FROM pages WHERE source_id = $1 AND NOT EXISTS ( SELECT 1 FROM pg_constraint c JOIN pg_trigger t ON t.tgconstraint = c.oid AND t.tgrelid = c.confrelid WHERE c.contype = 'f' AND c.conrelid = 'pages'::regclass AND c.confrelid = 'sources'::regclass AND c.confdeltype = 'c' AND c.conkey = ARRAY[(SELECT a.attnum FROM pg_attribute a WHERE a.attrelid = 'pages'::regclass AND a.attname = 'source_id')] AND t.tgfoid = 'pg_catalog.\"RI_FKey_cascade_del\"'::regproc AND (t.tgenabled = 'A' OR (t.tgenabled = 'O' AND current_setting('session_replication_role') <> 'replica')))), gone AS (DELETE FROM sources WHERE id = $2 AND archived = true AND archived_at > '1970-01-02'::timestamptz AND archive_expires_at > '1970-01-02'::timestamptz AND archive_expires_at <= now() AND (SELECT n FROM stranded) = 0 RETURNING id, incarnation), unbound AS (DELETE FROM persistence_source_bindings b USING gone WHERE b.source_id = gone.id AND b.source_incarnation = gone.incarnation), cursors AS (DELETE FROM op_checkpoints c USING gone WHERE c.op = 'managed-sync' AND c.completed_keys->0->>'sourceId' = gone.id), scrub_retrieval_event_pages AS (DELETE FROM retrieval_event_pages WHERE source_id = $3 AND EXISTS (SELECT 1 FROM gone)), scrub_retrieval_event_links AS (DELETE FROM retrieval_event_links WHERE source_id = $4 AND EXISTS (SELECT 1 FROM gone)), scrub_retrieval_feedback AS (DELETE FROM retrieval_feedback WHERE source_id = $5 AND EXISTS (SELECT 1 FROM gone)), scrub_context_volunteer_events AS (DELETE FROM context_volunteer_events WHERE source_id = $6 AND EXISTS (SELECT 1 FROM gone)), scrub_core_edit_notices AS (DELETE FROM core_edit_notices WHERE source_id = $7 AND EXISTS (SELECT 1 FROM gone)), scrub_write_gate_holds AS (DELETE FROM write_gate_holds WHERE source_id = $8 AND EXISTS (SELECT 1 FROM gone) RETURNING id::text AS id), scrub_write_gate_receipts AS (DELETE FROM write_gate_receipts r USING scrub_write_gate_holds h WHERE r.target_table = 'write_gate_holds' AND r.target_id = h.id), scrub_eval_candidates AS (UPDATE eval_candidates c SET retrieved_slugs = ARRAY(SELECT u.s FROM unnest(c.retrieved_slugs) WITH ORDINALITY AS u(s, n) WHERE EXISTS (SELECT 1 FROM pages pg WHERE pg.slug = u.s AND pg.source_id = ANY(c.source_ids) AND pg.source_id <> $9) ORDER BY u.n) WHERE $10 = ANY(c.source_ids) AND EXISTS (SELECT 1 FROM unnest(c.retrieved_slugs) AS r(s) WHERE NOT EXISTS (SELECT 1 FROM pages pg WHERE pg.slug = r.s AND pg.source_id = ANY(c.source_ids) AND pg.source_id <> $11)) AND EXISTS (SELECT 1 FROM gone)) SELECT id, 0 AS stranded FROM gone UNION ALL SELECT NULL, n FROM stranded WHERE n > 0 AND EXISTS (SELECT 1 FROM sources WHERE id = $12 AND archived = true AND archived_at > '1970-01-02'::timestamptz AND archive_expires_at > '1970-01-02'::timestamptz AND archive_expires_at <= now())",
+            "textSha256": "bd05f8edd9f6952ad30d7d3c788260cd27a38ca3acbbcb4cdaf243bb63384837"
+          }
+        ]
+      },
       "getSource": {
         "default": [
           {
@@ -43,6 +134,19 @@
             ],
             "sql": "SELECT id, name, local_path, last_commit, last_sync_at, config, created_at, contextual_retrieval_mode, trust_frontmatter_overrides FROM sources WHERE id = $1",
             "textSha256": "62f0fbc57b866ec35d27b204bffed68c8c0fe2b01b0f1c9d762645e14d571356"
+          }
+        ]
+      },
+      "holdPageEmbedding": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "number",
+              "string"
+            ],
+            "sql": "INSERT INTO page_embedding_budget (page_id, state, reason) VALUES ($1, 'held', $2) ON CONFLICT (page_id) DO UPDATE SET state = 'held', reason = EXCLUDED.reason, updated_at = now()",
+            "textSha256": "d331fc3e8d32335fe5321fdb303ec775b52e8bee53006be323009fdff8742fa4"
           }
         ]
       },
@@ -96,6 +200,18 @@
           }
         ]
       },
+      "listQuarantinedSlugs": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND NOT NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine')",
+            "textSha256": "bc5cb7265babab24fa474f7e22aa57f7752f437c58b3a031f1cf35dadb4f5051"
+          }
+        ]
+      },
       "listSourceLocalPaths": {
         "default": [
           {
@@ -103,6 +219,18 @@
             "params": [],
             "sql": "SELECT local_path FROM sources WHERE local_path IS NOT NULL AND local_path <> ''",
             "textSha256": "c7ffb048a4fd728fc6ccb9ec8d9f4dd3eb3d14173d5a73c101a2cb8eb6449c91"
+          }
+        ]
+      },
+      "listSourcePathPages": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT slug, source_path FROM pages WHERE source_id = $1 AND source_path IS NOT NULL AND deleted_at IS NULL",
+            "textSha256": "66f4014f93809e90652bc19041ff3a71a2588e7f6e7059e20bc6bcaaba6fb49c"
           }
         ]
       },
@@ -138,6 +266,95 @@
           }
         ]
       },
+      "markSourceSynced": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "UPDATE sources SET last_sync_at = now() WHERE id = $1 RETURNING id",
+            "textSha256": "72bc1a1d299ab56d8d771bcac792ea729527abe61c469a9e0a340d7acbba5827"
+          }
+        ]
+      },
+      "readLiveIdentityHolders": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "SELECT slug, source_path, frontmatter->>'id' AS fm_id, title FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND (frontmatter->>'id' = ANY($2::text[]) OR title = ANY($3::text[]))",
+            "textSha256": "ddc02e1c9dbe2b26b94eca4839a4cc3b4933da97fd60670b469a089b189c3fa1"
+          }
+        ]
+      },
+      "readPageSizeRows": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number"
+            ],
+            "sql": "SELECT p.slug, (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id WHERE p.source_id = $1 AND p.deleted_at IS NULL AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $2 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug",
+            "textSha256": "056b71d4359215c2373ec81e174be8cbd46570ba1d6a4653fc6d198de9c35460"
+          }
+        ],
+        "slugs": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "array<string>",
+              "number"
+            ],
+            "sql": "SELECT p.slug, (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.slug = ANY($2::text[]) AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $3 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug",
+            "textSha256": "aa98a64693e09380f76b21ee932430d338292d6fdfd7318d63aa7b7213d0f2c5"
+          }
+        ]
+      },
+      "readReasonPurgeTombstones": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT commit_sha, path FROM reason_purge_tombstones WHERE source_id = $1 ORDER BY commit_sha, path",
+            "textSha256": "cc293865dde54628ccaab2d05ebfd36ebf9cfbd8a5d1355ef32dbbe2274b55be"
+          }
+        ],
+        "pair": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "SELECT commit_sha, path FROM reason_purge_tombstones WHERE source_id = $1 AND commit_sha = $2 AND path = $3",
+            "textSha256": "84f27e7e8d6de6aa91a69f130dc1df8e1068f2a3ce0165c495c084c40e2fcdaf"
+          }
+        ]
+      },
+      "readRenameIdentityRows": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "SELECT slug, source_path, title FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND (source_path = ANY($2::text[]) OR slug = ANY($3::text[]))",
+            "textSha256": "fe3982b718a18e71e5cf5b6e0f30f9cf569a7d33e345df07534c3cf3d50fbeec"
+          }
+        ]
+      },
       "readSourceChunkerVersion": {
         "default": [
           {
@@ -147,6 +364,18 @@
             ],
             "sql": "SELECT chunker_version FROM sources WHERE id = $1",
             "textSha256": "89548ea315a927cbdaffec58bb971086a7f2e7d29ad81af3e05f73fa62dc9e77"
+          }
+        ]
+      },
+      "readSourceDeleteImpact": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT id, name FROM sources WHERE id = $1",
+            "textSha256": "2eec0fcee3e42b28821c70143a73a1183cb532fd00d3c033d0debdb25e9c81f2"
           }
         ]
       },
@@ -185,6 +414,20 @@
             ],
             "sql": "UPDATE sources SET config = ( WITH RECURSIVE root_layers(value, depth) AS ( SELECT COALESCE(config, '{}'::jsonb), 0 UNION ALL SELECT gbrain_try_jsonb(value #>> '{}'), depth + 1 FROM root_layers WHERE depth < 10 AND jsonb_typeof(value) = 'string' AND gbrain_try_jsonb(value #>> '{}') IS NOT NULL ), root(value) AS ( SELECT value FROM root_layers ORDER BY depth DESC LIMIT 1 ), fragment_seeds(ordinality, value) AS ( SELECT 0::bigint, value FROM root WHERE jsonb_typeof(value) = 'object' UNION ALL SELECT item.ordinality, item.value FROM root, LATERAL jsonb_array_elements( CASE WHEN jsonb_typeof(root.value) = 'array' THEN root.value ELSE '[]'::jsonb END ) WITH ORDINALITY AS item(value, ordinality) ), fragment_layers(ordinality, value, depth) AS ( SELECT ordinality, value, 0 FROM fragment_seeds UNION ALL SELECT ordinality, gbrain_try_jsonb(value #>> '{}'), depth + 1 FROM fragment_layers WHERE depth < 10 AND jsonb_typeof(value) = 'string' AND gbrain_try_jsonb(value #>> '{}') IS NOT NULL ), fragments AS ( SELECT DISTINCT ON (ordinality) ordinality, value FROM fragment_layers ORDER BY ordinality, depth DESC ) SELECT COALESCE( jsonb_object_agg(entry.key, entry.value ORDER BY fragments.ordinality), '{}'::jsonb ) FROM fragments CROSS JOIN LATERAL jsonb_each( CASE WHEN jsonb_typeof(fragments.value) = 'object' THEN fragments.value ELSE '{}'::jsonb END ) AS entry(key, value) ) || $1 WHERE id = $2",
             "textSha256": "f60452bce6db5db7619b76b5f03ed2843641c13d35708bfbca459d0bf3468b8d"
+          }
+        ]
+      },
+      "writeReasonPurgeTombstones": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "INSERT INTO reason_purge_tombstones(source_id, commit_sha, path) SELECT $1, t.c, t.p FROM unnest($2::text[], $3::text[]) AS t(c, p) ON CONFLICT DO NOTHING RETURNING 1",
+            "textSha256": "2ab69214bd925579e0d8c99815705bef88e0801fcdf600f6f875563acc631ba4"
           }
         ]
       }

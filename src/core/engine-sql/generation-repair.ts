@@ -50,6 +50,7 @@ const HELD_PROPOSAL_SQL = `SELECT proposal, hold_id FROM derived_generations WHE
 
 const SOURCE_INCARNATIONS_SQL = 'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id COLLATE "C"';
 
+
 const NO_FILTER = sqlFragment``;
 const RUN_FILTER = (runId: string) => sqlFragment` AND g.run_id = ${runId}`;
 const SINCE_FILTER = (since: string) => sqlFragment` AND g.created_at >= ${since}::timestamptz`;

@@ -25,7 +25,7 @@
 use super::{EMBED_SKIP_KEY, QUARANTINE_KEY, SAFE_FENCE_CHUNKER_VERSION, sealed, segmented};
 use crate::Store;
 use crate::chunks::{
-    ChunkRecord, clear_chunks, delete_chunks_matching, read_chunks, read_segment_view,
+    ChunkRecord, clear_chunks, delete_chunks_matching, in_live_body, read_chunks, read_segment_view,
 };
 use crate::error::Result;
 use crate::facts::{PrivacyPolicy, like, page_hidden, pg_lower_char};
@@ -686,14 +686,13 @@ impl Store {
             if !served(&page) || !policy.passes(&page, &input.scope)? {
                 continue;
             }
-            let generation = read_segment_view(&*read, page.id)?.generation;
-            let inline_ok = !segmented(&page);
+            // `chunkGenerationFilter`: a chunk of the live body. A chunk whose occurrence a deferred retire
+            // closed has no live manifest row, so it is not one, though its generation is not above the page's.
+            let view = read_segment_view(&*read, page.id)?;
+            let segmented_page = segmented(&page);
             let mut chunks: Vec<ChunkRecord> = read_chunks(&*read, page.id)?
                 .into_iter()
-                .filter(|c| match c.segment {
-                    None => inline_ok,
-                    Some(_) => c.visible_at(generation),
-                })
+                .filter(|c| in_live_body(c, segmented_page, &view))
                 .filter(|c| {
                     if hit.chunk_id > 0 {
                         i64::try_from(c.id).is_ok_and(|id| id == hit.chunk_id)

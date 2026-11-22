@@ -7,7 +7,7 @@ use gbrain_store::error::INVALID_ARGUMENT;
 use gbrain_store::facts::InsertFactsArgs;
 use gbrain_store::sources::SourceInput;
 use gbrain_store::trust::tier_reads::{
-    CorePageRowQuery, PageIdsQuery, TrustScanQuery, VersionIdsQuery,
+    CorePageRowQuery, PageIdsQuery, PageKeyRef, TrustScanQuery, VersionIdsQuery,
 };
 use gbrain_store::trust::write_gate::ReceiptFields;
 use memory_env::{Brain, brain};
@@ -603,4 +603,39 @@ fn page_refs_by_id_name_each_listed_page_once_deleted_pages_and_other_sources_in
     );
     let none: PageIdsQuery = args(json!({ "ids": [] }));
     assert!(b.list_page_refs_by_ids(&none).unwrap().is_empty());
+}
+
+#[test]
+fn pages_by_key_answer_each_named_key_in_order_with_tier_and_live_check() {
+    let b = brain("tier-reads-pages-by-key");
+    other_source(&b);
+    let plain = put_ref(&b, "default", "tier/plain", "note");
+    let gone = put_ref(&b, "default", "tier/gone", "note");
+    let elsewhere = put_ref(&b, "other", "tier/plain", "note");
+    b.soft_delete_page("tier/gone", Some("default")).unwrap();
+    let key = |s: &str, slug: &str| PageKeyRef {
+        source_id: s.into(),
+        slug: slug.into(),
+    };
+    let refs = [
+        key("other", "tier/plain"),
+        key("default", "tier/gone"),
+        key("default", "tier/missing"),
+        key("default", "tier/plain"),
+        key("default", "tier/plain"),
+    ];
+    let tiers = b.list_page_trust_tiers_by_key(&refs).unwrap();
+    let ids: Vec<i64> = tiers.iter().map(|r| r["id"].as_i64().unwrap()).collect();
+    assert_eq!(ids, [elsewhere, gone, plain, plain]);
+    assert!(tiers.iter().all(|r| r["trust_tier"].is_string()));
+    assert_eq!(
+        b.lock_live_pages_by_key(&refs).unwrap(),
+        [
+            json!({ "source_id": "other", "slug": "tier/plain" }),
+            json!({ "source_id": "default", "slug": "tier/plain" }),
+            json!({ "source_id": "default", "slug": "tier/plain" }),
+        ]
+    );
+    assert!(b.list_page_trust_tiers_by_key(&[]).unwrap().is_empty());
+    assert!(b.lock_live_pages_by_key(&[]).unwrap().is_empty());
 }

@@ -12,20 +12,29 @@ import { STORE_MEMBERS } from './store-members/index.ts';
 
 /**
  * Capabilities held back even when every member is served, each with the callers that still run raw SQL outside the
- * member table. Reporting `persistence_journal` would start a persistence listener and route CLI writes to an owner that
- * refuses them partway with owner_unavailable (rust-engine/owner-ipc/client.ts `rustOwnerServesPersistence`). A
- * capability leaves this table when its last blocking caller is typed.
+ * member table. A held `persistence_journal` would start no persistence listener (rust-engine/owner-ipc/client.ts
+ * `rustOwnerServesPersistence`). A capability leaves this table when its last blocking caller is typed.
+ *
+ * `managed_persistence` is held: a worktree-bound write (a source with a claimed checkout) still reaches raw SQL while
+ * it is prepared, published and recovered, so on this engine its admission refuses by name (persistence/journal.ts
+ * `admitWrite`) and writes no request row. A write with no worktree and a grouped admission of such writes are served,
+ * a remote write that queues a mention-links effect included (its effect and a finished batch's re-arm are typed
+ * members, rust/docs/store/remote-links.md).
  */
 export const HELD_FOR_CALLERS: Partial<Record<Capability, readonly string[]>> = {
-  persistence_journal: [
-    'segmentedGateEvidence (persistence/writer-versions.ts): the segmented-storage gate evidence answers no writer here',
-    'queuePublicationEffects (persistence/effect-journal.ts): the publication effects insert, where a forwarded put stops',
+  managed_persistence: [
+    'compareFileTarget (persistence/page-prepare.ts): a bound write compares its canonical file against the import hold through executeRaw',
+    'guardOwnership (persistence/ownership.ts): a bound write locks its worktree row FOR SHARE through executeRaw',
+    'publication recovery (persistence/coordinator.ts): a bound write marks publication started and locks its source row through executeRaw',
+    'withTopologyLocks (persistence/topology-locks.ts): topology recovery takes its locks through executeRaw',
   ],
 };
 
 /** Capabilities withheld until every capability they need is reported. */
 export const CAPABILITY_REQUIRES: Partial<Record<Capability, readonly Capability[]>> = {
   persistence_journal: ['transactions'],
+  // A managed worktree's writes go through the write journal; without it a worktree could be claimed but never written.
+  managed_persistence: ['persistence_journal', 'transactions'],
 };
 
 export function servedCapabilities(): EngineCapabilities {

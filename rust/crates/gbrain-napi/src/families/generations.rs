@@ -511,4 +511,18 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_atom_write_receipts(&source_id, &slugs))
     }
+
+    /// `listRetiredFenceItems(sourceIds, onlySourceId, onlySlug)`: resolves the retired fence items with a preimage of
+    /// the unproven, unheld page fence generations (`gbrain repair lost-fence-rows`).
+    #[napi]
+    pub fn list_retired_fence_items<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+        only_source_id: Option<String>,
+        only_slug: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        let only = only_source_id.zip(only_slug);
+        self.run(env, move |s| s.list_retired_fence_items(&source_ids, only))
+    }
 }

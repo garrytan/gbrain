@@ -1,5 +1,5 @@
 /**
- * Facts and their supersession chains (BrainEngine insertFact, insertFacts, deleteFactsForPage, expireFact,
+ * Facts and their supersession chains (BrainEngine insertFact, insertFacts, deleteFactsForPage, expireFact, expireFactSuperseded, expireFactAtDate,
  * listFactsByEntity, listFactsSince, listFactsKeyset, listFactsBySession, listSupersessions, countUnconsolidatedFacts,
  * findCandidateDuplicates, consolidateFact, findTrajectory, getFactsHealth, migrateFactsToCanonical, listUnattributedFacts,
  * pageCollapseFacts, listFenceRetireCandidates, readFactPreimages, restoreFactPreimage, listFactIdsBySourcePrefix,
@@ -11,9 +11,6 @@
  * caller other than the one the store's policy models (private-provenance.ts), the keyword arm in an FTS language other
  * than `english`, a visibility list widened for a caller the store does not model (fact-visibility.ts), and inputs whose PGLite outcome the store cannot reproduce (a non-finite
  * `claim_value`, `row_num` or `superseded_by_row`, a fractional offset, a keyset time in another text form).
- *
- * A read eligibility policy goes to the store on the list reads and `listSupersessions`: it hides the facts of a
- * quarantined provenance page and applies the trust floor and flag suppression (`projectionEligibleSql('facts')`).
  *
  * A vector travels as the literal PGLite inlines (`'[a,b,...]'`); the store casts it to the column's `halfvec` and
  * returns stored vectors as number lists, which become `Float32Array`s here.
@@ -173,6 +170,16 @@ export const expireFact: Member<'expireFact'> = (brain, id, opts) => {
   return storeCall({ member: 'expireFact' }, () => brain.expireFact({
     id, supersededBy: o.supersededBy, at: iso(o.at ?? new Date()), successorFrom: iso(o.successorFrom),
   }));
+};
+
+/** forget's supersession or retirement expiry (engine-sql/facts-trust.ts): ends the fact at `validUntil`, else at its own earlier end or now. */
+export const expireFactSuperseded: Member<'expireFactSuperseded'> = async (brain, factId, validUntil) => {
+  await storeCall({ member: 'expireFactSuperseded' }, () => brain.expireFactUntil({ id: factId, until: validUntil }));
+};
+
+/** forget's file-mirror stamp (engine-sql/facts-trust.ts): ends the fact at the day text, which the store reads as UTC midnight. */
+export const expireFactAtDate: Member<'expireFactAtDate'> = async (brain, factId, today) => {
+  await storeCall({ member: 'expireFactAtDate' }, () => brain.expireFactUntil({ id: factId, until: today }));
 };
 
 export const listFactsByEntity: Member<'listFactsByEntity'> = async (brain, sourceId, entitySlug, opts) => {

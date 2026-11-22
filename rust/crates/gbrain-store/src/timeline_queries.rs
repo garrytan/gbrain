@@ -53,10 +53,15 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 mod event_rows;
+mod repair_reads;
 mod site_reads;
 pub use event_rows::{
     EventProjectionIdSpec, EventProjectionRestoreSpec, EventProjectionRowsSpec,
     EventProjectionSlugsSpec,
+};
+pub use repair_reads::{
+    ConnectorFenceInput, TimelineHistoryInput, TimelineMarkupInput, TimelinePageScanInput,
+    TimelineRowRewrite,
 };
 pub use site_reads::{
     DeleteTimelineRowsInput, SegmentedTimelineInput, TimelineOrphanInput, TimelineRowDeletion,

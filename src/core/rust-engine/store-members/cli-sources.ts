@@ -2,13 +2,18 @@
  * Source-resolution members (BrainEngine listLocalPathSources, listSourceRoutingRows, countDefaultSourceSplit): the
  * typed reads source-resolver.ts makes instead of raw SQL. Store side: rust/crates/gbrain-store/src/cli_reads/sources.rs.
  * listStaleSyncSourceIds (the advisor's stale-sync read) and readSourceRow/lockSourceRow (one source's check columns)
- * read the store's source records here. countSourcePages counts one source's pages and insertSource creates a source
- * (store side: the same cli_reads/sources.rs).
+ * read the store's source records here. countSourcePages counts one source's pages, insertSource creates a source and
+ * advanceSourceCommit records the commit a git sync reached; listSourcePathPages, readRenameIdentityRows and
+ * readLiveIdentityHolders are a git sync's page reads, readPageSizeRows its size-state read and listQuarantinedSlugs the
+ * pages its link and timeline extraction skips; deleteSourceRecord and readSourceDeleteImpact are `sources remove` and
+ * its preview (store side: the same cli_reads/sources.rs, sources.rs for advanceSourceCommit, and sources/archive.rs
+ * for the delete).
  */
 import type { SourceRecordRow } from '../../engine.ts';
-import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from '../../engine-sql/sources.ts';
+import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PageSizeRow, PlainSyncSourceRow, ReasonPurgeTombstone, RenameIdentityRow, SourceCheckRow, SourceDeleteImpact, SourceDeleteResult, SourceInsert, SourcePathPageRow, SourceRoutingRow } from '../../engine-sql/sources.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeCall, type StoreMember } from './common.ts';
+import { refusing } from './constraint-errors.ts';
 import { isOwnerOnlySourceConfig } from '../../access/owner-only.ts';
 
 /** Any owner-only source, archived ones included: the store's source rows tested with the rule access/owner-only.ts states. */
@@ -63,6 +68,37 @@ export const lockSourceRow: StoreMember<[sourceId: string], SourceCheckRow | nul
 export const countSourcePages: StoreMember<[sourceId: string, opts?: { includeDeleted?: boolean }], number> = async (brain, sourceId, opts) =>
   Number(await storeCall({ member: 'countSourcePages', sourceId }, () => brain.countSourcePages(sourceId, opts?.includeDeleted === true)));
 
+/** `state` and `reason` are the page's embedding hold (rust/docs/store/sources.md), else null. */
+export const readPageSizeRows: StoreMember<[sourceId: string, maxBytes: number, slugs: readonly string[] | null], PageSizeRow[]> = async (brain, sourceId, maxBytes, slugs) =>
+  (await storeCall({ member: 'readPageSizeRows', sourceId }, () => brain.readPageSizeRows(sourceId, maxBytes, slugs ? [...slugs] : null))) as PageSizeRow[];
+
+export const holdPageEmbedding: StoreMember<[pageId: number, reason: string], void> = async (brain, pageId, reason) => {
+  await storeCall({ member: 'holdPageEmbedding' }, () => brain.holdPageEmbedding(pageId, reason));
+};
+
+export const readReasonPurgeTombstones: StoreMember<[sourceId: string, pair?: ReasonPurgeTombstone], ReasonPurgeTombstone[]> = async (brain, sourceId, pair) =>
+  (await storeCall({ member: 'readReasonPurgeTombstones', sourceId }, () => brain.readReasonPurgeTombstones(sourceId, pair ?? null))) as ReasonPurgeTombstone[];
+
+export const writeReasonPurgeTombstones: StoreMember<[sourceId: string, pairs: readonly ReasonPurgeTombstone[]], number> = async (brain, sourceId, pairs) =>
+  Number(await storeCall({ member: 'writeReasonPurgeTombstones', sourceId }, () => brain.writeReasonPurgeTombstones(sourceId, pairs.map(pair => ({ commit_sha: pair.commit_sha, path: pair.path })))));
+
+export const listSourcePathPages: StoreMember<[sourceId: string], SourcePathPageRow[]> = async (brain, sourceId) =>
+  (await storeCall({ member: 'listSourcePathPages', sourceId }, () => brain.listSourcePathPages(sourceId))) as SourcePathPageRow[];
+
+export const listQuarantinedSlugs: StoreMember<[sourceId: string], string[]> = async (brain, sourceId) =>
+  (await storeCall({ member: 'listQuarantinedSlugs', sourceId }, () => brain.listQuarantinedSlugs(sourceId))) as string[];
+
+export const readRenameIdentityRows: StoreMember<[sourceId: string, paths: readonly string[], slugs: readonly string[]], RenameIdentityRow[]> = async (brain, sourceId, paths, slugs) =>
+  (await storeCall({ member: 'readRenameIdentityRows', sourceId }, () => brain.readRenameIdentityRows(sourceId, [...paths], [...slugs]))) as RenameIdentityRow[];
+
+export const readLiveIdentityHolders: StoreMember<[sourceId: string, ids: readonly string[], titles: readonly string[]], LiveIdentityHolderRow[]> = async (brain, sourceId, ids, titles) =>
+  (await storeCall({ member: 'readLiveIdentityHolders', sourceId }, () => brain.readLiveIdentityHolders(sourceId, [...ids], [...titles]))) as LiveIdentityHolderRow[];
+
+/** last_sync_at is the store's clock, not a database `now()` (rust/docs/store/sources.md). */
+export const advanceSourceCommit: StoreMember<[sourceId: string, commit: string, newestContentAt?: string | null], void> = async (brain, sourceId, commit, newestContentAt) => {
+  await storeCall({ member: 'advanceSourceCommit', sourceId }, () => brain.advanceSourceCommit(sourceId, commit, newestContentAt !== undefined, newestContentAt ?? null));
+};
+
 /**
  * A taken id or name refuses `constraint_violation`, as the SQL unique keys do; the store also refuses an id outside
  * `[a-z0-9-]{1,32}`. The binding drops a config key set to `undefined`, as
@@ -70,4 +106,21 @@ export const countSourcePages: StoreMember<[sourceId: string, opts?: { includeDe
  */
 export const insertSource: StoreMember<[row: SourceInsert], void> = async (brain, row) => {
   await storeCall({ member: 'insertSource', sourceId: row.id }, () => brain.insertSource(row.id, row.name, row.local_path, row.config));
+};
+
+/**
+ * Deletes the source (only an expired archive when `expiredArchiveOnly`, by the store's archive times) with its pages
+ * and every record keyed by it in one store write; the pages always go with it, so `stranded` is 0. An OAuth client
+ * whose source_id names the source refuses it as Postgres's oauth_clients_source_id_fkey (23503) does
+ * (constraint-errors.ts).
+ */
+export const deleteSourceRecord: StoreMember<[sourceId: string, opts?: { expiredArchiveOnly?: boolean }], SourceDeleteResult> = async (brain, sourceId, opts) => ({
+  deleted: (await refusing<boolean>('deleteSourceRecord', () => brain.deleteSourceRecord(sourceId, opts?.expiredArchiveOnly === true))) === true,
+  stranded: 0,
+});
+
+/** The store keeps no `files` table, so `files` is 0; a source kept without a name reads with its id as the name. */
+export const readSourceDeleteImpact: StoreMember<[sourceId: string], SourceDeleteImpact | null> = async (brain, sourceId) => {
+  const r = (await storeCall({ member: 'readSourceDeleteImpact', sourceId }, () => brain.readSourceDeleteImpact(sourceId))) as (Omit<SourceDeleteImpact, 'name'> & { name: string | null }) | null;
+  return r && { id: r.id, name: r.name ?? r.id, pages: Number(r.pages), chunks: Number(r.chunks), embeddings: Number(r.embeddings), files: Number(r.files), facts: Number(r.facts) };
 };

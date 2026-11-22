@@ -4,7 +4,8 @@
 //! answers match its SQL row for row.
 //!
 //! Members: countOffGridTakeWeights, countTakes, planFactPurgeTakes, listTakeRowsForPage,
-//! countMcpResolvedTakes, listTakeSupersessionCandidates.
+//! countMcpResolvedTakes, listTakeSupersessionCandidates, listTakePointers, listTakeSupersedeReceipts,
+//! setTakeSupersededBy.
 //!
 //! A take is scoped by the page it hangs on, read now (its `source_id` and `slug`), not by the
 //! source it was inserted under. No read here hides a soft-deleted page unless its SQL does.
@@ -356,5 +357,109 @@ impl Store {
             }
         }
         Ok(out)
+    }
+
+    /// `listTakePointers(pageId)`: `[{ row_num, superseded_by }]`, every take on the page, in key
+    /// order (the SQL has no `ORDER BY`; the repair reads it into a map).
+    pub fn list_take_pointers(&self, page_id: u64) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        Ok(all_takes(&*read)?
+            .into_iter()
+            .filter(|t| t.page_id == page_id)
+            .map(|t| json!({ "row_num": t.row_num, "superseded_by": t.superseded_by }))
+            .collect())
+    }
+
+    /// `listTakeSupersedeReceipts(sourceId, pageId, slug)`: `[{ old_row, new_row }]`, the
+    /// `outcome->>'old_row'` / `outcome->>'new_row'` text of the committed `takes_supersede`
+    /// requests of the source whose page is `pageId`, or that recorded no page and name `slug`.
+    pub fn list_take_supersede_receipts(
+        &self,
+        source_id: &str,
+        page_id: u64,
+        slug: &str,
+    ) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let field = |outcome: &Option<Value>, key: &str| {
+            outcome
+                .as_ref()
+                .and_then(|o| o.get(key))
+                .and_then(crate::cli_reads::entities::arrow_text)
+        };
+        Ok(crate::persistence::all_requests(&*read)?
+            .into_iter()
+            .filter(|r| {
+                r.operation == "takes_supersede"
+                    && r.state == "committed"
+                    && r.source_id == source_id
+                    && match r.page_id {
+                        Some(id) => id == page_id,
+                        None => r.slug == slug,
+                    }
+            })
+            .map(|r| {
+                json!({
+                    "old_row": field(&r.outcome, "old_row"),
+                    "new_row": field(&r.outcome, "new_row"),
+                })
+            })
+            .collect())
+    }
+
+    /// `readTakeRowTier(pageId, rowNum)`: `{ id, trust_tier }` of the take in that row of the page, or null.
+    pub fn read_take_row_tier(&self, page_id: u64, row_num: i32) -> Result<Option<Value>> {
+        let read = self.read()?;
+        Ok(take_at(&*read, page_id, row_num)?
+            .map(|t| json!({ "id": t.id, "trust_tier": t.trust.tier().as_str() })))
+    }
+
+    /// `hasTakeClaim(pageId, claim)`: whether page `pageId` holds a take with that claim.
+    pub fn has_take_claim(&self, page_id: u64, claim: &str) -> Result<bool> {
+        let read = self.read()?;
+        Ok(page_takes(&*read, page_id)?
+            .iter()
+            .any(|t| t.claim == claim))
+    }
+
+    /// `listTakeRowNums(pageId)`: the row number of every take of the page, ascending.
+    pub fn list_take_row_nums(&self, page_id: u64) -> Result<Vec<i32>> {
+        let read = self.read()?;
+        let mut out: Vec<i32> = page_takes(&*read, page_id)?
+            .iter()
+            .map(|t| t.row_num)
+            .collect();
+        out.sort_unstable();
+        Ok(out)
+    }
+
+    /// `readTakeRowTierByClaim(pageId, rowNum, claim)`: `{ id, trust_tier }` of the take at that row of the page with
+    /// that claim, or null.
+    pub fn read_take_row_tier_by_claim(
+        &self,
+        page_id: u64,
+        row_num: i32,
+        claim: &str,
+    ) -> Result<Option<Value>> {
+        let read = self.read()?;
+        Ok(take_at(&*read, page_id, row_num)?
+            .filter(|t| t.claim == claim)
+            .map(|t| json!({ "id": t.id, "trust_tier": t.trust.tier().as_str() })))
+    }
+
+    /// `setTakeSupersededBy(pageId, rowNum, supersededBy)`: stores the take's `superseded_by`
+    /// (null clears it). The `UPDATE` sets no other column, so `updated_at` and the trust stamp stay.
+    pub fn set_take_superseded_by(
+        &self,
+        page_id: u64,
+        row_num: i32,
+        superseded_by: Option<i32>,
+    ) -> Result<()> {
+        self.write(|tx| {
+            if let Some(mut take) = take_at(&*tx, page_id, row_num)? {
+                take.superseded_by = superseded_by;
+                store_take(tx, &take)?;
+            }
+            Ok(())
+        })
     }
 }

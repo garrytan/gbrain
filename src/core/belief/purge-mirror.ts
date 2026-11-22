@@ -25,6 +25,7 @@ import { randomUUID } from 'node:crypto';
 import { chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
+import type { PurgeReplaySchema } from '../engine-sql/belief-purge.ts';
 import { configDir } from '../config.ts';
 import { opError } from '../ops/contract.ts';
 import { COVERAGE_KEY, factKey, pageKey, slugRef } from './keys.ts';
@@ -117,20 +118,20 @@ async function replayedPage(tx: BrainEngine, intent: PurgeMirrorIntent, ledger: 
 }
 
 /** What one replay run shares across its purges: the stores the restored archive has and the journal census of each page purge. */
-interface ReplayRun { present: ReadonlySet<string>; reasons: boolean; census: Map<string, { targets: IntentRedactionTarget[]; complete: boolean }> }
+interface ReplayRun { present: ReadonlySet<string>; reasons: boolean; walkable: boolean; census: Map<string, { targets: IntentRedactionTarget[]; complete: boolean }> }
 
 /**
  * #9469: one journal pass per source for the whole replay run, not one per replayed purge. Before anything is replayed,
  * each page purge to replay is matched to its restored page and the page's claims are read; one sweep of the source's
  * request journal then finds every request carrying any of them. Uncapped: a restore runs offline, so it has no budget.
  */
-async function replayRun(tx: BrainEngine, intents: readonly PurgeMirrorIntent[], ledger: boolean): Promise<ReplayRun> {
-  const { PURGE_SWEEP_STORES, readPurgeClaims } = await import('../persistence/page-purge.ts');
-  const present = new Set((await tx.executeRaw<{ name: string }>('SELECT t AS name FROM unnest($1::text[]) AS t WHERE to_regclass(t) IS NOT NULL', [[...PURGE_SWEEP_STORES]])).map(r => r.name));
-  const [reasonColumn] = await tx.executeRaw<{ present: boolean }>(`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'page_versions' AND column_name = 'change_reason') AS present`);
+async function replayRun(tx: BrainEngine, intents: readonly PurgeMirrorIntent[], ledger: boolean, schema: PurgeReplaySchema): Promise<ReplayRun> {
+  const { readPurgeClaims } = await import('../persistence/page-purge.ts');
+  const present = new Set(schema.stores);
+  const walkable = schema.derivationInputs;
   const census = new Map<string, { targets: IntentRedactionTarget[]; complete: boolean }>();
-  if (!present.has('persistence_requests')) return { present, reasons: false, census };
-  if (intents.some(intent => intent.scope === 'page') && (await tx.executeRaw<{ present: boolean }>("SELECT to_regclass('persistence_brain') IS NOT NULL AS present"))[0]?.present) await declarePersistenceProtocol(tx);
+  if (!present.has('persistence_requests')) return { present, reasons: false, walkable, census };
+  if (intents.some(intent => intent.scope === 'page') && schema.persistenceBrain) await declarePersistenceProtocol(tx);
   const groups = new Map<string, Array<{ key: string; claims: string[] }>>();
   for (const intent of intents) {
     if (intent.scope !== 'page' || !intent.slug) continue;
@@ -144,7 +145,7 @@ async function replayRun(tx: BrainEngine, intents: readonly PurgeMirrorIntent[],
       census.set(key, { targets: sweep.targets, complete: sweep.complete && replayFault !== 'incomplete_census' });
     }
   }
-  return { present, reasons: reasonColumn?.present === true, census };
+  return { present, reasons: schema.changeReason, walkable, census };
 }
 
 /** A replayed page purge whose sweep could not cover every store: the restore stops and names it, never reporting a partial sweep as replayed. */
@@ -156,20 +157,17 @@ function replayIncomplete(intent: PurgeMirrorIntent) {
 
 async function replayOne(tx: BrainEngine, intent: PurgeMirrorIntent, ledger: boolean, run: ReplayRun): Promise<ReplayOutcome> {
   const src = intent.source_id, actor = 'restore_replay', publicationId = randomUUID();
-  await tx.executeRaw("SELECT set_config('gbrain.write_sources', $1, true)", [JSON.stringify([src])]);
+  await tx.applyTransactionSettings(['gbrain.write_sources'], [JSON.stringify([src])]);
   if (ledger) await bumpPurgeEpoch(tx, src);
   for (const f of intent.facts) {
-    await tx.executeRaw(`INSERT INTO fact_purges(source_id,visibility,subject,fact_hash,request_id,actor,reason) VALUES ($1,$2,$3,$4,$5::uuid,$6,'restore replay')
-      ON CONFLICT DO NOTHING`, [src, f.visibility, f.subject, f.fact_hash, intent.request, actor]);
+    await tx.insertFactPurge({ sourceId: src, visibility: f.visibility, subject: f.subject, factHash: f.fact_hash, requestId: intent.request, actor, reason: 'restore replay' });
   }
   const takeHashes = [...new Set([...intent.takes, ...(intent.scope === 'fact' ? intent.facts.map(f => f.fact_hash) : [])])];
   for (const hash of takeHashes) {
-    await tx.executeRaw('INSERT INTO take_purges(source_id,subject,claim_hash,request_id) VALUES ($1,$2,$3,$4::uuid) ON CONFLICT DO NOTHING',
-      [src, intent.scope === 'page' ? intent.slug : intent.facts[0]?.subject ?? '*', hash, intent.request]);
+    await tx.insertTakePurge({ sourceId: src, subject: (intent.scope === 'page' ? intent.slug : intent.facts[0]?.subject) ?? '*', claimHash: hash, requestId: intent.request });
   }
   if (intent.content_hashes?.length) {
-    await tx.executeRaw(`INSERT INTO page_purges(source_id,content_hash,slug,request_id) SELECT $1,h,$3,$4::uuid FROM unnest($2::text[]) AS h
-      ON CONFLICT (source_id,content_hash) DO UPDATE SET slug=EXCLUDED.slug,request_id=EXCLUDED.request_id`, [src, intent.content_hashes, intent.slug, intent.request]);
+    await tx.replayPagePurges({ sourceId: src, contentHashes: intent.content_hashes, slug: intent.slug!, requestId: intent.request });
   }
   const fps = [...new Set([...intent.facts.map(f => f.fact_hash), ...intent.takes])];
   let claims: string[] = [];
@@ -222,7 +220,7 @@ async function replayOne(tx: BrainEngine, intent: PurgeMirrorIntent, ledger: boo
       for (const [i, claim] of claims.entries()) await purgeSegmentStorage(tx, src, claim, staged[i]!, [...segmented], replaced, intent.request);
     };
   }
-  const walkable = (await tx.executeRaw<{ present: boolean }>("SELECT to_regclass('derivation_inputs') IS NOT NULL AS present"))[0]?.present === true;
+  const walkable = run.walkable;
   const purgedHere = new Set(inputs.map(r => `${r.table}:${r.id}`));
   const walk = walkable && inputs.length ? await derivedRowsFrom(tx, inputs) : { rows: [], truncated: false };
   const derivedRows = walk.rows.filter(r => !purgedHere.has(`${r.table}:${r.id}`));
@@ -271,7 +269,9 @@ export interface PurgeReplayResult { state: PurgeReplayState; replays: ReplayRec
  */
 export async function replayPurgesInRestore(tx: BrainEngine, input: { lines: PurgeMirrorLine[] | null; archivedAt: string; restoreId: string; allTimes?: boolean }):
   Promise<PurgeReplayResult> {
-  const ledger = (await tx.executeRaw<{ present: boolean }>("SELECT to_regclass('belief_events') IS NOT NULL AS present"))[0]?.present === true;
+  const { PURGE_SWEEP_STORES } = await import('../persistence/page-purge.ts');
+  const schema = await tx.readPurgeReplaySchema(PURGE_SWEEP_STORES);
+  const ledger = schema.beliefEvents;
   const sources = await tx.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources ORDER BY id');
   const replays: ReplayRecord[] = [];
   if (input.lines) {
@@ -289,7 +289,7 @@ export async function replayPurgesInRestore(tx: BrainEngine, input: { lines: Pur
       if (replayFault === 'skip_replay') continue;
       pending.push({ intent, replay: committed.has(intent.request) || replayFault === 'replay_uncommitted' });
     }
-    const run = await replayRun(tx, pending.filter(p => p.replay).map(p => p.intent), ledger);
+    const run = await replayRun(tx, pending.filter(p => p.replay).map(p => p.intent), ledger, schema);
     for (const { intent, replay } of pending) {
       const outcome = replay ? await replayOne(tx, intent, ledger, run) : 'unverified';
       replays.push({ request: intent.request, request_id: intent.request_id, scope: intent.scope, outcome });

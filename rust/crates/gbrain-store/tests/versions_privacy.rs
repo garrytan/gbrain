@@ -160,3 +160,115 @@ fn a_live_page_the_caller_cannot_read_lists_no_snapshot() {
     let bob = caller(&["member:bob-example"], false, &[]);
     assert_eq!(markers(&store, "notes/secret", Some(bob), None), vec![2, 1]);
 }
+
+/// Writes `slug` with `frontmatter` and `body`, then snapshots it with `reason`.
+fn snapshot_with_reason(store: &Store, slug: &str, body: &str, frontmatter: Value, reason: &str) {
+    write(store, slug, body, frontmatter);
+    store.create_version_with(slug, None, Some(reason)).unwrap();
+}
+
+fn write(store: &Store, slug: &str, body: &str, frontmatter: Value) {
+    let input: PageInput = serde_json::from_value(json!({
+        "type": "note", "title": slug, "compiled_truth": body, "frontmatter": frontmatter,
+    }))
+    .unwrap();
+    let options: PutPageOptions = serde_json::from_value(json!({"index": false})).unwrap();
+    store.put_page(slug, &input, &options).unwrap();
+}
+
+/// The `replaced_because` of each snapshot `get_versions` lists, newest first.
+fn reasons(store: &Store, slug: &str, policy: Option<PrivacyPolicy>) -> Vec<Value> {
+    let options = VersionsOptions {
+        exclude_private: policy,
+        ..VersionsOptions::default()
+    };
+    store
+        .get_versions(slug, &options)
+        .unwrap()
+        .iter()
+        .map(|v| v["replaced_because"].clone())
+        .collect()
+}
+
+/// GBRA-217 (`replacedBecauseSql`): under `excludePrivate` a snapshot's reason is shown only when the
+/// next snapshot of the page (over every snapshot, never only the visible ones; the live page for
+/// the newest) is world-visible and names no reader the caller does not meet. The successor's own
+/// fields decide, whatever the caller's entity privacy part or private-readable grant.
+#[test]
+fn a_caller_never_reads_the_reason_a_hidden_successor_gave() {
+    let (_dir, store) = brain("versions-privacy-successor-reason");
+    let slug = "notes/why";
+    snapshot_with_reason(&store, slug, "one", json!({"visibility": "world"}), "r1");
+    snapshot_with_reason(&store, slug, "two", json!({"visibility": "world"}), "r2");
+    snapshot_with_reason(
+        &store,
+        slug,
+        "three",
+        json!({"visibility": "private"}),
+        "r3",
+    );
+    snapshot_with_reason(
+        &store,
+        slug,
+        "four",
+        json!({"readable_by": ["bob-example"]}),
+        "r4",
+    );
+    write(&store, slug, "live", json!({"visibility": "world"}));
+
+    // The trusted read: every stored reason.
+    assert_eq!(
+        reasons(&store, slug, None),
+        [json!("r4"), json!("r3"), json!("r2"), json!("r1")]
+    );
+    // alice sees snapshots 2 and 1; snapshot 2's successor (3) is private.
+    let alice = caller(&["member:alice-example"], true, &[]);
+    assert_eq!(
+        reasons(&store, slug, Some(alice)),
+        [Value::Null, json!("r1")]
+    );
+    // bob also sees snapshot 4, whose successor is the world live page.
+    let bob = caller(&["member:bob-example"], true, &[]);
+    assert_eq!(
+        reasons(&store, slug, Some(bob)),
+        [json!("r4"), Value::Null, json!("r1")]
+    );
+    // Without the entity privacy part bob sees snapshot 3 too (its successor names him), and the
+    // private successor still withholds snapshot 2's reason.
+    let bob_open = caller(&["member:bob-example"], false, &[]);
+    assert_eq!(
+        reasons(&store, slug, Some(bob_open)),
+        [json!("r4"), json!("r3"), Value::Null, json!("r1")]
+    );
+    // alice's private-readable grant opens snapshot 3, not its successor's readers, and never the
+    // private successor of snapshot 2.
+    let alice_granted = caller(&["member:alice-example"], true, &["default"]);
+    assert_eq!(
+        reasons(&store, slug, Some(alice_granted)),
+        [Value::Null, Value::Null, json!("r1")]
+    );
+}
+
+/// GBRA-217: a snapshot whose successor a prune deleted (`successor_pruned`) keeps its reason from
+/// every `excludePrivate` reader, since the successor's visibility can no longer be checked.
+#[test]
+fn a_caller_never_reads_the_reason_of_a_snapshot_whose_successor_was_pruned() {
+    let (_dir, store) = brain("versions-privacy-successor-pruned");
+    let slug = "notes/grown";
+    snapshot_with_reason(&store, slug, "Small.", json!({}), "grew");
+    write(&store, slug, &"x".repeat(1024 * 1024 + 1), json!({}));
+    for _ in 0..6 {
+        store.create_version_with(slug, None, None).unwrap();
+    }
+    let trusted = reasons(&store, slug, None);
+    assert_eq!(
+        trusted.len(),
+        6,
+        "five large versions and the small one stay"
+    );
+    assert_eq!(trusted[5], json!("grew"));
+    let anyone = caller(&[], true, &[]);
+    let remote = reasons(&store, slug, Some(anyone));
+    assert_eq!(remote.len(), 6);
+    assert_eq!(remote[5], Value::Null);
+}

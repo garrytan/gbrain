@@ -50,21 +50,14 @@ export interface SynopsisTierConfig {
 export async function readSynopsisTierConfig(engine: BrainEngine): Promise<SynopsisTierConfig> {
   const knobs = resolveSearchMode(await loadSearchModeConfig(engine));
   const killSwitch = knobs.contextual_retrieval_disabled === true;
-  // #9683: the NULL row says a page's trusted frontmatter picks the tier (the trust rule of eligiblePagesSql).
-  const rows = await engine.executeRaw<{ id: string | null }>(
-    `SELECT id FROM sources WHERE contextual_retrieval_mode = 'per_chunk_synopsis' AND NOT archived
-     UNION ALL
-     SELECT NULL WHERE NOT $1::boolean AND EXISTS (SELECT 1 FROM pages p LEFT JOIN sources s ON s.id = p.source_id
-       WHERE p.deleted_at IS NULL AND p.page_kind = 'markdown' AND NOT COALESCE(s.archived, false)
-         AND p.frontmatter @> '{"contextual_retrieval":"per_chunk_synopsis"}'::jsonb
-         AND (p.source_id = 'default' OR COALESCE(s.trust_frontmatter_overrides, false)))
-     ORDER BY id`, [killSwitch || knobs.contextual_retrieval === 'per_chunk_synopsis']);
-  const synopsisSources = rows.flatMap(r => r.id === null ? [] : [r.id]);
+  // #9683: a page's trusted frontmatter can pick the tier (the trust rule of eligiblePagesSql); the check is skipped
+  // when the kill switch is on or the global tier already is the synopsis tier.
+  const tier = await engine.readSynopsisTierSources(killSwitch || knobs.contextual_retrieval === 'per_chunk_synopsis');
   return {
     global_tier: knobs.contextual_retrieval,
     kill_switch: killSwitch,
-    synopsis_sources: synopsisSources,
-    configured: !killSwitch && (knobs.contextual_retrieval === 'per_chunk_synopsis' || rows.length > 0),
+    synopsis_sources: tier.sourceIds,
+    configured: !killSwitch && (knobs.contextual_retrieval === 'per_chunk_synopsis' || tier.sourceIds.length > 0 || tier.frontmatterPicks),
   };
 }
 

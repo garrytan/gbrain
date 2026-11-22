@@ -42,7 +42,7 @@
 //!
 //! JSON columns (`completeness`, `held_context`, `proposal`, `preimage`) arrive as JSON text or
 //! values, are refused where Postgres `jsonb` refuses them, and are stored in Postgres `jsonb` key
-//! order (`dream::jsonb`).
+//! order (`jsonb::ordered`).
 //!
 //! A source delete removes the source's rows of all five tables (`remove_source_rows`); a deleted
 //! generation row sets its activations' `generation_id` to null.
@@ -55,7 +55,7 @@ use crate::cli_reads::pg_jsonb;
 use crate::cli_reads::pg_text::{jsonb_text as jsonb_text_of, pg_lower};
 use crate::dream::{int4, jsonb_check};
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, STORE_CORRUPT, StoreError};
-use crate::jsonb::ordered as jsonb;
+use crate::jsonb::ordered;
 use crate::kv::{KvRead, KvWrite, collect_prefix, scan_prefix};
 use crate::links::no_nul;
 use crate::{Store, get_json, keys, put_json};
@@ -68,6 +68,7 @@ mod atom_reads;
 mod chronicle_events;
 mod fence_evidence;
 mod fence_restore;
+mod lost_fence;
 mod page_rows;
 mod repair;
 pub use activations::ActivationRecordInput;
@@ -526,7 +527,7 @@ fn jsonb_text(op: &str, column: &str, text: &str) -> Result<Value> {
         )
     })?;
     jsonb_check(op, column, &value)?;
-    Ok(jsonb(&value))
+    Ok(ordered(&value))
 }
 
 fn check_violation(constraint: &str, table: &str) -> StoreError {
@@ -640,7 +641,7 @@ impl Store {
                 None | Some(Value::Null) => None,
                 Some(value) => {
                     jsonb_check(OP, "preimage", value)?;
-                    Some(jsonb(value))
+                    Some(ordered(value))
                 }
             };
             let preimage_bytes = item

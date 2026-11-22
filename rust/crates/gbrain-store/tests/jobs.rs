@@ -348,3 +348,37 @@ fn a_token_roll_up_that_overflows_an_integer_refuses_the_completion() {
     );
     assert_eq!(job(&b, parent)["tokens_input"], 1_500_000_000);
 }
+
+/// A job admitted on a store bound to a transaction is one statement of it (the facts backstop
+/// effect queues its facts-absorb job inside the effect's transaction): it does not wait for a
+/// second writer, it is seen inside the transaction, and a rollback keeps no row.
+#[test]
+fn admit_inside_a_transaction_is_one_statement() {
+    let b = brain("jobs-in-tx");
+    let spec: AdmitSpec =
+        serde_json::from_value(json!({ "insert": insert("work", json!({})), "maxSpawnDepth": 5 }))
+            .unwrap();
+    let tx = b.begin_transaction(false).unwrap();
+    let out = tx.admit_job(&spec).unwrap();
+    assert_eq!(out.outcome, "inserted");
+    let id = out.row["id"].as_i64().unwrap();
+    assert!(tx.get_job(id).unwrap().is_some());
+    tx.rollback_transaction().unwrap();
+    assert!(b.get_job(id).unwrap().is_none());
+
+    let tx = b.begin_transaction(false).unwrap();
+    let kept = tx.admit_job(&spec).unwrap().row["id"].as_i64().unwrap();
+    // A rolled-back admission's id is not handed out again, as Postgres `nextval` never is.
+    assert_ne!(kept, id);
+    let depth = tx.savepoint().unwrap();
+    let dropped = tx.admit_job(&spec).unwrap().row["id"].as_i64().unwrap();
+    tx.rollback_savepoint(depth).unwrap();
+    assert!(tx.get_job(dropped).unwrap().is_none());
+    let after = tx.admit_job(&spec).unwrap().row["id"].as_i64().unwrap();
+    assert!(after > dropped, "{after} after the dropped {dropped}");
+    tx.commit_transaction().unwrap();
+    assert_eq!(job(&b, kept)["status"], "waiting");
+    assert_eq!(job(&b, after)["status"], "waiting");
+    // Outside a transaction the sequence continues past every id handed out.
+    assert!(add(&b, "work", json!({})) > after);
+}

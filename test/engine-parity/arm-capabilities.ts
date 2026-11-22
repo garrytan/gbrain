@@ -17,6 +17,9 @@
  *    (src/core/schema-migration-lock.ts).
  *  - `managed_persistence` refuses: the Rust engine has no managed worktree, so a write to one refuses naming it
  *    (src/core/engine-capabilities.ts).
+ *  - `oauth_write_grant` is n/a: the Rust store keeps no OAuth clients yet, so a remote write over HTTP is refused at
+ *    admission (permission_denied) before it can commit. Lane 8 (bound-write-rust) serves the write grant; remove
+ *    this capability, and the `requires` that name it, when the Rust engine serves readOAuthClientWriteGrant.
  *
  * When `BrainEngine.capabilities` and `src/core/engine-capabilities.ts` land
  * (plan PR 5), `armCapabilities` reads the engine's own set instead of this
@@ -28,7 +31,7 @@ export const PARITY_ARMS = ['pglite', 'postgres', 'rust'] as const;
 export type ParityArmName = typeof PARITY_ARMS[number];
 
 /** Capabilities a parity case can require (a subset of the planned engine capability set). */
-export type EngineCapability = 'raw_sql' | 'schema_migration_lock' | 'managed_persistence';
+export type EngineCapability = 'raw_sql' | 'schema_migration_lock' | 'managed_persistence' | 'oauth_write_grant';
 
 export interface MissingCapability {
   /** `refuses`: the arm throws `engine_capability_missing`; `n/a`: the case does not run on the arm. */
@@ -42,14 +45,16 @@ export function missingCapability(capability: EngineCapability): MissingCapabili
     case 'raw_sql': return { kind: 'refuses', label: 'refuses:raw_sql' };
     case 'schema_migration_lock': return { kind: 'n/a', label: 'n/a:postgres-only' };
     case 'managed_persistence': return { kind: 'refuses', label: 'refuses:managed_persistence' };
+    case 'oauth_write_grant': return { kind: 'n/a', label: 'n/a:waiting-lane-8' };
     default: return assertNever(capability);
   }
 }
 
 export function armCapabilities(arm: ParityArmName): ReadonlySet<EngineCapability> {
   switch (arm) {
-    case 'pglite': return new Set<EngineCapability>(['raw_sql', 'managed_persistence']);
-    case 'postgres': return new Set<EngineCapability>(['raw_sql', 'schema_migration_lock', 'managed_persistence']);
+    case 'pglite': return new Set<EngineCapability>(['raw_sql', 'managed_persistence', 'oauth_write_grant']);
+    case 'postgres': return new Set<EngineCapability>(['raw_sql', 'schema_migration_lock', 'managed_persistence', 'oauth_write_grant']);
+    // No `oauth_write_grant` until lane 8 serves readOAuthClientWriteGrant on the Rust engine.
     case 'rust': return new Set<EngineCapability>();
     default: return assertNever(arm);
   }

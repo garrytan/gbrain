@@ -66,16 +66,6 @@ export async function sharedSkillPackTablePresent(exec: LegacyUnscopedRead): Pro
 }
 
 /**
- * Whether a resident notifier has recorded coverage for any source (a `sync_notifier_sources` row with `observed_at`):
- * one half of whether search carries the freshness notice (notifier/status.ts freshnessReported).
- */
-export async function notifierCoverageRecorded(exec: LegacyUnscopedRead): Promise<boolean> {
-  const [row] = await exec.executeRaw<{ covered: unknown }>('SELECT EXISTS (SELECT 1 FROM sync_notifier_sources WHERE observed_at IS NOT NULL) AS covered');
-  const covered = row?.covered;
-  return covered === true || covered === 't' || covered === 1;
-}
-
-/**
  * The completed keys of one resumable op's checkpoint (op-checkpoint.ts loadOpCheckpoint): the append-only child rows
  * (`op_checkpoint_paths`) and the legacy `completed_keys` array, deduplicated in first-seen order. A non-array legacy
  * value is skipped, so the child rows still load, and reported as `corruptParent`.
@@ -101,6 +91,33 @@ export async function readOpCheckpointKeys(exec: LegacyUnscopedRead, op: string,
     else if (typeof r.ckey === 'string') keys.add(r.ckey);
   }
   return { keys: [...keys], corruptParent };
+}
+
+/** One checkpoint parent as `readOpCheckpointRecord` returns it. */
+export interface OpCheckpointRecord {
+  /** The stored JSON, as written (a JSON array on every write path). */
+  completed_keys: unknown;
+  /** The stamp on the database clock, ISO 8601 with milliseconds, UTC. */
+  updated_at: string;
+  /** Whether the stamp is within `freshWithinDays` of the database clock; null when the caller did not ask. */
+  fresh: boolean | null;
+}
+
+/**
+ * The parent row of one checkpoint whose keys are JSON records rather than text keys: the repair runner's cursor
+ * (repair/core.ts, op `repair`) and the preview-approval sets (persistence/preview-approval.ts, op
+ * `repair-approval`). Freshness is measured on the database clock, the clock the checkpoint purge uses.
+ */
+export async function readOpCheckpointRecord(exec: LegacyUnscopedRead, op: string, fingerprint: string,
+  opts: { freshWithinDays?: number } = {}): Promise<OpCheckpointRecord | null> {
+  const days = opts.freshWithinDays === undefined ? null : String(opts.freshWithinDays);
+  const [row] = await exec.executeRaw<{ completed_keys: unknown; updated_at: string; fresh: boolean | null }>(
+    `SELECT completed_keys,
+            to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at,
+            updated_at >= now() - ($3::text || ' days')::interval AS fresh
+       FROM op_checkpoints WHERE op=$1 AND fingerprint=$2`,
+    [op, fingerprint, days]);
+  return row ? { completed_keys: row.completed_keys, updated_at: row.updated_at, fresh: row.fresh ?? null } : null;
 }
 
 /**

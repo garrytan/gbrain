@@ -671,12 +671,81 @@ fn projection_readiness_generation_moves_only_on_a_commit() {
     let brain = Brain::new("readiness-generation");
     brain.source("default");
     let before = brain.store.projection_readiness_generation().unwrap();
+    assert!(before.is_some());
     assert_eq!(
         before,
         brain.store.projection_readiness_generation().unwrap()
     );
     brain.page("notes/a", "default", "note");
-    let after = brain.store.projection_readiness_generation().unwrap();
-    assert_ne!(before, after);
+    let after = brain
+        .store
+        .projection_readiness_generation()
+        .unwrap()
+        .unwrap();
+    assert_ne!(before.as_deref(), Some(after.as_str()));
     assert!(after.starts_with(&format!("{}/", brain.store.brain_id())));
+    assert_eq!(after, brain.store.health_memo_clock().unwrap());
+}
+
+#[test]
+fn projection_readiness_generation_is_null_inside_a_transaction() {
+    let brain = Brain::new("readiness-generation-tx");
+    brain.source("default");
+    let tx = brain.store.begin_transaction(false).unwrap();
+    // The transaction reads its own writes, which the commit sequence does not count yet.
+    assert_eq!(tx.projection_readiness_generation().unwrap(), None);
+    tx.rollback_transaction().unwrap();
+}
+
+#[test]
+fn attended_origins_are_self_attended_body_or_frontmatter_links_of_one_source() {
+    let b = Brain::new("attended-origins");
+    b.source("work");
+    for slug in ["a", "b", "c", "d", "e", "gone"] {
+        b.page(slug, "default", "note");
+    }
+    b.page("a", "work", "note");
+    let row = |from: &str, to: &str, link_type: &str, link_source: &str, source: &str| {
+        let mut v = json!({
+            "from_slug": from, "to_slug": to, "link_type": link_type, "link_source": link_source,
+            "origin_slug": from, "from_source_id": source, "to_source_id": source,
+            "origin_source_id": source,
+        });
+        if link_source == "frontmatter" {
+            v["origin_field"] = json!("attendees");
+        }
+        serde_json::from_value(v).unwrap()
+    };
+    let batch = vec![
+        row("a", "a", "attended", "markdown", "default"),
+        row("b", "b", "attended", "frontmatter", "default"),
+        row("c", "c", "mentions", "markdown", "default"),
+        row("e", "e", "attended", "manual", "default"),
+        row("d", "a", "attended", "markdown", "default"),
+        row("gone", "gone", "attended", "wikilink-resolved", "default"),
+        row("a", "a", "attended", "markdown", "work"),
+    ];
+    b.store.add_links_batch(&batch).unwrap();
+    b.store.soft_delete_page("gone", None).unwrap();
+
+    // The SQL joins the origin page without a live filter, so a soft-deleted origin still counts.
+    let all = b.store.list_attended_origin_slugs("default", None).unwrap();
+    assert_eq!(all, ["a", "b", "gone"]);
+    let scoped: Vec<String> = ["b", "c", "missing", "b"].map(String::from).to_vec();
+    assert_eq!(
+        b.store
+            .list_attended_origin_slugs("default", Some(&scoped))
+            .unwrap(),
+        ["b"]
+    );
+    assert!(
+        b.store
+            .list_attended_origin_slugs("default", Some(&[]))
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        b.store.list_attended_origin_slugs("work", None).unwrap(),
+        ["a"]
+    );
 }

@@ -87,6 +87,8 @@ function statsRejectingEngine(err: Error): BrainEngine {
       if (prop === 'getConfig') return async () => null;
       // Single-row reads answer null (no row), not the list default below.
       if (prop === 'getSource') return async () => null;
+      // The managed-sync bookkeeping read answers its five empty lists.
+      if (prop === 'listManagedSyncOrphanRows') return async () => ({ cursors: [], failures: [], passes: [], retiredCursors: [], retiredFailures: [] });
       return async () => [];
     },
   }) as unknown as BrainEngine;

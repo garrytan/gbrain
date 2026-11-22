@@ -227,6 +227,57 @@ export async function findTakeId(tx: Raw, pageId: number, rowNum: number): Promi
   return take ? Number(take.id) : null;
 }
 
+/** The row number and stored `superseded_by` of every take on page `pageId` (the take supersession repair's stored pointers). */
+export async function listTakePointers(tx: Raw, pageId: number): Promise<Array<{ row_num: number; superseded_by: number | null }>> {
+  return tx.executeRaw<{ row_num: number; superseded_by: number | null }>(
+    'SELECT row_num, superseded_by FROM takes WHERE page_id = $1', [pageId]);
+}
+
+/**
+ * The `old_row` / `new_row` outcome text of the committed `takes_supersede` requests of page `pageId` (or, for a request
+ * that recorded no page, of `slug`) in source `sourceId`: the journal evidence of the take supersession repair.
+ */
+export async function listTakeSupersedeReceipts(tx: Raw, sourceId: string, pageId: number, slug: string): Promise<Array<{ old_row: string | null; new_row: string | null }>> {
+  return tx.executeRaw<{ old_row: string | null; new_row: string | null }>(
+    `SELECT outcome->>'old_row' AS old_row, outcome->>'new_row' AS new_row FROM persistence_requests
+      WHERE operation = 'takes_supersede' AND state = 'committed' AND source_id = $1
+        AND (page_id = $2 OR (page_id IS NULL AND slug = $3))`, [sourceId, pageId, slug]);
+}
+
+/** Sets the stored `superseded_by` of page `pageId`'s take at `rowNum` (null clears it); nothing else on the row moves. */
+export async function setTakeSupersededBy(tx: Raw, pageId: number, rowNum: number, supersededBy: number | null): Promise<void> {
+  await tx.executeRaw('UPDATE takes SET superseded_by = $3 WHERE page_id = $1 AND row_num = $2', [pageId, rowNum, supersededBy]);
+}
+
+/** One accepted take `forget` proposal with the committed `takes_remove` request that applied it (repair accepted-takes). */
+export interface AcceptedTakeRemoval {
+  proposal_id: number; source_id: string; slug: string; page_id: number; row_num: number; receipt_id: string; change: string; writer_tier: string;
+}
+
+/**
+ * The accepted `forget` proposals on takes of the sources (not proposed by `takes_remove`, their change `deactivated` or
+ * `replaced`; `proposalId` narrows to one) joined to the committed `takes_remove` request whose intent accepts them, by
+ * proposal id.
+ */
+export async function listAcceptedTakeRemovals(tx: Raw, sourceIds: readonly string[], proposalId: number | null): Promise<AcceptedTakeRemoval[]> {
+  return tx.executeRaw<AcceptedTakeRemoval>(`SELECT p.id::int AS proposal_id, r.source_id, r.slug, r.page_id::int AS page_id,
+      (r.intent->>'row_num')::int AS row_num, r.id::text AS receipt_id, p.before_state->>'change' AS change,
+      p.before_state->>'writer_tier' AS writer_tier
+    FROM trust_proposals p
+    JOIN persistence_requests r ON r.operation = 'takes_remove' AND r.state = 'committed' AND r.source_id = p.source_id
+      AND r.intent->>'trust_accept' = p.id::text AND r.page_id IS NOT NULL AND (r.intent->>'row_num') ~ '^[0-9]+$'
+    WHERE p.action = 'forget' AND p.target_table = 'takes' AND p.status = 'accepted' AND p.proposer <> 'takes_remove'
+      AND p.before_state->>'change' IN ('deactivated', 'replaced') AND p.source_id = ANY($1::text[])
+      AND ($2::bigint IS NULL OR p.id = $2::bigint)
+    ORDER BY p.id`, [[...sourceIds], proposalId]);
+}
+
+/** The id and stored trust tier of the take in row `rowNum` of page `pageId`, or null. */
+export async function readTakeRowTier(tx: Raw, pageId: number, rowNum: number): Promise<{ id: number; trust_tier: string } | null> {
+  const [row] = await tx.executeRaw<{ id: number; trust_tier: string }>('SELECT id::int AS id, trust_tier FROM takes WHERE page_id = $1 AND row_num = $2', [pageId, rowNum]);
+  return row ?? null;
+}
+
 /**
  * The two before-state statements, written out in full (no composition, so each `$n` is a static placeholder);
  * `TAKE_PREIMAGE_SQL` is the column list both carry, pinned byte-for-byte by test/engine-sql-caller-raw-sql-pins.test.ts.

@@ -97,6 +97,12 @@ The grant is one store write, so it needs no row lock. A reservation older than 
 A new signature starts a new ledger. A window is `reserved_at` in microseconds; a new window is at least one
 millisecond later than the one it replaces. An unlimited cap crosses the addon as `null`.
 
+Spent and reserved amounts keep every f64, as PGLite's DOUBLE PRECISION does: a settle can book Infinity or
+NaN (and -Infinity books 0, the caller's `Math.max(0, bookedUsd)`). The record stores each amount as its IEEE 754
+bits in hex (`"0x7ff0000000000000"`) and still reads a record holding plain numbers; across the addon a non-finite
+amount is its JavaScript name (`"Infinity"`, `"-Infinity"`, `"NaN"`). Tests: `rust/crates/gbrain-store/tests/page_embedding_budget.rs`
+and the non-finite case in `test/engine-parity/page-embedding-budget.test.ts`.
+
 A take vector counts only while its `B 'k'` row equals the take's `claim_rev`, so a claim edit makes it
 stale at once (PGLite compares `embedded_text_hash` with `md5(claim)`). `addTakesBatch` also deletes the
 vector when it changes a claim, as Postgres nulls the column; that raises the vector generation, so a warm

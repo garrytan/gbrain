@@ -15,6 +15,10 @@
 //! every arm books the same floats. A reservation older than an hour is counted as spent, never
 //! released. A reservation window is `reserved_at` in microseconds, as text; a settle books only
 //! while the window it reserved in is still open.
+//!
+//! Money is stored bit-exact ([`exact_f64`]): PGLite and Postgres keep a DOUBLE PRECISION, which
+//! holds Infinity, -Infinity and NaN, and a settle can book them. A JSON number cannot, so the record
+//! writes each amount as its IEEE 754 bits and still reads a record that holds plain numbers.
 
 use crate::error::{CONSTRAINT_VIOLATION, StoreError};
 use crate::kv::{KvRead, KvWrite};
@@ -43,7 +47,9 @@ pub(crate) struct BudgetRecord {
     state: String,
     reason: Option<String>,
     embedding_signature: Option<String>,
+    #[serde(with = "exact_f64")]
     spent_usd: f64,
+    #[serde(with = "exact_f64")]
     reserved_usd: f64,
     reserved_at: Option<i64>,
     unpriced_calls: i64,
@@ -105,7 +111,9 @@ pub struct ReserveInput {
 #[serde(rename_all = "camelCase")]
 pub struct SettleInput {
     pub window: Option<String>,
+    #[serde(deserialize_with = "exact_f64::deserialize")]
     pub reserved_usd: f64,
+    #[serde(deserialize_with = "exact_f64::deserialize")]
     pub booked_usd: f64,
     pub unpriced_calls: i64,
 }
@@ -166,8 +174,8 @@ impl Store {
             "state": row.as_ref().map(|r| r.state.clone()),
             "reason": row.as_ref().and_then(|r| r.reason.clone()),
             "embedding_signature": row.as_ref().and_then(|r| r.embedding_signature.clone()),
-            "spent_usd": row.as_ref().map(|r| r.spent_usd),
-            "reserved_usd": row.as_ref().map(|r| r.reserved_usd),
+            "spent_usd": row.as_ref().map(|r| exact_f64::to_value(r.spent_usd)),
+            "reserved_usd": row.as_ref().map(|r| exact_f64::to_value(r.reserved_usd)),
             "cap_usd": row.as_ref().and_then(|r| r.cap_usd),
             "unpriced_calls": row.as_ref().map(|r| r.unpriced_calls),
             "reservation_window": row.as_ref().and_then(BudgetRecord::window),
@@ -347,7 +355,12 @@ impl Store {
             } else {
                 row.reserved_usd -= settle.reserved_usd;
             }
-            row.spent_usd += settle.booked_usd.max(0.0);
+            // `spent_usd + Math.max(0, bookedUsd)`: JavaScript's max keeps NaN, Rust's drops it.
+            row.spent_usd += if settle.booked_usd.is_nan() {
+                f64::NAN
+            } else {
+                settle.booked_usd.max(0.0)
+            };
             row.unpriced_calls += settle.unpriced_calls;
             row.updated_at = now;
             put_json(tx, &key, &row)
@@ -358,4 +371,112 @@ impl Store {
 /// Deletes the page's ledger record (`embeddings::remove_page_rows`).
 pub(crate) fn remove_page_budget(tx: &mut dyn KvWrite, page_id: u64) -> Result<()> {
     tx.delete(&budget_key(page_id))
+}
+
+/// An f64 that keeps every value, Infinity, -Infinity and NaN included, bit for bit.
+///
+/// Stored as the IEEE 754 bits in hex (`"0x7ff0000000000000"`); a stored plain JSON number (records
+/// written before this encoding) still reads. Across the addon a finite value is a number and a
+/// non-finite one is the string `"Infinity"`, `"-Infinity"` or `"NaN"`, as JavaScript spells it
+/// (`src/core/rust-engine/store-members/page-embedding-budget.ts`).
+pub(crate) mod exact_f64 {
+    use serde::de::{Deserializer, Error};
+    use serde::{Deserialize, Serializer};
+    use serde_json::{Value, json};
+
+    pub fn serialize<S: Serializer>(value: &f64, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&format!("0x{:016x}", value.to_bits()))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
+        match Value::deserialize(d)? {
+            Value::Number(n) => n
+                .as_f64()
+                .ok_or_else(|| D::Error::custom("an amount is not a number")),
+            Value::String(s) => {
+                parse(&s).ok_or_else(|| D::Error::custom(format!("an amount is not a number: {s}")))
+            }
+            other => Err(D::Error::custom(format!(
+                "an amount is not a number: {other}"
+            ))),
+        }
+    }
+
+    /// The stored bits, or JavaScript's name of a non-finite number.
+    pub fn parse(s: &str) -> Option<f64> {
+        match s {
+            "Infinity" => Some(f64::INFINITY),
+            "-Infinity" => Some(f64::NEG_INFINITY),
+            "NaN" => Some(f64::NAN),
+            _ => {
+                let hex = s.strip_prefix("0x")?;
+                (hex.len() == 16)
+                    .then(|| u64::from_str_radix(hex, 16).ok().map(f64::from_bits))
+                    .flatten()
+            }
+        }
+    }
+
+    /// The value as the addon returns it: a number, or the name of a non-finite one.
+    pub fn to_value(value: f64) -> Value {
+        if value.is_finite() {
+            json!(value)
+        } else if value.is_nan() {
+            json!("NaN")
+        } else if value > 0.0 {
+            json!("Infinity")
+        } else {
+            json!("-Infinity")
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BudgetRecord, exact_f64};
+
+    #[test]
+    fn every_f64_round_trips_bit_exact() {
+        let quiet_nan_payload = f64::from_bits(0x7ff8_0000_0000_0001);
+        for v in [
+            0.0,
+            -0.0,
+            0.1,
+            1e-300,
+            f64::MAX,
+            f64::MIN_POSITIVE,
+            5e-324,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+            quiet_nan_payload,
+        ] {
+            let mut row = BudgetRecord::new(1);
+            row.spent_usd = v;
+            row.reserved_usd = v;
+            let back: BudgetRecord =
+                serde_json::from_slice(&serde_json::to_vec(&row).unwrap()).unwrap();
+            assert_eq!(back.spent_usd.to_bits(), v.to_bits(), "{v}");
+            assert_eq!(back.reserved_usd.to_bits(), v.to_bits(), "{v}");
+        }
+    }
+
+    #[test]
+    fn a_record_with_plain_numbers_still_reads() {
+        let old = br#"{"state":"open","reason":null,"embedding_signature":"m:1","spent_usd":0.875,"reserved_usd":0.25,"reserved_at":7,"unpriced_calls":1,"cap_usd":2.0,"updated_at":9}"#;
+        let row: BudgetRecord = serde_json::from_slice(old).unwrap();
+        assert_eq!(row.spent_usd, 0.875);
+        assert_eq!(row.reserved_usd, 0.25);
+    }
+
+    #[test]
+    fn the_addon_spells_non_finite_numbers_as_javascript_does() {
+        assert_eq!(exact_f64::to_value(f64::INFINITY), "Infinity");
+        assert_eq!(exact_f64::to_value(f64::NEG_INFINITY), "-Infinity");
+        assert_eq!(exact_f64::to_value(f64::NAN), "NaN");
+        assert_eq!(exact_f64::to_value(0.5), 0.5);
+        assert!(exact_f64::parse("NaN").unwrap().is_nan());
+        assert_eq!(exact_f64::parse("0x7ff0000000000000"), Some(f64::INFINITY));
+        assert_eq!(exact_f64::parse("bogus"), None);
+    }
 }

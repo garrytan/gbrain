@@ -49,7 +49,7 @@ interface Details { brain_total: number; by_source: Record<string, number>; samp
 
 /** The source's checkout, found the way the purge's trailer scan finds it; null for a repo-less source. */
 async function checkoutRoot(engine: BrainEngine, sourceId: string): Promise<string | null> {
-  const [source] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id = $1', [sourceId]);
+  const source = await engine.getSource(sourceId);
   const root = source?.local_path || (sourceId === 'default' ? await engine.getConfig('sync.repo_path') : null);
   return root && isAbsolute(root) ? root : null;
 }
@@ -62,8 +62,7 @@ async function readCommit(gitRoot: string, sha: string): Promise<TrailerCommit |
 
 /** Every stored change reason of the source that is the trailer text of one of its tombstoned (commit, path) pairs. Read-only. */
 export async function findLeakedChangeReasons(engine: BrainEngine, sourceId: string): Promise<LeakedReasonScan> {
-  const tombstones = await engine.executeRaw<{ commit_sha: string; path: string }>(
-    'SELECT commit_sha, path FROM reason_purge_tombstones WHERE source_id = $1 ORDER BY commit_sha, path', [sourceId]);
+  const tombstones = await engine.readReasonPurgeTombstones(sourceId);
   const root = await checkoutRoot(engine, sourceId);
   if (!root) return { rows: [], unreadable_commit: tombstones.length, without_checkout: true };
   const repo = tombstones.length ? gitTopLevel(root) : null;
@@ -85,18 +84,16 @@ export async function findLeakedChangeReasons(engine: BrainEngine, sourceId: str
     pathsByText.set(text, paths);
   }
   if (!pathsByText.size) return { rows: [], unreadable_commit: unreadable, without_checkout: false };
-  const rows = await engine.executeRaw<{ id: number | string; slug: string; source_path: string | null; reason: string }>(
-    `SELECT v.id, p.slug, v.source_path, v.change_reason AS reason FROM page_versions v JOIN pages p ON p.id = v.page_id
-      WHERE p.source_id = $1 AND v.change_reason = ANY($2::text[]) ORDER BY v.id`, [sourceId, [...pathsByText.keys()]]);
+  const rows = await engine.listVersionsByChangeReason(sourceId, [...pathsByText.keys()]);
   return {
-    rows: rows.map(row => ({ id: Number(row.id), source_id: sourceId, slug: row.slug, text: row.reason,
+    rows: rows.map(row => ({ id: row.id, source_id: sourceId, slug: row.slug, text: row.reason,
       class: row.source_path !== null && !sharedTexts.has(row.reason) && pathsByText.get(row.reason)!.has(row.source_path) ? 'evidenced' : 'path_mismatch' })),
     unreadable_commit: unreadable, without_checkout: false,
   };
 }
 
 async function previewCommand(engine: BrainEngine, sourceIds: string[], includeAmbiguous: boolean): Promise<string> {
-  const [{ n }] = await engine.executeRaw<{ n: number | string }>('SELECT count(*)::int AS n FROM sources WHERE archived IS NOT TRUE');
+  const n = (await engine.listAllSources()).length;
   return `gbrain repair ${COMMAND}${sourceIds.length === 1 && Number(n) > 1 ? ` --source ${sourceIds[0]}` : ''}${includeAmbiguous ? ' --include-ambiguous' : ''}`;
 }
 
@@ -105,8 +102,7 @@ function batchItems(batches: Approved[], hash: string): BatchItem[] {
     action: `set ${batch.rows.length} leaked change reason(s) to '${PURGED_REASON}'`, batch, hash, last: index === batches.length - 1 }));
 }
 
-const sourcesOf = (engine: BrainEngine, ids: string[]) => engine.executeRaw<{ id: string; incarnation: string }>(
-  'SELECT id, incarnation::text AS incarnation FROM sources WHERE id = ANY($1::text[]) ORDER BY id', [ids]);
+const sourcesOf = (engine: BrainEngine, ids: string[]) => engine.listSourceIncarnations(ids);
 
 const itemName = (row: LeakedReason) => `${row.source_id}:${row.slug}@v${row.id}`;
 
@@ -187,12 +183,9 @@ export const purgedChangeReasonsRepair: RepairHandler = {
  * text it found) to '[purged]' only while it holds exactly that text. Nothing outside the approved ids is written.
  */
 async function clearBatch(tx: BrainEngine, batch: Approved, still: Array<{ id: number; text: string }>): Promise<{ cleared: number[]; changed: number[] }> {
-  await tx.executeRaw('SELECT id FROM sources WHERE id = $1 FOR UPDATE', [batch.source_id]);
+  await tx.lockSourceRow(batch.source_id);
   const ids = batch.rows.map(row => row.id);
-  const cleared = still.length ? (await tx.executeRaw<{ id: number | string }>(
-    `UPDATE page_versions v SET change_reason = $1 FROM pages p, unnest($3::bigint[], $4::text[]) AS t(id, reason)
-      WHERE p.id = v.page_id AND p.source_id = $2 AND v.id = t.id AND v.change_reason = t.reason RETURNING v.id`,
-    [PURGED_REASON, batch.source_id, still.map(row => row.id), still.map(row => row.text)])).map(row => Number(row.id)) : [];
+  const cleared = await tx.replaceVersionChangeReasons(batch.source_id, still.map(row => ({ id: row.id, reason: row.text })), PURGED_REASON);
   const done = new Set(cleared);
-  return { cleared: cleared.sort((a, b) => a - b), changed: ids.filter(id => !done.has(id)) };
+  return { cleared, changed: ids.filter(id => !done.has(id)) };
 }

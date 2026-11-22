@@ -3,7 +3,8 @@
 //! `pages.contextual_retrieval_mode` / `pages.corpus_generation` columns.
 //!
 //! Members: updateSlug, resolveSlugWithAlias, resolveSlugWithAliasDetailed, resolveAliases,
-//! setPageAliases, replaceDerivedAliases, updatePageContextualRetrievalState, aliasCanonicalRefs.
+//! setPageAliases, replaceDerivedAliases, updatePageContextualRetrievalState, aliasCanonicalRefs,
+//! listSlugAliases.
 //!
 //! Keys (every record starts with `keys::ALIAS`, `k`; text parts are joined with `0x00`):
 //!
@@ -58,6 +59,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
+
+mod orphans;
+pub use orphans::AliasTarget;
 
 const SLUG_ALIAS: u8 = 0x01;
 const PAGE_ALIAS: u8 = 0x02;
@@ -884,6 +888,29 @@ impl Store {
             }))
     }
 
+    /// `listSlugAliases(sourceId)`: every `slug_aliases` row of `source_id` as `{ alias_slug,
+    /// canonical_slug }`, in alias byte order (the SQL has no `ORDER BY`; its one caller, link
+    /// extraction, builds a map). A source id with a NUL byte names no row.
+    pub fn list_slug_aliases(&self, source_id: &str) -> Result<Vec<Value>> {
+        if has_nul(&[source_id]) {
+            return Ok(Vec::new());
+        }
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for (_, parts) in scan_tails(&*read, &prefix(SLUG_ALIAS, &[source_id]))? {
+            let [alias] = parts.as_slice() else {
+                continue;
+            };
+            if let Some(record) = read_slug_alias(&*read, source_id, alias)? {
+                out.push(serde_json::json!({
+                    "alias_slug": alias,
+                    "canonical_slug": record.canonical_slug,
+                }));
+            }
+        }
+        Ok(out)
+    }
+
     /// `updatePageContextualRetrievalState(slug, sourceId, mode, corpusGeneration)`: stamps the
     /// live page at `(sourceId, slug)` and sets its `updated_at`; anything else is left alone. The
     /// knowledge revision does not move (neither column is in the revision trigger's list). Moving a
@@ -932,9 +959,10 @@ impl Store {
     /// there is none). The page is versioned as it stood first, then moved by
     /// `pages::rename_page`; a real move records `old -> new` in the rename history and the slug aliases, moves the records
     /// other families key by slug (`cascade::rename_slug_rows`) and moves the page's alias rows. `invalid_slug` for a bad new slug, `constraint_violation` when the new
-    /// slug is taken; either keeps nothing. A segmented page (NULL body) is refused with `invalid_state` before anything
-    /// is written, as `create_version` refuses it: PGLite versions it as a reference to its live body generation, and
-    /// this store keeps no such reference, so the version would hold no body.
+    /// slug is taken; either keeps nothing. A segmented page is versioned as a reference to its live body generation
+    /// (`pages::snapshot_in`, PGLite's `insertSegmentedVersion`), so its body never moves. A NULL body with no segmented
+    /// generation behind it is refused with `invalid_state` before anything is written: PGLite's CHECK makes that row
+    /// impossible, and its version would hold no body.
     pub fn update_slug(
         &self,
         old_slug: &str,
@@ -957,10 +985,14 @@ impl Store {
             let Some(page) = read_page(&*tx, source, old_slug)? else {
                 return Ok(0);
             };
-            if page.compiled_truth.is_null() {
+            if page.compiled_truth.is_null()
+                && crate::page_body::segmented_reference(&*tx, page.id)?.is_none()
+            {
                 return Err(StoreError::new(
                     INVALID_STATE,
-                    format!("updateSlug refuses segmented page {old_slug} (source={source})"),
+                    format!(
+                        "updateSlug refuses page {old_slug} (source={source}): its body is NULL and no segmented body generation holds it"
+                    ),
                 ));
             }
             snapshot_in(tx, &*self.env, &page)?;

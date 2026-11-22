@@ -253,6 +253,7 @@ describe('generation repair reads on every engine', () => {
         [() => pg.readGenerationItemsByIds(seeded.pair), OLD.items, [seeded.pair]],
         [() => pg.readHeldGenerationProposal(seeded.heldK3), OLD.proposal, [seeded.heldK3]],
         [() => pg.listGenerationSourceIncarnations(SOURCES), OLD.incarnations, [SOURCES]],
+        // listSourceIncarnations is the sources member (engine-sql/sources.ts), pinned with the sources reads.
       ];
       for (const [call, sql, params] of singles) {
         const old = await pg.executeRaw(sql, params);
