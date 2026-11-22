@@ -75,6 +75,13 @@ describe('gbrain publish refuses frontmatter wrapped in other text', () => {
     expect(() => makeShareable(`wrapper\n--- json\n{"private": "alice-example"}\n---\n${BODY}`)).toThrow(invalid);
   });
 
+  test('wrapped frontmatter that never closes, or that holds a flow mapping, is refused', () => {
+    expect(() => makeShareable('Saved:\n---\ntype: note\nprivate: alice-example\n\n# A note\n')).toThrow(invalid);
+    expect(() => makeShareable('Saved:\n---yaml\nprivate: alice-example\n')).toThrow(invalid);
+    expect(() => makeShareable(`wrapper\n---\n{private: alice-example}\n---\n${BODY}`)).toThrow(invalid);
+    expect(makeShareable('intro\n---\nThe draft is ready.\n\nA later line.\n')).toContain('The draft is ready.');
+  });
+
   test('a language opener at the top of the page is frontmatter and is stripped', () => {
     for (const opener of ['---yml', '---yaml', '--- yaml']) expect(makeShareable(`${opener}\nprivate: alice-example\n---\n${BODY}`)).toBe(BODY.trim());
   });
