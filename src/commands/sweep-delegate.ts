@@ -18,7 +18,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { serr } from '../core/console-prefix.ts';
-import { engineLabel, hookServeOwner, type LocalBrainEngine } from '../core/persistence/resident-owner.ts';
+import { engineLabel, hookServeOwner, hookServeStillHolds, type LocalBrainEngine } from '../core/persistence/resident-owner.ts';
 import {
   IPC_UNAVAILABLE,
   readIpcSecret,
@@ -142,8 +142,7 @@ export async function maybeDelegateSweepToServe(dataDir: string, args: string[],
 
   let start = await requestSweepStart(sock, { secret, clientToken, options });
   if (start === IPC_UNAVAILABLE) {
-    const still = await hookServeOwner(engine, dataDir);
-    if (!still || !still.serve) return false;
+    if (!(await hookServeStillHolds(engine, dataDir, holder.pid))) return false;
     start = await requestSweepStart(sock, { secret, clientToken, options });
     if (start === IPC_UNAVAILABLE) {
       serr(
@@ -191,8 +190,7 @@ export async function maybeDelegateSweepToServe(dataDir: string, args: string[],
     if (s === IPC_UNAVAILABLE || 'degraded' in (s as object)) {
       failures++;
       if (failures % PID_PROBE_EVERY === 0) {
-        const still = await hookServeOwner(engine, dataDir);
-        if (!still || !still.serve) {
+        if (!(await hookServeStillHolds(engine, dataDir, holder.pid))) {
           serr(`[sweep] the serve (PID ${holder.pid}) died mid-sweep — re-run \`gbrain sweep --once\`.`);
           await setVerdict(1);
           return true;

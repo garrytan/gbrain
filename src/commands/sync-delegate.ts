@@ -47,7 +47,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { serr } from '../core/console-prefix.ts';
-import { engineLabel, hookServeOwner, localBrainEngine, type LocalBrainEngine } from '../core/persistence/resident-owner.ts';
+import { engineLabel, hookServeOwner, hookServeStillHolds, localBrainEngine, type LocalBrainEngine } from '../core/persistence/resident-owner.ts';
 import {
   IPC_UNAVAILABLE,
   hookResolveSocketForConfig,
@@ -256,8 +256,7 @@ export async function maybeDelegateSyncToServe(dataDir: string, args: string[], 
     // Race: the serve may have died between probe and connect — or it started
     // the job and the ack was lost. Re-probe; alive → ONE retry with the SAME
     // token (busy/attach semantics make it safe), dead → normal path.
-    const still = await hookServeOwner(engine, dataDir);
-    if (!still || !still.serve) return false;
+    if (!(await hookServeStillHolds(engine, dataDir, holder.pid))) return false;
     start = await requestSyncStart(sock, { secret, clientToken, options });
     if (start === IPC_UNAVAILABLE) {
       serr(
@@ -310,7 +309,7 @@ export async function maybeDelegateSyncToServe(dataDir: string, args: string[], 
 
   const polled = await pollDelegatedJob({
     sock, secret, jobId, pid: holder.pid,
-    alive: async () => { const still = await hookServeOwner(engine, dataDir); return !!still && still.serve; },
+    alive: () => hookServeStillHolds(engine, dataDir, holder.pid),
   });
   if (polled.kind === 'lost') { await setVerdict(1); return true; }
   if (polled.kind === 'failed') {

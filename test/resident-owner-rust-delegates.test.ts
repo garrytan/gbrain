@@ -40,6 +40,7 @@ import { setStdoutCapture } from '../src/core/cli-force-exit.ts';
 import { createServer, type Server } from 'node:net';
 import { ensureIpcSecret, resolveSocketPath } from '../src/core/context/resolve-ipc.ts';
 import { prepareLocalIpcPath } from '../src/core/context/ipc-path.ts';
+import { hookServeStillHolds } from '../src/core/persistence/resident-owner.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const root = mkdtempSync(join(tmpdir(), 'gbrain-rust-delegates-'));
@@ -209,5 +210,16 @@ describe('sync trigger and sweep through a Rust serve wait for its hook socket',
     expect(nudges.map(n => [n.kind, n.sourceId])).toEqual([['sync_nudge', 'default']]);
     expect(out).toContain('"action":"nudged"');
     expect(out).toContain(`"pid":${process.pid}`);
+  }), 30_000);
+
+  // Value: protects=after a lost start acknowledgment or between polls, a busy Rust owner that accepts connections but does not answer its hello in time still counts as holding the brain, so the CLI never runs an accepted sync or sweep a second time itself; fails_when=the re-check uses the one-second hello probe, which reads a busy owner as gone; why_new=an outside review reproduced a delegated sync falling back while the owner still ran it; seam=a real Unix socket that accepts and never answers, at the owner socket path; no_claim=the owner's own work
+  test('a busy Rust owner that does not answer its hello still holds the brain; a refused owner socket does not', () => inHome(async () => {
+    const stalled: Server = createServer(() => { /* accepts, never answers */ });
+    const ownerPath = prepareLocalIpcPath(ownerSocketPath(dbDir), true);
+    await new Promise<void>(resolve => stalled.listen(ownerPath, resolve));
+    try {
+      expect(await hookServeStillHolds('rust', dbDir, process.pid)).toBe(true);
+    } finally { await new Promise<void>(resolve => stalled.close(() => resolve())); }
+    expect(await hookServeStillHolds('rust', dbDir, process.pid)).toBe(false);
   }), 30_000);
 });
