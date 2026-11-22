@@ -91,6 +91,20 @@ describe('callers of frontmatterBodyOffset read the real body', () => {
     }
   });
 
+  test('the back-link fixer refuses frontmatter closed only by an indented ---', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'fence-col0-'));
+    try {
+      const page = '---\ntitle: Example\ntags:\n## Timeline\n- one\nnotes: |\n  ---\n';
+      writeFileSync(join(dir, 'target.md'), page);
+      const outcome = await fixBacklinkGaps(dir, [{ targetPage: 'target.md', sourcePage: 'source.md', sourceTitle: 'Source' } as never], false, { lockRoot: dir });
+      expect(outcome.fixed).toBe(0);
+      expect(outcome.skipped.map(s => s.page)).toEqual(['target.md']);
+      expect(readFileSync(join(dir, 'target.md'), 'utf8')).toBe(page);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('a Timeline heading quoted inside frontmatter is not the page Timeline section', () => {
     const page = '---\ntitle: Example\nnotes: |\n  ---\n  ## Timeline\n---\n# Example\n\nBody.\n';
     expect(timelineSectionOf(page, 'example')).toBe('omitted');
@@ -105,6 +119,8 @@ describe('callers of frontmatterBodyOffset read the real body', () => {
       return JSON.parse(res.content[0]!.text);
     };
     const stored = (slug: string) => engine.executeRaw<{ title: string; frontmatter: unknown }>('SELECT title, frontmatter FROM pages WHERE slug = $1', [slug]).then(r => r[0]);
+    const storedDated = (slug: string) => engine.executeRaw<{ title: string; frontmatter: unknown; effective_date: string | null }>(
+      'SELECT title, frontmatter, effective_date::text AS effective_date FROM pages WHERE slug = $1', [slug]).then(r => r[0]);
 
     beforeAll(async () => {
       engine = new PGLiteEngine();
@@ -122,6 +138,23 @@ describe('callers of frontmatterBodyOffset read the real body', () => {
       const { revision } = await ok('get_page', { slug: 'notes/fence-quoted' });
       await ok('put_page', { slug: 'notes/fence-quoted', expected_revision: revision, content: head(`|-\n${pasted}`) });
       expect(await stored('notes/fence-quoted')).toEqual(await stored('notes/fence-plain'));
+    }, 120_000);
+
+    test('unfencing that title keeps a naive date in the brain timezone', async () => {
+      await engine.setConfig('brain.timezone', 'America/Los_Angeles');
+      try {
+        const head = (title: string) => `---\ntype: note\ndate: 2026-10-03 23:30:00\nnotes: |\n  public line\n  ---\n  second line\ntitle: ${title}\n---\n\nPasted body.\n`;
+        await ok('put_page', { slug: 'notes/tz-plain', content: head('Pasted') });
+        await ok('put_page', { slug: 'notes/tz-quoted', content: '---\ntype: note\ntitle: Old\n---\n\nOld body.\n' });
+        const pasted = fenceTranscriptText('Pasted', 'notes/tz-quoted').split('\n').map(l => `  ${l}`).join('\n');
+        const { revision } = await ok('get_page', { slug: 'notes/tz-quoted' });
+        await ok('put_page', { slug: 'notes/tz-quoted', expected_revision: revision, content: head(`|-\n${pasted}`) });
+        const [plain, unfenced] = [await storedDated('notes/tz-plain'), await storedDated('notes/tz-quoted')];
+        expect(plain!.effective_date?.startsWith('2026-10-04 06:30:00')).toBe(true);
+        expect(unfenced).toEqual(plain);
+      } finally {
+        await engine.setConfig('brain.timezone', '');
+      }
     }, 120_000);
   });
 });
