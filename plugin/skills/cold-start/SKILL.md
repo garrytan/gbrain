@@ -133,18 +133,21 @@ them at request time, enforces policies, and logs everything.
    export CLAWVISOR_AGENT_TOKEN="<token>"
    ```
 4. Activate Google services (Gmail, Calendar, Contacts) in the dashboard
-5. Create a standing task with expansive scope:
-   > "Full brain bootstrapping: read emails, calendar events, and contacts to
-   > populate knowledge base. List, read, and search across all connected accounts."
+5. Create a standing task with the narrowest scope that does the job:
+   > "Brain bootstrapping, read-only: list, read, and search emails, calendar
+   > events, and contacts in the accounts the user named, to populate the
+   > knowledge base."
 6. Save the standing task ID the same way:
    ```bash
    export CLAWVISOR_TASK_ID="<task_id>"
    ```
 
-**Critical scoping rule:** Be expansive in task purposes. "Email triage" gets
-rejected by intent verification. "Full executive assistant email management
-including inbox triage, searching by any criteria, reading emails, tracking
-threads" works. The intent model uses the purpose to judge each request.
+**Scoping rule:** Ask for the narrowest scope and purpose that does the job,
+and state it plainly: what the agent reads, from which accounts, and why.
+Don't pad the purpose to get more requests approved. The intent model uses
+the purpose to judge each request; when it blocks one the user actually
+needs, tell the user what was blocked and widen the task then, with their
+agreement.
 
 ### If the user declines ClawVisor
 
