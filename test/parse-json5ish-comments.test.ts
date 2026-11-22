@@ -23,6 +23,11 @@ describe('parseJson5ish', () => {
       .toEqual({ url: 'http://example.invalid/a', note: 'x: y // z', q: 'say "hi"', e: 'a\nb', s: "it's" });
   });
 
+  test('a raw tab inside a string and old Mac (CR-only) line endings', () => {
+    expect(parseJson5ish("{ a: 'x\ty', b: \"p\tq\" }")).toEqual({ a: 'x\ty', b: 'p\tq' });
+    expect(parseJson5ish('// header\r{\r  // x\r  a: 1,\r}\r')).toEqual({ a: 1 });
+  });
+
   test('a realistic config with comments everywhere', () => {
     const text = `// OpenClaw config
 {

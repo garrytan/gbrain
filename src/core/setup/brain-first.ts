@@ -184,7 +184,9 @@ export function openclawConfigPath(): string {
 }
 
 /** One JSON5 token: a double- or single-quoted string, a line or block comment, or a bare key before its colon. */
-const JSON5_TOKEN = /"(?:[^"\\\n]|\\.)*"|'((?:[^'\\\n]|\\.)*)'|\/\/[^\n]*|\/\*[\s\S]*?\*\/|([A-Za-z_$][\w$-]*)(?=\s*:)/g;
+const JSON5_TOKEN = /"(?:[^"\\\n\r]|\\.)*"|'((?:[^'\\\n\r]|\\.)*)'|\/\/[^\n\r]*|\/\*[\s\S]*?\*\/|([A-Za-z_$][\w$-]*)(?=\s*:)/g;
+/** JSON5 strings may hold raw control characters such as a tab; JSON needs them escaped. */
+const escapeControlChars = (s: string): string => s.replace(/[\u0000-\u001f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
 
 /**
  * openclaw.json is JSON5. One left-to-right scan skips strings and comments
@@ -194,8 +196,9 @@ const JSON5_TOKEN = /"(?:[^"\\\n]|\\.)*"|'((?:[^'\\\n]|\\.)*)'|\/\/[^\n]*|\/\*[\
  */
 export function parseJson5ish(text: string): unknown {
   const json = text.replace(JSON5_TOKEN, (m, single: string | undefined, key: string | undefined) => {
-    if (single !== undefined) return `"${single.replace(/\\.|"/g, (s) => (s === '"' ? '\\"' : s === "\\'" ? "'" : s))}"`;
-    return key !== undefined ? `"${key}"` : m;
+    if (single !== undefined) return `"${escapeControlChars(single.replace(/\\.|"/g, (s) => (s === '"' ? '\\"' : s === "\\'" ? "'" : s)))}"`;
+    if (key !== undefined) return `"${key}"`;
+    return m.startsWith('"') ? escapeControlChars(m) : m;
   });
   const errors: ParseError[] = [];
   const value = parseJsonc(json, errors, { allowTrailingComma: true });
