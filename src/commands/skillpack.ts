@@ -116,6 +116,9 @@ Removed in v0.33 (use migrate-fence to upgrade, then \`scaffold\`):
                   skills/<slug>/ directory (the files are yours).
 `;
 
+/** Every subcommand runSkillpack dispatches; the switch below handles each one, and scripts/build-public-surface.ts reads the promised ones from here. */
+export const SKILLPACK_SUBCOMMANDS = ['list', 'scaffold', 'reference', 'pin', 'unpin', 'restore', 'status', 'sync', 'setup', 'migrate-fence', 'scrub-legacy-fence-rows', 'harvest', 'diff', 'check', 'health', 'search', 'info', 'registry', 'doctor', 'init', 'init-brain-pack', 'pack', 'endorse', 'remove', 'install', 'uninstall'] as const;
+
 export async function runSkillpack(args: string[]): Promise<void> {
   const sub = args[0];
   const rest = args.slice(1);
@@ -123,7 +126,8 @@ export async function runSkillpack(args: string[]): Promise<void> {
     console.log(HELP_TOP);
     process.exit(0);
   }
-  switch (sub) {
+  const known = sub as (typeof SKILLPACK_SUBCOMMANDS)[number];
+  switch (known) {
     case 'list':
       await cmdList(rest);
       return;
@@ -215,10 +219,12 @@ export async function runSkillpack(args: string[]): Promise<void> {
       );
       process.exit(2);
       return;
-    default:
-      console.error(`Unknown subcommand: ${sub}\n`);
+    default: {
+      const unhandled: never = known;
+      console.error(`Unknown subcommand: ${unhandled}\n`);
       console.error(HELP_TOP);
       process.exit(2);
+    }
   }
 }
 

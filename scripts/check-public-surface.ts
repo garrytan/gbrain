@@ -39,7 +39,7 @@ export const NO_BEHAVIOR_CHANGE = /<!--\s*public-surface:\s*no-behavior-change:\
 const NOTICE_DAYS = 14;
 const SEE = 'See:  docs/STABILITY.md#what-stays-the-same-on-stable and deprecations.d/README.md';
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
-const RECORD_SURFACES: readonly string[] = [...SURFACES, 'page-format', 'json-field'];
+const RECORD_SURFACES: readonly string[] = [...SURFACES, 'page-format'];
 
 export interface Deprecation { id: string; surface: string; name: string; owner: string; remove_after: string }
 
