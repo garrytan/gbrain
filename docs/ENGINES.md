@@ -916,8 +916,8 @@ or `--http`) holds it, page and fact writes from the CLI (`gbrain put`,
 `entity`, `search-exact` and `gbrain waiting`) go through the
 running server and print what they print with no server running. A read run
 with a read-affecting `GBRAIN_*` variable or provider key the server does not
-share stays with the refusal below, so it never answers with the server's
-settings. Commands
+share stays with the refusal below. Edits to `config.json` reach the server's
+answers only after the server restarts. Commands
 that need the database to themselves, which includes the admin commands
 (`gbrain access …`, `gbrain sources …`, `gbrain auth …`) and the remaining reads,
 refuse with `pglite_busy` reason `live_serve`. The refusal names the server's
