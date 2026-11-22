@@ -103,4 +103,39 @@ describe('engine parity: the folder-source sync stamp', () => {
     expect(out).toEqual({ other: false, afterOther: 'unset', upper: true, afterOwn: 'set', unknown: false, malformed: 'refused' });
     return out;
   });
+
+  parityTest('markSourceSynced with newestContentAt sets the newest content time, keeps it for null, and obeys the incarnation guard', { methods: ['markSourceSynced', 'getSource', 'listSourceRecords', 'readSourceMembership'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'feed-a', {}, '/srv/brain/feed-a');
+    const incarnation = (await engine.readSourceMembership('feed-a'))!.incarnation;
+    const newest = async () => {
+      const row = (await engine.listSourceRecords()).find(r => r.id === 'feed-a');
+      const at = row?.newest_content_at;
+      return at === null || at === undefined ? null : new Date(at).toISOString();
+    };
+    const before = Date.now();
+    // A connector's clean run (github, google): the newest item's time.
+    const set = await engine.markSourceSynced('feed-a', { newestContentAt: '2026-03-04T05:06:07.000Z' });
+    const afterSet = { newest: await newest(), synced: stamp((await engine.getSource('feed-a'))?.last_sync_at, before) };
+    // A run that saw nothing newer (meetings, slack, imessage pass null): COALESCE keeps the stored time.
+    const kept = await engine.markSourceSynced('feed-a', { newestContentAt: null });
+    const afterNull = await newest();
+    // A time with an offset is the same instant.
+    await engine.markSourceSynced('feed-a', { newestContentAt: '2026-05-06T09:08:09+02:00' });
+    const afterOffset = await newest();
+    // The managed connector sync (lane 7) guards with its incarnation: another one changes nothing.
+    const other = await engine.markSourceSynced('feed-a', { incarnation: 'f0000000-0000-4000-8000-000000000000', newestContentAt: '2027-01-01T00:00:00.000Z' });
+    const afterOther = await newest();
+    const own = await engine.markSourceSynced('feed-a', { incarnation, newestContentAt: '2027-01-01T00:00:00.000Z' });
+    const afterOwn = await newest();
+    // Refused as an input error: Rust's invalid_argument, the cast's SQLSTATE on PGLite, or postgres.js refusing an
+    // unparsable timestamp before it sends it (RangeError "Invalid Date").
+    const badTime = await engine.markSourceSynced('feed-a', { newestContentAt: 'not a time' }).then(() => 'answered', (e: { code?: string; message?: string }) =>
+      e?.code === 'invalid_argument' || e?.code === '22007' || e?.code === '22008' || (e instanceof RangeError && /Invalid Date/.test(e.message)) ? 'refused' : `other: ${String(e)}`);
+    const out = { set, afterSet, kept, afterNull, afterOffset, other, afterOther, own, afterOwn, badTime };
+    expect(out).toEqual({
+      set: true, afterSet: { newest: '2026-03-04T05:06:07.000Z', synced: 'set' }, kept: true, afterNull: '2026-03-04T05:06:07.000Z',
+      afterOffset: '2026-05-06T07:08:09.000Z', other: false, afterOther: '2026-05-06T07:08:09.000Z', own: true, afterOwn: '2027-01-01T00:00:00.000Z', badTime: 'refused',
+    });
+    return out;
+  });
 });

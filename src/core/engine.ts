@@ -1666,8 +1666,6 @@ export interface BrainEngine {
   readSourceChunkerVersion(sourceId: string): Promise<string | null>;
   /** Stamps the source's chunker version; an unknown source changes nothing (engine-sql/sources.ts). */
   setSourceChunkerVersion(sourceId: string, version: string): Promise<void>;
-  /** Sets the source's last sync time to now; false for an unknown source, which changes nothing (engine-sql/sources.ts). */
-  markSourceSynced(sourceId: string, opts?: SourceSyncStampOptions): Promise<boolean>;
   /** Advances the sync anchor: last_commit, last_sync_at and, when given, newest_content_at (null clears it); an unknown source changes nothing (engine-sql/sources.ts). */
   advanceSourceCommit(sourceId: string, commit: string, newestContentAt?: string | null): Promise<void>;
   /** The 0-change sync heartbeat: `last_sync_at` = now, the commit anchor untouched. An unknown source changes nothing. */
@@ -1678,6 +1676,8 @@ export interface BrainEngine {
   readPageIdentity(pageId: number): Promise<PageIdentityRow | null>;
   /** The commit the source's last sync advanced to, or null before the first sync and for an unknown source (engine-sql/sources.ts). */
   readSourceLastCommit(sourceId: string): Promise<string | null>;
+  /** Sets the source's last sync time to now; false for an unknown source, which changes nothing (engine-sql/sources.ts). */
+  markSourceSynced(sourceId: string, opts?: SourceSyncStampOptions): Promise<boolean>;
   /** Pages of one source, soft-deleted pages only with `includeDeleted`; an unknown source has none (engine-sql/sources.ts). */
   countSourcePages(sourceId: string, opts?: { includeDeleted?: boolean }): Promise<number>;
   /** Inserts one source row (id, name, local_path, config); a taken id or name throws and writes nothing. */

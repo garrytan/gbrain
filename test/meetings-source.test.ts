@@ -110,6 +110,10 @@ describe('repo-less brain (record: database)', () => {
     expect(byTitle['Weekly planning']!.body).toContain('Summary of Weekly planning.');
     const [cursor] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM op_checkpoints WHERE op=$1', [CONNECTOR_DB_CURSOR_OP]);
     expect(cursor!.n).toBeGreaterThan(0);
+    // A clean run on an unmanaged brain stamps the last sync time and the newest content time (markSourceSynced).
+    const stamped = (await engine.listSourceRecords()).find(r => r.id === id)!;
+    expect(stamped.last_sync_at).not.toBeNull();
+    expect(stamped.newest_content_at ?? null).not.toBeNull();
 
     const again = await runMeetingsSync(engine, id, cfg, options, { provider: provider(fake), now: () => NOW + 60_000 });
     expect(again.added + again.modified + again.deleted).toBe(0);

@@ -126,11 +126,14 @@ impl From<SourceRecord> for SourceDetailRow {
     }
 }
 
-/// `markSourceSynced` options: `incarnation` stamps only a source still of that incarnation.
+/// `markSourceSynced` options: `incarnation` stamps only a source still of that incarnation;
+/// `newest_content_at` (timestamptz text) also sets the newest content time, and null or absent
+/// keeps it (`COALESCE($n::timestamptz, newest_content_at)`).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct SourceSyncStampOptions {
     pub incarnation: Option<String>,
+    pub newest_content_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -381,36 +384,6 @@ impl Store {
         })
     }
 
-    /// `markSourceSynced(id)`: sets the source's last sync time to the store clock, the stamp a
-    /// clean `gbrain import` of a folder source makes. Returns whether the source exists; an
-    /// unknown id changes nothing. Mirrors `markSourceSynced` (`last_sync_at = now()`).
-    pub fn mark_source_synced(&self, id: &str, options: &SourceSyncStampOptions) -> Result<bool> {
-        // `incarnation = $2::uuid`: a malformed id is refused as the cast refuses it; case does not matter.
-        let incarnation = match options.incarnation.as_deref() {
-            None => None,
-            Some(text) if crate::env::is_uuid(text) => Some(text.to_lowercase()),
-            Some(text) => {
-                return Err(StoreError::invalid(format!(
-                    "invalid input syntax for type uuid: \"{text}\""
-                )));
-            }
-        };
-        self.write(|tx| {
-            let Some(mut record) = read_source(&*tx, id)? else {
-                return Ok(false);
-            };
-            if incarnation
-                .as_deref()
-                .is_some_and(|want| record.incarnation.to_lowercase() != want)
-            {
-                return Ok(false);
-            }
-            record.last_sync_at_us = Some(self.env.now_micros());
-            put_json(tx, &source_key(id), &record)?;
-            Ok(true)
-        })
-    }
-
     /// `writeSourceSyncHeartbeat(sourceId)`: stamps `last_sync_at` with the store clock and leaves
     /// the commit anchor alone (the 0-change sync heartbeat). An unknown source changes nothing.
     pub fn write_source_sync_heartbeat(&self, source_id: &str) -> Result<()> {
@@ -444,6 +417,44 @@ impl Store {
             record.upstream_commit = Some(commit.to_owned());
             record.upstream_behind = behind;
             put_json(tx, &source_key(source_id), &record)
+        })
+    }
+
+    /// `markSourceSynced(id)`: sets the source's last sync time to the store clock, the stamp a
+    /// clean `gbrain import` of a folder source makes. Returns whether the source exists; an
+    /// unknown id changes nothing. Mirrors `markSourceSynced` (`last_sync_at = now()`).
+    pub fn mark_source_synced(&self, id: &str, options: &SourceSyncStampOptions) -> Result<bool> {
+        // `incarnation = $2::uuid`: a malformed id is refused as the cast refuses it; case does not matter.
+        let incarnation = match options.incarnation.as_deref() {
+            None => None,
+            Some(text) if crate::env::is_uuid(text) => Some(text.to_lowercase()),
+            Some(text) => {
+                return Err(StoreError::invalid(format!(
+                    "invalid input syntax for type uuid: \"{text}\""
+                )));
+            }
+        };
+        let newest = options
+            .newest_content_at
+            .as_deref()
+            .map(|text| crate::persistence::parse_timestamptz(text, "newest_content_at"))
+            .transpose()?;
+        self.write(|tx| {
+            let Some(mut record) = read_source(&*tx, id)? else {
+                return Ok(false);
+            };
+            if incarnation
+                .as_deref()
+                .is_some_and(|want| record.incarnation.to_lowercase() != want)
+            {
+                return Ok(false);
+            }
+            record.last_sync_at_us = Some(self.env.now_micros());
+            if newest.is_some() {
+                record.newest_content_at_us = newest;
+            }
+            put_json(tx, &source_key(id), &record)?;
+            Ok(true)
         })
     }
 

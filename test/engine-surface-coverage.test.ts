@@ -122,11 +122,11 @@ const INTERFACE_METHODS: readonly string[] = [
   'listAllPageRefs', 'listEntityKeyRows', 'listIdentityDecisions', 'listRestrictedIdentityMembers', 'applyIdentityDecisions', 'listAllSources', 'listSourceLocalPaths', 'listLocalPathSources', 'listSourceRoutingRows', 'countDefaultSourceSplit', 'updateSourceConfig', 'getSource', 'readSourceDeleteImpact', 'deleteSourceRecord', 'listStaleSyncSourceIds', 'readSourceRow', 'lockSourceRow', 'readSourceChunkerVersion', 'setSourceChunkerVersion', 'countSourcePages', 'insertSource', 'listPrefixSampledPages', 'listCorpusSample', 'markSourceSynced',
   'readPlainSyncSource', 'readOwnerOnlySourcesPresent', 'readOwnerOnlySourceConfig',
   'countRepoBoundSources', 'listNotifierHostSourceRows', 'advanceSourceCommit', 'listSourcePathPages', 'listQuarantinedSlugs', 'readRenameIdentityRows', 'readLiveIdentityHolders', 'readPageSizeRows', 'holdPageEmbedding', 'readReasonPurgeTombstones', 'writeReasonPurgeTombstones',
+  'readSoleSourceId', 'readFirstSourceId', 'lockAllSourceRows', 'listSourceIds', 'advanceSourcePurgeEpoch', 'readPageIdentity',
+  'writeSourceSyncHeartbeat', 'writeSourceUpstreamObservation',
   // Hybrid search reads (engine-sql/search-reads.ts) and the onboarding signal count (engine-sql/health.ts)
   'cosinesByChunkIds', 'hasSupersedeEdges', 'supersedingPageSlugs', 'aliasCanonicalRefs', 'pageCollapseFacts', 'slugsEndingIn',
   'generatedPagesIn', 'livePageIdsAt', 'pagesLinkingTo', 'countOnboardSignal', 'countBrainLivePages', 'countLivePagesBySource', 'countChunksBySource', 'readBrainMaturity',
-  'readSoleSourceId', 'readFirstSourceId', 'lockAllSourceRows', 'listSourceIds', 'advanceSourcePurgeEpoch', 'readPageIdentity',
-  'writeSourceSyncHeartbeat', 'writeSourceUpstreamObservation',
   // Graph and doctor link reads (engine-sql/link-reads.ts)
   'inboundLinkCoverage', 'listJunkEntityHubs', 'countEntityPages', 'entityGraphCoverage', 'entityFeatureCoverage', 'countDatedMeetingPages', 'countForeignEdges',
   'listLivePageSummaries', 'countInboundLinks', 'readEntityInboundEdges', 'listLinkEndpointPages', 'listPagesTitledIn', 'wordLexemes',

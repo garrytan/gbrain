@@ -329,11 +329,11 @@ src/core/function-search-path.ts	execute_raw	3
 src/core/ghost-pages.ts	execute_raw	1
 src/core/git/redact-finish.ts	execute_raw	8	GST-2988 PR 2 publish redaction finish: reads sources.local_path and persistence_host_bindings to find the checkout that owns a pushed root, reads and compare-and-sets sources.last_commit to the rebuilt sha, and lists persistence_effects worktree ids to remap parked effects; branched before the #9641 ratchet; no typed engine method for these source and effect reads exists yet
 src/core/git/untrack-admission.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
-src/core/github-source.ts	execute_raw	3
+src/core/github-source.ts	execute_raw	2
 src/core/google/attachment-backfill.ts	execute_raw	2
 src/core/google/counterparty.ts	execute_raw	1
 src/core/google/file-modes.ts	execute_raw	1
-src/core/google/google-source.ts	execute_raw	4
+src/core/google/google-source.ts	execute_raw	3
 src/core/google/loop-catchup.ts	execute_raw	8
 src/core/google/loops-exclusion.ts	execute_raw	4
 src/core/google/loops-extract.ts	execute_raw	1
@@ -361,7 +361,7 @@ src/core/guests/stamp-readable.ts	execute_raw	1
 src/core/heal-audit.ts	execute_raw	3
 src/core/identity/owner.ts	execute_raw	4	GST-3216 PR 1: the owner identity resolver reads members, member links, member source bindings and Google source accounts across the access tables in one derived pass with no cache; it moves behind a typed access read when the access tables get engine methods
 src/core/identity/speaker-owner.ts	execute_raw	2	GST-3216 PR 2: the speaker-owner trust read joins a page's live revision to its write request, source kind and member bindings in one statement, and the connector stamp reads a source's bound members; both move behind typed reads when the access and journal tables get engine methods
-src/core/imessage/imessage-source.ts	execute_raw	3	#9634, pre-ratchet: reads the source row (incarnation, local_path, config), checks a page slug exists, and stamps sources.last_sync_at/newest_content_at; no typed engine method exists yet
+src/core/imessage/imessage-source.ts	execute_raw	2	#9634, pre-ratchet: reads the source row (incarnation, local_path, config), checks a page slug exists, and stamps sources.last_sync_at/newest_content_at; no typed engine method exists yet
 src/core/import-chunk-reuse.ts	execute_raw	1
 src/core/import-file.ts	execute_raw	1
 src/core/import-identity.ts	execute_raw	1
@@ -374,7 +374,7 @@ src/core/link-source-check-repair.ts	execute_raw	3
 src/core/links-fence-projection.ts	execute_raw	8
 src/core/loops/loops-store.ts	execute_raw	2
 src/core/maintenance/run.ts	execute_raw	1
-src/core/meetings/meetings-source.ts	execute_raw	3
+src/core/meetings/meetings-source.ts	execute_raw	2
 src/core/mentions/pass.ts	execute_raw	32
 src/core/mentions/siblings.ts	execute_raw	1
 src/core/migrate.ts	execute_raw	2
@@ -756,7 +756,7 @@ src/core/shared-skills/setup.ts	execute_raw	6
 src/core/shared-skills/source-opt-out.ts	execute_raw	2
 src/core/similar-pages.ts	execute_raw	1
 src/core/skillpack/shared-brain-bridge.ts	execute_raw	4
-src/core/slack/slack-source.ts	execute_raw	4
+src/core/slack/slack-source.ts	execute_raw	3
 src/core/source-default-search.ts	execute_raw	1
 src/core/source-health.ts	execute_raw	3
 src/core/sources-not-readable.ts	execute_raw	1
