@@ -25,7 +25,7 @@ when_to_use: "Use when the user asks: \"second opinion\", \"cross-modal review\"
 # Cross-Modal Review
 
 > **Convention:** see [conventions/cross-modal.yaml](../conventions/cross-modal.yaml)
-> for the review pairs and refusal routing chain.
+> for the review pairs and refusal routing.
 
 > **Relationship to `gbrain eval cross-modal`:** This skill is the manual
 > mid-flow gate (one model reviews work product before commit, with refusal
@@ -134,10 +134,11 @@ A refusal is a result, not something to hide. If the review model refuses:
 1. Tell the user, naming the model: its provider refused the review. Call it
    a provider refusal, not a model failure, and never report the review as
    passed.
-2. Another model reviews only when the user chooses one, or when
-   `refusal_routing.behavior` in `conventions/cross-modal.yaml` is
-   `next_in_chain`. The review output then names the model that refused and
-   the model that reviewed instead.
+2. Another model reviews only when the user chooses one. The review output
+   then names the model that refused and the model that reviewed instead.
+   If `refusal_routing.behavior` in `conventions/cross-modal.yaml` still says the
+   removed `next_in_chain`, treat it as `report` and tell the user once that
+   the automatic retry option was removed.
 3. Don't reword the request to get around the refusal.
 
 ## Output format

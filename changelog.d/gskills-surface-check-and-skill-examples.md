@@ -5,3 +5,6 @@
 - A deprecation record for a command now also covers that command's subcommands, as it already covered its flags.
 - The archive-crawler, cron-scheduler, reports and strategic-reading skills, and the schema-unify and skillpack-harvest skills, no longer carry examples tied to one particular deployment or person; the instructions are otherwise unchanged.
 - The voice-note-ingest skill's example of a verbatim quote no longer contains profanity, and book-mirror now keeps verbatim quotes to a sentence or two instead of whole passages.
+- The cross-modal-review skill no longer retries a refused review on other models by itself: the `next_in_chain` option and its model list are gone, a refusal is reported naming the model, and another model reviews only when you pick one. A copy still set to `next_in_chain` is read as `report`, with a one-line notice.
+
+<!-- behavior-change: cross_modal_no_auto_retry_on_refusal -->
