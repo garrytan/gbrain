@@ -201,6 +201,7 @@ import * as atomBacklogImpl from './engine-sql/atom-backlog.ts';
 import type { AtomBacklogQuery } from './engine-sql/atom-backlog.ts';
 import * as projectionBacklogImpl from './engine-sql/projection-backlog.ts';
 import * as doctorAccImpl from './engine-sql/doctor-acc.ts';
+import * as doctorJoinImpl from './engine-sql/doctor-join.ts';
 import * as doctorCheckpointsImpl from './engine-sql/doctor-checkpoints.ts';
 import * as doctorTerminalImpl from './engine-sql/doctor-terminal.ts';
 import * as doctorBrainImpl from './engine-sql/doctor-brain.ts';
@@ -1398,6 +1399,14 @@ export class PostgresEngine implements BrainEngine {
   listOrphanedAliasCounts() { return doctorSearchImpl.listOrphanedAliasCounts(this.executeRaw.bind(this)); }
   readSoftDeletedAliasCounts() { return doctorSearchImpl.readSoftDeletedAliasCounts(this.executeRaw.bind(this)); }
   listPageTypePairs() { return doctorSearchImpl.listPageTypePairs(this.executeRaw.bind(this)); }
+  listAccessMemberStatuses() { return doctorJoinImpl.listAccessMemberStatuses(this.executeRaw.bind(this)); }
+  listAccessGroupMemberships() { return doctorJoinImpl.listAccessGroupMemberships(this.executeRaw.bind(this)); }
+  listPagesReadByNobody(live: readonly string[], opts: { timeoutMs: number }) { return doctorJoinImpl.listPagesReadByNobody(this.executeRaw.bind(this), live, opts); }
+  listRulePagesReadByNobody(sourceId: string, prefix: string, admittedCount: number, admitted: readonly string[], opts: { timeoutMs: number }) {
+    return doctorJoinImpl.listRulePagesReadByNobody(this.executeRaw.bind(this), sourceId, prefix, admittedCount, admitted, opts);
+  }
+  listGoogleSourceMembers() { return doctorJoinImpl.listGoogleSourceMembers(this.executeRaw.bind(this)); }
+  listOwnerMemberLinks(memberId: string) { return doctorJoinImpl.listOwnerMemberLinks(this.executeRaw.bind(this), memberId); }
   isAccessStateUnreadable() { return doctorAccImpl.isAccessStateUnreadable(this.executeRaw.bind(this)); }
   listRawOnlyRules() { return doctorAccImpl.listRawOnlyRules(this.executeRaw.bind(this)); }
   listAudienceMemberIds() { return doctorAccImpl.listAudienceMemberIds(this.executeRaw.bind(this)); }

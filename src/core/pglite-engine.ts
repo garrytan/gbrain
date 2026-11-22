@@ -209,6 +209,7 @@ import * as atomBacklogImpl from './engine-sql/atom-backlog.ts';
 import type { AtomBacklogQuery } from './engine-sql/atom-backlog.ts';
 import * as projectionBacklogImpl from './engine-sql/projection-backlog.ts';
 import * as doctorAccImpl from './engine-sql/doctor-acc.ts';
+import * as doctorJoinImpl from './engine-sql/doctor-join.ts';
 import * as doctorCheckpointsImpl from './engine-sql/doctor-checkpoints.ts';
 import * as doctorTerminalImpl from './engine-sql/doctor-terminal.ts';
 import * as doctorBrainImpl from './engine-sql/doctor-brain.ts';
@@ -1724,6 +1725,14 @@ export class PGLiteEngine implements BrainEngine {
   listOrphanedAliasCounts() { return doctorSearchImpl.listOrphanedAliasCounts(this.rawRead); }
   readSoftDeletedAliasCounts() { return doctorSearchImpl.readSoftDeletedAliasCounts(this.rawRead); }
   listPageTypePairs() { return doctorSearchImpl.listPageTypePairs(this.rawRead); }
+  listAccessMemberStatuses() { return doctorJoinImpl.listAccessMemberStatuses(this.rawRead); }
+  listAccessGroupMemberships() { return doctorJoinImpl.listAccessGroupMemberships(this.rawRead); }
+  listPagesReadByNobody(live: readonly string[], opts: { timeoutMs: number }) { return doctorJoinImpl.listPagesReadByNobody(this.rawRead, live, opts); }
+  listRulePagesReadByNobody(sourceId: string, prefix: string, admittedCount: number, admitted: readonly string[], opts: { timeoutMs: number }) {
+    return doctorJoinImpl.listRulePagesReadByNobody(this.rawRead, sourceId, prefix, admittedCount, admitted, opts);
+  }
+  listGoogleSourceMembers() { return doctorJoinImpl.listGoogleSourceMembers(this.rawRead); }
+  listOwnerMemberLinks(memberId: string) { return doctorJoinImpl.listOwnerMemberLinks(this.rawRead, memberId); }
   isAccessStateUnreadable() { return doctorAccImpl.isAccessStateUnreadable(this.rawRead); }
   listRawOnlyRules() { return doctorAccImpl.listRawOnlyRules(this.rawRead); }
   listAudienceMemberIds() { return doctorAccImpl.listAudienceMemberIds(this.rawRead); }

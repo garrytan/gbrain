@@ -16,6 +16,7 @@ mod cli_reads_doctor_derived_health;
 mod cli_reads_doctor_drift;
 mod cli_reads_doctor_facts_trust;
 mod cli_reads_doctor_fence;
+mod cli_reads_doctor_join;
 mod cli_reads_doctor_pages;
 mod cli_reads_doctor_persistence;
 mod cli_reads_doctor_search;

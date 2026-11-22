@@ -42,6 +42,8 @@ import { MANAGED_MODE_SQL } from '../src/core/persistence/managed-mode.ts';
 import { FACT_PREIMAGE_SQL } from '../src/core/engine-sql/facts.ts';
 import { TAKE_PREIMAGE_SQL } from '../src/core/engine-sql/takes-reads.ts';
 import { trustRankSql } from '../src/core/trust/tier.ts';
+import { ruleCoversSql } from '../src/core/access/folder-rules.ts';
+import { exactIdentityStatement } from '../src/core/engine-sql/exact-identity.ts';
 
 interface Pin {
   /** The caller site the statement came from, at 7470c703ed unless it names another commit. */
@@ -52,6 +54,69 @@ interface Pin {
 }
 
 const PINS: Pin[] = [
+  // The doctor checks from the rust-engine/main join, copied verbatim from the callers at 3c72fae727.
+  {
+    from: 'src/commands/doctor/checks/access-pages-read-by-nobody.ts:32 the member statuses (at 3c72fae727)',
+    case: { method: 'listAccessMemberStatuses', variant: 'default', run: e => e.listAccessMemberStatuses() },
+    texts: ["SELECT id, CASE WHEN tombstoned_at IS NOT NULL THEN 'removed' WHEN disabled_at IS NOT NULL THEN 'disabled' ELSE 'enabled' END AS status FROM access_members ORDER BY id"],
+  },
+  {
+    from: 'src/commands/doctor/checks/access-pages-read-by-nobody.ts:35 the group memberships (at 3c72fae727)',
+    case: { method: 'listAccessGroupMemberships', variant: 'default', run: e => e.listAccessGroupMemberships() },
+    texts: ['SELECT group_id, member_id FROM access_group_members'],
+  },
+  {
+    from: 'src/commands/doctor/checks/access-pages-read-by-nobody.ts:42 the labelled pages no enabled member reads (at 3c72fae727)',
+    case: { method: 'listPagesReadByNobody', variant: 'default', run: e => e.listPagesReadByNobody(['member:alice-example'], { timeoutMs: 5000 }) },
+    // The caller passed { timeoutMs } to executeRaw, so the statement runs in its bounded transaction, as before.
+    texts: ['BEGIN READ WRITE; SET LOCAL statement_timeout = 5000',
+      'SELECT source_id, slug, page_readers AS readers FROM pages WHERE deleted_at IS NULL AND page_readers IS NOT NULL AND NOT (page_readers && $1::text[]) AND NOT ($2 = ANY(page_readers)) AND NOT starts_with(slug, $3)',
+      'COMMIT'],
+  },
+  {
+    from: 'src/commands/doctor/checks/access-pages-read-by-nobody.ts:50 the pages a folder rule covers that no admitted member reads (at 3c72fae727; the caller spliced ruleCoversSql in, rendered here the same way)',
+    case: { method: 'listRulePagesReadByNobody', variant: 'default', run: e => e.listRulePagesReadByNobody('default', 'people/', 1, ['member:alice-example'], { timeoutMs: 5000 }) },
+    texts: () => ['BEGIN READ WRITE; SET LOCAL statement_timeout = 5000',
+      'SELECT source_id, slug, page_readers AS readers FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND ' + ruleCoversSql('slug', '$2') +
+      ' AND NOT starts_with(slug, $5) AND (page_readers IS NULL OR NOT ($4 = ANY(page_readers))) AND ($3::int = 0 OR (page_readers IS NOT NULL AND NOT (page_readers && $6::text[])))',
+      'COMMIT'],
+  },
+  {
+    from: 'src/core/identity/owner.ts:77 the Google sources and their bound members (at 3c72fae727)',
+    case: { method: 'listGoogleSourceMembers', variant: 'default', run: e => e.listGoogleSourceMembers() },
+    texts: [`SELECT s.id, s.config->>'g_account' AS account,
+            (SELECT array_agg(b.member_id ORDER BY b.member_id) FROM access_member_sources b WHERE b.source_id = s.id) AS members
+       FROM sources s
+      WHERE s.archived IS NOT TRUE AND s.config->>'kind' = 'google'
+      ORDER BY s.id COLLATE "C"`],
+  },
+  {
+    from: 'src/core/identity/owner.ts:111 the owner member\'s external ids (at 3c72fae727)',
+    case: { method: 'listOwnerMemberLinks', variant: 'default', run: e => e.listOwnerMemberLinks('alice-example') },
+    texts: ['SELECT system, external_id FROM access_member_links WHERE member_id = $1 ORDER BY system, external_id'],
+  },
+  {
+    from: 'src/core/identity/owner.ts:131 the owner email pages (at 3c72fae727; the caller built the same statement with exactIdentityStatement and ran it through executeRaw)',
+    case: { method: 'listExactIdentityCandidates', variant: 'owner_emails', run: e => e.listExactIdentityCandidates({
+      probes: { titleKeys: [], titleRaw: '', basenames: [], aliasKeys: [], emails: ['alice@example.com'] }, sourceIds: ['a-z', 'ab', 'default'], types: { types: ['person'], per_source: [] }, emailsOnly: true, limit: 50 }) },
+    texts: () => [exactIdentityStatement({
+      probes: { titleKeys: [], titleRaw: '', basenames: [], aliasKeys: [], emails: ['alice@example.com'] }, sourceIds: ['a-z', 'ab', 'default'], types: { types: ['person'], per_source: [] }, emailsOnly: true, limit: 50 }).text],
+  },
+  {
+    // EQUIVALENT, not verbatim: access-pages-read-by-nobody.ts:45 and identity/owner.ts:123 (at 3c72fae727) ran
+    // 'SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id COLLATE "C"'. They now read listAllSources() and sort
+    // its ids with sortSourcesById (byte order, as COLLATE "C"): the same live sources (archived ones left out by the
+    // same predicate) in the same order, on every engine.
+    from: 'src/commands/doctor/checks/access-pages-read-by-nobody.ts:45 and src/core/identity/owner.ts:123, the live source ids (equivalent: listAllSources + sortSourcesById)',
+    case: { method: 'listAllSources', variant: 'live_source_ids', run: e => e.listAllSources() },
+    texts: [`
+      SELECT id, name, local_path, last_sync_at, config
+        FROM sources
+       WHERE ($1 OR archived IS NOT TRUE)
+         AND ($2 OR (local_path IS NOT NULL AND config->>'role' IS DISTINCT FROM 'storage_manifest'))
+       ORDER BY (id = 'default') DESC, id COLLATE "C"
+    `],
+  },
   {
     from: 'src/commands/sync/preflight.ts:195 the 0-change sync heartbeat',
     case: { method: 'writeSourceSyncHeartbeat', variant: 'default', run: e => e.writeSourceSyncHeartbeat('default') },

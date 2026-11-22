@@ -2673,6 +2673,28 @@
         ],
         "flagOnScopes": []
       },
+      "listAccessGroupMemberships#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listAccessMemberStatuses#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listAccessPolicySources#default": {
         "flagOffLanes": [
           "pool"
@@ -3270,6 +3292,17 @@
         ],
         "flagOnScopes": []
       },
+      "listGoogleSourceMembers#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listHeldGenerationRows#default": {
         "flagOffLanes": [
           "pool"
@@ -3420,6 +3453,17 @@
         "flagOnScopes": []
       },
       "listOwnedGenerationItems#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listOwnerMemberLinks#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -3665,6 +3709,17 @@
         ],
         "flagOnScopes": []
       },
+      "listPagesReadByNobody#default": {
+        "flagOffLanes": [
+          "reserved"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "reserved"
+        ],
+        "flagOnScopes": []
+      },
       "listPendingSegmentedProjections#default": {
         "flagOffLanes": [
           "pool"
@@ -3776,6 +3831,17 @@
         "flagOn": "unscoped",
         "flagOnLanes": [
           "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listRulePagesReadByNobody#default": {
+        "flagOffLanes": [
+          "reserved"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "reserved"
         ],
         "flagOnScopes": []
       },
@@ -8326,8 +8392,10 @@
         "linkTemporal": "none",
         "listAbandonedTakes": "none",
         "listAccessCoverage": "none",
+        "listAccessGroupMemberships": "none",
         "listAccessMemberLinks": "none",
         "listAccessMemberRows": "none",
+        "listAccessMemberStatuses": "none",
         "listAccessPolicySourceIds": "none",
         "listAccessPolicySources": "none",
         "listAccessPrefixSlugs": "none",
@@ -8485,6 +8553,7 @@
         "listGitEffectsCarryingReason": "none",
         "listGitImageHoldCounts": "none",
         "listGitPushHoldRows": "none",
+        "listGoogleSourceMembers": "none",
         "listGuardedTakeRows": "none",
         "listGuestSourceIds": "none",
         "listGuestSourceRows": "none",
@@ -8573,6 +8642,7 @@
         "listOwnedGenerationItems": "none",
         "listOwnedPrivateQueues": "none",
         "listOwnerBindings": "none",
+        "listOwnerMemberLinks": "none",
         "listOwnerProposalRows": "none",
         "listOwnerRecoveryHeads": "none",
         "listOwnerTierFacts": "none",
@@ -8591,6 +8661,7 @@
         "listPages": "direct",
         "listPagesForPurgeRewrite": "none",
         "listPagesNamingReader": "none",
+        "listPagesReadByNobody": "none",
         "listPagesTitledIn": "none",
         "listParkedEffects": "none",
         "listParkedGroupRows": "none",
@@ -8647,6 +8718,7 @@
         "listRetiredDeactivations": "none",
         "listRetiredGenerationItemKeys": "none",
         "listRootPageSlugsAfter": "none",
+        "listRulePagesReadByNobody": "none",
         "listRunningClaimOwners": "none",
         "listRunningRequestStalls": "none",
         "listScraperJunkCandidates": "none",

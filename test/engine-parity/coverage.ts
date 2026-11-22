@@ -300,6 +300,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
   doctor_search: ['listOrphanedAliasCounts', 'readSoftDeletedAliasCounts', 'listPageTypePairs',
     'listTruncatedMarkdownBodies', 'countSegmentedMarkdownBodies', 'listRecentPageBodies', 'countSegmentedRecentPages',
     'countPagesHiddenByPrefix', 'listGitImageHoldCounts', 'readProjectionBacklog', 'countAtomExtractionBacklog'],
+  doctor_join: ['listAccessMemberStatuses', 'listAccessGroupMemberships', 'listPagesReadByNobody', 'listRulePagesReadByNobody',
+    'listGoogleSourceMembers', 'listOwnerMemberLinks'],
   doctor_reads_acc: ['isAccessStateUnreadable', 'listRawOnlyRules', 'listAudienceMemberIds',
     'listLabelledOnlyMemberIds', 'listAccessMemberRows', 'listAttestCredentialRows', 'listActiveAccessTokenRows',
     'listActiveOauthClientRows', 'listOauthClientAuthShapes', 'listDanglingFederatedReads',

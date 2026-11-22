@@ -57,6 +57,7 @@ test/engine-parity/doctor-checkpoints.test.ts	5	0
 test/engine-parity/doctor-derived.test.ts	15	0
 test/engine-parity/doctor-facts-trust.test.ts	6	0
 test/engine-parity/doctor-fence-census.test.ts	5	0
+test/engine-parity/doctor-join-checks.test.ts	3	0
 test/engine-parity/doctor-pages.test.ts	16	0
 test/engine-parity/doctor-persistence.test.ts	4	0
 test/engine-parity/doctor-reads.test.ts	1	0
@@ -147,7 +148,7 @@ test/engine-parity/oauth-revocation.test.ts	4	0
 test/engine-parity/op-checkpoint.test.ts	2	0
 test/engine-parity/open-loops.test.ts	6	0
 test/engine-parity/open-pages.test.ts	3	1
-test/engine-parity/owner-only-marks.test.ts	0	2
+test/engine-parity/owner-only-marks.test.ts	1	1
 test/engine-parity/owner-only-reads.test.ts	3	0
 test/engine-parity/owner-recovery-scans.test.ts	5	0
 test/engine-parity/page-embedding-budget.test.ts	7	0

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1656/1662
+# covered: 1662/1668
 # lifecycle: 9/9
 # pages: 65/65
 # search: 7/7
@@ -50,6 +50,7 @@
 # doctor_persistence: 37/37
 # doctor_pages: 18/18
 # doctor_search: 11/11
+# doctor_join: 6/6
 # doctor_reads_acc: 25/25
 # doctor_checkpoints: 18/18
 # doctor_sync: 3/3
@@ -135,7 +136,7 @@ listIdentityDecisions	pages	yes	1	no	yes	yes	refuses:pages
 listRestrictedIdentityMembers	pages	yes	1	no	yes	yes	refuses:pages
 applyIdentityDecisions	pages	yes	1	no	yes	yes	refuses:pages
 listAllPageRefs	pages	yes	3	yes	yes	yes	serves
-listAllSources	pages	yes	13	no	yes	yes	serves
+listAllSources	pages	yes	15	no	yes	yes	serves
 updateSourceConfig	pages	yes	13	no	yes	yes	serves
 getSource	pages	yes	14	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
@@ -535,7 +536,7 @@ replaceDerivedAliases	sync_aliases	yes	16	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
-getConfig	config	yes	36	no	yes	yes	serves
+getConfig	config	yes	37	no	yes	yes	serves
 setConfig	config	yes	53	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	5	no	yes	yes	serves
@@ -982,7 +983,7 @@ completeSubagentToolExecution	minion_subagent	yes	7	no	yes	yes	serves
 failSubagentToolExecution	minion_subagent	yes	7	no	yes	yes	serves
 scanExactBatch	cli_reads_ops	yes	5	no	yes	yes	serves
 nextLivePageAfter	cli_reads_ops	yes	1	no	yes	yes	serves
-listExactIdentityCandidates	cli_reads_ops	yes	5	no	yes	yes	serves
+listExactIdentityCandidates	cli_reads_ops	yes	6	no	yes	yes	serves
 rankEntities	cli_reads_ops	yes	4	no	yes	yes	serves
 readRankCoverage	cli_reads_ops	yes	1	no	yes	yes	serves
 readExactSnippetChunks	cli_reads_ops	yes	1	no	yes	yes	serves
@@ -1105,6 +1106,12 @@ countPagesHiddenByPrefix	doctor_search	yes	1	no	yes	yes	serves
 listOrphanedAliasCounts	doctor_search	yes	1	no	yes	yes	serves
 readSoftDeletedAliasCounts	doctor_search	yes	1	no	yes	yes	serves
 listPageTypePairs	doctor_search	yes	1	no	yes	yes	serves
+listAccessMemberStatuses	doctor_join	yes	1	no	yes	yes	serves
+listAccessGroupMemberships	doctor_join	yes	1	no	yes	yes	serves
+listPagesReadByNobody	doctor_join	yes	1	no	yes	yes	serves
+listRulePagesReadByNobody	doctor_join	yes	1	no	yes	yes	serves
+listGoogleSourceMembers	doctor_join	yes	1	no	yes	yes	serves
+listOwnerMemberLinks	doctor_join	yes	1	no	yes	yes	serves
 listDecideReceiptStats	doctor_reads_acc	yes	8	no	yes	yes	serves
 isAccessStateUnreadable	doctor_reads_acc	yes	1	no	yes	yes	serves
 listRawOnlyRules	doctor_reads_acc	yes	1	no	yes	yes	serves
@@ -1499,7 +1506,7 @@ readAccessStoreConfig	write_misc	no	0	no	-	-	-
 writeAccessStoreConfig	write_misc	no	0	no	-	-	-
 ensureAccessPolicyState	write_misc	yes	1	no	yes	yes	serves
 lockAccessPolicy	write_misc	yes	1	no	yes	yes	serves
-listAccessRules	write_misc	yes	2	no	yes	yes	serves
+listAccessRules	write_misc	yes	3	no	yes	yes	serves
 readAccessPolicyRevisions	write_misc	yes	2	no	yes	yes	serves
 listAccessCoverage	write_misc	yes	2	no	yes	yes	serves
 readAccessStateUnreadable	write_misc	yes	1	no	yes	yes	serves
@@ -1527,7 +1534,7 @@ switchAccessMigration	write_misc	yes	1	no	yes	yes	serves
 listAccessPolicySources	write_misc	yes	1	no	yes	yes	serves
 countPeopleFolderPages	write_misc	yes	1	no	yes	yes	serves
 countOpenPages	write_misc	yes	3	no	yes	yes	serves
-readAccessMembers	write_misc	yes	14	no	yes	yes	serves
+readAccessMembers	write_misc	yes	15	no	yes	yes	serves
 readAccessCredentials	write_misc	yes	5	no	yes	yes	serves
 revokeAccessTokensNamed	write_misc	yes	4	no	yes	yes	serves
 revokeAccessToken	write_misc	yes	12	no	yes	yes	serves
@@ -1763,4 +1770,4 @@ storeDecideQualification	decide_store	yes	3	no	yes	yes	serves
 listDecideCalibrations	decide_store	yes	9	no	yes	yes	serves
 getDecideCalibration	decide_store	yes	6	no	yes	yes	serves
 setDecideCalibrationRetired	decide_store	yes	4	no	yes	yes	serves
-ownerOnlyMarkTriggers	owner_only	yes	2	no	yes	yes	refuses:raw_sql
+ownerOnlyMarkTriggers	owner_only	yes	3	no	yes	yes	serves

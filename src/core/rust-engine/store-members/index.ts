@@ -118,6 +118,7 @@ import * as doctorPersistence from './doctor-persistence.ts';
 import * as doctorPages from './doctor-pages.ts';
 import * as doctorSearch from './doctor-search.ts';
 import * as doctorAcc from './doctor-acc.ts';
+import * as doctorJoin from './doctor-join.ts';
 import * as doctorCheckpoints from './doctor-checkpoints.ts';
 import * as doctorTerminal from './doctor-terminal.ts';
 import * as doctorBrain from './doctor-brain.ts';
@@ -225,6 +226,8 @@ export const STORE_MEMBERS = {
   // Search and knowledge doctor reads (rust/docs/store/cli-reads-doctor-search.md).
   ...doctorSearch,
   ...doctorAcc,
+  // Doctor reads of the checks from the main join (rust/docs/store/cli-reads-doctor-join.md).
+  ...doctorJoin,
   // The op_checkpoints and ingest_log statements doctor ran through executeRaw (rust/docs/store/cli-reads-doctor-checkpoints.md).
   ...doctorCheckpoints,
   // Doctor terminal reads: the grouped terminal write failure aggregate, its drill-down batch and the open-pass blocker statements doctor ran through executeRaw (rust/docs/store/cli-reads-doctor-terminal.md).
