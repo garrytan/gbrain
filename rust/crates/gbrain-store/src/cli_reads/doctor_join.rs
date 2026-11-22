@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::Store;
 use crate::error::Result;
-use crate::facts::privacy::access_readers;
+use crate::facts::access_readers;
 use crate::pages::{PageRecord, all_pages};
 
 /// `NOBODY` (src/core/access/principals.ts): the reader a page names to stay closed on purpose.
