@@ -766,6 +766,7 @@ impl KvRead for StateRead<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::STORE_IO;
     use crate::test_support::store;
 
     fn collect(read: &dyn KvRead, start: &[u8], end: &[u8], reverse: bool) -> Vec<Vec<u8>> {
@@ -933,6 +934,74 @@ mod tests {
             .write(|tx| crate::pages::next_id(tx, "next_probe_id"))
             .unwrap();
         assert!(next > handed, "id {next} was handed out again");
+    }
+
+    fn note(title: &str) -> crate::pages::PageInput {
+        serde_json::from_value(
+            serde_json::json!({"type": "note", "title": title, "compiled_truth": "b"}),
+        )
+        .unwrap()
+    }
+
+    // Why a failed commit cannot hand out a reused id (RA1 fix 8, the failed-commit edge): a
+    // commit that fails releases the writer without raising the id sequences, but no writer can
+    // use that gap. redb poisons the store on a failed commit, so every later write in the
+    // process fails until it is reopened (this test); and the sequence and the rows are written
+    // in one commit, so after a reopen the counter matches the stored rows (the next test). A
+    // future backend that does not poison the store on a failed commit must revisit this: there,
+    // a writer could start in the gap and take an id the failed transaction handed out.
+    #[test]
+    fn a_failed_commit_poisons_every_later_write_in_the_process() {
+        let file = crate::test_support::FlakyFile::default();
+        let s = crate::test_support::store_on(&file);
+        let t = s.begin_transaction(false).unwrap();
+        t.put_page("notes/t", &note("t"), &Default::default())
+            .unwrap();
+        file.fail_sync
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(t.commit_transaction().unwrap_err().code, STORE_IO);
+        for _ in 0..2 {
+            let refused = s
+                .write(|tx| crate::pages::next_id(tx, "next_page_id"))
+                .unwrap_err();
+            assert_eq!(refused.code, STORE_IO);
+            assert!(refused.message.contains("re-open"), "{}", refused.message);
+        }
+    }
+
+    // See the comment above: the id sequence and the rows commit atomically, so after a reopen a
+    // failed commit left both or neither, and the next id follows the stored rows.
+    #[test]
+    fn after_a_failed_commit_and_a_reopen_the_id_counter_matches_the_stored_rows() {
+        let file = crate::test_support::FlakyFile::default();
+        let s = crate::test_support::store_on(&file);
+        let t = s.begin_transaction(false).unwrap();
+        let handed = t
+            .put_page("notes/t", &note("t"), &Default::default())
+            .unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        file.fail_sync
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(t.commit_transaction().is_err());
+        drop(t);
+        drop(s);
+        let s = crate::test_support::store_on(&file);
+        let stored = s
+            .read_page_snapshot("notes/t", &Default::default())
+            .unwrap()
+            .map(|p| p["page"]["id"].as_u64().unwrap());
+        let next = s
+            .put_page("notes/o", &note("o"), &Default::default())
+            .unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        match stored {
+            // The bytes reached the file before the sync failed: the row and its id step are kept.
+            Some(id) => assert_eq!((id, next), (handed, handed + 1)),
+            // Neither reached it: the id is free again and nothing stored refers to it.
+            None => assert_eq!(next, handed),
+        }
     }
 
     #[test]
