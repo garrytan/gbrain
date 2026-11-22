@@ -87,6 +87,15 @@ const PASS_HEARTBEAT_MS = 30_000;
  */
 const DRIFT_HISTORY_BUDGET_MS = 120_000;
 
+/**
+ * Master's up_to_date freshness stamp of a managed sync: sets the source's last sync time to the database clock, only while
+ * it is still the incarnation the run bound. Runs inside the caller's coordinated-write transaction (sync-run.ts, a complete
+ * check that found nothing; `stampIdlePass` and `stampUnchangedPass` below). Callers do not read the result.
+ */
+export async function stampManagedSourceFresh(tx: BrainEngine, sourceId: string, incarnation: string): Promise<unknown> {
+  return tx.executeRaw('UPDATE sources SET last_sync_at=now() WHERE id=$1 AND incarnation=$2::uuid', [sourceId, incarnation]);
+}
+
 export interface SyncPassInput {
   opts: SyncOpts; slice?: { maxPages: number; maxMs: number }; context: ManagedSyncContext; authority: SyncAuthority;
   processingOptions: SyncProcessingOptions; syncOptions: SyncCursorOptions; assertActive: () => void; signal?: AbortSignal;
@@ -565,7 +574,7 @@ async function stampIdlePass(engine: BrainEngine, input: SyncPassInput, lease: N
     assertActive();
     // One round trip: the lease check, the stamp and the row (started at the transaction's clock) are pipelined; a lost
     // lease rolls the other two back.
-    await pipelined(tx, [() => assertDrainLease(tx, sourceId), () => tx.executeRaw('UPDATE sources SET last_sync_at=now() WHERE id=$1 AND incarnation=$2::uuid', [sourceId, incarnation]),
+    await pipelined(tx, [() => assertDrainLease(tx, sourceId), () => stampManagedSourceFresh(tx, sourceId, incarnation),
       () => writePassRow(tx, value, { pin: true, clock: true })]);
   }, principalAttribution(authority.writer.principal)));
   // A failure is recorded only under the lease this pass holds, so none recorded at pin means none to clear.
@@ -635,7 +644,7 @@ async function stampUnchangedPass(engine: BrainEngine, input: SyncPassInput, rou
   await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], async () => {
     assertActive();
     await assertDrainLease(tx, sourceId);
-    await tx.executeRaw('UPDATE sources SET last_sync_at=now() WHERE id=$1 AND incarnation=$2::uuid', [sourceId, incarnation]);
+    await stampManagedSourceFresh(tx, sourceId, incarnation);
     // Holds on paths that left the level go with it here too, as a stamp releases them.
     for (const path of [...level.releasableHolds, ...await settledDeletionHolds(tx, sourceId, level.deletionCandidates)]) await clearGitHold(tx, { sourceId, incarnation, path, observedAt: startedAt });
     await recordPassFenceTrend(tx, { worktreeId: context.binding.worktree_id, sourceId, passId, since: converged?.request_hwm ?? null, prefix: trend });

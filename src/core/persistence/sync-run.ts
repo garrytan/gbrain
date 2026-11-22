@@ -75,7 +75,7 @@ import { LockUnavailableError, syncLockId } from '../db-lock.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { assertPassAdmission, isPassBatchKey, passBatchStep, passedOverBefore, passRequestId, readPassBatch, setPassBatch, type PassEntry } from './sync-pass-batch.ts';
 import type { PassStamp } from './sync-prepare.ts';
-import { runSyncPass } from './sync-pass-run.ts';
+import { runSyncPass, stampManagedSourceFresh } from './sync-pass-run.ts';
 import { serr } from '../console-prefix.ts';
 import { noteIdentityDowngrades } from '../sync-identity-downgrades.ts';
 import { isContentRefusal } from '../import-screen.ts';
@@ -1682,7 +1682,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
         // A complete check that found nothing is still a sync: stamp the freshness heartbeat for this incarnation only (#6712 PR 2: and release what left the source).
         await engine.transaction(tx => withCoordinatedWrite(tx, [context.sourceId], async () => {
           assertActive(); await releaseDiscoveredHolds(tx, fresh);
-          return tx.executeRaw('UPDATE sources SET last_sync_at=now() WHERE id=$1 AND incarnation=$2::uuid', [context.sourceId, context.incarnation]);
+          return stampManagedSourceFresh(tx, context.sourceId, context.incarnation);
         }, principalAttribution(authority.writer.principal)));
         await clearManagedSyncFailureAfterSuccess(engine, key);
         assertActive();
