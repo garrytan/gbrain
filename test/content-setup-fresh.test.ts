@@ -10,14 +10,17 @@
  *    three engines; this pins the PGLite member itself, which no parity brain can reach before its schema.
  * 4. Seams: none. An in-memory PGLite engine.
  */
-import { afterAll, expect, test } from 'bun:test';
+import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 
-const engine = new PGLiteEngine();
+let engine: PGLiteEngine;
+beforeAll(async () => {
+  engine = new PGLiteEngine();
+  await engine.connect({});
+});
 afterAll(async () => { await engine.disconnect(); });
 
 test('a database with no schema is fresh, and the same database after initSchema is not', async () => {
-  await engine.connect({});
   expect(await engine.readFreshContentDatabase()).toBe(true);
   await engine.initSchema();
   expect(await engine.readFreshContentDatabase()).toBe(false);
