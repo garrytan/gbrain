@@ -16,7 +16,7 @@ import { projectionRetryReadyFragment, SEGMENTED_JOB_PROBES_SQL, segmentedProjec
 import { projectionClassSql, sealableImageSql } from '../page-state/projection-class.ts';
 import { pageReadFilter } from '../search/read-policy-sql.ts';
 import type { PageReadScope } from '../types.ts';
-import { ACTIVATION_SERVED_REVISION, chunkGenerationFilter, movableChunkSql } from '../search/safe-chunks.ts';
+import { ACTIVATION_SERVED_REVISION, chunkGenerationFilter, chunkGenerationProbe, movableChunkSql } from '../search/safe-chunks.ts';
 import { chunkModelMatchesSql } from '../embedding-invalidation.ts';
 import { quoteIdentifier } from '../search/embedding-column.ts';
 
@@ -346,4 +346,73 @@ export async function touchUnclaimedProjectionJob(raw: EngineRawRead, job: Proje
 export async function deferProjectionJob(raw: EngineRawRead, job: ProjectionJobKey): Promise<boolean> {
   return (await raw(`UPDATE page_projection_jobs SET updated_at=now()
         WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid RETURNING slug`, [job.sourceIncarnation, job.slug, job.revision])).length > 0;
+}
+
+/** One queue row of the image seal's window (`sealImageProjections`): `sealable` when its live page is a sealable image at the row's revision. */
+export interface ImageSealCandidate { source_id: string | null; source_incarnation: string; slug: string; revision: string; sealable: boolean }
+
+/**
+ * A primary-key window of queue rows after `after` (incarnation, slug in the C collation), at most `limit`, last
+ * queued at or before `notAfter` when given, each probed by its page's unique key only (sealImageProjections).
+ */
+export async function listImageSealWindow(raw: EngineRawRead, after: { sourceIncarnation: string; slug: string }, limit: number,
+  notAfter?: string): Promise<ImageSealCandidate[]> {
+  const before = notAfter === undefined ? sqlFragment`` : sqlFragment`AND j.updated_at<=${notAfter}::text::timestamptz`;
+  const { text, params } = renderFragment(sqlFragment`SELECT s.id AS source_id,j.source_incarnation::text AS source_incarnation,
+        j.slug,j.revision::text AS revision,p.sealable IS TRUE AS sealable
+      FROM (SELECT source_incarnation,slug,revision FROM page_projection_jobs j WHERE (j.source_incarnation,j.slug COLLATE "C") > (${after.sourceIncarnation}::uuid,${after.slug} COLLATE "C") ${before}
+        ORDER BY j.source_incarnation,j.slug COLLATE "C" LIMIT ${limit}) j
+      LEFT JOIN LATERAL (SELECT s.id FROM sources s WHERE s.incarnation=j.source_incarnation AND NOT s.archived OFFSET 0) s ON true
+      LEFT JOIN LATERAL (SELECT p.deleted_at IS NULL AND p.knowledge_revision=j.revision AND ${trustedSql(sealableImageSql('p'))} AS sealable
+        FROM pages p WHERE p.source_id=s.id AND p.slug=j.slug OFFSET 0) p ON true
+      ORDER BY j.source_incarnation,j.slug COLLATE "C"`);
+  return raw<ImageSealCandidate>(text, params);
+}
+
+/** A sealable image page of a seal group, as the seal re-reads it under the page guard. */
+export interface ImageSealPage { id: number; revision: string; title: string; mode: string | null; corpus_generation: string | null }
+
+/** The pages of `rows` still live at their queued revision and still sealable images of an active source, in no set order. */
+export async function readImageSealPages(raw: EngineRawRead, rows: ReadonlyArray<{ source_id: string; slug: string; revision: string }>): Promise<ImageSealPage[]> {
+  const { text, params } = renderFragment(sqlFragment`SELECT p.id,p.knowledge_revision::text AS revision,p.title,
+          p.contextual_retrieval_mode AS mode,p.corpus_generation
+        FROM jsonb_to_recordset(${JSON.stringify(rows.map(({ source_id, slug, revision }) => ({ source_id, slug, revision })))}::text::jsonb) AS v(source_id text, slug text, revision uuid)
+        JOIN sources s ON s.id=v.source_id AND NOT s.archived
+        CROSS JOIN LATERAL (SELECT p.id FROM pages p WHERE p.source_id=v.source_id AND p.slug=v.slug OFFSET 0) k
+        JOIN pages p ON p.id=k.id
+        WHERE p.deleted_at IS NULL AND p.knowledge_revision=v.revision AND ${trustedSql(sealableImageSql('p'))}`);
+  return raw<ImageSealPage>(text, params);
+}
+
+/** A live chunk of a seal group's pages that holds a vector in the write column. */
+export interface ImageSealChunk { id: number; page_id: number; chunk_text: string; chunk_source: string; embedding_input_hash: string | null; current: boolean }
+
+/**
+ * The live chunks of `pageIds` holding a vector in `column`, each with whether that vector is its text's and of
+ * `provenanceModel` (`current`).
+ */
+export async function listImageSealChunks(raw: EngineRawRead, pageIds: readonly number[], column: KeepColumn, provenanceModel: string | null): Promise<ImageSealChunk[]> {
+  const col = quoteIdentifier(column.name);
+  const { text, params } = renderFragment(sqlFragment`SELECT id,page_id,chunk_text,chunk_source,embedding_input_hash,
+          ${trustedSql(movableChunkSql(col))} AND model IS NOT DISTINCT FROM ${provenanceModel} AS current
+        FROM content_chunks c WHERE c.page_id=ANY(${[...pageIds]}::int[]) AND c.${trustedSql(col)} IS NOT NULL AND ${trustedSql(chunkGenerationProbe('c'))}`);
+  return raw<ImageSealChunk>(text, params);
+}
+
+/** Clears and marks pending the vector in `column` of the chunks `chunks` (by id; the page id is for engines keyed by page). */
+export async function clearImageSealVectors(raw: EngineRawRead, column: KeepColumn, chunks: ReadonlyArray<{ id: number; page_id: number }>): Promise<void> {
+  const col = quoteIdentifier(column.name);
+  const { text, params } = renderFragment(sqlFragment`UPDATE content_chunks SET ${trustedSql(col)}=NULL,embedded_at=NULL,embedded_text_hash=NULL,embedding_input_hash=NULL,
+          embedding_pending_since=COALESCE(embedding_pending_since,now()) WHERE id=ANY(${chunks.map(chunk => chunk.id)}::int[])`);
+  await raw(text, params);
+}
+
+/** Seals each page of `pages` still at its revision; one row per sealed page, with whether a live chunk holds a visual vector. */
+export async function sealImagePages(raw: EngineRawRead, pages: ReadonlyArray<{ id: number; revision: string }>): Promise<Array<{ has_visual: boolean }>> {
+  const { text, params } = renderFragment(sqlFragment`UPDATE pages SET text_projection_revision=pages.knowledge_revision
+          FROM jsonb_to_recordset(${JSON.stringify(pages)}::text::jsonb) AS v(id int, revision uuid)
+          WHERE pages.id=v.id AND pages.knowledge_revision=v.revision
+          RETURNING EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id=pages.id AND c.embedding_image IS NOT NULL
+            AND ${trustedSql(chunkGenerationFilter('pages', 'c'))}) AS has_visual`);
+  return raw<{ has_visual: boolean }>(text, params);
 }

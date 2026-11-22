@@ -20,7 +20,9 @@ use super::projection_queue::{
     Job, all_jobs, job_at_revision, parse_timestamptz, retry_ready, sources_by_incarnation,
 };
 use super::uuid_param;
-use crate::chunks::{ChunkRecord, delete_chunks_matching, read_chunks, segmented};
+use crate::chunks::{
+    ChunkRecord, delete_chunks_matching, in_live_body, read_chunks, read_segment_view, segmented,
+};
 use crate::cli_reads::pg_text::timestamptz_text;
 use crate::embeddings::{remove_chunk_vector, text_hash};
 use crate::env::transaction_clock;
@@ -109,20 +111,115 @@ pub struct ProjectionJobKey {
     pub revision: String,
 }
 
+/// `SAFE_FENCE_CHUNKER_VERSION`: a page whose chunks the safe fence certified.
+const SAFE_FENCE_CHUNKER_VERSION: i16 = 4;
+/// `BOUNDED_PREFIX_BYTES` (page-window/document.ts): `left()` counts code points.
+const BOUNDED_PREFIX_CHARS: usize = 64 * 1024;
+
+/// The class of an unsealed projection (`projectionClassSql`): `text`, `archived`, `protected`,
+/// `sealable` or `reimport`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PageClass {
+    Text,
+    Archived,
+    Protected,
+    Sealable,
+    Reimport,
+}
+
+/// `importerChunkSql`: the page's live chunks are exactly one, at index 0, an `image_asset` chunk of
+/// modality `image`, shorter than the bounded prefix and equal to the page's bounded body prefix
+/// (`left(coalesce(compiled_truth, truth_lead), 65536)`), or to its title when that prefix is empty.
+fn importer_chunk(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
+    let view = read_segment_view(read, page.id)?;
+    let seg = segmented(page);
+    let live: Vec<ChunkRecord> = read_chunks(read, page.id)?
+        .into_iter()
+        .filter(|c| in_live_body(c, seg, &view))
+        .collect();
+    let [chunk] = live.as_slice() else {
+        return Ok(false);
+    };
+    let body = match page.compiled_truth.as_deref() {
+        Some(text) => text.to_owned(),
+        None => crate::page_body::truth_lead(read, page.id)?.unwrap_or_default(),
+    };
+    let prefix: String = body.chars().take(BOUNDED_PREFIX_CHARS).collect();
+    let expected = if prefix.is_empty() {
+        page.title.as_str()
+    } else {
+        prefix.as_str()
+    };
+    Ok(chunk.chunk_index == 0
+        && chunk.chunk_source == "image_asset"
+        && chunk.modality == "image"
+        && chunk.chunk_text.chars().count() < BOUNDED_PREFIX_CHARS
+        && chunk.chunk_text == expected)
+}
+
+/// `protectedBodyFilter` of an inline page: a protected marker in either body column.
+fn protected_body(page: &PageRecord) -> bool {
+    crate::pages::has_protected_text(&page.compiled_truth)
+        || crate::pages::has_protected_text(&page.timeline)
+}
+
+/// `projectionClassSql(p, s)` of a live page of a source that is `archived` or not.
+pub(crate) fn page_class(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    archived: bool,
+) -> Result<PageClass> {
+    Ok(if archived {
+        PageClass::Archived
+    } else if page.page_kind != "image" || segmented(page) {
+        PageClass::Text
+    } else if protected_body(page) {
+        PageClass::Protected
+    } else if page.chunker_version.unwrap_or(0) >= SAFE_FENCE_CHUNKER_VERSION
+        && importer_chunk(read, page)?
+    {
+        PageClass::Sealable
+    } else {
+        PageClass::Reimport
+    })
+}
+
+/// `sealableImageSql`: a live, unprotected inline image page the importer sealed at or after the
+/// safe-chunk fence.
+pub(crate) fn sealable_image(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
+    Ok(page.page_kind == "image"
+        && !segmented(page)
+        && !protected_body(page)
+        && page.chunker_version.unwrap_or(0) >= SAFE_FENCE_CHUNKER_VERSION
+        && importer_chunk(read, page)?)
+}
+
 /// The live inline page of an active source that `job` names (`projectionJobProbes`).
 fn drainable_page(
     read: &dyn KvRead,
     source: Option<&SourceRecord>,
     job: &Job,
 ) -> Result<Option<PageRecord>> {
+    drainable_page_with(read, source, job, false)
+}
+
+/// `projectionJobProbes({ media })`: the live inline Markdown or code page of an active source that
+/// `job` names, or with `media` also a sealable image page (`sealableImageSql`).
+fn drainable_page_with(
+    read: &dyn KvRead,
+    source: Option<&SourceRecord>,
+    job: &Job,
+    media: bool,
+) -> Result<Option<PageRecord>> {
     let Some(source) = source.filter(|s| !s.archived) else {
         return Ok(None);
     };
-    Ok(read_page(read, &source.id, &job.slug)?.filter(|p| {
-        p.deleted_at_us.is_none()
-            && (p.page_kind == "markdown" || p.page_kind == "code")
-            && !(p.compiled_truth.is_null() && p.timeline.is_null())
-    }))
+    let Some(page) = read_page(read, &source.id, &job.slug)?.filter(|p| p.deleted_at_us.is_none())
+    else {
+        return Ok(None);
+    };
+    let inline = (page.page_kind == "markdown" || page.page_kind == "code") && !segmented(&page);
+    Ok((inline || (media && sealable_image(read, &page)?)).then_some(page))
 }
 
 /// `chunkModelMatchesSql('model', provenanceModel, vector_dims(col) = dims)`: the chunk's label is
@@ -140,7 +237,7 @@ fn model_matches(chunk: &crate::chunks::ChunkRecord, model: Option<&str>, dims: 
 }
 
 /// `embedded_text_hash IS NOT DISTINCT FROM md5(chunk_text)` (the store keeps sha256).
-fn text_current(chunk: &crate::chunks::ChunkRecord) -> bool {
+pub(super) fn text_current(chunk: &crate::chunks::ChunkRecord) -> bool {
     chunk.embed.text_hash.as_deref() == Some(text_hash(&chunk.chunk_text).as_str())
 }
 
@@ -454,47 +551,34 @@ impl Store {
             .is_some_and(|p| p.deleted_at_us.is_none() && segmented(&p)))
     }
 
-    /// `listProjectionDrainPreview(limit)`: the jobs a media drain would take (`projectionJobProbes`
-    /// with `media`: live inline pages of active sources, or sealable images), images last, then
-    /// pages search answers for from their pre-upgrade index, then by time, incarnation and slug
-    /// (byte order), at most `limit`. A queued image page that is neither protected nor in an
-    /// archived source may be sealable, which the store cannot tell: `undecided` counts them, and the
-    /// TypeScript member refuses a preview that has one.
-    pub fn list_projection_drain_preview(&self, limit: f64) -> Result<Value> {
+    /// `listProjectionDrainPreview(limit)`: the jobs a media drain takes (`projectionJobProbes` with
+    /// `media`: live inline Markdown or code pages of active sources, or sealable images), images
+    /// next, then pages search answers for from their pre-upgrade index, then by time, incarnation and
+    /// slug (byte order), at most `limit`.
+    pub fn list_projection_drain_preview(&self, limit: f64) -> Result<Vec<Value>> {
         let read = self.read()?;
         let read = &*read;
         let sources = sources_by_incarnation(read)?;
-        let mut undecided = 0;
         let mut rows = Vec::new();
         for job in all_jobs(read)? {
-            let Some(source) = sources.get(&job.incarnation).filter(|s| !s.archived) else {
+            let source = sources.get(&job.incarnation);
+            let Some(page) = drainable_page_with(read, source, &job, true)? else {
                 continue;
             };
-            let Some(page) =
-                read_page(read, &source.id, &job.slug)?.filter(|p| p.deleted_at_us.is_none())
-            else {
-                continue;
+            let rank: u8 = if page.page_kind != "markdown" && page.page_kind != "code" {
+                1
+            } else if page.text_projection_revision.as_deref() == Some(ACTIVATION_SERVED_REVISION) {
+                2
+            } else {
+                0
             };
-            if page.page_kind == "image"
-                && !segmented(&page)
-                && !crate::pages::has_protected_text(&page.compiled_truth)
-                && !crate::pages::has_protected_text(&page.timeline)
-            {
-                undecided += 1;
-                continue;
-            }
-            if drainable_page(read, Some(source), &job)?.is_none() {
-                continue;
-            }
-            let rank = u8::from(
-                page.text_projection_revision.as_deref() == Some(ACTIVATION_SERVED_REVISION),
-            ) * 2;
+            let source_id = source.map(|s| s.id.clone()).unwrap_or_default();
             rows.push((
                 rank,
                 job.record.updated_at_us,
                 job.incarnation.clone(),
                 job.slug.clone(),
-                source.id.clone(),
+                source_id,
                 page.page_kind.clone(),
                 job.record.reason.clone(),
             ));
@@ -507,20 +591,19 @@ impl Store {
         } else {
             1
         };
-        let rows: Vec<Value> = rows
+        Ok(rows
             .into_iter()
             .take(take)
             .map(|(_, at, _, slug, source_id, page_kind, reason)| {
                 json!({ "source_id": source_id, "slug": slug, "page_kind": page_kind, "reason": reason, "updated_at": timestamptz_text(at) })
             })
-            .collect();
-        Ok(json!({ "rows": rows, "undecided": undecided }))
+            .collect())
     }
 
-    /// `hasQueuedProjectionWork()`: whether any job, whatever its reason, names a live inline page
-    /// of an active source (`projectionJobProbes`) or a live segmented page of one
-    /// (`SEGMENTED_JOB_PROBES`): the work a limited drain left.
-    pub fn has_queued_projection_work(&self) -> Result<bool> {
+    /// `hasQueuedProjectionWork({ media })`: whether any job, whatever its reason, names a live inline
+    /// page of an active source (with `media`, or a sealable image: `projectionJobProbes`) or a live
+    /// segmented page of one (`SEGMENTED_JOB_PROBES`): the work a limited drain left.
+    pub fn has_queued_projection_work(&self, media: bool) -> Result<bool> {
         let read = self.read()?;
         let read = &*read;
         let sources = sources_by_incarnation(read)?;
@@ -528,25 +611,25 @@ impl Store {
             let Some(source) = sources.get(&job.incarnation).filter(|s| !s.archived) else {
                 continue;
             };
-            if read_page(read, &source.id, &job.slug)?.is_some_and(|p| {
-                p.deleted_at_us.is_none()
-                    && (segmented(&p) || p.page_kind == "markdown" || p.page_kind == "code")
-            }) {
+            if drainable_page_with(read, Some(source), &job, media)?.is_some()
+                || read_page(read, &source.id, &job.slug)?
+                    .is_some_and(|p| p.deleted_at_us.is_none() && segmented(&p))
+            {
                 return Ok(true);
             }
         }
         Ok(false)
     }
 
-    /// `hasDrainableProjectionJob()`: whether a job of a live inline page of an active source is
-    /// queued with a reason other than `rebuild_failed`.
-    pub fn has_drainable_projection_job(&self) -> Result<bool> {
+    /// `hasDrainableProjectionJob({ media })`: whether a job of a live inline page of an active
+    /// source (with `media`, or a sealable image) is queued with a reason other than `rebuild_failed`.
+    pub fn has_drainable_projection_job(&self, media: bool) -> Result<bool> {
         let read = self.read()?;
         let read = &*read;
         let sources = sources_by_incarnation(read)?;
         for job in all_jobs(read)? {
             if job.record.reason != "rebuild_failed"
-                && drainable_page(read, sources.get(&job.incarnation), &job)?.is_some()
+                && drainable_page_with(read, sources.get(&job.incarnation), &job, media)?.is_some()
             {
                 return Ok(true);
             }
@@ -591,6 +674,54 @@ mod tests {
     }
 
     #[test]
+    fn an_image_page_is_sealable_only_with_the_importer_chunk_at_the_safe_fence() {
+        let store = crate::test_support::store();
+        let image = |slug: &str, body: &str, chunk: &str, version: i16| {
+            let input = PageInput {
+                page_type: "note".into(),
+                title: slug.into(),
+                compiled_truth: body.into(),
+                page_kind: Some("image".into()),
+                ..PageInput::default()
+            };
+            let options = PutPageOptions {
+                index: Some(false),
+                ..PutPageOptions::default()
+            };
+            store.put_page(slug, &input, &options).unwrap();
+            let c: crate::chunks::ChunkInput = serde_json::from_value(json!({
+                "chunk_index": 0, "chunk_text": chunk, "chunk_source": "image_asset", "modality": "image" })).unwrap();
+            store
+                .upsert_chunks(slug, &[c], &Default::default())
+                .unwrap();
+            store
+                .set_chunker_version(slug, &version.to_string(), None)
+                .unwrap();
+        };
+        image("sealable", "Photo of a heron", "Photo of a heron", 4);
+        image("changed", "Photo of an ibex", "an older caption", 4);
+        image("pre-fence", "Photo of a lynx", "Photo of a lynx", 3);
+        let class = |slug: &str| {
+            let read = store.read().unwrap();
+            let page = read_page(&*read, "default", slug).unwrap().unwrap();
+            page_class(&*read, &page, false).unwrap()
+        };
+        assert_eq!(class("sealable"), PageClass::Sealable);
+        assert_eq!(class("changed"), PageClass::Reimport);
+        assert_eq!(class("pre-fence"), PageClass::Reimport);
+        let backlog = store
+            .read_projection_backlog(&crate::link_queries::CoverageScope::default())
+            .unwrap();
+        assert_eq!((backlog.sealable, backlog.reimport), (1, 2));
+        assert!(store.has_drainable_projection_job(true).unwrap());
+        assert!(!store.has_drainable_projection_job(false).unwrap());
+        assert_eq!(
+            slugs(&store.list_projection_drain_preview(10.0).unwrap()),
+            ["sealable"]
+        );
+    }
+
+    #[test]
     fn the_drain_reads_count_the_queue_and_list_its_rows() {
         let store = crate::test_support::store();
         for slug in ["a", "b"] {
@@ -607,15 +738,9 @@ mod tests {
         let none = store.read_projection_backlog(&other).unwrap();
         assert_eq!((none.pending, none.oldest), (0, None));
         let preview = store.list_projection_drain_preview(1.0).unwrap();
-        assert_eq!(slugs(preview["rows"].as_array().unwrap()), ["a"]);
-        assert_eq!(
-            store.list_projection_drain_preview(0.0).unwrap()["rows"]
-                .as_array()
-                .unwrap()
-                .len(),
-            1
-        );
-        assert!(store.has_queued_projection_work().unwrap());
+        assert_eq!(slugs(&preview), ["a"]);
+        assert_eq!(store.list_projection_drain_preview(0.0).unwrap().len(), 1);
+        assert!(store.has_queued_projection_work(false).unwrap());
         // The drain clock: a run start reads back as `now()::text`, and the clock is not past a later time.
         let start = store.read_drain_run_start().unwrap();
         assert!(start.ends_with("+00"));
@@ -673,7 +798,7 @@ mod tests {
             .list_queued_page_projections(&filter(json!({ "limit": 10, "served": "waiting" })))
             .unwrap();
         assert_eq!(waiting.len(), 3);
-        assert!(store.has_drainable_projection_job().unwrap());
+        assert!(store.has_drainable_projection_job(false).unwrap());
     }
 
     #[test]
@@ -744,7 +869,7 @@ mod tests {
         );
         store.delete_projection_job(&job_ref(&live)).unwrap();
         assert_eq!(store.read_projection_job_reason(&live).unwrap(), None);
-        assert!(!store.has_drainable_projection_job().unwrap());
+        assert!(!store.has_drainable_projection_job(false).unwrap());
     }
 
     #[test]
