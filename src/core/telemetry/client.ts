@@ -101,6 +101,24 @@ function withQueueLock(fn: () => void): void {
   if (!lock) return;
   try { fn(); } finally { release(lock); }
 }
+/**
+ * Read-modify-write of settings.json on a fresh read under queue.lock, so two
+ * writers never overwrite each other's change (an upgrade note never undoes a
+ * concurrent `telemetry off`). `change` returns null to write nothing. Without
+ * the lock an optional write is skipped; a required one (a consent choice, a
+ * confirmed forget) is written anyway.
+ */
+function updateSettings(change: (s: Settings) => Settings | null, required: boolean): Settings | null {
+  const lock = acquire('queue.lock', 50);
+  if (!lock && !required) return null;
+  try {
+    const next = change(readSettings());
+    if (next) writeJson('settings.json', next);
+    return next;
+  } finally {
+    if (lock) release(lock);
+  }
+}
 
 export function forcedOff(): boolean {
   return process.env.GBRAIN_TELEMETRY?.trim().toLowerCase() === 'off';
@@ -123,10 +141,12 @@ function cachedTier(): Tier {
 
 /** The person's answer. Off deletes everything queued; a yes records one consent event. */
 export function setTier(tier: Tier): Settings {
-  const next: Settings = { ...readSettings(), tier, answered_at: new Date().toISOString() };
-  if (tier === 'community' && !next.installation_id) next.installation_id = randomUUID();
-  if (tier !== 'off') next.last_run_version ??= VERSION;
-  writeJson('settings.json', next);
+  const next = updateSettings((s) => {
+    const n: Settings = { ...s, tier, answered_at: new Date().toISOString() };
+    if (tier === 'community' && !n.installation_id) n.installation_id = randomUUID();
+    if (tier !== 'off') n.last_run_version ??= VERSION;
+    return n;
+  }, true)!;
   tierCache = null;
   if (tier === 'off') clearQueue();
   else recordEvent({ event_type: 'consent', answer: tier });
@@ -507,8 +527,7 @@ export async function forgetInstallation(): Promise<{ status: ForgetStatus; http
     }
     const body = (await res.json().catch(() => ({}))) as Row;
     if (!res.ok || body.forgotten !== true) return { status: 'failed', http: res.status };
-    const { installation_id: _gone, ...rest } = readSettings();
-    writeJson('settings.json', rest);
+    updateSettings(({ installation_id: _gone, ...rest }) => rest, true);
     clearQueue();
     return { status: 'forgotten', http: res.status, events_cleared: typeof body.events_cleared === 'number' ? body.events_cleared : 0 };
   } finally {
@@ -542,11 +561,16 @@ export async function fetchPulse(): Promise<PulseResult> {
 export function noteRunVersion(channel?: string): void {
   try {
     if (currentTier() === 'off') return;
-    const settings = readSettings();
-    if (settings.last_run_version === VERSION || (settings.last_run_version && isNewerVersion(VERSION, settings.last_run_version))) return;
-    writeJson('settings.json', { ...settings, last_run_version: VERSION });
-    if (settings.last_run_version && VERSION_RE.test(settings.last_run_version)) {
-      recordEvent({ event_type: 'upgrade', from_version: settings.last_run_version, to_version: VERSION, outcome: 'success', channel: oneOf('channel', channel) ?? 'unknown' });
+    const settled = (s: Settings) => s.last_run_version === VERSION || (!!s.last_run_version && isNewerVersion(VERSION, s.last_run_version));
+    if (settled(readSettings())) return;
+    let from: string | undefined;
+    updateSettings((s) => {
+      if (s.tier === 'off' || settled(s)) return null;
+      from = s.last_run_version;
+      return { ...s, last_run_version: VERSION };
+    }, false);
+    if (from && VERSION_RE.test(from)) {
+      recordEvent({ event_type: 'upgrade', from_version: from, to_version: VERSION, outcome: 'success', channel: oneOf('channel', channel) ?? 'unknown' });
     }
   } catch { /* telemetry never breaks a command */ }
 }

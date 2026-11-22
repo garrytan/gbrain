@@ -1,4 +1,5 @@
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, spyOn, test } from 'bun:test';
+import * as fs from 'fs';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -396,6 +397,47 @@ describe('gbrain telemetry client: review fixes', () => {
       });
     } finally {
       ok.stop();
+    }
+  });
+});
+
+describe('gbrain telemetry client: an opt-out is never undone', () => {
+  it('a telemetry off written between the version check and the version write survives', () => {
+    setTier('anonymous');
+    writeFileSync(join(telemetryDir(), 'settings.json'), JSON.stringify({ ...readSettings(), last_run_version: '0.0.1' }));
+    const realRead = fs.readFileSync;
+    let reads = 0;
+    let injected = false;
+    const spy = spyOn(fs, 'readFileSync').mockImplementation(((path: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
+      const out = (realRead as (...a: unknown[]) => unknown)(path, ...rest);
+      if (!injected && String(path).endsWith('settings.json') && ++reads === 2) {
+        injected = true;
+        setTier('off');
+      }
+      return out;
+    }) as typeof fs.readFileSync);
+    try {
+      noteRunVersion('stable');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(injected).toBe(true);
+    expect(readSettings().tier).toBe('off');
+    expect(queue()).toEqual([]);
+  });
+
+  it('a held queue lock makes the version note wait for the next run, and a telemetry off still lands', () => {
+    setTier('anonymous');
+    writeFileSync(join(telemetryDir(), 'settings.json'), JSON.stringify({ ...readSettings(), last_run_version: '0.0.1' }));
+    const lock = join(telemetryDir(), 'queue.lock');
+    writeFileSync(lock, '');
+    try {
+      noteRunVersion('stable');
+      expect(readSettings().last_run_version).toBe('0.0.1');
+      setTier('off');
+      expect(readSettings().tier).toBe('off');
+    } finally {
+      rmSync(lock, { force: true });
     }
   });
 });
