@@ -22,7 +22,7 @@
 import type { BrainEngine } from '../../engine.ts';
 import { GRADUATION_INVENTORY } from '../../persistence/graduation-inventory.ts';
 import { storeCall, type StoreMember } from './common.ts';
-import { RECEIPT_ABSENT_SLUG_STORES, STORE_ABSENT_PROBE_TABLES } from './purge-plan.ts';
+import { RECEIPT_ABSENT_SLUG_STORES, STORE_ABSENT_PROBE_TABLES } from './purge-absent-stores.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 

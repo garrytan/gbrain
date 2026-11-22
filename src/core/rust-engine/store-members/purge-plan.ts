@@ -35,6 +35,7 @@ import { escapeFenceCell } from '../../fence-shared.ts';
 import { purgeProbeShape } from '../../facts/purge-plan-statements.ts';
 import type { PurgeProbe } from '../../engine-sql/facts-purge-plan.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { RECEIPT_ABSENT_SLUG_STORES, STORE_ABSENT_PROBE_TABLES } from './purge-absent-stores.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -49,29 +50,7 @@ const STORE_PROBED_TABLES: ReadonlySet<string> = new Set([
   'page_body_staging_texts', 'page_segment_texts', 'page_segment_derivations', 'page_segment_derivation_purges', 'persistence_effects', 'trust_proposals', 'write_gate_holds',
 ]);
 
-/** Inventory tables the store keeps no rows of: a probe of one finds nothing. */
-export const STORE_ABSENT_PROBE_TABLES: ReadonlySet<string> = new Set([
-  'context_volunteer_events', 'mention_gazetteer_entries', 'conversation_parser_llm_cache', 'drift_decisions',
-  'eval_takes_quality_runs', 'link_edge_proposals', 'memory_proposals', 'migration_impact_log', 'persistence_graduation',
-  'persistence_worktree_refreshes', 'pinned_questions', 'session_context_state', 'shared_skill_revisions',
-  'source_ingestion_receipts', 'sync_notifier_sources', 'take_grade_cache', 'think_ab_results',
-  // The store keeps no raw upload parts and no retrieval event, feedback or weight record.
-  'page_body_staging_parts', 'retrieval_event_links', 'retrieval_event_pages', 'retrieval_feedback',
-  'retrieval_weights',
-]);
-
 type ProbeRoute = { kind: 'none' } | { kind: 'store'; args: Record<string, unknown> } | { kind: 'receipt'; probe: Record<string, unknown> };
-
-/**
- * The slug-keyed stores of a page purge receipt the store keeps no rows of, so a probe of one finds nothing:
- * `core_edit_notices` (no edit notices), the retrieval event, link, feedback and weight stores (reserved keyspaces that
- * hold no record), `context_volunteer_events` and `mention_gazetteer_entries` (not kept). `query_cache` is the same:
- * the store keeps no query cache, as `clearQueryCache` answering 0 says.
- */
-export const RECEIPT_ABSENT_SLUG_STORES: ReadonlySet<string> = new Set([
-  'core_edit_notices', 'retrieval_event_pages', 'retrieval_event_links', 'retrieval_feedback', 'retrieval_weights',
-  'context_volunteer_events', 'mention_gazetteer_entries',
-]);
 
 /**
  * The store's arguments for a page purge receipt's store probe (facts/purge_store_probe.rs `StoreProbe`), or none when the
