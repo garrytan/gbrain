@@ -9,7 +9,7 @@ import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
 import { LATEST_VERSION } from '../migrate.ts';
 import type { CatalogForeignKey, CatalogRelation } from '../engine-sql/graduation-catalog.ts';
-import { capabilityMissing, rethrowCapabilityMissing } from '../rust-engine/errors.ts';
+import { refuseKeyspaceStore, rethrowCapabilityMissing } from '../rust-engine/errors.ts';
 import type { ColumnTransform, Inventory, InventoryClass, InventoryEntry, LossKind } from './engine-graduation.types.ts';
 
 type EngineKind = 'pglite' | 'postgres';
@@ -269,7 +269,7 @@ export function expectedRelations(engine: EngineKind, inv: Inventory = GRADUATIO
 export async function listRelations(engine: BrainEngine): Promise<readonly CatalogRelation[]> {
   const catalog = await engine.listCatalogRelations();
   if (catalog.store !== 'sql') {
-    throw capabilityMissing('raw_sql', `listRelations (graduation copies SQL relations; this store keeps ${catalog.keyspaces.length} keyspaces of format ${catalog.formatVersion} instead)`);
+    refuseKeyspaceStore('listRelations', `graduation copies SQL relations; this store keeps ${catalog.keyspaces.length} keyspaces of format ${catalog.formatVersion} instead`);
   }
   return catalog.relations;
 }

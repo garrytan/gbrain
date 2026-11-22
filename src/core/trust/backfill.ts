@@ -43,7 +43,7 @@ import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import { FACTS_BACKSTOP_SOURCES } from '../facts/capture-sources.ts';
 import { opError } from '../ops/contract.ts';
-import { capabilityMissing } from '../rust-engine/errors.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 import { CONNECTOR_SOURCE_KINDS } from '../persistence/connector-identity.ts';
 import { withCoordinatedWrite, withTrustBackfill } from '../persistence/context.ts';
 import { propagateTierLowering } from './propagation.ts';
@@ -294,9 +294,7 @@ function summarize(mode: TrustBackfillReport['mode'], schema: TrustBackfillRepor
  * name, before the first read or write, so a backfill never starts a run it cannot finish.
  */
 function refuseWithoutRawSql(engine: Partial<Pick<BrainEngine, 'capabilities'>>, member: string): void {
-  if (engine.capabilities?.has('raw_sql') === false) {
-    throw capabilityMissing('raw_sql', `${member} (the trust backfill's batch, apply and relower statements are raw SQL)`);
-  }
+  requireRawSql(engine, member, "the trust backfill's batch, apply and relower statements are raw SQL");
 }
 
 /** The read-only projection: counts by table x tier, in keyset batches inside one READ ONLY transaction. */

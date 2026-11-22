@@ -64,6 +64,37 @@ export function requireManagedPersistence(engine: object, step: string, why: str
 }
 
 /**
+ * The named refusal of a step whose statements are raw SQL, on an engine that reports a capability set without
+ * `raw_sql` (the Rust engine). The step calls it before it reads or writes anything, so nothing of it ran. PGLite,
+ * Postgres and transaction handles (no capability set) pass.
+ */
+export function requireRawSql(engine: object, step: string, why: string): void {
+  if (!servesRawSql(engine)) throw capabilityMissing('raw_sql', `${step} (${why})`);
+}
+
+/**
+ * The named refusal of a step that works on SQL relations, called when `listCatalogRelations` answered
+ * `store: 'keyspaces'` (the Rust engine). PGLite and Postgres answer `store: 'sql'` and never reach it.
+ */
+export function refuseKeyspaceStore(step: string, why: string): never {
+  throw capabilityMissing('raw_sql', `${step} (${why})`);
+}
+
+/** One stop a purge entry point meets on the Rust engine (persistence/purge-path-members.ts entryStops). */
+export interface PurgeEntryStop { capability: Capability; name: string; why: string; owner: string; due?: string }
+
+/**
+ * The pre-write refusal of a purge entry point that meets `stop`: a stop with a due date names its owner and date in the
+ * message and the detail, one without (a lane's own) names its owner. No stop passes. The stop lists are empty on PGLite
+ * and Postgres (entryStops answers only for the Rust engine), so only the Rust engine refuses here.
+ */
+export function refusePurgeEntryStop(what: string, stop: PurgeEntryStop | undefined): void {
+  if (!stop) return;
+  if (stop.due) throw capabilityMissing(stop.capability, `${what}, which needs ${stop.name}: ${stop.why}`, 'none', { owner: stop.owner, due: stop.due });
+  throw capabilityMissing(stop.capability, `${what}, which needs ${stop.name} (owner ${stop.owner}: ${stop.why})`);
+}
+
+/**
  * Whether `engine` can hold managed-checkout state at all. Without `managed_persistence` no worktree, refresh or
  * worktree-owned write can exist (their admission refuses above), so an owner scan over them has nothing to find and
  * returns empty instead of reading. PGLite, Postgres and transaction handles (no capability set) answer true.

@@ -30,7 +30,7 @@ import { preservedConceptSections } from '../cycle/concept-sections.ts';
 import { boundedBodyPrefixSql } from '../page-window/bounded-lead.ts';
 import { BOUNDED_PREFIX_BYTES } from '../page-window/document.ts';
 import { HELD_CONCEPT_SQL } from '../engine-sql/concept-rebuild.ts';
-import { capabilityMissing } from '../rust-engine/errors.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 type Sql = Pick<BrainEngine, 'executeRaw'> & Partial<Pick<BrainEngine, 'capabilities'>>;
@@ -41,9 +41,7 @@ type Sql = Pick<BrainEngine, 'executeRaw'> & Partial<Pick<BrainEngine, 'capabili
  * with `engine_capability_missing` naming it, before any lock, purge or write, never part of the way through.
  */
 function refuseWithoutRawSql(engine: Partial<Pick<BrainEngine, 'capabilities'>>, member: string): void {
-  if (engine.capabilities?.has('raw_sql') === false) {
-    throw capabilityMissing('raw_sql', `${member} (the concept rebuild's stated-row, access and held-concept reads are raw SQL)`);
-  }
+  requireRawSql(engine, member, "the concept rebuild's stated-row, access and held-concept reads are raw SQL");
 }
 
 /** The tombstone a synthesis rebuilds: its row, delete instant and revision, and the members (at the revisions read). */

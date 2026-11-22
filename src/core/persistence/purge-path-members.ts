@@ -24,7 +24,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { Capability } from '../engine-capabilities.ts';
-import { capabilityMissing } from '../rust-engine/errors.ts';
+import { refusePurgeEntryStop } from '../rust-engine/errors.ts';
 
 /** Who lifts or owns an entry. */
 export const PURGE_OWNERS = {
@@ -239,9 +239,6 @@ export const purgePathStops = (engine: object, entryPoint: PurgeEntryPoint = 'de
  */
 export async function requirePurgePathServed(engine: object, entryPoint: PurgeEntryPoint = 'delete_page'): Promise<void> {
   const [first] = await purgePathStops(engine, entryPoint);
-  if (!first) return;
-  const what = entryPoint === 'retention' ? 'the retention purge' : 'delete_page --purge';
   // A stop with a due date names owner and date in the message and the detail (errors.ts); one without (this lane's own) names its owner.
-  if (first.due) throw capabilityMissing(first.capability, `${what}, which needs ${first.name}: ${first.why}`, 'none', { owner: first.owner, due: first.due });
-  throw capabilityMissing(first.capability, `${what}, which needs ${first.name} (owner ${first.owner}: ${first.why})`);
+  refusePurgeEntryStop(entryPoint === 'retention' ? 'the retention purge' : 'delete_page --purge', first);
 }

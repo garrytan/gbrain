@@ -43,7 +43,7 @@
  *   No stop is left without an owner and a date (test/fact-purge-path-members.test.ts).
  */
 import type { BrainEngine } from '../engine.ts';
-import { capabilityMissing } from '../rust-engine/errors.ts';
+import { refusePurgeEntryStop } from '../rust-engine/errors.ts';
 import { PURGE_DUE, PURGE_OWNERS, entryStops, type PurgePathEntry, type PurgePathStop } from './purge-path-members.ts';
 
 /** The requests that write: a real run, and `--status --continue` (it continues the derivation sweep). */
@@ -199,7 +199,5 @@ export const factPurgeStops = (engine: object, entryPoint: FactPurgeEntryPoint =
  */
 export async function requireFactPurgeServed(engine: object, entryPoint: FactPurgeEntryPoint = 'purge'): Promise<void> {
   const [first] = await factPurgeStops(engine, entryPoint);
-  if (!first) return;
-  const what = entryPoint === 'continue' ? 'purge_fact --status --continue' : 'purge_fact (forget --purge)';
-  throw capabilityMissing(first.capability, `${what}, which needs ${first.name}: ${first.why}`, 'none', { owner: first.owner, due: first.due! });
+  refusePurgeEntryStop(entryPoint === 'continue' ? 'purge_fact --status --continue' : 'purge_fact (forget --purge)', first);
 }
