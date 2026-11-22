@@ -121,7 +121,8 @@
     "rust/bench/corpus/**": ["rust/bench/baseline/baseline.test.ts"],
     "rust/bench/Cargo.lock": ["rust/bench/tests/sim_kill.rs"],
     "rust/bench/.gitignore": ["rust/bench/tests/sim_kill.rs"],
-    "rust/crates/gbrain-store/tests/fixtures/**": ["rust/crates/gbrain-store/tests/graph_parity.rs"]
+    "rust/crates/gbrain-store/tests/fixtures/**": ["rust/crates/gbrain-store/tests/graph_parity.rs"],
+    "scripts/rust-crash/**": ["rust/crates/gbrain-store/src/crash_points.rs"]
   },
   "guards": [
     {
