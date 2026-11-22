@@ -8,6 +8,12 @@
  * stored `1990-05-01T00:00:00.000Z`, so the comparison must read the baseline under the old typing too
  * (legacyStoredFrontmatter), or every such edit is held as file_drift and the suggested `--prefer database` repair would
  * overwrite the user's edit.
+ *
+ * That waiver needs proof that the older release stored the page from that baseline: the page's import record names the
+ * old importer (import=1), the proof provenLegacyCarry uses. Without it a database edit to the old-typed form of a value
+ * (code: '007' changed to 7) would look unchanged and be overwritten, so a page today's importer stored, or a page with
+ * no import record, stays held. The record-less case differs from master on purpose and fails safe: the hold names its
+ * repair and nothing is lost.
  */
 import { describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
@@ -26,12 +32,14 @@ const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root
 const commit = (root: string, message: string) => { git(root, 'add', '-A'); git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', message); };
 const PLAIN = 'notes/a';
 const TYPED = 'people/d';
+const CODED = 'people/c';
 const plain = (slug: string) => `---\ntype: concept\ntitle: ${slug}\ntags: [alpha, beta]\n---\n\nThe committed body of ${slug}, about acme-example.\n`;
 const typed = (slug: string) => `---\ntype: person\ntitle: ${slug}\nborn: 1990-05-01\n---\n\nThe committed body of ${slug}.\n`;
-const file = (slug: string) => (slug === TYPED ? typed(slug) : plain(slug));
+const coded = (slug: string) => `---\ntype: person\ntitle: ${slug}\ncode: 007\n---\n\nThe committed body of ${slug}.\n`;
+const file = (slug: string) => (slug === TYPED ? typed(slug) : slug === CODED ? coded(slug) : plain(slug));
 const setup = ({ root }: { root: string }) => {
   mkdirSync(join(root, 'notes'), { recursive: true }); mkdirSync(join(root, 'people'), { recursive: true }); git(root, 'init', '-q');
-  for (const slug of [PLAIN, TYPED]) writeFileSync(join(root, `${slug}.md`), file(slug));
+  for (const slug of [PLAIN, TYPED, CODED]) writeFileSync(join(root, `${slug}.md`), file(slug));
   commit(root, 'notes');
 };
 const snapshotOf = async (engine: BrainEngine, slug: string) => (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!;
@@ -56,12 +64,24 @@ async function seedOlderRelease(engine: BrainEngine, oldHash = false): Promise<v
   await engine.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,obligations,converged,parser_fp}','\"an-older-parser\"'::jsonb) WHERE op='managed-sync-pass'");
 }
 
+const holdsOf = async (engine: BrainEngine) => (await readGitSourceHolds(engine, { sourceIds: ['default'] })).flatMap(entry => entry.holds.map(hold => `${hold.path}: ${hold.code}`)).sort();
+
+/** Edits the body of `slug` in Git and syncs; the page must stay held as file_drift with its database value kept. */
+async function editIsHeld(engine: BrainEngine, root: string, slug: string, kept: Record<string, unknown>): Promise<void> {
+  writeFileSync(join(root, `${slug}.md`), `${file(slug)}\nAn added line.\n`);
+  commit(root, 'edit');
+  await performManagedSync(engine, { sourceId: 'default', noPull: true });
+  expect(await holdsOf(engine)).toEqual([`${slug}.md: file_drift`]);
+  const page = (await engine.getPage(slug))!;
+  expect(page.frontmatter).toMatchObject(kept);
+  expect(page.compiled_truth).not.toContain('An added line.');
+}
+
 async function editsImportCleanly(engine: BrainEngine, root: string): Promise<void> {
   for (const slug of [PLAIN, TYPED]) writeFileSync(join(root, `${slug}.md`), `${file(slug)}\nAn added line.\n`);
   commit(root, 'edit');
   const result = await performManagedSync(engine, { sourceId: 'default', noPull: true });
-  const holds = (await readGitSourceHolds(engine, { sourceIds: ['default'] })).flatMap(entry => entry.holds.map(hold => `${hold.path}: ${hold.code}`));
-  expect(holds).toEqual([]);
+  expect(await holdsOf(engine)).toEqual([]);
   expect(result.status).toBe('synced');
   for (const slug of [PLAIN, TYPED]) expect((await engine.getPage(slug))!.compiled_truth).toContain('An added line.');
   // The import stores the file's text, so the older page's date now reads as written.
@@ -69,7 +89,7 @@ async function editsImportCleanly(engine: BrainEngine, root: string): Promise<vo
 }
 
 describe('pages-03: a git edit to an older page with typed frontmatter is not held as file drift', () => {
-  test('after a database-only change since its last import (drift both)', () => managedBrain(async ({ engine, root }) => {
+  test('(iii) an old-importer record waives the hold after a database-only change (drift both, the repro\'s seed)', () => managedBrain(async ({ engine, root }) => {
     expect((await performManagedSync(engine, { sourceId: 'default', noPull: true })).status).toBe('first_sync');
     await seedOlderRelease(engine);
     expect((await engine.getPage(TYPED))!.frontmatter).toMatchObject({ born: '1990-05-01T00:00:00.000Z' });
@@ -88,7 +108,7 @@ describe('pages-03: a git edit to an older page with typed frontmatter is not he
     await editsImportCleanly(engine, root);
   }, { setup }), 240_000);
 
-  test('a real database change to a value the file also holds is still held as file drift', () => managedBrain(async ({ engine, root }) => {
+  test('(ii) an old-importer record the page moved past with a real database change stays held', () => managedBrain(async ({ engine, root }) => {
     expect((await performManagedSync(engine, { sourceId: 'default', noPull: true })).status).toBe('first_sync');
     await seedOlderRelease(engine);
     await withManagedFixtureWrite(engine, ['default'], async tx => {
@@ -96,19 +116,27 @@ describe('pages-03: a git edit to an older page with typed frontmatter is not he
       await tx.executeRaw('UPDATE pages SET frontmatter=$1::text::jsonb WHERE slug=$2', [JSON.stringify({ ...row!.frontmatter, born: '1990-06-01T00:00:00.000Z' }), TYPED]);
       await tx.addTag(TYPED, 'gamma', { sourceId: 'default' });
     });
-    writeFileSync(join(root, `${TYPED}.md`), `${typed(TYPED)}\nAn added line.\n`);
-    commit(root, 'edit');
-    await performManagedSync(engine, { sourceId: 'default', noPull: true });
-    const holds = (await readGitSourceHolds(engine, { sourceIds: ['default'] })).flatMap(entry => entry.holds.map(hold => `${hold.path}: ${hold.code}`));
-    expect(holds).toEqual([`${TYPED}.md: file_drift`]);
-    expect((await engine.getPage(TYPED))!.frontmatter).toMatchObject({ born: '1990-06-01T00:00:00.000Z' });
+    await editIsHeld(engine, root, TYPED, { born: '1990-06-01T00:00:00.000Z' });
   }, { setup }), 240_000);
 
-  test('with no import record (drift unknown)', () => managedBrain(async ({ engine, root }) => {
+  test('(i) a record from today\'s importer and a database edit to the old-typed form of a value (007 to 7) stays held', () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, { sourceId: 'default', noPull: true })).status).toBe('first_sync');
+    expect((await engine.getPage(CODED))!.frontmatter).toMatchObject({ code: '007' });
+    await withManagedFixtureWrite(engine, ['default'], async tx => {
+      const [row] = await tx.executeRaw<{ frontmatter: Record<string, unknown> }>('SELECT frontmatter FROM pages WHERE slug=$1', [CODED]);
+      await tx.executeRaw('UPDATE pages SET frontmatter=$1::text::jsonb WHERE slug=$2', [JSON.stringify({ ...row!.frontmatter, code: 7 }), CODED]);
+      await tx.addTag(CODED, 'gamma', { sourceId: 'default' });
+    });
+    await editIsHeld(engine, root, CODED, { code: 7 });
+  }, { setup }), 240_000);
+
+  // (iv) The repro's FE_SIDE=unknown shape: with no import record nothing proves the older release stored the page, so the
+  // edit stays held on purpose (a difference from master that fails safe), not a clean import.
+  test('(iv) an older page with no import record stays held (drift unknown)', () => managedBrain(async ({ engine, root }) => {
     expect((await performManagedSync(engine, { sourceId: 'default', noPull: true })).status).toBe('first_sync');
     await seedOlderRelease(engine);
     await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1', [SYNC_IMPORT_PROVENANCE_OP]);
-    await editsImportCleanly(engine, root);
+    await editIsHeld(engine, root, TYPED, { born: '1990-05-01T00:00:00.000Z' });
   }, { setup }), 240_000);
 });
 
