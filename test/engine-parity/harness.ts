@@ -152,12 +152,35 @@ async function openArm(backend: ParityBackend): Promise<ParityArm> {
 const PRESERVED_TABLES = ['schema_version', 'page_generation_clock', 'persistence_brain'];
 
 /**
+ * The arm's database is its own (isolatedPersistencePostgres), so every other client transaction on it is work this process
+ * started and did not finish: a write the previous case's apply mode left draining, say. Deleting rows under it can
+ * deadlock (a reset `DELETE FROM sources` against such work failed a case on CI), so wait for those transactions to end.
+ * A transaction still open after the bound is a leak: the reset fails and names it, rather than racing it.
+ */
+async function waitForOpenTransactions(engine: BrainEngine, timeoutMs = 30_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const open = await engine.executeRaw<{ pid: number; state: string; query: string }>(
+      `SELECT pid, state, left(query, 160) AS query FROM pg_stat_activity
+        WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend' AND xact_start IS NOT NULL`,
+    );
+    if (open.length === 0) return;
+    if (Date.now() > deadline) {
+      throw new Error(`parity reset: ${open.length} transaction(s) the previous case left open did not end within ${timeoutMs} ms: `
+        + open.map(t => `pid ${t.pid} (${t.state}): ${t.query}`).join('; '));
+    }
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+}
+
+/**
  * Postgres: the schema's enabled event trigger sends resetPgliteState down its
  * TRUNCATE path (~2.8 s a test). Delete every row under replica role instead
  * (truncateCascade, ~ms); sequences keep counting, so cases never compare ids.
  */
-async function resetPostgres(engine: BrainEngine): Promise<void> {
+export async function resetPostgres(engine: BrainEngine): Promise<void> {
   await disposePersistenceConsumer(engine);
+  await waitForOpenTransactions(engine);
   const tables = await engine.executeRaw<{ relname: string }>(
     `SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND NOT (c.relname = ANY($1::text[]))`,
