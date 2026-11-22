@@ -43,6 +43,7 @@ const digest = (text: string) => createHash('sha256').update(text).digest('hex')
 
 describe('the PGLite lock is unchanged', () => {
   test('acquire, release and holder inspection are byte-for-byte master\'s (master 1597b77ac8 digests)', () => {
+    // test-reads-source-ok[structural]: Minder's ask is that the lock's acquire/release/holder code is byte-for-byte master's; a digest of each function's source is that proof
     const lock = readFileSync(join(ROOT, 'src/core/pglite-lock.ts'), 'utf8');
     const lifecycle = readFileSync(join(ROOT, 'src/core/pglite-lifecycle.ts'), 'utf8');
     expect({
