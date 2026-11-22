@@ -7,10 +7,12 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { ABANDONED_STOP_GRACE_MS, PersistenceConsumer } from '../src/core/persistence/consumer.ts';
 import { PreparationDeadlineError } from '../src/core/persistence/bounded-reads.ts';
 import { resetWriteSwitches } from '../src/core/persistence/switches.ts';
-import { admitWrite, getWriteRequestById, WRITE_PROGRESS_SQL } from '../src/core/persistence/journal.ts';
+import { admitWrite, claimNextWrite, prepareRecovery, completeWrite, getWriteRequestById, WRITE_PROGRESS_SQL } from '../src/core/persistence/journal.ts';
 import { cancelWriteRequest } from '../src/core/persistence/control.ts';
-import { publishMutation } from '../src/core/persistence/coordinator.ts';
-import { acquireWorktree } from '../src/core/persistence/ownership.ts';
+import { publishMutation, recoverPublication } from '../src/core/persistence/coordinator.ts';
+import { tryAcquirePublicationCapacity } from '../src/core/persistence/pool-capacity.ts';
+import { sha256 } from '../src/core/persistence/digest.ts';
+import { acquireWorktree, WORKTREE_BINDING_SQL } from '../src/core/persistence/ownership.ts';
 import { admission, assertCommittedSnapshot, assertConservation, fixtures, initializeFixtures, prepared, selectFixtureHost, type HarnessConfig } from '../scripts/persistence/harness.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { waitFor } from './helpers/wait-for.ts';
@@ -650,6 +652,86 @@ test('stopping while preparation is active does not schedule another queued writ
     for (const row of [first, second]) await cancelWriteRequest(engine, { kind: 'local_cli', id: config.principalIds[0] }, row.request_id);
   }
 }), 15_000);
+
+// #10083 preservation checks pass on master. They reject the first payload fix:
+// lost terminal handoff, stale capacity cooldown, and cooldown timed before a slow lock check.
+async function recoveryFixture(slug: string) {
+  const [source] = await fixtures(engine, config);
+  const accepted = await admitWrite(engine, admission(config, source, slug, 'After'));
+  const row = (await claimNextWrite(engine, config.hostId))!;
+  expect(row.id).toBe(accepted.id);
+  const lock = await acquireWorktree(source.binding);
+  expect(lock).not.toBeNull();
+  await prepareRecovery(engine, row, { version: 1, root: source.root, path: join(source.root, `${row.slug}.md`),
+    before: null, beforeHash: null, afterHash: sha256('After'), mode: 0o600,
+    ownerEpoch: String(source.binding.owner_epoch), attempt: row.execution_token! }, 4096);
+  return { source, row, lock: lock! };
+}
+const recoveryRetries = (consumer: PersistenceConsumer) =>
+  (consumer as unknown as { rootRetryAfter: Map<string, number> }).rootRetryAfter;
+async function finishRecovery(row: Awaited<ReturnType<typeof recoveryFixture>>['row']) {
+  await recoverPublication(engine, row.id, config.hostId);
+  await cancelWriteRequest(engine, { kind: 'local_cli', id: config.principalIds[0] }, row.request_id);
+}
+
+test.each(['committed', 'failed', 'conflict', 'cancelled'] as const)('recovery preservation: busy %s receipt calls onSettled', state => withEnv(env, async () => {
+  const { row, lock } = await recoveryFixture(`busy-terminal-${state}`);
+  await engine.transaction(tx => completeWrite(tx, row, state, {}));
+  const terminal = await getWriteRequestById(engine, row.id);
+  const seen: unknown[] = [], errors: unknown[] = [];
+  const consumer = new PersistenceConsumer(engine, { engine: 'pglite' }, async () => { throw new Error('Recovery only'); },
+    { hostId: config.hostId, concurrency: 0, requestsOnly: true, onSettled: current => seen.push(current), onError: error => errors.push(error) });
+  try {
+    await consumer.tick();
+    expect(seen).toEqual([terminal]);
+    expect(terminal?.recovery).not.toBeNull();
+    expect(errors).toEqual([]);
+  } finally { await consumer.stop(); await lock.release(); await finishRecovery(row); }
+}));
+
+test('recovery preservation: capacity refusal replaces the scanned unexpected-bytes cooldown', () => withEnv(env, async () => {
+  const { row, lock } = await recoveryFixture('capacity-recovery-cooldown');
+  await lock.release();
+  const release = tryAcquirePublicationCapacity(engine);
+  expect(release).not.toBeNull();
+  const consumer = new PersistenceConsumer(engine, { engine: 'pglite' }, async () => { throw new Error('Recovery only'); },
+    { hostId: config.hostId, concurrency: 0, requestsOnly: true });
+  try {
+    await engine.executeRaw(`UPDATE persistence_requests SET blocked_reason='unexpected_file_bytes' WHERE id=$1::uuid`, [row.id]);
+    const started = Date.now();
+    await consumer.tick();
+    expect((await getWriteRequestById(engine, row.id))?.blocked_reason).toBe('writer_pool_capacity');
+    expect(recoveryRetries(consumer).get(row.worktree_id!)!).toBeGreaterThanOrEqual(started + 1000);
+    expect(recoveryRetries(consumer).get(row.worktree_id!)!).toBeLessThanOrEqual(Date.now() + 1000);
+    expect(consumer.status().last_error).toBeUndefined();
+  } finally { await consumer.stop(); release?.(); await finishRecovery(row); }
+}));
+
+test('recovery preservation: busy unexpected bytes keep 30 seconds after the lock check', () => withEnv(env, async () => {
+  const { row, lock } = await recoveryFixture('busy-recovery-cooldown');
+  let checkedAt = 0;
+  const proxy = new Proxy(engine, { get(target, key) {
+    if (key === 'executeRaw') return async (...args: Parameters<typeof engine.executeRaw>) => {
+      if (args[0] === WORKTREE_BINDING_SQL) await Bun.sleep(50);
+      const rows = await target.executeRaw(...args);
+      if (args[0] === WORKTREE_BINDING_SQL) checkedAt = Date.now();
+      return rows;
+    };
+    const value = Reflect.get(target, key);
+    return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  const consumer = new PersistenceConsumer(proxy, { engine: 'pglite' }, async () => { throw new Error('Recovery only'); },
+    { hostId: config.hostId, concurrency: 0, requestsOnly: true });
+  try {
+    await engine.executeRaw(`UPDATE persistence_requests SET blocked_reason='unexpected_file_bytes' WHERE id=$1::uuid`, [row.id]);
+    await consumer.tick();
+    expect(checkedAt).toBeGreaterThan(0);
+    expect(recoveryRetries(consumer).get(row.worktree_id!)!).toBeGreaterThanOrEqual(checkedAt + 30_000);
+    expect(recoveryRetries(consumer).get(row.worktree_id!)!).toBeLessThanOrEqual(Date.now() + 30_000);
+    expect((await getWriteRequestById(engine, row.id))?.recovery).not.toBeNull();
+    expect(consumer.status().last_error).toBeUndefined();
+  } finally { await consumer.stop(); await lock.release(); await finishRecovery(row); }
+}));
 
 for (const reason of ['locked root', 'retryable preparation'] as const) test(`${reason} keeps idle backoff instead of spinning on immediate wake-ups`, async () => withEnv(env, async () => {
   const sources = await fixtures(engine, config);

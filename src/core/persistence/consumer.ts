@@ -43,6 +43,7 @@ import { isConnectionLoss } from '../retry-matcher.ts';
 import { INSPECT_OWNER_RETRY_MS } from './health.ts';
 import { lockOpenOsError } from './native-lock.ts';
 import { boundPublication, publicationLeaseMs, readPublicationCeilingMs, type PublicationBound } from './publication-deadline.ts';
+import { acquireWorktree, getWorktreeBinding } from './ownership.ts';
 
 type PhaseObservation = { name: string; started_at: string; deadline_exceeded: boolean; attempt: number; first_conn_ms?: number };
 /** #5373: set by a task that abandons a still-running preparation after losing its claim; its root is freed only once `until` settles. */
@@ -683,7 +684,8 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     for (const [root, retryAt] of this.rootRetryAfter) if (retryAt <= now) this.rootRetryAfter.delete(root);
     if (scan) {
       const excluded = [...this.activeRoots, ...this.rootRetryAfter.keys()];
-      const recovery = await this.phase('recovery_scan', signal => this.statements.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r
+      const recovery = await this.phase('recovery_scan', signal => this.statements.executeRaw<
+        Pick<WriteRequest, 'id' | 'source_id' | 'worktree_id' | 'blocked_reason' | 'state'>>(`SELECT r.id,r.source_id,r.worktree_id,r.blocked_reason,r.state FROM persistence_requests r
         JOIN persistence_worktrees w ON w.id=r.worktree_id
         WHERE w.owner_host_id=$1::uuid AND r.recovery IS NOT NULL AND NOT(r.worktree_id::text=ANY($2::text[]))
         AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier WHERE earlier.worktree_id=r.worktree_id
@@ -696,7 +698,18 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
         const delay = Math.max(1000, (this.opts.pollMs ?? 250) * 2);
         this.rootRetryAfter.set(root, Date.now() + delay);
         try {
-          const recovered = await this.phase('recovery', () => recoverPublication(this.engine, row.id, this.hostId));
+          const recovered = await this.phase('recovery', async () => {
+            const binding = await getWorktreeBinding(this.engine, row.source_id, this.hostId);
+            if (!binding || binding.owner_host_id !== this.hostId) return recoverPublication(this.engine, row.id, this.hostId);
+            const lock = await acquireWorktree(binding, 0, undefined, this.engine, { yieldLanes: true });
+            if (!lock) return isTerminal(row) ? getWriteRequestById(this.engine, row.id) : null;
+            try { return await recoverPublication(this.engine, row.id, this.hostId, true); }
+            finally { await lock.release(); }
+          });
+          if (!recovered) {
+            if (row.blocked_reason === 'unexpected_file_bytes') this.rootRetryAfter.set(root, Date.now() + Math.max(delay, 30_000));
+            continue;
+          }
           if (isTerminal(recovered)) this.settled(recovered);
           if (!recovered.recovery) this.rootRetryAfter.delete(root);
           else if (recovered.blocked_reason === 'unexpected_file_bytes') this.rootRetryAfter.set(root, Date.now() + Math.max(delay, 30_000));
