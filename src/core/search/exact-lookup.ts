@@ -49,7 +49,7 @@ import { isMissingSchemaObject } from '../utils.ts';
 import { normalizeAlias } from './alias-normalize.ts';
 import { isLookupShapedQuery } from './query-intent.ts';
 import { applySupersedeDownrank } from './hybrid.ts';
-import { isExcludedIdentity } from './alias-hop.ts';
+import { identityTypeAllowed, isExcludedIdentity } from './alias-hop.ts';
 import { identifierKeywordQuery, parseIdentifier, textContainsIdentifier } from './identifier-query.ts';
 
 /** Keyword rows read for an identifier query before the containment check. */
@@ -123,14 +123,9 @@ export async function structuralExactLookup(
   const seen = new Set<string>();
   // #4480 — mirror the scored arms' shape filters so the tier can never
   // inject a page the caller explicitly filtered out.
-  const typeGate = (t: string | undefined | null): boolean => {
-    if (opts.type && t !== opts.type) return false;
-    if (opts.types && opts.types.length > 0 && (t == null || !opts.types.includes(t))) return false;
-    return true;
-  };
   const push = (r: SearchResult) => {
     if (isExcludedIdentity(r.slug, opts)) return;
-    if (!typeGate(r.type)) return;
+    if (!identityTypeAllowed(r.type, opts)) return;
     const key = `${r.source_id ?? 'default'}::${r.slug}`;
     if (seen.has(key)) return;
     seen.add(key);

@@ -605,7 +605,7 @@
         "kind": "variable",
         "name": "DEGRADED_STAGES",
         "signature": [
-          "readonly [\"embed_unavailable\", \"embed_timeout\", \"expansion_failed\", \"expansion_partial\", \"rescore_skipped\", \"vector_arm_failed\", \"keyword_arm_failed\", \"supersede_check_failed\", \"title_arm_failed\", \"budget_dropped_all\", \"budget_truncated\", \"keyword_zero\", \"cache_prestamp\", \"reranker_skipped\", \"rerank_passthrough\", \"rerank_failed\", \"keyword_relaxed_carried\", \"safe_index_pending\", \"vector_candidates_incomplete\", \"keyword_candidates_incomplete\", \"projection_pending\", \"projection_by_design\", \"projection_status_unknown\", \"keyword_count_unavailable\", \"saved_facts_withheld\", \"fact_observed_date_unavailable\", \"contested_unavailable\", \"facts_history_unavailable\"]"
+          "readonly [\"embed_unavailable\", \"embed_timeout\", \"expansion_failed\", \"expansion_partial\", \"rescore_skipped\", \"vector_arm_failed\", \"keyword_arm_failed\", \"supersede_check_failed\", \"title_arm_failed\", \"entity_lookup_failed\", \"budget_dropped_all\", \"budget_truncated\", \"keyword_zero\", \"cache_prestamp\", \"reranker_skipped\", \"rerank_passthrough\", \"rerank_failed\", \"keyword_relaxed_carried\", \"safe_index_pending\", \"vector_candidates_incomplete\", \"keyword_candidates_incomplete\", \"projection_pending\", \"projection_by_design\", \"projection_status_unknown\", \"keyword_count_unavailable\", \"saved_facts_withheld\", \"fact_observed_date_unavailable\", \"contested_unavailable\", \"facts_history_unavailable\"]"
         ]
       },
       {
@@ -619,14 +619,14 @@
         "kind": "type",
         "name": "DegradedStage",
         "signature": [
-          "\"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"supersede_check_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\" | \"fact_observed_date_unavailable\" | \"contested_unavailable\" | \"facts_history_unavailable\""
+          "\"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"supersede_check_failed\" | \"title_arm_failed\" | \"entity_lookup_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\" | \"fact_observed_date_unavailable\" | \"contested_unavailable\" | \"facts_history_unavailable\""
         ]
       },
       {
         "kind": "interface",
         "members": [
           "reason?: \"candidate_budget\" | \"iterative_scan_unavailable\" | \"timeout\" | \"provider_error\" | \"no_provider\" | \"variant_embed_failed\" | \"original_embed_failed\" | \"first_result_truncated\" | \"no_key\" | \"empty_result_set\" | \"malformed_shape\" | \"budget\" | \"rate_limited\" | \"unreachable\" | \"auth\" | \"egress_denied\" | \"embedding_disabled\" | \"skipped_after_timeout\" | undefined",
-          "stage: \"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"supersede_check_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\" | \"fact_observed_date_unavailable\" | \"contested_unavailable\" | \"facts_history_unavailable\""
+          "stage: \"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"supersede_check_failed\" | \"title_arm_failed\" | \"entity_lookup_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\" | \"fact_observed_date_unavailable\" | \"contested_unavailable\" | \"facts_history_unavailable\""
         ],
         "name": "DegradedStageEntry"
       },
@@ -1538,7 +1538,7 @@
         "kind": "variable",
         "name": "RANKING_ONLY_DEGRADED_STAGES",
         "signature": [
-          "ReadonlySet<\"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"supersede_check_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\" | \"fact_observed_date_unavailable\" | \"contested_unavailable\" | \"facts_history_unavailable\">"
+          "ReadonlySet<\"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"supersede_check_failed\" | \"title_arm_failed\" | \"entity_lookup_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\" | \"fact_observed_date_unavailable\" | \"contested_unavailable\" | \"facts_history_unavailable\">"
         ]
       },
       {
@@ -3047,7 +3047,7 @@
           "search?: { adaptive_return?: boolean; adaptive_return_entity_max?: number; adaptive_return_other_max?: number; adaptive_return_min_keep?: number; vector_legacy_guard?: boolean; hnsw_iterative_scan?: string; cjk_keyword_deadline_ms?: number; keyword_statement_timeout_ms?: number; } | undefined",
           "search_embedding_column?: string | undefined",
           "secrets?: { on_push?: \"redact\" | \"refuse\"; } | undefined",
-          "self_upgrade?: { mode?: \"auto\" | \"notify\" | \"off\"; channel?: \"stable\" | \"alpha\" | \"latest\"; mode_prompted?: boolean; quiet_hours?: { start?: number; end?: number; tz?: string; }; failed_versions?: string[]; attempting_version?: string; last_check_ts?: number; last_applied_version?: string; autopilot_launcher?: \"external\"; } | undefined",
+          "self_upgrade?: { mode?: \"auto\" | \"notify\" | \"off\"; channel?: \"stable\" | \"alpha\" | \"latest\"; mode_prompted?: boolean; quiet_hours?: { start?: number; end?: number; tz?: string; }; failed_versions?: string[]; attempting_version?: string; last_check_ts?: number; last_applied_version?: string; autopilot_launcher?: \"external\"; serve_launcher?: \"external\"; } | undefined",
           "serve_cli_socket?: boolean | undefined",
           "serve_vector_prewarm?: boolean | undefined",
           "storage?: unknown",
@@ -8930,7 +8930,9 @@
           "excludeSlugs?: string[] | undefined",
           "requireSafeChunks?: boolean | undefined",
           "sourceId?: string | undefined",
-          "sourceIds?: string[] | undefined"
+          "sourceIds?: string[] | undefined",
+          "type?: string | undefined",
+          "types?: string[] | undefined"
         ],
         "name": "IdentityTierOpts"
       },
@@ -10103,7 +10105,7 @@
         "kind": "variable",
         "name": "DEGRADED_STAGES",
         "signature": [
-          "readonly [\"embed_unavailable\", \"embed_timeout\", \"expansion_failed\", \"expansion_partial\", \"rescore_skipped\", \"vector_arm_failed\", \"keyword_arm_failed\", \"supersede_check_failed\", \"title_arm_failed\", \"budget_dropped_all\", \"budget_truncated\", \"keyword_zero\", \"cache_prestamp\", \"reranker_skipped\", \"rerank_passthrough\", \"rerank_failed\", \"keyword_relaxed_carried\", \"safe_index_pending\", \"vector_candidates_incomplete\", \"keyword_candidates_incomplete\", \"projection_pending\", \"projection_by_design\", \"projection_status_unknown\", \"keyword_count_unavailable\", \"saved_facts_withheld\", \"fact_observed_date_unavailable\", \"contested_unavailable\", \"facts_history_unavailable\"]"
+          "readonly [\"embed_unavailable\", \"embed_timeout\", \"expansion_failed\", \"expansion_partial\", \"rescore_skipped\", \"vector_arm_failed\", \"keyword_arm_failed\", \"supersede_check_failed\", \"title_arm_failed\", \"entity_lookup_failed\", \"budget_dropped_all\", \"budget_truncated\", \"keyword_zero\", \"cache_prestamp\", \"reranker_skipped\", \"rerank_passthrough\", \"rerank_failed\", \"keyword_relaxed_carried\", \"safe_index_pending\", \"vector_candidates_incomplete\", \"keyword_candidates_incomplete\", \"projection_pending\", \"projection_by_design\", \"projection_status_unknown\", \"keyword_count_unavailable\", \"saved_facts_withheld\", \"fact_observed_date_unavailable\", \"contested_unavailable\", \"facts_history_unavailable\"]"
         ]
       },
       {
@@ -10117,14 +10119,14 @@
         "kind": "type",
         "name": "DegradedStage",
         "signature": [
-          "\"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"supersede_check_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\" | \"fact_observed_date_unavailable\" | \"contested_unavailable\" | \"facts_history_unavailable\""
+          "\"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"supersede_check_failed\" | \"title_arm_failed\" | \"entity_lookup_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\" | \"fact_observed_date_unavailable\" | \"contested_unavailable\" | \"facts_history_unavailable\""
         ]
       },
       {
         "kind": "interface",
         "members": [
           "reason?: \"candidate_budget\" | \"iterative_scan_unavailable\" | \"timeout\" | \"provider_error\" | \"no_provider\" | \"variant_embed_failed\" | \"original_embed_failed\" | \"first_result_truncated\" | \"no_key\" | \"empty_result_set\" | \"malformed_shape\" | \"budget\" | \"rate_limited\" | \"unreachable\" | \"auth\" | \"egress_denied\" | \"embedding_disabled\" | \"skipped_after_timeout\" | undefined",
-          "stage: \"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"supersede_check_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\" | \"fact_observed_date_unavailable\" | \"contested_unavailable\" | \"facts_history_unavailable\""
+          "stage: \"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"supersede_check_failed\" | \"title_arm_failed\" | \"entity_lookup_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\" | \"fact_observed_date_unavailable\" | \"contested_unavailable\" | \"facts_history_unavailable\""
         ],
         "name": "DegradedStageEntry"
       },
@@ -10677,7 +10679,7 @@
         "kind": "variable",
         "name": "RANKING_ONLY_DEGRADED_STAGES",
         "signature": [
-          "ReadonlySet<\"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"supersede_check_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\" | \"fact_observed_date_unavailable\" | \"contested_unavailable\" | \"facts_history_unavailable\">"
+          "ReadonlySet<\"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"supersede_check_failed\" | \"title_arm_failed\" | \"entity_lookup_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\" | \"fact_observed_date_unavailable\" | \"contested_unavailable\" | \"facts_history_unavailable\">"
         ]
       },
       {

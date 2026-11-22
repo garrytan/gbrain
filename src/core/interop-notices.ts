@@ -45,6 +45,7 @@ export const DEGRADED_STAGE_GUIDANCE: Readonly<Record<RecallStage, StageGuidance
   keyword_arm_failed: { why: 'the keyword retrieval arm failed', fix: 'doctor' },
   supersede_check_failed: { why: 'the check for pages a newer page replaced failed, so results may include outdated pages that are neither flagged superseded nor ranked below their replacement; if currency matters, repeat the call', fix: 'doctor' },
   title_arm_failed: { why: 'the title retrieval arm failed', fix: 'doctor' },
+  entity_lookup_failed: { why: 'the page lookup for this name failed, so "not found" cannot be told from a lookup that did not run; that is not evidence the entity is absent', fix: 'doctor' },
   budget_dropped_all: { why: 'the token budget dropped every result; raise the budget parameter to see them', fix: null },
   budget_truncated: { why: 'the token budget cut some results; raise the budget parameter to see more', fix: null },
   keyword_zero: { why: 'keyword matching found nothing for these terms', fix: null },

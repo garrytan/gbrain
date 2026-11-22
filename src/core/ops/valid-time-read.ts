@@ -36,6 +36,7 @@ import { LARGE_PAGE_VERSIONS_KEPT } from '../page-body/limits.ts';
 import { validDateSql, validTimeVerdict, type ValidTimeVerdict, type ValidTimeWhy } from '../valid-time.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { Page } from '../types.ts';
+import { noteReturnedPages } from '../access/read-log.ts';
 
 export const AS_OF_PARAM: ParamDef = { type: 'string', description: 'YYYY-MM-DD: edition in force then. No valid_time in reply: current page.' };
 
@@ -344,6 +345,7 @@ export async function getPageAsOf(ctx: OperationContext, p: Record<string, unkno
   }
   if (excludePrivate && !row.visible) throw missing();
   if (!loaded) throw missing();
+  noteReturnedPages([identity.id]);
   // #6259: a quarantined page (now, or in the chosen edition) keeps its body from a remote reader, as the plain read does.
   const quarantined = readQuarantined(ctx, loaded.current.page, false)
     ?? readQuarantined(ctx, { slug: identity.slug, source_id: identity.source_id, frontmatter: loaded.edition.frontmatter }, false);

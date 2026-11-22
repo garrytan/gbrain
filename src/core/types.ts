@@ -2108,6 +2108,7 @@ export const DEGRADED_STAGES = [
   'keyword_arm_failed',
   'supersede_check_failed',
   'title_arm_failed',
+  'entity_lookup_failed',
   'budget_dropped_all',
   'budget_truncated',
   'keyword_zero',
