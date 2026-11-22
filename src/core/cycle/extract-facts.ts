@@ -470,12 +470,23 @@ async function planFenceReconcile(db: BrainEngine, page: PageFenceInput, slug: s
     `SELECT related_id AS id FROM trust_proposals WHERE source_id = $1 AND action IN ('supersede_fact', 'confirm') AND related_table = 'facts'
       AND related_id = ANY($2::bigint[]) AND status IN ('pending', 'rejected', 'undone') AND before_state->'visibility' IS NOT NULL`,
     [sourceId, widening])).map(r => Number(r.id)) : []);
-  const updates = extracted.map((f): FenceExtractedFact => {
+  const updates = extracted.flatMap(f => {
     const fact = matched.get(f.row_num);
-    return fact && heldWidening.has(Number(fact.id)) ? { ...f, visibility: fact.visibility as FenceExtractedFact['visibility'] } : f;
-  }).filter(f => {
-    const fact = matched.get(f.row_num);
-    return fact !== undefined && factCellsDiffer(fact, f);
+    if (!fact) return [];
+    const desired = { ...f };
+    if (heldWidening.has(Number(fact.id))) desired.visibility = fact.visibility as FenceExtractedFact['visibility'];
+    const successor = f.superseded_by_row === undefined ? undefined : matched.get(f.superseded_by_row);
+    if (managed && fact.expired_at != null && f.expired_at != null && successor &&
+      fact.superseded_by != null && String(fact.superseded_by) === String(successor.id)) {
+      // Native replacement writes the link marker into Markdown and keeps the original DB context.
+      // A new fence annotation still applies when it differs from that generated representation.
+      const marker = `superseded by #${f.superseded_by_row}`;
+      const context = fact.context?.trim();
+      if (f.context === marker || (context && f.context === `${marker} | ${context}`)) {
+        desired.context = fact.context ?? undefined;
+      }
+    }
+    return factCellsDiffer(fact, desired) ? [desired] : [];
   });
   const toInsert = extracted.filter(f => !matched.has(f.row_num));
   // #8819: on a managed brain, a stale row whose number and claim no fence of the page ever held was never in the fence,
