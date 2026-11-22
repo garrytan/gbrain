@@ -22,7 +22,9 @@ resolves which brain was selected (`--brain`, `GBRAIN_BRAIN_ID` and a `.gbrain-m
 brain is refused with `engine_swap_refused` (reason `team_brain`); only your own brain can be previewed. It then needs
 a store that already exists: a PGLite store with no `PG_VERSION` file is refused with `no_brain` before any connection,
 because connecting would otherwise initialize a new, empty brain. With a store in place, it opens the brain without
-migrating it, reads the worktree refresh journal and the shadow status, and lists:
+migrating it and reads whether the brain uses managed storage. A managed brain is refused with `engine_swap_refused`
+(reason `managed_storage`), because the Rust engine never holds managed storage. Otherwise it reads the worktree
+refresh journal and the shadow status, and lists:
 
 - the verdict, `READY` or `NOT READY`, and the refusal a run would give;
 - one row per readiness criterion (below), each `pass`, `fail`, `missing` or, for criterion 8, `reported`;
@@ -75,6 +77,15 @@ never a pass. With no shadow running, every criterion is `missing`.
 ## Refusals: `engine_swap_refused`
 
 Every refusal leaves the current engine in charge and writes nothing. The `reason` field names the row.
+
+<a id="managed_storage"></a>
+### `managed_storage`
+
+The brain uses managed storage (`persistence_brain.enabled` is true). The Rust engine never holds managed storage, so
+the cutover could not carry it and would fail after writes are fenced. This is checked before the refresh journal and
+before any readiness criterion. Needs the user's decision: keep the brain on its current engine, or turn managed
+storage off for it first. There is no override. A persistence state that is missing or malformed refuses with
+`storage_error` instead; it never reads as unmanaged.
 
 <a id="refresh_unsettled"></a>
 ### `refresh_unsettled`
