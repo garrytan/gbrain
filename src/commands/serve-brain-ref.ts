@@ -28,15 +28,20 @@ function holderDigest(token: string): string {
 }
 
 /**
- * Writes the sidecar for the brain this process serves. Writes nothing unless this process holds `dataDir`'s lock
- * and the brain has a persistence identity.
+ * Writes the sidecar for the brain this process serves and returns the reference it wrote, or null when it wrote
+ * nothing: this process does not hold `dataDir`'s lock, or the brain has no persistence identity. `known` is a
+ * reference already read for this same datastore, so a rewrite under a new lock token reads nothing from the database.
  */
-export async function recordServeBrainRef(engine: Pick<BrainEngine, 'readPersistenceBrainId'>, dataDir: string): Promise<'written' | 'skipped'> {
-  if (!heldLockFor(dataDir)) return 'skipped';
+export async function recordServeBrainRef(
+  engine: Pick<BrainEngine, 'readPersistenceBrainId'>,
+  dataDir: string,
+  known?: string,
+): Promise<string | null> {
+  if (!heldLockFor(dataDir)) return null;
   const token = liveHolderToken(dataDir);
-  if (!token) return 'skipped';
-  const brainRef = await readBrainRef(engine);
-  if (!brainRef) return 'skipped';
+  if (!token) return null;
+  const brainRef = known ?? await readBrainRef(engine);
+  if (!brainRef) return null;
   const path = brainRefSidecarPath(dataDir);
   const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   try {
@@ -53,7 +58,7 @@ export async function recordServeBrainRef(engine: Pick<BrainEngine, 'readPersist
     throw error;
   }
   flushDirectory(dirname(path), { bestEffort: true });
-  return 'written';
+  return brainRef;
 }
 
 export type ServeBrainRef =
@@ -78,22 +83,29 @@ export function readServeBrainRef(dataDir: string): ServeBrainRef {
 /**
  * `gbrain serve` start: records the sidecar for the PGLite datastore the served engine itself opened (a mounted brain's
  * own data dir, never the host config's), and records it again after every reopen of that engine, since a reconnect
- * takes a fresh lock token. Any other engine opened no PGLite datastore, so nothing is written. A failure costs only the
- * status field and one log line.
+ * takes a fresh lock token. Any other engine opened no PGLite datastore, so nothing is written.
+ *
+ * Off the critical path by construction: serve calls this without awaiting it; a reopen only schedules the rewrite
+ * (setImmediate), so nothing runs inside the reconnect; a rewrite for the same datastore reuses the reference already
+ * read, so it sends no statement to the database a close would wait for; and every failure ends here as one log line
+ * with an error code (never a message, which could carry a path or identity).
  */
 export async function recordServeBrainRefAtStart(
   engine: Pick<BrainEngine, 'readPersistenceBrainId'>,
   log: (line: string) => void = line => console.error(line),
 ): Promise<void> {
-  const record = async (): Promise<void> => {
-    const dataDir = openedPgliteDatastore(engine);
-    if (!dataDir) return;
+  let cached: { dataDir: string; brainRef: string } | null = null;
+  const record = async (sameDatastore: boolean): Promise<void> => {
     try {
-      await recordServeBrainRef(engine, dataDir);
+      const dataDir = openedPgliteDatastore(engine);
+      if (!dataDir) return;
+      const known = sameDatastore && cached?.dataDir === dataDir ? cached.brainRef : undefined;
+      const brainRef = await recordServeBrainRef(engine, dataDir, known);
+      if (brainRef) cached = { dataDir, brainRef };
     } catch (error) {
       log(`[gbrain serve] brain_ref not recorded for engine status (${(error as NodeJS.ErrnoException).code ?? 'error'})`);
     }
   };
-  registerPgliteReopen(engine, () => { void record(); });
-  await record();
+  registerPgliteReopen(engine, sameDatastore => { setImmediate(() => { void record(sameDatastore); }); });
+  await record(false);
 }

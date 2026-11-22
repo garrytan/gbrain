@@ -167,7 +167,7 @@ describe('recordServeBrainRef', () => {
     const { recordServeBrainRef } = await import('../src/commands/serve-brain-ref.ts');
     const other = join(home, 'not-held.pglite');
     const read = { readPersistenceBrainId: async () => brainId };
-    expect(await recordServeBrainRef(read, other)).toBe('skipped');
+    expect(await recordServeBrainRef(read, other)).toBeNull();
     expect(existsSync(brainRefSidecarPath(other))).toBe(false);
   });
 });
