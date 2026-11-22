@@ -98,7 +98,7 @@ publish. The details, and what is held back instead, are in
   any other value, `redact` and an empty one included, changes nothing (it never turns redaction on where the config
   says `refuse`) and prints one `[gbrain notice]` line on stderr.
 - When a managed worktree's page-write backup runs past its 300 s budget redacting or scanning, it is tried once more in
-  the background with 4 times the budget. That checkout's backups wait for it; other checkouts carry on. Past that
+  the background with 2 times the budget (`--scan-timeout 600`). That checkout's backups wait for it; other checkouts carry on. Past that
   budget again, the backups are held with `publish_scan_unreadable`
   ([details](shared-checkout-git.md#publish_secret_rebuild_unbounded)).
 - `gbrain git redact-unpushed --source <id>` shows what a publish would redact, writing nothing; `--apply --expect
