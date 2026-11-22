@@ -4,8 +4,8 @@
  *   bun test/engine-parity/coverage.ts           # print the list
  *   bun test/engine-parity/coverage.ts --write   # refresh test/engine-parity/coverage.tsv
  *
- * Reads the BrainEngine interface (src/core/engine.ts) with the TypeScript
- * compiler API, reads every `parityTest(name, { methods: [...] }, ...)` call
+ * Reads the BrainEngine interface (src/core/engine.ts, plus the interfaces it extends
+ * in src/core/engine-members/) with the TypeScript compiler API, reads every `parityTest(name, { methods: [...] }, ...)` call
  * in test/engine-parity/*.test.ts, and writes one row per callable interface
  * member: its family, how many parity cases cover it, and whether the legacy
  * Postgres-gated suite (test/e2e/engine-parity*.test.ts) calls it.
@@ -37,6 +37,7 @@ const PARITY_DIR = import.meta.dir;
 const LEGACY_DIR = join(REPO, 'test', 'e2e');
 // test-reads-source-ok[structural]: the coverage denominator is the declared BrainEngine member list.
 const ENGINE_FILE = join(REPO, 'src', 'core', 'engine.ts');
+const MEMBERS_DIR = join(REPO, 'src', 'core', 'engine-members');
 export const COVERAGE_FILE = join(PARITY_DIR, 'coverage.tsv');
 
 /**
@@ -484,20 +485,37 @@ export const FAMILIES: Record<string, readonly string[]> = {
   doctor_join: ['listAccessMemberStatuses', 'listAccessGroupMemberships', 'listPagesReadByNobody', 'listRulePagesReadByNobody', 'listGoogleSourceMembers', 'listOwnerMemberLinks'],
 };
 
-/** Callable members of `interface BrainEngine`, in declaration order (`kind` excluded). */
+/**
+ * Callable members of `interface BrainEngine`, in declaration order (`kind` excluded): its own members, then those of
+ * the interfaces it extends (src/core/engine-members/*.ts, in `extends` order).
+ */
 export function interfaceMethods(): string[] {
-  const text = readFileSync(ENGINE_FILE, 'utf8'); // test-reads-source-ok[structural]: parse the interface member names only.
-  const sf = ts.createSourceFile(ENGINE_FILE, text, ts.ScriptTarget.Latest, true);
   const names: string[] = [];
-  sf.forEachChild((node) => {
-    if (!ts.isInterfaceDeclaration(node) || node.name.text !== 'BrainEngine') return;
+  const declared = new Map<string, ts.InterfaceDeclaration>();
+  const load = (file: string) => {
+    const text = readFileSync(file, 'utf8'); // test-reads-source-ok[structural]: parse the interface member names only.
+    const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+    sf.forEachChild((node) => { if (ts.isInterfaceDeclaration(node)) declared.set(node.name.text, node); });
+  };
+  load(ENGINE_FILE);
+  for (const entry of readdirSync(MEMBERS_DIR).filter((f) => f.endsWith('.ts')).sort()) load(join(MEMBERS_DIR, entry));
+  const walk = (node: ts.InterfaceDeclaration) => {
     for (const member of node.members) {
       if (!member.name || !ts.isIdentifier(member.name)) continue;
       const callable = ts.isMethodSignature(member)
         || (ts.isPropertySignature(member) && member.type !== undefined && ts.isFunctionTypeNode(member.type));
       if (callable && !names.includes(member.name.text)) names.push(member.name.text);
     }
-  });
+    for (const clause of node.heritageClauses ?? []) {
+      for (const type of clause.types) {
+        const parent = ts.isIdentifier(type.expression) ? declared.get(type.expression.text) : undefined;
+        if (!parent) throw new Error(`engine-parity coverage: ${node.name.text} extends ${type.expression.getText()}, which is not declared in src/core/engine.ts or src/core/engine-members/`);
+        walk(parent);
+      }
+    }
+  };
+  const brainEngine = declared.get('BrainEngine');
+  if (brainEngine) walk(brainEngine);
   if (names.length === 0) throw new Error('engine-parity coverage: BrainEngine interface not found in src/core/engine.ts');
   return names;
 }
