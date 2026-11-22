@@ -2329,6 +2329,7 @@
     "self_upgrade.mode",
     "self_upgrade.mode_prompted",
     "self_upgrade.quiet_hours",
+    "self_upgrade.serve_launcher",
     "serve.cli_socket",
     "serve.vector_prewarm",
     "shared_skills.inventory.max_entries",

@@ -16,6 +16,8 @@ import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { randomBytes, createCipheriv, pbkdf2Sync } from 'crypto';
 import { dirname, basename, join } from 'path';
 import { createRequire } from 'module';
+import { frontmatterBodyOffset } from '../core/markdown.ts';
+import { opError } from '../core/ops/contract.ts';
 
 // Inline marked.js so published HTML is truly self-contained (no CDN dependency)
 const require = createRequire(import.meta.url);
@@ -23,12 +25,52 @@ const MARKED_JS = readFileSync(join(dirname(require.resolve('marked')), 'marked.
 
 // ── Content stripping ──────────────────────────────────────────────
 
-/** Strip private/internal data from brain markdown before publishing */
+const TIMELINE_MARKER = /<!--+\s*timeline\s*-*-->/i;
+const TIMELINE_LINE = /^[ \t]*(?:-{3,}[ \t]*timeline[ \t]*-{3,}[ \t]*$|#{1,6}[ \t]+[^A-Za-z0-9\n]*(?:timelines?|history)\b|[^A-Za-z0-9\n]*(?:timelines?|history)\b[^\n]*\n[ \t]*(?:=+|-+)[ \t]*$)/im;
+const MANAGED_BLOCK_END = /<!--+\s*gbrain:([a-z0-9_-]+):end\b[^>]*>/gi;
+const MANAGED_BLOCK_BEGIN = /^(?:[ \t]*#{1,6}[ \t]+(?:facts|takes)[ \t]*\n(?:[ \t]*\n)*)?[^\n]*?<!--+\s*gbrain:([a-z0-9_-]+):begin\b[^>]*>/im;
+
+/** The text before the first match of `pattern`, or all of it when nothing matches. */
+function before(text: string, pattern: RegExp): string {
+  const match = pattern.exec(text);
+  return match ? text.slice(0, match.index) : text;
+}
+
+/**
+ * Strip private/internal data from brain markdown before publishing. Fails closed (#10020): the page is cut at the
+ * first line that could start its timeline (any timeline sentinel, or a Timeline or History heading at any level,
+ * with or without a --- rule before it), a gbrain fence or HTML comment that never closes drops the rest of the
+ * page, and frontmatter that never closes refuses to publish.
+ */
 export function makeShareable(content: string): string {
-  let clean = content;
+  let clean = content.replace(/\r\n?/g, '\n');
 
   // Remove YAML frontmatter
-  clean = clean.replace(/^---[\s\S]*?---\n*/, '');
+  if (clean.split('\n').find(line => line.trim())?.trim() === '---') {
+    const offset = frontmatterBodyOffset(clean);
+    if (offset === 0) throw opError('invalid_frontmatter', 'The page opens a frontmatter block with --- and never closes it, so nothing was published.', 'Close the frontmatter with a --- line, then publish again.', { why: 'Publishing cannot tell where the private frontmatter ends, so it publishes nothing rather than guess.' });
+    clean = clean.slice(offset);
+  }
+
+  // Remove the Timeline section and everything after it
+  clean = before(before(clean, TIMELINE_MARKER), TIMELINE_LINE);
+
+  // Remove gbrain fences (facts, takes and other machine blocks) with their Facts/Takes headings
+  for (let match = MANAGED_BLOCK_BEGIN.exec(clean); match; match = MANAGED_BLOCK_BEGIN.exec(clean)) {
+    const rest = clean.slice(match.index + match[0].length);
+    const end = [...rest.matchAll(MANAGED_BLOCK_END)].find(candidate => candidate[1]!.toLowerCase() === match![1]!.toLowerCase());
+    clean = clean.slice(0, match.index) + (end ? rest.slice(end.index! + end[0].length) : '');
+  }
+
+  // Remove HTML comments
+  let visible = '';
+  let at = 0;
+  for (let open = clean.indexOf('<!--'); open !== -1; open = clean.indexOf('<!--', at)) {
+    visible += clean.slice(at, open).replace(/[ \t]+$/, '');
+    const close = clean.indexOf('-->', open + 4);
+    at = close === -1 ? clean.length : close + 3;
+  }
+  clean = visible + clean.slice(at);
 
   // Remove [Source: ...] citations (all formats)
   clean = clean.replace(/\s*\[Source:[^\]]*\]/g, '');
@@ -44,13 +86,10 @@ export function makeShareable(content: string): string {
   // Remove "See also" brain-internal lines
   clean = clean.replace(/^-?\s*See also:.*$/gm, '');
 
-  // Remove Timeline section (below the --- separator near end)
-  clean = clean.replace(/\n---\n\n## Timeline[\s\S]*$/, '');
-
-  // Clean up excessive blank lines
+  // Clean up excessive blank lines and the --- rule left above a removed timeline
   clean = clean.replace(/\n{3,}/g, '\n\n');
 
-  return clean.trim();
+  return clean.trim().replace(/(?:\n+[ \t]*---[ \t]*)+$/, '').trim();
 }
 
 // ── Title extraction ───────────────────────────────────────────────
@@ -412,7 +451,7 @@ export async function runPublish(args: string[]) {
 
   const raw = readFileSync(inputPath, 'utf-8');
   const cleaned = makeShareable(raw);
-  const title = (titleIdx >= 0 ? args[titleIdx + 1] : null) || extractTitle(raw);
+  const title = (titleIdx >= 0 ? args[titleIdx + 1] : null) || extractTitle(cleaned);
 
   // Handle password
   let encrypted: EncryptedContent | null = null;
