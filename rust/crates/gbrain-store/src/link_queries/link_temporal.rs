@@ -138,7 +138,7 @@ pub struct RelationshipKey {
 }
 
 impl RelationshipKey {
-    fn new(from: u64, to: u64, link_type: &str) -> Self {
+    pub(crate) fn new(from: u64, to: u64, link_type: &str) -> Self {
         RelationshipKey {
             from_page_id: from,
             to_page_id: to,
@@ -942,6 +942,30 @@ fn insert_transition(tx: &mut dyn KvWrite, record: TransitionRecord) -> Result<b
     row_key.extend_from_slice(&id.to_be_bytes());
     put_json(tx, &row_key, &TransitionRecord { id, ..record })?;
     Ok(true)
+}
+
+/// The stored key of a transition row: its relationship prefix and its id.
+fn transition_row_key(record: &TransitionRecord) -> Vec<u8> {
+    let mut key = pair_prefix(&record.source_id, TRANSITION, &record.key());
+    key.extend_from_slice(&record.id.to_be_bytes());
+    key
+}
+
+/// Deletes a stored transition row (the twin merge's loser delete, and the first half of its move).
+pub(crate) fn delete_transition(tx: &mut dyn KvWrite, record: &TransitionRecord) -> Result<()> {
+    tx.delete(&transition_row_key(record))
+}
+
+/// Stores a transition row under its (moved) relationship, keeping its id. A row with the same identity
+/// refuses, as the table's unique index does.
+pub(crate) fn put_moved_transition(tx: &mut dyn KvWrite, record: &TransitionRecord) -> Result<()> {
+    if transitions_of(&*tx, &record.key())?
+        .iter()
+        .any(|(_, t)| t.id != record.id && t.same_identity(record))
+    {
+        return Err(crate::links::unique_violation());
+    }
+    put_json(tx, &transition_row_key(record), record)
 }
 
 fn check_transition(kind: &str, occurred_on: &str, precision: &str, producer: &str) -> Result<()> {

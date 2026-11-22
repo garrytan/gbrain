@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1508/1515
+# covered: 1509/1516
 # lifecycle: 9/9
 # pages: 69/69
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 13/13
-# persistence_journal: 202/202
+# persistence_journal: 203/203
 # entity_reads: 17/17
 # cycle_locks: 10/10
 # minion_jobs: 8/8
@@ -93,7 +93,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	179	no	yes	yes	serves
+transaction	lifecycle	yes	182	no	yes	yes	serves
 transactionDirect	lifecycle	yes	14	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -101,7 +101,7 @@ getPage	pages	yes	147	yes	yes	yes	serves
 readPageSnapshot	pages	yes	40	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	5	no	yes	yes	serves
-putPage	pages	yes	721	yes	yes	yes	serves
+putPage	pages	yes	724	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	24	yes	yes	yes	serves
@@ -201,7 +201,7 @@ linkRelationshipKeysForPages	link_temporal	yes	2	no	yes	yes	serves
 staleLinkRelationshipKeys	link_temporal	yes	2	no	yes	yes	serves
 linkRelationshipKeysForOrigin	link_temporal	yes	2	no	yes	yes	serves
 applyLinkTemporalRows	link_temporal	yes	1	no	yes	yes	serves
-writeManualLinkTransitions	link_temporal	yes	3	no	yes	yes	serves
+writeManualLinkTransitions	link_temporal	yes	4	no	yes	yes	serves
 removeManualLinkTransitions	link_temporal	yes	1	no	yes	yes	serves
 listRelationshipNoteRows	link_temporal	yes	9	no	yes	yes	serves
 edgeValidityCounts	link_temporal	yes	1	no	yes	yes	serves
@@ -271,13 +271,13 @@ markPagesAttendanceBlocked	extraction	yes	2	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	121	yes	yes	yes	serves
+addLink	links	yes	122	yes	yes	yes	serves
 addLinksBatch	links	yes	17	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	15	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
 removeLink	links	yes	3	no	yes	yes	serves
 removeLinksByPagesAndSource	links	yes	1	yes	yes	yes	serves
-getLinks	links	yes	22	yes	yes	yes	serves
+getLinks	links	yes	23	yes	yes	yes	serves
 getBacklinks	links	yes	13	yes	yes	yes	serves
 listLinkSources	links	yes	1	yes	yes	yes	serves
 findByTitleFuzzy	links	yes	5	no	yes	yes	serves
@@ -296,7 +296,7 @@ getSalienceScores	links	yes	12	yes	yes	yes	serves
 findOrphanPages	links	yes	8	yes	yes	yes	serves
 addTag	tags	yes	24	yes	yes	yes	serves
 removeTag	tags	yes	2	no	yes	yes	serves
-pruneFrontmatterTags	tags	yes	2	no	yes	yes	serves
+pruneFrontmatterTags	tags	yes	3	no	yes	yes	serves
 addPageTagsById	tags	yes	1	no	yes	yes	serves
 getTags	tags	yes	7	yes	yes	yes	serves
 sampleEffectiveDates	timeline	yes	1	no	yes	yes	serves
@@ -316,14 +316,14 @@ listMaterializedMarkerPages	timeline	yes	3	no	yes	yes	serves
 rewriteTimelineRow	timeline	yes	2	no	yes	yes	serves
 listDateBulletPages	timeline	yes	2	no	yes	yes	serves
 listConnectorFencePages	timeline	yes	2	no	yes	yes	serves
-addTimelineEntry	timeline	yes	50	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	51	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	4	no	yes	yes	serves
-getTimeline	timeline	yes	19	yes	yes	yes	serves
+getTimeline	timeline	yes	20	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	6	no	yes	yes	serves
 getSince	timeline	yes	9	no	yes	yes	serves
 getOnThisDay	timeline	yes	5	no	yes	yes	serves
 getLastSeen	timeline	yes	5	no	yes	yes	serves
-upsertEventProjection	timeline	yes	19	no	yes	yes	serves
+upsertEventProjection	timeline	yes	20	no	yes	yes	serves
 removeTimelineRows	timeline	yes	3	no	yes	yes	serves
 updateTimelineDetails	timeline	yes	2	no	yes	yes	serves
 insertCanonicalTimelineRows	timeline	yes	1	no	yes	yes	serves
@@ -336,11 +336,11 @@ repointSupersededToKept	ontology	yes	1	no	yes	yes	refuses:facts
 clearOntologySlots	ontology	yes	1	no	yes	yes	refuses:facts
 deleteRekeyLosers	ontology	yes	1	no	yes	yes	refuses:facts
 restoreOntologyFact	ontology	yes	1	no	yes	yes	refuses:facts
-putRawData	raw_files	yes	9	yes	yes	yes	serves
-getRawData	raw_files	yes	5	yes	yes	yes	serves
-upsertFile	raw_files	yes	5	no	yes	yes	serves
+putRawData	raw_files	yes	10	yes	yes	yes	serves
+getRawData	raw_files	yes	6	yes	yes	yes	serves
+upsertFile	raw_files	yes	6	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
-listFilesForPage	raw_files	yes	1	no	yes	yes	serves
+listFilesForPage	raw_files	yes	2	no	yes	yes	serves
 listFiles	raw_files	yes	3	no	yes	yes	serves
 hasFileWithHash	raw_files	yes	1	no	yes	yes	refuses:files
 listFileRowsForVerify	raw_files	yes	1	no	yes	yes	refuses:files
@@ -465,7 +465,7 @@ insertFact	facts	yes	101	yes	yes	yes	serves
 insertFacts	facts	yes	170	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	66	no	yes	yes	serves
-listFactsByEntity	facts	yes	36	yes	yes	yes	serves
+listFactsByEntity	facts	yes	37	yes	yes	yes	serves
 listFactsSince	facts	yes	27	yes	yes	yes	serves
 listFactsKeyset	facts	yes	10	no	yes	yes	serves
 listFactsBySession	facts	yes	13	yes	yes	yes	serves
@@ -523,13 +523,13 @@ listVisiblePageSlugs	stats_ingest	yes	1	no	yes	yes	refuses:pages
 readPagesForVersionHistory	stats_ingest	yes	1	no	yes	yes	refuses:pages
 logIngest	stats_ingest	yes	4	no	yes	yes	serves
 getIngestLog	stats_ingest	yes	2	no	yes	yes	serves
-updateSlug	sync_aliases	yes	26	no	yes	yes	serves
+updateSlug	sync_aliases	yes	27	no	yes	yes	serves
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
-resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
+resolveSlugWithAlias	sync_aliases	yes	2	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
 resolveAliases	sync_aliases	yes	20	no	yes	yes	serves
-setPageAliases	sync_aliases	yes	22	no	yes	yes	serves
-replaceDerivedAliases	sync_aliases	yes	14	no	yes	yes	serves
+setPageAliases	sync_aliases	yes	23	no	yes	yes	serves
+replaceDerivedAliases	sync_aliases	yes	15	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
@@ -687,6 +687,7 @@ releaseBudgetReservation	persistence_journal	yes	1	no	yes	yes	serves
 moveTwinRelationships	persistence_journal	yes	1	no	yes	yes	serves
 moveTwinPageChildren	persistence_journal	yes	1	no	yes	yes	serves
 moveTwinFacts	persistence_journal	yes	1	no	yes	yes	serves
+recordRenameAlias	persistence_journal	yes	1	no	yes	yes	serves
 movePageVersions	persistence_journal	yes	1	no	yes	yes	serves
 readRemirrorEffects	persistence_journal	yes	1	no	yes	yes	serves
 cancelWriteRow	persistence_journal	yes	2	no	yes	yes	serves
@@ -1500,9 +1501,9 @@ readFieldUsageSamples	field_usage	yes	3	no	yes	yes	serves
 findPagesByTitles	alias_fanout_reads	yes	7	no	yes	yes	serves
 resolveCaseSensitiveAliases	alias_fanout_reads	yes	4	no	yes	yes	serves
 readPageTitle	alias_fanout_reads	yes	1	no	yes	yes	serves
-readPageAliasRows	alias_fanout_reads	yes	3	no	yes	yes	serves
+readPageAliasRows	alias_fanout_reads	yes	4	no	yes	yes	serves
 readEntityAliasRows	alias_fanout_reads	yes	1	no	yes	yes	serves
-listSlugAliases	alias_fanout_reads	yes	1	no	yes	yes	serves
+listSlugAliases	alias_fanout_reads	yes	2	no	yes	yes	serves
 hasSegmentStorage	write_guards	yes	1	no	yes	yes	serves
 readPageOrigin	write_guards	yes	1	no	yes	yes	serves
 listOriginClaims	write_guards	yes	1	no	yes	yes	serves
@@ -1601,5 +1602,5 @@ ownerOnlyMarkTriggers	owner_only	yes	2	no	yes	yes	refuses:raw_sql
 readEngineMigrationHistory	engine_migration	yes	2	no	yes	yes	serves
 readMigrationRows	engine_migration	yes	4	no	yes	yes	serves
 readMigrationPageColumns	engine_migration	yes	2	no	yes	yes	serves
-listManualLinkTransitions	engine_migration	yes	2	no	yes	yes	serves
+listManualLinkTransitions	engine_migration	yes	3	no	yes	yes	serves
 countLiveTimelineEntries	engine_migration	yes	2	no	yes	yes	serves

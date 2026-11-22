@@ -33,6 +33,7 @@ mod timeline;
 mod trust;
 mod trust_fence;
 mod trust_proposals;
+mod twin_merge;
 mod versions;
 mod worktrees;
 mod write_attribution;

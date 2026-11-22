@@ -85,6 +85,7 @@ pub mod repair_failed_writes;
 pub mod repair_fence_scans;
 pub mod repair_plan_scans;
 pub mod repair_scans;
+pub mod repair_twin_merge;
 pub mod repair_versions;
 pub mod salience;
 pub mod source_cr_mode;

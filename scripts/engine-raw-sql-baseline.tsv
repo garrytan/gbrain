@@ -509,7 +509,7 @@ src/core/page-state/materialize.ts	execute_raw	5
 src/core/page-state/projection-status.ts	execute_raw	1
 src/core/page-state/projections.ts	execute_raw	33
 src/core/page-state/rebuild-estimate.ts	execute_raw	1
-src/core/page-state/rename-alias.ts	execute_raw	10
+src/core/page-state/rename-alias.ts	execute_raw	3
 src/core/page-state/revision-backfill-schema.ts	execute_raw	12
 src/core/page-state/tags.ts	execute_raw	3
 src/core/page-state/versions.ts	execute_raw	5

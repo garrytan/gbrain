@@ -8689,6 +8689,7 @@
         "recordHeldGenerationRow": "none",
         "recordNotifierSyncerHost": "none",
         "recordPageEmbeddingHold": "none",
+        "recordRenameAlias": "none",
         "recordSearchTelemetry": "none",
         "recordSubagentToolExecutions": "none",
         "recordTokenSetupReads": "none",

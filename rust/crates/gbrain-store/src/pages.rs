@@ -1339,14 +1339,14 @@ pub(crate) fn put_page_in(
     Ok(record)
 }
 
-fn tag_change(tx: &mut dyn KvWrite, env: &dyn Env, page: &mut PageRecord) -> Result<()> {
+pub(crate) fn tag_change(tx: &mut dyn KvWrite, env: &dyn Env, page: &mut PageRecord) -> Result<()> {
     page.knowledge_revision = env.new_uuid();
     page.text_projection_revision = None;
     write_page(tx, page)
 }
 
-const TAG_ADDED: &str = "added";
-const TAG_FRONTMATTER: &str = "frontmatter";
+pub(crate) const TAG_ADDED: &str = "added";
+pub(crate) const TAG_FRONTMATTER: &str = "frontmatter";
 
 /// Adds `tags` to the page with PGLite's claim rules: an explicit add claims each tag `added`; a
 /// `frontmatter` claim marks a new tag and adopts only an unclaimed legacy one. A new tag

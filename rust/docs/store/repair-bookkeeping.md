@@ -191,10 +191,23 @@ counts as `origin_unread` everywhere.
 On Rust, the origin-twins plan always takes its no-owner path, because the worktree binding is not
 served yet, and its apply finds `pages_live_origin_key` present. So the kind previews, and it applies
 in detach mode only: merge mode runs the twin merge, which stops by name (`repair twin merge`) before
-any read until its store side is served (`test/engine-parity/repair-twin-merge.test.ts`). The fold's
-version move `movePageVersions` is served (`repair_versions.rs`: each version re-keyed under the
-survivor, a missing survivor refused as the foreign key does); the twin moves
-(`moveTwinRelationships`, `moveTwinPageChildren`, `moveTwinFacts`) refuse by name.
+any read until the four fact rekey members (`listRekeyLosers`, `repointSupersededToKept`,
+`clearOntologySlots`, `deleteRekeyLosers`, which `dropRekeyDuplicates` calls between the page-children move
+and the fact move) are served (`test/engine-parity/repair-twin-merge.test.ts`). The merge's moves are all served:
+
+| JS member | Store fn (`repair_twin_merge.rs`) | Mirrors |
+| --- | --- | --- |
+| `movePageVersions(fromPageId, toPageId)` | `move_page_versions` (`repair_versions.rs`) | each version re-keyed under the survivor; a missing survivor refused as the foreign key does; the ids in id order |
+| `moveTwinRelationships({ twinId, survivorId })` | `move_twin_relationships` | the twin's link and transition keys, the colliding rows dropped (the `listTwinMergeLosers` link and transition losers), the rest re-pointed `from`, `to` and `origin` onto the survivor except the rows between the pair, then the survivor's keys. Links go through `delete_link` / `put_link` (the four link keys), transitions through `delete_transition` / `put_moved_transition` (their key holds the relationship). Keys come back in key order (links, then transitions), the moved link ids in id order |
+| `moveTwinPageChildren({ twinId, survivorId, sourceId, twinSlug, survivorSlug })` | `move_twin_page_children` | in statement order: timeline rows and events (`timeline_queries/twin_move.rs`: repeats of the survivor's `(date, summary, source)` dropped, rows moved through `put_entry` so the stamps, the dedup key and the event index follow, repeated event dates dropped, the rest re-pointed at the survivor as event page, `G` recomputed), raw data of a source the survivor lacks (`move_raw_data`), the survivor's import-owned tag claimed `added` when the twin's was, files re-attached with the survivor's slug (`move_files`), page aliases the survivor does not repeat (`move_twin_page_aliases`; a repeated row stays on the twin, unlike the rename's move), then the `added` or unclaimed tags the survivor lacks, which advance both pages' revisions as the tag trigger does. The moved tags come back in the twin's tag order (Postgres' order is unspecified) |
+| `moveTwinFacts(sourceId, twinSlug, survivorSlug)` | `move_twin_facts` | the source's facts about the twin slug that another page (or none) asserts take the survivor slug, each through `write_fact`; the ids in id order |
+| `recordRenameAlias(sourceId, oldSlug, newSlug)` | `record_rename_alias` (`aliases.rs`) | the rename history and slug alias statements of `updateSlug`, for a caller that moved or merged the page itself; the same slug records nothing |
+
+The twin and its survivor being one page refuses with `invalid_argument`; a page id that is not a page id
+names no page; a survivor page that does not exist refuses as the foreign key does, with nothing written.
+The history half of `recordRenameAlias` (`slug_rename_history`) has no typed read on the SQL engines, so the
+parity case compares the alias half and the cargo test `record_rename_alias_records_the_history_and_aliases_without_moving_a_page`
+pins the history. The cargo tests in `tests/repair_twin_merge.rs` pin the indexes the moves keep.
 The safe-chunks apply re-seals chunks, a B6 writer. Pinned by
 `test/engine-parity/repair-page-scans.test.ts` and the store tests
 `scans_answer_what_the_sql_filters` and `repair_scan_pages_answer_each_query_shape`.

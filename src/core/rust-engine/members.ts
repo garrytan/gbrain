@@ -1211,6 +1211,7 @@ export const RUST_ENGINE_MEMBERS = {
   moveTwinPageChildren: 'pages',
   moveTwinFacts: 'facts',
   movePageVersions: 'pages',
+  recordRenameAlias: 'pages',
   readRemirrorEffects: 'persistence_journal',
   listGlobalPurgeWithdrawals: 'facts',
   cancelWriteRow: 'persistence_journal',

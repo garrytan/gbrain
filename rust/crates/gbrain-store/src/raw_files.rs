@@ -309,6 +309,48 @@ pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Resul
     Ok(())
 }
 
+/// The twin merge's `UPDATE raw_data SET page_id = to WHERE page_id = from AND NOT EXISTS (a `to` row of the same
+/// source)`: the twin's raw data of a source the survivor lacks moves to the survivor, and the rest stays on the
+/// twin. A missing `to` page refuses as the foreign key does when a row would move.
+pub(crate) fn move_raw_data(tx: &mut dyn KvWrite, from: u64, to: u64) -> Result<()> {
+    for (key, mut row) in collect_values::<RawRecord>(&*tx, &raw_page_prefix(from))? {
+        let target = raw_key(to, &row.source);
+        if tx.get(&target)?.is_some() {
+            continue;
+        }
+        if read_page_by_id(&*tx, to)?.is_none() {
+            return Err(foreign_key("page_id"));
+        }
+        tx.delete(&key)?;
+        row.page_id = to;
+        put_json(tx, &target, &row)?;
+    }
+    Ok(())
+}
+
+/// The twin merge's `UPDATE files SET page_id = to, page_slug = to_slug WHERE page_id = from`: every file attached to
+/// the twin attaches to the survivor, with its page index entry. A missing `to` page refuses as the foreign key does.
+pub(crate) fn move_files(tx: &mut dyn KvWrite, from: u64, to: u64, to_slug: &str) -> Result<()> {
+    let attached: Vec<(Vec<u8>, String)> = collect_values(&*tx, &file_page_prefix(from))?;
+    if attached.is_empty() {
+        return Ok(());
+    }
+    if from != to && read_page_by_id(&*tx, to)?.is_none() {
+        return Err(foreign_key("page_id"));
+    }
+    for (key, path) in attached {
+        let Some(mut file) = read_file(&*tx, &path)? else {
+            continue;
+        };
+        tx.delete(&key)?;
+        file.page_id = Some(to);
+        file.page_slug = Some(to_slug.to_string());
+        tx.put(&file_page_key(to, file.id), &serde_json::to_vec(&path)?)?;
+        put_file(tx, &file)?;
+    }
+    Ok(())
+}
+
 /// The number of files of source `source_id` (the delete preview's `files` count).
 pub(crate) fn source_file_count(read: &dyn KvRead, source_id: &str) -> Result<u64> {
     let files: Vec<(Vec<u8>, FileRecord)> = collect_values(read, &[keys::RAW_FILES, FILE])?;

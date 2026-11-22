@@ -4821,6 +4821,8 @@ export interface BrainEngine {
   moveTwinPageChildren(move: import('./engine-sql/twin-merge-moves.ts').TwinPageChildrenMove): Promise<string[]>;
   /** The twin merge: rekeys the facts other pages assert about the twin's slug to the survivor's; the moved fact ids. */
   moveTwinFacts(sourceId: string, twinSlug: string, survivorSlug: string): Promise<number[]>;
+  /** Records `oldSlug -> newSlug` in the rename history and the slug aliases for a page renamed or merged into another (engine-sql/rename-alias-rows.ts; page-state/rename-alias.ts is the wrapper). Run it in the caller's transaction; the same slug records nothing. */
+  recordRenameAlias(sourceId: string, oldSlug: string, newSlug: string): Promise<void>;
   /** The moved-pages fold: moves every page version of `fromPageId` to `toPageId`; the moved version ids in id order. */
   movePageVersions(fromPageId: number, toPageId: number): Promise<number[]>;
   /** The latest `finished_at` of the completed jobs named `name`, as UTC ISO seconds, or null. */

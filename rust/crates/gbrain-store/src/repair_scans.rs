@@ -578,7 +578,12 @@ fn losers<T>(
     out
 }
 
-fn twin_merge_losers(read: &dyn KvRead, survivor: u64, twin: u64) -> Result<TwinMergeLosers> {
+/// The link rows moving the twin that land on another row's key (`twinLinkLosersStatement`), by id.
+pub(crate) fn twin_link_losers(
+    read: &dyn KvRead,
+    survivor: u64,
+    twin: u64,
+) -> Result<Vec<LinkLoser>> {
     let mut links: BTreeMap<u64, LinkRecord> = BTreeMap::new();
     for page in [twin, survivor] {
         for link in out_links(read, page)?
@@ -615,7 +620,16 @@ fn twin_merge_losers(read: &dyn KvRead, survivor: u64, twin: u64) -> Result<Twin
         same,
     })
     .collect();
+    Ok(link_losers)
+}
 
+/// The transition rows moving the twin that land on another row's key
+/// (`twinTransitionLosersStatement`), by id.
+pub(crate) fn twin_transition_losers(
+    read: &dyn KvRead,
+    survivor: u64,
+    twin: u64,
+) -> Result<Vec<TransitionLoser>> {
     let mut ts: Vec<TransitionRecord> = all_transitions(read)?;
     ts.sort_by_key(|t| t.id);
     let m: Vec<Moved<TransitionRecord>> = ts
@@ -643,7 +657,12 @@ fn twin_merge_losers(read: &dyn KvRead, survivor: u64, twin: u64) -> Result<Twin
         same,
     })
     .collect();
+    Ok(transition_losers)
+}
 
+fn twin_merge_losers(read: &dyn KvRead, survivor: u64, twin: u64) -> Result<TwinMergeLosers> {
+    let link_losers = twin_link_losers(read, survivor, twin)?;
+    let transition_losers = twin_transition_losers(read, survivor, twin)?;
     let survivor_rows = timeline_rows(read, survivor)?;
     let mut timeline: Vec<TimelineLoser> = timeline_rows(read, twin)?
         .into_iter()

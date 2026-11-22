@@ -27,6 +27,21 @@ impl Brain {
         })
     }
 
+    /// `recordRenameAlias(sourceId, oldSlug, newSlug)`: records `old -> new` in the rename history and the slug
+    /// aliases; resolves nothing.
+    #[napi]
+    pub fn record_rename_alias<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        old_slug: String,
+        new_slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.record_rename_alias(&source_id, &old_slug, &new_slug)
+        })
+    }
+
     /// `resolveSlugWithAliasDetailed(slug, sources)`: resolves `{ canonical_slug, source_id,
     /// matches }` for the first source in order that has the alias, or `null`.
     #[napi]

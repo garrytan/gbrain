@@ -4,8 +4,9 @@
  * survivor, with the relationship keys before and after), `moveTwinPageChildren` (timeline rows and events, raw data,
  * tags, file attachments and free-text page aliases), `moveTwinFacts` (facts other pages assert about the twin) and
  * `movePageVersions` (the fold moves the twin's page versions). Both SQL engines delegate here; the statement texts are
- * the ones mergeTwinInto and the fold sent. On the Rust engine the merge stops by name before any of them
- * ("repair twin merge"; rust-engine/store-members/twin-merge.ts) until the store side lands.
+ * the ones mergeTwinInto and the fold sent. The Rust store serves each as one write (rust/crates/gbrain-store/src/
+ * repair_twin_merge.rs); the merge itself still stops by name on the Rust engine ("repair twin merge",
+ * persistence/twin-merge.ts `requireTwinMerge`) until the fact rekey members `dropRekeyDuplicates` calls are served there.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { RelationshipKey } from '../link-relationships.ts';
