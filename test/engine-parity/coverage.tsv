@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1697/1706
+# covered: 1698/1707
 # lifecycle: 12/12
 # pages: 71/71
 # search: 7/7
@@ -49,7 +49,7 @@
 # fact_relink_writes: 3/3
 # facts_cycle: 13/13
 # facts_cycle_sites: 34/34
-# facts_purge: 98/98
+# facts_purge: 99/99
 # purge_plan: 4/4
 # projection_rebuild: 20/21
 # facts_repair: 48/48
@@ -109,9 +109,9 @@ withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
-getPage	pages	yes	177	yes	yes	yes	serves
-readPageSnapshot	pages	yes	53	no	yes	yes	serves
-readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
+getPage	pages	yes	179	yes	yes	yes	serves
+readPageSnapshot	pages	yes	54	no	yes	yes	serves
+readPageSnapshotsBatch	pages	yes	2	no	yes	yes	serves
 lockPageKeys	pages	yes	13	no	yes	yes	serves
 putPage	pages	yes	829	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
@@ -247,7 +247,7 @@ deleteChunksForPages	chunks	yes	3	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	5	no	yes	yes	serves
 upsertChunks	chunks	yes	57	yes	yes	yes	serves
-sealChunks	chunks	yes	72	no	yes	yes	serves
+sealChunks	chunks	yes	73	no	yes	yes	serves
 getChunks	chunks	yes	56	yes	yes	yes	serves
 getChunkPage	chunks	yes	14	no	yes	yes	serves
 getChunkWindows	chunks	yes	12	no	yes	yes	serves
@@ -542,7 +542,7 @@ readSegmentedEmbedPage	segmented_body	yes	1	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	12	no	yes	yes	serves
 createSegmentedPageShell	segmented_body	yes	52	no	yes	yes	serves
 flipBodyGeneration	segmented_body	yes	52	no	yes	yes	serves
-sealSegmentedPage	segmented_body	yes	9	no	yes	yes	serves
+sealSegmentedPage	segmented_body	yes	10	no	yes	yes	serves
 openBodyStaging	segmented_body	yes	38	no	yes	yes	serves
 setBodyStagingState	segmented_body	yes	36	no	yes	yes	serves
 sweepSegments	segmented_body	yes	4	no	yes	yes	serves
@@ -1130,11 +1130,12 @@ countRelinkCandidates	facts_purge	yes	1	no	yes	yes	serves
 listSimilarActiveFacts	facts_purge	yes	3	no	yes	yes	serves
 findActiveSingleFact	facts_purge	yes	6	no	yes	yes	serves
 listSingleFactMetadata	facts_purge	yes	2	no	yes	yes	serves
-listUnfencedFactRows	facts_purge	yes	1	no	yes	yes	serves
+countUnfencedFactGroups	facts_purge	yes	1	no	yes	yes	serves
+listUnfencedFactRows	facts_purge	yes	2	no	yes	yes	serves
 listHeldFenceFactRows	facts_purge	yes	1	no	yes	yes	serves
 listWithdrawalSlugs	facts_purge	yes	5	no	yes	yes	serves
 expireFactsByWithdrawal	facts_purge	yes	6	no	yes	yes	serves
-insertFactPurge	facts_purge	yes	16	no	yes	yes	serves
+insertFactPurge	facts_purge	yes	21	no	yes	yes	serves
 insertTakePurge	facts_purge	yes	14	no	yes	yes	serves
 upsertPagePurges	facts_purge	yes	6	no	yes	yes	serves
 expireFactsOfGonePages	facts_purge	yes	1	no	yes	yes	refuses:facts
@@ -1464,7 +1465,7 @@ getRecentSalience	salience_enrich	yes	8	yes	yes	yes	serves
 listEnrichCandidates	salience_enrich	yes	3	yes	yes	yes	serves
 findAnomalies	salience_enrich	yes	7	yes	yes	yes	serves
 hasCoveringFactWithdrawal	trust	yes	4	no	yes	yes	serves
-insertFactWithdrawal	trust	yes	29	no	yes	yes	serves
+insertFactWithdrawal	trust	yes	34	no	yes	yes	serves
 isFactWithdrawn	trust	yes	3	no	yes	yes	serves
 isFactPurged	trust	yes	6	no	yes	yes	serves
 listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves

@@ -372,13 +372,14 @@ const NEVER_PURGED: &[&str] = &[
     "managed-sync-failure",
 ];
 
-/// The ops kept while their source incarnation lives: the Git sync holds and their records, the
+/// The ops kept while their source incarnation lives: the Git sync holds and their records, the plain-directory agreement rows (`PLAIN_DIRECTORY_AGREED_OP`), the
 /// fence census and repair rows (`FENCE_CANDIDATE_OP`, `FENCE_SCAN_OP`, `FENCE_REPAIR_ATTEMPT_OP`,
 /// `FENCE_UNCOMMITTED_OP`) and the managed sync pass rows (`SYNC_PASS_ROW_OPS`).
 const KEPT_WITH_INCARNATION: &[&str] = &[
     "sync-hold",
     "sync-hold-retry",
     "sync-import-provenance",
+    "plain-directory-agreed",
     "sync-hold-summary",
     "sync-conversions",
     "fence-candidate",

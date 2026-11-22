@@ -677,6 +677,7 @@ export const RUST_ENGINE_MEMBERS = {
   findActiveSingleFact: 'facts',
   listSingleFactMetadata: 'facts',
   listUnfencedFactRows: 'facts',
+  countUnfencedFactGroups: 'facts',
   listHeldFenceFactRows: 'facts',
   listWithdrawalSlugs: 'facts',
   expireFactsByWithdrawal: 'facts',

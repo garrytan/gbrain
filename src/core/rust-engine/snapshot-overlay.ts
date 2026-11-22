@@ -7,7 +7,8 @@
  * subject-`*` tombstone, the `globalPurges` marker and every such tombstone in `globalPurgeRows`. This side keeps the
  * `*` tombstones whose hash a fence claim of the page has (`fenceClaimHashes`, as `resolveGlobalPurges` does), drops
  * `globalPurgeRows`, and, on a page that is not segmented, strikes withdrawn fence rows and drops purged ones from the
- * truth and timeline (`overlayWithdrawalBody`). A segmented page's seal overlays its timeline lead the same way
+ * truth and timeline (`overlayWithdrawalBody`). A segmented page keeps its ledger rows and is never read as a whole
+ * body (its body getters refuse page_body_segmented), as the SQL engines leave it. A segmented page's seal overlays its timeline lead the same way
  * (`overlayStoreLead`).
  *
  * The fingerprint text is each line lowercased with every whitespace run made one space, as the SQL engines'
@@ -39,14 +40,13 @@ export function overlayStoreSnapshot(snapshot: StoreSnapshot): PageSnapshot {
   const withdrawals = rest.withdrawals ?? [];
   if (!withdrawals.length && !globalPurgeRows?.length) return { ...rest, withdrawals };
   const page = rest.page;
-  // A segmented page's body is never loaded (reading it throws `page_body_segmented`), so it names no fence claim.
-  const segmented = isSegmentedPage(page);
-  const body = segmented ? '' : fingerprintText(page.compiled_truth), timeline = segmented ? '' : fingerprintText(page.timeline);
+  // A segmented page has no whole body, and its body getters throw page_body_segmented, so read neither. The SQL
+  // engines fingerprint its stored body columns, which are NULL, so no '*' tombstone is named and the body is untouched.
+  if (isSegmentedPage(page)) return { ...rest, withdrawals };
+  const body = fingerprintText(page.compiled_truth), timeline = fingerprintText(page.timeline);
   const all = withNamedPurges(withdrawals, globalPurgeRows, [body, timeline]);
-  if (!segmented) {
-    page.compiled_truth = overlayWithdrawalBody(page.compiled_truth, body, all);
-    page.timeline = overlayWithdrawalBody(page.timeline, timeline, all);
-  }
+  page.compiled_truth = overlayWithdrawalBody(page.compiled_truth, body, all);
+  page.timeline = overlayWithdrawalBody(page.timeline, timeline, all);
   return { ...rest, withdrawals: all };
 }
 

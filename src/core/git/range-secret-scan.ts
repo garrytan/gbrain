@@ -155,10 +155,11 @@ function attributesNeutral(root: string, deadline: number): boolean {
 /**
  * An empty `base` scans `head` and its whole history (a first push that creates the remote branch). `progress` receives a
  * line at once for a whole-history scan, and every 10 s while any scan runs. `opts.allowlist` replaces the checkout's
- * `.gbrain-scan-allow` (a redacting publish passes the remote's, GST-2988 D10).
+ * `.gbrain-scan-allow` (a redacting publish passes the remote's, GST-2988 D10). Each commit is scanned on its own, whatever
+ * the base: `opts.skip` leaves out commits a caller already scanned clean, and `opts.listed` collects the commits this scan covers.
  */
 export function scanRange(root: string, base: string, head: string, timeoutMs = DEFAULT_SCAN_TIMEOUT_MS, progress?: (line: string) => void,
-  opts: { allowlist?: string[] } = {}): RangeScan {
+  opts: { allowlist?: string[]; skip?: ReadonlySet<string>; listed?: Set<string> } = {}): RangeScan {
   const started = Date.now();
   const deadline = started + timeoutMs;
   let reported = base ? started : 0, spoke = false;
@@ -186,9 +187,12 @@ export function scanRange(root: string, base: string, head: string, timeoutMs = 
   try {
     prefix = must(run(root, ['rev-parse', '--show-prefix'], deadline), 'rev-parse').toString().replace(/\n$/, '');
     allowFile = `${prefix}${SCAN_ALLOW_FILENAME}`;
+    const range = must(run(root, ['rev-list', base ? `${base}..${head}` : head, '--'], deadline), 'rev-list').toString().split('\n')
+      .filter(commit => commit && !opts.skip?.has(commit));
+    for (const commit of range) opts.listed?.add(commit);
+    if (!range.length) return scan;
     const pageWrites = pageWriteCommits(root, deadline);
-    const commits = must(run(root, ['rev-list', base ? `${base}..${head}` : head, '--'], deadline), 'rev-list').toString().split('\n')
-      .filter(commit => commit && !pageWrites.has(commit));
+    const commits = range.filter(commit => !pageWrites.has(commit));
     if (!commits.length) return scan;
     report(() => `reading ${commits.length} commit(s)${base ? '' : ', the whole history'}`);
 

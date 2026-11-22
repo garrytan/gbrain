@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+A managed sync of a plain-directory source (a folder with no Git checkout, added with gbrain sources add --path) no longer imports a file over a database edit of its page. When the page was last changed by a write that did not write its file (a put_page with sync.write_through off, for example) and the file differs from it, sync keeps the page, imports nothing for that file, reports it as a failed file (blocked_by_failures, code file_drift) and syncs the rest of the source. Before, an unchanged old file overwrote the database edit on every sync. To keep the database edit, update the file to match the page and sync again; to keep the file, import it explicitly with gbrain import <file> --source <id>. A file edit after a page write that also wrote the file (write-through on, or an import) syncs as before.
