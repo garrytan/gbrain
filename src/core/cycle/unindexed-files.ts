@@ -25,7 +25,7 @@ import type { SyncOpts } from '../../commands/sync.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { resolveManagedSyncContext } from '../persistence/sync-discovery.ts';
 import { companyBrainProfile } from '../company-brain/policy.ts';
-import { findUnindexedFiles, readUnindexedFiles, refreshUnindexedFiles, unindexedScanBudgetMs, UNINDEXED_SCAN_MAX_BUDGET_MS, UNINDEXED_SCHEDULE_CAP, type UnindexedScan } from '../persistence/unindexed-files.ts';
+import { findUnindexedFiles, plainUnindexedSource, readUnindexedFiles, refreshUnindexedFiles, unindexedScanBudgetMs, UNINDEXED_SCAN_MAX_BUDGET_MS, UNINDEXED_SCHEDULE_CAP, type UnindexedScan } from '../persistence/unindexed-files.ts';
 import { isUncontainedPhaseError } from './phase-containment.ts';
 
 export interface UnindexedFilesPhaseOpts {
@@ -49,8 +49,8 @@ export async function runUnindexedFilesPhase(engine: BrainEngine | null, opts: U
   const timeBudgetMs = opts.deadlineAtMs == null ? UNINDEXED_SCAN_MAX_BUDGET_MS : Math.min(UNINDEXED_SCAN_MAX_BUDGET_MS, Math.floor((opts.deadlineAtMs - start) / 3));
   if (timeBudgetMs <= 0) return { ...base, status: 'skipped', summary: 'no maintenance-job time left to look for unindexed files; the next run continues', details: { reason: 'deadline' } };
   const deadlineAt = start + timeBudgetMs;
-  const rows = await engine.executeRaw<{ id: string; config: Record<string, unknown> | null; incarnation: string }>(
-    "SELECT id, config, incarnation::text AS incarnation FROM sources WHERE archived IS NOT TRUE AND local_path IS NOT NULL AND (config->>'kind') IS NULL ORDER BY id");
+  const rows = await engine.executeRaw<{ id: string; config: Record<string, unknown> | null; incarnation: string; local_path: string | null; last_commit: string | null }>(
+    "SELECT id, config, incarnation::text AS incarnation, local_path, last_commit FROM sources WHERE archived IS NOT TRUE AND local_path IS NOT NULL AND (config->>'kind') IS NULL ORDER BY id");
   const stored = await readUnindexedFiles(engine, rows.map(row => row.id));
   const scannedAt = (row: { id: string; incarnation: string }) => { const record = stored.get(row.id); return record?.incarnation === row.incarnation ? record.computed_at : ''; };
   rows.sort((a, b) => scannedAt(a).localeCompare(scannedAt(b)));
@@ -63,6 +63,7 @@ export async function runUnindexedFilesPhase(engine: BrainEngine | null, opts: U
     if (now() >= deadlineAt) { skipped.push({ source_id: row.id, reason: 'deadline' }); continue; }
     try {
       if (companyBrainProfile(row.config ?? {})) { skipped.push({ source_id: row.id, reason: 'company_source' }); continue; }
+      if (plainUnindexedSource(row)) { skipped.push({ source_id: row.id, reason: 'plain_directory' }); continue; }
       const context = await resolveManagedSyncContext(engine, { sourceId: row.id, noPull: true } as SyncOpts).catch((error: unknown) => {
         if (['owner_unavailable', 'source_changed', 'writer_coordinator_required'].includes(errorCode(error))) return errorCode(error);
         throw error;

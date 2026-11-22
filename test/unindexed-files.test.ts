@@ -56,12 +56,13 @@ async function unmanaged<T>(engine: BrainEngine, run: () => Promise<T>): Promise
   try { return await run(); } finally { await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1'); }
 }
 
-async function source(engine: BrainEngine, files: Record<string, string>, opts: { subdir?: string; mode?: 'git-root' | 'source-root' } = {}) {
+async function source(engine: BrainEngine, files: Record<string, string>, opts: { subdir?: string; mode?: 'git-root' | 'source-root'; plain?: boolean } = {}) {
   const id = `unidx-${randomUUID().replace(/-/g, '').slice(0, 20)}`, repo = join(home, id), root = opts.subdir ? join(repo, opts.subdir) : repo;
   const write = (path: string, content: string) => { mkdirSync(join(repo, path, '..'), { recursive: true }); writeFileSync(join(repo, path), content); };
-  mkdirSync(root, { recursive: true }); git(repo, 'init', '-q');
+  mkdirSync(root, { recursive: true });
+  if (!opts.plain) git(repo, 'init', '-q');
   for (const [path, content] of Object.entries(files)) write(path, content);
-  commit(repo);
+  if (!opts.plain) commit(repo);
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
   await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$3::text::jsonb)', [id, root, JSON.stringify(opts.mode ? { slug_root_mode: opts.mode } : {})]);
   await claimWorktree(engine, id, root);
@@ -325,5 +326,50 @@ test('#8887: a source whose scan errors leaves the phase incomplete, so the run 
   expect(phase.status).toBe('warn');
   expect(phase.details.errors).toEqual([{ source_id: s.id, code: expect.any(String) }]);
   expect(phase.details.complete).toBe(false);
+}), 240_000);
+
+test('#9546: intentional plain sources are not Git indexing gaps, while a Git sibling still schedules missing files', () => each(async engine => {
+  const plain = await source(engine, { 'notes/plain.md': note('Plain') }, { plain: true });
+  const sibling = await source(engine, { 'notes/healthy.md': note('Healthy') });
+  await sibling.sync();
+  await sibling.legacy({ 'notes/missed.md': note('Missed') });
+  const before = await plain.doctor();
+  expect(before).toMatchObject({ status: 'ok', readiness_state: 'not_applicable' });
+  expect(before.fix).toBeUndefined();
+  for (const dryRun of [true, false]) {
+    const phase = await runUnindexedFilesPhase(engine, { dryRun });
+    expect(phase.details.errors).not.toEqual(expect.arrayContaining([expect.objectContaining({ source_id: plain.id })]));
+    expect(phase.details.skipped).toContainEqual({ source_id: plain.id, reason: 'plain_directory' });
+    expect(phase.details.sources).toEqual(expect.arrayContaining([expect.objectContaining({ source_id: sibling.id, unindexed: 1 })]));
+    await expect(retryUnindexed(engine, plain.id, { dryRun })).rejects.toMatchObject({ code: 'sync_not_applicable', reason: 'plain_directory' });
+  }
+  expect((await readUnindexedFiles(engine, [plain.id])).size).toBe(0);
+  expect((await readUnindexedFiles(engine, [sibling.id])).get(sibling.id)?.pending).toEqual(['notes/missed.md']);
+  expect(await readGitHoldRetryPaths(engine, plain.id, await incarnationOf(engine, plain.id))).toEqual([]);
+}), 240_000);
+
+test('#8886: a previously synced checkout without Git metadata still fails rather than becoming not applicable', () => each(async engine => {
+  const s = await source(engine, { 'notes/a.md': note('A') });
+  await s.sync();
+  rmSync(join(s.repo, '.git'), { recursive: true });
+  const phase = await runUnindexedFilesPhase(engine, { dryRun: true });
+  expect(phase.status).toBe('warn');
+  expect(phase.details.complete).toBe(false);
+  expect(phase.details.errors).toContainEqual({ source_id: s.id, code: expect.any(String) });
+  expect((await s.doctor()).readiness_state).not.toBe('not_applicable');
+  await expect(retryUnindexed(engine, s.id, { dryRun: true })).rejects.toBeDefined();
+}), 240_000);
+
+test('#9546: a never-synced broken Git marker or missing root is not evidence of an intentional plain source', () => each(async engine => {
+  for (const broken of ['marker', 'root']) {
+    const s = await source(engine, { 'notes/a.md': note('A') }, { plain: true });
+    if (broken === 'marker') writeFileSync(join(s.repo, '.git'), 'gitdir: missing-checkout\n');
+    else rmSync(s.repo, { recursive: true });
+    const phase = await runUnindexedFilesPhase(engine, { dryRun: true });
+    expect(phase.details.errors).toContainEqual({ source_id: s.id, code: expect.any(String) });
+    expect(phase.details.complete).toBe(false);
+    expect((await s.doctor()).readiness_state).not.toBe('not_applicable');
+    await expect(retryUnindexed(engine, s.id, { dryRun: true })).rejects.toBeDefined();
+  }
 }), 240_000);
 
