@@ -8,7 +8,7 @@ test/engine-parity/access-serves.test.ts	4	0
 test/engine-parity/access-tokens.test.ts	2	0
 test/engine-parity/alias-fanout-reads.test.ts	11	0
 test/engine-parity/alias-trust.test.ts	6	0
-test/engine-parity/bearer-sign-in.test.ts	2	0
+test/engine-parity/bearer-sign-in.test.ts	3	0
 test/engine-parity/calibration-profiles.test.ts	5	0
 test/engine-parity/chunk-page-segmented.test.ts	7	0
 test/engine-parity/chunk-reads.test.ts	12	0

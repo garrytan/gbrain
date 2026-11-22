@@ -84,6 +84,31 @@ describe('engine parity: legacy-token sign-in', () => {
   });
 });
 
+describe('engine parity: the bearer members', () => {
+  // The three members the bearer checks call (engine-sql/access-credentials.ts), read on every arm directly: the live
+  // token's whole row by hash for both callers, the debounced last-use stamp, and the OAuth token read, which finds no
+  // row for a hash no OAuth token has (on Rust no OAuth token can exist yet, row 32d-2).
+  parityTest('the bearer reads find the live token by hash, stamp it once a minute, and find no OAuth token', {
+    methods: ['insertAccessToken', 'readActiveAccessTokenByHash', 'touchAccessTokenLastUsed', 'readOauthAccessTokenRows'],
+  }, async (engine) => {
+    await engine.setConfig('version', String(LATEST_SCHEMA_VERSION));
+    const { id } = await engine.insertAccessToken({ name: 'laptop', token_hash: 'hash-laptop', scopes: ['read'], permissions: {}, source_grant: 'default',
+      source_id: null, federated_read: null, allowed_operations: null, takes_holders: null });
+    const shape = (row: Record<string, unknown> | null) => row && { name: row.name, id: row.id === id, used: row.last_used_at != null };
+    const provider = shape(await engine.readActiveAccessTokenByHash('hash-laptop', 'provider'));
+    const transport = shape(await engine.readActiveAccessTokenByHash('hash-laptop', 'transport'));
+    const unknown = await engine.readActiveAccessTokenByHash('no-such-hash', 'provider');
+    await engine.touchAccessTokenLastUsed(id, true);
+    const stamped = shape(await engine.readActiveAccessTokenByHash('hash-laptop', 'provider'));
+    const oauth = await engine.readOauthAccessTokenRows('no-such-hash', 0);
+    expect({ provider, transport, unknown, stamped, oauth }).toEqual({
+      provider: { name: 'laptop', id: true, used: false }, transport: { name: 'laptop', id: true, used: false },
+      unknown: null, stamped: { name: 'laptop', id: true, used: true }, oauth: [],
+    });
+    return { provider, transport, unknown, stamped, oauth };
+  });
+});
+
 describe('engine parity: legacy-token sign-in over the serve --http legacy transport', () => {
   // The transport's own bearer check (mcp/http-transport.ts validateToken) over a real socket: whoami as the member key.
   parityTest('the transport signs a member key in as its member and refuses an unknown key', {

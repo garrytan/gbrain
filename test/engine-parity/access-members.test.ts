@@ -471,7 +471,7 @@ describe('engine parity: the open-page count reads the member keys (row 32g)', (
   });
 });
 
-describe('the Rust arm refuses what it does not serve yet (rows 32c, 32d, 32e and 32g), and writes nothing', () => {
+describe('the Rust arm refuses what it does not serve yet (rows 32c and 32e, and verifiedMember without an engine), and writes nothing', () => {
   // A parity case counts a typed refusal as a pass, so these read the Rust arm's own engine and pin each refusal: a pin
   // fails when Rust stops refusing, and its row must then leave docs/designs/RUST_ENGINE.md.
   const RAW_SQL = "This brain's engine does not support executeRaw yet (it needs the raw_sql capability), so nothing ran.";

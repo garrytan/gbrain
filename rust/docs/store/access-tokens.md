@@ -31,7 +31,11 @@ brain.
 `insertAccessToken`. A grant that reads a named source checks the source and inserts in one transaction
 (`assertScopeSourceGrant`); on this engine the check reads each source through `getSource`, and the store write
 transaction is the row lock the SQL engines take with `FOR SHARE`. `gbrain access serves several`
-(`src/commands/access-serves.ts`) mints its member keys this way and reads them back through the setup members above. `setMinTrust` and `setTokenMinTrust`
+(`src/commands/access-serves.ts`) mints its member keys this way and reads them back through the setup members above.
+The bearer checks of `gbrain serve --http` (`verifyAccessToken` in `src/core/oauth-provider.ts`, `validateToken` in
+`src/mcp/http-transport.ts`) read a token through `readActiveAccessTokenByHash` and stamp its use through
+`touchAccessTokenLastUsed` (`touchTokenLastUsed` in `src/core/grants/legacy-token.ts`); the OAuth branch reads
+`readOauthAccessTokenRows`, which finds no row here. `setMinTrust` and `setTokenMinTrust`
 (`src/core/trust/min-trust.ts`, behind `gbrain auth set-min-trust`, `auth create --min-trust` and `auth-mint`) call
 `findActiveAccessTokens` and `setAccessTokenMinTrust`; their `migrations_pending` answer for a brain without the
 `min_trust` column still comes from the undefined-column error the SQL engines raise.
