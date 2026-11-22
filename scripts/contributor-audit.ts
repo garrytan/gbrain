@@ -103,9 +103,15 @@ export function classifyPath(path: string): 'test' | 'doc' | 'product' {
   return 'product';
 }
 
+/**
+ * `fail` counts tests that ran and failed (one `(fail) <name>` line each), not
+ * bun's `N fail` summary, which also counts an unhandled error between tests:
+ * a test file whose import no longer resolves reads `0 pass / 1 fail / 1 error`
+ * with no test run, and that is a vacuous failure, not discrimination.
+ */
 export function parseCounts(output: string): { pass: number; fail: number } {
   const last = (re: RegExp) => { const all = [...output.matchAll(re)]; return all.length ? Number(all[all.length - 1][1]) : 0; };
-  return { pass: last(/^\s*(\d+) pass\b/gm), fail: last(/^\s*(\d+) fail\b/gm) };
+  return { pass: last(/^\s*(\d+) pass\b/gm), fail: [...output.matchAll(/^\(fail\) /gm)].length };
 }
 
 /** The discrimination verdict for the run with the product hunks reversed. */

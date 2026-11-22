@@ -15,7 +15,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildFixture } from '../../scripts/contributor-audit-fixture.ts';
-import { classifyPath, classifyReversed, parseArgs, sandboxEnv } from '../../scripts/contributor-audit.ts';
+import { classifyPath, classifyReversed, parseArgs, parseCounts, sandboxEnv } from '../../scripts/contributor-audit.ts';
 
 const SCRIPT = join(import.meta.dir, '..', '..', 'scripts', 'contributor-audit.ts');
 
@@ -153,6 +153,18 @@ describe('classification and refusals', () => {
     expect(classifyReversed({ exit: 1, pass: 0, fail: 0, timedOut: false })).toEqual({ result: 'vacuous_failure', reason: 'no_test_failed' });
     expect(classifyReversed({ exit: 128, pass: 0, fail: 0, timedOut: true })).toEqual({ result: 'vacuous_failure', reason: 'timeout' });
     expect(['test/a.test.ts', 'docs/x.md', 'src/a.ts', 'CHANGELOG.md', 'src/a.spec.ts'].map(classifyPath)).toEqual(['test', 'doc', 'product', 'doc', 'test']);
+  });
+
+  test('an import crash is not a failed test: only (fail) lines count', () => {
+    const importCrash = [
+      'a.test.ts:', '', '# Unhandled error between tests', '-------------------------------',
+      "error: Cannot find module '../src/new-module.ts' from 'test/a.test.ts'", '-------------------------------',
+      '', ' 0 pass', ' 1 fail', ' 1 error', 'Ran 1 test across 1 file.',
+    ].join('\n');
+    expect(parseCounts(importCrash)).toEqual({ pass: 0, fail: 0 });
+    expect(classifyReversed({ exit: 1, ...parseCounts(importCrash), timedOut: false }).result).toBe('vacuous_failure');
+    const realFail = ['a.test.ts:', 'error: expect(received).toBe(expected)', '(fail) returns two [1.2ms]', '(pass) ok', '', ' 1 pass', ' 1 fail', 'Ran 2 tests across 1 file.'].join('\n');
+    expect(parseCounts(realFail)).toEqual({ pass: 1, fail: 1 });
   });
 
   test('usage and preflight refusals are agent-contract envelopes with exit 2', () => {

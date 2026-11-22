@@ -16,7 +16,10 @@
 #          (default: merge-base with origin/master, falling back to HEAD~1)
 #      A file that does not exist in the base ref is removed (its pre-fix
 #      state is nonexistence).
-#   3. Runs `bun test <test-file>` and parses the pass/fail counts.
+#   3. Runs `bun test <test-file>` and counts the tests that ran and failed:
+#      one `(fail) <name>` line each. Not bun's `N fail` summary, which also
+#      counts an unhandled error between tests (a test file whose import no
+#      longer resolves reads `0 pass / 1 fail / 1 error` with no test run).
 #   4. Restores the source files (also on ^C / error — trap'd).
 #
 # Exit codes:
@@ -25,7 +28,8 @@
 #   1  DOES NOT DISCRIMINATE — the test passes with the fix reverted. The test
 #      is green both ways and pins nothing (the #3665 class).
 #   3  VACUOUS FAILURE — non-zero exit but zero executed-test failures (import
-#      crash, missing file, bash 127). A missing binary also exits non-zero;
+#      crash, including a reverted fix that removes a module the test imports,
+#      missing file, bash 127). A missing binary also exits non-zero;
 #      that is not discrimination (the #3573 class).
 #   2  usage / setup error.
 #
@@ -100,12 +104,16 @@ TEST_EXIT=$?
 restore
 trap - EXIT INT TERM
 
-FAILS="$(grep -Eo '^[[:space:]]*[0-9]+ fail' "$OUT" | grep -Eo '[0-9]+' | tail -1)"
+# A failed test prints `(fail) <name>`; bun's `N fail` summary also counts
+# unhandled errors between tests, which are not tests that ran.
+FAILS="$(grep -cE '^\(fail\) ' "$OUT")"
 PASSES="$(grep -Eo '^[[:space:]]*[0-9]+ pass' "$OUT" | grep -Eo '[0-9]+' | tail -1)"
+ERRORS="$(grep -Eo '^[[:space:]]*[0-9]+ errors?$' "$OUT" | grep -Eo '[0-9]+' | tail -1)"
 FAILS="${FAILS:-0}"
 PASSES="${PASSES:-0}"
+ERRORS="${ERRORS:-0}"
 
-echo "[discriminate] pre-fix run: exit=$TEST_EXIT pass=$PASSES fail=$FAILS (full output: $OUT)" >&2
+echo "[discriminate] pre-fix run: exit=$TEST_EXIT pass=$PASSES fail=$FAILS errors=$ERRORS (full output: $OUT)" >&2
 
 if [ "$TEST_EXIT" -eq 0 ]; then
   echo "[discriminate] DOES NOT DISCRIMINATE: $TEST_FILE passes with the fix reverted." >&2
@@ -114,6 +122,10 @@ if [ "$TEST_EXIT" -eq 0 ]; then
 fi
 if [ "$FAILS" -eq 0 ]; then
   echo "[discriminate] VACUOUS FAILURE: non-zero exit but no executed test failed (crash/127?)." >&2
+  if [ "$ERRORS" -gt 0 ]; then
+    echo "[discriminate] bun reported $ERRORS unhandled error(s) outside any test — an import that no longer resolves with the fix reverted is the usual cause." >&2
+    echo "[discriminate] Keep the module and revert only the code that uses it, or test through a caller that exists pre-fix." >&2
+  fi
   echo "[discriminate] A missing file also exits non-zero — that is not discrimination." >&2
   exit 3
 fi
