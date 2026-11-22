@@ -33,12 +33,13 @@ const MANAGED_BLOCK_END = /<!--+\s*gbrain:([a-z0-9_-]+):end\b[^>]*>/gi;
 const MANAGED_BLOCK_BEGIN = /^(?:[ \t]*#{1,6}[ \t]+(?:facts|takes)[ \t]*\n(?:[ \t]*\n)*)?[^\n]*?<!--+\s*gbrain:([a-z0-9_-]+):begin\b[^>]*>/im;
 
 const WRAPPED_FRONTMATTER_WINDOW = 5;
-const FRONTMATTER_KEY_LINE = /^(?:['"][^'"\n]+['"]|[A-Za-z_][\w.-]*)[ \t]*:(?:[ \t]|$)/m;
+const FRONTMATTER_KEY_LINE = /^(?:['"][^'"\n]+['"][ \t]*|[^\s#'"{}[\],&*!|>%@`?:-][^\n:]*):(?:[ \t]|$)/m;
 
 /**
  * Whether a column-0 frontmatter fence pair, as parseDataFrontmatter reads one, starts on one of the first
  * WRAPPED_FRONTMATTER_WINDOW non-blank lines: an opener naming its language (`---yaml`, `---yml`, `---json`), a fence
- * whose first line is a YAML key or a flow mapping, or a closed plain `---` pair with a YAML key line between the fences.
+ * whose first line after any # comments is a YAML key (any plain or quoted key shape) or a flow mapping, or a closed
+ * plain `---` pair with a YAML key line between the fences.
  * Two horizontal rules with only prose between them are not, and neither is one rule followed by prose.
  */
 function startsFrontmatterPair(text: string): boolean {
@@ -54,7 +55,7 @@ function startsFrontmatterPair(text: string): boolean {
       throw e;
     }
     if (!fenced) continue;
-    const first = /^.*\S.*$/m.exec(fenced.block)?.[0] ?? '';
+    const first = /^[ \t]*[^\s#].*$/m.exec(fenced.block)?.[0] ?? '';
     if (fenced.language !== '' || FRONTMATTER_KEY_LINE.test(first) || first.trimStart().startsWith('{')) return true;
     if (fenced.content != null && FRONTMATTER_KEY_LINE.test(fenced.block)) return true;
   }
