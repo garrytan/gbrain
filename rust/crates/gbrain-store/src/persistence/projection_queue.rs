@@ -314,14 +314,34 @@ pub(crate) fn queued_jobs(read: &dyn KvRead) -> Result<Vec<QueuedJob>> {
         .collect())
 }
 
-/// `min(updated_at)` over the jobs with reason `protocol_activation`: when an upgrade's index rebuild
-/// began, or none when no such job is queued (`projectionRebuildProgress`).
-pub(crate) fn activation_started_us(read: &dyn KvRead) -> Result<Option<i64>> {
-    Ok(all_jobs(read)?
-        .iter()
-        .filter(|job| job.record.reason == PROTOCOL_ACTIVATION)
-        .map(|job| job.record.updated_at_us)
-        .min())
+/// `min(updated_at)` over the jobs with reason `protocol_activation` whose page passes `waits`
+/// (`projectionRebuildProgress`'s `started`: a live page of the job's source): when an upgrade's index
+/// rebuild began, or none when no such job is queued. `waits` sees the job's page and its source.
+pub(crate) fn activation_started_us(
+    read: &dyn KvRead,
+    mut waits: impl FnMut(&PageRecord, &SourceRecord) -> Result<bool>,
+) -> Result<Option<i64>> {
+    let sources = sources_by_incarnation(read)?;
+    let mut started: Option<i64> = None;
+    for job in all_jobs(read)? {
+        if job.record.reason != PROTOCOL_ACTIVATION {
+            continue;
+        }
+        let Some(source) = sources.get(&job.incarnation) else {
+            continue;
+        };
+        let Some(page) =
+            read_page(read, &source.id, &job.slug)?.filter(|p| p.deleted_at_us.is_none())
+        else {
+            continue;
+        };
+        if waits(&page, source)? {
+            started = Some(started.map_or(job.record.updated_at_us, |s| {
+                s.min(job.record.updated_at_us)
+            }));
+        }
+    }
+    Ok(started)
 }
 
 /// True when the queue holds no job: one key read.
@@ -1185,13 +1205,31 @@ mod tests {
         assert_eq!((progress.done, progress.total), (1, 2));
         let rate = progress.pages_per_second.unwrap();
         assert!(rate > 0.05 && rate <= 0.1, "{rate}");
+        // #10000: an activation row outside the scope starts no clock in it.
         let elsewhere: CoverageScope =
             serde_json::from_value(json!({ "sourceId": "elsewhere" })).unwrap();
-        let none = store
-            .projection_rebuild_progress(&elsewhere)
-            .unwrap()
+        assert_eq!(store.projection_rebuild_progress(&elsewhere).unwrap(), None);
+    }
+
+    #[test]
+    fn an_activation_row_on_an_image_page_starts_no_rebuild_clock() {
+        use crate::link_queries::CoverageScope;
+        let store = crate::test_support::store();
+        put(&store, "photo");
+        store
+            .write(|tx| {
+                let mut page = read_page(&*tx, "default", "photo")?.unwrap();
+                page.page_kind = "image".into();
+                crate::pages::write_page(tx, &page)
+            })
             .unwrap();
-        assert_eq!((none.done, none.total, none.pages_per_second), (0, 0, None));
+        set_job(&store, "photo", PROTOCOL_ACTIVATION, 10_000_000);
+        let every = CoverageScope::default();
+        assert_eq!(store.projection_rebuild_progress(&every).unwrap(), None);
+        // The same row on a segmented image shell is a `text` page, so its clock runs.
+        segment(&store, "photo");
+        set_job(&store, "photo", PROTOCOL_ACTIVATION, 10_000_000);
+        assert!(store.projection_rebuild_progress(&every).unwrap().is_some());
     }
 
     #[test]
