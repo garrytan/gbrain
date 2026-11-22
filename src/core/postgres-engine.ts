@@ -150,6 +150,7 @@ import type { PageCountQuery, PageCounts, TypeGrouper } from './page-counts.ts';
 import * as healthImpl from './engine-sql/health.ts';
 import { resolveEntityTypes } from './schema-pack/entity-types.ts';
 import * as pagesImpl from './engine-sql/pages.ts';
+import { readAtomScanRevisionCandidates, type AtomScanRevisionQuery } from './engine-sql/atom-scans.ts';
 import * as entityKeysImpl from './engine-sql/entity-keys.ts';
 import type { EntityKeyRow, EntityKeyRowsOpts } from './engine-sql/entity-keys.ts';
 import * as identityDecisionsImpl from './engine-sql/identity-decisions.ts';
@@ -919,13 +920,12 @@ export class PostgresEngine implements BrainEngine {
    * v0.41.13 (#1309) — identity-based dedup pre-check.
    * See `BrainEngine.findDuplicatePage` for the contract.
    */
-  async findDuplicatePage(
-    sourceId: string,
-    opts: { hash: string; frontmatterId?: string | null; excludeSlug?: string },
+  async findDuplicatePage(sourceId: string, opts: { hash: string; frontmatterId?: string | null; excludeSlug?: string },
   ): Promise<{ slug: string; id: number } | null> {
     return this.withScopedReadTransaction(undefined, sourceId, tx => pagesImpl.findDuplicatePage(scopedRead(this.engineSqlOn(tx)), sourceId, opts));
   }
   async findDuplicatePages(sourceId: string, inputs: Parameters<typeof pagesImpl.findDuplicatePages>[2]) { return this.withScopedReadTransaction(undefined, sourceId, tx => pagesImpl.findDuplicatePages(scopedRead(this.engineSqlOn(tx)), sourceId, inputs)); }
+  readAtomScanRevisionCandidates(opts: AtomScanRevisionQuery) { return this.withScopedReadTransaction(undefined, opts.sourceId, tx => readAtomScanRevisionCandidates(scopedRead(this.engineSqlOn(tx)), opts)); }
 
   private _pageTransaction = false;
 

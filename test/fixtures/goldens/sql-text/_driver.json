@@ -4148,6 +4148,19 @@
           }
         ]
       },
+      "readAtomScanRevisionCandidates": {
+        "scoped": [
+          {
+            "paramCount": 6,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "readPageSnapshot": {
         "default": [
           {

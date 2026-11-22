@@ -6,13 +6,13 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 290/294
+# covered: 291/295
 # lifecycle: 9/9
 # pages: 32/32
 # search: 7/7
 # search_reads: 9/9
 # chunks: 22/22
-# extraction: 7/7
+# extraction: 8/8
 # links: 23/23
 # tags: 5/5
 # timeline: 10/10
@@ -55,7 +55,7 @@ getPage	pages	yes	41	yes	yes	yes	serves
 readPageSnapshot	pages	yes	11	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	161	yes	yes	yes	serves
+putPage	pages	yes	162	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	17	yes	yes	yes	serves
@@ -121,6 +121,7 @@ writeTextProjectionSeal	chunks	yes	1	no	yes	yes	refuses:chunks
 moveChunkIndexes	chunks	yes	1	no	yes	yes	refuses:chunks
 getChunkReuseRows	chunks	yes	1	no	yes	yes	refuses:chunks
 getChunksWithEmbeddings	chunks	yes	2	no	yes	yes	serves
+readAtomScanRevisionCandidates	extraction	yes	1	no	yes	yes	refuses:raw_sql
 countStalePagesForExtraction	extraction	yes	4	yes	yes	yes	serves
 listStalePagesForExtraction	extraction	yes	3	yes	yes	yes	serves
 markPagesExtractedBatch	extraction	yes	4	yes	yes	yes	serves

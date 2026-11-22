@@ -50,6 +50,7 @@ export const RUST_ENGINE_MEMBERS = {
   // Refused as the raw SQL it replaces until the Rust store serves it, so the reported capabilities stay as before.
   readStoredBodyBytes: 'raw_sql',
   readPageBodySizes: 'raw_sql',
+  readAtomScanRevisionCandidates: 'raw_sql',
   getPage: 'pages',
   readPageSnapshot: 'pages',
   readPageSnapshotsBatch: 'pages',

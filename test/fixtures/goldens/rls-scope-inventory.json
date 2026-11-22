@@ -2768,6 +2768,19 @@
           "default"
         ]
       },
+      "readAtomScanRevisionCandidates#scoped": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "scoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": [
+          "src-a"
+        ]
+      },
       "readEmbeddingStateCounts#full": {
         "flagOffLanes": [
           "pool"
@@ -3872,7 +3885,7 @@
       }
     },
     "static": {
-      "callSites": 36,
+      "callSites": 37,
       "directMethods": {
         "_searchKeywordCJK": 1,
         "countChunklessPagesWithContent": 1,
@@ -3900,6 +3913,7 @@
         "listStaleChunks": 1,
         "listStaleFrontmatterKeyPages": 1,
         "listStalePagesForExtraction": 1,
+        "readAtomScanRevisionCandidates": 1,
         "readEmbeddingStateCounts": 1,
         "readPageSnapshot": 1,
         "readPageSnapshotsBatch": 1,
@@ -4130,6 +4144,7 @@
         "putDreamVerdict": "none",
         "putPage": "none",
         "putRawData": "none",
+        "readAtomScanRevisionCandidates": "direct",
         "readCycleLocks": "none",
         "readDecideState": "none",
         "readEmbeddingStateCounts": "direct",
