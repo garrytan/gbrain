@@ -147,7 +147,7 @@ describe('the no-caller page policy PGLite renders, against privacy.rs', () => {
     expect(closed, `the fact policy lost its owner-only term. ${HOW}`).toContain(`AND NOT ${normalizeConceptInputs(ownerOnlyFactSql('facts', 'closed'))}`);
     expect(ownerOnlyFactSql('facts', 'closed')).toStartWith(`(${ANY_OWNER_ONLY_SQL} OR EXISTS (SELECT 1 FROM pg_catalog.pg_description held`);
     expect(OWNER_ONLY_RUST, 'the closed form in owner_only.rs does not read the marks that stand for the held flag').toContain('OwnerOnlyForm::Closed => Ok(self.guarded())');
-    expect(OWNER_ONLY_RUST, 'the lineage form in owner_only.rs does not walk the recorded derivation inputs').toContain('lineage_inputs(read, &start)');
+    expect(OWNER_ONLY_RUST, 'the lineage form in owner_only.rs does not walk the recorded derivation inputs').toContain('lineage_reaches(read, table, id, &mut |t, row_id|');
     expect(ownerOnlyFactSql('facts', 'fn')).toContain(`gbrain_owner_only_lineage('facts', facts.id)`);
     const body = RUST.slice(RUST.indexOf('pub(crate) fn hidden_by_private_provenance'));
     expect(body, 'hidden_by_private_provenance does not apply the owner-only fact rule').toContain('owner_only.fact_hidden(read, policy.owner_only, row.id, &row.source_id)?');
