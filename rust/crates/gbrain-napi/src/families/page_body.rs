@@ -150,8 +150,9 @@ impl Brain {
         })
     }
 
-    /// Not a member: `{ lead, revision }` of page `pageId` for `sealSegmentedPage` (the stored
-    /// timeline lead, `""` when none, and the page's knowledge revision), or `null` for a missing page.
+    /// Not a member: `{ lead, revision, slug, sourceId }` of page `pageId` for `sealSegmentedPage`
+    /// (the stored timeline lead, `""` when none, the page's knowledge revision and its identity),
+    /// or `null` for a missing page.
     #[napi]
     pub fn read_segmented_seal_lead<'env>(
         &self,
@@ -159,10 +160,7 @@ impl Brain {
         page_id: Value,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            let lead =
-                s.read_segmented_seal_lead(required(page_id, "readSegmentedSealLead pageId")?)?;
-            Ok(lead
-                .map(|(lead, revision)| serde_json::json!({ "lead": lead, "revision": revision })))
+            s.read_segmented_seal_lead(required(page_id, "readSegmentedSealLead pageId")?)
         })
     }
 

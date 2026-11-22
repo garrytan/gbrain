@@ -2,21 +2,30 @@
 //! leaves, one row per `(source_id, content_hash)` naming the purged page's slug, the write request
 //! that purged it and when.
 //!
-//! Members: listRecentPurgeRequests. `record_page_purge` is the writer a purge will call
-//! (`recordPagePurge` of src/core/persistence/page-purge.ts); no TypeScript path reaches it yet,
-//! because a purge runs through `executeRaw`, which a Rust brain refuses, so the parity cases and the
-//! store tests seed rows with it.
+//! Members: listRecentPurgeRequests and `upsertPagePurges` ([`Store::upsert_page_purges`], the page
+//! purge sweep's `tombstonePage` in src/core/persistence/page-purge.ts). The restore replay
+//! (`belief/purge-mirror.ts`) still writes the ledger with raw SQL and stops on the typed `raw_sql`
+//! refusal. [`Store::record_page_purge`] is the same writer under the napi `recordPagePurge` name; the
+//! store tests seed rows with it. The belief ledger's purge probe ([`has_page_purges`]) and
+//! `countPurgedPageFacts` (facts/repair.rs) read the ledger.
 //!
 //! Keys (after `keys::FACT`; a text part ends with a NUL byte, and no text column may hold one):
 //! - `F 0x0C source_id content_hash -> PagePurgeRecord`: one row, the `(source_id, content_hash)`
 //!   primary key. The table's foreign key to `sources` (`ON DELETE CASCADE`) is honoured by
-//!   `facts::remove_source_rows` and by `record_page_purge` refusing an unknown source.
+//!   `facts::remove_source_rows` and by the writers refusing an unknown source.
+//!
+//! The page guard ([`refuse_purged_page`]) refuses a page write that stores a tombstoned hash in its
+//! source, as the `pages_refuse_purged` trigger does: `putPage` (an upsert, so the `BEFORE INSERT`
+//! trigger fires) on every write, other page writes on insert or a hash or source change.
 
+use super::purge_ledger::PURGED_CONTENT;
 use super::{DAY_US, text_key};
 use crate::Store;
+use crate::env::is_uuid;
 use crate::error::{Result, StoreError};
 use crate::kv::{KvRead, scan_prefix};
 use crate::links::no_nul;
+use crate::pages::PageRecord;
 use crate::sources::require_source;
 use crate::{keys, put_json};
 use serde::{Deserialize, Serialize};
@@ -34,12 +43,36 @@ pub(crate) struct PagePurgeRecord {
     pub purged_at_us: i64,
 }
 
+const PURGED_PAGE_MESSAGE: &str =
+    "purged_content: this page content was purged from this source and cannot be saved again";
+
+/// `upsertPagePurges`'s argument (`PagePurgeUpsert`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PagePurgeUpsert {
+    pub source_id: String,
+    pub content_hashes: Vec<String>,
+    pub slug: String,
+    pub request_id: Option<String>,
+}
+
 fn source_prefix(source_id: &str) -> Vec<u8> {
     text_key(ROW, &[source_id])
 }
 
 fn row_key(source_id: &str, content_hash: &str) -> Vec<u8> {
     text_key(ROW, &[source_id, content_hash])
+}
+
+/// Whether the source has any page purge tombstone (`EXISTS (SELECT 1 FROM page_purges WHERE
+/// source_id = $1)`), for the belief ledger's purge probe.
+pub(crate) fn has_page_purges(read: &dyn KvRead, source_id: &str) -> Result<bool> {
+    let mut found = false;
+    scan_prefix(read, &source_prefix(source_id), false, &mut |_, _| {
+        found = true;
+        false
+    })?;
+    Ok(found)
 }
 
 /// Every `(content_hash, row)` of a source, by content hash (bytewise, as the key orders).
@@ -114,11 +147,30 @@ pub(crate) fn put_purge(
     )
 }
 
+/// The page guard (`gbrain_refuse_purged_page`, `BEFORE INSERT OR UPDATE ON pages`): a write that
+/// stores a content hash tombstoned in its source is refused, on insert (`before` is `None`) and
+/// on an update that changes the hash or the source. A page with no hash (a segmented shell) passes.
+pub(crate) fn refuse_purged_page(
+    read: &dyn KvRead,
+    before: Option<&PageRecord>,
+    record: &PageRecord,
+) -> Result<()> {
+    let Some(hash) = record.content_hash.as_deref() else {
+        return Ok(());
+    };
+    let applies = before
+        .is_none_or(|b| b.content_hash.as_deref() != Some(hash) || b.source_id != record.source_id);
+    if applies && read.get(&row_key(&record.source_id, hash))?.is_some() {
+        return Err(StoreError::new(PURGED_CONTENT, PURGED_PAGE_MESSAGE));
+    }
+    Ok(())
+}
+
 impl Store {
     /// `INSERT INTO page_purges(source_id, content_hash, slug, request_id) ... ON CONFLICT
     /// (source_id, content_hash) DO UPDATE SET slug, request_id, purged_at = now()` for each hash:
-    /// records the purge of a page's content under every hash it was saved with. A source the store
-    /// does not hold is refused, as the foreign key refuses it.
+    /// records the purge of a page's content under every hash it was saved with. It is
+    /// [`Store::upsert_page_purges`] with the arguments spread out.
     pub fn record_page_purge(
         &self,
         source_id: &str,
@@ -126,23 +178,56 @@ impl Store {
         slug: &str,
         request_id: Option<&str>,
     ) -> Result<()> {
-        const OP: &str = "recordPagePurge";
-        let mut texts: Vec<(&str, &str)> = vec![("sourceId", source_id), ("slug", slug)];
-        texts.extend(content_hashes.iter().map(|h| ("contentHashes", h.as_str())));
-        if let Some(request) = request_id {
-            texts.push(("requestId", request));
+        self.upsert_page_purges(&PagePurgeUpsert {
+            source_id: source_id.to_owned(),
+            content_hashes: content_hashes.to_vec(),
+            slug: slug.to_owned(),
+            request_id: request_id.map(str::to_owned),
+        })
+    }
+
+    /// `upsertPagePurges`: stores one tombstone per content hash under the slug. A hash already
+    /// tombstoned in the source takes the new slug, request id and time; an empty list writes
+    /// nothing. As Postgres refuses a statement that upserts one key twice, a repeated hash is
+    /// refused and nothing is written. `purged_at` is the open transaction's clock, else the store's.
+    pub fn upsert_page_purges(&self, row: &PagePurgeUpsert) -> Result<()> {
+        let op = "upsertPagePurges";
+        no_nul(op, &[("sourceId", &row.source_id), ("slug", &row.slug)])?;
+        for hash in &row.content_hashes {
+            no_nul(op, &[("contentHashes", hash)])?;
         }
-        no_nul(OP, &texts)?;
-        let now = self.env.now_micros();
+        let distinct: BTreeSet<&str> = row.content_hashes.iter().map(String::as_str).collect();
+        if distinct.len() != row.content_hashes.len() {
+            return Err(StoreError::invalid(format!(
+                "{op}: ON CONFLICT DO UPDATE command cannot affect row a second time"
+            )));
+        }
+        let request_id = match &row.request_id {
+            None => None,
+            Some(text) if is_uuid(text) => Some(text.to_lowercase()),
+            Some(_) => {
+                return Err(StoreError::invalid(format!(
+                    "{op}: requestId is not a UUID"
+                )));
+            }
+        };
+        if row.content_hashes.is_empty() {
+            return Ok(());
+        }
         self.write(|tx| {
-            require_source(&*tx, source_id)?;
-            for hash in content_hashes {
-                let row = PagePurgeRecord {
-                    slug: slug.to_owned(),
-                    request_id: request_id.map(str::to_owned),
-                    purged_at_us: now,
-                };
-                put_json(tx, &row_key(source_id, hash), &row)?;
+            require_source(tx, &row.source_id)?;
+            let purged_at_us = crate::env::transaction_clock::transaction_now()
+                .unwrap_or_else(|| self.env.now_micros());
+            for hash in &row.content_hashes {
+                put_json(
+                    tx,
+                    &row_key(&row.source_id, hash),
+                    &PagePurgeRecord {
+                        slug: row.slug.clone(),
+                        request_id: request_id.clone(),
+                        purged_at_us,
+                    },
+                )?;
             }
             Ok(())
         })
@@ -151,8 +236,8 @@ impl Store {
     /// `listRecentPurgeRequests(days, cap)` over the page ledger: the distinct request ids of the
     /// purges newer than `days` days (`purged_at > now() - make_interval(days => $1)`), up to `cap`.
     /// The statement has no `ORDER BY`; ids come in byte order. The fact purge ledger
-    /// (`fact_purges`, `facts::purge_ledger`) adds its ids too; the take purge ledger (`take_purges`)
-    /// has no store rows, so it adds nothing.
+    /// (`fact_purges`, `facts::purge_ledger`) and the take purge ledger (`take_purges`,
+    /// `facts::take_purges`) add their ids too.
     pub fn list_recent_purge_requests(&self, days: i64, cap: i64) -> Result<Vec<String>> {
         let since = self
             .env
@@ -176,9 +261,115 @@ impl Store {
             return Err(e);
         }
         super::purge_ledger::recent_request_ids(&*read, since, &mut requests)?;
+        super::take_purges::recent_request_ids(&*read, since, &mut requests)?;
         Ok(requests
             .into_iter()
             .take(usize::try_from(cap.max(0)).unwrap_or(usize::MAX))
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::OpenOptions;
+    use crate::pages::{PageInput, PutPageOptions};
+    use crate::sources::SourceInput;
+    use serde_json::json;
+    use std::path::PathBuf;
+
+    struct Dir(PathBuf);
+    impl Drop for Dir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn open(name: &str) -> (Store, Dir) {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/unit-tmp")
+            .join(format!("{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Store::open_dir(&dir.join("brain"), OpenOptions::default()).unwrap();
+        let team: SourceInput = serde_json::from_value(json!({ "id": "team" })).unwrap();
+        store.upsert_source(&team).unwrap();
+        (store, Dir(dir))
+    }
+
+    fn upsert(source: &str, hashes: &[&str], slug: &str, request: Option<&str>) -> PagePurgeUpsert {
+        serde_json::from_value(json!({ "sourceId": source, "contentHashes": hashes,
+            "slug": slug, "requestId": request }))
+        .unwrap()
+    }
+
+    fn slugs(store: &Store, source: &str) -> Vec<String> {
+        source_purges(&*store.read().unwrap(), source, "test")
+            .unwrap()
+            .into_iter()
+            .map(|(slug, _)| slug)
+            .collect()
+    }
+
+    #[test]
+    fn a_repeated_hash_takes_the_new_slug_and_a_bad_row_writes_nothing() {
+        let (store, _dir) = open("page-purges-upsert");
+        let request = "C0000000-0000-4000-8000-000000000001";
+        store
+            .upsert_page_purges(&upsert("default", &["h1", "h2"], "notes/a", Some(request)))
+            .unwrap();
+        store
+            .upsert_page_purges(&upsert("default", &["h2"], "notes/b", None))
+            .unwrap();
+        assert_eq!(slugs(&store, "default"), ["notes/a", "notes/b"]);
+        let stored: serde_json::Value =
+            crate::get_json(&*store.read().unwrap(), &row_key("default", "h1"))
+                .unwrap()
+                .unwrap();
+        assert_eq!(stored["request_id"], request.to_lowercase());
+        for bad in [
+            upsert("default", &["h3", "h3"], "notes/c", None),
+            upsert("default", &["h3"], "notes/c", Some("nope")),
+            upsert("missing", &["h3"], "notes/c", None),
+        ] {
+            assert!(store.upsert_page_purges(&bad).is_err());
+        }
+        store
+            .upsert_page_purges(&upsert("missing", &[], "notes/c", None))
+            .unwrap();
+        assert_eq!(slugs(&store, "default").len(), 2);
+    }
+
+    #[test]
+    fn put_page_refuses_a_tombstoned_body_in_its_source_and_the_source_delete_clears_it() {
+        let (store, _dir) = open("page-purges-guard");
+        let input: PageInput = serde_json::from_value(
+            json!({ "type": "note", "title": "Gone", "compiled_truth": "a purged body" }),
+        )
+        .unwrap();
+        let team: PutPageOptions = serde_json::from_value(json!({ "sourceId": "team" })).unwrap();
+        let page = store
+            .put_page("notes/gone", &input, &PutPageOptions::default())
+            .unwrap();
+        let hash = page["content_hash"].as_str().unwrap().to_string();
+        for source in ["default", "team"] {
+            store
+                .upsert_page_purges(&upsert(source, &[&hash], "notes/gone", None))
+                .unwrap();
+        }
+        for (slug, options) in [
+            ("notes/gone", &PutPageOptions::default()),
+            ("notes/copy", &PutPageOptions::default()),
+            ("notes/copy", &team),
+        ] {
+            let e = store.put_page(slug, &input, options).unwrap_err();
+            assert!(e.message.starts_with("purged_content:"), "{}", e.message);
+        }
+        store
+            .write(|tx| crate::cascade::remove_source_rows(tx, "team"))
+            .unwrap();
+        assert!(slugs(&store, "team").is_empty());
+        assert_eq!(slugs(&store, "default"), ["notes/gone"]);
+        store.put_page("notes/copy", &input, &team).unwrap();
     }
 }

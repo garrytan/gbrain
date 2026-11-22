@@ -247,3 +247,21 @@ impl Store {
         })
     }
 }
+
+/// The rows a fact purge's inventory probe searches (crate::facts::purge_probe): every verdict, expired or not, as the table holds it.
+pub(crate) fn purge_probe_rows(
+    read: &dyn crate::kv::KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow, json_rows};
+    Ok(json_rows::<DreamRecord>(read, &[keys::DREAM_VERDICT])?
+        .into_iter()
+        .map(|r| ProbeRow {
+            source_id: None,
+            cells: vec![
+                ("segments", ProbeCell::opt_jsonb(r.segments.as_ref())),
+                ("entities", ProbeCell::opt_jsonb(r.entities.as_ref())),
+                ("reasons", ProbeCell::opt_jsonb(r.reasons.as_ref())),
+            ],
+        })
+        .collect())
+}

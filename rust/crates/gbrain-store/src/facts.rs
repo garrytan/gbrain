@@ -26,10 +26,9 @@
 //! - `F 0x0A` and `F 0x0B`: the `fact_relink_attempts` table (`facts/relink.rs` lists them).
 //! - `F 0x0C source content_hash`: the `page_purges` ledger (`facts/page_purges.rs` lists it).
 //! - `F 0x0D page_id`: the `page_facts_reconcile` watermark (`facts/reconcile.rs`), read only.
-//! - `F 0x0E generation_id`: the `derived_generations` ledger with its items
-//!   (`facts/generations.rs`), read only.
 //! - `F 0x0F source visibility subject fact_hash`: the `fact_purges` ledger
 //!   (`facts/purge_ledger.rs`).
+//! - `F 0x10 source subject claim_hash`: the `take_purges` ledger (`facts/take_purges.rs`).
 //! - meta `next_facts_id`: the id sequence. An insert that `ON CONFLICT DO NOTHING` skips still
 //!   takes an id, as `nextval` does.
 //!
@@ -42,6 +41,7 @@
 //! Text: `ILIKE` and `gbrain_fact_normalize` lower-case with `pg_lower` (Postgres `lower()` on a
 //! UTF-8 database); `ILIKE` and `LIKE` read `\` as the escape character.
 
+pub mod captured;
 mod collapse;
 pub mod contest;
 pub mod cycle;
@@ -50,31 +50,42 @@ mod embedding;
 pub mod extractor_classify;
 mod fence;
 mod fence_overlay;
+pub mod forget;
 pub mod generations;
 mod held_cells;
+pub mod held_moves;
 pub mod holding_purges;
 mod kept_rows;
 pub mod loops;
+pub mod ontology_repair;
 pub mod page_purges;
 pub(crate) mod privacy;
 pub mod provenance;
 pub mod purge;
 pub mod purge_ledger;
+pub mod purge_plan;
+pub(crate) mod purge_probe;
 pub mod quote;
 pub mod quoted;
 pub mod recall;
 pub mod reconcile;
 pub mod relink;
 pub mod relink_writes;
+pub mod remember_reads;
 pub mod repair;
+pub mod rest_sites;
 pub mod saved_match;
+pub mod session_takes;
+pub mod take_purges;
 pub mod trust;
 pub mod trust_owner;
 pub mod trust_reads;
 mod widen;
 pub mod withdrawal_discovery;
 pub mod withdrawal_fence;
+mod withdrawal_guard;
 pub mod withdrawal_pages;
+pub mod write_path;
 
 pub use crate::owner_only::OwnerOnlyForm;
 pub(crate) use crate::owner_only::OwnerOnlySources;
@@ -83,6 +94,8 @@ pub(crate) use fence::jsonb_time;
 pub use fence::{FactRestore, FactSourcePrefix, FenceContext, FenceTarget};
 pub use fence_overlay::{FenceOverlayIncomingRow, FenceOverlayInput};
 pub use held_cells::{HeldFenceCellKey, HeldFenceCellsInput, HeldFenceMember};
+pub use page_purges::PagePurgeUpsert;
+pub(crate) use page_purges::has_page_purges;
 pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
 pub(crate) use privacy::{
@@ -796,7 +809,9 @@ pub(crate) fn fact_exists(read: &dyn KvRead, id: u64, source_ids: &[String]) -> 
 
 /// Deletes this family's records keyed by a source that is deleted (`cascade::remove_source_rows`):
 /// every fact row of the source, as `facts_source_id_fkey ... ON DELETE CASCADE` does, and its fact
-/// purge tombstones (`fact_purges_source_id_fkey`, [`purge_ledger::remove_source_rows`]). A row of
+/// purge tombstones (`fact_purges_source_id_fkey`, [`purge_ledger::remove_source_rows`]), page
+/// purge tombstones (`page_purges_source_id_fkey`, [`page_purges::remove_source_page_purges`]) and take
+/// purge tombstones (`take_purges_source_id_fkey`, [`take_purges::remove_source_rows`]). A row of
 /// another source that named one of them as its successor keeps its row with `superseded_by`
 /// cleared (`ON DELETE SET NULL`).
 ///
@@ -808,7 +823,8 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
         delete_fact(tx, trust, &row)?;
     }
     page_purges::remove_source_page_purges(tx, source_id)?;
-    purge_ledger::remove_source_rows(tx, source_id)
+    purge_ledger::remove_source_rows(tx, source_id)?;
+    take_purges::remove_source_rows(tx, source_id)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2116,7 +2132,8 @@ impl Store {
     /// `migrateFactsToCanonical(phantom, canonical, sourceId)`: the phantom page's unexpired rows
     /// move onto the canonical slug (entity and page), their `row_num` offset past the canonical
     /// page's largest. First the ontology observations the move would duplicate are dropped
-    /// (src/core/facts/ontology-rekey.ts `dropRekeyDuplicates`).
+    /// (src/core/facts/ontology-rekey.ts `dropRekeyDuplicates`). The withdrawal guard runs on each moved row
+    /// (`entity_slug` is in the `SET` list): a withdrawal of the claim on the canonical entity expires it.
     pub fn migrate_facts_to_canonical(
         &self,
         phantom: &str,
@@ -2164,6 +2181,7 @@ impl Store {
                         })?),
                         None => None,
                     };
+                withdrawal_guard::preserve_withdrawal(&*tx, &mut new)?;
                 write_fact(tx, trust, Some(old), &new)?;
             }
             Ok(moving.len() as u64)

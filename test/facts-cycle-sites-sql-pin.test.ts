@@ -135,6 +135,12 @@ const PINS: Pin[] = [
     params: [['src-a', 'people/a']],
   },
   {
+    from: 'src/core/write-through.ts:389 resolvePageWriteTarget (includeDeleted)',
+    case: { method: 'readPageFileOrigin', variant: 'includeDeleted', run: async e => { await e.readPageFileOrigin('src-a', 'people/a', { includeDeleted: true }); } },
+    texts: [`SELECT source_path, source_uri FROM pages WHERE source_id=$1 AND slug=$2`],
+    params: [['src-a', 'people/a']],
+  },
+  {
     from: 'src/core/facts/unfenced-facts.ts:392 planFence',
     case: { method: 'listFenceRowClaims', variant: 'default', run: async e => { await e.listFenceRowClaims('src-a', 'people/a'); } },
     texts: [`SELECT row_num, fact, source FROM facts

@@ -11,12 +11,14 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
+use gbrain_store::facts::PagePurgeUpsert;
 use gbrain_store::facts::purge::{
     DerivedRowsQuery, FactScopeArgs, HeldFenceQuery, PurgeTargetArgs, RelinkQuery, SimilarQuery,
     SingleFactQuery, SourceArgs, UnfencedQuery, WithdrawalExpiry,
 };
 use gbrain_store::facts::purge_ledger::FactPurgeInsert;
 use gbrain_store::facts::reconcile::{BacklogArgs, DrainArgs, LockArgs, SettleArgs};
+use gbrain_store::facts::take_purges::TakePurgeInsert;
 
 #[napi]
 impl Brain {
@@ -239,6 +241,32 @@ impl Brain {
         self.run(env, move |s| {
             let a: FactPurgeInsert = required(row, "insertFactPurge row")?;
             s.insert_fact_purge(&a)
+        })
+    }
+
+    /// `upsertPagePurges(row)`: stores the page purge tombstones; resolves null.
+    #[napi]
+    pub fn upsert_page_purges<'env>(
+        &self,
+        env: &'env Env,
+        row: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: PagePurgeUpsert = required(row, "upsertPagePurges row")?;
+            s.upsert_page_purges(&a)
+        })
+    }
+
+    /// `insertTakePurge(row)`: resolves whether the take tombstone was stored.
+    #[napi]
+    pub fn insert_take_purge<'env>(
+        &self,
+        env: &'env Env,
+        row: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: TakePurgeInsert = required(row, "insertTakePurge row")?;
+            s.insert_take_purge(&a)
         })
     }
 

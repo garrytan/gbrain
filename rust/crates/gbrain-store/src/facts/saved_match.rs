@@ -107,7 +107,7 @@ const CUE_PHRASES: [&str; 20] = [
 ];
 
 /// A word character of a Postgres regular expression (`\w`): a letter, a digit or `_`.
-fn word_char(c: char) -> bool {
+pub(super) fn word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 

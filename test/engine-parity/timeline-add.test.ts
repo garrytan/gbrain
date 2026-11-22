@@ -20,8 +20,8 @@
  *    Generated ids are compared by whether they match, never by value.
  *
  * Known stop on Rust (lane 3, src/core/page-state/projections.ts): after the write commits, the resident projection
- * drain reaches the raw-SQL probe in selectWindowJobs (projections.ts:663, `engine.executeRaw` of the job probe; the
- * function starts at :649). The drain catches that refusal, so the write and its answer are whole. On Rust each tool case
+ * drain reaches the raw-SQL probe in selectWindowJobs (projections.ts:651, `engine.executeRaw` of the job probe; the
+ * function starts at :637). The drain catches that refusal, so the write and its answer are whole. On Rust each tool case
  * checks the committed bullet and row, pins that every raw-SQL refusal it caught came from that one site, and then
  * ends on the refusal it caught, so the harness counts the case stopped, never equal. The pin fails as soon as the
  * probe stops refusing; remove it when lane 3's fix for projections.ts lands.
@@ -42,7 +42,7 @@ const STDIO = { remote: true, admissionOrigin: 'interactive', transport: 'stdio'
 const addTimelineEntry = operations.find(op => op.name === 'add_timeline_entry')!;
 
 /** The one site the Rust arm still refuses on these writes (see the known stop above). */
-const RUST_KNOWN_STOP = /at selectWindowJobs \([^)]*src\/core\/page-state\/projections\.ts:663:\d+\)/;
+const RUST_KNOWN_STOP = /at selectWindowJobs \([^)]*src\/core\/page-state\/projections\.ts:651:\d+\)/;
 
 /** `engine`, keeping every raw-SQL refusal a call on it (or on a transaction handle it opens) raised, caught or not. */
 function keepingRefusals(engine: BrainEngine, refusals: unknown[]): BrainEngine {

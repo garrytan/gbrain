@@ -98,11 +98,11 @@ pub struct PurgedCountArgs {
 }
 
 /// `PAGE_EXTRACTION_SOURCE_LIST` (facts/gone-page-facts.ts): the sources whose context names the page.
-const PAGE_EXTRACTION_SOURCES: [&str; 4] =
+pub(super) const PAGE_EXTRACTION_SOURCES: [&str; 4] =
     ["mcp:put_page", "sync:import", "file_upload", "code_import"];
 
 /// `contextHeadSql`: `split_part(context, ' — ', 1)`, the text before the first separator.
-fn context_head(context: &str) -> &str {
+pub(super) fn context_head(context: &str) -> &str {
     context.split(" \u{2014} ").next().unwrap_or("")
 }
 

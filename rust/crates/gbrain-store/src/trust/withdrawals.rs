@@ -109,6 +109,18 @@ pub(super) fn at(read: &dyn KvRead, parts: &[&str]) -> Result<Option<i64>> {
     Ok(get_json::<WithdrawalRecord>(read, &key(parts))?.map(|r| r.withdrawn_at_us))
 }
 
+/// The time of the ledger row `(source, visibility, subject, fact_hash)`, or `None`: the one-row read
+/// `readMemberPageWithdrawal` (`facts/remember_reads.rs`) makes for each candidate subject and fingerprint.
+pub(crate) fn withdrawal_time(
+    read: &dyn KvRead,
+    source_id: &str,
+    visibility: &str,
+    subject: &str,
+    fact_hash: &str,
+) -> Result<Option<i64>> {
+    at(read, &[source_id, visibility, subject, fact_hash])
+}
+
 /// One stored withdrawal of a source (`fact_withdrawals` row).
 pub(crate) struct WithdrawalRow {
     pub visibility: String,
@@ -236,6 +248,38 @@ pub(crate) fn withdrawal_hash_under(
         !found
     })?;
     Ok(found)
+}
+
+/// The withdrawals of `[source, visibility, subject]`: each fact_hash with its withdrawal time
+/// (micros), in fact_hash order (the snapshot ledger, `page_withdrawals.rs`).
+pub(crate) fn under_subject(
+    read: &dyn KvRead,
+    source_id: &str,
+    visibility: &str,
+    subject: &str,
+) -> Result<Vec<(String, i64)>> {
+    let mut prefix = key(&[source_id, visibility, subject]);
+    prefix.push(0);
+    let len = prefix.len();
+    let mut rows = Vec::new();
+    let mut failed = None;
+    scan_prefix(read, &prefix, false, &mut |k, v| {
+        let hash = String::from_utf8_lossy(&k[len..]).into_owned();
+        match serde_json::from_slice::<WithdrawalRecord>(v) {
+            Ok(r) => rows.push((hash, r.withdrawn_at_us)),
+            Err(e) => {
+                failed = Some(e);
+                return false;
+            }
+        }
+        true
+    })?;
+    if let Some(e) = failed {
+        return Err(StoreError::invalid(format!(
+            "fact_withdrawals: corrupt record: {e}"
+        )));
+    }
+    Ok(rows)
 }
 
 /// Removes every withdrawal of a source, for the source delete.
@@ -492,13 +536,15 @@ impl Store {
         Ok(found)
     }
 
-    /// `readSourcePurgeFlags`: whether the source has a fact purge tombstone (the store's fact
-    /// purge ledger, `facts/purge_ledger.rs`) and a take purge tombstone. The store keeps no take
-    /// purge ledger (`take_purges` has no Rust writer), so the second is false.
+    /// `readSourcePurgeFlags`: whether the source has a fact purge tombstone (the fact purge
+    /// ledger, `facts/purge_ledger.rs`) and a take purge tombstone (the take purge ledger,
+    /// `facts/take_purges.rs`), read in one snapshot.
     pub fn read_source_purge_flags(&self, source_id: &str) -> Result<(bool, bool)> {
         no_nul("readSourcePurgeFlags", &[("sourceId", source_id)])?;
-        let facts = crate::facts::purge_ledger::has_fact_purges(&*self.read()?, source_id)?;
-        Ok((facts, false))
+        let read = self.read()?;
+        let facts = crate::facts::purge_ledger::has_fact_purges(&*read, source_id)?;
+        let takes = crate::facts::take_purges::has_take_purges(&*read, source_id)?;
+        Ok((facts, takes))
     }
 
     /// `readTrustGeneration`: the trust policy generation as decimal text. The store keeps no
@@ -686,7 +732,7 @@ mod tests {
     }
 
     #[test]
-    fn source_purge_flags_read_the_fact_purge_ledger() {
+    fn source_purge_flags_read_both_purge_ledgers() {
         let s = store();
         source(&s, "default");
         source(&s, "work");
@@ -706,6 +752,16 @@ mod tests {
         .unwrap();
         assert_eq!(s.read_source_purge_flags("default").unwrap(), (true, false));
         assert_eq!(s.read_source_purge_flags("work").unwrap(), (false, false));
+        let take = crate::facts::take_purges::TakePurgeInsert {
+            source_id: "work".into(),
+            subject: "*".into(),
+            claim_hash: fact_fingerprint("Acme will win."),
+            request_id: None,
+        };
+        assert!(s.insert_take_purge(&take).unwrap());
+        assert!(!s.insert_take_purge(&take).unwrap());
+        assert_eq!(s.read_source_purge_flags("work").unwrap(), (false, true));
+        assert_eq!(s.read_source_purge_flags("default").unwrap(), (true, false));
         assert_eq!(
             s.read_source_purge_flags("missing").unwrap(),
             (false, false)

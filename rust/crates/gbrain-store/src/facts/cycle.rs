@@ -88,6 +88,15 @@ pub struct PageCoordinate {
     pub slug: String,
 }
 
+/// `readPageFileOrigin` arguments: a page coordinate, and whether a soft-deleted page still answers.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct PageFileOriginQuery {
+    pub source_id: String,
+    pub slug: String,
+    pub include_deleted: bool,
+}
+
 /// `readFenceRowOccupant` arguments: a page coordinate and a row number.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -487,6 +496,39 @@ impl Store {
             .max()
             .map_or(0, i64::from)
             .max(0))
+    }
+
+    /// `readPageFileOrigin` (src/core/facts/unfenced-facts.ts, facts-home.ts, write-through.ts): `{ source_path,
+    /// source_uri }` of the coordinate's page, or null for no page. A soft-deleted page answers only with
+    /// `includeDeleted`.
+    pub fn read_page_file_origin(&self, q: &PageFileOriginQuery) -> Result<Value> {
+        no_nul(
+            "readPageFileOrigin",
+            &[("sourceId", &q.source_id), ("slug", &q.slug)],
+        )?;
+        let read = self.read()?;
+        Ok(read_page(&*read, &q.source_id, &q.slug)?
+            .filter(|p| q.include_deleted || p.deleted_at_us.is_none())
+            .map_or(
+                Value::Null,
+                |p| json!({ "source_path": p.source_path, "source_uri": p.source_uri }),
+            ))
+    }
+
+    /// `readLiveStoredBody` (src/core/facts/file-body-guard.ts `readStoredBody`): `{ compiled_truth, timeline }` of
+    /// the live page, or null for a deleted or missing page. A segmented page reads null columns, as PGLite's do. The
+    /// caller's row lock is the store's writer gate, which a `transaction` already holds, so the read takes no lock.
+    pub fn read_live_stored_body(&self, q: &PageCoordinate) -> Result<Value> {
+        no_nul(
+            "readLiveStoredBody",
+            &[("sourceId", &q.source_id), ("slug", &q.slug)],
+        )?;
+        let read = self.read()?;
+        Ok(read_page(&*read, &q.source_id, &q.slug)?
+            .filter(|p| p.deleted_at_us.is_none())
+            .map_or(Value::Null, |p| {
+                json!({ "compiled_truth": p.compiled_truth.as_deref(), "timeline": p.timeline.as_deref() })
+            }))
     }
 
     /// `readFenceRowOccupant` (src/core/facts/fence-fact-append.ts): the id of the row of a page

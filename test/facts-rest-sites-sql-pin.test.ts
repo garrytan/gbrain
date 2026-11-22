@@ -5,7 +5,7 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each member's recorded statements (text and params, in order) equal what its caller sent through
- *    `executeRaw` at 2eb69f4613. Static texts below are copied from the callers at that commit. A text a caller built from
+ *    `executeRaw` at 2eb69f4613 (softDeleteDerivedPages and markNeedsRederive: at cb17d047b7, #9653). Static texts below are copied from the callers at that commit. A text a caller built from
  *    shared builders (the read-policy fragments, the trust floor, the withdrawal predicates, the pool WHERE) is the text that
  *    caller rendered at that commit, captured by running the unchanged callers against a recording engine; one over
  *    3000 characters is pinned by its length and SHA-256 instead of being copied. One member differs on purpose:
@@ -35,6 +35,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, test } from 'bun:test';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { makeFakeSql } from './helpers/fake-postgres-sql.ts';
+import { KEEP_HIDDEN_AT } from '../src/core/facts/derivation-inputs.ts';
 
 type Responder = Parameters<typeof makeFakeSql>[0];
 

@@ -28,6 +28,7 @@ import { storePrivacyPolicy } from './private-provenance.ts';
 import { storeVisibility } from './fact-visibility.ts';
 import { privateProvenanceFilterUnderPolicy } from '../../search/private-visibility.ts';
 import { withDates } from '../store-codec.ts';
+import { FACT_DATES, withVector } from './fact-codec.ts';
 import { checkFactIds, checkFactSourcePrefix, type FactPreimage } from '../../engine-sql/facts.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
@@ -35,10 +36,6 @@ type FactRow = Awaited<ReturnType<BrainEngine['listFactsByEntity']>>[number];
 type TrajectoryPoint = Awaited<ReturnType<BrainEngine['findTrajectory']>>[number];
 type Row = Record<string, unknown>;
 
-const FACT_DATES = ['valid_from', 'valid_until', 'expired_at', 'consolidated_at', 'embedded_at', 'created_at'] as const;
-/** A returned vector (a number list or null) as the `Float32Array` PGLite hands back. */
-const withVector = (row: Row): Row =>
-  Array.isArray(row.embedding) ? { ...row, embedding: new Float32Array(row.embedding as number[]) } : row;
 const facts = (rows: Row[]): FactRow[] => rows.map((row) => withDates(withVector(row), FACT_DATES) as unknown as FactRow);
 
 /** PGLite's inlined vector literal (engine-sql/facts.ts `toPgVectorLiteral`). */

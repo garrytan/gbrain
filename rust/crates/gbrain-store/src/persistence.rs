@@ -68,8 +68,10 @@ mod notifier;
 mod op_checkpoint;
 mod owner_scans;
 pub(crate) mod projection_queue;
+mod projection_rebuild;
 mod receipt_list;
 pub(crate) mod topology;
+pub(crate) use topology::purge_probe_rows as purge_probe_topology_rows;
 mod writer_versions;
 pub use effect_worker::{EffectClaim, EffectSettle, Settle};
 pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};
@@ -88,6 +90,9 @@ pub use projection_queue::{
 };
 pub(crate) use projection_queue::{
     activation_started_us, parse_timestamptz, queue_page_projection, queued_jobs,
+};
+pub use projection_rebuild::{
+    ProjectionJobKey, QueuedProjectionFilter, QueuedProjectionKey, QueuedProjectionPages,
 };
 pub use receipt_list::WriteRequestListFilter;
 pub use topology::TopologyChangeInsert;

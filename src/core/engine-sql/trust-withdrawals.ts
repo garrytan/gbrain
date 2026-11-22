@@ -4,7 +4,8 @@
  * moved. `isFactWithdrawn` and `isFactPurged` also read
  * `fact_purges` (facts/purge-schema.ts): every writer runs them before it saves a claim (facts/withdrawal.ts).
  * `readSourcePurgeFlags` is the per-source purge probe of the import overlay (facts/purge-overlay.ts): whether the
- * source has any fact or take purge tombstone.
+ * source has any fact or take purge tombstone. `listPurgedTakeRows` is that overlay's take match: which incoming
+ * takes-fence rows a take tombstone names.
  *
  * `readFactCacheWatermark` is the hot-memory cache's watermark (facts/meta-hook.ts): the ledger's row count and newest
  * withdrawal, plus a digest of the folder access rules and pending coverage, so a forget or a rulebook install in any
@@ -133,6 +134,19 @@ export async function readSourcePurgeFlags(exec: LegacyUnscopedRead, sourceId: s
     EXISTS (SELECT 1 FROM fact_purges WHERE source_id=$1) AS facts,
     EXISTS (SELECT 1 FROM take_purges WHERE source_id=$1) AS takes`, [sourceId]);
   return { facts: row?.facts === true, takes: row?.takes === true };
+}
+
+/** One take row of an incoming takes fence: its row number and its claim. */
+export interface TakeClaimRow { row_num: number; claim: string }
+
+/** The import overlay's take match: the row numbers of `takes` whose claim fingerprint a take tombstone of the source names, under subject '*' or `subject` (any subject when null), each once. No set order. */
+export async function listPurgedTakeRows(exec: LegacyUnscopedRead, sourceId: string, takes: readonly TakeClaimRow[], subject: string | null): Promise<number[]> {
+  const rows = await exec.executeRaw<{ row_num: number }>(`SELECT DISTINCT i.row_num
+      FROM jsonb_to_recordset($2::text::jsonb) AS i(row_num integer, claim text)
+      JOIN take_purges p ON p.source_id=$1 AND p.claim_hash=gbrain_fact_fingerprint(i.claim)
+        AND ($3::text IS NULL OR p.subject='*' OR p.subject=$3::text)`,
+    [sourceId, JSON.stringify(takes.map(t => ({ row_num: t.row_num, claim: t.claim }))), subject]);
+  return rows.map(r => Number(r.row_num));
 }
 
 /** `lockFactForWithdrawal`: the fact a withdrawal admits (FactWithdrawalClaimSpec), locked; outcome markers too. */

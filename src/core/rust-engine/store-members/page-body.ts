@@ -24,6 +24,7 @@ import { readFix } from '../../ops/op-fix.ts';
 import { prepareChunks, textColumnModel } from '../chunk-input.ts';
 import { sanitizeRemoteBody } from '../../remote-body.ts';
 import { storeErrorCode } from '../store-errors.ts';
+import { overlayStoreLead, type StoreSnapshot } from '../snapshot-overlay.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 
 const hex = (bytes: Uint8Array): string => Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('hex');
@@ -184,21 +185,24 @@ export const flipBodyGeneration: StoreMember<[input: BodyFlipInput], BodyFlipRes
 };
 
 /**
- * The store reads the page's stored timeline lead and revision (`readSegmentedSealLead`, not a member), this side
- * sanitizes the lead (`timelineLead` when given) with `sanitizeRemoteBody` as engine-sql/page-body.ts does, and the
- * store seals the page at that revision and records the text (`pages::record_search_timeline`). A page that moved in
- * between refuses `revision_conflict`; a missing page is a no-op. PGLite overlays the page's withdrawals and global
- * purges on the lead first; here that overlay is the identity, because the store keeps no withdrawal ledger or purge
- * markers (its readPageSnapshot reports no withdrawals), so the stored lead is the overlaid lead.
+ * The store reads the page's stored timeline lead, revision and identity (`readSegmentedSealLead`, not a member), this
+ * side takes `timelineLead` in its place when given, overlays it with the page's ledger rows as engine-sql/page-body.ts
+ * does (`overlayStoreLead` over the store snapshot read with `includeDeleted`: purged fence rows drop, withdrawn ones
+ * are struck), sanitizes it with `sanitizeRemoteBody`, and the store seals the page at that revision and records the
+ * text (`pages::record_search_timeline`). A page that moved in between refuses `revision_conflict`; a missing page is a
+ * no-op.
  */
 export const sealSegmentedPage: StoreMember<[pageId: number, opts?: { timelineLead?: string }], void> = async (brain, pageId, opts) => {
   const o = takeOptions('sealSegmentedPage', opts, ['timelineLead']);
-  const stored: { lead: string; revision: string } | null =
+  const stored: { lead: string; revision: string; slug: string; sourceId: string } | null =
     await storeCall({ member: 'sealSegmentedPage' }, () => brain.readSegmentedSealLead(pageId));
   if (!stored) return;
   const lead = typeof o.timelineLead === 'string' ? o.timelineLead : stored.lead;
+  const ledger: StoreSnapshot | null = await storeCall({ member: 'sealSegmentedPage', slug: stored.slug },
+    () => brain.readPageSnapshot(stored.slug, { sourceId: stored.sourceId, includeDeleted: true }));
+  const overlaid = ledger ? overlayStoreLead(lead, ledger) : lead;
   await storeCall({ member: 'sealSegmentedPage', expectedRevision: stored.revision },
-    () => brain.sealSegmentedPage(pageId, sanitizeRemoteBody(lead), stored.revision));
+    () => brain.sealSegmentedPage(pageId, sanitizeRemoteBody(overlaid), stored.revision));
 };
 
 export const openBodyStaging: StoreMember<[input: BodyStagingInput], void> = async (brain, input) => {

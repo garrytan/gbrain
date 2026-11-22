@@ -135,6 +135,11 @@ fn read_all<T: serde::de::DeserializeOwned>(read: &dyn KvRead, prefix: &[u8]) ->
         .collect()
 }
 
+/// Every supersede proposal, in id order (the claim-pair and contested-pair reads filter them).
+pub(crate) fn all_proposals(read: &dyn KvRead) -> Result<Vec<ProposalRecord>> {
+    read_all(read, &tagged(PROPOSAL))
+}
+
 fn id_at(bytes: &[u8]) -> Result<u64> {
     keys::be8(bytes).ok_or_else(|| StoreError::new(crate::error::STORE_CORRUPT, "bad proposal id"))
 }
@@ -1184,4 +1189,35 @@ impl Store {
             }
         }
     }
+}
+
+/// `PURGE_REVIEW_COUNTS_SQL` (a fact purge's plan): the review-queue rows, review proposals and
+/// supersede proposals of `source_id` that name a purged take (`a_ref`/`b_ref` in `refs`) or a
+/// purged fact (`new_fact_id`/`old_fact_id` in `fact_ids`), as `(q, rp, dp)`.
+pub(crate) fn purge_review_counts(
+    read: &dyn KvRead,
+    source_id: &str,
+    refs: &std::collections::HashSet<String>,
+    fact_ids: &std::collections::HashSet<i64>,
+) -> Result<(i64, i64, i64)> {
+    let names = |a: &str, b: &str| refs.contains(a) || refs.contains(b);
+    let queue: Vec<QueueRecord> = read_all(read, &tagged(REVIEW_QUEUE))?;
+    let q = queue
+        .iter()
+        .filter(|r| r.source_id == source_id && names(&r.a_ref, &r.b_ref))
+        .count();
+    let review: Vec<ReviewProposalRecord> = read_all(read, &tagged(REVIEW_PROPOSAL))?;
+    let rp = review
+        .iter()
+        .filter(|r| r.source_id == source_id && names(&r.a_ref, &r.b_ref))
+        .count();
+    let supersede: Vec<ProposalRecord> = read_all(read, &tagged(PROPOSAL))?;
+    let dp = supersede
+        .iter()
+        .filter(|r| {
+            r.source_id == source_id
+                && (fact_ids.contains(&r.new_fact_id) || fact_ids.contains(&r.old_fact_id))
+        })
+        .count();
+    Ok((q as i64, rp as i64, dp as i64))
 }
