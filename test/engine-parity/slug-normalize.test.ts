@@ -178,6 +178,29 @@ describe('engine parity: slug normal form', () => {
     expect(result).toEqual({ slug: stored, status: 'soft_deleted', noop: false, deletedInPlace: true, twin: null });
     return result;
   });
+  parityTest('restore_page by the stored decomposed spelling restores the row delete_page soft-deleted by it, with no composed twin', { methods: ['putPage', 'readPageSnapshot'] }, async (engine, backend) => {
+    const stored = 'notes/res-cafe\u0301';
+    const composed = 'notes/res-caf\u00e9';
+    if (backend === 'rust') await engine.putPage(stored, { type: 'note', title: 'Restore me', compiled_truth: 'Old.', timeline: '' });
+    else {
+      await engine.putPage(composed, { type: 'note', title: 'Restore me', compiled_truth: 'Old.', timeline: '' });
+      await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2', [stored, composed]);
+    }
+    const revision = async () => (await engine.readPageSnapshot(stored, { sourceId: 'default', includeDeleted: true }))!.revision;
+    let out: { slug: string };
+    try {
+      await operationsByName.delete_page!.handler(ctx(engine), { slug: stored, expected_revision: await revision(), request_id: randomUUID() });
+      out = await operationsByName.restore_page!.handler(ctx(engine), { slug: stored, expected_revision: await revision(), request_id: randomUUID() }) as typeof out;
+    } catch (e) {
+      if (backend === 'rust') { expect((e as Error).message).toBe(RUST_JOURNAL_STOP); throw e; }
+      throw e;
+    }
+    const after = await engine.readPageSnapshot(stored, { sourceId: 'default', includeDeleted: true });
+    const twin = await engine.readPageSnapshot(composed, { sourceId: 'default', includeDeleted: true });
+    const result = { slug: out.slug, restoredInPlace: after !== null && after.page.deleted_at == null, twin: twin?.page.slug ?? null };
+    expect(result).toEqual({ slug: stored, restoredInPlace: true, twin: null });
+    return result;
+  });
   parityTest('add_tag, remove_tag, add_timeline_entry, edit_page and append_page by the stored decomposed spelling change that row in place, with no composed twin', { methods: ['putPage', 'readPageSnapshot'] }, async (engine, backend) => {
     const stored = 'notes/write-cafe\u0301';
     const composed = 'notes/write-caf\u00e9';
