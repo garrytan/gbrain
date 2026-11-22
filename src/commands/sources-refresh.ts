@@ -81,7 +81,7 @@ export function printRefreshOutcome(outcome: { result: WorktreeRefreshResult } |
   // #7685: a refusal that carries a structured fix (argv, actor, ask_user) emits it as the v1 `fix`; the prose stays in `suggestion`.
   const env = toAgentError(error, { transport: 'cli', command: 'sources refresh', render: cliRenderContext() });
   const refusal = { status: 'refused', code: error.code, cause: error.message, fix: error.fix && env.fix ? env.fix : error.suggestion ?? null, docs: error.docs ?? null,
-    ...(error.detail ? { detail: error.detail } : {}), ...(error.why ? { why: error.why } : {}),
+    ...(error.detail ? { detail: error.detail } : {}), ...(error.why ? { why: error.why } : {}), ...(error.reason ? { reason: error.reason } : {}),
     error: env.error, message: env.message, suggestion: env.suggestion, docs_cmd: env.docs_cmd, class: env.class, retryable: env.retryable,
     contract_version: env.contract_version };
   console.log(json ? JSON.stringify(refusal) : `Refresh refused (${error.code}): ${error.message}\nFix: ${error.suggestion ?? USAGE}${error.docs ? `\nDocs: ${error.docs}` : ''}${error.why ? `\nWhy: ${error.why}` : ''}`);
