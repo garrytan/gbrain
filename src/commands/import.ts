@@ -272,9 +272,7 @@ export async function runImport(
     commit?: string; /** GBRA-217: a full sync's reason and history-gap note per file (absolute path) for the snapshot its import archives. */ history?: (filePath: string) => import('../core/page-state/versions.ts').VersionHistory | undefined;
     strategy?: SyncStrategy;
     sourceId?: string;
-    managedBookmark?: boolean;
-    /** #8079: a managed plain-directory sync; its imports never replace a page a database-only write made. */
-    plainDirectorySync?: boolean;
+    managedBookmark?: boolean; /** #8079: managed plain-directory sync, whose imports never replace a database-only edit. */ plainDirectorySync?: boolean;
     /** GST-2462: the run the privacy_label_ignored notice names. */ noticeRun?: 'sync';
     /** Paths the caller keeps out of this run (#5988 holds, #8620 reserved skill paths); skipped without importing, not failures. */
     heldPaths?: Pick<ReadonlySet<string>, 'has'>;
