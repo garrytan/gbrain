@@ -12,6 +12,7 @@
  * test/connect-bearer.test.ts and run unchanged.)
  */
 import { describe, test, expect, afterAll } from 'bun:test';
+import { readActiveAccessTokenByHash as readTokenByHash } from '../src/core/engine-sql/access-credentials.ts';
 import { createHash } from 'node:crypto';
 
 import { buildAmbientWritebackSection } from '../src/core/facts/writeback-instructions.ts';
@@ -148,16 +149,20 @@ describe('legacy bearer transport serves the shared builder output (parity)', ()
     ]);
     let dbHealthy = true;
     const validTokens = new Map([[hash(TOKEN), { id: 'tok-wb', name: 'wb-test' }]]);
+    const executeRaw = async (sql: string, params?: unknown[]) => {
+      const norm = sql.replace(/\s+/g, ' ').trim().toLowerCase();
+      if (norm.startsWith('select id, name') || norm.startsWith('select * from access_tokens')) {
+        const row = validTokens.get(params?.[0] as string);
+        return row ? [{ ...row, permissions: { takes_holders: ['world'] } }] : [];
+      }
+      return [];
+    };
     const engine = {
       kind: 'postgres',
-      executeRaw: async (sql: string, params?: unknown[]) => {
-        const norm = sql.replace(/\s+/g, ' ').trim().toLowerCase();
-        if (norm.startsWith('select id, name') || norm.startsWith('select * from access_tokens')) {
-          const row = validTokens.get(params?.[0] as string);
-          return row ? [{ ...row, permissions: { takes_holders: ['world'] } }] : [];
-        }
-        return [];
-      },
+      executeRaw,
+      // The bearer check's typed token read (engine-sql/access-credentials.ts) sends the same statement through executeRaw.
+      readActiveAccessTokenByHash: (h: string) => readTokenByHash({ executeRaw } as never, h, 'transport'),
+      touchAccessTokenLastUsed: async () => {},
       getConfig: async (k: string) => {
         if (!dbHealthy) throw new Error('db blip');
         return rows.get(k) ?? null;

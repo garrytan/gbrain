@@ -14,6 +14,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { readActiveAccessTokenByHash as readTokenByHash, touchAccessTokenLastUsed as touchTokenRow, type TokenByHashCaller } from '../src/core/engine-sql/access-credentials.ts';
 import { createHash } from 'crypto';
 import { startHttpTransport } from '../src/mcp/http-transport.ts';
 import { RateLimiter } from '../src/mcp/rate-limit.ts';
@@ -143,7 +144,12 @@ function makeFakeEngine(cfg: FakeEngineConfig = {}): FakeEngine {
     audit.push({ token_name: row.token_name, agent_name: row.agent_name, operation: row.operation, latency_ms: row.latency_ms as number, status: row.status });
   };
 
-  return { kind: 'postgres', executeRaw, sql, audit, rawLogInserts, logMcpRequest };
+  // The bearer check's typed token read and last-use stamp (engine-sql/access-credentials.ts) send the same statements
+  // through this executeRaw, so the stub above answers them.
+  const readActiveAccessTokenByHash = (hash: string, caller: TokenByHashCaller) => readTokenByHash({ executeRaw }, hash, caller);
+  const touchAccessTokenLastUsed = (id: string, unified: boolean) => touchTokenRow({ executeRaw }, id, unified);
+
+  return { kind: 'postgres', executeRaw, sql, audit, rawLogInserts, logMcpRequest, readActiveAccessTokenByHash, touchAccessTokenLastUsed };
 }
 
 interface TestServer {
