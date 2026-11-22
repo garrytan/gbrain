@@ -16,7 +16,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { randomBytes, createCipheriv, pbkdf2Sync } from 'crypto';
 import { dirname, basename, join } from 'path';
 import { createRequire } from 'module';
-import { frontmatterBodyOffset } from '../core/markdown.ts';
+import { frontmatterBodyOffset, validatorFrontmatterFence } from '../core/markdown.ts';
 import { opError } from '../core/ops/contract.ts';
 
 // Inline marked.js so published HTML is truly self-contained (no CDN dependency)
@@ -46,9 +46,9 @@ export function makeShareable(content: string): string {
   let clean = content.replace(/\r\n?/g, '\n');
 
   // Remove YAML frontmatter
-  if (clean.split('\n').find(line => line.trim())?.trim() === '---') {
+  if (validatorFrontmatterFence(clean.split('\n')).opens) {
     const offset = frontmatterBodyOffset(clean);
-    if (offset === 0) throw opError('invalid_frontmatter', 'The page opens a frontmatter block with --- and never closes it, so nothing was published.', 'Close the frontmatter with a --- line, then publish again.', { why: 'Publishing cannot tell where the private frontmatter ends, so it publishes nothing rather than guess.' });
+    if (offset === 0) throw opError('invalid_frontmatter', 'The page opens a frontmatter block with --- and never closes it, so nothing was published.', 'Close the frontmatter with a --- line that starts at the beginning of the line (an indented --- does not close it), then publish again.', { why: 'Publishing cannot tell where the private frontmatter ends, so it publishes nothing rather than guess.' });
     clean = clean.slice(offset);
   }
 
