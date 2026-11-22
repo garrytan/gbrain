@@ -442,8 +442,19 @@ for (const kind of testBackends()) {
       await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [FED]);
       const racer = await register('fedracer', HOME);
       await bindCredential(engine, { kind: 'client', id: racer.id }, { attestActor: 'qm', attestOps: MEMORY_OPS });
-      const race = raceWhile((sql, params) => sql.includes('UPDATE sources SET config = $1::text::jsonb WHERE id = $2') && params[1] === FED,
-        () => bindCredential(engine, { kind: 'client', id: racer.id }, { attestSources: [FED] }));
+      // The config write is the typed replaceSourceConfig (engine-sql/sources.ts): the mark races it there, while
+      // federate holds the source row (lockSourceRow) in the same transaction.
+      const original = engine.replaceSourceConfig;
+      let pending: Promise<Error | null> | null = null;
+      engine.replaceSourceConfig = (async function (this: BrainEngine, id: string, config: Record<string, unknown>) {
+        if (!pending && id === FED) {
+          let settled = false;
+          pending = refusal(bindCredential(engine, { kind: 'client', id: racer.id }, { attestSources: [FED] })).finally(() => { settled = true; });
+          for (let i = 0; i < 30 && !settled; i++) await new Promise(r => setTimeout(r, 50));
+        }
+        return original.call(this, id, config);
+      }) as typeof engine.replaceSourceConfig;
+      const race = { restore: () => { engine.replaceSourceConfig = original; }, result: () => pending };
       try {
         await runSources(engine, ['federate', FED]);
       } finally {

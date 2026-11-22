@@ -89,6 +89,20 @@ function makeStub(rowsByPattern: Record<string, unknown[]> = {}, opts: { appears
     getSource,
     listSourceRecords,
     listLocalPathSources,
+    // `sources federate` holds the row and replaces the whole config through typed members; the stub records the
+    // replacement as one UPDATE call (config as JSON text), the shape the federate tests read.
+    lockSourceRow: async (id: string) => detailRows().find(r => r.id === id) ?? null,
+    replaceSourceConfig: async (id: string, config: Record<string, unknown>) => {
+      calls.push({ sql: 'UPDATE sources SET config', params: [JSON.stringify(config), id] });
+      return true;
+    },
+    renameSource: async (id: string, name: string) => {
+      calls.push({ sql: 'UPDATE sources SET name', params: [name, id] });
+      return true;
+    },
+    // The federation warning's exposed-pages read: this brain has no remote-written page.
+    readFederationExposedPages: async () => [],
+    listAccessTokens: async () => [],
     // The strict mode reader is a typed method; it answers from the same fake rows as executeRaw.
     readManagedModeRows: () => executeRaw('SELECT enabled FROM persistence_brain WHERE singleton=1'),
     setConfig,
