@@ -36,14 +36,10 @@ export const PURGE_OWNERS = {
   receiptReads: 'lane 4 (rust-5a 90e7bea933)',
   /** The `publication_started` stamp of a recovered purge's publication transaction: rust-engine/bound-write-rust 075a30ef45 (journal.markPublicationStarted; not merged here). */
   publicationStamp: 'lane 5 (bound-write-rust 075a30ef45)',
-  /** The generation-ledger scrub (generations/ledger-scrub.ts): typed members, rust-engine commit 61b18fbbc. */
-  ledgerScrub: 'lane 4 (61b18fbbc)',
   /** The recorded-value probe of the receipt's ledger report: rust-engine/rust-belief-purge e211982aba serves it (not merged here). */
   beliefProbe: 'lane 3 (rust-belief-purge e211982aba)',
   /** The fact-context probe of the receipt's ledger report. */
   factContextProbe: 'lane 4 (rust-5a 90e7bea933)',
-  /** The origin-twin read: rust-engine/repair-rust b5945d814f (origin-twins.ts calls the readPageDatabaseOnlyReason member). */
-  repairOriginTwin: 'lane 10 (repair-rust b5945d814f)',
   /** The online-built request index read: rust-engine/doctor-checks-3 (b78e56edb9, contains 8d4d809039) makes it a typed member whose Rust store answers every index as valid. */
   requestIndexes: 'lane 14 (doctor-checks-3 b78e56edb9, contains 8d4d809039)',
   /** The fact purge's transaction statements and receipt counts: rust-engine/rust-5a bc4cc890fe serves them (not merged here); see fact-purge-path-members.ts. */
@@ -73,7 +69,7 @@ export interface PurgePathMember<E extends string = 'retention'> extends Base<E>
 export interface PurgePathSite<E extends string = 'retention'> extends Base<E> { site: string; guarded?: string; stop?: string }
 export type PurgePathEntry<E extends string = 'retention'> = PurgePathMember<E> | PurgePathSite<E>;
 
-const { ours, receiptReads, publicationStamp, ledgerScrub, beliefProbe, factContextProbe, repairOriginTwin, requestIndexes } = PURGE_OWNERS;
+const { ours, receiptReads, publicationStamp, beliefProbe, factContextProbe, requestIndexes } = PURGE_OWNERS;
 const { nov24, nov25 } = PURGE_DUE;
 const served = (owner: string, ...members: Array<keyof BrainEngine & string>): PurgePathMember[] => members.map(member => ({ member, owner }));
 
@@ -138,12 +134,10 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
   ...RETENTION_STOPS,
   // preparePagePurge: the request-index state read, then the origin-twin read.
   { site: 'readRequestIndexStates (persistence/checkpoint-validation.ts)', owner: requestIndexes, due: nov25, stop: 'the online-built request index read runs through raw SQL' },
-  { site: 'isOriginTwinPage (persistence/origin-twins.ts)', owner: repairOriginTwin, due: nov25, stop: 'the origin-twin read (page-prepare isOriginTwinPage, also :461 and :676) runs through raw SQL; member readPageDatabaseOnlyReason' },
   // The publication transaction of a recovered journaled purge: the `publication_started` stamp (the exclusive source lock
   // before it is the typed member `lockSourceForUpdate`).
   { site: '<anonymous> (persistence/coordinator.ts)', owner: publicationStamp, due: nov25, stop: 'the publication transaction of a recovered purge stamps publication_started through raw SQL (UPDATE persistence_requests ... RETURNING *)' },
   // sweepPurgedPage: the generation-ledger scrub.
-  { site: 'scrubGenerationLedger (generations/ledger-scrub.ts)', owner: ledgerScrub, due: nov25, stop: 'the generation-ledger scrub runs through raw SQL' },
   // verifyPagePurge: the receipt. Its store probes (`countPurgeProbe`) are served, the fact purge's `fingerprint` and
   // `claim_text` probes included.
   // ledgerReports: runs for every purge whose page has fact claims, belief ledger or not.
@@ -190,6 +184,10 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
     // config and the background ticks that share the consumer
     'getConfig', 'getConfigValues', 'getAllConfig', 'setConfig', 'expireMemoryProposals', 'listAwaitingMemoryProposals', 'purgeMemoryProposals',
     'ensureDreamMapConfigRow', 'lockDreamMapConfigRow', 'writeDreamMapConfigRow',
+    // served on Rust by main's batch 9: the origin-twin read, the managed worktree reads, the checkpoint records and the typed
+    // generation ledger scrub (the page purge's last raw reads)
+    'listTopologyRecoveries', 'readOpCheckpointRecords', 'readOwnerHostBinding', 'readPageDatabaseOnlyReason', 'readWorktreeAdmission',
+    'scrubGenerationPageRows',
   ),
   ...GUARDED_SITES,
 ];
