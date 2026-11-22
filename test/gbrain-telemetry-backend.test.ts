@@ -16,10 +16,11 @@ import { describe, expect, test } from 'bun:test';
 import { spawnSync } from 'child_process';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import enumsJson from '../src/core/telemetry/enums.json';
 import { toRow } from '../supabase/gbrain-telemetry/functions/gbrain-telemetry-ingest/validate.ts';
 
 const DIR = join(import.meta.dir, '..', 'supabase', 'gbrain-telemetry');
-const ENUMS: Record<string, string[]> = JSON.parse(readFileSync(join(import.meta.dir, '..', 'src', 'core', 'telemetry', 'enums.json'), 'utf-8'));
+const ENUMS: Record<string, string[]> = enumsJson;
 const SQL = readFileSync(join(DIR, 'migrations', 'G001_gbrain_telemetry.sql'), 'utf-8');
 const INGEST = readFileSync(join(DIR, 'functions', 'gbrain-telemetry-ingest', 'index.ts'), 'utf-8');
 const VALIDATE = readFileSync(join(DIR, 'functions', 'gbrain-telemetry-ingest', 'validate.ts'), 'utf-8');
