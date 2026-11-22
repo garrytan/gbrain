@@ -135,8 +135,14 @@ test.skipIf(!Bun.which('flock'))('GST-3497: a publish that finds the push lock h
     expect(error.retryable).toBe(true);
     expect(error.reason).toBe('publish_lock_busy');
     expect(error.message).toContain('holds this checkout\'s push lock (a process that did not record itself');
-    expect(error.suggestion).toContain(`--expect-remote ${remote}`);
-    expect(error.suggestion).toContain('publishes them again on its own');
+    expect(error.suggestion).toContain(`Retry gbrain sources refresh ${f.alpha}`);
+    const out: string[] = [];
+    const log = console.log;
+    _resetCliExitVerdictForTests();
+    console.log = (line: string) => { out.push(line); };
+    try { await runSourcesRefresh(f.engine, [f.alpha, '--json']); } finally { console.log = log; _resetCliExitVerdictForTests(); process.exitCode = 0; }
+    expect(JSON.parse(out.join(''))).toMatchObject({ status: 'refused', code: 'refresh_diverged', reason: 'publish_lock_busy', retryable: true,
+      fix: { argv: ['gbrain', 'sources', 'refresh', f.alpha] } });
     expect(remoteHead(f)).toBe(remote);
     expect(f.head()).toBe(local);
     expect(await f.refreshRows()).toEqual([]);

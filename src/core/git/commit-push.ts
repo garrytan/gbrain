@@ -1384,7 +1384,7 @@ function recordConflict(root: string, branch: string, e: unknown): void {
 
 // ── Public entry points ─────────────────────────────────────────────────────
 
-/** The process holding the publish lock, as its holder recorded itself (pid, command words and flags, never their values); a redacting publish, an older gbrain or the shell helper records nothing. */
+/** The process holding the publish lock, as its holder recorded itself (pid, since, and its mode as a fixed label, never a message or path); a redacting publish, an older gbrain or the shell helper records nothing. */
 function publishHolder(path: string): string {
   try {
     const h = JSON.parse(readFileSync(path, 'utf8')) as { pid?: number; since?: string; command?: string };
@@ -1507,9 +1507,9 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
   const claim = (timeoutMs: number) => {
     const handle = acquireNativeLockSync(publishLockPath, { timeoutMs });
     if (!handle) return null;
-    const command = ['gbrain', ...process.argv.slice(2, 4).filter(a => /^[a-z][a-z-]*$/.test(a)), ...process.argv.slice(4).filter(a => /^--[a-z-]+$/.test(a))].join(' ');
+    const command = `gbrain git commit-push${opts.pushOnly ? ' --push-only' : ''}${opts.keepCheckout ? ' --keep-checkout' : ''}${opts.pending ? ' --pending' : ''}`;
     try { writeFileSync(holderPath, JSON.stringify({ pid: process.pid, since: new Date().toISOString(), command })); } catch { /* the record is best effort; the lock is what excludes */ }
-    return { release: () => { rmSync(holderPath, { force: true }); handle.release(); } };
+    return { release: () => { try { rmSync(holderPath, { force: true }); } catch { /* best effort */ } finally { handle.release(); } } };
   };
   let pub = claim(waitMs);
   if (!pub) {

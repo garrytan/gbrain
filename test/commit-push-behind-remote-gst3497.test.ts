@@ -10,7 +10,7 @@
  * contention.
  * Regression it catches: the triple scan that kept a production-size publish past its child's 600 s bound, and a
  * busy-lock refusal that cannot say who holds the lock.
- * Seams: a `git` shim on the child CLI's PATH that logs what each secret scan reads and can slow a push; otherwise a
+ * Seams: a `git` shim on the child CLI's PATH that logs what each secret scan reads and holds a push while a sentinel file exists; otherwise a
  * real bare remote, two real clones and the real CLI.
  */
 import { afterEach, beforeEach, expect, test } from 'bun:test';
@@ -72,7 +72,7 @@ beforeEach(() => {
   writeFileSync(join(shimDir, 'git'), `#!/bin/sh
 PATH=$(printf '%s' "$PATH" | sed 's#${shimDir}:##g'); export PATH
 case " $* " in *" diff-tree --stdin "*) tee -a "$SHIM_LOG" | '${REAL_GIT}' "$@"; exit $? ;; esac
-case " $* " in *" push "*) [ -n "$SHIM_PUSH_SLEEP" ] && sleep "$SHIM_PUSH_SLEEP" ;; esac
+case " $* " in *" push "*) while [ -n "$SHIM_PUSH_HOLD" ] && [ -e "$SHIM_PUSH_HOLD" ]; do sleep 0.1; done ;; esac
 exec '${REAL_GIT}' "$@"
 `);
   chmodSync(join(shimDir, 'git'), 0o755);
@@ -122,8 +122,10 @@ test('an overlapping file refuses integrate_conflict and pushes nothing', () => 
 test('a busy push lock names the publish holding it, and that publish pushes the waiting HEAD too', async () => {
   const { bare, a, b } = setup();
   diverge(a, b);
+  const hold = join(root, 'hold-push');
+  writeFileSync(hold, '');
   const holder = spawn(process.execPath, [CLI, 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', b, '--json'],
-    { cwd: b, env: env({ SHIM_PUSH_SLEEP: '6' }), stdio: 'ignore' });
+    { cwd: b, env: env({ SHIM_PUSH_HOLD: hold }), stdio: 'ignore' });
   const exited = new Promise<number | null>(resolve => holder.on('exit', resolve));
   const record = join(git(b, 'rev-parse', '--absolute-git-dir'), 'brain-publish.holder');
   for (let i = 0; i < 100 && !existsSync(record); i++) await new Promise(r => setTimeout(r, 100));
@@ -131,7 +133,8 @@ test('a busy push lock names the publish holding it, and that publish pushes the
   expect(code).not.toBe(0);
   expect(doc).toMatchObject({ code: 'push_unconfirmed', reason: 'publish_lock_busy' });
   expect(String(doc.message)).toContain(`pid ${holder.pid}`);
-  expect(String(doc.message)).toContain('gbrain git commit-push --push-only');
+  expect(String(doc.message)).toContain('gbrain git commit-push --push-only --keep-checkout');
+  rmSync(hold);
   expect(await exited).toBe(0);
   git(b, 'merge-base', '--is-ancestor', 'HEAD', git(bare, 'rev-parse', 'refs/heads/main'));
   expect(existsSync(record)).toBe(false);
