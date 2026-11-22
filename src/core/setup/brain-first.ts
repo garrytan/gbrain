@@ -22,7 +22,7 @@
  */
 import { existsSync, lstatSync, readFileSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, join, relative } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { parse as parseJsonc, type ParseError } from 'jsonc-parser';
 import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
 import { acquireNativeLockSync } from '../persistence/native-lock.ts';
@@ -170,17 +170,29 @@ export function codexInstructionFile(overridePath: string, agentsPath: string): 
   return agentsPath;
 }
 
-/** OpenClaw's state directory: OPENCLAW_STATE_DIR, else ~/.openclaw (or ~/.openclaw-<profile>). */
+/** OpenClaw's home, as OpenClaw resolves it: OPENCLAW_HOME (a leading ~ is the user's home, a relative path is from the current directory), else the user's home. */
+function openclawHome(): string {
+  const explicit = process.env.OPENCLAW_HOME?.trim();
+  return explicit ? resolve(expandHome(explicit)) : home();
+}
+
+/** An OpenClaw path setting: a leading ~ is OpenClaw's home, a relative path is from the current directory. */
+function openclawPath(p: string): string {
+  return resolve(p === '~' ? openclawHome() : p.startsWith('~/') ? join(openclawHome(), p.slice(2)) : p);
+}
+
+/** OpenClaw's state directory: OPENCLAW_STATE_DIR, else <OpenClaw home>/.openclaw (or .openclaw-<profile>). */
 export function openclawStateDir(): string {
   const explicit = process.env.OPENCLAW_STATE_DIR?.trim();
-  if (explicit) return expandHome(explicit);
+  if (explicit) return openclawPath(explicit);
   const profile = process.env.OPENCLAW_PROFILE?.trim();
-  return join(home(), profile && profile !== 'default' ? `.openclaw-${profile}` : '.openclaw');
+  return join(openclawHome(), profile && profile !== 'default' ? `.openclaw-${profile}` : '.openclaw');
 }
 
 /** openclaw.json: OPENCLAW_CONFIG_PATH, else <state dir>/openclaw.json. */
 export function openclawConfigPath(): string {
-  return process.env.OPENCLAW_CONFIG_PATH?.trim() ? expandHome(process.env.OPENCLAW_CONFIG_PATH.trim()) : join(openclawStateDir(), 'openclaw.json');
+  const explicit = process.env.OPENCLAW_CONFIG_PATH?.trim();
+  return explicit ? openclawPath(explicit) : join(openclawStateDir(), 'openclaw.json');
 }
 
 /** One JSON5 token: a double- or single-quoted string, a line or block comment, or a bare key before its colon. */
@@ -225,7 +237,7 @@ export function resolveOpenclawWorkspace(): { path: string } | { error: string }
     if (workspace) configured = workspace.trim();
   }
   const fromEnv = process.env.OPENCLAW_WORKSPACE_DIR?.trim();
-  return { path: expandHome(configured ?? fromEnv ?? join(openclawStateDir(), 'workspace')) };
+  return { path: openclawPath(configured ?? fromEnv ?? join(openclawStateDir(), 'workspace')) };
 }
 
 /** The instruction file a harness loads every session, or an error naming what to pass. */

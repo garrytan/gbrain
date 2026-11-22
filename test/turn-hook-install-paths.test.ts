@@ -18,7 +18,7 @@ import { withEnv } from './helpers/with-env.ts';
 import { installerTurnHook, verifyTurnHook } from '../src/core/setup/turn-hook-check.ts';
 import { TURN_RULE_LANE_TOKEN, TURN_RULE_MARKER } from '../src/core/setup/turn-hook.ts';
 import { syncHermesTurnHook } from '../src/core/setup/hermes-turn-hook.ts';
-import { BRAIN_FIRST_BEGIN, brainFirstTurnRule } from '../src/core/setup/brain-first.ts';
+import { BRAIN_FIRST_BEGIN, brainFirstTurnRule, openclawConfigPath, openclawStateDir } from '../src/core/setup/brain-first.ts';
 import { openclawTurnPluginDir, openclawTurnPluginFiles } from '../src/core/setup/openclaw-turn-plugin.ts';
 
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
@@ -296,15 +296,23 @@ describe('OpenClaw and Hermes verify with their own inspect commands', () => {
     });
     const q = box();
     const openclawHome = join(q.root, 'openclaw-home');
-    mkdirSync(join(openclawHome, '.openclaw'), { recursive: true });
-    await withEnv({ ...q.env, OPENCLAW_HOME: openclawHome }, async () => {
-      const dir = openclawTurnPluginDir();
-      mkdirSync(dir, { recursive: true });
-      for (const [name, body] of Object.entries(openclawTurnPluginFiles(access))) writeFileSync(join(dir, name), body);
-      writeFileSync(join(q.home, '.openclaw', 'openclaw.json'), JSON.stringify({ plugins: { entries: { 'gbrain-turn-rule': entry } } }));
-      writeFileSync(join(openclawHome, '.openclaw', 'openclaw.json'), JSON.stringify({ marker: 'openclaw-home', plugins: { entries: { 'gbrain-turn-rule': entry } } }));
-      const bin = q.script('openclaw', `if grep -q openclaw-home "${'$'}{OPENCLAW_HOME:-${'$'}HOME}/.openclaw/openclaw.json" 2>/dev/null; then echo '{"id":"gbrain-turn-rule","status":"loaded","imported":true,"hooks":["before_prompt_build"]}'; else echo '{}'; fi`);
-      expect(verifyTurnHook('openclaw', { which: () => bin })).toMatchObject({ ok: true, reason: 'ran' });
+    const bin = q.script('openclaw', `if grep -q gbrain-turn-rule "${'$'}{OPENCLAW_HOME:-${'$'}HOME}/.openclaw/openclaw.json" 2>/dev/null; then echo '{"id":"gbrain-turn-rule","status":"loaded","imported":true,"hooks":["before_prompt_build"]}'; else echo '{}'; fi`);
+    for (const value of [openclawHome, relative(process.cwd(), openclawHome)]) {
+      await withEnv({ ...q.env, OPENCLAW_HOME: value }, async () => {
+        expect(openclawStateDir()).toBe(join(openclawHome, '.openclaw'));
+        expect(openclawConfigPath()).toBe(join(openclawHome, '.openclaw', 'openclaw.json'));
+        const dir = openclawTurnPluginDir();
+        mkdirSync(dir, { recursive: true });
+        for (const [name, body] of Object.entries(openclawTurnPluginFiles(access))) writeFileSync(join(dir, name), body);
+        writeFileSync(openclawConfigPath(), JSON.stringify({ plugins: { entries: { 'gbrain-turn-rule': entry } } }));
+        expect(verifyTurnHook('openclaw', { which: () => bin })).toMatchObject({ ok: true, reason: 'ran' });
+      });
+    }
+    await withEnv({ ...q.env, OPENCLAW_HOME: '~/oc', OPENCLAW_STATE_DIR: '~/state', OPENCLAW_CONFIG_PATH: undefined }, async () => {
+      expect(openclawStateDir()).toBe(join(q.home, 'oc', 'state'));
+    });
+    await withEnv({ ...q.env, OPENCLAW_HOME: '~/oc', OPENCLAW_PROFILE: 'work' }, async () => {
+      expect(openclawStateDir()).toBe(join(q.home, 'oc', '.openclaw-work'));
     });
   });
 });
