@@ -47,8 +47,11 @@ member-access part alone (the page's readers, and the origin of a derived page):
   (`callerFolders`); only an equal text is served, as `callerRecord` (the record's coverage is the whole pending test),
   with an identity or satisfied list SQL would empty (`validIdentity`, `validQualifiedRuleId`) sent empty. The satisfied
   rules it sends are exactly `satisfiedFor(identity)`: the record's own set when the identity argument is the record's
-  identity, none for any other identity (for which SQL renders no satisfied rule either). A caller outside any
-  record or on the short `restricted: false` form renders another text and refuses with `engine_capability_missing`.
+  identity, and none when the argument is the record's identity listed with a repeat, or another identity in a record
+  with no satisfied rules (both texts then render none). A caller outside any record, on the short `restricted: false`
+  form, or asking about an identity that is not the record's own while the record has satisfied rules (the reference
+  renders those rules for the argument, the call renders none) renders another text and refuses with
+  `engine_capability_missing`, which fails closed.
   The capability is `pages`.
 - `readWriterSlugFence(principal)` reads a `local_cli` or `local_stdio` writer's stored grant ceiling
   (`brain.readLocalWriter`) and returns its `slugPrefixes`, or `null`. Another kind, other than an OAuth client,
