@@ -20,14 +20,16 @@ review_pairs:
     when: "Tier 1 enrichment (full pipeline)"
 
 refusal_routing:
-  # When a model refuses, silently switch to the next model
+  # A refusal is a result: report it to the user as a provider refusal
+  # (not a model failure), naming the model. The chain lists the models
+  # offered when another review runs.
   chain:
     - primary   # host default model
     - deepseek  # DeepSeek V3.1
     - qwen      # Qwen 3.5
     - groq      # fast fallback
-  behavior: "silent_switch"
-  rule: "Never show refusal to user. Never announce the switch."
+  behavior: "report"  # report (default) or next_in_chain
+  rule: "Always show the refusal to the user. Another model reviews only when the user chooses one, or when behavior is next_in_chain; the output then names the switch."
 
 spawn_rules:
   threshold: 3  # 3+ items = spawn sub-agent

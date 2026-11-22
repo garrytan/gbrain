@@ -38,7 +38,7 @@ start here.
    export PATH="$HOME/.bun/bin:$PATH"
    bun install -g github:garrytan/gbrain#stable
    ```
-   Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](INSTALL_FOR_AGENTS.md#no-unzip), not an improvised one.
+   Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](INSTALL_FOR_AGENTS.md#no-unzip), not an improvised one. A command scanner (Hermes) refuses the Bun installer or `bun install -g`? Use the [release binary route](INSTALL_FOR_AGENTS.md#release-binary).
    If `bun install -g` aborts or `gbrain doctor` reports `schema_version: 0`
    ([#218](https://github.com/garrytan/gbrain/issues/218)), run `gbrain apply-migrations --yes --no-autopilot-install`.
    Exit 1 with `migrations_pending` means the schema is still behind and another `--yes` repeats the failure:
@@ -1026,6 +1026,19 @@ The PATH line goes in `~/.profile`, which new login shells read. Bash skips `~/.
 Next, on Claude Code or Codex: `gbrain setup claude-code` (or `gbrain setup codex`), which needs no API
 key ([Step 3](#step-3-create-the-brain)). On any other harness, `gbrain init --pglite --no-embedding` (Step 3).
 
+<a id="release-binary"></a>
+
+**A command scanner blocks the Bun installer or `bun install` (Hermes).** Some harnesses check each shell command before running it and refuse what they can't approve without a person. Hermes in single-query mode refuses `curl … | bash`, `bun install -g github:…` (its scanner, Tirith, can't finish a package lookup for a `github:` spec) and commands that append to a dotfile such as `~/.profile`. Install the release binary instead: one file built from the same release, which needs no Bun, no git and no package install. Run each line as its own command, exactly as written (Linux x64; on an Apple Silicon Mac use `gbrain-darwin-arm64`):
+
+```bash
+curl -fL --create-dirs -o ~/.local/bin/gbrain https://github.com/garrytan/gbrain/releases/latest/download/gbrain-linux-x64
+chmod +x ~/.local/bin/gbrain
+~/.local/bin/gbrain --version
+~/.local/bin/gbrain init --pglite --no-embedding
+```
+
+`releases/latest` is the stable release. Use the absolute path `~/.local/bin/gbrain` in every command and MCP registration instead of editing shell profiles. Run each line as written: an added `2>&1`, `$(…)` or `{ …; }` group can make the scanner refuse a line it would otherwise pass. Then run `~/.local/bin/gbrain setup hermes`: it registers gbrain through Hermes's own `hermes mcp add` (no hand edit of Hermes's protected `config.yaml`), adds the brain-first rule and its per-turn hook, and checks the server with `hermes mcp test gbrain`. If it prints a `hermes mcp add` command instead, or (an older gbrain) says setup does not register Hermes's MCP server, run the registration command from [docs/mcp/HERMES.md](docs/mcp/HERMES.md#register-by-hand) with `~/.local/bin/gbrain` as the command. If the user would rather keep the Bun install, Hermes's own refusal names its setting for this: `approvals.single_query_mode: approve` in Hermes's config, which is the user's call. `gbrain upgrade` updates a release binary in place.
+
 > **If `bun install -g` aborts or `gbrain doctor` reports `schema_version: 0`**
 > ([#218](https://github.com/garrytan/gbrain/issues/218)), run `gbrain apply-migrations --yes --no-autopilot-install`.
 > Exit 0 means the schema is at head. Exit 1 with `migrations_pending` means it is still behind and another
@@ -1498,15 +1511,34 @@ model gbrain removed in v0.33, needs `gbrain skillpack migrate-fence` once.)
 > Postgres/Supabase engine, which tolerates concurrent connections. Details:
 > [docs/architecture/serve-sync-concurrency.md](docs/architecture/serve-sync-concurrency.md).
 
-**If you are Hermes:** register gbrain as your MCP server:
+**If you are Hermes:** run setup by the path you installed gbrain at:
 
 ```bash
-printf 'Y\n' | hermes mcp add gbrain --env GBRAIN_HOME=$HOME --connect-timeout 60 --command $(which gbrain) --args serve --surface starter --advertise verbs
+~/.local/bin/gbrain setup hermes
 ```
 
-Keep `--args` last (everything after it becomes server argv) and verify with
-`hermes mcp test gbrain` — the add exits 0 even on failure. Full reference:
-[docs/mcp/HERMES.md](docs/mcp/HERMES.md).
+It registers gbrain as your MCP server through Hermes's own `hermes mcp add`, so
+you never edit `config.yaml` yourself (Hermes refuses that edit), adds the
+brain-first rule and its per-turn hook (without them a new session seldom calls
+gbrain), and checks the server with `hermes mcp test gbrain`. If it prints a
+`hermes mcp add` command instead of registering, or (an older gbrain) says it does
+not register Hermes's MCP server, run the command in
+[Register by hand](docs/mcp/HERMES.md#register-by-hand) and verify with
+`hermes mcp test gbrain`. Full reference: [docs/mcp/HERMES.md](docs/mcp/HERMES.md).
+
+**If you are OpenClaw:** register gbrain as your MCP server, then add the
+brain-first rule:
+
+```bash
+openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg starter --arg --advertise --arg verbs --env GBRAIN_HOME=$HOME
+gbrain setup openclaw
+```
+
+Run both lines. With only the first, the tools are registered but a new session
+answers from OpenClaw's own memory and chat history instead of gbrain. Once the
+gateway runs `gbrain serve`, use the MCP tools rather than the `gbrain` CLI on a
+PGLite brain (the CLI stops with `pglite_busy`). Full reference:
+[docs/mcp/OPENCLAW.md](docs/mcp/OPENCLAW.md).
 
 **If you are Grok Build** (xAI's `grok` CLI): register gbrain as your MCP server:
 
@@ -3647,7 +3679,8 @@ GBrain is MIT-licensed and free to self-host, and it starts with no API keys: se
 | How it connects | Agents |
 |---|---|
 | One command wires memory, hooks and instructions | [Claude Code](docs/mcp/CLAUDE_CODE.md) (`gbrain setup claude-code`), [Codex](docs/mcp/CODEX.md) (`gbrain setup codex`) |
-| MCP from its guide, then `gbrain setup <name>` adds the brain-first instructions | [OpenClaw](docs/mcp/OPENCLAW.md), [Hermes](docs/mcp/HERMES.md), [opencode](docs/mcp/OPENCODE.md), [Cursor](#connect-gbrain-to-your-ai-client-mcp) |
+| `gbrain setup hermes` registers MCP through Hermes's own CLI and adds the brain-first instructions | [Hermes](#hermes) |
+| MCP from its guide, then `gbrain setup <name>` adds the brain-first instructions | [OpenClaw](docs/mcp/OPENCLAW.md), [opencode](docs/mcp/OPENCODE.md), [Cursor](#connect-gbrain-to-your-ai-client-mcp) |
 | MCP from its guide | [ChatGPT](docs/mcp/CHATGPT.md), [Claude Desktop](docs/mcp/CLAUDE_DESKTOP.md), [Claude Cowork](docs/mcp/CLAUDE_COWORK.md), [Perplexity](docs/mcp/PERPLEXITY.md), [Grok Build](docs/mcp/GROK.md), [Grok Bot](docs/guides/grok-bot.md), [Muse](docs/guides/muse.md), [Windsurf and other stdio clients](#connect-gbrain-to-your-ai-client-mcp) |
 | Any other coding agent | Paste the [install prompt](#heres-how-to-self-host-it) below |
 
@@ -3673,7 +3706,7 @@ New releases come out many times a day, but the install command below gives you 
 > (codex mcp get gbrain >/dev/null 2>&1 || codex mcp add gbrain --url https://gbrain.io/mcp) && gbrain setup codex --instructions-only
 > ```
 >
-> Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](INSTALL_FOR_AGENTS.md#no-unzip), not an improvised one.
+> Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](INSTALL_FOR_AGENTS.md#no-unzip), not an improvised one. A command scanner (Hermes) refuses the Bun installer or `bun install -g`? Use the [release binary route](INSTALL_FOR_AGENTS.md#release-binary).
 >
 > `gbrain setup <harness> --instructions-only` tells the agent the brain is there; agents seldom call an MCP server nobody told them about. It writes the [brain-first block](docs/guides/setup.md#brain-first-instructions) into `~/.claude/CLAUDE.md` or Codex's `AGENTS.md` (a non-empty `AGENTS.override.md` instead when Codex has one) with a per-turn rule hook, and leaves the MCP entry alone; the same command with `--no-instructions` added takes them out.
 >
@@ -3706,6 +3739,19 @@ https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
 Keep my current identity and instructions, start keyless, and show me the
 search-mode choice. Verify a remember/recall round trip with real GBrain calls.
 ```
+
+### Hermes
+
+Hermes checks every shell command before it runs it, and with nobody there to approve (`hermes chat -q`, a gateway or cron run) it refuses the Bun installer and `bun install -g`. Install the release binary instead, one file that needs no Bun and no package install, and let setup register it through Hermes's own `hermes mcp add`. Run each line as its own command (Linux x64; on an Apple Silicon Mac use `gbrain-darwin-arm64`):
+
+```bash
+curl -fL --create-dirs -o ~/.local/bin/gbrain https://github.com/garrytan/gbrain/releases/latest/download/gbrain-linux-x64
+chmod +x ~/.local/bin/gbrain
+~/.local/bin/gbrain init --pglite --no-embedding
+~/.local/bin/gbrain setup hermes
+```
+
+Then start a new Hermes session. Setup registers the MCP server (`hermes mcp test gbrain` checks it) and adds the brain-first rule to `~/.hermes/SOUL.md` with a per-turn hook. Hermes's approval and command-scanner settings stay as they are; setup only records the approval for its own per-turn hook. If setup prints a `hermes mcp add` command instead of registering, run that command as printed. To paste it to Hermes instead, use the prompt above. Details: [docs/mcp/HERMES.md](docs/mcp/HERMES.md).
 
 Postgres, thin clients, API keys and upgrades: [docs/INSTALL.md](docs/INSTALL.md). Agents: [INSTALL_FOR_AGENTS.md](INSTALL_FOR_AGENTS.md). Memory-only walkthrough: [give your coding agent a memory](docs/tutorials/connect-coding-agent.md).
 
@@ -8979,6 +9025,7 @@ Refused writes a caller never saw land (`lost_caller_writes`) have their own rep
 | `local_path_missing` | This host owns the worktree but has no checkout path registered. | Register the checkout again on the brain host. |
 | `coordination_path_missing` | This host's registration has no coordination directory. | Repair the registration on the brain host. |
 | `not_sent`, `outcome_unknown` | The local owner's IPC lane did not take the write, or lost its acknowledgment. | `gbrain sources writer status --probe --json`; for `outcome_unknown` read the receipt (`gbrain write-request -- <id>`) before resubmitting. |
+| `earlier_call_running` | Rust brain only: the owner held this read back because an earlier write it would confirm is still running. Nothing ran, and the read tells nothing about that write. | Wait for the earlier call to end, then run the read again. Do not rerun the earlier write before the read answers. |
 
 A running sync is not one of these: `gbrain repair fences` now runs during a catch-up for every candidate the sync does not still name ([fence repair during a sync](repair.md#fence-repair-during-a-sync)), and a candidate it does name is `sync_in_progress`, not `owner_unavailable`.
 

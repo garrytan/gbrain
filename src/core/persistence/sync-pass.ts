@@ -1290,7 +1290,7 @@ function readPresent(root: string, gitPath: string, scope: string): boolean {
  * (`drift_version` below FILE_DRIFT_VERSION). The pass that wrote it moved the baseline to the held file, so its one re-screen
  * (sync-holds.ts holdRescreenDue) also compares the page with the file's earlier committed versions.
  */
-const unscreenedDrift = (hold: GitHoldRecord) => hold.code === 'file_drift' && fileDriftSide(hold.meta) === 'unknown' && (hold.meta.drift_version ?? 0) < FILE_DRIFT_VERSION;
+const unscreenedDrift = (hold: GitHoldRecord) => hold.code === 'file_drift' && fileDriftSide(hold.meta) === 'unknown' && ((hold.meta.drift_version ?? 0) < FILE_DRIFT_VERSION || hold.meta.history_unread === true);
 
 /** Whether a hold still describes the path at level `L`, in the hold's own domain (a pinned blob, working bytes, or a deletion). */
 function holdAtLevel(hold: GitHoldRecord, level: string | null, diskSha256: string | null): boolean {

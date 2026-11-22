@@ -28,6 +28,19 @@ function grantScopes(row: ClientRow, requested?: string[]): string[] {
 }
 
 /**
+ * What an owner's consent grants. A self-registered connector repeats its registration scope on every
+ * /authorize, so once the owner changes its grant (`gbrain auth rescope --client <id> --scopes ...`) a
+ * request that overlaps that grant takes the whole of it, as shown on the consent page. The grant stays
+ * the ceiling, a request naming nothing in it still gets nothing, and operator-registered clients keep
+ * the requested subset. Refresh never widens (RFC 6749 §6): only a new consent picks up a widening.
+ */
+function consentScopes(row: ClientRow, requested?: string[]): string[] {
+  const granted = grantScopes(row, requested);
+  if (row.registered_via !== 'dcr' || granted.length === 0) return granted;
+  return grantScopes(row);
+}
+
+/**
  * #5222 — the one RFC 8707 resource canonicalizer, shared by /authorize, code
  * exchange, refresh and bearer verification. `canonical` is the server's /mcp
  * resource, derived from the configured public URL and never from `Host` or
@@ -188,7 +201,7 @@ export class OAuthGrants {
     const id = generateToken('');
     const details: OAuthConsentDetails = {
       id, clientId, clientName: typeof row.client_name === 'string' ? row.client_name : clientId,
-      redirectUri: params.redirectUri, scopes: grantScopes(row, params.scopes),
+      redirectUri: params.redirectUri, scopes: consentScopes(row, params.scopes),
       sourceId: typeof row.source_id === 'string' ? row.source_id : null,
       allowedSources: Array.isArray(row.federated_read) ? [...row.federated_read] as string[] : [],
       allowedOperations: Array.isArray(row.allowed_operations) ? [...row.allowed_operations] as string[] : null,

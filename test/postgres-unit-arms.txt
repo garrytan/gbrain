@@ -158,6 +158,7 @@ test/engine-parity/links.test.ts
 test/engine-parity/owner-only-marks.test.ts
 test/engine-parity/page-vector-flip.test.ts
 test/engine-parity/page-vector-overflow.test.ts
+test/engine-parity/page-write-readers.test.ts
 test/engine-parity/pages.test.ts
 test/engine-parity/private-page-reads.test.ts
 test/engine-parity/put-source-fork.test.ts
@@ -643,6 +644,7 @@ test/projection-rebuild-progress-9192.test.ts
 test/provenance-drift-7891.test.ts
 test/provenance-stamps-7873.test.ts
 test/publish-redact-unpushed-gst2988.test.ts
+test/purge-age-coordinated.test.ts
 test/purge-context-facts-8859.test.ts
 test/purge-expires-page-facts.test.ts
 test/purge-fact.test.ts
@@ -668,6 +670,8 @@ test/qm-scope-read.test.ts
 test/qm-scope-writes.test.ts
 test/read-meta-diag.test.ts
 test/readers-label-setter.test.ts
+test/readers-noncanonical-owner-reads.test.ts
+test/readers-noncanonical.test.ts
 test/reason-trailers-gbra217.test.ts
 test/recall-page-fill.test.ts
 test/receipt-compaction-newest-sync-gbra130.test.ts
@@ -741,6 +745,7 @@ test/search-transcript-quote-tiers.test.ts
 test/search-transcript-quote.test.ts
 test/search-vector-scope-parity.test.ts
 test/search/page-rank-cut.test.ts
+test/search/rebuild-progress-steady-state.test.ts
 test/search/rerank-gate-hybrid.test.ts
 test/search/rerank-gate-telemetry.test.ts
 test/secret-store-backup.test.ts
@@ -810,6 +815,7 @@ test/sync-full-cursor-slices-6349.test.ts
 test/sync-full-untracked-import-5459.test.ts
 test/sync-group-member-order.test.ts
 test/sync-handler-drain-6706.test.ts
+test/sync-history-read-budget.test.ts
 test/sync-holds-followups-7974.test.ts
 test/sync-holds-only-converge-7327.test.ts
 test/sync-holds-wave-gbra133.test.ts

@@ -153,8 +153,12 @@ export interface SyncClassified {
   gitWins?: SyncClass;
 }
 
-/** #7199 / GST-3328: how many of its file's earlier committed versions a side-`unknown` page is compared with, found within how many commits (sync and the `repair file-drift` preview). */
-export const DRIFT_HISTORY_VERSIONS = 3, DRIFT_HISTORY_DEPTH = 50;
+/**
+ * #7199 / GST-3328: how many of its file's earlier committed versions a side-`unknown` page is compared with (sync and the
+ * `repair file-drift` preview), and how many distinct blobs of the file's history are read for them: those versions plus
+ * the two a caller can leave out (sync: the imported level and the baseline; the preview: the file at HEAD).
+ */
+export const DRIFT_HISTORY_VERSIONS = 3, DRIFT_HISTORY_DEPTH = DRIFT_HISTORY_VERSIONS + 2;
 
 const CLEAN = new Set<SyncDirtiness | null>(['clean', 'clean_eol', 'clean_lfs']);
 
