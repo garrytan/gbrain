@@ -259,7 +259,7 @@ describe('GST-2988 a publish redacts unpushed secrets', () => {
     const r = repo();
     const head = commit(r.root, 'notes.md', `token ${token}\n`);
     const lockPath = resolve(r.root, git(r.root, 'rev-parse', '--git-path', 'brain-commit.lock'));
-    const holder = spawn(process.execPath, ['-e', `const { acquireNativeLockSync } = await import(${JSON.stringify(resolve('src/core/persistence/native-lock.ts'))}); acquireNativeLockSync(${JSON.stringify(lockPath)}, { timeoutMs: 0 }); console.log('held'); await new Promise(r => setTimeout(r, 60_000));`], { stdio: ['ignore', 'pipe', 'inherit'] });
+    const holder = spawn(process.execPath, ['-e', `const { acquireNativeLockSync } = await import(${JSON.stringify(resolve('src/core/persistence/native-lock.ts'))}); const held = acquireNativeLockSync(${JSON.stringify(lockPath)}, { timeoutMs: 0 }); if (!held) process.exit(3); console.log('held'); await new Promise(r => setTimeout(r, 60_000)); held.release();`], { stdio: ['ignore', 'pipe', 'inherit'] });
     try {
       await new Promise<void>(held => holder.stdout!.on('data', d => { if (String(d).includes('held')) held(); }));
       const started = Date.now();
@@ -295,6 +295,21 @@ describe('GST-2988 a publish redacts unpushed secrets', () => {
     } finally { spy.mockRestore(); }
     expectRemoteClean(r);
   }, 60_000);
+
+  test('planning about 48,000 hits of a few repeated credentials across three 20 MB files, plus rare ones, finishes in seconds', async () => {
+    const r = repo();
+    const creds = Array.from({ length: 6 }, (_, i) => `https://svc${i}:Zt4qXk9mPw${i}Lr7Qa@db${i}.example.invalid/q`);
+    for (let f = 0; f < 3; f++) {
+      const lines = Array.from({ length: 400_000 }, (_, i) => i % 25 === 0 ? `sync ${i} via ${creds[(i / 25 + f) % 6]} ok` : `line ${i} of the export with ordinary text here`);
+      if (f === 0) for (let k = 0; k < 17; k++) lines[k * 7 + 3] = `rare https://ops${k}:Qm${k}Vt8Wn3Rp@vault${k}.example.invalid/k`;
+      writeFileSync(join(r.root, `export-${f}.md`), lines.join('\n') + '\n');
+    }
+    git(r.root, 'add', '.'); git(r.root, 'commit', '-qm', 'exports');
+    const started = Date.now();
+    const preview = await inHome(r, () => redactUnpushed(r.root, { base: r.base, budgetMs: 600_000 })) as RedactPreview;
+    expect(Date.now() - started).toBeLessThan(45_000);
+    expect(preview.rules.url_credentials).toMatchObject({ values: 23, hits: 48_017 });
+  }, 180_000);
 
   test('secrets.on_push refuse keeps the refusal and writes nothing', async () => {
     const r = repo();
