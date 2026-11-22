@@ -30,8 +30,12 @@ A remote caller needs both:
 1. Its token's operation list names `reveal_secret`. The owner adds it to one token at a time from the brain host:
    `gbrain auth rescope --token <name> --refresh-operations` previews, then the same command with
    `--add reveal_secret`. A token with no operation list, `--all-new` and a harness token never get it.
-2. It can read a page that holds the entry's marker (the same check `get_page` makes for that caller). A marker
-   copied into another page binds to nothing.
+2. It can see the entry's marker itself in a place where the store recorded it: its own `get_page` reply for a
+   page's text, or its own `takes_list`, `get_timeline`, `recall`, `get_raw_data` or `get_links` reply for a row, counted only when its token may call that operation.
+   Everything that hides text from that caller hides the marker too: owner-only rows (made from an iMessage chat,
+   for example), a takes fence or private facts fence stripped from the page, a take whose holder it may not read, a
+   marker since removed and a deleted row. A marker copied into another page binds to nothing, and a place recorded
+   from a git commit names a file, not a page, so it never counts. The reply lists only the places that counted.
 
 Otherwise the call fails with `secret_reveal_forbidden`. Every reveal, CLI or MCP, is appended to the `secrets` audit
 log (`~/.gbrain/audit/secrets-<year>-W<week>.jsonl`) with the entry, the caller and the pages, never the value.
@@ -94,7 +98,7 @@ publish. The details, and what is held back instead, are in
   any other value, `redact` and an empty one included, changes nothing (it never turns redaction on where the config
   says `refuse`) and prints one `[gbrain notice]` line on stderr.
 - When a managed worktree's page-write backup runs past its 300 s budget redacting or scanning, it is tried once more in
-  the background with 4 times the budget. That checkout's backups wait for it; other checkouts carry on. Past that
+  the background with 2 times the budget (`--scan-timeout 600`). That checkout's backups wait for it; other checkouts carry on. Past that
   budget again, the backups are held with `publish_scan_unreadable`
   ([details](shared-checkout-git.md#publish_secret_rebuild_unbounded)).
 - `gbrain git redact-unpushed --source <id>` shows what a publish would redact, writing nothing; `--apply --expect
