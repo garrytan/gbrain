@@ -1881,13 +1881,20 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   (two Supabase projects behind one pooler differ by user name; the password is never part of it). `stop --delete`
   removes the directory, and a child that is still running cannot write it back. The commands cover the host brain only:
   with `--brain <id>` or `GBRAIN_BRAIN_ID` naming another brain they refuse and change nothing.
-- **Managed storage is refused.** The Rust engine never holds managed storage, so a brain that uses it can never swap to
-  Rust and a shadow on it would measure nothing it could use. `start` (the preview, `--plan` and `--yes`) opens the brain
-  database to read its storage mode, writes nothing to it, and refuses a managed-storage brain with
-  `engine_shadow_refused` (`managed_storage`, exit 3), telling the agent to ask the user. It does this before the addon
-  loads and before any shadow file is created. A brain whose mode cannot be read, or that cannot be opened (for
-  example the database is down), is refused the same way, with the error in the detail line, never passed. So `start` now needs the brain database
-  reachable, even for `--plan`.
+- **Managed storage is refused.** The Rust engine never holds managed storage, so a brain that uses it can never swap
+  to Rust and a shadow on it would measure nothing it could use. Brains made by a default `gbrain init` use managed
+  storage and cannot be shadowed or swapped yet. `start` (the preview, `--plan` and `--yes`) opens the brain database
+  to read its storage mode, writes nothing to it, and refuses a managed-storage brain with `engine_shadow_refused`
+  (`managed_storage`, exit 3), telling the agent to ask the user. The next step names the ways out that exist today.
+  For a new brain, `gbrain init --db-only` creates one without managed storage. For an existing managed brain, `gbrain
+  sources writer deactivate --dry-run` previews converting it back to classic mode; the real deactivate needs your
+  consent. It refuses before the addon loads and before any shadow file is created. A brain whose mode cannot be read,
+  or that cannot be opened (for example the database is down), is refused the same way (exit 3, `managed_storage`) but
+  says so honestly: "gbrain could not confirm that this brain does not use managed storage", with the read or open
+  error in the why. Only a mode read as managed says "this brain uses managed storage". When another gbrain holds a
+  PGLite brain (`pglite_busy`, usually `gbrain serve`), the next step is to stop `gbrain serve` and anything else
+  holding it, run the command again, then restart serve. It is never a silent pass. The cost: `start` now opens the
+  brain database, even for `--plan`, so the database has to be reachable.
 - **No network in the background.** gbrain downloads no addon. `start --yes`, the child
   and `gbrain doctor` only use an addon that is already installed; without one, `start --yes` refuses and stays off, `gbrain doctor` fails
   the `rust_engine_addon` check, and the child records `addon_unavailable` (`rust_engine_addon_missing`, reason `not_installed`).

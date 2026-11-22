@@ -76,7 +76,10 @@ describe('engine shadow start on a managed-storage brain', () => {
       const text = r.err.join('\n');
       expect(text).toContain('The Rust engine never holds managed storage, so this brain can never swap to Rust');
       expect(text).toContain('Ask the user');
-      expect(text).toContain('nothing was written');
+      expect(text).toContain('Brains made by a default `gbrain init` use managed storage and cannot be shadowed or swapped yet.');
+      expect(text).toContain('`gbrain init --db-only`');
+      expect(text).toContain('`gbrain sources writer deactivate --dry-run`');
+      expect(text).toContain('Nothing was written');
       expect(r.out.join('\n')).not.toContain('plan_hash');
       expect(existsSync(shadowDir()), args.join(' ')).toBe(false);
     }
@@ -95,8 +98,22 @@ describe('engine shadow start on a managed-storage brain', () => {
   test('a brain that cannot be opened refuses and names the open error', async () => {
     const r = await run(['start', '--plan'], { openPrimary: async () => { throw new Error('connection refused by the test'); } });
     expect(r.code).toBe(3);
-    expect(r.err[0]).toContain('engine_shadow_refused (managed_storage)');
+    expect(r.err[0]).toBe('engine shadow: engine_shadow_refused (managed_storage): Shadow mode is refused: gbrain could not confirm that this brain does not use managed storage.');
     expect(r.err.join('\n')).toContain('connection refused by the test');
+    expect(r.err.join('\n')).not.toMatch(/refused: this brain uses managed storage|This brain uses managed storage/);
+    expect(existsSync(shadowDir())).toBe(false);
+  });
+
+  test('a busy PGLite brain (another gbrain holds it) is refused honestly, with the stop-serve next step', async () => {
+    const busy = Object.assign(new Error('A running gbrain holds the PGLite lock.'), { code: 'pglite_busy' });
+    const r = await run(['start', '--plan'], { openPrimary: async () => { throw busy; } });
+    expect(r.code).toBe(3);
+    expect(r.err[0]).toBe('engine shadow: engine_shadow_refused (managed_storage): Shadow mode is refused: gbrain could not confirm that this brain does not use managed storage.');
+    const text = r.err.join('\n');
+    expect(text).toContain('pglite_busy');
+    expect(text).toContain('stop `gbrain serve`');
+    expect(text).toContain('restart serve');
+    expect(text).not.toMatch(/refused: this brain uses managed storage|This brain uses managed storage/);
     expect(existsSync(shadowDir())).toBe(false);
   });
 
