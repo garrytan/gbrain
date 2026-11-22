@@ -106,6 +106,25 @@ describe('what counts', () => {
     expect(scan("export async function f(engine: any) { const rows = ['x']; { const rows: string[] = []; } try { return await engine.listPages(); } catch { return rows; } }")).toEqual([]);
   });
 
+  test('a guard `if` that only throws does not hide an empty answer behind it', () => {
+    const f = (handler: string) => scan(`export async function f(engine: any) { try { return await engine.listPages(); } catch (err) { ${handler} } }`);
+    expect(f('if (isEngineCapabilityRefusal(err)) throw err; return [];')).toEqual(['src/x.ts#f catch_empty 1']);
+    expect(f('if (isEngineCapabilityRefusal(err)) { throw err; } return [];')).toEqual(['src/x.ts#f catch_empty 1']);
+    expect(f('if (err.code !== "ENOENT") { log(err); throw err; } return null;')).toEqual(['src/x.ts#f catch_empty 1']);
+    expect(f('if (a) throw err; if (b) { throw wrap(err); } return [];')).toEqual(['src/x.ts#f catch_empty 1']);
+    expect(scan('export function f(engine: any) { return engine.listPages().catch((err: unknown) => { if (isEngineCapabilityRefusal(err)) throw err; return []; }); }')).toEqual(['src/x.ts#f promise_catch_empty 1']);
+  });
+
+  test('an `if` that can answer or do something else before the last statement still keeps the handler out', () => {
+    const f = (handler: string) => scan(`export async function f(engine: any) { try { return await engine.listPages(); } catch (err) { ${handler} } }`);
+    expect(f("if (cached) return ['a']; return [];")).toEqual([]);
+    expect(f('if (isEngineCapabilityRefusal(err)) { log(err); } return [];')).toEqual([]);
+    expect(f('if (a) { return []; } else { throw err; }')).toEqual([]);
+    expect(f('if (a) { if (b) return null; throw err; } return [];')).toEqual([]);
+    // the if-body returns on some path before its throw, so it is not a pure guard
+    expect(f('if (a) { if (b) return ["x"]; throw err; } return [];')).toEqual([]);
+  });
+
   test('promise handlers count: arrow and function forms, with a local receiver judged by its initializer', () => {
     expect(scan('export function f(engine: any) { return engine.getLinks("a").catch(() => []); }')).toEqual(['src/x.ts#f promise_catch_empty 1']);
     expect(scan('export function f(engine: any) { return engine.getLinks("a").catch(() => {}); }')).toEqual(['src/x.ts#f promise_catch_empty 1']);
