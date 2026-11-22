@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1177/1177
+# covered: 1178/1178
 # lifecycle: 9/9
 # pages: 48/48
 # search: 7/7
@@ -65,7 +65,7 @@
 # trust: 29/29
 # open_loops: 4/4
 # entity_identities: 5/5
-# cli_reads_import: 12/12
+# cli_reads_import: 13/13
 # wanted_links: 2/2
 # write_misc: 34/34
 # write_attribution: 5/5
@@ -1106,6 +1106,7 @@ readEntityIdentityIdsForPages	entity_identities	yes	1	no	yes	yes	serves
 readCanonicalTwin	entity_identities	yes	1	no	yes	yes	serves
 listSourceRecords	cli_reads_import	yes	3	no	yes	yes	serves
 readSourceIncarnation	cli_reads_import	yes	3	no	yes	yes	serves
+readRetainedSources	cli_reads_import	yes	1	no	yes	yes	refuses:raw_sql
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
 readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
 listGuestSourceIds	cli_reads_import	yes	1	no	yes	yes	serves

@@ -2,7 +2,7 @@
  * BrainEngine parity — the typed reads the CLI import and extract paths ran through `executeRaw`.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: listSourceRecords, readSourceIncarnation, hasCompanyBrainReceipt, readGuestSourceRow, listGuestSourceIds,
+ *  - Contract: listSourceRecords, readSourceIncarnation, readRetainedSources, hasCompanyBrainReceipt, readGuestSourceRow, listGuestSourceIds,
  *    hasGuestSource, readPageTrustRows, readRowTrustRows, readDatabaseClock, listLinkPageMetadata, listStoredTimelineRows and
  *    filterPagesAtRevision return the same observable result on every engine arm (PGLite always; Postgres with
  *    DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1), and so do the page labels pageActivationVerdicts builds
@@ -64,6 +64,16 @@ describe('engine parity: CLI import reads', () => {
     expect(unknown).toBeNull();
     const config = typeof work?.config === 'string' ? JSON.parse(work.config) : work?.config;
     return { config, incarnationIsUuid: UUID.test(String(work?.incarnation)), unknown };
+  });
+
+  parityTest('readRetainedSources keeps no source whose worktree holds no recovery record, and an empty list reads nothing', { methods: ['readRetainedSources'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work', { keep: 2 });
+    await createSource(engine, backend, 'notes', {});
+    const none = await engine.readRetainedSources([]);
+    const named = await engine.readRetainedSources(['work', 'notes', 'no-such-source']);
+    expect(none).toEqual([]);
+    expect(named).toEqual([]);
+    return { none, named };
   });
 
   parityTest('hasCompanyBrainReceipt is false for a source with no ingestion receipt', { methods: ['hasCompanyBrainReceipt'] }, async (engine, backend) => {

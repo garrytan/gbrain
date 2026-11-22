@@ -14,6 +14,7 @@ import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { agentFix, checkError, doctorVerify, withSkippedSegmented } from '../check-fix.ts';
 import { capabilityRefusal, capabilityUnknownCheck, scanDeadline } from '../budget.ts';
+import { isMissingSchemaObject } from '../../../core/utils.ts';
 import { boundUnknownDetails } from '../bounded-unknown.ts';
 
 /** Oversized pages `oversized_pages` lists before it reports a floor. */
@@ -305,9 +306,13 @@ async function runQuarantine(ctx: DoctorContext): Promise<Check[]> {
         : 'No quarantined pages',
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    // A Rust engine that does not serve the read reports unknown health; only a missing pages table is a clean skip;
+    // any other failure (#9924) is not a clean result.
     const refusal = capabilityRefusal(err);
-    checks.push(refusal ? capabilityUnknownCheck('quarantined_pages', refusal) : { name: 'quarantined_pages', status: 'ok', message: `Skipped (${msg})` });
+    checks.push(refusal ? capabilityUnknownCheck('quarantined_pages', refusal)
+      : isMissingSchemaObject(err, 'table', 'pages')
+        ? { name: 'quarantined_pages', status: 'ok', message: 'Skipped (pages table unavailable)' }
+        : checkError('quarantined_pages', 'count quarantined pages', err));
   }
 
   progress.heartbeat('flagged_pages');
@@ -326,9 +331,11 @@ async function runQuarantine(ctx: DoctorContext): Promise<Check[]> {
         : 'No flagged pages',
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
     const refusal = capabilityRefusal(err);
-    checks.push(refusal ? capabilityUnknownCheck('flagged_pages', refusal) : { name: 'flagged_pages', status: 'ok', message: `Skipped (${msg})` });
+    checks.push(refusal ? capabilityUnknownCheck('flagged_pages', refusal)
+      : isMissingSchemaObject(err, 'table', 'pages')
+        ? { name: 'flagged_pages', status: 'ok', message: 'Skipped (pages table unavailable)' }
+        : checkError('flagged_pages', 'count flagged pages', err));
   }
 
   // issue #160: extraction quarantine lane review nudge.

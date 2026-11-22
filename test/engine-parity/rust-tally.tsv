@@ -11,7 +11,7 @@ test/engine-parity/chunk-vector-overflow.test.ts	1	0
 test/engine-parity/chunks.test.ts	18	1
 test/engine-parity/cli-capabilities.test.ts	2	0
 test/engine-parity/cli-reads-export.test.ts	15	1
-test/engine-parity/cli-reads-import.test.ts	16	0
+test/engine-parity/cli-reads-import.test.ts	16	1
 test/engine-parity/cli-reads-ops.test.ts	22	0
 test/engine-parity/code-eval-salience.test.ts	13	0
 test/engine-parity/config-ingest.test.ts	8	0

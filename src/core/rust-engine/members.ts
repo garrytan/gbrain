@@ -154,6 +154,9 @@ export const RUST_ENGINE_MEMBERS = {
   insertSource: 'sources',
   listSourceRecords: 'sources',
   readSourceIncarnation: 'sources',
+  // #9968's retained read (connector-status.ts): no Rust store member yet, so it is refused like raw SQL and the caller
+  // counts every source as retained (RUST_ENGINE.md loss row 34, lane 11). Remap when the store serves it.
+  readRetainedSources: 'raw_sql',
   hasCompanyBrainReceipt: 'sources',
   readGuestSourceRow: 'sources',
   listGuestSourceIds: 'sources',

@@ -374,6 +374,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readFenceOverlayRows': OOS.cliReadsOps,
   'listSourceRecords': OOS.cliReadsImport,
   'readSourceIncarnation': OOS.cliReadsImport,
+  'readRetainedSources': OOS.cliReadsImport,
   'hasCompanyBrainReceipt': OOS.cliReadsImport,
   'readGuestSourceRow': OOS.cliReadsImport,
   'listGuestSourceIds': OOS.cliReadsImport,

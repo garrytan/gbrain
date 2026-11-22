@@ -1454,6 +1454,8 @@ export interface BrainEngine {
   listSourceRecords(): Promise<SourceRecordRow[]>;
   /** A source's config and incarnation, or null for an unknown id. */
   readSourceIncarnation(sourceId: string): Promise<SourceIncarnationRow | null>;
+  /** #9968: the ids among `sourceIds` whose bound worktree still holds a recovery record, in byte order. */
+  readRetainedSources(sourceIds: readonly string[]): Promise<string[]>;
   /** Whether the source's current incarnation has a company-brain ingestion receipt. */
   hasCompanyBrainReceipt(sourceId: string): Promise<boolean>;
   /** The source's guest_sources row and whether row-level security hides guest_sources; throws the missing-table error on an old schema. */
