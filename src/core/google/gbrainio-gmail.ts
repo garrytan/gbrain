@@ -139,6 +139,14 @@ export class GbrainioGmailReader {
     }
   }
 
+  /** Mail is read only from an answer that names the pinned account. */
+  private requireAccount(value: unknown): void {
+    if (typeof value !== 'string' || !value.trim()) {
+      throw new CredentialError('gbrainio_account_mismatch', ' (asked for ' + this.account + ', the answer named no account)');
+    }
+    this.assertAccount(value);
+  }
+
   /** Account check: gbrain.io has no history id, so historyId is always ''. */
   async getProfile(opts: { signal?: AbortSignal } = {}): Promise<{ emailAddress: string; historyId: string }> {
     await this.call(['label', 'ls'], opts.signal);
@@ -197,7 +205,7 @@ export class GbrainioGmailReader {
       const rows = Array.isArray(answer.messages) ? answer.messages : [];
       for (const r of rows) {
         const row = (r ?? {}) as Record<string, unknown>;
-        this.assertAccount(row.account);
+        this.requireAccount(row.account ?? answer.account);
         const id = str(row.id);
         const threadId = str(row.thread_id);
         if (!GMAIL_ID.test(id) || !GMAIL_ID.test(threadId)) {
@@ -271,7 +279,7 @@ export class GbrainioGmailReader {
     const raw = Array.isArray(answer.messages) ? answer.messages : [];
     const messages: GmailMessageMeta[] = raw.map((m, index) => {
       const row = (m ?? {}) as Record<string, unknown>;
-      this.assertAccount(row.account);
+      this.requireAccount(row.account ?? answer.account);
       const id = str(row.id);
       if (!GMAIL_ID.test(id)) throw new CredentialError('gbrainio_command_failed', ' (a thread answer carried a malformed message id)');
       const known = this.tags.get(id);

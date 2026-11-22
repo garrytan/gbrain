@@ -503,14 +503,20 @@ Threads are sorted into tiers before anything is written:
 The private-senders file holds one address or `@domain` per line (`#` starts
 a comment). If the file is missing, unreadable or empty, the sync stops before
 writing anything. When you add someone, the next sync rewrites their existing
-pages as private; on a git-backed brain, earlier commits still hold the old text.
+pages as private (up to 200 threads per sync; the rest follow on later syncs)
+and removes pages of threads that are gone from Gmail; on a git-backed brain,
+earlier commits still hold the old text. Otherwise a thread's tier is set when
+its newest message is read: starring it or creating a person page later
+changes the tier only when a new message arrives.
 
 What is not available on a gbrain.io source: `--full` skips the delete scan
 (pages of mail deleted later stay), `gbrain google attachments` repair is
 refused (`gbrainio_unsupported`), and labels you made yourself are not seen,
 so `g_loops_exclude_labels` matches only the built-in categories. A gbrain.io
 usage limit is handled like a Google rate limit: the unread range stays open
-and the next sync resumes it.
+and the next sync resumes it. Every mail answer must name the account the
+source was added for; an answer that names another account, or none, is
+refused (`gbrainio_account_mismatch`).
 
 ## Troubleshooting
 

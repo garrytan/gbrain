@@ -566,6 +566,8 @@ async function walkRecentWindow(g: GmailSweep, cutoffMs: number): Promise<WalkOu
  * and written again, so it becomes private. The list's hashes are banked only
  * when every such page was rewritten.
  */
+const RETIER_MAX_THREADS = 200;
+
 async function retierPrivatePages(g: GmailSweep): Promise<'aborted' | void> {
   const { deps, state } = g;
   const list = deps.privateSenders!;
@@ -573,30 +575,39 @@ async function retierPrivatePages(g: GmailSweep): Promise<'aborted' | void> {
   if (list.hashes.length === banked.size && list.hashes.every((h) => banked.has(h))) return;
   const addresses = [...list.addresses].filter((a) => !banked.has(entryHash(a)));
   const domains = [...list.domains].filter((d) => !banked.has(entryHash('@' + d)));
-  let rows: Array<{ tid: string | null }> = [];
+  let rows: Array<{ slug: string; source_path: string | null; tid: string | null }> = [];
   if (addresses.length > 0 || domains.length > 0) {
-    rows = await deps.engine.executeRaw<{ tid: string | null }>(
-      `SELECT DISTINCT frontmatter->>'thread_id' AS tid FROM pages
+    rows = await deps.engine.executeRaw<{ slug: string; source_path: string | null; tid: string | null }>(
+      `SELECT slug, source_path, frontmatter->>'thread_id' AS tid FROM pages
         WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE 'emails/%'
+          AND COALESCE(frontmatter->>'visibility', '') <> 'private'
           AND jsonb_typeof(frontmatter->'participants') = 'array'
           AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(frontmatter->'participants') a
                        WHERE lower(a) = ANY($2::text[]) OR split_part(lower(a), '@', 2) = ANY($3::text[]))`,
       [deps.sourceId, addresses, domains],
     );
   }
+  const byThread = new Map<string, Array<{ slug: string; source_path: string | null }>>();
+  for (const r of rows) {
+    if (!r.tid || !/^[A-Za-z0-9]{1,128}$/.test(r.tid)) continue;
+    byThread.set(r.tid, [...(byThread.get(r.tid) ?? []), { slug: r.slug, source_path: r.source_path }]);
+  }
   let failed = 0;
   let rewritten = 0;
-  for (const { tid } of rows) {
-    if (!tid || !/^[A-Za-z0-9]{1,128}$/.test(tid)) continue;
+  for (const [tid, threadPages] of [...byThread].slice(0, RETIER_MAX_THREADS)) {
     if (deps.opts.signal?.aborted) return 'aborted';
     try {
       await processThread(deps, g.gmail, tid, g.activePack, g.summary, g.countedSlugs);
       rewritten++;
     } catch (e) {
-      if (e instanceof GoogleCursorExpiredError && e.status === 404) continue;
+      if (e instanceof GoogleCursorExpiredError && e.status === 404) {
+        g.summary.deleted += await deleteEmailPages(deps, threadPages);
+        continue;
+      }
       if (deps.managed) rethrowConnectorWriteError(e);
       failed++;
       deps.log(`[google] re-tiering thread ${tid} as private failed (retried next sweep): ${e instanceof Error ? e.message : String(e)}`);
+      if (e instanceof CredentialError && (e.code === 'gbrainio_limit_reached' || e.code === 'rate_limited')) break;
     }
   }
   if (rewritten > 0) {
@@ -604,6 +615,10 @@ async function retierPrivatePages(g: GmailSweep): Promise<'aborted' | void> {
   }
   if (failed > 0) {
     g.summary.status = 'partial';
+    return;
+  }
+  if (byThread.size > RETIER_MAX_THREADS) {
+    deps.log(`[google] re-tiered ${RETIER_MAX_THREADS} of ${byThread.size} threads as private; the rest continue next sweep`);
     return;
   }
   state.private_senders_hashes = [...list.hashes];
@@ -777,18 +792,23 @@ async function reconcileGmailDeletes(
     deps.log(`[google] mass-delete guard refused ${stale.length} deletes for source ${deps.sourceId}`);
     return;
   }
+  summary.deleted += await deleteEmailPages(deps, stale);
+}
+
+async function deleteEmailPages(deps: GoogleSyncDeps, pages: Array<{ slug: string; source_path: string | null }>): Promise<number> {
   if (deps.managed) {
-    for (const page of stale) if (await deps.managed.delete(page.slug, page.source_path)) summary.deleted++;
-    return;
+    let deleted = 0;
+    for (const page of pages) if (await deps.managed.delete(page.slug, page.source_path)) deleted++;
+    return deleted;
   }
-  await deps.engine.deletePages(stale.map((s) => s.slug), { sourceId: deps.sourceId });
-  for (const s of stale) {
-    if (!s.source_path) continue;
+  await deps.engine.deletePages(pages.map((p) => p.slug), { sourceId: deps.sourceId });
+  for (const p of pages) {
+    if (!p.source_path) continue;
     // Containment guard mirrors the write path (defense-in-depth on DB rows).
-    const target = join(deps.cfg.dir, s.source_path);
+    const target = join(deps.cfg.dir, p.source_path);
     if (isWriteTargetContained(target, deps.cfg.dir)) rmSync(target, { force: true });
   }
-  summary.deleted += stale.length;
+  return pages.length;
 }
 
 // ── Extract + embed (mirrors github-source's size-gated tail) ───────────────

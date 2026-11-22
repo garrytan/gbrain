@@ -164,6 +164,40 @@ test('gbrain.io source: a grown private-senders list rewrites the matching pages
   }
 }), 180_000);
 
+test('gbrain.io source: re-tiering stops at a usage limit, resumes, and removes pages of threads gone from Gmail', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    const file = privateList(['nobody@elsewhere.example.invalid']);
+    const config = gbrainioConfig({ g_private_senders_file: file });
+    const f = await source(engine, config);
+    const cfg = parseGoogleSourceConfig(config, f.dir);
+    const mail = MAIL.map((m) => ({ ...m }));
+    fakeGbrainio(mail);
+    await runGoogleSync(engine, f.id, cfg, options);
+    const before = await pages(engine, f.id);
+    expect(before.get('a1a1a1a1a1a1a100')?.visibility).not.toBe('private');
+    expect(before.has('b2b2b2b2b2b2b200')).toBe(true);
+    writeFileSync(file, 'nobody@elsewhere.example.invalid\nstranger@example.invalid\npeer@example.invalid\n');
+
+    const limited = fakeGbrainio(mail, { override: (args) => args[2] === 'thread'
+      ? { exitCode: 1, stdout: '', stderr: 'daily limit reached for this terminal' } : null });
+    expect((await runGoogleSync(engine, f.id, cfg, options)).status).toBe('partial');
+    expect(limited.shows()).toHaveLength(1);
+
+    const gone = mail.findIndex((m) => m.tid === 'b2b2b2b2b2b2b200');
+    mail.splice(gone, 1);
+    fakeGbrainio(mail);
+    expect((await runGoogleSync(engine, f.id, cfg, options)).status).not.toBe('partial');
+    const after = await pages(engine, f.id);
+    expect(after.get('a1a1a1a1a1a1a100')?.visibility).toBe('private');
+    expect(after.has('b2b2b2b2b2b2b200')).toBe(false);
+
+    const settled = fakeGbrainio(mail);
+    expect((await runGoogleSync(engine, f.id, cfg, options)).status).not.toBe('partial');
+    expect(settled.shows()).toEqual([]);
+  }
+}), 180_000);
+
+
 test('gbrain.io source: a missing private-senders list stops the run before any write', async () => withEnv(env, async () => {
   for (const engine of engines) {
     const config = gbrainioConfig({ g_private_senders_file: join(tmpdir(), 'gbrainio-missing-' + Date.now(), 'private-senders.txt') });
@@ -190,6 +224,11 @@ test('gbrain.io source: an unconnected terminal and an answer for another mailbo
       ? { exitCode: 0, stdout: JSON.stringify({ account: 'someone-else@example.invalid', messages: [] }), stderr: '' } : null });
     const result = await runGoogleSync(engine, f.id, cfg, options);
     expect(result.status).toBe('partial');
+    expect((await pages(engine, f.id)).size).toBe(0);
+
+    fakeGbrainio(MAIL, { override: (args) => args[3] === 'search'
+      ? { exitCode: 0, stdout: JSON.stringify({ messages: [{ id: 'a1a1a1a1a1a1a101', thread_id: 'a1a1a1a1a1a1a100', received_at: new Date(NOW_MS).toISOString() }] }), stderr: '' } : null });
+    expect((await runGoogleSync(engine, f.id, cfg, options)).status).toBe('partial');
     expect((await pages(engine, f.id)).size).toBe(0);
   }
 }), 120_000);

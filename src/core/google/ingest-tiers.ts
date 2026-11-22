@@ -110,8 +110,8 @@ function ownerWrote(m: GmailMessageMeta, mine: Set<string>): boolean {
 }
 
 /**
- * The tier for one thread. 'private' is decided first by the list; a bulk
- * thread is still 'none' (no page is stricter than a private page).
+ * The tier for one thread. 'private' is decided first by the list, even for
+ * bulk mail, so re-tiering always rewrites an earlier page as private.
  */
 export async function classifyThreadTier(
   engine: BrainEngine,
@@ -119,6 +119,7 @@ export async function classifyThreadTier(
   mine: Set<string>,
   privateSenders: PrivateSenders | null,
 ): Promise<IngestTier> {
+  if (privateSenders && isPrivateThread(thread, privateSenders)) return 'private';
   const others = [...participantsOf(thread)].filter((a) => a && !mine.has(a));
   const known = await addressesWithPersonPage(engine, others);
   const wrote = thread.messages.some((m) => ownerWrote(m, mine));
@@ -131,7 +132,6 @@ export async function classifyThreadTier(
   const otherMessages = thread.messages.filter((m) => !ownerWrote(m, mine));
   const bulkOnly = !wrote && !flagged && otherMessages.length > 0 && otherMessages.every(isBulk);
   if (bulkOnly && known.size === 0) return 'none';
-  if (privateSenders && isPrivateThread(thread, privateSenders)) return 'private';
   if (wrote || flagged || known.size > 0) return 'full';
   return 'record';
 }
