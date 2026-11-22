@@ -911,9 +911,15 @@ means the unclean-shutdown genesis is still active — see the ladder's rung 4).
 
 One gbrain process opens a PGLite brain at a time. While `gbrain serve` (stdio
 or `--http`) holds it, page and fact writes from the CLI (`gbrain put`,
-`gbrain remember`) go through the running server and work. Commands that need
-the database to themselves, which includes the admin commands
-(`gbrain access …`, `gbrain sources …`, `gbrain auth …`) and most reads,
+`gbrain remember`) and everyday reads (`gbrain find`, `list`, `search`, `query`,
+`get`, `tags`, `links`, `backlinks`, `timeline`, `history`, `graph`, `whois`,
+`entity`, `search-exact` and `gbrain waiting`) go through the
+running server and print what they print with no server running. A read run
+with a read-affecting `GBRAIN_*` variable or provider key the server does not
+share stays with the refusal below. Edits to `config.json` reach the server's
+answers only after the server restarts. Commands
+that need the database to themselves, which includes the admin commands
+(`gbrain access …`, `gbrain sources …`, `gbrain auth …`) and the remaining reads,
 refuse with `pglite_busy` reason `live_serve`. The refusal names the server's
 PID, and its fix is two steps: stop that server, then run the command again.
 Never remove the lock of a server that is still running.

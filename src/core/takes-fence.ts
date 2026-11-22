@@ -239,7 +239,16 @@ import {
   stripStrikethrough,
   escapeFenceCell as safeFenceCell,
   assertFenceRewritable,
+  parsePlainNumberCell,
 } from './fence-shared.ts';
+
+/** A weight cell: a plain number, or `N%` read as N/100; anything else is malformed. */
+export function parseWeightCell(raw: string): number | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed.endsWith('%')) return parsePlainNumberCell(trimmed);
+  const percent = parsePlainNumberCell(trimmed.slice(0, -1));
+  return percent === undefined ? undefined : percent / 100;
+}
 import { indexOfOutsideCode, locateOutsideCode, protectedRegions, unclosedCodeFenceStart } from './fence-scan.ts';
 
 function parseSinceCell(raw: string): { since?: string; until?: string } {
@@ -361,8 +370,8 @@ export function parseTakesFence(body: string): ParseResult {
       // Fall through — row is still parsed and stored.
     }
 
-    const weight = parseFloat(weightRaw);
-    if (!Number.isFinite(weight)) {
+    const weight = parseWeightCell(weightRaw);
+    if (weight === undefined) {
       warnings.push(`TAKES_TABLE_MALFORMED: non-numeric weight "${weightRaw}"`);
       continue;
     }
