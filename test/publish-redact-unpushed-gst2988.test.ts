@@ -17,6 +17,7 @@ import { join, resolve } from 'node:path';
 import { commitAndPush } from '../src/core/git/commit-push.ts';
 import { redactUnpushed, spoolSealer, type RedactOutcome, type RedactPreview } from '../src/core/git/redact-unpushed.ts';
 import * as redactModule from '../src/core/git/redact-unpushed.ts';
+import * as spawnModule from '../src/core/spawn.ts';
 const realRedact = redactModule.redactUnpushed;
 import { addSpoolOccurrences, allowedLocally, drainSpool, openSpooled, readSpool, refreshAllowedCache, spoolValue, undrainedCount } from '../src/core/secret-store/spool.ts';
 import { currentKey, macKeyOf } from '../src/core/secret-store/keyring.ts';
@@ -355,6 +356,27 @@ describe('GST-2988 a publish redacts unpushed secrets', () => {
     const journal = readFileSync(join(r.root, '.git', 'gbrain', 'redactions.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
     expect(journal).toEqual([expect.objectContaining({ old_head: outcome.old_head, new_head: outcome.new_head })]);
   }, 120_000);
+
+  test('a budget that runs out just after the branch moves still journals the move and reports the redaction', async () => {
+    const r = repo();
+    commit(r.root, 'notes.md', `token ${token}\n`);
+    const realNow = Date.now.bind(Date), realSpawn = spawnModule.spawnSync;
+    let shift = 0;
+    const clock = spyOn(Date, 'now').mockImplementation(() => realNow() + shift);
+    const spawnSpy = spyOn(spawnModule, 'spawnSync').mockImplementation(((command: string, ...rest: unknown[]) => {
+      const out = (realSpawn as (...a: unknown[]) => unknown)(command, ...rest);
+      if (Array.isArray(rest[0]) && (rest[0] as string[]).includes('update-ref') && (rest[0] as string[]).some(a => a.includes('secrets replaced by store markers'))) shift = 3_600_000;
+      return out;
+    }) as typeof spawnModule.spawnSync);
+    let outcome: RedactOutcome;
+    try {
+      outcome = await inHome(r, () => redactUnpushed(r.root, { base: r.base, sealer: spoolSealer(r.root, null), budgetMs: 60_000 })) as RedactOutcome;
+    } finally { spawnSpy.mockRestore(); clock.mockRestore(); }
+    expect(outcome).toMatchObject({ redacted: true });
+    expect(git(r.root, 'rev-parse', 'HEAD')).toBe(outcome.new_head);
+    const journal = readFileSync(join(r.root, '.git', 'gbrain', 'redactions.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    expect(journal).toEqual([expect.objectContaining({ old_head: outcome.old_head, new_head: outcome.new_head })]);
+  }, 60_000);
 
   test('gbrain git redact-unpushed: the CLI previews as JSON and applies with --expect', () => {
     const r = repo();

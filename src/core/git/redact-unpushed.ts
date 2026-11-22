@@ -128,6 +128,8 @@ export interface RedactOutcome extends RedactPreview {
 export type HeldReason = 'gate_change' | 'too_large' | 'not_utf8' | 'held_before';
 
 class OverBudget extends Error {}
+/** Once the branch has moved, the remaining local steps finish past the budget so the move is always journaled. */
+const AFTER_MOVE_MS = 30_000;
 class GitFailed extends Error {}
 class Race extends Error {}
 
@@ -429,7 +431,7 @@ export function redactUnpushed(root: string, opts: RedactOptions): RedactPreview
         const wait = opts.lockWaitMs ?? lockWaitMs(), left = deadline - Date.now();
         if (left <= 0) throw new OverBudget();
         let commitLock: ReturnType<typeof acquireCommitLock>;
-        try { commitLock = acquireCommitLock(root, Math.min(wait, left)); } catch (error) { if (left < wait) throw new OverBudget(); throw error; }
+        try { commitLock = acquireCommitLock(root, Math.min(wait, left)); } catch (error) { if (left < wait && (error as { code?: string }).code === 'commit_lock_busy') throw new OverBudget(); throw error; }
         try {
           const p = plan(root, opts.base, deadline, value => sealer.allowed(value));
           if (!p) return null;
@@ -629,7 +631,7 @@ function rebuild(p: Plan, sealer: Sealer, deadline: number): RedactOutcome {
   }
   for (const [sha, m] of p.messages) for (const s of m.spans) occurrences.push({ id: ids.get(s.value)!, commit: map.get(sha)!, path: MESSAGE_PATH, line: null });
   sealer.record(occurrences);
-  const sideRefs = sideRefsHolding(p, deadline);
+  const sideRefs = sideRefsHolding(p, Math.max(deadline, Date.now() + AFTER_MOVE_MS));
   const outcome: RedactOutcome = { ...preview, redacted: true, old_head: p.head, new_head: newHead, push_target: tip, backup_ref: backupRef, held_commit: heldCommit,
     rebuilt: Object.keys(changedMap).length, values: ids.size, spooled: sealer.spooled(), side_refs: sideRefs, unsigned, map: changedMap, notices: [] };
   outcome.notices = redactionNotices(outcome);
@@ -703,7 +705,7 @@ function moveBranch(p: Plan, newHead: string, blobMap: ReadonlyMap<string, strin
     writeFileSync(tmp, next, { mode });
     renameSync(tmp, file);
   }
-  run(p.root, ['update-index', '-q', '--refresh'], deadline, { allowFail: true });
+  run(p.root, ['update-index', '-q', '--refresh'], Math.max(deadline, Date.now() + AFTER_MOVE_MS), { allowFail: true });
 }
 
 /** Local branches, tags and other worktrees that still reach a commit that held a value (D2b): named, never moved. */
