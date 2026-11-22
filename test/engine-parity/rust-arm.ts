@@ -101,11 +101,6 @@ export interface DivergenceRow { file: string; name: string; normalizer: string;
  * after the row's normaliser, so a row states exactly how the engines differ and nothing else.
  */
 export const DIVERGENCE_NORMALIZERS: Record<string, (value: unknown) => unknown> = {
-  // A NUL byte in a ref of a purge review delete: the SQL engines refuse it (their text type cannot hold it) and the Rust store
-  // answers 0. Set aside what each ref delete answered; the cases still must differ raw.
-  'nul-ref-outcome': (value) => (value !== null && typeof value === 'object'
-    ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key, key.endsWith('Ref') ? 'set aside' : item]))
-    : value),
   // Keyword ranking is BM25 (design D5): scores differ and ties order differently. Set aside the score and the order
   // of the rows; the same pages must still be found.
   'ranking-order-and-score': (value) => {
