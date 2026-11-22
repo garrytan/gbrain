@@ -66,6 +66,15 @@ export function ownConsumerForcedReason(): string | null { return ownConsumerFor
 /** Test seam. */
 export function resetOwnConsumerForTest(): void { ownConsumerForced = null; }
 
+/**
+ * The owner-socket role of an engine that has one (the Rust engine: `owner` when this process opened the store,
+ * `client` when it reaches the owner over its socket, null mid-election), or undefined for an engine with no owner
+ * socket (PGLite, Postgres).
+ */
+export function ownerSocketRole(engine: object): 'owner' | 'client' | null | undefined {
+  return 'ownerRole' in engine ? (engine as { ownerRole: 'owner' | 'client' | null }).ownerRole : undefined;
+}
+
 /** The owner a waiter defers to, as its status and the `writer_pending` envelope name it. */
 export interface ElectedOwner { kind: string; pid: number; nonce: string; pid_ns: string | null; version: string; started_at: string; renewed_age_ms: number;
   restart_required: boolean; root_barrier_age_ms: number | null; mode: string }
@@ -130,6 +139,8 @@ export class WaiterOnlyConsumer implements PersistenceConsumerLike {
   electedOwner(): ElectedOwner | null { return this.owner ? ownerOf(this.owner) : null; }
   start(): void {
     this.stopping = false;
+    // An engine with an owner socket (Rust) follows its owner role on every tick, so a client never consumes.
+    if (ownerSocketRole(this.engine) !== undefined) { this.schedule(0); return; }
     if (this.engine.kind !== 'postgres' || ownConsumerForced !== null) { this.becomeFull('full', this.engine.kind !== 'postgres' ? 'single_process_engine' : `forced:${ownConsumerForced}`); return; }
     this.schedule(0);
   }
@@ -163,6 +174,20 @@ export class WaiterOnlyConsumer implements PersistenceConsumerLike {
   }
   private async doTick(): Promise<void> {
     if (this.stopping || this._mode === 'full') return;
+    const role = ownerSocketRole(this.engine);
+    if (role !== undefined) {
+      // The Rust engine: one process owns the store and runs the brain's one consumer. A client reaches it over the
+      // owner socket, where transactions do not cross, so it can never publish: it submits, waits and claims nothing,
+      // whatever persistence.single_consumer says (the setting's one-consumer rule always holds here, as on PGLite).
+      // When an election makes this process the owner, it consumes.
+      if (role === 'owner') { await this.becomeFull(this._mode === 'probing' ? 'full' : 'promoted', this._mode === 'probing' ? 'single_process_engine' : 'owner_lapsed'); return; }
+      if (role === 'client' && this._mode === 'probing') {
+        this._mode = 'waiter_only';
+        this.log('phase=consumer_probe reason=waiter_only message="this process reaches the brain\'s owner over its socket; the owner\'s consumer publishes, and this process claims nothing"');
+      }
+      this.backoff();
+      return;
+    }
     if (ownConsumerForced !== null) { await this.becomeFull('full', `forced:${ownConsumerForced}`); return; }
     const cancel = new AbortController();
     const timer = setTimeout(() => cancel.abort(new Error('probe_timeout')), this.opts.phaseMs ?? 5000);

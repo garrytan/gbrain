@@ -7,7 +7,7 @@ import type { GBrainConfig } from '../config.ts';
 import { OperationError } from '../ops/contract.ts';
 import { isPhysicalRootDirectoryChangedMessage, relocatedRootTransferFix } from './physical-root-record.ts';
 import { LANE_BUSY, PersistenceConsumer, type PersistenceConsumerLike, type PrepareMutation } from './consumer.ts';
-import { WaiterOnlyConsumer, type ElectedOwner } from './consumer-election.ts';
+import { ownerSocketRole, WaiterOnlyConsumer, type ElectedOwner } from './consumer-election.ts';
 import { RESIDENT_CONSUMER_KINDS, startConsumerHeartbeat, type ConsumerHeartbeat } from './consumer-heartbeat.ts';
 import { enginePoolStats } from '../postgres-engine/pool-stats.ts';
 import { claimOwnerKind, isOneShotCommand } from './claim-phase.ts';
@@ -149,7 +149,8 @@ export function startPersistenceConsumer(engine: BrainEngine, config: GBrainConf
   const oneShot = isOneShotCommand() && kind !== 'serve' && !RESIDENT_CONSUMER_KINDS.includes(kind) ? { waiting: () => (settledWaiters.get(engine)?.size ?? 0) > 0 } : undefined;
   const full = () => new PersistenceConsumer(engine, config, preparePersistedMutation,
     { drainNotice: kind === 'serve', oneShot, onSettled: row => { recordSettlement(engine); rememberSettled(engine, row.id); for (const listener of settledWaiters.get(engine)?.get(row.id) ?? []) listener(row); } });
-  const service: Service = kind !== 'serve' && RESIDENT_CONSUMER_KINDS.includes(kind) && engine.kind === 'postgres'
+  // A Rust engine follows its owner role (consumer-election.ts): only the process that owns the store consumes.
+  const service: Service = (kind !== 'serve' && RESIDENT_CONSUMER_KINDS.includes(kind) && engine.kind === 'postgres') || ownerSocketRole(engine) !== undefined
     ? { consumer: new WaiterOnlyConsumer(engine, config, full, { kind, hostId: hostIdFor(engine), pool: () => enginePoolStats(engine) }), stopping: false }
     : (() => { const consumer = full(); return { consumer, stopping: false, heartbeat: startConsumerHeartbeat(engine, consumer.hostId,
         // #6317 (C1): the row's pool numbers come from the vendored driver's own queues (postgres-engine/pool-stats.ts).

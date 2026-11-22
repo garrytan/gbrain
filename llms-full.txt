@@ -6191,6 +6191,11 @@ therefore prefers one full consumer per host:
   doctor lists such owners under `consumers_without_heartbeat`.
 - PGLite is unchanged: its single-writer lock already allows one process, and a
   sync beside a live `serve` delegates the run to it over the IPC socket.
+- The Rust engine keeps one consumer per brain whatever the setting says: the
+  process that owns the store runs it, and every other process reaches that
+  store over the owner socket, where a consumer could not publish (transactions
+  do not cross it), so it runs waiter-only and logs `reason=waiter_only`. When
+  an election makes it the owner, it consumes.
 
 The managed catch-up on Postgres follows the same rule: `gbrain sync` beside a
 live `serve` hands the drain to the serve (the serve-delegated sync family,
