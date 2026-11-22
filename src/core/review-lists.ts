@@ -38,15 +38,21 @@ export async function listUnattributedFacts(engine: BrainEngine, ctx: OperationC
     [sourceIds, worldOnlyFacts(ctx.remote), opts.limit + 1, opts.offset],
   );
   // A remote caller reads text below the owner's tier quoted as source material (GST-687), actions included.
-  const read = await quoteFacts(engine, rows.slice(0, opts.limit).map(r => ({ ...r, id: Number(r.id) })), untrusted);
-  const page = read.map((r): UnattributedRow => {
+  const stored = rows.slice(0, opts.limit);
+  const read = await quoteFacts(engine, stored.map(r => ({ ...r, id: Number(r.id) })), untrusted);
+  const page = read.map((r, i): UnattributedRow => {
     const id = String(r.id);
+    // #8597: CLI remember preserves literal text for the trusted local owner.
+    // Its action must use the stored claim, not the display-only quote wrapper.
+    // Never unquote the stored bytes: the claim itself may contain a quote example.
+    // MCP actions still cross the remote boundary, where remember removes the read fence.
+    const cliFact = untrusted ? r.fact : stored[i]!.fact;
     return {
       fact_id: id, fact: r.fact, kind: r.kind ?? 'fact', visibility: r.visibility, source_id: r.source_id, created_at: r.created_at,
       ...(r.quoted ? { quoted: r.quoted } : {}),
       actions: [{
         kind: 'relink', run_by: 'caller',
-        argv: ['gbrain', 'remember', r.fact, '--entity', '<entity-slug>', '--replaces', id, '--source', r.source_id],
+        argv: ['gbrain', 'remember', cliFact, '--entity', '<entity-slug>', '--replaces', id, '--source', r.source_id, '--visibility', r.visibility],
         mcp: { tool: 'remember', arguments: { fact: r.fact, entity: '<entity-slug>', replaces: id, visibility: r.visibility } },
         inputs: [{ name: 'entity-slug', how: 'The slug of the person, company or project page the claim is about (search or whois finds it).' }],
         why: 'Saves the same claim on the entity it is about and replaces this unattributed copy. Do not forget it first: a forget without an entity blocks the claim for every entity.',
