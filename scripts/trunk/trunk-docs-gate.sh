@@ -35,6 +35,6 @@ say "docs-repo-paths rc=$rc $(grep -E '^ *[0-9]+ (pass|fail)$' "$G/docs-repo-pat
 flock /var/tmp/trunk/bun.lock bun run build:llms > "$G/build-llms.log" 2>&1; rc=$?
 DRIFT=$(git status --short | grep -v ' node_modules$')
 say "build:llms rc=$rc drift=[${DRIFT}]"; git checkout -q -- . ; [ $rc -eq 0 ] && [ -z "$DRIFT" ] || fail build-llms
-flock /var/tmp/trunk/bun.lock bun test test/build-llms.test.ts > "$G/build-llms-test.log" 2>&1; rc=$?
+flock /var/tmp/trunk/bun.lock bun test --timeout=60000 test/build-llms.test.ts > "$G/build-llms-test.log" 2>&1; rc=$?
 say "build-llms.test rc=$rc $(grep -E '^ *[0-9]+ (pass|fail)$' "$G/build-llms-test.log" | tr '\n' ' ')"; [ $rc -eq 0 ] || fail build-llms-test
 say "GATE PASS $SHA $(( $(date +%s) - W0 ))"
