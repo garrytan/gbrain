@@ -381,12 +381,23 @@ export async function restoreMarkersOnPage(tx: BrainEngine, sourceId: string, sl
   return { replaced, fields: results.filter(r => r.spans.length).map(r => r.key), unsealed, storage: read.page.body_storage };
 }
 
+/**
+ * Rebuilds a page's search projection right after a rewrite committed: an inline page's chunk reseal runs through typed
+ * members on every engine; a segmented page's projection build is raw SQL (page-body/projection.ts), so an engine without
+ * it leaves the queued projection to the queue's own rebuild ('queued').
+ */
+async function resealPage(engine: BrainEngine, sourceId: string, slug: string, storage: string, unsealed: boolean): Promise<'sealed' | 'queued'> {
+  if (storage !== 'segmented') await resealSafeChunks(engine, slug, sourceId);
+  else if (unsealed) {
+    if (!servesRawSql(engine)) return 'queued';
+    await buildSegmentedProjection(engine, { sourceId, slug });
+  }
+  return 'sealed';
+}
+
 /** Rebuilds a page's search projection after a restore committed (the same steps a redaction runs). */
 export async function resealAfterRestore(engine: BrainEngine, sourceId: string, slug: string, storage: string, unsealed: boolean): Promise<void> {
-  // As in the apply: the immediate reseal is raw SQL, so on an engine without it the queued projection rebuilds the page.
-  if (!servesRawSql(engine)) return;
-  if (storage !== 'segmented') await resealSafeChunks(engine, slug, sourceId);
-  else if (unsealed) await buildSegmentedProjection(engine, { sourceId, slug });
+  await resealPage(engine, sourceId, slug, storage, unsealed);
 }
 
 interface Residual { total: number; rules: Record<string, number>; stores: Record<string, number> }
@@ -574,17 +585,8 @@ export const secretSpansRepair: RepairHandler = {
         return { applied: false, outcome: 'changed_since_preview', reason: written.refused === 'changed_since_preview' ? 'the page changed since the preview' : written.refused };
       }
       audit.log(written.receipt);
-      let projection = 'sealed';
-      // The immediate reseal reads and rebuilds chunk rows through raw SQL (page-state/projections.ts), which the Rust store
-      // does not serve yet: there the page's projection stays queued (queuePageProjection above, and the revision bump)
-      // for the queue's own rebuild, and the detail says so.
-      if (!servesRawSql(ctx.engine)) projection = 'queued';
-      else {
-        try {
-          if (page.storage !== 'segmented') await resealSafeChunks(ctx.engine, page.slug, page.source_id);
-          else if (written.unsealed) await buildSegmentedProjection(ctx.engine, { sourceId: page.source_id, slug: page.slug });
-        } catch { projection = 'queued'; }
-      }
+      let projection: 'sealed' | 'queued' = 'sealed';
+      try { projection = await resealPage(ctx.engine, page.source_id, page.slug, page.storage, written.unsealed); } catch { projection = 'queued'; }
       const embedded = opts?.embed && !written.embedSkip
         ? (await embedStalePages(ctx.engine, [page.slug], page.source_id).catch(() => ({ embedded: 0 }))).embedded : 0;
       const residual = await residualScan(ctx.engine, page.source_id, page.slug, rules);

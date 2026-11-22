@@ -1099,4 +1099,44 @@ impl Brain {
             s.find_topology_changes(&principal_id, &request_ids)
         })
     }
+
+    /// `readChunkKeepState(pageId, provenanceModel, column)`: the `embedding` column's width is
+    /// `dims`. `{ id, embedding_input_hash, movable }` rows.
+    #[napi]
+    pub fn read_chunk_keep_state<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        model: Option<String>,
+        dims: u32,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_chunk_keep_state(page_id, model.as_deref(), dims)
+        })
+    }
+
+    /// `clearUnkeptChunkVectors(pageId, provenanceModel, column, currentIds)`: resolves null.
+    #[napi]
+    pub fn clear_unkept_chunk_vectors<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        model: Option<String>,
+        dims: u32,
+        current_ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.clear_unkept_chunk_vectors(page_id, model.as_deref(), dims, &current_ids)
+        })
+    }
+
+    /// `countPendingTextChunks(pageId, column)`: `{ chunks, chars }` of the `embedding` column.
+    #[napi]
+    pub fn count_pending_text_chunks<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_pending_text_chunks(page_id))
+    }
 }

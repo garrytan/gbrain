@@ -80,6 +80,7 @@ mod notifier;
 mod op_checkpoint;
 mod owner_scans;
 pub(crate) mod projection_queue;
+mod projection_rebuild;
 mod receipt_compaction;
 mod receipt_list;
 mod sync_orphan_reads;

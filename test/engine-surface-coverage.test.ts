@@ -404,6 +404,8 @@ const INTERFACE_METHODS: readonly string[] = [
   // The batch 6c secret store and secret-spans members (engine-sql/secret-store.ts, secret-spans-rows.ts, page-projection-queue.ts; test/engine-parity/repair-secret-spans.test.ts)
   'findSecretEntryByMac', 'secretEntryExists', 'insertSecretEntry', 'insertSecretOccurrence', 'readSecretEntry', 'listSecretOccurrences', 'listSecretEntrySummaries', 'countSecretsByRule', 'listAllowedSecretMacs', 'listSecretKeysInUse', 'readSecretStoreSnapshot', 'insertBackupSecretEntry', 'readBackupEntryHold', 'insertBackupSecretOccurrence', 'deleteUnreferencedSecretEntry', 'listSecretHoldingPages', 'countUnreferencedSecretEntries', 'readRestorePageHit', 'markSecretEntryAllowed',
   'readPageRedactionRow', 'readPageRedactionRows', 'listTimelineDedupRows', 'listVersionBodiesForRedaction', 'countPageVersionRows', 'setRetainedVersionBody', 'listChunkTextsForRedaction', 'deleteChunksByIds', 'setRedactedPageFields', 'readRawDataValue', 'setRawDataValue', 'setRedactedRowText', 'queuePageProjectionJob',
+  // The batch 6c chunk reseal after a rewrite (engine-sql/projection-rebuild.ts; test/engine-parity/projection-reseal.test.ts)
+  'readChunkKeepState', 'clearUnkeptChunkVectors', 'countPendingTextChunks',
   // The write owner's housekeeping scans (engine-sql/persistence-owner-scans.ts).
   'listOverdueHeldWrites', 'lockOverdueHold', 'listOwnerRecoveryHeads', 'listResumableRefreshes', 'listSourceLastCommits',
   // The effect worker's claim, settle and gate statements (engine-sql/persistence-effect-worker.ts).

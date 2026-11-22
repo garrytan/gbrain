@@ -27,6 +27,7 @@ import type { ConversationFactLink, ConversationRelinkPagesQuery, RelinkPlacemen
 import type * as DreamCycleSql from './engine-sql/dream-cycle.ts';
 import type * as FactsCycleSql from './engine-sql/facts-cycle.ts';
 import type * as FactsPurgeSql from './engine-sql/facts-purge.ts';
+import type * as ProjectionRebuildSql from './engine-sql/projection-rebuild.ts';
 import type * as FactsRepairSql from './engine-sql/facts-repair.ts';
 import type * as LabelRepairSql from './engine-sql/label-repair-reads.ts';
 import type * as FactTextRepairSql from './engine-sql/fact-text-repair.ts';
@@ -4879,6 +4880,13 @@ export interface BrainEngine {
   setRedactedRowText(pageId: number, store: import('./engine-sql/secret-spans-rows.ts').RedactedRowStore, id: number, column: string, text: string): Promise<void>;
   /** Queues the live page at (source, slug) for a projection rebuild at its current revision (engine-sql/page-projection-queue.ts). */
   queuePageProjectionJob(sourceId: string, slug: string, reason: string): Promise<void>;
+  // A page's chunk reseal (page-state/projections.ts installPageProjection, resealSafeChunks): the keep plan's read, the vector clear and the pending count.
+  /** Each chunk of the page with its recorded embedding input and whether its vector in `column` is current (present, from the text as it is, labelled `provenanceModel` or its bare name at the column's width). */
+  readChunkKeepState(pageId: number, provenanceModel: string | null, column: ProjectionRebuildSql.KeepColumn): Promise<ProjectionRebuildSql.ChunkKeepState[]>;
+  /** Clears the vector and embedding record of each chunk of the page not labelled `provenanceModel`, whose text hash is not its text's, or whose id is not in `currentIds`, and marks it pending. */
+  clearUnkeptChunkVectors(pageId: number, provenanceModel: string | null, column: ProjectionRebuildSql.KeepColumn, currentIds: readonly number[]): Promise<void>;
+  /** How many of the page's text chunks have no vector in `column`, and their characters. */
+  countPendingTextChunks(pageId: number, column: ProjectionRebuildSql.KeepColumn): Promise<{ chunks: number; chars: number }>;
   /** The twin merge: drops the twin's colliding derived links and transitions and moves the rest onto the survivor, with the relationship keys before and after (engine-sql/twin-merge-moves.ts). Run it in the merge's transaction. */
   moveTwinRelationships(ids: import('./engine-sql/twin-merge-moves.ts').TwinMergeIds): Promise<import('./engine-sql/twin-merge-moves.ts').TwinRelationshipMoves>;
   /** The twin merge: moves the twin's timeline rows and events, raw data, user-added tags, files and free-text aliases to the survivor; the tags moved. */

@@ -89,7 +89,8 @@ const runKind = async (engine: BrainEngine, opts: { apply: boolean; slugs: strin
 
 /** Every stored copy of the alpha page and what the store holds, as the repair leaves them. */
 async function readState(engine: BrainEngine) {
-  const chunks = (await engine.getChunks(ALPHA, { sourceId: SRC, includeUnsealed: true } as never)).map(c => c.chunk_text);
+  const chunkRows = await engine.getChunks(ALPHA, { sourceId: SRC, includeUnsealed: true } as never);
+  const chunks = chunkRows.map(c => c.chunk_text);
   const page = await engine.getPage(ALPHA, { sourceId: SRC });
   const snapshot = await engine.readPageSnapshot(ALPHA, { sourceId: SRC });
   return norm({
@@ -101,6 +102,8 @@ async function readState(engine: BrainEngine) {
     raw: (await engine.getRawData(ALPHA, 'test', { sourceId: SRC })).map(r => r.data),
     revision: snapshot!.revision,
     chunksHoldingACredential: leaked(chunks).length,
+    chunkRows: chunkRows.map(c => [c.chunk_index, c.chunk_source, c.chunk_text]),
+    sealed: snapshot!.page.text_projection_revision === snapshot!.revision,
   });
 }
 
@@ -131,7 +134,7 @@ describe('engine parity: repair secret-spans', () => {
       'queuePageProjectionJob', 'findSecretEntryByMac', 'insertSecretEntry', 'insertSecretOccurrence', 'listSecretEntrySummaries', 'countSecretsByRule',
       'listSecretOccurrences', 'readSecretEntry', 'readOpCheckpointRecord', 'writeOpCheckpointRecord', 'readPageRevisions'],
     timeout: 180_000,
-  }, async (engine, backend) => {
+  }, async engine => {
     await seedPages(engine);
     return inHome(async () => {
       const slugs = [ALPHA, CLEAN];
@@ -140,8 +143,8 @@ describe('engine parity: repair secret-spans', () => {
       const result = await runKind(engine, { apply: true, slugs, expect: preview.preview_hash });
       expect(result.applied).toBe(1);
       expect(result.outcomes).toEqual({ redacted: 1 });
-      // The immediate reseal is raw SQL: the Rust engine leaves the page's projection queued for the queue's own rebuild.
-      expect((result.outcome_items ?? []).map(item => item.detail?.projection)).toEqual([backend === 'rust' ? 'queued' : 'sealed']);
+      // The reseal right after the commit is typed members (readChunkKeepState and the rest): every engine seals the page at once.
+      expect((result.outcome_items ?? []).map(item => item.detail?.projection)).toEqual(['sealed']);
       expect(leaked(result)).toEqual([]);
       const after = await readState(engine);
       expect(after.revision).not.toBe(before.revision);
@@ -152,7 +155,7 @@ describe('engine parity: repair secret-spans', () => {
       const read = await engine.readSecretEntry(entries.find(e => e.rule === 'openai')!.id);
       const again = await runKind(engine, { apply: false, slugs });
       return norm({ result: { applied: result.applied, outcomes: result.outcomes, verification: result.verification,
-        items: (result.outcome_items ?? []).map(item => ({ item: item.item, outcome: item.outcome, detail: { ...item.detail, projection: undefined } })) },
+        items: (result.outcome_items ?? []).map(item => ({ item: item.item, outcome: item.outcome, detail: item.detail })) },
       state: { ...after, revision: undefined }, entries: entries.map(e => ({ rule: e.rule, status: e.status, occurrences: e.occurrences, slugs: e.slugs }))
         .sort((a, b) => a.rule.localeCompare(b.rule)),
       entry: { rule: read!.rule, status: read!.status, source_id: read!.source_id, readable: /^[0-9a-f]{16}$/.test(read!.key_id) },
@@ -201,8 +204,8 @@ describe('engine parity: repair secret-spans', () => {
       const second = await runKind(engine, { apply: false, slugs });
       return norm({ fields: restore.pages.map(p => p.fields), restored: done.restored, status: done.status, entry: (await engine.readSecretEntry(entry.id))!.status,
         allowed: (await allowedMatcher(engine, SRC))(OPENAI), other: (await allowedMatcher(engine, SRC))(AWS), isAllowed: await isAllowed(engine, SRC, OPENAI),
-        // The chunk rows are rebuilt from the restored body right away on the SQL engines and by the projection queue on the Rust engine.
-        state: { ...after, revision: undefined, chunksHoldingACredential: undefined }, second: { affected: second.affected, residuals: second.residuals } });
+        // The chunk rows are rebuilt from the restored body right away on every engine.
+        state: { ...after, revision: undefined }, second: { affected: second.affected, residuals: second.residuals } });
     });
   });
 

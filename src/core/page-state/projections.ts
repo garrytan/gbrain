@@ -178,10 +178,8 @@ async function planProjectionKeep(tx: BrainEngine, current: PageSnapshot, contex
   // nulled once and stamped by its re-embed.
   const mode = current.page.contextual_retrieval_mode;
   const provenance = embeddingInputContext(context, current.page.title, context.corpusGeneration, chunks);
-  const col = quoteIdentifier(context.column.name);
-  const recorded = new Map((await tx.executeRaw<{ id: number; embedding_input_hash: string | null; movable: boolean }>(
-    `SELECT id,embedding_input_hash,${movableChunkSql(col)} AND ${chunkModelMatchesSql('model', '$2', `vector_dims(${col}) = ${context.column.dimensions}`)} AS movable FROM content_chunks WHERE page_id=$1`,
-    [current.page.id, context.provenanceModel])).map(row => [Number(row.id), row]));
+  const recorded = new Map((await tx.readChunkKeepState(current.page.id, context.provenanceModel, context.column))
+    .map(row => [Number(row.id), row]));
   const currentInput = (chunk: Chunk) => {
     const hash = recorded.get(Number(chunk.id))?.embedding_input_hash ?? null;
     return hash === null ? mode == null : acceptedEmbeddingInputHashes(provenance, mode, chunk).includes(hash);
@@ -339,21 +337,15 @@ export async function installPageProjection(engine: BrainEngine, prepared: Proje
     if (changed.length) throw new PageProjectionConflictError(snapshot.revision, current!.revision, changed, slug, sourceId);
     if (opts.seal && opts.preserveEmbeddings) {
       const { kept, current: currentIds, provenanceModel, column } = await planProjectionKeep(tx, current!, context, stored, chunks);
-      const col = quoteIdentifier(column.name);
       await tx.deleteChunksExcept(slug, kept.map(chunk => chunk.id), { sourceId });
-      await tx.executeRaw(`UPDATE content_chunks SET ${col}=NULL,
-        embedded_at=NULL,embedded_text_hash=NULL,embedding_input_hash=NULL,
-        embedding_pending_since=COALESCE(embedding_pending_since,now()) WHERE page_id=$1 AND
-        (NOT ${chunkModelMatchesSql('model', '$2', `vector_dims(${col}) = ${column.dimensions}`)} OR embedded_text_hash <> md5(chunk_text) OR NOT(id=ANY($3::int[])))`,
-      [snapshot.page.id, provenanceModel, currentIds]);
+      await tx.clearUnkeptChunkVectors(snapshot.page.id, provenanceModel, column, currentIds);
     } else if (opts.seal) await tx.deleteChunks(slug, { sourceId });
     await tx.upsertChunks(slug, chunks, { sourceId, expectedRevision: snapshot.revision, embeddingColumn: context.column });
     if (opts.code) await installCodeChunkEdges(tx, slug, sourceId, opts.code);
     if (opts.seal) {
-      await tx.executeRaw(`UPDATE pages SET chunker_version=$3
-        WHERE source_id=$1 AND slug=$2`, [sourceId, slug, MARKDOWN_CHUNKER_VERSION]);
+      await tx.setChunkerVersion(slug, MARKDOWN_CHUNKER_VERSION, { sourceId });
       await sealPageTextProjection(tx, slug, sourceId, current!);
-      await tx.executeRaw('DELETE FROM page_projection_jobs WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid', [snapshot.sourceIncarnation, slug, snapshot.revision]);
+      await tx.deleteProjectionJob({ sourceIncarnation: snapshot.sourceIncarnation, slug, revision: snapshot.revision });
     }
     if (opts.signature) await tx.setPageEmbeddingSignature(slug, { sourceId, signature: opts.signature });
   });
@@ -481,10 +473,8 @@ export async function resealSafeChunks(engine: BrainEngine, slug: string, source
     && prepared.snapshot.page.text_projection_revision === prepared.snapshot.revision) return null;
   const projection = await preparePageProjection(prepared);
   await installPageProjection(engine, prepared, projection.chunks, { seal: true, preserveEmbeddings: true, code: projection.code });
-  const [pending] = await engine.executeRaw<{ chunks: number; chars: number }>(`SELECT COUNT(*)::int AS chunks,
-    COALESCE(SUM(length(chunk_text)),0)::int AS chars FROM content_chunks
-    WHERE page_id=$1 AND ${quoteIdentifier(prepared.embeddingColumn.name)} IS NULL AND modality='text'`, [prepared.snapshot.page.id]);
-  return { pendingChunks: Number(pending?.chunks ?? 0), pendingChars: Number(pending?.chars ?? 0) };
+  const pending = await engine.countPendingTextChunks(prepared.snapshot.page.id, prepared.embeddingColumn);
+  return { pendingChunks: pending.chunks, pendingChars: pending.chars };
 }
 
 export async function preparePageProjection(prepared: ProjectionSnapshot) {

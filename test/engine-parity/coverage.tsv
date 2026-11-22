@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1541/1548
+# covered: 1544/1551
 # lifecycle: 9/9
 # pages: 69/69
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 13/13
-# persistence_journal: 235/235
+# persistence_journal: 238/238
 # entity_reads: 17/17
 # cycle_locks: 10/10
 # minion_jobs: 8/8
@@ -98,10 +98,10 @@ transactionDirect	lifecycle	yes	14	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 getPage	pages	yes	152	yes	yes	yes	serves
-readPageSnapshot	pages	yes	45	no	yes	yes	serves
+readPageSnapshot	pages	yes	47	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	5	no	yes	yes	serves
-putPage	pages	yes	731	yes	yes	yes	serves
+putPage	pages	yes	733	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	24	yes	yes	yes	serves
@@ -160,7 +160,7 @@ listLivePagesSharingFrontmatterId	pages	yes	1	no	yes	yes	serves
 hasSegmentedHistory	pages	yes	2	no	yes	yes	serves
 readLivePagesByIds	pages	yes	1	no	yes	yes	serves
 listStaleAtoms	pages	yes	2	no	yes	yes	serves
-getPageSealState	pages	yes	5	no	yes	yes	serves
+getPageSealState	pages	yes	6	no	yes	yes	serves
 refreshPageOrigin	pages	yes	3	no	yes	yes	serves
 readLivePageIdBySlug	pages	yes	2	no	yes	yes	serves
 readPageTierRef	pages	yes	1	no	yes	yes	serves
@@ -232,9 +232,9 @@ listWithdrawalChunks	chunks	yes	1	no	yes	yes	serves
 deleteChunksForPages	chunks	yes	2	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	4	no	yes	yes	serves
-upsertChunks	chunks	yes	47	yes	yes	yes	serves
+upsertChunks	chunks	yes	49	yes	yes	yes	serves
 sealChunks	chunks	yes	71	no	yes	yes	serves
-getChunks	chunks	yes	46	yes	yes	yes	serves
+getChunks	chunks	yes	48	yes	yes	yes	serves
 getChunkPage	chunks	yes	14	no	yes	yes	serves
 getChunkWindows	chunks	yes	12	no	yes	yes	serves
 countStaleChunks	chunks	yes	8	no	yes	yes	serves
@@ -248,9 +248,9 @@ listChunklessPagesWithContent	chunks	yes	3	yes	yes	yes	serves
 readEmbeddingStateCounts	chunks	yes	2	no	yes	yes	serves
 listEmbeddingStateRows	chunks	yes	2	no	yes	yes	serves
 deleteChunks	chunks	yes	3	no	yes	yes	serves
-deleteChunksExcept	chunks	yes	3	no	yes	yes	serves
-setChunkerVersion	chunks	yes	15	no	yes	yes	serves
-writeTextProjectionSeal	chunks	yes	2	no	yes	yes	serves
+deleteChunksExcept	chunks	yes	4	no	yes	yes	serves
+setChunkerVersion	chunks	yes	16	no	yes	yes	serves
+writeTextProjectionSeal	chunks	yes	3	no	yes	yes	serves
 moveChunkIndexes	chunks	yes	2	no	yes	yes	serves
 getChunkReuseRows	chunks	yes	4	no	yes	yes	serves
 readPageEmbeddingBudget	chunks	yes	4	no	yes	yes	serves
@@ -716,6 +716,9 @@ readRawDataValue	persistence_journal	yes	2	no	yes	yes	serves
 setRawDataValue	persistence_journal	yes	2	no	yes	yes	serves
 setRedactedRowText	persistence_journal	yes	2	no	yes	yes	serves
 queuePageProjectionJob	persistence_journal	yes	2	no	yes	yes	serves
+readChunkKeepState	persistence_journal	yes	2	no	yes	yes	serves
+clearUnkeptChunkVectors	persistence_journal	yes	2	no	yes	yes	serves
+countPendingTextChunks	persistence_journal	yes	2	no	yes	yes	serves
 moveTwinRelationships	persistence_journal	yes	1	no	yes	yes	serves
 moveTwinPageChildren	persistence_journal	yes	1	no	yes	yes	serves
 moveTwinFacts	persistence_journal	yes	1	no	yes	yes	serves
@@ -754,7 +757,7 @@ selectProjectionWindowJobs	persistence_journal	yes	5	no	yes	yes	serves
 claimSegmentedProjection	persistence_journal	yes	1	no	yes	yes	serves
 renewSegmentedProjectionClaim	persistence_journal	yes	1	no	yes	yes	serves
 releaseSegmentedProjectionClaim	persistence_journal	yes	1	no	yes	yes	serves
-deleteProjectionJob	persistence_journal	yes	1	no	yes	yes	serves
+deleteProjectionJob	persistence_journal	yes	2	no	yes	yes	serves
 markProjectionRebuildFailed	persistence_journal	yes	1	no	yes	yes	serves
 listGatedMirrorRequests	persistence_journal	yes	1	no	yes	yes	serves
 listEffectRecoveries	persistence_journal	yes	1	no	yes	yes	serves

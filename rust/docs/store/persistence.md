@@ -478,6 +478,33 @@ here has reason `canonical_change`; the reads still apply every reason filter. A
 the queue existed has no job for a page it left unsealed, and nothing backfills one: no released Rust
 brain predates the queue, so no such store exists outside development.
 
+## Projection reseal
+
+A page's chunk reseal (`resealSafeChunks`, `installPageProjection` with `seal` and `preserveEmbeddings`, the step
+`gbrain repair secret-spans` runs right after a rewrite commits) runs through typed members. Three are new
+(`persistence/projection_rebuild.rs`; SQL in `src/core/engine-sql/projection-rebuild.ts`); the rest are served already.
+
+| JS member | Returns | Mirrors SQL |
+| --- | --- | --- |
+| `readChunkKeepState(pageId, provenanceModel, column)` | `{ id, embedding_input_hash, movable }` per chunk of the page, any generation | `SELECT id, embedding_input_hash, <movable> FROM content_chunks WHERE page_id=$1` |
+| `clearUnkeptChunkVectors(pageId, provenanceModel, column, currentIds)` | nothing | the `UPDATE content_chunks SET embedding=NULL, ... WHERE (NOT <model match> OR embedded_text_hash <> md5(chunk_text) OR NOT id=ANY(current))` |
+| `countPendingTextChunks(pageId, column)` | `{ chunks, chars }` | `SELECT COUNT(*), SUM(length(chunk_text)) FROM content_chunks WHERE page_id=$1 AND embedding IS NULL AND modality='text'` |
+
+The row delete, the chunker stamp, the seal and the queue row's delete are `deleteChunksExcept`, `setChunkerVersion`,
+`writeTextProjectionSeal` and `deleteProjectionJob`.
+
+- A chunk is `movable` when it holds a vector, the vector was computed from the chunk's text as it is now, and its model
+  label is the page's model or that model's bare name at the column's width. The store keeps a sha256 text hash where
+  PGLite keeps md5; only equality is compared. A chunk with no model label matches only a null model.
+- `clearUnkeptChunkVectors` drops the vector, the embed time and both hashes of each chunk that is not current, and marks it
+  pending now unless it already is (`COALESCE(embedding_pending_since, now())`). A chunk already without a vector is
+  marked too, as the SQL statement does.
+- The store keeps one vector column, `embedding`: another column refuses (`engine_capability_missing`, the member named).
+- A code page's reseal still stops at its first raw statement (`installCodeChunkEdges`): the apply catches it, rolls the
+  transaction back and reports `projection: queued`.
+- The same three member names, arguments and statement text are typed on the rust-rebuild-path branch (commits
+  7f1ee5198e and 170280a2cd); merging the two keeps one copy.
+
 ## Worktree bindings
 
 An unmanaged writer claim (`claimWorktree` in `src/core/persistence/ownership.ts`) records one
