@@ -89,11 +89,13 @@ const DRIFT_HISTORY_BUDGET_MS = 120_000;
 
 /**
  * Master's up_to_date freshness stamp of a managed sync: sets the source's last sync time to the database clock, only while
- * it is still the incarnation the run bound. Runs inside the caller's coordinated-write transaction (sync-run.ts, a complete
- * check that found nothing; `stampIdlePass` and `stampUnchangedPass` below). Callers do not read the result.
+ * it is still the incarnation the run bound (`markSourceSynced` with `incarnation`, engine-sql/sources.ts, so a Rust brain
+ * stamps too). Runs inside the caller's coordinated-write transaction (sync-run.ts, a complete check that found nothing;
+ * `stampIdlePass` and `stampUnchangedPass` below). Returns whether the source was stamped; callers do not read it, as they
+ * did not read the raw statement's rows.
  */
-export async function stampManagedSourceFresh(tx: BrainEngine, sourceId: string, incarnation: string): Promise<unknown> {
-  return tx.executeRaw('UPDATE sources SET last_sync_at=now() WHERE id=$1 AND incarnation=$2::uuid', [sourceId, incarnation]);
+export async function stampManagedSourceFresh(tx: BrainEngine, sourceId: string, incarnation: string): Promise<boolean> {
+  return tx.markSourceSynced(sourceId, { incarnation });
 }
 
 export interface SyncPassInput {

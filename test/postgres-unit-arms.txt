@@ -338,6 +338,7 @@ test/engine-parity/sync-import-provenance.test.ts
 test/engine-parity/sync-pass-pages.test.ts
 test/engine-parity/sync-route.test.ts
 test/engine-parity/sync-run-reads.test.ts
+test/engine-parity/sync-stamp.test.ts
 test/engine-parity/sync-status-reads.test.ts
 test/engine-parity/take-purge-ledger.test.ts
 test/engine-parity/take-purge-overlay.test.ts

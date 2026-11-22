@@ -7,8 +7,9 @@
  *  - Contract: on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1)
  *    the stamp sets `last_sync_at` of a source still of the run's incarnation, and leaves a source of another incarnation,
  *    or an unknown source, as it was.
- *  - Regression: the stamp ran as raw SQL (`UPDATE sources SET last_sync_at=now() ...`), which the Rust engine refuses, so
- *    the step of a no-change managed sync failed on a Rust brain and its source kept reading as stale.
+ *  - Regression: the stamp ran as raw SQL (`UPDATE sources SET last_sync_at=now() ...`), which the Rust engine refuses
+ *    (engine_capability_missing), so the step of a no-change managed sync failed on a Rust brain and its source kept
+ *    reading as stale. The step now calls `markSourceSynced(sourceId, { incarnation })`.
  *  - Why existing coverage misses it: import-folder-stamp.test.ts covers `markSourceSynced` alone; the managed sync suites
  *    run PGLite and Postgres only, and a Rust brain cannot activate managed persistence yet (managed-mode.ts reads its
  *    persistence row as not enabled), so no whole managed sync reaches the stamp on that arm.
@@ -38,7 +39,7 @@ const stamped = async (engine: BrainEngine, sourceId: string) => (await engine.g
 
 describe('engine parity: a managed sync stamps its source fresh', () => {
   parityTest('the managed sync stamp sets last_sync_at only for the run\'s incarnation of the source', {
-    methods: ['insertSource', 'readSourceMembership', 'getSource'],
+    methods: ['insertSource', 'readSourceMembership', 'getSource', 'markSourceSynced'],
   }, async (engine) => {
     await engine.insertSource({ id: 'stamp-a', name: 'stamp-a', local_path: null, config: {} });
     const incarnation = (await engine.readSourceMembership('stamp-a'))!.incarnation;
