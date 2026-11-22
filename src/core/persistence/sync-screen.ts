@@ -22,7 +22,7 @@ import { loadImportSanityConfig, screenNormalized, type ContentRefusal, type Imp
 import { fencesNormalizeEnabled } from '../fence-repair/config.ts';
 import type { FenceFix } from '../fence-repair/types.ts';
 import { parseMarkdown, RECOVERY_VERSION, RESERVED_FRONTMATTER_KEYS, type IntendedRefusal } from '../markdown.ts';
-import { alignLegacyTyped } from '../frontmatter-legacy.ts';
+import { alignLegacyTyped, recordNamesOldImporter } from '../frontmatter-legacy.ts';
 import { fenceMessage, type FenceMessageLocation } from '../fence-repair/reasons.ts';
 import { completeFenceLocation, FENCE_VERSION, type ReceiptFenceLocation } from '../fence-repair/refusal.ts';
 import { QUOTE_SCREEN_VERSION } from '../fence-repair/quote-markers.ts';
@@ -131,15 +131,27 @@ export function driftBaselineContent(gitRoot: string, entry: Pick<SyncEntry, 'dr
  * file still names the `legacy_type` (align-stored.ts keepRetypeStamp), each absent from the file. A page with any other
  * difference (a protected key, a label) is not treated as unchanged since that file.
  */
-export function onlyDerivedKeysAdded(content: string, stored: Record<string, unknown> | null | undefined): boolean {
+export function onlyDerivedKeysAdded(content: string, stored: Record<string, unknown> | null | undefined, legacyProven = false): boolean {
   const parsed = parseMarkdown(content, 'derived-keys.md');
-  alignLegacyTyped(parsed, stored); // pages-03: a value the old parser typed reads as stored
+  if (legacyProven) alignLegacyTyped(parsed, stored); // pages-03: the older release stored the page, so a value it typed reads as stored
   const { frontmatter: file, type } = parsed;
   const page = stored ?? {};
   const retyped = typeof page.legacy_type === 'string' && page.legacy_type === type && !Object.hasOwn(file, 'legacy_type');
   return [...new Set([...Object.keys(file), ...Object.keys(page)])].every(key => digest(file[key] ?? null) === digest(page[key] ?? null)
     || !Object.hasOwn(file, key) && ((RESERVED_FRONTMATTER_KEYS as readonly string[]).includes(key) || key === 'validate' && page[key] === false
       || retyped && (key === 'legacy_type' || key === 'subtype')));
+}
+
+/**
+ * pages-03: whether the older release stored the page from the entry's drift baseline: its import record (the one the
+ * baseline comes from, drift `both`) names the old importer. Only then may the drift check read the baseline under the old
+ * typing; a page today's importer stored, or one with no record (`unknown`), is compared as written and stays held.
+ */
+export async function driftBaselineFromOldImporter(engine: BrainEngine, sourceId: string, incarnation: string, pageId: number | string,
+  entry: Pick<SyncEntry, 'drift' | 'driftBaseline'>): Promise<boolean> {
+  if (entry.drift !== 'both' || !entry.driftBaseline) return false;
+  const record = await readSyncImportProvenance(engine, sourceId, incarnation, Number(pageId));
+  return record?.disk_blob_oid === entry.driftBaseline && recordNamesOldImporter(record);
 }
 
 /** #7199: whether the page still holds what the entry's baseline or one of its earlier committed versions (`driftHistory`) imports, tried in order. */

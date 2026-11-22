@@ -136,6 +136,14 @@ export function legacyStoredFrontmatter(current: Record<string, unknown>, fileTe
 }
 
 /**
+ * pages-03: whether an import record names the importer before pages-03 (import=1, or no parser stamp on a record from
+ * before the stamp), as importedByOldParserSql reads it. Only such a record proves the older release stored the page.
+ */
+export function recordNamesOldImporter(record: { parser?: { parser_version?: string | null } | null } | null | undefined): boolean {
+  return !!record && (record.parser?.parser_version ?? 'import=1;').startsWith('import=1;');
+}
+
+/**
  * pages-03: SQL true when page row `page` was stored by the importer before pages-03: its import record, at the page's
  * current revision (or at `renamedFrom`, the SQL text of the revision this transaction just renamed the page from),
  * names an importer before import=2 (or none, on records from before the parser stamp). A page with no such record, or

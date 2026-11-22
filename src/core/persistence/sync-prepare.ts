@@ -716,7 +716,9 @@ function canonicalWritebackNeeded(row: WriteRequest, p: SyncIntent, pinned: stri
 /** A managed-sync preparation; a Markdown import also carries the provenance its publication records, which a no-op waiver records instead. */
 export type SyncPreparedMutation = PreparedMutation & { importProvenance?: SyncImportProvenanceBase;
   /** The import leaves the page as it is (only a canonical writeback of the file may remain); #6712 drift baseline check in sync-run.ts. */
-  pageUnchanged?: boolean };
+  pageUnchanged?: boolean;
+  /** pages-03: the page holds what the import's content imported under the old typing (legacyUnchanged); the drift baseline check counts it only with proof the older release stored the page. */
+  legacyPageUnchanged?: boolean };
 
 /**
  * A managed-sync preparation. #6926, folded into 4b: an import whose intent carries the pass stamp (the round's last) takes
@@ -990,7 +992,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
   const preparedImport: SyncPreparedMutation = { observedRevision: snapshot?.revision ?? null, trust: await ownerImportTrust(engine, row, ready.parsedPage.frontmatter, p.sourcePath), importProvenance,
     // Tells the #5470 screen the content is unchanged; publication still queues its effects.
     contentUnchanged: ready.noop && !moved && !writeback,
-    pageUnchanged: (ready.noop || ready.legacyUnchanged === true) && !moved, // pages-03: legacyUnchanged, for the drift baseline check (sync-run.ts)
+    pageUnchanged: ready.noop && !moved, legacyPageUnchanged: ready.legacyUnchanged === true && !moved,
     ...(renamed ? { additionalPageKeys: [{ sourceId: row.source_id, slug: renamed.slug }] } : {}),
     validate: async tx => { await validate(tx); await ready.validate(tx); },
     deferEmbedding: p.processingOptions?.noEmbed || p.embedDeferred === true, ...(!(p.processingOptions?.noEmbed || p.embedDeferred === true) && ready.noop && !moved && snapshot && await chunksEmbeddedAsIs(engine, snapshot.page.id) ? { embeddingCurrent: true } : {}),

@@ -48,7 +48,7 @@ import { laneApplyMsPerMember, lanePolicy, openLanes } from './sync-lanes.ts';
 import { SYNC_READ_BOUND, type TreeBlob } from './sync-blobs.ts';
 import { readDryRunWriterState } from './sync-dry-run-writer.ts';
 import { fileMatchesSnapshot } from './page-prepare.ts';
-import { onlyDerivedKeysAdded, pageHoldsDriftBaseline, dryRunScreen, heldImageEntry, isSyncReadBound, loadSyncScreenRun, originConflictHold, oversizeHold, pinnedBlob, pinnedContent, pinnedFilterDriver, pinnedImageBytes, preparationStalledHold, prepareTimeFenceHold, screenFrozenImport, streamedRefusalHold, unreadableFileHold, type HeldEntry, type SyncScreenRun } from './sync-screen.ts';
+import { driftBaselineFromOldImporter, onlyDerivedKeysAdded, pageHoldsDriftBaseline, dryRunScreen, heldImageEntry, isSyncReadBound, loadSyncScreenRun, originConflictHold, oversizeHold, pinnedBlob, pinnedContent, pinnedFilterDriver, pinnedImageBytes, preparationStalledHold, prepareTimeFenceHold, screenFrozenImport, streamedRefusalHold, unreadableFileHold, type HeldEntry, type SyncScreenRun } from './sync-screen.ts';
 import { frozenImageIntent, sameImageBytes } from './sync-image.ts';
 import { fenceReceiptLocation } from '../fence-repair/refusal.ts';
 import { managedSyncWriteDiagnostic, writeWaitOf } from './sync-write-diagnostic.ts';
@@ -484,8 +484,8 @@ async function freezeEntryOnce(engine: BrainEngine, cursor: Cursor, key: string,
     // GST-2568: and so is a page that holds its file's baseline (or an earlier committed version) in that same reading.
     if (entry.drift && !occupantRebound && content !== null && snapshot && !(image ? sameImageBytes(imageBytes, snapshot.page)
       : await sameContentAtOrigin(engine, cursor, entry, key, snapshot, content, rawHash, lineEndingOnly, run.signal)
-        || await fileMatchesSnapshot(engine, slug, content, snapshot, entry.sourcePath).catch(() => false) || await pageHoldsDriftBaseline(cursor.gitRoot, entry, async baseline => await sameContentAtOrigin(engine, cursor, entry, key, snapshot, baseline, null, false, run.signal, true)
-        || baseline !== null && onlyDerivedKeysAdded(baseline, snapshot.page.frontmatter) && await fileMatchesSnapshot(engine, slug, baseline, snapshot, entry.sourcePath).catch(() => false)))) {
+        || await fileMatchesSnapshot(engine, slug, content, snapshot, entry.sourcePath).catch(() => false) || await pageHoldsDriftBaseline(cursor.gitRoot, entry, async baseline => { const proven = await driftBaselineFromOldImporter(engine, cursor.sourceId, cursor.incarnation, snapshot.page.id, entry); return await sameContentAtOrigin(engine, cursor, entry, key, snapshot, baseline, null, false, run.signal, true, proven)
+        || baseline !== null && onlyDerivedKeysAdded(baseline, snapshot.page.frontmatter, proven) && await fileMatchesSnapshot(engine, slug, baseline, snapshot, entry.sourcePath).catch(() => false); }))) {
       if (!holdsOn) throw syncRunRefusal('file_drift', 'An import would overwrite a database version of the page that sync never saw.', retry, `Page ${slug} in source ${cursor.sourceId} ${entry.drift === 'unknown' ? `differs from ${entry.path} and has no import record to tell whether the file or the database changed` : `changed in the database since ${entry.path} was last imported, and the file differs from it`}, so the run stopped before admitting it (sync.holds=fail).`);
       const proof = await pageChangeProof(engine, { sourceId: cursor.sourceId, incarnation: cursor.incarnation, pageId, expectedRevision: null }); assertActive();
       return { hold: fileDriftHold(entry, slug, pageId, frozenIntent, { sides: entry.drift, revision: snapshot.revision, proof, sharedOrigin: await sharedOriginSurvivor(engine, cursor.sourceId, entry.sourcePath), baseline: entry.driftBaseline ?? null }) };
@@ -854,7 +854,7 @@ async function alreadyImportedAtOrigin(engine: BrainEngine, cursor: Cursor, entr
  * #6278: the preparation races the sync budget; past it the origin refusal stands, and a cancelled run propagates. #6712 `pageOnly`: the page holds what `content` (a `both` entry's recorded disk blob) imports, a canonical writeback aside.
  */
 async function sameContentAtOrigin(engine: BrainEngine, cursor: Cursor, entry: Cursor['entries'][number], key: string,
-  snapshot: Awaited<ReturnType<BrainEngine['readPageSnapshot']>>, content: string | null, rawHash: string | null, lineEndingOnly: boolean, signal?: AbortSignal, pageOnly = false): Promise<boolean> {
+  snapshot: Awaited<ReturnType<BrainEngine['readPageSnapshot']>>, content: string | null, rawHash: string | null, lineEndingOnly: boolean, signal?: AbortSignal, pageOnly = false, legacyProven = false): Promise<boolean> {
   if (!snapshot || snapshot.page.deleted_at != null || content === null) return false;
   const intent: SyncIntent = { kind: 'managed_sync_import', expected_revision: snapshot.revision, sourcePath: entry.sourcePath, path: entry.path, rawHash: pageOnly ? sha256(content) : rawHash, content, lineEndingOnly,
     processingOptions: cursor.processingOptions, ownerEpoch: String(cursor.binding.owner_epoch), syncAuthority: cursor.authority,
@@ -863,7 +863,7 @@ async function sameContentAtOrigin(engine: BrainEngine, cursor: Cursor, entry: C
     const budgetMs = await syncPreparationBudgetMs(engine);
     const prepared = await raceSyncBudget(prepareManagedSyncMutation(engine, screeningRequest({ source_id: cursor.sourceId, source_incarnation: cursor.incarnation, slug: snapshot.page.slug,
       page_id: snapshot.page.id, worktree_id: cursor.binding.worktree_id, authority: cursor.authority.writer, intent }), { engine: engine.kind }, startClaimPhase(Date.now(), undefined, budgetMs)), budgetMs, signal);
-    return (pageOnly ? prepared.pageUnchanged === true || prepared.noop === true : (prepared.contentUnchanged === true || prepared.noop === true) && !prepared.file) && prepared.observedRevision === snapshot.revision;
+    return (pageOnly ? prepared.pageUnchanged === true || prepared.noop === true || legacyProven && prepared.legacyPageUnchanged === true : (prepared.contentUnchanged === true || prepared.noop === true) && !prepared.file) && prepared.observedRevision === snapshot.revision;
   } catch (error) {
     if (signal?.aborted) throw error;
     return false;

@@ -140,14 +140,17 @@ describe('pages-03: a git edit to an older page with typed frontmatter is not he
   }, { setup }), 240_000);
 });
 
-describe('pages-03: onlyDerivedKeysAdded reads a value the old parser typed as stored', () => {
+describe('pages-03: onlyDerivedKeysAdded reads a value the old parser typed as stored only with proof', () => {
   const stored = { born: '1990-05-01T00:00:00.000Z', zip: 2134, version: 1.1, title: 'people/d', type: 'person' };
   const content = (extra = '') => `---\ntype: person\ntitle: people/d\nborn: 1990-05-01\nzip: 02134\nversion: 1.10\n${extra}---\n\nBody.\n`;
-  test('a file whose values differ from the stored page only by the old typing adds no keys', () => {
-    expect(onlyDerivedKeysAdded(content(), stored)).toBe(true);
+  test('with proof the older release stored the page, a file whose values differ only by the old typing adds no keys', () => {
+    expect(onlyDerivedKeysAdded(content(), stored, true)).toBe(true);
+  });
+  test('without that proof the file is compared as written', () => {
+    expect(onlyDerivedKeysAdded(content(), stored)).toBe(false);
   });
   test('a real change is still a difference', () => {
-    expect(onlyDerivedKeysAdded(content().replace('born: 1990-05-01', 'born: 1990-05-02'), stored)).toBe(false);
-    expect(onlyDerivedKeysAdded(content('label: new\n'), stored)).toBe(false);
+    expect(onlyDerivedKeysAdded(content().replace('born: 1990-05-01', 'born: 1990-05-02'), stored, true)).toBe(false);
+    expect(onlyDerivedKeysAdded(content('label: new\n'), stored, true)).toBe(false);
   });
 });
