@@ -167,7 +167,12 @@ export async function maybeDelegateLocalOperation(
   }
   const cwd = options.cwd ?? process.cwd();
   const brainId = resolveBrainId(options.brain, cwd);
-  const config = persistenceConfigForBrain(hostConfig, brainId, brainId === 'host' ? [] : loadMounts());
+  let config: GBrainConfig | null;
+  try { config = persistenceConfigForBrain(hostConfig, brainId, brainId === 'host' ? [] : loadMounts()); }
+  catch (error) {
+    if (PERSISTENCE_IPC_READ_EXTENSIONS.includes(operation)) return { handled: false };
+    throw error;
+  }
   if (config?.engine !== 'pglite' || !config.database_path || config.database_url) return { handled: false };
   const holder = inspectLockHolder(config.database_path);
   if (!holder.held) return { handled: false };
