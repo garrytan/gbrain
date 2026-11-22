@@ -180,7 +180,7 @@ describe('the picker in a turn', () => {
     reply('{"needed": true, "skills": ["gbrain:skill-1"]}');
     const out = (await turn(h, 'zzqx')).output;
     expect(calls.length).toBe(0);
-    expect(out.router?.fallback).toEqual({ code: 'no_known_ids' });
+    expect(out.router).toMatchObject({ answered_by: 'words', fallback: null, est_usd: 0 });
     expect(out.no_skill).toBe(true);
   });
 
@@ -212,7 +212,7 @@ describe('a compat: model on an OpenAI-compatible endpoint', () => {
   const server = Bun.serve({ port: 0, hostname: '127.0.0.1', async fetch(req) {
     const path = new URL(req.url).pathname;
     seen.push({ path, auth: req.headers.get('authorization'), body: await req.json() });
-    if (path.startsWith('/denied/')) return new Response('{"error": "forbidden"}', { status: 403 });
+    if (path.startsWith('/denied/') || path.startsWith('/gdeny/')) return new Response('{"error": "forbidden"}', { status: 403 });
     if (path.startsWith('/hop/')) return new Response(null, { status: 307, headers: { location: '/v1/chat/completions' } });
     if (path.startsWith('/g/')) return Response.json({ candidates: [{ content: { parts: [{ text: '{"needed": true, "skills": ["gbrain:people"]}' }] }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 1000, candidatesTokenCount: 10, thoughtsTokenCount: 150 } });
     const answer = '"choices": [{"message": {"content": "{\\"needed\\": true, \\"skills\\": [\\"gbrain:people\\"]}"}, "finish_reason": "stop"}]';
@@ -307,11 +307,17 @@ describe('a compat: model on an OpenAI-compatible endpoint', () => {
     expect(r.output.router!.est_usd).toBeCloseTo((1000 * price.input + 160 * price.output) / 1e6, 6);
   });
 
-  test('a 4xx answer is refunded from the ledger: the provider did not bill it', async () => {
-    const h = await home(compat({ router_base_url: `http://127.0.0.1:${server.port}/denied/v1`, router_usd_per_mtok: [1, 2] }));
-    const r = await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: h, catalogs: ['c'], router: true, env });
-    expect(r.output.router).toMatchObject({ fallback: { code: 'provider_error' }, est_usd: 0 });
+  test('a 4xx from Anthropic, OpenAI or Google is refunded; a compat endpoint keeps the reservation', async () => {
+    const h = await home({ router: true, router_model: 'google:gemini-3.5-flash-lite' });
+    const genv = { ...process.env, GOOGLE_GENERATIVE_AI_BASE_URL: `http://127.0.0.1:${server.port}/gdeny`, GEMINI_API_KEY: 'k-test' };
+    const g = await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: h, catalogs: ['c'], router: true, env: genv });
+    expect(g.output.router).toMatchObject({ fallback: { code: 'provider_error' }, est_usd: 0 });
     expect((await readRouterSpend(h)).charged_usd).toBe(0);
+    const c = await home(compat({ router_base_url: `http://127.0.0.1:${server.port}/denied/v1`, router_usd_per_mtok: [1, 2] }));
+    const r = await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: c, catalogs: ['c'], router: true, env });
+    expect(r.output.router?.fallback).toEqual({ code: 'provider_error' });
+    expect(r.output.router!.est_usd).toBeGreaterThan(0);
+    expect((await readRouterSpend(c)).charged_usd).toBeCloseTo(r.output.router!.est_usd, 6);
   });
 
   test('a cap of 0 stops a free model too, before any call', async () => {

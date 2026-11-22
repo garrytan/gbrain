@@ -174,9 +174,9 @@ async function callPicker(home: string, message: string, skills: readonly Picker
   try {
     res = await pickerChat({ model, system, message, maxTokens: PICKER_MAX_OUTPUT_TOKENS, signal, ...(compat && s.baseUrl ? { baseUrl: s.baseUrl } : {}) }, key, env);
   } catch (e) {
-    if (e instanceof PickerHttpError && e.status >= 400 && e.status < 500) {
-      await settle(0);
-      return { ok: false, code: 'provider_error', model, usd: 0 };
+    if (!compat && e instanceof PickerHttpError && e.status >= 400 && e.status < 500) {
+      const refunded = await settle(0);
+      return { ok: false, code: 'provider_error', model, usd: refunded ? 0 : estimate };
     }
     return { ok: false, code: signal.aborted ? 'timeout' : 'provider_error', model, usd: estimate };
   }

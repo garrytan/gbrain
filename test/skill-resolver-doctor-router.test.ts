@@ -12,7 +12,7 @@ import { describe, expect, test } from 'bun:test';
 import { skillResolverCheck, type SkillResolverRouterView } from '../src/commands/doctor/checks/skill-resolver.ts';
 
 const check = (router: Partial<SkillResolverRouterView>) => skillResolverCheck({ config: 'ok', harnesses: [], recent: { turns: 0, outcomes: {}, errors: {} },
-  router: { turns: 1, picker: 0, fallbacks: {}, last: null, spent_usd: 0, cap_usd: 0.5, day: '2026-11-23', ...router } })!;
+  router: { turns: 1, picker: 0, fallbacks: {}, last: null, last_day: '2026-11-22', spent_usd: 0, cap_usd: 0.5, day: '2026-11-23', ...router } })!;
 
 describe('doctor and the model picker', () => {
   test('a daily_cap fallback warns only while today\'s spend is near a cap above 0', () => {
@@ -22,6 +22,13 @@ describe('doctor and the model picker', () => {
     expect(c.status).toBe('warn');
     expect((c.details as any).code).toBe('skill_router_daily_cap');
     expect(c.fix?.argv).toEqual(['gbrain', 'config', 'set', 'skills.resolver.router_max_usd_per_day', '1']);
+  });
+
+  test('a cap below one call\'s largest cost warns while today\'s newest turn was refused, even with nothing spent', () => {
+    const c = check({ turns: 20, fallbacks: { daily_cap: 20 }, last: 'daily_cap', last_day: '2026-11-23', spent_usd: 0, cap_usd: 0.1 });
+    expect(c.status).toBe('warn');
+    expect((c.details as any).code).toBe('skill_router_daily_cap');
+    expect(c.message).toContain('largest cost');
   });
 
   test('the cap raise never passes the 100 USD maximum, and at the maximum there is nothing to run', () => {

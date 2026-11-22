@@ -51,19 +51,19 @@ export interface SkillResolverView {
   cursor?: CursorSkillView;
 }
 
-export interface SkillResolverRouterView { turns: number; picker: number; fallbacks: Record<string, number>; last: string | null; spent_usd: number; cap_usd: number; day: string }
+export interface SkillResolverRouterView { turns: number; picker: number; fallbacks: Record<string, number>; last: string | null; last_day: string | null; spent_usd: number; cap_usd: number; day: string }
 /** Below this many picker turns in 24 hours, the fallback rate is not judged. */
 const ROUTER_MIN_TURNS = 10;
 /** A fallback share at or above this warns. */
 const ROUTER_FALLBACK_WARN = 0.2;
 /** Fallbacks that need the user: the newest picker turn ending in one warns. */
 const ROUTER_SETUP_CODES = ['missing_key', 'no_pricing', 'config_invalid'];
-/** A daily_cap fallback warns while today's spend is at least this share of the cap (a call is refused once its largest cost would pass the cap). */
+/** A daily_cap fallback warns while today's spend is at least this share of the cap (a call is refused once its largest cost would pass the cap), or while today's newest picker turn was refused. */
 const ROUTER_CAP_NEAR = 0.8;
 
 function recentRouter(home: string, now = Date.now()): Omit<SkillResolverRouterView, 'spent_usd' | 'cap_usd' | 'day'> {
   const text = readRecentDailyLog(logsDir(home), LANE_LOG, LOG_TAIL_BYTES * 16, now) ?? '';
-  const out = { turns: 0, picker: 0, fallbacks: {} as Record<string, number>, last: null as string | null };
+  const out = { turns: 0, picker: 0, fallbacks: {} as Record<string, number>, last: null as string | null, last_day: null as string | null };
   for (const line of text.split('\n')) {
     let j: { at?: unknown; router?: { by?: unknown; code?: unknown } };
     try { j = JSON.parse(line); } catch { continue; }
@@ -72,6 +72,7 @@ function recentRouter(home: string, now = Date.now()): Omit<SkillResolverRouterV
     if (j.router.by === 'picker') out.picker++;
     if (typeof j.router.code === 'string') out.fallbacks[j.router.code] = (out.fallbacks[j.router.code] ?? 0) + 1;
     out.last = typeof j.router.code === 'string' ? j.router.code : null;
+    out.last_day = j.at.slice(0, 10);
   }
   return out;
 }
@@ -188,9 +189,11 @@ export function skillResolverCheck(v: SkillResolverView | null): Check | null {
 function routerProblem(r: SkillResolverRouterView): { code: string; what: string; fix: NonNullable<Check['fix']> } | null {
   const docs = (code: string) => `docs/guides/skill-resolver.md#router_fallback-${code}`;
   const base = { requires_exclusive: false, verify: doctorVerify(name) };
-  if (r.fallbacks.daily_cap && r.cap_usd > 0 && r.spent_usd >= r.cap_usd * ROUTER_CAP_NEAR) {
+  if (r.fallbacks.daily_cap && r.cap_usd > 0 && (r.spent_usd >= r.cap_usd * ROUTER_CAP_NEAR || (r.last === 'daily_cap' && r.last_day === r.day))) {
     const raise = Math.min(ROUTER_MAX_USD_PER_DAY_MAX, Math.max(1, r.cap_usd * 2));
-    const what = `The model picker reached its daily cap: ${r.spent_usd.toFixed(4)} of ${r.cap_usd.toFixed(2)} USD spent on ${r.day} (UTC), so the word matcher answers until the cap resets at 00:00 UTC.`;
+    const what = r.spent_usd >= r.cap_usd * ROUTER_CAP_NEAR
+      ? `The model picker reached its daily cap: ${r.spent_usd.toFixed(4)} of ${r.cap_usd.toFixed(2)} USD spent on ${r.day} (UTC), so the word matcher answers until the cap resets at 00:00 UTC.`
+      : `The model picker refuses its calls: one call's largest cost is more than what is left of the ${r.cap_usd.toFixed(2)} USD daily cap (${r.spent_usd.toFixed(4)} spent on ${r.day}, UTC), so the word matcher answers.`;
     return { code: 'daily_cap', what, fix: raise > r.cap_usd
       ? { ...base, argv: ['gbrain', 'config', 'set', 'skills.resolver.router_max_usd_per_day', String(raise)], consent: ['paid'], actor: 'agent', docs: docs('daily_cap'),
         why: 'Raises the daily spend cap for the model picker; each turn costs about $0.0001 to $0.001.',

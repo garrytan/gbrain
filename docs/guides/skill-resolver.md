@@ -410,7 +410,8 @@ What it does on each turn:
   do, whatever the config says; a library caller does only when it passes
   `router: true`.
 - **What it reads.** Every skill while the catalogs hold up to 150, else the top
-  40 of the word ranking. Descriptions come from `picker.json`, which each
+  40 of the word ranking; when no skill shares a word with the message there,
+  it makes no call and the word matcher answers, with no fallback code. Descriptions come from `picker.json`, which each
   build writes beside the index (cut at 400 characters). A project catalog's
   skills are sent by id only, as their hints are never shown.
 - **What it shows.** Its picks, best first, with `match_strength: "picked"`,
@@ -496,9 +497,7 @@ if it repeats, the model may not suit the prompt: try the default model.
 
 ### router_fallback: no_known_ids
 
-The reply named no skill in your catalog, or, with more than 150 skills, no
-skill shared a word with the message, so there was nothing to offer and no call
-was made. One-off failures are harmless; if it
+The reply named no skill in your catalog. One-off failures are harmless; if it
 repeats, rebuild the catalog (`gbrain skills index build`) so the picker sees
 current ids.
 

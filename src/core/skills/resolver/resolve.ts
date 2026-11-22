@@ -387,10 +387,11 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
       const skills: PickerSkill[] = [...offered].map(([id, { c, doc }]) => ({ id, description: loaded[c]!.receipt.catalog.hints === 'names_only' ? '' : descriptions[c]?.get(id) ?? metaOf(c, doc).summary }));
       const r0 = performance.now();
       const left = opts.deadlineMs === undefined ? Infinity : opts.deadlineMs - (r0 - t0) - PICKER_RENDER_RESERVE_MS;
-      const outcome: PickOutcome = offered.size === 0 ? { ok: false, code: 'no_known_ids', model: settings.router.model, usd: 0 } : left < 1 ? { ok: false, code: 'timeout', model: settings.router.model, usd: 0 } : await pickSkills(home, input.message, skills, settings.router, Math.min(routerTimeoutMs(input.harness, settings.router), left), opts.env ?? process.env, opts.now);
-      base.router = { mode: 'picker', answered_by: outcome.ok ? 'picker' : 'words', model: outcome.model, ms: Math.round(performance.now() - r0), est_usd: outcome.usd, fallback: outcome.ok ? null : { code: outcome.code } };
+      const outcome: PickOutcome | null = offered.size === 0 && !settings.router.invalid ? null : left < 1 ? { ok: false, code: 'timeout', model: settings.router.model, usd: 0 } : await pickSkills(home, input.message, skills, settings.router, Math.min(routerTimeoutMs(input.harness, settings.router), left), opts.env ?? process.env, opts.now);
+      base.router = !outcome ? { mode: 'picker', answered_by: 'words', model: settings.router.model, ms: 0, est_usd: 0, fallback: null }
+        : { mode: 'picker', answered_by: outcome.ok ? 'picker' : 'words', model: outcome.model, ms: Math.round(performance.now() - r0), est_usd: outcome.usd, fallback: outcome.ok ? null : { code: outcome.code } };
       check();
-      if (outcome.ok) pick = outcome;
+      if (outcome?.ok) pick = outcome;
     }
     if (!pick && ranks.every(r => r.idfSum === 0)) return finish({ ...base, no_skill: true, no_skill_reason: 'no_match', block_reason: 'no_match' }, { tokens: 0, suggested: [], resuggested: [] });
 
