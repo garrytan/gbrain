@@ -83,7 +83,7 @@ The publish command automatically removes all private/internal data:
 
 **Preserved:** external URLs (`https://...`), all other content.
 
-Stripping fails closed: anything after a section that never closes (a fence or comment with no end marker) is dropped too, and a page whose frontmatter never closes is refused. A guest page saved from `gbrain get` keeps its `[outside guest · …]` warning line above the frontmatter; publish drops that line and strips the frontmatter as usual. Any other text above frontmatter in the first five non-blank lines (the quote fence a paged `gbrain get` prints) is refused with `invalid_frontmatter`: save the page with plain `gbrain get <slug>` or delete those lines. Read the output before sharing when a page has a prose `History` section: it is dropped with everything after it.
+Stripping fails closed: anything after a section that never closes (a fence or comment with no end marker) is dropped too, and a page whose frontmatter never closes is refused. A guest page saved from `gbrain get` keeps its `[outside guest · …]` warning line above the frontmatter; publish drops that line and strips the frontmatter as usual. Any other text above frontmatter in the first five non-blank lines (the quote fence a paged `gbrain get` prints) is refused with `invalid_frontmatter`: save the page with plain `gbrain get <slug>` or delete those lines. Publish whole pages only: a `gbrain get --lines` slice that starts below the opening `---` holds frontmatter keys publish cannot recognize. Read the output before sharing when a page has a prose `History` section: it is dropped with everything after it.
 
 ## Sharing Workflows
 
