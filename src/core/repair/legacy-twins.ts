@@ -313,7 +313,7 @@ export async function mergeLegacyTwin(ctx: OperationContext, pair: LegacyTwinPai
   const engine = ctx.engine;
   const moved = await pairNow(engine, pair, owner);
   if (moved) return changed(moved);
-  requireTwinMerge(engine, 'gbrain repair legacy-twins merge');
+  requireTwinMerge(engine);
   if (await managedPersistenceEnabled(engine)) {
     const authority = (await maintenancePreflight(engine, pair.source_id))!;
     try {

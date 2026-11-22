@@ -27,10 +27,9 @@ import { opError } from '../ops/contract.ts';
 import { noteBelief } from '../belief/ledger.ts';
 import { recordRenameAlias } from '../page-state/rename-alias.ts';
 import { dropRekeyDuplicates } from '../facts/ontology-rekey.ts';
-import { refreshRelationships, type RelationshipKey } from '../link-relationships.ts';
+import { refreshRelationships } from '../link-relationships.ts';
 import { SYNC_IMPORT_PROVENANCE_OP } from './sync-holds.ts';
 import { ORIGIN_TWIN_REASON } from './origin-twins.ts';
-import { twinLinkLosersStatement, twinMoveRowsStatement, twinTransitionLosersStatement } from '../engine-sql/repair-page-scans.ts';
 import { requireRawSql } from '../rust-engine/errors.ts';
 
 /** Link provenances re-derived from page bodies and frontmatter: a survivor with the same body re-derives each one. */
@@ -42,8 +41,6 @@ export interface TwinMergePage { page_id: number; slug: string }
 export interface TwinMergeResult { links_moved: number[]; facts_moved: number[]; transitions_moved: number; tags_moved: string[]; deduplicated: number }
 /** `id` is the row's id; a raw_data row (unique per page and source, the detail names the source) carries the twin's page id. */
 export interface TwinMergeConflict { table: 'links' | 'link_transitions' | 'timeline_entries' | 'raw_data'; id: number; detail: string }
-
-type Exec = Pick<BrainEngine, 'executeRaw'>;
 
 /**
  * Rows of the twin whose move would discard distinct evidence; empty when the merge loses nothing. Read-only. The
@@ -62,23 +59,21 @@ export async function twinMergeConflicts(engine: Pick<BrainEngine, 'listTwinMerg
   return [...links, ...transitions, ...timeline, ...raw];
 }
 
-/**
- * The named refusal of the twin merge on an engine without raw SQL (the Rust engine, until `mergeTwinInto` gets typed
- * members). The caller asks before it opens its transaction or submits its request, so nothing of the merge ran and
- * the refusal names the merge, not the first raw statement. PGLite, Postgres and transaction handles pass.
- */
-export function requireTwinMerge(engine: object, step: string): void {
-  requireRawSql(engine, `${step} (mergeTwinInto moves the twin's links, timeline, raw data, tags, aliases and facts through raw SQL)`);
-}
+/** The named refusal of the twin merge on an engine without raw SQL: every merge step stops here before it reads or writes. */
+export const TWIN_MERGE_STEP = 'repair twin merge';
 
-async function relationshipKeys(exec: Exec, table: 'links' | 'link_transitions', pageIds: number[]): Promise<RelationshipKey[]> {
-  return (await exec.executeRaw<RelationshipKey>(`SELECT DISTINCT from_page_id, to_page_id, link_type FROM ${table}
-    WHERE from_page_id=ANY($1::int[]) OR to_page_id=ANY($1::int[])`, [pageIds])).map(row => ({ from_page_id: Number(row.from_page_id), to_page_id: Number(row.to_page_id), link_type: row.link_type }));
+/**
+ * The named refusal of the twin merge on an engine without its store side (the Rust engine, until the twin-merge moves
+ * and the rename alias are served there). `mergeTwinInto` asks first, and each caller asks before it opens its
+ * transaction or submits its request, so nothing of the merge ran. PGLite, Postgres and transaction handles pass.
+ */
+export function requireTwinMerge(engine: object): void {
+  requireRawSql(engine, TWIN_MERGE_STEP);
 }
 
 export async function mergeTwinInto(tx: BrainEngine, input: { sourceId: string; incarnation: string; survivor: TwinMergePage; twin: TwinMergePage }): Promise<TwinMergeResult> {
+  requireTwinMerge(tx);
   const { sourceId, survivor, twin } = input;
-  const params = [twin.page_id, survivor.page_id];
   const conflicts = await twinMergeConflicts(tx, survivor.page_id, twin.page_id);
   if (conflicts.length) {
     throw opError('revision_conflict', 'The duplicate page holds evidence its survivor does not, so the merge was refused.',
@@ -87,43 +82,18 @@ export async function mergeTwinInto(tx: BrainEngine, input: { sourceId: string; 
   }
   await tx.createVersion(twin.slug, { sourceId });
   await tx.detachPageOrigin(twin.page_id, ORIGIN_TWIN_REASON);
-  const before = [...await relationshipKeys(tx, 'links', [twin.page_id]), ...await relationshipKeys(tx, 'link_transitions', [twin.page_id])];
-  const linkLosersSql = twinLinkLosersStatement(twin.page_id, survivor.page_id);
-  const transitionLosersSql = twinTransitionLosersStatement(twin.page_id, survivor.page_id);
-  const linkLosers = (await tx.executeRaw<{ id: number }>(linkLosersSql.text, linkLosersSql.params)).map(row => Number(row.id));
-  const transitionLosers = (await tx.executeRaw<{ id: number }>(transitionLosersSql.text, transitionLosersSql.params)).map(row => Number(row.id));
-  if (linkLosers.length) await tx.executeRaw('DELETE FROM links WHERE id=ANY($1::int[])', [linkLosers]);
-  if (transitionLosers.length) await tx.executeRaw('DELETE FROM link_transitions WHERE id=ANY($1::bigint[])', [transitionLosers]);
-  const moveLinksSql = twinMoveRowsStatement('links', twin.page_id, survivor.page_id);
-  const movedLinks = (await tx.executeRaw<{ id: number }>(moveLinksSql.text, moveLinksSql.params)).map(row => Number(row.id));
-  const moveTransitionsSql = twinMoveRowsStatement('link_transitions', twin.page_id, survivor.page_id);
-  const movedTransitions = await tx.executeRaw(moveTransitionsSql.text, moveTransitionsSql.params);
-  const statements: Array<[string, unknown[]]> = [
-    [`DELETE FROM timeline_entries s WHERE s.page_id=$1 AND EXISTS (SELECT 1 FROM timeline_entries o WHERE o.page_id=$2 AND o.date=s.date
-        AND md5(o.summary)=md5(s.summary) AND o.source=s.source)`, params],
-    ['UPDATE timeline_entries SET page_id=$2 WHERE page_id=$1', params],
-    ['DELETE FROM timeline_entries s WHERE s.event_page_id=$1 AND EXISTS (SELECT 1 FROM timeline_entries o WHERE o.event_page_id=$2 AND o.date=s.date)', params],
-    ['UPDATE timeline_entries SET event_page_id=$2 WHERE event_page_id=$1', params],
-    ['UPDATE raw_data r SET page_id=$2 WHERE r.page_id=$1 AND NOT EXISTS (SELECT 1 FROM raw_data o WHERE o.page_id=$2 AND o.source=r.source)', params],
-    [`UPDATE tags o SET tag_source='added' WHERE o.page_id=$2 AND o.tag_source='frontmatter'
-        AND EXISTS (SELECT 1 FROM tags s WHERE s.page_id=$1 AND s.tag=o.tag AND s.tag_source='added')`, params],
-    ['UPDATE files SET page_id=$2, page_slug=$3 WHERE page_id=$1', [...params, survivor.slug]],
-    [`UPDATE page_aliases a SET slug=$3 WHERE a.source_id=$1 AND a.slug=$2
-        AND NOT EXISTS (SELECT 1 FROM page_aliases o WHERE o.source_id=$1 AND o.slug=$3 AND o.alias_norm=a.alias_norm AND o.origin=a.origin)`, [sourceId, twin.slug, survivor.slug]],
-  ];
-  for (const [sql, values] of statements) await tx.executeRaw(sql, values);
-  const tagsMoved = (await tx.executeRaw<{ tag: string }>(`UPDATE tags s SET page_id=$2 WHERE s.page_id=$1 AND s.tag_source IS DISTINCT FROM 'frontmatter'
-    AND NOT EXISTS (SELECT 1 FROM tags o WHERE o.page_id=$2 AND o.tag=s.tag) RETURNING tag`, params)).map(row => row.tag);
+  const ids = { twinId: twin.page_id, survivorId: survivor.page_id };
+  const relationships = await tx.moveTwinRelationships(ids);
+  const tagsMoved = await tx.moveTwinPageChildren({ ...ids, sourceId, twinSlug: twin.slug, survivorSlug: survivor.slug });
   await dropRekeyDuplicates(tx, sourceId, { where: 'f.entity_slug = $2 AND f.source_markdown_slug IS DISTINCT FROM $2', entity: '$3::text', sms: 'f.source_markdown_slug', params: [twin.slug, survivor.slug] });
-  const factIds = (await tx.executeRaw<{ id: number }>(`UPDATE facts SET entity_slug=$3 WHERE source_id=$1 AND entity_slug=$2
-    AND source_markdown_slug IS DISTINCT FROM $2 RETURNING id`, [sourceId, twin.slug, survivor.slug])).map(row => Number(row.id));
+  const factIds = await tx.moveTwinFacts(sourceId, twin.slug, survivor.slug);
   await recordRenameAlias(tx, sourceId, twin.slug, survivor.slug);
-  const after = [...await relationshipKeys(tx, 'links', [survivor.page_id]), ...await relationshipKeys(tx, 'link_transitions', [survivor.page_id])];
-  await refreshRelationships(tx, [...before, ...after]);
-  noteBelief({ kind: 'transferred', fromSlug: twin.slug, table: 'links', ids: movedLinks });
+  await refreshRelationships(tx, [...relationships.before, ...relationships.after]);
+  noteBelief({ kind: 'transferred', fromSlug: twin.slug, table: 'links', ids: relationships.linksMoved });
   noteBelief({ kind: 'transferred', fromSlug: twin.slug, table: 'facts', ids: factIds });
   await tx.softDeletePage(twin.slug, { sourceId });
   // The twin's import record goes with the twin: the checkpoint member deletes the row when given no keys, on this tx.
   await tx.writeOpCheckpointRecord(SYNC_IMPORT_PROVENANCE_OP, `${sourceId}:${input.incarnation}:${twin.page_id}`, null);
-  return { links_moved: movedLinks, facts_moved: factIds, transitions_moved: movedTransitions.length, tags_moved: tagsMoved, deduplicated: linkLosers.length + transitionLosers.length };
+  return { links_moved: relationships.linksMoved, facts_moved: factIds, transitions_moved: relationships.transitionsMoved, tags_moved: tagsMoved,
+    deduplicated: relationships.deduplicated };
 }

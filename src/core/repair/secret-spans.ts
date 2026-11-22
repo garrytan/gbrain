@@ -35,6 +35,7 @@
  * before writing (`preview_changed`) and again under its lock
  * (`changed_since_preview`), then re-scans what it wrote.
  */
+import { requireRawSql } from '../rust-engine/errors.ts';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
 import { trustedCliRequired } from '../ops/op-fix.ts';
@@ -485,6 +486,9 @@ export const secretSpansRepair: RepairHandler = {
       return { items: [], residuals: { pages_to_redact: 0, spans: 0, clean: 0, refused: 0, retained_versions: 0 },
         warnings: ['No page named, so nothing was read. Preview the pages to redact: gbrain repair secret-spans --source <id> --slug <slug>... (repeatable).'] };
     }
+    // The scan reads page fields and the secret store through raw SQL, and the Rust store keeps no secret store yet: an
+    // engine without raw SQL stops here by name, before any read.
+    requireRawSql(engine, 'repair secret-spans scan');
     const selection = selectionOf(scope, opts.slugs, opts.rules);
     const rules = resolveSecretRules(selection.rules);
     const command = previewCommand(selection);

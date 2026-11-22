@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1504/1511
+# covered: 1508/1515
 # lifecycle: 9/9
 # pages: 69/69
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 13/13
-# persistence_journal: 198/198
+# persistence_journal: 202/202
 # entity_reads: 17/17
 # cycle_locks: 10/10
 # minion_jobs: 8/8
@@ -93,15 +93,15 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	177	no	yes	yes	serves
+transaction	lifecycle	yes	179	no	yes	yes	serves
 transactionDirect	lifecycle	yes	14	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	146	yes	yes	yes	serves
+getPage	pages	yes	147	yes	yes	yes	serves
 readPageSnapshot	pages	yes	40	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	5	no	yes	yes	serves
-putPage	pages	yes	716	yes	yes	yes	serves
+putPage	pages	yes	721	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	24	yes	yes	yes	serves
@@ -294,11 +294,11 @@ getPageTimestamps	links	yes	1	no	yes	yes	serves
 getEffectiveDates	links	yes	10	no	yes	yes	serves
 getSalienceScores	links	yes	12	yes	yes	yes	serves
 findOrphanPages	links	yes	8	yes	yes	yes	serves
-addTag	tags	yes	23	yes	yes	yes	serves
+addTag	tags	yes	24	yes	yes	yes	serves
 removeTag	tags	yes	2	no	yes	yes	serves
 pruneFrontmatterTags	tags	yes	2	no	yes	yes	serves
 addPageTagsById	tags	yes	1	no	yes	yes	serves
-getTags	tags	yes	6	yes	yes	yes	serves
+getTags	tags	yes	7	yes	yes	yes	serves
 sampleEffectiveDates	timeline	yes	1	no	yes	yes	serves
 sampleEffectiveDateSources	timeline	yes	1	no	yes	yes	serves
 readMaxTimelineEntryId	timeline	yes	1	no	yes	yes	serves
@@ -462,7 +462,7 @@ readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
 insertFact	facts	yes	101	yes	yes	yes	serves
-insertFacts	facts	yes	169	no	yes	yes	serves
+insertFacts	facts	yes	170	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	66	no	yes	yes	serves
 listFactsByEntity	facts	yes	36	yes	yes	yes	serves
@@ -497,8 +497,8 @@ readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	3	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 listInlineVersionTexts	versions	yes	2	no	yes	yes	serves
-createVersion	versions	yes	53	no	yes	yes	serves
-getVersions	versions	yes	21	no	yes	yes	serves
+createVersion	versions	yes	54	no	yes	yes	serves
+getVersions	versions	yes	23	no	yes	yes	serves
 readLatestVersionId	versions	yes	1	no	yes	yes	serves
 readLatestVersionIdAtTier	versions	yes	1	no	yes	yes	serves
 stampVersionChangeReason	versions	yes	1	no	yes	yes	serves
@@ -684,6 +684,10 @@ reserveBudgetReservation	persistence_journal	yes	1	no	yes	yes	serves
 dispatchBudgetReservation	persistence_journal	yes	1	no	yes	yes	serves
 settleBudgetReservation	persistence_journal	yes	1	no	yes	yes	serves
 releaseBudgetReservation	persistence_journal	yes	1	no	yes	yes	serves
+moveTwinRelationships	persistence_journal	yes	1	no	yes	yes	serves
+moveTwinPageChildren	persistence_journal	yes	1	no	yes	yes	serves
+moveTwinFacts	persistence_journal	yes	1	no	yes	yes	serves
+movePageVersions	persistence_journal	yes	1	no	yes	yes	serves
 readRemirrorEffects	persistence_journal	yes	1	no	yes	yes	serves
 cancelWriteRow	persistence_journal	yes	2	no	yes	yes	serves
 readSourceMembership	persistence_journal	yes	69	no	yes	yes	serves

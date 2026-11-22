@@ -16,7 +16,7 @@
  *    legacy-twins previews the twin pair, on every arm; its apply merges the pair on the SQL arms (the twin's sync import
  *    record moves to the legacy page and the twin's op_checkpoints row is deleted through writeOpCheckpointRecord on the
  *    merge transaction), and the Rust engine refuses the merge by name and leaves the twin's record
- *    (`engine_capability_missing`, raw_sql, "gbrain repair legacy-twins merge") until the merge moves to typed members. Before batch 8 a Rust brain stopped at the raw import-record read (ghost-pages)
+ *    (`engine_capability_missing`, raw_sql, "repair twin merge") until the merge's store side is served. Before batch 8 a Rust brain stopped at the raw import-record read (ghost-pages)
  *    and the raw twin-merge conflict read (legacy-twins).
  *  - segmented-mirror on an owned brain: the preview walks the source's segmented pages (listSegmentedPageSlugs) and
  *    lists none when no page has a withdrawal ledger, and the apply of that empty preview is a no-op, on every arm.
@@ -176,8 +176,7 @@ describe('engine parity: repair kinds that need the owner host', () => {
     } catch (err) {
       if (backend === 'rust') {
         const text = JSON.stringify({ message: (err as Error).message, detail: (err as { detail?: unknown }).detail });
-        expect(text).toContain('gbrain repair legacy-twins merge');
-        expect(text).toContain('mergeTwinInto');
+        expect(text).toContain('repair twin merge');
         // Refused before the merge: the twin keeps its import record.
         expect(await records()).toEqual({ twin: true, legacy: false });
       }

@@ -18,6 +18,7 @@ import * as versions from './versions.ts';
 import * as pageOps from './page-ops.ts';
 import * as fenceRepairRecords from './fence-repair-records.ts';
 import * as budgetLedger from './budget-ledger.ts';
+import * as twinMerge from './twin-merge.ts';
 import * as extraction from './extraction.ts';
 import * as aliases from './aliases.ts';
 import * as pageBody from './page-body.ts';
@@ -134,7 +135,7 @@ export const STORE_MEMBERS = {
   getPage: pages.getPage, readPageSnapshot: pages.readPageSnapshot, putPage: pages.putPage, deletePage: pages.deletePage,
   softDeletePage: pages.softDeletePage, restorePage: pages.restorePage, listPages: pages.listPages, resolveSlugs: pages.resolveSlugs,
   // Planned families: a member is served once its family file exports it.
-  ...pageOps, ...fenceRepairRecords, ...budgetLedger, ...extraction, ...aliases, ...pageBody, ...facts, ...ontology, ...takes, ...contradictions, ...dream, ...dreamJournal,
+  ...pageOps, ...fenceRepairRecords, ...budgetLedger, ...twinMerge, ...extraction, ...aliases, ...pageBody, ...facts, ...ontology, ...takes, ...contradictions, ...dream, ...dreamJournal,
   ...evalCapture, ...codeEdges, ...salience, ...stats, ...rawFiles, ...linkQueries, ...timelineQueries, ...timelineRepairReads, ...keyword,
   ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...writeContext, ...relations, ...wantedLinks, ...trustWithdrawals, ...trustWriteGate, ...openLoops, ...loopMutes,
   ...sourceArchive,

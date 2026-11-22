@@ -189,14 +189,19 @@ A segmented page has no compiled truth on any engine, so an atom whose source pa
 counts as `origin_unread` everywhere.
 
 On Rust, the origin-twins plan always takes its no-owner path, because the worktree binding is not
-served yet, and its apply finds `pages_live_origin_key` present. So the kind previews and applies.
+served yet, and its apply finds `pages_live_origin_key` present. So the kind previews, and it applies
+in detach mode only: merge mode runs the twin merge, which stops by name (`repair twin merge`) before
+any read until its store side is served (`test/engine-parity/repair-twin-merge.test.ts`). The fold's
+version move `movePageVersions` is served (`repair_versions.rs`: each version re-keyed under the
+survivor, a missing survivor refused as the foreign key does); the twin moves
+(`moveTwinRelationships`, `moveTwinPageChildren`, `moveTwinFacts`) refuse by name.
 The safe-chunks apply re-seals chunks, a B6 writer. Pinned by
 `test/engine-parity/repair-page-scans.test.ts` and the store tests
 `scans_answer_what_the_sql_filters` and `repair_scan_pages_answer_each_query_shape`.
 
 The ghost-pages and legacy-twins plans stop off the owner host until the worktree binding is
 served. With a binding, ghost-pages previews and applies on Rust; legacy-twins finds its pairs and
-then reads `twinMergeConflicts` (`persistence/twin-merge.ts`), which still runs raw SQL.
+then reads `twinMergeConflicts` (`persistence/twin-merge.ts`); its merge stops by name (`repair twin merge`).
 
 ## Repair plan scans
 

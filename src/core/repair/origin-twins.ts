@@ -36,7 +36,7 @@ import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { maintenancePreflight, submitDatabaseMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { decideOriginTwins, ORIGIN_TWIN_REASON, readOriginClaimants, slugPathOccupied, type OriginClaimant, type OriginConflictReason, type OriginTwinVerdict } from '../persistence/origin-twins.ts';
-import { mergeTwinInto, twinMergeConflicts } from '../persistence/twin-merge.ts';
+import { mergeTwinInto, twinMergeConflicts, requireTwinMerge } from '../persistence/twin-merge.ts';
 import { buildOriginIndexIfClean, originTwinsRepairCommand } from '../persistence/origin-index.ts';
 import { legacySyncOrigin, sameSyncOrigin, syncOriginPath, type SyncOriginScope } from '../persistence/sync-origin.ts';
 import { frontmatterIdentity } from '../sync-rename-identity.ts';
@@ -303,6 +303,8 @@ export async function originPairNow(engine: BrainEngine, pair: OriginTwinPair, o
 /** Resolves one pair; a managed brain submits it under `requestId()`. Returns the receipt fields on success. */
 export async function resolveOriginTwin(ctx: OperationContext, pair: OriginTwinPair, owner: GhostOwner | null, requestId: () => Promise<string>): Promise<RepairItemOutcome> {
   const engine = ctx.engine;
+  // A merge runs mergeTwinInto, whose store side the Rust engine does not serve yet: it stops here by name, before any read.
+  if (pair.mode === 'merge') requireTwinMerge(engine);
   const moved = await originPairNow(engine, pair, owner);
   if (moved) return changed(moved);
   if (await managedPersistenceEnabled(engine)) {

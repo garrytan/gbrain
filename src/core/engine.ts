@@ -4815,6 +4815,14 @@ export interface BrainEngine {
   settleBudgetReservation(key: import('./engine-sql/budget-ledger-writes.ts').BudgetLedgerKey, id: string, actual: string): Promise<import('./engine-sql/budget-ledger-writes.ts').BudgetSettleRow | null>;
   /** Releases a held reservation and frees its estimate; true when released. */
   releaseBudgetReservation(key: import('./engine-sql/budget-ledger-writes.ts').BudgetLedgerKey, id: string): Promise<boolean>;
+  /** The twin merge: drops the twin's colliding derived links and transitions and moves the rest onto the survivor, with the relationship keys before and after (engine-sql/twin-merge-moves.ts). Run it in the merge's transaction. */
+  moveTwinRelationships(ids: import('./engine-sql/twin-merge-moves.ts').TwinMergeIds): Promise<import('./engine-sql/twin-merge-moves.ts').TwinRelationshipMoves>;
+  /** The twin merge: moves the twin's timeline rows and events, raw data, user-added tags, files and free-text aliases to the survivor; the tags moved. */
+  moveTwinPageChildren(move: import('./engine-sql/twin-merge-moves.ts').TwinPageChildrenMove): Promise<string[]>;
+  /** The twin merge: rekeys the facts other pages assert about the twin's slug to the survivor's; the moved fact ids. */
+  moveTwinFacts(sourceId: string, twinSlug: string, survivorSlug: string): Promise<number[]>;
+  /** The moved-pages fold: moves every page version of `fromPageId` to `toPageId`; the moved version ids in id order. */
+  movePageVersions(fromPageId: number, toPageId: number): Promise<number[]>;
   /** The latest `finished_at` of the completed jobs named `name`, as UTC ISO seconds, or null. */
   readLastFinishedJobAt(name: string): Promise<string | null>;
   /** `gbrain repair segmented-mirror`: the effects of request row `requestId` the apply waits on, in kind order. */

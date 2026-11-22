@@ -397,6 +397,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'insertRemirrorEffects', 'readRemirrorEffects', 'listGlobalPurgeWithdrawals',
   // The batch 9 fence repair bookkeeping (engine-sql/fence-repair-records.ts; test/engine-parity/repair-fence-records.test.ts)
   'listSourceCheckpointRecords', 'insertOpCheckpointIfAbsent', 'replaceOpCheckpointAtVersion', 'readOldestSyncHoldAt',
+  // The batch 6b twin-merge moves (engine-sql/twin-merge-moves.ts; test/engine-parity/repair-twin-merge.test.ts)
+  'moveTwinRelationships', 'moveTwinPageChildren', 'moveTwinFacts', 'movePageVersions',
   // The batch 9 daily budget ledger writes (engine-sql/budget-ledger-writes.ts; test/engine-parity/budget-ledger-writes.test.ts)
   'reclaimBudgetReservations', 'reserveBudgetReservation', 'dispatchBudgetReservation', 'settleBudgetReservation', 'releaseBudgetReservation',
   // The write owner's housekeeping scans (engine-sql/persistence-owner-scans.ts).
