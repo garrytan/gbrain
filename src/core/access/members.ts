@@ -21,6 +21,7 @@
  * sets it (`gbrain access member kind`, `member add --kind`); a remote caller is refused.
  */
 import type { BrainEngine } from '../engine.ts';
+import { lacksRawSql } from '../engine-capabilities.ts';
 import type { AccessMemberRow } from '../engine-sql/access-control.ts';
 import { sqlQueryForEngine, type SqlQuery } from '../sql-query.ts';
 import { forgetWakePrincipal } from '../wakeshift/forget.ts';
@@ -465,13 +466,14 @@ export class MemberBindingRefused extends Error {
  * with its groups. Null for an unbound credential (no member_id, or a schema
  * that predates the column). A binding to a disabled, removed or missing
  * member throws MemberBindingRefused, and so does an unreadable member table.
- * With an engine the member is its readAccessMembers({ id }) row (any status,
- * with its groups), so a store with no raw SQL (the Rust engine) verifies too.
+ * With an engine that runs no raw SQL (the Rust engine) the member is its
+ * readAccessMembers({ id }) row (any status, with its groups); every other engine keeps the
+ * minimal statement below, which a brain with later member columns still pending can run.
  */
 export async function verifiedMember(sql: SqlQuery, memberId: unknown, engine?: Pick<BrainEngine, 'readAccessMembers'>): Promise<{ id: string; groups: string[] } | null> {
   if (memberId == null) return null;
   if (typeof memberId !== 'string' || !ACCESS_ID_RE.test(memberId)) throw new MemberBindingRefused(String(memberId), 'malformed');
-  const [row] = engine ? await engine.readAccessMembers({ id: memberId }) : await sql`SELECT m.id, m.disabled_at, m.tombstoned_at,
+  const [row] = engine && lacksRawSql(engine) ? await engine.readAccessMembers({ id: memberId }) : await sql`SELECT m.id, m.disabled_at, m.tombstoned_at,
     COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
     FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
     WHERE m.id = ${memberId} GROUP BY m.id`;

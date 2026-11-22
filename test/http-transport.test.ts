@@ -36,6 +36,8 @@ interface FakeEngine {
   /** Raw `INSERT INTO mcp_request_log` statements that reached executeRaw (none expected). */
   rawLogInserts: string[];
   logMcpRequest: (row: { token_name: string | null; agent_name: string | null; operation: string; latency_ms: number | null; status: string }) => Promise<void>;
+  readActiveAccessTokenByHash: (hash: string, caller: TokenByHashCaller) => Promise<Record<string, unknown> | null>;
+  touchAccessTokenLastUsed: (id: string, unified: boolean) => Promise<void>;
 }
 
 function makeSqlTag(handler: SqlHandler) {
