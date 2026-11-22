@@ -24,6 +24,7 @@
  * a real bare remote, a pushing clone and the managed checkout.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { spawn } from 'node:child_process';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -120,6 +121,24 @@ test('setting on: the text result names the publish', () => each(async f => {
   try { await runSourcesRefresh(f.engine, [f.alpha]); } finally { console.log = log; _resetCliExitVerdictForTests(); process.exitCode = 0; }
   expect(out.join('\n')).toContain('Published 1 local commit(s) merged with 1 upstream commit(s) as ');
   expect(out.join('\n')).toContain('Refresh completed');
+}), 120_000);
+
+test.skipIf(!Bun.which('flock'))('GST-3497: a publish that finds the push lock held refuses refresh_diverged, retryable, naming the lock, and changes nothing', () => each(async f => {
+  const local = diverge(f);
+  const remote = remoteHead(f);
+  await f.engine.setConfig(REFRESH_PUBLISH_DIVERGED_KEY, 'true');
+  const holder = spawn('flock', ['-o', join(git(f.root, 'rev-parse', '--absolute-git-dir'), 'brain-publish.lock'), 'sleep', '60'], { stdio: 'ignore' });
+  try {
+    await new Promise(r => setTimeout(r, 300));
+    const error = await refusedWith(refreshWorktree(f.engine, f.alpha), 'refresh_diverged') as { message?: string; suggestion?: string; retryable?: boolean; reason?: string };
+    expect(error.retryable).toBe(true);
+    expect(error.reason).toBe('publish_lock_busy');
+    expect(error.message).toContain('holds this checkout\'s push lock');
+    expect(error.suggestion).toContain('publishes them again on its own');
+    expect(remoteHead(f)).toBe(remote);
+    expect(f.head()).toBe(local);
+    expect(await f.refreshRows()).toEqual([]);
+  } finally { holder.kill('SIGKILL'); }
 }), 120_000);
 
 test('setting off (false, or unset while Git durability is not on): the refresh refuses refresh_diverged, pushes nothing and names the way to turn it on', () => each(async f => {

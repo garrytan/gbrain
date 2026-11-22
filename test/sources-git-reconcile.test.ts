@@ -196,6 +196,13 @@ test('managed worktree: Git durability on publishes through refresh and a repeat
       expect(off[0].sources.sort()).toEqual([f.alpha, f.beta].sort());
       await engine.executeRaw(`UPDATE persistence_host_bindings SET git_durability='enabled' WHERE local_path LIKE $1`, [`${f.root}%`]);
       try {
+        if (Bun.which('flock')) {
+          const holder = spawn('flock', ['-o', join(git(f.root, 'rev-parse', '--absolute-git-dir'), 'brain-publish.lock'), 'sleep', '60'], { stdio: 'ignore' });
+          try {
+            await new Promise(r => setTimeout(r, 300));
+            expect(await reconcileSources(engine, { sourceIds: [f.alpha, f.beta] })).toMatchObject([{ managed: true, status: 'failed', error: { code: 'refresh_diverged' } }]);
+          } finally { holder.kill('SIGKILL'); }
+        }
         const [done] = await reconcileSources(engine, { sourceIds: [f.alpha, f.beta] });
         expect(done).toMatchObject({ managed: true, status: 'published', ahead: 1, behind: 1 });
         git(f.root, 'merge-base', '--is-ancestor', local, 'HEAD');

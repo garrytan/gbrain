@@ -563,7 +563,7 @@ async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTi
       'Git durability is not on for this worktree, so nothing leaves it through Git on its own.',
       ` To let every refresh publish it on its own, the user can turn Git durability on (gbrain sources writer git-durability ${sourceId} --enable) or run gbrain config set ${REFRESH_PUBLISH_DIVERGED_KEY} true.`);
     const localCommits = Number((await read(['rev-list', '--count', `${targetHead}..${oldHead}`])).stdout.trim()) || 0;
-    const pushed = await publishInChild(root, sourceId, targetHead);
+    const pushed = await publishInChild(root, sourceId, targetHead).catch(error => { throw error instanceof OperationError && error.reason === 'publish_lock_busy' ? unpublishedRefusal(root, sourceId, upstreamRef, localCommits, error) : error; });
     const published = { sha: pushed.sha ?? targetHead, local_commits: localCommits, integrated: pushed.integrated,
       ...(pushed.quarantined ? { quarantined: pushed.quarantined } : {}), ...(pushed.superseded_remote_paths ? { superseded_remote_paths: pushed.superseded_remote_paths } : {}) };
     const plan = await precheck(engine, git, sourceId, fetchTimeoutMs, false, run).catch(async error => { notePublished(error, published); throw error instanceof OperationError && error.code === 'refresh_diverged' && await revParse(git, root, 'HEAD') !== oldHead ? retryInTick(error) : error; });
@@ -596,7 +596,7 @@ async function publishInChild(root: string, sourceId: string, checkedUpstream: s
   if (!child.error && doc?.outcome === 'pushed') return doc as { sha: string | null; integrated: number; quarantined?: QuarantineEntry; superseded_remote_paths?: string[] };
   if (doc && typeof doc.code === 'string' && typeof doc.message === 'string') {
     throw opError(doc.code as Parameters<typeof opError>[0], doc.message, typeof doc.suggestion === 'string' ? doc.suggestion : '',
-      { ...(typeof doc.detail === 'string' ? { detail: doc.detail } : {}), ...(doc.fix ? { fix: doc.fix as Action } : {}), retryable: doc.retryable === true });
+      { ...(typeof doc.detail === 'string' ? { detail: doc.detail } : {}), ...(doc.fix ? { fix: doc.fix as Action } : {}), ...(typeof doc.reason === 'string' ? { reason: doc.reason } : {}), retryable: doc.retryable === true });
   }
   throw opError('push_unconfirmed', `The publish of the diverged checkout ${root} did not report a push (${child.error ? `exit ${String(child.error.code ?? child.error.signal ?? 'unknown')}` : `outcome ${String(doc?.outcome ?? 'unreadable')}`}: ${child.stderr.trim().slice(0, 300) || 'no detail'}); the refresh stopped before fencing anything, and the remote may already hold the merge.`,
     `Check gbrain sources writer status --source ${sourceId} --json, then retry gbrain sources refresh ${sourceId}.`, { retryable: true });
@@ -617,6 +617,23 @@ async function divergedRefusal(git: Git, root: string, sourceId: string, upstrea
     why: `HEAD has ${local} that ${upstreamRef} lacks while ${upstreamRef} moved on; pushing HEAD merged with it makes HEAD an ancestor of the upstream, so the refresh can fast-forward.`,
     user_message: rewrite ? `The checkout of source ${sourceId} cannot be published on its own: ${rewrite} Push this checkout's history merged with the remote anyway, or replace the checkout with gbrain sources reclone ${sourceId}?`
       : `The checkout of source ${sourceId} has ${local} that were never pushed while its remote moved on. Push them, merged with the remote, so gbrain can bring the checkout up to date? Conflicting files stop the push and change nothing.`,
+    docs: 'docs/guides/write-refusals.md#refresh_diverged' };
+  return error;
+}
+/**
+ * GST-3497: the refresh's own publish of a diverged checkout found another publish holding the push lock, so it pushed
+ * nothing and the checkout is still diverged: refuse refresh_diverged, as doctor git_convergence says, naming the holder.
+ * It is retryable: the next refresh publishes again on its own.
+ */
+function unpublishedRefusal(root: string, sourceId: string, upstreamRef: string, localCommits: number, cause: OperationError): OperationError {
+  const argv = ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', root, '--json'];
+  const error = refusal('refresh_diverged',
+    `The checkout has ${localCommits} local commit(s) that ${upstreamRef} lacks while ${upstreamRef} moved on, and this refresh's publish of them merged with the upstream did not run: ${cause.message} Nothing changed.`,
+    `The next gbrain sources refresh ${sourceId} publishes them again on its own. To publish now, run ${argv.map(q).join(' ')} (it waits for a running publish, merges in memory, refuses on a conflict and never moves the checkout), then retry gbrain sources refresh ${sourceId}.`);
+  error.retryable = true;
+  error.reason = 'publish_lock_busy';
+  error.fix = { argv, consent: [], actor: 'agent', requires_exclusive: false,
+    why: `Refresh publishing is on for this checkout, so its local commits are already cleared to publish; this runs the same keep-checkout publish, waiting for the running one instead of stopping.`,
     docs: 'docs/guides/write-refusals.md#refresh_diverged' };
   return error;
 }
