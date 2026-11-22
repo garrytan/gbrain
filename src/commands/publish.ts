@@ -22,7 +22,7 @@ import { opError } from '../core/ops/contract.ts';
 
 // Inline marked.js so published HTML is truly self-contained (no CDN dependency). It is embedded at build time
 // because a compiled binary has no node_modules (#10019), and vendored because marked's exports hide the UMD file.
-import MARKED_JS from '../../vendor/marked/marked.umd.js' with { type: 'text' };
+import { MARKED_JS } from '../../vendor/marked/marked-source.ts';
 
 // ── Content stripping ──────────────────────────────────────────────
 
