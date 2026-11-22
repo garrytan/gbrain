@@ -3,11 +3,23 @@ import { hasFlag, parseFlag, type JobsCommandContext } from './shared.ts';
 import { formatNice, getEffectiveNiceness } from '../../core/minions/niceness.ts';
 import { DREAM_INLINE_PRIVATE_QUEUE_PREFIX, deriveWedgeSignal } from '../../core/minions/queue.ts';
 import type { QueueFamilyStats } from '../../core/minions/queue-families.ts';
+import { postgresStatusReadError } from '../../cli/postgres-status-read-error.ts';
 
-export async function runJobsStats({ args, engine, queue }: JobsCommandContext): Promise<void> {
+export async function runJobsStats(context: JobsCommandContext): Promise<void> {
+  try { await readJobsStats(context); }
+  catch (error) { throw hasFlag(context.args, '--json') ? postgresStatusReadError(error, context.engine.kind) : error; }
+}
+
+async function ensureStatsSchema(args: string[], queue: JobsCommandContext['queue']): Promise<void> {
   try { await queue.ensureSchema(); }
-  catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
+  catch (e) {
+    if (hasFlag(args, '--json')) throw e;
+    console.error(e instanceof Error ? e.message : String(e)); process.exit(1);
+  }
+}
 
+async function readJobsStats({ args, engine, queue }: JobsCommandContext): Promise<void> {
+  await ensureStatsSchema(args, queue);
   const statsQueue = parseFlag(args, '--queue') ?? 'default';
   const stats = await queue.getStats({ queue: statsQueue });
 
