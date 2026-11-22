@@ -3547,6 +3547,10 @@ export interface BrainEngine {
   openBodyStaging(input: BodyStagingInput): Promise<void>;
   /** Move a staging to a new state; `commitRequestId` with `committed`. */
   setBodyStagingState(id: string, state: BodyStagingState, opts?: { commitRequestId?: string | null }): Promise<void>;
+  /** The state of a body staging, row-locked in the transaction (a create checks its staging is live before it flips); null when no staging has the id. */
+  readBodyStagingState(id: string): Promise<string | null>;
+  /** Deletes the page's chunk rows staged for body generation `generation` whose index is not in `keepIndexes` (a replace keeps the chunks its preparation staged). */
+  deleteStagedChunksNotIn(pageId: number, generation: number, keepIndexes: readonly number[]): Promise<void>;
   /** Garbage collection: retired chunks and dead manifest rows (versions are roots), unreferenced texts past the grace window, expired stagings. */
   sweepSegments(opts?: SegmentSweepOptions): Promise<SegmentSweepResult>;
   /** Whether any body staging or segment text exists: the vacuum's one probe before it sweeps (engine-sql/write-guards.ts). */

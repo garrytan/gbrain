@@ -237,9 +237,10 @@ async function writePage(tx: BrainEngine, planned: Planned): Promise<{ unsealed:
   const pageChanged = planned.results.some((result, index) => result.spans.length > 0 && (fieldOf(index).store === 'page' || fieldOf(index).store === 'frontmatter'));
   let unsealed = false;
   if (pageChanged && page.body_storage === 'segmented') {
-    // Staging, flipping and sealing a segmented body (persistence/segmented-apply.ts, page-body/ingest.ts) run raw SQL the Rust
-    // store does not serve: an engine without it stops here by name, before the page is written. (A Rust brain holds no
-    // segmented page that the TypeScript import path could make: page body staging refuses there too.)
+    // Staging a replacement of a segmented body (page-body/ingest.ts occurrencesWithoutChunks, hasStaleChunks) and the page's
+    // ledger and chunk-vector reuse reads (page-body/segment-ledger.ts, segment-chunks.ts) still send raw SQL the Rust store
+    // does not serve: an engine without it stops here by name, before the page is written. (A segmented page is created through
+    // typed members now: persistence/segmented-apply.ts applySegmentedBody, test/engine-parity/repair-secret-spans.test.ts.)
     requireRawSql(tx, 'repair secret-spans segmented body write');
     const { principal } = await maintenanceAttribution(tx);
     const prepared = await prepareSegmentedBody(tx, { sourceId: page.source_id, slug: page.slug, title, type: page.type, frontmatter, tags: page.tags,

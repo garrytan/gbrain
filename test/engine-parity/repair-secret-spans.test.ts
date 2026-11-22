@@ -34,6 +34,7 @@ import { repairRunner } from '../../src/core/repair/registry.ts';
 import { allowedMatcher, countsByRule, entryRow, insertBackupRows, isAllowed, keysInUse, listEntries, markerOf, occurrencesOf, recordOccurrence, seal, sealWithId,
   storeSnapshot, unreferencedEntryCount } from '../../src/core/secret-store/store.ts';
 import { applyRestore, previewRestore } from '../../src/core/secret-store/restore.ts';
+import { sealSegmentedPage, stageSegmentedImport } from '../../src/core/persistence/segmented-apply.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -46,6 +47,7 @@ const BEARER = 'EXAMPLEtokenNOTreal' + '1234567890abcdef';
 const SECRETS = [OPENAI, AWS, GITHUB, BEARER];
 const SRC = 'default';
 const ALPHA = 'notes/alpha-example';
+const SEGMENTED = 'notes/segmented-example';
 const CLEAN = 'notes/clean-example';
 const ALPHA_BODY = ['# Alpha Example', '', `The deploy notes keep the old key ${OPENAI} here.`, `Authorization: Bearer ${BEARER}`,
   `The token ${BEARER} appears again bare.`, 'Nothing else changes, not even this line.'].join('\n');
@@ -81,6 +83,27 @@ async function seedPages(engine: BrainEngine) {
   await engine.putRawData(ALPHA, 'test', { request: { headers: { authorization: `Bearer ${BEARER}` }, ids: [1, 2] }, note: 'kept as is' }, { sourceId: SRC });
   await engine.upsertChunks(ALPHA, [{ chunk_index: 0, chunk_text: ALPHA_BODY, chunk_source: 'compiled_truth' }, { chunk_index: 1, chunk_text: 'A clean chunk.', chunk_source: 'compiled_truth' }], { sourceId: SRC });
   return { alpha: Number(alpha.id), clean: Number(clean.id) };
+}
+
+/** A segmented page whose stored body holds credentials, created through the staging members only (no raw SQL on any arm). */
+async function seedSegmented(engine: BrainEngine) {
+  const body = ['# Segmented Example', '', `The deploy notes keep the old key ${OPENAI} here.`, `Authorization: Bearer ${BEARER}`, 'Nothing else changes, not even this line.'].join('\n');
+  const staged = await stageSegmentedImport(engine, { slug: SEGMENTED, sourceId: SRC, existing: null,
+    page: { title: 'Segmented Example', type: 'note', compiled_truth: body, timeline: '', frontmatter: {}, tags: [] },
+    policy: { segmented: true, maxBytes: 1e9, flipRetireMaxRows: 1000, versionsMaxPerPage: 10, versionsMaxPinnedBytes: 1e9 } as never,
+    chunking: { quarantined: false, tier: 'none', corpusGeneration: null } as never, baseRevision: null });
+  const created = await engine.transaction(async tx => {
+    const applied = await staged.apply(tx, { title: 'Segmented Example', type: 'note' as never, frontmatter: {}, page_kind: 'markdown' as never } as never, { mode: 'none', corpusGeneration: null });
+    if (applied.complete) await sealSegmentedPage(tx, applied.pageId);
+    return applied;
+  });
+  /** The page's stored body, segment by segment, as the manifest orders it. */
+  const storedBody = async () => {
+    const rows = await engine.readManifest(created.pageId);
+    const texts = await engine.readSegmentTexts(SRC, rows.map(row => row.sha256));
+    return rows.map(row => Buffer.from(texts.get(Buffer.from(row.sha256).toString('hex')) ?? new Uint8Array()).toString('utf8')).join('');
+  };
+  return { created, storedBody };
 }
 
 const runKind = async (engine: BrainEngine, opts: { apply: boolean; slugs: string[]; expect?: string }) =>
@@ -162,6 +185,46 @@ describe('engine parity: repair secret-spans', () => {
       versions: (await engine.getVersions(ALPHA, { sourceId: SRC, includeBody: true } as never)).map(v => v.compiled_truth),
       places: occurrences.map(list => list.map(o => [o.slug, o.field, o.origin]).sort()).sort(),
       byRule: await engine.countSecretsByRule(SRC), second: { affected: again.affected, residuals: again.residuals } });
+    });
+  });
+
+  parityTest('a segmented page is created through the staging, manifest and flip members and stores the same body, sealed, on every arm', {
+    methods: ['openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'createSegmentedPageShell', 'flipBodyGeneration', 'setBodyStagingState', 'readBodyStagingState',
+      'readManifest', 'readSegmentTexts', 'sealSegmentedPage', 'readPageSnapshot'],
+    timeout: 180_000,
+  }, async engine => {
+    const { created, storedBody } = await seedSegmented(engine);
+    expect(created.complete).toBe(true);
+    const snapshot = await engine.readPageSnapshot(SEGMENTED, { sourceId: SRC });
+    const rows = await engine.readManifest(created.pageId);
+    expect(await storedBody()).toContain(OPENAI);
+    // The two members the apply sends: a staging no write opened reads null; a generation no chunk was staged for deletes nothing.
+    const unknownStaging = await engine.readBodyStagingState('99999999-9999-4999-8999-999999999999');
+    await engine.deleteStagedChunksNotIn(created.pageId, 99, []);
+    expect(unknownStaging).toBeNull();
+    return { unknownStaging, body: await storedBody(), manifestRows: rows.length, sealed: snapshot!.page.text_projection_revision === snapshot!.revision };
+  });
+
+  parityTest('a segmented page: the apply rewrites its stored body through the staging and flip members, seals it and leaves a second preview empty', {
+    methods: ['openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'createSegmentedPageShell', 'flipBodyGeneration', 'setBodyStagingState', 'readBodyStagingState', 'deleteStagedChunksNotIn',
+      'readManifest', 'readSegmentTexts', 'sealSegmentedPage', 'readPageSnapshot'],
+    // The replacement's preparation reads chunk and ledger rows through raw SQL: the Rust arm stops on that refusal by name.
+    requires: 'raw_sql',
+    timeout: 180_000,
+  }, async engine => {
+    const { storedBody } = await seedSegmented(engine);
+    return inHome(async () => {
+      const preview = await runKind(engine, { apply: false, slugs: [SEGMENTED] });
+      expect(preview.affected).toBe(1);
+      const result = await runKind(engine, { apply: true, slugs: [SEGMENTED], expect: preview.preview_hash });
+      expect(result.applied).toBe(1);
+      expect(result.outcomes).toEqual({ redacted: 1 });
+      const after = await storedBody();
+      expect(leaked(after)).toEqual([]);
+      const snapshot = await engine.readPageSnapshot(SEGMENTED, { sourceId: SRC });
+      const again = await runKind(engine, { apply: false, slugs: [SEGMENTED] });
+      return norm({ outcomes: result.outcomes, items: (result.outcome_items ?? []).map(item => ({ item: item.item, outcome: item.outcome, detail: item.detail })),
+        body: after, sealed: snapshot!.page.text_projection_revision === snapshot!.revision, second: { affected: again.affected, residuals: again.residuals } });
     });
   });
 

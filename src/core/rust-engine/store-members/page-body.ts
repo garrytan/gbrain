@@ -213,6 +213,15 @@ export const setBodyStagingState: StoreMember<[id: string, state: BodyStagingSta
     await bodyCall('setBodyStagingState', () => brain.setBodyStagingState(id, state, o));
   };
 
+/** The staging's state, or null for an id no staging has. The store's write is exclusive, so there is no row lock to take. */
+export const readBodyStagingState: StoreMember<[id: string], string | null> = (brain, id) =>
+  bodyCall('readBodyStagingState', () => brain.readBodyStagingState(id)) as Promise<string | null>;
+
+export const deleteStagedChunksNotIn: StoreMember<[pageId: number, generation: number, keepIndexes: readonly number[]], void> =
+  async (brain, pageId, generation, keepIndexes) => {
+    await storeCall({ member: 'deleteStagedChunksNotIn' }, () => brain.deleteStagedChunksNotIn(pageId, generation, [...keepIndexes]));
+  };
+
 export const sweepSegments: StoreMember<[opts?: SegmentSweepOptions], SegmentSweepResult> = async (brain, opts) => {
   const o = takeOptions('sweepSegments', opts, ['sourceId', 'pageId', 'graceMs', 'expireStagings', 'now']);
   if (o.now instanceof Date) o.now = o.now.toISOString();

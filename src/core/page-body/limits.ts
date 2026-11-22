@@ -68,9 +68,9 @@ export const STAGE_BATCH_BYTES: Readonly<Record<'postgres' | 'pglite', number>> 
   pglite: 4 * 1024 ** 2,
 };
 
-/** STAGE_BATCH_BYTES for the engine's kind; a Rust brain stages no SQL rows, so it is refused (`engine_capability_missing`). */
+/** STAGE_BATCH_BYTES for the engine's kind. A Rust brain stages no SQL rows (typed members write its records), so its batches are the Postgres size, which bounds one binding call's payload there as well. */
 export function stageBatchBytes(kind: EngineKind): number {
-  return STAGE_BATCH_BYTES[sqlEngineKind(kind, 'page body staging')];
+  return kind === 'rust' ? STAGE_BATCH_BYTES.postgres : STAGE_BATCH_BYTES[sqlEngineKind(kind, 'page body staging')];
 }
 
 /**

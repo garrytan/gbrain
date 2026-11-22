@@ -336,6 +336,8 @@ export const RUST_ENGINE_MEMBERS = {
   sealSegmentedPage: 'page_body',
   openBodyStaging: 'page_body',
   setBodyStagingState: 'page_body',
+  readBodyStagingState: 'page_body',
+  deleteStagedChunksNotIn: 'page_body',
   sweepSegments: 'page_body',
   hasSegmentStorage: 'page_body',
   readSegmentDerivations: 'page_body',

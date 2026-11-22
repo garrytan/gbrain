@@ -428,6 +428,18 @@ export async function sealSegmentedPage(exec: SqlExecutor, pageId: number, timel
     FROM (SELECT ${sanitizeRemoteBody(timeline)}::text AS lead) seal WHERE pages.id = ${pageId}`);
 }
 
+/** The state of a body staging, row-locked in the caller's transaction (`FOR UPDATE`); null when no staging has the id. */
+export async function readBodyStagingState(exec: SqlExecutor, id: string): Promise<string | null> {
+  const [row] = await exec.executeRaw<{ state: string }>('SELECT state FROM page_body_stagings WHERE id=$1::uuid FOR UPDATE', [id]);
+  return row?.state ?? null;
+}
+
+/** Deletes the page's chunk rows staged for body generation `generation` whose chunk index is not in `keepIndexes`. */
+export async function deleteStagedChunksNotIn(exec: SqlExecutor, pageId: number, generation: number, keepIndexes: readonly number[]): Promise<void> {
+  await exec.executeRaw('DELETE FROM content_chunks WHERE page_id=$1 AND body_generation=$2 AND NOT (chunk_index = ANY($3::int[]))',
+    [pageId, generation, [...keepIndexes]]);
+}
+
 export async function setBodyStagingState(exec: SqlExecutor, id: string, state: BodyStagingState, opts: { commitRequestId?: string | null } = {}): Promise<void> {
   const { rows } = await exec.run<{ id: string }>(sqlFragment`UPDATE page_body_stagings SET state = ${state}, updated_at = now(),
       idle_expires_at = CASE WHEN ${state} = ANY(${LIVE_STAGING_STATES}::text[])

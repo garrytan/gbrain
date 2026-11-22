@@ -1763,6 +1763,40 @@ impl Store {
         })
     }
 
+    /// `readBodyStagingState(id)`: the staging's state, or `None` for an id no staging has. The
+    /// store's write is exclusive, so PGLite's `FOR UPDATE` row lock has nothing to take. A
+    /// staging id that is not a uuid is refused, as the `::uuid` cast refuses it.
+    pub fn read_body_staging_state(&self, id: &str) -> Result<Option<String>> {
+        let id = staging_id_arg(id)?;
+        let record: Option<StagingRecord> = get_json(&*self.read()?, &staging_key(&id))?;
+        Ok(record.map(|r| r.state))
+    }
+
+    /// `deleteStagedChunksNotIn(pageId, generation, keepIndexes)`: removes the page's segment
+    /// chunks staged for body `generation` whose chunk index is not in `keep_indexes`, with their
+    /// postings and vectors. An inline chunk (no segment place) is never staged for a generation, so
+    /// it is left, as `body_generation = $2` leaves a row whose generation is NULL.
+    pub fn delete_staged_chunks_not_in(
+        &self,
+        page_id: i64,
+        generation: i64,
+        keep_indexes: &[i64],
+    ) -> Result<()> {
+        let page_id = u64::try_from(page_id)
+            .map_err(|_| StoreError::invalid(format!("pageId is not an id: {page_id}")))?;
+        let generation = u64::try_from(generation).ok();
+        self.write(|tx| {
+            if let Some(generation) = generation {
+                crate::chunks::delete_chunks_matching(tx, page_id, &|c| {
+                    c.segment
+                        .is_some_and(|place| place.body_generation == generation)
+                        && !keep_indexes.contains(&i64::from(c.chunk_index))
+                })?;
+            }
+            Ok(())
+        })
+    }
+
     /// `openBodyStaging(input)`: a new staging in state `open`. Refuses a taken id or client
     /// request (principal kind, principal id, client request id), an unknown source or page, an
     /// unknown kind or mode, and negative declared bytes.
@@ -2562,6 +2596,33 @@ mod tests {
         .unwrap()
     }
 
+    #[test]
+    fn a_staging_reads_its_state_and_an_unknown_one_reads_none() {
+        let store = crate::test_support::store();
+        let staging = "11111111-1111-4111-8111-111111111111";
+        assert_eq!(store.read_body_staging_state(staging).unwrap(), None);
+        store
+            .open_body_staging(&staging_input(
+                staging,
+                "default",
+                None,
+                "44444444-4444-4444-8444-444444444444",
+            ))
+            .unwrap();
+        assert_eq!(
+            store.read_body_staging_state(staging).unwrap().as_deref(),
+            Some("open")
+        );
+        store
+            .set_body_staging_state(staging, "aborted", &StagingStateOptions::default())
+            .unwrap();
+        assert_eq!(
+            store.read_body_staging_state(staging).unwrap().as_deref(),
+            Some("aborted")
+        );
+        assert!(store.read_body_staging_state("not-a-uuid").is_err());
+    }
+
     fn count(store: &Store, prefix: &[u8]) -> usize {
         let read = store.read().unwrap();
         let mut n = 0;
@@ -3149,6 +3210,51 @@ mod segment_chunk_tests {
             vec![2]
         );
         assert_eq!(visible(&store, id), vec!["one a", "one b", "two"]);
+    }
+
+    #[test]
+    fn a_replace_deletes_the_staged_chunks_it_did_not_keep_for_its_generation_only() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        store
+            .stage_segment_chunks(
+                id,
+                1,
+                &[chunk(1, 0, "a"), chunk(1, 1, "b"), chunk(2, 0, "c")],
+            )
+            .unwrap();
+        store
+            .stage_segment_chunks(id, 2, &[chunk(3, 0, "d"), chunk(3, 1, "e")])
+            .unwrap();
+        let rows = |store: &Store| -> Vec<(u32, String)> {
+            let mut rows: Vec<_> = crate::chunks::read_chunks(&*store.read().unwrap(), id as u64)
+                .unwrap()
+                .into_iter()
+                .map(|c| (c.chunk_index, c.chunk_text))
+                .collect();
+            rows.sort();
+            rows
+        };
+        let all = |texts: &[&str]| -> Vec<(u32, String)> {
+            texts
+                .iter()
+                .enumerate()
+                .map(|(i, t)| (i as u32, (*t).to_string()))
+                .collect()
+        };
+        assert_eq!(rows(&store), all(&["a", "b", "c", "d", "e"]));
+        // Generation 2 keeps index 3 only; generation 1 is not its to delete.
+        store.delete_staged_chunks_not_in(id, 2, &[3]).unwrap();
+        let after = rows(&store);
+        assert_eq!(after.len(), 4);
+        assert!(after.iter().any(|(i, t)| *i == 3 && t == "d"));
+        assert!(!after.iter().any(|(_, t)| t == "e"));
+        // Nothing kept deletes the generation's chunks; a generation that has none changes nothing.
+        store.delete_staged_chunks_not_in(id, 2, &[]).unwrap();
+        assert_eq!(rows(&store).len(), 3);
+        store.delete_staged_chunks_not_in(id, 9, &[]).unwrap();
+        assert_eq!(rows(&store).len(), 3);
+        assert!(store.delete_staged_chunks_not_in(-1, 2, &[]).is_err());
     }
 
     fn lead(store: &Store, id: i64) -> Option<String> {

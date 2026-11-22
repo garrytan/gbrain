@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1544/1551
+# covered: 1546/1553
 # lifecycle: 9/9
 # pages: 69/69
 # search: 7/7
@@ -26,7 +26,7 @@
 # dream: 37/37
 # contradictions: 22/22
 # facts: 23/23
-# segmented_body: 16/16
+# segmented_body: 18/18
 # versions: 16/16
 # stats_ingest: 11/11
 # sync_aliases: 10/10
@@ -98,7 +98,7 @@ transactionDirect	lifecycle	yes	14	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 getPage	pages	yes	152	yes	yes	yes	serves
-readPageSnapshot	pages	yes	47	no	yes	yes	serves
+readPageSnapshot	pages	yes	49	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	5	no	yes	yes	serves
 putPage	pages	yes	733	yes	yes	yes	serves
@@ -481,17 +481,19 @@ consolidateFact	facts	yes	9	no	yes	yes	serves
 findTrajectory	facts	yes	6	yes	yes	yes	serves
 getFactsHealth	facts	yes	2	yes	yes	yes	serves
 allocateBodyOccurrenceIds	segmented_body	yes	18	no	yes	yes	serves
-stageSegmentTexts	segmented_body	yes	18	no	yes	yes	serves
-readSegmentTexts	segmented_body	yes	6	no	yes	yes	serves
-stageManifestRows	segmented_body	yes	20	no	yes	yes	serves
-readManifest	segmented_body	yes	10	no	yes	yes	serves
+stageSegmentTexts	segmented_body	yes	20	no	yes	yes	serves
+readSegmentTexts	segmented_body	yes	8	no	yes	yes	serves
+stageManifestRows	segmented_body	yes	22	no	yes	yes	serves
+readManifest	segmented_body	yes	12	no	yes	yes	serves
 readSegmentedEmbedPage	segmented_body	yes	1	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	10	no	yes	yes	serves
-createSegmentedPageShell	segmented_body	yes	32	no	yes	yes	serves
-flipBodyGeneration	segmented_body	yes	34	no	yes	yes	serves
-sealSegmentedPage	segmented_body	yes	7	no	yes	yes	serves
-openBodyStaging	segmented_body	yes	22	no	yes	yes	serves
-setBodyStagingState	segmented_body	yes	20	no	yes	yes	serves
+createSegmentedPageShell	segmented_body	yes	34	no	yes	yes	serves
+flipBodyGeneration	segmented_body	yes	36	no	yes	yes	serves
+sealSegmentedPage	segmented_body	yes	9	no	yes	yes	serves
+openBodyStaging	segmented_body	yes	24	no	yes	yes	serves
+setBodyStagingState	segmented_body	yes	22	no	yes	yes	serves
+readBodyStagingState	segmented_body	yes	2	no	yes	yes	serves
+deleteStagedChunksNotIn	segmented_body	yes	1	no	yes	yes	serves
 sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	3	no	yes	yes	serves

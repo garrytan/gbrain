@@ -3829,6 +3829,8 @@ export class PostgresEngine implements BrainEngine {
   async sealSegmentedPage(pageId: number, opts?: { timelineLead?: string }): Promise<void> { return pageBodyImpl.sealSegmentedPage(this.engineSql, pageId, opts?.timelineLead); }
   async openBodyStaging(input: BodyStagingInput): Promise<void> { return pageBodyImpl.openBodyStaging(this.engineSql, input); }
   async setBodyStagingState(id: string, state: BodyStagingState, opts?: { commitRequestId?: string | null }): Promise<void> { return pageBodyImpl.setBodyStagingState(this.engineSql, id, state, opts); }
+  async readBodyStagingState(id: string): Promise<string | null> { return pageBodyImpl.readBodyStagingState(this.engineSql, id); }
+  async deleteStagedChunksNotIn(pageId: number, generation: number, keepIndexes: readonly number[]): Promise<void> { return pageBodyImpl.deleteStagedChunksNotIn(this.engineSql, pageId, generation, keepIndexes); }
   async sweepSegments(opts?: SegmentSweepOptions): Promise<SegmentSweepResult> { return pageBodyImpl.sweepSegments(this.engineSql, opts); }
   hasSegmentStorage() { return this.preparationRead(exec => writeGuardsImpl.hasSegmentStorage(unscopedExecutor(exec, 'page body: segment storage probe ran unscoped through executeRaw'))); }
   async readSegmentDerivations(pageId: number, opts?: { kind?: SegmentDerivationKind; occurrenceIds?: readonly number[] }): Promise<SegmentDerivationRow[]> {

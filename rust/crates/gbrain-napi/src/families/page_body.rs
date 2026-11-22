@@ -197,6 +197,30 @@ impl Brain {
         })
     }
 
+    /// `readBodyStagingState(id)`: the staging's state, or `null`.
+    #[napi]
+    pub fn read_body_staging_state<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_body_staging_state(&id))
+    }
+
+    /// `deleteStagedChunksNotIn(pageId, generation, keepIndexes)`: resolves `null`.
+    #[napi]
+    pub fn delete_staged_chunks_not_in<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        generation: i64,
+        keep_indexes: Vec<i64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.delete_staged_chunks_not_in(page_id, generation, &keep_indexes)
+        })
+    }
+
     /// `setBodyStagingState(id, state, { commitRequestId? }?)`: resolves `null`.
     #[napi]
     pub fn set_body_staging_state<'env>(

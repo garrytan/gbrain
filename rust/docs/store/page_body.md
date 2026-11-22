@@ -28,6 +28,8 @@ ISO strings. Derivation `createdAt` and `updatedAt` are `YYYY-MM-DDTHH:MM:SS.fff
 | `brain.flipBodyGeneration(input)` | `{ retiredChunks, retireDeferred }` | `flipBodyGeneration` |
 | `brain.openBodyStaging(input)` | `null`; the staging starts `open` | `openBodyStaging` |
 | `brain.setBodyStagingState(id, state, { commitRequestId? }?)` | `null` | `setBodyStagingState` |
+| `brain.readBodyStagingState(id)` | the staging's state (`open`, `sealed`, `prepared`, `committed`, `aborted`, `expired`), or `null` for an id no staging has; a non-uuid id refuses. PGLite row-locks the staging (`FOR UPDATE`); the store's write is exclusive, so there is nothing to lock | `readBodyStagingState` |
+| `brain.deleteStagedChunksNotIn(pageId, generation, keepIndexes)` | `null`. Removes the page's segment chunks staged for body `generation` whose chunk index is not in `keepIndexes`, with their postings and vectors; an inline chunk and another generation's chunks stay | `deleteStagedChunksNotIn` |
 | `brain.sweepSegments({ sourceId?, pageId?, graceMs?, expireStagings?, now? }?)` | `{ retiredChunksDeleted, manifestRowsDeleted, textsDeleted, stagingsExpired }`; `now` as an ISO string. See "The sweep" | `sweepSegments` |
 | `brain.readSegmentDerivations(pageId, { kind?, occurrenceIds? }?)` | derivation rows by kind, then occurrence; `[]` for an empty `occurrenceIds` | `readSegmentDerivations` |
 | `brain.upsertSegmentDerivations(rows)` | `null`. A row with the same `(page, kind, occurrence)` is replaced and keeps its `createdAt` | `upsertSegmentDerivations` |

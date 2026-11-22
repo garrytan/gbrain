@@ -76,13 +76,31 @@ function examined(node: PlanNode): number {
 }
 const planNodes = (node: PlanNode): PlanNode[] => [node, ...(node.Plans ?? []).flatMap(planNodes)];
 
-/** An engine-sql executor that records each statement it runs on either table. */
-function recordingExecutor(exec: SqlExecutor, log: Statement[]): SqlExecutor {
+/** Measures `sql` in a savepoint rolled back before the statement runs, and records its plan. */
+async function probePlan(target: { executeRaw: BrainEngine['executeRaw'] }, sql: string, params: unknown[] | undefined, log: Statement[]): Promise<void> {
+  await target.executeRaw('SAVEPOINT plan_probe');
+  const [row] = await target.executeRaw<Record<string, unknown>>(`EXPLAIN (ANALYZE, FORMAT JSON) ${sql}`, params);
+  await target.executeRaw('ROLLBACK TO SAVEPOINT plan_probe');
+  const raw = Object.values(row!)[0];
+  const plan = ((typeof raw === 'string' ? JSON.parse(raw) : raw) as Array<{ Plan: PlanNode }>)[0]!.Plan;
+  const nodes = planNodes(plan);
+  log.push({ sql: shape(sql), rows: examined(plan), nodes: nodes.map(n => `${n['Node Type'] ?? ''}${n['Index Name'] ? ` on ${n['Index Name']}` : ''}`), subplan: nodes.some(n => n['Parent Relationship'] === 'SubPlan' || n['Parent Relationship'] === 'InitPlan') });
+}
+
+/**
+ * An engine-sql executor that records each statement it runs on either table. With `measure`, an executeRaw statement on
+ * either table is measured (probePlan) instead: the typed members that replaced a caller's raw statement send it here.
+ */
+function recordingExecutor(exec: SqlExecutor, log: Statement[], measure = false): SqlExecutor {
   const note = (sql: string) => { if (TABLES.test(sql)) log.push({ sql: shape(sql) }); };
   return new Proxy(exec, { get(target, prop) {
+    if (prop === 'executeRaw' && measure) return async (sql: string, params?: unknown[], opts?: unknown) => {
+      if (TABLES.test(sql)) await probePlan(target, sql, params, log);
+      return (target.executeRaw as Function)(sql, params, opts);
+    };
     if (prop === 'query' || prop === 'executeRaw' || prop === 'unsafe') return (sql: string, ...rest: unknown[]) => { note(sql); return (target[prop] as Function)(sql, ...rest); };
     if (prop === 'run') return (fragment: SqlFragment, opts?: unknown) => { note(renderFragment(fragment).text); return target.run(fragment, opts as never); };
-    if (prop === 'transaction') return <T>(fn: (tx: SqlExecutor) => Promise<T>) => target.transaction(tx => fn(recordingExecutor(tx, log)));
+    if (prop === 'transaction') return <T>(fn: (tx: SqlExecutor) => Promise<T>) => target.transaction(tx => fn(recordingExecutor(tx, log, measure)));
     return Reflect.get(target, prop, target);
   } });
 }
@@ -103,17 +121,9 @@ function isMethod(target: object, prop: PropertyKey): boolean {
  */
 function measuredTx(tx: BrainEngine, log: Statement[]): BrainEngine {
   const proxy: BrainEngine = new Proxy(tx, { get(target, prop) {
-    if (prop === 'engineSql') return recordingExecutor(Reflect.get(target, prop, target) as SqlExecutor, log);
+    if (prop === 'engineSql') return recordingExecutor(Reflect.get(target, prop, target) as SqlExecutor, log, true);
     if (prop === 'executeRaw') return async (sql: string, params?: unknown[], opts?: unknown) => {
-      if (TABLES.test(sql)) {
-        await target.executeRaw('SAVEPOINT plan_probe');
-        const [row] = await target.executeRaw<Record<string, unknown>>(`EXPLAIN (ANALYZE, FORMAT JSON) ${sql}`, params);
-        await target.executeRaw('ROLLBACK TO SAVEPOINT plan_probe');
-        const raw = Object.values(row!)[0];
-        const plan = ((typeof raw === 'string' ? JSON.parse(raw) : raw) as Array<{ Plan: PlanNode }>)[0]!.Plan;
-        const nodes = planNodes(plan);
-        log.push({ sql: shape(sql), rows: examined(plan), nodes: nodes.map(n => `${n['Node Type'] ?? ''}${n['Index Name'] ? ` on ${n['Index Name']}` : ''}`), subplan: nodes.some(n => n['Parent Relationship'] === 'SubPlan' || n['Parent Relationship'] === 'InitPlan') });
-      }
+      if (TABLES.test(sql)) await probePlan(target, sql, params, log);
       return target.executeRaw(sql, params, opts as never);
     };
     // A class method runs on the proxy, so its \`this.engineSql\` records; own properties (a driver handle) pass through untouched.
