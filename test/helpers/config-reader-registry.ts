@@ -25,6 +25,7 @@ export interface InternalConfigState {
 
 export const INTERNAL_CONFIG_STATE: readonly InternalConfigState[] = [
   { key: 'version', reason: 'schema version stamp written by migrate.ts' },
+  { key: 'persistence.writer_admin_lock', reason: 'the opt-in writer-administration lock that the writer_lock and writer_unlock persistence operations write as JSON (persistence/admin-lock.ts setWriterAdminLock, with a generation counter); config set refuses it, and writer claim, activate and transfer read it to refuse while it is locked' },
   { key: 'transcripts.archive.pinned_timezone.', prefix: true, reason: 'the timezone the conversation archive pinned for a source on its first run (transcripts/archive.ts); a hand edit would re-slice every archived day' },
   { key: 'transcripts.archive.audience.', prefix: true, reason: 'the audience (personal or shared) the conversation archive last ran under per source (transcripts/archive.ts); it decides when earlier pages are kept to the owner' },
   { key: 'transcripts.archive.rescope_capped.', prefix: true, reason: 'the number of archive folders when the owner-only re-scope passed the per-source rule limit and kept the whole conversations/ folder to the owner instead (transcripts/archive.ts); status and doctor report it' },
