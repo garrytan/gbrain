@@ -246,6 +246,22 @@ describe('engine parity: retrieval coverage', () => {
     },
   );
 
+  // A transaction reads its own writes before they commit: the probe must not reuse an answer cached before them.
+  parityTest(
+    'search/projection-readiness: with the cache on, a probe inside a transaction sees that transaction\'s page write',
+    { methods: ['transaction', 'putPage', 'readProjectionReadinessGeneration', 'readProjectionReadiness'] },
+    async (engine) => {
+      __resetProjectionReadinessCacheForTests();
+      return withEnv({ [PROJECTION_READINESS_CACHE_ENV]: undefined }, () => engine.transaction(async (tx) => {
+        const steps: string[] = [await probe(tx)];
+        await tx.putPage('notes/in-transaction', page('In transaction'));
+        steps.push(await probe(tx), await probe(tx));
+        expect(steps).toEqual(['ready', 'projection_pending', 'projection_pending']);
+        return steps;
+      }));
+    },
+  );
+
   parityTest(
     'search/projection-readiness: with the cache on, a probe with no write since the last reuses its answer',
     { methods: ['putPage', 'readProjectionReadinessGeneration', 'readProjectionReadiness'] },

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1177/1177
+# covered: 1178/1178
 # lifecycle: 9/9
 # pages: 48/48
 # search: 7/7
@@ -65,7 +65,7 @@
 # trust: 29/29
 # open_loops: 4/4
 # entity_identities: 5/5
-# cli_reads_import: 12/12
+# cli_reads_import: 13/13
 # wanted_links: 2/2
 # write_misc: 34/34
 # write_attribution: 5/5
@@ -88,25 +88,25 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	146	no	yes	yes	serves
+transaction	lifecycle	yes	149	no	yes	yes	serves
 transactionDirect	lifecycle	yes	13	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	134	yes	yes	yes	serves
+getPage	pages	yes	137	yes	yes	yes	serves
 readPageSnapshot	pages	yes	37	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	608	yes	yes	yes	serves
+putPage	pages	yes	618	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	22	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	174	yes	yes	yes	serves
+softDeletePage	pages	yes	175	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	5	no	yes	yes	serves
-listPages	pages	yes	12	yes	yes	yes	serves
+listPages	pages	yes	13	yes	yes	yes	serves
 findPages	pages	yes	4	no	yes	yes	serves
 countPagesBy	pages	yes	1	no	yes	yes	serves
 resolveSlugs	pages	yes	6	no	yes	yes	serves
@@ -133,18 +133,18 @@ countSourcePages	pages	yes	1	no	yes	yes	serves
 insertSource	pages	yes	1	no	yes	yes	serves
 listPrefixSampledPages	pages	yes	2	no	yes	yes	serves
 listCorpusSample	pages	yes	2	no	yes	yes	serves
-bumpPageRetrievals	pages	yes	1	no	yes	yes	serves
+bumpPageRetrievals	pages	yes	2	no	yes	yes	serves
 getPageSealState	pages	yes	5	no	yes	yes	serves
 refreshPageOrigin	pages	yes	3	no	yes	yes	serves
 readLivePageIdBySlug	pages	yes	1	no	yes	yes	serves
 readPageTierRef	pages	yes	1	no	yes	yes	serves
 readPageTierRows	pages	yes	1	no	yes	yes	serves
 pageHasFrontmatterKey	pages	yes	1	no	yes	yes	serves
-searchKeyword	search	yes	40	yes	yes	yes	serves
+searchKeyword	search	yes	41	yes	yes	yes	serves
 countKeywordPages	search	yes	12	no	yes	yes	serves
 searchKeywordPages	search	yes	17	no	yes	yes	serves
 searchTitles	search	yes	20	yes	yes	yes	serves
-searchVector	search	yes	14	yes	yes	yes	serves
+searchVector	search	yes	15	yes	yes	yes	serves
 getEmbeddingsByChunkIds	search	yes	1	no	yes	yes	serves
 searchKeywordChunks	search	yes	16	yes	yes	yes	serves
 cosinesByChunkIds	search_reads	yes	1	no	yes	yes	serves
@@ -173,8 +173,8 @@ readLinkRelationshipEvidence	link_temporal	yes	3	no	yes	yes	serves
 writeLinkRelationshipState	link_temporal	yes	2	no	yes	yes	serves
 linkRelationshipKeysForPages	link_temporal	yes	2	no	yes	yes	serves
 staleLinkRelationshipKeys	link_temporal	yes	2	no	yes	yes	serves
-linkRelationshipKeysForOrigin	link_temporal	yes	2	no	yes	yes	serves
-applyLinkTemporalRows	link_temporal	yes	1	no	yes	yes	serves
+linkRelationshipKeysForOrigin	link_temporal	yes	3	no	yes	yes	serves
+applyLinkTemporalRows	link_temporal	yes	2	no	yes	yes	serves
 writeManualLinkTransitions	link_temporal	yes	1	no	yes	yes	serves
 removeManualLinkTransitions	link_temporal	yes	1	no	yes	yes	serves
 listRelationshipNoteRows	link_temporal	yes	9	no	yes	yes	serves
@@ -188,8 +188,8 @@ ensureFactsKeywordIndex	search_vector	yes	1	no	yes	yes	serves
 countPendingProjectionPages	retrieval_coverage	yes	10	no	yes	yes	serves
 countEmbeddingHeldPages	retrieval_coverage	yes	1	no	yes	yes	serves
 projectionRebuildProgress	retrieval_coverage	yes	5	no	yes	yes	serves
-readProjectionReadinessGeneration	retrieval_coverage	yes	2	no	yes	yes	serves
-readProjectionReadiness	retrieval_coverage	yes	7	no	yes	yes	serves
+readProjectionReadinessGeneration	retrieval_coverage	yes	3	no	yes	yes	serves
+readProjectionReadiness	retrieval_coverage	yes	8	no	yes	yes	serves
 readSourceChunkerVersion	chunks	yes	2	no	yes	yes	serves
 setSourceChunkerVersion	chunks	yes	1	no	yes	yes	serves
 findCodeDefinitions	chunks	yes	3	no	yes	yes	serves
@@ -205,10 +205,10 @@ listQualifiedSymbolNames	chunks	yes	1	no	yes	yes	serves
 listWithdrawalChunks	chunks	yes	1	no	yes	yes	serves
 deleteChunksForPages	chunks	yes	2	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
-resolveFrozenHits	chunks	yes	4	no	yes	yes	serves
+resolveFrozenHits	chunks	yes	5	no	yes	yes	serves
 upsertChunks	chunks	yes	39	yes	yes	yes	serves
-sealChunks	chunks	yes	68	no	yes	yes	serves
-getChunks	chunks	yes	41	yes	yes	yes	serves
+sealChunks	chunks	yes	69	no	yes	yes	serves
+getChunks	chunks	yes	42	yes	yes	yes	serves
 getChunkPage	chunks	yes	13	no	yes	yes	serves
 getChunkWindows	chunks	yes	12	no	yes	yes	serves
 countStaleChunks	chunks	yes	8	no	yes	yes	serves
@@ -227,11 +227,11 @@ setChunkerVersion	chunks	yes	14	no	yes	yes	serves
 writeTextProjectionSeal	chunks	yes	2	no	yes	yes	serves
 moveChunkIndexes	chunks	yes	2	no	yes	yes	serves
 getChunkReuseRows	chunks	yes	4	no	yes	yes	serves
-readPageEmbeddingBudget	chunks	yes	5	no	yes	yes	serves
+readPageEmbeddingBudget	chunks	yes	6	no	yes	yes	serves
 recordPageEmbeddingHold	chunks	yes	1	no	yes	yes	serves
 openPageEmbeddingHold	chunks	yes	1	no	yes	yes	serves
-reservePageEmbedding	chunks	yes	5	no	yes	yes	serves
-settlePageEmbeddingReservation	chunks	yes	1	no	yes	yes	serves
+reservePageEmbedding	chunks	yes	6	no	yes	yes	serves
+settlePageEmbeddingReservation	chunks	yes	2	no	yes	yes	serves
 readEmbeddingCompletion	chunks	yes	2	no	yes	yes	serves
 lockEffectClaimRow	chunks	yes	1	no	yes	yes	serves
 lockEmbeddingSwitch	chunks	yes	1	no	yes	yes	serves
@@ -244,7 +244,7 @@ markPagesAttendanceBlocked	extraction	yes	2	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	116	yes	yes	yes	serves
+addLink	links	yes	117	yes	yes	yes	serves
 addLinksBatch	links	yes	16	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	12	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
@@ -281,7 +281,7 @@ storedTimelineRowsByPageIds	timeline	yes	1	no	yes	yes	serves
 countSegmentedTimelinePages	timeline	yes	1	no	yes	yes	serves
 countTimelineCommentMarkupRows	timeline	yes	1	no	yes	yes	serves
 listTimelineOrphanPages	timeline	yes	1	no	yes	yes	serves
-addTimelineEntry	timeline	yes	44	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	45	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	3	no	yes	yes	serves
 getTimeline	timeline	yes	18	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	6	no	yes	yes	serves
@@ -327,11 +327,11 @@ countFilesRegisteredElsewhere	raw_files	yes	1	no	yes	yes	refuses:files
 registerFileRow	raw_files	yes	1	no	yes	yes	refuses:files
 readReadableFileForVerify	raw_files	yes	1	no	yes	yes	refuses:files
 listReadableFilePaths	raw_files	yes	1	no	yes	yes	refuses:files
-addTakesBatch	takes	yes	53	yes	yes	yes	serves
-updateTakeEmbeddings	takes	yes	3	no	yes	yes	serves
-listTakes	takes	yes	27	no	yes	yes	serves
+addTakesBatch	takes	yes	55	yes	yes	yes	serves
+updateTakeEmbeddings	takes	yes	4	no	yes	yes	serves
+listTakes	takes	yes	28	no	yes	yes	serves
 searchTakes	takes	yes	3	no	yes	yes	serves
-searchTakesVector	takes	yes	2	no	yes	yes	serves
+searchTakesVector	takes	yes	3	no	yes	yes	serves
 getTakeEmbeddings	takes	yes	1	no	yes	yes	serves
 countStaleTakes	takes	yes	1	no	yes	yes	serves
 listStaleTakes	takes	yes	1	no	yes	yes	serves
@@ -414,13 +414,13 @@ listLiveChunksByIds	contradictions	yes	1	no	yes	yes	refuses:chunks
 listLiveTakesByIds	contradictions	yes	1	no	yes	yes	refuses:takes
 readLastContradictionsPromptVersion	contradictions	yes	1	no	yes	yes	refuses:contradictions
 listEvalCandidateQueries	contradictions	yes	1	no	yes	yes	refuses:eval_capture
-insertFact	facts	yes	95	yes	yes	yes	serves
-insertFacts	facts	yes	134	no	yes	yes	serves
+insertFact	facts	yes	96	yes	yes	yes	serves
+insertFacts	facts	yes	135	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	60	no	yes	yes	serves
 listFactsByEntity	facts	yes	36	yes	yes	yes	serves
-listFactsSince	facts	yes	27	yes	yes	yes	serves
-listFactsKeyset	facts	yes	10	no	yes	yes	serves
+listFactsSince	facts	yes	29	yes	yes	yes	serves
+listFactsKeyset	facts	yes	11	no	yes	yes	serves
 listFactsBySession	facts	yes	13	yes	yes	yes	serves
 listSupersessions	facts	yes	7	yes	yes	yes	serves
 countUnconsolidatedFacts	facts	yes	2	yes	yes	yes	serves
@@ -437,16 +437,16 @@ readManifest	segmented_body	yes	10	no	yes	yes	serves
 readSegmentedEmbedPage	segmented_body	yes	1	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	9	no	yes	yes	serves
 createSegmentedPageShell	segmented_body	yes	28	no	yes	yes	serves
-flipBodyGeneration	segmented_body	yes	29	no	yes	yes	serves
-sealSegmentedPage	segmented_body	yes	6	no	yes	yes	serves
+flipBodyGeneration	segmented_body	yes	30	no	yes	yes	serves
+sealSegmentedPage	segmented_body	yes	7	no	yes	yes	serves
 openBodyStaging	segmented_body	yes	21	no	yes	yes	serves
 setBodyStagingState	segmented_body	yes	19	no	yes	yes	serves
 sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	3	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
-createVersion	versions	yes	36	no	yes	yes	serves
-getVersions	versions	yes	17	no	yes	yes	serves
+createVersion	versions	yes	38	no	yes	yes	serves
+getVersions	versions	yes	18	no	yes	yes	serves
 readLatestVersionId	versions	yes	1	no	yes	yes	serves
 readLatestVersionIdAtTier	versions	yes	1	no	yes	yes	serves
 stampVersionChangeReason	versions	yes	1	no	yes	yes	serves
@@ -481,7 +481,7 @@ readPersistenceBrainId	import_guards	yes	5	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	13	no	yes	yes	serves
-applyTransactionSettings	import_guards	yes	68	no	yes	yes	serves
+applyTransactionSettings	import_guards	yes	69	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	1	no	yes	yes	serves
@@ -505,15 +505,15 @@ readAccessTokenWriteGrant	persistence_journal	yes	1	no	yes	yes	serves
 shareLockWriteCredential	persistence_journal	yes	1	no	yes	yes	serves
 readCounterRows	persistence_journal	yes	3	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	3	no	yes	yes	serves
-lockPersistenceCounters	persistence_journal	yes	46	no	yes	yes	serves
-insertWriteRequest	persistence_journal	yes	50	no	yes	yes	serves
+lockPersistenceCounters	persistence_journal	yes	47	no	yes	yes	serves
+insertWriteRequest	persistence_journal	yes	51	no	yes	yes	serves
 stampWriteClaim	persistence_journal	yes	23	no	yes	yes	serves
 lockWriteRequest	persistence_journal	yes	5	no	yes	yes	serves
 completeWriteRow	persistence_journal	yes	18	no	yes	yes	serves
 insertPublicationEffects	persistence_journal	yes	9	no	yes	yes	serves
-insertWithdrawalEffects	persistence_journal	yes	3	no	yes	yes	serves
+insertWithdrawalEffects	persistence_journal	yes	4	no	yes	yes	serves
 cancelWriteRow	persistence_journal	yes	2	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	55	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	56	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	2	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	2	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	4	no	yes	yes	serves
@@ -545,7 +545,7 @@ markProjectionRebuildFailed	persistence_journal	yes	1	no	yes	yes	serves
 listGatedMirrorRequests	persistence_journal	yes	1	no	yes	yes	serves
 listEffectRecoveries	persistence_journal	yes	1	no	yes	yes	serves
 selectClaimableEffect	persistence_journal	yes	4	no	yes	yes	serves
-readRequestEffects	persistence_journal	yes	8	no	yes	yes	serves
+readRequestEffects	persistence_journal	yes	9	no	yes	yes	serves
 listOverdueHeldWrites	persistence_journal	yes	1	no	yes	yes	serves
 lockOverdueHold	persistence_journal	yes	1	no	yes	yes	serves
 listOwnerRecoveryHeads	persistence_journal	yes	1	no	yes	yes	serves
@@ -560,7 +560,7 @@ retryBusyEffectRow	persistence_journal	yes	1	no	yes	yes	serves
 requeueEffectRow	persistence_journal	yes	1	no	yes	yes	serves
 parkEffectRow	persistence_journal	yes	1	no	yes	yes	serves
 failEffectRow	persistence_journal	yes	1	no	yes	yes	serves
-readMirrorGateRows	persistence_journal	yes	1	no	yes	yes	serves
+readMirrorGateRows	persistence_journal	yes	2	no	yes	yes	serves
 lockEffectGuard	persistence_journal	yes	1	no	yes	yes	serves
 hasRearmableTargets	persistence_journal	yes	1	no	yes	yes	serves
 probeIdleWork	persistence_journal	yes	1	no	yes	yes	serves
@@ -578,7 +578,7 @@ findExactSlug	entity_reads	yes	1	no	yes	yes	serves
 findFuzzyEntityCandidates	entity_reads	yes	3	no	yes	yes	serves
 findExactBasenameCandidates	entity_reads	yes	2	no	yes	yes	serves
 readRetirementHop	entity_reads	yes	5	no	yes	yes	serves
-readEntityCardRows	entity_reads	yes	1	no	yes	yes	serves
+readEntityCardRows	entity_reads	yes	2	no	yes	yes	serves
 readExtractionLagCounts	entity_reads	yes	2	no	yes	yes	serves
 readIgnoredPrivacyLabelPages	entity_reads	yes	2	no	yes	yes	serves
 acquireCycleLock	cycle_locks	yes	13	no	yes	yes	serves
@@ -715,7 +715,7 @@ completeSubagentToolExecution	minion_subagent	yes	7	no	yes	yes	serves
 failSubagentToolExecution	minion_subagent	yes	7	no	yes	yes	serves
 listExportPageKeys	cli_reads_export	yes	1	no	yes	yes	serves
 readExportWithdrawalLedgerBytes	cli_reads_export	yes	1	no	yes	yes	serves
-listExportWithdrawals	cli_reads_export	yes	1	no	yes	yes	serves
+listExportWithdrawals	cli_reads_export	yes	2	no	yes	yes	serves
 readExportPageRows	cli_reads_export	yes	1	no	yes	yes	serves
 normalizeFenceLines	cli_reads_export	yes	1	no	yes	yes	serves
 readSegmentedPageHead	cli_reads_export	yes	4	no	yes	yes	serves
@@ -756,7 +756,7 @@ readFactTableCatalog	facts_doctor	yes	1	no	yes	yes	refuses:facts
 readChunkVectorColumn	embedding_catalog	yes	2	no	yes	yes	serves
 readEmbeddingIdentity	embedding_catalog	yes	1	no	yes	yes	serves
 listEmbeddingStores	embedding_catalog	yes	1	no	yes	yes	serves
-hasStoredVectors	embedding_catalog	yes	1	no	yes	yes	serves
+hasStoredVectors	embedding_catalog	yes	2	no	yes	yes	serves
 countChunkVectorCoverage	embedding_catalog	yes	1	no	yes	yes	serves
 upsertFactRelinkAttempt	fact_relink_attempts	yes	8	no	yes	yes	serves
 listFactRelinkOutcomes	fact_relink_attempts	yes	3	no	yes	yes	serves
@@ -826,7 +826,7 @@ listUnfencedFactRows	facts_purge	yes	1	no	yes	yes	serves
 listHeldFenceFactRows	facts_purge	yes	1	no	yes	yes	serves
 listWithdrawalSlugs	facts_purge	yes	4	no	yes	yes	serves
 expireFactsByWithdrawal	facts_purge	yes	5	no	yes	yes	serves
-insertFactPurge	facts_purge	yes	8	no	yes	yes	serves
+insertFactPurge	facts_purge	yes	9	no	yes	yes	serves
 listDerivedRows	facts_purge	yes	2	no	yes	yes	serves
 expireFactsOfGonePages	facts_purge	yes	1	no	yes	yes	refuses:facts
 readPurgeSourceLocalPath	facts_purge	yes	1	no	yes	yes	refuses:facts
@@ -1016,7 +1016,7 @@ listVersionTrustTiers	trust_tier_reads	yes	1	no	yes	yes	serves
 listVersionReasonWriters	trust_tier_reads	yes	1	no	yes	yes	serves
 listPageRefsByIds	trust_tier_reads	yes	1	no	yes	yes	serves
 listValidTimeIdentities	trust_tier_reads	yes	4	no	yes	yes	serves
-pickValidTimeEdition	trust_tier_reads	yes	9	no	yes	yes	serves
+pickValidTimeEdition	trust_tier_reads	yes	10	no	yes	yes	serves
 listAmendmentsNotApplied	trust_tier_reads	yes	3	no	yes	yes	serves
 readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
@@ -1067,7 +1067,7 @@ getRecentSalience	salience_enrich	yes	8	yes	yes	yes	serves
 listEnrichCandidates	salience_enrich	yes	3	yes	yes	yes	serves
 findAnomalies	salience_enrich	yes	7	yes	yes	yes	serves
 hasCoveringFactWithdrawal	trust	yes	3	no	yes	yes	serves
-insertFactWithdrawal	trust	yes	23	no	yes	yes	serves
+insertFactWithdrawal	trust	yes	24	no	yes	yes	serves
 isFactWithdrawn	trust	yes	3	no	yes	yes	serves
 isFactPurged	trust	yes	5	no	yes	yes	serves
 listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves
@@ -1099,13 +1099,14 @@ upsertOpenLoop	open_loops	yes	12	no	yes	yes	serves
 closeOpenLoop	open_loops	yes	7	no	yes	yes	serves
 listOpenLoops	open_loops	yes	4	no	yes	yes	serves
 readEntityOpenLoops	open_loops	yes	2	no	yes	yes	serves
-linkEntityIdentityRow	entity_identities	yes	9	no	yes	yes	serves
+linkEntityIdentityRow	entity_identities	yes	10	no	yes	yes	serves
 unlinkEntityIdentityRow	entity_identities	yes	1	no	yes	yes	serves
-listEntityIdentityRows	entity_identities	yes	8	no	yes	yes	serves
+listEntityIdentityRows	entity_identities	yes	9	no	yes	yes	serves
 readEntityIdentityIdsForPages	entity_identities	yes	1	no	yes	yes	serves
 readCanonicalTwin	entity_identities	yes	1	no	yes	yes	serves
 listSourceRecords	cli_reads_import	yes	3	no	yes	yes	serves
 readSourceIncarnation	cli_reads_import	yes	3	no	yes	yes	serves
+readRetainedSources	cli_reads_import	yes	1	no	yes	yes	refuses:raw_sql
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
 readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
 listGuestSourceIds	cli_reads_import	yes	1	no	yes	yes	serves
@@ -1156,7 +1157,7 @@ readWriteAttributionNames	write_attribution	yes	4	no	yes	yes	serves
 readPageRevisionAttribution	write_attribution	yes	2	no	yes	yes	serves
 readVersionAttributions	write_attribution	yes	2	no	yes	yes	serves
 readOldestVersionAttribution	write_attribution	yes	2	no	yes	yes	serves
-readRowAttribution	write_attribution	yes	3	no	yes	yes	serves
+readRowAttribution	write_attribution	yes	4	no	yes	yes	serves
 recordSearchTelemetry	telemetry	yes	3	no	yes	yes	serves
 readSearchStats	telemetry	yes	3	no	yes	yes	serves
 readClientOpUsage	telemetry	yes	4	no	yes	yes	serves
@@ -1193,7 +1194,7 @@ listFenceFactRows	trust_fence	yes	5	no	yes	yes	serves
 restorePageTrust	trust_fence	yes	1	no	yes	yes	serves
 listHeldRows	trust_fence	yes	2	no	yes	yes	serves
 listGuardedTakeRows	trust_fence	yes	1	no	yes	yes	serves
-insertTrustProposal	trust_proposals	yes	11	no	yes	yes	serves
+insertTrustProposal	trust_proposals	yes	12	no	yes	yes	serves
 getTrustProposal	trust_proposals	yes	2	no	yes	yes	serves
 listTrustProposals	trust_proposals	yes	4	no	yes	yes	serves
 pendingTrustProposalsFor	trust_proposals	yes	2	no	yes	yes	serves

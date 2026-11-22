@@ -21,15 +21,17 @@ checks it with `hermes mcp test gbrain`. Hermes's file tools refuse an agent's e
 of `config.yaml` ("Agent cannot modify security-sensitive configuration"), so
 an agent should run setup rather than edit the file. Setup finds `hermes` on PATH
 or where Hermes's installer puts it (`~/.local/bin/hermes`,
-`$HERMES_HOME/hermes-agent/venv/bin/hermes`); with neither it prints the command
-below. An `mcp_servers.gbrain` entry setup did not write (a hosted URL, say) is
-left alone, `--dry-run` previews and `--remove` runs `hermes mcp remove gbrain`.
+`$HERMES_HOME/hermes-agent/venv/bin/hermes`); with neither it prints the
+`hermes mcp add` command to run where Hermes is installed (the
+[by-hand command](#register-by-hand) works too). An `mcp_servers.gbrain` entry
+setup did not write (a hosted URL, say) is left alone, `--dry-run` previews and `--remove` runs `hermes mcp remove gbrain`.
 A rerun updates gbrain's own entry and keeps its member binding
 (`--stdio-member`), its connect timeout and, when `GBRAIN_HOME` is unset, the
 brain it already points at. An entry of gbrain's that carries other settings, or
 environment variables beyond `GBRAIN_HOME`, is left alone too (setup says which;
-no stored value goes on a command line). If an update fails, setup puts the
-previous entry back with `hermes config set` and exits 1.
+no stored value goes on a command line). If an update of an enabled entry fails,
+setup puts the previous entry back with `hermes config set`; any failed
+registration exits 1.
 Hermes rewrites `config.yaml` as plain YAML, dropping comments, so setup sets its
 marked hook block aside around the call and puts it back. Then start a new session.
 

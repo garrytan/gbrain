@@ -448,6 +448,7 @@ test/skillpack-scaffold.test.ts	runScaffold — IRON-RULE regressions (R1, R2)	3
 test/skillpack-scaffold.test.ts	runScaffold — happy path	3	readFileSync
 test/skillpack-scrub-legacy.test.ts	runScrubLegacy	8	readFileSync
 test/skillpack-writer-guard.test.ts	(file-level)	6	readFileSync
+test/skills-refusal-honesty.test.ts	agent-loaded text reports refusals and asks for narrow access	2	readFileSync
 test/slug-move-keeps-trust-9735.test.ts	#9735 slug move census	2	readFileSync
 test/snapshot-shape-guard.test.ts	(file-level)	10	readFileSync
 test/sources-webhook.test.ts	Webhook sync job extraction contract	1	source-surface-helper

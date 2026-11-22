@@ -3383,6 +3383,60 @@ mod segment_chunk_tests {
     }
 
     #[test]
+    fn a_frozen_hit_on_a_chunk_a_deferred_retire_left_reads_no_chunk() {
+        use crate::chunk_queries::{ChunkReadScope, FrozenHit, FrozenHitsInput};
+        let store = crate::test_support::store();
+        let id = published(&store);
+        store
+            .stage_segment_chunks(id, 1, &[chunk(1, 0, "one"), chunk(2, 0, "two")])
+            .unwrap();
+        second_generation(&store, id);
+        let result = store
+            .flip_body_generation(&flip(
+                id,
+                1,
+                STAGING_2,
+                9,
+                json!({"closeOccurrences": [2], "retireChunkOccurrences": [2], "retireMaxRows": 1}),
+            ))
+            .unwrap();
+        assert!(result.retire_deferred);
+        // The page serves its projection, so a frozen hit on it resolves.
+        store
+            .write(|tx| {
+                let mut page = crate::pages::read_page_by_id(&*tx, id as u64)?.unwrap();
+                page.text_projection_revision = Some(page.knowledge_revision.clone());
+                crate::pages::write_page(tx, &page)
+            })
+            .unwrap();
+        let chunk_id = |text: &str| {
+            crate::chunks::read_chunks(&*store.read().unwrap(), id as u64)
+                .unwrap()
+                .into_iter()
+                .find(|c| c.chunk_text == text)
+                .unwrap()
+                .id as i64
+        };
+        let hit = |chunk_id: i64, ord: i64| FrozenHit {
+            source_id: "default".into(),
+            slug: "notes/a".into(),
+            chunk_id,
+            ord,
+        };
+        let rows = store
+            .resolve_frozen_hits(&FrozenHitsInput {
+                hits: vec![hit(chunk_id("two"), 1), hit(chunk_id("one"), 2)],
+                scope: ChunkReadScope::default(),
+            })
+            .unwrap();
+        // The retired occurrence's chunk is not part of the live body: its hit keeps the page row with no chunk.
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["ord"], json!(1));
+        assert_eq!(rows[0]["chunk_text"], Value::Null);
+        assert_eq!(rows[1]["chunk_text"], json!("one"));
+    }
+
+    #[test]
     fn a_flip_deletes_retired_segment_chunks_under_the_cap() {
         let store = crate::test_support::store();
         let id = published(&store);

@@ -184,6 +184,31 @@ describe('engine parity: link temporal state', () => {
     },
   );
 
+  // link_transitions.origin_page_id references pages(id): a transition whose origin page does not exist is refused
+  // by the foreign key and nothing is written; a soft-deleted origin page still exists, so its transition is kept.
+  parityTest(
+    'link-temporal-apply: a transition is refused when its origin page does not exist, and kept when the origin is only soft-deleted',
+    { methods: ['putPage', 'softDeletePage', 'applyLinkTemporalRows', 'linkRelationshipKeysForOrigin'] },
+    async (engine) => {
+      await seedCompanies(engine);
+      const alice = await engine.putPage(ALICE, page('Alice', { type: 'person' }));
+      const note = await engine.putPage('notes/origin-example', page('Origin'));
+      await engine.softDeletePage('notes/origin-example');
+      const missing = Number(alice.id) + Number(note.id) + 100000;
+      const transition = { from_slug: ALICE, to_slug: ACME, link_type: 'works_at', kind: 'start' as const, occurred_on: '2020-01-01',
+        date_precision: 'day', producer: 'explicit', line_hash: 'line-a' };
+      const apply = (pageId: number) => engine.applyLinkTemporalRows({ pageId, sourceId: 'default', tenseRows: [], transitions: [transition], explicitTargets: [] })
+        .then(r => ({ inserted: r.inserted.length }), (e: Error) => /link_transitions_origin_page_id_fkey/.test(e.message) ? 'origin_page_fk' : e.message);
+      const refused = await apply(missing);
+      const kept = await apply(Number(note.id));
+      return {
+        refused, kept,
+        missingKeys: await keyView(engine, await engine.linkRelationshipKeysForOrigin(missing)),
+        keptKeys: await keyView(engine, await engine.linkRelationshipKeysForOrigin(Number(note.id))),
+      };
+    },
+  );
+
   parityTest(
     'link-temporal-apply: manual dated transitions write and remove the relationship\'s state',
     { methods: ['putPage', 'addLink', 'writeManualLinkTransitions', 'removeManualLinkTransitions', 'listRelationshipNoteRows'] },

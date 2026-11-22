@@ -49,6 +49,19 @@ export async function readSourceIncarnation(exec: LegacyUnscopedRead, sourceId: 
   return row ?? null;
 }
 
+/**
+ * #9968: the ids among `sourceIds` whose bound worktree still holds a recovery record (a request on the source's
+ * worktree with `recovery IS NOT NULL`; several sources can share one worktree). Master's RETAINED_SQL scope.
+ */
+export async function readRetainedSources(exec: LegacyUnscopedRead, sourceIds: readonly string[]): Promise<string[]> {
+  if (sourceIds.length === 0) return [];
+  const rows = await exec.executeRaw<{ id: string }>(
+    `SELECT id FROM sources WHERE id=ANY($1::text[]) AND EXISTS (SELECT 1 FROM persistence_source_bindings b
+       JOIN persistence_requests r ON r.worktree_id=b.worktree_id WHERE b.source_id=sources.id AND r.recovery IS NOT NULL)
+     ORDER BY id COLLATE "C"`, [[...sourceIds]]);
+  return rows.map(r => r.id);
+}
+
 /** Whether the source's current incarnation has a company-brain ingestion receipt. */
 export async function hasCompanyBrainReceipt(exec: LegacyUnscopedRead, sourceId: string): Promise<boolean> {
   const rows = await exec.executeRaw(`SELECT r.id FROM source_ingestion_receipts r JOIN sources s ON s.id=r.source_id AND s.incarnation=r.source_incarnation

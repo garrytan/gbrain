@@ -278,9 +278,15 @@ fn owner_only_form_reads_from_the_policy_json() {
     let policy: PrivacyPolicy =
         serde_json::from_value(json!({"honorAliases": true, "entityPrivacy": true})).unwrap();
     assert_eq!(policy.owner_only, OwnerOnlyForm::Closed);
+    // Master's member names the fn form `lineage`.
+    let policy: PrivacyPolicy = serde_json::from_value(
+        json!({"honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage"}),
+    )
+    .unwrap();
+    assert_eq!(policy.owner_only, OwnerOnlyForm::Fn);
     assert!(
         serde_json::from_value::<PrivacyPolicy>(
-            json!({"honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage"})
+            json!({"honorAliases": true, "entityPrivacy": true, "ownerOnly": "mode"})
         )
         .is_err()
     );

@@ -6647,6 +6647,7 @@
         "readRepairBrainId": "none",
         "readReplacementTarget": "none",
         "readRequestEffects": "none",
+        "readRetainedSources": "none",
         "readRetirementHop": "none",
         "readReviewAcceptedMark": "none",
         "readRowAttribution": "none",

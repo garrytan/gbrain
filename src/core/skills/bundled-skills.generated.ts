@@ -751,6 +751,7 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
       "conventions/model-routing.md",
       "conventions/regex-discipline.md",
       "conventions/test-before-bulk.md",

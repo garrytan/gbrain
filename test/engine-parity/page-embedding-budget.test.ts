@@ -148,6 +148,42 @@ describe('engine parity: page embedding ledger', () => {
     });
     return answers;
   });
+
+  parityTest('a settle that books Infinity, -Infinity or NaN leaves the same readable ledger row on every arm', {
+    methods: ['putPage', 'getPage', 'reservePageEmbedding', 'settlePageEmbeddingReservation', 'readPageEmbeddingBudget'],
+  }, async (engine) => {
+    // PGLite and Postgres keep DOUBLE PRECISION: Infinity and NaN are booked as they are, -Infinity as 0 (Math.max).
+    const cases = [
+      ['inf', { reservedUsd: 0.875, bookedUsd: Infinity }],
+      ['neg-inf', { reservedUsd: 0.875, bookedUsd: -Infinity }],
+      ['nan', { reservedUsd: 0.875, bookedUsd: NaN }],
+      ['reserved-nan', { reservedUsd: NaN, bookedUsd: 0.5 }],
+      ['reserved-neg-inf', { reservedUsd: -Infinity, bookedUsd: 0.5 }],
+    ] as const;
+    const answers: Record<string, unknown> = {};
+    for (const [name, amounts] of cases) {
+      await engine.putPage(`notes/non-finite-${name}`, NOTE);
+      const id = await idOf(engine, `notes/non-finite-${name}`);
+      const grant = await engine.reservePageEmbedding(id, { ...OPEN, chunks: CHUNKS });
+      if (grant.kind !== 'grant' || grant.window === null) throw new Error(`${name}: no grant window`);
+      await engine.settlePageEmbeddingReservation(id, { window: grant.window, ...amounts, unpricedCalls: 0 });
+      const row = await ledger(engine, id);
+      answers[name] = { ...row, json: JSON.stringify(row), spent: String(row.spent_usd), reserved: String(row.reserved_usd) };
+    }
+    const row = (spent: number, reserved: number) => {
+      const r = { ...ROW, spent_usd: spent, reserved_usd: reserved, window: reserved !== 0 };
+      return { ...r, json: JSON.stringify(r), spent: String(spent), reserved: String(reserved) };
+    };
+    expect(answers as unknown).toEqual({
+      inf: row(Infinity, 0),
+      'neg-inf': row(0, 0),
+      nan: row(NaN, 0),
+      'reserved-nan': row(0.5, NaN),
+      'reserved-neg-inf': row(0.5, Infinity),
+    });
+    return answers;
+  });
+
   parityTest('a second grant while a reservation is open counts the money already reserved against the cap', {
     methods: ['putPage', 'getPage', 'reservePageEmbedding', 'readPageEmbeddingBudget'],
   }, async (engine) => {
