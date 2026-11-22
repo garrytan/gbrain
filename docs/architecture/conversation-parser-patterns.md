@@ -79,8 +79,10 @@ grammar is distinctive. Candidate-only scoring activates only after two anchors
 match, or when the first non-blank line is an anchor. This evidence threshold
 lets a single long message keep its continuation body without turning one stray
 anchor in a prose page into a conversation. Candidate anchor lines that fail the
-full regex still lower the score. Other patterns continue to use all non-blank
-lines in their density score.
+full regex still lower the score, so keep `quick_reject` to the anchor's own
+opening: `imessage-slack` takes only lines that start `**Name** (`, which lets a
+long answer full of bold headings or `**Label:**` lines read as continuation.
+Other patterns continue to use all non-blank lines in their density score.
 
 If the anchor grammar is a plausible label in ordinary prose about the same
 subject (rather than distinctive like a bold name plus a valid timestamp),

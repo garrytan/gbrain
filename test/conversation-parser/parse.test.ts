@@ -800,6 +800,32 @@ describe('bold-name-no-time pattern (Circleback/Granola/Zoom, no timestamp)', ()
     expect(detector.finish()).toBe('imessage-slack');
   });
 
+  // GST-3347: a short session whose one long answer leads many lines with bold
+  // text. Every `**` line used to count as a near-miss anchor, so two turns
+  // over 45 bold lines scored 4% and the page ended below the 5% floor.
+  for (const [shape, line] of [['bold headings', (i: number) => `**Step ${i}** do thing ${i}`], ['bold labels', (i: number) => `**Step ${i}:** do thing ${i}`]] as const) {
+    test(`REGRESSION (GST-3347): a two-turn transcript whose answer has 45 lines of ${shape} parses`, () => {
+      const body = [
+        '**User** (2024-03-15 9:00 AM): what is the plan?',
+        '**Assistant** (2024-03-15 9:01 AM): Here it is:',
+        ...Array.from({ length: 45 }, (_, i) => line(i + 1)),
+      ].join('\n');
+      const r = parseConversation(body, { fallbackDate: '2024-03-15' });
+      expect(r.matched_pattern_id).toBe('imessage-slack');
+      expect(r.messages.map((m) => m.speaker)).toEqual(['User', 'Assistant']);
+      expect(r.messages[1]!.text.split('\n')).toHaveLength(46);
+      const detector = createPatternDetector();
+      detector.push(body);
+      expect(detector.finish()).toBe('imessage-slack');
+    });
+  }
+
+  test('GST-3347 control: one stray transcript line in bold-heavy notes stays no_match', () => {
+    const body = ['Notes from the offsite.', '**Alice Example** (2024-03-15 9:00 AM): one quoted line',
+      ...Array.from({ length: 30 }, (_, i) => `**Item ${i}** detail ${i}`), ...Array.from({ length: 30 }, (_, i) => `prose line ${i}`)].join('\n');
+    expect(parseConversation(body, { fallbackDate: '2024-03-15' }).phase).toBe('no_match');
+  });
+
   test('GST-3251: a no_match names why and the best pattern', () => {
     const body = ['A', 'B', 'C', 'D'].map((x) => `**Option ${x}:** detail ${x}`).join('\n');
     const r = parseConversation(body, { fallbackDate: '2026-04-01' });
