@@ -90,6 +90,7 @@ test/codex-plugin-manifest.test.ts	codex mcp.json	3	readFileSync
 test/codex-plugin-manifest.test.ts	curated tree membership + scanner guard	6	readFileSync
 test/codex-plugin-manifest.test.ts	generator negative fixtures (a guard that cannot fail is not coverage)	9	readFileSync
 test/codex-plugin-manifest.test.ts	variant ${def.plugin_name} (persona ${personaName})	5	readFileSync
+test/company-brainify-export-purge.test.ts	company-brainify copies	1	readFileSync
 test/compile-context-core.serial.test.ts	compile-context core arm	5	readFileSync
 test/compile-view.test.ts	compileView — determinism	3	readFileSync
 test/compile-view.test.ts	compileView — source isolation + read errors	3	readFileSync
@@ -292,7 +293,7 @@ test/postgres-driver-vendor.test.ts	vendored Postgres driver packaging	5	readFil
 test/postgres-engine.test.ts	postgres-engine / search date filtering	2	source-surface-helper
 test/postgres-engine.test.ts	postgres-engine / search path timeout isolation	7	source-surface-helper
 test/postgres15-sql-compat-7112.test.ts	#7112: shipped SQL parses on every supported Postgres (15+)	2	readFileSync
-test/pregate-allowlist-cache-keys.test.ts	(file-level)	6	readFileSync
+test/pregate-allowlist-cache-keys.test.ts	(file-level)	9	readFileSync
 test/private-visibility.test.ts	shared private predicate lives once (#4352 remediation)	1	readFileSync
 test/purge-root-metafile-7613.test.ts	(file-level)	3	readFileSync
 test/q2-typing-package.test.ts	(file-level)	3	readFileSync
@@ -384,6 +385,7 @@ test/scripts/require-executed-tests.test.ts	require-executed-tests	9	readFileSyn
 test/scripts/run-verify-parallel.test.ts	guard registration ⇒ execution coverage	1	readFileSync
 test/scripts/run-verify-parallel.test.ts	run-verify-parallel.sh — no-timeout-binary fallback rc capture (regression)	8	readFileSync
 test/scripts/serial-files.test.ts	scripts/serial-files.tsv (serial lane manifest)	5	readFileSync
+test/scripts/silent-read-catches.test.ts	what counts	10	readFileSync
 test/scripts/sql-move-check.test.ts	sql-move-check: the real engine-sql copies	3	readFileSync
 test/scripts/stable-daily.test.ts	stable-daily.yml	2	readFileSync
 test/scripts/stress-gate.test.ts	docs anchors	1	readFileSync

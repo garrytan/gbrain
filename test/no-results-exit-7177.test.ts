@@ -114,6 +114,13 @@ describe('entity', () => {
     expect(formatEntityResult(miss).split('\n')).toEqual(['No entity found.', '  mention coverage: pending, 40 page(s) pending', '  (2613ms)', '']);
   }));
 
+  test('a miss whose lookup read failed is not "nothing matched": exit 0 even with GBRAIN_FAIL_ON_EMPTY=1', () => failOnEmpty(() => {
+    _resetCliExitVerdictForTests();
+    silenced(() => markEntityMiss('entity', miss, { degraded: [{ stage: 'entity_lookup_failed' }] }));
+    expect(currentExitCode()).toBe(0);
+    expect(err).not.toContain('no_results');
+  }));
+
   test('a found card, a miss with text mentions and other ops exit 0', () => failOnEmpty(() => {
     for (const [op, r] of [
       ['entity', { found: true, card: {} }],

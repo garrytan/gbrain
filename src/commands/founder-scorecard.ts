@@ -27,7 +27,7 @@
  *       ...
  *     ],
  *     red_flags: [
- *       { kind: 'regression',        metric, text },
+ *       { kind: 'regression',        metric, text },   // text: "<metric> fell N% (...)", or "rose N%" for a lower-is-better metric
  *       { kind: 'narrative_drift',                text },
  *       { kind: 'missed_prediction',              text },
  *     ],
@@ -125,7 +125,9 @@ export function computeFounderScorecard(args: {
     const latest = series[series.length - 1].value!;
     const prior = series[series.length - 2].value!;
     if (prior === 0) continue;
-    const delta = (latest - prior) / prior;
+    // abs() denominator, as in detectRegressions: a loss shrinking from -100000
+    // to -50000 is +50% (up), not -50%.
+    const delta = (latest - prior) / Math.abs(prior);
     const dir: 'up' | 'down' | 'flat' =
       Math.abs(delta) < 0.01 ? 'flat' : (delta > 0 ? 'up' : 'down');
     growth.push({ metric, direction: dir, latest_delta_pct: delta });
@@ -141,7 +143,7 @@ export function computeFounderScorecard(args: {
     redFlags.push({
       kind: 'regression',
       metric: r.metric,
-      text: `${r.metric} fell ${pct}% (${r.from_date} → ${r.to_date})`,
+      text: `${r.metric} ${r.delta_pct > 0 ? 'rose' : 'fell'} ${pct}% (${r.from_date} → ${r.to_date})`,
     });
   }
   if (drift_score !== null && drift_score >= driftRedFlag) {
