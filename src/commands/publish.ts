@@ -12,7 +12,7 @@
  *   gbrain publish <page-path> --title "Custom Title"  # override title
  */
 
-import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, realpathSync, statSync } from 'fs';
 import { randomBytes, createCipheriv, pbkdf2Sync } from 'crypto';
 import { dirname, basename, join } from 'path';
 import { createRequire } from 'module';
@@ -487,6 +487,30 @@ ${contentScript}
 
 // ── CLI entry point ────────────────────────────────────────────────
 
+/**
+ * Refuse an --out that names the page itself: the same real path or the same file by device and inode when it exists
+ * (a symlink, a hard link, a case variant on a case-insensitive filesystem), else the same name in the page's real
+ * parent folder. Checked before anything is written.
+ */
+function refuseOutOverPage(inputPath: string, outPath: string): void {
+  const page = statSync(inputPath);
+  const pageReal = realpathSync(inputPath);
+  let same = false;
+  try {
+    const out = statSync(outPath);
+    same = realpathSync(outPath) === pageReal || (out.dev === page.dev && out.ino === page.ino);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code !== 'ENOENT' && code !== 'ENOTDIR') throw e;
+    try {
+      same = basename(outPath) === basename(pageReal) && realpathSync(dirname(outPath)) === dirname(pageReal);
+    } catch {
+      same = false;
+    }
+  }
+  if (same) throw opError('invalid_params', `--out ${outPath} is the page itself, so the published copy would replace it; nothing was written.`, 'Pass a different --out path.');
+}
+
 export async function runPublish(args: string[]) {
   const inputPath = args.find(a => !a.startsWith('--'));
   const outIdx = args.indexOf('--out');
@@ -526,6 +550,7 @@ export async function runPublish(args: string[]) {
 
   // Determine output path
   const outPath = outIdx >= 0 ? args[outIdx + 1] : basename(inputPath, '.md') + '.html';
+  refuseOutOverPage(inputPath, outPath);
   mkdirSync(dirname(outPath), { recursive: true });
   writeFileSync(outPath, html);
 
