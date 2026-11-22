@@ -6,7 +6,7 @@
  * filesystem.
  */
 import { describe, expect, test } from 'bun:test';
-import { archiveLine, buildInitFirstRunNotices, setupFirstRunNotices, upkeepLine } from '../src/commands/init-first-run.ts';
+import { archiveLine, buildInitFirstRunNotices, setupFirstRunNotices, TELEMETRY_LINE, upkeepLine } from '../src/commands/init-first-run.ts';
 import { costMatrixSentence } from '../src/core/search/mode-advice.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -218,5 +218,27 @@ describe('the conversation archive line (GST-2768)', () => {
     const [n] = setupFirstRunNotices([{ ...bundle, contract_version: 1 }], 'Codex');
     expect(n.user_message!.split(archiveLine('on', false)).length).toBe(2);
     expect(n.user_message).toContain('Nothing needs an answer now');
+  });
+});
+
+describe('opt-in usage telemetry in the first-run bundle', () => {
+  test('asked only while unanswered, with no option marked recommended and nothing applied by default', () => {
+    expect(buildInitFirstRunNotices({ searchMode }).flatMap(n => n.decisions ?? []).map(d => d.id)).not.toContain('telemetry');
+    const [bundle] = buildInitFirstRunNotices({ telemetry: true });
+    const decision = bundle.decisions!.find(d => d.id === 'telemetry')!;
+    expect(decision.default).toBe('unanswered');
+    expect(decision.options.find(o => o.id === 'unanswered')!.argv).toBeUndefined();
+    expect(decision.options.map(o => o.argv?.join(' ')).filter(Boolean)).toEqual(['gbrain telemetry anonymous', 'gbrain telemetry community', 'gbrain telemetry off']);
+    for (const label of decision.options.map(o => o.label)) expect(label.toLowerCase()).not.toContain('recommended');
+    expect(decision.default_reason).toContain('No option is recommended');
+    expect(decision.question).toContain('Never pick one yourself');
+    expect(bundle.user_message).toContain(TELEMETRY_LINE);
+  });
+
+  test('setup relays the same question even when it is the only open one', () => {
+    const notices = setupFirstRunNotices(buildInitFirstRunNotices({ telemetry: true }), 'Codex');
+    expect(notices).toHaveLength(1);
+    expect(notices[0].decisions!.map(d => d.id)).toEqual(['telemetry']);
+    expect(notices[0].user_message).toContain(TELEMETRY_LINE);
   });
 });

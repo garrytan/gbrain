@@ -441,3 +441,64 @@ describe('gbrain telemetry client: an opt-out is never undone', () => {
     }
   });
 });
+
+describe('gbrain telemetry client: before the person answers', () => {
+  const held = () => (existsSync(join(telemetryDir(), 'pending.jsonl')) ? readFileSync(join(telemetryDir(), 'pending.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : []);
+  const home = () => mkdirSync(join(process.env.GBRAIN_HOME!, '.gbrain'), { recursive: true });
+
+  it('setup and upgrade events wait in the pending file; counts, doctor and the queue stay empty', () => {
+    home();
+    recordEvent({ event_type: 'setup', harness: 'codex', outcome: 'success' });
+    recordEvent({ event_type: 'upgrade', from_version: '0.1.0', outcome: 'error' });
+    recordDoctor({ score: 80, failing: [], pages: 5 });
+    countCommand('query');
+    flushCounts();
+    expect(held().map(e => e.event_type)).toEqual(['setup', 'upgrade']);
+    expect(readdirSync(telemetryDir()).sort()).toEqual(['pending.jsonl']);
+    expect(buildBatch().events).toEqual([]);
+    expect(telemetryStatus()).toMatchObject({ tier: 'off', answered: false, held_events: 2, queued_events: 0 });
+  });
+
+  it('with no gbrain home yet, nothing is held and no directory is created', () => {
+    recordEvent({ event_type: 'setup', harness: 'codex', outcome: 'error' });
+    expect(existsSync(join(process.env.GBRAIN_HOME!, '.gbrain'))).toBe(false);
+  });
+
+  it('at most 50 events and 7 days are held', () => {
+    home();
+    const old = { qid: 'old', ts: new Date(Date.now() - 8 * 86_400_000).toISOString(), event_type: 'setup', gbrain_version: '0.1.0' };
+    mkdirSync(telemetryDir(), { recursive: true });
+    writeFileSync(join(telemetryDir(), 'pending.jsonl'), `${JSON.stringify(old)}\n`);
+    for (let i = 0; i < 60; i++) recordEvent({ event_type: 'setup', harness: 'codex', outcome: 'success' });
+    const rows = held();
+    expect(rows.length).toBe(50);
+    expect(rows.some(e => e.qid === 'old')).toBe(false);
+  });
+
+  it('a yes moves the held events into the queue; they are then sent with the tier', () => {
+    home();
+    recordEvent({ event_type: 'setup', harness: 'codex', outcome: 'success' });
+    setTier('anonymous');
+    expect(existsSync(join(telemetryDir(), 'pending.jsonl'))).toBe(false);
+    expect(queue().map(e => e.event_type)).toEqual(['setup', 'consent']);
+    expect(buildBatch().events.find(e => e.event_type === 'setup')).toMatchObject({ harness: 'codex', tier: 'anonymous' });
+  });
+
+  it('off deletes the held events, and nothing is held after an answer of off', () => {
+    home();
+    recordEvent({ event_type: 'setup', harness: 'codex', outcome: 'success' });
+    setTier('off');
+    expect(existsSync(join(telemetryDir(), 'pending.jsonl'))).toBe(false);
+    recordEvent({ event_type: 'setup', harness: 'codex', outcome: 'success' });
+    expect(held()).toEqual([]);
+    expect(queue()).toEqual([]);
+  });
+
+  it('GBRAIN_TELEMETRY=off holds nothing', async () => {
+    home();
+    await withEnv({ GBRAIN_TELEMETRY: 'off' }, () => {
+      recordEvent({ event_type: 'setup', harness: 'codex', outcome: 'success' });
+      expect(existsSync(telemetryDir())).toBe(false);
+    });
+  });
+});

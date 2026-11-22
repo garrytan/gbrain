@@ -1,7 +1,20 @@
 # Telemetry
 
-gbrain sends no usage data unless you say yes. With no answer, or after
-`gbrain telemetry off`, it writes no telemetry file and opens no connection.
+gbrain sends no usage data unless you say yes. After `gbrain telemetry off`, or
+with `GBRAIN_TELEMETRY=off`, it writes no telemetry file and opens no connection.
+
+## The question
+
+The first time `gbrain init` or `gbrain setup <harness>` runs, it tells your agent
+to ask you, in the reply that reports the install, whether gbrain may send usage
+data. No option is marked recommended, and the agent is told never to pick one
+for you; `--yes`, `--json` and unattended runs never answer it. Your answer is
+the command the agent runs for you: `gbrain telemetry anonymous`, `community` or
+`off`.
+
+Until you answer, gbrain keeps setup and upgrade results only on your machine,
+in `~/.gbrain/telemetry/pending.jsonl` (at most 50, for 7 days). A yes moves them
+into the send queue; `off` deletes them. Nothing else is kept before an answer.
 
 ## What you can turn on
 
@@ -39,10 +52,10 @@ paths, source names, hostnames or error messages.
 ## Commands
 
 ```bash
-gbrain telemetry            # what is on, what is queued, where it goes
-gbrain telemetry show       # the exact JSON the next send would post, and the last sends
+gbrain telemetry            # what is on, what is queued or waiting, where it goes
+gbrain telemetry show       # what waits for your answer, the exact JSON the next send would post, and the last sends
 gbrain telemetry anonymous  # or: community
-gbrain telemetry off        # stop and delete the local queue
+gbrain telemetry off        # stop and delete the local queue and anything waiting
 gbrain telemetry forget     # delete this install's data on the server, then the local id and queue
 gbrain telemetry pulse      # the public aggregate of everyone's opt-in data
 gbrain telemetry sync       # send now instead of waiting (--force skips the 6-hour window)
@@ -65,7 +78,8 @@ network. It never starts from a `--json` run, a hook or a server. A send that
 hits a 429, a server error or no connection keeps the events for the next try;
 a batch the server refuses with any other 4xx is dropped on the third such
 refusal.
-Events older than 30 days are dropped.
+Events older than 30 days are dropped. The server keeps stored events for 400
+days.
 
 Data goes to gbrain's own tables in the Supabase project gbrain shares with
 gstack, through one validated endpoint. The publishable key in the code can call

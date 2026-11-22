@@ -1,8 +1,10 @@
 /**
  * gbrain's opt-in usage telemetry, client side (docs/guides/telemetry.md).
  *
- * Off unless the person answered yes: with no answer, or tier off, or
- * GBRAIN_TELEMETRY=off, nothing here writes a file or opens a connection.
+ * Off unless the person answered yes. After an off answer, or with GBRAIN_TELEMETRY=off,
+ * nothing here writes a file or opens a connection. Before any answer, setup
+ * and upgrade events wait in a local pending file that is sent only after a
+ * yes and deleted on off.
  * At anonymous or community tier:
  *   - setup, upgrade, doctor and consent events append to events.jsonl
  *     (kept 30 days, at most 500);
@@ -149,13 +151,16 @@ export function setTier(tier: Tier): Settings {
   }, true)!;
   tierCache = null;
   if (tier === 'off') clearQueue();
-  else recordEvent({ event_type: 'consent', answer: tier });
+  else {
+    releaseHeld();
+    recordEvent({ event_type: 'consent', answer: tier });
+  }
   return next;
 }
 
 export function clearQueue(): void {
   pending = {};
-  for (const name of ['events.jsonl', 'counts']) rmSync(file(name), { recursive: true, force: true });
+  for (const name of ['events.jsonl', 'counts', 'pending.jsonl']) rmSync(file(name), { recursive: true, force: true });
 }
 
 const oneOf = (key: string, v: unknown) => (typeof v === 'string' && ENUMS[key].includes(v) ? v : undefined);
@@ -277,7 +282,10 @@ const writeQueue = (rows: Row[]) => writeAtomic(file('events.jsonl'), rows.map(r
 /** Queue one event. Never throws; does nothing at tier off. */
 export function recordEvent(fields: Row): void {
   try {
-    if (currentTier() === 'off') return;
+    if (currentTier() === 'off') {
+      if (HELD_TYPES.has(String(fields.event_type)) && awaitingAnswer()) holdForAnswer(fields);
+      return;
+    }
     const clean = sanitize({ ...environmentFields(), ...fields });
     if (!clean) return;
     const now = Date.now();
@@ -286,6 +294,52 @@ export function recordEvent(fields: Row): void {
       writeQueue([...kept, { qid: randomUUID(), ts: hourStamp(now), ...clean }]);
     });
   } catch { /* telemetry never breaks a command */ }
+}
+
+/**
+ * Before the person answers, setup and upgrade events wait in pending.jsonl
+ * (at most 50, 7 days). A yes moves them into the queue; off deletes them.
+ * Nothing in that file is sent unless the person says yes, and nothing is
+ * held when no gbrain home exists yet (a refused setup creates no directory).
+ */
+const HELD_TYPES = new Set(['setup', 'upgrade']);
+const MAX_HELD_EVENTS = 50;
+const HELD_TTL_MS = 7 * DAY_MS;
+
+export function awaitingAnswer(): boolean {
+  return !forcedOff() && !readSettings().answered_at;
+}
+
+function readHeld(now: number): Row[] {
+  let text = '';
+  try { text = readFileSync(file('pending.jsonl'), 'utf8'); } catch { return []; }
+  return text.split('\n').filter(Boolean).flatMap((line) => {
+    try { return [JSON.parse(line) as Row]; } catch { return []; }
+  }).filter(e => typeof e.ts === 'string' && now - Date.parse(e.ts) < HELD_TTL_MS);
+}
+
+function holdForAnswer(fields: Row): void {
+  if (!existsSync(configDir())) return;
+  const clean = sanitize({ ...environmentFields(), ...fields });
+  if (!clean) return;
+  const now = Date.now();
+  withQueueLock(() => {
+    const kept = readHeld(now).slice(-(MAX_HELD_EVENTS - 1));
+    writeAtomic(file('pending.jsonl'), [...kept, { qid: randomUUID(), ts: hourStamp(now), ...clean }].map(r => `${JSON.stringify(r)}\n`).join(''));
+  });
+}
+
+function releaseHeld(): void {
+  const now = Date.now();
+  withQueueLock(() => {
+    const held = readHeld(now);
+    if (held.length) writeQueue([...readQueue().filter(freshAt(now)), ...held].slice(-MAX_QUEUED_EVENTS));
+    rmSync(file('pending.jsonl'), { force: true });
+  });
+}
+
+export function heldEvents(now = Date.now()): Row[] {
+  return readHeld(now);
 }
 
 let pending: DayCounts = {};
@@ -613,6 +667,7 @@ export interface TelemetryStatus {
   answered: boolean;
   installation_id: string | null;
   queued_events: number;
+  held_events: number;
   count_days: number;
   last_attempt_at: string | null;
   last_sent_at: string | null;
@@ -633,6 +688,7 @@ export function telemetryStatus(now = Date.now()): TelemetryStatus {
     answered: !!settings.answered_at,
     installation_id: settings.installation_id ?? null,
     queued_events: readQueue().filter(freshAt(now)).length,
+    held_events: readHeld(now).length,
     count_days: countDays().length,
     last_attempt_at: state.last_attempt_at ?? null,
     last_sent_at: state.last_sent_at ?? null,

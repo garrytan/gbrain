@@ -95,4 +95,22 @@ describe('gbrain telemetry CLI', () => {
       server.stop(true);
     }
   }, 600_000);
+
+  test('init asks about usage data without answering it, holds its setup event, and a yes releases it', async () => {
+    const home = join(ROOT, 'consent');
+    const init = await runCli(['init', '--pglite', '--no-embedding', '--json'], { home, timeoutMs: 120_000 });
+    expect(init.exitCode).toBe(0);
+    const doc = JSON.parse(init.stdout) as { notices?: Array<{ decisions?: Array<{ id: string; default: string }> }> };
+    const decision = (doc.notices ?? []).flatMap(n => n.decisions ?? []).find(d => d.id === 'telemetry');
+    expect(decision).toMatchObject({ default: 'unanswered' });
+    const dir = join(home, '.gbrain', 'telemetry');
+    expect(readdirSync(dir)).toEqual(['pending.jsonl']);
+    expect(readFileSync(join(dir, 'pending.jsonl'), 'utf8')).toContain('"step":"brain_create"');
+    const status = JSON.parse((await runCli(['telemetry', '--json'], { home })).stdout);
+    expect(status).toMatchObject({ tier: 'off', answered: false, held_events: 1 });
+    await runCli(['telemetry', 'community'], { home });
+    const show = JSON.parse((await runCli(['telemetry', 'show', '--json'], { home })).stdout) as { held_for_answer: unknown[]; next_send: Array<Record<string, unknown>> };
+    expect(show.held_for_answer).toEqual([]);
+    expect(show.next_send.map(e => e.event_type)).toEqual(['setup', 'consent']);
+  }, 240_000);
 });
