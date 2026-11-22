@@ -102,7 +102,7 @@ a private row the same `widen` record admits (`world_admits`):
 | Rule | Store test | PGLite text |
 |---|---|---|
 | Own member page | a private row on `memory/members/<member>`, whose live page names `member:<member>` among its readers (`access_readers`) and passes `memberPagePolicy` (`page_hidden`) | `memberFactAdmitSql` |
-| Private-facts grant | a private row of a source in `privateFactSources` that has a page to check (not `unpagedFactSql`: no holding page, or a conversation, hook, sweep, transcript or connector lane) and whose pages keep it private for no reason: no holding, entity or provenance slug under `memory/members/`; the holding and provenance pages (`provenance_slug`) not derivation-private in any row, missing, soft-deleted or quarantined; the entity page not derivation-private | `grantedPrivateFactSql`, `factPagesOpenSql`, `factPageReasons` (`src/core/facts/private-fact-pages.ts`) |
+| Private-facts grant | a private row of a source in `privateFactSources` that has a page to check (not `unpagedFactSql`: no holding page, or a conversation, hook, sweep, transcript or connector lane) and whose pages keep it private for no reason: no holding, entity or provenance slug under `memory/members/`; the holding and provenance pages (`provenance_slug`) not derivation-private in any row, missing, soft-deleted or quarantined; the entity page not derivation-private; and not a held row the grant refuses (GST-2979: a visibility proposal names a copy the caller's reads admit by neither rule, along the hold chain; `widen.rs` `hold_refused`) | `grantedPrivateFactSql`, `factPagesOpenSql`, `factPageReasons` (`src/core/facts/private-fact-pages.ts`) |
 
 The member (`src/core/rust-engine/store-members/fact-visibility.ts`) sends the list alone when PGLite renders the
 bare list. Otherwise it sends `widen` only when the caller's text equals the rendering for a record of just its reader
@@ -639,7 +639,8 @@ it is not a transcript-lane row (a `source` of the conversation prefix, `hook:wr
 private derivation (`derivation_private`), or, for a page other than the entity page, there is no live row or the
 live row carries the quarantine key. A row that a `confirm` or `supersede_fact` proposal with a `visibility` key in
 its before state names as the related fact is admitted only when every target copy of those proposals is itself
-admitted by the member or grant admission (`trust::proposals::visibility_proposal_targets`). With no grant, a grant
+admitted by the member or grant admission, a copy only the grant admits counting only when its own proposals pass the
+same test (the hold chain, `widen.rs` `hold_refused` over `trust::proposals::visibility_proposal_targets`). With no grant, a grant
 on another source, or a soft-deleted page, the rows stay held.
 
 The answer is `[{ source_id, slug, row_num, claim }]`, one row per distinct

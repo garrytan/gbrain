@@ -96,7 +96,7 @@ getPage	pages	yes	135	yes	yes	yes	serves
 readPageSnapshot	pages	yes	36	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	611	yes	yes	yes	serves
+putPage	pages	yes	612	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	22	yes	yes	yes	serves
@@ -415,12 +415,12 @@ listLiveTakesByIds	contradictions	yes	1	no	yes	yes	refuses:takes
 readLastContradictionsPromptVersion	contradictions	yes	1	no	yes	yes	refuses:contradictions
 listEvalCandidateQueries	contradictions	yes	1	no	yes	yes	refuses:eval_capture
 insertFact	facts	yes	96	yes	yes	yes	serves
-insertFacts	facts	yes	133	no	yes	yes	serves
+insertFacts	facts	yes	134	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	60	no	yes	yes	serves
 listFactsByEntity	facts	yes	36	yes	yes	yes	serves
-listFactsSince	facts	yes	28	yes	yes	yes	serves
-listFactsKeyset	facts	yes	10	no	yes	yes	serves
+listFactsSince	facts	yes	29	yes	yes	yes	serves
+listFactsKeyset	facts	yes	11	no	yes	yes	serves
 listFactsBySession	facts	yes	13	yes	yes	yes	serves
 listSupersessions	facts	yes	7	yes	yes	yes	serves
 countUnconsolidatedFacts	facts	yes	2	yes	yes	yes	serves
@@ -1193,7 +1193,7 @@ listFenceFactRows	trust_fence	yes	5	no	yes	yes	serves
 restorePageTrust	trust_fence	yes	1	no	yes	yes	serves
 listHeldRows	trust_fence	yes	2	no	yes	yes	serves
 listGuardedTakeRows	trust_fence	yes	1	no	yes	yes	serves
-insertTrustProposal	trust_proposals	yes	11	no	yes	yes	serves
+insertTrustProposal	trust_proposals	yes	12	no	yes	yes	serves
 getTrustProposal	trust_proposals	yes	2	no	yes	yes	serves
 listTrustProposals	trust_proposals	yes	4	no	yes	yes	serves
 pendingTrustProposalsFor	trust_proposals	yes	2	no	yes	yes	serves
