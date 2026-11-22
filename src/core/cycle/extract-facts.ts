@@ -85,7 +85,7 @@ import { fenceUnfencedFacts, isFenceHold, planUnfencedFacts } from '../facts/unf
 import { heldMoveIncomplete, moveHeldFacts } from '../facts/held-fact-move.ts';
 import { classifyRunStop, upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { factsFenceView } from '../facts-fence.ts';
-import { fenceReadOf, publishFenceGeneration, readFenceBlocks, FACT_FENCE_KIND, type FenceRead } from '../generations/fence.ts';
+import { clearFenceHold, fenceOwnerKey, fenceReadOf, publishFenceGeneration, readFenceBlocks, FACT_FENCE_KIND, type FenceRead } from '../generations/fence.ts';
 import { factsFenceHeld, moveKeptRows } from '../generations/fence-evidence.ts';
 import type { BodyStorage } from '../page-body/types.ts';
 import { factFenceItems, factPreimages, factRetireItem } from '../generations/adapters/fact-rows.ts';
@@ -518,6 +518,11 @@ function reconcileWrites(plan: FenceReconcilePlan, embeddingDeferred = false) {
   };
 }
 
+/** An in-sync plan skips the generation primitive, so a fence that parses again must still answer a held `fence_absent`. */
+async function clearHeldFenceWhenParsed(db: BrainEngine, sourceId: string, slug: string, plan: FenceReconcilePlan): Promise<void> {
+  if (plan.read.state === 'parsed') await clearFenceHold(db, { kind: FACT_FENCE_KIND, sourceId, ownerKey: fenceOwnerKey(slug) });
+}
+
 /** One page's reconcile writes, inside a transaction that holds the page key. */
 async function writeFenceReconcile(tx: BrainEngine, sourceId: string, slug: string, plan: FenceReconcilePlan,
   writes: ReturnType<typeof reconcileWrites>, signal?: AbortSignal): Promise<{ inserted: number; updated: number; deleted: number; held?: true; warnings: string[]; write_gate?: GateTally }> {
@@ -621,6 +626,7 @@ export async function prepareFenceFactsReconcile(engine: BrainEngine, row: Write
       const current = await tx.getPage(row.slug, { sourceId: row.source_id });
       const warnings: string[] = [];
       const plan = current ? await planFenceReconcile(tx, current, row.slug, row.source_id, warnings, true) : null;
+      if (plan?.inSync) await clearHeldFenceWhenParsed(tx, row.source_id, row.slug, plan);
       if (!plan || plan.inSync) return { status: 'completed', inserted: 0, updated: 0, deleted: 0, deferred: false, warnings };
       const signature = await resolveManagedFactsEmbedding(tx, config, true);
       const vectors = new Map((intent?.embeddings ?? [])
@@ -1045,7 +1051,10 @@ export async function runExtractFacts(
     if (!plan) return 'invalid';
     if (plan.fenceRows > 0) result.pagesWithFacts += 1;
     if (opts.dryRun) return 'skipped';
-    if (plan.inSync) return 'unchanged';
+    if (plan.inSync) {
+      await clearHeldFenceWhenParsed(engine, sourceId, slug, plan);
+      return 'unchanged';
+    }
     const { toInsert } = plan;
 
     // v0.35.4 (D-CDX-3) — batch-embed new rows before insert so
