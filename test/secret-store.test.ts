@@ -188,7 +188,7 @@ describe('reveal_secret stays approved by name in profile grants', () => {
 });
 
 describe('reveal_secret counts only a place whose marker the caller can see (GST-3065)', () => {
-  test('a non-owner with a reveal grant is refused an original whose marker it cannot read itself (an owner-only take, timeline or fact row, a body copy in a stripped takes fence, a private fact fence row, a take holder outside its allowlist, a removed marker, a row edited or deleted, a commit), and is told only the places that counted; the owner and the local CLI still reveal', () => withEnv({ GBRAIN_HOME: home, GBRAIN_SECRET_STORE_KEY: undefined }, async () => {
+  test('a non-owner with a reveal grant is refused an original whose marker it cannot read itself (an owner-only take, timeline or fact row, a body copy in a stripped takes fence, a private fact fence row, a take holder outside its allowlist, a removed marker, a row edited or deleted, a row its token may not read, a commit), and is told only the places that counted; the owner and the local CLI still reveal', () => withEnv({ GBRAIN_HOME: home, GBRAIN_SECRET_STORE_KEY: undefined }, async () => {
     for (const { name, engine } of engines) {
       const op = operationsByName.reveal_secret!;
       const values = { open: 'AKIA' + 'OPENROWVALUE0001', take: 'AKIA' + 'OWNERONLYTAKE001', timeline: 'AKIA' + 'OWNERONLYTIME001', fact: 'AKIA' + 'OWNERONLYFACT001',
@@ -233,11 +233,14 @@ describe('reveal_secret counts only a place whose marker the caller can see (GST
       await recordOccurrence(engine, { ...at, entryId: ids.edited, field: `takes/${edited}/claim` });
       await recordOccurrence(engine, { ...at, pageId: null, entryId: ids.commit, field: 'compiled_truth', origin: 'publish_rebuild', commit: 'a'.repeat(40), path: 'notes/shared-plan.md', line: 3 });
 
-      const nonOwner = remoteCtx(engine, ['get_page', 'reveal_secret']);
+      const nonOwner = remoteCtx(engine, ['get_page', 'takes_list', 'get_timeline', 'recall', 'reveal_secret']);
+      const noTakes = remoteCtx(engine, ['get_page', 'reveal_secret']);
       const open = await op.handler(nonOwner, { id: ids.open }) as { value: string; occurrences: Array<{ slug: string; field: string; commit: string | null }> };
       expect(open.value, name).toBe(values.open);
       expect(open.occurrences.map(o => [o.slug, o.field, o.commit]), name).toEqual([['notes/shared-plan', 'compiled_truth', null]]);
       expect(await op.handler(nonOwner, { id: ids.gone }), `${name} gone before delete`).toMatchObject({ value: values.gone });
+      await expect(op.handler(noTakes, { id: ids.gone }), `${name} gone without takes_list`).rejects.toMatchObject({ code: 'secret_reveal_forbidden' });
+      expect(await op.handler(noTakes, { id: ids.open }), `${name} open without takes_list`).toMatchObject({ value: values.open });
       expect(await op.handler(nonOwner, { id: ids.edited }), `${name} edited before edit`).toMatchObject({ value: values.edited });
       await engine.executeRaw('DELETE FROM takes WHERE id = $1', [gone]);
       await engine.executeRaw("UPDATE takes SET claim = 'Draft done' WHERE id = $1", [edited]);

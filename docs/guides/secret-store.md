@@ -31,7 +31,7 @@ A remote caller needs both:
    `gbrain auth rescope --token <name> --refresh-operations` previews, then the same command with
    `--add reveal_secret`. A token with no operation list, `--all-new` and a harness token never get it.
 2. It can see the entry's marker itself in a place where the store recorded it: its own `get_page` reply for a
-   page's text, or its own `takes_list`, `get_timeline`, `recall`, `get_raw_data` or `get_links` reply for a row.
+   page's text, or its own `takes_list`, `get_timeline`, `recall`, `get_raw_data` or `get_links` reply for a row, counted only when its token may call that operation.
    Everything that hides text from that caller hides the marker too: owner-only rows (made from an iMessage chat,
    for example), a takes fence or private facts fence stripped from the page, a take whose holder it may not read, a
    marker since removed and a deleted row. A marker copied into another page binds to nothing, and a place recorded

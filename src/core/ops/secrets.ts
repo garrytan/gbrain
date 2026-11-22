@@ -4,7 +4,7 @@
  * `reveal_secret` (an explicit approval: a grant with no snapshot, or a refresh of one, never reaches it; see
  * execution-prerequisites.ts), and a recorded place of the entry whose full marker it can see itself (GST-3065): the
  * marker appears in what that caller's own read of the place returns (get_page for the page's fields, takes_list,
- * get_timeline, recall, get_raw_data or get_links for a row), so page visibility, source scope, member rules, fence
+ * get_timeline, recall, get_raw_data or get_links for a row, each counted only when the token may call it), so page visibility, source scope, member rules, fence
  * stripping, take holders, private facts and owner-only lineage all apply unchanged, and a place whose marker is gone no
  * longer counts. A commit place names a git file, not a page, and never counts. The remote reply lists only the places
  * that counted. Every reveal is written to the `secrets` audit log without the value.
@@ -46,6 +46,7 @@ async function visiblePlaces(ctx: OperationContext, marker: string, places: Occu
   for (const o of places) {
     if (!o.slug || o.commit_sha) continue;
     const [op, params] = readOf(o as Occurrence & { slug: string });
+    if (!ctx.auth?.allowedOperations?.includes(op)) continue;
     const key = JSON.stringify([op, params]);
     if (!replies.has(key)) replies.set(key, Promise.resolve().then(() => operationsByName[op]!.handler(ctx, params))
       .then(out => (out && typeof out === 'object' && 'error' in out ? null : out), () => null));
