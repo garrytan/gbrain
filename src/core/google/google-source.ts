@@ -986,10 +986,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
     // frequent cron keep the gate green forever (red-team F2 bypass).
     if (gmailSweepOk && !managed) {
       try {
-        await engine.executeRaw(
-          `UPDATE sources SET last_sync_at = now(), newest_content_at = $1::timestamptz WHERE id = $2`,
-          [new Date(state.gmail_newest_ms ?? Date.now()).toISOString(), sourceId],
-        );
+        await engine.markSourceSynced(sourceId, { newestContentAt: new Date(state.gmail_newest_ms ?? Date.now()).toISOString() });
       } catch { /* best-effort */ }
     }
 

@@ -15,7 +15,7 @@ export const updateSourceConfig: StoreMember<[sourceId: string, patch: Record<st
 
 /** Sets the source's last sync time to the store clock; false for an unknown source (or another incarnation), which changes nothing. */
 export const markSourceSynced: StoreMember<[sourceId: string, opts?: SourceSyncStampOptions], boolean> = (brain, sourceId, opts) =>
-  storeCall({ member: 'markSourceSynced', sourceId }, () => brain.markSourceSynced(sourceId, takeOptions('markSourceSynced', opts, ['incarnation'])));
+  storeCall({ member: 'markSourceSynced', sourceId }, () => brain.markSourceSynced(sourceId, takeOptions('markSourceSynced', opts, ['incarnation', 'newestContentAt'])));
 
 /**
  * The row or null; `created_at` and `last_sync_at` come back as Dates, like the driver's. The store keeps the source's
