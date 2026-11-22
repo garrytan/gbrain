@@ -90,6 +90,17 @@ describe('gbrain telemetry backend: locked down and separate from gstack', () =>
     for (const n of [...tables, ...views, ...functions]) expect(VERIFY).toContain(n);
   });
 
+  // Value: protects=verify.sh calls each function with exactly its SQL parameter names, so PostgREST reaches the permission check (42501) instead of PGRST202; fails_when=a probe sends {} to a function that takes arguments, or a parameter is renamed; why_new=the probe test checks names only; seam=none; no_claim=a live PostgREST answer (static check against G001)
+  test('verify.sh calls each function with its SQL parameter names', () => {
+    const fn = VERIFY.match(/^rpc_args\(\) \{[\s\S]*?\n\}/m)![0];
+    for (const f of functions) {
+      const params = SQL_CODE.match(new RegExp(`FUNCTION public\\.${f}\\(([^)]*)\\)`))![1];
+      const want = [...params.matchAll(/\b(p_\w+)\b/g)].map(m => m[1]).sort();
+      const out = spawnSync('bash', ['-c', `${fn}\nrpc_args ${f}`], { encoding: 'utf-8' }).stdout;
+      expect({ f, keys: Object.keys(JSON.parse(out)).sort() }).toEqual({ f, keys: want });
+    }
+  });
+
   test('verify.sh sends a test event the ingest accepts', () => {
     const line = VERIFY.split('\n').find(l => l.startsWith('PROBE='))!;
     const out = spawnSync('bash', ['-c', `${line}\nprintf %s "$PROBE"`], { encoding: 'utf-8' }).stdout;

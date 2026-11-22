@@ -5,7 +5,7 @@
  *   status (default)            what is on, what is queued, where it goes
  *   show                        the exact JSON the next send would post, and recent sends
  *   off | anonymous | community set the tier (off deletes the local queue)
- *   forget                      delete this install's data on the server, then the local id and queue
+ *   forget                      delete this install's record on the server and unlink its stored events, then the local id and queue
  *   pulse                       the public aggregate; non-zero exit when it is stale or unreachable
  *   sync [--force]              send now (normally a detached background run does this)
  */
@@ -27,7 +27,7 @@ file paths, source names or error messages is ever sent.
   anonymous     send usage counts and setup/upgrade/doctor results, with no install id
   community     the same plus a random install id, so a setup and a later upgrade on
                 one machine can be linked
-  forget        delete this install's data on the server, then the local install id
+  forget        delete this install's record on the server and unlink its stored events, then the local install id
   pulse         the public aggregate of everyone's opt-in data
   sync          send now instead of waiting for the background send (--force skips
                 the 6-hour window)
@@ -97,7 +97,7 @@ async function forget(json: boolean): Promise<void> {
   }
   const tier = readSettings().tier;
   const still = tier === 'off' || forcedOff() ? '' : ` Telemetry is still ${tier}: gbrain telemetry off stops sending.`;
-  await out(json, r, `Deleted this install's data on the server (${r.events_cleared ?? 0} stored event(s) unlinked), removed the local install id and deleted the local queue.${still}\n`);
+  await out(json, r, `Deleted this install's record on the server (${r.events_cleared ?? 0} stored event(s) unlinked and kept only as anonymous rows), removed the local install id and deleted the local queue.${still}\n`);
 }
 
 async function pulse(json: boolean): Promise<void> {

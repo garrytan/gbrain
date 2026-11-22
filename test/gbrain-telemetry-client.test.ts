@@ -440,6 +440,40 @@ describe('gbrain telemetry client: an opt-out is never undone', () => {
       rmSync(lock, { force: true });
     }
   });
+
+  // Value: protects=a telemetry off that lands while a send mints the community install id stays off; fails_when=the id mint writes stale settings outside the settings lock; why_new=the version-note race test covers noteRunVersion only; seam=none; no_claim=no real cross-process race (the second settings read is where the other process's off is simulated)
+  it('a telemetry off written while a send mints the community install id survives, and nothing is sent', async () => {
+    const ok = standIn([200]);
+    try {
+      await withEnv({ GBRAIN_TELEMETRY_URL: ok.url }, async () => {
+        setTier('community');
+        recordEvent({ event_type: 'setup', outcome: 'success' });
+        const { installation_id: _drop, ...rest } = readSettings();
+        writeFileSync(join(telemetryDir(), 'settings.json'), JSON.stringify(rest));
+        const realRead = fs.readFileSync;
+        let reads = 0;
+        let injected = false;
+        const spy = spyOn(fs, 'readFileSync').mockImplementation(((path: fs.PathOrFileDescriptor, ...more: unknown[]) => {
+          const out = (realRead as (...a: unknown[]) => unknown)(path, ...more);
+          if (!injected && String(path).endsWith('settings.json') && ++reads === 2) {
+            injected = true;
+            setTier('off');
+          }
+          return out;
+        }) as typeof fs.readFileSync);
+        try {
+          await syncTelemetry({ force: true });
+        } finally {
+          spy.mockRestore();
+        }
+        expect(injected).toBe(true);
+        expect(readSettings().tier).toBe('off');
+        expect(ok.posts).toEqual([]);
+      });
+    } finally {
+      ok.stop();
+    }
+  });
 });
 
 describe('gbrain telemetry client: before the person answers', () => {

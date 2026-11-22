@@ -504,11 +504,11 @@ export async function syncTelemetry(opts: { force?: boolean; now?: number } = {}
   try {
     const now = opts.now ?? Date.now();
     if (!opts.force && !syncDue(now)) return { status: 'too_soon' };
-    const settings = readSettings();
+    let settings = readSettings();
     if (forcedOff() || settings.tier === 'off') return { status: 'off' };
     if (settings.tier === 'community' && !settings.installation_id) {
-      settings.installation_id = randomUUID();
-      writeJson('settings.json', settings);
+      settings = updateSettings(s => (s.tier === 'community' && !s.installation_id ? { ...s, installation_id: randomUUID() } : null), true) ?? readSettings();
+      if (settings.tier === 'off') return { status: 'off' };
     }
     const batch = buildBatch(settings, now);
     if (!batch.events.length) {

@@ -58,7 +58,7 @@ gbrain telemetry            # what is on, what is queued or waiting, where it go
 gbrain telemetry show       # what waits for your answer, the exact JSON the next send would post, and the last sends
 gbrain telemetry anonymous  # or: community
 gbrain telemetry off        # stop and delete the local queue and anything waiting
-gbrain telemetry forget     # delete this install's data on the server, then the local id and queue
+gbrain telemetry forget     # delete this install's record on the server and unlink its events, then the local id and queue
 gbrain telemetry pulse      # the public aggregate of everyone's opt-in data
 gbrain telemetry sync       # send now instead of waiting (--force skips the 6-hour window)
 ```

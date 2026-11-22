@@ -26,7 +26,7 @@ The ceiling is one bucket shared by every caller, so one caller can fill it. The
 ## Applying it
 
 1. Apply `migrations/G001_gbrain_telemetry.sql` as the project owner (psql or the dashboard SQL editor). It runs in one transaction and is safe to run twice.
-2. Deploy both functions (`supabase functions deploy gbrain-telemetry-ingest` and `gbrain-telemetry-pulse`, or paste each `index.ts` into the dashboard editor; each file is self-contained).
+2. Deploy both functions with JWT verification off (`supabase functions deploy gbrain-telemetry-ingest --no-verify-jwt` and the same for `gbrain-telemetry-pulse`, or paste each `index.ts` into the dashboard editor and turn off "Enforce JWT verification"; each file is self-contained). The client sends only the publishable key in an `apikey` header, which is not a JWT, so with verification on every request is refused with 401 before the function runs.
 3. Run `GBRAIN_TELEMETRY_URL=… GBRAIN_TELEMETRY_KEY=… bash supabase/gbrain-telemetry/verify.sh` and keep its `VERDICT:` line.
 4. Retention: run `select public.gbrain_telemetry_prune();` daily. Where pg_cron is enabled: `select cron.schedule('gbrain-telemetry-prune', '17 4 * * *', 'select public.gbrain_telemetry_prune()');` Otherwise run it by hand at least monthly.
 

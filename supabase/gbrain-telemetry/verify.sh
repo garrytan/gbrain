@@ -59,6 +59,18 @@ update_filter() {
   esac
 }
 
+# Each function's real named arguments with harmless values, so PostgREST finds the
+# function and the call reaches the permission check (an unmatched signature answers
+# PGRST202 instead of 42501).
+rpc_args() {
+  case "$1" in
+    gbrain_ingest_reserve) echo '{"p_rows":0,"p_max_requests":0,"p_max_rows":0}' ;;
+    gbrain_telemetry_forget) echo '{"p_installation_id":"00000000-0000-0000-0000-000000000000"}' ;;
+    gbrain_pulse_summary) echo '{"p_max_version":"0.0.0"}' ;;
+    *) echo '{}' ;;
+  esac
+}
+
 run_role() { # <role label> <bearer>
   local who="$1" bearer="$2" t f
   for t in $TABLES; do
@@ -67,7 +79,7 @@ run_role() { # <role label> <bearer>
     denied "$who update $t" -X PATCH -H "apikey: $KEY" -H "Authorization: Bearer $bearer" -H "Content-Type: application/json" -d "$(update_body "$t")" "$URL/rest/v1/$t?$(update_filter "$t")"
   done
   for f in $FUNCS; do
-    denied "$who call $f" -X POST -H "apikey: $KEY" -H "Authorization: Bearer $bearer" -H "Content-Type: application/json" -d '{}' "$URL/rest/v1/rpc/$f"
+    denied "$who call $f" -X POST -H "apikey: $KEY" -H "Authorization: Bearer $bearer" -H "Content-Type: application/json" -d "$(rpc_args "$f")" "$URL/rest/v1/rpc/$f"
   done
 }
 
