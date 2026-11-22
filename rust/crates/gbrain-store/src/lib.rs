@@ -49,6 +49,8 @@ pub mod chat_usage;
 pub mod chunk_queries;
 pub mod code_edges;
 pub mod contradictions;
+#[cfg(test)]
+mod derivation_walks;
 pub mod dream;
 pub mod dream_config;
 pub mod drift_conflicts;

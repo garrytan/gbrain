@@ -108,7 +108,7 @@ getPage	pages	yes	172	yes	yes	yes	serves
 readPageSnapshot	pages	yes	51	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	2	no	yes	yes	serves
 lockPageKeys	pages	yes	13	no	yes	yes	serves
-putPage	pages	yes	775	yes	yes	yes	serves
+putPage	pages	yes	779	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	27	yes	yes	yes	serves
@@ -118,7 +118,7 @@ softDeletePage	pages	yes	209	yes	yes	yes	serves
 softDeletePages	pages	yes	3	yes	yes	yes	serves
 restorePage	pages	yes	14	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	5	no	yes	yes	serves
-listPages	pages	yes	15	yes	yes	yes	serves
+listPages	pages	yes	16	yes	yes	yes	serves
 findPages	pages	yes	4	no	yes	yes	serves
 countPagesBy	pages	yes	1	no	yes	yes	serves
 resolveSlugs	pages	yes	6	no	yes	yes	serves
@@ -473,12 +473,12 @@ hasActiveFactText	facts	yes	2	no	yes	yes	serves
 readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
-insertFact	facts	yes	109	yes	yes	yes	serves
+insertFact	facts	yes	113	yes	yes	yes	serves
 insertFacts	facts	yes	179	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	67	no	yes	yes	serves
 listFactsByEntity	facts	yes	36	yes	yes	yes	serves
-listFactsSince	facts	yes	30	yes	yes	yes	serves
+listFactsSince	facts	yes	31	yes	yes	yes	serves
 listFactsKeyset	facts	yes	11	no	yes	yes	serves
 listFactsBySession	facts	yes	13	yes	yes	yes	serves
 listSupersessions	facts	yes	7	yes	yes	yes	serves
@@ -1060,7 +1060,7 @@ listBeliefEventsForPurgeProbe	facts_purge	yes	2	no	yes	yes	refuses:facts
 listFactContextsForPurgeProbe	facts_purge	yes	1	no	yes	yes	refuses:facts
 listPageSourcePathsForPurge	facts_purge	yes	2	no	yes	yes	serves
 listNearestFactsForPurge	facts_purge	yes	2	no	yes	yes	serves
-countLegacyDerivedPages	facts_purge	yes	4	no	yes	yes	serves
+countLegacyDerivedPages	facts_purge	yes	5	no	yes	yes	serves
 vacuumPurgedTables	facts_purge	yes	1	no	yes	yes	refuses:facts
 listPageProseHits	facts_purge	yes	1	no	yes	yes	refuses:facts
 readPurgeReceiptSourcePath	facts_purge	yes	1	no	yes	yes	refuses:facts
@@ -1176,14 +1176,14 @@ expireCapturedFacts	facts_repair	yes	1	no	yes	yes	refuses:facts
 listExpiredFactIds	facts_repair	yes	1	no	yes	yes	refuses:facts
 readEntityRehomeState	facts_repair	yes	1	no	yes	yes	refuses:facts
 rehomeEntityFacts	facts_repair	yes	1	no	yes	yes	refuses:facts
-listDerivedRows	facts_trust	yes	3	no	yes	yes	serves
+listDerivedRows	facts_trust	yes	5	no	yes	yes	serves
 listFactsForRelevance	facts_trust	yes	7	no	yes	yes	serves
 countUncomparableFacts	facts_trust	yes	4	no	yes	yes	serves
 matchSavedFacts	facts_trust	yes	6	no	yes	yes	serves
 readFactForOwnerAction	facts_trust	yes	2	no	yes	yes	serves
 listStandingPreferences	facts_trust	yes	2	no	yes	yes	serves
 listLexicalContestCandidates	facts_trust	yes	2	no	yes	yes	serves
-listFactsFromQuotedPages	facts_trust	yes	1	no	yes	yes	serves
+listFactsFromQuotedPages	facts_trust	yes	2	no	yes	yes	serves
 listOwnerTierFacts	facts_trust	yes	1	no	yes	yes	serves
 listRestatedPrivateCopies	facts_trust	yes	1	no	yes	yes	serves
 countDerivedFactTaint	facts_trust	yes	3	no	yes	yes	serves
@@ -1206,7 +1206,7 @@ lockAgentWritebackSetting	facts_trust	yes	1	no	yes	yes	refuses:facts
 listFactsToRetireFromPage	facts_trust	yes	1	no	yes	yes	refuses:facts
 listContestedProposalPairs	facts_trust	yes	1	no	yes	yes	refuses:facts
 listFactProvenance	facts_trust	yes	1	no	yes	yes	refuses:facts
-recordDerivationEdges	facts_trust	yes	1	no	yes	yes	refuses:facts
+recordDerivationEdges	facts_trust	yes	7	no	yes	yes	serves
 expireDerivedFacts	facts_trust	yes	1	no	yes	yes	refuses:facts
 deactivateDerivedTakes	facts_trust	yes	1	no	yes	yes	refuses:facts
 softDeleteDerivedPages	facts_trust	yes	1	no	yes	yes	refuses:facts

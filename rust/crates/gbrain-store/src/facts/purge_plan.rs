@@ -551,8 +551,8 @@ impl Store {
         Ok(Value::Array(rows.into_values().take(limit).collect()))
     }
 
-    /// `countLegacyDerivedPages`: `LEGACY_DERIVED_PAGES_SQL`. This store keeps no derivation edges, so
-    /// every live atom or dream-generated page of the source counts.
+    /// `countLegacyDerivedPages`: `LEGACY_DERIVED_PAGES_SQL`, the live atom or dream-generated pages of the
+    /// source that no recorded `derivation_inputs` edge names as derived (`generations/derivation_inputs.rs`).
     pub fn count_legacy_derived_pages(&self, q: &PurgeSourceArgs) -> Result<i64> {
         no_nul("countLegacyDerivedPages", &[("sourceId", &q.source_id)])?;
         let read = self.read()?;
@@ -561,14 +561,16 @@ impl Store {
             Some(Value::Bool(b)) => *b,
             _ => false,
         };
-        let n = source_pages(&*read, &q.source_id)?
-            .iter()
-            .filter(|p| {
-                p.deleted_at_us.is_none()
-                    && (p.page_type == "atom" || dream(p.frontmatter.get("dream_generated")))
-            })
-            .count();
-        Ok(n as i64)
+        let mut n = 0i64;
+        for p in source_pages(&*read, &q.source_id)? {
+            if p.deleted_at_us.is_none()
+                && (p.page_type == "atom" || dream(p.frontmatter.get("dream_generated")))
+                && !crate::generations::has_inputs(&*read, "pages", &p.id.to_string())?
+            {
+                n += 1;
+            }
+        }
+        Ok(n)
     }
 
     /// `listPageSourcePaths`: `PAGE_SOURCE_PATHS_SQL` (DISTINCT, at most 64; here in byte order).
