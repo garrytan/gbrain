@@ -30,10 +30,12 @@ A remote caller needs both:
 1. Its token's operation list names `reveal_secret`. The owner adds it to one token at a time from the brain host:
    `gbrain auth rescope --token <name> --refresh-operations` previews, then the same command with
    `--add reveal_secret`. A token with no operation list, `--all-new` and a harness token never get it.
-2. It can read a page that holds the entry's marker (the same check `get_page` makes for that caller). A marker
-   copied into another page binds to nothing. A marker that sits in a take, timeline entry or fact counts only when
-   that caller may read the row itself, so a row made from owner-only data (an iMessage chat, for example) reveals
-   nothing to anyone but the owner. A place recorded from a git commit names a file, not a page, so it never counts.
+2. It can see the entry's marker itself in a place where the store recorded it: its own `get_page` reply for a
+   page's text, or its own `takes_list`, `get_timeline`, `recall`, `get_raw_data` or `get_links` reply for a row.
+   Everything that hides text from that caller hides the marker too: owner-only rows (made from an iMessage chat,
+   for example), a takes fence or private facts fence stripped from the page, a take whose holder it may not read, a
+   marker since removed and a deleted row. A marker copied into another page binds to nothing, and a place recorded
+   from a git commit names a file, not a page, so it never counts. The reply lists only the places that counted.
 
 Otherwise the call fails with `secret_reveal_forbidden`. Every reveal, CLI or MCP, is appended to the `secrets` audit
 log (`~/.gbrain/audit/secrets-<year>-W<week>.jsonl`) with the entry, the caller and the pages, never the value.

@@ -1102,7 +1102,7 @@ export function privateProvenanceFilterFragment(factAlias: string): string {
 }
 
 /** A fact held in or derived from an owner-only source (access/owner-only.ts) passes only for an owner read; empty for the owner. */
-export function ownerOnlyFactAllowedSql(factAlias: string): string {
+function ownerOnlyFactAllowedSql(factAlias: string): string {
   return currentCallerAccess().owner ? '' : ` AND NOT ${ownerOnlyFactSql(factAlias, ownerOnlyForm(readSchemaVersion()))}`;
 }
 

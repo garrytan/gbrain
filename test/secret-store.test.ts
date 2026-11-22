@@ -187,44 +187,67 @@ describe('reveal_secret stays approved by name in profile grants', () => {
   });
 });
 
-describe('reveal_secret and owner-only rows (GST-3065)', () => {
-  test('a non-owner with a reveal grant is refused an original redacted from an owner-only take, timeline or fact row, from a row since deleted, or held only by a commit occurrence; the owner and the local CLI still reveal', () => withEnv({ GBRAIN_HOME: home, GBRAIN_SECRET_STORE_KEY: undefined }, async () => {
+describe('reveal_secret counts only a place whose marker the caller can see (GST-3065)', () => {
+  test('a non-owner with a reveal grant is refused an original whose marker it cannot read itself (an owner-only take, timeline or fact row, a body copy in a stripped takes fence, a private fact fence row, a take holder outside its allowlist, a removed marker, a row edited or deleted, a commit), and is told only the places that counted; the owner and the local CLI still reveal', () => withEnv({ GBRAIN_HOME: home, GBRAIN_SECRET_STORE_KEY: undefined }, async () => {
     for (const { name, engine } of engines) {
       const op = operationsByName.reveal_secret!;
+      const values = { open: 'AKIA' + 'OPENROWVALUE0001', take: 'AKIA' + 'OWNERONLYTAKE001', timeline: 'AKIA' + 'OWNERONLYTIME001', fact: 'AKIA' + 'OWNERONLYFACT001',
+        privateFact: 'AKIA' + 'PRIVATEFENCEFAC1', holder: 'AKIA' + 'OTHERHOLDERTAKE1', removed: 'AKIA' + 'MARKERREMOVED001', gone: 'AKIA' + 'DELETEDTAKEROW01', edited: 'AKIA' + 'EDITEDTAKEROW001', commit: 'AKIA' + 'COMMITONLYVAL001' };
+      const ids = Object.fromEntries(await Promise.all(Object.entries(values).map(async ([k, v]) => [k, (await seal(engine, { sourceId: 'default', rule: 'aws_access_key', value: v })).id]))) as Record<keyof typeof values, string>;
+      const marker = (id: string) => `<REDACTED:aws_access_key:${id}>`;
       await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ('oo-src', 'oo-src', '{"owner_only":true}'::jsonb) ON CONFLICT (id) DO NOTHING`);
-      await importFromContent(engine, 'notes/oo-chat', '---\ntitle: Chat\n---\nPrivate chat.\n', { sourceId: 'oo-src' });
-      await importFromContent(engine, 'notes/shared-plan', '---\ntitle: Shared plan\n---\nShared plan.\n', { sourceId: 'default' });
+      await importFromContent(engine, 'notes/oo-chat', `---\ntitle: Chat\n---\nPrivate chat ${marker(ids.open)}.\n`, { sourceId: 'oo-src' });
+      const body = ['---', 'title: Shared plan', '---', `Shared plan ${marker(ids.open)}.`, '',
+        '<!--- gbrain:facts:begin -->', '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |',
+        '|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|',
+        `| 1 | Keeps ${marker(ids.privateFact)} | fact | 1.0 | private | medium | 2026-01-01 |  | fixture |  |`, '<!--- gbrain:facts:end -->', '',
+        '<!--- gbrain:takes:begin -->', '| # | claim | kind | who | weight | since | source |', '|---|-------|------|-----|--------|-------|--------|',
+        `| 1 | Plan ${marker(ids.take)} | take | world | 0.5 | 2026-06 | fixture |`, '<!--- gbrain:takes:end -->', ''].join('\n');
+      await importFromContent(engine, 'notes/shared-plan', body, { sourceId: 'default' });
       const pageOf = async (slug: string, sourceId: string) => Number((await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug=$1 AND source_id=$2', [slug, sourceId]))[0]!.id);
       const chatId = await pageOf('notes/oo-chat', 'oo-src');
       const pageId = await pageOf('notes/shared-plan', 'default');
-      const values = { open: 'AKIA' + 'OPENROWVALUE0001', take: 'AKIA' + 'OWNERONLYTAKE001', timeline: 'AKIA' + 'OWNERONLYTIME001', fact: 'AKIA' + 'OWNERONLYFACT001', gone: 'AKIA' + 'DELETEDTAKEROW01', commit: 'AKIA' + 'COMMITONLYVAL001' };
-      const ids = Object.fromEntries(await Promise.all(Object.entries(values).map(async ([k, v]) => [k, (await seal(engine, { sourceId: 'default', rule: 'aws_access_key', value: v })).id]))) as Record<keyof typeof values, string>;
-      const marker = (id: string) => `<REDACTED:aws_access_key:${id}>`;
-      const [take] = await engine.executeRaw<{ id: number }>(`INSERT INTO takes (page_id, row_num, claim, kind, holder) VALUES ($1, 1, $2, 'take', 'world') RETURNING id`, [pageId, 'Plan ' + marker(ids.take)]);
+      const take = async (rowNum: number, claim: string, holder: string) => (await engine.executeRaw<{ id: number }>(
+        `INSERT INTO takes (page_id, row_num, claim, kind, holder) VALUES ($1, $2, $3, 'take', $4) RETURNING id`, [pageId, rowNum, claim, holder]))[0]!.id;
+      const taken = await take(51, 'Plan ' + marker(ids.take), 'world');
+      const other = await take(52, 'Holds ' + marker(ids.holder), 'alice-example');
+      const gone = await take(53, 'Old ' + marker(ids.gone), 'world');
+      const edited = await take(54, 'Draft ' + marker(ids.edited), 'world');
+      await take(55, 'Also ' + marker(ids.open), 'world');
       const [row] = await engine.executeRaw<{ id: number }>(`INSERT INTO timeline_entries (page_id, date, summary) VALUES ($1, '2026-06-14', $2) RETURNING id`, [pageId, 'Met ' + marker(ids.timeline)]);
       const [fact] = await engine.executeRaw<{ id: number }>(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source) VALUES ('default', 'notes/shared-plan', $1, 'fact', 'world', 'fixture') RETURNING id`, ['Uses ' + marker(ids.fact)]);
-      const [gone] = await engine.executeRaw<{ id: number }>(`INSERT INTO takes (page_id, row_num, claim, kind, holder) VALUES ($1, 2, $2, 'take', 'world') RETURNING id`, [pageId, 'Old ' + marker(ids.gone)]);
       await engine.executeRaw(`INSERT INTO derivation_inputs (derived_table, derived_id, input_table, input_id, source_id) VALUES
-        ('takes', $1, 'pages', $3, 'default'), ('timeline_entries', $2, 'pages', $3, 'default'), ('facts', $4, 'pages', $3, 'default')`, [String(take!.id), String(row!.id), String(chatId), String(fact!.id)]);
+        ('takes', $1, 'pages', $3, 'default'), ('timeline_entries', $2, 'pages', $3, 'default'), ('facts', $4, 'pages', $3, 'default')`, [String(taken), String(row!.id), String(chatId), String(fact!.id)]);
       const at = { sourceId: 'default', pageId, slug: 'notes/shared-plan', origin: 'repair' as const };
       await recordOccurrence(engine, { ...at, entryId: ids.open, field: 'compiled_truth' });
-      await recordOccurrence(engine, { ...at, entryId: ids.take, field: `takes/${take!.id}/claim` });
+      await recordOccurrence(engine, { ...at, sourceId: 'oo-src', pageId: chatId, slug: 'notes/oo-chat', entryId: ids.open, field: 'compiled_truth' });
+      await recordOccurrence(engine, { ...at, pageId: null, entryId: ids.open, field: 'compiled_truth', origin: 'publish_rebuild', commit: 'b'.repeat(40), path: 'notes/shared-plan.md', line: 4 });
+      await recordOccurrence(engine, { ...at, entryId: ids.take, field: `takes/${taken}/claim` });
+      await recordOccurrence(engine, { ...at, entryId: ids.take, field: 'compiled_truth' });
       await recordOccurrence(engine, { ...at, entryId: ids.timeline, field: `timeline_entries/${row!.id}/summary` });
       await recordOccurrence(engine, { ...at, entryId: ids.fact, field: `facts/${fact!.id}/fact` });
-      await recordOccurrence(engine, { ...at, entryId: ids.gone, field: `takes/${gone!.id}/claim` });
+      await recordOccurrence(engine, { ...at, entryId: ids.privateFact, field: 'compiled_truth' });
+      await recordOccurrence(engine, { ...at, entryId: ids.holder, field: `takes/${other}/claim` });
+      await recordOccurrence(engine, { ...at, entryId: ids.removed, field: 'compiled_truth' });
+      await recordOccurrence(engine, { ...at, entryId: ids.gone, field: `takes/${gone}/claim` });
+      await recordOccurrence(engine, { ...at, entryId: ids.edited, field: `takes/${edited}/claim` });
       await recordOccurrence(engine, { ...at, pageId: null, entryId: ids.commit, field: 'compiled_truth', origin: 'publish_rebuild', commit: 'a'.repeat(40), path: 'notes/shared-plan.md', line: 3 });
 
       const nonOwner = remoteCtx(engine, ['get_page', 'reveal_secret']);
-      expect(await op.handler(nonOwner, { id: ids.open }), name).toMatchObject({ value: values.open });
+      const open = await op.handler(nonOwner, { id: ids.open }) as { value: string; occurrences: Array<{ slug: string; field: string; commit: string | null }> };
+      expect(open.value, name).toBe(values.open);
+      expect(open.occurrences.map(o => [o.slug, o.field, o.commit]), name).toEqual([['notes/shared-plan', 'compiled_truth', null]]);
       expect(await op.handler(nonOwner, { id: ids.gone }), `${name} gone before delete`).toMatchObject({ value: values.gone });
-      await engine.executeRaw('DELETE FROM takes WHERE id = $1', [gone!.id]);
-      for (const k of ['take', 'timeline', 'fact', 'commit', 'gone'] as const) {
+      expect(await op.handler(nonOwner, { id: ids.edited }), `${name} edited before edit`).toMatchObject({ value: values.edited });
+      await engine.executeRaw('DELETE FROM takes WHERE id = $1', [gone]);
+      await engine.executeRaw("UPDATE takes SET claim = 'Draft done' WHERE id = $1", [edited]);
+      for (const k of ['take', 'timeline', 'fact', 'privateFact', 'holder', 'removed', 'gone', 'edited', 'commit'] as const) {
         await expect(op.handler(nonOwner, { id: ids[k] }), `${name} ${k}`).rejects.toMatchObject({ code: 'secret_reveal_forbidden' });
       }
       for (const k of ['take', 'timeline', 'fact'] as const) {
         expect(await withCallerAccess({ owner: true }, () => op.handler(nonOwner, { id: ids[k] })), `${name} owner ${k}`).toMatchObject({ value: values[k] });
       }
-      for (const k of ['take', 'timeline', 'fact', 'commit', 'gone'] as const) {
+      for (const k of Object.keys(values) as (keyof typeof values)[]) {
         expect(await op.handler({ engine, config: {}, logger, dryRun: false, remote: false } as unknown as OperationContext, { id: ids[k] }), `${name} local ${k}`).toMatchObject({ value: values[k] });
       }
     }
