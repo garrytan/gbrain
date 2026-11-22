@@ -330,6 +330,7 @@ const RUST_ROWS: readonly RustRow[] = [
   ['e', null, 'extraction', 'pages'],
   ['f', null, 'jobs', 'dream_synthesis_completions'],
   ['g', null, 'code_edges', 'code_traversal_cache'],
+  ['h', null, 'embedding_holds', 'page_embedding_budget'],
   ['i', null, 'entity_identities', 'entity_identities'],
   ['j', null, 'core', 'persistence_requests', 'index'],
   ['k', null, 'aliases', 'slug_aliases page_aliases pages slug_rename_history'],
@@ -345,6 +346,8 @@ const RUST_ROWS: readonly RustRow[] = [
   ['u', null, 'timeline_queries', 'timeline_entries', 'index'],
   ['v', null, 'relations', '', undefined, ['no_memory_text', 'the relation catalog: no record is built under v yet']],
   ['w', null, 'transactions', '', undefined, ['no_memory_text', 'the lock queue: held in memory, no record is written under w']],
+  ['y', null, 'reason_tombstones', 'reason_purge_tombstones'],
+  ['z', null, 'access_rules', 'access_policy_state access_rules access_pending_coverage access_policy_revisions pages access_policy_migrations'],
 ];
 
 export const RUST_STORE_INVENTORY: readonly RustStoreEntry[] = RUST_ROWS.map(([tag, kind, name, tables, index, none]) => ({
