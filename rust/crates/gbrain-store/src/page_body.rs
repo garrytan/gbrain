@@ -3629,6 +3629,42 @@ mod segment_chunk_tests {
     }
 
     #[test]
+    fn a_request_inserted_through_the_persistence_api_keeps_its_staging() {
+        // The persistence API (`insert_write_request`) writes a queued request into the same
+        // REQUEST family as `admit_write`, but charges only the persistence counters, never the
+        // journal's own. A request it inserted must still root its staging, so the sweep keeps
+        // the staged rows: dropping them would delete text the queued write still needs.
+        let run = |held: bool| {
+            let store = crate::test_support::store();
+            let id = published(&store);
+            second_generation(&store, id);
+            if held {
+                let insert: crate::persistence::WriteRequestInsert =
+                    serde_json::from_value(json!({
+                        "principalKind": "local_cli", "principalId": "cli",
+                        "requestId": "77777777-7777-4777-8777-777777777777",
+                        "operation": "put_page", "sourceId": "default",
+                        "sourceIncarnation": "88888888-8888-4888-8888-888888888888",
+                        "pageId": null, "slug": "notes/a", "worktreeId": null,
+                        "topologyGeneration": null, "digest": "digest",
+                        "intent": {"body_ref": {"staging_id": STAGING_2}},
+                        "authority": {}, "intentBytes": 10, "terminalReservation": 4096,
+                        "targetKind": "page", "protocolVersion": 1,
+                        "admitterVersion": "v-test", "admitterHostId": null,
+                        "counterKeys": [], "clientRequestId": null,
+                        "state": "queued", "deferredRefreshId": null,
+                    }))
+                    .unwrap();
+                store.insert_write_request(&insert).unwrap();
+            }
+            let result = sweep(&store, json!({"expireStagings": true, "now": LATER}));
+            (result, manifest_len(&store, id))
+        };
+        assert_eq!(run(true), (swept(1, 0, 0, 1), 3));
+        assert_eq!(run(false), (swept(2, 1, 1, 2), 2));
+    }
+
+    #[test]
     fn a_terminal_staging_is_deleted_a_day_after_its_last_change() {
         let store = crate::test_support::store();
         let id = published(&store);
