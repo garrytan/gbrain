@@ -39,9 +39,11 @@ export function overlayStoreSnapshot(snapshot: StoreSnapshot): PageSnapshot {
   const withdrawals = rest.withdrawals ?? [];
   if (!withdrawals.length && !globalPurgeRows?.length) return { ...rest, withdrawals };
   const page = rest.page;
-  const body = fingerprintText(page.compiled_truth), timeline = fingerprintText(page.timeline);
+  // A segmented page's body is never loaded (reading it throws `page_body_segmented`), so it names no fence claim.
+  const segmented = isSegmentedPage(page);
+  const body = segmented ? '' : fingerprintText(page.compiled_truth), timeline = segmented ? '' : fingerprintText(page.timeline);
   const all = withNamedPurges(withdrawals, globalPurgeRows, [body, timeline]);
-  if (!isSegmentedPage(page)) {
+  if (!segmented) {
     page.compiled_truth = overlayWithdrawalBody(page.compiled_truth, body, all);
     page.timeline = overlayWithdrawalBody(page.timeline, timeline, all);
   }
