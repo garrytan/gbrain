@@ -162,6 +162,11 @@ describe('engine parity: the repair runner', () => {
     methods: ['readDriftConflictBounds', 'listDriftConflictGroups', 'readDriftConflictDetails'],
     timeout: 60_000,
   }, previewThenApply('file-drift'));
+  // A Rust store creates every record family when it opens, so it checks PGLite's table list and finds none missing, as
+  // a fully migrated PGLite brain does; the empty preview saves no set, so the apply refuses with the same code (batch 9).
+  parityTest('gbrain repair missing-tables checks every expected table, finds none missing, and its apply refuses with the same code', {
+    methods: ['readOpCheckpointRecord', 'readPersistenceBrainId', 'readCounterRows', 'getConfig'], timeout: 60_000,
+  }, previewThenApply('missing-tables'));
   for (const kind of B1_KINDS) {
     if (REFUSED_APPLY.has(kind)) {
       parityTest(`gbrain repair ${kind} previews, and its apply refuses with the same code`, {

@@ -10,3 +10,9 @@ run through, so they work on a Rust brain. Each has one SQL copy in `src/core/en
 | `listGlobalPurgeWithdrawals` | `segmented-mirror` (the typed withdrawal overlay, `page-state/snapshot.ts overlayCanonicalBodiesTyped`) | `segmented-mirror-effects.ts` | `src/facts/purge_ledger.rs` | A source's subject-`*` tombstones of the asked claim fingerprints as `{ visibility, fact_hash, withdrawn_at, purged: true }`, world rows only when asked, in (visibility, fingerprint) order. |
 
 The parity cases are in `test/engine-parity/segmented-mirror-effects.test.ts`.
+
+`missing-tables` and `planner-stats` need no member: their reads are catalog probes
+(`src/core/rust-engine/store-members/catalog.ts`). `readMissingTables` checks PGLite's table list and answers none
+missing, because the store creates every record family when it opens and no command drops one; `readPlannerTableStates`
+answers no table, because the store has no planner. Each preview is what a healthy PGLite brain previews
+(`test/engine-parity/repair-runner.test.ts`).
