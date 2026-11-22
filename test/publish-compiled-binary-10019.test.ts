@@ -13,6 +13,7 @@ import { join, resolve } from 'node:path';
 const PUBLISH = resolve(import.meta.dir, '..', 'src', 'commands', 'publish.ts');
 const VENDORED = resolve(import.meta.dir, '..', 'vendor', 'marked', 'marked.umd.js');
 const INSTALLED = resolve(import.meta.dir, '..', 'node_modules', 'marked', 'lib', 'marked.umd.js');
+const TYPES = resolve(import.meta.dir, '..', 'vendor/marked/marked.umd.d.ts');
 
 describe('#10019: publish in a compiled binary', () => {
   test('generateHtml inlines marked from a compiled binary run outside the repo', () => {
@@ -34,5 +35,9 @@ process.stdout.write(generateHtml({ title: 'T', markdown: '# Hi', encrypted: nul
 
   test('the vendored marked.umd.js matches the installed marked package', () => {
     expect(readFileSync(VENDORED, 'utf8')).toBe(readFileSync(INSTALLED, 'utf8'));
+  });
+
+  test('marked.umd.d.ts types the text import as a string', () => {
+    expect(readFileSync(TYPES, 'utf8')).toMatch(/declare const source: string;\s*export default source;/);
   });
 });

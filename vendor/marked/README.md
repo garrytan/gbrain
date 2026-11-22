@@ -7,7 +7,7 @@ It is checked in because a compiled `gbrain` binary has no `node_modules` (#1001
 not expose the UMD file to an import. `src/commands/publish.ts` embeds it at build time with
 `import ... with { type: 'text' }`.
 
-After a `marked` upgrade, `test/publish-compiled-binary-10019.serial.test.ts` fails until you refresh the copy:
+After a `marked` upgrade, `test/publish-compiled-binary-10019.test.ts` fails until you refresh the copy:
 
 ```bash
 cp node_modules/marked/lib/marked.umd.js vendor/marked/marked.umd.js
