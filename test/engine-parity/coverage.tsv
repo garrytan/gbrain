@@ -96,7 +96,7 @@ getPage	pages	yes	136	yes	yes	yes	serves
 readPageSnapshot	pages	yes	36	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	615	yes	yes	yes	serves
+putPage	pages	yes	617	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	22	yes	yes	yes	serves
@@ -185,7 +185,7 @@ countSearchVectorRows	search_vector	yes	1	no	yes	yes	serves
 replaceSearchVectorTriggerFunction	search_vector	yes	1	no	yes	yes	serves
 backfillSearchVectors	search_vector	yes	1	no	yes	yes	serves
 ensureFactsKeywordIndex	search_vector	yes	1	no	yes	yes	serves
-countPendingProjectionPages	retrieval_coverage	yes	10	no	yes	yes	serves
+countPendingProjectionPages	retrieval_coverage	yes	12	no	yes	yes	serves
 countEmbeddingHeldPages	retrieval_coverage	yes	1	no	yes	yes	serves
 projectionRebuildProgress	retrieval_coverage	yes	5	no	yes	yes	serves
 readProjectionReadinessGeneration	retrieval_coverage	yes	3	no	yes	yes	serves

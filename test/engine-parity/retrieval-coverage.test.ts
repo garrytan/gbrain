@@ -11,8 +11,9 @@
  *    for the same pages and the same read scope: sources, privacy, kind, types,
  *    excluded slug prefixes, the trust floor, the flagged-page filter,
  *    soft-deleted, quarantined and archived pages. A
- *    count that reaches the cap refuses on Rust, and the probe's cached
- *    answer lasts until the next write on every arm.
+ *    count that reaches the cap counts every match in scope up to its own cap,
+ *    whatever order the pages were written in, and the probe's cached answer
+ *    lasts until the next write on every arm.
  *  - Regression: an engine whose count drifts tells a search caller that a
  *    complete answer is incomplete (or the reverse), and an engine whose probe
  *    drifts reports `ready` while pages wait for indexing. Before this lane the
@@ -280,16 +281,53 @@ describe('engine parity: retrieval coverage', () => {
   );
 
   parityTest(
-    'search/retrieval-coverage: a count that reaches the cap reports the same could-affect, or refuses',
+    'search/retrieval-coverage: a capped count gives the same could-affect whatever order the pages were written in',
     { methods: ['putPage', 'countPendingProjectionPages'] },
     async (engine) => {
-      // Five matching pages written first, then a cap of pages that sort before them by slug. The SQL engines read the
-      // capped subset in their own scan order (PGLite and Postgres can disagree), so the store refuses a capped count.
+      // Three matching pages sort before a cap of other pages and two after them, and they are written in neither
+      // order. Rewriting the matching pages moves their rows on the SQL engines, so a count of the matches among the
+      // first 1000 rows an engine reads moves with them (and differs between engines); a count of every match does not.
+      const widgets = ['alpha/widget-0', 'alpha/widget-1', 'alpha/widget-2', 'zeta/widget-3', 'zeta/widget-4'];
+      for (const slug of widgets.slice(3)) await engine.putPage(slug, page(`Widget ${slug}`));
+      for (let i = 0; i < 1000; i++) await engine.putPage(`mid/other-${String(i).padStart(4, '0')}`, page('Other'));
+      for (const slug of widgets.slice(0, 3)) await engine.putPage(slug, page(`Widget ${slug}`));
+      const words = coverageRelevance([{ type: 'company' }], 'widget', undefined, new Set());
+      const written = await countPendingProjections(engine, {}, words);
+      for (const slug of widgets) await engine.putPage(slug, page(`Widget ${slug} again`));
+      const rewritten = await countPendingProjections(engine, {}, words);
+      expect({ written, rewritten }).toEqual({
+        written: { total: 1000, capped: true, could_affect: 5, could_affect_images: 0 },
+        rewritten: { total: 1000, capped: true, could_affect: 5, could_affect_images: 0 },
+      });
+      return { written, rewritten };
+    },
+  );
+
+  parityTest(
+    'search/retrieval-coverage: more could-affect pages than the cap stop could-affect at the cap',
+    { methods: ['putPage', 'countPendingProjectionPages'] },
+    async (engine) => {
+      // More than a cap of matching pages: could_affect stops at its own cap, never above total, and the notice's
+      // `could - images` stays non-negative.
+      for (let i = 0; i < 1003; i++) await engine.putPage(`notes/widget-${String(i).padStart(4, '0')}`, page(`Widget ${i}`));
+      const words = coverageRelevance([{ type: 'company' }], 'widget', undefined, new Set());
+      const capped = await countPendingProjections(engine, {}, words);
+      expect(capped).toEqual({ total: 1000, capped: true, could_affect: 1000, could_affect_images: 0 });
+      return capped;
+    },
+  );
+
+  parityTest(
+    'search/retrieval-coverage: a count that reaches the cap still counts every could-affect page',
+    { methods: ['putPage', 'countPendingProjectionPages'] },
+    async (engine) => {
+      // Five matching pages written first, then a cap of pages that sort before them by slug. could_affect counts
+      // every match in scope (up to its own cap), not the matches among the first 1000 pages an engine happens to read.
       for (let i = 0; i < 5; i++) await engine.putPage(`zeta/widget-${i}`, page(`Widget ${i}`));
       for (let i = 0; i < 1000; i++) await engine.putPage(`alpha/other-${String(i).padStart(4, '0')}`, page('Other'));
       const words = coverageRelevance([{ type: 'company' }], 'widget', undefined, new Set());
       const capped = await countPendingProjections(engine, {}, words);
-      expect(capped?.capped).toBe(true);
+      expect(capped).toEqual({ total: 1000, capped: true, could_affect: 5, could_affect_images: 0 });
       return capped;
     },
   );
