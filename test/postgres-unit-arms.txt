@@ -725,6 +725,7 @@ test/repair-visibility-propose-gst2670.test.ts
 test/request-tools-combined-gbra449.test.ts
 test/requester-scope.test.ts
 test/restated-private-cross-entity-2891.test.ts
+test/retired-fence-history.test.ts
 test/retrieval-coverage-notices.test.ts
 test/salience-enrich-parity.test.ts
 test/schema-missing-tables.test.ts
