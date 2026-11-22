@@ -792,6 +792,33 @@ describe('engine parity: chronicle reads and event projection', () => {
   );
 });
 
+describe('engine parity: the trust tier of a chronicle row', () => {
+  // The chronicle reads (the chronicle_day and chronicle_since tools) report each row's stored tier, as getTimeline does.
+  parityTest(
+    'getTimelineForDate, getSince and getOnThisDay report the trust tier each insert declared, and unknown for an undeclared one',
+    { methods: ['transaction', 'applyTransactionSettings', 'addTimelineEntry', 'putPage', 'getTimelineForDate', 'getSince', 'getOnThisDay'] },
+    async (engine) => {
+      await putPlain(engine, 'notes/tiered');
+      for (const tier of ['agent_written', 'operator_curated'] as const) {
+        await engine.transaction(async (tx) => {
+          await tx.applyTransactionSettings(['gbrain.write_trust_tier', 'gbrain.write_origin'], [tier, JSON.stringify({ channel: tier })]);
+          await tx.addTimelineEntry('notes/tiered', { date: '2026-06-18', summary: tier });
+        });
+      }
+      await engine.addTimelineEntry('notes/tiered', { date: '2026-06-18', summary: 'undeclared' });
+      const tiers = (rows: ChronicleTimelineRow[]) => rows.map((r) => `${r.summary}=${r.trust_tier}`).sort();
+      const out = {
+        day: tiers(await engine.getTimelineForDate('2026-06-18')),
+        since: tiers(await engine.getSince('2026-06-01')),
+        onThisDay: tiers(await engine.getOnThisDay({ date: '2027-06-18' })),
+      };
+      const expected = ['agent_written=agent_written', 'operator_curated=operator_curated', 'undeclared=unknown'];
+      expect(out).toEqual({ day: expected, since: expected, onThisDay: expected });
+      return out;
+    },
+  );
+});
+
 describe('engine parity: excludePrivate on the chronicle reads', () => {
   /**
    * Depth pages and event pages for each rule of the page policy (`privatePagesFilterForCaller`), in `default`, and a
