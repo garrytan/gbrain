@@ -68,7 +68,7 @@ export async function runDelegatedCliOperation(
     if (delegated.meta?.retrieval) options.emitResponseMeta?.('retrieval', delegated.meta.retrieval);
     const { result, stderr } = delegated.meta
       ? (await import('../cli/op-notices.ts')).withDelegatedMeta(operation, delegated.result, delegated.meta, params.json === true) : { result: delegated.result };
-    const output = render(operation, result, params);
+    const output = (await import('../cli/guest-lines.ts')).withGuestLines(operation, result, params, render(operation, result, params));
     if (output) await writeStdoutFinal(output);
     if (stderr) process.stderr.write(stderr);
     if ((delegated.result as { status?: unknown } | null)?.status === 'error') setCliExitVerdict(1);
@@ -87,7 +87,7 @@ async function printDelegatedRoom(operation: string, delegated: { result: unknow
   const marked = await roomCli.delegatedRoom(operation, delegated, room);
   const { applyCliOpNotices } = await import('../cli/op-notices.ts');
   const { result, stderr } = applyCliOpNotices(roomCli.cliRoomResult(marked, params.json === true), params.json === true, { op: operation, retrieval: null });
-  const output = render(operation, result, params);
+  const output = (await import('../cli/guest-lines.ts')).withGuestLines(operation, result, params, render(operation, result, params));
   if (output) await writeStdoutFinal(output);
   if (stderr) process.stderr.write(stderr);
   if (params.json !== true) process.stderr.write(roomCli.roomSummaryLine(marked.meta));

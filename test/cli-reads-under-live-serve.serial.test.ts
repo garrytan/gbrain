@@ -14,10 +14,11 @@
  * Lane: serial (spawns a real serve and cold PGLite inits).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
 const home = mkdtempSync(join(tmpdir(), 'gbrain-g8-reads-'));
@@ -46,7 +47,10 @@ const READS: Array<[string, string[]]> = [
 /** Human output that reads the serve's retrieval meta: the empty-result cause after "No results.". */
 const TEXT_READS: Array<[string, string[]]> = [
   ['search (no results)', ['search', 'zzzz']],
+  ['find (outside-guest page)', ['find', 'notes/guestnote-zz']],
+  ['list (outside-guest page)', ['list', '--source', 'guests']],
 ];
+const GUEST_LINE = '[outside guest · unattributed · ';
 const cold = new Map<string, string>();
 const coldText = new Map<string, string>();
 let coldEntityMiss: number | null = null;
@@ -73,6 +77,17 @@ beforeAll(async () => {
   const note = Bun.spawn({ cmd: [process.execPath, '--no-env-file', CLI, 'put', 'notes/alice-notes', '--source', 'notes'], cwd: home, env: env(),
     stdin: new Blob(['---\ntitle: Alice Notes\ntype: concept\n---\nNotes about Alice.\n']), stdout: 'ignore', stderr: 'pipe' });
   expect(await note.exited).toBe(0);
+  // An outside-guest source: its page's human output carries the guest warning line, with or without a serve.
+  expect((await cli(['sources', 'add', 'guests'])).exitCode).toBe(0);
+  const guest = Bun.spawn({ cmd: [process.execPath, '--no-env-file', CLI, 'put', 'notes/guestnote-zz', '--source', 'guests'], cwd: home, env: env(),
+    stdin: new Blob(['---\ntitle: Guest Note\ntype: note\n---\nA note an outside guest left.\n']), stdout: 'ignore', stderr: 'pipe' });
+  expect(await guest.exited).toBe(0);
+  const engine = new PGLiteEngine();
+  await engine.connect({ engine: 'pglite', database_path: JSON.parse(readFileSync(join(home, '.gbrain', 'config.json'), 'utf8')).database_path });
+  // initGuestSource refuses a source that already holds pages, so the fixture writes the two guest records itself.
+  await engine.executeRaw(`UPDATE sources SET config = config || '{"federated": true, "guest": true}'::jsonb WHERE id = 'guests'`);
+  await engine.executeRaw("INSERT INTO guest_sources (source_id, writers) VALUES ('guests', ARRAY[]::text[])");
+  await engine.disconnect();
   coldEntityMiss = (await cli(['entity', 'nobody-zzz', '--json'], { GBRAIN_FAIL_ON_EMPTY: '1' })).exitCode;
   for (const [name, args] of READS) {
     const r = await cli(args);
@@ -118,6 +133,13 @@ describe('read-only CLI commands while a live serve owns the PGLite brain', () =
       expect(r.stdout).toBe(coldText.get(name)!);
     }, 90_000);
   }
+
+  test('an outside-guest page keeps its warning line through the serve', async () => {
+    for (const name of ['find (outside-guest page)', 'list (outside-guest page)']) {
+      expect(coldText.get(name)!).toContain(GUEST_LINE);
+      expect((await cli(TEXT_READS.find(([n]) => n === name)![1])).stdout).toContain(GUEST_LINE);
+    }
+  }, 90_000);
 
   test('the federated set reaches both sources, as with no serve', async () => {
     const slugs = (JSON.parse((await cli(['list', '--json'])).stdout) as Array<{ slug: string }>).map(p => p.slug);
