@@ -84,6 +84,7 @@ describe('engine parity: oauth_clients rows and constraints', () => {
         ['negative-concurrency', { bound_max_concurrent: -1 }],
         ['tab-delimited', { scope: 'read\tagent', bound_tools: null }],
         ['newline-delimited-last', { scope: 'read\nagent', bound_tools: null }],
+        ['ideographic-space-delimited', { scope: 'read\u3000agent', bound_tools: null }],
         ['agent-only', { scope: 'agent', bound_tools: null }],
       ];
       const refused: Record<string, unknown> = {};
