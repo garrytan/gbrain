@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1582/1592
+# covered: 1583/1593
 # lifecycle: 9/9
 # pages: 70/70
 # search: 7/7
@@ -47,7 +47,7 @@
 # fact_relink_writes: 3/3
 # facts_cycle: 12/12
 # facts_cycle_sites: 34/34
-# facts_purge: 87/87
+# facts_purge: 88/88
 # purge_plan: 4/4
 # projection_rebuild: 20/21
 # facts_repair: 48/48
@@ -1027,7 +1027,8 @@ countRelinkCandidates	facts_purge	yes	1	no	yes	yes	serves
 listSimilarActiveFacts	facts_purge	yes	3	no	yes	yes	serves
 findActiveSingleFact	facts_purge	yes	6	no	yes	yes	serves
 listSingleFactMetadata	facts_purge	yes	2	no	yes	yes	serves
-listUnfencedFactRows	facts_purge	yes	1	no	yes	yes	serves
+countUnfencedFactGroups	facts_purge	yes	1	no	yes	yes	serves
+listUnfencedFactRows	facts_purge	yes	2	no	yes	yes	serves
 listHeldFenceFactRows	facts_purge	yes	1	no	yes	yes	serves
 listWithdrawalSlugs	facts_purge	yes	5	no	yes	yes	serves
 expireFactsByWithdrawal	facts_purge	yes	6	no	yes	yes	serves

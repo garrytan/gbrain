@@ -7729,6 +7729,7 @@
         "countUncomparableFacts": "none",
         "countUnconsolidatedFacts": "none",
         "countUnconsolidatedFactsBySource": "none",
+        "countUnfencedFactGroups": "none",
         "countUnfilledAttribution": "none",
         "countUnlinkedFactStats": "none",
         "countUnlinkedFactsByOrigin": "none",
