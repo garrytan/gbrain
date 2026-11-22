@@ -14,6 +14,10 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import type { DegradedStageEntry } from '../types.ts';
+import { isTimeoutError, pushDegraded } from '../search/hybrid/degraded.ts';
+import { warnOncePerProcess } from '../utils.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { isQuarantined } from '../quarantine.ts';
 import { followRetirement, isIdentityEntity } from '../entities/resolve.ts';
 import { NAME_MATCH_RANK, NAME_TITLE_TOKENS, WEAK_NAME_MATCHES, hasLeadingTitle, matchNameVariant, parsePersonName, probeWords, stripLeadingTitles, type NameMatchKind } from '../entities/name-variants.ts';
@@ -59,6 +63,18 @@ export function isTitleStub(name: string): boolean {
 }
 
 /**
+ * A lookup read failed: the arm contributes nothing, and `degraded` says so (a miss is then not proof the entity is
+ * absent). The Rust engine's typed capability refusal is not a database failure and ends the call; the raw error text goes
+ * to stderr only, never onto the wire.
+ */
+export function lookupReadFailed(err: unknown, degraded: DegradedStageEntry[] | undefined): void {
+  rethrowCapabilityRefusal(err);
+  if (!degraded) return; // a caller that only shapes suggestions (possible duplicates, the doctor pair scan) reports nothing
+  warnOncePerProcess('entity-lookup-failed', `[gbrain] entity lookup read failed (reported as degraded): ${err instanceof Error ? err.message : String(err)}`);
+  pushDegraded(degraded, 'entity_lookup_failed', isTimeoutError(err) ? 'timeout' : 'provider_error');
+}
+
+/**
  * Variant candidates for `name` in one source. `selectColumns` is the
  * caller's row projection over `pages`; `privatePredicate` its read
  * predicate (` AND ...` or empty) on `pages`, `retirementPrivacy` the same on
@@ -68,7 +84,7 @@ export async function resolveNameVariant<R extends VariantRow>(
   engine: BrainEngine,
   sourceId: string,
   name: string,
-  opts: { selectColumns: string; privatePredicate: string; retirementPrivacy: string; entityTypes: ReadonlySet<string>; omitQuarantined?: boolean; exclude?: readonly string[] },
+  opts: { selectColumns: string; privatePredicate: string; retirementPrivacy: string; entityTypes: ReadonlySet<string>; omitQuarantined?: boolean; exclude?: readonly string[]; degraded?: DegradedStageEntry[] },
 ): Promise<VariantResult<R>> {
   const words = probeWords(name);
   if (!words.length || parsePersonName(name).core.length > MAX_NAME_WORDS || name.includes('/')) return { matches: [] };
@@ -86,7 +102,9 @@ export async function resolveNameVariant<R extends VariantRow>(
       [sourceId, [...opts.entityTypes, 'person', 'company', 'fund', 'organization'],
         ['people/%', 'companies/%', 'funds/%', 'orgs/%', 'organizations/%'], words.map(likeWord)],
     );
-  } catch {
+  } catch (err) {
+    // The candidate read failed: no variant can be offered, and a miss is then not proof the entity is absent.
+    lookupReadFailed(err, opts.degraded);
     return { matches: [] };
   }
   const capped = rows.length > VARIANT_CANDIDATE_CAP;
@@ -97,13 +115,14 @@ export async function resolveNameVariant<R extends VariantRow>(
     if (opts.omitQuarantined && isQuarantined(row.frontmatter)) continue;
     const kind = bestKind(name, row);
     if (!kind) continue;
-    const live = await followRetirement(engine, sourceId, row.slug, opts.retirementPrivacy).catch(() => null);
+    // A failed follow-up read drops a real candidate, so it is a failed lookup too (the capability refusal still ends the call).
+    const live = await followRetirement(engine, sourceId, row.slug, opts.retirementPrivacy).catch(err => { lookupReadFailed(err, opts.degraded); return null; });
     if (!live || exclude.has(live.slug)) continue;
     let target: R | undefined = live.slug === row.slug ? row : rows.find(r => r.slug === live.slug);
     if (!target) {
       const [fetched] = await engine.executeRaw<R>(
         `SELECT ${opts.selectColumns} FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = $2${opts.privatePredicate}`,
-        [sourceId, live.slug]).catch(() => [] as R[]);
+        [sourceId, live.slug]).catch(err => { lookupReadFailed(err, opts.degraded); return [] as R[]; });
       if (!fetched || (opts.omitQuarantined && isQuarantined(fetched.frontmatter))) continue;
       target = fetched;
     }
