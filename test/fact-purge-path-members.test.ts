@@ -207,6 +207,7 @@ describe('the fact purge calls only what the list names', () => {
 
   test('every member the purge handler calls in its own source is on the list', () => {
     // The recording above reaches what the scenarios reach; the source read adds the branches they do not (a staged upload, a segmented page).
+    // test-reads-source-ok[structural]: the inventory's completeness check lists the members and stops the purge handler calls on branches no scenario reaches.
     const source = readFileSync(join(import.meta.dir, '../src/core/facts/purge.ts'), 'utf8');
     const called = new Set([...source.matchAll(/\b(?:tx|engine|ctx\.engine)\.([A-Za-z]+)\(/g)].map(match => match[1]!)
       .filter(name => typeof (PGLiteEngine.prototype as unknown as Record<string, unknown>)[name] === 'function' && !RAW_PRIMITIVES.includes(name)));
@@ -215,6 +216,7 @@ describe('the fact purge calls only what the list names', () => {
   });
 
   test('every stop on the list was observed (a stop names a call the purge makes) or is named by the purge source', () => {
+    // test-reads-source-ok[structural]: the inventory's completeness check lists the members and stops the purge handler calls on branches no scenario reaches.
     const source = readFileSync(join(import.meta.dir, '../src/core/facts/purge.ts'), 'utf8');
     const observed = new Set([...phases.real, ...phases.resume, ...sites]);
     const unobserved = stopEntries.map(purgeEntryName).filter(name => !observed.has(name) && !source.includes(`.${name}(`));
