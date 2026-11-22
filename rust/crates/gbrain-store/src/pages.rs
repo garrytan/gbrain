@@ -1894,6 +1894,10 @@ impl Store {
                 {
                     continue;
                 }
+                let rule_labelled = match policy {
+                    Some(policy) => crate::facts::page_rule_labelled(&*read, &page, policy)?,
+                    None => false,
+                };
                 scan_prefix(
                     &*read,
                     &keys::version_prefix(page.id),
@@ -1906,6 +1910,7 @@ impl Store {
                                     &row.page_type,
                                     &row.frontmatter,
                                     policy,
+                                    rule_labelled,
                                 )
                             })
                         {

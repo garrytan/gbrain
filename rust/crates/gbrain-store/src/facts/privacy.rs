@@ -110,6 +110,18 @@ pub struct PrivacyPolicy {
     /// the no-caller rendering reads them.
     #[serde(default)]
     pub caller_record: bool,
+    /// GBRA-108 design 1 (`CallerAccess.labelledOnly`, `labelledOnlySql`): the caller reads only pages
+    /// that name it, by readers in `identity` or a stamped folder rule in `satisfied_rule_ids`. A page
+    /// read ANDs that onto the page policy; the fact policy instead keeps a fact to the caller's own
+    /// member page (`labelledOnlyFactSql`, see `labelled_member`) and judges the entity and holding
+    /// pages without it. Never set with lineage or for the owner (the TypeScript member refuses).
+    #[serde(default)]
+    pub labelled_only: bool,
+    /// The labelled-only caller's member id for the fact conjunct: a fact passes only from
+    /// `memory/members/<member>` of its own source while that page names `member:<member>`. None
+    /// with `labelled_only` (an audience of several, or no member identity) hides every fact.
+    #[serde(default)]
+    pub labelled_member: Option<String>,
 }
 
 /// One entry of [`PrivacyPolicy::folder_coverage`]: `''` covers the whole source.
@@ -207,9 +219,24 @@ pub(crate) fn hidden_by_private_provenance(
     if hidden_by_provenance_page_with(read, row, policy, true, owner_only)? {
         return Ok(true);
     }
+    if policy.labelled_only && !labelled_fact_allowed(read, row, policy)? {
+        return Ok(true);
+    }
     if policy.provenance_only {
         return Ok(false);
     }
+    // The entity and holding pages are judged by the caller's ordinary access, not its labelled-only
+    // grant (`privateEntityFilterForCaller`).
+    let unlabelled;
+    let policy = if policy.labelled_only {
+        unlabelled = PrivacyPolicy {
+            labelled_only: false,
+            ..policy.clone()
+        };
+        &unlabelled
+    } else {
+        policy
+    };
     let held = match (&row.entity_slug, &row.source_markdown_slug) {
         (Some(_), Some(slug)) if holding_slug(slug) => Some(slug),
         _ => None,
@@ -237,10 +264,20 @@ pub(crate) fn hidden_by_private_provenance(
         }
     }
     // `sharedHeldRuledSql`: a held fact reads as its entity's page would under a folder rule
-    // (live, whatever the access state) or a pending prefix, which no served caller satisfies.
+    // (live, whatever the access state): only for a caller that satisfies every covering rule, and
+    // for nobody while a pending prefix covers it.
     match (&row.entity_slug, held) {
-        (Some(entity), Some(_)) => Ok(!folder_rules(read, &row.source_id, entity)?.is_empty()
-            || pending_covers(read, &row.source_id, entity)?),
+        (Some(entity), Some(_)) => {
+            let satisfied = |r: &AccessRuleRecord| {
+                policy.satisfied_rule_ids.iter().any(|id| {
+                    id.split_once(':') == Some((r.source_id.as_str(), r.rule_id.as_str()))
+                })
+            };
+            Ok(!folder_rules(read, &row.source_id, entity)?
+                .iter()
+                .all(satisfied)
+                || pending_covers(read, &row.source_id, entity)?)
+        }
         _ => Ok(false),
     }
 }
@@ -342,10 +379,75 @@ pub(crate) fn page_hidden_with(
     owner_only: &OwnerOnlySources,
 ) -> Result<bool> {
     let allowed = member_access_allows(read, page, &policy.identity, policy, owner_only, false)?
+        && (!policy.labelled_only || labelled_for(read, page, policy)?)
         && (!policy.entity_privacy
             || private_source_open(page, policy)
             || privacy_allows(read, page, policy.honor_aliases)?);
     Ok(!allowed)
+}
+
+/// `labelledOnlySql` (with no lineage): the page's readers name one of the caller's principals, or
+/// one of the folder rules stamped on it is one the caller satisfies (`folder_rule_ids &&
+/// satisfied`). An invalid identity or satisfied list reads as empty, as the SQL renders it.
+fn labelled_for(read: &dyn KvRead, page: &PageRecord, policy: &PrivacyPolicy) -> Result<bool> {
+    let named = access_readers(&page.frontmatter)
+        .is_some_and(|readers| readers.iter().any(|r| policy.identity.contains(r)));
+    if named {
+        return Ok(true);
+    }
+    Ok(stamped_rules(read, page)?.iter().any(|r| {
+        policy
+            .satisfied_rule_ids
+            .iter()
+            .any(|id| id.split_once(':') == Some((r.source_id.as_str(), r.rule_id.as_str())))
+    }))
+}
+
+/// `labelledOnlySql(sp, access, false)` for a version's live page: one of the folder rules stamped on
+/// it is one the caller satisfies. False unless the policy is labelled-only. A version read computes
+/// it once per page and passes it to [`version_hidden`] or [`caller_version_hidden`].
+pub(crate) fn page_rule_labelled(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    policy: &PrivacyPolicy,
+) -> Result<bool> {
+    if !policy.labelled_only {
+        return Ok(false);
+    }
+    Ok(stamped_rules(read, page)?.iter().any(|r| {
+        policy
+            .satisfied_rule_ids
+            .iter()
+            .any(|id| id.split_once(':') == Some((r.source_id.as_str(), r.rule_id.as_str())))
+    }))
+}
+
+/// The labelled-only snapshot conjunct (`callerReadersAllowedSql(pv, 'snapshot')`): the version's own
+/// readers name one of the caller's principals, or its live page carries a rule the caller satisfies.
+fn snapshot_labelled(fm: &Map<String, Value>, policy: &PrivacyPolicy, rule_labelled: bool) -> bool {
+    rule_labelled
+        || access_readers(fm)
+            .is_some_and(|readers| readers.iter().any(|r| policy.identity.contains(r)))
+}
+
+/// `labelledOnlyFactSql` (with no lineage): the fact comes from the labelled-only caller's own
+/// member page of its source, and that page names the member.
+fn labelled_fact_allowed(
+    read: &dyn KvRead,
+    row: &FactRecord,
+    policy: &PrivacyPolicy,
+) -> Result<bool> {
+    let Some(member) = policy.labelled_member.as_deref() else {
+        return Ok(false);
+    };
+    let own = format!("memory/members/{member}");
+    if row.source_markdown_slug.as_deref() != Some(own.as_str()) {
+        return Ok(false);
+    }
+    let principal = format!("member:{member}");
+    Ok(read_page(read, &row.source_id, &own)?.is_some_and(|page| {
+        access_readers(&page.frontmatter).is_some_and(|readers| readers.contains(&principal))
+    }))
 }
 
 /// `holdingSlugSql`: `memory/unattributed`, or a slug ending in `/memory/unattributed`.
@@ -398,9 +500,13 @@ pub(crate) fn version_hidden(
     page_type: &str,
     fm: &Map<String, Value>,
     policy: &PrivacyPolicy,
+    rule_labelled: bool,
 ) -> bool {
     let readers_allow = !fm.contains_key("readable_by")
         || access_readers(fm).is_some_and(|r| r.iter().any(|id| policy.identity.contains(id)));
+    if policy.labelled_only && !snapshot_labelled(fm, policy, rule_labelled) {
+        return true;
+    }
     let privacy_allows = !policy.entity_privacy
         || private_source_open(page, policy)
         || snapshot_fields_allow(page_type, fm, policy.honor_aliases);
@@ -417,11 +523,13 @@ pub(crate) fn caller_version_hidden(
     page_type: &str,
     fm: &Map<String, Value>,
     policy: &PrivacyPolicy,
+    rule_labelled: bool,
 ) -> bool {
     let readers_allowed = !fm.contains_key("readable_by")
         || access_readers(fm)
             .is_some_and(|readers| readers.iter().any(|r| policy.identity.contains(r)));
     !readers_allowed
+        || (policy.labelled_only && !snapshot_labelled(fm, policy, rule_labelled))
         || (policy.entity_privacy
             && (fm.contains_key("pinned_question")
                 || !(private_source_open(page, policy)
@@ -1215,5 +1323,126 @@ mod tests {
             );
             assert!(!page_hidden(&*read, &open_page, &named).unwrap());
         }
+    }
+
+    #[test]
+    fn a_labelled_only_caller_reads_only_pages_that_name_it_and_versions_likewise() {
+        let store = crate::test_support::store();
+        let open_page = put(&store, "notes/open");
+        let deal = put(&store, "deals/q4");
+        let input = |fm: Value| crate::pages::PageInput {
+            page_type: "note".into(),
+            title: "t".into(),
+            compiled_truth: "body".into(),
+            frontmatter: Some(fm.as_object().unwrap().clone()),
+            ..crate::pages::PageInput::default()
+        };
+        for (slug, fm) in [
+            ("notes/alice", json!({ "readable_by": ["alice-example"] })),
+            ("notes/team", json!({ "readable_by": ["group:team-a"] })),
+            ("notes/bob", json!({ "readable_by": ["bob-example"] })),
+        ] {
+            store
+                .put_page(slug, &input(fm), &crate::pages::PutPageOptions::default())
+                .unwrap();
+        }
+        store.put_access_policy_state("default").unwrap();
+        store
+            .put_access_rule(rule("deals", "deals/", true))
+            .unwrap();
+        let read = store.read().unwrap();
+        let page = |slug: &str| read_page(&*read, "default", slug).unwrap().unwrap();
+        let policy = PrivacyPolicy {
+            identity: vec!["group:team-a".into(), "member:alice-example".into()],
+            satisfied_rule_ids: vec!["default:deals".into()],
+            labelled_only: true,
+            labelled_member: Some("alice-example".into()),
+            ..PrivacyPolicy::default()
+        };
+        let hidden = |p: &PageRecord| page_hidden(&*read, p, &policy).unwrap();
+        assert!(hidden(&open_page), "an unlabelled page is hidden");
+        assert!(!hidden(&page("notes/alice")));
+        assert!(
+            !hidden(&page("notes/team")),
+            "a group the caller is in names it"
+        );
+        assert!(hidden(&page("notes/bob")));
+        assert!(
+            !hidden(&deal),
+            "a folder rule the caller satisfies names it"
+        );
+        let unlabelled = PrivacyPolicy {
+            labelled_only: false,
+            ..policy.clone()
+        };
+        assert!(!page_hidden(&*read, &open_page, &unlabelled).unwrap());
+        // A version: its own readers name the caller, or its live page carries a satisfied rule.
+        let rule_labelled = page_rule_labelled(&*read, &deal, &policy).unwrap();
+        assert!(rule_labelled);
+        let empty = Map::new();
+        assert!(!caller_version_hidden(
+            &deal,
+            "note",
+            &empty,
+            &policy,
+            rule_labelled
+        ));
+        assert!(caller_version_hidden(
+            &open_page, "note", &empty, &policy, false
+        ));
+        let named = json!({ "readable_by": ["alice-example"] });
+        assert!(!version_hidden(
+            &open_page,
+            "note",
+            named.as_object().unwrap(),
+            &policy,
+            false
+        ));
+    }
+
+    #[test]
+    fn a_labelled_only_caller_reads_only_the_facts_of_its_own_member_page() {
+        let store = crate::test_support::store();
+        put(&store, "notes/open");
+        let fm = json!({ "readable_by": ["member:alice-example"] });
+        store
+            .put_page(
+                "memory/members/alice-example",
+                &crate::pages::PageInput {
+                    page_type: "note".into(),
+                    title: "m".into(),
+                    compiled_truth: "body".into(),
+                    frontmatter: Some(fm.as_object().unwrap().clone()),
+                    ..crate::pages::PageInput::default()
+                },
+                &crate::pages::PutPageOptions::default(),
+            )
+            .unwrap();
+        let read = store.read().unwrap();
+        let fact = |slug: &str| FactRecord {
+            source_id: "default".into(),
+            source_markdown_slug: Some(slug.into()),
+            ..FactRecord::default()
+        };
+        let policy = PrivacyPolicy {
+            identity: vec!["member:alice-example".into()],
+            member_page: Some("memory/members/alice-example".into()),
+            labelled_only: true,
+            labelled_member: Some("alice-example".into()),
+            ..PrivacyPolicy::default()
+        };
+        let hidden = |row: &FactRecord, p: &PrivacyPolicy| {
+            hidden_by_private_provenance(&*read, row, p).unwrap()
+        };
+        assert!(hidden(&fact("notes/open"), &policy));
+        assert!(!hidden(&fact("memory/members/alice-example"), &policy));
+        let no_member = PrivacyPolicy {
+            labelled_member: None,
+            ..policy.clone()
+        };
+        assert!(
+            hidden(&fact("memory/members/alice-example"), &no_member),
+            "no member id hides every fact"
+        );
     }
 }

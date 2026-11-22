@@ -59,9 +59,11 @@ member-access part alone (the page's readers, and the origin of a derived page):
   with no `ownerOnly` is `closed`, and any other value (`null` too) is refused before the store reads
   (`tests/owner_only_form_contract.rs`).
 
-- **Callers the store does not render.** A caller whose access record adds folder rules, an audience, a lineage
-  or a labelled-only grant renders a policy the store cannot judge. Both page members then refuse with
-  `engine_capability_missing` before any read.
+- **Callers the store does not render.** A caller whose access record adds an audience or a lineage renders a
+  policy the store cannot judge, and so does a labelled-only caller's remote floor. Both page members then refuse
+  with `engine_capability_missing` before any read. Satisfied folder rules (row 32b-1) and the labelled-only grant
+  (row 32e: a page passes only when its readers name the caller or it carries a rule the caller satisfies) are
+  served ([facts.md](facts.md)).
 - **OAuth clients.** The store keeps no OAuth clients, so `readWriterSlugFence` for an `oauth_client` principal
   refuses with `engine_capability_missing`.
 - **Writer ids.** PGLite casts the writer id to `uuid` and fails on an id that is not one. The store looks the

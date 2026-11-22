@@ -25,10 +25,10 @@
  *  - Why existing coverage misses it: test/access-members.test.ts runs the commands on PGLite only, and the write-misc
  *    parity cases seed members with raw SQL, which stops on the Rust arm.
  *  - Seam: none. Timestamps are reduced to their shape. Token rows are written through the typed insertAccessToken.
- *  - Known losses on Rust (docs/designs/RUST_ENGINE.md rows 32c and 32e): applyAttestSources and the labelled-only
- *    page policy; verifiedMember also refuses on Rust when called with no engine (sign-in passes the engine, row
- *    32d-1). The token list (row 32g) is served and has its own parity case. The last describe pins each refusal, so
- *    a pin fails when Rust stops refusing and its row must leave the table.
+ *  - Known losses on Rust (docs/designs/RUST_ENGINE.md row 32c): applyAttestSources; verifiedMember also refuses on
+ *    Rust when called with no engine (sign-in passes the engine, row 32d-1). The labelled-only page policy (row 32e)
+ *    and the token list (row 32g) are served and have their own parity cases. The last describe pins each refusal,
+ *    so a pin fails when Rust stops refusing and its row must leave the table.
  */
 import { describe, expect, test } from 'bun:test';
 import { createSource, parityArms, resetArm } from './harness.ts';
@@ -112,8 +112,7 @@ describe('engine parity: access members', () => {
       return { bound, disabled };
     });
 
-  // Rust arm: a known stop. The store's page policy does not serve a labelled-only caller, so the read refuses and
-  // shows nothing (pinned below); it must never show core/open, which PGLite hides.
+  // Every arm: the store page policy serves a labelled-only caller (row 32e); it must never show core/open.
   parityTest('a labelled-only member reads only the pages that name it, never an unlabelled page',
     { methods: ['insertAccessMember', 'setAccessMemberLabelledOnly', 'listCorePageRows'] }, async (engine) => {
       await engine.setConfig('version', String(LATEST_SCHEMA_VERSION));
@@ -471,7 +470,7 @@ describe('engine parity: the open-page count reads the member keys (row 32g)', (
   });
 });
 
-describe('the Rust arm refuses what it does not serve yet (rows 32c and 32e, and verifiedMember without an engine), and writes nothing', () => {
+describe('the Rust arm refuses what it does not serve yet (row 32c, and verifiedMember without an engine), and writes nothing', () => {
   // A parity case counts a typed refusal as a pass, so these read the Rust arm's own engine and pin each refusal: a pin
   // fails when Rust stops refusing, and its row must then leave docs/designs/RUST_ENGINE.md.
   const RAW_SQL = "This brain's engine does not support executeRaw yet (it needs the raw_sql capability), so nothing ran.";
@@ -489,20 +488,6 @@ describe('the Rust arm refuses what it does not serve yet (rows 32c and 32e, and
     if (rust) await resetArm(rust);
     return rust?.engine;
   };
-
-  test('loss: a labelled-only caller\'s page read refuses on the store page policy and shows no page', async () => {
-    const engine = await rustArm();
-    if (!engine) return;
-    await engine.setConfig('version', String(LATEST_SCHEMA_VERSION));
-    for (const id of ['alice-example', 'bob-example']) await addMember(engine, id);
-    await setMemberLabelledOnly(engine, 'alice-example', true, { remote: false });
-    await engine.setConfig('mcp.stdio_member', 'alice-example');
-    await seedCorePages(engine);
-    const access = await remoteCallerAccess(engine, undefined, [], 'stdio');
-    expect(access.labelledOnly).toBe(true);
-    const read = await refusal(() => withCallerAccess(access, () => corePages(engine)));
-    expect(read).toMatchObject({ code: 'engine_capability_missing' });
-  });
 
   test('loss: applyAttestSources and verifiedMember stop on the raw_sql refusal', async () => {
     const engine = await rustArm();

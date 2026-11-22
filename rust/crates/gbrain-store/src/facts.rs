@@ -82,8 +82,8 @@ pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
 pub(crate) use privacy::{
     OwnerOnlyCache, access_readers, caller_version_hidden, concept_inputs, folder_restricted,
-    hidden_by_provenance_page, page_hidden, page_hidden_with, stamped_rules, twin_open_to,
-    twin_snapshot_allows, version_hidden,
+    hidden_by_provenance_page, page_hidden, page_hidden_with, page_rule_labelled, stamped_rules,
+    twin_open_to, twin_snapshot_allows, version_hidden,
 };
 pub use widen::VisibilityWidening;
 use widen::{visibility_admits, world_admits};

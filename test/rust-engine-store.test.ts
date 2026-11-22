@@ -186,7 +186,7 @@ describe('Rust engine on the store', () => {
     expect(await code(() => asAudience(() => engine.getRecentSalience({ days: 7 })))).toBeUndefined();
   });
 
-  withAddon('excludePrivate on the fact reads serves a reader identity and grant but refuses folder rules, audiences, lineage and labelled-only', async () => {
+  withAddon('excludePrivate on the fact reads serves a reader identity, grant, folder rules and labelled-only, and refuses audiences and lineage', async () => {
     const { engine } = await open();
     await engine.putPage('notes/a', page);
     await engine.insertFacts([{ fact: 'f', entity_slug: 'people/a-example', source_markdown_slug: 'notes/a', row_num: 1, kind: 'fact', visibility: 'world', source: 'fence' }] as never, { source_id: 'default' });
@@ -196,15 +196,18 @@ describe('Rust engine on the store', () => {
       getOntology: () => engine.getOntology('people/a-example', { excludePrivate: true }),
     };
     const reader = { identity: ['member:alice-example'], privateReadableSources: ['default'] };
-    // Option C scope: each of these changes the fact policy text, and the store has no form for it.
+    // Served: folder rules (row 32b-1 for pages, 32e for facts) and the labelled-only grant (row 32e).
+    const served = { folderRule: { ...reader, satisfiedRuleIds: ['default:team-notes'] }, labelledOnly: { ...reader, labelledOnly: true } };
+    // Each of these changes the fact policy text, and the store has no form for it.
     const refused = {
-      folderRule: { ...reader, satisfiedRuleIds: ['default:team-notes'] },
       audience: { audience: ['member:alice-example', 'member:bob-example'], audienceIdentities: [['member:alice-example'], ['member:bob-example']] },
       lineage: { ...reader, lineage: true },
-      labelledOnly: { ...reader, labelledOnly: true },
     };
     for (const [name, read] of Object.entries(reads)) {
       expect([name, await code(() => withCallerAccess(reader, read))]).toEqual([name, undefined]);
+      for (const [kind, access] of Object.entries(served)) {
+        expect([name, kind, await code(() => withCallerAccess(access, read))]).toEqual([name, kind, undefined]);
+      }
       for (const [kind, access] of Object.entries(refused)) {
         expect([name, kind, await code(() => withCallerAccess(access, read))]).toEqual([name, kind, 'engine_capability_missing']);
       }

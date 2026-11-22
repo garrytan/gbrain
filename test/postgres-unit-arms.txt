@@ -231,6 +231,7 @@ test/engine-parity/jobs-subagent.test.ts
 test/engine-parity/jobs-wake.test.ts
 test/engine-parity/jobs.test.ts
 test/engine-parity/keyword-visibility.test.ts
+test/engine-parity/labelled-only.test.ts
 test/engine-parity/large-page.test.ts
 test/engine-parity/lifecycle.test.ts
 test/engine-parity/link-read-options.test.ts
