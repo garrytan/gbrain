@@ -93,6 +93,27 @@ describe('engine parity: slug normal form', () => {
     return reads;
   });
 
+  parityTest('pages-01: a page written once opens by a mixed-case and by a decomposed-accent spelling of its slug, with the same page on every arm', { methods: ['putPage', 'readPageSnapshot'] }, async (engine, backend) => {
+    await engine.putPage('people/charlie-example', { type: 'person', title: 'Charlie Example', compiled_truth: 'Charlie.', timeline: '' });
+    await engine.putPage('places/caf\u00e9-example', { type: 'note', title: 'Cafe Example', compiled_truth: 'Coffee.', timeline: '' });
+    const reads: Array<{ asked: string; slug: string; title: string }> = [];
+    for (const asked of ['People/Charlie-Example', 'places/cafe\u0301-example']) {
+      try {
+        const page = await operationsByName.get_page!.handler(ctx(engine), { slug: asked }) as { slug: string; title: string };
+        reads.push({ asked, slug: page.slug, title: page.title });
+      } catch (e) {
+        // master's Rust adapter has no readPageSnapshot resolveAlias, so the arm stops on this typed refusal; it never refuses the read itself.
+        if (backend === 'rust') expect((e as Error).message).toBe(RUST_RESOLVE_ALIAS_STOP);
+        throw e;
+      }
+    }
+    expect(reads).toEqual([
+      { asked: 'People/Charlie-Example', slug: 'people/charlie-example', title: 'Charlie Example' },
+      { asked: 'places/cafe\u0301-example', slug: 'places/caf\u00e9-example', title: 'Cafe Example' },
+    ]);
+    return reads;
+  });
+
   parityTest('putPage stores an NFD slug in NFC, and an NFD wikilink names that page', { methods: ['putPage', 'getPage'] }, async (engine, backend) => {
     const stored = await engine.putPage(NFD_ZOE, { type: 'person', title: 'Zoe', compiled_truth: 'Zoe.', timeline: '' });
     const extracted = await extractPageLinks('people/hal-example', `Hal knows [[${NFD_ZOE}]].`, {}, 'person', { resolve: async () => null });
