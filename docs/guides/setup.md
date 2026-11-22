@@ -326,7 +326,7 @@ may read (see below).
 | claude-code | `~/.claude/CLAUDE.md` (`--scope project`: `./CLAUDE.local.md`) |
 | codex | `$CODEX_HOME/AGENTS.md`, or a non-empty `AGENTS.override.md` (the file Codex loads) |
 | opencode | `~/.config/opencode/AGENTS.md` |
-| openclaw | `<workspace>/AGENTS.md` (`agents.defaults.workspace`, else `~/.openclaw/workspace`; several agents need `--workspace`) |
+| openclaw | `<workspace>/AGENTS.md` (`agents.defaults.workspace`, else `~/.openclaw/workspace`, under `$OPENCLAW_HOME` when set; several agents need `--workspace`) |
 | hermes | `$HERMES_HOME/SOUL.md`, after the identity text; never created, since a SOUL.md replaces Hermes's default identity |
 | cursor | `./.cursor/rules/gbrain-brain-first.mdc` (an always-applied project rule) |
 
