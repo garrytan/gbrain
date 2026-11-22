@@ -14,14 +14,13 @@
 
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { randomBytes, createCipheriv, pbkdf2Sync } from 'crypto';
-import { dirname, basename, join } from 'path';
-import { createRequire } from 'module';
+import { dirname, basename } from 'path';
 import { frontmatterBodyOffset } from '../core/markdown.ts';
 import { opError } from '../core/ops/contract.ts';
 
-// Inline marked.js so published HTML is truly self-contained (no CDN dependency)
-const require = createRequire(import.meta.url);
-const MARKED_JS = readFileSync(join(dirname(require.resolve('marked')), 'marked.umd.js'), 'utf8');
+// Inline marked.js so published HTML is truly self-contained (no CDN dependency). It is embedded at build time
+// because a compiled binary has no node_modules (#10019), and vendored because marked's exports hide the UMD file.
+import MARKED_JS from '../../vendor/marked/marked.umd.js' with { type: 'text' };
 
 // ── Content stripping ──────────────────────────────────────────────
 
