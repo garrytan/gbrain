@@ -1106,7 +1106,7 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // v0.41 (migration v94) — minions cathedral budget columns. Same precedent
   // as facts.claim_metric and friends: column-only additions on `minion_jobs`,
   // no forward-reference index in PGLITE_SCHEMA_SQL (the partial indexes
-  // `minion_jobs_budget_owner_idx` + `minion_jobs_budget_root_owner_idx`
+  // `minion_jobs_budget_owner_idx`
   // live INSIDE the same v93 migration, not in the schema blob), and
   // downstream callers explicitly handle NULL via the Eng D10 NULL-bypass
   // branch in budget-tracker (jobs without `budget_owner_job_id` skip

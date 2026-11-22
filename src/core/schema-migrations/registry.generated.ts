@@ -333,6 +333,7 @@ import { v329 } from './v329-serves-since-subsecond.ts';
 import { v330 } from './v330-entity-identity-reviews-evidence.ts';
 import { v331 } from './v331-access-read-log.ts';
 import { v332 } from './v332-retire-shared-skill-revision-request-index.ts';
+import { v333 } from './v333-retire-minion-budget-root-owner-index.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -664,4 +665,5 @@ export const MIGRATIONS: Migration[] = [
   v330,
   v331,
   v332,
+  v333,
 ];

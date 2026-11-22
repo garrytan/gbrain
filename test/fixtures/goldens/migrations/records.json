@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 327,
+    "count": 328,
     "gaps": [
       17,
       18,
@@ -108,7 +108,7 @@
       "widenIdentityIndex": "86a6176bd7637d964dbc1d3cd3b1bdfa3ca0161e1ee248c37d7380a1471282e6",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 332,
+    "latest": 333,
     "records": [
       {
         "handler": {
@@ -5421,6 +5421,19 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 332
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "retire_minion_budget_root_owner_index",
+        "sql": {
+          "length": 1105,
+          "sha256": "bde75850bf02e78402de8bcacff9be6131a041f04d8a0b323bbcaccc3822bb05"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 333
       }
     ],
     "versions": [
@@ -5750,7 +5763,8 @@
       329,
       330,
       331,
-      332
+      332,
+      333
     ]
   },
   "normalizer": "migrations-record-v1"

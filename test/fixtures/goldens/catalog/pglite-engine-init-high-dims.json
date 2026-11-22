@@ -1598,7 +1598,6 @@
       "minion_budget_log_recent_idx": "CREATE INDEX minion_budget_log_recent_idx ON public.minion_budget_log USING btree (occurred_at DESC)",
       "minion_inbox_pkey": "CREATE UNIQUE INDEX minion_inbox_pkey ON public.minion_inbox USING btree (id)",
       "minion_jobs_budget_owner_idx": "CREATE INDEX minion_jobs_budget_owner_idx ON public.minion_jobs USING btree (budget_owner_job_id) WHERE (budget_owner_job_id IS NOT NULL)",
-      "minion_jobs_budget_root_owner_idx": "CREATE INDEX minion_jobs_budget_root_owner_idx ON public.minion_jobs USING btree (budget_root_owner_id) WHERE (budget_root_owner_id IS NOT NULL)",
       "minion_jobs_pkey": "CREATE UNIQUE INDEX minion_jobs_pkey ON public.minion_jobs USING btree (id)",
       "minion_lease_pressure_log_job_idx": "CREATE INDEX minion_lease_pressure_log_job_idx ON public.minion_lease_pressure_log USING btree (job_id)",
       "minion_lease_pressure_log_pkey": "CREATE UNIQUE INDEX minion_lease_pressure_log_pkey ON public.minion_lease_pressure_log USING btree (id)",

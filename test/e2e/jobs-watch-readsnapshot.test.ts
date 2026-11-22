@@ -71,6 +71,14 @@ describe('v0.41 jobs-watch readSnapshot E2E', () => {
       [budgetOwner.id],
     );
 
+    const [historical] = await engine.executeRaw<{ budget_root_owner_id: number; retired: boolean }>(
+      `SELECT budget_root_owner_id, to_regclass('public.minion_jobs_budget_root_owner_idx') IS NULL AS retired
+         FROM minion_jobs WHERE id = $1`,
+      [budgetOwner.id],
+    );
+    expect(Number(historical.budget_root_owner_id)).toBe(budgetOwner.id);
+    expect(historical.retired).toBe(true);
+
     const s = await readSnapshot(engine);
     // Queue health: 4 waiting from queue.add, +1 budget owner = 5 waiting.
     // Plus the 2 dead jobs counted as "completed-or-failed-or-dead" don't
