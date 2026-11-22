@@ -184,11 +184,12 @@ export interface ProjectionDrainPreviewRow { source_id: string; slug: string; pa
 
 /** The rows a media drain takes, images last, then pages answered from their pre-upgrade index, oldest first, at most `limit`. */
 export async function listProjectionDrainPreview(raw: EngineRawRead, limit: number): Promise<ProjectionDrainPreviewRow[]> {
-  return raw<ProjectionDrainPreviewRow>(`SELECT s.id AS source_id,j.slug,p.page_kind,j.reason,j.updated_at::text AS updated_at
-    FROM page_projection_jobs j ${projectionJobProbes({ media: true })}
+  const { text, params } = renderFragment(sqlFragment`SELECT s.id AS source_id,j.slug,p.page_kind,j.reason,j.updated_at::text AS updated_at
+    FROM page_projection_jobs j ${trustedSql(projectionJobProbes({ media: true }))}
     ORDER BY CASE WHEN p.page_kind NOT IN ('markdown','code') THEN 1
-      WHEN EXISTS (SELECT 1 FROM pages q WHERE q.source_id=s.id AND q.slug=j.slug AND q.text_projection_revision='${ACTIVATION_SERVED_REVISION}'::uuid) THEN 2
-      ELSE 0 END,j.updated_at,j.source_incarnation,j.slug COLLATE "C" LIMIT $1`, [limit]);
+      WHEN EXISTS (SELECT 1 FROM pages q WHERE q.source_id=s.id AND q.slug=j.slug AND q.text_projection_revision='${trustedSql(ACTIVATION_SERVED_REVISION)}'::uuid) THEN 2
+      ELSE 0 END,j.updated_at,j.source_incarnation,j.slug COLLATE "C" LIMIT ${limit}`);
+  return raw<ProjectionDrainPreviewRow>(text, params);
 }
 
 /**

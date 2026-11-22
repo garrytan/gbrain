@@ -480,9 +480,10 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // (countBrainLivePages, readBrainMaturity), so the check answers as it does on PGLite.
       // entity_duplicates warns with the refusal of listEntityKeyRows, whose rows carry a page generation the store
       // does not keep ("the store keeps no page generation"), so the check reports health unknown.
+      // text_projection_readiness is gone from this list: the projection backlog it reads is a typed member the store
+      // serves (readProjectionBacklog), so the check no longer warns with the raw SQL refusal.
       untypedWarnings: ['canonical_content_writes', 'child_table_orphans', 'entity_duplicates',
-        'extract_atoms_backlog', 'raw_provenance', 'retrieval_reflex_health', 'sync_failures',
-        'text_projection_readiness', 'trust_scan'],
+        'extract_atoms_backlog', 'raw_provenance', 'retrieval_reflex_health', 'sync_failures', 'trust_scan'],
       // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack
       // reads are served, so the successor notice is the same. embeddings is not here: Rust cannot read the backlog
       // age, so it warns with that typed refusal where PGLite reads the age and passes.
