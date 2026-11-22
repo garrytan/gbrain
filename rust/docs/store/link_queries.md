@@ -38,6 +38,8 @@ Code: `rust/crates/gbrain-store/src/link_queries.rs`, the napi methods in
 | `readEntityInboundEdges(slug, sourceId, { excludePrivate, originSameSource })` | served |
 | `listLinkEndpointPages(sourceId, slugs, crossSourceSlugs)` | served |
 | `listPagesTitledIn(queryLower, scope)` | served |
+| `probePageTypes(sets, scope)` | served |
+| `readLongPageSizes(ids, scope, { includeTimeline })` | served |
 | `wordLexemes(words)` | served under the English text search configuration |
 | `readLinkContextMatches(asks)` | served |
 | `readLinkContextOriginPages(ids)` | served |
@@ -46,7 +48,7 @@ Code: `rust/crates/gbrain-store/src/link_queries.rs`, the napi methods in
 
 - The temporal read option (`temporal`) on every member but `relationalFanout` and `relationalChainHop`. `minTrust` and `suppressFlagged` are served wherever `pageReadFilter` reads
   them (`getBacklinkCounts`, `getAdjacencyBoosts`, `supersedingPageSlugs`, `relationalFanout`, `relationalChainHop`,
-  `listLivePageSummaries`, `listPagesTitledIn`): `GraphScope` applies `trust::TrustPolicy` to the page's stamped tier
+  `listLivePageSummaries`, `listPagesTitledIn`, `probePageTypes`, `readLongPageSizes`): `GraphScope` applies `trust::TrustPolicy` to the page's stamped tier
   and its write-gate receipts. `findOrphanPages` and `listLinkSources` still refuse them: their SQL does not read
   them through `pageReadFilter`, and no caller passes them. `takesHoldersAllowList` is accepted: it turns the live
   filter on in `relationalFanout` and is ignored by `getBacklinkCounts` and `getAdjacencyBoosts`, as in the SQL
@@ -87,7 +89,7 @@ policy hides fails the filter, live or not, in `getBacklinkCounts`, `getAdjacenc
 from a hidden page or with a hidden origin (`privateLinkOriginFilterForCaller` tests the origin's privacy only, not
 whether it is live). The origin clause (`originFilter`) passes a link with no origin, or one whose origin page passes the
 live filter. The policy carries a caller's reader identity and private-readable grant (the `callerReaders`
-opt-in), in these reads and in `listLivePageSummaries`, `listPagesTitledIn` and `countInboundLinks`; any other caller
+opt-in), in these reads and in `listLivePageSummaries`, `listPagesTitledIn`, `probePageTypes`, `readLongPageSizes` and `countInboundLinks`; any other caller
 whose policy differs (folder grants, lineage, an owner read) refuses. The owner-only part of the policy (`ownerOnly`: a
 page of an owner-only source, a concept synthesized from one, or every page under the closed form) applies to each page
 the read judges, with the owner-only sources read once per call, on the first page the call judges (`OwnerOnlyCache`).
@@ -177,6 +179,17 @@ alone unless the statement also applies `pageReadFilter(.., live)`.
   leaves the row order to the plan.
 - `listPagesTitledIn`: pages whose lowercased title (three characters or more) occurs in `queryLower` and that pass
   `pageReadFilter(.., scope, live)`, by source then slug in byte order, at most 50.
+- `probePageTypes`: search's type-filter probe (engine-sql/cli-reads-ops.ts). `present[i]` is whether a page that
+  passes `pageReadFilter(.., scope, live)` has a type in `sets[i]` (false for an empty set). `available` is null unless
+  a non-empty set has no such page; then it lists at most 500 distinct types of those pages. The SQL leaves which 500
+  and their order to the plan; the store returns the first 500 in byte order, and the caller sorts them.
+- `readLongPageSizes`: search's long-page size preflight (search/long-page-sizes.ts). One row `{ id, chars, bytes }`
+  per page in `ids` that passes `pageReadFilter(.., scope, live)` and `servedTextProjectionFilter`, and
+  `safeChunksFilter` when `requiresSafeChunks(scope)`. `chars` and `bytes` are the compiled truth's `char_length` and
+  `octet_length` (NULL counts 0); with `includeTimeline`, a timeline that holds a character outside `[[:space:]]` adds
+  `TIMELINE_SEPARATOR` (21) and its own length. The SQL leaves the row order to the plan; the store returns rows in
+  first-ask order, once per id, and the caller reads them into a map. An id that is not a 32-bit integer throws a
+  `TypeError` before the store is called, as the SQL's `int[]` cast fails.
 - `wordLexemes`: each word's `tsvector_to_array(to_tsvector('english', w))`, in tsvector order. The member returns a
   `Map` from word to lexemes.
 - `readLinkContextMatches`: for each ask (a returned link context and its stored edge: from page, to page, link type;

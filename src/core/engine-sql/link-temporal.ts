@@ -477,6 +477,17 @@ export async function readReferrerPageDetails(exec: Exec, ids: readonly number[]
   return rows.map(r => ({ ...r, id: Number(r.id) }));
 }
 
+/**
+ * The date `referenced_by` reports for a live page, `COALESCE(effective_date, updated_at)`, as UTC text with
+ * microseconds (`YYYY-MM-DDTHH:MM:SS.ffffffZ`), or null for a missing or soft-deleted page (the newer-mentions cutoff).
+ */
+export async function readPageReferenceDate(exec: Exec, sourceId: string, slug: string): Promise<string | null> {
+  const [page] = await exec.executeRaw<{ d: string | null }>(
+      `SELECT to_char(COALESCE(effective_date, updated_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS d
+         FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL`, [sourceId, slug]);
+  return page?.d ?? null;
+}
+
 /** The batched card counts' scope: the group read's, without the cap, plus the canonical record types to total. */
 export type ReferrerTargetCountScope = Omit<ReferrerGroupScope, 'perGroup'> & { recordTypes: readonly string[] };
 

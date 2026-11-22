@@ -220,6 +220,14 @@ describe('bounded work on a 4 MB page', () => {
       }
       return rows;
     }) as never);
+    // The reflex reads are typed members that do not pass through executeRaw on PGLite; record their rows too.
+    const reflexSeen: number[] = [];
+    const reflexOriginal = engine.readReflexPages.bind(engine);
+    const reflexSpy = spyOn(engine, 'readReflexPages').mockImplementation((async (...args: Parameters<typeof engine.readReflexPages>) => {
+      const rows = await reflexOriginal(...args);
+      for (const row of rows) if (typeof row.compiled_truth === 'string') reflexSeen.push(row.compiled_truth.length);
+      return rows;
+    }) as never);
     try {
       const { results } = await lookupEntityNames(engine, 'default', ['Erin Example'], { remote: true });
       expect((results[0] as { lead: string }).lead.length).toBeLessThanOrEqual(200);
@@ -227,9 +235,11 @@ describe('bounded work on a 4 MB page', () => {
       expect(block?.pointers.find(p => p.slug === 'people/erin-example')?.synopsis.length).toBeLessThanOrEqual(160);
       const rel = await buildRelationalArm(engine, 'who invested in widget-co');
       expect(rel.find(r => r.slug === 'people/erin-example')?.chunk_text.length).toBeLessThanOrEqual(240);
-    } finally { spy.mockRestore(); }
+    } finally { spy.mockRestore(); reflexSpy.mockRestore(); }
     expect(seen.length).toBeGreaterThan(0);
     expect(Math.max(...seen)).toBeLessThanOrEqual(BOUNDED_PREFIX_BYTES);
+    expect(reflexSeen.length).toBeGreaterThan(0);
+    expect(Math.max(...reflexSeen)).toBeLessThanOrEqual(BOUNDED_PREFIX_BYTES);
   }, 60_000);
 
   test('the lead helpers cost a fraction of sanitizing the whole body', async () => {

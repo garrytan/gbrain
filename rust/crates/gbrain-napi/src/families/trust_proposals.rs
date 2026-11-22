@@ -11,7 +11,7 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
-use gbrain_store::trust::proposals::{Decider, NewProposal, ProposalFilter};
+use gbrain_store::trust::proposals::{Decider, HoldReadQuery, NewProposal, ProposalFilter};
 
 #[napi]
 impl Brain {
@@ -46,6 +46,20 @@ impl Brain {
         self.run(env, move |s| {
             let filter: ProposalFilter = required(filter, "listTrustProposals filter")?;
             s.list_trust_proposals(&filter)
+        })
+    }
+
+    /// `listUnreadablePrivacyHoldIds({ ids, widen })`: resolves the privacy-hold ids whose target
+    /// fact the caller's widened world-only reads do not admit, ascending.
+    #[napi]
+    pub fn list_unreadable_privacy_hold_ids<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: HoldReadQuery = required(args, "listUnreadablePrivacyHoldIds args")?;
+            s.list_unreadable_privacy_hold_ids(&q)
         })
     }
 

@@ -54,12 +54,19 @@ becomes visible to the brain in one commit, or not at all.
       transaction's handle ([`write_trust.md`](write_trust.md)). `gbrain.write_sources`,
       `gbrain.git_protocol` and `gbrain.persistence_protocol` stay on the transaction in
       TypeScript (`RustTransactionScope.settings`).
+    - Any other custom name Postgres accepts, `gbrain` and one or more simple identifiers
+      (`^gbrain(\.[a-z_][a-z0-9_]*)+$`), stays on the transaction too, unless schema SQL reads it.
+      The names the schema's triggers and functions read and no store writer reads yet
+      (`gbrain.materializing_revision`, `writer_quiesced`, `topology_change`, `refresh_barrier`,
+      `trust_generation_bumped`, `guest_note`, `graduation_run`) refuse, so a caller never sets
+      one that changes Postgres and nothing here.
     - They end with the transaction. A savepoint rollback restores them; a release keeps them.
     - Outside a transaction an apply keeps nothing, as a lone `set_config(..., true)` on PGLite.
     - A name never set reads `null`. A name set before on the engine reads `''`, as Postgres
       keeps a placeholder for it on the connection.
     - A name outside `^[a-z_][a-z0-9_.]*$` throws `Invalid transaction setting name: <name>`, as
-      on PGLite. Any other name refuses with `engine_capability_missing`, reason `transactions`,
+      on PGLite. Any other name (`gbrain.`, `gbrain..x`, `gbrain.1x`, a name with no dot, a
+      schema-read name) refuses with `engine_capability_missing`, reason `transactions`,
       `detail: "member=<m> capability=transactions setting=<name> outcome=none written=nothing"`.
     - Two transactions never see each other's settings. The store admits one write transaction at
       a time: a second `begin_transaction` waits for the writer, and each transaction's handle has

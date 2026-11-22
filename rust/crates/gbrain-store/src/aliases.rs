@@ -255,8 +255,15 @@ pub(crate) fn alias_row_slugs(
     source: &str,
     alias: &str,
 ) -> Result<BTreeSet<String>> {
+    Ok(alias_rows(read, source, alias)?.into_iter().collect())
+}
+
+/// The slug of each `page_aliases` row of `alias` in `source`, one per (slug, origin) row, in
+/// slug then origin byte order: a slug the alias names under two origins appears twice, as the
+/// SQL join returns it.
+pub(crate) fn alias_rows(read: &dyn KvRead, source: &str, alias: &str) -> Result<Vec<String>> {
     if has_nul(&[source, alias]) {
-        return Ok(BTreeSet::new());
+        return Ok(Vec::new());
     }
     Ok(scan_tails(read, &prefix(PAGE_ALIAS, &[source, alias]))?
         .into_iter()

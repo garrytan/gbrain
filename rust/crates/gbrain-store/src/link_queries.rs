@@ -15,7 +15,7 @@
 //! site_reads: inboundLinkCoverage, listJunkEntityHubs, countEntityPages, entityGraphCoverage,
 //! entityFeatureCoverage, countDatedMeetingPages,
 //! countForeignEdges, listLivePageSummaries, countInboundLinks, listLinkEndpointPages,
-//! listPagesTitledIn, wordLexemes.
+//! listPagesTitledIn, wordLexemes, probePageTypes.
 //!
 //! Reads and writes go through the core links helpers (`put_link`, `delete_link`, `out_links`,
 //! `in_links`) and the page and source readers.
@@ -78,7 +78,8 @@ pub use retrieval_coverage::{
 mod site_reads;
 pub use site_reads::{
     EndpointsInput, EntityPagesInput, FeatureCoverageInput, ForeignEdgesInput, InboundCountInput,
-    InboundCoverageInput, JunkHubsInput, LinkContextAsk, TitledInput,
+    InboundCoverageInput, JunkHubsInput, LinkContextAsk, LongPageSizeInput, TitledInput,
+    TypeProbeInput,
 };
 
 /// The frontmatter key that hides a page (`quarantineFilterFragment`).

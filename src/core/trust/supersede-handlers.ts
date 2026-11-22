@@ -18,7 +18,7 @@ import {
   applyProposalAction, type PairProposal, type PairProposalStore, type ProposalActionResult,
 } from '../facts/proposal-supersede.ts';
 import { currentWriteTrust, withCoordinatedWrite, withTrustPromotion, withWriteAttribution } from '../persistence/context.ts';
-import { normalizeDimension, NOT_CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
+import { normalizeDimension } from '../chronicle/ontology.ts';
 import { verbError, type OperationError } from '../ops/contract.ts';
 import type { Principal } from '../persistence/model.ts';
 import {
@@ -165,10 +165,7 @@ export async function contestOntologySupersession(tx: BrainEngine, sourceId: str
   result: { action: string; factId: number | null }): Promise<{ contested?: { proposal_ref: string } }> {
   if (result.action !== 'inserted' || result.factId === null) return {};
   const writer = (await currentWriteTrust(tx))?.tier ?? 'unknown';
-  const [current] = await tx.executeRaw<{ id: number; trust_tier: string }>(
-    `SELECT id, trust_tier FROM facts WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND id <> $4
-       AND expired_at IS NULL AND valid_until IS NULL AND (dim_status IS NULL OR dim_status = 'active') AND ${NOT_CONVERSATION_SLOT_SQL}
-     ORDER BY valid_from DESC NULLS LAST, confidence DESC, id DESC LIMIT 1`, [sourceId, entitySlug, normalizeDimension(dimension), result.factId]);
+  const current = await tx.readOntologyRival(sourceId, entitySlug, normalizeDimension(dimension), Number(result.factId));
   if (!current || !supersessionGuarded(writer, current.trust_tier)) return {};
   return { contested: await recordContestedFact(tx, { sourceId, oldId: Number(current.id), oldTier: storedTrustTier(current.trust_tier),
     newId: result.factId, newTier: writer, guard: 'ontology' }) };

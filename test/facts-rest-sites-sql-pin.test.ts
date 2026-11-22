@@ -12,7 +12,8 @@
  *    `listNearestFacts` sends the same statement with its placeholders renumbered, because the old text bound the model, the
  *    dimensions and the vector literal once and referenced them from two places, while the member binds each twice
  *    (the pool WHERE placeholders now follow the similarity expression's). The statement means the same; its params are
- *    [model, dims, literal, ...pool params, model, dims, literal, limit], and dims bind only once when the column has declared
+ *    [model, dims, literal, literal, ...pool params, model, dims, literal, limit] since the ANN read became an inner
+ *    distance-ordered query with an outer id tie-break (the literal is bound once more), and dims bind only once when the column has declared
  *    dimensions (the pool then skips its vector_dims filter). This is the same shape listFactsForRelevance
  *    has used since lane 4's first batch.
  *  - Main join (da99c637a7): the cli-members line's callers (fact-relevance.ts at de72811022) sorted the pool keys and
@@ -599,6 +600,20 @@ const PINS: Pin[] = [
         ORDER BY f.embedding <=> $9::vector LIMIT $10) f
        ORDER BY f.distance, f.id`, params: ['openai:text-embedding-3-large', 4, '[0,0.1,0.2,0.3]', '[0,0.1,0.2,0.3]', ['s1'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], 'openai:text-embedding-3-large', 4, '[0,0.1,0.2,0.3]', 7] },
       { text: `SELECT set_config(name, value, true) FROM unnest($1::text[], $2::text[]) AS settings(name, value)`, params: [[],[]] }],
+  },
+  {
+    from: 'src/core/search/slot-history.ts:88 entityKeys (at c33606182c)',
+    member: 'listReadablePageSlugs',
+    label: 'local scope',
+    run: e => e.listReadablePageSlugs('s1', ['people/carol', 'companies/carol'], { sourceId: 's1', worldOnly: false, excludePrivate: false } as never, 2),
+    statements: [{ text: `SELECT p.slug FROM pages p WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) LIMIT 2`, params: ['s1', ['people/carol', 'companies/carol']] }],
+  },
+  {
+    from: 'src/core/search/slot-history.ts:88 entityKeys (at c33606182c)',
+    member: 'listReadablePageSlugs',
+    label: 'remote scope, trust floor, two sources (the source filter is not applied)',
+    run: e => e.listReadablePageSlugs('s1', ['people/carol', 'companies/carol'], scopeB, 2),
+    statements: [{ digest: { length: 8094, sha256: 'a0bc46f046af6b7f7bb8a9b28e0a03b2050fd9e7fdfd2007118d0258e28a9f74' }, params: ['s1', ['people/carol', 'companies/carol']] }],
   },
 ];
 

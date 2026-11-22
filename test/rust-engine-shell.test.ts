@@ -6,7 +6,7 @@
  * addon; test/rust-engine-store.test.ts runs the real one.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openRustEngine, RustEngine, rustMemberCapability } from '../src/core/rust-engine.ts';
@@ -282,5 +282,68 @@ describe('Rust kind on SQL-only paths', () => {
     expect(stageBatchBytes('pglite')).toBe(STAGE_BATCH_BYTES.pglite);
     const staged = await refusal(() => stageBatchBytes('rust'));
     expect(staged.code).toBe('engine_capability_missing');
+  });
+});
+
+/**
+ * Transaction-local settings on the Rust shell (store-members/transactions.ts, rust/docs/store/transactions.md item
+ * 12). The name checks run before any store call, so the fake store answers them. Postgres accepts a custom name only
+ * as two or more simple identifiers separated by dots, and an unknown name with no dot not at all; the Rust engine
+ * keeps a `gbrain.*` name only when Postgres would take it and no schema SQL reads it.
+ */
+describe('Rust transaction settings: the names the shell keeps', () => {
+  const SETTINGS_FILE = join(import.meta.dir, '..', 'src/core/rust-engine/store-members/transactions.ts');
+  /** The names of one `const <name>: ReadonlySet<string> = new Set([...])` in transactions.ts. */
+  function setNames(constName: string): string[] {
+    // test-reads-source-ok[structural]: which list a name sits in is not observable (scope and custom names behave alike), and transactions.ts may export only engine members.
+    const match = readFileSync(SETTINGS_FILE, 'utf8').match(new RegExp(`const ${constName}: ReadonlySet<string> = new Set\\(\\[([^\\]]*)\\]\\)`));
+    expect(match).not.toBeNull();
+    return [...match![1]!.matchAll(/'([^']+)'/g)].map((m) => m[1]!);
+  }
+  /** Every `gbrain.*` name SQL under src reads with current_setting('gbrain.<name>'. */
+  function schemaReadNames(): string[] {
+    const names = new Set<string>();
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) walk(path);
+        else if (/\.(ts|sql)$/.test(entry.name)) {
+          for (const m of readFileSync(path, 'utf8').matchAll(/current_setting\(\s*'(gbrain\.[a-z0-9_.]+)'/g)) names.add(m[1]!);
+        }
+      }
+    };
+    walk(join(import.meta.dir, '..', 'src'));
+    return [...names].sort();
+  }
+  const refused = async (run: () => Promise<unknown>) => {
+    const error = await refusal(run);
+    return [error.code, error.reason];
+  };
+
+  test('a name Postgres rejects, and a name schema SQL reads, refuse; a custom gbrain name is kept', async () => {
+    const engine = open();
+    await engine.connect({ engine: 'pglite', database_path: BRAIN_PATH });
+    try {
+      for (const name of ['gbrain.', 'gbrain..x', 'gbrain.1x', 'parity_first', ...setNames('SCHEMA_READ_SETTINGS')]) {
+        expect({ name, read: await refused(() => engine.readTransactionSettings([name])) })
+          .toEqual({ name, read: ['engine_capability_missing', 'transactions'] });
+        expect({ name, apply: await refused(() => engine.applyTransactionSettings([name], ['v'])) })
+          .toEqual({ name, apply: ['engine_capability_missing', 'transactions'] });
+      }
+      // Outside a transaction a kept name reads unset, as on PGLite.
+      expect(await engine.readTransactionSettings(['gbrain.parity_first', 'gbrain.parity.nested'])).toEqual([null, null]);
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
+  test('every gbrain setting schema SQL reads is one the store keeps or one the shell refuses', () => {
+    const kept = [...setNames('TRUST_SETTINGS'), ...setNames('SCOPE_SETTINGS')];
+    const refusedNames = setNames('SCHEMA_READ_SETTINGS');
+    expect(kept.length).toBeGreaterThan(0);
+    expect(refusedNames.length).toBeGreaterThan(0);
+    const read = schemaReadNames();
+    expect(read).toContain('gbrain.writer_quiesced');
+    expect(read.filter((name) => !kept.includes(name) && !refusedNames.includes(name))).toEqual([]);
   });
 });

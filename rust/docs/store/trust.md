@@ -110,6 +110,7 @@ through `cascade::remove_source_rows`).
 | --- | --- | --- |
 | `insertTrustProposal` | `insert_trust_proposal`: takes an id first, then returns the pending proposal of the same key with `created: false`, so a refused insert uses up an id as BIGSERIAL does | `INSERT … ON CONFLICT DO NOTHING RETURNING id`, then `SELECT id … status = 'pending'` |
 | `getTrustProposal` | `get_trust_proposal`: a point read (the `FOR UPDATE` lock is the store's one writer) | `SELECT * … WHERE id = $1` |
+| `listUnreadablePrivacyHoldIds` | `list_unreadable_privacy_hold_ids`: each listed id once, ascending; a `supersede_fact` proposal whose before state names `visibility` whose target fact is missing (or not in `facts`) or one `VisibilityWidening::admits` refuses (the caller's member page and private-facts grant, sent by `storeVisibility`); a caller the member cannot model refuses | `SELECT tp.id FROM trust_proposals tp LEFT JOIN facts f … AND (f.id IS NULL OR NOT (<memberFactAdmitSql> OR <grantedPrivateFactSql>))` |
 | `listTrustProposals` | `list_trust_proposals`: filters on status (`all`), source, action and `since`; sorted by `created_at` then id, cut to the limit | `… ORDER BY created_at, id LIMIT $5` |
 | `pendingTrustProposalsFor` | `pending_trust_proposals_for`: the pending proposals naming the row, by id | `… WHERE status = 'pending' AND (target … OR related …) ORDER BY id` |
 | `updatePendingTrustProposalAfter` | `update_pending_trust_proposal_after`: a pending proposal only | `UPDATE … WHERE id = $1 AND status = 'pending'` |

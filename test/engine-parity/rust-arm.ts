@@ -80,8 +80,8 @@ export function removeBrainDir(dir: string): void {
 }
 
 /** Fixture: register a source on the Rust brain (BrainEngine has no typed "create source"). */
-export async function createRustSource(engine: unknown, id: string, config: Record<string, unknown>, localPath?: string): Promise<void> {
-  await (engine as RustEngine).openStore('createSource').brain.upsertSource({ id, name: id, config, local_path: localPath ?? null });
+export async function createRustSource(engine: unknown, id: string, config: Record<string, unknown>, localPath?: string, lastSyncAt?: string): Promise<void> {
+  await (engine as RustEngine).openStore('createSource').brain.upsertSource({ id, name: id, config, local_path: localPath ?? null, ...(lastSyncAt ? { last_sync_at: lastSyncAt } : {}) });
 }
 
 /** Fixture: archive a source on the Rust brain (BrainEngine has no typed "archive source"). */

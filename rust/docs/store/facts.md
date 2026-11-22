@@ -532,6 +532,19 @@ two keys per ledger, visibility and hash; with none it scans the `source\0visibi
 after the subject. A NUL byte in any text is refused. Pinned by `test/engine-parity/withdrawal-fence.test.ts`,
 `test/withdrawal-fence-sql-pin.test.ts` and `rust/crates/gbrain-store/tests/withdrawal_fence.rs`.
 
+## Slot-history reads (`facts/quoted.rs`)
+
+`listReadablePageSlugs` serves the bare-name page lookup of a slot-history question (`search/slot-history.ts`
+`entityKeys`). The TypeScript member is `rust-engine/store-members/facts-quoted.ts`; the napi family is
+`families/facts_quoted.rs`. The quote reads of `search/transcript-quote.ts` are `facts/quote.rs` (see Group 5).
+
+| Member | What the store does |
+| --- | --- |
+| `listReadablePageSlugs(sourceId, slugs, scope, limit)` | Of `slugs` in `sourceId`, the pages `pageReadFilter(.., live = true)` admits under `scope` (the chunk reads' page policy: privacy, trust floor and flag suppression, not soft-deleted, not quarantined, a live source), at most `limit`. The scope's own `sourceId` / `sourceIds` do not narrow the read, and `requireSafeChunks` is not read. The SQL has no `ORDER BY`; the store keeps the asked order. |
+
+The TypeScript member resolves the privacy policy as the chunk reads do (a caller's readers are allowed) and ignores
+`requireSafeChunks`, which `pageReadFilter` does not read. Parity: `test/engine-parity/facts-quoted.test.ts`.
+
 
 ## Group 5: search relevance and trust reads (`facts/trust.rs`)
 
@@ -539,7 +552,10 @@ after the subject. A NUL byte in any text is refused. Pinned by `test/engine-par
 |---|---|---|---|
 | `listFactsForRelevance` | `search/fact-relevance.ts` | keyword and entity arms | The pool predicate and `similarity` are below. `entity_ended` refuses (it reads `fact_withdrawals` and `gbrain_fact_fingerprint`). |
 | `countUncomparableFacts` | `search/fact-relevance.ts` | yes | Per source, the most first, then by source id. |
+| `listSlotRows` | `search/slot-ends.ts` (`readSlotRows`) | yes (`facts/recall.rs`) | The pool rows, expired ones included in the read, that are still active conversation slot rows (unexpired, not superseded, a value hash, `dim_status` active, a conversation source) of the `(source, entity, dimension)` slots, by `valid_from` then id; no `similarity`. The other five recall pool reads of `engine-sql/facts-recall.ts` are served on rust-5a, not here. |
 | `matchSavedFacts` | `search/saved-facts-match.ts` | yes (`facts/saved_match.rs`) | The match columns, `need`, the cue flag, `trust_rank` and `pool_rank`, as below. The member refuses another correction cue, a non-`english` FTS language and a `worldOnly` read a private-facts grant widens. |
+| `readEntityNewestFacts` | `search/entity-facts.ts` | yes (`facts/saved_match.rs`) | The saved-fact columns plus the collapse columns, newest first (a fact dated after now ranks by `created_at`, as the SQL's `CASE WHEN valid_from > now() THEN created_at ELSE valid_from END`), then the highest id, 50 rows at most. The member refuses a `worldOnly` read a private-facts grant widens, and the caller rethrows that refusal instead of reading it as no facts. |
+| `matchHeadStems` | `search/saved-facts-match.ts` | yes (`facts/saved_match.rs`) | One row per name head, in input order, with the 1-based indexes of the terms its `to_tsvector` matches by `plainto_tsquery`; a stopword term matches nothing. The member refuses a non-`english` FTS language, and the caller rethrows that refusal instead of reading it as no match. |
 | `readFactForOwnerAction` | `trust/owner-actions.ts` | yes | Served by `facts/trust_owner.rs`: the 16 bound columns in the SELECT's order, the stored tier, null for no fact. |
 | `listStandingPreferences` | `trust/review.ts` | yes | Served by `facts/trust_owner.rs`: the `standing_instruction` flag receipts and the source's claim state, with the owner floor and connector kinds the member passes. |
 | `listLexicalContestCandidates` | `trust/supersede-handlers.ts` | yes (`facts/contest.rs`) | Active rows of the entity, kind and visibility whose stamped tier ranks above the writer's (a writer that names no tier ranks 0), on `pageSlug` or, without one, on no owned memory page. Highest id first, at most 200; each row is `{ id, fact, trust_tier }`. |
@@ -547,7 +563,6 @@ after the subject. A NUL byte in any text is refused. Pinned by `test/engine-par
 | `listOwnerTierFacts` | `search/transcript-quote.ts` | yes (`facts/quote.rs`) | The ids whose stamped tier ranks at or above `floor`; a floor that names no tier answers nothing. Ascending, each id once. |
 | `listRestatedPrivateCopies` | `trust/supersede-handlers.ts` | yes | Served by `facts/trust_reads.rs`: the stored tier's rank against the writer's, the lowest id; any active world copy on the entity lifts it. |
 | `countDerivedFactTaint` | `trust/taint.ts` | yes | Served by `facts/trust_owner.rs`: `write_origin ? 'taint_inputs'` over every source. |
-
 
 The pool predicate (`poolWhere`), clause by clause: the source list; unless `includeExpired`, `expired_at`
 and `superseded_by` NULL and `valid_until` NULL or in the future; no audit checkpoint source; the row's
@@ -571,6 +586,10 @@ provenance page hides the row; then the entity, session, `since` (on `valid_from
   `CORRECTION_CUE` written out as its 20 phrases, each matched case-insensitively between word boundaries
   (the store has no regular-expression engine). `trust_rank` is 0 for a tier name it does not know, as
   `trustRankSql` is.
+- `readEntityNewestFacts` reads the named entity slugs in one source: active rows, no audit source,
+  `worldOnly` and the private-provenance policy for a remote caller, then `projectionEligibleSql` (a
+  soft-deleted page, a live quarantined provenance page, the trust floor). `valid_from` is the timestamptz
+  text Postgres prints. The caller collapses copies of one claim before its caps.
 - `listFactsForRelevance` serves the pool reads only. Its caller `collectFactCandidates` still makes
   other reads on the way (the word stems, the facts embedding column, the named-entity anchor and the
   nearest-vector arm); on Rust each of those is served or refused by the family that owns it.

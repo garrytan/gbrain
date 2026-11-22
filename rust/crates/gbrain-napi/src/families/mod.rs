@@ -4,6 +4,7 @@
 
 mod access_members;
 mod access_rules;
+mod brief_reads;
 mod chronicle_events;
 mod chunks;
 mod cli_entities;
@@ -43,6 +44,7 @@ mod page_purges;
 
 mod page_visibility;
 mod pages;
+mod reflex_reads;
 mod search;
 mod session_state;
 mod shared_skill_members;
@@ -83,6 +85,8 @@ mod facts_holding_purges;
 mod facts_loops;
 mod facts_provenance;
 mod facts_purge;
+mod facts_quoted;
+mod facts_recall;
 mod facts_repair;
 mod facts_trust;
 mod facts_trust_owner;

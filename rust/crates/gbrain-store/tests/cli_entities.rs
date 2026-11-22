@@ -333,6 +333,197 @@ fn label_pages_carry_a_label_key_and_no_readers() {
 }
 
 #[test]
+fn live_page_frontmatter_reads_the_stored_page_or_none() {
+    let dir = TempDir::new("cli-live-frontmatter");
+    let store = seeded(&dir);
+    let row = store
+        .read_live_page_frontmatter("default", "notes/readers")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.page_type, "note");
+    assert_eq!(row.frontmatter["access"], json!("x"));
+    assert_eq!(row.frontmatter["readable_by"], json!(["a"]));
+    // Soft-deleted, missing, or in another source: no row.
+    assert!(
+        store
+            .read_live_page_frontmatter("default", "people/nc")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .read_live_page_frontmatter("default", "notes/ghost")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .read_live_page_frontmatter("other", "notes/readers")
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn entity_anchored_pages_name_or_link_the_entity_newest_first() {
+    let dir = TempDir::new("cli-anchored");
+    let store = open(&dir);
+    store
+        .upsert_source(&SourceInput {
+            id: "other".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    let page = |t: &str, body: &str, fm: Value| json!({"type": t, "title": "T", "compiled_truth": body, "frontmatter": fm});
+    put(
+        &store,
+        "default",
+        "people/nova-example",
+        json!({"type": "person", "title": "Nova Example", "compiled_truth": "Nova Example", "frontmatter": {}}),
+    );
+    put(
+        &store,
+        "default",
+        "notes/title",
+        page("note", "Met NOVA EXAMPLE today.", json!({})),
+    );
+    put(
+        &store,
+        "default",
+        "notes/tail",
+        page("note", "see nova-example.", json!({})),
+    );
+    put(
+        &store,
+        "default",
+        "notes/longer",
+        page("note", "Nova Examples met.", json!({})),
+    );
+    put(
+        &store,
+        "default",
+        "notes/linked",
+        page("note", "no name here", json!({})),
+    );
+    put(
+        &store,
+        "default",
+        "notes/amends",
+        page("note", "no name here", json!({})),
+    );
+    put(
+        &store,
+        "default",
+        "notes/question",
+        page("question", "Nova Example?", json!({})),
+    );
+    put(
+        &store,
+        "default",
+        "notes/pinned",
+        page("note", "Nova Example", json!({"pinned_question": "q"})),
+    );
+    put(
+        &store,
+        "default",
+        "notes/gone",
+        page("note", "Nova Example", json!({})),
+    );
+    store
+        .soft_delete_page("notes/gone", Some("default"))
+        .unwrap();
+    put(
+        &store,
+        "other",
+        "notes/elsewhere",
+        page("note", "Nova Example", json!({})),
+    );
+    let link = |from: &str, link_type: &str| {
+        let options: AddLinkOptions =
+            serde_json::from_value(json!({"linkType": link_type, "context": "c"})).unwrap();
+        store
+            .add_link(from, "people/nova-example", &options)
+            .unwrap();
+    };
+    link("notes/linked", "works_at");
+    link("notes/amends", "amends");
+    let anchored = store
+        .read_entity_anchored_pages("default", "people/nova-example")
+        .unwrap();
+    let entity = anchored.entity.unwrap();
+    assert_eq!(entity.title, "Nova Example");
+    let slugs: Vec<&str> = anchored.pages.iter().map(|p| p.slug.as_str()).collect();
+    assert_eq!(slugs, ["notes/linked", "notes/tail", "notes/title"]);
+    // No live entity page: only the slug tail names it, and no link counts.
+    let missing = store
+        .read_entity_anchored_pages("default", "people/missing")
+        .unwrap();
+    assert!(missing.entity.is_none() && missing.pages.is_empty());
+    // Titles read each page id once; an id outside integer is refused.
+    let gone = store.read_page_titles_by_id(&[entity.id as i64]).unwrap();
+    assert_eq!(gone[0].title, "Nova Example");
+    let ids: Vec<i64> = anchored.pages.iter().map(|p| p.id as i64).collect();
+    let titles = store
+        .read_page_titles_by_id(&[ids[0], ids[0], 0, 999_999])
+        .unwrap();
+    assert_eq!(titles.len(), 1);
+    assert!(
+        store
+            .read_page_titles_by_id(&[i64::from(i32::MAX) + 1])
+            .is_err()
+    );
+}
+
+#[test]
+fn text_mention_pages_read_live_pages_at_the_slugs_in_the_sources() {
+    let dir = TempDir::new("cli-text-mentions");
+    let store = open(&dir);
+    for id in ["other", "third"] {
+        store
+            .upsert_source(&SourceInput {
+                id: id.into(),
+                ..Default::default()
+            })
+            .unwrap();
+    }
+    let page = |title: &str, date: Option<&str>| {
+        json!({"type": "note", "title": title, "compiled_truth": "x", "frontmatter": {"quarantine": false},
+            "effective_date": date, "effective_date_source": date.map(|_| "date")})
+    };
+    put(&store, "default", "notes/a", page("A", Some("2026-03-04")));
+    put(&store, "other", "notes/a", page("A other", None));
+    put(&store, "third", "notes/a", page("A third", None));
+    put(&store, "default", "notes/gone", page("Gone", None));
+    put(&store, "default", "notes/unasked", page("Unasked", None));
+    store
+        .soft_delete_page("notes/gone", Some("default"))
+        .unwrap();
+    let rows = store
+        .read_text_mention_pages(
+            &["default".into(), "other".into()],
+            &["notes/a".into(), "notes/gone".into(), "notes/never".into()],
+        )
+        .unwrap();
+    let got: Vec<(&str, &str, &str)> = rows
+        .iter()
+        .map(|r| (r.source_id.as_str(), r.slug.as_str(), r.title.as_str()))
+        .collect();
+    assert_eq!(
+        got,
+        vec![("default", "notes/a", "A"), ("other", "notes/a", "A other")]
+    );
+    assert!(rows[0].date.starts_with("2026-03-04T00:00:00"));
+    assert_eq!(rows[0].page_type, "note");
+    assert_eq!(rows[0].frontmatter.get("quarantine"), Some(&json!(false)));
+    assert!(
+        store
+            .read_text_mention_pages(&[], &["notes/a".into()])
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn retirement_hop_reads_retirement_and_target() {
     let dir = TempDir::new("cli-hop");
     let store = seeded(&dir);

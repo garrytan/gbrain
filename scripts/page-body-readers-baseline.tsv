@@ -92,10 +92,7 @@ src/core/connectors/fence-carry.ts	carryStoredFences	field	INLINE	moved from goo
 src/core/content-repair/judgment.ts	judgmentParticipant	field	STREAM	
 src/core/content-sanity.ts	assessContentSanity	field	STREAM	
 src/core/context/proactive-brief.ts	editItem	field	INLINE	reads the body only at or under 64 KiB, below the segmented threshold; a segmented page's NULL body skips the edit arm
-src/core/context/proactive-brief.ts	editItem	sql	INLINE	reads the body only at or under 64 KiB, below the segmented threshold; a segmented page's NULL body skips the edit arm
-src/core/context/retrieval-reflex.ts	resolveEntitiesToPointers	sql	LEAD	boundedBodyPrefixSql AS compiled_truth
 src/core/context/retrieval-reflex.ts	safeSynopsis	field	LEAD	bounded prefix rows
-src/core/context/retrieval-reflex.ts	weakTitleHits	sql	LEAD	boundedBodyPrefixSql AS compiled_truth
 src/core/conversation-parser/body.ts	readSummaryBody	field	STREAM	
 src/core/core-memory.ts	applyCoreSensitivity	field	INLINE	
 src/core/core-memory.ts	listCorePages	field	INLINE	
@@ -179,6 +176,8 @@ src/core/engine-sql/atom-backlog.ts	ATOM_BACKLOG_ALL_CONNECTORS_OUT_SQL	sql	STRE
 src/core/engine-sql/atom-backlog.ts	ATOM_BACKLOG_ALL_SQL	sql	STREAM	moved from extract-atoms.ts countExtractAtomsBacklog (minCompiledTruthChars): octet_length of a NULL body is not true, so a segmented page is never counted (skip until per-segment extraction)
 src/core/engine-sql/atom-backlog.ts	ATOM_BACKLOG_SCOPED_CONNECTORS_OUT_SQL	sql	STREAM	moved from extract-atoms.ts countExtractAtomsBacklog (minCompiledTruthChars): octet_length of a NULL body is not true, so a segmented page is never counted (skip until per-segment extraction)
 src/core/engine-sql/atom-backlog.ts	ATOM_BACKLOG_SCOPED_SQL	sql	STREAM	moved from extract-atoms.ts countExtractAtomsBacklog (minCompiledTruthChars): octet_length of a NULL body is not true, so a segmented page is never counted (skip until per-segment extraction)
+src/core/engine-sql/brief-reads.ts	readBriefEditPage	sql	INLINE	moved from context/proactive-brief.ts editItem: reads the body only at or under 64 KiB, below the segmented threshold; a segmented page's NULL body skips the edit arm
+src/core/engine-sql/brief-reads.ts	readBriefPageVersions	sql	INLINE	moved from context/proactive-brief.ts editItem: reads the body only at or under 64 KiB, below the segmented threshold; a segmented page's NULL body skips the edit arm
 src/core/engine-sql/chunk-reads.ts	countOversizedEmbedSkips	sql	META	doctor content-quality's oversized embed-skip count, moved from runContentSanity: octet_length metadata
 src/core/engine-sql/chunks.ts	chunklessPagesWhere	sql	META	lane 1e file: body <> '' predicate
 src/core/engine-sql/chunks.ts	getChunkWindows	sql	STREAM	lane 1e file: ships whole bodies per hit for inline pages; a segmented page ships none (NULL) and its chunks carry occurrence_id + span, read by search/segmented-evidence.ts
@@ -211,6 +210,7 @@ src/core/engine-sql/export-reads.ts	readExportPageRows	sql	STREAM	moved from exp
 src/core/engine-sql/dream-cycle.ts	listDreamAtomPages	sql	INLINE	dream-cycle statements: moved from synthesize-concepts.ts runPhaseSynthesizeConcepts unchanged
 src/core/engine-sql/dream-cycle.ts	listSynthesisPageBodies	sql	INLINE	dream-cycle statements: moved from synthesize-generations.ts unchanged; segmented pages are excluded in SQL, so a segmented earlier output is never compared and stays live as an unreadable unmatched predecessor
 src/core/engine-sql/dream-cycle.ts	readDreamPreRunRevision	sql	STREAM	dream-cycle statements: moved from synthesize-verify-epochs.ts loadPreRunRevision unchanged
+src/core/engine-sql/entity-reads.ts	readEntityAnchoredPages	sql	STREAM	moved from search/entity-anchor.ts entityAnchoredPages (the anchored-page name match over compiled_truth)
 src/core/engine-sql/facts-purge.ts	listFactsReconcileBacklog	sql	STREAM	group 5 facts sites: moved from facts/reconcile-watermark.ts readFactsReconcileBacklog unchanged
 src/core/engine-sql/facts-purge.ts	selectFactsReconcileDrain	sql	STREAM	group 5 facts sites: moved from facts/reconcile-watermark.ts selectFactsReconcileDrain unchanged
 src/core/engine-sql/facts-purge.ts	PROSE_IN	sql	STREAM	segmented pages probed through their segment texts (purge-verify.ts segmentedProse); moved from verifyPagePurge with listPageProseHits
@@ -241,6 +241,7 @@ src/core/engine-sql/pages.ts	putPage	sql	SEGW	blank-guard reads body_bytes for a
 src/core/engine-sql/pages.ts	refreshPageBody	sql	SEGW	UPDATE of the body columns; the body-storage CHECK refuses it over a segmented row; callers assert first
 src/core/engine-sql/pages.ts	revertToVersion	sql	SEGW	lane 1e: refuses a segmented page/version (revert deferred to PR 3)
 src/core/engine-sql/pages.ts	toDomainBankRow	field	LEAD	maps sampled rows; segmented pages are never sampled
+src/core/engine-sql/reflex-reads.ts	reflexPagesStatement	sql	LEAD	moved from context/retrieval-reflex.ts resolveEntitiesToPointers and weakTitleHits (boundedBodyPrefixSql AS compiled_truth)
 src/core/engine-sql/salience.ts	listEnrichCandidates	sql	META	
 src/core/engine-sql/search-reads.ts	generatedPagesIn	sql	LEAD	moved from search/provenance-demotion.ts readGeneratedPages (same statement, typed engine method)
 src/core/engine-sql/sources.ts	PAGE_SIZE_ROWS_FOR_SLUGS_SQL	sql	META	lane 1e file: body_bytes for segmented pages; octet_length of the inline body only (moved from page-embedding-budget.ts readPageSizeStates)
@@ -675,10 +676,9 @@ src/core/schema-pack/page-to-link.ts	runPageToLinkCore	sql	LEAD
 src/core/search-vector-backfill.ts	backfillPageVectors	field	LEAD	
 src/core/search-vector-backfill.ts	backfillPageVectors	sql	LEAD	
 src/core/search/chunk-windows.ts	mapChunkWindowRows	field	STREAM	
-src/core/search/entity-anchor.ts	entityAnchoredPages	sql	STREAM	
 src/core/search/evidence-delivery.ts	deliverEvidence	field	STREAM	inline pages: the fence overlay over the whole body; a segmented page (no body) skips it and is planned from windows (search/segmented-evidence.ts)
-src/core/search/evidence-delivery.ts	selectLongPages	sql	META	sizes a segmented page from its NULL body (0), so it is never selected as a long page; moves to body_bytes
 src/core/search/exact-scan.ts	buildExactBatchStatement	sql	META	#7191: octet_length of the body columns (stored size, never the body) decides an unreadable page
+src/core/search/long-page-sizes.ts	longPageSizeStatement	sql	META	moved from search/evidence-delivery.ts selectLongPages: sizes a segmented page from its NULL body (0), so it is never selected as a long page; moves to body_bytes
 src/core/search/provenance-demotion.ts	applyGeneratedDemotion	field	LEAD	
 src/core/search/read-enrichment.ts	readAliases	sql	NONE	not the page body: SELECT * FROM pages used for identity columns
 src/core/search/read-enrichment.ts	readChainHop	sql	META	SELECT * FROM pages by id; protectedBodyFilter(ev) reads body_flags for a segmented page
