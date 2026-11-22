@@ -1884,12 +1884,20 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   behind, and the unseeded gap rows (tables the Rust store cannot serve yet; a swap is refused while any remain).
   It refuses while shadow mode is on. To seed again, `stop --delete` and seed into the new directory.
   Rust store layout: [rust/docs/store/seed.md](../rust/docs/store/seed.md).
-- **Managed storage is refused.** The Rust engine never holds managed storage, so a brain that uses it can never swap to
-  Rust and a seed of it copies data nothing can use. `seed` opens the brain database, reads its storage mode, and
-  refuses a managed-storage brain with `engine_shadow_refused` (`managed_storage`, exit 3; with `--json` the error
-  envelope is also printed on stdout), telling the agent to ask the user. It does this before the Rust addon loads, so a refused seed
-  creates no shadow directory, no store and no `seed.json`. A brain whose mode cannot be read, or that cannot be opened,
-  is refused the same way, with the error in the detail line, never passed.
+- **Managed storage is refused.** The Rust engine never holds managed storage, so a brain that uses it can never swap
+  to Rust and a seed of it copies data nothing can use. Brains made by a default `gbrain init` use managed storage and
+  cannot be shadowed or swapped yet. `seed` opens the brain database, reads its storage mode, and refuses a
+  managed-storage brain with `engine_shadow_refused` (`managed_storage`, exit 3; with `--json` the error envelope is
+  also printed on stdout), telling the agent to ask the user. The next step names the ways out that exist today. For a
+  new brain, `gbrain init --db-only` creates one without managed storage. For an existing managed brain, `gbrain
+  sources writer deactivate --dry-run` previews converting it back to classic mode; the real deactivate needs your
+  consent. It refuses before the Rust addon loads, so a refused seed creates no shadow directory, no store and no
+  `seed.json`. A brain whose mode cannot be read, or that cannot be opened (for example the database is down), is
+  refused the same way (exit 3, `managed_storage`) but says so honestly: "gbrain could not confirm that this brain
+  does not use managed storage", with the read or open error in the why. Only a mode read as managed says "this brain
+  uses managed storage". When another gbrain holds a PGLite brain (`pglite_busy`, usually `gbrain serve`), the next
+  step is to stop `gbrain serve` and anything else holding it, run the command again, then restart serve. It is never
+  a silent pass.
 - **Provisional report.** The verdict is always `NOT READY`: this phase compares reads only, the seeded store does
   not follow later writes yet, and writes and the readiness decision come in later phases of the plan
   (`docs/designs/RUST_ENGINE.md`, Phase S). Until the Rust engine serves reads, comparisons record

@@ -281,7 +281,7 @@ async function seed(
 function renderManagedRefusal(e: OperationError, err: (l: string) => void): number {
   err(`engine shadow: ${e.code} (${e.reason}): ${e.message}`);
   if (e.why) err(e.why);
-  if (e.detail) err(`Detail: ${e.detail}`);
+  if (e.detail && !e.why?.includes(e.detail)) err(`Detail: ${e.detail}`);
   err(e.suggestion ?? 'Ask the user; nothing was written.');
   return 3;
 }
