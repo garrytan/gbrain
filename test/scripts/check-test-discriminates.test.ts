@@ -54,29 +54,29 @@ function discriminate(dir: string, testFile: string, ...sources: string[]) {
   return { code: r.status, stdout: r.stdout, stderr: r.stderr };
 }
 
-const TEST = "import { expect, test } from 'bun:test';\nimport { two } from '../src/two.ts';\ntest('returns two', () => expect(two()).toBe(2));\n";
+const TEST = "import { expect, test } from 'bun:test';\nimport { two } from '../lib/two.ts';\ntest('returns two', () => expect(two()).toBe(2));\n";
 
 describe('check-test-discriminates.sh exit codes', () => {
   test('a test that ran and failed pre-fix discriminates (exit 0), and the source is restored', () => {
-    const dir = repo({ 'src/two.ts': 'export const two = () => 1;\n' }, { 'src/two.ts': 'export const two = () => 2;\n', 'test/two.test.ts': TEST });
-    const r = discriminate(dir, 'test/two.test.ts', 'src/two.ts');
+    const dir = repo({ 'lib/two.ts': 'export const two = () => 1;\n' }, { 'lib/two.ts': 'export const two = () => 2;\n', 'test/two.test.ts': TEST });
+    const r = discriminate(dir, 'test/two.test.ts', 'lib/two.ts');
     expect(r.code, r.stderr).toBe(0);
     expect(r.stdout).toContain('→ 0 pass / 1 fail');
-    expect(readFileSync(join(dir, 'src/two.ts'), 'utf8')).toBe('export const two = () => 2;\n');
+    expect(readFileSync(join(dir, 'lib/two.ts'), 'utf8')).toBe('export const two = () => 2;\n');
   }, 120_000);
 
   test('a test green both ways does not discriminate (exit 1)', () => {
-    const dir = repo({ 'src/two.ts': 'export const two = () => 2;\n' }, { 'src/two.ts': 'export const two = () => 2; // touched\n', 'test/two.test.ts': TEST });
-    expect(discriminate(dir, 'test/two.test.ts', 'src/two.ts').code).toBe(1);
+    const dir = repo({ 'lib/two.ts': 'export const two = () => 2;\n' }, { 'lib/two.ts': 'export const two = () => 2; // touched\n', 'test/two.test.ts': TEST });
+    expect(discriminate(dir, 'test/two.test.ts', 'lib/two.ts').code).toBe(1);
   }, 120_000);
 
   test('a reverted fix that removes the module the test imports is vacuous (exit 3), not OK', () => {
-    const dir = repo({ 'src/keep.ts': 'export const keep = 1;\n' }, { 'src/two.ts': 'export const two = () => 2;\n', 'test/two.test.ts': TEST });
-    const r = discriminate(dir, 'test/two.test.ts', 'src/two.ts');
+    const dir = repo({ 'lib/keep.ts': 'export const keep = 1;\n' }, { 'lib/two.ts': 'export const two = () => 2;\n', 'test/two.test.ts': TEST });
+    const r = discriminate(dir, 'test/two.test.ts', 'lib/two.ts');
     expect(r.code, r.stderr).toBe(3);
     expect(r.stderr).toContain('VACUOUS FAILURE');
     expect(r.stderr).toContain('unhandled error');
     expect(r.stdout).not.toContain('Discrimination test:');
-    expect(existsSync(join(dir, 'src/two.ts'))).toBe(true);
+    expect(existsSync(join(dir, 'lib/two.ts'))).toBe(true);
   }, 120_000);
 });
