@@ -425,7 +425,9 @@ fn a_transfer_prepare_drains_the_worktree_and_a_cancel_reactivates_it() {
     assert_eq!(store.prepared_transfer_worktree().unwrap(), None);
     assert_eq!(
         store.read_worktree_owner(OTHER_WORKTREE).unwrap(),
-        Some(json!({ "owner_host_id": HOST_B, "owner_epoch": "1", "state": "active" }))
+        Some(
+            json!({ "owner_host_id": HOST_B, "owner_epoch": "1", "state": "active", "manifest": null })
+        )
     );
     assert_eq!(store.read_worktree_owner(STALE).unwrap(), None);
     assert!(!store.worktree_publication_pending(OTHER_WORKTREE).unwrap());

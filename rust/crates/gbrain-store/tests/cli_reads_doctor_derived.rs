@@ -252,7 +252,7 @@ fn atom_fence_candidates_and_compiled_truths() {
     let (s, _) = brain("atom-fence");
     let atoms = |atom_id: Option<i64>, after: i64| -> Vec<Value> {
         let q: gbrain_store::repair_fence_scans::AtomFenceQuery = serde_json::from_value(json!({
-            "atomId": atom_id, "afterId": after, "limit": 10,
+            "atom_id": atom_id, "after_id": after, "limit": 10,
         }))
         .unwrap();
         let rows = s
