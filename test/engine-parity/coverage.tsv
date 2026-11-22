@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1549/1556
+# covered: 1554/1561
 # lifecycle: 9/9
 # pages: 69/69
 # search: 7/7
@@ -26,7 +26,7 @@
 # dream: 37/37
 # contradictions: 22/22
 # facts: 23/23
-# segmented_body: 19/19
+# segmented_body: 24/24
 # versions: 16/16
 # stats_ingest: 11/11
 # sync_aliases: 10/10
@@ -98,7 +98,7 @@ transactionDirect	lifecycle	yes	14	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 getPage	pages	yes	153	yes	yes	yes	serves
-readPageSnapshot	pages	yes	51	no	yes	yes	serves
+readPageSnapshot	pages	yes	55	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	5	no	yes	yes	serves
 putPage	pages	yes	737	yes	yes	yes	serves
@@ -234,7 +234,7 @@ listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	4	no	yes	yes	serves
 upsertChunks	chunks	yes	52	yes	yes	yes	serves
 sealChunks	chunks	yes	72	no	yes	yes	serves
-getChunks	chunks	yes	50	yes	yes	yes	serves
+getChunks	chunks	yes	53	yes	yes	yes	serves
 getChunkPage	chunks	yes	14	no	yes	yes	serves
 getChunkWindows	chunks	yes	12	no	yes	yes	serves
 countStaleChunks	chunks	yes	8	no	yes	yes	serves
@@ -482,24 +482,29 @@ consolidateFact	facts	yes	9	no	yes	yes	serves
 findTrajectory	facts	yes	6	yes	yes	yes	serves
 getFactsHealth	facts	yes	2	yes	yes	yes	serves
 allocateBodyOccurrenceIds	segmented_body	yes	18	no	yes	yes	serves
-stageSegmentTexts	segmented_body	yes	20	no	yes	yes	serves
+stageSegmentTexts	segmented_body	yes	24	no	yes	yes	serves
 readSegmentTexts	segmented_body	yes	8	no	yes	yes	serves
-stageManifestRows	segmented_body	yes	22	no	yes	yes	serves
-readManifest	segmented_body	yes	12	no	yes	yes	serves
+stageManifestRows	segmented_body	yes	26	no	yes	yes	serves
+readManifest	segmented_body	yes	16	no	yes	yes	serves
 readSegmentedEmbedPage	segmented_body	yes	1	no	yes	yes	serves
-stageSegmentChunks	segmented_body	yes	10	no	yes	yes	serves
-createSegmentedPageShell	segmented_body	yes	34	no	yes	yes	serves
-flipBodyGeneration	segmented_body	yes	36	no	yes	yes	serves
-sealSegmentedPage	segmented_body	yes	9	no	yes	yes	serves
-openBodyStaging	segmented_body	yes	24	no	yes	yes	serves
-setBodyStagingState	segmented_body	yes	22	no	yes	yes	serves
-readBodyStagingState	segmented_body	yes	2	no	yes	yes	serves
+stageSegmentChunks	segmented_body	yes	11	no	yes	yes	serves
+createSegmentedPageShell	segmented_body	yes	38	no	yes	yes	serves
+flipBodyGeneration	segmented_body	yes	40	no	yes	yes	serves
+sealSegmentedPage	segmented_body	yes	13	no	yes	yes	serves
+openBodyStaging	segmented_body	yes	28	no	yes	yes	serves
+setBodyStagingState	segmented_body	yes	26	no	yes	yes	serves
+readBodyStagingState	segmented_body	yes	6	no	yes	yes	serves
 deleteStagedChunksNotIn	segmented_body	yes	1	no	yes	yes	serves
+listChunkedOccurrences	segmented_body	yes	4	no	yes	yes	serves
+readRetiredChunkVectors	segmented_body	yes	1	no	yes	yes	serves
+hasStaleSegmentChunks	segmented_body	yes	3	no	yes	yes	serves
+retireStaleSegmentChunks	segmented_body	yes	2	no	yes	yes	serves
+readSegmentedProjectionPage	segmented_body	yes	2	no	yes	yes	serves
 sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	3	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
-listVectorlessChunkIndexes	segmented_body	yes	2	no	yes	yes	serves
+listVectorlessChunkIndexes	segmented_body	yes	4	no	yes	yes	serves
 listInlineVersionTexts	versions	yes	2	no	yes	yes	serves
 createVersion	versions	yes	58	no	yes	yes	serves
 getVersions	versions	yes	24	no	yes	yes	serves
@@ -758,7 +763,7 @@ trueUpReservations	persistence_journal	yes	1	no	yes	yes	serves
 readCapacityForecastInputs	persistence_journal	yes	2	no	yes	yes	serves
 listPendingSegmentedProjections	persistence_journal	yes	3	no	yes	yes	serves
 selectProjectionWindowJobs	persistence_journal	yes	5	no	yes	yes	serves
-claimSegmentedProjection	persistence_journal	yes	1	no	yes	yes	serves
+claimSegmentedProjection	persistence_journal	yes	2	no	yes	yes	serves
 renewSegmentedProjectionClaim	persistence_journal	yes	1	no	yes	yes	serves
 releaseSegmentedProjectionClaim	persistence_journal	yes	1	no	yes	yes	serves
 deleteProjectionJob	persistence_journal	yes	2	no	yes	yes	serves
@@ -1326,7 +1331,7 @@ listEnrichCandidates	salience_enrich	yes	3	yes	yes	yes	serves
 findAnomalies	salience_enrich	yes	7	yes	yes	yes	serves
 listGlobalPurgeWithdrawals	trust	yes	1	no	yes	yes	serves
 hasCoveringFactWithdrawal	trust	yes	3	no	yes	yes	serves
-insertFactWithdrawal	trust	yes	25	no	yes	yes	serves
+insertFactWithdrawal	trust	yes	26	no	yes	yes	serves
 isFactWithdrawn	trust	yes	3	no	yes	yes	serves
 isFactPurged	trust	yes	4	no	yes	yes	serves
 listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves

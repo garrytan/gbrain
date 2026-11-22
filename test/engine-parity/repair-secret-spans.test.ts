@@ -39,6 +39,9 @@ import { allowedMatcher, countsByRule, entryRow, insertBackupRows, isAllowed, ke
   storeSnapshot, unreferencedEntryCount } from '../../src/core/secret-store/store.ts';
 import { applyRestore, previewRestore } from '../../src/core/secret-store/restore.ts';
 import { sealSegmentedPage, stageSegmentedImport } from '../../src/core/persistence/segmented-apply.ts';
+import { renderFactsTable } from '../../src/core/facts-fence.ts';
+import { buildSegmentedProjection } from '../../src/core/page-body/projection.ts';
+import { parseEmbedding } from '../../src/core/utils.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -349,9 +352,7 @@ describe('engine parity: repair secret-spans', () => {
 
   parityTest('a segmented page: the apply rewrites its stored body through the staging and flip members, seals it and leaves a second preview empty', {
     methods: ['openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'createSegmentedPageShell', 'flipBodyGeneration', 'setBodyStagingState', 'readBodyStagingState', 'deleteStagedChunksNotIn',
-      'readManifest', 'readSegmentTexts', 'sealSegmentedPage', 'readPageSnapshot'],
-    // The replacement's preparation reads chunk and ledger rows through raw SQL: the Rust arm stops on that refusal by name.
-    requires: 'raw_sql',
+      'readManifest', 'readSegmentTexts', 'sealSegmentedPage', 'readPageSnapshot', 'listChunkedOccurrences', 'hasStaleSegmentChunks', 'getChunks', 'listVectorlessChunkIndexes'],
     timeout: 180_000,
   }, async engine => {
     const { storedBody } = await seedSegmented(engine);
@@ -365,8 +366,137 @@ describe('engine parity: repair secret-spans', () => {
       expect(leaked(after)).toEqual([]);
       const snapshot = await engine.readPageSnapshot(SEGMENTED, { sourceId: SRC });
       const again = await runKind(engine, { apply: false, slugs: [SEGMENTED] });
+      // The page's search chunks after the replace: the rows the sealed projection shows, none holding a credential.
+      const chunks = (await engine.getChunks(SEGMENTED, { sourceId: SRC } as never)).map(c => [c.chunk_source, c.chunk_text]);
+      expect(leaked(chunks)).toEqual([]);
+      expect(chunks.length).toBeGreaterThan(0);
+      const entries = await listEntries(engine, { sourceId: SRC });
+      // Every chunk row of the replaced page is live and holds no vector yet: the vectorless list is the same set of rows on every arm.
+      const column = (await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true })).name;
+      const vectorless = (await engine.listVectorlessChunkIndexes(Number(snapshot!.page.id), column)).length;
       return norm({ outcomes: result.outcomes, items: (result.outcome_items ?? []).map(item => ({ item: item.item, outcome: item.outcome, detail: item.detail })),
-        body: after, sealed: snapshot!.page.text_projection_revision === snapshot!.revision, second: { affected: again.affected, residuals: again.residuals } });
+        body: after, chunks, vectorless: vectorless === chunks.length, sealed: snapshot!.page.text_projection_revision === snapshot!.revision,
+        entries: entries.map(e => ({ rule: e.rule, status: e.status, occurrences: e.occurrences, slugs: e.slugs })).sort((a, b) => a.rule.localeCompare(b.rule)),
+        second: { affected: again.affected, residuals: again.residuals } });
+    });
+  });
+
+  parityTest('the chunk probes of a segmented replace answer the same: chunked occurrences, stale rows and their retirement', {
+    methods: ['openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'createSegmentedPageShell', 'flipBodyGeneration', 'setBodyStagingState', 'readBodyStagingState',
+      'readManifest', 'sealSegmentedPage', 'readPageSnapshot', 'listChunkedOccurrences', 'hasStaleSegmentChunks', 'retireStaleSegmentChunks', 'readSegmentedProjectionPage'],
+    timeout: 180_000,
+  }, async engine => {
+    const { created } = await seedSegmented(engine);
+    const manifest = await engine.readManifest(created.pageId);
+    const ids = manifest.map(row => Number(row.occurrenceId));
+    // An id the page never had, a repeat and the order the caller sent: the answer keeps the caller's order and repeats.
+    const probe = [999_999, ...ids.slice().reverse(), ...ids.slice(0, 1)];
+    const chunked = await engine.listChunkedOccurrences(created.pageId, probe, 1);
+    const none = await engine.listChunkedOccurrences(created.pageId, [], 1);
+    const other = await engine.listChunkedOccurrences(999_999, ids, 1);
+    const page = await engine.readSegmentedProjectionPage(SRC, SEGMENTED);
+    const missing = await engine.readSegmentedProjectionPage(SRC, 'notes/no-such-segmented-page');
+    const inline = await engine.putPage(CLEAN, { type: 'note' as never, title: 'Clean Example', compiled_truth: 'No credentials on this page.', timeline: '' }, { sourceId: SRC });
+    const inlinePage = await engine.readSegmentedProjectionPage(SRC, CLEAN);
+    // Every chunk row belongs to a live occurrence at generation 1: none is stale. Naming no live occurrence makes them all stale.
+    const fresh = await engine.hasStaleSegmentChunks(created.pageId, 1, ids);
+    const allStale = await engine.hasStaleSegmentChunks(created.pageId, 1, []);
+    const noPage = await engine.hasStaleSegmentChunks(999_999, 1, []);
+    const retiredNone = await engine.retireStaleSegmentChunks(created.pageId, 1, ids, 10);
+    const retiredOne = await engine.retireStaleSegmentChunks(created.pageId, 1, [], 1);
+    const retiredRest = await engine.retireStaleSegmentChunks(created.pageId, 1, [], 1000);
+    const afterRetire = await engine.hasStaleSegmentChunks(created.pageId, 1, []);
+    const left = await engine.listChunkedOccurrences(created.pageId, ids, 1);
+    expect(inline.id).toBeDefined();
+    return norm({ order: chunked.map(id => probe.indexOf(id) >= 0), count: chunked.length, none, other, ids: ids.length,
+      page: page && { generation: Number(page.body_generation), bytes: Number(page.body_bytes), title: page.title, frontmatter: page.frontmatter, flags: page.body_flags,
+        sealed: page.text_projection_revision === page.knowledge_revision, leadSet: page.timeline_lead !== undefined },
+      missing, inlinePage, fresh, allStale, noPage, retiredNone, retired: [retiredOne, retiredRest > 0], afterRetire, left });
+  });
+
+  parityTest('a segmented page whose projection was never built is chunked and sealed by the projection build, and a second build has nothing left to do', {
+    methods: ['openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'createSegmentedPageShell', 'flipBodyGeneration', 'setBodyStagingState', 'readBodyStagingState',
+      'readManifest', 'readPageSnapshot', 'readSegmentedProjectionPage', 'listChunkedOccurrences', 'hasStaleSegmentChunks', 'retireStaleSegmentChunks', 'sealSegmentedPage',
+      'claimSegmentedProjection', 'getChunks'],
+    timeout: 180_000,
+  }, async engine => {
+    const body = ['# Unsealed Example', '', 'A paragraph that waits for its projection.', '', 'Another paragraph of the same page.'].join('\n');
+    const staged = await stageSegmentedImport(engine, { slug: 'notes/unsealed-example', sourceId: SRC, existing: null,
+      page: { title: 'Unsealed Example', type: 'note', compiled_truth: body, timeline: '', frontmatter: {}, tags: [] },
+      policy: { segmented: true, maxBytes: 1e9, flipRetireMaxRows: 1000, versionsMaxPerPage: 10, versionsMaxPinnedBytes: 1e9 } as never,
+      chunking: { quarantined: false, tier: 'none', corpusGeneration: null } as never, baseRevision: null });
+    // The create stages no chunks and does not seal: the projection build does both.
+    const created = await engine.transaction(async tx => staged.apply(tx, { title: 'Unsealed Example', type: 'note' as never, frontmatter: {}, page_kind: 'markdown' as never } as never, { mode: 'none', corpusGeneration: null }));
+    const before = await engine.readSegmentedProjectionPage(SRC, 'notes/unsealed-example');
+    const ids = (await engine.readManifest(created.pageId)).map(row => Number(row.occurrenceId));
+    const chunkedBefore = await engine.listChunkedOccurrences(created.pageId, ids, 1);
+    const built = await buildSegmentedProjection(engine, { sourceId: SRC, slug: 'notes/unsealed-example' });
+    const after = await engine.readSegmentedProjectionPage(SRC, 'notes/unsealed-example');
+    const chunks = (await engine.getChunks('notes/unsealed-example', { sourceId: SRC } as never)).map(c => [c.chunk_source, c.chunk_text]);
+    const again = await buildSegmentedProjection(engine, { sourceId: SRC, slug: 'notes/unsealed-example' });
+    return { sealedBefore: before!.text_projection_revision === before!.knowledge_revision, chunkedBefore: chunkedBefore.length > 0, built: { chunks: built.chunks > 0, retired: built.retired, sealed: built.sealed },
+      sealedAfter: after!.text_projection_revision === after!.knowledge_revision, chunks, again: { chunks: again.chunks, retired: again.retired, sealed: again.sealed },
+      complete: created.complete };
+  });
+
+  parityTest('the vectors of the rows a replace retires are read back for reuse: text, vector, model, recorded input and the page fields reuse checks', {
+    methods: ['openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'createSegmentedPageShell', 'flipBodyGeneration', 'setBodyStagingState', 'readBodyStagingState',
+      'readManifest', 'sealSegmentedPage', 'readPageSnapshot', 'stageSegmentChunks', 'readRetiredChunkVectors'],
+    timeout: 180_000,
+  }, async engine => {
+    const { created } = await seedSegmented(engine);
+    const ids = (await engine.readManifest(created.pageId)).map(row => Number(row.occurrenceId));
+    const first = ids[0]!;
+    const column = (await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true })).name;
+    const before = await engine.readRetiredChunkVectors(created.pageId, ids, column);
+    // A chunk that carries a vector (a reused one) is stored with it, its model and its recorded input.
+    await engine.stageSegmentChunks(created.pageId, 1, [{ chunk_index: 0, chunk_text: 'A chunk with a vector.', chunk_source: 'compiled_truth', model: 'stub-model',
+      embedding: new Float32Array(vectorFor('A chunk with a vector.')), embedding_input_hash: 'input-hash', occurrence_id: first, local_ordinal: 9, raw_byte_start: 0, raw_byte_end: 22 } as never]);
+    const rows = await engine.readRetiredChunkVectors(created.pageId, [first], column);
+    const none = await engine.readRetiredChunkVectors(created.pageId, [], column);
+    const elsewhere = await engine.readRetiredChunkVectors(created.pageId, [999_999], column);
+    return norm({ before: before.length, rows: rows.map(r => ({ text: r.chunk_text, source: r.chunk_source, model: r.model, hash: r.embedding_input_hash, mode: r.contextual_retrieval_mode,
+      slug: r.slug, source_id: r.source_id, corpus: r.corpus_generation,
+      vector: Array.from(parseEmbedding(r.embedding as never) as ArrayLike<number>).slice(0, 8).map(v => Math.round(v * 1e4) / 1e4), width: (parseEmbedding(r.embedding as never) as ArrayLike<number>).length })),
+    none, elsewhere });
+  });
+
+  parityTest('a segmented page with a withdrawn fact: the replace chunks the body under the withdrawal ledger and the apply keeps the struck row out of its chunks on PGLite and Postgres', {
+    methods: ['openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'createSegmentedPageShell', 'flipBodyGeneration', 'setBodyStagingState', 'readBodyStagingState',
+      'readManifest', 'sealSegmentedPage', 'readPageSnapshot', 'insertFactWithdrawal', 'listChunkedOccurrences', 'getChunks', 'listVectorlessChunkIndexes'],
+    timeout: 180_000,
+  }, async (engine, backend) => {
+    const slug = 'notes/withdrawn-segmented-example';
+    const fact = (rowNum: number, claim: string) => ({ rowNum, claim, kind: 'fact' as const, confidence: 1, visibility: 'world' as const, notability: 'medium' as const,
+      validFrom: '2024-01-01', source: 'user', active: true });
+    const body = [`# Withdrawn Example`, '', `The deploy notes keep the old key ${OPENAI} here.`, '', '## Facts', '', renderFactsTable([fact(1, 'Ana lives in Lima'), fact(2, 'Ana keeps bees')]), ''].join('\n');
+    // The ledger names row 1's claim before the body is stored, so every chunking of the body sees it.
+    await engine.insertFactWithdrawal(SRC, 'world', 'Ana lives in Lima', slug, '2026-01-03T00:00:00.000Z');
+    const staged = await stageSegmentedImport(engine, { slug, sourceId: SRC, existing: null,
+      page: { title: 'Withdrawn Example', type: 'note', compiled_truth: body, timeline: '', frontmatter: {}, tags: [] },
+      policy: { segmented: true, maxBytes: 1e9, flipRetireMaxRows: 1000, versionsMaxPerPage: 10, versionsMaxPinnedBytes: 1e9 } as never,
+      chunking: { quarantined: false, tier: 'none', corpusGeneration: null } as never, baseRevision: null });
+    const created = await engine.transaction(async tx => {
+      const applied = await staged.apply(tx, { title: 'Withdrawn Example', type: 'note' as never, frontmatter: {}, page_kind: 'markdown' as never } as never, { mode: 'none', corpusGeneration: null });
+      if (applied.complete) await sealSegmentedPage(tx, applied.pageId);
+      return applied;
+    });
+    const chunksOf = async () => (await engine.getChunks(slug, { sourceId: SRC } as never)).map(c => c.chunk_text);
+    const before = await chunksOf();
+    const column = (await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true })).name;
+    return inHome(async () => {
+      const preview = await (await repairRunner(engine, { apply: false, noEmbed: true, logger })).run('secret-spans', await resolveRepairScope(engine, SRC),
+        { explicit: true, remote: false, sourceFlag: SRC, slugs: [slug] } as never);
+      const result = await (await repairRunner(engine, { apply: true, noEmbed: true, logger })).run('secret-spans', await resolveRepairScope(engine, SRC),
+        { explicit: true, remote: false, sourceFlag: SRC, slugs: [slug], expect: preview.preview_hash } as never);
+      const after = await chunksOf();
+      const snapshot = await engine.readPageSnapshot(slug, { sourceId: SRC });
+      const vectorless = (await engine.listVectorlessChunkIndexes(created.pageId, column)).length;
+      // Open gap (RUST_ENGINE.md row 37): the Rust store's page snapshot does not list a page's withdrawals yet
+      // (origin/rust-engine/pg-fold-gap2, 2573915b55), so the chunker there keeps the struck row. PGLite and Postgres drop it.
+      if (backend !== 'rust') expect(after.join('\n')).not.toContain('lives in Lima');
+      return norm({ created: created.complete, outcomes: result.outcomes, before: before.map(t => t.includes('Lima')), chunks: after.length,
+        leaked: leaked(after), sealed: snapshot!.page.text_projection_revision === snapshot!.revision, vectorless: vectorless === after.length });
     });
   });
 

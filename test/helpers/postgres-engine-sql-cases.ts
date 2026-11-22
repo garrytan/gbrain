@@ -70,6 +70,7 @@ const OOS = {
   trustFence: 'out-of-scope:trust-fence (born in engine-sql/facts.ts and engine-sql/trust-fence.ts; pinned by test/engine-parity/facts.test.ts, test/engine-parity/trust-fence.test.ts and test/fold-hook-noop-6712.test.ts)',
   trustProposals: 'out-of-scope:trust-proposals (born in engine-sql/trust-proposals.ts; pinned by test/engine-parity/trust-proposals.test.ts and test/engine-parity/trust-fence.test.ts)',
   connectGate: 'out-of-scope:connect-gate (born in engine-sql/connect-gate.ts; pinned by test/engine-parity/connect-gate.test.ts and test/cold-read-folded-statements.test.ts)',
+  segmentedWrites: 'out-of-scope:segmented-writes (moved from the segmented-replace callers into engine-sql/segmented-writes.ts; pinned by test/engine-sql-segmented-writes.test.ts)',
   pageBody: 'out-of-scope:page-body (Wave B segmented storage, born in engine-sql/page-body.ts; pinned by test/engine-sql-page-body.test.ts)',
   cycleLocks: 'out-of-scope:cycle-locks (gbrain_cycle_locks leases, born in engine-sql/cycle-locks.ts; pinned by test/engine-parity/cycle-locks.test.ts)',
   callerRawSql: 'out-of-scope:caller-raw-sql (statements callers ran through executeRaw, now typed members; pinned byte-identical by test/engine-sql-caller-raw-sql-pins.test.ts)',
@@ -1089,7 +1090,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'invalidateContentDriftEmbeddings': 'chunks', 'listStaleChunks': 'chunks',
   'countChunklessPagesWithContent': 'chunks', 'listChunklessPagesWithContent': 'chunks', 'deleteChunks': 'chunks',
   'readEmbeddingStateCounts': 'chunks', 'listEmbeddingStateRows': 'chunks',
-  'readBodyStagingState': OOS.pageBody, 'deleteStagedChunksNotIn': OOS.pageBody, 'allocateBodyOccurrenceIds': OOS.pageBody, 'stageSegmentTexts': OOS.pageBody, 'readSegmentTexts': OOS.pageBody, 'stageManifestRows': OOS.pageBody, 'readManifest': OOS.pageBody, 'readSegmentedEmbedPage': OOS.pageBody, 'stageSegmentChunks': OOS.pageBody, 'createSegmentedPageShell': OOS.pageBody, 'flipBodyGeneration': OOS.pageBody, 'sealSegmentedPage': OOS.pageBody, 'openBodyStaging': OOS.pageBody, 'setBodyStagingState': OOS.pageBody, 'sweepSegments': OOS.pageBody,
+  'readBodyStagingState': OOS.pageBody, 'deleteStagedChunksNotIn': OOS.pageBody, 'listChunkedOccurrences': OOS.segmentedWrites, 'readRetiredChunkVectors': OOS.segmentedWrites, 'hasStaleSegmentChunks': OOS.segmentedWrites, 'retireStaleSegmentChunks': OOS.segmentedWrites, 'readSegmentedProjectionPage': OOS.segmentedWrites, 'allocateBodyOccurrenceIds': OOS.pageBody, 'stageSegmentTexts': OOS.pageBody, 'readSegmentTexts': OOS.pageBody, 'stageManifestRows': OOS.pageBody, 'readManifest': OOS.pageBody, 'readSegmentedEmbedPage': OOS.pageBody, 'stageSegmentChunks': OOS.pageBody, 'createSegmentedPageShell': OOS.pageBody, 'flipBodyGeneration': OOS.pageBody, 'sealSegmentedPage': OOS.pageBody, 'openBodyStaging': OOS.pageBody, 'setBodyStagingState': OOS.pageBody, 'sweepSegments': OOS.pageBody,
   'readSegmentDerivations': OOS.pageBody, 'upsertSegmentDerivations': OOS.pageBody, 'retireSegmentDerivations': OOS.pageBody,
   'getEmbeddingsByChunkIds': 'chunks', 'getChunksWithEmbeddings': 'chunks',
   // facts (incl. the ontology rows of the facts table)

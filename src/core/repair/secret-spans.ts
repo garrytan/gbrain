@@ -35,7 +35,6 @@
  * before writing (`preview_changed`) and again under its lock
  * (`changed_since_preview`), then re-scans what it wrote.
  */
-import { requireRawSql, servesRawSql } from '../rust-engine/errors.ts';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
 import { trustedCliRequired } from '../ops/op-fix.ts';
@@ -237,11 +236,9 @@ async function writePage(tx: BrainEngine, planned: Planned): Promise<{ unsealed:
   const pageChanged = planned.results.some((result, index) => result.spans.length > 0 && (fieldOf(index).store === 'page' || fieldOf(index).store === 'frontmatter'));
   let unsealed = false;
   if (pageChanged && page.body_storage === 'segmented') {
-    // Staging a replacement of a segmented body (page-body/ingest.ts occurrencesWithoutChunks, hasStaleChunks) and the page's
-    // ledger and chunk-vector reuse reads (page-body/segment-ledger.ts, segment-chunks.ts) still send raw SQL the Rust store
-    // does not serve: an engine without it stops here by name, before the page is written. (A segmented page is created through
-    // typed members now: persistence/segmented-apply.ts applySegmentedBody, test/engine-parity/repair-secret-spans.test.ts.)
-    requireRawSql(tx, 'repair secret-spans segmented body write');
+    // Staging a replacement of a segmented body reads its chunk rows and stored vectors through typed members
+    // (listChunkedOccurrences, readRetiredChunkVectors, hasStaleSegmentChunks; engine-sql/segmented-writes.ts), so a
+    // Rust brain serves it. (A segmented page is created through typed members too: persistence/segmented-apply.ts.)
     const { principal } = await maintenanceAttribution(tx);
     const prepared = await prepareSegmentedBody(tx, { sourceId: page.source_id, slug: page.slug, title, type: page.type, frontmatter, tags: page.tags,
       live: { id: page.id, generation: Number(page.generation), storage: 'segmented', title: page.title, type: page.type, flags: page.body_flags },
@@ -383,14 +380,12 @@ export async function restoreMarkersOnPage(tx: BrainEngine, sourceId: string, sl
 }
 
 /**
- * Rebuilds a page's search projection right after a rewrite committed: an inline page's chunk reseal runs through typed
- * members on every engine; a segmented page's projection build is raw SQL (page-body/projection.ts), so an engine without
- * it leaves the queued projection to the queue's own rebuild ('queued').
+ * Rebuilds a page's search projection right after a rewrite committed: the chunk reseal of an inline page and the
+ * projection build of a segmented page (page-body/projection.ts) both run through typed members on every engine.
  */
 async function resealPage(engine: BrainEngine, sourceId: string, slug: string, storage: string, unsealed: boolean): Promise<'sealed' | 'queued'> {
   if (storage !== 'segmented') await resealSafeChunks(engine, slug, sourceId);
   else if (unsealed) {
-    if (!servesRawSql(engine)) return 'queued';
     await buildSegmentedProjection(engine, { sourceId, slug });
   }
   return 'sealed';

@@ -45,6 +45,7 @@ import { conversationPage } from '../helpers/conversation-page.ts';
 import { segmentedPageRow } from '../helpers/segmented-page-checks.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
+import { segmentedWriteThrough } from '../helpers/segmented-writes-proxy.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-publication-seal-'));
 const env = { GBRAIN_HOME: home, OPENAI_API_KEY: undefined, VOYAGE_API_KEY: undefined, ANTHROPIC_API_KEY: undefined, GBRAIN_PLANNER_AUTO_ANALYZE: '0' };
@@ -138,7 +139,7 @@ function measuredTx(tx: BrainEngine, log: Statement[]): BrainEngine {
  * recorded into `publication`, and whose post-commit projection is lost (its page read throws), so only the publication seals.
  */
 function measuredWrite(engine: BrainEngine, publication: Statement[]): BrainEngine {
-  return new Proxy(engine, { get(target, prop) {
+  return new Proxy(engine, { get(target, prop, receiver) {
     if (prop === 'executeRaw') return (sql: string, params?: unknown[], opts?: unknown) => sql.includes(PROJECTION_PAGE_READ)
       ? Promise.reject(new Error('projection lost (probe)')) : target.executeRaw(sql, params, opts as never);
     if (prop === 'transaction') return (fn: (tx: BrainEngine) => Promise<unknown>, opts?: unknown) => target.transaction(async tx => {
@@ -151,6 +152,8 @@ function measuredWrite(engine: BrainEngine, publication: Statement[]): BrainEngi
         return out;
       } finally { installFaultHook(undefined); }
     }, opts as never);
+    const through = segmentedWriteThrough(prop, receiver);
+    if (through) return through;
     const value = Reflect.get(target, prop, target);
     return typeof value === 'function' ? value.bind(target) : value;
   } });

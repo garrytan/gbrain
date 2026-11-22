@@ -1,3 +1,4 @@
+import type { RetiredChunkVectorRow, SegmentedProjectionPage } from './engine-sql/segmented-writes.ts';
 import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead, BodyManifestRow, BodyManifestMeta, BodyManifestOutline } from './engine-sql/export-reads.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as DecideStoreSql from './engine-sql/decide-store.ts';
@@ -3551,6 +3552,16 @@ export interface BrainEngine {
   readBodyStagingState(id: string): Promise<string | null>;
   /** Deletes the page's chunk rows staged for body generation `generation` whose index is not in `keepIndexes` (a replace keeps the chunks its preparation staged). */
   deleteStagedChunksNotIn(pageId: number, generation: number, keepIndexes: readonly number[]): Promise<void>;
+  /** A segmented write: the members of `occurrenceIds`, in order, with a chunk row at or below `generation` (engine-sql/segmented-writes.ts). */
+  listChunkedOccurrences(pageId: number, occurrenceIds: readonly number[], generation: number): Promise<number[]>;
+  /** A segmented write: the stored vectors in `column` of the visible chunks of `occurrences`, in chunk_index order, for reuse (engine-sql/segmented-writes.ts). */
+  readRetiredChunkVectors(pageId: number, occurrences: readonly number[], column: string): Promise<RetiredChunkVectorRow[]>;
+  /** A segmented projection: whether the page stores a chunk row generation `generation` (live occurrences `live`) does not hold (engine-sql/segmented-writes.ts). */
+  hasStaleSegmentChunks(pageId: number, generation: number, live: readonly number[]): Promise<boolean>;
+  /** A segmented projection: delete up to `maxRows` of those stale chunk rows; returns how many it deleted (engine-sql/segmented-writes.ts). */
+  retireStaleSegmentChunks(pageId: number, generation: number, live: readonly number[], maxRows: number): Promise<number>;
+  /** A segmented projection: the live segmented page at `sourceId`/`slug` it builds, or null (engine-sql/segmented-writes.ts). */
+  readSegmentedProjectionPage(sourceId: string, slug: string): Promise<SegmentedProjectionPage | null>;
   /** Garbage collection: retired chunks and dead manifest rows (versions are roots), unreferenced texts past the grace window, expired stagings. */
   sweepSegments(opts?: SegmentSweepOptions): Promise<SegmentSweepResult>;
   /** Whether any body staging or segment text exists: the vacuum's one probe before it sweeps (engine-sql/write-guards.ts). */

@@ -6,7 +6,7 @@
  * Served: allocateBodyOccurrenceIds, stageSegmentTexts, readSegmentTexts, stageManifestRows, readManifest, readSegmentedEmbedPage,
  * stageSegmentChunks, createSegmentedPageShell, flipBodyGeneration, sealSegmentedPage, openBodyStaging, setBodyStagingState,
  * sweepSegments, readSegmentDerivations, upsertSegmentDerivations, retireSegmentDerivations, refreshPageBody.
- * stageSegmentChunks refuses a chunk that carries a vector (vectors are not stored), as upsertChunks does.
+ * stageSegmentChunks keeps a text vector a chunk carries (a vector a replace reuses) and refuses an image vector.
  *
  * The flip and the staging members refuse as PGLite does: the store reports the refusal as an `invalid_state` error
  * whose message is `page_body:<json>`, and `bodyError` rebuilds the error PGLite's engine throws from that JSON.
@@ -151,14 +151,15 @@ export const readSegmentedEmbedPage: StoreMember<[ref: SegmentedEmbedRef], Segme
  * The chunks get PGLite's normalisation (`prepareChunks`: model default, empty values to null, scrubbed text) plus
  * their place in the occurrence; `chunk_index` is the store's to pick. `opts.embeddingColumn` only picks the default
  * model label (PGLite's `column.embeddingModel || ...`); it is served for the store's one vector column and refused
- * for any other (`textColumnModel`).
+ * for any other (`textColumnModel`). A chunk that carries a vector (one reused from a retired row) keeps it, with its
+ * model and recorded input; an image vector is refused.
  */
 export const stageSegmentChunks: StoreMember<[pageId: number, generation: number, chunks: readonly SegmentChunkInput[], opts?: { embeddingColumn?: unknown }], number[]> =
   async (brain, pageId, generation, chunks, opts) => {
     const { embeddingColumn } = takeOptions('stageSegmentChunks', opts, ['embeddingColumn']);
     if (chunks.length === 0) return [];
     for (const chunk of chunks) {
-      if (chunk.embedding !== undefined || chunk.embedding_image !== undefined) refuseMember('stageSegmentChunks', 'chunk vectors are not stored');
+      if (chunk.embedding_image !== undefined) refuseMember('stageSegmentChunks', 'image vectors are not stored');
     }
     const columnModel = textColumnModel('stageSegmentChunks', embeddingColumn);
     const prepared = await prepareChunks(brain, chunks.map(chunk => ({ ...chunk, chunk_index: 0 })), columnModel);

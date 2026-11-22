@@ -48,6 +48,10 @@ use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod page_spend;
+mod segmented_embedding;
+mod segmented_writes;
+pub use segmented_embedding::RetiredChunkVector;
+pub use segmented_writes::SegmentedProjectionPage;
 
 const TEXT: u8 = 0x01;
 const MANIFEST: u8 = 0x02;
@@ -1688,7 +1692,7 @@ impl Store {
             }
             // Not stale, so the generation is at or above the page's, which is at least 0.
             let at = u64::try_from(generation).unwrap_or(0);
-            crate::chunks::append_segment_chunks(tx, page.id, at, chunks)
+            crate::chunks::append_segment_chunks(tx, page.id, at, chunks, self.env.now_micros())
         })
     }
 
@@ -2835,7 +2839,7 @@ mod segment_chunk_tests {
         serde_json::from_value(input).unwrap()
     }
 
-    fn chunk(occurrence: i64, ordinal: i64, body: &str) -> SegmentChunkInput {
+    pub(super) fn chunk(occurrence: i64, ordinal: i64, body: &str) -> SegmentChunkInput {
         serde_json::from_value(json!({
             "chunk_text": body, "chunk_source": "compiled_truth", "model": "m",
             "occurrence_id": occurrence, "local_ordinal": ordinal,
@@ -2853,7 +2857,7 @@ mod segment_chunk_tests {
     }
 
     /// A shell published at generation 1 from occurrences 1 ("one\n" at 0) and 2 ("two\n" at 4).
-    fn published(store: &Store) -> i64 {
+    pub(super) fn published(store: &Store) -> i64 {
         published_with(store, json!({}))
     }
 
@@ -3088,7 +3092,7 @@ mod segment_chunk_tests {
 
     /// Generation 2 staged: occurrence 3 replaces occurrence 2 at byte 4, with a chunk for
     /// occurrence 3 and one for occurrence 9, which has no row in generation 2.
-    fn second_generation(store: &Store, id: i64) {
+    pub(super) fn second_generation(store: &Store, id: i64) {
         store
             .open_body_staging(&staging(
                 STAGING_2,
@@ -3788,8 +3792,14 @@ mod segment_chunk_tests {
             // A late batch at the live generation (the flip went to another write first).
             store
                 .write(|tx| {
-                    crate::chunks::append_segment_chunks(tx, id as u64, 1, &[chunk(7, 0, "late")])
-                        .map(|_| ())
+                    crate::chunks::append_segment_chunks(
+                        tx,
+                        id as u64,
+                        1,
+                        &[chunk(7, 0, "late")],
+                        0,
+                    )
+                    .map(|_| ())
                 })
                 .unwrap();
             if abort {

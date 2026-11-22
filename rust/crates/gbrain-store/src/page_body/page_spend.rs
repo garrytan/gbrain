@@ -5,27 +5,22 @@
 //! 3ebc7aab90 and 76c4c4d3be); that lane's file of this name also serves the lease, the per-page spend ledgers and
 //! the hold reads, which this branch does not move.
 
-use super::page_u64;
-use crate::chunks::{keyed_chunks, segmented};
+use super::{page_u64, segmented_embedding::visible_chunks};
 use crate::pages::read_page_by_id;
 use crate::{Result, Store};
 
 impl Store {
-    /// `listVectorlessChunkIndexes(pageId, column)`: the indexes of the page's live-body rows
-    /// (`chunkGenerationFilter`) that hold no vector, in document order. A page id that names no
-    /// page answers none. The store keeps one vector column, so the shell refuses any other
-    /// `column` before this call.
+    /// `listVectorlessChunkIndexes(pageId, column)`: the page's visible rows with no vector.
     pub fn list_vectorless_chunk_indexes(&self, page_id: i64) -> Result<Vec<i64>> {
         let Some(id) = page_u64(page_id) else {
             return Ok(Vec::new());
         };
         let read = self.read()?;
-        let Some(page) = read_page_by_id(&*read, id)? else {
+        if read_page_by_id(&*read, id)?.is_none() {
             return Ok(Vec::new());
-        };
-        Ok(keyed_chunks(&*read, id, Some(segmented(&page)))?
+        }
+        Ok(visible_chunks(&*read, id)?
             .into_iter()
-            .map(|(_, chunk)| chunk)
             .filter(|c| !c.embed.has_vector())
             .map(|c| i64::from(c.chunk_index))
             .collect())
