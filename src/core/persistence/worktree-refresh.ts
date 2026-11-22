@@ -563,7 +563,7 @@ async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTi
       'Git durability is not on for this worktree, so nothing leaves it through Git on its own.',
       ` To let every refresh publish it on its own, the user can turn Git durability on (gbrain sources writer git-durability ${sourceId} --enable) or run gbrain config set ${REFRESH_PUBLISH_DIVERGED_KEY} true.`);
     const localCommits = Number((await read(['rev-list', '--count', `${targetHead}..${oldHead}`])).stdout.trim()) || 0;
-    const pushed = await publishInChild(root, sourceId, targetHead).catch(error => { throw error instanceof OperationError && error.reason === 'publish_lock_busy' ? unpublishedRefusal(root, sourceId, upstreamRef, localCommits, error) : error; });
+    const pushed = await publishInChild(root, sourceId, targetHead).catch(error => { throw error instanceof OperationError && error.reason === 'publish_lock_busy' ? unpublishedRefusal(root, sourceId, upstreamRef, targetHead, localCommits, error) : error; });
     const published = { sha: pushed.sha ?? targetHead, local_commits: localCommits, integrated: pushed.integrated,
       ...(pushed.quarantined ? { quarantined: pushed.quarantined } : {}), ...(pushed.superseded_remote_paths ? { superseded_remote_paths: pushed.superseded_remote_paths } : {}) };
     const plan = await precheck(engine, git, sourceId, fetchTimeoutMs, false, run).catch(async error => { notePublished(error, published); throw error instanceof OperationError && error.code === 'refresh_diverged' && await revParse(git, root, 'HEAD') !== oldHead ? retryInTick(error) : error; });
@@ -625,15 +625,15 @@ async function divergedRefusal(git: Git, root: string, sourceId: string, upstrea
  * nothing and the checkout is still diverged: refuse refresh_diverged, as doctor git_convergence says, naming the holder.
  * It is retryable: the next refresh publishes again on its own.
  */
-function unpublishedRefusal(root: string, sourceId: string, upstreamRef: string, localCommits: number, cause: OperationError): OperationError {
-  const argv = ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', root, '--json'];
+function unpublishedRefusal(root: string, sourceId: string, upstreamRef: string, checkedUpstream: string, localCommits: number, cause: OperationError): OperationError {
+  const argv = ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', root, '--expect-remote', checkedUpstream, '--json'];
   const error = refusal('refresh_diverged',
     `The checkout has ${localCommits} local commit(s) that ${upstreamRef} lacks while ${upstreamRef} moved on, and this refresh's publish of them merged with the upstream did not run: ${cause.message} Nothing changed.`,
-    `The next gbrain sources refresh ${sourceId} publishes them again on its own. To publish now, run ${argv.map(q).join(' ')} (it waits for a running publish, merges in memory, refuses on a conflict and never moves the checkout), then retry gbrain sources refresh ${sourceId}.`);
+    `The next gbrain sources refresh ${sourceId} publishes them again on its own. To publish now, run ${argv.map(q).join(' ')} (it waits for a running publish, merges in memory, refuses on a conflict or when ${upstreamRef} moved since this refresh checked it for a rewrite, and never moves the checkout), then retry gbrain sources refresh ${sourceId}.`);
   error.retryable = true;
   error.reason = 'publish_lock_busy';
   error.fix = { argv, consent: [], actor: 'agent', requires_exclusive: false,
-    why: `Refresh publishing is on for this checkout, so its local commits are already cleared to publish; this runs the same keep-checkout publish, waiting for the running one instead of stopping.`,
+    why: `Refresh publishing is on for this checkout, so its local commits are already cleared to publish; this runs the same keep-checkout publish, bound to the upstream this refresh checked for a rewrite, waiting for the running one instead of stopping.`,
     docs: 'docs/guides/write-refusals.md#refresh_diverged' };
   return error;
 }

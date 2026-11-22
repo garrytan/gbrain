@@ -70,6 +70,7 @@ beforeEach(() => {
   shimDir = join(root, 'bin'); scanLog = join(root, 'scan.log');
   mkdirSync(shimDir); mkdirSync(join(root, 'home'));
   writeFileSync(join(shimDir, 'git'), `#!/bin/sh
+PATH=$(printf '%s' "$PATH" | sed 's#${shimDir}:##g'); export PATH
 case " $* " in *" diff-tree --stdin "*) tee -a "$SHIM_LOG" | '${REAL_GIT}' "$@"; exit $? ;; esac
 case " $* " in *" push "*) [ -n "$SHIM_PUSH_SLEEP" ] && sleep "$SHIM_PUSH_SLEEP" ;; esac
 exec '${REAL_GIT}' "$@"

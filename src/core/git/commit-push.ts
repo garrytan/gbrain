@@ -1384,13 +1384,13 @@ function recordConflict(root: string, branch: string, e: unknown): void {
 
 // ── Public entry points ─────────────────────────────────────────────────────
 
-/** The process holding the publish lock, as its holder recorded itself; a lock taken by an older gbrain or the shell helper records nothing. */
+/** The process holding the publish lock, as its holder recorded itself (pid, command words and flags, never their values); a redacting publish, an older gbrain or the shell helper records nothing. */
 function publishHolder(path: string): string {
   try {
     const h = JSON.parse(readFileSync(path, 'utf8')) as { pid?: number; since?: string; command?: string };
     if (h.pid && h.pid !== process.pid && isPidAlive(h.pid)) return `pid ${h.pid}, ${h.command ?? 'gbrain'}, since ${h.since ?? 'an unknown time'}`;
   } catch { /* no record */ }
-  return 'a process that did not record itself, such as an older gbrain or scripts/brain-commit-push.sh';
+  return 'a process that did not record itself: a redacting publish, an older gbrain or scripts/brain-commit-push.sh';
 }
 
 function defaultPublishWaitMs(): number {
@@ -1507,7 +1507,8 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
   const claim = (timeoutMs: number) => {
     const handle = acquireNativeLockSync(publishLockPath, { timeoutMs });
     if (!handle) return null;
-    writeFileSync(holderPath, JSON.stringify({ pid: process.pid, since: new Date().toISOString(), command: `gbrain ${process.argv.slice(2).join(' ')}`.slice(0, 200) }));
+    const command = ['gbrain', ...process.argv.slice(2, 4).filter(a => /^[a-z][a-z-]*$/.test(a)), ...process.argv.slice(4).filter(a => /^--[a-z-]+$/.test(a))].join(' ');
+    try { writeFileSync(holderPath, JSON.stringify({ pid: process.pid, since: new Date().toISOString(), command })); } catch { /* the record is best effort; the lock is what excludes */ }
     return { release: () => { rmSync(holderPath, { force: true }); handle.release(); } };
   };
   let pub = claim(waitMs);

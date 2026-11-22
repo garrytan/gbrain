@@ -127,13 +127,15 @@ test.skipIf(!Bun.which('flock'))('GST-3497: a publish that finds the push lock h
   const local = diverge(f);
   const remote = remoteHead(f);
   await f.engine.setConfig(REFRESH_PUBLISH_DIVERGED_KEY, 'true');
-  const holder = spawn('flock', ['-o', join(git(f.root, 'rev-parse', '--absolute-git-dir'), 'brain-publish.lock'), 'sleep', '60'], { stdio: 'ignore' });
+  const lock = join(git(f.root, 'rev-parse', '--absolute-git-dir'), 'brain-publish.lock');
+  const holder = spawn('flock', ['-o', lock, 'sleep', '60'], { stdio: 'ignore' });
   try {
-    await new Promise(r => setTimeout(r, 300));
+    for (let i = 0; i < 100 && Bun.spawnSync(['flock', '-n', lock, 'true']).exitCode === 0; i++) await new Promise(r => setTimeout(r, 50));
     const error = await refusedWith(refreshWorktree(f.engine, f.alpha), 'refresh_diverged') as { message?: string; suggestion?: string; retryable?: boolean; reason?: string };
     expect(error.retryable).toBe(true);
     expect(error.reason).toBe('publish_lock_busy');
-    expect(error.message).toContain('holds this checkout\'s push lock');
+    expect(error.message).toContain('holds this checkout\'s push lock (a process that did not record itself');
+    expect(error.suggestion).toContain(`--expect-remote ${remote}`);
     expect(error.suggestion).toContain('publishes them again on its own');
     expect(remoteHead(f)).toBe(remote);
     expect(f.head()).toBe(local);
