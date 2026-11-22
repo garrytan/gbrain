@@ -276,9 +276,7 @@ src/commands/doctor/checks/queue-assets.ts#runQueueHealth	capability_refusal_swa
 src/commands/doctor/checks/queue-jobs.ts#checkBatchRetryHealth	catch_empty	1
 src/commands/doctor/checks/queue-jobs.ts#computeOrphanedPrivateQueueCheck	capability_refusal_swallowed	1
 src/commands/doctor/checks/queue-jobs.ts#computePgliteQueueHealth	capability_refusal_swallowed	1
-src/commands/doctor/checks/queue-jobs.ts#computeQueueHealthCheck	capability_refusal_swallowed	2
 src/commands/doctor/checks/queue-jobs.ts#computeQueueHealthCheck	catch_empty	1
-src/commands/doctor/checks/queue-jobs.ts#computeWedgedQueueCheck	capability_refusal_swallowed	1
 src/commands/doctor/checks/queue-jobs.ts#computeWedgedQueueCheck	catch_empty	1	audit health-5: wedged_queue answers ok "Skipped" (the audit lists it at queue-jobs.ts:537)
 src/commands/doctor/checks/routing-federation.ts#checkAutopilotLockScope	catch_empty	1
 src/commands/doctor/checks/routing-federation.ts#checkOauthClientScopeHealth	capability_refusal_swallowed	3
@@ -647,7 +645,7 @@ src/core/advisor/collect-mcp-client-fit.ts#readClientSurfaces	catch_empty	1
 src/core/advisor/collect-migration.ts#collectMigration.collect	catch_empty	1
 src/core/advisor/collect-schema-pack.ts#collectSchemaPack.collect	catch_empty	1
 src/core/advisor/collect-setup-smells.ts#dbBool	catch_empty	1
-src/core/advisor/collect-stalled-jobs.ts#collectStalledJobs.collect	capability_refusal_swallowed	2
+src/core/advisor/collect-stalled-jobs.ts#collectStalledJobs.collect	capability_refusal_swallowed	1
 src/core/advisor/collect-uninstalled-brain-pack.ts#collectUninstalledBrainPack.collect	catch_empty	1
 src/core/advisor/collect-writeback-consent.ts#collectWritebackConsent.collect	catch_empty	1
 src/core/agent-contract-log.ts#appendBoundedJsonl	catch_empty	1
@@ -1210,7 +1208,6 @@ src/core/guests/marker.ts#brainHasGuestSource	capability_refusal_swallowed	1
 src/core/guests/marker.ts#loadGuestMarks	capability_refusal_swallowed	1
 src/core/guests/marker.ts#loadGuestMarks	catch_empty	1
 src/core/harness/shared-skills.ts#installSharedSkillsConnection	promise_catch_empty	1
-src/core/health-memo.ts#readGeneration	capability_refusal_swallowed	1
 src/core/health-memo.ts#readGeneration	catch_empty	1
 src/core/held-embedding.ts#oversizedFacts	catch_empty	1
 src/core/imessage/imessage-source.ts#helperPort	promise_catch_empty	1
@@ -1769,7 +1766,6 @@ src/core/schema-migrations/helpers.ts#runMigrationStatement<anon@1>	catch_empty	
 src/core/schema-migrations/helpers.ts#runMigrationStatement<anon@1>	promise_catch_empty	1
 src/core/schema-migrations/v045-facts-hot-memory-v0-31.ts#v045.handler	catch_empty	1
 src/core/schema-migrations/v055-query-cache-search-lite.ts#v055.handler	catch_empty	2
-src/core/schema-pack/best-effort.ts#loadActivePackBestEffort	catch_empty	1
 src/core/schema-pack/best-effort.ts#loadActivePackForLocalEngine	catch_empty	1
 src/core/schema-pack/candidate-audit.ts#readRecentCandidates	catch_empty	1
 src/core/schema-pack/entity-types.ts#resolveTypeFilter	capability_refusal_swallowed	1
@@ -1785,13 +1781,10 @@ src/core/schema-pack/stats.ts#fetchCountRows	capability_refusal_swallowed	1
 src/core/schema-pack/sync.ts#probePrefix	capability_refusal_swallowed	1
 src/core/schema-pack/write-vocabulary.ts#loadActivePackForWriteVocabulary	catch_empty	1
 src/core/search/alias-fanout.ts#aliasFanoutMax	promise_catch_empty	1
-src/core/search/alias-fanout.ts#namesOf	capability_refusal_swallowed	1
 src/core/search/alias-fanout.ts#namesOf	promise_catch_empty	1
-src/core/search/alias-fanout.ts#resolveQueryEntities	capability_refusal_swallowed	1
 src/core/search/alias-fanout.ts#resolveQueryEntities	promise_catch_empty	2
 src/core/search/alias-fanout.ts#resolveQueryEntities<anon@2>	capability_refusal_swallowed	1
 src/core/search/alias-fanout.ts#resolveQueryEntities<anon@2>	promise_catch_empty	1
-src/core/search/alias-fanout.ts#titleOf	capability_refusal_swallowed	1
 src/core/search/alias-fanout.ts#titleOf	promise_catch_empty	1
 src/core/search/alias-fanout.ts#withAliasFanOut	promise_catch_empty	1
 src/core/search/alias-fanout.ts#withAliasFanOut<anon@10>	promise_catch_empty	1
@@ -2129,7 +2122,6 @@ src/core/vector-index.ts#dropZombieIndexes	capability_refusal_swallowed	2
 src/core/vector-index.ts#monitorBuild	capability_refusal_swallowed	1
 src/core/vector-index.ts#monitorBuild	catch_empty	1
 src/core/verbs/conformance.ts#runConformance	catch_empty	1
-src/core/verbs/entity-card-identity.ts#readSiblingIdentity	capability_refusal_swallowed	1
 src/core/verbs/entity-card-identity.ts#readSiblingIdentity	promise_catch_empty	1
 src/core/verbs/entity-card.ts#assembleCard	capability_refusal_swallowed	4
 src/core/verbs/entity-card.ts#assembleCard	catch_empty	1
