@@ -64,6 +64,14 @@ describeE2E('doctor --tier ops on Postgres (#6696)', () => {
             return target.executeRaw(sql, params, opts);
           };
         }
+        // The persistence_capacity check reads its counters through the typed member (a statement bound to the raw engine,
+        // which this proxy's executeRaw never sees), so the slow read is injected at the member the check calls.
+        if (key === 'listCapacityCounters') {
+          return async () => {
+            await target.executeRaw('SELECT pg_sleep(3)');
+            return target.listCapacityCounters();
+          };
+        }
         const value = Reflect.get(target, key, target);
         return typeof value === 'function' ? value.bind(target) : value;
       },
