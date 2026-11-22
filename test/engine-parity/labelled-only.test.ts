@@ -328,6 +328,51 @@ async function grantDoesNotOpenSuccessorReason(engine: BrainEngine) {
   return alice;
 }
 
+/**
+ * C20 (Grant H): a pruned successor alone withholds a reason. Every snapshot is world and names no reader; S1 (small)
+ * is followed by six large snapshots, so the large-version prune deletes the oldest large one and marks S1
+ * successor_pruned. bob reads S1 without its reason, while each retained large snapshot keeps its own.
+ */
+async function prunedSuccessorReason(engine: BrainEngine) {
+  await seed(engine);
+  const large = (n: number) => `${'x'.repeat(1024 * 1024 + 16)} edition ${n}`;
+  await engine.putPage('notes/pruned', core('S1'), { sourceId: 'default' });
+  await engine.createVersion('notes/pruned', { sourceId: 'default', reason: 'grew past the inline limit' });
+  for (let n = 1; n <= 6; n++) {
+    await engine.putPage('notes/pruned', { ...core(`L${n}`), compiled_truth: large(n) }, { sourceId: 'default' });
+    await engine.createVersion('notes/pruned', { sourceId: 'default', reason: `large edit ${n}` });
+  }
+  await engine.putPage('notes/pruned', core('Live'), { sourceId: 'default' });
+  const bob = await as(engine, 'bob-example', () => versionReasons(engine, 'notes/pruned'));
+  expect(bob).toEqual([
+    { title: 'S1', replaced_because: null },
+    ...[2, 3, 4, 5, 6].map(n => ({ title: `L${n}`, replaced_because: `large edit ${n}` })),
+  ]);
+  return bob;
+}
+
+/**
+ * C21 (Grant H): a successor only another member can read withholds the reason. V1 is world, V2 names only alice, the
+ * live page is world. bob reads V1 without the reason for the write that kept V2 to alice; the pick shows V2 as not
+ * visible to him and never as what introduced the live page.
+ */
+async function otherMemberSuccessorReason(engine: BrainEngine) {
+  await seed(engine);
+  await engine.putPage('notes/kept', core('V1', { valid_from: '2026-01-01' }), { sourceId: 'default' });
+  await engine.createVersion('notes/kept', { sourceId: 'default', reason: 'kept to alice: secret plan B' });
+  await engine.putPage('notes/kept', core('V2', { readable_by: ['alice-example'], valid_from: '2026-04-01' }), { sourceId: 'default' });
+  await engine.createVersion('notes/kept', { sourceId: 'default', reason: 'opened again' });
+  await engine.putPage('notes/kept', core('Live', { valid_from: '2026-06-01' }), { sourceId: 'default' });
+  const bob = await as(engine, 'bob-example', async () => {
+    const pageId = (await engine.getPage('notes/kept', { sourceId: 'default' }))!.id;
+    const pick = async (asOf: string) => pickFields(await engine.pickValidTimeEdition({ pageId, asOf, excludePrivate: true, pinOrd: null, inlineMaxBytes: 1_000_000 }));
+    return { versions: await versionReasons(engine, 'notes/kept'), february: await pick('2026-02-01'), may: await pick('2026-05-01'), july: await pick('2026-07-01') };
+  });
+  expect(bob.versions).toEqual([{ title: 'V1', replaced_because: null }]);
+  expect([bob.february?.visible, bob.february?.reason, bob.may?.visible, bob.july?.visible, bob.july?.introduced_because]).toEqual([true, null, false, true, null]);
+  return bob;
+}
+
 describe('engine parity: the labelled-only page policy', () => {
   // The read-side leak, first: a labelled-only member never reads an unlabelled page or a page kept to someone else.
   parityTest('a labelled-only member reads only the pages that name it, by readers or by a folder rule', {
@@ -384,6 +429,14 @@ describe('engine parity: the labelled-only page policy', () => {
     methods: ['createVersion', 'getVersions', 'pickValidTimeEdition'],
   }, hiddenSuccessorReasonLabelled);
 
+  parityTest('a pruned successor alone withholds a version\'s reason', {
+    methods: ['createVersion', 'getVersions'],
+  }, prunedSuccessorReason);
+
+  parityTest('a successor only another member can read withholds a version\'s reason', {
+    methods: ['createVersion', 'getVersions', 'pickValidTimeEdition'],
+  }, otherMemberSuccessorReason);
+
   parityTest('a private-readable grant does not open a successor\'s reason for a labelled-only member', {
     methods: ['createVersion', 'getVersions', 'pickValidTimeEdition'],
   }, grantDoesNotOpenSuccessorReason);
@@ -432,6 +485,8 @@ describe('the Rust arm serves the labelled-only page policy', () => {
     ['a version reason is withheld when the next snapshot is hidden (labelled-only)', hiddenSuccessorReasonLabelled],
     ['a version reason is withheld when the next snapshot is private', hiddenSuccessorReasonPrivate],
     ['a private-readable grant does not open a successor reason', grantDoesNotOpenSuccessorReason],
+    ['a pruned successor alone withholds a reason', prunedSuccessorReason],
+    ['a successor only another member can read withholds a reason', otherMemberSuccessorReason],
     ['own member-page facts still need their entity page', ownFactsKeepEntityAccess],
     ['the own member page counts only in the fact\'s own source', ownMemberPageInTheFactsSource],
     ['a held fact reads only under every satisfied rule', heldFactsUnderRealRules],
