@@ -115,6 +115,28 @@ describe('pregate allowlist: Rust type annotations the secrets check reads as ke
     }
   });
 
+  // gstack tests an entry's pattern against the added line from the column where the flagged value starts, as
+  // `^(?:pattern)(?![\\w-])` (lib/pregate/allowlist.ts): the text before the value is never seen, so a pattern cannot name the
+  // key, and `^\\s*token: ...` would match nothing. Anchoring is therefore `^pattern$`: the value starts the match and the
+  // line ends it. One case per entry: a quoted credential followed by a comment that holds the annotation is still flagged,
+  // because its own finding starts at the quoted value, and the pattern does not match there.
+  const TAILS: Array<{ path: string; prefix: string; annotation: string; valueAt: (line: string) => number }> = [
+    { path: 'link_queries/link_temporal.rs', prefix: '    key: ', annotation: '&RelationshipKey,', valueAt: l => l.indexOf(': ') + 2 },
+    { path: 'persistence/effect_worker.rs', prefix: '    token: ', annotation: 'Option<&str>,', valueAt: l => l.indexOf(': ') + 2 },
+    { path: 'occ_kv.rs', prefix: '    by_key: ', annotation: 'Mutex<HashMap<Vec<u8>, u64>>,', valueAt: l => l.indexOf(': ') + 2 },
+    { path: 'write_attribution.rs', prefix: '        exclude_private: ', annotation: 'Option<PrivacyPolicy>,', valueAt: l => l.indexOf(': ') + 2 },
+    { path: 'cli_reads/reads.rs', prefix: '                    Token::Char(c) => ', annotation: 'Token::Char(c) => {', valueAt: l => l.indexOf(':') + 1 },
+  ];
+  for (const t of TAILS) {
+    test(`${t.path}: a line that only ends with the annotation is not covered at its credential`, () => {
+      const pattern = entryFor(RUST_SRC + t.path)!.pattern!;
+      expect(pattern.startsWith('^') && pattern.endsWith('$')).toBe(true);
+      const line = `${t.prefix}"${secret}", // ${t.annotation}`;
+      expect(anchored(pattern, line.slice(t.valueAt(line)))).toBe(false);
+      expect(new RegExp(pattern).test(line)).toBe(false);
+    });
+  }
+
   test('each entry covers its own annotation and still flags a quoted credential on the same key', () => {
     for (const shape of SHAPES) {
       const entry = entryFor(RUST_SRC + shape.path);

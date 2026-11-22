@@ -266,7 +266,7 @@
       "paths": [
         "rust/crates/gbrain-store/src/link_queries/link_temporal.rs"
       ],
-      "pattern": "&RelationshipKey,$",
+      "pattern": "^&RelationshipKey,$",
       "reason": "a Rust type annotation, `key: &RelationshipKey,` (three places): a type, never a credential value"
     },
     {
@@ -274,7 +274,7 @@
       "paths": [
         "rust/crates/gbrain-store/src/persistence/effect_worker.rs"
       ],
-      "pattern": "Option<&str>,$",
+      "pattern": "^Option<&str>,$",
       "reason": "a Rust type annotation, `token: Option<&str>,`: a type, never a credential value"
     },
     {
@@ -282,7 +282,7 @@
       "paths": [
         "rust/crates/gbrain-store/src/occ_kv.rs"
       ],
-      "pattern": "Mutex<HashMap<Vec<u8>, u64>>,$",
+      "pattern": "^Mutex<HashMap<Vec<u8>, u64>>,$",
       "reason": "a Rust type annotation, `by_key: Mutex<HashMap<Vec<u8>, u64>>,`: a type, never a credential value"
     },
     {
@@ -290,7 +290,7 @@
       "paths": [
         "rust/crates/gbrain-store/src/write_attribution.rs"
       ],
-      "pattern": "Option<PrivacyPolicy>,$",
+      "pattern": "^Option<PrivacyPolicy>,$",
       "reason": "a Rust type annotation, `exclude_private: Option<PrivacyPolicy>,`: a type, never a credential value"
     },
     {
@@ -298,7 +298,7 @@
       "paths": [
         "rust/crates/gbrain-store/src/cli_reads/reads.rs"
       ],
-      "pattern": ":Char\\(c\\) => \\{$",
+      "pattern": "^:Char\\(c\\) => \\{$",
       "reason": "a match arm, `Token::Char(c) => {`, in a tokenizer: an enum pattern, never a credential value"
     }
   ]
