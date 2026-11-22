@@ -422,6 +422,12 @@ describe('per_harness.<claude-code|codex>.session_start: text the lane prints at
     const bullet = await run(b, 'set', 'skills.resolver.per_harness.codex.session_start', '- Run the tests first');
     expect(bullet.exitCode, bullet.stderr).toBe(0);
     expect(JSON.parse(read(configPath(b))!).skills.resolver.per_harness.codex.session_start).toBe('- Run the tests first');
+    const flagOnly = await run(b, 'set', 'skills.resolver.per_harness.codex.session_start', '--dry-run');
+    expect(flagOnly.exitCode).not.toBe(0);
+    expect(JSON.parse(read(configPath(b))!).skills.resolver.per_harness.codex.session_start).toBe('- Run the tests first');
+    const flagFirst = await run(b, 'set', 'skills.resolver.per_harness.codex.session_start', '--yes', 'Read the notes.');
+    expect(flagFirst.exitCode, flagFirst.stderr).toBe(0);
+    expect(JSON.parse(read(configPath(b))!).skills.resolver.per_harness.codex.session_start).toBe('Read the notes.');
   });
 
   test('refused: empty text, over the cap, control characters, and a harness other than claude-code or codex', async () => {
