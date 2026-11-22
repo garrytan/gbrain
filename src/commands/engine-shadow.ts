@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { loadConfig } from '../core/config.ts';
 import type { EngineConfig } from '../core/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
+import type { OperationError } from '../core/ops/contract.ts';
 import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
 import { readFaults, readShadowSummary } from '../shadow/ledger.ts';
 import { readSeedRecord, runSeed, SeedBudgetError, writeSeedRecord, type SeedRecord, type SeedTarget } from '../shadow/seed.ts';
@@ -56,6 +57,8 @@ brain repo; everything lives in <gbrain home>/shadow/<brain>/. stop --delete rem
 
 seed copies this brain into the Rust store once, in one read-only snapshot, before shadow mode compares answers.
 It writes nothing to the brain. A store is seeded once: to seed again, delete the shadow directory first.
+A brain that uses managed storage is refused (exit 3): the Rust engine never holds managed storage, so seeding it
+copies data nothing can use. seed checks that first and writes nothing when it refuses.
 
 The report is provisional and always says NOT READY.`;
 
@@ -256,6 +259,46 @@ async function seed(
     err('engine shadow: stop shadow mode first (gbrain engine shadow stop): its child holds the Rust store. Nothing was written.');
     return 1;
   }
+  // The managed-storage gate: the Rust engine never holds managed storage, so seeding it copies data nothing can use.
+  // It runs before the addon loads, before the shadow directory exists, before the store opens and before the snapshot starts.
+  const { managedStorageRefusal, unopenableBrainRefusal } = await import('../shadow/managed-gate.ts');
+  let primary: BrainEngine;
+  try {
+    primary = await (deps.openPrimary ?? openConfiguredPrimary)();
+  } catch (e) {
+    return await refuseManaged(unopenableBrainRefusal(e), json, out, err);
+  }
+  try {
+    const refusal = await managedStorageRefusal(primary);
+    if (refusal) return await refuseManaged(refusal, json, out, err);
+    return await seedFrom(primary, brain, json, deps, out, err, now);
+  } finally {
+    await primary.disconnect().catch(() => undefined);
+  }
+}
+
+/** Renders the managed-storage refusal: one line, the why and the next step on stderr; with --json also the error envelope on stdout; exit 3 (consent). */
+function renderManagedRefusal(e: OperationError, err: (l: string) => void): number {
+  err(`engine shadow: ${e.code} (${e.reason}): ${e.message}`);
+  if (e.why) err(e.why);
+  if (e.detail) err(`Detail: ${e.detail}`);
+  err(e.suggestion ?? 'Ask the user; nothing was written.');
+  return 3;
+}
+
+async function refuseManaged(e: OperationError, json: boolean, out: (l: string) => void, err: (l: string) => void): Promise<number> {
+  if (json) {
+    const { renderCliError } = await import('../core/agent-output.ts');
+    out(renderCliError(e, { json: true, command: 'engine shadow seed', tty: false }).stdout!.trimEnd());
+  }
+  return renderManagedRefusal(e, err);
+}
+
+/** The rest of `seed` once the primary is open and unmanaged: the addon, the shadow directory, the store, the snapshot. */
+async function seedFrom(
+  primary: BrainEngine, brain: { key: string; dir: string; engine: string }, json: boolean, deps: EngineShadowDeps,
+  out: (l: string) => void, err: (l: string) => void, now: () => Date,
+): Promise<number> {
   const load = await (deps.loadAddon ?? (async () => {
     const { loadRustEngineAddon } = await import('../core/rust-engine/addon-loader.ts');
     return loadRustEngineAddon();
@@ -278,9 +321,7 @@ async function seed(
     }
     throw e;
   }
-  let primary: BrainEngine | null = null;
   try {
-    primary = await (deps.openPrimary ?? openConfiguredPrimary)();
     const record = await runSeed(primary, store, {
       primaryEngine: brain.engine, now,
       onBatch: json ? undefined : (relation, rows) => err(`  seeding ${relation}: ${rows} rows`),
@@ -300,7 +341,6 @@ async function seed(
     }
     throw e;
   } finally {
-    await primary?.disconnect().catch(() => undefined);
     await store.close().catch(() => undefined);
   }
 }
