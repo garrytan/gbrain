@@ -31,7 +31,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { configDir } from '../core/config.ts';
 import { hashToken } from '../core/utils.ts';
 import { opError } from '../core/ops/contract.ts';
-import { capabilityMissing } from '../core/rust-engine/errors.ts';
+import { sqlEngineKind } from '../core/sql-engine-kind.ts';
 import { usageError } from '../cli/cli-error.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { normalizeRule, ruleIdForPrefix, type FolderRule } from '../core/access/folder-rules.ts';
@@ -300,7 +300,7 @@ export async function labelSeveral(engine: BrainEngine, roster: string[], source
   const receipt = await plan(engine, roster, sourceId, labelledOnly, opts.owner);
   if (!apply || blocked(receipt)) return receipt;
   // Widening a kept key runs raw SQL (legacy-token.ts, row 32k), which a Rust brain refuses: refuse before the first write.
-  if (engine.capabilities?.has('raw_sql') === false && receipt.keys.some(k => k.action === 'keep' && k.adds?.length)) throw capabilityMissing('raw_sql', 'gbrain access serves several --yes with a kept key that needs more reads (row 32k)');
+  if (receipt.keys.some(k => k.action === 'keep' && k.adds?.length)) sqlEngineKind(engine.kind, 'gbrain access serves several --yes with a kept key that needs more reads (row 32k)');
   receipt.applied = true;
   try {
     for (const m of receipt.members.filter(x => x.action === 'add')) await addMember(engine, m.id, { beforeWrite: () => rescopeArchiveBefore(engine, m.id, 'add') });
