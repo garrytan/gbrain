@@ -34,6 +34,7 @@ import { resolveAbs, findGbrainOrDie, resolveWorkspace } from './skillpack/share
 import { cmdScaffold } from './skillpack/scaffold.ts';
 import { cmdReference } from './skillpack/reference.ts';
 import { recordScaffoldBases, type ScaffoldedFile } from '../core/skillpack/safe-update.ts';
+import { applyMovedRegistryTestSeam } from '../cli/moved-registry-seam.ts';
 
 const HELP_TOP = `gbrain skillpack <subcommand> [options]
 
@@ -119,6 +120,7 @@ Removed in v0.33 (use migrate-fence to upgrade, then \`scaffold\`):
 export async function runSkillpack(args: string[]): Promise<void> {
   const sub = args[0];
   const rest = args.slice(1);
+  applyMovedRegistryTestSeam();
   if (!sub || sub === '--help' || sub === '-h') {
     console.log(HELP_TOP);
     process.exit(0);
@@ -322,7 +324,8 @@ async function cmdStatus(args: string[]): Promise<void> {
     console.log(
       'gbrain skillpack status [--workspace PATH] [--json]\n\n' +
         'Report install currency (new / drifted / current) for every bundled\n' +
-        'skill, plus which installed skills declare machine-checkable\n' +
+        'skill, marks a skill that moved to another catalog as moved, and lists\n' +
+        'which installed skills declare machine-checkable\n' +
         'preconditions. Read-only. Verify preconditions live with `gbrain doctor`.',
     );
     process.exit(0);
@@ -353,7 +356,7 @@ async function cmdStatus(args: string[]): Promise<void> {
     }
 
     const c = currency.counts;
-    console.log(`new: ${c.new}  drifted: ${c.drifted}  current: ${c.current}  (${c.total} total)`);
+    console.log(`new: ${c.new}  drifted: ${c.drifted}  current: ${c.current}${c.moved ? `  moved: ${c.moved}` : ''}  (${c.total} total)`);
 
     const newSlugs = currency.skills.filter(s => s.status === 'new').map(s => s.slug);
     const driftedSlugs = currency.skills.filter(s => s.status === 'drifted').map(s => s.slug);
@@ -365,6 +368,11 @@ async function cmdStatus(args: string[]): Promise<void> {
     if (driftedSlugs.length) {
       console.log('\nDrifted from bundle (run `gbrain skillpack reference <slug>`):');
       for (const slug of driftedSlugs) console.log(`  ${slug}`);
+    }
+    const moved = currency.skills.filter(s => s.moved);
+    if (moved.length) {
+      console.log('\nMoved (gbrain still includes its copy for now):');
+      for (const s of moved) console.log(`  ${s.slug} (${s.status}): ${s.moved}`);
     }
     if (preconditions.length) {
       console.log('\nSkills with declared preconditions (verify with `gbrain doctor`):');

@@ -17,7 +17,9 @@ import { opError } from '../../core/ops/contract.ts';
 import { suggestNearest } from '../../core/levenshtein.ts';
 import { bundledCatalogId, bundledSkillAsset, bundledSkillDescription, bundledSkills, bundledSkillText, findBundledSkill, type SkillAudience } from '../../core/skills/bundled.ts';
 import { VERSION } from '../../version.ts';
+import { movedSkillNotice } from '../../core/skillpack/moved.ts';
 import { exitCliError, usageError } from '../cli-error.ts';
+import { applyMovedRegistryTestSeam } from '../moved-registry-seam.ts';
 
 const HELP = `Usage: gbrain bundled-skill [<name>] [--asset <path>] [--json]
 
@@ -30,7 +32,8 @@ from this gbrain itself. No brain connection is needed.
   --json                                    machine-readable output
 
 The skills index written by \`gbrain setup <harness> --skill-loading spring\`
-tells agents to run this command when a task matches a skill.
+tells agents to run this command when a task matches a skill. A skill that
+moved to another catalog says where it went.
 `;
 
 export function bundledSkillAudience(): SkillAudience {
@@ -42,6 +45,7 @@ export async function run(args: string[]): Promise<void> {
     await writeStdoutFinal(HELP);
     return;
   }
+  applyMovedRegistryTestSeam();
   const json = args.includes('--json');
   let asset: string | undefined;
   const names: string[] = [];
@@ -73,6 +77,12 @@ export async function run(args: string[]): Promise<void> {
   }
 
   const skill = findBundledSkill(name, audience);
+  const moved = movedSkillNotice(name);
+  if (!skill && moved) {
+    await writeStdoutFinal(json ? `${JSON.stringify({ schema_version: 1, gbrain_version: VERSION, name, moved }, null, 2)}\n` : `${moved}\n`);
+    return;
+  }
+  if (moved) process.stderr.write(`${moved}\n`);
   if (!skill) {
     const nearest = suggestNearest(name, bundledSkills(audience).map(s => s.name));
     exitCliError(opError('skill_not_found', `gbrain ${VERSION} has no bundled skill named ${name}${audience === 'downstream' ? ' for this thin-client install' : ''}.${nearest ? ` Did you mean "${nearest}"?` : ''}`,
