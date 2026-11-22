@@ -1,6 +1,6 @@
 import { execSync } from '../core/spawn.ts';
 import { readdirSync, lstatSync, existsSync, copyFileSync, mkdirSync, readFileSync } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, resolve as resolvePath } from 'path';
 import { fileURLToPath } from 'url';
 import { homedir } from 'os';
 
@@ -56,6 +56,7 @@ async function runInitBranches(args: string[]) {
 
   const isSupabase = args.includes('--supabase');
   const isPGLite = args.includes('--pglite');
+  const isRust = args.includes('--rust');
   const isMcpOnly = args.includes('--mcp-only');
   const isForce = args.includes('--force');
   const isNonInteractive = args.includes('--non-interactive');
@@ -176,12 +177,23 @@ async function runInitBranches(args: string[]) {
   // engine here (CDX2-7); the env plane keeps its existing precedence in
   // the non-interactive branch below.
   let preservedPostgresUrl: string | null = null;
-  if (isForce && !isPGLite && !isSupabase && !manualUrl) {
+  if (isForce && !isPGLite && !isRust && !isSupabase && !manualUrl) {
     const fileCfg = loadConfigFileOnly();
     if (fileCfg?.engine === 'postgres' && fileCfg.database_url) {
       preservedPostgresUrl = fileCfg.database_url;
       console.error('[init] Existing postgres engine preserved (pass --pglite to switch engines).');
     }
+  }
+
+  // The opt-in Rust engine: a local store set up as --pglite sets up PGLite (content root, managed activation).
+  if (isRust) {
+    if (isPGLite || isSupabase || manualUrl) failInitFlag('--rust cannot be combined with --pglite, --supabase or --url.', jsonOutput);
+    // Database-only, as --db-only: managed content roots (and the managed writes behind them) are not served on the
+    // Rust engine yet, so a content root or Git setup is refused by name instead of half set up.
+    if (contentRootIndex !== -1 || args.includes('--git')) {
+      failInitFlag('--rust sets up a database-only brain (as --db-only): managed content roots are not served on the Rust engine yet, so --content-root and --git cannot be combined with it.', jsonOutput);
+    }
+    return initPGLite({ jsonOutput, apiKey, customPath, aiOpts, schemaPack, skipEmbedCheck, content: { ...content, dbOnly: true }, engineKind: 'rust' });
   }
 
   // Explicit PGLite mode
@@ -232,6 +244,7 @@ async function runInitBranches(args: string[]) {
 
 const INIT_BOOLEAN_FLAGS = new Set([
   '--pglite',
+  '--rust',
   '--supabase',
   '--mcp-only',
   '--force',
@@ -1058,9 +1071,13 @@ export async function initPGLite(opts: {
   /** v0.42 (#1780 Gap 2): skip the init-time embedding-key validation. */
   skipEmbedCheck?: boolean;
   content?: SharedContentOptions;
+  /** The local engine: PGLite (the default), or the opt-in Rust store (`gbrain init --rust`). */
+  engineKind?: 'pglite' | 'rust';
 }) {
-  const dbPath = opts.customPath || gbrainPath('brain.pglite');
-  console.log(`Setting up local brain with PGLite (no server needed)...`);
+  const kind = opts.engineKind ?? 'pglite';
+  // The Rust store is opened by an absolute path (engine-construct.ts); PGLite keeps the path as given.
+  const dbPath = kind === 'rust' ? resolvePath(opts.customPath || gbrainPath('brain.rust')) : opts.customPath || gbrainPath('brain.pglite');
+  console.log(kind === 'rust' ? 'Setting up local brain with the Rust engine (opt-in; no server needed)...' : `Setting up local brain with PGLite (no server needed)...`);
 
   // v0.37.10.0 T6 (D11): preflight schema dim BEFORE any DB write or schema
   // creation. After T5's env detection runs, opts.aiOpts has either an
@@ -1071,7 +1088,7 @@ export async function initPGLite(opts: {
   let resolvedModel: string | undefined;
   if (opts.aiOpts?.noEmbedding) {
     // D9 deferred-setup mode: skip preflight, no model/dim resolved.
-    if (!opts.aiOpts.implicitKeyless) console.log(deferredEmbeddingHint({ engine: 'pglite', database_path: dbPath, embedding_disabled: true }));
+    if (!opts.aiOpts.implicitKeyless) console.log(deferredEmbeddingHint({ engine: kind, database_path: dbPath, embedding_disabled: true }));
   } else if (opts.aiOpts?.embedding_model) {
     const { resolveSchemaEmbeddingDim } = await import('../core/embedding-dim-check.ts');
     const pre = resolveSchemaEmbeddingDim({
@@ -1111,13 +1128,13 @@ export async function initPGLite(opts: {
   if (opts.aiOpts?.chat_model) console.log(`  Chat: ${opts.aiOpts.chat_model}`);
 
 
-  const engine = await createEngine({ engine: 'pglite' });
+  const engine = await createEngine(kind === 'rust' ? { engine: kind, database_path: dbPath } : { engine: kind });
   try {
-    await engine.connect({ database_path: dbPath, engine: 'pglite' });
+    await engine.connect({ database_path: dbPath, engine: kind });
     const freshContentDatabase = await isNewContentDatabase(engine);
     await assertInitEmbeddingIdentity(engine, resolvedModel);
     const kept = await keptEmbeddingIdentity(engine, opts.aiOpts, freshContentDatabase);
-    if (opts.aiOpts?.implicitKeyless) console.log(kept ? keptEmbeddingNotice(kept) : deferredEmbeddingHint({ engine: 'pglite', database_path: dbPath, embedding_disabled: true }));
+    if (opts.aiOpts?.implicitKeyless) console.log(kept ? keptEmbeddingNotice(kept) : deferredEmbeddingHint({ engine: kind, database_path: dbPath, embedding_disabled: true }));
     configureGateway({
       embedding_model: resolvedModel ?? kept?.model ?? opts.aiOpts?.embedding_model,
       embedding_dimensions: resolvedDim ?? kept?.dimensions ?? opts.aiOpts?.embedding_dimensions ??
@@ -1145,6 +1162,7 @@ export async function initPGLite(opts: {
           requestedDims: resolvedDim,
           requestedModel: resolvedModel,
           source: 'init',
+          // The Rust store cannot resize its vector width in place either: the PGLite re-init text applies.
           engineKind: 'pglite',
           databasePath: dbPath,
         }) + '\n');
@@ -1171,6 +1189,7 @@ export async function initPGLite(opts: {
           requestedDims: resolvedDim,
           requestedModel: resolvedModel,
           source: 'init',
+          // The Rust store cannot resize its vector width in place either: the PGLite re-init text applies.
           engineKind: 'pglite',
           databasePath: dbPath,
         }));
@@ -1183,7 +1202,7 @@ export async function initPGLite(opts: {
     const existingFile = loadConfigFileOnly() ?? ({} as GBrainConfig);
     const config: GBrainConfig = {
       ...existingFile,
-      engine: 'pglite',
+      engine: kind,
       database_path: dbPath,
       ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
       ...(opts.aiOpts?.noEmbedding
@@ -1252,12 +1271,12 @@ export async function initPGLite(opts: {
     const stats = await engine.getStats();
 
     if (opts.jsonOutput) {
-      setInitJsonResult({ status: 'success', engine: 'pglite', path: dbPath, pages: stats.page_count, embedding_check: embedCheck, content: contentReceipt, ...firstRunJson(await firstRunBundle(engine, searchMode, registrationSurface)) });
+      setInitJsonResult({ status: 'success', engine: kind, path: dbPath, pages: stats.page_count, embedding_check: embedCheck, content: contentReceipt, ...firstRunJson(await firstRunBundle(engine, searchMode, registrationSurface)) });
     } else if (process.env.GBRAIN_IN_AGENT_SETUP === '1') {
       printInAgentReady(dbPath, freshContentDatabase);
     } else {
       console.log(`\nBrain ready at ${dbPath}`);
-      console.log(`${stats.page_count} pages. Engine: PGLite (local Postgres).`);
+      console.log(kind === 'rust' ? `${stats.page_count} pages. Engine: Rust (opt-in local store).` : `${stats.page_count} pages. Engine: PGLite (local Postgres).`);
       // Reference/status blocks print FIRST and terse; the ONE primary action
       // (the memory demo) prints LAST so it is the final, unmistakable thing on
       // screen. Krug: one obvious next action, everything else subordinate.
@@ -1280,7 +1299,7 @@ export async function initPGLite(opts: {
       writeCliNotices(await firstRunBundle(engine, searchMode, registrationSurface));
 
       // The single primary action, last-on-screen.
-      printMemoryVerbsQuickstart({ emptyBrain: stats.page_count === 0, onPglite: true, keyless: config.embedding_disabled === true });
+      printMemoryVerbsQuickstart({ emptyBrain: stats.page_count === 0, onPglite: kind !== 'rust', keyless: config.embedding_disabled === true });
     }
   } finally {
     try { await engine.disconnect(); } catch { /* best-effort */ }
@@ -1811,6 +1830,7 @@ USAGE
 
 ENGINE SELECTION (mutually exclusive)
   --pglite              Use embedded PGLite (zero-config, the default)
+  --rust                Use the opt-in Rust engine (a local store; database-only, as --db-only)
   --supabase            Use Supabase Postgres (recommended for 1000+ files)
   --url <URL>           Use a manual Postgres connection string
   --mcp-only            Thin-client mode: connect to a remote gbrain MCP, no local engine
@@ -1825,7 +1845,7 @@ OPTIONS
   --db-only             Keep memory database-only; shared publication needs export/adoption
   --git                 Authorize Git init in the new owned empty content directory
   --no-git              Keep a content directory without Git (default)
-  --path <DIR>          Override default brain path (PGLite only)
+  --path <DIR>          Override default brain path (PGLite or Rust)
   --key <APIKEY>        Provide an API key non-interactively (Supabase only)
   --embedding-model <PROVIDER:MODEL>
                         e.g. openai:text-embedding-3-large, voyage:voyage-multimodal-3

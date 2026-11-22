@@ -18,8 +18,7 @@ import { waitForWrite } from '../persistence/service.ts';
 import { isTerminal, type WriteRequest } from '../persistence/model.ts';
 
 export async function isNewContentDatabase(engine: BrainEngine): Promise<boolean> {
-  const [row] = await engine.executeRaw<{ fresh: boolean }>("SELECT to_regclass('public.pages') IS NULL AND to_regclass('public.config') IS NULL AND to_regclass('public.persistence_brain') IS NULL AS fresh");
-  return row?.fresh === true;
+  return engine.readFreshContentDatabase();
 }
 
 export interface SharedContentOptions {
@@ -70,8 +69,7 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
   }
   const sourceId = options.sourceId ?? ctx.sourceId;
   const brain = await readPersistenceBrain(ctx.engine);
-  const [source] = await ctx.engine.executeRaw<{ id: string; incarnation: string; local_path: string | null }>(
-    'SELECT id,incarnation,local_path FROM sources WHERE id=$1 AND NOT archived', [sourceId]);
+  const source = await ctx.engine.readContentSetupSource(sourceId);
   if (!source) {
     throw opError('source_changed', 'Content setup requires an active selected source.',
       `Source ${sourceId} is archived or not registered. Check the registered sources, then run gbrain init again for an active one.`,

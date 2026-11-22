@@ -166,6 +166,7 @@ test/engine-parity/cli-reads-ops.test.ts
 test/engine-parity/code-eval-salience.test.ts
 test/engine-parity/config-ingest.test.ts
 test/engine-parity/connect-gate.test.ts
+test/engine-parity/content-setup.test.ts
 test/engine-parity/core-page-member-reads.test.ts
 test/engine-parity/credential-grant-writes.test.ts
 test/engine-parity/cycle-locks.test.ts
@@ -869,6 +870,7 @@ test/request-tools-combined-gbra449.test.ts
 test/requester-scope.test.ts
 test/restated-private-cross-entity-2891.test.ts
 test/retrieval-coverage-notices.test.ts
+test/rust-init-db-only.serial.test.ts
 test/salience-enrich-parity.test.ts
 test/schema-missing-tables.test.ts
 test/schema-replay-deadlock-6143.test.ts

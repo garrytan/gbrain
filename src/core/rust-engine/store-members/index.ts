@@ -41,6 +41,7 @@ import * as trustWithdrawals from './trust-withdrawals.ts';
 import * as openLoops from './open-loops.ts';
 import * as trustWriteGate from './trust-write-gate.ts';
 import * as cliSources from './cli-sources.ts';
+import * as contentSetup from './content-setup.ts';
 import * as filesSources from './files-sources.ts';
 import * as dreamConfig from './dream-config.ts';
 import * as factsHoldingPurges from './facts-holding-purges.ts';
@@ -127,6 +128,8 @@ export const STORE_MEMBERS = {
   ...jobs,
   // Typed reads that replace raw SQL in CLI paths (rust/crates/gbrain-store/src/cli_reads/).
   ...cliSources, ...filesSources, ...dreamConfig, ...factsHoldingPurges,
+  // Content-root setup of gbrain init (rust/docs/store/content-setup.md).
+  ...contentSetup,
   // Typed reads that CLI paths ran through executeRaw (docs/research/rust-cli-executeraw-map.md).
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages,
   // The reads gbrain export makes (rust/docs/store/cli-reads-export.md).

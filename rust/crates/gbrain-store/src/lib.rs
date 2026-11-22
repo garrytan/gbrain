@@ -47,6 +47,7 @@ pub mod aliases;
 pub mod chat_usage;
 pub mod chunk_queries;
 pub mod code_edges;
+pub mod content_setup;
 pub mod contradictions;
 pub mod dream;
 pub mod dream_config;

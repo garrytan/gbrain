@@ -266,6 +266,7 @@ import * as jobsSpend from './engine-sql/jobs-spend.ts';
 import * as spendLog from './engine-sql/spend-log.ts';
 import * as oauthClients from './engine-sql/oauth-clients.ts';
 import * as accessTokens from './engine-sql/access-tokens.ts';
+import * as contentSetup from './engine-sql/content-setup.ts';
 import * as jobsSubagent from './engine-sql/jobs-subagent.ts';
 import * as takesReads from './engine-sql/takes-reads.ts';
 import * as trustTierReads from './engine-sql/trust-tier-reads.ts';
@@ -4301,6 +4302,8 @@ export class PGLiteEngine implements BrainEngine {
   async findActiveAccessTokens(target: string) { return accessTokens.findActiveAccessTokens(this, target); }
   async setAccessTokenMinTrust(id: string, tier: string | null) { return accessTokens.setAccessTokenMinTrust(this, id, tier); }
   async readLiveAccessTokenScope(id: string) { return accessTokens.readLiveAccessTokenScope(this, id); }
+  async readFreshContentDatabase() { return contentSetup.readFreshContentDatabase(this); }
+  async readContentSetupSource(sourceId: string) { return contentSetup.readContentSetupSource(this, sourceId); }
   async insertLeasePressure(row: jobsSpend.LeasePressureInsert) { return jobsSpend.insertLeasePressure(this, row); }
   async countLeasePressure(filter?: jobsSpend.LeasePressureFilter) { return jobsSpend.countLeasePressure(this, filter); }
   async listRecentLeasePressure(windowMs: number, limit: number) { return jobsSpend.listRecentLeasePressure(this, windowMs, limit); }

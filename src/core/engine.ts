@@ -116,6 +116,7 @@ import type {
 } from './engine-sql/spend-log.ts';
 import type { OauthClientPatch, OauthClientPatchGuard, OauthClientPatched, OauthClientRow } from './engine-sql/oauth-clients.ts';
 import type { AccessTokenInsert, AccessTokenScopeRow, ActiveAccessTokenRow } from './engine-sql/access-tokens.ts';
+import type { ContentSetupSource } from './engine-sql/content-setup.ts';
 import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakePreimage, TakesLeavingFence } from './engine-sql/takes-reads.ts';
 import type {
   BeliefHistoryRowQuery, CorePageRow, CorePageRowSpec, TrustScanRow, TrustScanRowSpec, UnscannedTrustSpec, ValidTimeIdentityRow,
@@ -5222,6 +5223,10 @@ export interface BrainEngine {
   setAccessTokenMinTrust(id: string, tier: string | null): Promise<void>;
   /** A live token's `reads_unscoped` and `created_at` (access/requester-scope.ts `credentialScopeFor`), or null when revoked or absent. */
   readLiveAccessTokenScope(id: string): Promise<AccessTokenScopeRow | null>;
+  /** Content-root setup of gbrain init (shared-skills/setup.ts): no pages, config or persistence_brain table yet, read before initSchema. */
+  readFreshContentDatabase(): Promise<boolean>;
+  /** Content-root setup: the source when registered and not archived, else null. */
+  readContentSetupSource(sourceId: string): Promise<ContentSetupSource | null>;
   /** One rate-lease bounce appended to the lease-pressure log. */
   insertLeasePressure(row: LeasePressureInsert): Promise<void>;
   /** How many lease bounces match every given field (window in ms, job id, lease key). */

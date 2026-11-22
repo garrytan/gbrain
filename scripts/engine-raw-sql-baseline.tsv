@@ -884,7 +884,7 @@ src/core/shared-skills/policy.ts	execute_raw	10
 src/core/shared-skills/publication.ts	execute_raw	14
 src/core/shared-skills/restore.ts	execute_raw	27
 src/core/shared-skills/retention.ts	execute_raw	12
-src/core/shared-skills/setup.ts	execute_raw	6
+src/core/shared-skills/setup.ts	execute_raw	4
 src/core/shared-skills/source-opt-out.ts	execute_raw	2
 src/core/similar-pages.ts	execute_raw	1
 src/core/skillpack/shared-brain-bridge.ts	execute_raw	4
