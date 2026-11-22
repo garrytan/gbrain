@@ -319,7 +319,7 @@ export async function listClosedConsolidationTies(raw: EngineRawRead, sourceIds:
       FROM facts f
      WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.claim_metric IS NOT NULL
        AND f.consolidated_into IS NOT NULL AND f.valid_until = f.valid_from AND f.entity_slug IS NOT NULL
-     ORDER BY f.source_id, f.id`, [sourceIds]);
+     ORDER BY f.source_id COLLATE "C", f.id`, [sourceIds]);
 }
 
 export interface PagelessEntityRow { source_id: string; slug: string; ids: Array<number | string> | null; fenced: number | string }
@@ -334,7 +334,7 @@ export async function listPagelessEntityFacts(raw: EngineRawRead, sourceIds: str
      WHERE f.source_id = ANY($1::text[]) AND f.entity_slug IS NOT NULL
        AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)
      GROUP BY f.source_id, f.entity_slug
-     ORDER BY f.source_id, f.entity_slug`, [sourceIds]);
+     ORDER BY f.source_id COLLATE "C", f.entity_slug COLLATE "C"`, [sourceIds]);
 }
 
 /** The expiry instant as UTC text with microseconds; a bound timestamp parameter can lose them. */
@@ -385,7 +385,7 @@ export async function listDuplicateFactRows(raw: EngineRawRead, sourceIds: strin
        WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
          AND f.superseded_by IS NULL AND COALESCE(f.source, '') <> ALL($2::text[])
     ) d WHERE d.n > 1
-    ORDER BY d.source_id, d.visibility, d.fp, d.speaker, d.fenced DESC, d.created_at, d.id`, [sourceIds, excludedSources]);
+    ORDER BY d.source_id COLLATE "C", d.visibility COLLATE "C", d.fp COLLATE "C", d.speaker COLLATE "C", d.fenced DESC, d.created_at, d.id`, [sourceIds, excludedSources]);
   return rows.map(r => ({ id: r.id, source_id: r.source_id, visibility: r.visibility, fp: r.fp, fact: r.fact, entity_slug: r.entity_slug, fenced: r.fenced,
     row_num: r.row_num, source_markdown_slug: r.source_markdown_slug, speaker: r.speaker }));
 }
@@ -447,7 +447,7 @@ export async function listFactsHomeCandidates(raw: EngineRawRead, sourceId: stri
   return raw<FactsHomeCandidateRow>(`SELECT f.id, f.source_id, f.entity_slug, f.fact, f.kind, f.visibility, f.notability, f.context, f.valid_from, f.valid_until, f.source,
   f.confidence, f.claim_metric, f.claim_value, f.claim_unit, f.claim_period, f.attributed_to, f.dimension, EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.entity_slug AND p.deleted_at IS NULL) AS page_exists,
     EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.entity_slug AND p.deleted_at IS NOT NULL) AS page_deleted FROM facts f
-    WHERE f.source_id=$1 AND f.row_num IS NULL AND f.expired_at IS NULL ORDER BY f.entity_slug NULLS FIRST, f.id`, [sourceId]);
+    WHERE f.source_id=$1 AND f.row_num IS NULL AND f.expired_at IS NULL ORDER BY f.entity_slug COLLATE "C" NULLS FIRST, f.id`, [sourceId]);
 }
 
 export type HeldHomeRow = UnfencedFactRow & { held_since: string; old: boolean; from_slug: string };
@@ -458,7 +458,7 @@ export async function listHeldHomeRows(raw: EngineRawRead, sourceId: string, day
   f.confidence, f.claim_metric, f.claim_value, f.claim_unit, f.claim_period, f.attributed_to, EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.entity_slug AND p.deleted_at IS NULL) AS page_exists, f.source_markdown_slug AS from_slug,
       to_char(f.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS held_since, f.created_at < now() - ($2 || ' days')::interval AS old
      FROM facts f WHERE f.source_id=$1 AND f.source_markdown_slug IN (SELECT hp.slug FROM pages hp WHERE hp.source_id = $1 AND (hp.slug = 'memory/unattributed' OR hp.slug LIKE '%/memory/unattributed')) AND f.row_num IS NOT NULL AND f.expired_at IS NULL AND f.dimension IS NULL
-      AND f.entity_slug IS NOT NULL AND NOT (f.entity_slug = 'memory/unattributed' OR f.entity_slug LIKE '%/memory/unattributed') ORDER BY f.entity_slug, f.id`, [sourceId, String(days)]);
+      AND f.entity_slug IS NOT NULL AND NOT (f.entity_slug = 'memory/unattributed' OR f.entity_slug LIKE '%/memory/unattributed') ORDER BY f.entity_slug COLLATE "C", f.id`, [sourceId, String(days)]);
 }
 
 /** The active fence rows of a source whose page is not live, with that page's slug, by id. */

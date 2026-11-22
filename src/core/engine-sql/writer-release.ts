@@ -115,21 +115,21 @@ const FAILED_EFFECTS_SQL = `SELECT e.id::text AS effect_id, e.kind, e.state, COA
        EXISTS (SELECT 1 FROM sources s WHERE s.id = r.source_id AND s.incarnation = r.source_incarnation AND NOT s.archived) AS source_live
      FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id
      WHERE e.state='failed' AND e.recovery IS NULL AND NOT (e.data ? 'settled') ORDER BY e.id LIMIT 50`;
-const LIVE_LEASES_SQL = 'SELECT id, holder_host, holder_pid FROM gbrain_cycle_locks WHERE ttl_expires_at > now() AND NOT starts_with(id, $1) ORDER BY id';
+const LIVE_LEASES_SQL = 'SELECT id, holder_host, holder_pid FROM gbrain_cycle_locks WHERE ttl_expires_at > now() AND NOT starts_with(id, $1) ORDER BY id COLLATE "C"';
 const LIVE_WORKTREE_ROOTS_SQL = `SELECT w.id::text AS id, h.local_path AS root FROM persistence_worktrees w
-      LEFT JOIN persistence_host_bindings h ON h.worktree_id=w.id WHERE w.state<>'retired' ORDER BY w.id, h.local_path`;
+      LEFT JOIN persistence_host_bindings h ON h.worktree_id=w.id WHERE w.state<>'retired' ORDER BY w.id, h.local_path COLLATE "C"`;
 const CLAIM_ROOTS_SQL = `SELECT b.source_id, b.worktree_id::text AS worktree_id, h.local_path AS root
-    FROM persistence_source_bindings b LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id ORDER BY b.source_id, h.local_path`;
+    FROM persistence_source_bindings b LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id ORDER BY b.source_id COLLATE "C", h.local_path COLLATE "C"`;
 const LIVE_BOUND_SOURCES_SQL = `SELECT COUNT(*)::integer AS count FROM persistence_source_bindings b
       JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation WHERE NOT s.archived`;
-const SOURCES_SQL = "SELECT id,incarnation,local_path,config->>'kind' AS kind FROM sources WHERE archived=false ORDER BY id";
-const SOURCES_FOR_UPDATE_SQL = "SELECT id,incarnation,local_path,config->>'kind' AS kind FROM sources WHERE archived=false ORDER BY id FOR UPDATE";
+const SOURCES_SQL = "SELECT id,incarnation,local_path,config->>'kind' AS kind FROM sources WHERE archived=false ORDER BY id COLLATE \"C\"";
+const SOURCES_FOR_UPDATE_SQL = "SELECT id,incarnation,local_path,config->>'kind' AS kind FROM sources WHERE archived=false ORDER BY id COLLATE \"C\" FOR UPDATE";
 const ENABLE_SQL = 'UPDATE persistence_brain SET enabled=true,activated_at=COALESCE(activated_at,now()),mode_epoch=mode_epoch+1 WHERE singleton=1 RETURNING mode_epoch::text';
 const DISABLE_SQL = 'UPDATE persistence_brain SET enabled=false, mode_epoch=mode_epoch+1 WHERE singleton=1 RETURNING mode_epoch::text';
 const AUDIT_PAGES_SQL = `SELECT slug, source_path, source_uri, database_only_reason,
     octet_length(compiled_truth)+octet_length(COALESCE(timeline,''))+octet_length(frontmatter::text) AS bytes
-    FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND page_kind='markdown' AND slug>$2
-    ORDER BY slug LIMIT $3`;
+    FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND page_kind='markdown' AND slug COLLATE "C">$2
+    ORDER BY slug COLLATE "C" LIMIT $3`;
 const ADD_COUNTERS_SQL = `UPDATE persistence_counters SET lifetime_ids=lifetime_ids+$2,terminal_bytes=terminal_bytes+$3,
     outstanding_count=outstanding_count+$4,intent_bytes=intent_bytes+$5,recovery_bytes=recovery_bytes+$6 WHERE key=$1`;
 
@@ -161,7 +161,7 @@ export function sqlWriterReleaseStore(exec: RawSql): WriterReleaseStore {
     liveWorktreeRoots: () => exec.executeRaw<WorktreeRootRow>(LIVE_WORKTREE_ROOTS_SQL),
     claimRoots: () => exec.executeRaw<ClaimRootRow>(CLAIM_ROOTS_SQL),
     async boundSourceIds() {
-      return (await exec.executeRaw<{ id: string }>('SELECT source_id AS id FROM persistence_source_bindings ORDER BY source_id')).map(row => row.id);
+      return (await exec.executeRaw<{ id: string }>('SELECT source_id AS id FROM persistence_source_bindings ORDER BY source_id COLLATE "C"')).map(row => row.id);
     },
     sourceBindingCount: () => count('SELECT COUNT(*)::int AS n FROM persistence_source_bindings'),
     async liveBoundSourceCount() { return Number((await exec.executeRaw<{ count: number }>(LIVE_BOUND_SOURCES_SQL))[0]?.count ?? 0); },

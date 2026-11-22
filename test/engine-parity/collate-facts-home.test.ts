@@ -22,7 +22,7 @@ import { BYTE_SLUGS, MIXED_SLUGS } from '../helpers/byte-order.ts';
 const { parityTest } = parityArms(testBackends());
 
 describe('facts-home preview lists facts by byte', () => {
-  parityTest('scanFactsHome lists unfenced facts by entity slug byte order', { methods: ['putPage', 'insertFact', 'scanUnfencedFactRows'] }, async (engine) => {
+  parityTest('scanFactsHome lists unfenced facts by entity slug byte order', { methods: ['putPage', 'insertFact', 'listFactsHomeCandidates'] }, async (engine) => {
     for (const slug of MIXED_SLUGS) {
       await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `${slug} body`, timeline: '' });
       await engine.insertFact({ fact: `${slug} has a legacy fact`, kind: 'fact', entity_slug: slug, visibility: 'world', source: 'legacy import' } as never,

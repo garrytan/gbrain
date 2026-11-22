@@ -43,7 +43,7 @@ const isoOf = (v: unknown) => (v === null || v === undefined ? null : new Date(v
 describe('engine parity: a source keeps the last_commit its sync anchor advanced', () => {
   parityTest('a last_commit advance stamps the source, and freshness, the markers and the first-due clock read it', {
     methods: ['advanceSourceCommit', 'getSource', 'listSourceRecords', 'readNotifierStatusRows', 'readDueWantedMarkers',
-      'pruneSatisfiedWantedMarkers', 'settleFreshnessMarker', 'readNotifierFirstDue'],
+      'pruneSatisfiedWantedMarkers', 'settleFreshnessMarker', 'readFirstDue'],
   }, async (engine, backend) => {
     const host = hostIdFor(engine);
     for (const id of ['alpha', 'beta', 'gamma']) await createSource(engine, backend, id, {}, `/srv/brain/${id}`);

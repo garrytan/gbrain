@@ -34,7 +34,7 @@ const ORPHANS = `SELECT b.source_id, b.source_incarnation::text AS source_incarn
 /** Every orphan binding, brain-wide, by source id; at most `limit` when given. */
 export function listOrphanBindings(exec: LegacyUnscopedRead, opts: { limit?: number } = {}): Promise<OrphanBinding[]> {
   const limit = opts.limit ? sqlFragment` LIMIT ${Math.floor(opts.limit)}` : sqlFragment``;
-  const { text, params } = renderFragment(sqlFragment`${trustedSql(ORPHANS)} ORDER BY b.source_id${limit}`);
+  const { text, params } = renderFragment(sqlFragment`${trustedSql(ORPHANS)} ORDER BY b.source_id COLLATE "C"${limit}`);
   return exec.executeRaw<OrphanBinding>(text, params);
 }
 
@@ -135,7 +135,7 @@ export function listOrphanConnectorCheckpoints(exec: LegacyUnscopedRead, loadabl
   limit: number): Promise<OrphanCheckpointRow[]> {
   const { text, params } = renderFragment(sqlFragment`SELECT c.op, c.fingerprint, c.updated_at::text AS updated_at FROM op_checkpoints c
     WHERE c.op IN ('managed-connector','managed-connector-retry') AND ${orphanPredicate(loadable, bounds)}
-    ORDER BY c.op, c.fingerprint LIMIT ${limit}`);
+    ORDER BY c.op COLLATE "C", c.fingerprint COLLATE "C" LIMIT ${limit}`);
   return exec.executeRaw<OrphanCheckpointRow>(text, params);
 }
 

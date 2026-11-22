@@ -374,16 +374,9 @@ describe('topology status and blocker lists sort source ids by byte', () => {
   }, async (engine) => inHome(async () => withEnv({ GBRAIN_BRAIN_ID: 'host', GBRAIN_SOURCE: undefined }, async () => {
     for (const id of MIXED_SRC) await bind(engine, id, await addSource(engine, id), await addWorktree(engine));
     await lockRows(engine, MIXED_IDS);
-    // The admin state is a hash, so read the document it hashes: the one statement that builds it, through a wrapper that keeps its result.
-    let document = '';
-    const watching = new Proxy(engine, { get: (target, key) => key === 'executeRaw'
-      ? async (sql: string, ...rest: unknown[]) => {
-        const rows = await (target.executeRaw as (...args: unknown[]) => Promise<Array<{ state?: string }>>)(sql, ...rest);
-        if (sql.includes("jsonb_build_object(\n    'brain'")) document = rows[0]!.state!;
-        return rows;
-      }
-      : Reflect.get(target, key) }) as unknown as BrainEngine;
-    await writerAdminState(watching);
+    // The admin state is a hash, so read the document it hashes: the typed member returns the one statement's JSON text.
+    await writerAdminState(engine);
+    const document = await engine.readWriterAdminState();
     const state = JSON.parse(document) as { bindings: unknown[][]; legacy_locks: unknown[][] };
     const folded = { bindings: state.bindings.map(row => row[0]), locks: state.legacy_locks.map(row => row[0]) };
     expect(folded).toEqual({ bindings: [...BYTE_SRC], locks: [...BYTE_IDS] });

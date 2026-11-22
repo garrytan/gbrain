@@ -25,7 +25,7 @@ import type { ScopedRead } from '../../src/core/engine-sql/brands.ts';
 import type { SqlFragment } from '../../src/core/engine-sql/fragment.ts';
 import { renderFragment } from '../../src/core/engine-sql/fragment.ts';
 import { listPages } from '../../src/core/engine-sql/pages.ts';
-import { auditDriftConflicts } from '../../src/core/persistence/drift-conflicts.ts';
+import { listDriftConflictGroups } from '../../src/core/engine-sql/repair-plan-scans.ts';
 import { readRequestIndexStates } from '../../src/core/persistence/checkpoint-validation.ts';
 import { PERSISTENCE_REQUEST_ONLINE_INDEXES, PERSISTENCE_REQUEST_SLUG_BYTE_ORDER_INDEX, POSTGRES_CONCURRENT_PERSISTENCE_INDEXES } from '../../src/core/persistence/schema.ts';
 import { PGLITE_SCHEMA_SQL } from '../../src/core/pglite-schema.generated.ts';
@@ -74,16 +74,21 @@ for (const backend of testBackends()) describe(`[${backend}] v333 byte-order slu
     await listPages(exec, { sourceId: 'default', sort: 'slug', slugAfter: 'notes/p5', limit: 50 });
     return renderFragment(captured!);
   };
-  /** The drift-conflict page statement auditDriftConflicts sends, captured at engine.executeRaw (the call then stops). */
+  /** The drift-conflict page statement auditDriftConflicts sends (the typed read listDriftConflictGroups), captured at the executor it takes. */
   const driftPageSql = async () => {
     let captured: { text: string; params: unknown[] } | undefined;
-    const stop = new Error('captured');
-    const spy = Object.create(engine) as BrainEngine;
-    spy.executeRaw = (async (sql: string, params?: unknown[]) => {
-      if (sql.includes('GROUP BY')) { captured = { text: sql, params: params ?? [] }; throw stop; }
-      return engine.executeRaw(sql, params);
-    }) as BrainEngine['executeRaw'];
-    await expect(auditDriftConflicts(spy, 'default', { trusted: true, excludePrivate: false }, { limit: 100 })).rejects.toBe(stop);
+    const exec = { executeRaw: async (sql: string, params?: unknown[]) => {
+      if (!sql.includes('GROUP BY')) return [{ slugs: 0, receipts: 0 }];
+      captured = { text: sql, params: params ?? [] };
+      return [];
+    } } as never;
+    // The window auditDriftConflicts reads: this source's own requests, up to its newest (readDriftConflictBounds).
+    const bounds = await engine.readDriftConflictBounds('default');
+    const top = BigInt(bounds?.top ?? '0');
+    await listDriftConflictGroups(exec, 'default', {
+      incarnation: bounds?.incarnation ?? '00000000-0000-4000-8000-000000000000', floor: String(top - 100000n), through: String(top),
+      requireLivePage: false, excludePrivate: false, after: '', limit: 100, driftMessage: 'The canonical file contains an uncoordinated local edit.',
+    });
     return captured!;
   };
 

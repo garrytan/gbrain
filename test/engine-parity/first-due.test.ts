@@ -26,7 +26,7 @@ const ms = (iso: string | null | undefined) => (iso ? Date.parse(iso) : null);
 
 describe('engine parity: the first-due clock of the oldest unsynced commit', () => {
   parityTest('readFirstDue takes the earlier of a busy notifier row and a due freshness marker, per existing source', {
-    methods: ['readNotifierFirstDue'],
+    methods: ['readFirstDue'],
   }, async (engine, backend) => {
     for (const id of ['alpha', 'beta', 'gamma', 'delta', 'eps', 'gone']) await createSource(engine, backend, id, {}, `/srv/brain/${id}`);
     await archiveSource(engine, backend, 'gone');

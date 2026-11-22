@@ -64,7 +64,7 @@ async function pageWritten(engine: BrainEngine): Promise<boolean> {
 
 describe('credential grant reads of a remote write', () => {
   parityTest('an MCP put_page over http owned by a live OAuth client commits', {
-    methods: ['readOAuthClientWriteGrant', 'readOauthClient'],
+    methods: ['readOAuthClientWriteGrant'],
     // Held: a remote put_page queues a mention-links effect, and the links worker still reads through raw SQL, so its
     // admission refuses raw_sql by name on Rust (persistence/journal.ts admitWrite). Remove this line when the links
     // worker is typed; the case then compares on Rust.
@@ -90,7 +90,7 @@ describe('credential grant reads of a remote write', () => {
       gone: await engine.readWriterSlugFence(principal('client-missing')) };
   });
 
-  parityTest('a legacy token minted with a grant to a named source reads that source over http', { methods: ['lockRegisteredSourceIds', 'insertAccessToken'] }, async (engine, backend) => {
+  parityTest('a legacy token minted with a grant to a named source reads that source over http', { methods: ['insertAccessToken'] }, async (engine, backend) => {
     await createSource(engine, backend, SOURCE);
     await engine.putPage(SLUG, { type: 'note', title: 'Credential grant', compiled_truth: 'A page in the granted source.' }, { sourceId: SOURCE });
     const minted = await mintLegacyToken(engine, { name: 'source-granted', scopes: ['read'], sourceGrant: [SOURCE], takesHolders: ['world'] });
@@ -116,7 +116,7 @@ describe('credential grant reads of a remote write', () => {
       revoked: grant(await engine.readAccessTokenWriteGrant(revoked.id)), missing: await engine.readAccessTokenWriteGrant('00000000-0000-4000-8000-000000000000') };
   });
 
-  parityTest('a token grant that names a marked scope source refuses invalid_grant and inserts no token', { methods: ['lockRegisteredSourceIds', 'getSource'] }, async (engine, backend) => {
+  parityTest('a token grant that names a marked scope source refuses invalid_grant and inserts no token', { methods: ['readScopeSourceConfigs'] }, async (engine, backend) => {
     await createSource(engine, backend, 'scope-a', { qm_scope: true });
     const refusal = await mintLegacyToken(engine, { name: 'scope-reader', scopes: ['read'], sourceGrant: ['scope-a'], takesHolders: ['world'] })
       .then(() => null, (e: unknown) => e as { code?: unknown; name?: unknown });

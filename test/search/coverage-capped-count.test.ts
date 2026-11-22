@@ -28,7 +28,8 @@ describe('coverage count read options', () => {
       seen.push(opts);
       return [{ total: 3, could_affect: 1, could_affect_images: 0 }] as never;
     }, {}, WORDS);
-    expect(seen).toEqual([{ timeoutMs: COVERAGE_COUNT_TIMEOUT_MS, prepare: false }]);
+    // The pending count is the classed one, so it also runs JIT off (sync 11).
+    expect(seen).toEqual([{ timeoutMs: COVERAGE_COUNT_TIMEOUT_MS, prepare: false, jitOff: true }]);
     expect(count).toEqual({ total: 3, could_affect: 1, capped: false, could_affect_images: 0 });
   });
 
