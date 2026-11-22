@@ -92,11 +92,11 @@ transaction	lifecycle	yes	147	no	yes	yes	serves
 transactionDirect	lifecycle	yes	13	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	135	yes	yes	yes	serves
+getPage	pages	yes	136	yes	yes	yes	serves
 readPageSnapshot	pages	yes	36	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	611	yes	yes	yes	serves
+putPage	pages	yes	612	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	22	yes	yes	yes	serves
@@ -133,7 +133,7 @@ countSourcePages	pages	yes	1	no	yes	yes	serves
 insertSource	pages	yes	1	no	yes	yes	serves
 listPrefixSampledPages	pages	yes	2	no	yes	yes	serves
 listCorpusSample	pages	yes	2	no	yes	yes	serves
-bumpPageRetrievals	pages	yes	1	no	yes	yes	serves
+bumpPageRetrievals	pages	yes	2	no	yes	yes	serves
 getPageSealState	pages	yes	5	no	yes	yes	serves
 refreshPageOrigin	pages	yes	3	no	yes	yes	serves
 readLivePageIdBySlug	pages	yes	1	no	yes	yes	serves
@@ -578,7 +578,7 @@ findExactSlug	entity_reads	yes	1	no	yes	yes	serves
 findFuzzyEntityCandidates	entity_reads	yes	3	no	yes	yes	serves
 findExactBasenameCandidates	entity_reads	yes	2	no	yes	yes	serves
 readRetirementHop	entity_reads	yes	5	no	yes	yes	serves
-readEntityCardRows	entity_reads	yes	1	no	yes	yes	serves
+readEntityCardRows	entity_reads	yes	2	no	yes	yes	serves
 readExtractionLagCounts	entity_reads	yes	2	no	yes	yes	serves
 readIgnoredPrivacyLabelPages	entity_reads	yes	2	no	yes	yes	serves
 acquireCycleLock	cycle_locks	yes	13	no	yes	yes	serves
