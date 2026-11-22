@@ -1,0 +1,4 @@
+**Search no longer spends more than a second compiling its readiness counts on a large self-hosted Postgres brain.**
+
+### Fixed
+- On a Postgres server with JIT on (the stock default, and the default of the pgvector Docker image), the counts search adds to its readiness metadata (pending pages, pages held from embedding, and the upgrade rebuild's progress) were priced past Postgres's JIT thresholds by the visibility checks a remote caller adds. Postgres then compiled each one with LLVM on every search, which cost more than a second per search on a brain of several hundred thousand pages while the reads themselves took a fraction of that. These counts now run with JIT off for their own transaction, as the readiness probe and the search reads already did. Servers with JIT off, and PGLite, are unaffected. Search results and the metadata are unchanged.
