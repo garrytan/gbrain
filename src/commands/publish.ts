@@ -26,7 +26,7 @@ const MARKED_JS = readFileSync(join(dirname(require.resolve('marked')), 'marked.
 // ── Content stripping ──────────────────────────────────────────────
 
 const TIMELINE_MARKER = /<!--+\s*timeline\s*-*-->/i;
-const TIMELINE_LINE = /^[ \t]*(?:---[ \t]+timeline[ \t]+---|#{1,6}[ \t]+(?:timeline|history)\b.*)$/im;
+const TIMELINE_LINE = /^[ \t]*(?:-{3,}[ \t]*timeline[ \t]*-{3,}[ \t]*$|#{1,6}[ \t]+[^A-Za-z0-9\n]*(?:timelines?|history)\b|[^A-Za-z0-9\n]*(?:timelines?|history)\b[^\n]*\n[ \t]*(?:=+|-+)[ \t]*$)/im;
 const GBRAIN_BLOCK_BEGIN = /^(?:[ \t]*#{1,6}[ \t]+(?:facts|takes)[ \t]*\n(?:[ \t]*\n)*)?[^\n]*?<!--+\s*gbrain:([a-z0-9_-]+):begin\b[^>]*>/im;
 
 /** The text before the first match of `pattern`, or all of it when nothing matches. */
@@ -47,7 +47,7 @@ export function makeShareable(content: string): string {
   // Remove YAML frontmatter
   if (clean.split('\n').find(line => line.trim())?.trim() === '---') {
     const offset = frontmatterBodyOffset(clean);
-    if (offset === 0) throw opError('invalid_frontmatter', 'The page opens a frontmatter block with --- and never closes it, so nothing was published.', 'Close the frontmatter with a --- line, then publish again.');
+    if (offset === 0) throw opError('invalid_frontmatter', 'The page opens a frontmatter block with --- and never closes it, so nothing was published.', 'Close the frontmatter with a --- line, then publish again.', { why: 'Publishing cannot tell where the private frontmatter ends, so it publishes nothing rather than guess.' });
     clean = clean.slice(offset);
   }
 
@@ -62,7 +62,14 @@ export function makeShareable(content: string): string {
   }
 
   // Remove HTML comments
-  clean = before(clean.replace(/[ \t]*<!--[\s\S]*?-->/g, ''), /<!--/);
+  let visible = '';
+  let at = 0;
+  for (let open = clean.indexOf('<!--'); open !== -1; open = clean.indexOf('<!--', at)) {
+    visible += clean.slice(at, open).replace(/[ \t]+$/, '');
+    const close = clean.indexOf('-->', open + 4);
+    at = close === -1 ? clean.length : close + 3;
+  }
+  clean = visible + clean.slice(at);
 
   // Remove [Source: ...] citations (all formats)
   clean = clean.replace(/\s*\[Source:[^\]]*\]/g, '');

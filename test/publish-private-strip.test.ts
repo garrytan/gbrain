@@ -15,6 +15,11 @@ describe('makeShareable drops every private section, whatever comes before it (#
     ['<!-- timeline --> sentinel', '# Test\n\nBody.\n\n<!-- timeline -->\n\n- 2026-01-01 ' + SECRET + '\n'],
     ['<!--timeline--> sentinel', '# Test\n\nBody.\n\n<!--timeline-->\n- 2026-01-01 ' + SECRET + '\n'],
     ['--- timeline --- sentinel', '# Test\n\nBody.\n\n--- timeline ---\n\n- 2026-01-01 ' + SECRET + '\n'],
+    ['--- timeline --- sentinel with trailing whitespace', '# Test\n\nBody.\n\n--- timeline --- \t\n\n- 2026-01-01 ' + SECRET + '\n'],
+    ['bold heading', '# Test\n\nBody.\n\n## **Timeline**\n\n- 2026-01-01 ' + SECRET + '\n'],
+    ['heading with an emoji', '# Test\n\nBody.\n\n## \u{1F4C5} Timeline\n\n- 2026-01-01 ' + SECRET + '\n'],
+    ['plural heading', '# Test\n\nBody.\n\n## Timelines\n\n- 2026-01-01 ' + SECRET + '\n'],
+    ['setext heading', '# Test\n\nBody.\n\nTimeline\n========\n\n- 2026-01-01 ' + SECRET + '\n'],
     ['## History heading', '# Test\n\nBody.\n\n---\n\n## History\n\n- 2026-01-01 ' + SECRET + '\n'],
     ['lowercase heading with trailing text', '# Test\n\nBody.\n\n## timeline (raw)\n\n- 2026-01-01 ' + SECRET + '\n'],
     ['H3 Timeline heading', '# Test\n\nBody.\n\n### Timeline\n\n- 2026-01-01 ' + SECRET + '\n'],
@@ -35,6 +40,10 @@ describe('makeShareable drops every private section, whatever comes before it (#
     expect(out).not.toContain(SECRET);
     expect(out).not.toContain('gbrain:');
     expect(out).toBe('# Test\n\nBody.\n\nAfter.');
+  });
+
+  test('any other gbrain fence is dropped', () => {
+    expect(makeShareable('# Test\n\nBody.\n\n<!-- gbrain:links:begin -->\n- ' + SECRET + '\n<!-- gbrain:links:end -->\n\nAfter.\n')).toBe('# Test\n\nBody.\n\nAfter.');
   });
 
   test('an unclosed gbrain fence drops everything after it', () => {
