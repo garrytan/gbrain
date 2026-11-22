@@ -41,7 +41,7 @@ import { buildSkillIndex, catalogStatus } from '../skills/resolver/build.ts';
 import { ResolverError } from '../skills/resolver/errors.ts';
 import { logsDir, skillIndexRoot } from '../skills/resolver/paths.ts';
 import { readDirSources } from '../skills/resolver/sources.ts';
-import { openclawConfigPath, openclawStateDir, parseJson5ish, resolveOpenclawWorkspace } from './brain-first.ts';
+import { openclawConfigPath, openclawPath, openclawStateDir, parseJson5ish, resolveOpenclawWorkspace } from './brain-first.ts';
 import { openclawSkillLoaderJs, openclawSkillWorkerJs } from './openclaw-skill-plugin-code.ts';
 import { openclawPluginRegistered, runOpenclawCli } from './openclaw-turn-plugin.ts';
 import { catalogSkillIds, pinnedBlockFor } from './skill-pins.ts';
@@ -133,7 +133,7 @@ export function openclawAgentSkillDirs(agentId: string, roster: RosterEntry[] = 
     const w = resolveOpenclawWorkspace();
     if (!('error' in w)) workspace = w.path;
   }
-  const dirs = [workspace ? join(workspace.replace(/^~(?=\/|$)/, process.env.HOME ?? '~'), 'skills') : null, join(openclawStateDir(), 'skills')];
+  const dirs = [workspace ? join(openclawPath(workspace), 'skills') : null, join(openclawStateDir(), 'skills')];
   return [...new Set(dirs.filter((d): d is string => !!d && existsSync(d)))];
 }
 

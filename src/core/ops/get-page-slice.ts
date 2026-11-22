@@ -26,7 +26,7 @@
  */
 import type { OperationContext, ParamDef } from './contract.ts';
 import { opError } from './contract.ts';
-import { invalidParam, readFix } from './op-fix.ts';
+import { invalidParam, opTransport, paramUse, readFix } from './op-fix.ts';
 import { resultByteCap } from '../egress-budget.ts';
 import { FENCE, HEADING, HEADING_MAX_CHARS, clip } from '../page-window/window.ts';
 
@@ -54,12 +54,17 @@ const NL = 0x0a;
 
 export type SliceRequest = { kind: 'section'; heading: string } | { kind: 'grep'; term: string; context: number };
 
-const SECTION_EXAMPLE = { slug: 'notes/acme-example-log', section: 'Next steps' };
+const SECTION_EXAMPLE = { slug: 'notes/acme-example-log', section: 'Goals' };
 const GREP_EXAMPLE = { slug: 'notes/acme-example-log', grep: 'widget', context: 2 };
 
 /** The slice a get_page call asks for, or undefined; throws invalid_params on a malformed value or a conflicting param. */
 export function parseSliceRequest(ctx: Pick<OperationContext, 'remote' | 'transport'>, p: Record<string, unknown>): SliceRequest | undefined {
-  const bad = (param: string, message: string, example: unknown) => invalidParam(ctx, 'get_page', param, message, { example });
+  const bad = (param: string, message: string, example: { slug: string } & Record<string, string | number>) => invalidParam(ctx, 'get_page', param, message, {
+    def: GET_PAGE_SLICE_PARAMS[param],
+    call: opTransport(ctx) === 'cli'
+      ? `gbrain get ${example.slug} ${Object.entries(example).filter(([k]) => k !== 'slug').map(([k, v]) => paramUse(ctx, k, v)).join(' ')}`
+      : `get_page ${JSON.stringify(example)}`,
+  });
   if (p.section === undefined && p.grep === undefined) {
     if (p.context !== undefined) throw bad('context', 'get_page: context applies to grep; pass grep with it.', GREP_EXAMPLE);
     return undefined;
