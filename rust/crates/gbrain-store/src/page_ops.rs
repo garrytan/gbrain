@@ -42,7 +42,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod atom_restore;
 mod relational;
-mod retrievals;
+pub(crate) mod retrievals;
 mod stale_atoms;
 pub(crate) use retrievals::remove_page_rows;
 

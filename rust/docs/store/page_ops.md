@@ -65,6 +65,7 @@ page's embedded chunk with the lowest `chunk_index`, or `null` when no chunk of 
 
 - The store keeps no legacy `pages.last_retrieved_at` column, so the retrieval record is the only
   source of `last_retrieved_at` (Postgres takes the later of the two).
+- The entity card read (`readEntityCardRows`, `cli_reads/entities.rs`) reads the same record for its `last_retrieved_at`.
 - `listCorpusSample` uses a SplitMix64 shuffle seeded from `seed`. A seed gives a fixed pick, but not
   the pick Postgres `setseed()` + `random()` gives. The parity cases compare the set, not the order.
 - `countPagesBy` refuses a `since` that is not an ISO date or instant (Postgres also takes other
