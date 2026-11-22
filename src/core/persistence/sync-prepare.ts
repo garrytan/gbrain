@@ -588,7 +588,7 @@ export async function publishPassStamp(tx: BrainEngine, row: WriteRequest, p: Sy
     passes_since_full: stamp.full || !prior ? 0 : prior.passes_since_full + 1 };
   if (stamp.closesEpisode) delete value.obligations.episode;
   if (stamp.configured) delete value.obligations.slug_mode;
-  Object.assign(value.obligations, { not_converged_streak: 0, mismatch: {}, faults: {}, stuck_since: null, stamped_behind: stamp.behind ? { commit: p.target, head_seen: stamp.behind } : undefined });
+  Object.assign(value.obligations, { not_converged_streak: 0, mismatch: {}, faults: {}, stuck_since: null, stamped_behind: stamp.behind ? { commit: p.target, head_seen: stamp.behind } : stamp.configured ? undefined : value.obligations.stamped_behind });
   value.telemetry = { ...value.telemetry, outcome: 'synced', stop_reason: stamp.configured ? null : 'selection_scoped', ended_at: at, remaining: 0,
     duration_ms: Date.parse(at) - Date.parse(value.telemetry.started_at) };
   if (!await writePassRow(tx, value)) throw syncPublicationRefusal(SYNC_PASS_SUPERSEDED, PASS_LEASE_LOST_MESSAGE, row, p,

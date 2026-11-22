@@ -17,7 +17,8 @@
  *   While it is set the next tick reads in full, never idle (a HEAD rewound to the stamped commit is read again, then idle), and
  *   under `sync.admission=classify_only` it is `admission_paused`, never up to date. Status reads it as `pass_unfinished` (a failed
  *   writeback or withheld deletes still read blocked) and the backlog as owing a pass.
- * - A selection-scoped pass (an exclude flag) never reads a confirm level or stamps behind HEAD.
+ * - A selection-scoped pass (an exclude flag) never reads a confirm level or stamps behind HEAD, and a selection-scoped stamp
+ *   keeps the marker: only a configured stamp clears it.
  * - A pass that stops resumable (a slice's writer_yield) keeps its `I⋈P` for the next pass, whose first round patches it.
  * Real PGLite (and Postgres when DATABASE_URL is set), real managed syncs and real Git.
  */
@@ -111,6 +112,9 @@ for (const backend of testBackends()) describe(`[${backend}] GST-3534: a pass wh
     expect(passStatusState(row, null, 'request-a')).toEqual(['blocked', 'writeback_failed']);
     const withheld: DeletesWithheld = { source_id: 'default', incarnation: row.value.incarnation ?? '', target: head, count: 1, reconcilable: 2, ratio: 0.5, set_hash: 'h', samples: ['notes/n1.md'], at: row.updated_at };
     expect(passStatusState(row, withheld)).toEqual(['blocked', 'deletes_withheld']);
+    // A selection-scoped sync converges for its own selection, leaves last_commit behind and keeps the marker.
+    expect((await performManagedSync(engine, { ...OPTS, exclude: ['notes/n1.md'] })).reason).toBe('selection_scoped');
+    expect({ lastCommit: await lastCommit(engine), stamped_behind: (await convergence(engine)).stamped_behind }).toEqual({ lastCommit: seen[2]!.head, stamped_behind: { commit: seen[2]!.head, head_seen: head } });
     const next = await performManagedSync(engine, OPTS);
     expect({ status: next.status, toCommit: next.toCommit }).toEqual({ status: 'synced', toCommit: head });
     expect(await slugs(engine)).toEqual(['notes/w0', 'notes/w1', 'notes/w2', 'notes/w3']);
