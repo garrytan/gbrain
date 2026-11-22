@@ -351,6 +351,7 @@ cd "$STAGING"
 git init -b main
 git add -A  # gbrain-allow-shared-tree-git: first commit of a fresh single-writer export repo holding only the export list
 # Refuse anything staged that is not on the export list: it got no read.
+[ -s "$STAGING.export-list" ] || { echo "no export list at $STAGING.export-list — ABORT"; exit 1; }
 unread=$(git -c core.quotePath=false diff --cached --name-only | LC_ALL=C sort | LC_ALL=C comm -23 - "$STAGING.export-list")
 [ -z "$unread" ] || { echo "not on the export list, never read: $unread — ABORT"; exit 1; }
 git commit -m "Initial import — sanitized team brain"

@@ -32,6 +32,7 @@ done
 # here that never got the read. List them and stop; the user removes each one
 # (git rm, commit-push, re-run Step 1) or appends it to the export list and
 # gives it the full read and the Phase 4 checks.
+[ -s "$STAGING.export-list" ] || { echo "no export list at $STAGING.export-list — ABORT"; exit 1; }
 unread=$(for d in people meetings daily companies projects analysis; do [ -d "$d" ] && find "$d" -type f; done \
   | LC_ALL=C sort | LC_ALL=C comm -23 - "$STAGING.export-list")
 [ -z "$unread" ] || { printf 'not on the export list, never read — ABORT:\n%s\n' "$unread"; exit 1; }
@@ -141,8 +142,13 @@ git fetch --tags origin
 for b in $(git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/origin/); do
   [ "$b" = HEAD ] || [ "$b" = main ] || git branch -f "$b" "origin/$b"
 done
-# Refs the user marked delete on the card: remove them locally now
-# (git branch -D <branch>, git tag -d <tag>); the push deletes them remotely.
+# Refs the user marked delete on the card: record each full ref name in
+# $WORK/delete-refs.txt and remove it locally now, the remote-tracking ref too
+# so filter-repo cannot recreate the branch; the push deletes them remotely:
+#   echo "refs/heads/<branch>" >> "$WORK/delete-refs.txt"; git branch -D <branch>
+#   git update-ref -d refs/remotes/origin/<branch>
+#   echo "refs/tags/<tag>" >> "$WORK/delete-refs.txt"; git tag -d <tag>
+touch "$WORK/delete-refs.txt"
 
 # The purge list is the COMPLETE set of scanned dirs (Phases 1-4); a narrower
 # list leaves old history alive. Backed-up, filtered and re-added sets match.
@@ -182,8 +188,9 @@ git -C "$BACKUP_PATH" log -1 >/dev/null \
 ```
 
 **Step 3b — push every branch and tag under a lease.** One atomic push: each
-ref recorded in Step 1 is rewritten, or deleted when it no longer exists
-locally, and each carries `--force-with-lease=<ref>:<recorded sha>` (main's
+ref recorded in Step 1 is rewritten, or deleted when Step 3 listed it in
+`$WORK/delete-refs.txt`; a recorded ref missing locally that was not marked
+delete stops the purge before anything is pushed. Each ref carries `--force-with-lease=<ref>:<recorded sha>` (main's
 is `$LEASE`). If any ref moved, the whole push refuses and nothing on the
 remote changes.
 
@@ -196,7 +203,9 @@ while read -r old ref; do
   case "$ref" in refs/heads/*|refs/tags/*) ;; *) continue ;; esac
   case "$ref" in *'^{}') continue ;; esac
   LEASES="$LEASES --force-with-lease=$ref:$old"
-  if git show-ref --verify --quiet "$ref"; then REFSPECS="$REFSPECS $ref:$ref"; else REFSPECS="$REFSPECS :$ref"; fi
+  if git show-ref --verify --quiet "$ref"; then REFSPECS="$REFSPECS $ref:$ref"
+  elif grep -qxF "$ref" "$WORK/delete-refs.txt"; then REFSPECS="$REFSPECS :$ref"
+  else echo "$ref is missing locally but was not marked delete — ABORT, nothing pushed"; exit 1; fi
 done < "$WORK/remote-refs.txt"
 git push --atomic $LEASES origin $REFSPECS || { echo "push refused: the remote moved, nothing changed — re-run from Step 1"; exit 1; }  # gbrain-allow-shared-tree-git: confirmed history purge of a private clone, every ref leased to its Step 1 sha
 

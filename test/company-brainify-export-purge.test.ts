@@ -113,6 +113,9 @@ describe('company-brainify export: only files that got the read ship', () => {
     rmSync(join(shared, 'people/family-member-example.md'));
     const clean = bash(guard, shared, { STAGING: staging });
     expect(clean.status).toBe(0);
+    const noList = bash(guard, shared, { STAGING: join(dir, 'no-such-staging') });
+    expect(noList.status).toBe(1);
+    expect(noList.stdout).toContain('no export list');
     expect(readFileSync(join(shared, 'people/alice-example.md'), 'utf8')).toBe('Staff engineer.\n');
   });
 
@@ -185,6 +188,7 @@ describe('company-brainify purge: every ref leased and pushed', () => {
     git(shared, 'update-ref', 'refs/heads/main', newMain);
     git(shared, 'branch', '-f', 'feat', newFeat);
     git(shared, 'tag', '-d', 'v1');
+    writeFileSync(join(work, 'delete-refs.txt'), 'refs/tags/v1\n');
     return { dir, remote, seed, work, shared, newMain, newFeat, oldMain: git(seed, 'rev-parse', 'main'), oldFeat: git(seed, 'rev-parse', 'feat') };
   }
 
@@ -214,6 +218,17 @@ describe('company-brainify purge: every ref leased and pushed', () => {
       expect(git(r.dir, '--git-dir', r.remote, 'rev-parse', 'feat')).toBe(r.oldFeat);
       expect(git(r.dir, '--git-dir', r.remote, 'tag', '-l')).toBe('v1');
     }
+  });
+
+  test('a branch missing locally that was not marked delete stops the purge, and the remote keeps it', () => {
+    const r = sharedRepo();
+    git(r.shared, 'branch', '-D', 'feat');
+    const run = bash(fenceContaining('--force-with-lease=$ref:$old'), r.dir, { WORK: r.work, PURGE_DIRS });
+    expect(run.status).not.toBe(0);
+    expect(run.stdout).toContain('refs/heads/feat is missing locally but was not marked delete');
+    expect(git(r.dir, '--git-dir', r.remote, 'rev-parse', 'feat')).toBe(r.oldFeat);
+    expect(git(r.dir, '--git-dir', r.remote, 'rev-parse', 'main')).toBe(r.oldMain);
+    expect(git(r.dir, '--git-dir', r.remote, 'tag', '-l')).toBe('v1');
   });
 
   test('a branch added during the card stops the purge before anything is pushed', () => {
