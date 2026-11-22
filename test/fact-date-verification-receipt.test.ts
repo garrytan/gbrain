@@ -54,7 +54,9 @@ async function verifyNativeReceipt(databaseUrl?: string) {
     };
     await put(originalSlug, content('note', 'Original report', originalText));
     const original = (await engine.readPageSnapshot(originalSlug, { sourceId: source }))!;
-    await put(originalSlug, content('note', 'Updated report', 'A later revision omits the old observation.'));
+    const [archived] = await engine.executeRaw<{ count: number }>(
+      'SELECT count(*)::int AS count FROM page_versions WHERE page_id=$1', [original.page.id]);
+    expect(archived?.count).toBe(0);
     await put(factSlug, factPage('A delivery handover was recorded.'));
     const [id] = await engine.executeRaw<{ id: number }>(
       'SELECT id FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND expired_at IS NULL', [source, factSlug]);
@@ -160,6 +162,10 @@ async function verifyNativeReceipt(databaseUrl?: string) {
     expect(readFileSync(join(root, factSlug + '.md'), 'utf8')).toBe(file);
     expect(readFileSync(join(root, originalSlug + '.md'), 'utf8')).toBe(evidenceFile);
 
+    await put(originalSlug, content('note', 'Updated report', 'A later revision omits the old observation.'));
+    expect(await run()).toEqual(preview);
+    expect(await run(['--apply', '--expect', preview.preview_hash])).toEqual(applied);
+
     expect(await compactReceipt(engine, committed[0]!)).toMatchObject({ freed_bytes: expect.any(Number) });
     expect((await receipts()).find(r => r.request_id === request)).toMatchObject({
       compacted: true, intent: null, outcome: { verified_event_date: day, proof },
@@ -196,7 +202,6 @@ async function verifyDoctor(databaseUrl?: string) {
         visibility: 'private', notability: 'medium', validFrom: day, source: 'synthetic journal', active: true }))));
     await put(originalSlug, content('note', 'Original handover log', data.map(item => item.quote).join('\n')));
     const original = (await engine.readPageSnapshot(originalSlug, { sourceId: source }))!;
-    await put(originalSlug, content('note', 'Current handover log', 'Later events.'));
     for (let i = 0; i < 20; i++) await put(entitySlug(i), entityPage(data.slice(i * 10, i * 10 + 10).map(item => item.claim)));
     const raw = await findBulkFactDays(engine, [source]);
     expect(raw).toMatchObject([{ source_id: source, day, facts: 200, entities: 20, dated_claims: 0 }]);

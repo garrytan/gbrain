@@ -9,6 +9,15 @@ const FACT_ASSERTION = trustedSql(`jsonb_build_array(f.id::text, f.source_id, f.
   extract(epoch FROM f.valid_from)::text, f.write_request_id::text)`);
 
 type SqlIdentifier = ReturnType<typeof trustedSql>;
+const originalBodies = (revision: ReturnType<typeof sqlFragment>, lockHistory = false) => {
+  const current = sqlFragment`p.knowledge_revision=${revision} AND p.body_storage='inline'`;
+  return sqlFragment`SELECT p.compiled_truth WHERE ${current}
+    UNION ALL
+    SELECT retained.compiled_truth FROM (SELECT pv.compiled_truth FROM page_versions pv
+      WHERE pv.page_id=p.id AND pv.knowledge_revision=${revision}
+        AND pv.is_deleted IS NOT TRUE AND pv.body_storage='inline' AND (${current}) IS NOT TRUE
+      ${lockHistory ? sqlFragment`FOR SHARE OF pv` : sqlFragment``}) retained`;
+};
 const dateExcerptSql = (start: SqlIdentifier, length: SqlIdentifier) => sqlFragment`jsonb_build_object(
   'text',substring(v.compiled_truth FROM ${start} FOR ${length}),
   'before',substring(v.compiled_truth FROM greatest(1,${start}-${DATE_CONTEXT_CHARS}::int) FOR least(${start}-1,${DATE_CONTEXT_CHARS}::int)),
@@ -32,16 +41,15 @@ export async function readFactDatePin(engine: BrainEngine, sourceId: string, fac
   return row ? { utc_day: row.utc_day, fact_digest: digest(row.assertion) } : null;
 }
 
-/** The excerpt lives on a retained original revision in the same active source. Offsets are SQL characters. */
+/** Read the pinned original's current or retained inline revision. Offsets are SQL characters. */
 export async function readOriginalDateExcerpt(tx: BrainEngine, sourceId: string, pageId: number,
   revision: string, start: number, length: number) {
   const excerpt = dateExcerptSql(trustedSql('a.excerpt_start'), trustedSql('a.excerpt_length'));
   const q = renderFragment(sqlFragment`SELECT ${excerpt} AS excerpt
-    FROM pages p JOIN page_versions v ON v.page_id=p.id
+    FROM pages p CROSS JOIN LATERAL (${originalBodies(sqlFragment`${revision}::uuid`, true)}) v
     CROSS JOIN (SELECT ${start}::int AS excerpt_start, ${length}::int AS excerpt_length) a
-    WHERE p.source_id=${sourceId} AND p.id=${pageId}::bigint AND p.deleted_at IS NULL AND v.knowledge_revision=${revision}::uuid
-      AND v.is_deleted IS NOT TRUE AND v.body_storage='inline'
-    LIMIT 2 FOR SHARE OF p,v`);
+    WHERE p.source_id=${sourceId} AND p.id=${pageId}::bigint AND p.deleted_at IS NULL
+    LIMIT 2 FOR SHARE OF p`);
   const rows = await tx.executeRaw<{ excerpt: DateExcerpt }>(q.text, q.params);
   return rows.length === 1 ? rows[0]!.excerpt : null;
 }
@@ -84,9 +92,8 @@ type DateAnchor = Pick<FactDateProof, 'fact_id' | 'utc_day' | 'original_page_id'
 export async function readFactDateAnchors(tx: BrainEngine, assessments: Array<DateAnchor & { source_id: string }>) {
   const q = renderFragment(sqlFragment`SELECT a.ord::int AS ord, ${FACT_ASSERTION} AS assertion, f.fact AS claim,
       (SELECT CASE WHEN count(*)=1 THEN jsonb_agg(${dateExcerptSql(trustedSql('proof.excerpt_start'), trustedSql('proof.excerpt_length'))})->0 END
-       FROM pages p JOIN page_versions v ON v.page_id=p.id
-       WHERE p.source_id=proof.source_id AND p.id=proof.original_page_id AND p.deleted_at IS NULL
-         AND v.knowledge_revision=proof.original_revision AND v.is_deleted IS NOT TRUE AND v.body_storage='inline') AS excerpt
+       FROM pages p CROSS JOIN LATERAL (${originalBodies(sqlFragment`proof.original_revision`)}) v
+       WHERE p.source_id=proof.source_id AND p.id=proof.original_page_id AND p.deleted_at IS NULL) AS excerpt
     FROM jsonb_array_elements(${JSON.stringify(assessments)}::text::jsonb) WITH ORDINALITY a(input,ord)
     CROSS JOIN LATERAL jsonb_to_record(a.input) AS proof(source_id text, fact_id bigint, utc_day date,
       original_page_id bigint, original_revision uuid, excerpt_start int, excerpt_length int)

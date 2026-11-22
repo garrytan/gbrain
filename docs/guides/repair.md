@@ -3300,7 +3300,7 @@ stable `request_id` UUID and an `evidence` object with these fields.
 | `fact_id` | The active fact's numeric ID in the selected source |
 | `claim_sha256` | Lowercase SHA-256 of the exact stored claim as UTF-8 |
 | `utc_day` | The fact's recorded event day in `YYYY-MM-DD` form |
-| `original_page_id`, `original_revision` | Numeric page ID and revision UUID of the retained original in that source |
+| `original_page_id`, `original_revision` | Numeric page ID and revision UUID of the original in that source. The exact inline revision can be current or retained in page history. |
 | `excerpt_start`, `excerpt_length` | One-based starting character and length in the archived `compiled_truth`, measured in Unicode code points. The length may be up to 4,000 characters. |
 | `excerpt_sha256` | Lowercase SHA-256 of the exact archived substring as UTF-8, including any whitespace in the selection |
 
