@@ -171,3 +171,42 @@ describe('recordServeBrainRef', () => {
     expect(existsSync(brainRefSidecarPath(other))).toBe(false);
   });
 });
+
+describe('the served engine records its own datastore, and again after a reconnect', () => {
+  let held: PGLiteEngine;
+  let mount: PGLiteEngine;
+  let mountDir: string;
+  let mountId: string;
+
+  beforeAll(async () => {
+    held = new PGLiteEngine();
+    await held.connect({ engine: 'pglite', database_path: dataDir });
+    mountDir = join(home, 'mounted.pglite');
+    mount = new PGLiteEngine();
+    await mount.connect({ engine: 'pglite', database_path: mountDir });
+    await mount.initSchema();
+    mountId = (await mount.readPersistenceBrainId())!;
+  }, 120_000);
+
+  afterAll(async () => {
+    await held?.disconnect();
+    await mount?.disconnect();
+  });
+
+  test('a reconnect takes a fresh lock token, and the reference is recorded again under it', async () => {
+    const { recordServeBrainRefAtStart, readServeBrainRef } = await import('../src/commands/serve-brain-ref.ts');
+    await recordServeBrainRefAtStart(held, () => {});
+    expect(readServeBrainRef(dataDir)).toEqual({ brain_ref: brainRefFor(brainId) });
+    await held.reconnect();
+    const deadline = Date.now() + 10_000;
+    while (readServeBrainRef(dataDir).brain_ref === null && Date.now() < deadline) await Bun.sleep(50);
+    expect(readServeBrainRef(dataDir)).toEqual({ brain_ref: brainRefFor(brainId) });
+  }, 60_000);
+
+  test('a served brain outside the host config (a mount) records under its own data directory', async () => {
+    const { recordServeBrainRefAtStart, readServeBrainRef } = await import('../src/commands/serve-brain-ref.ts');
+    await recordServeBrainRefAtStart(mount, () => {});
+    expect(readServeBrainRef(mountDir)).toEqual({ brain_ref: brainRefFor(mountId) });
+    expect(brainRefFor(mountId)).not.toBe(brainRefFor(brainId));
+  }, 60_000);
+});

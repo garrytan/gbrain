@@ -5252,7 +5252,7 @@ A probe that reaches the brain also prints `brain_ref` (JSON `probe.brain_ref`, 
 one-way digest of the brain's persistence identity (`persistence_brain.brain_id`), which a reviewed policy uses to
 name one brain, such as the engine swap's dated readiness override. The digest cannot be turned back into the
 identity, and the command never prints the identity itself. While `gbrain serve` holds a PGLite brain, the probe
-reads the reference that serve recorded at start (`<data dir>.gbrain-brain-ref.json`, 0600, holding the reference and
+reads the reference that serve recorded at start and after each reconnect (`<data dir>.gbrain-brain-ref.json`, 0600, holding the reference and
 a digest of the serve's lock token, never the identity); a file another lock holder wrote is refused
 (`brain_ref_note: serve_brain_ref_stale`). Other notes, with `brain_ref: null`: `no_persistence_identity`,
 `brain_ref_unreadable`, `locked_by_other_process`, `serve_brain_ref_missing` (a serve from before this field).

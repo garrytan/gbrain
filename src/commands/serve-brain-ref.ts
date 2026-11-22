@@ -13,7 +13,7 @@ import { dirname } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
 import { readBrainRef } from '../core/brain-ref.ts';
 import { flushDirectory } from '../core/fs-durable.ts';
-import { gbrainPath, type GBrainConfig } from '../core/config.ts';
+import { openedPgliteDatastore, registerPgliteReopen } from '../core/pglite-lifecycle.ts';
 import { getPgliteKernelLockPath, heldLockFor, liveHolderToken } from '../core/pglite-lock.ts';
 
 const BRAIN_REF = /^[0-9a-f]{16}$/;
@@ -76,18 +76,24 @@ export function readServeBrainRef(dataDir: string): ServeBrainRef {
 }
 
 /**
- * `gbrain serve` start: records the sidecar for a local PGLite brain (a serve of any other brain holds no PGLite lock,
- * so `recordServeBrainRef` skips it); a failure costs only the status field and one log line.
+ * `gbrain serve` start: records the sidecar for the PGLite datastore the served engine itself opened (a mounted brain's
+ * own data dir, never the host config's), and records it again after every reopen of that engine, since a reconnect
+ * takes a fresh lock token. Any other engine opened no PGLite datastore, so nothing is written. A failure costs only the
+ * status field and one log line.
  */
 export async function recordServeBrainRefAtStart(
   engine: Pick<BrainEngine, 'readPersistenceBrainId'>,
-  cfg: GBrainConfig | null,
   log: (line: string) => void = line => console.error(line),
 ): Promise<void> {
-  if (!cfg || cfg.remote_mcp || cfg.database_url) return;
-  try {
-    await recordServeBrainRef(engine, cfg.database_path ?? gbrainPath('brain.pglite'));
-  } catch (error) {
-    log(`[gbrain serve] brain_ref not recorded for engine status (${(error as NodeJS.ErrnoException).code ?? 'error'})`);
-  }
+  const record = async (): Promise<void> => {
+    const dataDir = openedPgliteDatastore(engine);
+    if (!dataDir) return;
+    try {
+      await recordServeBrainRef(engine, dataDir);
+    } catch (error) {
+      log(`[gbrain serve] brain_ref not recorded for engine status (${(error as NodeJS.ErrnoException).code ?? 'error'})`);
+    }
+  };
+  registerPgliteReopen(engine, () => { void record(); });
+  await record();
 }
