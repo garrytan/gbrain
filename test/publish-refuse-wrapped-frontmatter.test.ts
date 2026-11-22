@@ -73,7 +73,10 @@ describe('gbrain publish refuses frontmatter wrapped in other text', () => {
   test('a wrapped opener with a language selector is refused without a key line', () => {
     expect(() => makeShareable(`wrapper\n---yaml\ntitle: A note\nprivate: alice-example\n---\n${BODY}`)).toThrow(invalid);
     expect(() => makeShareable(`wrapper\n--- json\n{"private": "alice-example"}\n---\n${BODY}`)).toThrow(invalid);
-    expect(() => makeShareable(`---yml\nprivate: alice-example\n---\n${BODY}`)).toThrow(invalid);
+  });
+
+  test('a language opener at the top of the page is frontmatter and is stripped', () => {
+    for (const opener of ['---yml', '---yaml', '--- yaml']) expect(makeShareable(`${opener}\nprivate: alice-example\n---\n${BODY}`)).toBe(BODY.trim());
   });
 
   test('the window is the first five non-blank lines: four wrapper lines are refused, five publish', () => {

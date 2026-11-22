@@ -16,7 +16,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { randomBytes, createCipheriv, pbkdf2Sync } from 'crypto';
 import { dirname, basename, join } from 'path';
 import { createRequire } from 'module';
-import { frontmatterBodyOffset } from '../core/markdown.ts';
+import { frontmatterBodyOffset, validatorFrontmatterFence } from '../core/markdown.ts';
 import { FrontmatterLanguageError, scanDataFrontmatter } from '../core/data-frontmatter.ts';
 import { GUEST_WARNING_LINE_RE } from '../core/guests/marker.ts';
 import { opError } from '../core/ops/contract.ts';
@@ -73,7 +73,7 @@ function before(text: string, pattern: RegExp): string {
  */
 export function makeShareable(content: string): string {
   let clean = content.replace(/\r\n?/g, '\n');
-  const opensFrontmatter = (text: string) => text.split('\n').find(line => line.trim())?.trim() === '---';
+  const opensFrontmatter = (text: string) => validatorFrontmatterFence(text.split('\n')).opens;
 
   const guestLine = GUEST_WARNING_LINE_RE.exec(clean);
   if (guestLine && opensFrontmatter(clean.slice(guestLine[0].length))) clean = clean.slice(guestLine[0].length);
