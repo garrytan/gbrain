@@ -5,7 +5,10 @@ thousands of pages, other agents committing to the brain repo every few
 minutes) finishes unattended. A page that moves under the run is held, not
 fatal; a dropped database connection is retried, not fatal; a relaunch starts
 a new pass that reads the source's level again and admits only what is still
-unsettled, so nothing already settled is written twice (a company-brain source
+unsettled, so nothing already settled is written twice; in the same process it
+re-reads only the database rows that changed since the last pass's read, and
+a pass whose `HEAD` keeps moving stamps the newest commit it settled instead of
+chasing every new one (a company-brain source
 keeps its cursor and resumes its frozen manifest). What is left for an
 operator is one loop over two commands, and this page is the decision table
 behind them.
@@ -33,7 +36,7 @@ moving again; ask me only about the ones gbrain will not decide by itself."*
    say where the source stands. Where the run stands is `convergence` for a
    managed source synced by the live pass (its newest pass: `pass_id`,
    `outcome`, `stop_reason`, `round`, `candidates`, `settled`, `remaining`,
-   `classes`; see [the pass](#the-pass-outcomes-and-status-reasons)); there
+   `classes`, `levels`, `settled_behind`; see [the pass](#the-pass-outcomes-and-status-reasons)); there
    `run_id`, `cursor`, `rate_pages_per_min` and `eta_seconds` are null because
    no cursor exists. A company-brain source keeps `cursor` (`index/total`, the
    `pinned_target` commit, `last_advance_at`). `committed_last_10m` is the
@@ -410,13 +413,26 @@ unsettled and nothing in flight stamps `last_commit`. Every plain sync
 compares the whole tree with what the database absorbed, so a reset or a lost
 run converges on the next plain sync with no flag.
 
+Each round reads the level at the current `HEAD`. A round at a commit its
+previous round did not read (another writer committed, or `gbrain sources
+refresh` moved `HEAD`) patches that round's pages-and-import-records read,
+re-reading only the rows any writer changed since; the tree is patched from
+`git diff-tree` and every path is still judged. When the last round's only
+unsettled paths are ones the commits since the previous round changed, the
+previous round's commit is converged: the pass stamps it (`synced`), and
+`convergence.settled_behind` names the newer `HEAD`, whose commits the next
+plain sync imports (status reads `commits_waiting` until then). So a pass ends
+in at most four rounds however often writers commit. `convergence.levels`
+counts the commits the newest pass read (`heads`) and how many of its rounds
+read the pages whole or patched the previous read (`whole`, `patched`).
+
 | Status `reason` | `state` | What it means | `next` |
 |---|---|---|---|
 | `pass_unfinished` | resumable | The newest pass is open or stopped at a deadline. | The plain sync (`resume_argv`); safe to loop. |
 | `pass_interrupted` | resumable | The newest pass is open but no process holds the source's drain lease: its process was killed or crashed (an out-of-memory guard, a timeout) before it ended the pass, so nothing recorded a failure. `live` is null and `interrupted` names the pass, its last write and, when the lock row outlived the process, the holder and the pages it committed. Doctor `managed_sync_blocked` lists it as `pass_interrupted` (warn, then fail after an hour). | The plain sync; if that pass stops the same way, the reason becomes `pass_abandoned`. |
 | `pass_terminated` | resumable | A SIGTERM or SIGHUP (an outer `timeout`, a supervisor stop, a closed terminal) reached `gbrain sync` during a managed pass, and the pass recorded its stop (`stop_reason: terminated`, drain stop `terminated`) before the run exited 143 (129 for SIGHUP). A second signal, or a run still saving the pass 3 s after the handler starts, exits as before and leaves the row open (`pass_interrupted`); a run that saved the pass but is still printing its result then exits without it, and the row reads `pass_terminated`. On PGLite the handler can start tens of seconds after the signal, as it already did before, so a supervisor that kills the process before then leaves the row open the same way; that pass reads `pass_interrupted` and the plain sync resumes it. Ctrl-C still records `timeout` and exits 0, and a sync job inside `jobs work` keeps the worker's own shutdown. | The plain sync; if that pass is stopped the same way before it saves work, the reason becomes `pass_abandoned`. |
 | `pass_abandoned` | blocked | Two passes in a row never ended, were stopped by a termination signal, or ended on the same kind of transient stop, and neither saved work before it stopped. A pass saved work when it committed a page, held a path it had not held before, or re-checked a held path and cleared that hold's re-check trigger (the hold is no longer due, and a `file_drift` hold names the page's current revision); saved work moved the source, so it resets the count. A pass that only reported progress does not count, nor does one that only re-held a page edited again before it (the hold is marked `basis_moved`), re-held a path with the same code and bytes only because `sync unblock` or `sources retry-held` asked (`retry_only`; a retry whose re-check changed the hold's code or file bytes restarts the hold, so that pass still counts once), or brought a transient hold to its attempt cap. So passes that only re-hold a page edited again before each of them still end `pass_abandoned`, and from that page's third hold `sync status` reports `needs_human: true` with the page's decision. Passes stop this way when the drain stopped them for making no progress, their process was killed, or each hit a statement timeout, a lost connection or write back-pressure (#7982). The newest open pass counts once no process holds the source's drain lease (#7596; a reader without the lease read counts it once its row has not moved for 5 minutes). | `gbrain doctor --json` and a report with the gbrain version and the newest run's `drain.stall`; another plain sync is likely to stop the same way. |
-| `not_converged` | resumable | The pass used its four rounds while another writer kept changing the level. Everything it admitted stands. | The plain sync; after three such passes in a row `next` is `gbrain doctor --json` and a report, because another sync will not change it. |
+| `not_converged` | resumable | The pass used its four rounds while the level kept changing in a way new commits do not explain (a working copy edited under every round, a write still in flight, a path that would not settle). Everything it admitted stands. | The plain sync; after three such passes in a row `next` is `gbrain doctor --json` and a report, because another sync will not change it. |
 | `settle_mismatch` | resumable | A path keeps settling without reading settled. The next pass re-admits it once; after three passes at one level it is a `settle_mismatch` hold that needs a person. | The plain sync, then report the hold. |
 | `deletes_withheld` | blocked | The pass's deletes crossed the mass-delete threshold (#2828) or an absolute cap (#7130: `sync.max_deletes`, default 500; `sync.max_delete_ratio`, default 0.01 above 50 deletes; per source `<key>.source.<id>`). The record's `trip` names which. It wrote one withheld record and synced everything else; no per-page hold is written. | Ask the user: restore the checkout if it is wrong; when the deletion is intended, raise the cap for that source (`gbrain config set sync.max_deletes.source.<id> <n>`) or run `GBRAIN_ALLOW_MASS_RECONCILE=1 gbrain sync --source <id>` on the brain host. `gbrain sync --source <id> --dry-run --json` lists the set and its hash. |
 | `admission_paused` | resumable | `sync.admission` is `imports_only` or `classify_only`. | Ask the user to run `gbrain config set sync.admission normal` when the pause is over; it is never lifted automatically. |
