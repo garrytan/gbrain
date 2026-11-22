@@ -9,11 +9,11 @@
  * (legacyStoredFrontmatter), or every such edit is held as file_drift and the suggested `--prefer database` repair would
  * overwrite the user's edit.
  *
- * That waiver needs proof that the older release stored the page from that baseline: the page's import record names the
- * old importer (import=1), the proof provenLegacyCarry uses. Without it a database edit to the old-typed form of a value
- * (code: '007' changed to 7) would look unchanged and be overwritten, so a page today's importer stored, or a page with
- * no import record, stays held. The record-less case differs from master on purpose and fails safe: the hold names its
- * repair and nothing is lost.
+ * For a page with an import record, that waiver needs proof that the older release stored the page from that baseline:
+ * the record names the old importer (import=1), the proof provenLegacyCarry uses. Without it a database edit to the
+ * old-typed form of a value (code: '007' changed to 7) would look unchanged and be overwritten, so a page today's
+ * importer stored stays held. A page with no import record imports the Git edit, as master does (#9939): Git is the
+ * parent on a repo brain, and with no record to prove which typing stored a value, the file's version wins.
  */
 import { describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
@@ -22,7 +22,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { legacyTypedFrontmatter } from '../src/core/frontmatter-legacy.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
-import { gitHoldFix, readGitSourceHolds, SYNC_IMPORT_PROVENANCE_OP } from '../src/core/persistence/sync-holds.ts';
+import { readGitSourceHolds, SYNC_IMPORT_PROVENANCE_OP } from '../src/core/persistence/sync-holds.ts';
 import { onlyDerivedKeysAdded } from '../src/core/persistence/sync-screen.ts';
 import { contentHash } from '../src/core/utils.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
@@ -130,13 +130,12 @@ describe('pages-03: a git edit to an older page with typed frontmatter is not he
     await editIsHeld(engine, root, CODED, { code: 7 });
   }, { setup }), 240_000);
 
-  // (iv) The repro's FE_SIDE=unknown shape: with no import record nothing proves the older release stored the page, so the
-  // edit stays held on purpose (a difference from master that fails safe), not a clean import.
-  test('(iv) an older page with no import record stays held (drift unknown)', () => managedBrain(async ({ engine, root }) => {
+  // (iv) The repro's FE_SIDE=unknown shape: with no import record the file's version wins, as on master (#9939).
+  test('(iv) an older page with no import record imports the Git edit (drift unknown)', () => managedBrain(async ({ engine, root }) => {
     expect((await performManagedSync(engine, { sourceId: 'default', noPull: true })).status).toBe('first_sync');
     await seedOlderRelease(engine);
     await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1', [SYNC_IMPORT_PROVENANCE_OP]);
-    await editIsHeld(engine, root, TYPED, { born: '1990-05-01T00:00:00.000Z' });
+    await editsImportCleanly(engine, root);
   }, { setup }), 240_000);
 });
 
@@ -152,17 +151,5 @@ describe('pages-03: onlyDerivedKeysAdded reads a value the old parser typed as s
   test('a real change is still a difference', () => {
     expect(onlyDerivedKeysAdded(content().replace('born: 1990-05-01', 'born: 1990-05-02'), stored, true)).toBe(false);
     expect(onlyDerivedKeysAdded(content('label: new\n'), stored, true)).toBe(false);
-  });
-});
-
-describe('pages-03: the repair text of a record-less file_drift hold names the older-release typing case', () => {
-  const fix = (meta: Record<string, unknown>) => gitHoldFix({ source_id: 'source-a', path: 'people/d.md', slug: 'people/d', code: 'file_drift', meta } as unknown as Parameters<typeof gitHoldFix>[0]).why;
-  test('it says plainly that this is the older-release typing case and names the one-pass command that imports the file versions', () => {
-    const why = fix({ sides: 'unknown', side: 'unknown' });
-    expect(why).toContain('older-release typing case');
-    expect(why).toContain('gbrain repair file-drift --source source-a --held --side unknown --prefer file --whole-class');
-  });
-  test('a hold whose database side changed since a recorded import does not claim the typing case', () => {
-    expect(fix({ sides: 'both', side: 'both', page_revision: 'r2' })).not.toContain('older-release typing case');
   });
 });
