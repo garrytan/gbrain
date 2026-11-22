@@ -38,6 +38,7 @@ test/access-page-indexes-online.test.ts
 test/access-page-rule-fileless.test.ts
 test/access-qm-actor.test.ts
 test/access-raw-only-rules.test.ts
+test/access-read-log.test.ts
 test/access-room.test.ts
 test/access-rule-hints-owner-gst2128.test.ts
 test/access-rule-owner-gst2698.test.ts
@@ -754,6 +755,7 @@ test/search-transcript-quote-tiers.test.ts
 test/search-transcript-quote.test.ts
 test/search-vector-scope-parity.test.ts
 test/search/page-rank-cut.test.ts
+test/search/rebuild-progress-steady-state.test.ts
 test/search/rerank-gate-hybrid.test.ts
 test/search/rerank-gate-telemetry.test.ts
 test/secret-store-backup.test.ts
@@ -824,6 +826,7 @@ test/sync-full-cursor-slices-6349.test.ts
 test/sync-full-untracked-import-5459.test.ts
 test/sync-group-member-order.test.ts
 test/sync-handler-drain-6706.test.ts
+test/sync-history-read-budget.test.ts
 test/sync-holds-followups-7974.test.ts
 test/sync-holds-only-converge-7327.test.ts
 test/sync-holds-wave-gbra133.test.ts

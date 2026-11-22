@@ -110,6 +110,7 @@ export const UNRESOLVED_CONFIG_READS: readonly UnresolvedConfigRead[] = [
   { file: 'src/core/consent-cli.ts', expr: 'key', why: P },
   { file: 'src/core/content-repair/llm.ts', expr: 'key', why: P },
   { file: 'src/core/cycle/auto-think.ts', expr: 'key', why: P },
+  { file: 'src/core/cycle/base-phase.ts', expr: 'this.budgetUsdKey', why: 'the subclass budget key: cycle.propose_takes.budget_usd, cycle.grade_takes.budget_usd, cycle.calibration_profile.budget_usd (registered in config-runtime-keys.ts)' },
   { file: 'src/core/cycle/extract-atoms-cost-gate.ts', expr: 'key', why: 'listConfigKeys walk over ATOMS_NO_PRICING_KEY_PREFIX (cycle. prefix)' },
   { file: 'src/core/cycle/nightly-probe-routes.ts', expr: 'key', why: 'Object.entries walk over NIGHTLY_PROBE_SLOT_KEYS' },
   { file: 'src/core/cycle/nightly-probe-search-config.ts', expr: 'key', why: 'walk over NIGHTLY_PROBE_SEARCH_CONFIG_KEYS (search. prefix)' },

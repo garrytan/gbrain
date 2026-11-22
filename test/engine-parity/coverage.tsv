@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 313/324
+# covered: 326/358
 # lifecycle: 9/9
 # pages: 32/32
 # search: 7/7
@@ -15,7 +15,7 @@
 # extraction: 7/7
 # links: 23/23
 # tags: 5/5
-# timeline: 10/10
+# timeline: 19/19
 # ontology: 4/4
 # raw_files: 5/6
 # takes: 17/17
@@ -45,6 +45,8 @@
 # withdrawal_discovery: 1/1
 # belief_reads: 0/1
 # search_vector: 0/1
+# open_loops: 4/4
+# write_misc: 0/21
 # owner_only: 1/1
 # wanted_links: 2/2
 # salience_enrich: 5/5
@@ -62,13 +64,13 @@ getPage	pages	yes	45	yes	yes	yes	serves
 readPageSnapshot	pages	yes	11	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	173	yes	yes	yes	serves
+putPage	pages	yes	178	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	17	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	48	yes	yes	yes	serves
+softDeletePage	pages	yes	50	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	8	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	5	no	yes	yes	serves
@@ -90,7 +92,7 @@ listPrefixSampledPages	pages	yes	1	no	yes	yes	serves
 listCorpusSample	pages	yes	1	no	yes	yes	serves
 getPageSealState	pages	yes	1	no	yes	yes	refuses:pages
 refreshPageOrigin	pages	yes	1	no	yes	yes	refuses:pages
-searchKeyword	search	yes	27	yes	yes	yes	serves
+searchKeyword	search	yes	28	yes	yes	yes	serves
 countKeywordPages	search	yes	5	no	yes	yes	serves
 searchKeywordPages	search	yes	8	no	yes	yes	serves
 searchTitles	search	yes	13	yes	yes	yes	serves
@@ -163,14 +165,23 @@ removeTag	tags	yes	1	no	yes	yes	serves
 pruneFrontmatterTags	tags	yes	1	no	yes	yes	serves
 addPageTagsById	tags	yes	1	no	yes	yes	serves
 getTags	tags	yes	2	yes	yes	yes	serves
-addTimelineEntry	timeline	yes	12	yes	yes	yes	serves
+sampleEffectiveDates	timeline	yes	1	no	yes	yes	refuses:raw_sql
+sampleEffectiveDateSources	timeline	yes	1	no	yes	yes	refuses:raw_sql
+readMaxTimelineEntryId	timeline	yes	1	no	yes	yes	refuses:raw_sql
+listStoredTimelineRowsOrdered	timeline	yes	2	no	yes	yes	refuses:raw_sql
+deleteTimelineRows	timeline	yes	2	no	yes	yes	refuses:raw_sql
+storedTimelineRowsByPageIds	timeline	yes	1	no	yes	yes	refuses:raw_sql
+countSegmentedTimelinePages	timeline	yes	1	no	yes	yes	refuses:raw_sql
+countTimelineCommentMarkupRows	timeline	yes	1	no	yes	yes	refuses:raw_sql
+listTimelineOrphanPages	timeline	yes	1	no	yes	yes	refuses:raw_sql
+addTimelineEntry	timeline	yes	15	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	1	no	yes	yes	serves
 getTimeline	timeline	yes	6	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	2	no	yes	yes	serves
 getSince	timeline	yes	1	no	yes	yes	serves
 getOnThisDay	timeline	yes	1	no	yes	yes	serves
 getLastSeen	timeline	yes	1	no	yes	yes	serves
-upsertEventProjection	timeline	yes	6	no	yes	yes	serves
+upsertEventProjection	timeline	yes	8	no	yes	yes	serves
 removeTimelineRows	timeline	yes	2	no	yes	yes	refuses:timeline
 updateTimelineDetails	timeline	yes	1	no	yes	yes	refuses:timeline
 mergeOntologyFact	ontology	yes	5	no	yes	yes	serves
@@ -208,7 +219,7 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	27	yes	yes	yes	serves
+insertFact	facts	yes	28	yes	yes	yes	serves
 insertFacts	facts	yes	14	no	yes	yes	serves
 deleteFactsForPage	facts	yes	2	no	yes	yes	serves
 expireFact	facts	yes	9	no	yes	yes	serves
@@ -220,7 +231,7 @@ listSupersessions	facts	yes	5	yes	yes	yes	serves
 countUnconsolidatedFacts	facts	yes	2	yes	yes	yes	serves
 findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
 consolidateFact	facts	yes	3	no	yes	yes	serves
-findTrajectory	facts	yes	3	yes	yes	yes	serves
+findTrajectory	facts	yes	4	yes	yes	yes	serves
 getFactsHealth	facts	yes	2	yes	yes	yes	serves
 allocateBodyOccurrenceIds	segmented_body	yes	11	no	yes	yes	serves
 stageSegmentTexts	segmented_body	yes	10	no	yes	yes	serves
@@ -228,7 +239,7 @@ readSegmentTexts	segmented_body	yes	3	no	yes	yes	serves
 stageManifestRows	segmented_body	yes	12	no	yes	yes	serves
 readManifest	segmented_body	yes	7	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	8	no	yes	yes	serves
-createSegmentedPageShell	segmented_body	yes	16	no	yes	yes	serves
+createSegmentedPageShell	segmented_body	yes	17	no	yes	yes	serves
 flipBodyGeneration	segmented_body	yes	22	no	yes	yes	serves
 sealSegmentedPage	segmented_body	yes	5	no	yes	yes	serves
 openBodyStaging	segmented_body	yes	13	no	yes	yes	serves
@@ -280,7 +291,7 @@ readCycleLocks	cycle_locks	yes	8	no	yes	yes	refuses:minion_queue
 deleteCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
 deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	5	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	6	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	3	yes	yes	yes	serves
@@ -365,6 +376,31 @@ listPageTypesByIds	trust_tier_reads	yes	1	no	yes	yes	refuses:raw_sql
 readWithdrawalDiscovery	withdrawal_discovery	yes	4	no	yes	yes	refuses:raw_sql
 listCoveredSources	belief_reads	no	0	no	-	-	-
 countSearchVectorRows	search_vector	no	0	no	-	-	-
+upsertOpenLoop	open_loops	yes	9	no	yes	yes	serves
+closeOpenLoop	open_loops	yes	6	no	yes	yes	serves
+listOpenLoops	open_loops	yes	4	no	yes	yes	serves
+readEntityOpenLoops	open_loops	yes	4	no	yes	yes	serves
+readSourceState	write_misc	no	0	no	-	-	-
+readAdmissionSource	write_misc	no	0	no	-	-	-
+sharedSkillPackTablePresent	write_misc	no	0	no	-	-	-
+listSharedSkillPackRoots	write_misc	no	0	no	-	-	-
+getWorktreeBinding	write_misc	no	0	no	-	-	-
+hasExtractedEvents	write_misc	no	0	no	-	-	-
+listActiveAccessMembers	write_misc	no	0	no	-	-	-
+hasLabelledOnlyMember	write_misc	no	0	no	-	-	-
+listAccessTokens	write_misc	no	0	no	-	-	-
+notifierCoverageRecorded	write_misc	no	0	no	-	-	-
+readOpCheckpointKeys	write_misc	no	0	no	-	-	-
+readHealthMemoClock	write_misc	no	0	no	-	-	-
+listSynopsisSourceIds	write_misc	no	0	no	-	-	-
+expireMemoryProposals	write_misc	no	0	no	-	-	-
+listAwaitingMemoryProposals	write_misc	no	0	no	-	-	-
+readMemoryProposal	write_misc	no	0	no	-	-	-
+purgeMemoryProposals	write_misc	no	0	no	-	-	-
+readPendingProposalSummary	write_misc	no	0	no	-	-	-
+listMemoryProposalRows	write_misc	no	0	no	-	-	-
+listOwnerProposalRows	write_misc	no	0	no	-	-	-
+attachSourcePath	write_misc	no	0	no	-	-	-
 ownerOnlyMarkTriggers	owner_only	yes	2	no	yes	yes	refuses:raw_sql
 lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	refuses:links
 replaceWantedLinkRows	wanted_links	yes	4	no	yes	yes	refuses:links

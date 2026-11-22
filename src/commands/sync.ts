@@ -383,7 +383,7 @@ export interface SyncOpts {
    * breadcrumbs already cover that surface).
    */
   onProgress?: (p: { phase: string; bankedFiles?: number; total?: number; waived?: boolean; group?: number;
-    /** #5984 lanes (phase `managed_sync.lanes`). */ lanes?: { effective: number; stepDown: string | null; overlapped: number; fallbacks: number }; /** #7243: a pass round (`managed_sync.round_level`, `managed_sync.round_admit`; #7866 `managed_sync.round_batch`: `batch` of `batches`, starting at candidate `base`). */ round?: { round: number; target: string; paths: number; read_ms?: number; imports?: number; deletes?: number; in_flight?: number; batch?: number; batches?: number; base?: number } }) => void;
+    /** #5984 lanes (phase `managed_sync.lanes`). */ lanes?: { effective: number; stepDown: string | null; overlapped: number; fallbacks: number }; /** #7243: a pass round (`managed_sync.round_level`, `managed_sync.round_admit`; #7866 `managed_sync.round_batch`: `batch` of `batches`, starting at candidate `base`). */ round?: { round: number; target: string; paths: number; read_ms?: number; /** GST-3534: the read patched the previous round's or pass's `I⋈P`. */ patched?: boolean; imports?: number; deletes?: number; in_flight?: number; batch?: number; batches?: number; base?: number } }) => void;
   /**
    * #5984: managed sync only. Re-enter the single-pass managed sync until the
    * cursor is done, the caller's signal/deadline stops it, or it is blocked
