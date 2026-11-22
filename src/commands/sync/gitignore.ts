@@ -165,8 +165,13 @@ export function manageGitignore(
   const linesToAdd: string[] = [];
 
   for (const dir of storageConfig.db_only) {
-    if (!existingLines.has(dir) && !existingLines.has(`/${dir}`)) {
-      linesToAdd.push(dir);
+    // A single-segment name ('decisions' or 'decisions/') matches at every
+    // depth and would hide tracked nested dirs like docs/decisions/. Anchor it
+    // to the repo root; multi-segment paths are already anchored by git.
+    const bare = dir.replace(/^\/+/, '');
+    const anchored = /^[^/]+\/*$/.test(bare) ? `/${bare}` : dir;
+    if (!existingLines.has(dir) && !existingLines.has(`/${bare}`) && !existingLines.has(anchored)) {
+      linesToAdd.push(anchored);
     }
   }
 
