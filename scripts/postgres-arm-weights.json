@@ -26,6 +26,7 @@
   "test/access-page-rule-fileless.test.ts": 18259,
   "test/access-qm-actor.test.ts": 17267,
   "test/access-raw-only-rules.test.ts": 56506,
+  "test/access-read-log.test.ts": 16200,
   "test/access-room.test.ts": 12615,
   "test/access-rule-hints-owner-gst2128.test.ts": 5194,
   "test/access-rule-owner-gst2698.test.ts": 14639,
