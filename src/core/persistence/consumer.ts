@@ -683,7 +683,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     for (const [root, retryAt] of this.rootRetryAfter) if (retryAt <= now) this.rootRetryAfter.delete(root);
     if (scan) {
       const excluded = [...this.activeRoots, ...this.rootRetryAfter.keys()];
-      const recovery = await this.phase('recovery_scan', signal => this.statements.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r
+      const recovery = await this.phase('recovery_scan', signal => this.statements.executeRaw<Pick<WriteRequest, 'id' | 'worktree_id'>>(`SELECT r.id,r.worktree_id FROM persistence_requests r
         JOIN persistence_worktrees w ON w.id=r.worktree_id
         WHERE w.owner_host_id=$1::uuid AND r.recovery IS NOT NULL AND NOT(r.worktree_id::text=ANY($2::text[]))
         AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier WHERE earlier.worktree_id=r.worktree_id
