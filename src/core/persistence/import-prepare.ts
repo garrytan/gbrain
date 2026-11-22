@@ -39,7 +39,7 @@ import type { Action } from '../agent-output.ts';
 import { bindOrigin } from './origin-guard.ts';
 import { segmentedOutcome } from './searchable.ts';
 import { isQuarantined } from '../quarantine.ts';
-import { assertPlainDirectoryFileInStep } from './plain-directory-drift.ts';
+import { assertPlainDirectoryFileInStep, recordPlainDirectoryAgreement } from './plain-directory-drift.ts';
 import { READERS_FIX_EFFECT } from './readers-request.ts';
 
 export type ImportPack = { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string>; aliases?: ReadonlyArray<string> }> };
@@ -287,6 +287,8 @@ export async function prepareManagedImportMutation(engine: BrainEngine, row: Wri
     apply: async tx => {
       const applied = await ready.apply(tx);
       await bindOrigin(tx, { sourceId: row.source_id, slug: row.slug, sourcePath: p.sourcePath });
+      // #8079: a plain-directory file that only rewrites to the page's own canonical form agrees with the page.
+      if (p.plainDirectorySync && snapshot && ready.noop) await recordPlainDirectoryAgreement(tx, row.source_id, row.source_incarnation, snapshot);
       if (project) {
         // The coordinator proved the base revision under its page guard (importFromContent `coordinated`); this is the
         // one read of the page after its last page write (the projections and the seal leave its revision unchanged):

@@ -104,6 +104,39 @@ describe.each(backends.map(url => [engineName(url), url] as const))('plain-direc
     expect(await sync()).toMatchObject({ status: 'synced', added: 1 });
     expect((await engine.getPage('people/alice-example', { sourceId: 'source-a' }))?.compiled_truth).toContain('edits the file before the next sync');
   }), 180_000);
+
+  test('a file matched to the page in a noncanonical form resolves the conflict (#8079)', () => withPlainSource(url, async ({ engine, ctx }, dir) => {
+    const sync = () => performSync(engine, { sourceId: 'source-a', noPull: true, noEmbed: true });
+    await sync();
+    await engine.setConfig('sync.write_through', 'false');
+    await putPerson(ctx, engine, 'Database-only correction.');
+    await engine.setConfig('sync.write_through', 'true');
+    const file = join(dir, 'people/alice-example.md');
+    const page = await engine.readPageSnapshot('people/alice-example', { sourceId: 'source-a' });
+    writeFileSync(file, `${serializePageToMarkdown(page!.page, page!.tags)}\n\n\n`);
+    expect(await sync()).toMatchObject({ status: 'synced' });
+    writeFileSync(file, person('Alice Example', 'A file edit after the file was matched.'));
+    expect(await sync()).toMatchObject({ status: 'synced', added: 1 });
+    expect((await engine.getPage('people/alice-example', { sourceId: 'source-a' }))?.compiled_truth).toContain('after the file was matched');
+  }), 180_000);
+
+  test('a file edit after an import that left its file untouched still syncs (#8079)', () => withPlainSource(url, async ({ engine }, dir) => {
+    const sync = () => performSync(engine, { sourceId: 'source-a', noPull: true, noEmbed: true });
+    expect(await sync()).toMatchObject({ status: 'synced', added: 1 });
+    // A streamed import (a body over the single-string limit) validates its canonical file without rewriting it, so its
+    // receipt says the import came from the file but records no file write.
+    const [receipt] = await engine.transaction(async tx => {
+      await tx.executeRaw("SELECT set_config('gbrain.persistence_protocol','2',true)");
+      return tx.executeRaw<{ id: string }>(`UPDATE persistence_requests r
+        SET outcome = (r.outcome - 'persistence' - 'write_through') || '{"persistence":{"mode":"database"},"write_through":{"written":false,"skipped":"no_repo_configured"}}'::jsonb
+        FROM pages p WHERE p.slug='people/alice-example' AND p.source_id='source-a' AND r.id=p.revision_write_request_id
+          AND r.outcome->>'imported_file'='true' RETURNING r.id`);
+    });
+    expect(receipt).toBeDefined();
+    writeFileSync(join(dir, 'people/alice-example.md'), person('Alice Example', 'An ordinary file edit.'));
+    expect(await sync()).toMatchObject({ status: 'synced', added: 1 });
+    expect((await engine.getPage('people/alice-example', { sourceId: 'source-a' }))?.compiled_truth).toContain('An ordinary file edit.');
+  }), 180_000);
   test('a forced plain directory syncs its files into the source without Git', () => withPlainSource(url, async ({ engine }, dir) => {
     const first = await performSync(engine, { sourceId: 'source-a', noPull: true, noEmbed: true });
     expect(first).toMatchObject({ status: 'synced', added: 1, deleted: 0 });

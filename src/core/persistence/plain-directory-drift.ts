@@ -1,7 +1,8 @@
 /**
  * #8079: a plain-directory source has no Git history, so its sync cannot tell from the file alone whether the file or the
  * page moved last. Its import replaces a page only when the page's current revision was written with its file in step: by
- * a write whose receipt says it wrote the file (a file import, a write-through), or one this sync saw agree with the file.
+ * a write whose receipt says it imported or wrote the file (a file import, a streamed import that left its file untouched, a
+ * write-through), or one this sync saw agree with the file.
  * A page whose current revision a database-only write made (write-through off, a delete that kept its file) keeps it, and
  * the file is refused until a person picks a side.
  */
@@ -14,7 +15,8 @@ export const PLAIN_DIRECTORY_AGREED_OP = 'plain-directory-agreed';
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 
 const IN_STEP = `(r.state='committed' AND r.source_id=p.source_id
-  AND COALESCE(r.outcome->'persistence'->>'file_written', r.outcome->'write_through'->>'written')='true') IS TRUE`;
+  AND (COALESCE(r.outcome->'persistence'->>'file_written', r.outcome->'write_through'->>'written')='true'
+    OR (r.outcome->>'imported_file'='true' AND NOT (r.outcome ? 'connector_database')))) IS TRUE`;
 const AGREED = `EXISTS (SELECT 1 FROM op_checkpoints c WHERE c.op=$3 AND c.fingerprint=$4 AND c.completed_keys->0->>'revision'=p.knowledge_revision::text)`;
 const FROM_PAGE = 'FROM pages p LEFT JOIN persistence_requests r ON r.id=p.revision_write_request_id WHERE p.id=$1 AND p.knowledge_revision::text=$2';
 const params = (sourceId: string, incarnation: string, snapshot: PageSnapshot) =>
