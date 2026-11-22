@@ -29,6 +29,7 @@ import { electOwner, type OwnerRole } from '../src/core/rust-engine/owner-ipc/el
 import { ownerWholeOperations } from '../src/core/rust-engine/owner-ipc/owner-ops.ts';
 import { connectOwner, installOwnerClient, ownerConnectionFor } from '../src/core/rust-engine/owner-ipc/client.ts';
 import { serveOwnerEngine } from '../src/core/rust-engine/owner-ipc/server.ts';
+import { OWNER_IPC_ROUTES } from '../src/core/rust-engine/owner-ipc/routes.ts';
 import { waitFor } from './helpers/wait-for.ts';
 import { OWNER_IPC_VERSION, ownerLockPath, ownerSocketPath, readFrames } from '../src/core/rust-engine/owner-ipc/protocol.ts';
 import { forwardWholeOperation } from '../src/core/rust-engine/owner-ipc/whole-op.ts';
@@ -218,6 +219,22 @@ describe('two or more client processes on one owner', () => {
       const reserved = await engine.withReservedConnection(async () => 1).then(() => null, e => e);
       expect((reserved as OperationError).code).toBe('engine_capability_missing');
       expect(Date.now() - started).toBeLessThan(1_000);
+    } finally { close(); }
+  });
+
+  // Value: protects=the two store getters hand a caller an object whose calls must run inside the owner's transaction, so a client refuses them at once and nothing runs; fails_when=worktreeClaimStore or writerAdminStore is forwarded (the owner would return a store the client cannot send) or refuses with another code; why_new=the two getters came with the port's typed members; seam=none; no_claim=what the owner's transaction does with them
+  test('worktreeClaimStore() and writerAdminStore() refuse at once with engine_capability_missing, as transaction() does', async () => {
+    const { engine, close } = await clientOf(ownerSocketPath(db));
+    try {
+      expect(OWNER_IPC_ROUTES.worktreeClaimStore).toBe('refuse');
+      expect(OWNER_IPC_ROUTES.writerAdminStore).toBe('refuse');
+      for (const member of ['worktreeClaimStore', 'writerAdminStore'] as const) {
+        const error = await engine[member]().then(() => null, e => e);
+        expect(error).toBeInstanceOf(OperationError);
+        expect((error as OperationError).code).toBe('engine_capability_missing');
+        expect((error as OperationError).detail).toContain(`member=${member}`);
+        expect((error as OperationError).detail).toContain('via=owner_ipc');
+      }
     } finally { close(); }
   });
 
