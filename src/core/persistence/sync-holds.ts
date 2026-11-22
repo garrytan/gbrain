@@ -943,7 +943,7 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
       const verify = { argv: ['gbrain', 'sources', 'status', source, '--json'] };
       const side = fileDriftSide(record.meta);
       const held = side === 'unknown' && !record.meta.competing_request_id
-        ? `Page ${slug} differs from ${record.path} and has no import record to tell whether the file or the database changed, so sync held the file instead of overwriting the database version. After an upgrade from a gbrain release before frontmatter values were kept as written, this is the older-release typing case: the page still holds that release's typing of its values (born: 1990-05-01 stored as 1990-05-01T00:00:00.000Z, zip: 02134 as 2134) and no import record proves that release stored it, so sync does not guess. To import the file version of every such page in one pass, run gbrain repair file-drift --source ${source} --held --side unknown --prefer file --whole-class (a preview that writes nothing and prints its apply); check that it names no database edit you want to keep. `
+        ? `Page ${slug} differs from ${record.path} and has no import record to tell whether the file or the database changed, so sync held the file instead of overwriting the database version. `
         : `${by} since ${record.path} was last imported, so sync held the file instead of overwriting the database version (${record.meta.sides === 'database' && !record.meta.side ? 'the file did not change in Git'
           : side === 'both' ? 'the file changed too' : 'no import record says whether the file changed too'}). `;
       const decide = `Decide with the user which version wins. ${FILE_DRIFT_APPLY_STEP} Then sync again. The rest of the source is not blocked.`;

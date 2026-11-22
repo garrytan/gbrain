@@ -143,12 +143,14 @@ export function onlyDerivedKeysAdded(content: string, stored: Record<string, unk
 }
 
 /**
- * pages-03: whether the older release stored the page from the entry's drift baseline: its import record (the one the
- * baseline comes from, drift `both`) names the old importer. Only then may the drift check read the baseline under the old
- * typing; a page today's importer stored, or one with no record (`unknown`), is compared as written and stays held.
+ * pages-03: whether the drift check may read the entry's baseline under the old typing. With drift `both` the page's import
+ * record (the one the baseline comes from) must name the old importer, so a page today's importer stored is compared as
+ * written and stays held. A page with no import record at all (`unknown`) may, as master and #9939 import its Git edit:
+ * with no record to prove which typing stored a value, the file's version wins.
  */
 export async function driftBaselineFromOldImporter(engine: BrainEngine, sourceId: string, incarnation: string, pageId: number | string,
   entry: Pick<SyncEntry, 'drift' | 'driftBaseline'>): Promise<boolean> {
+  if (entry.drift === 'unknown') return !await readSyncImportProvenance(engine, sourceId, incarnation, Number(pageId));
   if (entry.drift !== 'both' || !entry.driftBaseline) return false;
   const record = await readSyncImportProvenance(engine, sourceId, incarnation, Number(pageId));
   return record?.disk_blob_oid === entry.driftBaseline && recordNamesOldImporter(record);
