@@ -310,8 +310,8 @@ function unquotedFrontmatter(sent: string, content: string, slug: string): strin
   const fenced = new Set(Object.keys(data).filter(k => JSON.stringify(data[k]) !== JSON.stringify(frontmatter[k])));
   if (!fenced.size) return content;
   const lines = content.slice(0, offset).split('\n');
-  const open = lines.findIndex(l => l.trim() === '---');
-  const close = lines.findIndex((l, i) => i > open && l.trim() === '---');
+  const open = lines.findIndex(l => l.trim().length > 0);
+  const close = lines.length - (lines[lines.length - 1] === '' ? 2 : 1);
   const out = lines.slice(0, open + 1);
   for (let i = open + 1; i < close;) {
     let end = i + 1;

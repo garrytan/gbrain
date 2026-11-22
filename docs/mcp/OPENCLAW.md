@@ -342,7 +342,8 @@ gbrain setup openclaw   # --dry-run previews; --workspace <dir> picks the agent
 It writes one short marked block into the workspace `AGENTS.md` (from
 `OPENCLAW_CONFIG_PATH` or `~/.openclaw/openclaw.json`: a sole agent's
 workspace, else `agents.defaults.workspace`, else `~/.openclaw/workspace`; with
-several agents, pass `--workspace`). Text outside the markers is never touched,
+several agents, pass `--workspace`; with `OPENCLAW_HOME` set, `~/.openclaw`
+means `$OPENCLAW_HOME/.openclaw`, as it does for OpenClaw). Text outside the markers is never touched,
 a re-run upgrades the block in place, `--no-instructions` opts out and is
 remembered, and `--remove` takes it out. A thin-client install puts the same
 block at the top of `GBRAIN-INSTRUCTIONS.md`.

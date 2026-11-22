@@ -15,7 +15,9 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { randomBytes, createCipheriv, pbkdf2Sync } from 'crypto';
 import { dirname, basename, resolve } from 'path';
-import { frontmatterBodyOffset } from '../core/markdown.ts';
+import { frontmatterBodyOffset, validatorFrontmatterFence } from '../core/markdown.ts';
+import { FrontmatterLanguageError, scanDataFrontmatter } from '../core/data-frontmatter.ts';
+import { GUEST_WARNING_LINE_RE } from '../core/guests/marker.ts';
 import { opError } from '../core/ops/contract.ts';
 
 // Inline marked.js so published HTML is truly self-contained (no CDN dependency). It is embedded at build time
@@ -29,6 +31,35 @@ const TIMELINE_LINE = /^(?:[^\S\n]*-{3,}[^\S\n]*timeline[^\S\n]*-{3,}[^\S\n]*$|[
 const MANAGED_BLOCK_END = /<!--+\s*gbrain:([a-z0-9_-]+):end\b[^>]*>/gi;
 const MANAGED_BLOCK_BEGIN = /^(?:[ \t]*#{1,6}[ \t]+(?:facts|takes)[ \t]*\n(?:[ \t]*\n)*)?[^\n]*?<!--+\s*gbrain:([a-z0-9_-]+):begin\b[^>]*>/im;
 
+const WRAPPED_FRONTMATTER_WINDOW = 5;
+const FRONTMATTER_KEY_LINE = /^(?:['"][^'"\n]+['"]|[A-Za-z_][\w.-]*)[ \t]*:(?:[ \t]|$)/m;
+
+/**
+ * Whether a column-0 frontmatter fence pair, as parseDataFrontmatter reads one, starts on one of the first
+ * WRAPPED_FRONTMATTER_WINDOW non-blank lines: an opener naming its language (`---yaml`, `---yml`, `---json`), a fence
+ * whose first line is a YAML key or a flow mapping, or a closed plain `---` pair with a YAML key line between the fences.
+ * Two horizontal rules with only prose between them are not, and neither is one rule followed by prose.
+ */
+function startsFrontmatterPair(text: string): boolean {
+  const lines = text.split('\n');
+  for (let i = 0, seen = 0; i < lines.length && seen < WRAPPED_FRONTMATTER_WINDOW; i++) {
+    if (!lines[i]!.trim()) continue;
+    seen++;
+    let fenced;
+    try {
+      fenced = scanDataFrontmatter(lines.slice(i).join('\n')).fenced;
+    } catch (e) {
+      if (e instanceof FrontmatterLanguageError) continue;
+      throw e;
+    }
+    if (!fenced) continue;
+    const first = /^.*\S.*$/m.exec(fenced.block)?.[0] ?? '';
+    if (fenced.language !== '' || FRONTMATTER_KEY_LINE.test(first) || first.trimStart().startsWith('{')) return true;
+    if (fenced.content != null && FRONTMATTER_KEY_LINE.test(fenced.block)) return true;
+  }
+  return false;
+}
+
 /** The text before the first match of `pattern`, or all of it when nothing matches. */
 function before(text: string, pattern: RegExp): string {
   const match = pattern.exec(text);
@@ -39,16 +70,24 @@ function before(text: string, pattern: RegExp): string {
  * Strip private/internal data from brain markdown before publishing. Fails closed (#10020): the page is cut at the
  * first line that could start its timeline (any timeline sentinel, or a Timeline or History heading at any level,
  * with or without a --- rule before it), a gbrain fence or HTML comment that never closes drops the rest of the
- * page, and frontmatter that never closes refuses to publish.
+ * page, and frontmatter that never closes refuses to publish. A guest page saved from `gbrain get` starts with its
+ * warning line; when frontmatter opens right after it, the line is dropped and the frontmatter stripped as usual. Any
+ * other text above frontmatter (the quote fence a paged `gbrain get` prints, a wrapper line) refuses to publish.
  */
 export function makeShareable(content: string): string {
   let clean = content.replace(/\r\n?/g, '\n');
+  const opensFrontmatter = (text: string) => validatorFrontmatterFence(text.split('\n')).opens;
+
+  const guestLine = GUEST_WARNING_LINE_RE.exec(clean);
+  if (guestLine && opensFrontmatter(clean.slice(guestLine[0].length))) clean = clean.slice(guestLine[0].length);
 
   // Remove YAML frontmatter
-  if (clean.split('\n').find(line => line.trim())?.trim() === '---') {
+  if (opensFrontmatter(clean)) {
     const offset = frontmatterBodyOffset(clean);
-    if (offset === 0) throw opError('invalid_frontmatter', 'The page opens a frontmatter block with --- and never closes it, so nothing was published.', 'Close the frontmatter with a --- line, then publish again.', { why: 'Publishing cannot tell where the private frontmatter ends, so it publishes nothing rather than guess.' });
+    if (offset === 0) throw opError('invalid_frontmatter', 'The page opens a frontmatter block with --- and never closes it, so nothing was published.', 'Close the frontmatter with a --- line that starts at the beginning of the line (an indented --- does not close it), then publish again.', { why: 'Publishing cannot tell where the private frontmatter ends, so it publishes nothing rather than guess.' });
     clean = clean.slice(offset);
+  } else if (startsFrontmatterPair(clean)) {
+    throw opError('invalid_frontmatter', 'The page has frontmatter below other text, such as the quote fence a paged gbrain get prints, so nothing was published.', 'Save the page again with plain gbrain get, or delete the lines above the opening --- so the frontmatter starts the file, then publish again.', { why: 'Publishing strips frontmatter only where it starts the file; it refuses rather than share frontmatter it did not strip.' });
   }
 
   // Remove the Timeline section and everything after it
