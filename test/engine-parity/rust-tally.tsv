@@ -178,6 +178,6 @@ test/engine-parity/write-request-cancel.test.ts	2	0
 test/engine-parity/write-request-reads.test.ts	3	0
 test/engine-parity/writer-admin.test.ts	5	0
 test/engine-parity/writer-registration.test.ts	2	0
-test/engine-parity/writer-release.test.ts	4	0
+test/engine-parity/writer-release.test.ts	2	2
 test/engine-parity/writer-status.test.ts	2	1
 test/engine-parity/writer-versions.test.ts	3	0

@@ -13,9 +13,11 @@
  *    worktree, moves the epoch once more and leaves the source unclaimed, and sync imports the checkout again.
  *    Called directly, the release store reads a fresh brain the same on every arm (no bindings, roots or recovering
  *    effect, `default` configured, audit pages in slug order after a cursor) and addPersistenceCounters changes an
- *    existing counter row only, refusing a sum below zero with the row unchanged.
- *  - Regression: an engine whose release or activation path refuses (`engine_capability_missing`), so a claim on it
- *    has no supported exit and fences sync for good.
+ *    existing counter row only, refusing a sum below zero with the row unchanged. On the Rust engine the two activate
+ *    cases end on the typed refusal of activation (`requireManagedActivation`, raw_sql): a managed brain's import,
+ *    sources add and extract still run raw SQL there, so managed mode stays off; deactivate is its supported exit.
+ *  - Regression: an engine whose release path refuses (`engine_capability_missing`), so a claim on it has no supported
+ *    exit and fences sync for good.
  *  - Why existing coverage misses it: test/persistence-preactivation-claim.test.ts runs on PGLite and Postgres only and
  *    claims through the internal claimWorktree; the Rust engine refused every raw-SQL step of both paths.
  *  - Seam: none. Real engines, real Git checkout, typed members only.
@@ -103,6 +105,8 @@ describe('writer release on a never-activated brain', () => {
 
   parityTest('a reviewed activate after a claim turns managed persistence on with the claimed source', {
     methods: ['readWriterAdminState', 'worktreeClaimStore', 'writerReleaseStore'],
+    // The Rust engine refuses to turn managed mode on (activation.ts requireManagedActivation): a typed stop.
+    requires: 'raw_sql',
     timeout: 120_000,
   }, async (engine, backend) => withClaimableCheckout(engine, backend, async (root) => {
     const before = await readPersistenceBrain(engine);
@@ -130,6 +134,8 @@ describe('writer release on a never-activated brain', () => {
 
   parityTest('a reviewed deactivate after activation returns the brain to classic, then sync imports the checkout', {
     methods: ['readWriterAdminState', 'worktreeClaimStore', 'writerReleaseStore', 'addPersistenceCounters', 'listRetiredDeactivations'],
+    // The Rust engine refuses to turn managed mode on (activation.ts requireManagedActivation): a typed stop.
+    requires: 'raw_sql',
     timeout: 120_000,
   }, async (engine, backend) => withClaimableCheckout(engine, backend, async (root) => {
     const before = await readPersistenceBrain(engine);
