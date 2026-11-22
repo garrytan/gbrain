@@ -556,7 +556,8 @@ mod tests {
         // - `lib.rs`: the brain-create write, the two arms of `Store::write`'s unbound loop, and
         //   the format upgrade (no page records);
         // - `transactions.rs`: a transaction's exclusive base handle (its statements run through
-        //   the bound arm of `Store::write`) and its counter flush;
+        //   the bound arm of `Store::write`); a rollback writes its counters forward on that same
+        //   handle, so it opens no second one;
         // - this module's open-time scan, job admission (no page records), and the keyword index
         //   repair (`keyword/index_build.rs`, postings only);
         // - the keyword test modules (`index_build/tests.rs`, `index_writer/tests.rs`), which are
@@ -572,7 +573,7 @@ mod tests {
             ("lib.rs", 4),
             ("occ_kv.rs", 4),
             ("redb_kv.rs", 4),
-            ("transactions.rs", 2),
+            ("transactions.rs", 1),
         ];
         let opens = |c: &str| {
             [
