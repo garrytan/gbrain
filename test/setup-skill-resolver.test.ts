@@ -428,6 +428,12 @@ describe('per_harness.<claude-code|codex>.session_start: text the lane prints at
     const flagFirst = await run(b, 'set', 'skills.resolver.per_harness.codex.session_start', '--yes', 'Read the notes.');
     expect(flagFirst.exitCode, flagFirst.stderr).toBe(0);
     expect(JSON.parse(read(configPath(b))!).skills.resolver.per_harness.codex.session_start).toBe('Read the notes.');
+    const separated = await run(b, 'set', 'skills.resolver.per_harness.codex.session_start', '--', '--no-verify is banned');
+    expect(separated.exitCode, separated.stderr).toBe(0);
+    expect(JSON.parse(read(configPath(b))!).skills.resolver.per_harness.codex.session_start).toBe('--no-verify is banned');
+    const bare = await run(b, 'set', 'skills.resolver.per_harness.codex.session_start', '--');
+    expect(bare.exitCode).not.toBe(0);
+    expect(JSON.parse(read(configPath(b))!).skills.resolver.per_harness.codex.session_start).toBe('--no-verify is banned');
   });
 
   test('refused: empty text, over the cap, control characters, and a harness other than claude-code or codex', async () => {
