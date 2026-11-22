@@ -29,8 +29,7 @@ import * as realReadiness from '../src/core/search/projection-readiness.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { encodeDeepResearchId } from '../src/core/deep-research-id.ts';
 import { fenceTranscriptText } from '../src/core/search/transcript-quote.ts';
-import { readBrainMaturity as readBrainMaturitySql } from '../src/core/engine-sql/health.ts';
-import { countLivePages as countLivePagesSql } from '../src/core/engine-sql/doctor-pages.ts';
+import { countBrainLivePages as countBrainLivePagesSql, readBrainMaturity as readBrainMaturitySql } from '../src/core/engine-sql/health.ts';
 
 let nextResults: unknown[] = [{ id: encodeDeepResearchId('default', 'a'), page_id: 1, source_id: 'default', slug: 'a', chunk_text: 'x' }];
 
@@ -93,8 +92,7 @@ const engineStub = {
   readPageTitle: async () => null,
   readPageAliasRows: async () => [],
   listSourceRecords: async () => { sourceListings++; return []; },
-  // The live-page count is the typed doctor-pages member, run on this stub's executeRaw.
-  countLivePages() { const e = this as unknown as { executeRaw(sql: string, params?: unknown[]): Promise<never[]> }; return countLivePagesSql((sql, params) => e.executeRaw(sql, params)); },
+  countBrainLivePages() { return countBrainLivePagesSql(this as never); },
   readBrainMaturity() { return readBrainMaturitySql(this as never); },
   executeRaw: async (sql: string) => {
     rawCalls.push(String(sql));
