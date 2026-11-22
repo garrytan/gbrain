@@ -7,6 +7,7 @@ import { readProcessCommand, type ProcessCommandProbeDeps } from './autopilot-lo
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseGlobalFlags } from './cli-options.ts';
 import { tryAcquireNativeLock, type NativeLockHandle } from './persistence/native-lock.ts';
+import { runPgliteCreateGuard } from './pglite-create-guard.ts';
 import type { Action } from './agent-output.ts';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -110,8 +111,7 @@ export function processStartTime(pid: number): string | null {
 }
 
 /** Resolve existing ancestors without creating the datastore during inspection. */
-/** The real path of `path`, absent trailing parts allowed: how this module names a datastore. */
-export function canonicalPath(path: string): string {
+function canonicalPath(path: string): string {
   const absolute = resolve(path);
   try { return realpathSync(absolute); } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
@@ -321,20 +321,6 @@ export const LEGACY_UNVERIFIED_WHY: Readonly<Record<LegacyUnverifiedReason, stri
 };
 
 /**
- * A check `acquireLock` runs for every persistent datastore once it holds the kernel lock and before it creates the data
- * dir or any metadata. A throw releases the lock and reaches the caller. Doctor installs one so a datastore that went
- * missing while it waited for the lock is refused instead of built empty (src/commands/doctor/missing-brain.ts).
- */
-export type PgliteCreateGuard = (canonicalDataDir: string) => void;
-const createGuards = new Set<PgliteCreateGuard>();
-
-/** Install a guard for the rest of this run; the returned function removes it. */
-export function installPgliteCreateGuard(guard: PgliteCreateGuard): () => void {
-  createGuards.add(guard);
-  return () => { createGuards.delete(guard); };
-}
-
-/**
  * First kernel acquisition also claims the legacy mkdir lock. A live or
  * unreadable legacy holder blocks migration. After migration, pid/mtime/
  * metadata corruption cannot authorize or prevent native ownership.
@@ -358,7 +344,7 @@ export async function acquireLock(dataDir: string | undefined, opts: { timeoutMs
       try {
         let migrated = false;
         try { migrated = JSON.parse(readFileSync(markerPath, 'utf8')).protocol === protocol; } catch { /* first upgrade */ }
-        for (const guard of createGuards) guard(canonical);
+        runPgliteCreateGuard(canonical);
         mkdirSync(canonical, { recursive: true });
         let reaped = false;
         try { mkdirSync(lockDir); }

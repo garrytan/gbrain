@@ -11,7 +11,8 @@ import { join } from 'node:path';
 import { getMountsPath, loadMounts } from '../../core/brain-registry.ts';
 import { configPath, gbrainPath, loadConfig } from '../../core/config.ts';
 import { opError, OperationError } from '../../core/ops/contract.ts';
-import { canonicalPath, installPgliteCreateGuard } from '../../core/pglite-lock.ts';
+import { installPgliteCreateGuard } from '../../core/pglite-create-guard.ts';
+import { pgliteLockDirFor } from '../../core/pglite-lock.ts';
 import { probeStatus, statusFix, type StatusModeState } from '../../mcp/status-mode.ts';
 
 /**
@@ -74,7 +75,8 @@ export function isMissingBrainRefusal(e: unknown): e is OperationError {
 export function guardMissingBrainAtLock(brainId = 'host'): () => void {
   return installPgliteCreateGuard((lockedDir) => {
     const found = missingState(brainId);
-    if (found?.brain_path && canonicalPath(found.brain_path) === lockedDir) throw refusalFor(found);
+    // pgliteLockDirFor names a datastore the way acquireLock does (canonical path + the lock folder), so the two spellings compare equal.
+    if (found?.brain_path && pgliteLockDirFor(found.brain_path) === join(lockedDir, '.gbrain-lock')) throw refusalFor(found);
   });
 }
 

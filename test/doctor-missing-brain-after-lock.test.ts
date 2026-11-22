@@ -17,7 +17,9 @@ import { existsSync, mkdtempSync, readdirSync, renameSync, rmSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { guardMissingBrainAtLock, isMissingBrainRefusal } from '../src/commands/doctor/missing-brain.ts';
-import { acquireKernelLockOnly, acquireLock, canonicalPath, installPgliteCreateGuard, pgliteLockDirFor, releaseLock } from '../src/core/pglite-lock.ts';
+import { installPgliteCreateGuard } from '../src/core/pglite-create-guard.ts';
+import { acquireKernelLockOnly, acquireLock, pgliteLockDirFor, releaseLock } from '../src/core/pglite-lock.ts';
+import { withEnv } from './helpers/with-env.ts';
 import { runCli } from './helpers/cli-spawn.ts';
 
 let home: string;
@@ -80,13 +82,7 @@ describe('the datastore moves while doctor waits for the lock', () => {
 });
 
 describe('the guard seam, with no timing involved', () => {
-  const withHome = async (run: () => Promise<void>) => {
-    const saved = { HOME: process.env.HOME, GBRAIN_HOME: process.env.GBRAIN_HOME };
-    process.env.HOME = home; process.env.GBRAIN_HOME = home;
-    try { await run(); } finally {
-      for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
-    }
-  };
+  const withHome = (run: () => Promise<void>) => withEnv({ HOME: home, GBRAIN_HOME: home }, run);
 
   test('acquireLock runs an installed guard under the held lock, before it creates the folder, and releases the lock when it throws', async () => {
     const dir = join(home, 'seam', 'brain.pglite');
@@ -95,7 +91,7 @@ describe('the guard seam, with no timing involved', () => {
     try {
       await expect(acquireLock(dir, { timeoutMs: 0 })).rejects.toThrow('refused by guard');
     } finally { remove(); }
-    expect(seen).toEqual([canonicalPath(dir)]);
+    expect(seen.map((d) => join(d, '.gbrain-lock'))).toEqual([pgliteLockDirFor(dir)]);
     expect(existsSync(dir)).toBe(false);
     const free = await acquireKernelLockOnly(dir, { lockDir: pgliteLockDirFor(dir), timeoutMs: 0 });
     await releaseLock(free);

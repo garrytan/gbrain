@@ -65,7 +65,7 @@ const isMissingBrainRefusal = (e: unknown): boolean => (e as { code?: unknown } 
 
 /** The local-engine doctor (everything after the thin-client route and the missing-brain refusal). */
 async function runLocalDoctor(args: string[], ctx: CliDispatchContext): Promise<void> {
-  const { connectEngine } = ctx;
+  const { connectEngine, dbMarkerBrainId } = ctx;
 
   // v0.36+ brain-health-100: --remediation-plan and --remediate go
   // through dedicated functions that compute from engine.getHealth()
