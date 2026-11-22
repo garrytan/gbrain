@@ -5405,6 +5405,10 @@ export interface BrainEngine {
   takePageEmbeddingLease(leaseId: string, opts: { holderPid: number; holderHost: string; acquisitionToken: string; ttlMinutes: number }): Promise<boolean>;
   renewPageEmbeddingLease(leaseId: string, opts: { acquisitionToken: string; ttlMinutes: number }): Promise<boolean>;
   releasePageEmbeddingLease(leaseId: string, opts: { acquisitionToken: string }): Promise<void>;
+  /** The chunk indexes of a page's live rows with no vector in `column` (engine-sql/page-spend.ts; `embedStalePages`). */
+  listVectorlessChunkIndexes(pageId: number, column: string): Promise<number[]>;
+  /** Whether every visible chunk of the page holds a vector in `column` that is current for `model` at `dims` wide (engine-sql/embedding-provenance.ts; the embedding signature stamp). */
+  readPageProvenanceComplete(slug: string, sourceId: string, model: string, dims: number | null, column: string): Promise<boolean>;
 
   /**
    * The lease fence: true when `lockId` is still held under `acquisitionToken` and unexpired. Inside a transaction it
@@ -5856,6 +5860,12 @@ export interface BrainEngine {
    * new edges write.
    */
   deleteCodeEdgesForChunks(chunkIds: number[]): Promise<void>;
+
+  /**
+   * Delete the edges that LEAVE these chunks from both tables and clear their `edges_backfilled_at`, keeping the edges
+   * other chunks hold that point AT them (`installCodeChunkEdges`; engine-sql/code-edges.ts).
+   */
+  clearCodeEdgesLeavingChunks(chunkIds: number[]): Promise<void>;
 
   /**
    * "Who calls this symbol?" Returns UNION of code_edges_chunk +

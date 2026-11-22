@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1546/1553
+# covered: 1549/1556
 # lifecycle: 9/9
 # pages: 69/69
 # search: 7/7
@@ -15,7 +15,7 @@
 # link_temporal: 12/12
 # search_vector: 4/4
 # retrieval_coverage: 5/5
-# chunks: 47/48
+# chunks: 48/49
 # extraction: 7/7
 # links: 23/23
 # tags: 5/5
@@ -26,7 +26,7 @@
 # dream: 37/37
 # contradictions: 22/22
 # facts: 23/23
-# segmented_body: 18/18
+# segmented_body: 19/19
 # versions: 16/16
 # stats_ingest: 11/11
 # sync_aliases: 10/10
@@ -58,7 +58,7 @@
 # withdrawal_pages: 2/2
 # withdrawal_fence: 1/1
 # raw_sql: 4/4
-# code_edges: 9/9
+# code_edges: 10/10
 # eval_capture: 5/5
 # calibration_profiles: 5/5
 # salience_enrich: 6/6
@@ -97,11 +97,11 @@ transaction	lifecycle	yes	182	no	yes	yes	serves
 transactionDirect	lifecycle	yes	14	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	152	yes	yes	yes	serves
-readPageSnapshot	pages	yes	49	no	yes	yes	serves
+getPage	pages	yes	153	yes	yes	yes	serves
+readPageSnapshot	pages	yes	51	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	5	no	yes	yes	serves
-putPage	pages	yes	733	yes	yes	yes	serves
+putPage	pages	yes	737	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	24	yes	yes	yes	serves
@@ -162,7 +162,7 @@ readLivePagesByIds	pages	yes	1	no	yes	yes	serves
 listStaleAtoms	pages	yes	2	no	yes	yes	serves
 getPageSealState	pages	yes	6	no	yes	yes	serves
 refreshPageOrigin	pages	yes	3	no	yes	yes	serves
-readLivePageIdBySlug	pages	yes	2	no	yes	yes	serves
+readLivePageIdBySlug	pages	yes	4	no	yes	yes	serves
 readPageTierRef	pages	yes	1	no	yes	yes	serves
 readPageTierRows	pages	yes	1	no	yes	yes	serves
 pageHasFrontmatterKey	pages	yes	1	no	yes	yes	serves
@@ -232,14 +232,14 @@ listWithdrawalChunks	chunks	yes	1	no	yes	yes	serves
 deleteChunksForPages	chunks	yes	2	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	4	no	yes	yes	serves
-upsertChunks	chunks	yes	49	yes	yes	yes	serves
-sealChunks	chunks	yes	71	no	yes	yes	serves
-getChunks	chunks	yes	48	yes	yes	yes	serves
+upsertChunks	chunks	yes	52	yes	yes	yes	serves
+sealChunks	chunks	yes	72	no	yes	yes	serves
+getChunks	chunks	yes	50	yes	yes	yes	serves
 getChunkPage	chunks	yes	14	no	yes	yes	serves
 getChunkWindows	chunks	yes	12	no	yes	yes	serves
 countStaleChunks	chunks	yes	8	no	yes	yes	serves
 sumStaleChunkChars	chunks	yes	3	no	yes	yes	serves
-setPageEmbeddingSignature	chunks	yes	4	no	yes	yes	serves
+setPageEmbeddingSignature	chunks	yes	5	no	yes	yes	serves
 invalidateStaleSignatureEmbeddings	chunks	yes	1	no	yes	yes	serves
 invalidateContentDriftEmbeddings	chunks	yes	1	no	yes	yes	serves
 listStaleChunks	chunks	yes	3	no	yes	yes	serves
@@ -262,8 +262,9 @@ readEmbeddingCompletion	chunks	yes	2	no	yes	yes	serves
 lockEffectClaimRow	chunks	yes	1	no	yes	yes	serves
 lockEmbeddingSwitch	chunks	yes	1	no	yes	yes	serves
 installChunkEmbeddings	chunks	yes	1	no	yes	yes	serves
-getChunksWithEmbeddings	chunks	yes	2	no	yes	yes	serves
+getChunksWithEmbeddings	chunks	yes	4	no	yes	yes	serves
 readSegmentRegions	chunks	no	0	no	-	-	-
+readPageProvenanceComplete	chunks	yes	1	no	yes	yes	serves
 countStalePagesForExtraction	extraction	yes	4	yes	yes	yes	serves
 listStalePagesForExtraction	extraction	yes	3	yes	yes	yes	serves
 markPagesExtractedBatch	extraction	yes	6	yes	yes	yes	serves
@@ -498,6 +499,7 @@ sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	3	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
+listVectorlessChunkIndexes	segmented_body	yes	2	no	yes	yes	serves
 listInlineVersionTexts	versions	yes	2	no	yes	yes	serves
 createVersion	versions	yes	58	no	yes	yes	serves
 getVersions	versions	yes	24	no	yes	yes	serves
@@ -705,7 +707,7 @@ listSecretHoldingPages	persistence_journal	yes	1	no	yes	yes	serves
 countUnreferencedSecretEntries	persistence_journal	yes	3	no	yes	yes	serves
 readRestorePageHit	persistence_journal	yes	2	no	yes	yes	serves
 markSecretEntryAllowed	persistence_journal	yes	2	no	yes	yes	serves
-readPageRedactionRow	persistence_journal	yes	3	no	yes	yes	serves
+readPageRedactionRow	persistence_journal	yes	5	no	yes	yes	serves
 readPageRedactionRows	persistence_journal	yes	3	no	yes	yes	serves
 listTimelineDedupRows	persistence_journal	yes	3	no	yes	yes	serves
 listVersionBodiesForRedaction	persistence_journal	yes	2	no	yes	yes	serves
@@ -717,10 +719,10 @@ setRedactedPageFields	persistence_journal	yes	2	no	yes	yes	serves
 readRawDataValue	persistence_journal	yes	2	no	yes	yes	serves
 setRawDataValue	persistence_journal	yes	2	no	yes	yes	serves
 setRedactedRowText	persistence_journal	yes	2	no	yes	yes	serves
-queuePageProjectionJob	persistence_journal	yes	2	no	yes	yes	serves
-readChunkKeepState	persistence_journal	yes	2	no	yes	yes	serves
+queuePageProjectionJob	persistence_journal	yes	3	no	yes	yes	serves
+readChunkKeepState	persistence_journal	yes	3	no	yes	yes	serves
 clearUnkeptChunkVectors	persistence_journal	yes	2	no	yes	yes	serves
-countPendingTextChunks	persistence_journal	yes	2	no	yes	yes	serves
+countPendingTextChunks	persistence_journal	yes	3	no	yes	yes	serves
 moveTwinRelationships	persistence_journal	yes	1	no	yes	yes	serves
 moveTwinPageChildren	persistence_journal	yes	1	no	yes	yes	serves
 moveTwinFacts	persistence_journal	yes	1	no	yes	yes	serves
@@ -1297,11 +1299,12 @@ executeRaw	raw_sql	yes	6	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves
-addCodeEdges	code_edges	yes	4	yes	yes	yes	serves
+addCodeEdges	code_edges	yes	6	yes	yes	yes	serves
 deleteCodeEdgesForChunks	code_edges	yes	1	no	yes	yes	serves
-getCallersOf	code_edges	yes	3	no	yes	yes	serves
+clearCodeEdgesLeavingChunks	code_edges	yes	2	no	yes	yes	serves
+getCallersOf	code_edges	yes	4	no	yes	yes	serves
 getCalleesOf	code_edges	yes	2	yes	yes	yes	serves
-getEdgesByChunk	code_edges	yes	2	no	yes	yes	serves
+getEdgesByChunk	code_edges	yes	4	no	yes	yes	serves
 getCodeTraversalCache	code_edges	yes	7	no	yes	yes	serves
 putCodeTraversalCache	code_edges	yes	7	no	yes	yes	serves
 clearCodeTraversalCache	code_edges	yes	2	no	yes	yes	serves

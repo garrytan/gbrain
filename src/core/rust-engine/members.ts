@@ -343,6 +343,7 @@ export const RUST_ENGINE_MEMBERS = {
   readSegmentDerivations: 'page_body',
   upsertSegmentDerivations: 'page_body',
   retireSegmentDerivations: 'page_body',
+  listVectorlessChunkIndexes: 'page_body',
   // tags
   pruneFrontmatterTags: 'tags',
   addPageTagsById: 'tags',
@@ -386,6 +387,7 @@ export const RUST_ENGINE_MEMBERS = {
   countStaleChunks: 'embeddings',
   sumStaleChunkChars: 'embeddings',
   setPageEmbeddingSignature: 'embeddings',
+  readPageProvenanceComplete: 'embeddings',
   invalidateStaleSignatureEmbeddings: 'embeddings',
   invalidateContentDriftEmbeddings: 'embeddings',
   listStaleChunks: 'embeddings',
@@ -896,6 +898,7 @@ export const RUST_ENGINE_MEMBERS = {
   // code_edges
   addCodeEdges: 'code_edges',
   deleteCodeEdgesForChunks: 'code_edges',
+  clearCodeEdgesLeavingChunks: 'code_edges',
   getCallersOf: 'code_edges',
   getCalleesOf: 'code_edges',
   getEdgesByChunk: 'code_edges',

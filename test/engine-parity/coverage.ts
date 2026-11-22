@@ -74,7 +74,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   retrieval_coverage: ['countPendingProjectionPages', 'countEmbeddingHeldPages', 'projectionRebuildProgress',
     'readProjectionReadinessGeneration', 'readProjectionReadiness'],
   chunks: ['upsertChunks', 'sealChunks', 'getChunks', 'getChunkPage', 'getChunkWindows', 'countStaleChunks', 'sumStaleChunkChars',
-    'setPageEmbeddingSignature', 'invalidateStaleSignatureEmbeddings', 'invalidateContentDriftEmbeddings', 'listStaleChunks',
+    'setPageEmbeddingSignature', 'readPageProvenanceComplete', 'invalidateStaleSignatureEmbeddings', 'invalidateContentDriftEmbeddings', 'listStaleChunks',
     'readPageEmbeddingBudget', 'recordPageEmbeddingHold', 'openPageEmbeddingHold', 'reservePageEmbedding', 'settlePageEmbeddingReservation',
     'readEmbeddingCompletion', 'lockEffectClaimRow', 'lockEmbeddingSwitch', 'installChunkEmbeddings',
     'countChunklessPagesWithContent', 'listChunklessPagesWithContent', 'readEmbeddingStateCounts', 'listEmbeddingStateRows',
@@ -146,7 +146,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     // the batch 7 lost-fence-rows fact reads (engine-sql/lost-fence-reads.ts)
     'hasActiveFactText', 'readFactTrustTier', 'listFenceFactRowNums', 'readLiveFactRowTier'],
   segmented_body: ['allocateBodyOccurrenceIds', 'stageSegmentTexts', 'readSegmentTexts', 'stageManifestRows', 'readManifest', 'readSegmentedEmbedPage',
-    'stageSegmentChunks', 'createSegmentedPageShell', 'flipBodyGeneration', 'sealSegmentedPage', 'openBodyStaging', 'setBodyStagingState', 'readBodyStagingState', 'deleteStagedChunksNotIn', 'sweepSegments',
+    'stageSegmentChunks', 'createSegmentedPageShell', 'flipBodyGeneration', 'sealSegmentedPage', 'openBodyStaging', 'setBodyStagingState', 'readBodyStagingState', 'deleteStagedChunksNotIn', 'listVectorlessChunkIndexes', 'sweepSegments',
     'readSegmentDerivations', 'upsertSegmentDerivations', 'retireSegmentDerivations'],
   versions: ['createVersion', 'getVersions', 'revertToVersion', 'readLatestVersionId', 'readLatestVersionIdAtTier', 'stampVersionChangeReason', 'pruneHoldingPageVersions',
     // the batch 6a history repair reads (engine-sql/version-reasons.ts, overwrite-reads.ts)
@@ -301,7 +301,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   withdrawal_fence: ['hasWithdrawnFenceClaim'],
 
   raw_sql: ['runMigration', 'executeRaw', 'executeRawDirect', 'keywordBoundedRead'],
-  code_edges: ['addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk',
+  code_edges: ['addCodeEdges', 'deleteCodeEdgesForChunks', 'clearCodeEdgesLeavingChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk',
     // group D (code-edge read)
     'hasCodeEdgesSymbol',
     // group D (code traversal cache)

@@ -133,6 +133,7 @@ const OOS = {
   repairHistoryKinds: 'out-of-scope:repair-history-kinds (the batch 6a history repair reads and writes, born in engine-sql/version-reasons.ts, overwrite-reads.ts, takes-reads.ts, fact-text-repair.ts, atom-restore-reads.ts and moved-page-reads.ts; pinned by test/engine-parity/repair-history-kinds.test.ts)',
   twinMergeMoves: 'out-of-scope:twin-merge-moves (the batch 6b twin-merge moves, born in engine-sql/twin-merge-moves.ts, and the rename alias, born in engine-sql/rename-alias-rows.ts; pinned by test/engine-parity/repair-twin-merge.test.ts)',
   secretStore: 'out-of-scope:secret-store (the batch 6c secret store and secret-spans page-store statements, born in engine-sql/secret-store.ts, secret-spans-rows.ts and page-projection-queue.ts; pinned by test/engine-parity/repair-secret-spans.test.ts and test/secret-store*.test.ts)',
+  embedStale: 'out-of-scope:embed-stale (the embedStalePages and provenance stamp reads, born in engine-sql/page-spend.ts and engine-sql/embedding-provenance.ts; pinned by test/embed-stale-sql-pin.test.ts and test/engine-parity/repair-secret-spans.test.ts)',
   projectionReseal: 'out-of-scope:projection-reseal (the batch 6c chunk reseal statements, born in engine-sql/projection-rebuild.ts; pinned by test/projection-rebuild-sql-pin.test.ts and test/engine-parity/projection-reseal.test.ts)',
   budgetLedgerWrites: 'out-of-scope:budget-ledger-writes (the batch 9 daily budget ledger writes, born in engine-sql/budget-ledger-writes.ts; pinned by test/engine-parity/budget-ledger-writes.test.ts)',
   fenceRepairRecords: 'out-of-scope:fence-repair-records (the batch 9 fence repair bookkeeping, born in engine-sql/fence-repair-records.ts; pinned by test/engine-parity/repair-fence-records.test.ts and jobs-status.test.ts)',
@@ -588,6 +589,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'readChunkKeepState': OOS.projectionReseal,
   'clearUnkeptChunkVectors': OOS.projectionReseal,
   'countPendingTextChunks': OOS.projectionReseal,
+  'listVectorlessChunkIndexes': OOS.embedStale,
+  'readPageProvenanceComplete': OOS.embedStale,
   'reclaimBudgetReservations': OOS.budgetLedgerWrites,
   'reserveBudgetReservation': OOS.budgetLedgerWrites,
   'dispatchBudgetReservation': OOS.budgetLedgerWrites,
@@ -1106,7 +1109,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'batchLoadEmotionalInputs': 'salience', 'setEmotionalWeightBatch': 'salience', 'getRecentSalience': 'salience',
   'listEnrichCandidates': 'salience', 'findAnomalies': 'salience',
   // code-edges
-  'addCodeEdges': 'code-edges', 'deleteCodeEdgesForChunks': 'code-edges', 'getCallersOf': 'code-edges',
+  'addCodeEdges': 'code-edges', 'deleteCodeEdgesForChunks': 'code-edges', 'clearCodeEdgesLeavingChunks': 'code-edges', 'getCallersOf': 'code-edges',
   'getCalleesOf': 'code-edges', 'getEdgesByChunk': 'code-edges',
   'getCodeTraversalCache': 'code-edges', 'putCodeTraversalCache': 'code-edges', 'clearCodeTraversalCache': 'code-edges',
   // cjk-search: the CJK branch of the two keyword methods (cases tagged #cjk)
@@ -1990,6 +1993,7 @@ export const SQL_CASES: SqlCase[] = [
     ])],
   ]),
   ...variants('deleteCodeEdgesForChunks', [['default', (e) => e.deleteCodeEdgesForChunks([1, 2])]]),
+  ...variants('clearCodeEdgesLeavingChunks', [['default', (e) => e.clearCodeEdgesLeavingChunks([1, 2])]]),
   ...variants('getCallersOf', [
     ['default', (e) => e.getCallersOf('B.g')],
     ['sourceId', (e) => e.getCallersOf('B.g', { sourceId: SRC })],

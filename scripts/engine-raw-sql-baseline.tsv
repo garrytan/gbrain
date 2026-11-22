@@ -278,7 +278,6 @@ src/core/chronicle/ledger.ts	execute_raw	10	#9636: add_link carries a still-pend
 src/core/chronicle/publish.ts	execute_raw	4
 src/core/chunkers/symbol-resolver.ts	execute_raw	7
 src/core/claw-test/seed-pglite.ts	driver_call	1
-src/core/code-chunks.ts	execute_raw	3
 src/core/code-graph-readiness.ts	execute_raw	1
 src/core/code-intel/recursive-walk.ts	execute_raw	2
 src/core/company-brain/admission.ts	execute_raw	12
@@ -340,7 +339,6 @@ src/core/embed-backfill-submit.ts	execute_raw	2
 src/core/embed-consent.ts	execute_raw	2
 src/core/embed-facts.ts	execute_raw	8
 src/core/embed-stale-images.ts	execute_raw	2
-src/core/embed-stale.ts	execute_raw	3
 src/core/embed-takes.ts	execute_raw	1
 src/core/embedding-ann-build.ts	execute_raw	8
 src/core/embedding-dim-check.ts	execute_raw	2
@@ -498,7 +496,6 @@ src/core/page-body/segment-rewrite.ts	execute_raw	8
 src/core/page-body/segmented-embedding.ts	execute_raw	7
 src/core/page-body/splice.ts	execute_raw	1
 src/core/page-embedding-budget.ts	execute_raw	4
-src/core/page-embedding-lease.ts	execute_raw	1
 src/core/page-searchability.ts	execute_raw	3
 src/core/page-spend.ts	execute_raw	4
 src/core/page-state/contextual-proof.ts	execute_raw	3

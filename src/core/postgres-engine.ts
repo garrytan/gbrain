@@ -153,6 +153,8 @@ import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, O
 import * as trustWriteGateImpl from './engine-sql/trust-write-gate.ts';
 import * as takesImpl from './engine-sql/takes.ts';
 import * as codeEdgesImpl from './engine-sql/code-edges.ts';
+import * as pageSpendImpl from './engine-sql/page-spend.ts';
+import * as embeddingProvenanceImpl from './engine-sql/embedding-provenance.ts';
 import * as codeTraversalCache from './engine-sql/code-traversal-cache.ts';
 import * as salienceImpl from './engine-sql/salience.ts';
 import * as pageLookupImpl from './engine-sql/page-lookup.ts';
@@ -4606,6 +4608,8 @@ export class PostgresEngine implements BrainEngine {
   takePageEmbeddingLease(leaseId: string, opts: Parameters<BrainEngine['takePageEmbeddingLease']>[1]) { return cycleLocksImpl.takePageEmbeddingLease(this.engineSql, leaseId, opts); }
   renewPageEmbeddingLease(leaseId: string, opts: Parameters<BrainEngine['renewPageEmbeddingLease']>[1]) { return cycleLocksImpl.renewPageEmbeddingLease(this.engineSql, leaseId, opts); }
   releasePageEmbeddingLease(leaseId: string, opts: Parameters<BrainEngine['releasePageEmbeddingLease']>[1]) { return cycleLocksImpl.releasePageEmbeddingLease(this.engineSql, leaseId, opts); }
+  listVectorlessChunkIndexes(pageId: number, column: string) { return pageSpendImpl.listVectorlessChunkIndexes(this, pageId, column); }
+  readPageProvenanceComplete(slug: string, sourceId: string, model: string, dims: number | null, column: string) { return embeddingProvenanceImpl.readPageProvenanceComplete(this, slug, sourceId, model, dims, column); }
   async assertCycleLease(lockId: string, acquisitionToken: string) { return cycleLocksImpl.assertCycleLease(this, lockId, acquisitionToken); }
 
   // Minion jobs (engine-sql/jobs.ts): the submission and lifecycle writes run in one transaction each; claim and
@@ -4828,6 +4832,10 @@ export class PostgresEngine implements BrainEngine {
 
   async deleteCodeEdgesForChunks(chunkIds: number[]): Promise<void> {
     return codeEdgesImpl.deleteCodeEdgesForChunks(this.engineSql, chunkIds);
+  }
+
+  async clearCodeEdgesLeavingChunks(chunkIds: number[]): Promise<void> {
+    return codeEdgesImpl.clearCodeEdgesLeavingChunks(this.engineSql, chunkIds);
   }
 
   async getCallersOf(

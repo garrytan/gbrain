@@ -21,22 +21,29 @@
  *  - Seam: none. The repair runs in the engine's own transactions; seeding uses typed members only. Row ids, revisions
  *    and sealed ids differ by engine and are normalized (`REV`, `#`, a rule marker without its id).
  */
-import { describe, expect } from 'bun:test';
+import { afterAll, describe, expect } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
+import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../../src/core/ai/gateway.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { resolveRepairScope } from '../../src/core/repair/core.ts';
 import { repairRunner } from '../../src/core/repair/registry.ts';
+import { embedStalePages } from '../../src/core/embed-stale.ts';
+import { resealAfterRestore } from '../../src/core/repair/secret-spans.ts';
+import { resolveActiveEmbeddingColumnFromEngine } from '../../src/core/search/embedding-column.ts';
 import { allowedMatcher, countsByRule, entryRow, insertBackupRows, isAllowed, keysInUse, listEntries, markerOf, occurrencesOf, recordOccurrence, seal, sealWithId,
   storeSnapshot, unreferencedEntryCount } from '../../src/core/secret-store/store.ts';
 import { applyRestore, previewRestore } from '../../src/core/secret-store/restore.ts';
 import { sealSegmentedPage, stageSegmentedImport } from '../../src/core/persistence/segmented-apply.ts';
 
 const { parityTest } = parityArms(testBackends());
+
+// The cases that embed configure the process-global gateway; put the preload's baseline back for the next file.
+afterAll(() => resetGateway());
 
 const logger = { info() {}, warn() {}, error() {} } as never;
 // Obviously fake key shapes, assembled so no literal key sits in the source.
@@ -106,8 +113,8 @@ async function seedSegmented(engine: BrainEngine) {
   return { created, storedBody };
 }
 
-const runKind = async (engine: BrainEngine, opts: { apply: boolean; slugs: string[]; expect?: string }) =>
-  (await repairRunner(engine, { apply: opts.apply, noEmbed: true, logger })).run('secret-spans', await resolveRepairScope(engine, SRC),
+const runKind = async (engine: BrainEngine, opts: { apply: boolean; slugs: string[]; expect?: string; embed?: boolean }) =>
+  (await repairRunner(engine, { apply: opts.apply, noEmbed: !opts.embed, logger })).run('secret-spans', await resolveRepairScope(engine, SRC),
     { explicit: true, remote: false, sourceFlag: SRC, slugs: opts.slugs, ...(opts.expect ? { expect: opts.expect } : {}) } as never);
 
 /** Every stored copy of the alpha page and what the store holds, as the repair leaves them. */
@@ -129,6 +136,25 @@ async function readState(engine: BrainEngine) {
     sealed: snapshot!.page.text_projection_revision === snapshot!.revision,
   });
 }
+
+/** A deterministic stub vector per input text: the embed runs without a provider request. */
+const DIMS = 1536;
+const vectorFor = (text: string) => Array.from({ length: DIMS }, (_, i) => Math.sin((text.length + 1) * (i + 1)));
+const SIGNATURE = `openai:text-embedding-3-large:${DIMS}`;
+
+/** Configures the gateway so an embed returns the stub vectors, and says what each chunk row holds. */
+function stubEmbeddings() {
+  configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: DIMS, env: { OPENAI_API_KEY: 'test' } });
+  __setEmbedTransportForTests((async ({ values }: { values: string[] }) => ({ embeddings: values.map(vectorFor) })) as never);
+}
+const embeddedRows = async (engine: BrainEngine, slug: string) =>
+  (await engine.getChunksWithEmbeddings(slug, { sourceId: SRC, includeUnsealed: true })).map(c => [c.chunk_index, c.chunk_text, c.embedding ? c.embedding.length : null, c.model]);
+
+/** A code page whose constant holds a credential, and the call it makes: its chunks carry one call edge once resealed. */
+const CODE = 'src/example-code';
+const CODE_BODY = [`const KEY = '${OPENAI}';`, '', 'export function alpha() {', '  return beta(KEY);', '}', '', 'export function beta(value: string) {', '  return value.length;', '}'].join('\n');
+const seedCode = (engine: BrainEngine, body = CODE_BODY) => engine.putPage(CODE, { type: 'code' as never, page_kind: 'code' as never, title: 'example-code.ts (typescript)',
+  compiled_truth: body, timeline: '', frontmatter: { file: 'src/example-code.ts', language: 'typescript' } }, { sourceId: SRC });
 
 describe('engine parity: repair secret-spans', () => {
   parityTest('the preview lists a page with credentials by rule, counts a clean page and writes nothing', {
@@ -186,6 +212,122 @@ describe('engine parity: repair secret-spans', () => {
       places: occurrences.map(list => list.map(o => [o.slug, o.field, o.origin]).sort()).sort(),
       byRule: await engine.countSecretsByRule(SRC), second: { affected: again.affected, residuals: again.residuals } });
     });
+  });
+
+  parityTest('the apply with embedding on re-embeds the rebuilt chunks, stamps the page and leaves no chunk without a vector', {
+    methods: ['putPage', 'upsertChunks', 'getChunksWithEmbeddings', 'getPage', 'readPageSnapshot', 'readLivePageIdBySlug', 'listVectorlessChunkIndexes', 'queuePageProjectionJob', 'readPageRedactionRow'],
+    timeout: 180_000,
+  }, async engine => {
+    stubEmbeddings();
+    await seedPages(engine);
+    return inHome(async () => {
+      const slugs = [ALPHA, CLEAN];
+      const preview = await runKind(engine, { apply: false, slugs, embed: true });
+      const result = await runKind(engine, { apply: true, slugs, expect: preview.preview_hash, embed: true });
+      expect(result.applied).toBe(1);
+      const [item] = result.outcome_items ?? [];
+      expect(item?.detail?.projection).toBe('sealed');
+      expect(item?.detail?.embedded as number).toBeGreaterThan(0);
+      const after = await readState(engine);
+      expect(leaked(after)).toEqual([]);
+      const rows = await embeddedRows(engine, ALPHA);
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.every(row => row[2] === DIMS)).toBe(true);
+      // A second embed finds nothing stale: the first one embedded every rebuilt chunk.
+      const again = await embedStalePages(engine, [ALPHA], SRC);
+      return norm({ detail: item?.detail, state: { ...after, revision: undefined }, rows, again: { embedded: again.embedded, pagesProcessed: again.pagesProcessed } });
+    });
+  });
+
+  parityTest('embedStalePages embeds a page\'s stale chunks, keeps the others and stamps the signature once every chunk is current', {
+    methods: ['putPage', 'sealChunks', 'upsertChunks', 'getChunksWithEmbeddings', 'readLivePageIdBySlug', 'listVectorlessChunkIndexes', 'readPageProvenanceComplete', 'setPageEmbeddingSignature'],
+    timeout: 180_000,
+  }, async engine => {
+    stubEmbeddings();
+    const page = await engine.putPage('notes/embed-example', { type: 'note' as never, title: 'Embed Example', compiled_truth: 'One paragraph of text.\n\nAnother paragraph of text.', timeline: '' }, { sourceId: SRC });
+    await engine.sealChunks('notes/embed-example', [{ chunk_index: 0, chunk_text: 'One paragraph of text.', chunk_source: 'compiled_truth' },
+      { chunk_index: 1, chunk_text: 'Another paragraph of text.', chunk_source: 'compiled_truth' }], { sourceId: SRC });
+    const column = (await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true })).name;
+    const found = await engine.readLivePageIdBySlug('notes/embed-example', SRC);
+    const before = { found: found === Number(page.id), missing: await engine.readLivePageIdBySlug('notes/no-such-page', SRC),
+      vectorless: await engine.listVectorlessChunkIndexes(Number(page.id), column), none: await engine.listVectorlessChunkIndexes(999_999, column),
+      complete: await engine.readPageProvenanceComplete('notes/embed-example', SRC, 'openai:text-embedding-3-large', DIMS, column) };
+    expect(before.found).toBe(true);
+    expect(before.vectorless).toEqual([0, 1]);
+    expect(before.complete).toBe(false);
+    const embedded = await embedStalePages(engine, ['notes/embed-example', 'notes/no-such-page'], SRC, { embeddingSignature: SIGNATURE });
+    const after = { vectorless: await engine.listVectorlessChunkIndexes(Number(page.id), column),
+      complete: await engine.readPageProvenanceComplete('notes/embed-example', SRC, 'openai:text-embedding-3-large', DIMS, column),
+      otherModel: await engine.readPageProvenanceComplete('notes/embed-example', SRC, 'openai:another-model', DIMS, column),
+      otherWidth: await engine.readPageProvenanceComplete('notes/embed-example', SRC, 'openai:text-embedding-3-large', 768, column),
+      otherSource: await engine.readPageProvenanceComplete('notes/embed-example', 'nowhere', 'openai:text-embedding-3-large', DIMS, column) };
+    expect(embedded.embedded).toBe(2);
+    expect(after.vectorless).toEqual([]);
+    expect(after.complete).toBe(true);
+    // A chunk write leaves the text projection unsealed: the page is not complete until it is sealed and embedded again.
+    await engine.upsertChunks('notes/embed-example', [{ chunk_index: 0, chunk_text: 'One paragraph of edited text.', chunk_source: 'compiled_truth' },
+      { chunk_index: 1, chunk_text: 'Another paragraph of text.', chunk_source: 'compiled_truth' }], { sourceId: SRC });
+    const edited = { vectorless: await engine.listVectorlessChunkIndexes(Number(page.id), column),
+      complete: await engine.readPageProvenanceComplete('notes/embed-example', SRC, 'openai:text-embedding-3-large', DIMS, column) };
+    return norm({ before, embedded: { embedded: embedded.embedded, pagesProcessed: embedded.pagesProcessed }, after, edited, rows: await embeddedRows(engine, 'notes/embed-example') });
+  });
+
+  parityTest('a code page: the reseal after a restore installs its call edges through typed members, and the apply names a code page as unsupported', {
+    methods: ['putPage', 'getChunks', 'getEdgesByChunk', 'getCallersOf', 'addCodeEdges', 'clearCodeEdgesLeavingChunks', 'readPageSnapshot', 'readPageRedactionRow', 'readChunkKeepState',
+      'countPendingTextChunks'],
+    timeout: 180_000,
+  }, async engine => {
+    await seedCode(engine);
+    return inHome(async () => {
+      // secret-spans rewrites markdown pages only: a code page is refused by name on every arm, never reaching a reseal through the apply.
+      const preview = await runKind(engine, { apply: false, slugs: [CODE] });
+      expect(preview.residuals).toMatchObject({ pages_to_redact: 0, refused: 1 });
+      // The reseal `gbrain secrets restore` runs after a restore (resealAfterRestore -> resealSafeChunks) is what installs a code page's edges.
+      const view = async () => {
+        const chunks = await engine.getChunks(CODE, { sourceId: SRC, includeUnsealed: true } as never);
+        const edges = (await Promise.all(chunks.map(async c => (await engine.getEdgesByChunk(c.id, { direction: 'out' })).map(e => [c.chunk_index, e.from_symbol_qualified, e.to_symbol_qualified, e.edge_type]))))
+          .flat().sort();
+        const snapshot = await engine.readPageSnapshot(CODE, { sourceId: SRC });
+        return { chunks: chunks.map(c => [c.chunk_index, c.chunk_text, c.symbol_name_qualified]), edges, sealed: snapshot!.page.text_projection_revision === snapshot!.revision };
+      };
+      const before = await view();
+      await resealAfterRestore(engine, SRC, CODE, 'inline', false);
+      const first = await view();
+      expect(first.sealed).toBe(true);
+      expect(first.edges.length).toBeGreaterThan(0);
+      // An edge a chunk no longer holds, then an edit that leaves the other function alone: the next reseal installs exactly the page's own edges.
+      const alpha = (await engine.getChunks(CODE, { sourceId: SRC, includeUnsealed: true } as never)).find(c => c.symbol_name_qualified?.includes('alpha'))!;
+      await engine.addCodeEdges([{ from_chunk_id: alpha.id, to_chunk_id: null, from_symbol_qualified: alpha.symbol_name_qualified!, to_symbol_qualified: 'stale.callee', edge_type: 'calls', source_id: SRC }]);
+      await seedCode(engine, `${CODE_BODY}\n\nexport function gamma() {\n  return alpha();\n}`);
+      await resealAfterRestore(engine, SRC, CODE, 'inline', false);
+      const second = await view();
+      expect(second.sealed).toBe(true);
+      expect(JSON.stringify(second.edges)).not.toContain('stale.callee');
+      const callers = (await engine.getCallersOf('beta', { sourceId: SRC })).map(e => [e.from_symbol_qualified, e.to_symbol_qualified, e.edge_type]);
+      return norm({ refused: preview.listing, before, first, second, callers });
+    });
+  });
+
+  parityTest('clearCodeEdgesLeavingChunks drops the edges leaving the named chunks from both tables and keeps the edges that point at them', {
+    methods: ['putPage', 'upsertChunks', 'getChunks', 'addCodeEdges', 'getEdgesByChunk', 'clearCodeEdgesLeavingChunks'],
+    timeout: 120_000,
+  }, async engine => {
+    await engine.putPage('src/edges-a', { type: 'code' as never, page_kind: 'code' as never, title: 'a', compiled_truth: 'a', timeline: '', frontmatter: { file: 'src/edges-a.ts' } }, { sourceId: SRC });
+    await engine.upsertChunks('src/edges-a', [{ chunk_index: 0, chunk_text: 'function a() { b(); }', chunk_source: 'compiled_truth', symbol_name_qualified: 'a' } as never,
+      { chunk_index: 1, chunk_text: 'function b() {}', chunk_source: 'compiled_truth', symbol_name_qualified: 'b' } as never,
+      { chunk_index: 2, chunk_text: 'function c() { b(); }', chunk_source: 'compiled_truth', symbol_name_qualified: 'c' } as never], { sourceId: SRC });
+    const [a, b, c] = (await engine.getChunks('src/edges-a', { sourceId: SRC, includeUnsealed: true } as never)).map(chunk => chunk.id);
+    const edge = (from: number, to: number | null, fromName: string, toName: string) => ({ from_chunk_id: from, to_chunk_id: to, from_symbol_qualified: fromName, to_symbol_qualified: toName, edge_type: 'calls', source_id: SRC });
+    await engine.addCodeEdges([edge(a!, b!, 'a', 'b'), edge(c!, b!, 'c', 'b'), edge(b!, c!, 'b', 'c'), edge(a!, null, 'a', 'elsewhere'), edge(c!, null, 'c', 'elsewhere')]);
+    const view = async () => Promise.all([a!, b!, c!].map(async id => (await engine.getEdgesByChunk(id, { direction: 'both' })).map(e => [e.from_symbol_qualified, e.to_symbol_qualified, e.resolved]).sort()));
+    const before = await view();
+    await engine.clearCodeEdgesLeavingChunks([]);
+    const empty = await view();
+    await engine.clearCodeEdgesLeavingChunks([a!, 999_999]);
+    const afterA = await view();
+    expect(afterA).not.toEqual(before);
+    await engine.clearCodeEdgesLeavingChunks([b!, c!]);
+    return norm({ before, empty, afterA, afterAll: await view() });
   });
 
   parityTest('a segmented page is created through the staging, manifest and flip members and stores the same body, sealed, on every arm', {

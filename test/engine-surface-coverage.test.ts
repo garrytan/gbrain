@@ -301,7 +301,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Search
   'searchKeyword', 'countKeywordPages', 'searchKeywordPages', 'searchTitles', 'searchVector', 'getEmbeddingsByChunkIds',
   // Chunks
-  'upsertChunks', 'sealChunks', 'getChunks', 'getChunkPage', 'getChunkWindows', 'countStaleChunks', 'sumStaleChunkChars', 'setPageEmbeddingSignature',
+  'upsertChunks', 'sealChunks', 'getChunks', 'getChunkPage', 'getChunkWindows', 'countStaleChunks', 'sumStaleChunkChars', 'setPageEmbeddingSignature', 'readPageProvenanceComplete',
   'invalidateStaleSignatureEmbeddings', 'invalidateContentDriftEmbeddings', 'listStaleChunks',
   // The page embedding ledger (engine-sql/page-embedding-budget.ts).
   'readPageEmbeddingBudget', 'recordPageEmbeddingHold', 'openPageEmbeddingHold', 'reservePageEmbedding', 'settlePageEmbeddingReservation',
@@ -416,7 +416,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'readSourceState', 'readAdmissionSource', 'sharedSkillPackTablePresent', 'listSharedSkillPackRoots', 'getWorktreeBinding', 'isSourceClaimed', 'hasExtractedEvents', 'listActiveAccessMembers', 'listAccessTokens', 'hasLabelledOnlyMember', 'expireMemoryProposals', 'listAwaitingMemoryProposals', 'purgeMemoryProposals', 'attachSourcePath', 'readMemoryProposal', 'readPendingProposalSummary', 'listMemoryProposalRows', 'listOwnerProposalRows',
   'worktreeClaimStore', 'readWriterAdminState', 'writerAdminStore',
   // Code edges
-  'addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk',
+  'addCodeEdges', 'deleteCodeEdgesForChunks', 'clearCodeEdgesLeavingChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk',
   'getCodeTraversalCache', 'putCodeTraversalCache', 'clearCodeTraversalCache',
   'searchKeywordChunks',
   // Eval capture
@@ -427,7 +427,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'findAnomalies',
   // Wave B segmented page bodies (src/core/engine-sql/page-body.ts; covered by test/large-pages/ and test/engine-sql-page-body.test.ts)
   'allocateBodyOccurrenceIds', 'stageSegmentTexts', 'readSegmentTexts', 'stageManifestRows', 'readManifest', 'readSegmentedEmbedPage', 'stageSegmentChunks',
-  'createSegmentedPageShell', 'flipBodyGeneration', 'sealSegmentedPage', 'openBodyStaging', 'setBodyStagingState', 'readBodyStagingState', 'deleteStagedChunksNotIn', 'sweepSegments',
+  'createSegmentedPageShell', 'flipBodyGeneration', 'sealSegmentedPage', 'openBodyStaging', 'setBodyStagingState', 'readBodyStagingState', 'deleteStagedChunksNotIn', 'listVectorlessChunkIndexes', 'sweepSegments',
   // Wave B PR 4 per-segment derivation rows (same SQL module; covered by test/engine-sql-segment-derivations.test.ts and its Postgres arm)
   'readSegmentDerivations', 'upsertSegmentDerivations', 'retireSegmentDerivations',
   // Trust: the fact withdrawal ledger (engine-sql/trust-withdrawals.ts)

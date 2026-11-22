@@ -298,6 +298,17 @@
         ],
         "flagOnScopes": []
       },
+      "clearCodeEdgesLeavingChunks#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "clearCodeTraversalCache#allSources": {
         "flagOffLanes": [
           "pool"
@@ -7433,6 +7444,7 @@
         "claimSegmentedProjection": "none",
         "claimWakeForgets": "none",
         "claimWakeWatch": "none",
+        "clearCodeEdgesLeavingChunks": "none",
         "clearCodeTraversalCache": "none",
         "clearConversationPageFacts": "none",
         "clearFenceHoldRows": "none",
@@ -8242,6 +8254,7 @@
         "listUnverifiedArchivedSourceIds": "none",
         "listUnwithdrawnFacts": "none",
         "listValidTimeIdentities": "none",
+        "listVectorlessChunkIndexes": "none",
         "listVersionBodiesForRedaction": "none",
         "listVersionReasonWriters": "none",
         "listVersionTrustTiers": "none",
@@ -8583,6 +8596,7 @@
         "readPageIdInSource": "none",
         "readPageIndexingState": "none",
         "readPageOrigin": "none",
+        "readPageProvenanceComplete": "none",
         "readPageRedactionRow": "none",
         "readPageRedactionRows": "none",
         "readPageRevisionAttribution": "none",
