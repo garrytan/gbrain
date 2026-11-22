@@ -23,7 +23,7 @@
  *    (page-body/limits.ts stageBatchBytes), which the page body lane serves.
  */
 import { describe, expect } from 'bun:test';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'fs';
+import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'fs';
 import { join, relative } from 'path';
 import { tmpdir } from 'os';
 import { parityArms } from './harness.ts';
@@ -81,7 +81,8 @@ const LONG_PAGE = `---\ntitle: Long page\ntype: note\n---\n\n${Array.from({ leng
 describe('engine parity: the export tree', () => {
   parityTest('export writes the same files with the same bytes', { methods: ['putPage', 'listExportPageKeys', 'readExportPageRows'] },
     async (engine) => {
-      const dir = mkdtempSync(join(tmpdir(), 'export-parity-'));
+      // Export refuses a destination under a symlink, and macOS tmpdir() sits behind the /var -> /private/var symlink.
+      const dir = realpathSync(mkdtempSync(join(tmpdir(), 'export-parity-')));
       try {
         await importFromContent(engine, 'people/front', FRONTMATTER_PAGE, { sourceId: 'default' });
         await importFromContent(engine, 'notes/long', LONG_PAGE, { sourceId: 'default' });
