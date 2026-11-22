@@ -131,7 +131,8 @@ the page projection, repair contextual-mode and evidence delivery. Each answers 
   of their chunks.
 - `resolveFrozenHits` answers one row per hit in scope and per joined chunk, in hit order. A positive chunk id joins
   that chunk, any other id joins chunk index 0, and a page that holds no such chunk gives a row with NULL chunk
-  columns.
+  columns. Only a chunk of the live body joins (`chunkGenerationFilter`): a chunk whose occurrence a deferred retire
+  closed has no live manifest row, so a hit on it reads no chunk.
 
 ## Known differences
 

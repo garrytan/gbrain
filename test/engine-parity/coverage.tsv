@@ -205,10 +205,10 @@ listQualifiedSymbolNames	chunks	yes	1	no	yes	yes	serves
 listWithdrawalChunks	chunks	yes	1	no	yes	yes	serves
 deleteChunksForPages	chunks	yes	2	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
-resolveFrozenHits	chunks	yes	4	no	yes	yes	serves
+resolveFrozenHits	chunks	yes	5	no	yes	yes	serves
 upsertChunks	chunks	yes	39	yes	yes	yes	serves
 sealChunks	chunks	yes	69	no	yes	yes	serves
-getChunks	chunks	yes	41	yes	yes	yes	serves
+getChunks	chunks	yes	42	yes	yes	yes	serves
 getChunkPage	chunks	yes	13	no	yes	yes	serves
 getChunkWindows	chunks	yes	12	no	yes	yes	serves
 countStaleChunks	chunks	yes	8	no	yes	yes	serves
@@ -437,8 +437,8 @@ readManifest	segmented_body	yes	10	no	yes	yes	serves
 readSegmentedEmbedPage	segmented_body	yes	1	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	9	no	yes	yes	serves
 createSegmentedPageShell	segmented_body	yes	28	no	yes	yes	serves
-flipBodyGeneration	segmented_body	yes	29	no	yes	yes	serves
-sealSegmentedPage	segmented_body	yes	6	no	yes	yes	serves
+flipBodyGeneration	segmented_body	yes	30	no	yes	yes	serves
+sealSegmentedPage	segmented_body	yes	7	no	yes	yes	serves
 openBodyStaging	segmented_body	yes	21	no	yes	yes	serves
 setBodyStagingState	segmented_body	yes	19	no	yes	yes	serves
 sweepSegments	segmented_body	yes	3	no	yes	yes	serves
