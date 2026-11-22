@@ -11,9 +11,13 @@
  * skills (db-repair, migrations, …) are not offered, matching the index the
  * thin-client install writes.
  */
+import { existsSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { writeStdoutFinal } from '../../core/cli-force-exit.ts';
 import { loadConfig, isThinClient } from '../../core/config.ts';
 import { opError } from '../../core/ops/contract.ts';
+import { findGbrainRoot } from '../../core/skillpack/bundle.ts';
 import { suggestNearest } from '../../core/levenshtein.ts';
 import { bundledCatalogId, bundledSkillAsset, bundledSkillDescription, bundledSkills, bundledSkillText, findBundledSkill, type SkillAudience } from '../../core/skills/bundled.ts';
 import { VERSION } from '../../version.ts';
@@ -27,7 +31,11 @@ from this gbrain itself. No brain connection is needed.
   gbrain bundled-skill                      every bundled skill, one line each
   gbrain bundled-skill <name>               the skill's SKILL.md, then the files it names
   gbrain bundled-skill <name> --asset <p>   one file the skill names (as listed)
-  --json                                    machine-readable output
+  --json                                    machine-readable output; with no
+                                            name it also gives skills_root, the
+                                            skills folder this gbrain was
+                                            installed with (null for a
+                                            single-file binary)
 
 The skills index written by \`gbrain setup <harness> --skill-loading spring\`
 tells agents to run this command when a task matches a skill.
@@ -35,6 +43,22 @@ tells agents to run this command when a task matches a skill.
 
 export function bundledSkillAudience(): SkillAudience {
   return isThinClient(loadConfig()) ? 'downstream' : 'owner';
+}
+
+/**
+ * The skills folder of the gbrain that is running, found from this module and
+ * the entrypoint (never the cwd, which may be another checkout), or null when
+ * the skills exist only inside a compiled binary.
+ */
+export function installedSkillsRoot(): string | null {
+  const starts: string[] = [];
+  try { starts.push(dirname(fileURLToPath(import.meta.url))); } catch { /* compiled binary */ }
+  if (process.argv[1]) starts.push(dirname(resolve(process.argv[1])));
+  for (const start of starts) {
+    const root = findGbrainRoot(start);
+    if (root && existsSync(join(root, 'skills', 'RESOLVER.md'))) return join(root, 'skills');
+  }
+  return null;
 }
 
 export async function run(args: string[]): Promise<void> {
@@ -67,7 +91,7 @@ export async function run(args: string[]): Promise<void> {
     if (asset !== undefined) exitCliError(usageError('--asset needs a skill name.', 'Usage: gbrain bundled-skill <name> --asset <path>'), 'bundled-skill');
     const skills = await Promise.all(bundledSkills(audience).map(async s => ({ name: s.name, description: await bundledSkillDescription(s) })));
     await writeStdoutFinal(json
-      ? `${JSON.stringify({ schema_version: 1, gbrain_version: VERSION, catalog: bundledCatalogId(), skills }, null, 2)}\n`
+      ? `${JSON.stringify({ schema_version: 1, gbrain_version: VERSION, catalog: bundledCatalogId(), skills_root: installedSkillsRoot(), skills }, null, 2)}\n`
       : `${skills.map(s => `${s.name.padEnd(28)} ${s.description}`).join('\n')}\n`);
     return;
   }
