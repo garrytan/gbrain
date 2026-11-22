@@ -8,6 +8,7 @@ These scripts gate every push to `rust-engine/main`. They are checked in so the 
   - `cargo-test`: `cargo build --workspace --locked`, `cargo clippy --all-targets --locked -- -D warnings` and `cargo test --workspace --locked`.
   - `rust-build`: the napi addon, built for this tree.
   - `parity-arm`: every `test/engine-parity/*.test.ts` file, each in its own process, on all three arms. PGLite always runs; Postgres runs with `DATABASE_URL` on a fresh database; the Rust arm runs with `GBRAIN_TEST_RUST_ARM=1` against the addon. The step stops at the first red file.
+  - `addon-serial`: `test/rust-export.serial.test.ts`, `test/rust-jsonb-key-order.serial.test.ts` and `test/rust-vector-search-cli.serial.test.ts`, each in its own process with the addon required and no skip allowed. No workflow runs them with the addon (`docs/research/rust-test-audit-r2.md`, item 10), and `.github` is frozen until 20:30Z Nov 24. When a `rust-engine.yml` step runs them, drop this step.
   - `unit-lane`, `e2e-selected`, `guard12` and `dupfn`.
 - `trunk-docs-gate.sh <sha> <base>` gates a push that changes only docs, `changelog.d`, `TODOS.md` or the llms bundles. The base must already carry a full `GATE PASS`.
 - `full-e2e-ci.sh` and `full-test-ci.sh` look up the CI run on the exact sha.

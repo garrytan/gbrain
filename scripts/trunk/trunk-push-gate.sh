@@ -13,6 +13,11 @@
 #                  GBRAIN_RUST_ENGINE_ADDON=<worktree>/rust/target/addon/gbrain_engine.linux-x64-glibc.node
 #                  (rust-engine.yml "Rust engine store tests and the parity suite's Rust arm"), with the
 #                  Postgres arm on (DATABASE_URL = the fresh gbrain_test_pushgate database on :55434)
+#   3b addon-serial the three serial files no workflow runs with the addon (docs/research/rust-test-audit-r2.md, item 10):
+#                  test/rust-export.serial.test.ts, test/rust-jsonb-key-order.serial.test.ts and
+#                  test/rust-vector-search-cli.serial.test.ts, one bun process per file, GBRAIN_TEST_RUST_ADDON_REQUIRED=1, no
+#                  DATABASE_URL. A skipped test fails the step: with the addon required, nothing may skip. This step stands
+#                  in for a rust-engine.yml line until the .github freeze ends (20:30Z Nov 24); drop it when that line lands.
 #   4 unit-lane    DATABASE_URL unset. The full CI unit lane (40 shards, serial lane) takes about 100 minutes here and
 #                  does not fit. This runs a fixed subset: the census files (scripts/ci-census-tests.sh --run) and
 #                  GATE_UNIT_SHARD_PAIRS (default 0) pairs of test.yml's `test` shards, picked by the sha
@@ -184,6 +189,25 @@ s_parity() {
   done
 }
 step parity-arm 1 0 s_parity
+
+# ---- 3b the export, jsonb key-order and vector CLI tests, with the addon required (see header)
+ADDON_SERIAL_FILES=(test/rust-export.serial.test.ts test/rust-jsonb-key-order.serial.test.ts test/rust-vector-search-cli.serial.test.ts)
+s_addon_serial() {
+  cd "$WT"
+  export GBRAIN_TEST_RUST_ADDON_REQUIRED=1
+  local file n=0 rc out
+  for file in "${ADDON_SERIAL_FILES[@]}"; do
+    n=$((n + 1)); out="$G/addon-serial-$n.out"
+    echo "== $file"
+    [ -f "$file" ] || { echo "PARITY_FAIL $file does not exist"; return 1; }
+    F env -u DATABASE_URL -u GBRAIN_TEST_ALLOW_DATABASE_URL -u GBRAIN_TEST_RUST_ARM bun test --timeout=120000 "$file" > "$out" 2>&1; rc=$?
+    cat "$out"
+    [ "$rc" -eq 0 ] || { echo "PARITY_FAIL $file"; return 1; }
+    # Addon required: a skipped or empty file is a red step, never a pass.
+    if grep -Eq '^ *[1-9][0-9]* skip$' "$out" || ! grep -Eq '^ *[1-9][0-9]* pass$' "$out"; then echo "PARITY_FAIL $file skipped or ran no test with the addon required"; return 1; fi
+  done
+}
+step addon-serial 1 0 s_addon_serial
 
 # ---- 4 unit lane (subset, see header)
 s_unit() {

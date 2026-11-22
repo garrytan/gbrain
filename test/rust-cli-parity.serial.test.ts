@@ -21,7 +21,11 @@
  *
  * Each command ends in one of three states:
  *  - `equal`: the Rust brain printed the same JSON as the reference brain, value for value.
- *  - `refused`: the command failed with the typed `engine_capability_missing` refusal; the table names the member.
+ *  - `refused`: the command failed with the typed `engine_capability_missing` refusal; the table names the member. The
+ *    refusal passes only as a recorded stop (STOPPED_COMMANDS: the command and the member the Rust engine does not serve).
+ *    A refusal by a member the Rust engine serves, or by a command that is not in the list, fails the test and names the
+ *    member; so does a refused setup write. A served member that must stop for now takes a row in test/rust-stop-pins/
+ *    (owner and due date). The list is the per-command ledger: a command can no longer start refusing unseen.
  *  - `diverged`: anything else (other JSON, an untyped error, output that is not JSON). The test fails on it: a
  *    wrong answer is never acceptable.
  *
@@ -49,6 +53,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
+import { readStopPins, rustServes, today } from './engine-parity/rust-refusals.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
 const CLI = join(ROOT, 'src', 'cli.ts');
@@ -297,6 +302,32 @@ const table: Row[] = [];
 const setupRows: Row[] = [];
 let rustArm: 'on' | 'no-engine' = 'on';
 
+/**
+ * The read commands that stop on a typed refusal today, each with the member the Rust engine does not serve that refuses
+ * it. A command that refuses and is not here fails; one listed here that now answers passes and prints that its row can go.
+ */
+const STOPPED_COMMANDS: Record<string, string> = {
+  'entity "Alice Example" --json': 'executeRaw',
+};
+
+const CLI_FILE = 'test/rust-cli-parity.serial.test.ts';
+/** Why a refusal of `member` by `command` fails the test, or null when it is a stop on a member the engine does not serve. */
+function refusalFailure(command: string, member: string): string | null {
+  const pin = readStopPins().find((row) => row.file === CLI_FILE && row.name === command);
+  if (pin !== undefined) {
+    if (pin.member !== member) return `${command} has a row in test/rust-stop-pins/ for ${pin.member}, but it now refuses at ${member}; update the row`;
+    if (pin.due < today()) return `the stop pin for ${command} (${pin.owner}) was due ${pin.due} and has passed (${pin.reason}); fix ${member} or move the date`;
+    return null;
+  }
+  if (rustServes(member)) {
+    return `${command} was refused by ${member}, which the Rust engine serves; fix the member, or pin the command in test/rust-stop-pins/<family>.tsv with an owner and a due date`;
+  }
+  if (STOPPED_COMMANDS[command] !== member) {
+    return `${command} was refused by ${member}, and ${STOPPED_COMMANDS[command] === undefined ? 'it is not in STOPPED_COMMANDS' : `STOPPED_COMMANDS records ${STOPPED_COMMANDS[command]}`}; a command that newly refuses on Rust fails (record it only when the member is not served)`;
+  }
+  return null;
+}
+
 const label = (args: string[]) => args.map((a) => (a === FIXTURE ? '<fixture>' : /\s/.test(a) ? JSON.stringify(a) : a)).join(' ');
 
 function printTable(): void {
@@ -334,8 +365,11 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
     if (root) rmSync(root, { recursive: true, force: true });
   });
 
-  test('setup never ends in an untyped Rust failure', () => {
+  test('setup never ends in an untyped Rust failure or a refusal', () => {
     expect(setupRows.filter((r) => r.state === 'diverged')).toEqual([]);
+    // A refused setup write leaves the Rust brain without the fixture, so every read after it would compare less than it
+    // says: the refusal fails here, with the command and the member named.
+    expect(setupRows.filter((r) => r.state === 'refused').map((r) => ({ setup: r.command, refusedBy: r.note }))).toEqual([]);
     // The mirror is the reference only while a Rust setup write is refused; once every write runs, the full brain is.
     expect(useMirror).toBe(setupRows.some((r) => r.state === 'refused'));
   });
@@ -353,8 +387,13 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       const member = refusedMember(rust);
       if (member) {
         table.push({ command: label(args), state: 'refused', note: member });
+        // The ledger: a refusal passes only as a recorded stop on a member the engine does not serve.
+        const failure = refusalFailure(label(args), member);
+        const verdict: { command: string; refusedBy: string; failure: string | null } = { command: label(args), refusedBy: member, failure };
+        expect(verdict).toEqual({ ...verdict, failure: null });
         return;
       }
+      if (STOPPED_COMMANDS[label(args)] !== undefined) console.log(`[rust cli parity] ${label(args)} no longer refuses; remove it from STOPPED_COMMANDS`);
       const ref = useMirror ? await cli(brains.mirror, args) : pg;
       const refBrain = useMirror ? brains.mirror : brains.pglite;
       const asJson = (run: Run, brain: Brain, json = parseJson(run.stdout)) =>
