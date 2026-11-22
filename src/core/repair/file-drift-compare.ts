@@ -105,7 +105,7 @@ export async function readDriftEvidence(engine: BrainEngine, sourceId: string, s
 
 /**
  * GST-3328: the blob of the earlier version of its file a side-`unknown` page still holds, read as sync's screen reads it
- * (the DRIFT_HISTORY_VERSIONS versions before the file at HEAD, within DRIFT_HISTORY_DEPTH commits): only Git moved since, so a
+ * (the DRIFT_HISTORY_VERSIONS versions before the file at HEAD, from the commits that changed it): only Git moved since, so a
  * re-screen of its hold imports the file. Null when none matches or Git cannot tell.
  */
 async function earlierVersionHeld(engine: BrainEngine, sourceId: string, slug: string): Promise<string | null> {
