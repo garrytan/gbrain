@@ -1846,7 +1846,6 @@ export class PGLiteEngine implements BrainEngine {
   listRequestsForSlugs(sourceId: string, slugs: readonly string[], limit: number, after: string) { return pagePurgeJournalImpl.listRequestsForSlugs(this, sourceId, slugs, limit, after); }
   readJournalCeiling(sourceId: string) { return pagePurgeJournalImpl.readJournalCeiling(this, sourceId); }
   sweepJournalChunk(q: pagePurgeJournalImpl.JournalChunkQuery) { return pagePurgeJournalImpl.sweepJournalChunk(this, q); }
-  lockWriteRequests(ids: readonly string[]) { return pagePurgeJournalImpl.lockWriteRequests(this, ids); }
   readEffectBytes(requestId: string) { return pagePurgeJournalImpl.readEffectBytes(this, requestId); }
   redactWriteRequestRow(redaction: pagePurgeJournalImpl.RequestRedaction) { return pagePurgeJournalImpl.redactWriteRequestRow(this, redaction); }
   releaseTerminalBytes(key: string, bytes: number) { return pagePurgeJournalImpl.releaseTerminalBytes(this, key, bytes); }

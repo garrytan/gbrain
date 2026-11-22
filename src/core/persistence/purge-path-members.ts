@@ -179,7 +179,7 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
     'readBeliefFactsById', 'readBeliefStateRows', 'readOpenBeliefLifetimes', 'insertBeliefEvents', 'endBeliefLifetime', 'markBeliefCommits',
     // the persistence journal and consumer that run the purge request
     'declarePersistence', 'insertWriteRequest', 'completeWriteRow', 'completeEffectRow', 'insertPublicationEffects', 'readWriteRequest',
-    'readWriteRequestById', 'readWriteRequestProgress', 'lockWriteRequest', 'lockWriteRequests', 'lockPageKeys', 'lockPersistenceCounters',
+    'readWriteRequestById', 'readWriteRequestProgress', 'lockWriteRequest', 'lockWriteRequestsById', 'lockPageKeys', 'lockPersistenceCounters',
     'lockEffectGuard', 'lockSourceForUpdate', 'lockNoopEmbeddingWindow', 'hasClaimableWrite', 'hasRearmableTargets', 'selectClaimableWrite', 'selectClaimableEffect',
     'selectProjectionWindowJobs', 'listPendingSegmentedProjections', 'stampWriteClaim', 'stampEffectClaim', 'renewWriteClaim',
     'expireStaleWriteClaims', 'redactWriteRequestRow', 'releaseTerminalBytes', 'trueUpReservations', 'listTrueUpRequests', 'listReservationsAfter',

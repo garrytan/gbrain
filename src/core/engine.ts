@@ -4437,8 +4437,6 @@ export interface BrainEngine {
   readJournalCeiling(sourceId: string): Promise<string | null>;
   /** One chunk of the journal sweep: the source's requests in a sequence range, of which the ones that carry a needle (lowercased intent, outcome, error detail or error message) or are still pending come back. Reads persistence_requests. */
   sweepJournalChunk(q: PagePurgeJournalSql.JournalChunkQuery): Promise<PagePurgeJournalSql.JournalSweepChunk>;
-  /** The requests with these ids, each once, in id order, locked until the transaction ends. Run it in the purge transaction. */
-  lockWriteRequests(ids: readonly string[]): Promise<WriteRequest[]>;
   /** The bytes a request's effect rows hold on its receipt; 0 when it has none. Reads persistence_effects. */
   readEffectBytes(requestId: string): Promise<number>;
   /** Redacts one request row: intent and error message removed, marked compacted, its terminal reservation, outcome and error detail replaced. Writes persistence_requests; run it in the purge transaction. */

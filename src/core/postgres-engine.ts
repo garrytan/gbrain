@@ -1523,7 +1523,6 @@ export class PostgresEngine implements BrainEngine {
   /** The journal sweep's two reads run in write preparation under the claim's deadline (TYPED_PREPARATION_READS): `ownRawRead` ends them on the server at the bound, as the bounded view ended their raw statements. */
   readJournalCeiling(sourceId: string) { return this.ownRawRead(exec => pagePurgeJournalImpl.readJournalCeiling(exec, sourceId)); }
   sweepJournalChunk(q: pagePurgeJournalImpl.JournalChunkQuery) { return this.ownRawRead(exec => pagePurgeJournalImpl.sweepJournalChunk(exec, q)); }
-  lockWriteRequests(ids: readonly string[]) { return pagePurgeJournalImpl.lockWriteRequests(this, ids); }
   readEffectBytes(requestId: string) { return pagePurgeJournalImpl.readEffectBytes(this, requestId); }
   redactWriteRequestRow(redaction: pagePurgeJournalImpl.RequestRedaction) { return pagePurgeJournalImpl.redactWriteRequestRow(this, redaction); }
   releaseTerminalBytes(key: string, bytes: number) { return pagePurgeJournalImpl.releaseTerminalBytes(this, key, bytes); }

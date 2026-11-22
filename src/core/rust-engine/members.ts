@@ -753,7 +753,6 @@ export const RUST_ENGINE_MEMBERS = {
   listRequestsForSlugs: 'persistence_journal',
   readJournalCeiling: 'persistence_journal',
   sweepJournalChunk: 'persistence_journal',
-  lockWriteRequests: 'persistence_journal',
   readEffectBytes: 'persistence_journal',
   redactWriteRequestRow: 'persistence_journal',
   releaseTerminalBytes: 'persistence_journal',

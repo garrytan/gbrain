@@ -258,7 +258,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listPageTimelineReceipts', 'listPageVersionBodiesForPurge', 'listPageVersionSourcePaths', 'listPendingTakeProposals', 'listProposeTakesCandidatePages', 'listPurgeClaimFacts',
   'listPurgeClaimTakes', 'listPurgeOrigins', 'listPurgeSegmentClaims', 'listQueuedPagePurges', 'listRejectedTakeProposalClaims', 'listRequestsForSlugs',
   'listTakeHorizons', 'listTakeProposalTombstones', 'listWaveAppliedTakeIds', 'listWriteRequestsByRequestId', 'lockHeldConcept', 'lockLiveConceptMembers',
-  'lockSourceForUpdate', 'lockWriteRequests', 'readCatalogSchemaVersion', 'readDerivationPurgeState', 'readEffectBytes', 'readExtractReceiptSeal',
+  'lockSourceForUpdate', 'readCatalogSchemaVersion', 'readDerivationPurgeState', 'readEffectBytes', 'readExtractReceiptSeal',
   'readExtractReceiptSlot', 'readHeadBlockerRows', 'readHeldConcept', 'readIncompleteSyncReceipt', 'readIncompleteSyncReceiptRows', 'readJournalCeiling',
   'readLiveTakePage', 'readOpCheckpointDoc', 'readOpenPassWork', 'readPageLabelRow', 'readPrivacyOrigin', 'readPurgePageBody',
   'readRecoveringHeadRow', 'readStrandedTakeProposalClaim', 'readTakeClaim', 'readTakeGrade', 'readTakeProposal', 'readTombstoneWindow',

@@ -53,16 +53,6 @@ impl Brain {
         })
     }
 
-    /// `lockWriteRequests`: resolves the request rows with these ids, by id.
-    #[napi]
-    pub fn lock_write_requests<'env>(
-        &self,
-        env: &'env Env,
-        ids: Vec<String>,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.lock_write_requests(&ids))
-    }
-
     /// `readEffectBytes`: resolves the bytes the request's effect rows hold on its receipt.
     #[napi]
     pub fn read_effect_bytes<'env>(

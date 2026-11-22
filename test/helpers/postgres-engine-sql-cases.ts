@@ -1249,7 +1249,6 @@ export const DOMAIN_OF: Record<string, string> = {
   'listRequestsForSlugs': OOS.pagePurgeJournal,
   'readJournalCeiling': OOS.pagePurgeJournal,
   'sweepJournalChunk': OOS.pagePurgeJournal,
-  'lockWriteRequests': OOS.pagePurgeJournal,
   'readEffectBytes': OOS.pagePurgeJournal,
   'redactWriteRequestRow': OOS.pagePurgeJournal,
   'releaseTerminalBytes': OOS.pagePurgeJournal,

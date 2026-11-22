@@ -167,7 +167,7 @@ export const FACT_PURGE_PATH: readonly FactPurgeEntry[] = [
     'listPurgeMatchCandidates', 'listPurgePagesById', 'listQueuedPageProjections', 'listRequestsCarryingClaim',
     'listSegmentedPageBodies', 'listSegmentedVersionBodies', 'listSimilarActiveFacts', 'listStagingPartEdges',
     'listStagingsHoldingClaim', 'listWithdrawalChunks', 'loadPurgeTarget', 'lockPageKeys', 'lockPersistenceCounters',
-    'lockPurgeSource', 'lockWriteRequest', 'lockWriteRequests', 'markBeliefCommits', 'planFactPurgeIds', 'planFactPurgeTakes',
+    'lockPurgeSource', 'lockWriteRequest', 'lockWriteRequestsById', 'markBeliefCommits', 'planFactPurgeIds', 'planFactPurgeTakes',
     'probePurgeDerivations', 'purgeSubjectPageLive', 'readBeliefFactsById', 'readBeliefStateRows', 'readChunkKeepState',
     'readDerivationPurgeState', 'readEffectBytes', 'readGraduationGateRow', 'readJournalLimitRows', 'readLedgerSource',
     'readLocalWriterRow', 'readOpenBeliefLifetimes', 'readPageIndexingState', 'readPageSnapshot', 'readPageTrustRows',

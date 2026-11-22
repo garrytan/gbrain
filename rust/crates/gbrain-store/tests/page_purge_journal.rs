@@ -174,11 +174,6 @@ fn a_redaction_of_an_unknown_request_changes_nothing_and_a_bad_id_is_refused() {
     );
     assert!(store.redact_write_request_row(&bad).is_err());
     assert!(store.read_effect_bytes("not-a-uuid").is_err());
-    assert!(
-        store
-            .lock_write_requests(&["not-a-uuid".to_string()])
-            .is_err()
-    );
 }
 
 #[test]
@@ -274,13 +269,6 @@ fn the_lock_answers_each_request_once_by_id_and_the_release_never_goes_below_zer
         json!({ "content": CLAIM }),
         Some(json!({ "ok": true })),
     );
-    let unknown = "f0000000-0000-4000-8000-0000000000ff".to_string();
-    let locked = store
-        .lock_write_requests(&[a.clone(), a.clone(), unknown])
-        .unwrap();
-    assert_eq!(locked.len(), 1);
-    assert_eq!(locked[0]["id"], json!(a));
-    assert!(store.lock_write_requests(&[]).unwrap().is_empty());
     assert_eq!(store.read_effect_bytes(&a).unwrap(), 0);
     let before = terminal(&store, KEY);
     assert!(before > 0);

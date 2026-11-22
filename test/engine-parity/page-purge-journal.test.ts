@@ -224,7 +224,7 @@ describe('engine parity: the journal sweep and the intent redaction of a page pu
   });
 
   parityTest('redactRequestIntents refuses a pending carrier unless told to skip it, and redacts a terminal one: intent and error text removed, outcome scrubbed, reservation shrunk, counters released', {
-    methods: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow', 'transactionDirect', 'declarePersistence', 'insertPublicationEffects', 'transaction', 'readWriteRequestById', 'readCounterRows', 'lockWriteRequests', 'readEffectBytes', 'redactWriteRequestRow', 'releaseTerminalBytes'],
+    methods: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow', 'transactionDirect', 'declarePersistence', 'insertPublicationEffects', 'transaction', 'readWriteRequestById', 'readCounterRows', 'lockWriteRequestsById', 'readEffectBytes', 'redactWriteRequestRow', 'releaseTerminalBytes'],
   }, async (engine, backend) => {
     const ids = await seed(engine, backend);
     const target = (label: string): IntentRedactionTarget => ({ id: ids[label]!, principal_kind: PRINCIPAL.kind, principal_id: PRINCIPAL.id });
@@ -252,7 +252,7 @@ describe('engine parity: the journal sweep and the intent redaction of a page pu
   });
   parityTest('the journal members answer edge inputs alike: an empty list, an unknown id or source, a chunk with ids and an exclusion, no ceiling, a clamped release', {
     methods: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow', 'transactionDirect', 'declarePersistence', 'insertPublicationEffects', 'readWriteRequestById', 'readCounterRows',
-      'transaction', 'listRequestsForSlugs', 'readJournalCeiling', 'sweepJournalChunk', 'lockWriteRequests', 'readEffectBytes', 'redactWriteRequestRow', 'releaseTerminalBytes'],
+      'transaction', 'listRequestsForSlugs', 'readJournalCeiling', 'sweepJournalChunk', 'lockWriteRequestsById', 'readEffectBytes', 'redactWriteRequestRow', 'releaseTerminalBytes'],
   }, async (engine, backend) => {
     const ids = await seed(engine, backend);
     const sequences = new Map<string, string>();
@@ -282,7 +282,7 @@ describe('engine parity: the journal sweep and the intent redaction of a page pu
     const listed = async (slugs: string[], limit: number, after: string, sourceId = SRC) => (await engine.listRequestsForSlugs(sourceId, slugs, limit, after)).map(r => seq(r.sequence));
     const lists = [await listed([SLUG, SLUG], 100, '0'), await listed([SLUG], 2, seqOf('detailCarrier')), await listed([SLUG], 100, '0', 'nobody'), await listed([], 100, '0'), await listed(['notes/keeper'], 100, '0', OTHER)];
     const ceilings = [seq(await engine.readJournalCeiling(SRC)), seq(await engine.readJournalCeiling(OTHER)), await engine.readJournalCeiling('nobody')];
-    const locked = async (wanted: string[]) => (await engine.transaction(tx => tx.lockWriteRequests(wanted))).map(r => name(engine, r.id)).sort();
+    const locked = async (wanted: string[]) => (await engine.transaction(tx => tx.lockWriteRequestsById(wanted))).map(r => name(engine, r.id)).sort();
     const locks = [await locked([]), await locked([unknownId]), await locked([ids.intentCarrier!, ids.otherSource!, unknownId]), await locked([ids.cafeCarrier!, ids.cafeCarrier!])];
     const effectBytes = [await engine.readEffectBytes(ids.outcomeCarrier!), await engine.readEffectBytes(ids.cafeCarrier!), await engine.readEffectBytes(ids.unrelated!), await engine.readEffectBytes(unknownId)];
     const before = { rows: await rowsOf(engine, ids), counters: await counters(engine) };

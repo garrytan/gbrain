@@ -21,7 +21,7 @@ use crate::journal::{RequestRecord, write_request};
 use crate::links::no_nul;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::HashSet;
 
 /// `(state IN ('queued','deferred','running','recovering') OR recovery IS NOT NULL)`.
 const PENDING_STATES: [&str; 4] = ["queued", "deferred", "running", "recovering"];
@@ -201,23 +201,6 @@ impl Store {
             "scanned": chunk.len(),
             "last": chunk.last().map_or(Value::Null, |r| json!(r.sequence.to_string())),
         }))
-    }
-
-    /// `lockWriteRequests(ids)`: the request rows with these ids, each once, by id; an id no request has is left out. The lock
-    /// is a no-op here (one store write transaction at a time).
-    pub fn lock_write_requests(&self, ids: &[String]) -> Result<Vec<Value>> {
-        let wanted: BTreeSet<String> = ids
-            .iter()
-            .map(|id| uuid_param(id, "lockWriteRequests ids"))
-            .collect::<Result<_>>()?;
-        let read = self.read()?;
-        let mut rows = Vec::new();
-        for id in wanted {
-            if let Some(r) = request_by_id(&*read, &id)? {
-                rows.push(r.to_row());
-            }
-        }
-        Ok(rows)
     }
 
     /// `readEffectBytes(requestId)`: the bytes the request's effect rows hold on its receipt (kind, data and the 1 KiB

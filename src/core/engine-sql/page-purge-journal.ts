@@ -89,11 +89,6 @@ export async function sweepJournalChunk(engine: Raw, q: JournalChunkQuery): Prom
     matched: (hits?.length ?? 0) > 0, hits: (hits ?? []).map(Number) })).sort(bySequence), scanned: Number(stats.chunk_rows), last: stats.chunk_last };
 }
 
-/** The requests with these ids, each locked `FOR UPDATE` until the transaction ends, in id order; an id no request has is left out. */
-export async function lockWriteRequests(engine: Raw, ids: readonly string[]): Promise<WriteRequest[]> {
-  return engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE', [[...ids]]);
-}
-
 /** The bytes the request's effect rows hold on its receipt (`EFFECT_BYTES_SQL` each); 0 when it has none. */
 export async function readEffectBytes(engine: Raw, requestId: string): Promise<number> {
   const sql = renderFragment(sqlFragment`SELECT COALESCE(SUM(${trustedSql(EFFECT_BYTES_SQL)}),0)::text AS bytes
