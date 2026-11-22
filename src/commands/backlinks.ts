@@ -15,7 +15,7 @@ import { join, relative, basename } from 'path';
 import { extractEntityRefs as canonicalExtractEntityRefs } from '../core/link-extraction.ts';
 import { createProgress, startHeartbeat } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
-import { parseMarkdown, frontmatterBodyOffset, findTimelineSplitIndex } from '../core/markdown.ts';
+import { parseMarkdown, frontmatterBodyOffset, findTimelineSplitIndex, validatorFrontmatterFence } from '../core/markdown.ts';
 import { atomicWriteFileSync } from '../core/atomic-write.ts';
 import { withPageLock } from '../core/page-lock.ts';
 
@@ -356,6 +356,13 @@ export async function fixBacklinkGaps(
         }
 
         const bodyStart = frontmatterBodyOffset(content);
+        if (bodyStart === 0 && validatorFrontmatterFence(content.split('\n')).opens) {
+          outcome.skipped.push({
+            page: targetPage,
+            reason: 'frontmatter has no closing --- at the start of a line — file left untouched',
+          });
+          return;
+        }
         let inserted = 0;
         for (const gap of targetGaps) {
           // Compute relative path from target to source

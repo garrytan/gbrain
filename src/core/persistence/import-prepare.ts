@@ -39,6 +39,7 @@ import type { Action } from '../agent-output.ts';
 import { bindOrigin } from './origin-guard.ts';
 import { segmentedOutcome } from './searchable.ts';
 import { isQuarantined } from '../quarantine.ts';
+import { assertPlainDirectoryFileInStep, recordPlainDirectoryAgreement } from './plain-directory-drift.ts';
 import { READERS_FIX_EFFECT } from './readers-request.ts';
 
 export type ImportPack = { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string>; aliases?: ReadonlyArray<string> }> };
@@ -49,6 +50,8 @@ export interface ManagedImportIntent extends Record<string, unknown> {
   kind: 'managed_file_import'; slug: string; content?: string; body_ref?: ManagedImportBodyRef; sourcePath: string; path?: string;
   inputPath: string; inputHash: string; targetHash: string | null;
   ownerEpoch: string; expected_revision?: string; noEmbed: boolean; activePack?: ImportPack;
+  /** #8079: a plain-directory sync's import, which never replaces a page a database-only write made (plain-directory-drift.ts). */
+  plainDirectorySync?: true;
 }
 
 const reimportFix = (inputPath: string, sourceId: string): Action => ({
@@ -268,6 +271,7 @@ export async function prepareManagedImportMutation(engine: BrainEngine, row: Wri
   if (ready.slug !== row.slug || ready.observedRevision !== (snapshot?.revision ?? null)) throw opError('revision_conflict', 'The import identity changed during preparation.',
     `Page ${row.slug} in source ${row.source_id} changed while import request ${row.request_id} was prepared, so it published nothing. Import ${p.sourcePath} again against the current page.`,
     { fix: reimportFix(p.inputPath, row.source_id) });
+  if (p.plainDirectorySync && snapshot && !ready.noop) await assertPlainDirectoryFileInStep(engine, row.source_id, row.source_incarnation, snapshot, p.inputPath);
   if (!image && !ready.parsedPage) throw opError('invalid_params', 'The text import lost its prepared page.',
     `Preparing ${p.sourcePath} for import request ${row.request_id} in source ${row.source_id} produced no page, so nothing was published. Read the receipt and report it to the user if importing the file again fails the same way.`,
     { fix: receiptFix(row) });
@@ -283,6 +287,8 @@ export async function prepareManagedImportMutation(engine: BrainEngine, row: Wri
     apply: async tx => {
       const applied = await ready.apply(tx);
       await bindOrigin(tx, { sourceId: row.source_id, slug: row.slug, sourcePath: p.sourcePath });
+      // #8079: a plain-directory file that only rewrites to the page's own canonical form agrees with the page.
+      if (p.plainDirectorySync && snapshot && ready.noop) await recordPlainDirectoryAgreement(tx, row.source_id, row.source_incarnation, snapshot);
       if (project) {
         // The coordinator proved the base revision under its page guard (importFromContent `coordinated`); this is the
         // one read of the page after its last page write (the projections and the seal leave its revision unchanged):
@@ -358,6 +364,7 @@ async function prepareStreamedManagedImport(engine: BrainEngine, row: WriteReque
   if (prepared.slug !== row.slug || prepared.observedRevision !== (snapshot?.revision ?? null)) throw opError('revision_conflict', 'The import identity changed during preparation.',
     `Page ${row.slug} in source ${row.source_id} changed while import request ${row.request_id} was prepared, so it published nothing. Import ${p.sourcePath} again against the current page.`,
     { fix: reimportFix(p.inputPath, row.source_id) });
+  if (p.plainDirectorySync && snapshot && !prepared.noop) await assertPlainDirectoryFileInStep(engine, row.source_id, row.source_incarnation, snapshot, p.inputPath);
   const mutation: PreparedMutation = { observedRevision: prepared.observedRevision, noop: prepared.noop,
     trust: await ownerImportTrust(engine, row, prepared.frontmatter, p.sourcePath), deferEmbedding: p.noEmbed,
     validate: async tx => { await checkPlacement(tx); await prepared.validate(tx); },
