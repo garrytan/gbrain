@@ -33,7 +33,7 @@ const MANAGED_BLOCK_END = /<!--+\s*gbrain:([a-z0-9_-]+):end\b[^>]*>/gi;
 const MANAGED_BLOCK_BEGIN = /^(?:[ \t]*#{1,6}[ \t]+(?:facts|takes)[ \t]*\n(?:[ \t]*\n)*)?[^\n]*?<!--+\s*gbrain:([a-z0-9_-]+):begin\b[^>]*>/im;
 
 const WRAPPED_FRONTMATTER_WINDOW = 5;
-const FRONTMATTER_KEY_LINE = /^(?:[&!]\S*[ \t]+)*(?:\?(?:[ \t]|$)|(?:"(?:[^"\\\n]|\\.)+"[ \t]*|'(?:[^'\n]|'')+'[ \t]*|(?:[-?:][^\s:]|[^\s#'"{}[\],&*!|>%@`?:-])[^\n:]*):(?:[ \t]|$))/m;
+const FRONTMATTER_KEY_LINE = /^(?:[&!]\S*[ \t]+)*(?:\?(?:[ \t]|$)|(?:\x22(?:[^\x22\\\n]|\\.)+\x22[ \t]*|\x27(?:[^\x27\n]|\x27\x27)+\x27[ \t]*|(?:[-?:][^\s:]|[^\s#\x27\x22{}[\],&*!|>%@\x60?:-])[^\n:]*):(?:[ \t]|$))/m;
 
 /**
  * Whether a column-0 frontmatter fence pair, as parseDataFrontmatter reads one, starts on one of the first
