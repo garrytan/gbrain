@@ -10,6 +10,100 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.761.0] - 2026-11-22
+
+**A sync that re-screens many held notes against their files' earlier versions now spends at most two minutes per pass reading Git history, keeps what a cut-short read already found, and keeps reporting progress while it reads.**
+
+### Fixed
+- Reading a held note's earlier versions walks every commit that changed its file, so on a deep repository a pass over thousands of such notes could spend many minutes in Git. A pass now stops starting new history reads after two minutes. A note whose history it didn't read in full is screened with what it did read and counted as `driftHistoryUnread` in the pass's counts. If that note is held, including a note whose file changed for the first time since an older gbrain imported it, the hold is marked so the next sync screens it again, with no `gbrain sources retry-held` needed. If that retry is cut short too, the note keeps an ordinary hold, so sync doesn't re-read the same history on every run.
+- A history read that timed out used to drop everything it had read for its group of notes. It now keeps the versions it found, so those notes can still clear.
+- While a long history read streams, the pass now reports progress every second or so instead of only when the read ends, so a slow read no longer looks stalled and a cancelled sync stops promptly.
+- The read now collects 5 distinct versions per file, which is what sync and `gbrain repair file-drift --held` use, instead of 50. A file listed twice no longer keeps its group's read from stopping early.
+
+**Bundled skills now tell you when a model refuses instead of hiding it, ask for the narrowest access that works, and `gbrain book-mirror` no longer writes a refused chapter into the page as finished.**
+
+### Fixed
+- `gbrain book-mirror` marks a chapter the provider refused, or whose output filter stopped it, as failed with "provider refusal or output filter stop". Before, the refusal text went into the page as a completed chapter and the run could exit 0. The retry hints now say to retry only if you choose, and that a refused chapter's job has to be deleted first (`gbrain jobs delete <id>`).
+
+### Changed
+- The cross-modal-review skill reports a review model's refusal to you as a provider refusal. Another model reviews only when you pick one, or when `refusal_routing.behavior` in `skills/conventions/cross-modal.yaml` is `next_in_chain`, and the output then names the switch. The default is `report`. `skills/conventions/model-routing.md` follows the same rule.
+- The cold-start skill, the credential-gateway recipe and its integration doc ask for the narrowest gateway task scope and purpose that does the job. When a request you need is blocked, the agent tells you and widens the task with your agreement.
+- The book-mirror skill records a filter-stopped chapter as that chapter's result and tells you, and retries only if you choose.
+
+## [0.60.760.0] - 2026-11-22
+
+**`gbrain search` on the command line now shows the facts you saved with `gbrain remember`, and the OpenClaw install steps add the brain-first rule.**
+
+### Fixed
+- `gbrain search` and `gbrain query` on the command line print the saved facts (`remember`) that match, under "Saved facts (remember)", as MCP search already did. A fact saved with `gbrain remember` and looked up later with `gbrain search` used to print "No results." With `--json`, stdout stays the row array and the saved facts go to stderr.
+- `gbrain setup --help` names `openclaw`, `hermes`, `opencode` and `cursor` in its usage lines, not only `claude-code` and `codex`.
+
+### Changed
+- The OpenClaw install steps (`INSTALL_FOR_AGENTS.md`, `docs/mcp/OPENCLAW.md`) run `gbrain setup openclaw` right after registering the MCP server. Without that step a new session answers from OpenClaw's own memory instead of gbrain.
+
+**Search is fast again on brains where old upgrade work sits parked on image pages.**
+
+### Fixed
+- Since v0.60.723.0, every search on a brain whose readiness said "projection pending" also counted the pages a post-upgrade rebuild still had to process. When that rebuild's queue rows were parked on image pages, which the rebuild never touches, the count still read every page in the brain on every search. On a brain of several hundred thousand pages that added more than a second to each warm search. Search now reads only the rebuild's queued rows to decide whether a rebuild is running, and counts pages only while one is running for text pages in the caller's scope.
+- Search results are unchanged. The rebuild progress in search's readiness metadata (`_meta.retrieval.coverage.rebuild`) now appears only while text pages in your scope still wait for the rebuild; work left only on image pages no longer shows as a running rebuild, and the pending-images notice still names it.
+
+**A GitHub connector's first import now also stops at the job's deadline, and a connector sync refused on its own retained publication records that refusal.**
+
+### Fixed
+- The first, database-only pass of a GitHub connector import ignored the job's deadline, so a large first import could still run until the job was killed at its timeout and record nothing. It now stops importing at the deadline without counting a failed item, keeps every listed page, and the next sync picks up the items it did not reach. (#9968)
+- A connector sync refused with `recovery_required` because its own retained publication was still recovering did not record the refusal, so `sources status` never counted it toward a stop. The refusal is now recorded as the source's last failure, with the blocking request. (#9968)
+
+## [0.60.759.0] - 2026-11-21
+
+**Sync now finds the earlier committed version a held note still matches by looking through that file's own history, so the `gbrain sources retry-held` route clears what `gbrain repair file-drift --held` says it will. On a read-only mirror, the preview also says why it couldn't read a held file.**
+
+### Fixed
+- To check whether a note with no import record still holds an earlier version of its file, sync used to read the file at each of the last 50 commits of the whole repository. On a busy repository, the version a note matched was often thousands of commits back, so sync kept the note held even though `gbrain repair file-drift --held` listed it as "an earlier version" that `retry-held` would clear. Sync now reads the versions from the last 50 commits that changed that file, as the preview does.
+- When a held note's file on a read-only mirror can't be read losslessly (invalid UTF-8, or frontmatter YAML that only parses through recovery), the preview now shows the reason after the code, such as `invalid_params: Canonical file metadata cannot be parsed losslessly; repair its syntax before previewing.`, instead of `invalid_params` alone.
+- The preview no longer says a committed sync leaves a file with uncommitted bytes in place. It says sync holds such a file `worktree_dirty` until the bytes are committed or restored.
+
+## [0.60.758.0] - 2026-11-21
+
+**Conversation fact extraction no longer skips short transcripts whose answers lead many lines with bold text, and one window the model declines no longer fails its page.**
+
+### Fixed
+- A transcript in the documented `**Speaker** (YYYY-MM-DD h:mm AM): text` shape with few turns and a long answer full of bold headings or `**Label:**` lines was skipped as unparsed: every line starting with `**` counted against the format, so two turns over 45 bold lines scored under the 5% floor. Only lines that open like a turn (`**Name** (`) count now, and the rest read as part of the answer.
+- A window the extraction model still declines after its retry as two halves (a refusal or a content-filter stop) is now left out instead of failing the page. The page completes with the facts of every other window, on managed brains too, which before published nothing for such a page. It is not counted in `pages_failed`, the next run doesn't pay to read it again, and `--json` lists each declined span in `declined_windows` and counts them in the new `windows_declined` (also in the backfill cycle's details). `--force` on the page tries a declined window again. A page where every window declined still stays unfinished and retries next run.
+- Each `--json` `unparsed_pages` entry now carries a `reason` code (`no_format_line`, `below_floor`, `label_list`, `no_formats` or `no_message_lines`) beside its `cause`, so scripts can count why pages were skipped without parsing the sentence.
+
+**Clearer errors for bad search, timeline and import input, and honest doctor and halt reporting.**
+
+### Fixed
+- `gbrain doctor` no longer reports the quarantined pages, flagged pages and autopilot fan-out checks as passing when the check itself fails. It now shows a warning with the error, and skips quietly only when the table it reads doesn't exist yet. (#9924)
+- Search reads a negative limit as the default and a negative offset as 0, instead of returning the wrong rows or failing. (#9921)
+- The timeline lookup refuses a date that isn't a YYYY-MM-DD calendar date (a full timestamp included) and a negative or fractional limit with a clear invalid-input error naming the field, instead of a database error. (#9920)
+- `gbrain jobs cancel --group <id> --json` exits 1 with a `not_found` error when the group has no jobs, as it already did without `--json`. A script that read the old empty success output now sees the error. (#9919)
+- `gbrain access rule import --file <path>` names a missing file as invalid input and writes nothing. (#9889)
+- Concept synthesis records a run stopped by a provider-wide sign-in or rate-limit failure under that reason, instead of as an ordinary item error. (#9962)
+
+Thanks to @Masashi-Ono0611 and @Kkkkkuro for the reports.
+
+**Lands #9963, #9932 and #9954 together, and conversation fact extraction now keeps a claim private when the "keep this quiet" request for it sits in the other half of a window the model refused.**
+
+**Connector syncs run as jobs now stop at the job's deadline and save their place, and a recovery_required stop with nothing left to recover no longer shows the connector as stopped.**
+
+<!-- behavior-change: connector_job_deadline_9968 -->
+
+### Fixed
+- A managed connector sync run by autopilot or a sync job ignored the job's deadline, so a long Gmail backfill ran until the job was killed at its timeout (`aborted: timeout`), every time. The killed run recorded nothing, not even its pending writes, its last position or its counts. With the sync job drain on (the default; `sync.job_drain false` turns the deadline off too), it now stops at the job's deadline less its reserve, ends `partial` with reason `timeout`, records its run and saves the newest backfill position whose mail has already been written, so the job completes and the next sync continues below that position. Mail already imported is not imported again, and the position never moves past mail that is not yet written. The first database-only pass of a large GitHub import still runs to the job timeout; a follow-up fixes that. (#9968)
+- `sources status` and `sync status` kept showing a connector as `stopped` on a `recovery_required` failure recorded before an upgrade, because only a complete run cleared it and the killed runs recorded nothing. When no request of the source still holds a recovery record, the failure now shows `recovery_settled: true` and `stopped: false`, and the next sync that ends without an error clears it. A source with a real retained publication keeps the stop. (#9968)
+- The `recovery_required` refusal of a connector sync now names the retained request, its state and its `blocked_reason`, and its `fix` reads that receipt (`gbrain write-request -- <request id>`); `sources status` names the same request. Its wait for the publication to settle never runs past the caller's deadline. (#9968)
+- `gbrain sources writer status` now lists a request that has ended but still holds a recovery record, which blocks its worktree; before, it listed only queued, running and recovering requests and blocked ones. Reported and first fixed by @Masashi-Ono0611 (#9969).
+
+Nothing to run after upgrading. The next sync of an affected source stops at its deadline, records its run and clears a settled `recovery_required` record by itself.
+
+**The `query` tool's `autocut` description now says autocut is off by default, which is what every search mode does.**
+
+### Fixed
+- The `autocut` parameter on `query` told agents it was on by default and never empty. It has been off in every search mode (`conservative`, `balanced`, `tokenmax`) since the ranker wave, so an agent that left it unset already got the full top results. The description now says so: autocut is off unless you pass `autocut: true` or set `gbrain config set search.autocut true`, and turning it on trims the results at the steepest score drop, which can drop relevant results on questions with more than one part. Search behavior is unchanged; a new PGLite test pins that `query` without `autocut` returns the full reranked set in `balanced` and `tokenmax`.
+
+<!-- public-surface: no-behavior-change: the query tool autocut description text is corrected to match existing behavior; no flag, tool or default changes -->
+
 ## [0.60.757.0] - 2026-11-21
 
 **gbrain installs and connects to Hermes without changing Hermes's security settings: `gbrain setup hermes` now registers the MCP server through Hermes's own `hermes mcp add`, and the install docs add a release-binary route Hermes's command scanner allows.**

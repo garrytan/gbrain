@@ -6,6 +6,7 @@
 src/cli/enforced-commit-push.ts	execute_raw	1
 src/cli/enforced-member.ts	execute_raw	6
 src/commands/access-read-by-nobody.ts	execute_raw	2
+src/commands/access-read-log.ts	execute_raw	4	GST-2476 gap 1: the access read log readers (access log, who-read) over the new access_read_log table (v331); the access area is still raw SQL (access.ts, access-rules.ts) and converts with it
 src/commands/access-rules.ts	execute_raw	4
 src/commands/access-serves.ts	execute_raw	8	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/commands/access.ts	execute_raw	6
@@ -291,6 +292,7 @@ src/core/access/owner.ts	execute_raw	1
 src/core/access/policy-migrate.ts	execute_raw	4
 src/core/access/policy-transfer.ts	execute_raw	1
 src/core/access/policy.ts	execute_raw	31
+src/core/access/read-log.ts	execute_raw	3	GST-2476 gap 1: the access read log writer (batched insert, two retention deletes) over access_read_log (v331); the access area is still raw SQL (caller.ts, members.ts) and converts with it
 src/core/access/requester-scope.ts	execute_raw	4
 src/core/access/room.ts	execute_raw	2
 src/core/access/serves.ts	execute_raw	2
