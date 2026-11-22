@@ -92,6 +92,30 @@ describe('company-brainify export: only files that got the read ship', () => {
     expect(text).not.toContain("holds nothing the pass didn't read");
   });
 
+  test('the purge stops when the shared repo keeps a page that is not on the export list', () => {
+    const step1 = fenceContaining('Sanitize: strip sensitive content before history purge');
+    const start = step1.indexOf(`for d in ${PURGE_DIRS}; do\n  [ -d "$STAGING/$d" ]`);
+    const end = step1.indexOf('SANITIZED=""');
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const guard = step1.slice(start, end);
+    const dir = tmp();
+    const staging = join(dir, 'staging');
+    write(staging, 'people/alice-example.md', 'Staff engineer.\n');
+    writeFileSync(`${staging}.export-list`, 'people/alice-example.md\n');
+    const shared = join(dir, 'shared');
+    write(shared, 'people/alice-example.md', 'Old copy.\n');
+    write(shared, 'people/family-member-example.md', 'Private, from an earlier folder export.\n');
+    const stale = bash(guard, shared, { STAGING: staging });
+    expect(stale.status).toBe(1);
+    expect(stale.stdout).toContain('people/family-member-example.md');
+    expect(stale.stdout).not.toContain('people/alice-example.md');
+    rmSync(join(shared, 'people/family-member-example.md'));
+    const clean = bash(guard, shared, { STAGING: staging });
+    expect(clean.status).toBe(0);
+    expect(readFileSync(join(shared, 'people/alice-example.md'), 'utf8')).toBe('Staff engineer.\n');
+  });
+
   test('Phase 4 greps look for personal data across every scanned folder', () => {
     const greps = fenceContaining('# Rating fields remaining in frontmatter');
     expect(greps).toContain("grep -v -i '@acme-example\\.com$'");

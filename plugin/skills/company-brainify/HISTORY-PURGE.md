@@ -28,6 +28,13 @@ cd "$WORK/shared"
 for d in people meetings daily companies projects analysis; do
   [ -d "$STAGING/$d" ] && rsync -a "$STAGING/$d/" "./$d/"   # or sanitize in place here
 done
+# Nothing unread may stay: an earlier whole-folder export can have left pages
+# here that never got the read. List them and stop; the user removes each one
+# (git rm, commit-push, re-run Step 1) or appends it to the export list and
+# gives it the full read and the Phase 4 checks.
+unread=$(for d in people meetings daily companies projects analysis; do [ -d "$d" ] && find "$d" -type f; done \
+  | LC_ALL=C sort | LC_ALL=C comm -23 - "$STAGING.export-list")
+[ -z "$unread" ] || { printf 'not on the export list, never read — ABORT:\n%s\n' "$unread"; exit 1; }
 SANITIZED=""
 for d in people meetings daily companies projects analysis; do [ -d "$d" ] && SANITIZED="$SANITIZED $d"; done
 gbrain git commit-push -m "Sanitize: strip sensitive content before history purge" -- $SANITIZED
