@@ -13,6 +13,7 @@ test/engine-parity/alias-fanout-reads.test.ts	11	0
 test/engine-parity/alias-trust.test.ts	6	0
 test/engine-parity/attested-actor-link.test.ts	1	0
 test/engine-parity/backup-readiness-callers.test.ts	3	0
+test/engine-parity/brief-reads.test.ts	6	0
 test/engine-parity/calibration-profiles.test.ts	5	0
 test/engine-parity/chronicle-publish-parity.test.ts	2	1
 test/engine-parity/chunk-page-segmented.test.ts	7	0
@@ -94,9 +95,10 @@ test/engine-parity/facts-cycle.test.ts	15	0
 test/engine-parity/facts-doctor.test.ts	14	0
 test/engine-parity/facts-purge-sites.test.ts	1	26
 test/engine-parity/facts-purge.test.ts	25	2
+test/engine-parity/facts-quoted.test.ts	1	0
 test/engine-parity/facts-repair-sites.test.ts	1	13
 test/engine-parity/facts-repair.test.ts	17	2
-test/engine-parity/facts-rest-sites.test.ts	1	18
+test/engine-parity/facts-rest-sites.test.ts	2	17
 test/engine-parity/facts-trust-owner.test.ts	6	0
 test/engine-parity/facts-trust.test.ts	13	0
 test/engine-parity/facts.test.ts	36	0
@@ -113,11 +115,14 @@ test/engine-parity/generation-page-rows-order.test.ts	1	0
 test/engine-parity/generation-write-parity.test.ts	1	2
 test/engine-parity/git-holds.test.ts	3	0
 test/engine-parity/held-fence-cells.test.ts	5	0
+test/engine-parity/hidden-refusals-2.test.ts	12	0
+test/engine-parity/hidden-refusals.test.ts	4	1	the Rust store stems in English only (the non-English saved-facts case refuses by design)
 test/engine-parity/holding-page-purges.test.ts	2	0
+test/engine-parity/hot-memory-meta.test.ts	3	0
 test/engine-parity/hot-memory-watermark.test.ts	2	0
 test/engine-parity/import-folder-stamp.test.ts	5	0
 test/engine-parity/import-members.test.ts	10	0
-test/engine-parity/import-path.test.ts	6	2
+test/engine-parity/import-path.test.ts	7	1
 test/engine-parity/import-writes.test.ts	11	0
 test/engine-parity/jobs-checks.test.ts	9	0
 test/engine-parity/jobs-health.test.ts	8	0
@@ -145,6 +150,7 @@ test/engine-parity/oauth-clients.test.ts	17	0
 test/engine-parity/oauth-http.test.ts	2	0
 test/engine-parity/oauth-lifecycle.test.ts	4	0
 test/engine-parity/oauth-revocation.test.ts	4	0
+test/engine-parity/ontology-propose.test.ts	5	0
 test/engine-parity/op-checkpoint.test.ts	2	0
 test/engine-parity/open-loops.test.ts	6	0
 test/engine-parity/open-pages.test.ts	3	1
@@ -162,6 +168,7 @@ test/engine-parity/pages.test.ts	37	2
 test/engine-parity/persistence-declaration.test.ts	9	2
 test/engine-parity/persistence.test.ts	61	0
 test/engine-parity/person-duplicates.test.ts	5	0
+test/engine-parity/privacy-hold-reply.test.ts	1	0
 test/engine-parity/private-page-reads.test.ts	25	0
 test/engine-parity/put-source-fork.test.ts	1	2
 test/engine-parity/raw-sql.test.ts	0	4
@@ -176,6 +183,7 @@ test/engine-parity/request-tools-persist.test.ts	1	0
 test/engine-parity/resolve-reads.test.ts	7	0
 test/engine-parity/restriction-flag-reads.test.ts	3	0
 test/engine-parity/retrieval-coverage.test.ts	12	1
+test/engine-parity/retrieval-reflex.test.ts	5	0
 test/engine-parity/search-cjk.test.ts	7	0
 test/engine-parity/search-deep-query.test.ts	1	0
 test/engine-parity/search-privacy-retention.test.ts	5	0
@@ -208,12 +216,13 @@ test/engine-parity/telemetry.test.ts	10	0
 test/engine-parity/think-gather-takes.test.ts	1	0
 test/engine-parity/tie-break-stale-orphan-edge-downgrade.test.ts	0	4
 test/engine-parity/tie-purge-files-links-facts.test.ts	0	5
+test/engine-parity/timeline-add.test.ts	1	5
 test/engine-parity/timeline-held-rows.test.ts	2	0
 test/engine-parity/timeline-reads.test.ts	4	0
 test/engine-parity/timeline.test.ts	34	0
 test/engine-parity/title-fuzzy-like-bound.test.ts	1	0
 test/engine-parity/title-fuzzy-unicode.test.ts	1	0
-test/engine-parity/transaction-settings.test.ts	10	1
+test/engine-parity/transaction-settings.test.ts	11	1
 test/engine-parity/traversal-cache.test.ts	7	0
 test/engine-parity/trust-fence.test.ts	7	0
 test/engine-parity/trust-proposals.test.ts	5	0

@@ -96,6 +96,32 @@ describe('engine parity: transaction-local settings', () => {
     });
   });
 
+  // Any custom gbrain name Postgres accepts and no schema SQL reads (the import-path settings case uses two): kept for
+  // the transaction, restored by a savepoint rollback, kept by a release, gone after commit.
+  parityTest('a custom gbrain setting no trigger reads is kept for the transaction like the others', {
+    methods: ['transaction', 'applyTransactionSettings', 'readTransactionSettings'],
+  }, async (engine, backend) => {
+    const names = ['gbrain.parity_custom', 'gbrain.parity.nested'];
+    const inside = await engine.transaction(async (tx) => {
+      const before = await tx.readTransactionSettings(names);
+      if (backend === 'rust') expect(before).toEqual([null, null]);
+      await tx.applyTransactionSettings(names, ['one', 'two']);
+      const set = await tx.readTransactionSettings(names);
+      const dropped = await tx.transaction(async (inner) => {
+        await inner.applyTransactionSettings([names[0]!], ['dropped']);
+        throw Object.assign(new Error('drop the savepoint'), { seen: await inner.readTransactionSettings(names) });
+      }).then(() => null, (error: { seen?: unknown }) => error.seen ?? null);
+      const afterRollback = await tx.readTransactionSettings(names);
+      await tx.transaction((inner) => inner.applyTransactionSettings([names[1]!], ['released']));
+      const afterRelease = await tx.readTransactionSettings(names);
+      return { before: unset(before), set, dropped, afterRollback, afterRelease };
+    });
+    expect(inside).toMatchObject({ set: ['one', 'two'], dropped: ['dropped', 'two'], afterRollback: ['one', 'two'], afterRelease: ['one', 'released'] });
+    const later = await engine.transaction((tx) => tx.readTransactionSettings(names));
+    if (backend === 'rust') expect(later).toEqual(['', '']);
+    return { ...inside, later: unset(later) };
+  });
+
   parityTest('two transactions opened together each read only their own settings', {
     methods: ['transaction', 'applyTransactionSettings', 'readTransactionSettings'],
   }, async (engine) => {
@@ -264,8 +290,9 @@ describe('engine parity: transaction-local settings', () => {
     return { outcomes, after };
   });
 
-  // The Rust engine keeps only the settings its writers read (the six trust settings in the store, the attribution
-  // and source scope on the transaction); any other name refuses as a capability it lacks. PGLite answers it.
+  // The Rust engine keeps the settings its writers read (the trust settings in the store, the attribution and source
+  // scope on the transaction) and any other custom gbrain name no schema SQL reads. A name schema SQL reads that no
+  // store writer reads yet, such as gbrain.writer_quiesced, refuses as a capability it lacks. PGLite answers it.
   parityTest('a setting name the Rust engine does not keep refuses on Rust', {
     methods: ['transaction', 'readTransactionSettings'],
   }, async (engine, backend) => {

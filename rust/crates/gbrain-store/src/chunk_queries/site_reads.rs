@@ -201,13 +201,13 @@ fn nulls_last<T: Ord>(a: &Option<T>, b: &Option<T>) -> Ordering {
 }
 
 /// `pageReadFilter(.., live = true)` over pages, with the source cache it needs.
-struct Policy<'a> {
+pub(crate) struct Policy<'a> {
     read: &'a dyn KvRead,
     sources: HashMap<String, bool>,
 }
 
 impl<'a> Policy<'a> {
-    fn new(read: &'a dyn KvRead) -> Self {
+    pub(crate) fn new(read: &'a dyn KvRead) -> Self {
         Self {
             read,
             sources: HashMap::new(),
@@ -223,7 +223,7 @@ impl<'a> Policy<'a> {
         Ok(live)
     }
 
-    fn passes(&mut self, page: &PageRecord, scope: &ChunkReadScope) -> Result<bool> {
+    pub(crate) fn passes(&mut self, page: &PageRecord, scope: &ChunkReadScope) -> Result<bool> {
         if !scope.source_ok(&page.source_id) || (scope.require_safe_chunks && !safe_chunks(page)) {
             return Ok(false);
         }

@@ -17,6 +17,7 @@ import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
 import { resetFtsLanguageCache } from '../../src/core/fts-language.ts';
 import { makeFakeSql, type FakeSql, type RecordedStatement, type Responder } from './fake-postgres-sql.ts';
 import { withEnv } from './with-env.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { LEGACY_EMBEDDING_CONFIG } from './legacy-embedding-config.ts';
 
 export const W1_DOMAINS = [
@@ -117,6 +118,7 @@ const OOS = {
   factsTrustSites: 'out-of-scope:facts-trust-sites (write-path and capture statements, born in engine-sql/facts-trust.ts; pinned byte-identical by test/facts-repair-sites-sql-pin.test.ts and test/engine-parity/facts-repair-sites.test.ts)',
   factsRestSites: 'out-of-scope:facts-rest-sites (write-path statements, born in engine-sql/facts-trust.ts; pinned byte-identical by test/facts-rest-sites-sql-pin.test.ts and test/engine-parity/facts-rest-sites.test.ts)',
   factsRecallSites: 'out-of-scope:facts-recall-sites (recall pool statements, born in engine-sql/facts-recall.ts; pinned byte-identical by test/facts-rest-sites-sql-pin.test.ts and test/engine-parity/facts-rest-sites.test.ts)',
+  factsQuotedReads: 'out-of-scope:facts-quoted-reads (quote and slot-history reads, born in engine-sql/facts-recall.ts; pinned byte-identical by test/facts-rest-sites-sql-pin.test.ts and test/engine-parity/facts-quoted.test.ts)',
   trustWithdrawals: 'out-of-scope:trust-withdrawals (born in engine-sql/trust-withdrawals.ts; pinned by test/engine-parity/trust-withdrawals.test.ts and test/engine-parity/fact-purge-ledger.test.ts)',
   trustWriteGate: 'out-of-scope:trust-write-gate (born in engine-sql/trust-write-gate.ts; pinned by test/engine-parity/trust-write-gate.test.ts)',
   versionReasons: 'out-of-scope:version-reasons (born in engine-sql/version-reasons.ts; pinned by test/engine-parity/versions-raw.test.ts)',
@@ -546,6 +548,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'loadPurgeTarget': OOS.factsPurge,
   'loopFactDrift': OOS.factsRepair,
   'matchSavedFacts': OOS.factsTrust,
+  'readEntityNewestFacts': OOS.callerRawSql,
   'maxFenceRowNum': OOS.factsCycle,
   'readFenceRowOccupant': OOS.factsCycle,
   'planFactPurgeIds': OOS.factsPurge,
@@ -583,6 +586,17 @@ export const DOMAIN_OF: Record<string, string> = {
   'listSourceRecords': OOS.cliReadsImport,
   'readSourceIncarnation': OOS.cliReadsImport,
   'readGitHoldRecords': OOS.callerRawSql,
+  'probePageTypes': OOS.callerRawSql,
+  'readLongPageSizes': OOS.callerRawSql,
+  'readReflexLiveKeys': OOS.callerRawSql,
+  'readReflexPages': OOS.callerRawSql,
+  'readBriefEntityPages': OOS.callerRawSql,
+  'readBriefMeetingPages': OOS.callerRawSql,
+  'readBriefEmailAliasPages': OOS.callerRawSql,
+  'readBriefWorldFacts': OOS.callerRawSql,
+  'readBriefEditPage': OOS.callerRawSql,
+  'readBriefTimelineEntry': OOS.callerRawSql,
+  'readBriefPageVersions': OOS.callerRawSql,
   'readGitHoldRetryRequest': OOS.callerRawSql,
   'readGitHoldReportInputs': OOS.callerRawSql,
   'readSourcePurgeEpoch': OOS.callerRawSql,
@@ -1144,6 +1158,10 @@ export const DOMAIN_OF: Record<string, string> = {
   'readFolderAccess': OOS.callerRawSql,
   'upsertSessionState': OOS.callerRawSql,
   'listFactProvenance': OOS.callerRawSql,
+  'listOntologyStreamSlugs': OOS.callerRawSql,
+  'readOntologyRival': OOS.callerRawSql,
+  'listBeliefStreamSlugs': OOS.callerRawSql,
+  'listUnreadablePrivacyHoldIds': OOS.callerRawSql,
   'readSessionCursor': OOS.callerRawSql,
   'readDeltaSessionRow': OOS.callerRawSql,
   'readCheckpointManifestRow': OOS.callerRawSql,
@@ -1280,6 +1298,13 @@ export const DOMAIN_OF: Record<string, string> = {
   'listPagesNamingReader': OOS.callerRawSql,
   'forgetWakeMember': OOS.callerRawSql,
   'forgetWakeCredential': OOS.callerRawSql,
+  'readNewestTimelineEntryId': OOS.callerRawSql,
+  'readPageReferenceDate': OOS.callerRawSql,
+  'matchHeadStems': OOS.callerRawSql,
+  'readLivePageFrontmatter': OOS.callerRawSql,
+  'readEntityAnchoredPages': OOS.callerRawSql,
+  'readPageTitlesById': OOS.callerRawSql,
+  'readTextMentionPages': OOS.callerRawSql,
   // the page-write reads and upkeep that belong to no other domain
   'readSourceState': OOS.writeMisc,
   'readOpCheckpointKeys': OOS.writeMisc,
@@ -1443,6 +1468,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listCallOffCueFacts': OOS.factsRecallSites,
   'listPoolEntityPairs': OOS.factsRecallSites,
   'listFactRowsByIds': OOS.factsRecallSites,
+  'listReadablePageSlugs': OOS.factsQuotedReads,
 };
 
 /** Every own member of PostgresEngine.prototype (methods + accessors), sorted. */
@@ -2209,6 +2235,17 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('readDeltaSessionRow', [['default', (e) => e.readDeltaSessionRow('default', 'local', 's')]]),
   ...variants('readCheckpointManifestRow', [['default', (e) => e.readCheckpointManifestRow('default', 'local', 's')]]),
   ...variants('listFactProvenance', [['default', (e) => e.listFactProvenance('default', [1, 2])]]),
+  ...variants('listOntologyStreamSlugs', [['default', (e) => e.listOntologyStreamSlugs('default', 'people/a', 'role')]]),
+  ...variants('readOntologyRival', [['default', (e) => e.readOntologyRival('default', 'people/a', 'role', 1)]]),
+  ...variants('listBeliefStreamSlugs', [
+    ['facts', (e) => e.listBeliefStreamSlugs('facts', [1, 2])],
+    ['takes', (e) => e.listBeliefStreamSlugs('takes', [1])],
+    ['pages', (e) => e.listBeliefStreamSlugs('pages', [1])],
+  ]),
+  ...variants('listUnreadablePrivacyHoldIds', [
+    ['world-only', (e) => e.listUnreadablePrivacyHoldIds([1, 2])],
+    ['granted', (e) => withCallerAccess({ privateFactSources: ['default'] }, () => e.listUnreadablePrivacyHoldIds([1, 2]))],
+  ]),
   ...variants('readMayActFor', [
     ['legacy-token', (e) => e.readMayActFor('legacy_token', '00000000-0000-4000-8000-0000000000a1')],
     ['oauth-client', (e) => e.readMayActFor('oauth_client', 'client-a')],

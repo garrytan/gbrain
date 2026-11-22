@@ -2794,6 +2794,39 @@
         ],
         "flagOnScopes": []
       },
+      "listBeliefStreamSlugs#facts": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listBeliefStreamSlugs#pages": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listBeliefStreamSlugs#takes": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listChronicleEventSlotRows#default": {
         "flagOffLanes": [
           "pool"
@@ -3376,6 +3409,17 @@
         "flagOnScopes": []
       },
       "listNotifierHostSourceRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listOntologyStreamSlugs#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -4145,6 +4189,28 @@
         "flagOnScopes": []
       },
       "listUnmatchedGenerationRows#filtered": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listUnreadablePrivacyHoldIds#granted": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listUnreadablePrivacyHoldIds#world-only": {
         "flagOffLanes": [
           "pool"
         ],
@@ -5825,6 +5891,17 @@
         "flagOn": "unscoped",
         "flagOnLanes": [
           "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "readOntologyRival#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
         ],
         "flagOnScopes": []
       },
@@ -8366,6 +8443,7 @@
         "listAudienceMemberIds": "none",
         "listAwaitingMemoryProposals": "none",
         "listBeliefEventsForPurgeProbe": "none",
+        "listBeliefStreamSlugs": "none",
         "listBracketPathPages": "none",
         "listBudgetLimitedRows": "none",
         "listBudgetOwners": "none",
@@ -8561,6 +8639,7 @@
         "listOlderDriftReceiptSlugs": "none",
         "listOntologyFactCandidates": "none",
         "listOntologyObservationSlugs": "none",
+        "listOntologyStreamSlugs": "none",
         "listOpenIdentityDowngrades": "none",
         "listOpenJobIdsInQueue": "none",
         "listOpenLoops": "none",
@@ -8630,6 +8709,7 @@
         "listRawOnlyRules": "none",
         "listReadableFilePaths": "none",
         "listReadableFileRows": "none",
+        "listReadablePageSlugs": "none",
         "listReadersSourcedFactIds": "none",
         "listRecentDriftReceiptSlugs": "none",
         "listRecentFailedJobErrors": "none",
@@ -8748,6 +8828,7 @@
         "listUnmatchedGenerationRows": "none",
         "listUnpreviewedTrustFacts": "none",
         "listUnpricedDerivationModels": "none",
+        "listUnreadablePrivacyHoldIds": "none",
         "listUnretiredPagesBySlugPattern": "none",
         "listUnreviewedJobs": "none",
         "listUntiledSegmentedPageRows": "none",
@@ -8823,6 +8904,7 @@
         "markRevertedEdgeProposals": "none",
         "markSourceSynced": "none",
         "markSpendUsageUnknown": "none",
+        "matchHeadStems": "none",
         "matchSavedFacts": "none",
         "matchTakeRows": "none",
         "maxConversationRowNum": "none",
@@ -8869,6 +8951,7 @@
         "probeIdleWork": "none",
         "probeLiveConsumerRows": "none",
         "probeNoopEmbeddingSettle": "none",
+        "probePageTypes": "none",
         "probePurgeDerivations": "none",
         "projectionRebuildProgress": "none",
         "promoteDelayedJobs": "none",
@@ -8918,6 +9001,13 @@
         "readBodyManifestOutline": "none",
         "readBodyManifestRows": "none",
         "readBrainMaturity": "none",
+        "readBriefEditPage": "none",
+        "readBriefEmailAliasPages": "none",
+        "readBriefEntityPages": "none",
+        "readBriefMeetingPages": "none",
+        "readBriefPageVersions": "none",
+        "readBriefTimelineEntry": "none",
+        "readBriefWorldFacts": "none",
         "readBudgetHoldAge": "none",
         "readBudgetLedgerDay": "none",
         "readCallerPageAccess": "none",
@@ -8967,9 +9057,11 @@
         "readEmbeddingIdentity": "none",
         "readEmbeddingStateCounts": "direct",
         "readEntityAliasRows": "none",
+        "readEntityAnchoredPages": "none",
         "readEntityCardRows": "none",
         "readEntityIdentityIdsForPages": "none",
         "readEntityInboundEdges": "none",
+        "readEntityNewestFacts": "none",
         "readEntityOpenLoops": "none",
         "readEntityRehomeState": "none",
         "readEventProjectionId": "none",
@@ -9071,6 +9163,7 @@
         "readLiveMember": "none",
         "readLiveOauthClients": "none",
         "readLivePageBody": "none",
+        "readLivePageFrontmatter": "none",
         "readLivePageIdBySlug": "none",
         "readLivePageTypes": "none",
         "readLiveSlugs": "none",
@@ -9078,6 +9171,7 @@
         "readLiveSyncPassRows": "none",
         "readLocalWriterMemberGrant": "none",
         "readLocalWriterRow": "none",
+        "readLongPageSizes": "none",
         "readManagedModeRows": "none",
         "readManagedSyncPassRow": "none",
         "readManifest": "none",
@@ -9097,6 +9191,7 @@
         "readMirrorGateRows": "none",
         "readNamedEntitySlugs": "none",
         "readNewestConversationFactId": "none",
+        "readNewestTimelineEntryId": "none",
         "readNoopEmbeddingCandidates": "none",
         "readNotifierFirstDue": "none",
         "readNotifierLease": "none",
@@ -9116,6 +9211,7 @@
         "readOldestSourceCreatedAt": "none",
         "readOldestVersionAttribution": "none",
         "readOldestWaitingAge": "none",
+        "readOntologyRival": "none",
         "readOpCheckpointKeys": "none",
         "readOwnerOnlySourceConfig": "none",
         "readOwnerOnlySourcesPresent": "none",
@@ -9129,6 +9225,7 @@
         "readPageIdentity": "none",
         "readPageIndexingState": "none",
         "readPageOrigin": "none",
+        "readPageReferenceDate": "none",
         "readPageRevisionAttribution": "none",
         "readPageRevisions": "none",
         "readPageSizeRows": "none",
@@ -9138,6 +9235,7 @@
         "readPageTierRef": "none",
         "readPageTierRows": "none",
         "readPageTitle": "none",
+        "readPageTitlesById": "none",
         "readPageTrustRows": "none",
         "readPageVersionEdition": "none",
         "readPagesForVersionHistory": "none",
@@ -9180,6 +9278,8 @@
         "readReferrerRows": "none",
         "readReferrerTargetCounts": "none",
         "readReferrerTypes": "none",
+        "readReflexLiveKeys": "none",
+        "readReflexPages": "none",
         "readRelinkSource": "none",
         "readRemoteForgetTier": "none",
         "readRenameIdentityRows": "none",
@@ -9237,6 +9337,7 @@
         "readTakeRowTrust": "none",
         "readTakeTrustRef": "none",
         "readTerminalFailureGroups": "none",
+        "readTextMentionPages": "none",
         "readTokenLifetimeClampedClients": "none",
         "readTopologyChange": "none",
         "readTransaction": "none",

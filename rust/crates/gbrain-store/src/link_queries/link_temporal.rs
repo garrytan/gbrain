@@ -2116,6 +2116,20 @@ impl Store {
         })
     }
 
+    /// `readPageReferenceDate(sourceId, slug)`: the live page's `COALESCE(effective_date,
+    /// updated_at)` as `to_char(.. AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')` prints it, or
+    /// `None` for a missing or soft-deleted page.
+    pub fn read_page_reference_date(&self, source_id: &str, slug: &str) -> Result<Option<String>> {
+        crate::links::no_nul(
+            "readPageReferenceDate",
+            &[("sourceId", source_id), ("slug", slug)],
+        )?;
+        let read = self.read()?;
+        Ok(read_page(&*read, source_id, slug)?
+            .filter(|page| page.deleted_at_us.is_none())
+            .map(|page| iso(page.effective_date_us.unwrap_or(page.updated_at_us))))
+    }
+
     /// `readReferrerPageDetails`: the title, bounded body, date source, trust fields, flag and
     /// frontmatter of each page id that exists (soft-deleted pages too, as `id = ANY($1)` reads
     /// them), once per id, in id order.

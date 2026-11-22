@@ -330,6 +330,34 @@ impl Brain {
         })
     }
 
+    /// `probePageTypes(input)`: `{ present, available }`.
+    #[napi]
+    pub fn probe_page_types<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::TypeProbeInput =
+                arg(input, "probePageTypes input")?;
+            s.probe_page_types(&input)
+        })
+    }
+
+    /// `readLongPageSizes(input)`: `[{ id, chars, bytes }]`.
+    #[napi]
+    pub fn read_long_page_sizes<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::LongPageSizeInput =
+                arg(input, "readLongPageSizes input")?;
+            s.read_long_page_sizes(&input)
+        })
+    }
+
     /// `wordLexemes(words)`: `[{ w, lexemes }]`.
     #[napi]
     pub fn word_lexemes<'env>(

@@ -52,6 +52,8 @@ import * as wantedLinks from './wanted-links.ts';
 import * as persistence from './persistence.ts';
 import * as syncHoldStore from './sync-hold-store.ts';
 import * as cliEntities from './cli-entities.ts';
+import * as reflexReads from './reflex-reads.ts';
+import * as briefReads from './brief-reads.ts';
 import * as factsDoctor from './facts-doctor.ts';
 import * as embeddingCatalog from './embedding-catalog.ts';
 import * as fenceHolds from './fence-holds.ts';
@@ -60,8 +62,10 @@ import * as factsCycle from './facts-cycle.ts';
 import * as factsPurge from './facts-purge.ts';
 import * as factsRepair from './facts-repair.ts';
 import * as factsTrust from './facts-trust.ts';
+import * as factsRecall from './facts-recall.ts';
 import * as derivationTrust from './derivation-trust.ts';
 import * as chronicleEvents from './chronicle-events.ts';
+import * as factsQuoted from './facts-quoted.ts';
 import * as factsTrustReads from './facts-trust-reads.ts';
 import * as factsProvenance from './facts-provenance.ts';
 import * as factsTrustOwner from './facts-trust-owner.ts';
@@ -144,9 +148,9 @@ export const STORE_MEMBERS = {
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages, ...sweepReads,
   // The reads gbrain export makes (rust/docs/store/cli-reads-export.md).
   ...cliReadsExport,
-  ...cliEntities,
+  ...cliEntities, ...reflexReads, ...briefReads,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
-  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...derivationTrust, ...factsTrustReads, ...factsTrustOwner, ...factsProvenance, ...factRelinkAttempts,
+  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...factsRecall, ...derivationTrust, ...factsTrustReads, ...factsTrustOwner, ...factsProvenance, ...factsQuoted, ...factRelinkAttempts,
   ...factRelinkWrites,
   // The Life Chronicle event statements (rust/crates/gbrain-store/src/generations/chronicle_events.rs).
   ...chronicleEvents,

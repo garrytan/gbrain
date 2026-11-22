@@ -24,6 +24,8 @@ import {
   type EngineRawRead, type EngineRawTransaction, type FactPoolFilters, type FactPoolScope, type RelevanceVector,
 } from './facts-trust.ts';
 import type { FactRowSqlShape } from './facts.ts';
+import { pageReadFilter } from '../search/read-policy-sql.ts';
+import type { PageReadScope } from '../types.ts';
 
 // The vetted builder below is named in scripts/check-engine-sql-dynamic.ts: it wraps one constant fragment.
 function conversationSlotSql(): string { return CONVERSATION_SLOT_SQL; }
@@ -129,4 +131,19 @@ export async function listPoolEntityPairs(raw: EngineRawRead, scope: FactPoolSco
 /** The whole fact rows of these ids within these sources (recall's final read; the caller strips the embedding). */
 export async function listFactRowsByIds(raw: EngineRawRead, sourceIds: readonly string[], ids: readonly number[]): Promise<FactRowSqlShape[]> {
   return raw<FactRowSqlShape>('SELECT * FROM facts WHERE source_id = ANY($1::text[]) AND id = ANY($2::bigint[])', [[...sourceIds], [...ids]]);
+}
+
+const READABLE_PAGE_SLUGS_HEAD = 'SELECT p.slug FROM pages p WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND ';
+
+/**
+ * Of `slugs` in source `sourceId`, the live pages `scope`'s read policy admits (its source filter is not applied: the
+ * source is `sourceId`), at most `limit` (search/slot-history.ts entityKeys).
+ */
+export async function listReadablePageSlugs(raw: EngineRawRead, sourceId: string, slugs: readonly string[], scope: PageReadScope,
+  limit: number): Promise<string[]> {
+  if (!Number.isFinite(limit)) throw new Error(`listReadablePageSlugs: limit must be a finite number, got ${limit}`);
+  const params: unknown[] = [sourceId, [...slugs]];
+  const filter = pageReadFilter('p', { ...scope, sourceId: undefined, sourceIds: undefined }, params, true);
+  const rows = await raw<{ slug: string }>(`${READABLE_PAGE_SLUGS_HEAD}${filter} LIMIT ${limit}`, params);
+  return rows.map(r => r.slug);
 }

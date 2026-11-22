@@ -258,3 +258,7 @@ export const countEmbeddingHeldPages: StoreMember<[scope: ProjectionReadinessSco
   async (_brain: StoreBrain, _scope, relevance) => ({
     total: 0, could_affect: 0, capped: false, ...(relevance.exactTopPageId != null ? { top_counted: false } : {}),
   });
+
+/** `readPageReferenceDate`: the live page's reference date as the store prints it, or null. */
+export const readPageReferenceDate: StoreMember<[sourceId: string, slug: string], string | null> = async (brain, sourceId, slug) =>
+  (await storeCall({ member: 'readPageReferenceDate', slug, sourceId }, () => brain.readPageReferenceDate(sourceId, slug))) ?? null;

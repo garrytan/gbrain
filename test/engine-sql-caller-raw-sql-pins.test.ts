@@ -12,10 +12,13 @@
  *  - Seam: the fake postgres.js driver (test/helpers/fake-postgres-sql.ts) records the text; no database runs.
  */
 import { describe, expect, test } from 'bun:test';
-import { runCase, withPinnedSqlEnvironment, type SqlCase } from './helpers/postgres-engine-sql-cases.ts';
+import { makeEngineWithFake, runCase, withPinnedSqlEnvironment, type SqlCase } from './helpers/postgres-engine-sql-cases.ts';
+import { withRequestSignal } from '../src/core/request-signal.ts';
 import { edgeTrimSql } from '../src/core/edge-whitespace.ts';
 import { budgetRowAppliesFilter } from '../src/core/page-size-policy.ts';
 import { chunkGenerationFilter } from '../src/core/search/safe-chunks.ts';
+import { requiresSafeChunks, safeChunksFilter, servedTextProjectionFilter } from '../src/core/search/safe-chunks.ts';
+import { TIMELINE_SEPARATOR } from '../src/core/page-window/document.ts';
 import { quoteIdentifier } from '../src/core/search/embedding-column.ts';
 import { retiredPageSql } from '../src/core/entities/resolve.ts';
 import { rankingLinkSql } from '../src/core/link-ranking-policy.ts';
@@ -37,11 +40,21 @@ import { OAuthGrants } from '../src/core/oauth-grants.ts';
 import { OAUTH_TOKEN_SQL } from '../src/core/engine-sql/access-credentials.ts';
 import { hashToken } from '../src/core/utils.ts';
 import { activationSuppressedSql, pageEligibleSql } from '../src/core/eligibility/sql.ts';
+import { trustRankSql } from '../src/core/trust/tier.ts';
+import { grantedPrivateFactSql, memberFactAdmitSql } from '../src/core/access/member-facts.ts';
+import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { quarantineFilterFragment } from '../src/core/quarantine.ts';
 import { MANAGED_MODE_SQL } from '../src/core/persistence/managed-mode.ts';
 import { FACT_PREIMAGE_SQL } from '../src/core/engine-sql/facts.ts';
 import { TAKE_PREIMAGE_SQL } from '../src/core/engine-sql/takes-reads.ts';
-import { trustRankSql } from '../src/core/trust/tier.ts';
+import { pageReadFilter } from '../src/core/search/read-policy-sql.ts';
+import type { TrustTier } from '../src/core/trust/tier.ts';
+import { privateFactFilterForReader } from '../src/core/search/private-visibility.ts';
+import { privateFactFilterForCaller, privateTimelineEventFilterForCaller, privateTimelineEventFilterFragment } from '../src/core/search/private-visibility.ts';
+import { projectionEligibleSql } from '../src/core/eligibility/sql.ts';
+import { SAVED_FACT_COLLAPSE_COLUMNS } from '../src/core/search/saved-fact-collapse.ts';
+import { PINNED_QUESTION_MARKER } from '../src/core/questions/identity.ts';
+import { MAX_ANCHORED } from '../src/core/search/entity-anchor.ts';
 
 interface Pin {
   /** The caller site the statement came from, at 7470c703ed unless it names another commit. */
@@ -565,6 +578,44 @@ const PINS: Pin[] = [
     from: 'src/core/ops/facts.ts:706 withProvenance, at 0a68889b57',
     case: { method: 'listFactProvenance', variant: 'default', run: e => e.listFactProvenance('default', [1, 2]) },
     texts: ['SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[])'],
+  },
+  {
+    from: 'src/core/belief/writers.ts:41 ontologyStreamSlugs, at 432ac446f4',
+    case: { method: 'listOntologyStreamSlugs', variant: 'default', run: e => e.listOntologyStreamSlugs('default', 'people/a', 'role') },
+    texts: [`SELECT DISTINCT source_markdown_slug AS slug FROM facts
+    WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND expired_at IS NULL AND valid_until IS NULL AND COALESCE(source, '') NOT LIKE 'cli:extract-conversation-facts%'`],
+  },
+  {
+    from: 'src/core/trust/supersede-handlers.ts:169 contestOntologySupersession, at 432ac446f4',
+    case: { method: 'readOntologyRival', variant: 'default', run: e => e.readOntologyRival('default', 'people/a', 'role', 1) },
+    texts: [`SELECT id, trust_tier FROM facts WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND id <> $4
+       AND expired_at IS NULL AND valid_until IS NULL AND (dim_status IS NULL OR dim_status = 'active') AND COALESCE(source, '') NOT LIKE 'cli:extract-conversation-facts%'
+     ORDER BY valid_from DESC NULLS LAST, confidence DESC, id DESC LIMIT 1`],
+  },
+  {
+    from: 'src/core/belief/writers.ts:29 beliefStreamSlugs (facts), at d2671f1342',
+    case: { method: 'listBeliefStreamSlugs', variant: 'facts', run: e => e.listBeliefStreamSlugs('facts', [1, 2]) },
+    texts: ['SELECT COALESCE(source_markdown_slug, entity_slug) AS slug FROM facts WHERE id = ANY($1::bigint[])'],
+  },
+  {
+    from: 'src/core/belief/writers.ts:29 beliefStreamSlugs (takes), at d2671f1342',
+    case: { method: 'listBeliefStreamSlugs', variant: 'takes', run: e => e.listBeliefStreamSlugs('takes', [1]) },
+    texts: ['SELECT p.slug FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.id = ANY($1::bigint[])'],
+  },
+  {
+    from: 'src/core/belief/writers.ts:29 beliefStreamSlugs (pages), at d2671f1342',
+    case: { method: 'listBeliefStreamSlugs', variant: 'pages', run: e => e.listBeliefStreamSlugs('pages', [1]) },
+    texts: ['SELECT slug FROM pages WHERE id = ANY($1::int[])'],
+  },
+  {
+    from: 'src/core/trust/privacy-hold-reply.ts:67 hiddenHoldRefs (a private-facts grant), at d2671f1342',
+    case: { method: 'listUnreadablePrivacyHoldIds', variant: 'granted', run: e => withCallerAccess({ privateFactSources: ['default'] }, () => e.listUnreadablePrivacyHoldIds([1, 2])) },
+    texts: () => withCallerAccess({ privateFactSources: ['default'] }, () => {
+      const admits = [memberFactAdmitSql('f'), grantedPrivateFactSql('f')];
+      return [`SELECT tp.id FROM trust_proposals tp LEFT JOIN facts f ON tp.target_table = 'facts' AND f.id = tp.target_id
+        WHERE tp.id = ANY($1::bigint[]) AND tp.action = 'supersede_fact' AND tp.before_state->'visibility' IS NOT NULL
+          AND (f.id IS NULL OR NOT (${admits.join(' OR ')}))`];
+    }),
   },
   {
     from: 'src/core/access/caller.ts:196 mayActForOf (legacy token)',
@@ -2136,7 +2187,262 @@ const PINS: Pin[] = [
        FROM access_member_links l JOIN access_members m ON m.id = l.member_id LEFT JOIN access_group_members g ON g.member_id = m.id
        WHERE l.system = $1 AND l.external_id = $2 AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL GROUP BY m.id`],
   },
+  {
+    from: 'src/core/persistence/semantic-pages.ts:101 prepareSemanticPageMutation (the flagged entry\'s row id; at 0740badd2c)',
+    case: { method: 'readNewestTimelineEntryId', variant: 'default', run: e => e.readNewestTimelineEntryId('default', 'people/alice-example', '2026-01-02', 'Met for coffee') },
+    texts: [`SELECT t.id FROM timeline_entries t JOIN pages p ON p.id = t.page_id
+      WHERE p.source_id = $1 AND p.slug = $2 AND t.date = $3::date AND t.summary = $4 ORDER BY t.id DESC LIMIT 1`],
+  },
+  {
+    from: 'src/core/mentions/newer-mentions.ts:77 readNewerMentions (the entity page date; at d1ec6f64c1)',
+    case: { method: 'readPageReferenceDate', variant: 'default', run: e => e.readPageReferenceDate('default', 'people/alice-example') },
+    texts: [`SELECT to_char(COALESCE(effective_date, updated_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS d
+         FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL`],
+  },
+  {
+    from: 'src/core/search/saved-facts-match.ts:58 headStems (the english configuration; at d1ec6f64c1)',
+    case: { method: 'matchHeadStems', variant: 'default', run: e => e.matchHeadStems(['widget'], ['widgets']) },
+    texts: [`SELECT h, ARRAY(SELECT t.i FROM unnest($2::text[]) WITH ORDINALITY AS t(term, i)
+       WHERE to_tsvector('english'::regconfig, h) @@ plainto_tsquery('english'::regconfig, t.term)) AS i
+     FROM unnest($1::text[]) AS h`],
+  },
+  {
+    from: 'src/core/search/ignored-privacy-labels.ts:179 withIgnoredPrivacyLabelNotice (the stored page; at efeb078093)',
+    case: { method: 'readLivePageFrontmatter', variant: 'default', run: e => e.readLivePageFrontmatter('default', 'people/alice-example') },
+    // The caller's NOTICE_READ_TIMEOUT_MS bound rides along: the same server-side envelope its executeRaw call sent.
+    texts: ['BEGIN READ WRITE; SET LOCAL statement_timeout = 1000',
+      'SELECT type, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL', 'COMMIT'],
+  },
+  {
+    from: 'src/core/ops/search-type-filter.ts:42 reconcileTypeFilter (a remote caller, one empty set; at efeb078093)',
+    case: { method: 'probePageTypes', variant: 'remote', run: e => e.probePageTypes([['person', 'people'], [], ['deal']], { sourceId: 'default', excludePrivate: true }) },
+    // The caller's JIT-off bound rides along: the same server-side envelope its executeRaw call sent.
+    texts: () => ["SELECT current_setting('jit') AS jit", 'BEGIN READ WRITE; SET LOCAL jit = off', pinnedTypeProbe([['person', 'people'], [], ['deal']], { sourceId: 'default', excludePrivate: true }), 'COMMIT'],
+  },
+  {
+    from: 'src/core/ops/search-type-filter.ts:42 reconcileTypeFilter (federated sources under a trust floor; at efeb078093)',
+    case: { method: 'probePageTypes', variant: 'floored', run: e => e.probePageTypes([['note']], { sourceIds: ['default', 'wiki'], minTrust: 'operator_curated' }) },
+    // The caller's JIT-off bound rides along: the same server-side envelope its executeRaw call sent.
+    texts: () => ["SELECT current_setting('jit') AS jit", 'BEGIN READ WRITE; SET LOCAL jit = off', pinnedTypeProbe([['note']], { sourceIds: ['default', 'wiki'], minTrust: 'operator_curated' }), 'COMMIT'],
+  },
+  {
+    from: 'src/core/search/entity-facts.ts:53 newestFacts (a local caller under a trust floor; at efeb078093)',
+    case: { method: 'readEntityNewestFacts', variant: 'local', run: e => e.readEntityNewestFacts({ sourceId: 'default', slugs: ['people/alice-example'], remote: false, worldOnly: false, minTrust: 'operator_curated' }) },
+    texts: () => [pinnedNewestFacts(false, false, 'operator_curated')],
+  },
+  {
+    from: 'src/core/search/entity-facts.ts:53 newestFacts (a remote caller with world-only facts; at efeb078093)',
+    case: { method: 'readEntityNewestFacts', variant: 'remote', run: e => e.readEntityNewestFacts({ sourceId: 'default', slugs: ['people/alice-example', 'alice-example'], remote: true, worldOnly: true }) },
+    texts: () => [pinnedNewestFacts(true, true)],
+  },
+  {
+    from: 'src/core/search/entity-facts.ts:53 newestFacts (a remote caller with private facts allowed; at efeb078093)',
+    case: { method: 'readEntityNewestFacts', variant: 'remotePrivate', run: e => e.readEntityNewestFacts({ sourceId: 'default', slugs: ['people/alice-example'], remote: true, worldOnly: false }) },
+    texts: () => [pinnedNewestFacts(true, false)],
+  },
+  {
+    from: 'src/core/search/entity-anchor.ts:38 and :42 entityAnchoredPages (the entity page, then the anchored pages; at efeb078093)',
+    case: { method: 'readEntityAnchoredPages', variant: 'default', run: e => e.readEntityAnchoredPages('default', 'people/alice-example') },
+    // The second statement is written out in engine-sql (the dynamic-SQL guard allows `$4` twice only in a static
+    // statement); the caller's interpolations are rebuilt here from their constants, so a drift in either fails.
+    texts: () => ['SELECT id, title FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL',
+      `SELECT p.id, p.slug FROM pages p WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.slug <> $2
+       AND p.type NOT IN ('question', 'synthesis') AND NOT (p.frontmatter ? '${PINNED_QUESTION_MARKER}')
+       AND (p.compiled_truth ~* $3 OR ($4::integer IS NOT NULL AND EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id AND l.to_page_id = $4::integer AND ${rankingLinkSql('l')})))
+     ORDER BY COALESCE(p.effective_date, p.updated_at) DESC, p.id DESC LIMIT ${MAX_ANCHORED}`],
+  },
+  {
+    from: 'src/core/search/entity-anchor.ts:116 applyEntityAnchoring (the anchored page titles; at efeb078093)',
+    case: { method: 'readPageTitlesById', variant: 'default', run: e => e.readPageTitlesById([1, 2]) },
+    texts: ['SELECT id, title FROM pages WHERE id = ANY($1::int[])'],
+  },
+  {
+    from: 'src/core/verbs/entity-text-mentions.ts:103 probe (the text-mention pages; at efeb078093)',
+    case: { method: 'readTextMentionPages', variant: 'default', run: e => e.readTextMentionPages(['default'], ['notes/a']) },
+    texts: [`SELECT slug, source_id, title, type, frontmatter, COALESCE(effective_date, updated_at) AS date
+       FROM pages WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) AND slug = ANY($2::text[])`],
+  },
+  {
+    from: 'src/core/search/evidence-delivery.ts:416 selectLongPages (the long-page size preflight with the timeline; at efeb078093)',
+    case: { method: 'readLongPageSizes', variant: 'timeline', run: e => e.readLongPageSizes([3, 5], { sourceId: 'default' }, { includeTimeline: true }) },
+    texts: () => [pinnedLongPageSizes({ sourceId: 'default' }, true)],
+  },
+  {
+    from: 'src/core/search/evidence-delivery.ts:416 selectLongPages (detail low, a remote caller under a trust floor; at efeb078093)',
+    case: { method: 'readLongPageSizes', variant: 'low', run: e => e.readLongPageSizes([3], { sourceIds: ['default', 'wiki'], excludePrivate: true, minTrust: 'operator_curated' }, { includeTimeline: false }) },
+    texts: () => [pinnedLongPageSizes({ sourceIds: ['default', 'wiki'], excludePrivate: true, minTrust: 'operator_curated' }, false)],
+  },
+  ...reflexPins(),
+  ...briefPins(),
 ];
+
+type PinPrivacy = 'none' | 'caller' | 'floor';
+
+/** context/retrieval-reflex.ts's `privacySql` at efeb078093 (`excludePrivate === false` is 'none'). */
+function pinnedReflexPrivacy(privacy: PinPrivacy): string {
+  return privacy === 'none' ? '' : `AND ${privacy === 'caller' ? privatePagesFilterForCaller('p') : remoteReadFloorSql('p')}`;
+}
+
+/** Each retrieval-reflex statement and the brief's entity-page statement at efeb078093, verbatim, for every privacy mode. */
+function reflexPins(): Pin[] {
+  const PREFIX_SQL = boundedBodyPrefixSql('p');
+  const at = (line: string) => `src/core/context/retrieval-reflex.ts:${line} at efeb078093`;
+  const scope = (privacy: PinPrivacy) => ({ sourceIds: ['default', 'wiki'], privacy });
+  const names = { kind: 'names' as const, titlesLc: ['alice example'], exactSlugs: ['alice-example'], slugSuffixes: ['%/alice-example'] };
+  return (['none', 'caller', 'floor'] as const).flatMap((privacy): Pin[] => {
+    const privacySql = pinnedReflexPrivacy(privacy);
+    return [
+      { from: `${at('79')} weakTitleHits (${privacy})`,
+        case: { method: 'readReflexPages', variant: `titles-${privacy}`, run: e => e.readReflexPages(scope(privacy), { kind: 'titles', titlesLc: ['acme example'] }) },
+        texts: () => [`SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, ${PREFIX_SQL} AS compiled_truth
+         FROM pages p
+        WHERE p.deleted_at IS NULL ${privacySql}
+          AND p.source_id = ANY($1::text[])
+          AND lower(p.title) = ANY($2::text[])`] },
+      { from: `${at('357')} the alias live check (${privacy})`,
+        case: { method: 'readReflexLiveKeys', variant: privacy, run: e => e.readReflexLiveKeys(scope(privacy), ['people/alice-example']) },
+        texts: () => [`SELECT p.slug, p.source_id FROM pages p
+            WHERE p.deleted_at IS NULL AND p.source_id = ANY($1::text[]) AND p.slug = ANY($2::text[]) ${privacySql}`] },
+      { from: `${at('417')} the title, slug and surname arm (${privacy})`,
+        case: { method: 'readReflexPages', variant: `surname-${privacy}`, run: e => e.readReflexPages(scope(privacy), { ...names, surnamePatterns: ['% example'] }) },
+        texts: () => [`SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, ${PREFIX_SQL} AS compiled_truth
+             FROM pages p
+            WHERE p.deleted_at IS NULL ${privacySql}
+              AND p.source_id = ANY($1::text[])
+              AND ( lower(p.title) = ANY($2::text[])
+                 OR p.slug = ANY($3::text[])
+                 OR p.slug LIKE ANY($4::text[])
+                 OR (lower(p.title) LIKE ANY($5::text[]) AND p.type = 'person') ) ORDER BY p.id`] },
+      { from: `${at('428')} the title and slug arm (${privacy})`,
+        case: { method: 'readReflexPages', variant: `names-${privacy}`, run: e => e.readReflexPages(scope(privacy), names) },
+        texts: () => [`SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, ${PREFIX_SQL} AS compiled_truth
+             FROM pages p
+            WHERE p.deleted_at IS NULL ${privacySql}
+              AND p.source_id = ANY($1::text[])
+              AND ( lower(p.title) = ANY($2::text[])
+             OR p.slug = ANY($3::text[])
+             OR p.slug LIKE ANY($4::text[]) ) ORDER BY p.id`] },
+      { from: `${at('447')} the alias-only hydration (${privacy})`,
+        case: { method: 'readReflexPages', variant: `slugs-${privacy}`, run: e => e.readReflexPages(scope(privacy), { kind: 'slugs', slugs: ['people/alice-example'] }) },
+        texts: () => [`SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, ${PREFIX_SQL} AS compiled_truth
+           FROM pages p
+          WHERE p.deleted_at IS NULL ${privacySql} AND p.source_id = ANY($1::text[]) AND p.slug = ANY($2::text[])`] },
+      { from: `${at('531')} the CJK exact arm (${privacy})`,
+        case: { method: 'readReflexPages', variant: `cjk-${privacy}`, run: e => e.readReflexPages(scope(privacy), { kind: 'cjkExact', norms: ['爱丽丝'] }) },
+        texts: () => [`SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, ${PREFIX_SQL} AS compiled_truth
+             FROM pages p
+            WHERE p.deleted_at IS NULL ${privacySql}
+              AND p.source_id = ANY($1::text[])
+              AND ( lower(p.title) = ANY($2::text[]) OR p.slug = ANY($3::text[]) )`] },
+      { from: `src/core/context/proactive-brief.ts:203 entityPages at efeb078093 (${privacy}, a trust floor)`,
+        case: { method: 'readBriefEntityPages', variant: privacy, run: e => e.readBriefEntityPages('default', ['people/alice-example'], { privacy, eligibility: { floor: 'operator_curated', suppressFlagged: true } }) },
+        texts: () => [`SELECT p.slug, p.title, p.type FROM pages p
+      WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND p.deleted_at IS NULL
+        ${privacy !== 'none' ? `AND ${privacy === 'caller' ? privatePagesFilterForCaller('p') : remoteReadFloorSql('p')}` : ''}
+        AND ${pageEligibleSql('p', { floor: 'operator_curated', suppressFlagged: true })}`] },
+    ];
+  });
+}
+
+/**
+ * The proactive brief's meeting, alias, world-fact, edit-page, timeline and revision statements at 0ea77f47bd.
+ * The meeting, alias and world-fact texts are verbatim. The edit-page, timeline and revision texts are equivalent
+ * statements, not byte for byte: master bound `[source, slug, maxBytes]` and `[pageId, since(, maxBytes)]` and used
+ * `$3` before `$1`, and the timeline read used `$2` twice; engine-sql numbers placeholders in the order they appear
+ * (renderFragment), so the byte ceiling binds first and `since` binds twice. The same values reach the same places,
+ * so the same rows come back in the same order. The rest of each text is verbatim; the parameter test below pins
+ * the new order.
+ */
+function briefPins(): Pin[] {
+  const at = (line: string) => `src/core/context/proactive-brief.ts:${line} at 0ea77f47bd`;
+  const elig = { floor: 'operator_curated' as const, suppressFlagged: true };
+  const fixed: Pin[] = [
+    { from: `${at('276')} upcomingMeetings (a trust floor)`,
+      case: { method: 'readBriefMeetingPages', variant: 'floor', run: e => e.readBriefMeetingPages(['g1'], '2026-11-20', '2026-11-21~', elig) },
+      texts: () => [`SELECT p.slug, p.source_id, p.frontmatter->>'start' AS start, p.frontmatter->'attendees' AS attendees, p.frontmatter->>'account' AS account
+       FROM pages p
+      WHERE p.deleted_at IS NULL AND p.type = 'meeting' AND p.source_id = ANY($1::text[])
+        AND p.frontmatter->>'start' >= $2 AND p.frontmatter->>'start' <= $3
+        AND ${remoteReadFloorSql('p')} AND ${pageEligibleSql('p', elig)}`] },
+    { from: `${at('338')} meetingCounterparties (a trust floor)`,
+      case: { method: 'readBriefEmailAliasPages', variant: 'floor', run: e => e.readBriefEmailAliasPages('default', ['alice@example.com'], elig) },
+      texts: () => [`SELECT a.alias_norm, p.slug, p.title, p.type FROM page_aliases a
+       JOIN pages p ON p.source_id = a.source_id AND p.slug = a.slug AND p.deleted_at IS NULL
+      WHERE a.source_id = $1 AND a.alias_norm = ANY($2::text[])
+        AND ${remoteReadFloorSql('p')} AND ${pageEligibleSql('p', elig)}`] },
+    { from: `${at('421')} loopItems worldProjections (a trust floor)`,
+      case: { method: 'readBriefWorldFacts', variant: 'floor', run: e => e.readBriefWorldFacts([7], elig) },
+      texts: () => [`SELECT facts.id, facts.fact, facts.trust_tier, facts.write_origin FROM facts
+        WHERE facts.id = ANY($1::bigint[]) AND facts.expired_at IS NULL AND facts.visibility = 'world'
+          AND ${privateFactFilterForCaller('facts')}
+          AND ${projectionEligibleSql('facts', 'facts', elig)}`] },
+    { from: `${at('499')} editItem revisions (renumbered: maxBytes $1, pageId $2, since $3)`,
+      case: { method: 'readBriefPageVersions', variant: 'default', run: e => e.readBriefPageVersions(5, '2026-11-01T00:00:00.000Z', 65536, 5) },
+      texts: [`SELECT v.id, CASE WHEN octet_length(v.compiled_truth) + octet_length(COALESCE(v.timeline, '')) <= $1 THEN v.compiled_truth END AS compiled_truth,
+              v.timeline, v.snapshot_at, v.is_deleted
+         FROM page_versions v WHERE v.page_id = $2 AND v.snapshot_at >= $3::timestamptz
+        ORDER BY v.id DESC LIMIT 5`] },
+  ];
+  const byPrivacy = (['none', 'caller', 'floor'] as const).flatMap((privacy): Pin[] => [
+    { from: `${at('479')} editItem page (${privacy}, a trust floor; renumbered: maxBytes $1, source $2, slug $3)`,
+      case: { method: 'readBriefEditPage', variant: privacy, run: e => e.readBriefEditPage('default', 'people/alice-example', 65536, { privacy, eligibility: elig }) },
+      texts: () => [`SELECT p.id, CASE WHEN octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) <= $1 THEN p.compiled_truth END AS compiled_truth,
+            p.timeline, p.trust_tier, p.write_origin
+       FROM pages p
+      WHERE p.source_id = $2 AND p.slug = $3 AND p.deleted_at IS NULL
+        AND ${privacy === 'none' ? 'TRUE' : privacy === 'caller' ? privatePagesFilterForCaller('p') : remoteReadFloorSql('p')}
+        AND ${pageEligibleSql('p', elig)}`] },
+    { from: `${at('491')} editItem timeline entry (${privacy}, a trust floor; renumbered: since $2 and $3)`,
+      case: { method: 'readBriefTimelineEntry', variant: privacy, run: e => e.readBriefTimelineEntry(5, '2026-11-01T00:00:00.000Z', { privacy, eligibility: elig }) },
+      texts: () => [`SELECT te.id, te.date::text AS date, te.summary, te.detail, te.created_at FROM timeline_entries te
+        WHERE te.page_id = $1 AND te.created_at >= $2::timestamptz AND te.date >= $3::timestamptz::date
+          AND ${privacy === 'none' ? 'TRUE' : privacy === 'caller' ? privateTimelineEventFilterForCaller('te') : privateTimelineEventFilterFragment('te')}
+          AND ${projectionEligibleSql('timeline_entries', 'te', elig)}
+        ORDER BY te.created_at DESC, te.date DESC, te.id DESC LIMIT 1`] },
+  ]);
+  return [...fixed, ...byPrivacy];
+}
+
+/**
+ * search/entity-facts.ts newestFacts's statement at efeb078093 (`worldOnly` stands for `worldOnlyFacts(opts.remote)`), with
+ * main's ordering: a fact whose `valid_from` lies in the future sorts by `created_at`.
+ */
+function pinnedNewestFacts(remote: boolean, worldOnly: boolean, minTrust?: TrustTier): string {
+  const visibility = remote ? `${worldOnly ? `AND (f.visibility = 'world' OR ${grantedPrivateFactSql('f')})` : ''} AND ${privateFactFilterForReader('f')}` : '';
+  return `SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source, ${SAVED_FACT_COLLAPSE_COLUMNS}
+       FROM facts f
+      WHERE f.source_id = $1 AND f.entity_slug = ANY($2::text[])
+        AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
+        AND f.source != ALL($3::text[])
+        ${visibility}
+        AND ${projectionEligibleSql('facts', 'f', { floor: minTrust })}
+      ORDER BY (CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC
+      LIMIT 50`;
+}
+
+/** ops/search-type-filter.ts reconcileTypeFilter's probe statement at efeb078093, verbatim (`{ ...scope, excludePrivate }`). */
+function pinnedTypeProbe(expanded: string[][], scope: { sourceId?: string; sourceIds?: string[]; minTrust?: TrustTier; excludePrivate?: boolean }): string {
+  const params: unknown[] = [];
+  const filter = pageReadFilter('p', scope, params, true);
+  const probes = expanded.flatMap((set, i) => {
+    if (set.length === 0) return [];
+    params.push(set);
+    return [{ name: `t${i}`, sql: `EXISTS (SELECT 1 FROM pages p WHERE ${filter} AND p.type = ANY($${params.length}::text[])) AS t${i}` }];
+  });
+  return `SELECT probe.*, CASE WHEN ${probes.map(p => `probe.${p.name}`).join(' AND ')} THEN NULL
+         ELSE ARRAY(SELECT DISTINCT p.type FROM pages p WHERE ${filter} LIMIT 500) END AS available
+       FROM (SELECT ${probes.map(p => p.sql).join(', ')} OFFSET 0) probe`;
+}
+
+/** search/evidence-delivery.ts selectLongPages size preflight at efeb078093, verbatim; `timeline` is detail other than low. */
+function pinnedLongPageSizes(scope: { sourceId?: string; sourceIds?: string[]; minTrust?: TrustTier; excludePrivate?: boolean }, timeline: boolean): string {
+  const params: unknown[] = [[3]];
+  const filter = pageReadFilter('p', scope, params, true);
+  const tl = !timeline ? null : `CASE WHEN COALESCE(p.timeline, '') !~ '\\S' THEN 0 ELSE ${TIMELINE_SEPARATOR.length} + `;
+  return `SELECT p.id, char_length(COALESCE(p.compiled_truth, ''))${tl ? ` + ${tl}char_length(p.timeline) END` : ''} AS chars,
+              octet_length(COALESCE(p.compiled_truth, ''))${tl ? ` + ${tl}octet_length(p.timeline) END` : ''} AS bytes FROM pages p
+        WHERE p.id = ANY($1::int[]) AND ${filter} AND ${servedTextProjectionFilter('p')}${requiresSafeChunks(scope) ? ` AND ${safeChunksFilter('p')}` : ''}`;
+}
 
 /** mentions/referrers-sql.ts referrersCte at 97bf5544dd, verbatim, for the floored remote scope or the local one. */
 function pinnedReferrersCte(excludePrivate: boolean, floored: boolean): string {
@@ -2180,6 +2486,56 @@ describe('caller raw SQL moved into typed members keeps its Postgres text byte f
       expect(sent).toEqual(expected);
     });
   }
+});
+
+describe('the reflex and brief members keep the request-abort check of executeRaw', () => {
+  // The warm CLI socket and the Rust owner IPC server abort a request whose client left; the Postgres engine then
+  // refuses every later statement of it. The reflex and brief members delegate through executeRaw so that check stays.
+  const scope = { sourceIds: ['default'], privacy: 'floor' as const };
+  const calls: Array<[string, (e: any) => Promise<unknown>]> = [
+    ['readReflexPages', e => e.readReflexPages(scope, { kind: 'slugs', slugs: ['people/alice-example'] })],
+    ['readReflexLiveKeys', e => e.readReflexLiveKeys(scope, ['people/alice-example'])],
+    ['readBriefEntityPages', e => e.readBriefEntityPages('default', ['people/alice-example'], { privacy: 'floor' })],
+    ['readBriefMeetingPages', e => e.readBriefMeetingPages(['g1'], '2026-11-20', '2026-11-21~')],
+    ['readBriefEmailAliasPages', e => e.readBriefEmailAliasPages('default', ['alice@example.com'])],
+    ['readBriefWorldFacts', e => e.readBriefWorldFacts([7])],
+    ['readBriefEditPage', e => e.readBriefEditPage('default', 'people/alice-example', 65536, { privacy: 'floor' })],
+    ['readBriefTimelineEntry', e => e.readBriefTimelineEntry(5, '2026-11-01T00:00:00.000Z', { privacy: 'floor' })],
+    ['readBriefPageVersions', e => e.readBriefPageVersions(5, '2026-11-01T00:00:00.000Z', 65536, 5)],
+  ];
+  for (const [method, call] of calls) {
+    test(`${method} throws AbortError and sends no statement on an aborted request`, async () => {
+      const { engine, fake } = makeEngineWithFake();
+      const controller = new AbortController();
+      controller.abort(new Error('client left'));
+      const error = await withRequestSignal(controller.signal, () => call(engine)).then(() => undefined, (e: unknown) => e);
+      expect((error as DOMException | undefined)?.name).toBe('AbortError');
+      expect(fake.trace.filter(s => s.kind === 'query')).toEqual([]);
+    });
+  }
+});
+
+describe('the renumbered brief statements bind the same values in placeholder order', () => {
+  const since = '2026-11-01T00:00:00.000Z';
+  const cases: Array<[string, (e: any) => Promise<unknown>, unknown[]]> = [
+    ['readBriefEditPage', e => e.readBriefEditPage('default', 'people/alice-example', 65536, { privacy: 'none' }), [65536, 'default', 'people/alice-example']],
+    ['readBriefTimelineEntry', e => e.readBriefTimelineEntry(5, since, { privacy: 'none' }), [5, since, since]],
+    ['readBriefPageVersions', e => e.readBriefPageVersions(5, since, 65536, 5), [65536, 5, since]],
+  ];
+  for (const [method, run, expected] of cases) {
+    test(`${method} parameters`, async () => {
+      const capture = await withPinnedSqlEnvironment(undefined, () => runCase({ method, variant: 'params', run }));
+      expect(capture.error).toBeUndefined();
+      expect(capture.trace.filter(s => s.kind === 'query').map(s => s.params)).toEqual([expected]);
+    });
+  }
+  test('readBriefPageVersions refuses a limit that is not a positive integer and sends no statement', async () => {
+    for (const limit of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const capture = await withPinnedSqlEnvironment(undefined, () => runCase({ method: 'readBriefPageVersions', variant: 'bad-limit', run: e => e.readBriefPageVersions(5, since, 65536, limit) }));
+      expect(capture.error).toStartWith('RangeError: readBriefPageVersions: limit must be a positive integer');
+      expect(capture.trace.filter(s => s.kind === 'query')).toEqual([]);
+    }
+  });
 });
 
 describe('insertOauthClientGrant sends what insertClientGrant sends', () => {

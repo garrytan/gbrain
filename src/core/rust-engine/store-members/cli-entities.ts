@@ -6,7 +6,7 @@
  * refuses for a caller whose members, grants or lineage change it. `readRetirementHop` applies the hop's page policy
  * the same way (retirementHopPolicy).
  */
-import type { EntityCardMatch, EntityCardRow, IgnoredLabelPageRow, InboundLinkerCountRow, LivePageTypeRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, NameVariantCandidateQuery, NameVariantCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, TrigramCandidateQuery, TrigramCandidateRow, FuzzyEntityCandidateRow } from '../../engine-sql/entity-reads.ts';
+import type { EntityAnchoredPages, TextMentionPageRow, EntityCardMatch, EntityCardRow, IgnoredLabelPageRow, InboundLinkerCountRow, LivePageTypeRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, NameVariantCandidateQuery, NameVariantCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, TrigramCandidateQuery, TrigramCandidateRow, FuzzyEntityCandidateRow } from '../../engine-sql/entity-reads.ts';
 import { ignoredPrivacyLabels, SCAN_CAP } from '../../search/ignored-privacy-labels.ts';
 import { callerAccessAllowedSql, currentCallerAccess, privatePagesFilterForCaller, remoteReadFloorSql, withCallerAccess, withoutCallerAccess } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
@@ -142,6 +142,30 @@ export const findFuzzyEntityCandidates: StoreMember<[sourceId: string, title: st
 /** The store returns the matches in slug byte order; Postgres states no order (`LIMIT 2` with no `ORDER BY`). */
 export const findExactBasenameCandidates: StoreMember<[sourceId: string, slugs: readonly string[]], string[]> = (brain, sourceId, slugs) =>
   storeCall({ member: 'findExactBasenameCandidates', sourceId }, () => brain.findExactBasenameCandidates(sourceId, [...slugs]));
+
+/** The live page's type and frontmatter, or null; the store has no statement deadline, so `timeoutMs` is not read. */
+export const readLivePageFrontmatter: StoreMember<[sourceId: string, slug: string, opts?: { timeoutMs?: number }], IgnoredLabelPageRow | null> =
+  async (brain, sourceId, slug, opts) => {
+    takeOptions('readLivePageFrontmatter', opts, [], ['timeoutMs']);
+    return (await storeCall({ member: 'readLivePageFrontmatter', sourceId }, () => brain.readLivePageFrontmatter(sourceId, slug)) as IgnoredLabelPageRow | null) ?? null;
+  };
+
+/** The live entity page and the pages that name or link to it; the store matches the word pattern itself. */
+export const readEntityAnchoredPages: StoreMember<[sourceId: string, entitySlug: string], EntityAnchoredPages> =
+  (brain, sourceId, entitySlug) =>
+    storeCall({ member: 'readEntityAnchoredPages', sourceId }, () => brain.readEntityAnchoredPages(sourceId, entitySlug)) as Promise<EntityAnchoredPages>;
+
+/** The title of each page id, deleted or not. */
+export const readPageTitlesById: StoreMember<[ids: readonly number[]], Array<{ id: number; title: string }>> =
+  (brain, ids) =>
+    storeCall({ member: 'readPageTitlesById' }, () => brain.readPageTitlesById([...ids])) as Promise<Array<{ id: number; title: string }>>;
+
+/** The live pages at the slugs in the sources; the store's ISO date string becomes the Date both SQL engines return. */
+export const readTextMentionPages: StoreMember<[sourceIds: readonly string[], slugs: readonly string[]], TextMentionPageRow[]> =
+  async (brain, sourceIds, slugs) => {
+    const rows = await storeCall({ member: 'readTextMentionPages' }, () => brain.readTextMentionPages([...sourceIds], [...slugs])) as TextMentionPageRow[];
+    return rows.map(r => ({ ...r, date: r.date === null ? null : new Date(r.date) }));
+  };
 
 /** The store returns every live labelled page with no visibility key; the label rule itself is the TypeScript twin of the SQL. */
 export const readIgnoredPrivacyLabelPages: StoreMember<[sourceId: string, scope: { slugs: readonly string[] } | { since: string },

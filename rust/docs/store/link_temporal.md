@@ -26,6 +26,7 @@ writes the rows the builder returns.
 | `brain.listPageStatusByRef(...)` / `brain.listRecordMetadataRows(...)` | the frontmatter `status` of each ref / the status and supersession links of referring pages | `listPageStatusByRef` / `listRecordMetadataRows` |
 | `brain.readReferrerGroupRows(input)` | the live pages that link to the targets, grouped by canonical type (a pack alias maps to its canonical type, an empty type is `untyped`), newest first (`effective_date`, else `updated_at`; ties by source and slug), at most `perGroup` per group, each with its group's total | `readReferrerGroupRows` |
 | `brain.readReferrerPageDetails({ ids })` | the title, body (its first 4000 characters), date source, trust tier, write origin, activation flag and frontmatter of each page id that exists, soft-deleted pages too | `readReferrerPageDetails` |
+| `brain.readPageReferenceDate(sourceId, slug)` | the live page's `effective_date`, else its `updated_at`, as UTC text with microseconds (`2026-01-02T03:04:05.123000Z`, as `to_char` prints it); `null` for a missing or soft-deleted page | `readPageReferenceDate` |
 | `brain.readReferrerTargetCounts(input)` | per target index (`targetIndexes`; an index may hold several pages), the referrers of its live pages other than its own pages, read as `readReferrerGroupRows` reads them: the total (no canonical type), then the total of each canonical type in `recordTypes` that has any; an index with no referrer has no row | `readReferrerTargetCounts` |
 | `brain.listReferrerTargetSources(slug, sources)` | the sources, in input order, that hold a live page with this slug (`get_backlinks {group: "page"}` takes the first as the target) | `listReferrerTargetSources` |
 | `brain.countReferrerRows(target, scope)` / `brain.readReferrerRows(target, scope)` | the number of referring pages `readReferrerGroupRows` reads, of `scope.type` (its canonical or stored type) when set / one page of them by `(date DESC, source, slug)`, after the cursor `[date, source, slug]` when one is given (a null date sorts last), at most `limit` rows, each with its id, slug, source, type, canonical type and date; a cursor date that is not a date is refused | `countReferrerRows` / `readReferrerRows` |
@@ -63,6 +64,7 @@ writes the rows the builder returns.
 | `link-temporal-apply.ts` | linkRelationshipKeysForOrigin, applyLinkTemporalRows, writeManualLinkTransitions, removeManualLinkTransitions | equal |
 | `link-relationship-notes.ts` | listRelationshipNoteRows | equal |
 | `doctor/checks/edge-validity.ts` | edgeValidityCounts | equal |
+| `mentions/newer-mentions.ts` | readPageReferenceDate | equal |
 | `mentions/referrers.ts` | listPageStatusByRef, listRecordMetadataRows, readReferrerGroupRows, readReferrerPageDetails, readReferrerTargetCounts, countReferrerRows, readReferrerRows, readReferrerTypes, readReferrerRecordCandidates, readReferrerRecordPages | equal |
 | `ops/backlinks-paged.ts` | listReferrerTargetSources, listSourceIds | equal |
 | `search/retrieval-coverage.ts` | countEmbeddingHeldPages | equal (always 0: the store keeps no embedding budget rows) |

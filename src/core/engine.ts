@@ -27,7 +27,7 @@ import type { AccessCoverageRow, AccessPolicyMarks, AccessRestampWindow, AccessR
 import type { AccessMigrationRow, LiveAccessTokenRow, MemberKeyReadingRow, OpenPageCount, OpenPageExclusion, PeopleFolderCount } from './engine-sql/access-setup.ts';
 import type { FactsFencePagesQuery, SweepPageRefRow, SweepDeferredPageRow, SweepDeferredPagesQuery, SweepStalePageRow, SweepStalePagesQuery } from './engine-sql/sweep-reads.ts';
 import type { DeltaSessionRow, SessionCursorRow, SessionStateWrite } from './engine-sql/session-state.ts';
-import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow, RankCoverageRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
+import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow, LongPageSizeRow, PageTypeProbe, RankCoverageRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
 import type * as EmbeddingCatalogSql from './engine-sql/embedding-catalog.ts';
 import type * as DoctorReadsSql from './engine-sql/doctor-reads.ts';
@@ -51,12 +51,12 @@ import type { ConversationFactLink, ConversationRelinkPagesQuery, RelinkPlacemen
 import type * as DreamCycleSql from './engine-sql/dream-cycle.ts';
 import type * as FactsCycleSql from './engine-sql/facts-cycle.ts';
 import type * as FactsPurgeSql from './engine-sql/facts-purge.ts';
+import type * as FactsRecallSql from './engine-sql/facts-recall.ts';
 import type * as FactsRepairSql from './engine-sql/facts-repair.ts';
 import type * as FilesOpsSql from './engine-sql/files-ops.ts';
 import type * as ContradictionsCycleSql from './engine-sql/contradictions-cycle.ts';
 import type * as OntologyRepairSql from './engine-sql/ontology-repair.ts';
 import type * as AdminReadsSql from './engine-sql/admin-reads.ts';
-import type * as FactsRecallSql from './engine-sql/facts-recall.ts';
 import type * as FactsTrustSql from './engine-sql/facts-trust.ts';
 import type * as FactsConversationSql from './engine-sql/facts-conversation.ts';
 import type { EngineCapabilities } from './engine-capabilities.ts';
@@ -118,9 +118,11 @@ import type { PageEmbeddingBudgetRow, PageEmbeddingReservation, PageEmbeddingRes
 import type { EmbeddingCompletionOpts, EmbeddingCompletionRow } from './engine-sql/embedding-install.ts';
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from './engine-sql/page-visibility.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
-import type { EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, InboundLinkerCountRow, LivePageTypeRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, NameVariantCandidateQuery, NameVariantCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, TrigramCandidateQuery, TrigramCandidateRow, FuzzyEntityCandidateRow } from './engine-sql/entity-reads.ts';
+import type { EntityAnchoredPages, TextMentionPageRow, EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, InboundLinkerCountRow, LivePageTypeRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, NameVariantCandidateQuery, NameVariantCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, TrigramCandidateQuery, TrigramCandidateRow, FuzzyEntityCandidateRow } from './engine-sql/entity-reads.ts';
 import type { PageRefRow, RelationalPageRow } from './engine-sql/relational-reads.ts';
 import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PlainSyncSourceRow, RenameIdentityRow, SourceCheckRow, SourceInsert, SourceUpstreamObservation, PageIdentityRow, PageSizeRow, ReasonPurgeTombstone, SourcePathPageRow, SourceRoutingRow, SourceSyncStampOptions } from './engine-sql/sources.ts';
+import type { BriefEntityPageOpts, BriefEntityPageRow, ReflexPageMatch, ReflexPageRow, ReflexScope } from './engine-sql/reflex-reads.ts';
+import type * as BriefReadsSql from './engine-sql/brief-reads.ts';
 import type {
   Coverage as NotifierCoverage, MarkerIntent, NotifierHostSourceRow, NotifierLeaseClaim, NotifierLeaseClaimInput, NotifierLeaseHolder, NotifierSourceRow, NotifierStatusRow,
   NotifierFirstDueRow, PendingWantedMarker, SourceSyncShapeRow, StatePatch as NotifierStatePatch, WantedMarker, WantedMarkerInput,
@@ -1866,6 +1868,8 @@ export interface BrainEngine {
   listRecordMetadataRows(pageIds: readonly number[], scope: { referrerSources: readonly string[]; excludePrivate: boolean; includeQuarantined?: boolean }): Promise<LinkTemporalSql.RecordMetadataRows>;
   readReferrerGroupRows(target: { sources: readonly string[]; slugs: readonly string[] }, scope: LinkTemporalSql.ReferrerGroupScope): Promise<LinkTemporalSql.ReferrerGroupRow[]>;
   readReferrerPageDetails(ids: readonly number[]): Promise<LinkTemporalSql.ReferrerPageDetailRow[]>;
+  /** A live page's `COALESCE(effective_date, updated_at)` as UTC microsecond text, or null (the newer-mentions cutoff). */
+  readPageReferenceDate(sourceId: string, slug: string): Promise<string | null>;
   readReferrerTargetCounts(target: { sources: readonly string[]; slugs: readonly string[]; indexes: readonly number[] },
     scope: LinkTemporalSql.ReferrerTargetCountScope): Promise<LinkTemporalSql.ReferrerTargetCountRow[]>;
   /** The referrer page (get_backlinks group "page") and the card's record rows (mentions/referrers.ts). */
@@ -2691,6 +2695,8 @@ export interface BrainEngine {
    * source) to a stored row of the page is skipped. A missing page is a foreign key refusal.
    */
   insertCanonicalTimelineRows(pageId: number, rows: readonly CanonicalTimelineRow[]): Promise<void>;
+  /** The id of the newest timeline row of the page (deleted or not) on `date` whose summary is `summary`, event rows included, or null. */
+  readNewestTimelineEntryId(sourceId: string, slug: string, date: string, summary: string): Promise<number | null>;
 
   // v0.42.x — Life Chronicle (#2390) per-entity ontology (rides `facts`).
   /**
@@ -3685,6 +3691,8 @@ export interface BrainEngine {
   insertTrustProposal(input: NewTrustProposal): Promise<{ id: number; created: boolean }>;
   /** One trust proposal by id, or null; `lock` takes it `FOR UPDATE` for the decision that follows. */
   getTrustProposal(id: number, lock?: boolean): Promise<TrustProposalRow | null>;
+  /** The privacy holds among `ids` whose target fact the current caller's widened world-only fact reads do not admit, ascending (trust/privacy-hold-reply.ts). */
+  listUnreadablePrivacyHoldIds(ids: number[]): Promise<number[]>;
   /** Trust proposals by status (`pending` by default; `all`), source, action and creation time, oldest first (500 by default, at most 5000). */
   listTrustProposals(filter?: TrustProposalFilter): Promise<TrustProposalRow[]>;
   /** The pending trust proposals naming a row as target or related, by id. */
@@ -3813,6 +3821,10 @@ export interface BrainEngine {
    * with JIT off under a `timeoutMs` statement deadline; a timeout throws the statement-timeout error.
    */
   scanExactBatch(opts: ExactScanOpts, afterPageId: number, batchPages: number, timeoutMs: number): Promise<ExactBatchRow[] | null>;
+  /** search's type-filter probe (engine-sql/cli-reads-ops.ts probePageTypes); Postgres runs it with JIT off, unprepared. */
+  probePageTypes(sets: readonly (readonly string[])[], scope: PageReadScope): Promise<PageTypeProbe>;
+  /** The long-page size preflight (engine-sql/cli-reads-ops.ts): each served page's body length; `includeTimeline` counts the timeline. */
+  readLongPageSizes(ids: readonly number[], scope: PageReadScope, opts: { includeTimeline: boolean }): Promise<LongPageSizeRow[]>;
   /** The first live page after `afterPageId` in id order, in any source, or null. */
   nextLivePageAfter(afterPageId: number): Promise<{ id: number; slug: string; source_id: string } | null>;
   /** gbrain export: the next 256 live page keys after page id `q.afterId`, in id order, within the filters (engine-sql/export-reads.ts). */
@@ -4243,6 +4255,10 @@ export interface BrainEngine {
   countUncomparableFacts(q: FactsTrustSql.UncomparableFactsQuery): Promise<Array<{ source_id: string; n: number }>>;
   /** The keyword scan behind a search's saved-facts block: active facts sharing the query's words, with match counts and trust ranks. */
   matchSavedFacts(q: FactsTrustSql.SavedFactsMatchQuery): Promise<FactsTrustSql.SavedFactMatchRow[]>;
+  /** A named entity's newest active facts under the caller's read policy, with the collapse columns (search/entity-facts.ts). */
+  readEntityNewestFacts(q: FactsTrustSql.EntityNewestFactsQuery): Promise<FactsTrustSql.EntityNewestFactRow[]>;
+  /** The query terms each name head matches after stemming with the brain's full-text language, one row per head. */
+  matchHeadStems(heads: readonly string[], terms: readonly string[]): Promise<FactsTrustSql.HeadStemRow[]>;
   /** The fact an owner action targets, with its stored trust tier, or null when no fact has the id. */
   readFactForOwnerAction(id: number): Promise<FactsTrustSql.OwnerActionFactRow | null>;
   /** Unconfirmed standing preferences and commitments the write gate flagged (needs write_gate_receipts; the caller probes it). */
@@ -4417,6 +4433,14 @@ export interface BrainEngine {
   listPoolEntityPairs(scope: FactsTrustSql.FactPoolScope, filters: FactsTrustSql.FactPoolFilters): Promise<Array<{ source_id: string; entity_slug: string }>>;
   /** The whole fact rows of these ids within these sources. */
   listFactRowsByIds(sourceIds: readonly string[], ids: readonly number[]): Promise<FactsRecallSql.FactRowSqlShape[]>;
+  /** The provenance slug of each open non-conversation stint of an entity's (normalised) dimension, each once, sorted. */
+  listOntologyStreamSlugs(sourceId: string, entitySlug: string, dimension: string): Promise<string[]>;
+  /** The newest open, active, non-conversation stint of the dimension other than `excludeId`, with its stored tier; null: none. */
+  readOntologyRival(sourceId: string, entitySlug: string, dimension: string, excludeId: number): Promise<{ id: number; trust_tier: string } | null>;
+  /** The ledger stream slug of each listed fact, take or page row found (null where it has none), in no promised order. */
+  listBeliefStreamSlugs(table: 'facts' | 'takes' | 'pages', ids: readonly number[]): Promise<Array<string | null>>;
+  /** Of `slugs` in `sourceId`, the live pages the read policy of `scope` admits (its sources ignored), at most `limit`. */
+  listReadablePageSlugs(sourceId: string, slugs: readonly string[], scope: PageReadScope, limit: number): Promise<string[]>;
 
 
   /** True when the source's `config.canonical` is `git` (a git-canonical source); false for anything else, including an unknown id. */
@@ -5150,6 +5174,32 @@ export interface BrainEngine {
    */
   readIgnoredPrivacyLabelPages(sourceId: string, scope: { slugs: readonly string[] } | { since: string },
     opts?: { limit?: number; timeoutMs?: number }): Promise<IgnoredLabelPageRow[]>;
+  /** The type and frontmatter of the live page at `slug` in the source, or null; `timeoutMs` bounds Postgres (default 1 s). */
+  readLivePageFrontmatter(sourceId: string, slug: string, opts?: { timeoutMs?: number }): Promise<IgnoredLabelPageRow | null>;
+  /** The live entity page, then up to 10 newest live pages that name it as a word or link to it (search/entity-anchor.ts). */
+  readEntityAnchoredPages(sourceId: string, entitySlug: string): Promise<EntityAnchoredPages>;
+  /** The title of each page id, deleted or not, in no set order. */
+  readPageTitlesById(ids: readonly number[]): Promise<Array<{ id: number; title: string }>>;
+  /** The live pages at `slugs` in `sourceIds` with title, type, frontmatter and `COALESCE(effective_date, updated_at)` as `date` (the entity card's text mentions). */
+  readTextMentionPages(sourceIds: readonly string[], slugs: readonly string[]): Promise<TextMentionPageRow[]>;
+  /** The retrieval reflex's alias live recheck: the live pages in the scope at `slugs`, as (slug, source_id), in no set order. */
+  readReflexLiveKeys(scope: ReflexScope, slugs: readonly string[]): Promise<Array<{ slug: string; source_id: string }>>;
+  /** The retrieval reflex's candidate pages in the scope that `match` names, with the bounded body prefix (engine-sql/reflex-reads.ts). */
+  readReflexPages(scope: ReflexScope, match: ReflexPageMatch): Promise<ReflexPageRow[]>;
+  /** The proactive brief's live pages of the source at `slugs` that the privacy and the eligibility admit, in no set order. */
+  readBriefEntityPages(sourceId: string, slugs: readonly string[], opts: BriefEntityPageOpts): Promise<BriefEntityPageRow[]>;
+  /** The brief's world-visible, eligible meeting pages of `sourceIds` whose `start` text lies in [startFrom, startTo] (engine-sql/brief-reads.ts). */
+  readBriefMeetingPages(sourceIds: readonly string[], startFrom: string, startTo: string, eligibility?: BriefReadsSql.BriefReadEligibility): Promise<BriefReadsSql.BriefMeetingPageRow[]>;
+  /** The brief's alias rows of the source at `emails`, each with its live page that the read floor and eligibility admit. */
+  readBriefEmailAliasPages(sourceId: string, emails: readonly string[], eligibility?: BriefReadsSql.BriefReadEligibility): Promise<BriefReadsSql.BriefEmailAliasPageRow[]>;
+  /** The brief's active, world-visible, eligible facts among `factIds` whose provenance the caller may read. */
+  readBriefWorldFacts(factIds: readonly number[], eligibility?: BriefReadsSql.BriefReadEligibility): Promise<BriefReadsSql.BriefWorldFactRow[]>;
+  /** The brief's counterparty page for the edit arm, or null; its body is null past `maxBytes`. */
+  readBriefEditPage(sourceId: string, slug: string, maxBytes: number, opts: BriefReadsSql.BriefEditReadOpts): Promise<BriefReadsSql.BriefEditPageRow | null>;
+  /** The brief's newest timeline entry of the page recorded and dated since `since`, or null. */
+  readBriefTimelineEntry(pageId: number, since: string, opts: BriefReadsSql.BriefEditReadOpts): Promise<BriefReadsSql.BriefTimelineEntryRow | null>;
+  /** The brief's newest `limit` revisions of the page snapshotted since `since`, newest first; a body is null past `maxBytes`. */
+  readBriefPageVersions(pageId: number, since: string, maxBytes: number, limit: number): Promise<BriefReadsSql.BriefPageVersionRow[]>;
 
   // Migration support
   runMigration(version: number, sql: string): Promise<void>;

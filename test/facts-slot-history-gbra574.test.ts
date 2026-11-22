@@ -10,7 +10,8 @@
  * and a value under the page ends a stint under the key; the same key in two sources stays two people; a remote or
  * member-scoped caller never sees a value it cannot read (and an unreadable row never ends a readable window), nor the
  * history of a page it cannot read; withdrawn, superseded and expired rows never show; a failed history read keeps the
- * block, marks its rows and reports the degraded stage facts_history_unavailable.
+ * block, marks its rows and reports the degraded stage facts_history_unavailable; an engine capability refusal of a
+ * read the block needs rejects with that typed refusal, never an empty or degraded block.
  * PGLite with no git repository (the repo-less brain), and Postgres through
  * test/e2e/facts-slot-history-gbra574-postgres.test.ts.
  */
@@ -27,6 +28,7 @@ import { __resetPrivateVisibilityCacheForTests, withCallerAccess } from '../src/
 import { persistencePostgresTemplate } from './helpers/persistence-postgres.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { newSource, page, putPage } from './helpers/pinned-questions-fixture.ts';
+import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
 
 type Row = { result_type?: string; chunk_text?: string; fact_row?: { history_unavailable?: true } };
 const CONVERSATION = 'cli:extract-conversation-facts:v1';
@@ -35,6 +37,16 @@ const head = (from: string, until = 'unknown') => '[observed unknown; valid ' + 
 /** The slot history read (engine-sql/facts-recall.ts listSlotRows): H1 makes this member call fail. */
 const HISTORY_READ = 'listSlotRows' as const;
 const logger = { info() {}, warn() {}, error() {} };
+/** The quoted-page read (engine-sql/facts-recall.ts listFactsFromQuotedPages) every facts block makes. */
+const QUOTED_READ = 'listFactsFromQuotedPages' as const;
+
+/** `base` with `member` rejecting `error`; every other member answers from `base`. */
+const rejecting = (base: BrainEngine, member: string, error: () => Error) => new Proxy(base, { get(target, prop) {
+  if (prop === member) return () => Promise.reject(error());
+  const v = (target as unknown as Record<string, unknown>)[prop as string];
+  return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+} }) as BrainEngine;
+const refused = (member: string) => () => capabilityMissing('facts', member);
 
 describe('slotHistoryDimension', () => {
   test('a history cue plus one dimension fires, with that dimension', () => {
@@ -287,6 +299,13 @@ for (const backend of testBackends()) {
           expect(await call()).toContain('facts_history_unavailable');
         } finally { engine[HISTORY_READ] = original; }
       }, 60_000);
+    });
+
+    describe('an engine capability refusal stops the block', () => {
+      test('a refused quoted-page read rejects with the typed refusal, never an empty block', async () => {
+        await expect(block(ROLE_Q, [sourceId], 5500, 50, rejecting(engine, QUOTED_READ, refused(QUOTED_READ))))
+          .rejects.toMatchObject({ code: 'engine_capability_missing' });
+      });
     });
   });
 }

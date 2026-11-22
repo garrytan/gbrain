@@ -318,6 +318,17 @@ export async function insertCanonicalTimelineRows(exec: SqlExecutor, pageId: num
   await exec.executeRaw(INSERT_CANONICAL_TIMELINE_SQL, [pageId, JSON.stringify(rows.map((row, ord) => ({ ord, ...row })))]);
 }
 
+/**
+ * The id of the newest timeline row of the page (deleted or not) at `slug` in `sourceId` on `date` whose summary is
+ * `summary`, event rows included, or null (`BrainEngine.readNewestTimelineEntryId`): the row add_timeline_entry just
+ * wrote, whose write-gate receipt it records (persistence/semantic-pages.ts). Runs in the caller's transaction.
+ */
+export async function readNewestTimelineEntryId(exec: SqlExecutor, sourceId: string, slug: string, date: string, summary: string): Promise<number | null> {
+  const [row] = await exec.executeRaw<{ id: number | string }>(`SELECT t.id FROM timeline_entries t JOIN pages p ON p.id = t.page_id
+      WHERE p.source_id = $1 AND p.slug = $2 AND t.date = $3::date AND t.summary = $4 ORDER BY t.id DESC LIMIT 1`, [sourceId, slug, date, summary]);
+  return row ? Number(row.id) : null;
+}
+
 /** Replaces the detail of the page's own (non-event) rows named in `rows` with `next` when the stored detail still equals `detail` (`BrainEngine.updateTimelineDetails`). */
 export async function updateTimelineDetails(exec: SqlExecutor, pageId: number, rows: readonly TimelineDetailRefresh[]): Promise<void> {
   await exec.executeRaw(UPDATE_TIMELINE_DETAILS_SQL, [pageId, JSON.stringify(rows)]);
