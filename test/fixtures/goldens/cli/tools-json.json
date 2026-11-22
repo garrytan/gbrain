@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 301654,
-    "stdoutSha256": "4e11c04295c4342ee025b97b9f4a90c8292ffc931ab024a3b4a88e71c74fd0c9",
+    "stdoutBytes": 301693,
+    "stdoutSha256": "d81fbaac534f905a9b9a0fbfe920c9e63aba1e2ec094ed9e83631d980a8365b2",
     "toolNames": [
       "remember",
       "entity",
@@ -7350,7 +7350,7 @@
               "type": "string"
             },
             "valid_from": {
-              "description": "#4206: ISO 8601 event time for the extracted facts — use when the turn is historical (importing an old transcript) so facts do not get stamped with import time. Fallback only: a date the extractor derives from the turn itself wins. Default: now().",
+              "description": "#4206: ISO 8601 event time for the extracted facts — use when the turn is historical (importing an old transcript) so facts do not get stamped with import time. Fallback only: a date the extractor derives from the turn itself wins. If no event date can be established, it stays unknown.",
               "type": "string"
             },
             "visibility": {

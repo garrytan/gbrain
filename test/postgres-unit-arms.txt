@@ -206,6 +206,7 @@ test/fact-fence-adoption-exits.test.ts
 test/fact-purge-lookup-timeout-6511.test.ts
 test/fact-reads-page-access.test.ts
 test/facts-absorb-stalled-receipt-7439.test.ts
+test/facts-backstop-observation-event-time.test.ts
 test/facts-embedding-refusal-heal-8526.test.ts
 test/facts-entity-moved-7602.test.ts
 test/facts-future-valid-from-gst3170.test.ts

@@ -36,6 +36,7 @@ import { consolidationCloses, maintenancePreflight, submitMaintenanceConsolidati
 import { clearConsolidationTies, consolidationRestored, factPreimages, holdConsolidationTie, recordConsolidationGeneration } from '../../generations/adapters/fact-rows.ts';
 import { managedPersistenceEnabled } from '../../persistence/ownership.ts';
 import { DreamWriteDeferralPass } from '../dream-write-deferral.ts';
+import { utcDate } from '../cycle-date.ts';
 import { declareDerivation, derivedMaintenanceTransaction, derivedWriteTrust, isExternalTier, readTaintInputs } from '../../trust/taint.ts';
 import { DEFAULT_WRITE_GATE_CONFIG, type WriteGateConfig } from '../../write-gate.ts';
 import { loadImportSanityConfig } from '../../import-screen.ts';
@@ -315,7 +316,7 @@ export async function runPhaseConsolidate(
         const avgWeight = cluster.reduce((s, f) => s + f.confidence, 0) / cluster.length;
         const sources = Array.from(new Set(cluster.map(c => c.source_session ?? c.source).filter(Boolean))).join(',');
         const dated = cluster.flatMap(fact => fact.valid_from ? [fact.valid_from.getTime()] : []);
-        const sinceISO = dated.length ? new Date(Math.min(...dated)).toISOString().slice(0, 10) : undefined;
+        const sinceISO = dated.length ? utcDate(new Date(Math.min(...dated))) : undefined;
         const inputs = cluster.map(f => taint.get(f.id)!);
         const derivation = { inputs, trust: derivedWriteTrust({ channel: 'derive:consolidate', inputs }) };
 
