@@ -85,27 +85,39 @@ export function readServeBrainRef(dataDir: string): ServeBrainRef {
  * own data dir, never the host config's), and records it again after every reopen of that engine, since a reconnect
  * takes a fresh lock token. Any other engine opened no PGLite datastore, so nothing is written.
  *
- * Off the critical path by construction: serve calls this without awaiting it; a reopen only schedules the rewrite
- * (setImmediate), so nothing runs inside the reconnect; a rewrite for the same datastore reuses the reference already
- * read, so it sends no statement to the database a close would wait for; and every failure ends here as one log line
- * with an error code (never a message, which could carry a path or identity).
+ * The identity is read from the database once, here at start, and kept whether or not the first write lands. A reopen
+ * only schedules a rewrite (setImmediate, so nothing runs inside the reconnect) that reuses that reference and sends no
+ * statement to the database, so a reconnect or a close never waits on this file. Serve calls this without awaiting
+ * it, and every failure ends here as one log line with an error code (never a message, which could carry a path or
+ * identity).
  */
 export async function recordServeBrainRefAtStart(
   engine: Pick<BrainEngine, 'readPersistenceBrainId'>,
   log: (line: string) => void = line => console.error(line),
 ): Promise<void> {
   let cached: { dataDir: string; brainRef: string } | null = null;
-  const record = async (sameDatastore: boolean): Promise<void> => {
+  const guarded = async (step: () => Promise<unknown>): Promise<void> => {
     try {
-      const dataDir = openedPgliteDatastore(engine);
-      if (!dataDir) return;
-      const known = sameDatastore && cached?.dataDir === dataDir ? cached.brainRef : undefined;
-      const brainRef = await recordServeBrainRef(engine, dataDir, known);
-      if (brainRef) cached = { dataDir, brainRef };
+      await step();
     } catch (error) {
       log(`[gbrain serve] brain_ref not recorded for engine status (${(error as NodeJS.ErrnoException).code ?? 'error'})`);
     }
   };
-  registerPgliteReopen(engine, sameDatastore => { setImmediate(() => { void record(sameDatastore); }); });
-  await record(false);
+  registerPgliteReopen(engine, sameDatastore => {
+    setImmediate(() => {
+      void guarded(async () => {
+        const dataDir = openedPgliteDatastore(engine);
+        if (!dataDir || !sameDatastore || cached?.dataDir !== dataDir) return;
+        await recordServeBrainRef(engine, dataDir, cached.brainRef);
+      });
+    });
+  });
+  await guarded(async () => {
+    const dataDir = openedPgliteDatastore(engine);
+    if (!dataDir || !heldLockFor(dataDir)) return;
+    const brainRef = await readBrainRef(engine);
+    if (!brainRef) return;
+    cached = { dataDir, brainRef };
+    await recordServeBrainRef(engine, dataDir, brainRef);
+  });
 }
