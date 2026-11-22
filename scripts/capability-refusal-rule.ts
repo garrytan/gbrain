@@ -65,28 +65,50 @@ const isRawSqlCall = (n: ts.CallExpression): boolean =>
  */
 export function guardsRawSqlCall(node: ts.Node, awaited = false): boolean {
   let found = false;
+  const followed = new Set<ts.Node>();
   // `flows`: the value of `n` reaches the catch (awaited, returned, or the `.catch` receiver).
-  const visit = (n: ts.Node, flows: boolean, inCallback: boolean): void => {
+  // `cb`: the body of the callback `n` sits in, if any; a returned or awaited local is read from its initializer there.
+  const visit = (n: ts.Node, flows: boolean, cb: ts.Node | undefined): void => {
     if (found) return;
     if (n !== node && ts.isFunctionLike(n)) {
       if (!flows) return;
       const body = (n as ts.FunctionLikeDeclarationBase).body;
       if (!body) return;
-      visit(body, !ts.isBlock(body), true);
+      visit(body, !ts.isBlock(body), body);
       return;
     }
-    if (ts.isCallExpression(n) && isRawSqlCall(n) && (!inCallback || flows)) {
+    if (ts.isCallExpression(n) && isRawSqlCall(n) && (!cb || flows)) {
       found = true;
+      return;
+    }
+    if (cb && flows && ts.isIdentifier(n) && !(ts.isPropertyAccessExpression(n.parent) && n.parent.name === n)) {
+      for (const init of localInitializers(cb, n.text)) {
+        if (followed.has(init)) continue;
+        followed.add(init);
+        visit(init, true, cb);
+      }
       return;
     }
     // A statement starts a new value; await and return hand a value to the enclosing promise; other
     // expressions (call arguments, arrays, `.then` chains, parentheses) pass on whether theirs flows.
     let childFlows = ts.isStatement(n) || ts.isBlock(n) ? false : flows;
     if (ts.isAwaitExpression(n) || ts.isReturnStatement(n)) childFlows = true;
-    ts.forEachChild(n, (c) => visit(c, childFlows, inCallback));
+    ts.forEachChild(n, (c) => visit(c, childFlows, cb));
   };
-  visit(node, awaited || !ts.isBlock(node), false);
+  visit(node, awaited || !ts.isBlock(node), undefined);
   return found;
+}
+
+/** The initializers of the `const|let|var name = init` declarations in `body`, not in nested functions (names match, scopes are not told apart). */
+function localInitializers(body: ts.Node, name: string): ts.Expression[] {
+  const out: ts.Expression[] = [];
+  const visit = (n: ts.Node): void => {
+    if (n !== body && ts.isFunctionLike(n)) return;
+    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === name && n.initializer) out.push(n.initializer);
+    ts.forEachChild(n, visit);
+  };
+  visit(body);
+  return out;
 }
 
 const isName = (e: ts.Expression, name: string | undefined): boolean => !!name && ts.isIdentifier(e) && e.text === name;
@@ -132,6 +154,33 @@ function returnsFallback(s: ts.Node, errorName: string | undefined): boolean {
   return found;
 }
 
+/** Whether `s` (outside nested functions) assigns to `errorName`, so a later helper call may be handed another value. */
+function assignsError(s: ts.Node, errorName: string | undefined): boolean {
+  if (!errorName) return false;
+  let found = false;
+  const visit = (n: ts.Node): void => {
+    if (found || ts.isFunctionLike(n)) return;
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment
+      && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment && isName(n.left, errorName)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(s);
+  return found;
+}
+
+/** Whether the block's own statements declare `name` (a `const|let|var`, function or class), which shadows the caught error inside it. */
+function declaresName(block: ts.Block, name: string | undefined): boolean {
+  if (!name) return false;
+  const binds = (b: ts.BindingName): boolean => ts.isIdentifier(b)
+    ? b.text === name
+    : b.elements.some((el) => !ts.isOmittedExpression(el) && binds(el.name));
+  return block.statements.some((st) => (ts.isVariableStatement(st) && st.declarationList.declarations.some((d) => binds(d.name)))
+    || ((ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st)) && st.name?.text === name));
+}
+
 /**
  * Whether the handler lets a capability refusal through before any fallback: one of its leading
  * statements, before the first return, branch or assignment, rethrows it. A bare block is read as
@@ -143,6 +192,8 @@ export function handlerRethrowsCapabilityRefusal(site: CapabilityRefusalSite): b
   const scan = (body: readonly ts.Statement[]): boolean | undefined => {
     for (const s of body) {
       if (ts.isBlock(s)) {
+        // A block that redeclares the caught error's name hands its helper a different value; end the search.
+        if (declaresName(s, errorName)) return false;
         const inner = scan(s.statements);
         if (inner !== undefined) return inner;
         continue;
@@ -154,7 +205,8 @@ export function handlerRethrowsCapabilityRefusal(site: CapabilityRefusalSite): b
       // Logging, locals and other side effects may come first; the first answer or branch ends the search.
       if (ts.isReturnStatement(s) || ts.isIfStatement(s) || ts.isTryStatement(s)) return false;
       if (ts.isExpressionStatement(s) && ts.isBinaryExpression(s.expression) && s.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken) return false;
-      if (returnsFallback(s, errorName)) return false;
+      // A statement that can return a fallback or replace the caught error skips or defeats a later check.
+      if (returnsFallback(s, errorName) || assignsError(s, errorName)) return false;
     }
     return undefined;
   };

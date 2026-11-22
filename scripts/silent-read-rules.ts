@@ -223,7 +223,8 @@ function findBinding(fn: ts.Node, name: string, before: number, at: number): ts.
     if (n !== fn && ts.isFunctionLike(n)) return;
     if (ts.isVariableDeclarationList(n)) blockScoped = (n.flags & ts.NodeFlags.BlockScoped) !== 0;
     if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === name && n.end <= before) {
-      const own = blockScoped ? scope : fn;
+      // A catch parameter is scoped to its clause, like a `let`.
+      const own = blockScoped || ts.isCatchClause(n.parent) ? scope : fn;
       if (own.pos <= at && at < own.end && own.pos >= foundScopeStart) {
         found = n;
         foundScopeStart = own.pos;
