@@ -10,6 +10,85 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.762.0] - 2026-11-22
+
+**Apple Contacts can now fill themselves in from your brain, adding only and off until you switch it on.**
+
+### Added
+- After each clean pull, `apple_contacts.enrich` (off by default; `dry_run` records the batch without sending it) fills empty companies and job titles from the one person page a card is linked to, adds emails and phones you confirmed (your Google Contacts entry for that card, or a still-valid fact you stated that reads `Email: <address>` or `Phone: <number>` and nothing else), and, only with `apple_contacts.enrich.create_cards` set to true (off by default), creates at most 10 cards a run for Google Contacts entries that match exactly one person page. It never changes, removes, deletes or merges anything, and uses no outside service. Sending also needs `apple_contacts.write` on and the helper's enrich token in `apple_contacts.write_token_file`.
+- `gbrain apple-contacts enrich status` shows the last run, change by change with the page each value came from, and `gbrain apple-contacts enrich dry-run` lists what the next run would send.
+
+**`gbrain setup hermes` works when HERMES_HOME is set, and `gbrain setup openclaw` reads an openclaw.json with comments.**
+
+### Fixed
+- `gbrain setup hermes` no longer exits 1 with `turn_hook_not_loaded` when HERMES_HOME points somewhere other than ~/.hermes. The install check now runs `hermes hooks doctor` with HERMES_HOME, so it reads the config setup just wrote. The OpenClaw check (`openclaw plugins inspect`) gets OPENCLAW_HOME, OPENCLAW_STATE_DIR, OPENCLAW_CONFIG_PATH and OPENCLAW_PROFILE the same way, a relative path in any of them is resolved first, and the check still never sees provider keys. With OPENCLAW_HOME set, `gbrain setup openclaw` now writes under `$OPENCLAW_HOME/.openclaw`, where OpenClaw reads, instead of `~/.openclaw`, and finds a roster agent's `~/` workspace skills there too.
+- `gbrain setup openclaw` no longer exits 2 with `invalid_params` on an openclaw.json that has a `//` or `/* */` comment above a bare key. Comments, trailing commas, single-quoted strings, a raw tab inside a string, CR-only line endings and `//` inside a string value all read correctly now.
+
+### Changed
+- `gbrain connect`, `gbrain doctor` and `gbrain hook` no longer accept `--instructions`, a flag none of them reads (it was listed for them by mistake). `gbrain setup <harness> --instructions` is unchanged.
+
+**A brain checkout that fell behind its remote while another checkout pushed now publishes again instead of failing with `push_unconfirmed` on every run, and a busy push lock says which process holds it.**
+
+### Fixed
+- When a checkout had local commits and its remote had moved on, each publish scanned the same local commits for secrets up to three times, once per attempt, each with the full five-minute budget. On a large brain that could keep the publish past the ten-minute limit that `gbrain sources refresh` and the owner's Git effects give it, so it could be stopped before it pushed. Meanwhile every other publish (the publish cron, the next refresh) found the push lock held and refused `push_unconfirmed`, so the checkout never caught up. A publish now scans each local commit once, merges the remote's commits in memory and pushes, as `gbrain git commit-push` promises. A commit is scanned again if `.gbrain-scan-allow` changes during the publish.
+- A `push_unconfirmed` refusal for a busy push lock now carries `reason: publish_lock_busy` and names the process holding the lock: its pid, its mode (`gbrain git commit-push --push-only --keep-checkout`) and since when. It never includes a commit message or path. A push the remote refuses is never reported as lock contention.
+- `gbrain sources refresh` on a diverged checkout whose publish finds the push lock held now refuses `refresh_diverged` with `reason: publish_lock_busy`, as `gbrain doctor`'s `git_convergence` check describes, instead of `push_unconfirmed`. The refusal is retryable, its fix is to run the refresh again, and `gbrain sources reconcile` counts it as a retryable failure instead of a question for the user. `sources refresh --json` now includes the refusal's `reason`.
+- Brains without a Git repository are unaffected, because they never publish.
+
+**A plain-directory source no longer loses database edits to an old file on sync.**
+
+<!-- behavior-change: plain_directory_db_edits_8079 -->
+
+### Fixed
+- On a managed brain, syncing a plain-directory source (a folder with no Git checkout) used to import every file whose bytes differed from its page, so a page edited only in the database (for example a put_page with `sync.write_through` off) was overwritten by its unchanged old file on the next sync, and again on every autopilot run. Sync now keeps such a page and refuses that one file (`file_drift`, reported as a failed file) until you pick a side: update the file to match the page, or import the file explicitly with `gbrain import <file> --source <id>`. The rest of the source keeps syncing, and a later file edit still imports after a write that wrote or imported the file (a large file imported in place included) or after you matched the file to the page, whatever its layout. Reported and first fixed by @javieraldape (#9965, #8079).
+
+**Search no longer spends more than a second compiling its readiness counts on a large self-hosted Postgres brain.**
+
+### Fixed
+- On a Postgres server with JIT on (the stock default, and the default of the pgvector Docker image), the counts search adds while projections are pending (pending pages by class, and the upgrade rebuild's progress) were priced past Postgres's JIT thresholds by their per-page class checks and the visibility checks a remote caller adds. Postgres then compiled each one with LLVM on every search, which cost more than a second per search on a brain of several hundred thousand pages while the reads themselves took a fraction of that. These counts now run with JIT off for their own transaction, as the readiness probe and the search reads already did. The count that runs on every search stays a plain statement, so a search on a ready brain sends no extra statements. Servers with JIT off, and PGLite, are unaffected. Search results and the metadata are unchanged.
+
+**Self-upgrade restarts finish under containers, your own supervisors and a second brain on the same host, and never leave autopilot dead.**
+
+<!-- behavior-change: upgrade_restart_supervisors_8840 -->
+
+### Fixed
+- An autopilot that nothing relaunches (the ephemeral-container start script runs it once at container boot, or it was started by hand) exited after a self-upgrade swap and stayed down until the container restarted. It now starts itself again. A detached shell waits for the old process to exit (also when its parent never reaps it) and runs the same command line, which takes the autopilot lock. Under launchd, systemd, this brain's gbrain cron line or a declared `self_upgrade.autopilot_launcher` it still exits for that supervisor, and if no relaunch can be set up it keeps running its old build instead of exiting. (#8840, reported by @cupit01)
+- On macOS, `gbrain upgrade` counted every gbrain process on the host as this brain's, because it could not read a process's `GBRAIN_HOME` there, so another brain's `gbrain serve` made every restart refuse. It now reads `GBRAIN_HOME` (else `HOME`) from `ps -E`, as Linux reads `/proc`, and leaves other brains' processes alone. (#9725, reported by @JRUHF77)
+- A serve run by a systemd unit you named yourself, or by a container's process manager, refused every upgrade with `restart_refused` and no exact command. The refusal now names `systemctl --user restart <unit>` for the unit the serve runs in (found from its cgroup, any name, whatever `HOME` the upgrade runs with), else the command line serve was started with. (#9483, reported by @coolmanns and @exGeni)
+
+### Added
+- `gbrain config set self_upgrade.serve_launcher external` tells upgrades that something outside gbrain's serve service runs serve: `gbrain upgrade` and the autopilot's post-upgrade serve restart then run that systemd unit's restart command, or stop serve (only one whose environment shows this brain's home) and wait up to 6 minutes for your supervisor to start the new build, naming serve's command line if it does not come back. Unset, upgrades never restart that serve themselves.
+
+**The company-brainify skill now ships only the files it actually read when it builds a team brain, and its history purge can no longer overwrite a teammate's push or leave old history on other branches and tags.**
+
+### Fixed
+- The team-brain export copies only the files on its export list, each of which gets the per-file privacy read, instead of whole folders. The export commit stops when a staged file is not on the list or the list is missing.
+- Phase 4's checks now also look for personal email addresses outside the work domain, home addresses, phone numbers in every scanned folder, and family, medical and legal words.
+- The history purge, now in its own file (`skills/company-brainify/HISTORY-PURGE.md`), records every remote branch and tag, pushes them all in one atomic push with a lease on each recorded commit, and checks afterwards that no branch or tag still reaches the old history. A push made while the confirmation card waits makes the whole purge refuse instead of being overwritten.
+- The purge stops before its first commit when the shared repo still holds files nobody read, deletes only the branches and tags the user marked for deletion, and stops before pushing when any other recorded branch or tag is missing locally.
+
+**`gbrain dream` on a Postgres brain now warns, and names `gbrain jobs supervisor start`, when no job worker is extracting facts, instead of showing a quiet skip every night.**
+
+### Fixed
+- With no job worker running, a Postgres brain's `facts-absorb` jobs waited indefinitely while `gbrain dream` printed `facts_drain` as skipped, so nothing said that facts had stopped being extracted. The `facts_drain` phase now reports a warning (reason `no_worker`) once a `facts-absorb` job has waited longer than `GBRAIN_QUEUE_NO_WORKER_WARN_HOURS` (default 1) on a queue where no job is running or has started in that time. The warning gives the number of waiting jobs, the oldest one's age and the command that starts a worker. It reads the queue, so a worker on another machine counts. The cycle still exits 0, as with any other warning. Reported by Devin McNulty (overtonxyz/gbrain#2772), first fixed by @JamisonMercurio.
+
+<!-- behavior-change: dream_warns_no_job_worker_2772 -->
+
+**`gbrain publish` no longer puts a page's private Timeline, fact rows or hidden comments into the shared file.**
+
+<!-- behavior-change: publish_strips_private_sections_10020 -->
+
+### Fixed
+- `gbrain publish` removed the Timeline only when a `---` rule and one blank line came right before its `## Timeline` heading, so most pages published their whole private evidence log. It now cuts the page at the first Timeline or History heading or timeline marker, with or without a rule above it, and also drops gbrain's Facts and Takes blocks and HTML comments. Anything it cannot bound is dropped, and a page whose frontmatter never closes is refused instead of published (#10020). Reported by @ocscdsa and first fixed by @Masashi-Ono0611.
+
+**A brain shared with members now keeps a log of who read what, and `gbrain access log` and `gbrain access who-read` show it.**
+
+### Added
+- Reads made by a member or a group audience are logged in a new `access_read_log` table (migration v331): when, which member or audience, the operation, the transport, the result code and the ids of the pages the read surfaced. Page text and query terms are never stored.
+- `gbrain access log [--member <id>] [--since 7d]` lists those reads, and `gbrain access who-read <slug>` lists the members and audiences whose reads returned a page.
+- Owner reads, and every read on a brain with no members, write nothing and cost nothing extra. The log is written after the response, in batches, and a failed write never fails the read. Rows are kept for a year, at most a million.
+- Page ids come from search, query, recall, `get_page` and `fetch`; other reads are logged without page ids. Search and recall note their ids before the response is trimmed, so a row can name a page the reader did not receive. A call refused before it reaches the operation, and a read at an attested source scope, write no row.
+
 ## [0.60.761.0] - 2026-11-22
 
 **A sync that re-screens many held notes against their files' earlier versions now spends at most two minutes per pass reading Git history, keeps what a cut-short read already found, and keeps reporting progress while it reads.**

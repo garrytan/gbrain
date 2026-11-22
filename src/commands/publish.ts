@@ -48,7 +48,7 @@ export function makeShareable(content: string): string {
   // Remove YAML frontmatter
   if (clean.split('\n').find(line => line.trim())?.trim() === '---') {
     const offset = frontmatterBodyOffset(clean);
-    if (offset === 0) throw opError('invalid_frontmatter', 'The page opens a frontmatter block with --- and never closes it, so nothing was published.', 'Close the frontmatter with a --- line, then publish again.', { why: 'Publishing cannot tell where the private frontmatter ends, so it publishes nothing rather than guess.' });
+    if (offset === 0) throw opError('invalid_frontmatter', 'The page opens a frontmatter block with --- and never closes it, so nothing was published.', 'Close the frontmatter with a --- line that starts at the beginning of the line (an indented --- does not close it), then publish again.', { why: 'Publishing cannot tell where the private frontmatter ends, so it publishes nothing rather than guess.' });
     clean = clean.slice(offset);
   }
 
