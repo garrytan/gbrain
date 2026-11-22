@@ -59,6 +59,13 @@ function processUnit(pid: number): ServiceUnit | null {
   try { return unitFromCgroup(readFileSync(`/proc/${pid}/cgroup`, 'utf8')); } catch { return null; }
 }
 
+/** #9483: a serve's unit counts only when the unit's main process is the serve or its parent, not a unit it merely started under (a terminal, a CI runner). */
+function unitRunsServe(unit: ServiceUnit, pid: number, ppid: number): boolean {
+  const r = spawnSync('systemctl', [...(unit.scope === 'user' ? ['--user'] : []), 'show', '-p', 'MainPID', '--value', '--', unit.name], { encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'ignore'] });
+  const main = r.status === 0 && typeof r.stdout === 'string' ? Number(r.stdout.trim()) : NaN;
+  return main > 1 && (main === pid || main === ppid);
+}
+
 /**
  * #9725: macOS has no /proc, so a process's GBRAIN_HOME (else HOME) comes from `ps -E`, which appends the environment
  * of each process this user may read to its command; pid to home, empty when ps cannot run.
@@ -101,7 +108,10 @@ function readProcessTable(uid: number | undefined, pids?: number[]): ProcessTabl
     if (!m) return [];
     const elapsed = parseEtimeToMs(m[3]!);
     const pid = Number(m[1]);
-    return [{ pid, ppid: Number(m[2]), command: m[4]!, started_ms: elapsed === null ? null : now - elapsed, gbrain_home: processHome(pid), cwd: processCwd(pid), unit: processUnit(pid) }];
+    const ppid = Number(m[2]);
+    const cwd = processCwd(pid);
+    const unit = classifyGbrainCommand(m[4]!, { cwd, packageName: packageNameAt }) === 'serve' ? processUnit(pid) : null;
+    return [{ pid, ppid, command: m[4]!, started_ms: elapsed === null ? null : now - elapsed, gbrain_home: processHome(pid), cwd, unit: unit && unitRunsServe(unit, pid, ppid) ? unit : null }];
   });
   if (process.platform !== 'darwin') return rows;
   const homes = darwinProcessHomes(select, new Map(rows.map(row => [row.pid, row.command])));

@@ -75,16 +75,17 @@ export function unitFromCgroup(text: string): ServiceUnit | null {
   const line = text.split('\n').find(l => l.startsWith('0::')) ?? text.split('\n').find(l => /^\d+:name=systemd:/.test(l));
   const segments = (line?.slice(line.indexOf(':', line.indexOf(':') + 1) + 1) ?? '').split('/').filter(Boolean);
   const name = segments.at(-1);
-  if (!name?.endsWith('.service') || /^user@\d+\.service$/.test(name)) return null;
+  if (!name || !/^[A-Za-z0-9:_.\\@][A-Za-z0-9:_.\\@-]*\.service$/.test(name) || /^user@\d+\.service$/.test(name)) return null;
   return { name, scope: segments.some(s => /^user@\d+\.service$/.test(s)) ? 'user' : 'system' };
 }
 
-export const unitRestartArgv = (unit: ServiceUnit) => unit.scope === 'user' ? ['systemctl', '--user', 'restart', unit.name] : ['systemctl', 'restart', unit.name];
+export const unitRestartArgv = (unit: ServiceUnit) => unit.scope === 'user' ? ['systemctl', '--user', 'restart', '--', unit.name] : ['systemctl', 'restart', '--', unit.name];
 
 /**
  * #9725: the GBRAIN_HOME (else HOME) from a macOS `ps -E` command column, which is the command followed by the
  * process's environment as space-separated NAME=value words (a word that is not NAME=value continues the value before
- * it). Undefined when the column carries no environment: ps shows it only for processes this user may read.
+ * it). Undefined when the column carries no environment (ps shows it only for processes this user may read), and when
+ * a name appears twice, since one of them could sit inside another variable's value.
  */
 export function homeFromPsEnvironment(command: string, withEnvironment: string): string | null | undefined {
   if (!withEnvironment.startsWith(command)) return undefined;
@@ -94,7 +95,9 @@ export function homeFromPsEnvironment(command: string, withEnvironment: string):
     else if (vars.length) vars[vars.length - 1] += ` ${word}`;
   }
   if (!vars.length) return undefined;
-  const get = (name: string) => vars.findLast(v => v.startsWith(`${name}=`))?.slice(name.length + 1).trim() || null;
+  const found = (name: string) => vars.filter(v => v.startsWith(`${name}=`));
+  if (found('GBRAIN_HOME').length > 1 || found('HOME').length > 1) return undefined;
+  const get = (name: string) => found(name)[0]?.slice(name.length + 1).trim() || null;
   return get('GBRAIN_HOME') ?? get('HOME');
 }
 
@@ -363,11 +366,11 @@ export function planRestart(processes: readonly HostProcess[], ctx: RestartConte
         if (runsUnder(p, ctx.serveService)) { addService('serve', p.pid); break; }
         const service = ctx.serveService ? (ctx.serveService.pid === null ? ' (the service is not running)' : ` (the service runs pid ${ctx.serveService.pid})`) : '';
         const unit = p.unit ? unitRestartArgv(p.unit) : null;
-        if (unit && ctx.serveLauncher) {
+        if (unit && ctx.serveLauncher && !p.home_unread) {
           const known = units.get(unit.join(' '));
           if (known) known.pids.push(p.pid);
           else units.set(unit.join(' '), { kind: 'service', role: 'serve', argv: unit, pids: [p.pid] });
-        } else if (unit) {
+        } else if (unit && !ctx.serveLauncher) {
           manual.push({ role: p.role, pid: p.pid, version: p.version, argv: unit,
             instruction: `${label(p)} runs under the systemd unit ${p.unit!.name}, not gbrain's serve service${service}, so the upgrade does not restart it unless told to: install with \`gbrain upgrade --no-restart\`, then restart it with \`${unit.join(' ')}\`; or \`gbrain config set self_upgrade.serve_launcher external\` lets every upgrade run \`${unit.join(' ')}\` itself.` });
         } else if (ctx.serveLauncher && !p.home_unread && p.args && p.started_ms !== null) {

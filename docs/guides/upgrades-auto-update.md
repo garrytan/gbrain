@@ -306,13 +306,14 @@ process this brain runs on the host, or refuses before it installs anything:
    and waits for the launcher. A serve that gbrain's serve service does not
    run is restarted through what does run it once you declare it with
    `gbrain config set self_upgrade.serve_launcher external`: a systemd unit
-   of your own (found from the serve's cgroup, any name) is restarted with
-   `systemctl --user restart <unit>`, and any other supervisor (a container's
+   of your own (found from the serve's cgroup, any name, when the unit's main
+   process is serve or its parent) is restarted with
+   `systemctl --user restart -- <unit>`, and any other supervisor (a container's
    process manager, a wrapper) has to start serve again within 5 minutes of
-   it exiting: the restart stops serve (only one whose environment shows this
-   brain's home, while `ps` still shows the same process) and waits for it,
-   then names the command line serve was started with if it does not come
-   back. Undeclared, the refusal names that unit's restart command or that
+   it exiting: the restart stops serve (while `ps` still shows the same
+   process) and waits for it. Either way it acts only on a serve whose
+   environment shows this brain's home, and a stopped serve that does not
+   come back is reported with the command line it was started with. Undeclared, the refusal names that unit's restart command or that
    command line. A serve or worker started by
    hand, an autopilot started any other way, a running `gbrain sync`, or an MCP server an agent
    harness started refuses the upgrade with `restart_refused` (exit 3), naming

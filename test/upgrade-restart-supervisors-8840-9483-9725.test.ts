@@ -43,6 +43,7 @@ describe('#9725: another brain\'s serve on the same macOS host', () => {
     expect(homeFromPsEnvironment(command, `${command} PWD=/x HOME=/Users/alice-example`)).toBe('/Users/alice-example');
     expect(homeFromPsEnvironment(command, command)).toBeUndefined();
     expect(homeFromPsEnvironment(command, 'something else')).toBeUndefined();
+    expect(homeFromPsEnvironment(command, `${command} NOTE=x GBRAIN_HOME=/Users/alice-example GBRAIN_HOME=/Users/bob-example`)).toBeUndefined();
   });
 
   test('with the home read, the other brain\'s serve is not this brain\'s, so the restart neither refuses nor targets it', async () => {
@@ -68,14 +69,15 @@ describe('#9483: a serve run by an operator-named unit or a container supervisor
     expect(unitFromCgroup('0::/user.slice/user-1000.slice/session-3.scope\n')).toBeNull();
     expect(unitFromCgroup('0::/user.slice/user-1000.slice/user@1000.service\n')).toBeNull();
     expect(unitFromCgroup('0::/\n')).toBeNull();
+    expect(unitFromCgroup('0::/user.slice/user-1000.slice/user@1000.service/app.slice/-H.service\n')).toBeNull();
   });
 
   test('undeclared: the refusal names the unit\'s exact restart command, or the command line serve was started with, and the key', () => {
     const inUnit = planRestart([serve(40, { unit: MCP_UNIT })], ctx());
-    expect(inUnit.manual.map(m => m.argv)).toEqual([['systemctl', '--user', 'restart', 'gbrain-mcp.service']]);
+    expect(inUnit.manual.map(m => m.argv)).toEqual([['systemctl', '--user', 'restart', '--', 'gbrain-mcp.service']]);
     expect(inUnit.manual[0]!.instruction).toContain('runs under the systemd unit gbrain-mcp.service');
-    expect(inUnit.manual[0]!.instruction).toContain('`gbrain upgrade --no-restart`, then restart it with `systemctl --user restart gbrain-mcp.service`');
-    expect(restartRefusal(inUnit, ['gbrain', 'upgrade'], false)?.fix).toMatchObject({ argv: ['systemctl', '--user', 'restart', 'gbrain-mcp.service'] });
+    expect(inUnit.manual[0]!.instruction).toContain('`gbrain upgrade --no-restart`, then restart it with `systemctl --user restart -- gbrain-mcp.service`');
+    expect(restartRefusal(inUnit, ['gbrain', 'upgrade'], false)?.fix).toMatchObject({ argv: ['systemctl', '--user', 'restart', '--', 'gbrain-mcp.service'] });
     const byHand = planRestart([serve()], ctx());
     expect(byHand.manual[0]!.instruction).toContain('(`gbrain serve --http --port 3131`)');
     expect(byHand.manual[0]!.instruction).toContain('gbrain config set self_upgrade.serve_launcher external');
@@ -83,15 +85,15 @@ describe('#9483: a serve run by an operator-named unit or a container supervisor
 
   test('declared: the unit is restarted with its own command; any other serve of this brain is handed to the supervisor', () => {
     expect(planRestart([serve(40, { unit: MCP_UNIT }), serve(41, { unit: MCP_UNIT })], ctx({ serveLauncher: LAUNCHER })))
-      .toMatchObject({ manual: [], steps: [{ kind: 'service', role: 'serve', argv: ['systemctl', '--user', 'restart', 'gbrain-mcp.service'], pids: [40, 41] }] });
+      .toMatchObject({ manual: [], steps: [{ kind: 'service', role: 'serve', argv: ['systemctl', '--user', 'restart', '--', 'gbrain-mcp.service'], pids: [40, 41] }] });
     const handed = planRestart([serve()], ctx({ serveLauncher: LAUNCHER }));
     expect(handed.manual).toEqual([]);
     expect(handed.steps).toEqual([{ kind: 'handoff', role: 'serve', pid: 40, started_ms: 1_000, launcher: LAUNCHER, command: 'gbrain serve --http --port 3131' }]);
     expect(restartRefusal(handed, ['gbrain', 'upgrade'], false)).toBeNull();
   });
 
-  test('declared, but a serve whose environment could not be read is never stopped: it is a manual step', () => {
-    for (const over of [{ home_unread: true }, { args: undefined, started_ms: null }]) {
+  test('declared, but a serve whose environment could not be read is never stopped or restarted: it is a manual step', () => {
+    for (const over of [{ home_unread: true }, { home_unread: true, unit: MCP_UNIT }, { args: undefined, started_ms: null }]) {
       const plan = planRestart([serve(40, over)], ctx({ serveLauncher: LAUNCHER }));
       expect(plan.steps).toEqual([]);
       expect(plan.manual.map(m => m.argv)).toEqual([['kill', '40']]);
@@ -132,7 +134,7 @@ describe('#9483: a serve run by an operator-named unit or a container supervisor
       expect(checkSelfUpgradeHealth(planRestart([serve(40, { unit: MCP_UNIT })], ctx())).status).toBe('warn');
       const unit = checkSelfUpgradeHealth(planRestart([serve(40, { unit: MCP_UNIT })], ctx({ serveLauncher: LAUNCHER })));
       expect(unit.status).toBe('ok');
-      expect(unit.message).toContain('upgrades restart serve pid 40 with `systemctl --user restart gbrain-mcp.service`');
+      expect(unit.message).toContain('upgrades restart serve pid 40 with `systemctl --user restart -- gbrain-mcp.service`');
       const handed = checkSelfUpgradeHealth(planRestart([serve()], ctx({ serveLauncher: LAUNCHER })));
       expect(handed.status).toBe('ok');
       expect(handed.message).toContain('upgrades restart serve pid 40 through the launcher self_upgrade.serve_launcher declares');
