@@ -88,7 +88,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	147	no	yes	yes	serves
+transaction	lifecycle	yes	148	no	yes	yes	serves
 transactionDirect	lifecycle	yes	13	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -96,7 +96,7 @@ getPage	pages	yes	135	yes	yes	yes	serves
 readPageSnapshot	pages	yes	36	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	611	yes	yes	yes	serves
+putPage	pages	yes	612	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	22	yes	yes	yes	serves
@@ -188,8 +188,8 @@ ensureFactsKeywordIndex	search_vector	yes	1	no	yes	yes	serves
 countPendingProjectionPages	retrieval_coverage	yes	10	no	yes	yes	serves
 countEmbeddingHeldPages	retrieval_coverage	yes	1	no	yes	yes	serves
 projectionRebuildProgress	retrieval_coverage	yes	5	no	yes	yes	serves
-readProjectionReadinessGeneration	retrieval_coverage	yes	2	no	yes	yes	serves
-readProjectionReadiness	retrieval_coverage	yes	7	no	yes	yes	serves
+readProjectionReadinessGeneration	retrieval_coverage	yes	3	no	yes	yes	serves
+readProjectionReadiness	retrieval_coverage	yes	8	no	yes	yes	serves
 readSourceChunkerVersion	chunks	yes	2	no	yes	yes	serves
 setSourceChunkerVersion	chunks	yes	1	no	yes	yes	serves
 findCodeDefinitions	chunks	yes	3	no	yes	yes	serves
