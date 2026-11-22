@@ -14,21 +14,20 @@
 
 import { readFileSync, writeFileSync, mkdirSync, realpathSync, statSync } from 'fs';
 import { randomBytes, createCipheriv, pbkdf2Sync } from 'crypto';
-import { dirname, basename, join } from 'path';
-import { createRequire } from 'module';
+import { dirname, basename, resolve } from 'path';
 import { frontmatterBodyOffset, validatorFrontmatterFence } from '../core/markdown.ts';
 import { FRONTMATTER_SCHEMA, FrontmatterLanguageError, loadBoundedYaml, scanDataFrontmatter } from '../core/data-frontmatter.ts';
 import { GUEST_WARNING_LINE_RE } from '../core/guests/marker.ts';
 import { opError } from '../core/ops/contract.ts';
 
-// Inline marked.js so published HTML is truly self-contained (no CDN dependency)
-const require = createRequire(import.meta.url);
-const MARKED_JS = readFileSync(join(dirname(require.resolve('marked')), 'marked.umd.js'), 'utf8');
+// Inline marked.js so published HTML is truly self-contained (no CDN dependency). It is embedded at build time
+// because a compiled binary has no node_modules (#10019), and vendored because marked's exports hide the UMD file.
+import { MARKED_JS } from '../../vendor/marked/marked-source.ts';
 
 // ── Content stripping ──────────────────────────────────────────────
 
 const TIMELINE_MARKER = /<!--+\s*timeline\s*-*-->/i;
-const TIMELINE_LINE = /^[ \t]*(?:-{3,}[ \t]*timeline[ \t]*-{3,}[ \t]*$|#{1,6}[ \t]+[^A-Za-z0-9\n]*(?:timelines?|history)\b|[^A-Za-z0-9\n]*(?:timelines?|history)\b[^\n]*\n[ \t]*(?:=+|-+)[ \t]*$)/im;
+const TIMELINE_LINE = /^(?:[^\S\n]*-{3,}[^\S\n]*timeline[^\S\n]*-{3,}[^\S\n]*$|[ \t]*#{1,6}[ \t][^A-Za-z0-9\n]*(?:timelines?|history)\b|[^A-Za-z0-9\n]*(?:timelines?|history)\b[^\n]*\n[ \t]*(?:=+|-+)[ \t]*$)/im;
 const MANAGED_BLOCK_END = /<!--+\s*gbrain:([a-z0-9_-]+):end\b[^>]*>/gi;
 const MANAGED_BLOCK_BEGIN = /^(?:[ \t]*#{1,6}[ \t]+(?:facts|takes)[ \t]*\n(?:[ \t]*\n)*)?[^\n]*?<!--+\s*gbrain:([a-z0-9_-]+):begin\b[^>]*>/im;
 
@@ -131,7 +130,7 @@ export function makeShareable(content: string): string {
   clean = visible + clean.slice(at);
 
   // Remove [Source: ...] citations (all formats)
-  clean = clean.replace(/\s*\[Source:[^\]]*\]/g, '');
+  clean = clean.split(/\[Source:[^\]]*\]/).map((part, i, parts) => i < parts.length - 1 ? part.trimEnd() : part).join('');
 
   // Remove confirmation numbers
   clean = clean.replace(/\*\*Confirmation:\*\*\s*[A-Z0-9]{6,}/gi, '**Confirmation:** on file');
@@ -516,6 +515,7 @@ export async function runPublish(args: string[]) {
   const outIdx = args.indexOf('--out');
   const titleIdx = args.indexOf('--title');
   const pwIdx = args.indexOf('--password');
+  const markdownOnly = args.includes('--markdown');
 
   if (!inputPath) {
     console.error('Usage: gbrain publish <page.md> [--password ["secret"]] [--title "Title"] [--out path]');
@@ -527,12 +527,29 @@ export async function runPublish(args: string[]) {
     console.error('  --password          Auto-generate a password');
     console.error('  --password "secret" Use a specific password');
     console.error('  --title "Title"     Override the page title');
-    console.error('  --out path          Output file (default: <input-basename>.html)');
+    console.error('  --markdown          Write the stripped markdown instead of HTML, for another renderer (brain-pdf)');
+    console.error('  --out path          Output file (default: <input-basename>.html, or <input-basename>.shared.md with --markdown)');
     process.exit(1);
   }
 
+  if (markdownOnly && pwIdx >= 0) throw opError('invalid_params', '--password encrypts the HTML page, and --markdown writes plain markdown, so nothing was written.', 'Drop --password to write the stripped markdown, or drop --markdown to publish encrypted HTML.');
+
   const raw = readFileSync(inputPath, 'utf-8');
   const cleaned = makeShareable(raw);
+
+  if (markdownOnly) {
+    const outPath = outIdx >= 0 ? args[outIdx + 1] : basename(inputPath, '.md') + '.shared.md';
+    if (resolve(outPath) === resolve(inputPath)) throw opError('invalid_params', `--out ${outPath} is the page itself, so the stripped copy would replace it; nothing was written.`, 'Pass a different --out path.');
+    mkdirSync(dirname(outPath), { recursive: true });
+    try {
+      writeFileSync(outPath, cleaned + '\n', { flag: outIdx >= 0 ? 'w' : 'wx' });
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'EEXIST') throw opError('invalid_params', `${outPath} already exists, so nothing was written.`, 'Pass --out to choose the file to write.');
+      throw e;
+    }
+    console.log(`Stripped markdown: ${outPath}`);
+    return;
+  }
   const title = (titleIdx >= 0 ? args[titleIdx + 1] : null) || extractTitle(cleaned);
 
   // Handle password

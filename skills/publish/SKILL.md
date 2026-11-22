@@ -61,6 +61,9 @@ gbrain publish brain/companies/acme.md --password --title "Acme -- Deal Analysis
 
 # Custom output path
 gbrain publish brain/companies/acme.md --out /tmp/acme-share.html
+
+# Stripped markdown for another renderer (brain-pdf uses this)
+gbrain publish brain/companies/acme.md --markdown --out /tmp/acme-clean.md
 ```
 
 ## What Gets Stripped
