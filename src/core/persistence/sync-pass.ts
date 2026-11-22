@@ -82,6 +82,8 @@ export interface PassLevelInput {
   passId?: string;
   /** The pages whose import record the pass's previous round wrote (sync-pass-apply.ts `recorded`). */
   recorded?: ReadonlySet<number>;
+  /** GST-3534: the commit to read instead of HEAD (a confirm read of an older round's commit); the mode is still decided by HEAD. */
+  at?: string;
   /** #7355: called while the read works (its loops' pauses, at most once a second, and the origin history walk), so the drain sees progress before the first commit. */
   onProgress?: () => void;
   /** Throws once the pass must stop (a job deadline, a lost drain lease): checked at the read's pauses and while its origin history walk runs. */
@@ -308,6 +310,8 @@ export interface ShadowLevel {
   reused?: number;
   /** How a round that listed `T` got it (sync-tree-reuse.ts): read whole, the last pass's listing at the same commit, or that listing patched. */
   treeReuse?: TreeReuse;
+  /** GST-3534: the source's open writes and pending Git effects the round's snapshot saw, on any path. */
+  openWrites: number;
 }
 
 /** A page of the source with the import-record fields the classifier reads; `arm1` / `attested_hash` (`A`) are filled for the pages that need a proof. */
@@ -527,7 +531,7 @@ export async function readRevisionAttestations(exec: Exec, sourceId: string, inc
 }
 
 /** `U_db`: open requests of the worktree (the `persistence_requests_pending` index) and pending Git effects of the source. */
-async function readOpenWork(exec: Exec, sourceId: string, incarnation: string, worktreeId: string): Promise<{ pageIds: Set<number>; origins: Set<string>; statements: number }> {
+async function readOpenWork(exec: Exec, sourceId: string, incarnation: string, worktreeId: string): Promise<{ pageIds: Set<number>; origins: Set<string>; writes: number; statements: number }> {
   // A write admitted with sync.write_through=false carries no worktree (page-mutations.ts), so the incarnation's
   // worktree-less requests are open work too.
   const [requests, effects] = await Promise.all([exec.executeRaw<{ page_id: number | null; source_path: string | null; path: string | null }>(`SELECT page_id, intent->>'sourcePath' AS source_path, intent->>'path' AS path
@@ -540,7 +544,7 @@ async function readOpenWork(exec: Exec, sourceId: string, incarnation: string, w
   for (const row of [...requests, ...effects]) if (row.page_id != null) pageIds.add(Number(row.page_id));
   for (const row of requests) for (const origin of [row.source_path, row.path]) if (origin && !isWindowsColonTarget(origin)) origins.add(syncOriginPath(origin));
   for (const row of effects) if (row.path && !isWindowsColonTarget(row.path)) origins.add(syncOriginPath(row.path));
-  return { pageIds, origins, statements: 2 };
+  return { pageIds, origins, writes: requests.length + effects.length, statements: 2 };
 }
 
 /** Deletion markers of the incarnation (a primary-key range read); none exist before PR 4b. */
@@ -577,7 +581,7 @@ async function readPassRow(exec: Exec, sourceId: string, incarnation: string): P
 }
 
 /** HEAD's commit and whether HEAD is detached (master's rule, sync-discovery.ts: a detached HEAD forces working mode). */
-async function readLevelHead(gitRoot: string, sourceId: string): Promise<{ head: string; detached: boolean }> {
+export async function readLevelHead(gitRoot: string, sourceId: string): Promise<{ head: string; detached: boolean }> {
   const abbrev = syncGitAsync(gitRoot, ['rev-parse', '--abbrev-ref', 'HEAD']);
   abbrev.catch(() => undefined);
   const head = await revParse(gitRoot, 'HEAD');
@@ -690,7 +694,7 @@ export async function readShadowLevel(engine: BrainEngine, input: { sourceId: st
   const step = progressYield(turnYield(), { onProgress: input.pass?.onProgress, assertActive: input.pass?.assertActive });
 
   t = timer();
-  const { head, detached } = await readLevelHead(gitRoot, sourceId);
+  const current = await readLevelHead(gitRoot, sourceId), head = input.pass?.at ?? current.head, detached = current.detached;
   // G3: a strict source's level is its commit, a detached HEAD's too; the working tree never enters it.
   const working = !strict && (detached || (input.workingTree ?? workingConfig === 'true'));
   const mode: 'committed' | 'working' = working ? 'working' : 'committed';
@@ -951,7 +955,7 @@ export async function readShadowLevel(engine: BrainEngine, input: { sourceId: st
     releasableHolds: holds.filter(hold => releasableHold(hold, domain.has(toGit(hold.path)), dbOnlyUnknown, storage)).map(hold => hold.path),
     deletionCandidates: deletionCandidates(holds, path => domain.has(path) && !tree.has(path)
       && !(mode === 'working' && (untracked.has(path) || index.has(path))) && !readPresent(root, path, scope), toGit),
-    paths, reconcilable, ...(colon.refusals.size ? { fileRefusals: [...colon.refusals.values()] } : {}), timings_ms: timings, statements: statements + attestationStatements + 3,
+    paths, reconcilable, openWrites: open.writes, ...(colon.refusals.size ? { fileRefusals: [...colon.refusals.values()] } : {}), timings_ms: timings, statements: statements + attestationStatements + 3,
     ...(confirm ? { confirm: narrow ? { ...confirm, narrow: narrow === 'taken' && !reuse ? 'classified' : narrow } : confirm } : {}), ...(reuse ? { reused } : {}), ...(treeReuse ? { treeReuse } : {}), pack: pack?.identity ?? null,
     selection: { exclude: [...exclude].sort(), includeHidden: [...includeHidden].sort(), strategy, srcSubpath: scope || null, mode },
     rescreenDue: holds.filter(hold => holdRescreenDue(hold, retry.has(hold.path))).map(hold => toGit(hold.path)), workingCache: hashed?.cache ?? null };

@@ -68,6 +68,9 @@ export type FaultPoint = `publication:${PublicationBoundary}` | `effect:${Effect
   // #6712 PR 4b: before each round of a pass reads its level (`round`), and after it read it (`level`: its statements and its
   // confirm-round verdict), before it applies.
   | 'sync:round_start' | 'sync:level_read'
+  // GST-3534: after a pass's last round read the newest drained round's commit again (`level`, and `settled` when it may stamp
+  // that commit behind HEAD), and before the empty checkpoint batch of a stamp behind HEAD.
+  | 'sync:confirm_behind' | 'sync:stamp_behind'
   // GBRA-133 S-69: as a pass starts batching a level's entries (sync-pass-run.ts `batchEntries`); a hook that throws models a
   // rejection there, including a non-Error one.
   | 'sync:batch_entries'
@@ -121,7 +124,7 @@ export type FaultPoint = `publication:${PublicationBoundary}` | `effect:${Effect
 export interface FaultDetail { requestId?: string; writeId?: string; effectId?: string; sourceId?: string; operation?: string | null; signal?: AbortSignal; slug?: string; path?: string;
   /** The `*_interruption_charged` seams: what was charged and the error it was charged for, so a probe can name a charge it did not expect. */
   interruption?: { cause: string; sqlstate: string | null; error: string };
-  round?: number; read?: string; level?: { statements: number; confirm: { taken: boolean; reason: string | null; rows: number; narrow?: string; across?: true } | null; reused?: number;
+  round?: number; read?: string; settled?: boolean; level?: { statements: number; confirm: { taken: boolean; reason: string | null; rows: number; narrow?: string; across?: true } | null; reused?: number;
     /** `sync:level_read`: the level and the input it was read with (sync-pass.ts `readShadowLevel`), for probes that read it again. */
     shadow?: unknown; input?: unknown } }
 /** Postgres returns `persistence_effects.id` (bigserial) as a BigInt; `faultPoint` hands hooks its decimal string (#6584). */
