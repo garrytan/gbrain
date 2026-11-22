@@ -79,6 +79,8 @@ describe('calibration phases read the cap gbrain config set stores', () => {
     await store(PROBE_KEY, '0');
     expect(await probeCap({}, { budgetUsd: 4 })).toBe(4);
     expect(await probeCap({ [PROBE_KEY]: 3 })).toBe(3);
+    await store(PROBE_KEY, '2');
+    expect(await probeCap({ cycle: { 'budget_probe.budget_usd': '0' } })).toBe(0);
   });
 
   test('propose_takes with a stored 0 cap never calls the model; with nothing stored it does', async () => {

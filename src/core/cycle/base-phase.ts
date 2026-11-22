@@ -179,7 +179,8 @@ export abstract class BaseCyclePhase {
 
   /**
    * Resolve the budget cap: the explicit opts.budgetUsd, then the file config's
-   * budgetUsdKey, then the value `gbrain config set` stored (engine.getConfig,
+   * budgetUsdKey (top-level, or under `cycle` keyed by the part after `cycle.`,
+   * the shape GBrainConfig.cycle carries), then the value `gbrain config set` stored (engine.getConfig,
    * the plane every other paid dream phase reads), then the default. The cycle
    * hands these phases file-only config, so without the stored read an
    * operator's cap, a 0 included, never bound. An unreadable stored value keeps
@@ -187,7 +188,8 @@ export abstract class BaseCyclePhase {
    */
   private async resolveBudgetUsd(ctx: OperationContext, opts: BasePhaseOpts): Promise<number> {
     if (typeof opts.budgetUsd === 'number') return opts.budgetUsd;
-    const raw = ((ctx.config ?? {}) as unknown as Record<string, unknown>)[this.budgetUsdKey];
+    const config = (ctx.config ?? {}) as unknown as Record<string, unknown>;
+    const raw = config[this.budgetUsdKey] ?? (config.cycle as Record<string, unknown> | undefined)?.[this.budgetUsdKey.replace(/^cycle\./, '')];
     if (typeof raw === 'number' || (typeof raw === 'string' && raw.trim() !== '')) return parseBudgetUsd(raw, this.budgetUsdDefault);
     const stored = await Promise.resolve(ctx.engine.getConfig?.(this.budgetUsdKey)).catch(() => null);
     return parseBudgetUsd(stored, this.budgetUsdDefault);
