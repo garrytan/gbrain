@@ -295,22 +295,56 @@ fn put_record(tx: &mut dyn KvWrite, record: &ProposalRecord) -> Result<()> {
 /// Removes every proposal of a deleted source and its index entries (`ON DELETE CASCADE`).
 pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
     for record in all_records(tx)? {
-        if record.source_id != source_id {
-            continue;
+        if record.source_id == source_id {
+            delete_record(tx, &record)?;
         }
-        if record.status == "pending" {
-            let key = record.pending_key();
-            if get_id(tx, &key)? == Some(record.id) {
-                tx.delete(&key)?;
-            }
-        }
-        tx.delete(&row_key(&record.target_table, record.target_id, record.id))?;
-        if let (Some(table), Some(id)) = (&record.related_table, record.related_id) {
-            tx.delete(&row_key(table, id, record.id))?;
-        }
-        tx.delete(&by_id(record.id))?;
     }
     Ok(())
+}
+
+/// Deletes one proposal with its pending-key and row-index entries.
+fn delete_record(tx: &mut dyn KvWrite, record: &ProposalRecord) -> Result<()> {
+    if record.status == "pending" {
+        let key = record.pending_key();
+        if get_id(tx, &key)? == Some(record.id) {
+            tx.delete(&key)?;
+        }
+    }
+    tx.delete(&row_key(&record.target_table, record.target_id, record.id))?;
+    if let (Some(table), Some(id)) = (&record.related_table, record.related_id) {
+        tx.delete(&row_key(table, id, record.id))?;
+    }
+    tx.delete(&by_id(record.id))
+}
+
+/// `deletePurgeTrustProposals` (a fact purge): deletes the proposals of `source_id` whose target or
+/// related row is a purged fact (`facts`, id in `fact_ids`) or take (`takes`, id in `take_ids`);
+/// how many.
+pub(crate) fn purge_rows(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    fact_ids: &std::collections::HashSet<i64>,
+    take_ids: &std::collections::HashSet<i64>,
+) -> Result<u64> {
+    let names = |table: &str, id: i64| match table {
+        "facts" => fact_ids.contains(&id),
+        "takes" => take_ids.contains(&id),
+        _ => false,
+    };
+    let mut deleted = 0;
+    for record in all_records(tx)? {
+        let related = match (&record.related_table, record.related_id) {
+            (Some(table), Some(id)) => names(table, id),
+            _ => false,
+        };
+        if record.source_id == source_id
+            && (names(&record.target_table, record.target_id) || related)
+        {
+            delete_record(tx, &record)?;
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
 }
 
 fn get_id(read: &dyn KvRead, key: &[u8]) -> Result<Option<u64>> {

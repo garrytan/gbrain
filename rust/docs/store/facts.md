@@ -751,8 +751,9 @@ foreign key does. `insertHoldingPagePurges({ sourceId, visibility, factHash, req
 through `insertFactPurge`, so the first row keeps its columns; it answers null. A NUL character, a `requestId` that is
 not a UUID or an id that is not a whole number refuses with `invalid_argument` even when no row would be added. `purge_fact`
 (facts/purge.ts) writes its main tombstone through `insertFactPurge`; the holding-slug tombstones, its take tombstone
-(`insertTakePurge`, served: see "The take purge ledger") and the rest of the purge are typed members too, and this
-engine still refuses most of those, so a full `purge_fact` does not run on Rust yet. The plan, dry run and `--match`
+(`insertTakePurge`, served: see "The take purge ledger") and the rest of the purge are typed members too; the writes
+are served (see "The purge's writes"), but other members the purge reaches are still refused, so a full `purge_fact`
+does not run on Rust yet. The plan, dry run and `--match`
 reads are typed members: [purge-plan.md](purge-plan.md).
 
 Readers: the fence overlay's `purged`; `isFactPurged` (`is_fact_purged`: point reads for subject `*` and the entity)
@@ -769,6 +770,39 @@ name key. On insert it skips an extraction outcome marker (`gbrain_guard_inserte
 trigger when the statement sets one of those columns, even to the same value; the store fires it only on a change,
 which refuses nothing a no-op update would not already have kept. The refusal rolls back the whole write, as the
 trigger's exception does. Deleting a source removes its tombstones.
+
+## The purge's writes (`facts/purge_writes.rs`)
+
+The writes `submitPurgeFactMutation` and `rewritePageBodies` (facts/purge.ts) run in the purge's transaction, each one
+store write that answers what the SQL member answers:
+
+- `deletePurgedTakes(takeIds)`: the takes with those ids, with their evidence and embeddings; how many.
+- `deletePurgeReviewQueue(sourceId, refs)` and `deletePurgeReviewProposals(sourceId, refs)`: the source's review-queue
+  rows and review proposals whose `a_ref` or `b_ref` is a ref, with the proposals' unique-key entries; how many.
+- `deletePurgeDecideProposals(sourceId, factIds)`: the source's supersede proposals whose new or old fact is an id,
+  with their sweep-slot and claim-pair entries; how many.
+- `deletePurgeTrustProposals(sourceId, factIds, takeIds)`: the source's trust proposals whose target or related row is
+  one of the facts (`facts`) or takes (`takes`), with their pending and row-index entries; how many.
+- `deletePurgeOpenLoops(sourceId, factIds)`: the source's open loops on one of the facts, with their dedup entries.
+- `deletePurgeWriteGateHolds(sourceId, factHash)`: the source's holds whose `COALESCE(payload->>'fact',
+  payload->>'claim', '')` has the fingerprint, with their dedupe entries; the ids as text, in id order.
+- `deletePurgeWriteGateReceipts(factIds, takeIds, holdIds)`: the receipts on one of the facts, takes or holds (ids as
+  text); how many.
+- `deletePurgedFacts(factIds, sourceId)`: the source's facts with those ids, clearing `superseded_by` on the rows that
+  named them; how many.
+- `deletePurgedChunks(pageIds)`: the chunks of those pages, clearing the text seal of each page that had any; how many
+  chunk rows.
+- `listPagesForPurgeRewrite(sourceId, pageIds)`: the source's pages with those ids, deleted or not, each as `getPage`
+  gives it with `body_storage` and its tags in byte order as `purge_tags`, in slug order (byte order).
+- `updatePageBodyForPurge(sourceId, pageId, compiled, timeline, hash)`: an inline page's body and content hash, the text
+  seal and embedding signature cleared; a changed body takes a new knowledge revision, as the revision trigger does.
+
+`blankPurgeCoreEditNotices` answers 0 in TypeScript: the store keeps no core edit notices (the core guard writes them
+through `executeRaw`, which this engine refuses). `rewritePageBodies` versions an inline page through `createVersion`
+with the preimage it read, which the Rust `createVersion` serves (the store versions the read revision and metadata,
+[pages.md](pages.md)); its saved-version read is `listPurgeVersionBodies`.
+`deletePurgeTakeProposals` and the segmented-storage writes (`abortPurgedStagings`, `deletePurgedStagingParts`,
+`deletePageViewDigests`, `deleteUnreferencedPurgedTexts`) stay refused.
 
 ## The take purge ledger
 
