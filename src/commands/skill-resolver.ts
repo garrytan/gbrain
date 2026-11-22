@@ -32,6 +32,14 @@ import { PI_SKILL_CATALOG, refreshPiPins } from '../core/setup/pi-skill-extensio
 import { HERMES_PINS_CATALOG, syncHermesPins } from '../core/setup/hermes-skill-pins.ts';
 import { CURSOR_PINS_CATALOG_PREFIX, cursorPinnedBlock, refreshCursorPins } from '../core/setup/cursor-skill-pins.ts';
 
+/** The resolver subcommands of `gbrain skills`, each one's own subcommands and the flags it accepts (valued, then boolean); scripts/build-public-surface.ts lists them in the stable promise. */
+export const SKILLS_RESOLVER_CLI = {
+  index: { subcommands: ['build', 'status', 'remove'], valued: ['--catalog', '--dir', '--from-json', '--claude-plugins', '--routing', '--harness', '--scope', '--session'], booleans: ['--bundled', '--json', '--shadow'] },
+  resolve: { subcommands: [], valued: ['--catalog', '--text', '--previous', '--input-json', '--session', '--harness', '--exclude', '--top-k', '--min-match', '--top-gate', '--shadow-log', '--explain-target', '--expect-catalog', '--load-hint'], booleans: ['--shadow', '--json', '--fail-open', '--reset-session', '--names-only'] },
+  library: { subcommands: [], valued: ['--out'], booleans: ['--json'] },
+  pin: { subcommands: ['add', 'remove', 'list'], valued: ['--catalog', '--line'], booleans: ['--json'] },
+} as const;
+
 const HELP_INDEX = `Usage: gbrain skills index <build|status|remove> [options]
 
 Build, inspect or remove a skill catalog's index (under GBRAIN_HOME/skill-index/).
@@ -179,11 +187,11 @@ function runtimeFailure(e: ResolverError, json: boolean): never {
 
 async function runIndex(args: string[]): Promise<void> {
   const sub = args[0];
-  if (sub !== 'build' && sub !== 'status' && sub !== 'remove') {
+  if (!(SKILLS_RESOLVER_CLI.index.subcommands as readonly (string | undefined)[]).includes(sub)) {
     if (sub === undefined || sub === 'help' || sub === '--help' || sub === '-h') { process.stdout.write(HELP_INDEX); return; }
     usage(`Unknown subcommand "skills index ${sub}".`, 'Use gbrain skills index build, status or remove.');
   }
-  const p = parseFlags(args.slice(1), ['--catalog', '--dir', '--from-json', '--claude-plugins', '--routing', '--harness', '--scope', '--session'], ['--bundled', '--json', '--shadow'], HELP_INDEX);
+  const p = parseFlags(args.slice(1), SKILLS_RESOLVER_CLI.index.valued, SKILLS_RESOLVER_CLI.index.booleans, HELP_INDEX);
   const json = p.bools.has('--json');
   if (p.positionals.length) usage(`Unexpected argument "${p.positionals[0]}".`, 'Pass options as flags; see gbrain skills index --help.');
   try {
@@ -234,8 +242,7 @@ async function runIndex(args: string[]): Promise<void> {
 }
 
 async function runResolve(args: string[]): Promise<void> {
-  const p = parseFlags(args, ['--catalog', '--text', '--previous', '--input-json', '--session', '--harness', '--exclude', '--top-k', '--min-match', '--top-gate', '--shadow-log', '--explain-target', '--expect-catalog', '--load-hint'],
-    ['--shadow', '--json', '--fail-open', '--reset-session', '--names-only'], HELP_RESOLVE);
+  const p = parseFlags(args, SKILLS_RESOLVER_CLI.resolve.valued, SKILLS_RESOLVER_CLI.resolve.booleans, HELP_RESOLVE);
   if (p.positionals.length) usage(`Unexpected argument "${p.positionals[0]}".`, 'Pass the message with --text "<message>" or turn JSON with --input-json -.');
   const json = p.bools.has('--json');
   const failOpen = p.bools.has('--fail-open');
@@ -318,7 +325,7 @@ async function runResolve(args: string[]): Promise<void> {
 }
 
 async function runLibrary(args: string[]): Promise<void> {
-  const p = parseFlags(args, ['--out'], ['--json'], HELP_LIBRARY);
+  const p = parseFlags(args, SKILLS_RESOLVER_CLI.library.valued, SKILLS_RESOLVER_CLI.library.booleans, HELP_LIBRARY);
   if (p.positionals.length) usage(`Unexpected argument "${p.positionals[0]}".`, 'Pass the file with --out <file.mjs>.');
   const json = p.bools.has('--json');
   const out = one(p, '--out');
@@ -336,11 +343,11 @@ async function runLibrary(args: string[]): Promise<void> {
 
 async function runPin(args: string[]): Promise<void> {
   const sub = args[0];
-  if (sub !== 'add' && sub !== 'remove' && sub !== 'list') {
+  if (!(SKILLS_RESOLVER_CLI.pin.subcommands as readonly (string | undefined)[]).includes(sub)) {
     if (sub === undefined || sub === 'help' || sub === '--help' || sub === '-h') { process.stdout.write(HELP_PIN); return; }
     usage(`Unknown subcommand "skills pin ${sub}".`, 'Use gbrain skills pin add, remove or list.');
   }
-  const p = parseFlags(args.slice(1), ['--catalog', '--line'], ['--json'], HELP_PIN);
+  const p = parseFlags(args.slice(1), SKILLS_RESOLVER_CLI.pin.valued, SKILLS_RESOLVER_CLI.pin.booleans, HELP_PIN);
   const json = p.bools.has('--json');
   const catalog = one(p, '--catalog');
   if (!catalog || !validCatalogName(catalog)) usage('--catalog <name> is required (a-z, 0-9, _ and -).', 'Pass the catalog the pin belongs to, e.g. --catalog openclaw-main.');
