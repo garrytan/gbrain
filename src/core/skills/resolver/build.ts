@@ -140,7 +140,7 @@ function validateBuild(input: BuildInput): void {
 
 async function readSource(input: BuildInput): Promise<SourceRead> {
   if (input.claudePlugins !== undefined) return readClaudePluginSources(input.claudePlugins);
-  if (input.fromJson === undefined && input.dirs?.length) return readDirSources(input.dirs);
+  if (input.fromJson === undefined && input.dirs?.length) return readDirSources(input.dirs, [], input.harness);
   if (input.bundled) return readBundledSource();
   const text = input.fromJsonStdin ? input.fromJson! : (() => {
     const b = readBounded(input.fromJson!, JSON_INPUT_CAP_BYTES);
@@ -290,6 +290,7 @@ export async function catalogStatus(name: string, opts: { home?: string } = {}):
     try {
       const src = r.catalog.source;
       const input: BuildInput = { catalog: name, ...(src.kind === 'dir' ? { dirs: src.dirs } : src.kind === 'bundled' ? { bundled: true } : src.kind === 'claude_plugins' ? { claudePlugins: src.claude_dir } : { fromJson: join(dir, 'source.json'), ...(src.dirs?.length ? { dirs: src.dirs } : {}) }), ...(r.catalog.routing ? { routing: r.catalog.routing.file } : {}), scope: r.catalog.scope };
+      input.harness = r.catalog.harness ?? undefined;
       const p = await prepare(input);
       if (p.catalog_hash !== r.catalog.catalog_hash) staleReason = src.kind === 'json' ? 'snapshot_changed' : 'source_changed';
     } catch (e) {

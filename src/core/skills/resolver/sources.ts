@@ -111,7 +111,7 @@ function pluginNamespace(skillDir: string, root: string, cache: Map<string, stri
 }
 
 /** Read --dir sources in precedence order; rootNamespaces[i] names dirs[i]'s skills when no plugin manifest does. */
-export function readDirSources(dirs: readonly string[], rootNamespaces: readonly (string | undefined)[] = []): SourceRead {
+export function readDirSources(dirs: readonly string[], rootNamespaces: readonly (string | undefined)[] = [], harness?: string): SourceRead {
   const skills: SkillRecord[] = [];
   const skipped: SkippedSkill[] = [];
   const fp: DirFingerprint = { dirs: [], files: [] };
@@ -130,7 +130,9 @@ export function readDirSources(dirs: readonly string[], rootNamespaces: readonly
     }
     const visitedReal = new Set<string>([root]);
     let level: string[] = [root];
-    for (let depth = 0; level.length && depth <= MAX_DEPTH; depth++) {
+    // Claude's Skill tool loads <root>/<name>/SKILL.md, not checkout internals.
+    const maxDepth = harness === 'claude-code' ? 1 : MAX_DEPTH;
+    for (let depth = 0; level.length && depth <= maxDepth; depth++) {
       const next: string[] = [];
       for (const dir of level) {
         if (++visited > MAX_DIRS_VISITED) throw tooLarge(`more than ${MAX_DIRS_VISITED} directories under the --dir roots`);
@@ -154,10 +156,10 @@ export function readDirSources(dirs: readonly string[], rootNamespaces: readonly
             } else st = l;
           } catch { skipped.push({ reason: 'unreadable', path: full }); continue; }
           if (st.isDirectory()) {
-            if (!visitedReal.has(real)) { visitedReal.add(real); next.push(real); }
+            if (depth < maxDepth && !visitedReal.has(real)) { visitedReal.add(real); next.push(real); }
             continue;
           }
-          if (!st.isFile() || name !== 'SKILL.md') continue;
+          if (!st.isFile() || name !== 'SKILL.md' || (harness === 'claude-code' && depth !== 1)) continue;
           if (++files > MAX_SKILLS) throw tooLarge(`more than ${MAX_SKILLS} SKILL.md files`);
           let text: string;
           try { text = readHead(real, SKILL_FILE_CAP_BYTES).bytes.toString('utf8'); } catch { skipped.push({ reason: 'unreadable', path: real }); continue; }
