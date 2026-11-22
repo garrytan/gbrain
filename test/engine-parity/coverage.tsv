@@ -108,7 +108,7 @@ getPage	pages	yes	172	yes	yes	yes	serves
 readPageSnapshot	pages	yes	51	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	2	no	yes	yes	serves
 lockPageKeys	pages	yes	13	no	yes	yes	serves
-putPage	pages	yes	775	yes	yes	yes	serves
+putPage	pages	yes	776	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	27	yes	yes	yes	serves
@@ -123,10 +123,10 @@ findPages	pages	yes	4	no	yes	yes	serves
 countPagesBy	pages	yes	1	no	yes	yes	serves
 resolveSlugs	pages	yes	6	no	yes	yes	serves
 getAllSlugs	pages	yes	4	no	yes	yes	serves
-listEntityKeyRows	pages	yes	4	no	yes	yes	serves
-listIdentityDecisions	pages	yes	3	no	yes	yes	serves
+listEntityKeyRows	pages	yes	5	no	yes	yes	serves
+listIdentityDecisions	pages	yes	4	no	yes	yes	serves
 listRestrictedIdentityMembers	pages	yes	1	no	yes	yes	serves
-applyIdentityDecisions	pages	yes	3	no	yes	yes	serves
+applyIdentityDecisions	pages	yes	4	no	yes	yes	serves
 listAllPageRefs	pages	yes	3	yes	yes	yes	serves
 listAllSources	pages	yes	12	no	yes	yes	serves
 updateSourceConfig	pages	yes	17	no	yes	yes	serves
@@ -1399,7 +1399,7 @@ listUnverifiedArchivedSourceIds	source_archive	yes	1	no	yes	yes	serves
 listSourceOAuthClients	source_archive	yes	2	no	yes	yes	serves
 linkEntityIdentityRow	entity_identities	yes	11	no	yes	yes	serves
 unlinkEntityIdentityRow	entity_identities	yes	1	no	yes	yes	serves
-listEntityIdentityRows	entity_identities	yes	9	no	yes	yes	serves
+listEntityIdentityRows	entity_identities	yes	10	no	yes	yes	serves
 readEntityIdentityIdsForPages	entity_identities	yes	1	no	yes	yes	serves
 readCanonicalTwin	entity_identities	yes	1	no	yes	yes	serves
 listSourceRecords	cli_reads_import	yes	5	no	yes	yes	serves
