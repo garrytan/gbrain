@@ -345,3 +345,57 @@ describe('gbrain telemetry client: queue bounds and locks', () => {
     expect(queue().filter(e => e.event_type === 'upgrade').length).toBe(1);
   });
 });
+
+/**
+ * Pre-landing review fixes (gstack /ship Step 9, pass 1).
+ */
+describe('gbrain telemetry client: review fixes', () => {
+  it('an older build running after a newer one records no upgrade and keeps the newer version', () => {
+    setTier('anonymous');
+    writeFileSync(join(telemetryDir(), 'settings.json'), JSON.stringify({ ...readSettings(), last_run_version: '999.0.0' }));
+    noteRunVersion('stable');
+    expect(queue().filter(e => e.event_type === 'upgrade')).toEqual([]);
+    expect(readSettings().last_run_version).toBe('999.0.0');
+  });
+
+  it('a queue holding only expired data is cleared and stops asking for a send', async () => {
+    const s = standIn([200]);
+    try {
+      await withEnv({ GBRAIN_TELEMETRY_URL: s.url }, async () => {
+        setTier('anonymous');
+        const old = new Date(Date.now() - 31 * 86_400_000);
+        writeFileSync(join(telemetryDir(), 'events.jsonl'), `${JSON.stringify({ qid: 'old', ts: old.toISOString(), event_type: 'setup', gbrain_version: '0.1.0' })}\n`);
+        const counts = join(telemetryDir(), 'counts');
+        mkdirSync(counts, { recursive: true });
+        writeFileSync(join(counts, `${old.toISOString().slice(0, 10)}.json`), JSON.stringify({ none: { command_counts: { doctor: 1 } } }));
+        expect(shouldSpawnSync()).toBe(true);
+        expect((await syncTelemetry({ force: true })).status).toBe('empty');
+        expect(s.posts).toEqual([]);
+        expect(shouldSpawnSync()).toBe(false);
+      });
+    } finally {
+      s.stop();
+    }
+  });
+
+  it('forget refuses while a send is in flight, and afterwards drops what was queued under the old id', async () => {
+    const ok = standIn([200], () => ({ forgotten: true, events_cleared: 1 }));
+    try {
+      await withEnv({ GBRAIN_TELEMETRY_URL: ok.url }, async () => {
+        setTier('community');
+        countCommand('doctor');
+        flushCounts();
+        const lock = join(telemetryDir(), 'sync.lock');
+        writeFileSync(lock, '');
+        expect((await forgetInstallation()).status).toBe('busy');
+        expect(ok.posts).toEqual([]);
+        rmSync(lock);
+        expect((await forgetInstallation()).status).toBe('forgotten');
+        expect(queue()).toEqual([]);
+        expect(existsSync(join(telemetryDir(), 'counts'))).toBe(false);
+      });
+    } finally {
+      ok.stop();
+    }
+  });
+});

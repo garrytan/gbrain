@@ -42,14 +42,17 @@ gbrain telemetry            # what is on, what is queued, where it goes
 gbrain telemetry show       # the exact JSON the next send would post, and the last sends
 gbrain telemetry anonymous  # or: community
 gbrain telemetry off        # stop and delete the local queue
-gbrain telemetry forget     # delete this install's data on the server, then the local id
+gbrain telemetry forget     # delete this install's data on the server, then the local id and queue
 gbrain telemetry pulse      # the public aggregate of everyone's opt-in data
 ```
 
 Add `--json` for one JSON document. `pulse` exits non-zero with
 `telemetry_pulse_unavailable` when the aggregate is stale or unreachable, so a
 script never reads an outage as "no problems". `forget` keeps the local id until
-the server confirms the deletion (`telemetry_forget_failed` otherwise).
+the server confirms the deletion (`telemetry_forget_failed` otherwise, also
+while a send is in progress), then deletes the local queue so nothing recorded
+under the old id goes out under a new one. It leaves your tier as it was:
+`gbrain telemetry off` stops sending.
 
 ## How sending works
 

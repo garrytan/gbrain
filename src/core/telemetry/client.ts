@@ -22,6 +22,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, 
 import { dirname, join } from 'path';
 import { configDir, isThinClient, loadConfigFileOnly, type GBrainConfig } from '../config.ts';
 import { VERSION } from '../../version.ts';
+import { isNewerVersion } from '../semver.ts';
 import enumsJson from './enums.json';
 import { telemetryEndpoint } from './endpoint.ts';
 
@@ -435,7 +436,10 @@ export async function syncTelemetry(opts: { force?: boolean; now?: number } = {}
       writeJson('settings.json', settings);
     }
     const batch = buildBatch(settings, now);
-    if (!batch.events.length) return { status: 'empty' };
+    if (!batch.events.length) {
+      removeSent(batch, now);
+      return { status: 'empty' };
+    }
     const state = readJson<State>('state.json', {});
     writeJson('state.json', { ...state, last_attempt_at: new Date(now).toISOString() });
     let http = 0;
@@ -473,34 +477,43 @@ export async function syncTelemetry(opts: { force?: boolean; now?: number } = {}
   }
 }
 
-export type ForgetStatus = 'no_id' | 'blocked' | 'forgotten' | 'failed';
+export type ForgetStatus = 'no_id' | 'blocked' | 'busy' | 'forgotten' | 'failed';
 
 /**
  * Asks the server to delete this install's row and blank its id on stored
- * events, then deletes the local id. Works at any tier and ignores the send
- * window, so withdrawal never waits on anything.
+ * events, then deletes the local id and the local queue, so nothing recorded
+ * under the old id goes out under a new one. Works at any tier and ignores the
+ * send window; refuses while a send holds sync.lock, so no in-flight post can
+ * land after the server forgot the id. The tier is unchanged.
  */
 export async function forgetInstallation(): Promise<{ status: ForgetStatus; http?: number; events_cleared?: number }> {
   const settings = readSettings();
   if (!settings.installation_id) return { status: 'no_id' };
   const endpoint = telemetryEndpoint();
   if (!endpoint) return { status: 'blocked' };
-  let res: Response;
+  const lock = acquire('sync.lock', 1);
+  if (!lock) return { status: 'busy' };
   try {
-    res = await fetch(`${endpoint.url}/functions/v1/gbrain-telemetry-ingest`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: endpoint.key },
-      body: JSON.stringify({ forget: settings.installation_id }),
-      signal: AbortSignal.timeout(10_000),
-    });
-  } catch {
-    return { status: 'failed' };
+    let res: Response;
+    try {
+      res = await fetch(`${endpoint.url}/functions/v1/gbrain-telemetry-ingest`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: endpoint.key },
+        body: JSON.stringify({ forget: settings.installation_id }),
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch {
+      return { status: 'failed' };
+    }
+    const body = (await res.json().catch(() => ({}))) as Row;
+    if (!res.ok || body.forgotten !== true) return { status: 'failed', http: res.status };
+    const { installation_id: _gone, ...rest } = readSettings();
+    writeJson('settings.json', rest);
+    clearQueue();
+    return { status: 'forgotten', http: res.status, events_cleared: typeof body.events_cleared === 'number' ? body.events_cleared : 0 };
+  } finally {
+    release(lock);
   }
-  const body = (await res.json().catch(() => ({}))) as Row;
-  if (!res.ok || body.forgotten !== true) return { status: 'failed', http: res.status };
-  const { installation_id: _gone, ...rest } = readSettings();
-  writeJson('settings.json', rest);
-  return { status: 'forgotten', http: res.status, events_cleared: typeof body.events_cleared === 'number' ? body.events_cleared : 0 };
 }
 
 export type PulseResult = { ok: true; stale: boolean; data: Row } | { ok: false; reason: 'blocked' | 'offline' | 'unavailable'; http?: number };
@@ -520,12 +533,17 @@ export async function fetchPulse(): Promise<PulseResult> {
   return { ok: true, stale: data.stale === true, data };
 }
 
-/** The first run of a new version at tier on records one upgrade event. */
+/**
+ * The first run of a newer version at tier on records one upgrade event. An
+ * older build running after a newer one (the old `gbrain upgrade` process
+ * finishing after its post-upgrade child, or two installs sharing one
+ * GBRAIN_HOME) records nothing and never moves last_run_version back.
+ */
 export function noteRunVersion(channel?: string): void {
   try {
     if (currentTier() === 'off') return;
     const settings = readSettings();
-    if (settings.last_run_version === VERSION) return;
+    if (settings.last_run_version === VERSION || (settings.last_run_version && isNewerVersion(VERSION, settings.last_run_version))) return;
     writeJson('settings.json', { ...settings, last_run_version: VERSION });
     if (settings.last_run_version && VERSION_RE.test(settings.last_run_version)) {
       recordEvent({ event_type: 'upgrade', from_version: settings.last_run_version, to_version: VERSION, outcome: 'success', channel: oneOf('channel', channel) ?? 'unknown' });

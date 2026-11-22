@@ -5,7 +5,7 @@
  *   status (default)            what is on, what is queued, where it goes
  *   show                        the exact JSON the next send would post, and recent sends
  *   off | anonymous | community set the tier (off deletes the local queue)
- *   forget                      delete this install's data on the server, then the local id
+ *   forget                      delete this install's data on the server, then the local id and queue
  *   pulse                       the public aggregate; non-zero exit when it is stale or unreachable
  *   sync [--force]              send now (normally a detached background run does this)
  */
@@ -88,11 +88,13 @@ async function forget(json: boolean): Promise<void> {
     return;
   }
   if (r.status !== 'forgotten') {
-    fail(opError('telemetry_forget_failed', `The telemetry server did not confirm the deletion (${r.http ? `HTTP ${r.http}` : r.status === 'blocked' ? 'no endpoint in this environment' : 'no connection'}), so the local install id is kept.`,
+    fail(opError('telemetry_forget_failed', `The telemetry server did not confirm the deletion (${r.http ? `HTTP ${r.http}` : r.status === 'blocked' ? 'no endpoint in this environment' : r.status === 'busy' ? 'a send is in progress' : 'no connection'}), so the local install id is kept.`,
       'Run gbrain telemetry forget again when the machine is online; the id stays until the server confirms.', { retryable: true }));
     return;
   }
-  await out(json, r, `Deleted this install's data on the server (${r.events_cleared ?? 0} stored event(s) unlinked) and removed the local install id.\n`);
+  const tier = readSettings().tier;
+  const still = tier === 'off' || forcedOff() ? '' : ` Telemetry is still ${tier}: gbrain telemetry off stops sending.`;
+  await out(json, r, `Deleted this install's data on the server (${r.events_cleared ?? 0} stored event(s) unlinked), removed the local install id and deleted the local queue.${still}\n`);
 }
 
 async function pulse(json: boolean): Promise<void> {
