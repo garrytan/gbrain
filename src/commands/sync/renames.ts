@@ -9,6 +9,7 @@ import { softDeleteSyncPages } from '../../core/company-brain/profile.ts';
 import { serr } from '../../core/console-prefix.ts';
 import { DELETE_BATCH_SIZE } from '../../core/engine-constants.ts';
 import { importFile, isImageFilePath as isImageImportPath, importImageFile } from '../../core/import-file.ts';
+import { withTrustKeep } from '../../core/persistence/context.ts';
 import { maintenanceTransaction } from '../../core/persistence/attribution.ts';
 import type { BrainEngine } from '../../core/engine.ts';
 import { movePageIdReferences, moveSlugBindings, recordRenameAlias } from '../../core/page-state/rename-alias.ts';
@@ -376,7 +377,8 @@ export async function carryRenameIdentity(engine: BrainEngine, sourceId: string,
     await tx.lockPageKeys([{ sourceId, slug: staleSlug }, { sourceId, slug: newSlug }]);
     return recordFallbackRename(tx, { sourceId, staleSlug, newSlug, fromPageId: Number(from.id), toPageId: Number(to.id) }, async () => {
       await recordRenameAlias(tx, sourceId, staleSlug, newSlug);
-      await moveSlugBindings(tx, sourceId, staleSlug, newSlug);
+      // #10003: the re-key authors no text, so the moved facts keep their stored trust tier.
+      await withTrustKeep(tx, ['facts'], () => moveSlugBindings(tx, sourceId, staleSlug, newSlug));
       await movePageIdReferences(tx, Number(from.id), Number(to.id));
     });
   });

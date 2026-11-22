@@ -67,7 +67,7 @@ export async function renamePageOntoSlug(engine: BrainEngine, input: { sourceId:
         const rekeyed = await withTrustKeep(tx, ['pages'], () => tx.executeRaw<{ id: number }>(
           'UPDATE pages SET slug = $1 WHERE id = $2 AND source_id = $3 AND deleted_at IS NOT NULL RETURNING id', [purgedSlug(newSlug, tombstoneId), tombstoneId, sourceId]));
         if (!rekeyed.length) return 'live_destination' as const;
-        await moveSlugBindings(tx, sourceId, newSlug, purgedSlug(newSlug, tombstoneId));
+        await withTrustKeep(tx, ['facts'], () => moveSlugBindings(tx, sourceId, newSlug, purgedSlug(newSlug, tombstoneId)));
         if (await move(tx) === 0) throw nothingToMove;
         return 'renamed' as const;
       }));

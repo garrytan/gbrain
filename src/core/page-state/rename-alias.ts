@@ -2,7 +2,6 @@ import type { BrainEngine } from '../engine.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { MOVE_WITHDRAWAL_SUBJECT_SQL } from '../facts/withdrawal-schema.ts';
 import { dropRekeyDuplicates } from '../facts/ontology-rekey.ts';
-import { withTrustKeep } from '../persistence/context.ts';
 
 /**
  * Record `old -> new` in slug_aliases when a page is renamed, inside the
@@ -89,22 +88,12 @@ export async function recordSlugLineAlias(tx: Pick<BrainEngine, 'transaction'>, 
  * savepoint.
  */
 export async function moveSlugBindings(
-  tx: Pick<BrainEngine, 'transaction' | 'executeRaw' | 'readTransactionSettings' | 'applyTransactionSettings'>,
-  sourceId: string,
-  oldSlug: string,
-  newSlug: string,
-): Promise<void> {
-  if (oldSlug === newSlug) return;
-  // #10003: re-keying facts authors no text, so they keep their stored trust tier (as updateSlug does).
-  return withTrustKeep(tx, ['facts'], () => moveBindings(tx, sourceId, oldSlug, newSlug));
-}
-
-async function moveBindings(
   tx: Pick<BrainEngine, 'transaction' | 'executeRaw'>,
   sourceId: string,
   oldSlug: string,
   newSlug: string,
 ): Promise<void> {
+  if (oldSlug === newSlug) return;
   await tx.executeRaw(MOVE_WITHDRAWAL_SUBJECT_SQL, [sourceId, oldSlug, newSlug]);
   type Savepoint = Pick<BrainEngine, 'executeRaw'>;
   const sql = (text: string) => (savepoint: Savepoint) => savepoint.executeRaw(text, [sourceId, oldSlug, newSlug]);
