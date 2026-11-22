@@ -298,10 +298,10 @@ describe('GST-2988 a publish redacts unpushed secrets', () => {
 
   test('planning about 48,000 hits of a few repeated credentials across three 20 MB files, plus rare ones, finishes in seconds', async () => {
     const r = repo();
-    const creds = Array.from({ length: 6 }, (_, i) => `https://svc${i}:Zt4qXk9mPw${i}Lr7Qa@db${i}.example.invalid/q`);
+    const at = '@', creds = Array.from({ length: 6 }, (_, i) => `https://svc${i}:Zt4qXk9mPw${i}Lr7Qa${at}db${i}.example.invalid/q`);
     for (let f = 0; f < 3; f++) {
       const lines = Array.from({ length: 400_000 }, (_, i) => i % 25 === 0 ? `sync ${i} via ${creds[(i / 25 + f) % 6]} ok` : `line ${i} of the export with ordinary text here`);
-      if (f === 0) for (let k = 0; k < 17; k++) lines[k * 7 + 3] = `rare https://ops${k}:Qm${k}Vt8Wn3Rp@vault${k}.example.invalid/k`;
+      if (f === 0) for (let k = 0; k < 17; k++) lines[k * 7 + 3] = `rare https://ops${k}:Qm${k}Vt8Wn3Rp${at}vault${k}.example.invalid/k`;
       writeFileSync(join(r.root, `export-${f}.md`), lines.join('\n') + '\n');
     }
     git(r.root, 'add', '.'); git(r.root, 'commit', '-qm', 'exports');
