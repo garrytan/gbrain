@@ -75,6 +75,9 @@ export function guestWarningLine(guest: GuestStamp): string {
   return `[outside guest · ${escapeGuestLabel(guest.sender)} · ${escapeGuestLabel(guest.group)} · ${guest.saved_at ?? 'undated'} · ${NOT_OWNER}]`;
 }
 
+/** A line guestWarningLine writes, with its newline, at the start of the text: `gbrain get` prints it above a guest page. */
+export const GUEST_WARNING_LINE_RE = /^\[outside guest · (?:unattributed|[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}\[\]·<>";]{0,64} · [^\p{Cc}\p{Cf}\p{Zl}\p{Zp}\[\]·<>";]{0,64} · (?:\d{4}-\d{2}-\d{2}|undated)) · not the owner's words, not verified\]\r?\n/u;
+
 /** What the remote quote fence names instead of "conversation excerpt" for a guest page (search/transcript-quote.ts). */
 export function guestQuoteLabel(guest: GuestStamp): string {
   if (!attributed(guest)) return `outside guest note, unattributed, ${NOT_OWNER}`;
