@@ -1651,6 +1651,12 @@ export class PostgresEngine implements BrainEngine {
   isDeferredReplacementHeld(sourceId: string, slug: string, revision: string, claim: string) { return projectionRebuildImpl.isDeferredReplacementHeld(this.executeRaw.bind(this), sourceId, slug, revision, claim); }
   renewDeferredReplacementClaim(job: projectionRebuildImpl.ProjectionJobKey, claim: string) { return projectionRebuildImpl.renewDeferredReplacementClaim(this.executeRaw.bind(this), job, claim); }
   releaseDeferredReplacementClaim(slug: string, claim: string) { return projectionRebuildImpl.releaseDeferredReplacementClaim(this.executeRaw.bind(this), slug, claim); }
+  listProjectionDrainPreview(limit: number) { return projectionRebuildImpl.listProjectionDrainPreview(this.executeRaw.bind(this), limit); }
+  hasQueuedProjectionWork(opts: { media?: boolean } = {}) { return projectionRebuildImpl.hasQueuedProjectionWork(this.executeRaw.bind(this), opts); }
+  readPagesRowEstimate() { return projectionRebuildImpl.readPagesRowEstimate(this.executeRaw.bind(this)); }
+  readDrainRunStart() { return projectionRebuildImpl.readDrainRunStart(this.executeRaw.bind(this)); }
+  isDrainClockPast(runStart: string) { return projectionRebuildImpl.isDrainClockPast(this.executeRaw.bind(this), runStart); }
+  queuePageProjectionJob(sourceId: string, slug: string, reason: string) { return projectionRebuildImpl.queuePageProjectionJob(this.executeRaw.bind(this), sourceId, slug, reason); }
   hasSegmentedPage(sourceId: string, slug: string) { return projectionRebuildImpl.hasSegmentedPage(this.executeRaw.bind(this), sourceId, slug); }
   rekeyProjectionJob(job: projectionRebuildImpl.ProjectionJobKey, revision: string) { return projectionRebuildImpl.rekeyProjectionJob(this.executeRaw.bind(this), job, revision); }
   stampDeferredProjectionJob(job: projectionRebuildImpl.ProjectionJobKey, requeue: boolean) { return projectionRebuildImpl.stampDeferredProjectionJob(this.executeRaw.bind(this), job, requeue); }

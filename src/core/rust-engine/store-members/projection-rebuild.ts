@@ -4,16 +4,19 @@
  * member.
  *
  * The deferred chunk replacement's members (the row fingerprint, the unkept-row delete, the stale-vector list and
- * clear, the page head, the claim probe and renewal), the rebuild loop's queue stamps and the window probe are served too. The
+ * clear, the page head, the claim probe and renewal), the rebuild loop's queue stamps, the window probe, the queue insert and
+ * the drain's clock, work probe, backlog and preview are served too. The
  * fingerprint is the store's own opaque value: a caller only compares two of them.
  *
  * The store keeps one vector column, `embedding`, so the keep-plan and vector members refuse any other column. The drained probe
- * refuses `media`: the store does not decide which image pages are sealable. `setProjectionChunkerVersion` is the
+ * refuses `media`, as the work probe does: the store does not decide which image pages are sealable, so the backlog and
+ * preview refuse a queue that holds an image page that is neither protected nor archived. The row estimate is 0: the
+ * store keeps no planner statistics. `setProjectionChunkerVersion` is the
  * store's `setChunkerVersion`, which stamps the same column.
  */
 import type { BrainEngine } from '../../engine.ts';
 import type { KeepColumn, ProjectionJobKey } from '../../engine-sql/projection-rebuild.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -94,6 +97,34 @@ export const renewDeferredReplacementClaim: Member<'renewDeferredReplacementClai
 
 export const releaseDeferredReplacementClaim: Member<'releaseDeferredReplacementClaim'> = async (brain, slug, claim) => {
   await storeCall({ member: 'releaseDeferredReplacementClaim', slug }, () => brain.releaseDeferredReplacementClaim(slug, claim));
+};
+
+/** `listProjectionDrainPreview`: a queue that holds an image page the store cannot class refuses, as the backlog does. */
+export const listProjectionDrainPreview: Member<'listProjectionDrainPreview'> = async (brain, limit) => {
+  const member = 'listProjectionDrainPreview';
+  if (!Number.isSafeInteger(limit)) refuseMember(member, 'a limit that is not an integer');
+  const out: { rows: Awaited<ReturnType<BrainEngine['listProjectionDrainPreview']>>; undecided: number } =
+    await storeCall({ member }, () => brain.listProjectionDrainPreview(limit));
+  if (out.undecided > 0) refuseMember(member, 'an image page that may be sealable; the store does not decide which image pages are sealable');
+  return out.rows;
+};
+
+export const hasQueuedProjectionWork: Member<'hasQueuedProjectionWork'> = (brain, opts) => {
+  if (opts?.media) refuseMember('hasQueuedProjectionWork', 'option media; the store does not decide which image pages are sealable');
+  return storeCall({ member: 'hasQueuedProjectionWork' }, () => brain.hasQueuedProjectionWork());
+};
+
+/** The store keeps no planner statistics, so the drain's statistics debt starts from no rows. */
+export const readPagesRowEstimate: Member<'readPagesRowEstimate'> = async () => 0;
+
+export const readDrainRunStart: Member<'readDrainRunStart'> = (brain) =>
+  storeCall({ member: 'readDrainRunStart' }, () => brain.readDrainRunStart());
+
+export const isDrainClockPast: Member<'isDrainClockPast'> = (brain, runStart) =>
+  storeCall({ member: 'isDrainClockPast' }, () => brain.isDrainClockPast(runStart));
+
+export const queuePageProjectionJob: Member<'queuePageProjectionJob'> = async (brain, sourceId, slug, reason) => {
+  await storeCall({ member: 'queuePageProjectionJob', slug, sourceId }, () => brain.queuePageProjectionJob(sourceId, slug, reason));
 };
 
 export const hasSegmentedPage: Member<'hasSegmentedPage'> = (brain, sourceId, slug) =>

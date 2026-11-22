@@ -347,6 +347,7 @@ test/engine-parity/persistence.test.ts
 test/engine-parity/person-duplicates.test.ts
 test/engine-parity/privacy-hold-reply.test.ts
 test/engine-parity/private-page-reads.test.ts
+test/engine-parity/projection-drain-reads.test.ts
 test/engine-parity/projection-rebuild-steps.test.ts
 test/engine-parity/purge-dry-run.test.ts
 test/engine-parity/purge-plan.test.ts

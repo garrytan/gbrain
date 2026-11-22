@@ -1923,6 +1923,12 @@ export class PGLiteEngine implements BrainEngine {
   isDeferredReplacementHeld(sourceId: string, slug: string, revision: string, claim: string) { return projectionRebuildImpl.isDeferredReplacementHeld(this.rawRead, sourceId, slug, revision, claim); }
   renewDeferredReplacementClaim(job: projectionRebuildImpl.ProjectionJobKey, claim: string) { return projectionRebuildImpl.renewDeferredReplacementClaim(this.rawRead, job, claim); }
   releaseDeferredReplacementClaim(slug: string, claim: string) { return projectionRebuildImpl.releaseDeferredReplacementClaim(this.rawRead, slug, claim); }
+  listProjectionDrainPreview(limit: number) { return projectionRebuildImpl.listProjectionDrainPreview(this.rawRead, limit); }
+  hasQueuedProjectionWork(opts: { media?: boolean } = {}) { return projectionRebuildImpl.hasQueuedProjectionWork(this.rawRead, opts); }
+  readPagesRowEstimate() { return projectionRebuildImpl.readPagesRowEstimate(this.rawRead); }
+  readDrainRunStart() { return projectionRebuildImpl.readDrainRunStart(this.rawRead); }
+  isDrainClockPast(runStart: string) { return projectionRebuildImpl.isDrainClockPast(this.rawRead, runStart); }
+  queuePageProjectionJob(sourceId: string, slug: string, reason: string) { return projectionRebuildImpl.queuePageProjectionJob(this.rawRead, sourceId, slug, reason); }
   hasSegmentedPage(sourceId: string, slug: string) { return projectionRebuildImpl.hasSegmentedPage(this.rawRead, sourceId, slug); }
   rekeyProjectionJob(job: projectionRebuildImpl.ProjectionJobKey, revision: string) { return projectionRebuildImpl.rekeyProjectionJob(this.rawRead, job, revision); }
   stampDeferredProjectionJob(job: projectionRebuildImpl.ProjectionJobKey, requeue: boolean) { return projectionRebuildImpl.stampDeferredProjectionJob(this.rawRead, job, requeue); }

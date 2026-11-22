@@ -565,6 +565,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'listStaleChunkVectors', 'clearChunkVectors', 'readProjectionHead', 'isDeferredReplacementHeld',
   'renewDeferredReplacementClaim', 'releaseDeferredReplacementClaim', 'hasSegmentedPage', 'rekeyProjectionJob', 'stampDeferredProjectionJob',
   'touchUnclaimedProjectionJob', 'deferProjectionJob', 'countPendingTextChunks', 'probeProjectionWindowCandidates',
+  'queuePageProjectionJob', 'readPagesRowEstimate', 'readDrainRunStart', 'isDrainClockPast', 'hasQueuedProjectionWork', 'readProjectionBacklog', 'listProjectionDrainPreview',
   'readWriteRequestsByRequestIds', 'insertWriteRequestGroup', 'readOwnerHostBinding', 'listTopologyRecoveries', 'readSegmentedGateEvidence',
   'claimNotifierLease', 'readNotifierLease', 'holdsNotifierLease', 'releaseNotifierLease', 'readNotifierSources', 'writeNotifierState', 'writeNotifierCoverage', 'recordNotifierSyncerHost', 'readNotifierStatusRows', 'hasNotifierCoverage', 'upsertWantedMarker', 'attachWantedMarkerJob', 'readWantedMarkers', 'readDueWantedMarkers', 'pruneSatisfiedWantedMarkers', 'clearWantedMarker', 'settleFreshnessMarker', 'listSourceWantedMarkers', 'readFirstDue',
   'readLivePageFrontmatter', 'readEntityAnchoredPages', 'readPageTitlesById', 'readTextMentionPages',

@@ -25,9 +25,7 @@ import { advanceProjectionCursor, ineligibleKey, rememberIneligible, type Projec
 import { acceptedEmbeddingInputHashes, embeddingInputHash, plainEmbeddingTier, synopsisBodyHash,
   type EmbeddingInputContext, type EmbeddingTier } from '../embedding-input-hash.ts';
 import { isRetryableConnError } from '../retry-matcher.ts';
-import { ACTIVATION_SERVED_REVISION } from '../search/safe-chunks.ts';
 import { DEFERRED_CHUNK_CLAIM, DEFERRED_CHUNK_REPLACEMENT, projectionJobProbes } from '../engine-sql/projection-rebuild.ts';
-import { lacksRawSql } from '../engine-capabilities.ts';
 
 export { sealPageTextProjection } from './text-seal.ts';
 import { sealPageTextProjection } from './text-seal.ts';
@@ -421,11 +419,8 @@ export async function installPageEmbeddings(engine: BrainEngine, prepared: Proje
 }
 
 /** Queue the latest revision even when its worktree owner is unavailable. */
-export async function queuePageProjection(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string, reason: string): Promise<void> {
-  await engine.executeRaw(`INSERT INTO page_projection_jobs(source_incarnation,slug,revision,reason)
-    SELECT s.incarnation,p.slug,p.knowledge_revision,$3 FROM pages p JOIN sources s ON s.id=p.source_id
-    WHERE p.source_id=$1 AND p.slug=$2 AND p.deleted_at IS NULL
-    ON CONFLICT(source_incarnation,slug) DO UPDATE SET revision=EXCLUDED.revision,reason=EXCLUDED.reason,updated_at=now()`, [sourceId, slug, reason]);
+export async function queuePageProjection(engine: Pick<BrainEngine, 'queuePageProjectionJob'>, sourceId: string, slug: string, reason: string): Promise<void> {
+  await engine.queuePageProjectionJob(sourceId, slug, reason);
 }
 
 /** A live, unsegmented page's chunker version (`projectionBelowSafeFence`); the text lives in engine-sql/pages.ts with `getPageSealState`. */
@@ -513,9 +508,8 @@ export async function noteProjectionRebuilds(engine: BrainEngine, rebuilt: numbe
   if (owed.rows !== null && owed.rebuilt < 50 + owed.rows * 0.1) return;
   if (!await drained()) return;
   await refreshProjectionStatistics(engine);
-  // An engine without raw SQL (Rust) keeps no planner statistics: its debt restarts from no rows.
-  const [pages] = lacksRawSql(engine) ? [] : await engine.executeRaw<{ rows: number }>("SELECT GREATEST(reltuples,0)::float8 AS rows FROM pg_class WHERE oid='pages'::regclass");
-  statisticsDebt.set(engine, { rebuilt: 0, rows: Number(pages?.rows ?? 0) });
+  // An engine without planner statistics (Rust) answers 0: its debt restarts from no rows.
+  statisticsDebt.set(engine, { rebuilt: 0, rows: await engine.readPagesRowEstimate() });
   statisticsRefreshes.set(engine, projectionStatisticsRefreshes(engine) + 1);
 }
 
@@ -670,14 +664,10 @@ export function projectionBacklog(engine: Pick<BrainEngine, 'readProjectionBackl
  * queue reason, so a row that last failed (`rebuild_failed`) is named before
  * anything is rebuilt.
  */
-export async function previewProjectionDrain(engine: Pick<BrainEngine, 'executeRaw' | 'readProjectionBacklog'>, limit = 50):
+export async function previewProjectionDrain(engine: Pick<BrainEngine, 'readProjectionBacklog' | 'listProjectionDrainPreview'>, limit = 50):
   Promise<Required<ProjectionBacklog> & { rows: Array<{ source_id: string; slug: string; page_kind: string; reason: string; updated_at: string }> }> {
   const backlog = await projectionBacklog(engine);
-  const rows = await engine.executeRaw<{ source_id: string; slug: string; page_kind: string; reason: string; updated_at: string }>(`SELECT s.id AS source_id,j.slug,p.page_kind,j.reason,j.updated_at::text AS updated_at
-    FROM page_projection_jobs j ${projectionJobProbes({ media: true })}
-    ORDER BY CASE WHEN p.page_kind NOT IN ('markdown','code') THEN 1
-      WHEN EXISTS (SELECT 1 FROM pages q WHERE q.source_id=s.id AND q.slug=j.slug AND q.text_projection_revision='${ACTIVATION_SERVED_REVISION}'::uuid) THEN 2
-      ELSE 0 END,j.updated_at,j.source_incarnation,j.slug COLLATE "C" LIMIT $1`, [Math.max(1, limit)]);
+  const rows = await engine.listProjectionDrainPreview(Math.max(1, limit));
   return { ...backlog, rows };
 }
 
@@ -844,10 +834,10 @@ export interface ProjectionDrainResult {
  */
 export async function drainProjections(engine: BrainEngine, opts: { limit?: number; progress?: ProgressReporter; reasons?: readonly string[]; media?: boolean;
   concurrency?: number; onNarrow?: (concurrency: number, error: unknown) => void } = {}): Promise<ProjectionDrainResult> {
-  const [{ runStart }] = await engine.executeRaw<{ runStart: string }>('SELECT now()::text AS "runStart"');
+  const runStart = await engine.readDrainRunStart();
   // PGLite's clock can be coarse: wait until it passes the run start, so a page
   // that fails in this run is stamped after it and is not tried again.
-  while (!(await engine.executeRaw<{ passed: boolean }>('SELECT now()>$1::text::timestamptz AS passed', [runStart]))[0]?.passed) {
+  while (!await engine.isDrainClockPast(runStart)) {
     await new Promise(resolve => setTimeout(resolve, 1));
   }
   const before = await projectionBacklog(engine);
@@ -856,7 +846,6 @@ export async function drainProjections(engine: BrainEngine, opts: { limit?: numb
   const refreshes = projectionStatisticsRefreshes(engine);
   if (before.pending > 0) await refreshProjectionStatistics(engine, total);
   const failed: ProjectionRebuildFailure[] = [];
-  const probes = projectionJobProbes({ media: opts.media });
   let rebuilt = 0;
   let superseded = 0;
   let tried = 0;
@@ -908,8 +897,7 @@ export async function drainProjections(engine: BrainEngine, opts: { limit?: numb
       seal = await sealImageProjections(engine, { limit: opts.limit === undefined ? undefined : opts.limit - tried, notAfter: runStart });
       tried += seal.sealed;
       opts.progress?.tick(seal.sealed, `${seal.sealed} images sealed`);
-      await noteProjectionRebuilds(engine, seal.sealed, async () => !(await engine.executeRaw(`SELECT 1 FROM page_projection_jobs j ${probes}
-        WHERE j.reason<>'rebuild_failed' LIMIT 1`)).length);
+      await noteProjectionRebuilds(engine, seal.sealed, async () => !(await engine.hasDrainableProjectionJob({ media: opts.media })));
     }
     await rebuildInline('answering');
   } finally {
@@ -917,8 +905,7 @@ export async function drainProjections(engine: BrainEngine, opts: { limit?: numb
   }
   const after = await projectionBacklog(engine);
   const more = opts.limit !== undefined && tried >= opts.limit
-    && (await engine.executeRaw(`SELECT 1 FROM page_projection_jobs j ${probes}
-      UNION ALL SELECT 1 FROM page_projection_jobs j ${SEGMENTED_JOB_PROBES} LIMIT 1`)).length > 0;
+    && await engine.hasQueuedProjectionWork({ media: opts.media });
   const result: ProjectionDrainResult = { rebuilt, superseded, failed, remaining: after.pending, limited: more };
   return opts.media ? { ...result, ...seal, statistics_refreshed: projectionStatisticsRefreshes(engine) > refreshes, remaining_by_class: after } : result;
 }
