@@ -5,8 +5,8 @@ with `GBRAIN_TELEMETRY=off`, it writes no telemetry file and opens no connection
 
 ## The question
 
-The first time `gbrain init` or `gbrain setup <harness>` runs, it tells your agent
-to ask you, in the reply that reports the install, whether gbrain may send usage
+When `gbrain init` creates a brain (on its own or through `gbrain setup <harness>`),
+it tells your agent to ask you, in the reply that reports the install, whether gbrain may send usage
 data. No option is marked recommended, and the agent is told never to pick one
 for you; `--yes`, `--json` and unattended runs never answer it. Your answer is
 the command the agent runs for you: `gbrain telemetry anonymous`, `community` or
@@ -15,6 +15,8 @@ the command the agent runs for you: `gbrain telemetry anonymous`, `community` or
 Until you answer, gbrain keeps setup and upgrade results only on your machine,
 in `~/.gbrain/telemetry/pending.jsonl` (at most 50, for 7 days). A yes moves them
 into the send queue; `off` deletes them. Nothing else is kept before an answer.
+A brain created before this question existed is not asked; answer any time with
+the same commands, and anything it holds expires unsent after 7 days.
 
 ## What you can turn on
 

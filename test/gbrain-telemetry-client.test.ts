@@ -6,7 +6,7 @@ import { join } from 'path';
 import { telemetryEndpoint } from '../src/core/telemetry/endpoint.ts';
 import {
   MAX_BATCH_BYTES, MAX_BATCH_EVENTS, buildBatch, countCommand, countCrash, countErrorCode, countOperation, deploymentOf, fetchPulse,
-  flushCounts, forgetInstallation, noteRunVersion, readSettings, recordDoctor, recordEvent, sanitize, scoreBand, setTier, shouldSpawnSync,
+  flushCounts, forgetInstallation, heldEvents, noteRunVersion, readSettings, recordDoctor, recordEvent, sanitize, scoreBand, setTier, shouldSpawnSync,
   sizeBand, syncTelemetry, telemetryDir, telemetryStatus,
 } from '../src/core/telemetry/client.ts';
 import { telemetryAfterCli } from '../src/cli/telemetry-hook.ts';
@@ -494,11 +494,31 @@ describe('gbrain telemetry client: before the person answers', () => {
     expect(queue()).toEqual([]);
   });
 
+  it('a pending file left behind after an answer is never listed as waiting', () => {
+    home();
+    setTier('off');
+    const leftover = { qid: 'late', ts: new Date().toISOString(), event_type: 'setup', gbrain_version: '0.1.0' };
+    writeFileSync(join(telemetryDir(), 'pending.jsonl'), `${JSON.stringify(leftover)}\n`);
+    expect(heldEvents()).toEqual([]);
+    expect(telemetryStatus().held_events).toBe(0);
+  });
+
   it('GBRAIN_TELEMETRY=off holds nothing', async () => {
     home();
     await withEnv({ GBRAIN_TELEMETRY: 'off' }, () => {
       recordEvent({ event_type: 'setup', harness: 'codex', outcome: 'success' });
       expect(existsSync(telemetryDir())).toBe(false);
     });
+  });
+
+  // Value: protects=while unanswered the CLI seam holds a failed upgrade, but not a dry run or other commands' counts; fails_when=the waiting branch in telemetryAfterCli drops outcomes or counts commands; why_new=CLI test covers only init's held setup event; seam=none; no_claim=no spawned child or real upgrade (direct call)
+  it('the CLI seam holds a failed upgrade and counts nothing else while unanswered', () => {
+    home();
+    telemetryAfterCli(0, undefined, ['query', 'x']);
+    telemetryAfterCli(1, undefined, ['apply-migrations', '--dry-run']);
+    expect(existsSync(telemetryDir())).toBe(false);
+    telemetryAfterCli(1, undefined, ['apply-migrations']);
+    expect(held().map(e => [e.event_type, e.outcome])).toEqual([['upgrade', 'error']]);
+    expect(readdirSync(telemetryDir())).toEqual(['pending.jsonl']);
   });
 });

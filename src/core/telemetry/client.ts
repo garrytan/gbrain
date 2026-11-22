@@ -324,6 +324,7 @@ function holdForAnswer(fields: Row): void {
   if (!clean) return;
   const now = Date.now();
   withQueueLock(() => {
+    if (readSettings().answered_at) return;
     const kept = readHeld(now).slice(-(MAX_HELD_EVENTS - 1));
     writeAtomic(file('pending.jsonl'), [...kept, { qid: randomUUID(), ts: hourStamp(now), ...clean }].map(r => `${JSON.stringify(r)}\n`).join(''));
   });
@@ -339,7 +340,7 @@ function releaseHeld(): void {
 }
 
 export function heldEvents(now = Date.now()): Row[] {
-  return readHeld(now);
+  return readSettings().answered_at ? [] : readHeld(now);
 }
 
 let pending: DayCounts = {};
@@ -688,7 +689,7 @@ export function telemetryStatus(now = Date.now()): TelemetryStatus {
     answered: !!settings.answered_at,
     installation_id: settings.installation_id ?? null,
     queued_events: readQueue().filter(freshAt(now)).length,
-    held_events: readHeld(now).length,
+    held_events: heldEvents(now).length,
     count_days: countDays().length,
     last_attempt_at: state.last_attempt_at ?? null,
     last_sent_at: state.last_sent_at ?? null,
