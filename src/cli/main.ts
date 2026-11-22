@@ -636,6 +636,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     const { runDelegatedCliOperation } = await import('../commands/persistence-delegate.ts');
     if (await runDelegatedCliOperation(op.name, params, cfgPre, {
       brain: cliOpts.brain, timeoutMs: cliOpts.timeoutMs ?? undefined, ...(cliOpts.room !== undefined ? { room: cliOpts.room } : {}),
+      emitResponseMeta: captureRetrievalMeta,
     }, formatResult)) return;
   }
 

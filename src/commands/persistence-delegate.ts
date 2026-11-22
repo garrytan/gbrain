@@ -57,7 +57,7 @@ export async function runDelegatedCliOperation(
   operation: string,
   params: Record<string, unknown>,
   config: GBrainConfig | null,
-  options: { brain?: string | null; timeoutMs?: number; room?: string },
+  options: { brain?: string | null; timeoutMs?: number; room?: string; emitResponseMeta?: (key: string, value: unknown) => void },
   render: (operation: string, result: unknown, params: Record<string, unknown>) => string,
 ): Promise<boolean> {
   try {
@@ -65,7 +65,7 @@ export async function runDelegatedCliOperation(
       options.timeoutMs === undefined && !isPersistenceIpcMutation(operation) ? { ...options, timeoutMs: DEFAULT_READ_WALLCLOCK_MS } : options);
     if (!delegated.handled) return false;
     if (options.room !== undefined) return await printDelegatedRoom(operation, delegated, options.room, params, render);
-    if (delegated.meta?.retrieval) (await import('../cli/main.ts')).captureRetrievalMeta('retrieval', delegated.meta.retrieval);
+    if (delegated.meta?.retrieval) options.emitResponseMeta?.('retrieval', delegated.meta.retrieval);
     const { result, stderr } = delegated.meta
       ? (await import('../cli/op-notices.ts')).withDelegatedMeta(operation, delegated.result, delegated.meta, params.json === true) : { result: delegated.result };
     const output = render(operation, result, params);
