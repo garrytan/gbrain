@@ -43,9 +43,11 @@ member-access part alone (the page's readers, and the origin of a derived page):
   `closed` through and reads `fn` and `mode` as `fn`: the store keeps no owner-only read mode, so `mode` never widens
   the test. The capability is `pages`.
 - `readPageAdmitsCaller(sourceId, slug, identity)` renders `accessAllowedSql('p', identity)` and compares it with the same call in a
-  fresh record of the caller's identity argument, satisfied rules, folder coverage and owner flag with `restricted: true`
+  fresh record of the identity argument and the caller record's satisfied rules, folder coverage and owner flag with `restricted: true`
   (`callerFolders`); only an equal text is served, as `callerRecord` (the record's coverage is the whole pending test),
-  with an identity or satisfied list SQL would empty (`validIdentity`, `validQualifiedRuleId`) sent empty. A caller outside any
+  with an identity or satisfied list SQL would empty (`validIdentity`, `validQualifiedRuleId`) sent empty. The satisfied
+  rules it sends are exactly `satisfiedFor(identity)`: the record's own set when the identity argument is the record's
+  identity, none for any other identity (for which SQL renders no satisfied rule either). A caller outside any
   record or on the short `restricted: false` form renders another text and refuses with `engine_capability_missing`.
   The capability is `pages`.
 - `readWriterSlugFence(principal)` reads a `local_cli` or `local_stdio` writer's stored grant ceiling
