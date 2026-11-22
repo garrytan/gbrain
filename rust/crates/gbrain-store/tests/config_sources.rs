@@ -4,7 +4,7 @@ mod common;
 
 use common::{TempDir, open};
 use gbrain_store::error::INVALID_ARGUMENT;
-use gbrain_store::sources::{ListSourcesOptions, SourceInput};
+use gbrain_store::sources::{ListSourcesOptions, SourceInput, SourceSyncStampOptions};
 use gbrain_store::{DEFAULT_SCHEMA_VERSION, OpenOptions, Store};
 use serde_json::json;
 
@@ -404,6 +404,43 @@ fn the_sync_anchor_advances_one_source_and_survives_a_reopen() {
 }
 
 #[test]
+fn mark_source_synced_sets_only_the_last_sync_time_and_an_unknown_source_is_false() {
+    let dir = TempDir::new("src-synced");
+    let store = open(&dir);
+    store.upsert_source(&input("dept", Some("/d"))).unwrap();
+    let before = store.get_source("dept").unwrap().unwrap();
+    assert_eq!(before.last_sync_at, None);
+    assert!(
+        store
+            .mark_source_synced("dept", &Default::default())
+            .unwrap()
+    );
+    let after = store.get_source("dept").unwrap().unwrap();
+    let stamped = after.last_sync_at.clone().expect("the stamp is set");
+    assert!(stamped.ends_with('Z'), "an ISO timestamp: {stamped}");
+    // Only the sync time moved.
+    assert_eq!(
+        gbrain_store::sources::SourceDetailRow {
+            last_sync_at: None,
+            ..after
+        },
+        before
+    );
+    assert!(
+        !store
+            .mark_source_synced("missing", &Default::default())
+            .unwrap()
+    );
+    assert!(store.get_source("missing").unwrap().is_none());
+    store.close();
+    let store = open(&dir);
+    assert_eq!(
+        store.get_source("dept").unwrap().unwrap().last_sync_at,
+        Some(stamped)
+    );
+}
+
+#[test]
 fn a_fresh_brain_records_the_callers_initial_config_and_a_reopen_keeps_its_own() {
     let dir = TempDir::new("cfg-initial");
     let path = dir.path().join("brain");
@@ -471,4 +508,42 @@ fn the_purge_epoch_advances_one_source_and_survives_a_reopen() {
     let store = open(&dir);
     assert_eq!(store.read_source_purge_epoch("wiki").unwrap(), Some(2));
     assert_eq!(store.get_source("wiki").unwrap(), before);
+}
+
+#[test]
+fn mark_source_synced_with_an_incarnation_stamps_only_that_incarnation_and_refuses_a_malformed_id()
+{
+    let dir = TempDir::new("src-synced-inc");
+    let store = open(&dir);
+    store.upsert_source(&input("dept", Some("/d"))).unwrap();
+    let incarnation = store.get_source_by_id("dept").unwrap().unwrap().incarnation;
+    let with = |id: &str| SourceSyncStampOptions {
+        incarnation: Some(id.to_string()),
+    };
+    assert!(
+        !store
+            .mark_source_synced("dept", &with("f0000000-0000-4000-8000-000000000000"))
+            .unwrap()
+    );
+    assert_eq!(
+        store.get_source("dept").unwrap().unwrap().last_sync_at,
+        None
+    );
+    assert!(
+        store
+            .mark_source_synced("dept", &with(&incarnation.to_uppercase()))
+            .unwrap()
+    );
+    assert!(
+        store
+            .get_source("dept")
+            .unwrap()
+            .unwrap()
+            .last_sync_at
+            .is_some()
+    );
+    let err = store
+        .mark_source_synced("dept", &with("not-a-uuid"))
+        .unwrap_err();
+    assert_eq!(err.code, INVALID_ARGUMENT);
 }

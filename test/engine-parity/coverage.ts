@@ -54,7 +54,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listLocalPathSources', 'readPlainSyncSource', 'readOwnerOnlySourcesPresent', 'readOwnerOnlySourceConfig',
     'listSourceRoutingRows', 'countDefaultSourceSplit', 'listStaleSyncSourceIds', 'listSourceIds', 'readSoleSourceId',
     'readFirstSourceId', 'lockAllSourceRows', 'readSourceRow', 'lockSourceRow', 'countSourcePages', 'insertSource',
-    'updateSourceConfig', 'getSource', 'readPageIdentity', 'writeSourceSyncHeartbeat',
+    'updateSourceConfig', 'markSourceSynced', 'getSource', 'readPageIdentity', 'writeSourceSyncHeartbeat',
     'writeSourceUpstreamObservation', 'advanceSourceCommit', 'listSourcePathPages', 'readRenameIdentityRows',
     'readLiveIdentityHolders', 'readPageSizeRows', 'holdPageEmbedding', 'readReasonPurgeTombstones',
     'advanceSourcePurgeEpoch', 'listPrefixSampledPages', 'listCorpusSample', 'bumpPageRetrievals', 'getPageSealState',

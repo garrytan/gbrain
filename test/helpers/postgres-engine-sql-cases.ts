@@ -1036,7 +1036,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readDrainLeaseBeacon': OOS.cycleLocks, 'writeDrainLeaseHolder': OOS.cycleLocks, 'refreshDrainLeaseHolder': OOS.cycleLocks,
   'releaseDrainLeaseHolder': OOS.cycleLocks,
   // sources
-  'listAllSources': 'sources', 'listSourceLocalPaths': 'sources', 'countRepoBoundSources': 'sources', 'updateSourceConfig': 'sources',
+  'listAllSources': 'sources', 'listSourceLocalPaths': 'sources', 'countRepoBoundSources': 'sources', 'updateSourceConfig': 'sources', 'markSourceSynced': 'sources',
   'listLocalPathSources': 'sources', 'readPlainSyncSource': OOS.callerRawSql, 'readOwnerOnlySourcesPresent': OOS.callerRawSql, 'readOwnerOnlySourceConfig': OOS.callerRawSql, 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'getSource': 'sources',
   'listStaleSyncSourceIds': 'sources', 'listSourceIds': 'sources', 'readSoleSourceId': 'sources', 'readFirstSourceId': 'sources', 'lockAllSourceRows': 'sources', 'readSourceRow': 'sources', 'lockSourceRow': 'sources', 'readSourceChunkerVersion': 'sources',
   'setSourceChunkerVersion': 'sources', 'isSourceClaimed': 'sources', 'advanceSourceCommit': 'sources',
@@ -1826,6 +1826,7 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('listSourceRoutingRows', [['default', (e) => e.listSourceRoutingRows()]]),
   ...variants('countDefaultSourceSplit', [['default', (e) => e.countDefaultSourceSplit()]]),
   ...variants('updateSourceConfig', [['default', (e) => e.updateSourceConfig(SRC, { federated: true })]]),
+  ...variants('markSourceSynced', [['default', (e) => e.markSourceSynced(SRC)]]),
   ...variants('getSource', [['default', (e) => e.getSource(SRC)]]),
   ...variants('listStaleSyncSourceIds', [['default', (e) => e.listStaleSyncSourceIds()]]),
   ...variants('listSourceIds', [['default', (e) => e.listSourceIds()]]),
