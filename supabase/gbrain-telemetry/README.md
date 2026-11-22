@@ -8,7 +8,7 @@ gbrain's opt-in telemetry lands here: two Supabase edge functions and the SQL be
 | `migrations/G001_gbrain_telemetry.sql` | Tables, the live view, the pulse summary, forget, prune and the daily ceiling. G-numbered so these files never collide with gstack's `001`-`009`. |
 | `functions/gbrain-telemetry-ingest/` | The only write path. `validate.ts` checks every field (gbrain's tests import it); `index.ts` enforces the daily ceiling (15,000 accepted requests and 150,000 rows a UTC day; 429 above it) and handles `forget`. |
 | `functions/gbrain-telemetry-pulse/` | Public aggregates, cached an hour; a stale answer or 503 on error, never zeros. |
-| `verify.sh` | Read-only smoke test: the public key and signed-in users are refused everything. |
+| `verify.sh` | Smoke test: the public key and signed-in users are refused everything, the ingest stores one `source=test` event and the pulse answers. |
 
 ## Who can do what
 

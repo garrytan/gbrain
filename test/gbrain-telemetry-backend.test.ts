@@ -13,6 +13,7 @@
  *  - verify.sh probes every object G001 creates.
  */
 import { describe, expect, test } from 'bun:test';
+import { spawnSync } from 'child_process';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { toRow } from '../supabase/gbrain-telemetry/functions/gbrain-telemetry-ingest/validate.ts';
@@ -86,6 +87,12 @@ describe('gbrain telemetry backend: locked down and separate from gstack', () =>
 
   test('verify.sh probes every object G001 creates', () => {
     for (const n of [...tables, ...views, ...functions]) expect(VERIFY).toContain(n);
+  });
+
+  test('verify.sh sends a test event the ingest accepts', () => {
+    const line = VERIFY.split('\n').find(l => l.startsWith('PROBE='))!;
+    const out = spawnSync('bash', ['-c', `${line}\nprintf %s "$PROBE"`], { encoding: 'utf-8' }).stdout;
+    expect(toRow(JSON.parse(out))).toMatchObject({ source: 'test', event_type: 'setup' });
   });
 
   test('the ingest writes with the service-role key and never the caller\'s', () => {

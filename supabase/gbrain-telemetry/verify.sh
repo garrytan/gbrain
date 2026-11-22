@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # verify.sh: smoke-test the lockdown of gbrain's telemetry objects after G001
-# is applied and both functions are deployed. Read-only: it writes nothing.
+# is applied and both functions are deployed. Its one write is a single
+# source=test event, which the live view and the pulse leave out.
 #
 # For the public key (anon) and, when a user JWT is available, a signed-in user
 # (authenticated), every gbrain table, the view and every function must refuse
 # reads, inserts, updates and calls with a permission denial (Postgres 42501).
 # A missing object or any other answer fails, so an unapplied migration or a
-# wrong key can't pass. It also checks that the ingest function answers an
-# empty batch with accepted 0 and that the pulse answers 200 or 503.
+# wrong key can't pass. It also checks that the ingest stores that test event
+# (accepted 1) and that the pulse answers status ok. Run it again after a few
+# minutes if the pulse is still computing its first answer.
 #
 #   GBRAIN_TELEMETRY_URL=https://<project>.supabase.co \
 #   GBRAIN_TELEMETRY_KEY=<the project's publishable key> \
@@ -77,7 +79,7 @@ else
 fi
 
 # One test-source event (the live view and the pulse leave it out) proves the write path.
-PROBE="{"v":1,"ts":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","event_type":"setup","gbrain_version":"0.0.0","tier":"anonymous","source":"test"}"
+PROBE='{"v":1,"ts":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","event_type":"setup","gbrain_version":"0.0.0","tier":"anonymous","source":"test"}'
 ING="$(curl -s --max-time 15 -X POST -H "apikey: $KEY" -H "Content-Type: application/json" -d "$PROBE" "$URL/functions/v1/gbrain-telemetry-ingest" 2>/dev/null || true)"
 if printf '%s' "$ING" | grep -q '"accepted":1'; then echo "PASS ingest stores a test event"; PASS=$((PASS + 1)); else echo "FAIL ingest: $(printf '%s' "$ING" | head -c 200)"; FAIL=$((FAIL + 1)); fi
 
