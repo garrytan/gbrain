@@ -426,7 +426,7 @@ settled and no write of the source is open, the pass checkpoints that older
 commit instead of ending `not_converged`. `convergence.stamped_behind`
 then names the commit (`commit`) and the `HEAD` the pass saw past it
 (`head_seen`), and status reads `pass_unfinished` until the next plain sync
-imports the newer commits. Until then the next pass reads the whole level
+imports the newer commits (a sync at a narrower selection keeps the marker). Until then the next pass reads the whole level
 (never idle, even with a `HEAD` reset to the checkpointed commit), and under
 `sync.admission=classify_only` it reads `admission_paused`, never up to
 date.
