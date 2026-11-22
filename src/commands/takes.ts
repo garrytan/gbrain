@@ -18,6 +18,7 @@
  */
 
 import { normalizeSlug } from '../core/utils.ts';
+import { storedWriteSlug } from '../core/persistence/legacy-slug-put.ts';
 import { resolve as resolvePath } from 'node:path';
 import { existsSync } from 'node:fs';
 import type { BrainEngine } from '../core/engine.ts';
@@ -916,11 +917,13 @@ async function cmdHorizon(engine: BrainEngine, args: string[]): Promise<void> {
   }
 
   if (sub !== 'set' && sub !== 'clear') fail(usage);
-  const slug = rest[0] && !rest[0].startsWith('-') ? normalizeSlug(rest[0]) : fail(usage);
+  const typed = rest[0] && !rest[0].startsWith('-') ? rest[0] : fail(usage);
   const rowRaw = flagValue(rest, '--row');
   const row = rowRaw === undefined ? NaN : Number(rowRaw);
   if (!Number.isSafeInteger(row) || row < 1) fail(`--row requires the take's row number (a positive integer), e.g. --row 1.\n${usage}`);
   const sourceId = await resolveSourceId(engine, flagValue(rest, '--source-id') ?? null);
+  // The page stored under the exact spelling typed (or its lowercase) first, then the normal form, as an existing-page write resolves it.
+  const slug = await storedWriteSlug(engine, sourceId, typed, normalizeSlug(typed)) ?? normalizeSlug(typed);
   const [take] = await engine.executeRaw<{ id: number | string }>(
     `SELECT t.id FROM takes t JOIN pages p ON p.id = t.page_id
       WHERE p.source_id = $1 AND p.slug = $2 AND t.row_num = $3 AND p.deleted_at IS NULL`,

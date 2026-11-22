@@ -26,7 +26,7 @@ export function legacySpellingRefusal(stored: string, slug: string, sourceId: st
 }
 
 /** Operations that change a page that already exists: they address the exact stored row, whatever its spelling (storedWriteSlug). */
-export const EXISTING_PAGE_OPERATIONS: readonly string[] = ['delete_page', 'add_tag', 'remove_tag', 'add_timeline_entry', 'edit_page', 'append_page'];
+export const EXISTING_PAGE_OPERATIONS: readonly string[] = ['delete_page', 'restore_page', 'add_tag', 'remove_tag', 'add_timeline_entry', 'edit_page', 'append_page'];
 
 /**
  * Refuse a put whose exact bytes, or their lowercase, name a stored page in `sourceId` that is not the composed `slug`: whether

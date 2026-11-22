@@ -21,7 +21,8 @@
  * on neither list.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { normalizeSlug } from '../utils.ts';
+import { normalizeSlug, withStoredSlug } from '../utils.ts';
+import { storedWriteSlug } from '../persistence/legacy-slug-put.ts';
 import type { Page } from '../types.ts';
 import { opError, type Operation } from './contract.ts';
 import { federatedSearchScope, parseSourceIdParam, sourceScopeOpts } from './context.ts';
@@ -261,9 +262,30 @@ async function chooseSpelling(ctx: Ctx, op: string, params: Params, raw: string,
 }
 
 /**
+ * A write (`NORMALIZED_WRITES`) acts on the page stored under the caller's exact spelling, or its lowercase, when one is
+ * stored in the caller's source (storedWriteSlug), as it did before slugs were normalized; only a name that no stored page
+ * holds is normalized. Normalizing first would attach the write to a different page that prints the same name, such as a
+ * public composed page beside a private decomposed one.
+ */
+async function writeByStoredSpelling(ctx: Parameters<Operation['handler']>[0], params: Params, normalized: Params, scalars: string[], handler: Operation['handler']) {
+  let chosen = normalized;
+  let kept: string | null = null;
+  for (const path of scalars) {
+    const raw = scalarAt(params, path);
+    const wanted = scalarAt(normalized, path);
+    if (raw === undefined || wanted === undefined || raw === wanted) continue;
+    const stored = await storedWriteSlug(ctx.engine, ctx.sourceId ?? 'default', raw, wanted);
+    if (stored === null) continue;
+    chosen = normalizeAt(chosen, path, () => stored);
+    kept ??= stored;
+  }
+  return kept === null ? handler(ctx, chosen) : withStoredSlug(kept, () => handler(ctx, chosen));
+}
+
+/**
  * Wraps an operation handler so a read receives normalized slug params (see the file comment), except that a page
  * stored under the caller's exact spelling (a capital, or the decomposed Unicode form older writes kept) is read as
- * stored. A mutating operation is passed through as sent, except `NORMALIZED_WRITES`: a page write normalizes the
+ * stored. A mutating operation is passed through as sent, except `NORMALIZED_WRITES` (writeByStoredSpelling): a page write normalizes the
  * slug itself (validateSlug), and its request digest covers what the caller sent, so a retry of a request journaled
  * before this change still replays.
  */
@@ -273,7 +295,7 @@ export function withNormalizedSlugParams(op: Operation, handler: Operation['hand
   const scalars = SLUG_PARAMS[op.name]!.filter(path => !/[.[]/.test(path));
   return async (ctx, params) => {
     const normalized = normalizeSlugParams(op.name, params);
-    if (write) return handler(ctx, normalized);
+    if (write) return writeByStoredSpelling(ctx, params, normalized, scalars, handler);
     // `onlyChanged`: a param already in normal form needs no probe unless the read found nothing (below).
     const choose = async (onlyChanged: boolean) => {
       let chosen = normalized;
