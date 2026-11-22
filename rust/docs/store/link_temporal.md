@@ -26,7 +26,7 @@ writes the rows the builder returns.
 | `brain.listPageStatusByRef(...)` / `brain.listRecordMetadataRows(...)` | the frontmatter `status` of each ref / the status and supersession links of referring pages | `listPageStatusByRef` / `listRecordMetadataRows` |
 | `brain.countSearchVectorRows()` | `{ pages, chunks }`: every page (deleted ones too) and every chunk | `countSearchVectorRows` |
 | `brain.countPendingProjectionPages({ scope, relevance })` | `{ total, could_affect, capped, top_counted?, could_affect_images }`: the live pages in scope whose text projection waits and needs work, at most 1000 | `countPendingProjectionPages` |
-| `brain.projectionRebuildProgress(scope)` | `{ done, total, pages_per_second }` while `protocol_activation` jobs are queued, else null | `projectionRebuildProgress` |
+| `brain.projectionRebuildProgress(scope)` | `{ done, total, pages_per_second }` while a `protocol_activation` job waits on a live `text` page in scope, else null | `projectionRebuildProgress` |
 | `brain.readProjectionReadinessGeneration()` | `<brain id>/<commit sequence>`: every commit advances it, so a cached probe answer lasts until the next write; null inside a transaction | `readProjectionReadinessGeneration` |
 | `brain.readProjectionReadiness(scope)` | `{ pending, by_design }`: whether a waiting page in scope needs work, and when none does, whether protected images wait | `readProjectionReadiness` |
 
@@ -94,8 +94,10 @@ language is refused with `engine_capability_missing` (`keyword_search`) at the f
   is dropped after a write the SQL engines' generation ignores. Inside a transaction it is null, as the SQL answer is while
   a transaction is in flight: the transaction reads its own writes, which the sequence does not count until it commits.
   A cached answer is never stale.
-- `projectionRebuildProgress` is null unless `protocol_activation` jobs are queued, and no store writer queues them yet
-  (an upgrade's activation runs only on the SQL engines), so on a store it is null in practice.
+- `projectionRebuildProgress` is null unless a `protocol_activation` job waits on a `text` page (a live source, and not an
+  image unless the page is a segmented shell) in the scope, as the SQL's `started` does (#10000); the clock starts at the
+  oldest such job. No store writer queues `protocol_activation` yet (an upgrade's activation runs only on the SQL
+  engines), so on a store it is null in practice.
 - A coverage read applies `pageEligibleSql`'s trust part: `minTrust` drops a page whose stamped tier ranks below the
   floor (a stored `null` counts as `unknown`; a name that is no tier refuses with `invalid_argument`), and
   `suppressFlagged` drops a page at or below `agent_written` with an instruction-family flag receipt

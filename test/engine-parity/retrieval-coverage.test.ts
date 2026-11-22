@@ -200,6 +200,35 @@ describe('engine parity: retrieval coverage', () => {
     },
   );
 
+  // #10000 (loss row 40): the rebuild counts as running only while an activation row waits on a `text` page of a live
+  // source in scope, so activation rows parked on images, on an archived source or outside the scope start no clock.
+  parityTest(
+    'search/retrieval-coverage: the rebuild clock starts only from an activation row on a text page in scope',
+    { methods: ['putPage', 'claimSegmentedProjection', 'projectionRebuildProgress'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      await createSource(engine, backend, 'gone');
+      const activate = (slug: string, sourceId = 'default') => engine.claimSegmentedProjection({ sourceId, slug }, 'protocol_activation');
+      const progress = async (scope: ProjectionReadinessScope) => {
+        const p = await countProjectionRebuild(engine, scope);
+        return p === null ? null : { done: p.done, total: p.total, rated: p.pages_per_second === null ? null : p.pages_per_second > 0 };
+      };
+      await engine.putPage('images/the_widget', page('the_widget', { page_kind: 'image', compiled_truth: 'Photo of the_widget' }));
+      await engine.putPage('notes/gone-widget', page('Gone widget'), { sourceId: 'gone' });
+      await engine.putPage('notes/other-widget', page('Other widget'), { sourceId: 'other' });
+      const claims = [await activate('images/the_widget'), await activate('notes/gone-widget', 'gone'), await activate('notes/other-widget', 'other')];
+      await archiveSource(engine, backend, 'gone');
+      const imagesOnly = { all: await progress({}), mine: await progress({ sourceId: 'default' }) };
+      await engine.putPage('notes/widget-plan', page('Widget plan'));
+      claims.push(await activate('notes/widget-plan'));
+      const withText = { mine: await progress({ sourceId: 'default' }), image: await progress({ sourceId: 'default', pageKind: 'image' }) };
+      const out = { claims, imagesOnly, withText };
+      expect(out.imagesOnly.mine).toBeNull();
+      expect(out.withText.mine).not.toBeNull();
+      return out;
+    },
+  );
+
   parityTest(
     'search/projection-readiness: ready, pending and by-design statuses follow the scope',
     { methods: ['putPage', 'sealChunks', 'softDeletePage', 'readProjectionReadiness'] },

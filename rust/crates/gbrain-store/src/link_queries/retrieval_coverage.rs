@@ -307,15 +307,24 @@ impl Store {
         })
     }
 
-    /// `projectionRebuildProgress`: null unless an upgrade's activation queued a rebuild; else the
-    /// pages in scope that need work, those already current and the rate since the rebuild began.
+    /// `projectionRebuildProgress`: null unless an upgrade's activation row waits on a `text` page in
+    /// scope; else the pages in scope that need work, those already current and the rate since the
+    /// rebuild began (the oldest such row).
     pub fn projection_rebuild_progress(
         &self,
         scope: &CoverageScope,
     ) -> Result<Option<RebuildProgress>> {
         let read = self.read()?;
         let read = &*read;
-        let Some(started) = activation_started_us(read)? else {
+        // `started` (#10000): an activation row counts only while it waits on a `text` page (`textClassSql`: a live
+        // source, and not an image unless the page is a segmented shell) in scope.
+        let mut sources = Sources::new(read);
+        let Some(started) = activation_started_us(read, |page, source| {
+            Ok(!source.archived
+                && class(page, false) == ProjectionClass::Text
+                && in_scope(read, &mut sources, page, scope)?)
+        })?
+        else {
             return Ok(None);
         };
         let seconds = (self.env.now_micros() - started) as f64 / 1_000_000.0;
