@@ -91,6 +91,7 @@ mod wake;
 pub(crate) use access_tokens::bind_token_member;
 pub use access_tokens::{TokenGrantColumns, TokenInsert};
 pub use attachments::AttachmentInput;
+pub(crate) use attachments::purge_probe_attachment_rows;
 pub use checks::{
     BuildSkewSpec, DeadDreamSpec, DeathsSpec, KeyPrefixSpec, QueuedSpendSpec, StillDeadSpec,
 };
@@ -99,6 +100,7 @@ pub use client_grants::{
 };
 pub use credential_binding::{CredentialBinding, CredentialKind, CredentialLookup};
 pub use health::{DivergenceSpec, HealthSpec};
+pub(crate) use inbox::purge_probe_inbox_rows;
 pub use insight::InsightSpec;
 use mutations::add_token;
 pub use mutations::{DelayOpts, TokenDelta};
@@ -111,6 +113,7 @@ pub use spend::{ExpireScope, LeaseFilter, LeaseInsert, SpendInsert, SpendTreeSpe
 pub use spend_log::{ClientReserve, GroupReserve, LogInsert};
 pub use status::StatusFilter;
 pub use subagent::{FailureFallback, MessageInsert, ToolInsert, ToolStart, ToolTarget};
+pub(crate) use subagent::{purge_probe_message_rows, purge_probe_tool_rows};
 pub use sweeps::{CancelOpts, PruneOutcome, PruneSpec};
 pub use wake::{
     CronRunInput, EndSpec, ForgetClaimSpec, ForgetSettle, WatchFilter, WatchInsert, WatchSettle,
@@ -696,6 +699,24 @@ fn rows_with_status(read: &dyn KvRead, status: &str) -> Result<Vec<JobRecord>> {
         }
     }
     Ok(rows)
+}
+
+/// The `minion_jobs` rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_job_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow};
+    Ok(all_rows(read)?
+        .into_iter()
+        .map(|r| ProbeRow {
+            source_id: None,
+            cells: vec![
+                ("data", ProbeCell::jsonb(&r.data)),
+                ("result", ProbeCell::opt_jsonb(r.result.as_ref())),
+                ("error_text", ProbeCell::opt_text(r.error_text.as_deref())),
+            ],
+        })
+        .collect())
 }
 
 fn all_rows(read: &dyn KvRead) -> Result<Vec<JobRecord>> {

@@ -344,7 +344,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   facts_purge: ['countFactFingerprintLeftovers', 'loadPurgeTarget', 'planFactPurgeIds', 'listFactsReconcileBacklog',
     'listRelinkCandidateRows', 'countRelinkCandidates', 'listSimilarActiveFacts', 'findActiveSingleFact',
     'listSingleFactMetadata', 'listUnfencedFactRows', 'listHeldFenceFactRows', 'listWithdrawalSlugs',
-    'expireFactsByWithdrawal', 'insertFactPurge', 'settleFactsReconcile', 'lockReconcileRevision',
+    'expireFactsByWithdrawal', 'insertFactPurge', 'upsertPagePurges', 'settleFactsReconcile', 'lockReconcileRevision',
     'selectFactsReconcileDrain', 'listDerivedRows', 'expireFactsOfGonePages', 'readPurgeSourceLocalPath',
     'insertReasonPurgeTombstones', 'listGitEffectsCarryingReason', 'listPageGitEffectsForStrip', 'setPurgeEffectData',
     'listPageChangeReasons', 'listRequestsRecordingReasons', 'heldEntityPageDeleted', 'readHeldAccessState',
@@ -363,6 +363,16 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'deletePurgeDecideProposals', 'deletePurgeTrustProposals', 'deletePurgeOpenLoops', 'deletePurgeWriteGateHolds',
     'deletePurgeWriteGateReceipts', 'deletePurgeTakeProposals', 'blankPurgeCoreEditNotices', 'deletePurgedFacts',
     'deletePurgedChunks', 'listPurgedPageRevisions', 'insertPurgeEffects'],
+  // purge_plan: a fact purge's request finders and verification probes
+  purge_plan: ['listRequestsCarryingClaim', 'listRequestsHoldingStagings', 'countPurgeProbe', 'listPurgeProbeItems'],
+  // projection_rebuild: a page projection rebuild's queue listing, job reason, keep plan and drained probe
+  // (its job delete is persistence_journal's deleteProjectionJob)
+  projection_rebuild: ['listQueuedPageProjections', 'readProjectionJobReason', 'readChunkKeepState',
+    'clearUnkeptChunkVectors', 'setProjectionChunkerVersion', 'hasDrainableProjectionJob'],
+  // belief ledger writes: lifetimes, event appends, commit marks, redactions (engine-sql/belief-ledger.ts)
+  belief_ledger: ['readBeliefTombstones', 'readBeliefRedactions', 'insertBeliefRedaction', 'releaseBeliefRedactions', 'insertBeliefEvents',
+    'markBeliefCommits', 'readOpenBeliefLifetimes', 'endBeliefLifetime', 'mintBeliefLifetime', 'renameBeliefLifetime', 'readMovedBeliefLifetimes',
+    'readLatestBeliefCoverage', 'hasBeliefBaseline', 'listBeliefBaselinePending', 'countBeliefBaselineSlugs'],
   facts_repair: ['loopFactDrift', 'closedLoopWithActiveFact', 'listSessionFactsForClassification',
     'listSessionFactTwins', 'listCapturedFactsForClassification', 'countLabelFacts',
     'listExtractorFactsForClassification', 'countPurgedPageFacts', 'listUnwithdrawnFacts',
@@ -396,7 +406,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listEvalCaptureFailures'],
   salience_enrich: ['batchLoadEmotionalInputs', 'setEmotionalWeightBatch', 'getRecentSalience', 'listEnrichCandidates',
     'findAnomalies', 'countZeroWeightWithTakes'],
-  trust: ['hasCoveringFactWithdrawal', 'insertFactWithdrawal', 'isFactWithdrawn', 'isFactPurged',
+  trust: ['hasCoveringFactWithdrawal', 'insertFactWithdrawal', 'isFactWithdrawn', 'isFactPurged', 'listPurgedTakeRows',
     'listFactWithdrawalDates', 'moveFactWithdrawalSubject', 'hasFactWithdrawalForSubject', 'listFactWithdrawalKeys',
     'readFactCacheWatermark', 'readTrustGeneration', 'upsertWriteGateReceipt', 'upsertPageWriteGateReceipt',
     'deleteStalePageWriteGateReceipts', 'listWriteGateReceiptsFor', 'deleteStaleWriteGateReceipts',

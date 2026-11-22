@@ -290,6 +290,25 @@ export async function insertFactPurge(raw: EngineRawRead, row: FactPurgeInsert):
   return rows.length > 0;
 }
 
+/** A page purge's content-hash tombstones, the rows the page purge sweep writes into `page_purges`. */
+export interface PagePurgeUpsert { sourceId: string; contentHashes: string[]; slug: string; requestId: string | null }
+
+/** tombstonePage: records each content hash under the slug; a hash already tombstoned takes the new slug, request and time. */
+export async function upsertPagePurges(raw: EngineRawRead, row: PagePurgeUpsert): Promise<void> {
+  await raw(`INSERT INTO page_purges(source_id,content_hash,slug,request_id) SELECT $1,h,$3,$4::uuid FROM unnest($2::text[]) AS h
+    ON CONFLICT (source_id,content_hash) DO UPDATE SET slug=EXCLUDED.slug,request_id=EXCLUDED.request_id,purged_at=now()`, [row.sourceId, row.contentHashes, row.slug, row.requestId]);
+}
+
+/** A take purge tombstone, the row purge_fact and the page purge write into `take_purges`. */
+export interface TakePurgeInsert { sourceId: string; subject: string; claimHash: string; requestId: string | null }
+
+/** purge_fact's take tombstone: stores it; false when one already holds the same (source, subject, fingerprint). */
+export async function insertTakePurge(raw: EngineRawRead, row: TakePurgeInsert): Promise<boolean> {
+  const rows = await raw<{ inserted: number }>(`INSERT INTO take_purges(source_id,subject,claim_hash,request_id) VALUES ($1,$2,$3,$4::uuid) ON CONFLICT DO NOTHING RETURNING 1 AS inserted`,
+    [row.sourceId, row.subject, row.claimHash, row.requestId]);
+  return rows.length > 0;
+}
+
 export async function expireFactsByWithdrawal(raw: EngineRawRead, sourceId: string, visibility: string, fact: string, subject: string): Promise<Array<{ id: number }>> {
   const { text, params } = renderFragment(sqlFragment`UPDATE facts SET expired_at=now(),valid_until=LEAST(COALESCE(valid_until,now()),now()) FROM ${subjectOf(subject)}
     WHERE facts.source_id=${sourceId} AND facts.visibility=${visibility} AND gbrain_fact_fingerprint(facts.fact)=gbrain_fact_fingerprint(${fact})
@@ -795,11 +814,6 @@ export async function insertHoldingPagePurges(raw: EngineRawRead, sourceId: stri
         SELECT DISTINCT ${trustedSql(P.p1)}::text,${trustedSql(P.p2)}::text,f.source_markdown_slug,${trustedSql(P.p3)}::text,${trustedSql(P.p4)}::uuid,${trustedSql(P.p5)}::text,${trustedSql(P.p6)}::text FROM facts f
           WHERE f.id=ANY(${trustedSql(P.p7)}::bigint[]) AND f.source_id=${trustedSql(P.p1)} AND ${trustedSql(holdingSlugSql('f.source_markdown_slug'))} AND f.entity_slug IS NOT NULL ON CONFLICT DO NOTHING`);
   await raw(text, [sourceId, visibility, factHash, requestId, actor, reason, factIds]);
-}
-
-/** submitPurgeFactMutation: Stores the text-free take purge tombstone for the claim fingerprint under the subject, none twice. Writes take_purges; run it in the purge transaction. */
-export async function insertTakePurge(raw: EngineRawRead, sourceId: string, subject: string, claimHash: string, requestId: string): Promise<void> {
-  await raw(`INSERT INTO take_purges(source_id,subject,claim_hash,request_id) VALUES ($1,$2,$3,$4::uuid) ON CONFLICT DO NOTHING`, [sourceId, subject, claimHash, requestId]);
 }
 
 /** submitPurgeFactMutation: Deletes the takes with these ids; how many. Writes takes; run it in the purge transaction. */

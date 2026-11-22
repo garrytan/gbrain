@@ -220,8 +220,8 @@ const PINS: Pin[] = [
   {
     from: 'src/core/facts/purge.ts:552 submitPurgeFactMutation',
     member: 'insertTakePurge',
-    run: e => e.insertTakePurge('src-a', '*', 'hash-a', 'a0000000-0000-4000-8000-0000000000a1'),
-    texts: [`INSERT INTO take_purges(source_id,subject,claim_hash,request_id) VALUES ($1,$2,$3,$4::uuid) ON CONFLICT DO NOTHING`],
+    run: e => e.insertTakePurge({ sourceId: 'src-a', subject: '*', claimHash: 'hash-a', requestId: 'a0000000-0000-4000-8000-0000000000a1' }),
+    texts: [`INSERT INTO take_purges(source_id,subject,claim_hash,request_id) VALUES ($1,$2,$3,$4::uuid) ON CONFLICT DO NOTHING RETURNING 1 AS inserted`],
     params: [['src-a', '*', 'hash-a', 'a0000000-0000-4000-8000-0000000000a1']],
   },
   {

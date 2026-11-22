@@ -912,6 +912,26 @@ impl Store {
     }
 }
 
+/// The `mcp_request_log` rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow};
+    Ok(read_log(read)?
+        .into_iter()
+        .map(|(_, r)| ProbeRow {
+            source_id: None,
+            cells: vec![
+                ("params", ProbeCell::opt_jsonb(r.params.as_ref())),
+                (
+                    "error_message",
+                    ProbeCell::opt_text(r.error_message.as_deref()),
+                ),
+            ],
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

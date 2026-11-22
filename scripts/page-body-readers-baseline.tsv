@@ -656,6 +656,7 @@ src/core/repair/visibility.ts	planAliases	sql	META
 src/core/repair/visibility.ts	planEvents	sql	META	
 src/core/repair/visibility.ts	planLineage	sql	META	
 src/core/repair/visibility.ts	visibilityWrite	call:serializePageToMarkdown	SEGW	
+src/core/rust-engine/snapshot-overlay.ts	overlayStoreSnapshot	field	STREAM	the Rust arm of readSnapshotStatement's withdrawal overlay (page-state/snapshot.ts): the Rust store keeps every body inline; the body strike skips a segmented page as readSnapshotStatement does (per-window overlay in PR 2)
 src/core/rust-engine/store-members/chunks.ts	sealChunks	field	STREAM	mirrors sealPageTextProjection (text-seal.ts): sends sanitizeRemoteBody(timeline) with the seal for the page keyword vector; a segmented page (null timeline from the Rust store) sends none
 src/core/rust-engine/store-members/field-usage.ts	readFieldUsageSamples	field	LEAD	the Rust arm of engine-sql/field-usage.ts readFieldUsageSamples: passes the store's sampled compiled_truth through; a segmented page samples a null body (TODOS.md)
 src/core/rust-engine/store-members/page-body.ts	refreshPageBody	call:refreshPageBody	SEGW	forwards to the Rust store, which refuses a segmented page as the body-storage CHECK does; callers assert first

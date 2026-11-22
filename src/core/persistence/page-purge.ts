@@ -278,8 +278,7 @@ async function tombstonePage(tx: BrainEngine, sourceId: string, slug: string, pa
     const hash = await rewrittenContentHash(tx, pageId, sourceId, body.generation, overlaid, body.meta);
     if (hash) hashes.add(hash);
   }
-  await tx.executeRaw(`INSERT INTO page_purges(source_id,content_hash,slug,request_id) SELECT $1,h,$3,$4::uuid FROM unnest($2::text[]) AS h
-    ON CONFLICT (source_id,content_hash) DO UPDATE SET slug=EXCLUDED.slug,request_id=EXCLUDED.request_id,purged_at=now()`, [sourceId, [...hashes], slug, requestId]);
+  await tx.upsertPagePurges({ sourceId, contentHashes: [...hashes], slug, requestId });
 }
 
 /** Inside the coordinated delete transaction, before the page row is deleted. */

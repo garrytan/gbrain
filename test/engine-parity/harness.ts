@@ -40,7 +40,7 @@ import type { TestBackend } from '../helpers/test-backends.ts';
 import { armHas, isCapabilityRefusal, missingCapability, type EngineCapability } from './arm-capabilities.ts';
 import { checkRustTally } from './rust-tally.ts';
 import {
-  archiveRustSource, createRustSource, recordRustPagePurge, newRustBrain, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
+  archiveRustSource, createRustSource, newRustBrain, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
 } from './rust-arm.ts';
 
 /** The backends a parity arm can run on: the SQL ones every suite selects, and the opt-in Rust engine. */
@@ -307,7 +307,7 @@ export async function archiveSource(engine: BrainEngine, backend: ParityBackend,
  */
 export async function enableBeliefCoverage(engine: BrainEngine, backend: ParityBackend, sourceId: string): Promise<void> {
   switch (backend) {
-    // The Rust arm runs the same production path; it stops on the engine's typed refusal until the ledger is served.
+    // The Rust arm runs the same production path; a source with no pages enables there (a page's baseline still reads raw SQL).
     case 'rust':
     case 'pglite':
     case 'postgres':
@@ -399,19 +399,20 @@ export async function seedCalibrationProfile(engine: BrainEngine, _backend: Pari
  * harness-only SQL behind the backend switch; `purgedAt` (ISO) replaces the default `now()`, and `requestId` stamps the
  * purge request the row belongs to. `contentHash` may name several hashes (one row each).
  *
- * The Rust store has a writer for the ledger (`recordPagePurge`), but it stamps `now()` only: with a `purgedAt` the Rust
- * arm runs the same SQL and stops on the engine's typed raw_sql refusal.
+ * Without a `purgedAt` the row goes through the typed `upsertPagePurges`, which every arm serves and stamps `now()`: with a
+ * `purgedAt` the Rust arm runs the same SQL and stops on the engine's typed raw_sql refusal.
  */
 export async function recordPagePurge(
   engine: BrainEngine, backend: ParityBackend, sourceId: string, slug: string, contentHash: string | string[], purgedAt?: string, requestId: string | null = null,
 ): Promise<void> {
   const hashes = Array.isArray(contentHash) ? contentHash : [contentHash];
+  // Without a stamped time every arm stores the tombstone through the typed `upsertPagePurges` the page purge sweep uses.
+  if (purgedAt === undefined) {
+    await engine.upsertPagePurges({ sourceId, contentHashes: hashes, slug, requestId });
+    return;
+  }
   switch (backend) {
     case 'rust':
-      if (purgedAt === undefined) {
-        await recordRustPagePurge(engine, sourceId, hashes, slug, requestId);
-        return;
-      }
     // falls through: a stamped time has no Rust writer; the SQL below ends in the typed refusal.
     case 'pglite':
     case 'postgres':

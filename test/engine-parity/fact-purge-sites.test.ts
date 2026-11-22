@@ -269,11 +269,11 @@ describe('engine parity: fact purge plan, transaction and segment-storage statem
       await tx.insertHoldingPagePurges(SRC, 'private', 'hash-a', REQ, 'local_cli:me', 'because', [held]);
       await tx.insertHoldingPagePurges(SRC, 'private', 'hash-a', REQ, 'local_cli:me', null, [held]);
       await tx.insertHoldingPagePurges(SRC, 'private', 'hash-a', REQ, 'local_cli:me', 'because', []);
-      await tx.insertTakePurge(SRC, '*', 'hash-a', REQ);
-      await tx.insertTakePurge(SRC, '*', 'hash-a', REQ);
-      return 'stored';
+      const first = await tx.insertTakePurge({ sourceId: SRC, subject: '*', claimHash: 'hash-a', requestId: REQ });
+      const again = await tx.insertTakePurge({ sourceId: SRC, subject: '*', claimHash: 'hash-a', requestId: REQ });
+      return { first, again };
     });
-    expect(answers).toBe('stored');
+    expect(answers).toEqual({ first: true, again: false });
     return answers;
   });
 
@@ -666,10 +666,10 @@ describe('engine parity: fact purge plan, transaction and segment-storage statem
       await tx.insertHoldingPagePurges(SRC, 'private', 'hash-c', REQ, 'local_cli:me', 'none', [ordinary]);
       await tx.insertHoldingPagePurges(SRC, 'private', 'hash-e', REQ, 'local_cli:me', 'subject', [aboutHolding]);
       await tx.insertHoldingPagePurges(SRC, 'private', 'hash-d', REQ, 'local_cli:me', 'none', []);
-      await tx.insertTakePurge(SRC, '*', hash, REQ);
-      await tx.insertTakePurge(SRC, '*', hash, REQ2);
-      await tx.insertTakePurge(SRC, 'people/alice', hash, REQ);
-      await tx.insertTakePurge(SRC, '*', 'hash-b', REQ);
+      await tx.insertTakePurge({ sourceId: SRC, subject: '*', claimHash: hash, requestId: REQ });
+      await tx.insertTakePurge({ sourceId: SRC, subject: '*', claimHash: hash, requestId: REQ2 });
+      await tx.insertTakePurge({ sourceId: SRC, subject: 'people/alice', claimHash: hash, requestId: REQ });
+      await tx.insertTakePurge({ sourceId: SRC, subject: '*', claimHash: 'hash-b', requestId: REQ });
       return 'stored';
     });
     const matches = async (fact: string, visibility: string, entity: string | null) =>

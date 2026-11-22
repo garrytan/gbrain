@@ -162,6 +162,7 @@ test/engine-parity/alias-fanout-reads.test.ts
 test/engine-parity/alias-trust.test.ts
 test/engine-parity/attested-actor-link.test.ts
 test/engine-parity/backup-readiness-callers.test.ts
+test/engine-parity/belief-ledger.test.ts
 test/engine-parity/brief-reads.test.ts
 test/engine-parity/calibration-profiles.test.ts
 test/engine-parity/chronicle-publish-parity.test.ts
@@ -232,6 +233,7 @@ test/engine-parity/extraction.test.ts
 test/engine-parity/fact-future-order.test.ts
 test/engine-parity/fact-pool-widening.test.ts
 test/engine-parity/fact-provenance.test.ts
+test/engine-parity/fact-purge-commit.test.ts
 test/engine-parity/fact-purge-ledger.test.ts
 test/engine-parity/fact-purge-sites.test.ts
 test/engine-parity/fact-relink-attempts.test.ts
@@ -253,11 +255,13 @@ test/engine-parity/facts-trust.test.ts
 test/engine-parity/facts.test.ts
 test/engine-parity/family-tail-sites.test.ts
 test/engine-parity/fence-overlay.test.ts
+test/engine-parity/fenced-import-purge.test.ts
 test/engine-parity/field-usage.test.ts
 test/engine-parity/files-ops-sites.test.ts
 test/engine-parity/first-due.test.ts
 test/engine-parity/forget-commit.test.ts
 test/engine-parity/forget-reach-reads.test.ts
+test/engine-parity/forget-rebuild.test.ts
 test/engine-parity/forget-remember.test.ts
 test/engine-parity/generation-output-parity.test.ts
 test/engine-parity/generation-page-rows-order.test.ts
@@ -318,6 +322,8 @@ test/engine-parity/persistence.test.ts
 test/engine-parity/person-duplicates.test.ts
 test/engine-parity/privacy-hold-reply.test.ts
 test/engine-parity/private-page-reads.test.ts
+test/engine-parity/purge-dry-run.test.ts
+test/engine-parity/purge-plan.test.ts
 test/engine-parity/put-source-fork.test.ts
 test/engine-parity/raw-sql.test.ts
 test/engine-parity/reads-privacy.test.ts
@@ -356,6 +362,8 @@ test/engine-parity/sync-requests.test.ts
 test/engine-parity/sync-route.test.ts
 test/engine-parity/sync-run.test.ts
 test/engine-parity/take-held-rows.test.ts
+test/engine-parity/take-purge-ledger.test.ts
+test/engine-parity/take-purge-overlay.test.ts
 test/engine-parity/take-trust-fields.test.ts
 test/engine-parity/take-trust-reads.test.ts
 test/engine-parity/take-vector-search.test.ts

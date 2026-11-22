@@ -921,10 +921,22 @@ Facts and their supersession chains.
     `listSegmentedPagesBySlug`, `bumpWithdrawnPageRevisions`, `readPageRevisions` and `appendFactForgetReason`, and
     `readFactWithdrawnRow` and `readFactWithdrawnBacking` for the `fact_withdrawn` refusal of a remember. The store
     serves them in `trust/withdrawal_commit.rs` (rust/docs/store/trust.md "The forget commit"). Pinned by
-    `test/engine-parity/forget-commit.test.ts` and `test/engine-parity/forget-remember.test.ts`. Still raw on Rust:
-    the purge sweep (`facts/purge.ts`) and `memberPageWithdrawal`. The write-request forget (lane 4) reaches these
-    members and the typed `lockSourceRow`, `readFactWithdrawalClaim`, `applyDecideReviewQueue` and
-    `insertWithdrawalEffects` calls, so `recordFactWithdrawal` makes no raw statement but the ledger and fence reads.
+    `test/engine-parity/forget-commit.test.ts` and `test/engine-parity/forget-remember.test.ts`. `recordFactWithdrawal`
+    itself locks the claim with `readFactWithdrawalClaim` (`lock`) and queues its review with `applyDecideReviewQueue`,
+    so `lockFactForWithdrawal`, `queueWithdrawalReview`, `listSegmentedPagesBySlug`, `bumpWithdrawnPageRevisions` and
+    `readPageRevisions` have no caller in `src/` yet. Still raw on Rust: the purge sweep's commit transaction and
+    post-commit work (`facts/purge.ts`) and the forget's post-commit chunk rebuild (`page-state/projections.ts`).
+    The write-request forget (lane 4) reaches these members and the typed `lockSourceRow`, `readFactWithdrawalClaim`,
+    `applyDecideReviewQueue` and `insertWithdrawalEffects` calls, so `recordFactWithdrawal` makes no raw statement but the
+    ledger and fence reads.
+  - The purge plan, dry run and `--match` reads are typed (`engine-sql/facts-purge.ts` from `purgeSubjectPageLive` to
+    `listNearestFactsForPurge`, and `engine-sql/facts-purge-plan.ts`, four members to `listPurgeProbeItems`). The store serves
+    them in `facts/purge_plan.rs`, `facts/purge_probe.rs` and `page_body/purge_scan.rs` (rust/docs/store/purge-plan.md);
+    it probes `links`, `timeline_entries`, `raw_data`, `wanted_links` and every other inventory table it keeps (bytea
+    `minion_attachments.content` included), answers 0 for the tables it keeps no rows of, and refuses only naming
+    `raw_data` rows. On Rust a purge plan and its dry run complete and equal PGLite. Pinned by
+    `test/engine-parity/purge-plan.test.ts`, `test/engine-parity/purge-dry-run.test.ts` and
+    `test/purge-plan-sql-pin.test.ts`.
   - The reads withdrawal discovery makes (`discoverWithdrawalTargets`, `facts/withdrawal-discovery.ts`) are one typed
     member, `readWithdrawalDiscovery(read)` (`engine-sql/withdrawal-discovery.ts`), tagged by `kind`: `claim_keys`,
     `provenance_pages`, `claim_matches`, `inline_fence_pages`, `segment_fence_rows`, `split_fence_slots`,
@@ -1923,7 +1935,7 @@ and write provenance on content rows, and the trust records.
     answers false: the store keeps no `needs_rederive` queue. `beginSnapshotRead` (`engine-sql/transaction-settings.ts`) starts the valid-time,
     fuzzy `get_page` and export transactions as one `REPEATABLE READ` snapshot; the Rust member sets no isolation level, because a
     store transaction holds the one writer from its start, and it enforces `READ ONLY` with Postgres's `25006` refusal. It refuses the takes and timeline
-    scan tables, and the belief history members refuse for the missing belief ledger (TODOS.md `rust-belief-ledger`).
+    scan tables; the belief history members read the store's belief ledger (`trust/belief_history.rs`).
     The store prunes versions as PGLite does (`version_prune.rs`), so the pick reads the same marks, and it serves the
     fence fact append's holding-page prune (`pruneHoldingPageVersions`), its occupied-row read (`readFenceRowOccupant`)
     and its page tier restore (`restorePageTrust`, through the same trust stamp as the PGLite `UPDATE`).

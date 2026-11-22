@@ -60,6 +60,8 @@ import * as fenceHolds from './fence-holds.ts';
 import * as derivedGenerations from './derived-generations.ts';
 import * as factsCycle from './facts-cycle.ts';
 import * as factsPurge from './facts-purge.ts';
+import * as purgePlan from './purge-plan.ts';
+import * as projectionRebuild from './projection-rebuild.ts';
 import * as factsRepair from './facts-repair.ts';
 import * as factsTrust from './facts-trust.ts';
 import * as factsRecall from './facts-recall.ts';
@@ -130,6 +132,7 @@ import * as fenceCensus from './fence-census.ts';
 import * as doctorSources from './doctor-sources.ts';
 import * as sweepReads from './sweep-reads.ts';
 import * as cliReadsExport from './cli-reads-export.ts';
+import * as beliefLedger from './belief-ledger.ts';
 
 export const STORE_MEMBERS = {
   initSchema,
@@ -150,12 +153,14 @@ export const STORE_MEMBERS = {
   ...cliReadsExport,
   ...cliEntities, ...reflexReads, ...briefReads,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
-  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...factsRecall, ...derivationTrust, ...factsTrustReads, ...factsTrustOwner, ...factsProvenance, ...factsQuoted, ...factRelinkAttempts,
+  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...purgePlan, ...projectionRebuild, ...factsRepair, ...factsTrust, ...factsRecall, ...derivationTrust, ...factsTrustReads, ...factsTrustOwner, ...factsProvenance, ...factsQuoted, ...factRelinkAttempts,
   ...factRelinkWrites,
   // The Life Chronicle event statements (rust/crates/gbrain-store/src/generations/chronicle_events.rs).
   ...chronicleEvents,
   // Typed reads of stamped trust tiers (rust/docs/store/trust.md, "Tier reads").
   ...trustTierReads,
+  // Belief ledger writes and the append's reads (rust/docs/store/trust.md, "The belief ledger").
+  ...beliefLedger,
   // The reads remember and forget make before admission (rust/docs/store/memory_mutation_reads.md).
   ...memoryMutationReads,
   // The statements a forget's withdrawal commits and the fact_withdrawn refusal reads (rust/docs/store/trust.md).

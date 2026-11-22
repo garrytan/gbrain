@@ -16,18 +16,19 @@ import { getFtsLanguage } from '../fts-language.ts';
 import { getEmbeddingModel } from '../ai/gateway.ts';
 import { jsonRowBatches } from '../batch-rows.ts';
 import { refreshProjectionStatistics } from '../search/projection-statistics.ts';
-import { belowSafeChunkFence, movableChunkSql } from '../search/safe-chunks.ts';
+import { belowSafeChunkFence } from '../search/safe-chunks.ts';
 import { applyMoveWaves, CHUNK_VECTOR_WRITE_BUDGET, planMoveWaves, type ChunkMove } from './chunk-moves.ts';
 import { buildSegmentedProjection } from '../page-body/projection.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import type { PageReadScope } from '../types.ts';
-import { sealableImageSql } from './projection-class.ts';
 import { advanceProjectionCursor, ineligibleKey, rememberIneligible, type ProjectionScanCursor } from './projection-window.ts';
 import { acceptedEmbeddingInputHashes, embeddingInputHash, plainEmbeddingTier, synopsisBodyHash,
   type EmbeddingInputContext, type EmbeddingTier } from '../embedding-input-hash.ts';
 import { chunkModelMatchesSql } from '../embedding-invalidation.ts';
 import { isRetryableConnError } from '../retry-matcher.ts';
 import { ACTIVATION_SERVED_REVISION } from '../search/safe-chunks.ts';
+import { projectionJobProbes } from '../engine-sql/projection-rebuild.ts';
+import { lacksRawSql } from '../engine-capabilities.ts';
 
 export { sealPageTextProjection } from './text-seal.ts';
 import { sealPageTextProjection } from './text-seal.ts';
@@ -177,10 +178,8 @@ async function planProjectionKeep(tx: BrainEngine, current: PageSnapshot, contex
   // nulled once and stamped by its re-embed.
   const mode = current.page.contextual_retrieval_mode;
   const provenance = embeddingInputContext(context, current.page.title, context.corpusGeneration, chunks);
-  const col = quoteIdentifier(context.column.name);
-  const recorded = new Map((await tx.executeRaw<{ id: number; embedding_input_hash: string | null; movable: boolean }>(
-    `SELECT id,embedding_input_hash,${movableChunkSql(col)} AND ${chunkModelMatchesSql('model', '$2', `vector_dims(${col}) = ${context.column.dimensions}`)} AS movable FROM content_chunks WHERE page_id=$1`,
-    [current.page.id, context.provenanceModel])).map(row => [Number(row.id), row]));
+  const recorded = new Map((await tx.readChunkKeepState(current.page.id, context.provenanceModel, context.column))
+    .map(row => [Number(row.id), row]));
   const currentInput = (chunk: Chunk) => {
     const hash = recorded.get(Number(chunk.id))?.embedding_input_hash ?? null;
     return hash === null ? mode == null : acceptedEmbeddingInputHashes(provenance, mode, chunk).includes(hash);
@@ -338,21 +337,15 @@ export async function installPageProjection(engine: BrainEngine, prepared: Proje
     if (changed.length) throw new PageProjectionConflictError(snapshot.revision, current!.revision, changed, slug, sourceId);
     if (opts.seal && opts.preserveEmbeddings) {
       const { kept, current: currentIds, provenanceModel, column } = await planProjectionKeep(tx, current!, context, stored, chunks);
-      const col = quoteIdentifier(column.name);
       await tx.deleteChunksExcept(slug, kept.map(chunk => chunk.id), { sourceId });
-      await tx.executeRaw(`UPDATE content_chunks SET ${col}=NULL,
-        embedded_at=NULL,embedded_text_hash=NULL,embedding_input_hash=NULL,
-        embedding_pending_since=COALESCE(embedding_pending_since,now()) WHERE page_id=$1 AND
-        (NOT ${chunkModelMatchesSql('model', '$2', `vector_dims(${col}) = ${column.dimensions}`)} OR embedded_text_hash <> md5(chunk_text) OR NOT(id=ANY($3::int[])))`,
-      [snapshot.page.id, provenanceModel, currentIds]);
+      await tx.clearUnkeptChunkVectors(snapshot.page.id, provenanceModel, column, currentIds);
     } else if (opts.seal) await tx.deleteChunks(slug, { sourceId });
     await tx.upsertChunks(slug, chunks, { sourceId, expectedRevision: snapshot.revision, embeddingColumn: context.column });
     if (opts.code) await installCodeChunkEdges(tx, slug, sourceId, opts.code);
     if (opts.seal) {
-      await tx.executeRaw(`UPDATE pages SET chunker_version=$3
-        WHERE source_id=$1 AND slug=$2`, [sourceId, slug, MARKDOWN_CHUNKER_VERSION]);
+      await tx.setProjectionChunkerVersion(sourceId, slug, MARKDOWN_CHUNKER_VERSION);
       await sealPageTextProjection(tx, slug, sourceId, current!);
-      await tx.executeRaw('DELETE FROM page_projection_jobs WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid', [snapshot.sourceIncarnation, slug, snapshot.revision]);
+      await tx.deleteProjectionJob({ sourceIncarnation: snapshot.sourceIncarnation, slug, revision: snapshot.revision });
     }
     if (opts.signature) await tx.setPageEmbeddingSignature(slug, { sourceId, signature: opts.signature });
   });
@@ -518,13 +511,7 @@ export const SEGMENTED_JOB_PROBES = `JOIN sources s ON s.incarnation=j.source_in
  * (projection-class.ts), for the explicit drain and its preview only: the
  * resident, embed paths and `gbrain migrate` never pass it.
  */
-export function projectionJobProbes(opts: { media?: boolean } = {}): string {
-  const inline = "p.page_kind IN ('markdown','code') AND p.body_storage IS DISTINCT FROM 'segmented'";
-  return `CROSS JOIN LATERAL (SELECT s.id FROM sources s
-      WHERE s.incarnation=j.source_incarnation AND NOT s.archived OFFSET 0) s
-    CROSS JOIN LATERAL (SELECT p.page_kind FROM pages p WHERE p.id=(SELECT k.id FROM pages k WHERE k.source_id=s.id AND k.slug=j.slug)
-      AND p.deleted_at IS NULL AND ${opts.media ? `((${inline}) OR ${sealableImageSql('p')})` : inline} OFFSET 0) p`;
-}
+export { projectionJobProbes } from '../engine-sql/projection-rebuild.ts';
 const PROJECTION_JOB_PROBES = projectionJobProbes();
 
 /**
@@ -552,7 +539,8 @@ export async function noteProjectionRebuilds(engine: BrainEngine, rebuilt: numbe
   if (owed.rows !== null && owed.rebuilt < 50 + owed.rows * 0.1) return;
   if (!await drained()) return;
   await refreshProjectionStatistics(engine);
-  const [pages] = await engine.executeRaw<{ rows: number }>("SELECT GREATEST(reltuples,0)::float8 AS rows FROM pg_class WHERE oid='pages'::regclass");
+  // An engine without raw SQL (Rust) keeps no planner statistics: its debt restarts from no rows.
+  const [pages] = lacksRawSql(engine) ? [] : await engine.executeRaw<{ rows: number }>("SELECT GREATEST(reltuples,0)::float8 AS rows FROM pg_class WHERE oid='pages'::regclass");
   statisticsDebt.set(engine, { rebuilt: 0, rows: Number(pages?.rows ?? 0) });
   statisticsRefreshes.set(engine, projectionStatisticsRefreshes(engine) + 1);
 }
@@ -742,31 +730,11 @@ export async function previewProjectionDrain(engine: Pick<BrainEngine, 'executeR
 export async function rebuildPendingPageProjections(engine: BrainEngine, limit = 20, opts: ProjectionRebuildOptions = {}): Promise<{ rebuilt: number; superseded: number }> {
   const now = opts.now ?? Date.now;
   const startedAt = now();
-  const params: unknown[] = [Math.max(1, Math.min(limit, 100))];
-  const filters: string[] = [];
-  if (opts.retryCooldown) filters.push(PROJECTION_RETRY_READY_SQL);
-  if (opts.notAfter !== undefined) { params.push(opts.notAfter); filters.push(`j.updated_at<=$${params.length}::text::timestamptz`); }
-  if (opts.reasons) { params.push(opts.reasons); filters.push(`j.reason=ANY($${params.length}::text[])`); }
-  if (opts.pages) { params.push(opts.pages.slugs); filters.push(`j.slug=ANY($${params.length}::text[])`); }
-  const after = opts.window ? undefined : opts.walk?.after;
-  if (after) {
-    params.push(after.updated_at, after.source_incarnation, after.slug);
-    filters.push(`(j.updated_at,j.source_incarnation,j.slug COLLATE "C")>($${params.length - 2}::text::timestamptz,$${params.length - 1}::uuid,$${params.length} COLLATE "C")`);
-  }
-  const outer: string[] = [];
-  if (opts.pages) outer.push(`s.id=$${params.push(opts.pages.sourceId)}`);
-  if (opts.served) {
-    outer.push(`${opts.served === 'waiting' ? 'NOT ' : ''}EXISTS (SELECT 1 FROM pages q WHERE q.source_id=s.id AND q.slug=j.slug
-      AND q.text_projection_revision='${ACTIVATION_SERVED_REVISION}'::uuid)`);
-  }
-  const sourceFilter = outer.length ? `WHERE ${outer.join(' AND ')}` : '';
+  const max = Math.max(1, Math.min(limit, 100));
   const selected = opts.window ? await selectWindowJobs(engine, opts.window, opts.retryCooldown === true) : null;
-  const jobs = selected ? selected.jobs.slice(0, Number(params[0])) : await engine.executeRaw<QueuedJob>(`SELECT s.id AS source_id,j.source_incarnation,j.slug,j.revision,p.page_kind,j.updated_at::text AS updated_at
-    FROM (SELECT source_incarnation,slug,revision,updated_at FROM page_projection_jobs j
-      ${filters.length ? `WHERE ${filters.join(' AND ')}` : ''}
-      ORDER BY updated_at,source_incarnation,slug COLLATE "C" OFFSET 0) j
-    ${PROJECTION_JOB_PROBES} ${sourceFilter}
-    ORDER BY j.updated_at,j.source_incarnation,j.slug COLLATE "C" LIMIT $1`, params);
+  const jobs = selected ? selected.jobs.slice(0, max) : await engine.listQueuedPageProjections({ limit: max,
+    retryCooldown: opts.retryCooldown, notAfter: opts.notAfter, reasons: opts.reasons, pages: opts.pages,
+    after: opts.window ? undefined : opts.walk?.after, served: opts.served });
   let rebuilt = 0;
   let superseded = 0;
   let attempted = 0;
@@ -779,13 +747,13 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
   const runJob = async (index: number): Promise<boolean> => {
     const job = jobs[index]!;
     const observed = [job.source_incarnation, job.slug, job.revision];
+    const key = { sourceIncarnation: job.source_incarnation, slug: job.slug, revision: job.revision };
     try {
       const prepared = await engine.transaction(async tx => {
         await tx.lockPageKeys([{ sourceId: job.source_id, slug: job.slug }]);
-        const pending = await tx.executeRaw<{ reason: string }>(`SELECT reason FROM page_projection_jobs
-          WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid`, observed);
-        if (!pending.length) return null;
-        if (pending[0]!.reason === DEFERRED_CHUNK_REPLACEMENT || pending[0]!.reason.split(':')[0] === DEFERRED_CHUNK_CLAIM) return 'deferred';
+        const pending = await tx.readProjectionJobReason(key);
+        if (pending === null) return null;
+        if (pending === DEFERRED_CHUNK_REPLACEMENT || pending.split(':')[0] === DEFERRED_CHUNK_CLAIM) return 'deferred';
         const read = await readGuardedProjectionSnapshot(tx, job.slug, job.source_id, { allowUnsealed: true });
         if (!read) {
           const [segmented] = await tx.executeRaw(`SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND body_storage='segmented' AND deleted_at IS NULL`,
@@ -795,7 +763,7 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
         const { snapshot } = read;
         if (snapshot.sourceIncarnation === job.source_incarnation && snapshot.revision === job.revision) return read;
         if (snapshot.sourceIncarnation !== job.source_incarnation || snapshot.page.text_projection_revision === snapshot.revision) {
-          await tx.executeRaw('DELETE FROM page_projection_jobs WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid', observed);
+          await tx.deleteProjectionJob(key);
           return 'removed';
         }
         await tx.executeRaw(`UPDATE page_projection_jobs SET revision=$4::uuid,updated_at=now()
@@ -873,9 +841,7 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
   }
   // The resident's statistics probe stays inside its window: what it selected and did not rebuild.
   await noteProjectionRebuilds(engine, rebuilt, async () => selected ? selected.jobs.length <= rebuilt
-    : !(await engine.executeRaw(`SELECT 1 FROM page_projection_jobs j
-      ${projectionJobProbes({ media: opts.media })}
-      WHERE j.reason<>'rebuild_failed' LIMIT 1`)).length);
+    : !(await engine.hasDrainableProjectionJob({ media: opts.media })));
   const last = jobs[attempted - 1];
   if (opts.walk && !selected && last?.updated_at !== undefined) {
     opts.walk.after = { updated_at: last.updated_at, source_incarnation: last.source_incarnation, slug: last.slug };

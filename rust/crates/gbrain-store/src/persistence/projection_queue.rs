@@ -201,17 +201,17 @@ pub(crate) fn compact_format_2_jobs(tx: &mut dyn KvWrite) -> Result<()> {
 
 /// A job with its key fields.
 #[derive(Debug, Clone)]
-struct Job {
-    incarnation: String,
-    slug: String,
-    record: JobRecord,
+pub(super) struct Job {
+    pub(super) incarnation: String,
+    pub(super) slug: String,
+    pub(super) record: JobRecord,
 }
 
 fn prefix() -> [u8; 2] {
     [keys::PERSISTENCE, QUEUE]
 }
 
-fn job_key(incarnation: &str, slug: &str) -> Vec<u8> {
+pub(super) fn job_key(incarnation: &str, slug: &str) -> Vec<u8> {
     let mut key = prefix().to_vec();
     key.extend_from_slice(incarnation.as_bytes());
     key.push(0);
@@ -265,7 +265,7 @@ pub(crate) fn queue_page_projection(
 }
 
 /// Every job, in key order.
-fn all_jobs(read: &dyn KvRead) -> Result<Vec<Job>> {
+pub(super) fn all_jobs(read: &dyn KvRead) -> Result<Vec<Job>> {
     let mut out = Vec::new();
     let mut failure = None;
     let start = prefix().len();
@@ -344,7 +344,7 @@ fn claimed(job: &JobRecord, now: i64) -> bool {
 }
 
 /// `PROJECTION_RETRY_READY_TEXT`.
-fn retry_ready(job: &JobRecord, now: i64) -> bool {
+pub(super) fn retry_ready(job: &JobRecord, now: i64) -> bool {
     (job.reason != "rebuild_failed" || job.updated_at_us < now - RETRY_US)
         && !claimed(job, now)
         && !(reason_kind(&job.reason) == "chunk_replacement_continuing"
@@ -669,7 +669,7 @@ pub(crate) fn release_segmented_projection_claim_in(
 }
 
 /// The job at `(source_incarnation, slug)` when it is still queued at `revision`.
-fn job_at_revision(
+pub(super) fn job_at_revision(
     read: &dyn KvRead,
     job: &ProjectionJobRef,
 ) -> Result<Option<(Vec<u8>, JobRecord)>> {

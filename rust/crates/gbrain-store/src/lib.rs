@@ -34,6 +34,7 @@ mod owner_only_marks;
 mod page_columns;
 mod page_index;
 mod page_projection;
+mod page_withdrawals;
 pub mod pages;
 pub mod redb_kv;
 pub mod search;

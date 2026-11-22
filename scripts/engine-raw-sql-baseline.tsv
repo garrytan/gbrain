@@ -188,14 +188,11 @@ src/core/backfill-effective-date.ts	execute_raw	3
 src/core/backfill-skips.ts	execute_raw	2
 src/core/backup/quarantine.ts	execute_raw	9
 src/core/backup/snapshot.ts	execute_raw	5
-src/core/belief/append.ts	execute_raw	7
 src/core/belief/backfill.ts	execute_raw	8
 src/core/belief/changes.ts	execute_raw	2
 src/core/belief/coverage-report.ts	execute_raw	12
-src/core/belief/coverage.ts	execute_raw	5
 src/core/belief/identity.ts	execute_raw	2
 src/core/belief/ledger.ts	execute_raw	1
-src/core/belief/lifetimes.ts	execute_raw	6
 src/core/belief/page-at-time.ts	execute_raw	8
 src/core/belief/preimages.ts	execute_raw	2
 src/core/belief/purge-mirror.ts	execute_raw	24
@@ -303,8 +300,8 @@ src/core/extraction-lag.ts	execute_raw	1
 src/core/extraction-watermark.ts	execute_raw	5
 src/core/facts/derivation-inputs.ts	execute_raw	1
 src/core/facts/held-fact-move.ts	execute_raw	1
-src/core/facts/purge-overlay.ts	execute_raw	2
-src/core/facts/purge-verify.ts	execute_raw	3
+src/core/facts/purge-overlay.ts	execute_raw	1
+src/core/facts/purge-verify.ts	execute_raw	2
 src/core/facts/purge.ts	execute_raw	1	GBRA-574 F #9674 (opened before this ratchet): +1 the purge plan reads whether a fact sits on an unbacked name tag
 src/core/facts/writeback-audience.ts	execute_raw	1	reads access_tokens.member_id and oauth_clients.member_id to count people, not credentials, for the brain audience (GST-3180); no typed engine method exists yet
 src/core/feedback/store.ts	execute_raw	16
@@ -433,7 +430,7 @@ src/core/page-state/guards.ts	execute_raw	11
 src/core/page-state/image-seal.ts	execute_raw	5
 src/core/page-state/materialize.ts	execute_raw	5
 src/core/page-state/projection-status.ts	execute_raw	1
-src/core/page-state/projections.ts	execute_raw	32
+src/core/page-state/projections.ts	execute_raw	24
 src/core/page-state/rebuild-estimate.ts	execute_raw	1
 src/core/page-state/rename-alias.ts	execute_raw	10
 src/core/page-state/revision-backfill-schema.ts	execute_raw	10
@@ -517,7 +514,7 @@ src/core/persistence/import-deferral.ts	execute_raw	1
 src/core/persistence/import-mutations.ts	execute_raw	3
 src/core/persistence/import-prepare.ts	execute_raw	1
 src/core/persistence/import-reads.ts	execute_raw	7
-src/core/persistence/intent-redaction.ts	execute_raw	10
+src/core/persistence/intent-redaction.ts	execute_raw	8
 src/core/persistence/journal.ts	execute_raw	41
 src/core/persistence/landing-gaps.ts	execute_raw	3
 src/core/persistence/legacy-locks.ts	execute_raw	1
@@ -550,7 +547,7 @@ src/core/persistence/page-append.ts	execute_raw	2
 src/core/persistence/page-batch.ts	execute_raw	2
 src/core/persistence/page-mutations.ts	execute_raw	5
 src/core/persistence/page-prepare.ts	execute_raw	10
-src/core/persistence/page-purge.ts	execute_raw	30
+src/core/persistence/page-purge.ts	execute_raw	29
 src/core/persistence/page-upload.ts	execute_raw	16
 src/core/persistence/page-visibility.ts	execute_raw	7
 src/core/persistence/pending-import.ts	execute_raw	1

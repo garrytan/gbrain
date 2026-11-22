@@ -23,6 +23,7 @@ import { segmentedRevertRefusal } from '../../page-state/versions.ts';
 import type { CorpusSampleOpts, DomainBankRow, DomainBankSampleOpts, PageReadPolicy, PageReadScope } from '../../types.ts';
 import type { PageRefRow, RelationalPageRow } from '../../engine-sql/relational-reads.ts';
 import { toGetPage } from '../store-codec.ts';
+import { overlayStoreSnapshot, type StoreSnapshot } from '../snapshot-overlay.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { HYBRID_BAG_KEYS, WHOKNOWS_KEYS, storePagePolicy } from './private-provenance.ts';
@@ -43,13 +44,13 @@ void READ_POLICY_KEYS_COMPLETE;
  * PGLite's live filter (not deleted, not quarantined, source not archived), so `live` says one was passed.
  * `excludePrivate` applies the page policy (private-provenance.ts `storePagePolicy`), a caller's reader identity and
  * private-readable grant included; `minTrust` and `suppressFlagged`
- * apply the page's stored trust tier and its write-gate flag receipts (`pageEligibleSql`). `requireSafeChunks` changes
- * nothing on these reads. The marker reads (every member that uses this) are handed hybridSearch's whole option bag as
+ * apply the page's stored trust tier and its write-gate flag receipts (`pageEligibleSql`). `requireSafeChunks` and
+ * `takesHoldersAllowList` change nothing on these reads. The marker reads (every member that uses this) are handed hybridSearch's whole option bag as
  * their policy, so they also accept and ignore the bag's own keys (`HYBRID_BAG_KEYS`, and whoknows' `WHOKNOWS_KEYS`); any other key still refuses.
  */
 function readScope(member: string, opts: PageReadScope | undefined): Record<string, unknown> {
   if (opts === undefined || opts === null) return {};
-  const taken = takeOptions(member, opts, ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks', ...HYBRID_BAG_KEYS, ...WHOKNOWS_KEYS]);
+  const taken = takeOptions(member, opts, ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks', 'takesHoldersAllowList', ...HYBRID_BAG_KEYS, ...WHOKNOWS_KEYS]);
   return {
     sourceId: taken.sourceId, sourceIds: taken.sourceIds, live: true,
     excludePrivate: storePagePolicy(member, taken.excludePrivate, { callerReaders: true }) ?? null,
@@ -67,21 +68,21 @@ export const readPageSnapshotsBatch: StoreMember<
   const { absentIsNull, ...options } = takeOptions('readPageSnapshotsBatch', opts, ['maxBytes', 'includeDeleted', 'absentIsNull']);
   const snapshots = new Map<string, PageSnapshot>();
   if (!refs.length) return { snapshots, covered: 0 };
-  const batch: { covered: number; snapshots: Array<PageSnapshot | null> } = await storeCall({ member: 'readPageSnapshotsBatch' }, () =>
+  const batch: { covered: number; snapshots: Array<StoreSnapshot | null> } = await storeCall({ member: 'readPageSnapshotsBatch' }, () =>
     brain.readPageSnapshotsBatch(refs.map((r) => ({ slug: r.slug, sourceId: r.sourceId })), options));
   for (const [i, snapshot] of batch.snapshots.entries()) {
     const ref = refs[i]!;
     const key = pageSnapshotKey(ref.sourceId, ref.slug);
     if (snapshot) {
-      snapshots.set(key, { ...snapshot, page: toGetPage(snapshot.page) });
+      snapshots.set(key, overlayStoreSnapshot({ ...snapshot, page: toGetPage(snapshot.page) }));
       continue;
     }
     // PGLite reads an absent ref again through readPageSnapshot (same exact key), unless absentIsNull; an empty
     // source id names no source there, while the store would widen it to every source.
     if (absentIsNull || ref.sourceId === '') continue;
-    const again: PageSnapshot | null = await storeCall({ member: 'readPageSnapshotsBatch', slug: ref.slug }, () =>
+    const again: StoreSnapshot | null = await storeCall({ member: 'readPageSnapshotsBatch', slug: ref.slug }, () =>
       brain.readPageSnapshot(ref.slug, { sourceId: ref.sourceId, ...(options.includeDeleted ? { includeDeleted: true } : {}) }));
-    if (again) snapshots.set(key, { ...again, page: toGetPage(again.page) });
+    if (again) snapshots.set(key, overlayStoreSnapshot({ ...again, page: toGetPage(again.page) }));
   }
   return { snapshots, covered: batch.covered };
 };
