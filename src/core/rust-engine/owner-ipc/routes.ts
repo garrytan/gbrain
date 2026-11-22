@@ -256,7 +256,8 @@ export type OwnerPeerRefusedReason = 'peer_uid' | 'socket_owner' | 'socket_mode'
 /**
  * The owner socket's other end is not this OS user (`owner_ipc_peer_refused`, not retryable): the owner read another
  * uid from the kernel (`peer_uid`, on either side), or the client found the socket owned by another user
- * (`socket_owner`) or open to group or other users (`socket_mode`). Nothing was sent or run.
+ * (`socket_owner`) or open to group or other users outside a private 0700 directory of this user (`socket_mode`).
+ * Nothing was sent or run.
  */
 export function ownerPeerRefused(reason: OwnerPeerRefusedReason, detail: string): OperationError {
   const messages: Record<OwnerPeerRefusedReason, string> = {
