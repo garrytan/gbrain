@@ -8,6 +8,8 @@
 //! This crate has no JavaScript types. `gbrain-napi` turns each `Store` method into an async
 //! addon method and each `StoreError::code` into a JavaScript `Error.code`.
 
+#![forbid(unsafe_code)]
+
 mod access_flag;
 pub mod access_migrations;
 pub mod access_policy;
@@ -16,6 +18,7 @@ mod cascade;
 pub mod chunks;
 pub mod cli_reads;
 pub mod config;
+mod crash_points;
 pub mod env;
 pub mod error;
 #[cfg(feature = "fjall")]
@@ -211,7 +214,14 @@ fn open_records(dir: &Path, concurrent: bool) -> Result<Arc<dyn Kv>> {
             Arc::new(kv)
         });
     }
-    let kv = redb_kv::RedbKv::open_path(&dir.join(format::RECORDS_FILE))?;
+    let path = dir.join(format::RECORDS_FILE);
+    // The crash cell's test-only backend (`crash_points.rs`); off unless its log variable is set.
+    let kv = match crash_points::plan()? {
+        Some(plan) => {
+            redb_kv::RedbKv::open_backend(Box::new(crash_points::CrashFile::open(&path, plan)?))?
+        }
+        None => redb_kv::RedbKv::open_path(&path)?,
+    };
     Ok(if concurrent {
         Arc::new(occ_kv::OccKv::new(kv)?)
     } else {

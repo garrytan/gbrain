@@ -12,6 +12,8 @@
 //! The harness knows nothing about any particular store. A store is simulated by writing a driver
 //! that feeds it through these pieces; see the `gbrain-bakeoff` crate in `rust/bench`.
 
+#![forbid(unsafe_code)]
+
 pub mod check;
 pub mod clock;
 pub mod disk;

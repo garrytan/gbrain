@@ -1,0 +1,13 @@
+diff --git a/rust/crates/gbrain-store/src/redb_kv.rs b/rust/crates/gbrain-store/src/redb_kv.rs
+index 6ee651f9fd..9d9c664e33 100644
+--- a/rust/crates/gbrain-store/src/redb_kv.rs
++++ b/rust/crates/gbrain-store/src/redb_kv.rs
+@@ -308,7 +308,7 @@ impl KvWrite for Writer {
+             next
+         };
+         self.tx
+-            .set_durability(Durability::Immediate)
++            .set_durability(Durability::None)
+             .map_err(|e| StoreError::io(format!("record store: {e}")))?;
+         self.tx.commit().map_err(map)?;
+         Ok(next)
