@@ -23,6 +23,8 @@ export const PERSISTENCE_IPC_OPERATIONS = [
   'put_page', 'put_pages', 'capture', 'delete_page', 'restore_page', 'revert_version', 'edit_page', 'append_page',
   'remember', 'forget', 'extract_facts', 'get_write_request', 'list_write_requests', 'cancel_write_request',
   'get_page', 'fetch', 'get_recent_transcripts',
+  'find_pages', 'list_pages', 'search', 'query', 'search_exact', 'get_tags', 'get_links', 'get_backlinks', 'get_timeline',
+  'get_versions', 'traverse_graph', 'whois', 'entity', 'recall', 'open_loops',
   'list_skills', 'get_skill', 'get_skill_asset', 'list_brain_skillpack',
   'put_skill', 'delete_skill', 'join_brain', 'sync_brain_skills', 'leave_brain',
   'get_skill_policy', 'set_skill_policy', 'get_skill_retention', 'prune_skill_revisions',
@@ -64,6 +66,8 @@ export interface PersistenceIpcRequest {
   write_wait_ms?: number;
   /** GBRA-498: the room the CLI's `--room` named; sent only to owners advertising `room`, which answer `{ [PERSISTENCE_ROOM_MARKED_KEY]: … }`. */
   room?: string;
+  /** G8: a read asks for its degraded stamp and notices; sent only to owners advertising `meta`, which answer `{ [PERSISTENCE_META_KEY]: … }`. */
+  with_meta?: true;
 }
 
 export interface PersistenceIpcCapabilities {
@@ -79,10 +83,14 @@ export interface PersistenceIpcCapabilities {
   write_wait?: true;
   /** GBRA-498: the owner marks its trusted local CLI's answer for a `room` on operation requests. */
   room?: true;
+  /** G8: the owner returns its trusted local CLI's answer with the call's degraded stamp and rendered notices on `with_meta`. */
+  meta?: true;
 }
 
 /** GBRA-498: the one key of an owner's answer to a request that named a room: the marked result, its room meta and notices. */
 export const PERSISTENCE_ROOM_MARKED_KEY = 'room_marked';
+/** G8: the one key of an owner's answer to a `with_meta` request: the result and its `degraded` and `gbrain_notices` meta. */
+export const PERSISTENCE_META_KEY = 'with_meta';
 /** The longest `--room` a request carries; a longer one stays with the CLI, which marks every item unknown. */
 export const PERSISTENCE_ROOM_MAX_CHARS = 4_096;
 
@@ -151,8 +159,9 @@ export function isPersistenceIpcRegistration(value: unknown): value is Persisten
 
 const OPERATION_REQUEST_KEYS = ['version', 'kind', 'brain_id', 'operation', 'params', 'registration', 'routing'];
 function operationRequest(value: unknown): value is PersistenceIpcRequest {
-  if (!record(value) || !exactKeys(value, [...OPERATION_REQUEST_KEYS, ...['write_wait_ms', 'room'].filter(k => Object.prototype.hasOwnProperty.call(value, k))])) return false;
+  if (!record(value) || !exactKeys(value, [...OPERATION_REQUEST_KEYS, ...['write_wait_ms', 'room', 'with_meta'].filter(k => Object.prototype.hasOwnProperty.call(value, k))])) return false;
   if (value.room !== undefined && !(typeof value.room === 'string' && value.room.length <= PERSISTENCE_ROOM_MAX_CHARS)) return false;
+  if (value.with_meta !== undefined && value.with_meta !== true) return false;
   if (value.write_wait_ms !== undefined && !(typeof value.write_wait_ms === 'number'
     && Number.isSafeInteger(value.write_wait_ms) && value.write_wait_ms >= 0)) return false;
   if (value.version !== 1 || value.kind !== 'operation' || !isWriteRequestId(value.brain_id)
@@ -266,6 +275,7 @@ export async function startPersistenceIpcServer(
               ...(provider.administer ? { administration: PERSISTENCE_ADMIN_OPERATIONS, administration_extensions: PERSISTENCE_ADMIN_EXTENSIONS } : {}),
               write_wait: true,
               room: true,
+              meta: true,
             } satisfies PersistenceIpcCapabilities }));
             return;
           }

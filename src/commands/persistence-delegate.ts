@@ -63,8 +63,11 @@ export async function runDelegatedCliOperation(
     const delegated = await maybeDelegateLocalOperation(operation, params, config, options);
     if (!delegated.handled) return false;
     if (options.room !== undefined) return await printDelegatedRoom(operation, delegated, options.room, params, render);
-    const output = render(operation, delegated.result, params);
+    const { result, stderr } = delegated.meta
+      ? (await import('../cli/op-notices.ts')).withDelegatedMeta(operation, delegated.result, delegated.meta, params.json === true) : { result: delegated.result };
+    const output = render(operation, result, params);
     if (output) await writeStdoutFinal(output);
+    if (stderr) process.stderr.write(stderr);
     if ((delegated.result as { status?: unknown } | null)?.status === 'error') setCliExitVerdict(1);
     return true;
   } catch (error) {
