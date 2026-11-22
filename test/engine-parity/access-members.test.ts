@@ -25,9 +25,10 @@
  *  - Why existing coverage misses it: test/access-members.test.ts runs the commands on PGLite only, and the write-misc
  *    parity cases seed members with raw SQL, which stops on the Rust arm.
  *  - Seam: none. Timestamps are reduced to their shape. Token rows are written through the typed insertAccessToken.
- *  - Known losses on Rust (docs/designs/RUST_ENGINE.md rows 32c, 32d, 32e and 32g): applyAttestSources, verifiedMember,
- *    the labelled-only page policy and the token list (listAccessTokens). The last describe pins each
- *    refusal, so a pin fails when Rust stops refusing and its row must leave the table.
+ *  - Known losses on Rust (docs/designs/RUST_ENGINE.md rows 32c and 32e): applyAttestSources and the labelled-only
+ *    page policy; verifiedMember also refuses on Rust when called with no engine (sign-in passes the engine, row
+ *    32d-1). The token list (row 32g) is served and has its own parity case. The last describe pins each refusal, so
+ *    a pin fails when Rust stops refusing and its row must leave the table.
  */
 import { describe, expect, test } from 'bun:test';
 import { createSource, parityArms, resetArm } from './harness.ts';
