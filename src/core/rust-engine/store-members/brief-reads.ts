@@ -11,7 +11,7 @@ import type {
   BriefEditPageRow, BriefEditReadOpts, BriefEmailAliasPageRow, BriefMeetingPageRow, BriefPageVersionRow, BriefReadEligibility,
   BriefTimelineEntryRow, BriefWorldFactRow,
 } from '../../engine-sql/brief-reads.ts';
-import { privateFactFilterForCaller, privatePagesFilterForCaller, privatePagesFilterFragment } from '../../search/private-visibility.ts';
+import { privateFactFilterForCaller, privatePagesFilterForCaller, remoteReadFloorSql } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { reflexPolicy, storePageTextPolicy, storePrivacyPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
 
@@ -22,7 +22,8 @@ function trust(eligibility: BriefReadEligibility | undefined) {
 function timelinePolicy(member: string, privacy: BriefEditReadOpts['privacy']): StorePrivacyPolicy | null {
   if (privacy === 'none') return null;
   if (privacy === 'caller') return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true });
-  if (privacy === 'floor') return storePageTextPolicy(member, () => privatePagesFilterFragment('p'), { noReaders: true });
+  // The SQL side gates 'floor' with remoteReadFloorSql (engine-sql/brief-reads.ts); the store judges the same text.
+  if (privacy === 'floor') return storePageTextPolicy(member, () => remoteReadFloorSql('p'), { noReaders: true });
   refuseMember(member, `privacy ${String(privacy)}`);
 }
 
