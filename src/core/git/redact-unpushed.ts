@@ -393,6 +393,8 @@ export interface RedactOptions {
   /** The preview hash the operator approved (gbrain git redact-unpushed --apply --expect). */
   expect?: string;
   budgetMs?: number;
+  /** The caller's own wall-clock deadline (a publish's one bound across its scans, this redaction and its pushes); budgetMs then only names it. */
+  deadline?: number;
   lockWaitMs?: number;
   /** The source the fix lines name. */
   sourceId?: string | null;
@@ -407,7 +409,7 @@ export interface RedactOptions {
  */
 export function redactUnpushed(root: string, opts: RedactOptions): RedactPreview | RedactOutcome | null {
   const budget = opts.budgetMs ?? DEFAULT_REBUILD_BUDGET_MS;
-  const deadline = Date.now() + budget;
+  const deadline = opts.deadline ?? Date.now() + budget;
   const noRemote = () => run(root, ['for-each-ref', '--count', '1', 'refs/remotes'], Date.now() + 10_000, { allowFail: true }).stdout.length === 0;
   try {
     if (!opts.sealer) {
@@ -419,7 +421,10 @@ export function redactUnpushed(root: string, opts: RedactOptions): RedactPreview
       const publishLock = opts.publishLockHeld ? { release: () => undefined } : acquireNativeLockSync(gitPath(root, PUBLISH_LOCK_NAME), { timeoutMs: opts.lockWaitMs ?? lockWaitMs() });
       if (!publishLock) throw opError('push_unconfirmed', 'Another publish held this checkout\'s push lock, so the unpushed commits were not redacted yet.', 'The push retries on its own; nothing was changed.', { retryable: true });
       try {
-        const commitLock = acquireCommitLock(root, opts.lockWaitMs ?? lockWaitMs());
+        const wait = opts.lockWaitMs ?? lockWaitMs(), left = deadline - Date.now();
+        if (left <= 0) throw new OverBudget();
+        let commitLock: ReturnType<typeof acquireCommitLock>;
+        try { commitLock = acquireCommitLock(root, Math.min(wait, left)); } catch (error) { if (left < wait) throw new OverBudget(); throw error; }
         try {
           const p = plan(root, opts.base, deadline, value => sealer.allowed(value));
           if (!p) return null;
