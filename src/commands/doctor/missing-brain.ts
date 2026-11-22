@@ -19,8 +19,11 @@ import { probeStatus, statusFix, type StatusModeState } from '../../mcp/status-m
  * stray files). A path that is a plain file (a graduated brain's tombstone) is not this check's to judge.
  */
 function connectWouldCreate(dir: string): boolean {
-  if (!existsSync(dir)) return true;
-  try { return statSync(dir).isDirectory() && !existsSync(join(dir, 'PG_VERSION')); } catch { return false; }
+  // One stat, no existence pre-test: a path that cannot be stat'ed (gone, or vanished mid-check as a drive unmounts) is
+  // refused as missing, never read as "the brain is there".
+  let st;
+  try { st = statSync(dir); } catch { return true; }
+  return st.isDirectory() && !existsSync(join(dir, 'PG_VERSION'));
 }
 
 /** The folder the connector opens for this engine config, or undefined when it opens no local folder (Postgres). A leftover `database_url` does not change that. */
@@ -35,6 +38,7 @@ function missingState(brainId: string): MissingState | null {
   if (brainId !== 'host') {
     // The mount doctor really opens: BrainRegistry.getBrain resolves an enabled mount by its exact id (an alias never counts).
     let mount;
+    // silent-read-ok: a mounts.json that does not load is not a missing brain; the registry loads the same file and fails with its own error before any folder is opened, so nothing can be created
     try { mount = loadMounts().find((m) => m.id === brainId && m.enabled !== false); } catch { return null; }
     const dir = mount && localFolder(mount.engine, mount.database_path);
     return mount && dir && connectWouldCreate(dir) ? { config_path: getMountsPath(), brain_path: dir, mount: mount.id } : null;
