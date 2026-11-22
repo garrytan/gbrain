@@ -47,7 +47,8 @@ export async function loadActivePackForWriteVocabulary(
 }
 
 export function packDeclaresPageType(pack: ResolvedPack, typeName: string): boolean {
-  return pack.manifest.page_types.some((t) => t.name === typeName);
+  // Schema lint accepts a declared alias wherever a page type is named.
+  return pack.manifest.page_types.some((t) => t.name === typeName || (t.aliases ?? []).includes(typeName));
 }
 
 export function packDeclaresLinkType(pack: ResolvedPack, linkType: string): boolean {
