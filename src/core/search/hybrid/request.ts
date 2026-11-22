@@ -325,6 +325,8 @@ export async function resolveHybridRequest(
     requireSafeChunks: opts?.requireSafeChunks,
     excludeSlugs: opts?.exclude_slugs,
     excludeSlugPrefixes: resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes),
+    type: opts?.type,
+    types: opts?.types,
   };
   const aliasHopOpts = {
     ...identityTierOpts,

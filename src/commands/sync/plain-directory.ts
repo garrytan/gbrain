@@ -76,7 +76,7 @@ export async function performPlainDirectorySync(engine: BrainEngine, opts: SyncO
   let result: Awaited<ReturnType<typeof runImport>>;
   try {
     result = await runImport(engine, [root, ...(opts.noEmbed || keyless ? ['--no-embed'] : [])],
-      { signal: opts.signal, sourceId, strategy: opts.strategy, exclude, includeHidden: opts.includeHidden, noticeRun: 'sync', ...(managed ? { heldPaths: { has: isReservedSkillBundlePath } } : {}) });
+      { signal: opts.signal, sourceId, strategy: opts.strategy, exclude, includeHidden: opts.includeHidden, noticeRun: 'sync', ...(managed ? { plainDirectorySync: true, heldPaths: { has: isReservedSkillBundlePath } } : {}) });
     if (opts.signal?.aborted) throw new ImportAbortError('interrupted', 1, result);
   } catch (error) {
     // #7819: a --timeout stop is a resumable partial, as in the full Git import (sync/full.ts).

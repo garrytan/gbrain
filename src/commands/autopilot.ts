@@ -26,6 +26,7 @@ import { readDaemonStaleAfter } from '../core/autopilot-heartbeat.ts';
 import { detectExecutionEnvironment } from '../core/execution-env.ts';
 import { join, dirname, isAbsolute, resolve as resolvePath } from 'path';
 import { execSync } from '../core/spawn.ts';
+import { defaultRelaunchDeps, relaunchAfterSwap, type RelaunchDeps } from './autopilot/relaunch.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig, saveConfig, gbrainPath as gbrainHomePath } from '../core/config.ts';
 import {
@@ -433,6 +434,7 @@ export async function attemptAutopilotSelfUpgrade(
   engineType: string,
   lockPath: string,
   mayContinue: () => boolean = () => true,
+  relaunchDeps: RelaunchDeps = defaultRelaunchDeps(resolveGbrainCliPath),
 ): Promise<void> {
   try {
     const cfg = loadConfig();
@@ -514,7 +516,14 @@ export async function attemptAutopilotSelfUpgrade(
 
     if (!mayContinue()) return;
     // Swap done + smoke-verified by `upgrade --swap-only`. Exit cleanly so the
-    // supervisor relaunches the NEW binary, which reconciles the breadcrumb.
+    // supervisor (or the relauncher, #8840) starts the NEW binary, which reconciles the breadcrumb.
+    const relaunch = await relaunchAfterSwap(relaunchDeps);
+    if (relaunch.by === 'stay') {
+      const held = loadConfig();
+      if (held) { held.self_upgrade = { ...(held.self_upgrade ?? {}), last_check_ts: Date.now() }; saveConfig(held); }
+      console.error(`[autopilot] self-upgrade swapped to ${swap.installed}, but nothing would start this daemon again (${relaunch.reason}), so it keeps running v${VERSION}; restart it to load the new build.`);
+      return;
+    }
     logSelfUpgrade({
       channel: 'autopilot',
       action: 'apply',
@@ -523,7 +532,9 @@ export async function attemptAutopilotSelfUpgrade(
       outcome: 'applied',
       reason: SWAPPED_REASON,
     });
-    console.log('[autopilot] self-upgrade swapped; exiting for relaunch.');
+    console.log(relaunch.by === 'self'
+      ? `[autopilot] self-upgrade swapped; no supervisor relaunches this daemon, so it starts itself again once it exits: ${relaunch.argv!.join(' ')}`
+      : '[autopilot] self-upgrade swapped; exiting for relaunch.');
     try {
       unlinkSync(lockPath);
     } catch {

@@ -62,11 +62,19 @@ so it does not certify paid-model recall or provenance.
 ## Option 2: `openclaw mcp add`
 
 OpenClaw keeps MCP servers under `mcp.servers` in `~/.openclaw/openclaw.json`
-(`openclaw config schema` shows the key path). Register gbrain with the CLI:
+(`openclaw config schema` shows the key path). Register gbrain with the CLI,
+then run `gbrain setup openclaw` so a new session knows to use it:
 
 ```bash
 openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg starter --arg --advertise --arg verbs --env GBRAIN_HOME=$HOME
+gbrain setup openclaw
 ```
+
+The second line is not optional. Without it the tools are registered but
+nothing tells the agent to use them, and a new session answers from OpenClaw's
+own memory and chat history instead (in the [install eval](https://github.com/garrytan/harness-evals/blob/master/docs/benchmarks/2026-11-17-gbrain-install/results/README.md),
+11 of the 30 OpenClaw runs without gbrain's install block missed this way).
+See [Brain-first instructions](#brain-first-instructions).
 
 Use an absolute `--command` path: the launchd-started gateway's `PATH` does
 not include `~/.bun/bin`, so a bare `gbrain` fails to spawn. `--env` is
@@ -334,7 +342,8 @@ gbrain setup openclaw   # --dry-run previews; --workspace <dir> picks the agent
 It writes one short marked block into the workspace `AGENTS.md` (from
 `OPENCLAW_CONFIG_PATH` or `~/.openclaw/openclaw.json`: a sole agent's
 workspace, else `agents.defaults.workspace`, else `~/.openclaw/workspace`; with
-several agents, pass `--workspace`). Text outside the markers is never touched,
+several agents, pass `--workspace`; with `OPENCLAW_HOME` set, `~/.openclaw`
+means `$OPENCLAW_HOME/.openclaw`, as it does for OpenClaw). Text outside the markers is never touched,
 a re-run upgrades the block in place, `--no-instructions` opts out and is
 remembered, and `--remove` takes it out. A thin-client install puts the same
 block at the top of `GBRAIN-INSTRUCTIONS.md`.
