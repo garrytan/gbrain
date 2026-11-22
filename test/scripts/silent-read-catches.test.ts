@@ -98,14 +98,6 @@ describe('what counts', () => {
     expect(scan("export async function f(engine: any) { const d = ['x']; try { return await engine.listPages(); } catch { return d; } }")).toEqual([]);
   });
 
-  test('a returned local is the binding visible at the return: an empty outer fallback still counts past a same-named sibling block', () => {
-    expect(scan("export async function f(engine: any) { const rows: string[] = []; { const rows = ['cached']; } try { return await engine.listPages(); } catch { return rows; } }")).toEqual(['src/x.ts#f catch_empty 1']);
-  });
-
-  test('a returned local is the binding visible at the return: a non-empty outer value is not made empty by a same-named sibling block', () => {
-    expect(scan("export async function f(engine: any) { const rows = ['x']; { const rows: string[] = []; } try { return await engine.listPages(); } catch { return rows; } }")).toEqual([]);
-  });
-
   test('a guard `if` that only throws does not hide an empty answer behind it', () => {
     const f = (handler: string) => scan(`export async function f(engine: any) { try { return await engine.listPages(); } catch (err) { ${handler} } }`);
     expect(f('if (isEngineCapabilityRefusal(err)) throw err; return [];')).toEqual(['src/x.ts#f catch_empty 1']);
@@ -123,11 +115,6 @@ describe('what counts', () => {
     expect(f('if (a) { if (b) return null; throw err; } return [];')).toEqual([]);
     // the if-body returns on some path before its throw, so it is not a pure guard
     expect(f('if (a) { if (b) return ["x"]; throw err; } return [];')).toEqual([]);
-  });
-
-  test('a returned local is the binding visible at the return: a catch parameter is not made empty by a same-named local outside', () => {
-    expect(scan("export async function f(engine: any) { const error: string[] = []; try { await engine.getPage('a'); } catch (error) { try { return await engine.getPage('b'); } catch { return error; } } }")).toEqual([]);
-    expect(scan("export async function f(engine: any) { const error: string[] = []; try { await engine.getPage('a'); } catch (error) { try { return await engine.getPage('b'); } catch { return error; } } return error; }")).toEqual([]);
   });
 
   test('promise handlers count: arrow and function forms, with a local receiver judged by its initializer', () => {

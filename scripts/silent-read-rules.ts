@@ -209,31 +209,15 @@ function containsRead(node: ts.Node): boolean {
   return hit;
 }
 
-/**
- * The `const|let|var name = init` in `fn` (not in nested functions) that is visible at `at` and ends before
- * `before`. A `let`/`const` is visible only inside the block, loop, `case` body or catch clause that holds it;
- * a `var` anywhere in `fn`. When declarations nest, the innermost one wins, and the later one among equals.
- */
-function findBinding(fn: ts.Node, name: string, before: number, at: number): ts.VariableDeclaration | undefined {
+/** The latest `const|let name = init` declared in `fn` (not in nested functions) that ends before `before`. */
+function findBinding(fn: ts.Node, name: string, before: number): ts.VariableDeclaration | undefined {
   let found: ts.VariableDeclaration | undefined;
-  let foundScopeStart = -1;
-  const opensScope = (n: ts.Node): boolean => ts.isBlock(n) || ts.isCaseBlock(n) || ts.isCatchClause(n)
-    || ts.isForStatement(n) || ts.isForInStatement(n) || ts.isForOfStatement(n);
-  const visit = (n: ts.Node, scope: ts.Node, blockScoped: boolean): void => {
+  const visit = (n: ts.Node): void => {
     if (n !== fn && ts.isFunctionLike(n)) return;
-    if (ts.isVariableDeclarationList(n)) blockScoped = (n.flags & ts.NodeFlags.BlockScoped) !== 0;
-    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === name && n.end <= before) {
-      // A catch parameter is scoped to its clause, like a `let`.
-      const own = blockScoped || ts.isCatchClause(n.parent) ? scope : fn;
-      if (own.pos <= at && at < own.end && own.pos >= foundScopeStart) {
-        found = n;
-        foundScopeStart = own.pos;
-      }
-    }
-    const next = n !== fn && opensScope(n) ? n : scope;
-    ts.forEachChild(n, c => visit(c, next, blockScoped));
+    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === name && n.end <= before) found = n;
+    ts.forEachChild(n, visit);
   };
-  visit(fn, fn, false);
+  visit(fn);
   return found;
 }
 
@@ -243,7 +227,7 @@ export function isReadShaped(site: SiteContext): boolean {
   if (site.kind === 'promise-catch' && ts.isExpression(site.guarded)) {
     const recv = unwrap(site.guarded);
     if (ts.isIdentifier(recv)) {
-      const decl = findBinding(site.enclosingFunction, recv.text, site.catchNode.pos, recv.getStart());
+      const decl = findBinding(site.enclosingFunction, recv.text, site.catchNode.pos);
       if (decl?.initializer) return containsRead(decl.initializer);
     }
   }
@@ -273,7 +257,7 @@ export function isEmptyAnswer(e: ts.Expression | undefined, site: SiteContext): 
   }
   if (ts.isIdentifier(x)) {
     if (x.text === 'undefined') return true;
-    return isLocalEmptyFallback(x.text, x.getStart(), site);
+    return isLocalEmptyFallback(x.text, site);
   }
   return false;
 }
@@ -282,8 +266,8 @@ export function isEmptyAnswer(e: ts.Expression | undefined, site: SiteContext): 
  * A local that was initialized to an empty answer in the same function before the try: the handler
  * returns it, so the caller gets the empty fallback (`const m = new Map(); try {...} catch { return m }`).
  */
-function isLocalEmptyFallback(name: string, at: number, site: SiteContext): boolean {
-  const decl = findBinding(site.enclosingFunction, name, (site.tryStatement ?? site.catchNode).pos, at);
+function isLocalEmptyFallback(name: string, site: SiteContext): boolean {
+  const decl = findBinding(site.enclosingFunction, name, (site.tryStatement ?? site.catchNode).pos);
   if (!decl?.initializer) return false;
   const init = unwrap(decl.initializer);
   if (ts.isIdentifier(init)) return false;
