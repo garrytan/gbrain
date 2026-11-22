@@ -321,7 +321,7 @@ test/scripts/check-core-world-reads.test.ts	check-core-world-reads.ts: the ratch
 test/scripts/check-dynamic-ci.test.ts	check-dynamic-ci.ts	1	exec-scan,readFileSync
 test/scripts/check-function-size.test.ts	check-function-size.ts rules	11	readFileSync
 test/scripts/check-item-allowlist-catches.test.ts	CLI	2	readFileSync
-test/scripts/check-public-surface.test.ts	dropped manifest entries	6	bun-file
+test/scripts/check-public-surface.test.ts	dropped manifest entries	7	bun-file
 test/scripts/check-public-surface.test.ts	the base it compares with	10	bun-file
 test/scripts/check-public-surface.test.ts	the committed manifest	3	bun-file
 test/scripts/chunk-visibility-ratchet.test.ts	check-chunk-visibility.ts	6	readFileSync

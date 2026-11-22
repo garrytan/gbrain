@@ -48,7 +48,7 @@ old name is gone. That row's front matter is `kind: breaking` and
 `deprecation: <id>`, naming this record. Until `remove_after` has passed, the
 check refuses a pull request that drops a command, flag, MCP tool or
 parameter, config key or exit code this record names. A `cli-command` record
-also covers that command's flags, and an `mcp-tool` record its parameters,
+also covers that command's subcommands and flags, and an `mcp-tool` record its parameters,
 so retiring a whole command or tool takes one record. A page-format rule, and
 a `--json` field the list does not name, is not on the check's list, so its
 removal is checked in review.

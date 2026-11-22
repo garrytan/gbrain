@@ -99,6 +99,16 @@ describe('dropped manifest entries', () => {
     expect(r.out).toContain('json-field `gbrain skills resolve --json .no_skill` is removed or changed with no deprecations.d/<id>.md naming it');
   });
 
+  test('a cli-command record covers its subcommands and their flags', () => {
+    const base = manifest({ 'cli-command': ['gbrain search', 'gbrain skills index', 'gbrain skills index build'], 'cli-flag': ['gbrain search --limit', 'gbrain search --match', 'gbrain skills index --dir'] });
+    const head = { [MANIFEST]: manifest() };
+    const r = run(repo({ [MANIFEST]: base, 'deprecations.d/skills_index_1234.md': record('cli-command', 'gbrain skills index', '2026-11-16') }, head));
+    expect(r.code).toBe(0);
+    const other = run(repo({ [MANIFEST]: base, 'deprecations.d/skills_1234.md': record('cli-command', 'gbrain skill', '2026-11-16') }, head));
+    expect(other.code).toBe(1);
+    expect(other.out).toContain('cli-command `gbrain skills index build` is removed or changed with no deprecations.d/<id>.md naming it');
+  });
+
   test('a flag removed with no record is refused', () => {
     const r = run(repo({}, { [MANIFEST]: manifest({ 'cli-flag': ['gbrain search --match'] }) }));
     expect(r.code).toBe(1);

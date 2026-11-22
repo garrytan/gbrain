@@ -19,7 +19,8 @@
  * Plus the skill resolver surface that outside skill sets build on (their CI and setup call it): the resolver
  * subcommands of `gbrain skills` with all their flags, `gbrain skillpack health` and `doctor`,
  * `gbrain setup --skill-loading`, the resolver's documented config keys and the turn-output fields it reads. Each is read
- * from the code that accepts it and listed only while the code still does, so dropping one is a removal the check sees.
+ * from the code that accepts it and listed only while the code still does, so dropping one is a removal the check sees;
+ * the one exception is `skills.resolver.pins.<catalog>`, which `gbrain skills pin` writes and this list names by hand.
  * scripts/check-public-surface.ts compares the manifest with the base branch's.
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
