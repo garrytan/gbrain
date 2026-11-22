@@ -48,7 +48,7 @@ async function run(args: string[], extra: Partial<EngineSwapCliDeps> = {}) {
 }
 
 describe('engine swap --plan', () => {
-  test('a service definition that cannot be read is marked unread, not listed as setting nothing', () => {
+  test('a service definition that cannot be read is marked unread, not listed as setting nothing', async () => {
     const fakeHome = mkdtempSync(join(tmpdir(), 'gbrain-swap-svc-'));
     try {
       const dir = join(fakeHome, '.config', 'systemd', 'user');
@@ -60,6 +60,9 @@ describe('engine swap --plan', () => {
         { name: 'gbrain-serve.service', kind: 'systemd', sets: [], unread: 'read_failed' },
         { name: 'gbrain-sync.service', kind: 'systemd', sets: ['GBRAIN_DATABASE_URL'] },
       ]);
+      const human = await run(['--to', 'rust', '--dry-run'], { home: fakeHome, env: { HOME: fakeHome } });
+      expect(human.stdout).toContain('gbrain-serve.service (systemd; unreadable, names unknown)');
+      expect(human.stdout).toContain('gbrain-sync.service (systemd; sets GBRAIN_DATABASE_URL)');
     } finally {
       rmSync(fakeHome, { recursive: true, force: true });
     }

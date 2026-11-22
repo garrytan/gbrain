@@ -61,7 +61,7 @@ export function renderPlanText(p: SwapPlan): string {
     'Readiness:',
     ...p.criteria.map(c => `  ${String(c.n).padStart(2)}. [${c.state}] ${c.name}: ${c.detail}`),
     `Engine-selecting variables set (names only): ${p.routes.env.length ? p.routes.env.join(', ') : 'none'}`,
-    `Service definitions: ${p.routes.services.length ? p.routes.services.map(s => `${s.name} (${s.kind}${s.sets.length ? `; sets ${s.sets.join(', ')}` : ''})`).join('; ') : 'none found'}`,
+    `Service definitions: ${p.routes.services.length ? p.routes.services.map(s => `${s.name} (${s.kind}${s.unread ? '; unreadable, names unknown' : s.sets.length ? `; sets ${s.sets.join(', ')}` : ''})`).join('; ') : 'none found'}`,
     `Free disk at ${p.disk.path || '(unknown)'}: ${p.disk.free_bytes === null ? 'unknown' : `${(p.disk.free_bytes / 2 ** 30).toFixed(1)} GiB`}`,
     `Capability report: ${p.deferred.capability_report}`,
     `Expected write pause: ${p.deferred.expected_write_pause}`,
@@ -83,8 +83,14 @@ export function serviceDefinitions(home: string): ServiceDefinition[] {
     let names: string[];
     try { names = readdirSync(dir); } catch { continue; }
     for (const name of names.filter(n => /gbrain/i.test(n)).sort()) {
-      let text = '';
-      try { text = readFileSync(join(dir, name), 'utf8'); } catch { /* unreadable: listed with no names */ }
+      let text: string;
+      try {
+        text = readFileSync(join(dir, name), 'utf8');
+      } catch {
+        // Unreadable: the names it sets are unknown, so the plan says so instead of listing none.
+        out.push({ name, kind, sets: [], unread: 'read_failed' });
+        continue;
+      }
       // Whole-word names only, by token set (no dynamic regular expression).
       const words = new Set(text.split(/[^A-Za-z0-9_]+/));
       out.push({ name, kind, sets: ENGINE_SELECTING_ENV.filter(v => words.has(v)) });

@@ -28,6 +28,8 @@ export interface ServiceDefinition {
   kind: 'launchd' | 'systemd';
   /** Engine-selecting variable names the definition sets (names only). */
   sets: string[];
+  /** The file could not be read, so `sets` is unknown, not empty. */
+  unread?: 'read_failed';
 }
 
 export interface SwapPlan {
