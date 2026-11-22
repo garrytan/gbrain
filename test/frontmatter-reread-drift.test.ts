@@ -22,7 +22,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { legacyTypedFrontmatter } from '../src/core/frontmatter-legacy.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
-import { readGitSourceHolds, SYNC_IMPORT_PROVENANCE_OP } from '../src/core/persistence/sync-holds.ts';
+import { gitHoldFix, readGitSourceHolds, SYNC_IMPORT_PROVENANCE_OP } from '../src/core/persistence/sync-holds.ts';
 import { onlyDerivedKeysAdded } from '../src/core/persistence/sync-screen.ts';
 import { contentHash } from '../src/core/utils.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
@@ -152,5 +152,17 @@ describe('pages-03: onlyDerivedKeysAdded reads a value the old parser typed as s
   test('a real change is still a difference', () => {
     expect(onlyDerivedKeysAdded(content().replace('born: 1990-05-01', 'born: 1990-05-02'), stored, true)).toBe(false);
     expect(onlyDerivedKeysAdded(content('label: new\n'), stored, true)).toBe(false);
+  });
+});
+
+describe('pages-03: the repair text of a record-less file_drift hold names the older-release typing case', () => {
+  const fix = (meta: Record<string, unknown>) => gitHoldFix({ source_id: 'source-a', path: 'people/d.md', slug: 'people/d', code: 'file_drift', meta } as Parameters<typeof gitHoldFix>[0]).why;
+  test('it says plainly that this is the older-release typing case and names the one-pass command that imports the file versions', () => {
+    const why = fix({ sides: 'unknown', side: 'unknown' });
+    expect(why).toContain('older-release typing case');
+    expect(why).toContain('gbrain repair file-drift --source source-a --held --side unknown --prefer file --whole-class');
+  });
+  test('a hold whose database side changed since a recorded import does not claim the typing case', () => {
+    expect(fix({ sides: 'both', side: 'both', page_revision: 'r2' })).not.toContain('older-release typing case');
   });
 });
