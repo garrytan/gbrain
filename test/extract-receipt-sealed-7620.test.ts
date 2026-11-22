@@ -50,16 +50,20 @@ const RECEIPT: Omit<ExtractReceiptInput, 'source_id' | 'run_id'> = {
 const receipt = (sourceId: string, runId: string): ExtractReceiptInput => ({ ...RECEIPT, source_id: sourceId, run_id: runId });
 const note = (title: string, body: string) => `---\ntype: note\ntitle: ${title}\n---\n\n${body}\n`;
 
-/** The engine, with every directly issued statement matching `pattern` throwing, in nested transactions too. */
-function failingAt(engine: BrainEngine, pattern: RegExp): BrainEngine {
+/**
+ * The engine, with every directly issued statement matching `at` (a RegExp) or every call of the engine member `at`
+ * names throwing, in nested transactions too.
+ */
+function failingAt(engine: BrainEngine, at: RegExp | keyof BrainEngine): BrainEngine {
   return new Proxy(engine, {
     get(target, prop) {
+      if (prop === at) return async () => { throw new Error('injected failure after the receipt page write'); };
       if (prop === 'executeRaw') return async (sql: string, params?: unknown[]) => {
-        if (pattern.test(sql)) throw new Error('injected failure after the receipt page write');
+        if (at instanceof RegExp && at.test(sql)) throw new Error('injected failure after the receipt page write');
         return target.executeRaw(sql, params);
       };
       if (prop === 'transaction') return (fn: (tx: BrainEngine) => Promise<unknown>, opts?: unknown) =>
-        target.transaction(tx => fn(failingAt(tx, pattern)), opts as never);
+        target.transaction(tx => fn(failingAt(tx, at)), opts as never);
       const value = Reflect.get(target, prop, target);
       return typeof value === 'function' ? value.bind(target) : value;
     },
@@ -143,7 +147,8 @@ for (const backend of testBackends()) describe(`[${backend}] #7620 extract recei
   test('a failure after the receipt page write rolls back the page and its chunks together', async () => {
     await addSource('source-c');
     const input = receipt('source-c', 'run-c-0001');
-    await expect(writeReceipt(failingAt(engine, /SET chunker_version=/), input)).rejects.toThrow('injected failure');
+    // The projection stamps the page's chunker version (the typed setProjectionChunkerVersion member) after it wrote the page and its chunks.
+    await expect(writeReceipt(failingAt(engine, 'setProjectionChunkerVersion'), input)).rejects.toThrow('injected failure');
     expect(await pageRow('source-c', receiptSlug(input))).toBeUndefined();
     expect(await chunkCount('source-c', receiptSlug(input))).toBe(0);
   });
