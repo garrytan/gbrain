@@ -385,6 +385,52 @@ describe('engine parity: versions', () => {
       return { member, granted, stranger, memberTeam, strangerTeam };
     },
   );
+
+  parityTest(
+    'getVersions under excludePrivate withholds a reason whose successor is hidden from the caller or was pruned',
+    { methods: ['putPage', 'createVersion', 'getVersions'] },
+    async (engine) => {
+      const slug = 'notes/why';
+      const write = (body: string, frontmatter: Record<string, unknown>) =>
+        engine.putPage(slug, { type: 'note', title: 'Why', compiled_truth: body, timeline: '', frontmatter });
+      const steps: Array<[string, Record<string, unknown>, string]> = [
+        ['One.', { visibility: 'world' }, 'r1'],
+        ['Two.', { visibility: 'world' }, 'r2'],
+        ['Three.', { visibility: 'private' }, 'r3'],
+        ['Four.', { readable_by: ['bob-example'] }, 'r4'],
+      ];
+      for (const [body, frontmatter, reason] of steps) {
+        await write(body, frontmatter);
+        await engine.createVersion(slug, { sourceId: 'default', reason });
+      }
+      await write('Live.', { visibility: 'world' });
+      const reasons = (access?: Parameters<typeof withCallerAccess>[0], target = slug) => {
+        const run = async () => (await engine.getVersions(target, access ? { excludePrivate: true } : {}))
+          .map((v) => `${v.compiled_truth?.length ? v.compiled_truth : 'large'}:${v.replaced_because ?? null}`);
+        return access ? withCallerAccess(access, run) : run();
+      };
+      const trusted = await reasons();
+      const alice = await reasons({ identity: ['member:alice-example'], hidePrivate: true });
+      const bob = await reasons({ identity: ['member:bob-example'], hidePrivate: true });
+      const aliceGranted = await reasons({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true });
+      expect(trusted).toEqual(['Four.:r4', 'Three.:r3', 'Two.:r2', 'One.:r1']);
+      expect(alice).toEqual(['Two.:null', 'One.:r1']);
+      expect(bob).toEqual(['Four.:r4', 'Two.:null', 'One.:r1']);
+      expect(aliceGranted).toEqual(['Three.:null', 'Two.:null', 'One.:r1']);
+
+      // A prune deletes the small version's successor: its reason stays from every excludePrivate reader.
+      await engine.putPage('notes/grown', { type: 'note', title: 'Grown', compiled_truth: 'Small.', timeline: '' });
+      await engine.createVersion('notes/grown', { sourceId: 'default', reason: 'grew' });
+      await engine.putPage('notes/grown', { type: 'note', title: 'Grown', compiled_truth: 'x'.repeat(1024 * 1024 + 1), timeline: '' });
+      for (let i = 0; i < 6; i++) await engine.createVersion('notes/grown', { sourceId: 'default' });
+      const short = (rows: string[]) => rows.map((r) => r.startsWith('x') ? `large:${r.split(':').pop()}` : r);
+      const prunedTrusted = short(await reasons(undefined, 'notes/grown'));
+      const prunedRemote = short(await reasons({ identity: [], hidePrivate: true }, 'notes/grown'));
+      expect(prunedTrusted).toEqual([...Array(5).fill('large:null'), 'Small.:grew']);
+      expect(prunedRemote).toEqual([...Array(5).fill('large:null'), 'Small.:null']);
+      return { trusted, alice, bob, aliceGranted, prunedTrusted, prunedRemote };
+    },
+  );
 });
 
 describe('engine parity: raw data + files', () => {

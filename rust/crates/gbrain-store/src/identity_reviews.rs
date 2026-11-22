@@ -392,7 +392,8 @@ impl Store {
                     d.origin.as_str(),
                 ]
                 .into_iter()
-                .chain(texts.iter().filter_map(|t| t.as_deref())),
+                .chain(texts.iter().filter_map(|t| t.as_deref()))
+                .chain(d.evidence.iter().flatten().map(String::as_str)),
             )?;
             if !matches!(d.verdict.as_str(), "same" | "different") {
                 return Err(StoreError::invalid(format!(

@@ -26,14 +26,14 @@ export function unmanagedBeliefPoint(sourceId: string, slugs: readonly string[],
       await tx.lockPageKeys(sorted.map(slug => ({ sourceId, slug })));
       return withBeliefBatch(tx, { sourceId, slugs: sorted, op, origin: 'unmanaged', publicationId, report }, fn);
     },
-    async commit(engine: Pick<BrainEngine, 'executeRaw'>): Promise<void> {
+    async commit(engine: Pick<BrainEngine, 'markBeliefCommits'>): Promise<void> {
       if (report.appended && !nested) await markBeliefCommits(engine, [publicationId]);
     },
   };
 }
 
 /** One projection-point transaction: `transaction` runs its writes through `run`, and the commit is marked after it returns. */
-export async function withUnmanagedBeliefs<T>(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slugs: readonly string[], op: string,
+export async function withUnmanagedBeliefs<T>(engine: Pick<BrainEngine, 'markBeliefCommits'>, sourceId: string, slugs: readonly string[], op: string,
   transaction: (run: <U>(tx: BrainEngine, fn: () => Promise<U>) => Promise<U>) => Promise<T>): Promise<T> {
   const point = unmanagedBeliefPoint(sourceId, slugs, op);
   const result = await transaction((tx, fn) => point.run(tx, fn));

@@ -103,8 +103,7 @@ export async function scanSegmentedMirrors(engine: BrainEngine, sourceIds: reado
   for (const sourceId of sourceIds) {
     const binding = await getWorktreeBinding(engine, sourceId, hostId);
     if (!binding) continue;
-    const slugs = (await engine.executeRaw<{ slug: string }>("SELECT slug FROM pages WHERE source_id=$1 AND body_storage='segmented' AND deleted_at IS NULL ORDER BY slug", [sourceId]))
-      .map(row => row.slug);
+    const slugs = await engine.listSegmentedPageSlugs(sourceId);
     if (!slugs.length) continue;
     if (binding.owner_host_id !== hostId || !binding.local_path) {
       hold({ source_id: sourceId, slug: '*', reason: 'not_owner_host',
@@ -157,7 +156,8 @@ async function admitRemirror(ctx: OperationContext, stale: StaleMirror, hash: st
   const callerIntent = { kind: 'segmented_mirror', slug: stale.slug, page_id: stale.page_id, preview_hash: hash, file_sha256: stale.file_sha256, expected_sha256: stale.expected_sha256 };
   return retryWriteAdmission(requestId, remaining => engine.transaction(async tx => {
     await declareDurablePersistence(tx, `${Math.min(1000, remaining)}ms`, `${remaining}ms`);
-    const [source] = await tx.executeRaw<{ incarnation: string; archived: boolean }>('SELECT incarnation,archived FROM sources WHERE id=$1 FOR UPDATE', [stale.source_id]);
+    await tx.lockSourceRow(stale.source_id);
+    const source = await tx.readSourceState(stale.source_id);
     if (!source || source.archived) throw opError('source_changed', 'The source is missing or archived.',
       `Source ${stale.source_id} is archived or missing, so ${stale.slug} was not re-mirrored. Run ${previewCommand({ source_ids: [stale.source_id] })} again.`);
     const prior = await getWriteRequest(tx, principal, requestId);
@@ -245,8 +245,7 @@ export const segmentedMirrorRepair: RepairHandler = {
       emptyHash: async () => hashOf(scope, selection, (await scanSegmentedMirrors(engine, scope.source_ids)).items) })).items;
     if (approved.some(entry => JSON.stringify(entry.selection) !== JSON.stringify(selection))) throw previewChangedError(expect, command);
     const stale = approved.map(({ selection: _selection, ...entry }) => entry);
-    const admitted = new Set((await engine.executeRaw<{ request_id: string }>('SELECT request_id::text AS request_id FROM persistence_requests WHERE request_id=ANY($1::uuid[])',
-      [stale.map(entry => remirrorRequestId(expect, entry))])).map(row => row.request_id));
+    const admitted = new Set((await engine.listWriteRequestsByRequestIds(stale.map(entry => remirrorRequestId(expect, entry)))).map(row => row.request_id));
     // Every page not yet admitted under this hash still has the revision and file bytes the user saw, or nothing is written.
     for (const entry of stale) {
       if (admitted.has(remirrorRequestId(expect, entry))) continue;

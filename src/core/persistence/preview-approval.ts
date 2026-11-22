@@ -82,9 +82,7 @@ function fingerprint(command: PreviewApprovalCommand, hash: string): string {
 
 /** Saves (or re-confirms, restarting its age) the approved set a preview printed. */
 export async function saveApprovedSet<T>(engine: BrainEngine, key: Omit<ApprovedSetKey, 'previewCommand'>, items: readonly T[]): Promise<void> {
-  await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
-  [PREVIEW_APPROVAL_OP, fingerprint(key.command, key.hash), JSON.stringify([{ command: key.command, hash: key.hash, items }])]);
+  await engine.writeOpCheckpointRecord(PREVIEW_APPROVAL_OP, fingerprint(key.command, key.hash), [{ command: key.command, hash: key.hash, items }]);
 }
 
 /**
@@ -93,24 +91,20 @@ export async function saveApprovedSet<T>(engine: BrainEngine, key: Omit<Approved
  * the database clock, the same clock the purge uses.
  */
 export async function loadApprovedSet<T>(engine: BrainEngine, key: ApprovedSetKey): Promise<ApprovedSet<T>> {
-  const [row] = await engine.executeRaw<{ completed_keys: Array<{ command?: string; hash?: string; items?: T[] }>; fresh: boolean; approved_at: string }>(
-    `SELECT completed_keys, updated_at >= now() - ($3 || ' days')::interval AS fresh,
-            to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS approved_at
-       FROM op_checkpoints WHERE op=$1 AND fingerprint=$2`,
-    [PREVIEW_APPROVAL_OP, fingerprint(key.command, key.hash), String(APPROVAL_MAX_AGE_DAYS)]);
-  const saved = row?.completed_keys?.[0];
+  const row = await engine.readOpCheckpointRecord(PREVIEW_APPROVAL_OP, fingerprint(key.command, key.hash), { freshWithinDays: APPROVAL_MAX_AGE_DAYS });
+  const saved = Array.isArray(row?.completed_keys) ? (row.completed_keys as Array<{ command?: string; hash?: string; items?: T[] } | null>)[0] : undefined;
   if (!row && key.emptyHash && await key.emptyHash() === key.hash) {
     return { command: key.command, hash: key.hash, items: [], approved_at: new Date().toISOString() };
   }
   if (!row || row.fresh !== true || saved?.command !== key.command || saved.hash !== key.hash || !Array.isArray(saved.items)) {
     throw previewChangedError(key.hash, key.previewCommand);
   }
-  return { command: key.command, hash: key.hash, items: saved.items, approved_at: row.approved_at };
+  return { command: key.command, hash: key.hash, items: saved.items, approved_at: row.updated_at };
 }
 
 /** Drops an approved set once its apply finished. */
 export async function clearApprovedSet(engine: BrainEngine, key: Omit<ApprovedSetKey, 'previewCommand'>): Promise<void> {
-  await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [PREVIEW_APPROVAL_OP, fingerprint(key.command, key.hash)]);
+  await engine.writeOpCheckpointRecord(PREVIEW_APPROVAL_OP, fingerprint(key.command, key.hash), null);
 }
 
 /** Applies one approved item and drops the set once the last item returns; an item that throws keeps the set, so the printed apply resumes with the same hash. */

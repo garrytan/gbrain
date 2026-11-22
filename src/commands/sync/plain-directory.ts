@@ -89,7 +89,7 @@ export async function performPlainDirectorySync(engine: BrainEngine, opts: SyncO
   // A managed brain fences source checkpoints to coordinated writers; the classic import stamps last_sync_at itself.
   if (managed) {
     const attribution = await maintenanceAttribution(engine);
-    await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], () => tx.executeRaw('UPDATE sources SET last_sync_at=now() WHERE id=$1', [sourceId]), attribution));
+    await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], () => tx.markSourceSynced(sourceId), attribution));
   }
   return { ...empty, status: 'synced', added: result.imported, chunksCreated: result.chunksCreated, ...(result.malformedSkipped ? { malformedSkipped: result.malformedSkipped } : {}),
     ...(result.privacy_label_notice ? { privacy_label_notice: result.privacy_label_notice } : {}) };

@@ -343,8 +343,18 @@ impl Store {
 
     /// `readProjectionReadinessGeneration`: the brain and its commit sequence. Every commit advances the
     /// sequence, so a cached readiness answer is reused only while nothing was written since it was read.
-    /// A snapshot never sees a commit in flight, so the generation is never null.
-    pub fn projection_readiness_generation(&self) -> Result<String> {
+    /// A snapshot never sees a commit in flight. A store bound to a transaction reads that transaction's
+    /// own writes, which the commit sequence does not count until it commits, so it answers null and the
+    /// probe is never cached, as the SQL answers null while a transaction is in flight.
+    pub fn projection_readiness_generation(&self) -> Result<Option<String>> {
+        if self.bound.is_some() {
+            return Ok(None);
+        }
+        self.health_memo_clock().map(Some)
+    }
+
+    /// `readHealthMemoClock`: the brain and its commit sequence.
+    pub fn health_memo_clock(&self) -> Result<String> {
         Ok(format!("{}/{}", self.brain_id(), self.commit_version()?))
     }
 

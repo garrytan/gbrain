@@ -17,6 +17,7 @@
  * written through `executeRaw`, which this engine refuses, so none exists, and a record found refuses the read.
  * Checkpoint rows list in byte order, where the SQL orders by the database collation; they agree on ASCII keys.
  */
+import { APPLE_CONTACTS_PENDING_DELETES_OP, APPLE_CONTACTS_REVIEW_OP } from '../../apple-contacts/review-status.ts';
 import { syncLockId } from '../../db-lock.ts';
 import { MANAGED_SYNC_PASS_OP, summaryFingerprint } from '../../engine-sql/sync-hold-store.ts';
 import type {
@@ -27,7 +28,6 @@ import type { CycleLockRow, SourceDetailRow, SourceRow } from '../../engine.ts';
 import { SYNC_ADMISSION_KEY, SYNC_ADMISSION_SETTING_PARAMS } from '../../persistence/sync-admission.ts';
 import { SYNC_DELETES_WITHHELD_OP } from '../../persistence/sync-pass-row.ts';
 import { IDENTITY_DOWNGRADE_OP } from '../../persistence/sync-status-sql.ts';
-import { APPLE_CONTACTS_PENDING_DELETES_OP, APPLE_CONTACTS_REVIEW_OP } from '../../apple-contacts/review-status.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
@@ -110,13 +110,14 @@ export const readSyncStatusSourceRow: StoreMember<[sourceId: string], SyncStatus
       && (setAt === null || millis(text(telemetry?.started_at)) < millis(setAt));
     destructive = false;
   }
+  const reviews = await readRow(brain, member, APPLE_CONTACTS_REVIEW_OP, sourceId);
+  const heldDeletes = await readRow(brain, member, APPLE_CONTACTS_PENDING_DELETES_OP, sourceId);
   return {
     incarnation, last_commit: detail.last_commit, last_sync_at: detail.last_sync_at, drain_lock: locks.length > 0,
     pass_value: first(pass) as never, pass_updated_at: pass?.updated_at ?? null, pass_read_at: new Date().toISOString(), withheld: first(withheld) as never,
     admission_stored: stored, admission_row_value: rowValue, admission_set_at: text(dating?.set_at), admission_pinned: pinned, admission_destructive: destructive,
-    writeback_failed: null, refresh: null,
-    identity_reviews: (await readRow(brain, member, APPLE_CONTACTS_REVIEW_OP, sourceId))?.completed_keys ?? null,
-    held_deletes: (await readRow(brain, member, APPLE_CONTACTS_PENDING_DELETES_OP, sourceId))?.completed_keys ?? null,
+    writeback_failed: null, refresh: null, identity_reviews: reviews?.completed_keys ?? null, held_deletes: heldDeletes?.completed_keys ?? null,
+    config: detail.config,
   };
 };
 

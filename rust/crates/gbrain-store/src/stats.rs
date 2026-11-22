@@ -593,6 +593,9 @@ impl Store {
                 ("summary", &summary),
             ],
         )?;
+        if let Some(version) = &input.writer_version {
+            no_nul("logIngest", &[("writer_version", version)])?;
+        }
         let pages_updated: Value = serde_json::from_str(pages_json).map_err(|e| {
             StoreError::new(INVALID_ARGUMENT, format!("logIngest: pages_updated: {e}"))
         })?;
@@ -827,6 +830,30 @@ impl Store {
         }
         Ok(json!({ "baseline": baseline_rows, "today": today_rows }))
     }
+}
+
+/// The `ingest_log` rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow, json_rows};
+    Ok(json_rows::<IngestRecord>(read, &[keys::INGEST_LOG])?
+        .into_iter()
+        .map(|r| ProbeRow {
+            cells: vec![
+                ("summary", ProbeCell::text(&r.summary)),
+                (
+                    "pages_updated",
+                    if r.pages_updated.is_null() {
+                        ProbeCell::Null
+                    } else {
+                        ProbeCell::jsonb(&r.pages_updated)
+                    },
+                ),
+            ],
+            source_id: Some(r.source_id),
+        })
+        .collect())
 }
 
 #[cfg(test)]

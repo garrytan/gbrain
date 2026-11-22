@@ -6,6 +6,7 @@
  * a class over the statement bound is skipped and reported; doctor's fact count
  * comes first. Synthetic data only. PGLite + Postgres.
  */
+import * as factsRepairSql from '../src/core/engine-sql/facts-repair.ts';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -83,6 +84,7 @@ async function seedShape(engine: BrainEngine, n: { origins: number; atoms: numbe
 }
 
 /** The engine with every statement recorded, and `fail` choosing statements to end with a statement timeout. */
+const typedReads = { listConceptLineageRows: factsRepairSql.listConceptLineageRows, listConceptInputRows: factsRepairSql.listConceptInputRows, listNamedVisibilityRows: factsRepairSql.listNamedVisibilityRows };
 function recording(engine: BrainEngine, fail?: (sql: string) => boolean) {
   const statements: string[] = [];
   const proxy = new Proxy(engine, { get(target, key) {
@@ -91,6 +93,9 @@ function recording(engine: BrainEngine, fail?: (sql: string) => boolean) {
       if (fail?.(sql)) throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
       return target.executeRaw(sql, params, opts);
     };
+    // The plan's page and link reads are typed members now: run each member's own SQL text through this recording executeRaw.
+    if (typeof key === 'string' && key in typedReads) return (...args: unknown[]) =>
+      (typedReads as Record<string, (raw: typeof target.executeRaw, ...a: unknown[]) => unknown>)[key]!((sql, params, opts) => (proxy as BrainEngine).executeRaw(sql, params, opts), ...args);
     const value = Reflect.get(target, key);
     return typeof value === 'function' ? value.bind(target) : value;
   } });

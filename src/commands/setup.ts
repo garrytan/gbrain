@@ -25,6 +25,7 @@
 import { realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { removeHermesTurnHook, syncHermesTurnHook } from '../core/setup/hermes-turn-hook.ts';
+import { hermesMcpStep } from './setup-hermes-mcp.ts';
 import { removeOpenclawTurnPlugin, syncOpenclawTurnPlugin } from '../core/setup/openclaw-turn-plugin.ts';
 import { describeOpenclawSkill, readOpenclawSkillState, removeOpenclawSkillPlugin, syncOpenclawSkillPlugin, type OpenclawSkillResult } from '../core/setup/openclaw-skill-plugin.ts';
 import { describePiSkill, readPiSkillState, removePiSkillExtension, syncPiSkillExtension } from '../core/setup/pi-skill-extension.ts';
@@ -133,6 +134,10 @@ export const SETUP_HELP = `gbrain setup <harness> — give an agent harness memo
 
 Usage: gbrain setup claude-code [flags]
        gbrain setup codex [flags]
+       gbrain setup hermes [flags]   (registers MCP through hermes mcp add, then the rule and hook)
+       gbrain setup openclaw|opencode|cursor [flags]   (after the harness's own
+         MCP registration: writes the brain-first rule and per-turn hook; without it
+         agents in a new session seldom call gbrain)
 
 Resolves the brain, source, transport, launcher and registration owner first and
 prints them; refuses before writing anything when another owner holds the target.
@@ -278,9 +283,10 @@ Refusals: setup never starts a second owner or a second brain. A hosted brain is
 wired with gbrain connect <url> --harness <harness> --install; a running
 serve --http owner with gbrain bootstrap harness --harness <harness> --yes.
 
-Supported harnesses: claude-code, codex (MCP, hooks and instructions). opencode,
-openclaw, hermes and cursor: setup writes the instruction block and prints the MCP
-registration step from their guide.
+Supported harnesses: claude-code, codex (MCP, hooks and instructions). hermes: setup
+registers MCP through Hermes's own hermes mcp add and writes the instruction block
+and hook. opencode, openclaw and cursor: setup writes the instruction block and
+prints the MCP registration step from their guide.
 setup and onboard differ: setup wires a harness to a brain; onboard (post-connect)
 improves an existing brain's content.
 `;
@@ -1125,7 +1131,11 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
   const envSurface = process.env.GBRAIN_SURFACE;
   const surface = flags.surface ?? (isRegistrationSurface(envSurface) ? envSurface : undefined);
   const access: BrainFirstAccess = { kind: 'mcp', server: flags.name, ...(surface ? { surface } : {}), ...(flags.serves === 'several' && servesBound(flags) ? { serves: 'several' as const } : {}) };
-  const mcp = { setup: flags.instructionsOnly ? 'unchanged' as const : 'manual' as const, docs: adapter.guide };
+  const hermesMcp = harness === 'hermes' && !flags.instructionsOnly
+    ? hermesMcpStep({ hermesHome: dirname((brainFirstTarget('hermes', {}) as { path: string }).path), name: flags.name, surface, gbrainBin: flags.gbrainBin ?? resolveGbrainBin(), remove: flags.remove, dryRun: flags.dryRun })
+    : null;
+  const mcp = hermesMcp ? { setup: hermesMcp.action, docs: adapter.guide, detail: hermesMcp.detail, ...(hermesMcp.command ? { command: hermesMcp.command } : {}) }
+    : { setup: flags.instructionsOnly ? 'unchanged' as const : 'manual' as const, docs: adapter.guide };
   const exposure = flags.remove || !BOT_HARNESSES.includes(harness) ? null
     : sharedTokenNotice({ kind: 'stdio', harness }, { harness, serves: exposureServesVia(flags.gbrainBin ?? resolveGbrainBin()) });
   const notices = renderedExposure(exposure);
@@ -1177,7 +1187,7 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
   const resolver = harness === 'claude-code' || harness === 'codex' || harness === 'hermes' ? await resolverFor(harness, flags, flags.gbrainBin ?? resolveGbrainBin() ?? '') : null;
   const skillPlugin = harness === 'openclaw' ? await openclawSkillFor(flags) : null;
   const cursorPins = harness === 'cursor' && projectDir ? await cursorPinsFor(flags, projectDir) : null;
-  const code = instructions?.action === 'preserve' || skillsFailed(skills) || (check && !check.ok) || resolver?.error || cursorPins?.error ? 1 : 0;
+  const code = instructions?.action === 'preserve' || hermesMcp?.action === 'error' || skillsFailed(skills) || (check && !check.ok) || resolver?.error || cursorPins?.error ? 1 : 0;
   if (out.json) {
     await writeJsonDocument(`${JSON.stringify({ harness, dry_run: flags.dryRun, remove: flags.remove, instructions_only: true, instructions, ...(turnHook ? { turn_hook: turnHook } : {}), ...(check ? { turn_hook_check: check } : {}), skills, ...(resolver ? { skill_resolver: resolver } : {}), ...(skillPlugin ? { skill_resolver: skillPlugin } : {}), ...(cursorPins ? { skill_pins: cursorPins } : {}), mcp, notices }, null, 2)}\n`, (t) => process.stdout.write(t));
     return skillPlugin?.error ? exitCodeForCode(skillPlugin.error.code) : code;
@@ -1193,6 +1203,7 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
   if (cursorPins) for (const line of describeCursorPins(cursorPins, flags.dryRun)) say(out, line);
   if (check?.ok) say(out, `  verify   ${'turn hook'.padEnd(7)} ${check.message}`);
   if (mcp.setup === 'manual' && !flags.remove) say(out, `MCP: setup does not register ${adapter.label}'s MCP server. Follow ${adapter.guide} (one command), then start a new session.`);
+  if (hermesMcp) say(out, `  ${hermesMcp.action.padEnd(8)} ${'MCP'.padEnd(7)} ${hermesMcp.detail}${hermesMcp.command && hermesMcp.action !== 'write' ? `:\n    ${hermesMcp.command}` : ''}`);
   if (!flags.remove && instructions?.decision.value === 'accepted') say(out, 'Next: start a new session; the harness reads its instruction file at session start.');
   if (resolver?.error) return refuse(resolverRefusal(resolver), out);
   if (skillPlugin?.error) return refuse(openclawSkillRefusal(skillPlugin), out);

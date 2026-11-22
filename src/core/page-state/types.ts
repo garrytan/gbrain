@@ -104,6 +104,17 @@ export class PageRevisionConflictError extends Error {
   }
 }
 
+export type ProjectionConflictField = 'text_projection_revision' | 'chunk_digest' | 'indexing_context';
+
+/** Canonical state can stay unchanged while another worker replaces its projection. */
+export class PageProjectionConflictError extends PageRevisionConflictError {
+  constructor(expected: string, current: string, readonly changed: readonly ProjectionConflictField[], readonly slug: string, readonly sourceId: string) {
+    super(expected, current);
+    this.name = 'PageProjectionConflictError';
+    this.message = `The search projection of ${slug} (source ${sourceId}) changed during preparation (${changed.join(', ')}) at the same page revision; nothing was installed. Re-read its current snapshot before retrying.`;
+  }
+}
+
 /** #5216: the snapshot revision of a row written before the column existed and not yet backfilled. Never a UUID. */
 export const REVISION_BACKFILL_PENDING = 'backfill_pending';
 

@@ -653,7 +653,7 @@ async function applyKeepDeleted(ctx: OperationContext, page: ApprovedPage, artif
     if (error instanceof OperationError && error.code === 'changed_since_preview') return changed(error.message);
     throw error;
   }
-  const [source] = await ctx.engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [page.source_id]);
+  const source = await ctx.engine.readSourceIncarnation(page.source_id);
   const recorded = await ctx.engine.transaction(tx => recordKeepDeleted(tx, { sourceId: page.source_id, incarnation: source!.incarnation, path: pin.path, observedAt: pin.observed_at,
     state: pin.state, decision: { request_id: requestId, decided_at: new Date().toISOString(), page_id: pin.page_id, revision: pin.revision } }));
   if (!recorded) return changed('its hold was re-checked or cleared');
@@ -722,7 +722,7 @@ export async function prepareDriftDetach(engine: BrainEngine, row: WriteRequest)
   return { observedRevision: pin.revision, databaseOnlyReason: 'detached',
     validate: async tx => { await locked(tx); },
     apply: async tx => {
-      await tx.executeRaw('UPDATE pages SET source_path=NULL, source_uri=NULL, database_only_reason=$2 WHERE id=$1', [pin.page_id, DETACHED_REASON]);
+      await tx.detachPageOrigin(pin.page_id, DETACHED_REASON);
       return { status: 'detached', slug: row.slug, source_id: row.source_id, path: pin.path,
         hold_cleared: await clearGitHold(tx, { sourceId: row.source_id, incarnation: row.source_incarnation, path: pin.path, observedAt: pin.observed_at }) };
     } };
@@ -755,7 +755,7 @@ async function applyDeletedSide(ctx: OperationContext, page: ApprovedPage, artif
       const live = await assertDeletedPin(ctx.engine, page.source_id, pin);
       await asLocalCli(ctx.engine, () => submitManagedFileRepair(ctx, { sourceId: page.source_id, requestId, slug: artifact.slug, path: pin.path, sourcePath: pin.source_path,
         content: live.raw.toString('utf8'), beforeHash: pin.raw_file_hash, resultDigest: artifact.import_file.result_digest, ...(pin.revision ? { expected_revision: pin.revision } : {}),
-        noEmbed: !embed, holdObservedAt: pin.observed_at }));
+        noEmbed: !embed, holdObservedAt: pin.observed_at, repairKind: 'file-drift' }));
     }
     return { applied: true, outcome: 'repaired', detail: { request_id: requestId, prefer: artifact.prefer, action, state: pin.state } };
   } catch (error) {
@@ -967,7 +967,7 @@ export const fileDriftRepair: RepairHandler = {
     const targets: Array<{ slug: string | null; held?: HeldTarget }> = held ? held.targets.slice(0, HELD_WINDOW_PAGES).map(target => ({ slug: target.hold.slug, held: target })) : slugs.map(slug => ({ slug }));
     const windowEnd = Math.min(Date.now() + HELD_WINDOW_BUDGET_MS, opts.deadline ?? Infinity);
     let previewed = 0;
-    const [source] = held ? [] : await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
+    const source = held ? null : await engine.readSourceIncarnation(sourceId);
     const newerPages: string[] = [];
     opts.progress?.start('repair.file_drift.preview', targets.length);
     await asLocalCli(engine, async () => {

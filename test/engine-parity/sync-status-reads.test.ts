@@ -5,7 +5,8 @@
  * which persistence/sync-status.ts, sync-failures.ts, sync-drain.ts and sync-identity-downgrades.ts call instead of raw SQL.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: the source row carries the source's incarnation, last commit, drain lock, pass row and admission
+ *  - Contract: the source row carries the source's incarnation, last commit, drain lock, pass row, Apple Contacts
+ *    identity reviews and held deletes, and admission
  *    probes (null while the stored admission reads as normal; otherwise pinned only while an open pass row holds the
  *    live drain lease); an archived or missing source has no row. A brain with no managed write has no committed page,
  *    held push or fence, head request, recovery record, cursor, failure or identity downgrade. A managed-sync cursor
@@ -66,13 +67,29 @@ describe('engine parity: sync status reads', () => {
         source: {
           incarnation: true, last_commit: null, drain_lock: false, pass_value: null, pass_updated: false, read_at: true, withheld: null, synced: false,
           admission_stored: null, admission_row_value: null, admission_set_at: null, admission_pinned: null, admission_destructive: null,
-          writeback_failed: null, refresh: null, identity_reviews: null, held_deletes: null,
+          writeback_failed: null, refresh: null, identity_reviews: null, held_deletes: null, config: {},
         },
         missing: null,
         committed: { n: 0, git_push_held: false, fence_held: false, last_committed_at: null },
         header: null, retired: null, failures: [], scopedFailures: [], orphaned: [], head: null,
         recovery: { n: 0, request_id: null, slug: null, blocked: null },
         downgrades: [], callers: { failures: [], downgrades: [] },
+      });
+      return result;
+    });
+
+  parityTest('the source row carries the Apple Contacts identity reviews and held deletes recorded for that source only',
+    { methods: ['readSyncStatusSourceRow', 'writeOpCheckpointKeys'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'repo', {}, '/srv/brain/repo');
+      await createSource(engine, backend, 'other', {}, '/srv/brain/other');
+      await engine.writeOpCheckpointKeys(APPLE_CONTACTS_REVIEW_OP, 'repo', ['review-a', 'review-b']);
+      await engine.writeOpCheckpointKeys(APPLE_CONTACTS_PENDING_DELETES_OP, 'repo', ['delete-a']);
+      const pick = (row: Awaited<ReturnType<typeof sourceRow>>) => row && { reviews: row.identity_reviews, held: row.held_deletes };
+      const result = { repo: pick(await sourceRow(engine, 'repo')), other: pick(await sourceRow(engine, 'other')) };
+      expect(result).toEqual({
+        repo: { reviews: ['review-a', 'review-b'], held: ['delete-a'] },
+        other: { reviews: null, held: null },
       });
       return result;
     });

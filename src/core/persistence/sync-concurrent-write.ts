@@ -22,15 +22,13 @@ import type { HeldEntry } from './sync-screen.ts';
 export interface ConcurrentWriteProof { request_id: string; operation: string; revision: string }
 
 /** The proof that `done` failed because a non-sync write changed the page; null when it is not proven. */
-export async function concurrentWriteProof(engine: Pick<BrainEngine, 'executeRaw'>, input: { sourceId: string; incarnation: string;
+export async function concurrentWriteProof(engine: Pick<BrainEngine, 'readPageRevisionWriter' | 'readRevisionWriterRequest'>, input: { sourceId: string; incarnation: string;
   pending: { pageId: number | null; intent: SyncIntent }; done: Pick<WriteRequest, 'error_code'> }): Promise<ConcurrentWriteProof | null> {
   const { pending } = input;
   if (input.done.error_code !== 'revision_conflict' || pending.intent.kind !== 'managed_sync_import' || pending.pageId === null) return null;
-  const [page] = await engine.executeRaw<{ revision: string | null; writer: string | null }>(
-    'SELECT knowledge_revision::text AS revision, revision_write_request_id::text AS writer FROM pages WHERE id=$1 AND source_id=$2', [pending.pageId, input.sourceId]);
+  const page = await engine.readPageRevisionWriter(pending.pageId, input.sourceId);
   if (!page?.revision || !page.writer || page.revision === String(pending.intent.expected_revision ?? '')) return null;
-  const [writer] = await engine.executeRaw<{ request_id: string; operation: string; kind: string | null; state: string; incarnation: string; page_id: number | null }>(
-    `SELECT request_id::text, operation, intent->>'kind' AS kind, state, source_incarnation::text AS incarnation, page_id FROM persistence_requests WHERE id=$1::uuid`, [page.writer]);
+  const writer = await engine.readRevisionWriterRequest(page.writer);
   if (!writer || writer.state !== 'committed' || String(writer.kind ?? '').startsWith('managed_sync_')
     || writer.incarnation !== input.incarnation || Number(writer.page_id) !== pending.pageId) return null;
   return { request_id: writer.request_id, operation: writer.operation, revision: page.revision };

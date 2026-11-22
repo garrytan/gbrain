@@ -93,6 +93,33 @@ export async function readOpCheckpointKeys(exec: LegacyUnscopedRead, op: string,
   return { keys: [...keys], corruptParent };
 }
 
+/** One checkpoint parent as `readOpCheckpointRecord` returns it. */
+export interface OpCheckpointRecord {
+  /** The stored JSON, as written (a JSON array on every write path). */
+  completed_keys: unknown;
+  /** The stamp on the database clock, ISO 8601 with milliseconds, UTC. */
+  updated_at: string;
+  /** Whether the stamp is within `freshWithinDays` of the database clock; null when the caller did not ask. */
+  fresh: boolean | null;
+}
+
+/**
+ * The parent row of one checkpoint whose keys are JSON records rather than text keys: the repair runner's cursor
+ * (repair/core.ts, op `repair`) and the preview-approval sets (persistence/preview-approval.ts, op
+ * `repair-approval`). Freshness is measured on the database clock, the clock the checkpoint purge uses.
+ */
+export async function readOpCheckpointRecord(exec: LegacyUnscopedRead, op: string, fingerprint: string,
+  opts: { freshWithinDays?: number } = {}): Promise<OpCheckpointRecord | null> {
+  const days = opts.freshWithinDays === undefined ? null : String(opts.freshWithinDays);
+  const [row] = await exec.executeRaw<{ completed_keys: unknown; updated_at: string; fresh: boolean | null }>(
+    `SELECT completed_keys,
+            to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at,
+            updated_at >= now() - ($3::text || ' days')::interval AS fresh
+       FROM op_checkpoints WHERE op=$1 AND fingerprint=$2`,
+    [op, fingerprint, days]);
+  return row ? { completed_keys: row.completed_keys, updated_at: row.updated_at, fresh: row.fresh ?? null } : null;
+}
+
 /**
  * The page clock of the get_health memo (health-memo.ts): the brain id and `page_generation_clock_seq`, which every
  * page insert, update or delete advances, as `<brain id>:<clock>`.

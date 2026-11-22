@@ -349,7 +349,7 @@ pub(crate) fn page_hidden_with(
 }
 
 /// `holdingSlugSql`: `memory/unattributed`, or a slug ending in `/memory/unattributed`.
-fn holding_slug(slug: &str) -> bool {
+pub(super) fn holding_slug(slug: &str) -> bool {
     slug == "memory/unattributed" || slug.ends_with("/memory/unattributed")
 }
 
@@ -424,6 +424,22 @@ pub(crate) fn caller_version_hidden(
             && (fm.contains_key("pinned_question")
                 || !(private_source_open(page, policy)
                     || snapshot_fields_allow(page_type, fm, policy.honor_aliases))))
+}
+
+/// Whether a version's successor (the next version of the page) withholds the version's change
+/// reason from a policy reader (`replacedBecauseSql`): the successor names readers none of which is
+/// in the policy's identity, or its own fields are private (`privateSnapshotFilterFragment`). The
+/// successor is judged by its fields alone, whatever the policy's entity privacy part or
+/// private-readable grant, as the SQL does.
+pub(crate) fn successor_withholds_reason(
+    page_type: &str,
+    fm: &Map<String, Value>,
+    policy: &PrivacyPolicy,
+) -> bool {
+    let readers_allowed = !fm.contains_key("readable_by")
+        || access_readers(fm)
+            .is_some_and(|readers| readers.iter().any(|r| policy.identity.contains(r)));
+    !readers_allowed || !snapshot_fields_allow(page_type, fm, policy.honor_aliases)
 }
 
 /// `frontmatter ->> key`.

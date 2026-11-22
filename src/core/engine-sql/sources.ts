@@ -9,7 +9,7 @@ import type { SourceDetailRow, SourceRow } from '../engine.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from '../source-config-sql.ts';
 import { jsonbParam, type SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
-import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
+import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import { ANY_OWNER_ONLY_SQL, OWNER_ONLY_LINEAGE_PRESENT_SQL } from '../access/owner-only.ts';
 import { quarantineFilterFragment } from '../quarantine.ts';
 
@@ -120,6 +120,22 @@ export async function readSourceChunkerVersion(exec: LegacyUnscopedRead, sourceI
 /** Stamps the chunker version a full sync of the source used; an unknown source changes nothing. */
 export async function setSourceChunkerVersion(exec: SqlExecutor, sourceId: string, version: string): Promise<void> {
   await exec.executeRaw('UPDATE sources SET chunker_version = $1 WHERE id = $2', [version, sourceId]);
+}
+
+/** `markSourceSynced` options: `incarnation` stamps only while the source is still that incarnation (a managed sync run's guard). */
+export interface SourceSyncStampOptions { incarnation?: string }
+
+/**
+ * Sets the source's last sync time to the database clock (`now()`): the stamp a clean `gbrain import` of a folder
+ * source makes (#1691), a no-change sync's heartbeat and a connector's clean run. With `incarnation`, only a source
+ * still of that incarnation is stamped. Returns whether a source was stamped; an unknown source (or another
+ * incarnation) changes nothing.
+ */
+export async function markSourceSynced(exec: SqlExecutor, sourceId: string, opts: SourceSyncStampOptions = {}): Promise<boolean> {
+  const rows = opts.incarnation === undefined
+    ? await exec.executeRaw<{ id: string }>('UPDATE sources SET last_sync_at = now() WHERE id = $1 RETURNING id', [sourceId])
+    : await exec.executeRaw<{ id: string }>('UPDATE sources SET last_sync_at = now() WHERE id = $1 AND incarnation = $2::uuid RETURNING id', [sourceId, opts.incarnation]);
+  return rows.length > 0;
 }
 
 /**
@@ -385,4 +401,134 @@ export async function insertSource(exec: SqlExecutor, row: SourceInsert): Promis
     INSERT INTO sources (id, name, local_path, config)
          VALUES (${row.id}, ${row.name}, ${row.local_path}, ${jsonbParam(row.config)})
   `);
+}
+
+/** A source id and its incarnation as text (`listSourceIncarnations`). */
+export interface SourceIncarnationListRow { id: string; incarnation: string }
+
+/** The incarnation of each known source of `sourceIds`, in byte order of id (a repair preview hash binds it). */
+export async function listSourceIncarnations(exec: LegacyUnscopedRead, sourceIds: readonly string[]): Promise<SourceIncarnationListRow[]> {
+  return exec.executeRaw<SourceIncarnationListRow>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id COLLATE "C"', [[...sourceIds]]);
+}
+
+/**
+ * An archived source is purge-eligible only when both archive timestamps are real
+ * and its window has elapsed. A missing or epoch timestamp (#5452) cannot prove the
+ * 72h recovery window was honored, so it never reads as expired.
+ */
+export const EXPIRED_ARCHIVE_SQL = `archived = true AND archived_at > '1970-01-02'::timestamptz
+  AND archive_expires_at > '1970-01-02'::timestamptz AND archive_expires_at <= now()`;
+export const UNVERIFIED_ARCHIVE_SQL = `archived = true AND (archived_at IS NULL OR archived_at <= '1970-01-02'::timestamptz
+  OR archive_expires_at IS NULL OR archive_expires_at <= '1970-01-02'::timestamptz)`;
+
+/**
+ * #7072: a source delete removes its pages only through the pages -> sources
+ * ON DELETE CASCADE. True when that cascade fires on this brain: the foreign key
+ * exists on pages.source_id, cascades, and its delete trigger on sources is enabled
+ * for this session. Where it does not, a delete would leave the pages live with no
+ * sources row, unwritable and outside every per-source audit.
+ */
+const PAGES_CASCADE_SQL = `EXISTS (
+  SELECT 1 FROM pg_constraint c JOIN pg_trigger t ON t.tgconstraint = c.oid AND t.tgrelid = c.confrelid
+   WHERE c.contype = 'f' AND c.conrelid = 'pages'::regclass AND c.confrelid = 'sources'::regclass AND c.confdeltype = 'c'
+     AND c.conkey = ARRAY[(SELECT a.attnum FROM pg_attribute a WHERE a.attrelid = 'pages'::regclass AND a.attname = 'source_id')]
+     AND t.tgfoid = 'pg_catalog."RI_FKey_cascade_del"'::regproc
+     AND (t.tgenabled = 'A' OR (t.tgenabled = 'O' AND current_setting('session_replication_role') <> 'replica')))`;
+
+/**
+ * #9068: CTEs that remove what names a removed source's pages outside a foreign key, for `sourceId`, each only
+ * when `gate` holds: the source's retrieval_event_pages, retrieval_event_links, retrieval_feedback and
+ * context_volunteer_events rows, and each eval candidate's captured slugs that no other source the candidate covers
+ * still has a page for (retrieval_weights and mention_gazetteer_entries cascade from sources). #9146: also the
+ * source's core_edit_notices and write_gate_holds with the holds' receipts (take_proposals, open_loops, page_aliases,
+ * slug_aliases and slug_rename_history cascade from sources). Every removal runs
+ * them in the statement that deletes the sources row (gated on that delete), so the source and those rows go
+ * together, then again in a later statement: that statement reads past a feedback write or eval capture that held one
+ * of the source's page rows while the delete waited for it (a later one finds no page).
+ */
+export function removedSourceScrubCtes(sourceId: string, gate: SqlFragment): SqlFragment {
+  const elsewhereU = sqlFragment`EXISTS (SELECT 1 FROM pages pg WHERE pg.slug = u.s AND pg.source_id = ANY(c.source_ids) AND pg.source_id <> ${sourceId})`;
+  const elsewhereR = sqlFragment`EXISTS (SELECT 1 FROM pages pg WHERE pg.slug = r.s AND pg.source_id = ANY(c.source_ids) AND pg.source_id <> ${sourceId})`;
+  return sqlFragment`scrub_retrieval_event_pages AS (DELETE FROM retrieval_event_pages WHERE source_id = ${sourceId} AND ${gate}),
+       scrub_retrieval_event_links AS (DELETE FROM retrieval_event_links WHERE source_id = ${sourceId} AND ${gate}),
+       scrub_retrieval_feedback AS (DELETE FROM retrieval_feedback WHERE source_id = ${sourceId} AND ${gate}),
+       scrub_context_volunteer_events AS (DELETE FROM context_volunteer_events WHERE source_id = ${sourceId} AND ${gate}),
+       scrub_core_edit_notices AS (DELETE FROM core_edit_notices WHERE source_id = ${sourceId} AND ${gate}),
+       scrub_write_gate_holds AS (DELETE FROM write_gate_holds WHERE source_id = ${sourceId} AND ${gate} RETURNING id::text AS id),
+       scrub_write_gate_receipts AS (DELETE FROM write_gate_receipts r USING scrub_write_gate_holds h WHERE r.target_table = 'write_gate_holds' AND r.target_id = h.id),
+       scrub_eval_candidates AS (UPDATE eval_candidates c
+      SET retrieved_slugs = ARRAY(SELECT u.s FROM unnest(c.retrieved_slugs) WITH ORDINALITY AS u(s, n) WHERE ${elsewhereU} ORDER BY u.n)
+      WHERE ${sourceId} = ANY(c.source_ids) AND EXISTS (SELECT 1 FROM unnest(c.retrieved_slugs) AS r(s) WHERE NOT ${elsewhereR}) AND ${gate})`;
+}
+
+/**
+ * The source lifecycle's remove/purge statements (it runs them in its own topology transaction): delete one
+ * incarnation's sources row with the removedSourceScrubCtes rows, and the later ungated rescrub. Text and params.
+ */
+export function sourceIncarnationDeleteStatement(sourceId: string, incarnation: string): { text: string; params: unknown[] } {
+  return renderFragment(sqlFragment`WITH gone AS (DELETE FROM sources WHERE id = ${sourceId} AND incarnation = ${incarnation}::uuid RETURNING id),
+       ${removedSourceScrubCtes(sourceId, sqlFragment`EXISTS (SELECT 1 FROM gone)`)} SELECT 1`);
+}
+export function removedSourceRescrubStatement(sourceId: string): { text: string; params: unknown[] } {
+  return renderFragment(sqlFragment`WITH ${removedSourceScrubCtes(sourceId, sqlFragment`true`)} SELECT 1`);
+}
+
+/** What `deleteSourceRecord` did: whether the row went, and how many pages blocked it (then nothing was deleted). */
+export interface SourceDeleteResult { deleted: boolean; stranded: number }
+
+/**
+ * Deletes a `sources` row with that incarnation's persistence source binding (#5732; the binding has no FK, and a
+ * kept one would make a same-id replacement read as claimed), the source's managed-sync cursors (`op_checkpoints`,
+ * #8741) and the removedSourceScrubCtes rows, in one statement; a second statement repeats the scrub once the row is
+ * gone, unless a source with this id exists again by then. A source with pages goes only when the pages cascade
+ * (#7072); otherwise nothing is deleted and `stranded` counts the pages. `expiredArchiveOnly` deletes only an
+ * archived source whose window has elapsed (EXPIRED_ARCHIVE_SQL). An unknown source returns `deleted: false`.
+ */
+export async function deleteSourceRecord(exec: SqlExecutor, id: string, opts: { expiredArchiveOnly?: boolean } = {}): Promise<SourceDeleteResult> {
+  const expired = opts.expiredArchiveOnly ? sqlFragment`AND ${trustedSql(EXPIRED_ARCHIVE_SQL)}` : sqlFragment``;
+  const { rows } = await exec.run<{ id: string | null; stranded: number }>(sqlFragment`
+    WITH stranded AS (SELECT count(*)::int AS n FROM pages WHERE source_id = ${id} AND NOT ${trustedSql(PAGES_CASCADE_SQL)}),
+       gone AS (DELETE FROM sources WHERE id = ${id} ${expired} AND (SELECT n FROM stranded) = 0 RETURNING id, incarnation),
+       unbound AS (DELETE FROM persistence_source_bindings b USING gone
+                    WHERE b.source_id = gone.id AND b.source_incarnation = gone.incarnation),
+       cursors AS (DELETE FROM op_checkpoints c USING gone
+                    WHERE c.op = 'managed-sync' AND c.completed_keys->0->>'sourceId' = gone.id),
+       ${removedSourceScrubCtes(id, sqlFragment`EXISTS (SELECT 1 FROM gone)`)}
+     SELECT id, 0 AS stranded FROM gone
+     UNION ALL SELECT NULL, n FROM stranded WHERE n > 0 AND EXISTS (SELECT 1 FROM sources WHERE id = ${id} ${expired})`);
+  const stranded = rows.find(row => row.id === null);
+  if (stranded) return { deleted: false, stranded: Number(stranded.stranded) };
+  if (!rows.length) return { deleted: false, stranded: 0 };
+  await exec.run(sqlFragment`WITH ${removedSourceScrubCtes(id, sqlFragment`NOT EXISTS (SELECT 1 FROM sources WHERE id = ${id})`)} SELECT 1`);
+  return { deleted: true, stranded: 0 };
+}
+
+/** The counts a source delete would remove (`sources remove` preview); null for an unknown source. */
+export interface SourceDeleteImpact { id: string; name: string; pages: number; chunks: number; embeddings: number; files: number; facts: number }
+
+/**
+ * One source's id and name with the rows a delete would remove: pages (soft-deleted ones too), their chunks, the
+ * chunks with an embedding, its files (0 on a brain without the `files` table) and its facts (0 on a brain from
+ * before the `facts` table). Null for an unknown source.
+ */
+export async function readSourceDeleteImpact(exec: LegacyUnscopedRead, sourceId: string): Promise<SourceDeleteImpact | null> {
+  const [src] = (await exec.run<{ id: string; name: string }>(sqlFragment`SELECT id, name FROM sources WHERE id = ${sourceId}`)).rows;
+  if (!src) return null;
+  const [counts] = (await exec.run<{ pages: number; chunks: number; embeddings: number }>(
+    // chunk-visibility-ok: a source delete removes every chunk row of its pages, staged and retired ones too
+    sqlFragment`SELECT (SELECT COUNT(*)::int FROM pages WHERE source_id = ${sourceId}) AS pages,
+            (SELECT COUNT(*)::int FROM content_chunks cc JOIN pages p ON cc.page_id = p.id WHERE p.source_id = ${sourceId}) AS chunks,
+            (SELECT COUNT(*)::int FROM content_chunks cc JOIN pages p ON cc.page_id = p.id
+              WHERE p.source_id = ${sourceId} AND cc.embedding IS NOT NULL) AS embeddings`,
+  )).rows;
+  const [probe] = (await exec.run<{ files: boolean; facts: boolean }>(
+    sqlFragment`SELECT to_regclass('public.files') IS NOT NULL AS files, to_regclass('public.facts') IS NOT NULL AS facts`,
+  )).rows;
+  const count = async (fragment: SqlFragment) => Number((await exec.run<{ n: number }>(fragment)).rows[0]?.n ?? 0);
+  return {
+    id: src.id, name: src.name,
+    pages: Number(counts?.pages ?? 0), chunks: Number(counts?.chunks ?? 0), embeddings: Number(counts?.embeddings ?? 0),
+    files: probe?.files ? await count(sqlFragment`SELECT COUNT(*)::int AS n FROM files WHERE source_id = ${sourceId}`) : 0,
+    facts: probe?.facts ? await count(sqlFragment`SELECT COUNT(*)::int AS n FROM facts WHERE source_id = ${sourceId}`) : 0,
+  };
 }

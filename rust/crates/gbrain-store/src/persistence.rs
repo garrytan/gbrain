@@ -65,10 +65,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 mod checkpoint_rows;
+mod connector_orphans;
 mod dream_reads;
 mod effect_scans;
 mod effect_worker;
 mod effects;
+mod embedding_candidates;
+mod git_holds;
 mod housekeeping;
 mod idle_probe;
 #[cfg(test)]
@@ -78,8 +81,15 @@ mod notifier;
 mod op_checkpoint;
 mod owner_scans;
 pub(crate) mod projection_queue;
+mod projection_rebuild;
+mod purge_effects;
+mod receipt_compaction;
 mod receipt_list;
+mod sync_orphan_reads;
+mod sync_pass_pages;
+mod sync_run_reads;
 mod topology;
+pub(crate) use topology::purge_probe_rows as purge_probe_topology_rows;
 mod worktree_admission;
 #[cfg(test)]
 mod worktree_claim_tests;
@@ -87,6 +97,7 @@ mod worktree_rows;
 mod worktrees;
 mod write_claim_terms;
 mod writer_versions;
+pub use connector_orphans::OrphanBounds;
 pub use effect_worker::{EffectClaim, EffectSettle, LinksRearm, Settle};
 pub(crate) use effects::all_effects;
 pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};
@@ -97,13 +108,28 @@ pub(crate) use notifier::remove_source_rows as remove_notifier_source_rows;
 pub use notifier::{
     NotifierCoverage, NotifierLeaseClaim, NotifierStateError, NotifierStatePatch, WantedMarkerInput,
 };
+pub(crate) use op_checkpoint::{
+    delete_op_checkpoint_in, list_op_checkpoint_records_in, op_checkpoint_completed_keys,
+};
 pub use projection_queue::{
     ProjectionJobRef, ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };
-pub(crate) use projection_queue::{activation_started_us, queue_page_projection};
-pub use receipt_list::WriteRequestListFilter;
+pub(crate) use projection_queue::{
+    activation_started_us, parse_timestamptz, queue_page_projection,
+};
+pub use projection_rebuild::{
+    ProjectionJobKey, ProjectionWindowCandidate, QueuedProjectionFilter, QueuedProjectionKey,
+    QueuedProjectionPages,
+};
+pub use purge_effects::{
+    GitEffectsCarryingArgs, PageGitEffectsArgs, PurgeEffectDataArgs, PurgeGitEffectRow,
+};
+pub use receipt_list::{IncarnationRequestFilter, WriteRequestListFilter};
+pub use sync_pass_pages::{SyncImportPageQuery, SyncImportPageWindow};
+pub use sync_run_reads::SyncAdmissionEffectsQuery;
 pub use topology::TopologyChangeInsert;
 pub use worktree_admission::WorktreeAdmissionKey;
+pub(crate) use worktrees::remove_source_binding_in;
 pub use worktrees::{HostBindingInsert, SourceBindingInsert, WorktreeInsert};
 
 /// The byte after `keys::PERSISTENCE` of a counter row.
@@ -266,7 +292,7 @@ fn extra_is_null(record: &RequestRecord, column: &str) -> bool {
     record.extra.get(column).is_none_or(Value::is_null)
 }
 
-fn extra_bool(record: &RequestRecord, column: &str) -> bool {
+pub(crate) fn extra_bool(record: &RequestRecord, column: &str) -> bool {
     record
         .extra
         .get(column)
@@ -305,7 +331,7 @@ fn violation(message: impl Into<String>) -> StoreError {
 }
 
 /// Every request record, in key order. Requests are never deleted on this engine.
-fn all_requests(read: &dyn KvRead) -> Result<Vec<RequestRecord>> {
+pub(crate) fn all_requests(read: &dyn KvRead) -> Result<Vec<RequestRecord>> {
     let mut out = Vec::new();
     let mut bad = false;
     scan_prefix(read, &[keys::REQUEST], false, &mut |_, v| {
@@ -880,6 +906,19 @@ pub struct WriteCompletion {
     pub probe_purges: bool,
 }
 
+/// `TerminalIntentCompaction` of `src/core/engine-sql/persistence-journal.ts`: the compaction of a
+/// terminal request whose stored intent carried purged content (`journal.ts` finishTerminal).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalIntentCompaction {
+    pub id: String,
+    /// What the receipt keeps without its intent.
+    pub left: i64,
+    /// The terminal reservation the completion left.
+    pub reservation: i64,
+    pub counter_keys: Vec<String>,
+}
+
 /// `TRUE_UP_CLAMP_SQL`: adds `clamped` counters to `persistence.true_up.clamped` (a value that is
 /// not digits counts as 0); nothing is written when none clamped.
 fn add_true_up_clamped(tx: &mut dyn KvWrite, clamped: u64) -> Result<()> {
@@ -899,6 +938,49 @@ fn add_true_up_clamped(tx: &mut dyn KvWrite, clamped: u64) -> Result<()> {
 /// committed the reservation is kept whole. `None`, with nothing changed, when the result does not fit the
 /// terminal reservation. A source has no fact or page purge rows here, so the purge probe answers
 /// false.
+/// `compactTerminalIntent(compaction)`, as the SQL member's one statement: drops the request's
+/// intent and marks it compacted; its terminal reservation shrinks to `left` plus its effect bytes
+/// unless an effect is unfinished; each named counter (once) releases `reservation` minus what is
+/// kept, never below zero. The compacted row, or `None` for an unknown id (nothing changes). The
+/// row's `updated_at` stays as it was.
+pub(crate) fn compact_terminal_intent_in(
+    tx: &mut dyn KvWrite,
+    c: &TerminalIntentCompaction,
+) -> Result<Option<Value>> {
+    let Some(mut record) = request_by_id(&*tx, &c.id)? else {
+        return Ok(None);
+    };
+    let (effect_bytes, unfinished) = effects::effect_totals(&*tx, &c.id)?;
+    let current = extra_i64(&record, "terminal_reservation");
+    let out_of_range = || {
+        StoreError::invalid("compactTerminalIntent: a byte count is out of range for type bigint")
+    };
+    let kept = if unfinished {
+        current
+    } else {
+        let left = c.left.checked_add(effect_bytes).ok_or_else(out_of_range)?;
+        current.min(left)
+    };
+    record.intent = Value::Null;
+    record.extra.insert("compacted".into(), json!(true));
+    record
+        .extra
+        .insert("terminal_reservation".into(), json!(kept));
+    write_request(tx, &record)?;
+    let released = c.reservation.checked_sub(kept).ok_or_else(out_of_range)?;
+    for key in distinct_keys(&c.counter_keys) {
+        let Some(mut counter) = read_counter(&*tx, &key)? else {
+            continue;
+        };
+        counter.terminal_bytes = counter
+            .terminal_bytes
+            .checked_sub(released.min(counter.terminal_bytes))
+            .ok_or_else(out_of_range)?;
+        write_counter(tx, &key, &counter)?;
+    }
+    Ok(Some(record.to_row()))
+}
+
 pub(crate) fn complete_write_row_in(
     tx: &mut dyn KvWrite,
     env: &dyn Env,
@@ -1462,6 +1544,21 @@ impl Store {
         Ok(request_by_id(&*self.read()?, id)?.map(|r| r.to_row()))
     }
 
+    /// `listWriteRequestsByRequestIds(requestIds)`: the request rows whose client request id is
+    /// one of `request_ids`, by sequence. A malformed id refuses, as the SQL's `::uuid[]` cast does.
+    pub fn list_write_requests_by_request_ids(&self, request_ids: &[String]) -> Result<Vec<Value>> {
+        let mut wanted = std::collections::BTreeSet::new();
+        for id in request_ids {
+            wanted.insert(uuid_param(id, "requestIds")?);
+        }
+        let mut rows: Vec<RequestRecord> = all_requests(&*self.read()?)?
+            .into_iter()
+            .filter(|r| wanted.contains(&r.request_id.to_lowercase()))
+            .collect();
+        rows.sort_by_key(|r| r.sequence);
+        Ok(rows.iter().map(RequestRecord::to_row).collect())
+    }
+
     /// `insertWriteRequest(row)`: the stored request row.
     pub fn insert_write_request(&self, input: &WriteRequestInsert) -> Result<Value> {
         self.write(|tx| insert_write_request_in(tx, &*self.env, input))
@@ -1487,6 +1584,14 @@ impl Store {
     /// `completeWriteRow(completion)`: the completed row, or `None` when it does not fit.
     pub fn complete_write_row(&self, completion: &WriteCompletion) -> Result<Option<Value>> {
         self.write(|tx| complete_write_row_in(tx, &*self.env, completion))
+    }
+
+    /// `compactTerminalIntent(compaction)`: the compacted row, or `None` for an unknown id.
+    pub fn compact_terminal_intent(
+        &self,
+        compaction: &TerminalIntentCompaction,
+    ) -> Result<Option<Value>> {
+        self.write(|tx| compact_terminal_intent_in(tx, compaction))
     }
 
     /// `cancelWriteRow(cancellation)`: `{ status, row }`, or `None` when the row does not exist.

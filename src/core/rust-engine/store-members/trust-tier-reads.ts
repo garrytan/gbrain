@@ -2,8 +2,8 @@
  * The typed reads of stamped trust tiers (src/core/engine-sql/trust-tier-reads.ts), served from the trust store
  * (rust/crates/gbrain-store/src/trust/tier_reads.rs): `listCorePageRows`, `listTrustScanRows` and
  * `countUnscannedTrustRows` over pages and facts, `listVersionTrustTiers`, `listVersionReasonWriters` and
- * `listPageRefsByIds`, `listPageTrustTiersByKey` and `lockLivePagesByKey`; and the
- * valid-time reads (trust/valid_time.rs) `listValidTimeIdentities` and `pickValidTimeEdition`, and
+ * `listPageRefsByIds`, `listPageTrustTiersByKey` and `lockLivePagesByKey`; the belief history reads `readBeliefHistoryRows`
+ * and `listVisibleBeliefLifetimes` (trust/belief_history.rs); and the valid-time reads (trust/valid_time.rs) `listValidTimeIdentities` and `pickValidTimeEdition`, and
  * `listAmendmentsNotApplied` (link_queries/link_temporal.rs), `readPageVersionEdition` and
  * `readCursorEdition` (trust/valid_time.rs). `pageAwaitsRederive` answers false: the store keeps no `needs_rederive`
  * queue (only a raw-SQL purge writes one, and `executeRaw` refuses here). `beginSnapshotRead` sets no isolation level: a store transaction is one
@@ -14,9 +14,8 @@
  *    canonical one for its reader identity and private-readable sources (the remote floor: for no readers), such as
  *    a lineage read or a labelled-only, owner or audience caller;
  *  - the trust scan over `takes` and `timeline_entries`, which the store does not stamp yet;
- *  - `readBeliefHistoryRows` and `listVisibleBeliefLifetimes`, always and before any store call: the store keeps no
- *    belief ledger (every `belief_events` and `belief_page_lifetimes` write goes through `executeRaw`), so a read could
- *    only answer an empty list where PGLite has events (TODOS.md `rust-belief-ledger`);
+ *  - `readBeliefHistoryRows` and `listVisibleBeliefLifetimes` for a caller whose remote read floor is not the page
+ *    policy of no readers (a labelled-only caller);
  *  - `listValidTimeIdentities` under `excludePrivate`, and `pickValidTimeEdition` always, for a caller whose page or
  *    snapshot policy is neither the no-caller one nor the canonical one for its reader identity and private-readable
  *    sources (a labelled-only, owner, audience or lineage caller; the pick reports every row's visibility);
@@ -121,12 +120,29 @@ export const lockLivePagesByKey: Member<'lockLivePagesByKey'> = async (brain, re
   return storeCall({ member: 'lockLivePagesByKey' }, () => brain.lockLivePagesByKey(refs.map(r => ({ source_id: r.source_id, slug: r.slug }))));
 };
 
-/** Why the belief reads refuse: an answer from the store would be an empty ledger, never the one PGLite keeps. */
-const NO_BELIEF_LEDGER = 'the belief ledger, which the store does not keep yet';
+/** The remote read floor over `p` that `stream_visible` and the visible lifetimes are judged by. */
+const beliefFloor = (member: string) => storePageTextPolicy(member, () => remoteReadFloorSql('p'), { noReaders: true });
 
-export const readBeliefHistoryRows: Member<'readBeliefHistoryRows'> = async () => refuseMember('readBeliefHistoryRows', NO_BELIEF_LEDGER);
+export const readBeliefHistoryRows: Member<'readBeliefHistoryRows'> = async (brain, q) => {
+  const member = 'readBeliefHistoryRows';
+  requireInteger(member, 'cursor', q.afterId);
+  requireCount(member, 'limit', q.limit);
+  if (q.beforeId !== null) requireInteger(member, 'cursor', q.beforeId);
+  const floor = beliefFloor(member);
+  const rows: Array<Record<string, unknown>> = await storeCall({ member }, () => brain.readBeliefHistoryRows({
+    sourceId: q.sourceId, slug: q.slug, subjectKey: q.subjectKey, afterId: q.afterId, limit: q.limit,
+    recordedAfter: q.recordedAfter, recordedUntil: q.recordedUntil, subjectKeys: q.subjectKeys ? [...q.subjectKeys] : null,
+    beforeId: q.beforeId, descending: q.descending, floor,
+  }));
+  // PGLite answers timestamptz columns as dates.
+  return rows.map(r => ({ ...r, recorded_at: asDate(r.recorded_at), source_time: asDate(r.source_time) }));
+};
 
-export const listVisibleBeliefLifetimes: Member<'listVisibleBeliefLifetimes'> = async () => refuseMember('listVisibleBeliefLifetimes', NO_BELIEF_LEDGER);
+export const listVisibleBeliefLifetimes: Member<'listVisibleBeliefLifetimes'> = async (brain, lifetimes) => {
+  const member = 'listVisibleBeliefLifetimes';
+  const floor = beliefFloor(member);
+  return storeCall({ member }, () => brain.listVisibleBeliefLifetimes({ lifetimes: [...lifetimes], floor }));
+};
 
 export const listValidTimeIdentities: Member<'listValidTimeIdentities'> = (brain, spec) => {
   const member = 'listValidTimeIdentities';

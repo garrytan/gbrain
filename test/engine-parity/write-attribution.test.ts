@@ -7,7 +7,8 @@
  *    readOldestVersionAttribution read the receipts the attribution triggers stamp on a page and its versions;
  *    readRowAttribution reads one fact, take or timeline entry, inside its page, source, slug, visibility, privacy and
  *    holder filters, or null; under excludePrivate a caller who is not the owner gets no take or timeline entry while a
- *    source is owner-only (closed form). On every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm
+ *    source is owner-only (closed form). A take and a timeline entry answer the trust_tier and write_origin their write
+ *    stamped, not the column defaults. On every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm
  *    with GBRAIN_TEST_RUST_ARM=1). The get_write_attribution handler gives the same answer end to end.
  *  - Regression: an engine that names a request it was not asked for, drops a revoked writer's name, or serves a row
  *    outside the caller's source, world-only or holder filter tells an admin the wrong writer or leaks a hidden row.
@@ -294,6 +295,36 @@ describe('engine parity: write attribution', () => {
     const fn = await latest();
     expect(fn).toEqual(both);
     return { before, closed, owner, fn };
+  });
+
+  parityTest('readRowAttribution and get_write_attribution answer the trust tier and write origin a take and a timeline entry were written with', {
+    methods: ['readRowAttribution', 'addTakesBatch', 'addTimelineEntry', 'applyTransactionSettings'],
+  }, async (engine) => {
+    const reqA = await admit(engine, REQ_A, WRITER, 'put_page');
+    const page = await as(engine, reqA, 'local_cli', WRITER, (tx) =>
+      tx.putPage(SLUG, { type: 'person', title: 'Alice', compiled_truth: 'Alice v1', timeline: '' }));
+    const origin = { channel: 'mcp', tool: 'parity-take' };
+    // One write whose trust context declares a tier and an origin, as an agent's MCP write does.
+    await engine.transaction(async (tx) => {
+      await tx.applyTransactionSettings([...SETTINGS, 'gbrain.write_trust_tier', 'gbrain.write_origin'],
+        [reqA, 'local_cli', WRITER, 'agent_written', JSON.stringify(origin)]);
+      await tx.addTakesBatch([{ page_id: Number(page.id), row_num: 1, claim: 'a stamped take', kind: 'take', holder: 'garry' }]);
+      await tx.addTimelineEntry(SLUG, { date: '2026-01-02', source: 'cal', summary: 'Joined', detail: 'day one' });
+    });
+    const [entry] = await engine.getTimeline(SLUG);
+    const trust = (row: RowAttributionRow | null) => row && { trust_tier: row.trust_tier, write_origin: row.write_origin };
+    const take = trust(await engine.readRowAttribution({ kind: 'take', pageId: Number(page.id), rowNum: 1 }));
+    const timeline = trust(await engine.readRowAttribution({ kind: 'timeline', id: Number(entry!.id), pageId: Number(page.id) }));
+    const op = operations.find((o) => o.name === 'get_write_attribution')!;
+    const ctx = { engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId: 'default',
+      logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext;
+    const handled = await op.handler(ctx, { slug: SLUG, take: 1 }) as { trust_tier: unknown; write_origin: unknown };
+    const handler = { trust_tier: handled.trust_tier, write_origin: handled.write_origin };
+    // The stored tier and origin, not the column default `unknown` and NULL.
+    expect(take).toEqual({ trust_tier: 'agent_written', write_origin: expect.objectContaining(origin) });
+    expect(take).toEqual(timeline);
+    expect(handler).toEqual({ trust_tier: 'agent_written', write_origin: expect.objectContaining(origin) });
+    return { take, timeline, handler };
   });
 
   parityTest('get_write_attribution answers the page, a fact, a take, a timeline entry and the versions end to end', {

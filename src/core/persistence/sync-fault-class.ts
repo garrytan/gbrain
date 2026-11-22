@@ -116,6 +116,9 @@ export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
   // #7848: the file asks for visibility: private in a spelling page privacy does not read; only an edit to the file clears it.
   { code: 'visibility_noncanonical', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only an edit to the file clears it',
     human_reason: 'The file asks for visibility: private in a spelling page privacy does not read; write visibility: private on its own frontmatter line (lowercase) and commit.' },
+  // The file's frontmatter names its readers with a key page access does not read (`Readable_By`, `readable-by`); only an edit to the file clears it.
+  { code: 'readers_noncanonical', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only an edit to the file clears it',
+    human_reason: 'The file names its readers with a key page access does not read, so the page would be readable by every member; write the key as readable_by (lowercase, with an underscore) on its own frontmatter line and commit.' },
   // GBRA-133 S-39: the file's text holds NUL bytes (a UTF-16 save, a binary file, a padded file); only an edit or its removal clears it.
   { code: 'content_null_bytes', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only an edit to the file or its removal clears it',
     human_reason: 'The file holds NUL bytes, which page text cannot store; save a UTF-16 file as UTF-8, remove the NUL bytes, or remove a binary file (or exclude it with sync.exclude), and commit.' },

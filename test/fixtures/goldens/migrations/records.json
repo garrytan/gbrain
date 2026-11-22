@@ -1,12 +1,11 @@
 {
   "golden": {
-    "count": 326,
+    "count": 327,
     "gaps": [
       17,
       18,
       19,
       100,
-      331,
       332,
       333
     ],
@@ -5401,6 +5400,19 @@
         "version": 330
       },
       {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "access_read_log",
+        "sql": {
+          "length": 796,
+          "sha256": "f6f4eedb7a8b84ae342f434d490c4481f3b99ca67eff4d2e9e91ca56276030fc"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 331
+      },
+      {
         "handler": {
           "form": "arrow",
           "helpers": [
@@ -5756,6 +5768,7 @@
       328,
       329,
       330,
+      331,
       334
     ]
   },

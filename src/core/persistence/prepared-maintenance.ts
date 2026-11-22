@@ -408,16 +408,7 @@ interface EvidencePage { slug: string; revision: string; id: number; }
 
 /** Whole fact rows as comparable snapshots; `lock` takes FOR UPDATE inside a transaction. */
 export async function readFacts(engine: BrainEngine, sourceId: string, ids: number[], lock = false): Promise<FactSnapshot[]> {
-  const rows = await engine.executeRaw<FactSnapshot>(`SELECT f.id,jsonb_build_object(
-      'source_id',f.source_id,'entity_slug',f.entity_slug,'source_markdown_slug',f.source_markdown_slug,'row_num',f.row_num,
-      'fact',f.fact,'kind',f.kind,'visibility',f.visibility,'notability',f.notability,'context',f.context,
-      'valid_from',f.valid_from,'valid_until',f.valid_until,'expired_at',f.expired_at,'superseded_by',f.superseded_by,
-      'consolidated_at',f.consolidated_at,'consolidated_into',f.consolidated_into,
-      'source',f.source,'source_session',f.source_session,'confidence',f.confidence,
-      'claim_metric',f.claim_metric,'claim_value',f.claim_value,'claim_unit',f.claim_unit,'claim_period',f.claim_period,
-      'event_type',f.event_type,'dimension',f.dimension,'value',f.value,'dim_status',f.dim_status,'attributed_to',f.attributed_to
-    ) AS value FROM facts f
-    WHERE f.source_id=$1 AND f.id=ANY($2::integer[]) ORDER BY f.id${lock ? ' FOR UPDATE' : ''}`, [sourceId, ids]);
+  const rows = await engine.readFactSnapshots(sourceId, ids, lock);
   return rows.map(row => ({ ...row, id: Number(row.id) }));
 }
 

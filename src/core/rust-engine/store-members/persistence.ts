@@ -7,7 +7,8 @@
  * hasClaimableWrite), the consumer rows (listHostConsumerRows, probeLiveConsumerRows, renewConsumerRow,
  * deleteConsumerRow, stampWorktreeHeartbeats), the admission reads (readSourceMembership, findTopologyChanges), the topology recovery scan (listTopologyRecoveries), the lifecycle receipts
  * (readTopologyChange, insertTopologyChange) and readLedgerSource, and the effects a publication or a managed-request
- * withdrawal queues (insertPublicationEffects, insertWithdrawalEffects).
+ * withdrawal queues (insertPublicationEffects, insertWithdrawalEffects). The dream cycle's journal reads
+ * (readDreamDeferralReceipt, listLaterPersistenceRequests, listCommittedOutputRequests) are in dream-journal.ts.
  *
  * Each store call is one store write transaction, so the row locks PGLite takes (FOR SHARE, FOR UPDATE, the counter
  * lock) change nothing here: no other write can run between the read and the write that follows it. The callers that
@@ -17,7 +18,7 @@
  * rust/docs/store/persistence.md.
  */
 import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persistence-state.ts';
-import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestGroupInsert, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
+import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestGroupInsert, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress, HeldCoverageRow, TerminalIntentCompaction } from '../../engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
 import type { LedgerSource } from '../../engine-sql/belief.ts';
 import type { SourceStateRow } from '../../engine-sql/write-misc.ts';
@@ -28,6 +29,8 @@ import { PAGE_BODY_CONFIG_KEYS } from '../../page-body/limits.ts';
 import { requestRow, topologyRow } from '../store-codec.ts';
 import { withdrawalEffectsData } from '../../engine-sql/persistence-journal.ts';
 import { requireTextColumn, storeCall, type StoreMember } from './common.ts';
+import type { RustEngine } from '../../rust-engine.ts';
+import type { StoreBrain } from '../store.ts';
 // The managed-worktree admission members (managed_persistence), served beside the journal's.
 export * from './persistence-admission.ts';
 
@@ -111,6 +114,13 @@ export const listWriteRequestRows: StoreMember<[principalKind: string, principal
 /** The request with journal id `id`, or null. `signal` changes nothing: the read does not wait on anything. */
 export const readWriteRequestById: StoreMember<[id: string, opts?: { signal?: AbortSignal }], WriteRequest | null> =
   async (brain, id) => requestRow(await storeCall({ member: 'readWriteRequestById' }, () => brain.readWriteRequestById(id)));
+
+/** The requests admitted under any of the client request ids `requestIds`, by sequence. */
+export const listWriteRequestsByRequestIds: StoreMember<[requestIds: readonly string[]], WriteRequest[]> = async (brain, requestIds) => {
+  if (!requestIds.length) return [];
+  const rows = await storeCall({ member: 'listWriteRequestsByRequestIds' }, () => brain.listWriteRequestsByRequestIds([...requestIds])) as unknown[];
+  return rows.map(row => requestRow<WriteRequest>(row)!);
+};
 
 /**
  * The progress columns of request `id`, or null: the columns PGLite's WRITE_PROGRESS_SQL selects, taken from the
@@ -213,6 +223,24 @@ export const completeWriteRow: StoreMember<[completion: WriteCompletion], Comple
   requestRow<CompletedWriteRow>(await storeCall({ member: 'completeWriteRow' }, () => brain.completeWriteRow(completion)));
 
 /**
+ * The requests with these ids in id order (uuid order is the order of their lowercase text), each once; an unknown id reads
+ * nothing. FOR UPDATE changes nothing in one store write (see the header).
+ */
+export const lockWriteRequestsById: StoreMember<[ids: readonly string[]], WriteRequest[]> = async (brain, ids) => {
+  const ordered = [...new Set(ids.map(id => id.toLowerCase()))].sort();
+  const rows: WriteRequest[] = [];
+  for (const id of ordered) {
+    const row = requestRow<WriteRequest>(await storeCall({ member: 'lockWriteRequestsById' }, () => brain.readWriteRequestById(id)));
+    if (row) rows.push(row);
+  }
+  return rows;
+};
+
+/** The compaction of a terminal request whose intent carried purged content, in one store write; null for an unknown id. */
+export const compactTerminalIntent: StoreMember<[compaction: TerminalIntentCompaction], WriteRequest | null> = async (brain, compaction) =>
+  requestRow<WriteRequest>(await storeCall({ member: 'compactTerminalIntent' }, () => brain.compactTerminalIntent({ ...compaction, counterKeys: [...compaction.counterKeys] })));
+
+/**
  * Synchronous commit for the current transaction: nothing to set. A store commit makes every write durable before it
  * returns (gbrain-store kv.rs `commit`), so each commit already waits for the flush.
  */
@@ -312,24 +340,30 @@ export const insertTopologyChange: StoreMember<[row: TopologyChangeInsert], Topo
   topologyRow(await storeCall({ member: 'insertTopologyChange' }, () => brain.insertTopologyChange(row)))!;
 
 /**
- * The belief ledger's view of a source. Belief events, the purge epoch and take and page purges are written only
- * through `executeRaw`, which this engine refuses, so the epoch is 0 and coverage is null; a purge is possible when the
- * source holds a fact purge tombstone (`insertFactPurge`). A batch also returns the one unmanaged brain row and the
- * plan-cache mode PGLite reports, which it never changes here.
+ * The belief ledger's view of a source (trust/belief_history.rs): its incarnation, purge epoch and newest coverage
+ * event, and whether a fact, take or page purge tombstone or a raised epoch makes a purge possible. A batch also
+ * returns the one unmanaged brain row and the plan-cache mode it replaced: inside a transaction with coverage active it
+ * sets the transaction's `plan_cache_mode` to `force_generic_plan` (store-members/transactions.ts keeps it), as the SQL
+ * batch does with `set_config`. The store has no planner, so the setting changes nothing else.
  */
-export const readLedgerSource: StoreMember<[sourceId: string, opts?: { batch?: boolean }], LedgerSource | null> = async (brain, sourceId, opts) => {
-  const membership = await storeCall({ member: 'readLedgerSource' }, () => brain.readSourceMembership(sourceId)) as SourceMembership | null;
-  if (!membership) return null;
-  const purgesPossible = await storeCall({ member: 'readLedgerSource' }, () => brain.hasFactPurges(sourceId)) as boolean;
-  return { incarnation: String(membership.incarnation), purgeEpoch: 0, coverage: null, purgesPossible,
-    ...(opts?.batch ? { managedRows: [{ enabled: false }], planModePrev: PLAN_CACHE_MODE } : {}) };
+export const readLedgerSource = async function readLedgerSource(this: RustEngine, brain: StoreBrain, sourceId: string, opts?: { batch?: boolean }): Promise<LedgerSource | null> {
+  const row = await storeCall({ member: 'readLedgerSource' }, () => brain.readLedgerSource(sourceId)) as LedgerSource | null;
+  if (!row) return null;
+  if (!opts?.batch) return row;
+  const scope = this._txScope && !this._txScope.ended ? this._txScope : null;
+  const planModePrev = scope?.settings.get(PLAN_CACHE_SETTING) ?? PLAN_CACHE_MODE;
+  if (scope && row.coverage !== null && row.coverage !== 'coverage.stopped') scope.settings.set(PLAN_CACHE_SETTING, 'force_generic_plan');
+  return { ...row, managedRows: [{ enabled: false }], planModePrev };
 };
 
-/**
- * The store records no belief events (they are written only through `executeRaw`, which this engine refuses), so no
- * source is covered for any subject, as `readLedgerSource` answers `coverage: null`.
- */
-export const listCoveredSources: StoreMember<[subjectKey: string], string[]> = async () => [];
+/** The sources with a coverage event about the subject in their current incarnation, by id. */
+export const listCoveredSources: StoreMember<[subjectKey: string], string[]> = (brain, subjectKey) =>
+  storeCall({ member: 'listCoveredSources' }, () => brain.listCoveredSources(subjectKey));
 
 /** `current_setting('plan_cache_mode')` on a PGLite brain that never set it. */
 const PLAN_CACHE_MODE = 'auto';
+const PLAN_CACHE_SETTING = 'plan_cache_mode';
+
+/** The source's stored purge epoch (0 until a purge raises it); an unknown source has none (null). */
+export const readSourcePurgeEpoch: StoreMember<[sourceId: string], string | number | null> = async (brain, sourceId) =>
+  (await storeCall({ member: 'readSourcePurgeEpoch', sourceId }, () => brain.readSourcePurgeEpoch(sourceId))) ?? null;

@@ -10,7 +10,6 @@ src/commands/reindex-multimodal.ts	4
 src/core/code-graph-readiness.ts	1
 src/core/code-intel/read-scope.ts	1
 src/core/code-intel/recursive-walk.ts	2
-src/core/destructive-guard.ts	2
 src/core/embed-consent.ts	2
 src/core/embed-stale-images.ts	1
 src/core/embedding-invalidation.ts	4
@@ -28,7 +27,6 @@ src/core/facts/purge-verify.ts	1
 src/core/import-file.ts	1
 src/core/oversized-backfill.ts	2
 src/core/page-state/contextual-proof.ts	1
-src/core/page-state/projections.ts	2
 src/core/persistence/page-purge.ts	1
 src/core/pglite-engine.ts	1
 src/core/postgres-engine.ts	1

@@ -65,6 +65,7 @@ import { parseCorpusTurns } from '../context/corpus-turns.ts';
 import { DETECTED_PRINCIPAL, readSpeakerSidecar, speakerContextNote, type SpeakerSidecar } from '../context/session-speaker.ts';
 import { stripPastedContent } from '../transcripts/pasted-content.ts';
 import { wholeBodySnapshot } from '../persistence/segmented-apply.ts';
+import { sortSourcesById } from '../source-rows.ts';
 import { shellQuote } from '../shell-quote.ts';
 import { pruneDir } from '../sync.ts';
 import { CAPTURE_LANES, captureSessionId } from './captured-facts.ts';
@@ -317,11 +318,11 @@ function previewCommand(scope: RepairScope, all: string[], opts: AgentSessionOpt
 }
 
 async function activeSources(engine: BrainEngine): Promise<string[]> {
-  return (await engine.listActiveSourceIds()).map(row => row.id);
+  return sortSourcesById(await engine.listAllSources()).map(row => row.id);
 }
 
 async function brainId(engine: BrainEngine): Promise<string> {
-  return (await engine.readRepairBrainId().catch(() => null)) ?? 'host';
+  return (await engine.readPersistenceBrainId().catch(() => null)) ?? 'host';
 }
 
 /**

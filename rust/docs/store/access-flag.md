@@ -26,7 +26,8 @@ The store sets the flag in three places (`crates/gbrain-store/src/access_flag.rs
 When the scan cannot write (a full disk, or a record file that took the open but refuses the write), the open does
 not fail. The store reads the snapshot instead, and when a page record names readers, or that read does not finish,
 the process reads the flag as `'1'` (`Store::flag_assumed`) through `getConfig`, `getConfigValues`, `getAllConfig`
-and `listConfigKeys`, so it hides restricted pages. Nothing is stored; the next open that can write runs the scan.
+and `listConfigKeys`, and through every store read (`AssumedFlagRead`), so the short member-access form of a privacy
+policy (`open`, `facts/privacy.rs` `readers_allowed`) still walks the origins and hides restricted pages. Nothing is stored; the next open that can write runs the scan.
 The scan never runs in two other cases:
 
 - a second handle or process that opens a brain another one holds: the record file lock refuses that open with

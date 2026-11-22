@@ -111,3 +111,37 @@ fn an_unknown_source_queues_nothing_and_a_missing_request_refuses() {
     assert_eq!(err.code, INVALID_ARGUMENT, "{err:?}");
     assert!(store.read_request_effects(REQ).unwrap().is_empty());
 }
+
+/// Postgres stores a uuid in canonical lowercase whatever case the caller sends, so a withdrawal
+/// queued under an uppercase request id is found by the mirror gate under either spelling, and its
+/// rows read back with the lowercase id.
+#[test]
+fn an_uppercase_request_id_is_stored_and_found_as_postgres_reads_a_uuid() {
+    let dir = TempDir::new("withdrawal-effects-case");
+    let store = open(&dir);
+    let id = admit(&store, REQ);
+    let upper = id.to_uppercase();
+    let kinds = store
+        .insert_withdrawal_effects(&spec(&upper, "default", data()))
+        .unwrap();
+    assert_eq!(kinds.len(), 3);
+    let ids: Vec<String> = store
+        .read_request_effects(&id)
+        .unwrap()
+        .iter()
+        .map(|e| e["request_id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(ids, vec![id.clone(), id.clone(), id.clone()]);
+    for lookup in [id.clone(), upper.clone()] {
+        let gate = store.read_mirror_gate_rows(&[lookup]).unwrap();
+        assert_eq!(gate.len(), 1, "the mirror gate finds the withdrawal mirror");
+        assert_eq!(gate[0]["request_id"], json!(id));
+    }
+    // A second insert under the other spelling queues nothing new.
+    assert!(
+        store
+            .insert_withdrawal_effects(&spec(&id, "default", data()))
+            .unwrap()
+            .is_empty()
+    );
+}

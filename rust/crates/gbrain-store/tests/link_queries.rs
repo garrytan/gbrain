@@ -671,14 +671,30 @@ fn projection_readiness_generation_moves_only_on_a_commit() {
     let brain = Brain::new("readiness-generation");
     brain.source("default");
     let before = brain.store.projection_readiness_generation().unwrap();
+    assert!(before.is_some());
     assert_eq!(
         before,
         brain.store.projection_readiness_generation().unwrap()
     );
     brain.page("notes/a", "default", "note");
-    let after = brain.store.projection_readiness_generation().unwrap();
-    assert_ne!(before, after);
+    let after = brain
+        .store
+        .projection_readiness_generation()
+        .unwrap()
+        .unwrap();
+    assert_ne!(before.as_deref(), Some(after.as_str()));
     assert!(after.starts_with(&format!("{}/", brain.store.brain_id())));
+    assert_eq!(after, brain.store.health_memo_clock().unwrap());
+}
+
+#[test]
+fn projection_readiness_generation_is_null_inside_a_transaction() {
+    let brain = Brain::new("readiness-generation-tx");
+    brain.source("default");
+    let tx = brain.store.begin_transaction(false).unwrap();
+    // The transaction reads its own writes, which the commit sequence does not count yet.
+    assert_eq!(tx.projection_readiness_generation().unwrap(), None);
+    tx.rollback_transaction().unwrap();
 }
 
 #[test]

@@ -133,6 +133,17 @@ impl Brain {
         self.run(env, move |s| s.list_oauth_clients())
     }
 
+    /// `listSourceOAuthClients(sourceId)`: `{ client_id, client_name, deleted }` of every client
+    /// that names the source, revoked ones included, by client id in byte order.
+    #[napi(js_name = "listSourceOAuthClients")]
+    pub fn list_source_oauth_clients<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_source_oauth_clients(&source_id))
+    }
+
     /// `patchOauthClient(clientId, patch, guard)`: `{ row, before }` of the patched client, or null.
     #[napi]
     pub fn patch_oauth_client<'env>(

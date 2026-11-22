@@ -10,6 +10,9 @@
  *
  * Identity decisions (listEntityKeyRows, listIdentityDecisions, listRestrictedIdentityMembers, applyIdentityDecisions;
  * SQL in engine-sql/entity-keys.ts and engine-sql/identity-decisions.ts) live in gbrain-store `identity_reviews`.
+ * The store keeps no decision evidence and no automatic company groups yet, and its key rows carry no page id,
+ * generation, creation time or group: listEntityKeyRows refuses, listIdentityDecisions reads every decision's evidence
+ * as null (none kept), and applyIdentityDecisions refuses an upsert that carries evidence or a company sweep's plan.
  */
 import { identityPageNotFound, type CanonicalTwinRow, type EntityIdentityFilter, type EntityIdentityLinkInput, type EntityIdentityPageRow, type EntityIdentityRow, type EntityIdentityUnlinkInput } from '../../engine-sql/entity-identities.ts';
 import type { SourceRoutingRow } from '../../engine-sql/sources.ts';
@@ -22,10 +25,17 @@ import type {
 import { privatePagesFilterFragment } from '../../search/private-visibility.ts';
 import { pagePolicyFlags, storePagePolicy } from './private-provenance.ts';
 
+/**
+ * `confidence` is DOUBLE PRECISION on the SQL engines, which keep NaN and ±Infinity and read them back as numbers.
+ * JSON has no number for those three, so they cross the store boundary as the text Postgres prints for them.
+ */
+const toStoreFloat = (value: number): number | string => Number.isFinite(value) ? value : String(value);
+const fromStoreFloat = (value: number | string): number => typeof value === 'string' ? Number(value) : value;
+
 /** Links the live page into the group; the identity page-not-found error with no live page. */
 export const linkEntityIdentityRow: StoreMember<[input: EntityIdentityLinkInput], void> = async (brain, input) => {
   const linked = await storeCall({ member: 'linkEntityIdentityRow', slug: input.slug, sourceId: input.sourceId }, () => brain.linkEntityIdentity({
-    entity_id: input.entityId, slug: input.slug, source_id: input.sourceId, confidence: input.confidence,
+    entity_id: input.entityId, slug: input.slug, source_id: input.sourceId, confidence: toStoreFloat(input.confidence),
     established_by: input.establishedBy, canonical: input.canonical,
   }));
   if (linked !== true) throw identityPageNotFound(input.slug, input.sourceId);
@@ -50,8 +60,8 @@ export const listEntityIdentityRows: StoreMember<[filter: EntityIdentityFilter],
     slug_source_id: (filter.slug && filter.slugSourceId) || null,
     allowed_sources: filter.allowedSources?.length ? [...filter.allowedSources] : null,
     exclude_private: policy ?? null,
-  }))) as Array<Omit<EntityIdentityRow, 'established_at'> & { established_at: string }>;
-  return found.map((r) => ({ ...r, established_at: new Date(r.established_at) }));
+  }))) as Array<Omit<EntityIdentityRow, 'established_at' | 'confidence'> & { established_at: string; confidence: number | string }>;
+  return found.map((r) => ({ ...r, confidence: fromStoreFloat(r.confidence), established_at: new Date(r.established_at) }));
 };
 
 /** The group of each live member of the cross product of the pages' sources and slugs, by source then slug. */
@@ -80,9 +90,11 @@ export const listEntityKeyRows: StoreMember<[opts: EntityKeyRowsOpts], EntityKey
     tokens: opts.tokens ? { values: [...opts.tokens.values], fields: [...opts.tokens.fields] } : null,
   }));
 
-/** The owner's identity decisions by id, the members still pending, and the revision an apply can pin. */
-export const listIdentityDecisions: StoreMember<[], IdentityDecisionsRead> = (brain) =>
-  storeCall({ member: 'listIdentityDecisions' }, () => brain.listIdentityDecisions());
+/** The owner's identity decisions by id, the members still pending, and the revision an apply can pin. No evidence is kept. */
+export const listIdentityDecisions: StoreMember<[], IdentityDecisionsRead> = async (brain) => {
+  const read = await storeCall({ member: 'listIdentityDecisions' }, () => brain.listIdentityDecisions()) as IdentityDecisionsRead;
+  return { ...read, decisions: read.decisions.map(d => ({ ...d, evidence: d.evidence ?? null })) };
+};
 
 /** The members whose page the no-caller page policy (`privatePagesFilterFragment`) hides. */
 export const listRestrictedIdentityMembers: StoreMember<[members: ReadonlyArray<IdentityMemberRef>], IdentityMemberRef[]> = async (brain, members) => {
@@ -98,7 +110,7 @@ export const applyIdentityDecisions: StoreMember<[input: ApplyIdentityDecisionsI
       decision_id: d.decision_id, verdict: d.verdict, members: d.members, group_id: d.group_id ?? null, entity_id: d.entity_id ?? null,
       canonical: d.canonical ? { source_id: d.canonical.source_id, slug: d.canonical.slug } : null, decided_by: d.decided_by,
       decided_at: d.decided_at ?? null, origin: d.origin, home_source_id: d.home_source_id ?? null, git_blob: d.git_blob ?? null,
-      evidence: d.evidence ? [...d.evidence] : null,
+      evidence: d.evidence?.length ? [...d.evidence] : null,
     })),
     remove: [...(input.remove ?? [])],
     expect_revision: input.expectRevision ?? null,

@@ -75,6 +75,7 @@ import {
 } from '../core/sources-load.ts';
 import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { preflightOauthClientColumns } from './auth.ts';
+import { hasCapability } from '../core/engine-capabilities.ts';
 import { deleteSourceRow } from '../core/source-delete.ts';
 import { USAGE_EXIT_CODE } from '../core/exit-codes.ts';
 import { isSyncStrategy } from '../core/sync.ts';
@@ -841,14 +842,11 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
   class SourceReferencedError extends Error {}
   try {
     await (await import('../core/owned-folder/remove.ts')).removeOwnedFolderThen(engine, id, { keep: keepStorage }, () => engine.transaction(async (tx) => {
-      const cols = await preflightOauthClientColumns(sqlQueryForEngine(tx));
-      if (cols.has('source_id')) {
+      // A Rust store always has oauth_clients.source_id and runs no raw SQL; the SQL engines preflight the column.
+      const hasSourceColumn = !hasCapability(tx, 'raw_sql') || (await preflightOauthClientColumns(sqlQueryForEngine(tx))).has('source_id');
+      if (hasSourceColumn) {
         // PHYSICAL count (no deleted_at filter): the FK ignores soft-deletion.
-        const rows = await tx.executeRaw<{ n: string }>(
-          `SELECT COUNT(*)::text AS n FROM oauth_clients WHERE source_id = $1`,
-          [id],
-        );
-        if (Number(rows[0]?.n ?? 0) > 0) throw new SourceReferencedError();
+        if ((await tx.listOauthClients()).some(c => c.source_id === id)) throw new SourceReferencedError();
       }
       await deleteSourceRow(tx, id);
     }));
@@ -964,11 +962,7 @@ async function runArchive(engine: BrainEngine, args: string[]): Promise<void> {
     // the impact check above) and for "already archived" (UPDATE matched no
     // `archived = false` row). Distinguish them: already-archived is a
     // friendly idempotent no-op, not a reasonless failure.
-    const rows = await engine.executeRaw<{ archived: boolean }>(
-      `SELECT archived FROM sources WHERE id = $1`,
-      [id],
-    );
-    if (rows[0]?.archived) {
+    if ((await engine.listArchivedSourceRows()).some((r) => r.id === id)) {
       console.log(`Source "${id}" is already archived — nothing to do.`);
       console.log(`  'gbrain sources archived' shows its purge expiry; 'gbrain sources restore ${id}' un-archives it.`);
       return;

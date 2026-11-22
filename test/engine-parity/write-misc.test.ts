@@ -4,7 +4,7 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readSourceState, readAdmissionSource, sharedSkillPackTablePresent,
  *    listSharedSkillPackRoots, getWorktreeBinding, isSourceClaimed, hasExtractedEvents, listActiveAccessMembers,
- *    listAccessTokens, isFolderRestricted, listAppliedPolicyRevisions, readMayActFor, readAudiencePrincipals, readAccessMembers, readAccessCredentials,
+ *    listAccessTokens, isFolderRestricted, listAppliedPolicyRevisions, readMayActFor, readAudiencePrincipals, readJobPrincipal, readAccessMembers, readAccessCredentials,
  *    listAudienceAccessMembers, readLiveMember, hasLabelledOnlyMember, readFolderAccess, expireMemoryProposals,
  *    readOpCheckpointKeys, writeOpCheckpointKeys, appendOpCheckpointPaths, deleteOpCheckpoint, deleteOpCheckpointPaths,
  *    purgeStaleCheckpoints,
@@ -563,6 +563,54 @@ describe('engine parity: write misc', () => {
     };
     expect(lists).toEqual({ live: ['member:alice-example'], revoked: null, bare: null, tokenAsClient: null, clientLive: ['group:team-a'], clientGone: null, clientAsToken: null });
     return lists;
+  });
+
+  parityTest('readJobPrincipal finds no client and no token on a brain with none', { methods: ['readJobPrincipal'] }, async (engine) => {
+    const client = await engine.readJobPrincipal({ kind: 'oauth_client', id: 'client-absent' });
+    const token = await engine.readJobPrincipal({ kind: 'legacy_token', id: '00000000-0000-4000-8000-0000000000aa' });
+    expect({ client, token }).toEqual({ client: null, token: null });
+    return { client, token };
+  });
+
+  // Leak case: the member returns the revoked or deleted row as stored (the caller names which one denied the job), and
+  // a token id named as a client, or a client id named as a token, finds nothing. The Rust store keeps no tokens or
+  // clients (null above), so the token write stops on the raw_sql refusal.
+  parityTest('readJobPrincipal reads only the row it names, revoked and deleted rows included', { methods: ['readJobPrincipal'] }, async (engine, backend) => {
+    const write = await engine.executeRaw(
+      `INSERT INTO access_tokens (id, name, token_hash, scopes, revoked_at) VALUES
+         ('00000000-0000-4000-8000-0000000000b1', 'live', 'h1', ARRAY['admin'], NULL),
+         ('00000000-0000-4000-8000-0000000000b2', 'revoked', 'h2', ARRAY['admin'], now())`).then(() => null, (e: unknown) => e);
+    if (backend === 'rust') {
+      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
+      expect(await engine.readJobPrincipal({ kind: 'legacy_token', id: '00000000-0000-4000-8000-0000000000b1' })).toBeNull();
+      throw write;
+    }
+    expect(write).toBeNull();
+    await engine.executeRaw(
+      `INSERT INTO oauth_clients (client_id, client_name, scope, source_id, surface, deleted_at) VALUES
+         ('client-live', 'live', 'admin', 'default', 'full', NULL), ('client-gone', 'gone', 'read', NULL, NULL, now())`);
+    const read = async (kind: 'oauth_client' | 'legacy_token', id: string) => await engine.readJobPrincipal({ kind, id });
+    const live = await read('legacy_token', '00000000-0000-4000-8000-0000000000b1');
+    const revoked = await read('legacy_token', '00000000-0000-4000-8000-0000000000b2');
+    const clientLive = await read('oauth_client', 'client-live');
+    const clientGone = await read('oauth_client', 'client-gone');
+    const seen = {
+      live: { name: live?.name, scopes: live?.scopes, revoked: live?.revoked_at != null },
+      revoked: { name: revoked?.name, revoked: revoked?.revoked_at != null },
+      clientLive: { ...clientLive, deleted_at: clientLive?.deleted_at != null } as Record<string, unknown>,
+      clientGone: { scope: clientGone?.scope, source_id: clientGone?.source_id, deleted: clientGone?.deleted_at != null },
+      tokenAsClient: await read('oauth_client', '00000000-0000-4000-8000-0000000000b1'),
+      clientAsToken: await engine.readJobPrincipal({ kind: 'legacy_token', id: 'client-live' }).then(r => r, () => 'refused'),
+    };
+    expect(seen).toEqual({
+      live: { name: 'live', scopes: ['admin'], revoked: false },
+      revoked: { name: 'revoked', revoked: true },
+      clientLive: { client_id: 'client-live', deleted_at: false, scope: 'admin', source_id: 'default', bound_slug_prefixes: null, surface: 'full', allowed_operations: null },
+      clientGone: { scope: 'read', source_id: null, deleted: true },
+      tokenAsClient: null,
+      clientAsToken: 'refused',
+    });
+    return seen;
   });
 
   parityTest('readAudiencePrincipals reads nothing for an empty audience and finds no member or group on a brain with none', { methods: ['readAudiencePrincipals'] }, async (engine) => {

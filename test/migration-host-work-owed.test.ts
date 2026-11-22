@@ -22,7 +22,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { getDbUrlSource } from '../src/core/config.ts';
 import { VERSION } from '../src/version.ts';
 import { SHARED_SKILLS_HOST_WORK_VERSION } from '../src/core/shared-skills/migration-host-work.ts';
-import { hostWorkOwedFix, hostWorkOwedMessage } from '../src/core/migration-ledger.ts';
+import { MIGRATION_VERSIONS, hostWorkOwedFix, hostWorkOwedMessage } from '../src/core/migration-ledger.ts';
 import { minionsMigrationEntry } from '../src/commands/doctor/checks/local-runtime.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
 import type { Check } from '../src/commands/doctor.ts';
@@ -220,6 +220,22 @@ describe('the other surfaces say the same thing', () => {
     expect(notice!.why).toContain(INSPECT.join(' '));
     expect(notice!.why).not.toContain(FORCE_RETRY);
     expectInspectFix(notice!.fix);
+  });
+
+  test('ordinary commands say nothing about it when it is all that is left, even with nothing past it; doctor still warns', async () => {
+    const onlyOwed = [...MIGRATION_VERSIONS.filter(v => v !== OWED && v !== '0.60.31').map(version => ({ version, status: 'complete' })), ...[1, 2, 3].map(owedRow)];
+    for (const command of ['remember', 'recall', 'config', 'stats']) {
+      expect(await scoped(false, () => pendingUpgradeMigrationsNotice({ getConfig: async () => null } as never, command, VERSION), onlyOwed)).toBeNull();
+    }
+    const rows = await scoped(false, async () => (await buildChecks(null, ['--fast', '--json'], getDbUrlSource())).filter(c => c.name === 'minions_migration'), onlyOwed);
+    expect(rows.find(c => (c.details as any)?.code === 'migration_host_work_owed')?.status).toBe('warn');
+  });
+
+  test('with nothing past it an ordinary command still names a migration that has not run, never the wedge', async () => {
+    const notice = await scoped(false, () => pendingUpgradeMigrationsNotice({ getConfig: async () => null } as never, 'recall', VERSION));
+    expect(notice?.code).toBe('migrations_pending');
+    expect(notice!.why).toContain(MIGRATION_VERSIONS[0]!);
+    quietAboutWedge(notice!.why);
   });
 
   for (const superseded of [true, false]) {

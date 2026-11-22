@@ -84,13 +84,16 @@ mod wake;
 
 pub use access_tokens::TokenInsert;
 pub use attachments::AttachmentInput;
+pub(crate) use attachments::purge_probe_attachment_rows;
 pub use checks::{
     BuildSkewSpec, DeadDreamSpec, DeathsSpec, KeyPrefixSpec, QueuedSpendSpec, StillDeadSpec,
 };
 pub use health::{DivergenceSpec, HealthSpec};
+pub(crate) use inbox::purge_probe_inbox_rows;
 pub use insight::InsightSpec;
 use mutations::add_token;
 pub use mutations::{DelayOpts, TokenDelta};
+pub(crate) use oauth_clients::remove_source_rows as remove_oauth_source_rows;
 pub use oauth_clients::{ClientInsert, ClientPatch, ClientPatchGuard};
 pub use private_queues::PrivateQueueState;
 pub use reads::{JobPageCursor, JobPageSpec, OverdueSpec};
@@ -98,6 +101,7 @@ pub use spend::{ExpireScope, LeaseFilter, LeaseInsert, SpendInsert, SpendTreeSpe
 pub use spend_log::{ClientReserve, GroupReserve, LogInsert};
 pub use status::StatusFilter;
 pub use subagent::{FailureFallback, MessageInsert, ToolInsert, ToolStart, ToolTarget};
+pub(crate) use subagent::{purge_probe_message_rows, purge_probe_tool_rows};
 pub use sweeps::{CancelOpts, PruneOutcome, PruneSpec};
 pub use wake::{
     CronRunInput, EndSpec, ForgetClaimSpec, ForgetSettle, WatchFilter, WatchInsert, WatchSettle,
@@ -251,6 +255,15 @@ fn lock_key(id: &str) -> Vec<u8> {
     let mut k = prefix(LOCK);
     k.extend_from_slice(id.as_bytes());
     k
+}
+
+/// The acquisition token of cycle lock `id` while its lease is live (`ttl_expires_at > now`), as
+/// `gbrain_cycle_locks.acquisition_token::text`: what `sync status`'s pinned-pass probe joins
+/// (persistence/sync-admission-sql.ts `effectProbes`).
+pub(crate) fn live_lock_token(read: &dyn KvRead, id: &str, now: i64) -> Result<Option<String>> {
+    Ok(get_json::<LockRecord>(read, &lock_key(id))?
+        .filter(|l| l.ttl_expires_at > now)
+        .map(|l| l.acquisition_token))
 }
 
 fn last_id(key: &[u8]) -> Option<i64> {
@@ -691,6 +704,24 @@ fn rows_with_status(read: &dyn KvRead, status: &str) -> Result<Vec<JobRecord>> {
         }
     }
     Ok(rows)
+}
+
+/// The `minion_jobs` rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_job_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow};
+    Ok(all_rows(read)?
+        .into_iter()
+        .map(|r| ProbeRow {
+            source_id: None,
+            cells: vec![
+                ("data", ProbeCell::jsonb(&r.data)),
+                ("result", ProbeCell::opt_jsonb(r.result.as_ref())),
+                ("error_text", ProbeCell::opt_text(r.error_text.as_deref())),
+            ],
+        })
+        .collect())
 }
 
 fn all_rows(read: &dyn KvRead) -> Result<Vec<JobRecord>> {

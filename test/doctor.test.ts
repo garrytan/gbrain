@@ -826,7 +826,7 @@ describe('v0.32.4 — sync_freshness check', () => {
   // Stub engine: only checkSyncFreshness's executeRaw matters. Per-case rows
   // shape is `{id, name, local_path, last_sync_at}`.
   function makeStubEngine(rows: any[], managed = false): any {
-    return { executeRaw: async (sql: string) => (sql.includes('FROM persistence_brain') ? [{ enabled: managed }] : sql.includes('shared_skill_packs') ? [] : rows) };
+    return { executeRaw: async (sql: string) => (sql.includes('FROM persistence_brain') ? [{ enabled: managed }] : sql.includes('shared_skill_packs') ? [] : rows), listOwnedContentRows: async () => [] };
   }
 
   function agoMs(ms: number): Date {
@@ -995,7 +995,7 @@ describe('v0.41.27.0 — sync_freshness git short-circuit', () => {
   // Reuse the stub-engine pattern from v0.32.4 describe above. Row shape now
   // includes last_commit + chunker_version (extended SELECT in v0.41.27.0).
   function makeStubEngine(rows: any[]): any {
-    return { executeRaw: async (sql: string) => (sql.includes('shared_skill_packs') ? [] : rows) };
+    return { executeRaw: async (sql: string) => (sql.includes('shared_skill_packs') ? [] : rows), listOwnedContentRows: async () => [] };
   }
   function agoMs(ms: number): Date {
     return new Date(Date.now() - ms);
@@ -1253,7 +1253,7 @@ describe('v0.41.27.0 — sync_freshness git short-circuit', () => {
 // ============================================================================
 describe('v0.41.32.0 — commit-relative staleness', () => {
   function makeStubEngine(rows: any[]): any {
-    return { executeRaw: async (sql: string) => (sql.includes('shared_skill_packs') ? [] : rows) };
+    return { executeRaw: async (sql: string) => (sql.includes('shared_skill_packs') ? [] : rows), listOwnedContentRows: async () => [] };
   }
   function agoMs(ms: number): Date { return new Date(Date.now() - ms); }
   let currentChunkerVersion: string;
@@ -1923,7 +1923,7 @@ describe('BUG 4 — in-progress sync via live lock, not stale freshness', () => 
 // ============================================================================
 describe('sync_freshness — clone-unavailable content-lag fallback', () => {
   function makeStubEngine(rows: any[]): any {
-    return { executeRaw: async (sql: string) => (sql.includes('shared_skill_packs') ? [] : rows) };
+    return { executeRaw: async (sql: string) => (sql.includes('shared_skill_packs') ? [] : rows), listOwnedContentRows: async () => [] };
   }
   function agoMs(ms: number): Date { return new Date(Date.now() - ms); }
   const HOURS = 60 * 60 * 1000;
