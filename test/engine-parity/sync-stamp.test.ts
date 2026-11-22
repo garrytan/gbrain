@@ -12,7 +12,9 @@
  *    reading as stale. The step now calls `markSourceSynced(sourceId, { incarnation })`.
  *  - Why existing coverage misses it: import-folder-stamp.test.ts covers `markSourceSynced` alone; the managed sync suites
  *    run PGLite and Postgres only, and a Rust brain cannot activate managed persistence yet (managed-mode.ts reads its
- *    persistence row as not enabled), so no whole managed sync reaches the stamp on that arm.
+ *    persistence row as not enabled), so no whole managed sync reaches the stamp on that arm. That is a known gap:
+ *    test/rust-managed-sync-gap-tripwire.test.ts fails the day Rust managed mode turns on, and that change adds the
+ *    whole managed sync case here.
  *  - Seam: the case calls the step the managed sync calls, inside the same coordinated-write transaction shape, rather
  *    than a whole managed sync. Times differ per run, so it compares whether the stamp is set, not its value.
  */
