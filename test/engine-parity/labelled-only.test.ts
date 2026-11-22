@@ -302,6 +302,32 @@ async function hiddenSuccessorReasonPrivate(engine: BrainEngine) {
   return bob;
 }
 
+/**
+ * A private-readable grant opens a private version for reading but never a successor's reason: replacedBecauseSql checks
+ * the next snapshot's own fields with no grant. alice is labelled-only and holds a grant on default; V1 and the live page
+ * name her and are world, V2 names her and is private. She reads V2 through the grant, yet V1's reason (the write that
+ * made V2 private) is withheld, in getVersions and in the as-of pick.
+ */
+async function grantDoesNotOpenSuccessorReason(engine: BrainEngine) {
+  await seed(engine);
+  await engine.putPage('core/granted', core('V1', { readable_by: ['alice-example'], valid_from: '2026-01-01' }), { sourceId: 'default' });
+  await engine.createVersion('core/granted', { sourceId: 'default', reason: 'made private: secret plan B' });
+  await engine.putPage('core/granted', core('V2', { readable_by: ['alice-example'], visibility: 'private', valid_from: '2026-04-01' }), { sourceId: 'default' });
+  await engine.createVersion('core/granted', { sourceId: 'default', reason: 'opened again' });
+  await engine.putPage('core/granted', core('Live', { readable_by: ['alice-example'], valid_from: '2026-06-01' }), { sourceId: 'default' });
+  await engine.setConfig('mcp.stdio_member', 'alice-example');
+  const access = await remoteCallerAccess(engine, undefined, ['default'], 'stdio');
+  expect([access.labelledOnly, access.privateReadableSources]).toEqual([true, ['default']]);
+  const alice = await withCallerAccess(access, async () => {
+    const pageId = (await engine.getPage('core/granted', { sourceId: 'default' }))!.id;
+    const pick = async (asOf: string) => pickFields(await engine.pickValidTimeEdition({ pageId, asOf, excludePrivate: true, pinOrd: null, inlineMaxBytes: 1_000_000 }));
+    return { versions: await versionReasons(engine, 'core/granted'), february: await pick('2026-02-01'), may: await pick('2026-05-01') };
+  });
+  expect(alice.versions).toEqual([{ title: 'V1', replaced_because: null }, { title: 'V2', replaced_because: 'opened again' }]);
+  expect([alice.february?.visible, alice.february?.reason, alice.may?.visible, alice.may?.reason, alice.may?.introduced_because]).toEqual([true, null, true, 'opened again', null]);
+  return alice;
+}
+
 describe('engine parity: the labelled-only page policy', () => {
   // The read-side leak, first: a labelled-only member never reads an unlabelled page or a page kept to someone else.
   parityTest('a labelled-only member reads only the pages that name it, by readers or by a folder rule', {
@@ -358,6 +384,10 @@ describe('engine parity: the labelled-only page policy', () => {
     methods: ['createVersion', 'getVersions', 'pickValidTimeEdition'],
   }, hiddenSuccessorReasonLabelled);
 
+  parityTest('a private-readable grant does not open a successor\'s reason for a labelled-only member', {
+    methods: ['createVersion', 'getVersions', 'pickValidTimeEdition'],
+  }, grantDoesNotOpenSuccessorReason);
+
   parityTest('a version\'s reason is withheld from an ordinary caller when the next snapshot is private', {
     methods: ['createVersion', 'getVersions'],
   }, hiddenSuccessorReasonPrivate);
@@ -401,6 +431,7 @@ describe('the Rust arm serves the labelled-only page policy', () => {
     ['the valid-time pick reads a labelled-only member\'s page', pageInForceOnADate],
     ['a version reason is withheld when the next snapshot is hidden (labelled-only)', hiddenSuccessorReasonLabelled],
     ['a version reason is withheld when the next snapshot is private', hiddenSuccessorReasonPrivate],
+    ['a private-readable grant does not open a successor reason', grantDoesNotOpenSuccessorReason],
     ['own member-page facts still need their entity page', ownFactsKeepEntityAccess],
     ['the own member page counts only in the fact\'s own source', ownMemberPageInTheFactsSource],
     ['a held fact reads only under every satisfied rule', heldFactsUnderRealRules],

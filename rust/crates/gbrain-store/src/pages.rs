@@ -1899,20 +1899,22 @@ impl Store {
                     None => false,
                 };
                 // Every version of the page, oldest first, before any filter: a reason's successor is the next one.
-                let mut all: Vec<VersionRecord> = Vec::new();
+                // A row that does not parse is kept as `None`: it is never listed, and as a successor it counts
+                // as hidden, so the version before it shows no reason (fail closed).
+                let mut all: Vec<Option<VersionRecord>> = Vec::new();
                 scan_prefix(
                     &*read,
                     &keys::version_prefix(page.id),
                     false,
                     &mut |_, v| {
-                        if let Ok(row) = serde_json::from_slice::<VersionRecord>(v) {
-                            all.push(row);
-                        }
+                        all.push(serde_json::from_slice::<VersionRecord>(v).ok());
                         true
                     },
                 )?;
                 for i in 0..all.len() {
-                    let mut row = all[i].clone();
+                    let Some(mut row) = all[i].clone() else {
+                        continue;
+                    };
                     if let Some(policy) = policy {
                         if crate::facts::caller_version_hidden(
                             &page,
@@ -1927,12 +1929,14 @@ impl Store {
                         // withheld when a prune cut that snapshot or the caller may not read it; the newest
                         // version's successor is the live page, which the page check above covers.
                         let successor_hidden = all.get(i + 1).is_some_and(|next| {
-                            crate::facts::successor_snapshot_hidden(
-                                &next.page_type,
-                                &next.frontmatter,
-                                policy,
-                                rule_labelled,
-                            )
+                            next.as_ref().is_none_or(|next| {
+                                crate::facts::successor_snapshot_hidden(
+                                    &next.page_type,
+                                    &next.frontmatter,
+                                    policy,
+                                    rule_labelled,
+                                )
+                            })
                         });
                         if row.successor_pruned || successor_hidden {
                             row.change_reason = None;
@@ -2284,6 +2288,59 @@ pub(crate) fn remove_page(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A version whose successor row does not parse shows no reason under `excludePrivate`: the unreadable row is
+    /// never listed, and the next readable row is not taken as the successor (Grant G, fail closed).
+    #[test]
+    fn get_versions_withholds_the_reason_before_an_unreadable_successor() {
+        let store = crate::test_support::store();
+        let page = put(&store, "notes/history");
+        for reason in ["made private: secret plan B", "opened again", "retitled"] {
+            store
+                .create_version_with("notes/history", None, Some(reason))
+                .unwrap();
+        }
+        let ids: Vec<u64> = versions_of(&*store.read().unwrap(), page.id)
+            .unwrap()
+            .iter()
+            .map(|v| v.id)
+            .collect();
+        assert_eq!(ids.len(), 3);
+        // The middle version's record stops parsing (an invalid field), as a damaged row would.
+        store
+            .write(|tx| tx.put(&keys::version(page.id, ids[1]), br#"{"id":"not a number"}"#))
+            .unwrap();
+        let options = |policy: Option<PrivacyPolicy>| VersionsOptions {
+            include_body: Some(false),
+            exclude_private: policy,
+            ..VersionsOptions::default()
+        };
+        let reasons = |opts: &VersionsOptions| -> Vec<(u64, Value)> {
+            store
+                .get_versions("notes/history", opts)
+                .unwrap()
+                .iter()
+                .map(|v| (v["id"].as_u64().unwrap(), v["replaced_because"].clone()))
+                .collect()
+        };
+        let policy = PrivacyPolicy {
+            entity_privacy: true,
+            ..PrivacyPolicy::default()
+        };
+        assert_eq!(
+            reasons(&options(Some(policy))),
+            vec![(ids[2], json!("retitled")), (ids[0], Value::Null)],
+            "the unreadable row is not listed and its predecessor's reason is withheld"
+        );
+        // A trusted read (no policy) keeps the stored reasons of the rows it can read.
+        assert_eq!(
+            reasons(&options(None)),
+            vec![
+                (ids[2], json!("retitled")),
+                (ids[0], json!("made private: secret plan B"))
+            ]
+        );
+    }
 
     fn put(store: &Store, slug: &str) -> PageRecord {
         let input = PageInput {

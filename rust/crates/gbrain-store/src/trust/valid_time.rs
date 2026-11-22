@@ -21,7 +21,9 @@ use super::TrustTier;
 use crate::Store;
 use crate::env::iso;
 use crate::error::Result;
-use crate::facts::{PrivacyPolicy, page_hidden, page_rule_labelled, version_hidden};
+use crate::facts::{
+    PrivacyPolicy, page_hidden, page_rule_labelled, successor_snapshot_hidden, version_hidden,
+};
 use crate::keys;
 use crate::kv::{KvRead, scan_prefix};
 use crate::links::no_nul;
@@ -352,11 +354,11 @@ impl Store {
             .map(|(i, v)| {
                 let segmented = version_segmented(v);
                 // A reader held to world-visible pages sees the reason only when the next version
-                // (over every version, never only the visible ones) is visible too; the last
-                // version's successor is the page, which the caller's own page check covers.
+                // (over every version, never only the visible ones) passes the strict successor test
+                // (`replacedBecauseSql`: its own fields and readers, with no private-readable grant);
+                // the last version's successor is the page, which the caller's own page check covers.
                 let successor_visible = versions.get(i + 1).is_none_or(|n| {
-                    !version_hidden(
-                        &page,
+                    !successor_snapshot_hidden(
                         &n.page_type,
                         &n.frontmatter,
                         &q.policy,
