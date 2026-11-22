@@ -863,6 +863,29 @@ describe('engine parity: takes reads (group D)', () => {
   );
 
   parityTest(
+    'listHeldFenceTakeRows returns the page takes by row number while its take fence generation is held fence_absent',
+    { methods: ['putPage', 'addTakesBatch', 'recordHeldGenerationRow', 'listHeldFenceTakeRows'] },
+    async (engine) => {
+      const a = await page(engine, 'notes/held-b');
+      await engine.addTakesBatch([take(a.id, 2, 'second', { active: false, weight: 0.25, since_date: '2026-01' }), take(a.id, 1, 'first', { source: 'a note' })]);
+      const spec = { sourceId: 'default', kind: 'take_fence', ownerKey: 'page:notes/held-b' };
+      const before = await engine.listHeldFenceTakeRows({ ...spec, pageId: a.id });
+      await engine.transaction(tx => tx.recordHeldGenerationRow(spec, { holdId: 'h-fence', runId: null, inputPin: 'h-fence', inputSize: 1, setHash: 'h',
+        reason: 'fence_absent', context: '{}', proposal: null, proposalBytes: 0 }));
+      const rows = await engine.listHeldFenceTakeRows({ ...spec, pageId: a.id });
+      const otherReason = { ...spec, ownerKey: 'page:notes/held-c' };
+      await engine.transaction(tx => tx.recordHeldGenerationRow(otherReason, { holdId: 'h-proof', runId: null, inputPin: 'h-proof', inputSize: 1, setHash: 'h',
+        reason: 'no_proof', context: '{}', proposal: null, proposalBytes: 0 }));
+      const noProof = await engine.listHeldFenceTakeRows({ ...otherReason, pageId: a.id });
+      const out = { before, rows: rows.map(r => ({ ...r, weight: Number(r.weight) })), noProof };
+      expect(out.before).toEqual([]);
+      expect(out.rows.map(r => [r.row_num, r.claim, r.active, r.weight, r.since_date, r.source])).toEqual([[1, 'first', true, 0.5, null, 'a note'], [2, 'second', false, 0.25, '2026-01', null]]);
+      expect(out.noProof).toEqual([]);
+      return out;
+    },
+  );
+
+  parityTest(
     'planFactPurgeTakes plans the takes a purged fact consolidated into and the takes echoing its claim, within one source',
     { methods: ['putPage', 'addTakesBatch', 'insertFact', 'loadPurgeTarget', 'consolidateFact', 'planFactPurgeTakes'] },
     async (engine, backend) => {

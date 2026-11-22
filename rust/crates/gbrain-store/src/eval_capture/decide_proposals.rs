@@ -3,7 +3,7 @@
 //! `decide_review_queue` and the conflict sweep's retry table `decide_sweep_deferred`.
 //! Contract: rust/docs/store/decide-proposals.md; SQL twin: src/core/engine-sql/decide-proposals.ts.
 //!
-//! Members (the purge's deletes are in `decide_proposals/purge.rs`): insertDecideProposal, getDecideProposal, listDecideProposalIds, listDecideProposals,
+//! Members: insertDecideProposal, getDecideProposal, listDecideProposalIds, listDecideProposals,
 //! transitionDecideProposal, listDecideProposedPairs, insertDecideReviewProposal,
 //! listDecideReviewProposals, getDecideReviewProposal, transitionDecideReviewProposal,
 //! listDecideReviewProposalIds, readProposalReviewRates, listDueDecideReviewQueue,
@@ -35,7 +35,7 @@
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
 use crate::facts::{like, read_fact, real};
-use crate::kv::{KvRead, scan_prefix};
+use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::next_id;
 use crate::timeline_queries::timestamptz_text;
@@ -43,7 +43,6 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-mod purge;
 
 const NEXT_PROPOSAL_ID: &str = "decide_proposal_next_id";
 const NEXT_REVIEW_PROPOSAL_ID: &str = "decide_review_proposal_next_id";
@@ -1217,4 +1216,74 @@ pub(crate) fn purge_review_counts(
         })
         .count();
     Ok((q as i64, rp as i64, dp as i64))
+}
+
+/// `deletePurgeReviewQueue` (a fact purge): deletes the review-queue rows of `source_id` naming a
+/// purged fact or take (`a_ref` or `b_ref` in `refs`); how many.
+pub(crate) fn purge_review_queue(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    refs: &std::collections::HashSet<String>,
+) -> Result<u64> {
+    let rows: Vec<QueueRecord> = read_all(&*tx, &tagged(REVIEW_QUEUE))?;
+    let mut deleted = 0;
+    for r in rows {
+        if r.source_id == source_id && (refs.contains(&r.a_ref) || refs.contains(&r.b_ref)) {
+            tx.delete(&queue_key(&r.kind, &r.source_id, &r.a_ref, &r.b_ref))?;
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
+}
+
+/// `deletePurgeReviewProposals` (a fact purge): deletes the review proposals of `source_id` naming
+/// a purged fact or take, with their unique-key entries; how many.
+pub(crate) fn purge_review_proposals(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    refs: &std::collections::HashSet<String>,
+) -> Result<u64> {
+    let rows: Vec<ReviewProposalRecord> = read_all(&*tx, &tagged(REVIEW_PROPOSAL))?;
+    let mut deleted = 0;
+    for r in rows {
+        if r.source_id == source_id && (refs.contains(&r.a_ref) || refs.contains(&r.b_ref)) {
+            let unique = review_key(&r.kind, &r.source_id, &r.a_ref, &r.b_ref, &r.subject);
+            if tx.get(&unique)?.as_deref() == Some(&r.id.to_be_bytes()[..]) {
+                tx.delete(&unique)?;
+            }
+            tx.delete(&id_key(REVIEW_PROPOSAL, r.id))?;
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
+}
+
+/// `deletePurgeDecideProposals` (a fact purge): deletes the supersede proposals of `source_id`
+/// whose new or old fact is purged, with their sweep-slot and claim-pair entries; how many.
+pub(crate) fn purge_decide_proposals(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    fact_ids: &std::collections::HashSet<i64>,
+) -> Result<u64> {
+    let rows: Vec<ProposalRecord> = read_all(&*tx, &tagged(PROPOSAL))?;
+    let mut deleted = 0;
+    for r in rows {
+        if r.source_id != source_id
+            || !(fact_ids.contains(&r.new_fact_id) || fact_ids.contains(&r.old_fact_id))
+        {
+            continue;
+        }
+        let own = |bytes: Option<Vec<u8>>| bytes.as_deref() == Some(&r.id.to_be_bytes()[..]);
+        let slot = sweep_slot_key(&r.sweep_id, r.pair_index);
+        if own(tx.get(&slot)?) {
+            tx.delete(&slot)?;
+        }
+        let pair = claim_pair_key(&r.source_id, r.new_fact_id, r.old_fact_id);
+        if own(tx.get(&pair)?) {
+            tx.delete(&pair)?;
+        }
+        tx.delete(&id_key(PROPOSAL, r.id))?;
+        deleted += 1;
+    }
+    Ok(deleted)
 }

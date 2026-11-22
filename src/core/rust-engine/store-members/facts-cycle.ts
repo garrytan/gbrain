@@ -39,6 +39,12 @@ export const listFactProvenance: Member<'listFactProvenance'> = async (brain, so
 export const factsOrAliasesMayMatch: Member<'factsOrAliasesMayMatch'> = (brain, sourceId, slugTokens, aliasNorms) =>
   storeCall({ member: 'factsOrAliasesMayMatch' }, () => brain.factsOrAliasesMayMatch({ sourceId, slugTokens: [...slugTokens], aliasNorms: [...aliasNorms] }));
 
+/** `expired_at` comes back from PGLite as a `Date`. */
+export const readFactForForget: Member<'readFactForForget'> = async (brain, id) => {
+  const row: Record<string, unknown> | null = await storeCall({ member: 'readFactForForget' }, () => brain.readFactForForget(id));
+  return row === null ? null : withDates(row, ['expired_at']) as unknown as Awaited<ReturnType<BrainEngine['readFactForForget']>>;
+};
+
 /** `valid_from`, `valid_until` and `expired_at` come back from PGLite as `Date`s. */
 export const listFactsForPage: Member<'listFactsForPage'> = async (brain, sourceId, slug) => {
   const rows: Array<Record<string, unknown>> = await storeCall({ member: 'listFactsForPage' }, () => brain.listFactsForPage({ sourceId, slug }));

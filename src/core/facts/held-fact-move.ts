@@ -22,6 +22,8 @@ import { transientDatabaseFailure, transientInterruption } from '../persistence/
 import { registerEngineView } from '../persistence/switches.ts';
 import { syncPreparationBudgetMs } from '../persistence/sync-waivers.ts';
 import { requestConfigValue } from '../config-snapshot.ts';
+import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
+import { lacksRawSql } from '../engine-capabilities.ts';
 import { isFenceHold, pageHasFile, planManagedPage, type UnfencedFactRow } from './unfenced-facts.ts';
 
 export interface HeldFactMoveOutcome {
@@ -52,7 +54,10 @@ export async function holdingHome(engine: BrainEngine, sourceId: string, entity:
   Promise<{ slug: string } | { refused: 'page_rule' | 'access_unreadable' } | null> {
   if ((await getWorktreeBinding(engine, sourceId))?.canonical_git !== true) return null;
   if (/^(false|0|off|no)$/i.test(await engine.getConfig('sync.write_through') ?? 'true')) return null;
-  if (entity !== null && entity !== UNATTRIBUTED_MEMORY_SLUG && await engine.heldEntityPageDeleted(sourceId, entity)) return null;
+  // The SQL engines read it deadline-bound (planningView); the Rust engine, which runs no raw SQL, reads the snapshot.
+  if (entity !== null && entity !== UNATTRIBUTED_MEMORY_SLUG && (lacksRawSql(engine)
+    ? !!(await engine.readPageSnapshot(entity, { sourceId, includeDeleted: true }))?.page.deleted_at
+    : await engine.heldEntityPageDeleted(sourceId, entity))) return null;
   return holdingPageFor(engine, sourceId, entity);
 }
 
@@ -63,6 +68,8 @@ export async function holdingPageFor(engine: BrainEngine, sourceId: string, enti
   const access = await engine.readHeldAccessState(sourceId, entity).catch((error: unknown) => {
     // GST-2667: an error the persistence consumer prepares again (a cancel, a stale plan, contention, a lost connection) is rethrown, never a refusal.
     if (error instanceof PreparationDeadlineError || transientDatabaseFailure(error) || transientInterruption(error)) throw error;
+    // An engine without raw SQL refuses the access read by name; that is never a folder-access refusal, so it stops the caller.
+    rethrowCapabilityMissing(error);
     return null;
   });
   const row = access?.[0];

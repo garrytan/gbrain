@@ -50,11 +50,11 @@ pub(crate) fn mem_kv() -> Arc<dyn crate::kv::Kv> {
 
 /// A fresh brain on an in-memory file, with the `default` source.
 pub(crate) fn store() -> Store {
-    store_with_env(Arc::new(SystemEnv))
+    store_on(Arc::new(SystemEnv))
 }
 
 /// `store()` with the given clock and identifier source.
-pub(crate) fn store_with_env(env: Arc<dyn crate::env::Env>) -> Store {
+pub(crate) fn store_on(env: Arc<dyn crate::env::Env>) -> Store {
     let kv = RedbKv::open_backend(Box::<MemFile>::default()).unwrap();
     Store::open_kv(Arc::new(kv), env, OpenOptions::default()).unwrap()
 }
@@ -109,7 +109,7 @@ impl FileBackend for FlakyFile {
 }
 
 /// A brain on `file`: created on first open, opened again on the same bytes after that.
-pub(crate) fn store_on(file: &FlakyFile) -> Store {
+pub(crate) fn store_on_file(file: &FlakyFile) -> Store {
     let kv = RedbKv::open_backend(Box::new(file.clone())).unwrap();
     Store::open_kv(Arc::new(kv), Arc::new(SystemEnv), OpenOptions::default()).unwrap()
 }

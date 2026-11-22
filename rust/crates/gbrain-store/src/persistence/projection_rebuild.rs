@@ -1,7 +1,15 @@
 //! The members a page projection rebuild calls (`src/core/engine-sql/projection-rebuild.ts`):
 //! the queue listing it walks, the reason of one job (its delete is projection_queue.rs
 //! `deleteProjectionJob`), the keep plan of the page's chunk
-//! vectors and the drained probe of the rebuild statistics.
+//! vectors and the drained probe of the rebuild statistics. A deferred chunk replacement's reads
+//! and chunk writes (`readChunkRowsFingerprint`, `deleteUnkeptChunks`, `listStaleChunkVectors`,
+//! `clearChunkVectors`, `readProjectionHead`), the re-seal's pending count
+//! (`countPendingTextChunks`) and the segmented probe (`hasSegmentedPage`) are here too; its
+//! queue writes are in projection_queue.rs.
+//!
+//! `readChunkRowsFingerprint` is the store's own opaque value (the sha256 of the page's
+//! `id:index` pairs in index order), not Postgres's `hashtext` sum: a caller only compares two
+//! values from one engine.
 //!
 //! A job is drainable when its page is a live inline page (Markdown or code, not segmented) of a
 //! source that is not archived (`projectionJobProbes`). A segmented page has both body columns
@@ -12,7 +20,7 @@ use super::projection_queue::{
     Job, all_jobs, job_at_revision, parse_timestamptz, retry_ready, sources_by_incarnation,
 };
 use super::uuid_param;
-use crate::chunks::read_chunks;
+use crate::chunks::{ChunkRecord, delete_chunks_matching, read_chunks, segmented};
 use crate::cli_reads::pg_text::timestamptz_text;
 use crate::embeddings::{remove_chunk_vector, text_hash};
 use crate::env::transaction_clock;
@@ -62,6 +70,13 @@ pub struct QueuedProjectionFilter {
     /// `waiting`: only pages search does not answer for yet; any other value: only those it does.
     #[serde(default)]
     pub served: Option<String>,
+}
+
+/// One row the resident's window selection probes (`ProjectionWindowCandidate`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProjectionWindowCandidate {
+    pub source_incarnation: String,
+    pub slug: String,
 }
 
 /// A job's exact key (`ProjectionJobKey`).
@@ -277,6 +292,147 @@ impl Store {
         })
     }
 
+    /// `readChunkRowsFingerprint(pageId)`: the page's chunk rows as `id:index` pairs, hashed.
+    pub fn read_chunk_rows_fingerprint(&self, page_id: f64) -> Result<String> {
+        let page_id = id_of(page_id, "pageId")?;
+        let chunks = read_chunks(&*self.read()?, page_id)?;
+        let pairs: Vec<String> = chunks
+            .iter()
+            .map(|c| format!("{}:{}", c.id, c.chunk_index))
+            .collect();
+        Ok(format!("{}:{}", chunks.len(), text_hash(&pairs.join(","))))
+    }
+
+    /// `deleteUnkeptChunks(pageId, keptIds)`: deletes each chunk row of the page whose id is not
+    /// in `kept_ids`, with its postings, vector and dependent rows.
+    pub fn delete_unkept_chunks(&self, page_id: f64, kept_ids: &[f64]) -> Result<()> {
+        let page_id = id_of(page_id, "pageId")?;
+        let kept: Vec<u64> = kept_ids
+            .iter()
+            .map(|id| id_of(*id, "keptIds"))
+            .collect::<Result<_>>()?;
+        self.write(|tx| {
+            delete_chunks_matching(tx, page_id, &|c| !kept.contains(&c.id))?;
+            Ok(())
+        })
+    }
+
+    /// `listStaleChunkVectors(pageId, provenanceModel, column, currentIds)`: the ids, in chunk
+    /// order, of the page's chunks holding a vector that is of another model, embedded from other
+    /// text, or not in `current_ids`.
+    pub fn list_stale_chunk_vectors(
+        &self,
+        page_id: f64,
+        model: Option<&str>,
+        dims: u32,
+        current_ids: &[f64],
+    ) -> Result<Vec<u64>> {
+        let page_id = id_of(page_id, "pageId")?;
+        let current: Vec<u64> = current_ids
+            .iter()
+            .map(|id| id_of(*id, "currentIds"))
+            .collect::<Result<_>>()?;
+        let mut chunks = read_chunks(&*self.read()?, page_id)?;
+        chunks.sort_by_key(|c| c.chunk_index);
+        Ok(chunks
+            .iter()
+            .filter(|c| {
+                let drifted = c.embed.text_hash.is_some() && !text_current(c);
+                c.embed.has_vector()
+                    && (!model_matches(c, model, dims) || drifted || !current.contains(&c.id))
+            })
+            .map(|c| c.id)
+            .collect())
+    }
+
+    /// `clearChunkVectors(pageId, column, ids)`: clears the vector and the embedding record of the
+    /// page's chunks `ids` and marks them pending.
+    pub fn clear_chunk_vectors(&self, page_id: f64, ids: &[f64]) -> Result<()> {
+        let page_id = id_of(page_id, "pageId")?;
+        let ids: Vec<u64> = ids
+            .iter()
+            .map(|id| id_of(*id, "ids"))
+            .collect::<Result<_>>()?;
+        self.write(|tx| {
+            let now = transaction_clock::transaction_now().ok_or_else(|| {
+                StoreError::invalid("clearChunkVectors ran outside a store write transaction")
+            })?;
+            for mut chunk in read_chunks(&*tx, page_id)? {
+                if !ids.contains(&chunk.id) {
+                    continue;
+                }
+                chunk.embed.dims = 0;
+                chunk.embed.embedded_at_us = None;
+                chunk.embed.text_hash = None;
+                chunk.embed.input_hash = None;
+                chunk.embed.pending_since_us = chunk.embed.pending_since_us.or(Some(now));
+                put_json(tx, &keys::chunk(chunk.page_id, chunk.chunk_index), &chunk)?;
+                remove_chunk_vector(tx, chunk.page_id, chunk.chunk_index)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// `countPendingTextChunks(pageId, column)`: `{ chunks, chars }`, how many of the page's text
+    /// chunks have no vector and their length in characters (Postgres `length`).
+    pub fn count_pending_text_chunks(&self, page_id: f64) -> Result<Value> {
+        let page_id = id_of(page_id, "pageId")?;
+        let pending: Vec<ChunkRecord> = read_chunks(&*self.read()?, page_id)?
+            .into_iter()
+            .filter(|c| c.modality == "text" && !c.embed.has_vector())
+            .collect();
+        let chars: usize = pending.iter().map(|c| c.chunk_text.chars().count()).sum();
+        Ok(json!({ "chunks": pending.len(), "chars": chars }))
+    }
+
+    /// `probeProjectionWindowCandidates(candidates)`: for each candidate, at its index `i`, the
+    /// source of its incarnation (`source_id`, `archived`, archived or not) and that source's live
+    /// page at its slug (`page_kind`, `body_storage`); each part is null when it is missing.
+    pub fn probe_projection_window_candidates(
+        &self,
+        candidates: &[ProjectionWindowCandidate],
+    ) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let read = &*read;
+        let sources = sources_by_incarnation(read)?;
+        let mut rows = Vec::with_capacity(candidates.len());
+        for (i, candidate) in candidates.iter().enumerate() {
+            let incarnation = uuid_param(&candidate.source_incarnation, "source_incarnation")?;
+            let source = sources.get(&incarnation);
+            let page = match source {
+                Some(s) => {
+                    read_page(read, &s.id, &candidate.slug)?.filter(|p| p.deleted_at_us.is_none())
+                }
+                None => None,
+            };
+            rows.push(json!({
+                "i": i,
+                "source_id": source.map(|s| s.id.clone()),
+                "archived": source.map(|s| s.archived),
+                "page_kind": page.as_ref().map(|p| p.page_kind.clone()),
+                "body_storage": page.as_ref().map(|p| if segmented(p) { "segmented" } else { "inline" }),
+            }));
+        }
+        Ok(rows)
+    }
+
+    /// `readProjectionHead(sourceId, slug)`: `{ id, revision, sealed }` of the live page, or null.
+    pub fn read_projection_head(&self, source_id: &str, slug: &str) -> Result<Value> {
+        let page =
+            read_page(&*self.read()?, source_id, slug)?.filter(|p| p.deleted_at_us.is_none());
+        Ok(page.map_or(Value::Null, |p| {
+            let sealed =
+                p.text_projection_revision.as_deref() == Some(p.knowledge_revision.as_str());
+            json!({ "id": p.id, "revision": p.knowledge_revision, "sealed": sealed })
+        }))
+    }
+
+    /// `hasSegmentedPage(sourceId, slug)`: whether the page is a live segmented page.
+    pub fn has_segmented_page(&self, source_id: &str, slug: &str) -> Result<bool> {
+        Ok(read_page(&*self.read()?, source_id, slug)?
+            .is_some_and(|p| p.deleted_at_us.is_none() && segmented(&p)))
+    }
+
     /// `hasDrainableProjectionJob()`: whether a job of a live inline page of an active source is
     /// queued with a reason other than `rebuild_failed`.
     pub fn has_drainable_projection_job(&self) -> Result<bool> {
@@ -382,6 +538,51 @@ mod tests {
     }
 
     #[test]
+    fn the_window_probe_finds_each_candidates_source_and_live_page() {
+        let store = crate::test_support::store();
+        put(&store, "a");
+        put(&store, "gone");
+        let incarnation = store
+            .list_queued_page_projections(&filter(json!({ "limit": 1 })))
+            .unwrap()
+            .remove(0)["source_incarnation"]
+            .as_str()
+            .unwrap()
+            .to_uppercase();
+        store.soft_delete_page("gone", Some("default")).unwrap();
+        let candidate = |source_incarnation: &str, slug: &str| ProjectionWindowCandidate {
+            source_incarnation: source_incarnation.into(),
+            slug: slug.into(),
+        };
+        let rows = store
+            .probe_projection_window_candidates(&[
+                candidate(&incarnation, "a"),
+                candidate(&incarnation, "gone"),
+                candidate("00000000-0000-0000-0000-000000000001", "a"),
+            ])
+            .unwrap();
+        assert_eq!(
+            rows,
+            [
+                json!({ "i": 0, "source_id": "default", "archived": false, "page_kind": "markdown", "body_storage": "inline" }),
+                json!({ "i": 1, "source_id": "default", "archived": false, "page_kind": null, "body_storage": null }),
+                json!({ "i": 2, "source_id": null, "archived": null, "page_kind": null, "body_storage": null }),
+            ]
+        );
+        assert!(
+            store
+                .probe_projection_window_candidates(&[candidate("nope", "a")])
+                .is_err()
+        );
+        assert!(
+            store
+                .probe_projection_window_candidates(&[])
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn a_job_reads_and_deletes_only_at_its_revision() {
         let store = crate::test_support::store();
         put(&store, "a");
@@ -405,5 +606,89 @@ mod tests {
         store.delete_projection_job(&job_ref(&live)).unwrap();
         assert_eq!(store.read_projection_job_reason(&live).unwrap(), None);
         assert!(!store.has_drainable_projection_job().unwrap());
+    }
+
+    #[test]
+    fn a_deferred_replacement_reads_its_head_and_rows_and_clears_stale_vectors() {
+        let store = crate::test_support::store();
+        put(&store, "a");
+        let head = store.read_projection_head("default", "a").unwrap();
+        let page_id = head["id"].as_f64().unwrap();
+        assert!(head["revision"].is_string());
+        assert_eq!(head["sealed"], false);
+        assert_eq!(
+            store.read_projection_head("default", "none").unwrap(),
+            Value::Null
+        );
+        assert!(!store.has_segmented_page("default", "a").unwrap());
+        assert!(!store.has_segmented_page("default", "none").unwrap());
+        let stored = |store: &Store| read_chunks(&*store.read().unwrap(), page_id as u64).unwrap();
+        let chunk = |index: u32, text: &str, vector: bool| {
+            let mut input = crate::chunks::ChunkInput {
+                chunk_index: index,
+                chunk_text: text.into(),
+                ..crate::chunks::ChunkInput::default()
+            };
+            if vector {
+                input
+                    .rest
+                    .insert("embedding".into(), json!(vec![0.5; 1536]));
+                input.rest.insert("model".into(), json!("other-model"));
+            }
+            input
+        };
+        store
+            .upsert_chunks(
+                "a",
+                &[
+                    chunk(0, "one", true),
+                    chunk(1, "twö!", false),
+                    chunk(2, "three", true),
+                ],
+                &crate::chunks::UpsertChunksOptions::default(),
+            )
+            .unwrap();
+        let rows = stored(&store);
+        assert_eq!(rows.len(), 3);
+        // Only the text chunk without a vector is pending; chars counts characters, not bytes.
+        assert_eq!(
+            store.count_pending_text_chunks(page_id).unwrap(),
+            json!({ "chunks": 1, "chars": 4 })
+        );
+        let before = store.read_chunk_rows_fingerprint(page_id).unwrap();
+        assert_eq!(before, store.read_chunk_rows_fingerprint(page_id).unwrap());
+        let ids: Vec<f64> = rows.iter().map(|c| c.id as f64).collect();
+        // Another model's vectors are stale; the chunk without a vector is not.
+        assert_eq!(
+            store
+                .list_stale_chunk_vectors(page_id, Some("m"), 1536, &ids)
+                .unwrap(),
+            [rows[0].id, rows[2].id]
+        );
+        assert_eq!(
+            store
+                .list_stale_chunk_vectors(page_id, Some("other-model"), 1536, &ids[..1])
+                .unwrap(),
+            [rows[2].id]
+        );
+        store.delete_unkept_chunks(page_id, &ids[..2]).unwrap();
+        assert_eq!(stored(&store).len(), 2);
+        assert_ne!(before, store.read_chunk_rows_fingerprint(page_id).unwrap());
+        store.clear_chunk_vectors(page_id, &ids[..1]).unwrap();
+        let after = stored(&store);
+        assert!(!after[0].embed.has_vector());
+        assert!(after[0].embed.pending_since_us.is_some());
+        assert_eq!(
+            store.count_pending_text_chunks(page_id).unwrap(),
+            json!({ "chunks": 2, "chars": 7 })
+        );
+        assert!(
+            store
+                .list_stale_chunk_vectors(page_id, Some("m"), 1536, &ids)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(store.delete_unkept_chunks(1.5, &[]).is_err());
+        assert!(store.count_pending_text_chunks(1.5).is_err());
     }
 }

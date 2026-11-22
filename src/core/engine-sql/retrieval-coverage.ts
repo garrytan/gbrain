@@ -47,6 +47,7 @@ async function rows<R>(exec: Exec, fragment: SqlFragment, jitOff = false): Promi
 
 /**
  * Pages in scope matching `where` (over `pages p` joined to `sources s` and `join`), up to the cap, and how many could affect the query.
+ * A capped count reads the lowest page ids, so every engine counts the same pages (a scan order differs by engine).
  * `classed` also counts the could-affect images in the `sealable` or `reimport` class. Null when the count fails: unknown, never zero.
  * The classed count runs JIT off, as the readiness probe does (#8033): the class's per-page subplans and a remote caller's
  * visibility subplans lift its estimate past `jit_above_cost`, and on a large brain compiling them cost more than a second
@@ -68,7 +69,7 @@ async function countInScope(exec: Exec, scope: ProjectionReadinessScope, relevan
       FROM (SELECT p.id, p.type, p.page_kind, lower(COALESCE(p.title, '') || ' ' || p.slug) AS haystack${classColumn}
         FROM pages p JOIN sources s ON s.id = p.source_id ${join}
         WHERE p.deleted_at IS NULL AND ${where} AND ${scopeFilter(scope)}
-        LIMIT ${COVERAGE_COUNT_CAP}) x`, classed);
+        ORDER BY p.id LIMIT ${COVERAGE_COUNT_CAP}) x`, classed);
     const total = Number(row?.total), couldAffect = Number(row?.could_affect);
     if (!Number.isFinite(total) || !Number.isFinite(couldAffect)) return null;
     return { total, could_affect: couldAffect, capped: total >= COVERAGE_COUNT_CAP, ...(top === null ? {} : { top_counted: row?.top_counted === true }),

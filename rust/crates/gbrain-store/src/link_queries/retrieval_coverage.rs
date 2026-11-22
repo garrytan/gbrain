@@ -244,14 +244,17 @@ fn token_match(haystack: &str, term: &str) -> bool {
     })
 }
 
-/// Calls `visit` with each live page in scope and its class until `visit` returns false.
+/// Calls `visit` with each live page in scope and its class, in page-id order (the capped count's
+/// `ORDER BY p.id`), until `visit` returns false.
 fn walk_scope(
     read: &dyn KvRead,
     scope: &CoverageScope,
     mut visit: impl FnMut(&PageRecord, ProjectionClass) -> bool,
 ) -> Result<()> {
     let mut sources = Sources::new(read);
-    for page in all_pages(read)? {
+    let mut pages = all_pages(read)?;
+    pages.sort_unstable_by_key(|page| page.id);
+    for page in pages {
         if !in_scope(read, &mut sources, &page, scope)? {
             continue;
         }

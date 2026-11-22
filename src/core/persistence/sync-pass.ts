@@ -32,7 +32,7 @@ import { sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { colonFileRefusal, COLON_REFUSAL_MESSAGES, readSyncFile, resolveManagedSyncContext, syncExcludePatterns, syncGitAsync, type ManagedSyncContext, type SyncFileRefusal } from './sync-discovery.ts';
 import { isWindowsColonTarget } from './native-file-target.ts';
 import { confirmedSyncDelta } from '../sync-rename-identity.ts';
-import { FILE_DRIFT_VERSION, fileDriftSide, holdBasisMoved, holdRescreenDue, type DeletionCandidate, readGitHoldRetryPaths, readGitSourceHolds, SYNC_IMPORT_PROVENANCE_OP, syncImportParser, syncImportParsers,
+import { FILE_DRIFT_VERSION, fileDriftSide, holdBasisMoved, holdRescreenDue, type DeletionCandidate, readGitHoldRetryPaths, readGitSourceHolds, syncImportParser, syncImportParsers,
   type GitHoldRecord, type SyncImportParser, type SyncImportProvenance } from './sync-holds.ts';
 import { movedDriftHolds, sameParser } from './sync-prescreen.ts';
 import { sameSyncOrigin, selectOriginClaimant, syncOriginPath, type SyncOriginScope } from './sync-origin.ts';
@@ -44,11 +44,10 @@ import { buildConvergenceReceipt, readOnlySameContentScreen, type ConvergenceRec
 import { readManagedMode } from './ownership.ts';
 import { MANAGED_SYNC_PASS_OP, SYNC_ORIGIN_DELETED_OP, type SyncSelection } from './sync-pass-row.ts';
 import { faultPoint } from './fault-points.ts';
-import { MARKDOWN_CHUNKER_VERSION } from '../chunkers/recursive.ts';
 import { filterYielding, loopYield, progressYield, sortYielding, turnYield, whileActive, type LoopYield } from './sync-yield.ts';
 import { countsMatch, proveConfirm, readLevelMark, type ConfirmProof, type LevelMark } from './sync-pass-confirm.ts';
 import { domainCache, levelDomain, narrowedWalk, walkAttestations, type LevelDomainCache } from './sync-pass-narrow.ts';
-import { syncDeleteOrigin } from './sync-delete-tombstones.ts';
+import type { SyncImportPageRow } from '../engine-sql/sync-pass-pages.ts';
 
 export { MANAGED_SYNC_PASS_OP, SYNC_ORIGIN_DELETED_OP };
 
@@ -370,7 +369,7 @@ export class PageTable {
   }
 }
 
-type Exec = Pick<BrainEngine, 'executeRaw'>;
+type Exec = Pick<BrainEngine, 'executeRaw' | 'readSyncImportPageRows' | 'declareSyncImportPageCursor' | 'fetchSyncImportPageCursor'>;
 
 /**
  * Runs `fn` over the round's database reads: one `REPEATABLE READ, READ ONLY` snapshot on Postgres; on PGLite (one
@@ -399,32 +398,10 @@ async function readPages(exec: Exec, kind: 'postgres' | 'pglite', sourceId: stri
   // A record's fields usually repeat the page's (origin = source_path, disk = blob, revision = the page's), so those come back
   // as a flag instead of a second copy of the string, and so does the parser when it is the Markdown one the level expects
   // (`expected`, the same object for every such page; any other comes as text parsed once per distinct value): a 600k-page
-  // read then holds about one string per field per page and decodes no parser text per page.
-  // The record's fields come out of its JSON once, in a subquery. On Postgres `OFFSET 0` keeps it unflattened, so the hash
-  // join builds over those few text columns instead of the whole record (600k: about 3.1 s of serial server time to 2.0 s);
-  // PGLite's keyset statements and a confirm round's few rows need it flattened, so each probes the record by primary key.
-  const select = `SELECT p.id, p.slug, p.source_path, p.knowledge_revision::text AS revision, p.deleted_at IS NOT NULL AS deleted,
-      p.revision_write_request_id::text AS request_id, c.fingerprint IS NOT NULL AS has_record,
-      c.origin IS NOT DISTINCT FROM p.source_path AS rec_origin_same,
-      CASE WHEN c.origin IS DISTINCT FROM p.source_path THEN c.origin END AS rec_origin,
-      c.blob_oid AS rec_blob_oid,
-      c.disk_blob_oid IS NOT DISTINCT FROM c.blob_oid AS rec_disk_same,
-      CASE WHEN c.disk_blob_oid IS DISTINCT FROM c.blob_oid THEN c.disk_blob_oid END AS rec_disk_blob_oid,
-      c.revision IS NULL AS rec_revision_null,
-      NULLIF(c.revision, p.knowledge_revision::text) AS rec_revision,
-      CASE WHEN c.parser IS DISTINCT FROM $4::jsonb THEN c.parser::text END AS rec_parser, c.parser = $4::jsonb AS rec_parser_expected,
-      c.full_episode AS rec_full_episode, c.working AS rec_working,
-      (p.page_kind = 'markdown' AND p.chunker_version = ${MARKDOWN_CHUNKER_VERSION} AND p.body_storage IS DISTINCT FROM 'segmented'
-        AND p.text_projection_revision IS NOT DISTINCT FROM p.knowledge_revision AND p.contextual_retrieval_mode IS NOT NULL) AS derived_current,
-      CASE WHEN p.deleted_at IS NOT NULL THEN ${syncDeleteOrigin('p')} ELSE false END AS sync_deleted
-    FROM pages p LEFT JOIN (SELECT fingerprint, completed_keys->0->>'origin' AS origin, completed_keys->0->>'blob_oid' AS blob_oid,
-        completed_keys->0->>'disk_blob_oid' AS disk_blob_oid, completed_keys->0->>'revision' AS revision,
-        completed_keys->0->'parser' AS parser, completed_keys->0->>'full_episode' AS full_episode, (completed_keys->0->'working')::text AS working
-      FROM op_checkpoints WHERE op=$2${kind === 'postgres' && !only ? ' OFFSET 0' : ''}) c ON c.fingerprint=$3||p.id::text
-    WHERE p.source_id=$1 AND p.source_path IS NOT NULL`;
-  const params = [sourceId, SYNC_IMPORT_PROVENANCE_OP, `${sourceId}:${incarnation}:`, JSON.stringify(expected)];
-  type Raw = Omit<PageRow, 'record' | 'arm1' | 'attested_hash'> & { has_record: boolean; rec_origin_same: boolean; rec_origin: string | null; rec_blob_oid: string | null;
-    rec_disk_same: boolean; rec_disk_blob_oid: string | null; rec_revision_null: boolean; rec_revision: string | null; rec_parser: string | null; rec_parser_expected: boolean | null; rec_full_episode: string | null; rec_working: string | null; derived_current: boolean | null; sync_deleted: boolean | null };
+  // read then holds about one string per field per page and decodes no parser text per page. The statement and its
+  // three shapes live in engine-sql/sync-pass-pages.ts.
+  const q = { sourceId, incarnation, expected };
+  type Raw = SyncImportPageRow;
   const pages = only?.table ?? new PageTable(expected);
   const parsers = new Map<string, SyncImportProvenance['parser'] | undefined>(), episodes = new Map<string, string>();
   const parserOf = (text: string | null) => {
@@ -457,7 +434,7 @@ async function readPages(exec: Exec, kind: 'postgres' | 'pglite', sourceId: stri
   if (only) {
     // A confirm round: the previous round's rows, with the pages the pass wrote re-read into their slots (a new page last,
     // as the keyset would read it). A rewritten page that left `I⋈P` cannot be patched: the caller reads it whole.
-    const rows = await exec.executeRaw<Raw>(`${select} AND p.id = ANY($5::bigint[]) ORDER BY p.id`, [...params, only.ids]);
+    const rows = await exec.readSyncImportPageRows(q, { ids: only.ids });
     const read = new Set(rows.map(raw => String(raw.id)));
     if ([...only.slots.keys()].some(id => !read.has(id))) return null;
     for (const raw of rows) put(raw, only.slots.get(String(raw.id)) ?? pages.length);
@@ -465,11 +442,11 @@ async function readPages(exec: Exec, kind: 'postgres' | 'pglite', sourceId: stri
   }
   let statements = 0;
   if (kind === 'postgres') {
-    const declared = Promise.all([exec.executeRaw('SET LOCAL cursor_tuple_fraction = 1'), exec.executeRaw(`DECLARE sync_pass_pages NO SCROLL CURSOR FOR ${select}`, params)]);
+    const declared = exec.declareSyncImportPageCursor(q);
     declared.catch(() => undefined);
     statements += 2;
     // A queued fetch is awaited in turn; its own catch only keeps a failure behind an earlier one from going unhandled.
-    const fetch = () => { statements++; const page = exec.executeRaw<Raw>(`FETCH ${POSTGRES_FETCH_ROWS} FROM sync_pass_pages`); page.catch(() => undefined); return page; };
+    const fetch = () => { statements++; const page = exec.fetchSyncImportPageCursor(POSTGRES_FETCH_ROWS); page.catch(() => undefined); return page; };
     const ahead = Array.from({ length: POSTGRES_FETCHES_AHEAD }, fetch);
     await declared;
     for (;;) {
@@ -485,7 +462,7 @@ async function readPages(exec: Exec, kind: 'postgres' | 'pglite', sourceId: stri
   let after = 0;
   for (;;) {
     statements++;
-    const page = await exec.executeRaw<Raw>(`${select} AND p.id>$5 ORDER BY p.id LIMIT ${PGLITE_KEYSET_ROWS}`, [...params, after]);
+    const page = await exec.readSyncImportPageRows(q, { after, limit: PGLITE_KEYSET_ROWS });
     await turn();
     take(page);
     if (page.length < PGLITE_KEYSET_ROWS) return { pages, statements };

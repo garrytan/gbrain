@@ -406,9 +406,12 @@ describe('doctor, connected, reads which sources are in conflict now', () => {
 
   test('a source whose policy read fails is not inspected, so doctor keeps the warning with the inspect step', async () => {
     await live.executeRaw('INSERT INTO sources (id, name, local_path) VALUES ($1, $1, $2)', ['source-b', realpathSync(pack)]);
-    // The policy reads its source through the typed readSourceState member (engine-sql/write-misc.ts).
+    // The policy reads the source through the typed readSourceState member (engine-sql/write-misc.ts); fail that read.
     const readSourceState = live.readSourceState.bind(live);
-    live.readSourceState = (async () => { throw new Error('Connection terminated unexpectedly'); }) as typeof live.readSourceState;
+    live.readSourceState = (async (sourceId: string, opts?: Parameters<typeof live.readSourceState>[1]) => {
+      if (sourceId === 'source-b') throw new Error('Connection terminated unexpectedly');
+      return readSourceState(sourceId, opts);
+    }) as typeof live.readSourceState;
     try {
       const [row] = await owedChecks();
       expect(row?.status).toBe('warn');

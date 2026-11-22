@@ -485,9 +485,11 @@ impl Store {
                 archived: false,
                 created_at_us: self.env.now_micros(),
                 chunker_version: None,
-                purge_epoch: 0,
+                archived_at_us: None,
+                archive_expires_at_us: None,
                 last_commit: None,
                 newest_content_at_us: None,
+                purge_epoch: 0,
             };
             put_json(tx, &keys::text(keys::SOURCE, &[id]), &record)?;
             Ok(SourceRow::from(record))

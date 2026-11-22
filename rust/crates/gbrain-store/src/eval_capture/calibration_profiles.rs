@@ -263,9 +263,8 @@ fn delete_record(tx: &mut dyn KvWrite, record: &ProfileRecord) -> Result<()> {
     tx.delete(&time_key(record.generated_at_us, record.id))
 }
 
-/// A source delete's cascade: removes every profile of `source_id` and its index entries.
-// Core's source delete is the first caller (cascade::remove_source_rows); until then tests call it.
-#[cfg_attr(not(test), allow(dead_code))]
+/// A source delete's cascade (`cascade::remove_source_rows`): removes every profile of `source_id`
+/// and its index entries.
 pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
     for record in all_records(&*tx)? {
         if record.source_id == source_id {
@@ -534,9 +533,8 @@ pub(crate) fn purge_probe_rows(
 
 #[cfg(test)]
 mod tests {
-    //! `remove_source_rows` and the stored `domain_scorecards` are not reachable through a public
-    //! member (the Rust store serves no source delete, and no member returns the scorecards), so
-    //! their contract is tested here. The members are tested through the public API in
+    //! `remove_source_rows` is reached only through the whole source delete, and no member returns
+    //! the stored `domain_scorecards`, so their contract is tested here. The members are tested through the public API in
     //! `tests/calibration_profiles.rs`.
     use super::*;
     use crate::sources::SourceInput;

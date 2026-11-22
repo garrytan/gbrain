@@ -3,7 +3,7 @@
 //! fence-repair and entity-card paths ran through `executeRaw`.
 //!
 //! Members: listActiveFactsForEntity, listFreshExtractionOutcomes, listFenceRowGroups, readFactSubject,
-//! listFactProvenance, factsOrAliasesMayMatch, listFactsForPage, countLegacyFactsPending, countUnconsolidatedFactsBySource, findBulkFactDays, maxFenceRowNum,
+//! listFactProvenance, factsOrAliasesMayMatch, readFactForForget, listFactsForPage, countLegacyFactsPending, countUnconsolidatedFactsBySource, findBulkFactDays, maxFenceRowNum,
 //! listStoredFenceFactRows, countWorldFacts.
 //!
 //! Each member reads the rows its statement reads, through the indexes `facts.rs` keeps, and returns the columns the
@@ -366,6 +366,26 @@ impl Store {
             }
         }
         Ok(false)
+    }
+
+    /// `readFactForForget` (src/core/facts/forget.ts): `{ id, source_id, entity_slug, row_num, source_markdown_slug,
+    /// expired_at, visibility }` of fact `id`, `expired_at` as `iso` text the TypeScript member turns into a `Date`, or
+    /// null for no such row.
+    pub fn read_fact_for_forget(&self, id: f64) -> Result<Value> {
+        let read = self.read()?;
+        Ok(
+            fact_by_number(&*read, "readFactForForget", "id", id)?.map_or(Value::Null, |r| {
+                json!({
+                    "id": r.id,
+                    "source_id": r.source_id,
+                    "entity_slug": r.entity_slug,
+                    "row_num": r.row_num,
+                    "source_markdown_slug": r.source_markdown_slug,
+                    "expired_at": r.expired_at_us.map(iso),
+                    "visibility": r.visibility,
+                })
+            }),
+        )
     }
 
     /// `listFactsForPage` (src/core/cycle/extract-facts.ts): the fence-owned rows of a page coordinate, by

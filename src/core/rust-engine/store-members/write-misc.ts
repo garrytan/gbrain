@@ -80,17 +80,20 @@ export const listActiveAccessMembers: StoreMember<[], string[]> = async () => []
 export const hasLabelledOnlyMember: StoreMember<[], boolean> = async () => false;
 
 /**
- * The store's brain id and commit sequence (`readHealthMemoClock`). Every commit advances it, a page write among them, so a
- * memoized health answer is reused only while nothing was written since it was read.
+ * The store's brain id and commit sequence. Every commit advances it, a page write among them, so a memoized health
+ * answer is reused only while nothing was written since it was read.
  */
 export const readHealthMemoClock: StoreMember<[], string> = async (brain) =>
   storeCall({ member: 'readHealthMemoClock' }, () => brain.readHealthMemoClock());
 
 /**
- * The store keeps no source contextual-retrieval mode (only `sources` admin raw SQL writes it, refused on this engine),
- * so no source selects the synopsis tier.
+ * The sources that are not archived and whose own contextual-retrieval mode (`sources set-cr-mode`, source_cr_mode.rs)
+ * is per_chunk_synopsis, by id in byte order: the source half of the synopsis tier read, with its page check skipped.
  */
-export const listSynopsisSourceIds: StoreMember<[], string[]> = async () => [];
+export const listSynopsisSourceIds: StoreMember<[], string[]> = async (brain) => {
+  const tier = await storeCall({ member: 'listSynopsisSourceIds' }, () => brain.readSynopsisTierSources({ skipFrontmatter: true }));
+  return (tier as { sourceIds: string[] }).sourceIds;
+};
 
 /**
  * Folder rules and pending prefixes are gbrain-store `access_rules` records (rust/docs/store/access_rules.md). A slug
@@ -117,9 +120,6 @@ export const readFolderAccess: StoreMember<[readers: readonly string[]], FolderA
  */
 export const readMayActFor: StoreMember<[via: MayActForVia, key: string], string[] | string | null> = async (brain, via, key) =>
   via === 'stdio_config' ? storeCall({ member: 'readMayActFor' }, () => brain.getConfig(key)) : null;
-
-/** The store keeps no access tokens and no OAuth clients, so a remote job's principal has no row: the job is denied as revoked. */
-export const readJobPrincipal: StoreMember<[principal: { kind: JobPrincipalKind; id: string }], Record<string, unknown> | null> = async () => null;
 
 /** The store keeps no memory proposals, so upkeep expires nothing. */
 export const expireMemoryProposals: StoreMember<[reason: string], number> = async () => 0;
@@ -162,3 +162,6 @@ export const listMemoryProposalRows: StoreMember<[query: ProposalListQuery], Arr
 
 /** No memory proposals exist on this engine, so no request id names one: show, approve and deny answer not_found. */
 export const listOwnerProposalRows: StoreMember<[requestId: string], Array<Record<string, unknown>>> = async () => [];
+
+/** The store keeps no access tokens and no OAuth clients, so a remote job's principal has no row: the job is denied as revoked. */
+export const readJobPrincipal: StoreMember<[principal: { kind: JobPrincipalKind; id: string }], Record<string, unknown> | null> = async () => null;

@@ -133,3 +133,66 @@ export const listDerivedRows: Member<'listDerivedRows'> = (brain, frontier, limi
   for (const ref of frontier) if (typeof ref.table !== 'string' || typeof ref.id !== 'string') refuseMember(member, 'a frontier row whose table or id is not text');
   return storeCall({ member }, () => brain.listDerivedRows({ frontier: frontier.map(f => ({ table: f.table, id: f.id })), limit }));
 };
+
+/** The ids of a `bigint[]` argument as the store reads them; an id that is not a safe integer is refused, not rounded. */
+function purgeIds(member: string, ids: readonly number[]): number[] {
+  for (const id of ids) if (!Number.isSafeInteger(id)) refuseMember(member, 'an id that is not an integer');
+  return [...ids];
+}
+
+/*
+ * The writes a purge runs in its transaction (facts/purge_writes.rs). Each answers what the SQL member answers: the
+ * number of rows deleted, or the deleted hold ids as text.
+ */
+export const deletePurgedTakes: Member<'deletePurgedTakes'> = (brain, takeIds) =>
+  storeCall({ member: 'deletePurgedTakes' }, () => brain.deletePurgedTakes(purgeIds('deletePurgedTakes', takeIds)));
+
+export const deletePurgeReviewQueue: Member<'deletePurgeReviewQueue'> = (brain, sourceId, refs) =>
+  storeCall({ member: 'deletePurgeReviewQueue', sourceId }, () => brain.deletePurgeReviewQueue(sourceId, [...refs]));
+
+export const deletePurgeReviewProposals: Member<'deletePurgeReviewProposals'> = (brain, sourceId, refs) =>
+  storeCall({ member: 'deletePurgeReviewProposals', sourceId }, () => brain.deletePurgeReviewProposals(sourceId, [...refs]));
+
+export const deletePurgeDecideProposals: Member<'deletePurgeDecideProposals'> = (brain, sourceId, factIds) =>
+  storeCall({ member: 'deletePurgeDecideProposals', sourceId }, () =>
+    brain.deletePurgeDecideProposals(sourceId, purgeIds('deletePurgeDecideProposals', factIds)));
+
+export const deletePurgeTrustProposals: Member<'deletePurgeTrustProposals'> = (brain, sourceId, factIds, takeIds) =>
+  storeCall({ member: 'deletePurgeTrustProposals', sourceId }, () => brain.deletePurgeTrustProposals(sourceId,
+    purgeIds('deletePurgeTrustProposals', factIds), purgeIds('deletePurgeTrustProposals', takeIds)));
+
+export const deletePurgeOpenLoops: Member<'deletePurgeOpenLoops'> = (brain, sourceId, factIds) =>
+  storeCall({ member: 'deletePurgeOpenLoops', sourceId }, () => brain.deletePurgeOpenLoops(sourceId, purgeIds('deletePurgeOpenLoops', factIds)));
+
+export const deletePurgeWriteGateHolds: Member<'deletePurgeWriteGateHolds'> = (brain, sourceId, factHash) =>
+  storeCall({ member: 'deletePurgeWriteGateHolds', sourceId }, () => brain.deletePurgeWriteGateHolds(sourceId, factHash));
+
+export const deletePurgeWriteGateReceipts: Member<'deletePurgeWriteGateReceipts'> = (brain, factIds, takeIds, holdIds) =>
+  storeCall({ member: 'deletePurgeWriteGateReceipts' }, () => brain.deletePurgeWriteGateReceipts([...factIds], [...takeIds], [...holdIds]));
+
+/**
+ * `blankPurgeCoreEditNotices`: the store keeps no core edit notices (their only writer, the core guard in
+ * persistence/core-guard.ts, goes through `executeRaw`, which this engine refuses), so it blanks none.
+ */
+export const blankPurgeCoreEditNotices: Member<'blankPurgeCoreEditNotices'> = async () => 0;
+
+export const deletePurgedFacts: Member<'deletePurgedFacts'> = (brain, factIds, sourceId) =>
+  storeCall({ member: 'deletePurgedFacts', sourceId }, () => brain.deletePurgedFacts(purgeIds('deletePurgedFacts', factIds), sourceId));
+
+export const deletePurgedChunks: Member<'deletePurgedChunks'> = (brain, pageIds) =>
+  storeCall({ member: 'deletePurgedChunks' }, () => brain.deletePurgedChunks(purgeIds('deletePurgedChunks', pageIds)));
+
+/** The date columns of a page row, which come back `Date`s, as PGLite returns `SELECT p.*`. */
+const PAGE_DATES = ['created_at', 'updated_at', 'deleted_at', 'effective_date', 'ingested_at'] as const;
+
+/** `listPagesForPurgeRewrite`: each page as `getPage` gives it, with `body_storage` and its tags as `purge_tags`. */
+export const listPagesForPurgeRewrite: Member<'listPagesForPurgeRewrite'> = async (brain, sourceId, pageIds) => {
+  const rows: Row[] = await storeCall({ member: 'listPagesForPurgeRewrite', sourceId }, () =>
+    brain.listPagesForPurgeRewrite(sourceId, purgeIds('listPagesForPurgeRewrite', pageIds)));
+  return rows.map(row => withDates(row, [...PAGE_DATES]));
+};
+
+export const updatePageBodyForPurge: Member<'updatePageBodyForPurge'> = async (brain, sourceId, pageId, compiled, timeline, hash) => {
+  if (!Number.isSafeInteger(pageId)) refuseMember('updatePageBodyForPurge', 'a page id that is not an integer');
+  await storeCall({ member: 'updatePageBodyForPurge', sourceId }, () => brain.updatePageBodyForPurge(sourceId, pageId, compiled, timeline, hash));
+};

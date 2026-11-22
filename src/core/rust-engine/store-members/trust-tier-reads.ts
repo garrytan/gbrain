@@ -137,9 +137,6 @@ export const lockLivePagesByKey: Member<'lockLivePagesByKey'> = async (brain, re
   return storeCall({ member: 'lockLivePagesByKey' }, () => brain.lockLivePagesByKey(refs.map(r => ({ source_id: r.source_id, slug: r.slug }))));
 };
 
-/** Why the belief reads refuse: an answer from the store would be an empty ledger, never the one PGLite keeps. */
-const NO_BELIEF_LEDGER = 'the belief ledger, which the store does not keep yet';
-
 /** The remote read floor over `p` that `stream_visible` and the visible lifetimes are judged by. */
 const beliefFloor = (member: string) => storePageTextPolicy(member, () => remoteReadFloorSql('p'), { noReaders: true });
 

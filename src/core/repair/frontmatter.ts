@@ -70,6 +70,8 @@ import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type
 import { gitChildEnv } from '../git-env.ts';
 import { commitPushCommand } from '../git/commit-push.ts';
 import { bindOrigin, originConflictMessage, pickCanonicalOrigin } from '../persistence/origin-guard.ts';
+import { readSourceStates } from '../source-rows.ts';
+import type { OriginPathPageRow } from '../engine-sql/repair-plan-scans.ts';
 
 type Mode = 'managed' | 'legacy';
 type RepairClass = 'safe' | 'interpretive';
@@ -220,8 +222,7 @@ function resolution(hold: Pick<ContentRefusal, 'code' | 'reason' | 'key' | 'line
 /** The managed owner root, or the legacy checkout, of each source in scope; others are residuals. */
 async function sourceRoots(engine: BrainEngine, scope: RepairScope, residuals: Record<string, number>, warnings: string[]): Promise<SourceRoot[]> {
   const managed = await managedPersistenceEnabled(engine);
-  const rows = await engine.executeRaw<{ id: string; incarnation: string; local_path: string | null }>(
-    'SELECT id, incarnation::text AS incarnation, local_path FROM sources WHERE id = ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+  const rows = await readSourceStates(engine, scope.source_ids);
   const roots: SourceRoot[] = [];
   for (const row of rows) {
     if (managed) {
@@ -251,21 +252,21 @@ function markdownFiles(root: string): string[] {
   return [...new Set(paths)].filter(path => /\.mdx?$/i.test(path) && !path.split('/').some(part => part.startsWith('.')) && !isReservedSkillBundlePath(path)).sort();
 }
 
-interface PageRow { id: number; slug: string; source_path: string; revision: string; title: string; head: string }
+type PageRow = OriginPathPageRow;
 
 /**
  * Each recorded origin's canonical live page (#6948: twins resolve to the page whose slug the file derives, else stay ambiguous),
- * and each recorded origin's soft-deleted page slugs, from one read.
+ * and each recorded origin's soft-deleted page slugs (typed reads: live pages, then the file tombstones).
  */
 async function pagesByOrigin(engine: BrainEngine, sourceId: string): Promise<{ live: Map<string, PageRow | { ambiguous: string[] }>; deleted: Map<string, string[]> }> {
-  const rows = await engine.executeRaw<PageRow & { gone: boolean }>(`SELECT id, slug, source_path, knowledge_revision::text AS revision, title,
-      CASE WHEN deleted_at IS NULL THEN left(compiled_truth, 400) ELSE '' END AS head, deleted_at IS NOT NULL AS gone
-    FROM pages WHERE source_id=$1 AND source_path IS NOT NULL ORDER BY slug`, [sourceId]);
   const grouped = new Map<string, PageRow[]>();
+  for (const row of await engine.listPagesByOriginPath(sourceId)) grouped.set(row.source_path, [...grouped.get(row.source_path) ?? [], row]);
   const deleted = new Map<string, string[]>();
-  for (const { gone, ...row } of rows) {
-    if (gone) deleted.set(row.source_path, [...deleted.get(row.source_path) ?? [], row.slug]);
-    else grouped.set(row.source_path, [...grouped.get(row.source_path) ?? [], { ...row, id: Number(row.id) }]);
+  for (let before: number | null = null; ;) {
+    const page = await engine.listFileTombstones(sourceId, { before, limit: 1000 });
+    for (const row of page) deleted.set(row.source_path, [...deleted.get(row.source_path) ?? [], row.slug]);
+    if (page.length < 1000) break;
+    before = page[page.length - 1]!.id;
   }
   return { live: new Map([...grouped].map(([path, pages]) => [path, pickCanonicalOrigin(pages, path)!])), deleted };
 }
@@ -276,9 +277,7 @@ async function pagesByOrigin(engine: BrainEngine, sourceId: string): Promise<{ l
  * it. The preview and the apply report how many (`skipped_segmented`).
  */
 async function reportSkippedSegmented(engine: BrainEngine, sourceIds: string[], residuals: Record<string, number>, warnings: string[]): Promise<void> {
-  const [row] = await engine.executeRaw<{ n: number }>(`SELECT COUNT(*)::int AS n FROM pages
-    WHERE source_id=ANY($1::text[]) AND deleted_at IS NULL AND source_path IS NOT NULL AND body_storage='segmented'`, [sourceIds]);
-  const n = Number(row?.n ?? 0);
+  const n = await engine.countSegmentedOriginPages(sourceIds);
   if (!n) return;
   residuals.skipped_segmented = n;
   warnings.push(`skipped (segmented): ${n} page(s) store their body in segments, so the database-side check for a stored body that begins with its own frontmatter block `
@@ -297,7 +296,7 @@ function slugTitle(slug: string): string {
 /** Database-side damage worth a re-import from the canonical file. */
 function pageDamage(page: PageRow | undefined, content: string): string | null {
   if (!page) return null;
-  if (EMBEDDED_BLOCK.test(page.head)) return 'its stored body begins with an embedded frontmatter block';
+  if (EMBEDDED_BLOCK.test(page.head ?? '')) return 'its stored body begins with an embedded frontmatter block';
   const titleLine = /^---[^\n]*\n[\s\S]*?^title:[ \t]*\S/m.test(content.replace(/^\uFEFF/, ''));
   if (titleLine && page.title === slugTitle(page.slug)) return 'its stored title was derived from the slug although the file names a title';
   return null;
@@ -538,7 +537,7 @@ async function scan(engine: BrainEngine, scope: RepairScope, selection: Selectio
  * design v3.2 §3.7: one interlock for every repair; an unreadable set names the first file).
  */
 async function busySyncPath(engine: BrainEngine, sourceId: string, items: Array<{ path: string; source_path?: string | null; slug?: string | null }>): Promise<{ path: string; busy: RepairBusySet } | null> {
-  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
+  const source = await engine.readSourceIncarnation(sourceId);
   const busy = await loadRepairBusySet(engine, sourceId, source?.incarnation ?? '');
   const named = items.find(entry => repairBusy(busy, { path: entry.path, sourcePath: entry.source_path, slug: entry.slug }));
   return named ? { path: named.path, busy } : null;
@@ -564,7 +563,7 @@ export const frontmatterRepair: RepairHandler = {
           `Preview first: ${shellQuote(preview)} — show the user the per-file diffs, then run the apply command it prints (with --yes --expect <preview-hash>).`);
       }
       const approved = await loadApprovedSet<ApprovedSetItem>(engine, { command: 'frontmatter', hash: opts.expect, previewCommand: shellQuote(preview),
-        emptyHash: async () => previewHash({ kind: 'frontmatter-v1', brain_id: scope.brain_id, sources: (await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids])), selection, items: [] }) });
+        emptyHash: async () => previewHash({ kind: 'frontmatter-v1', brain_id: scope.brain_id, sources: (await engine.listSourceIncarnations(scope.source_ids)), selection, items: [] }) });
       if (approved.items.some(entry => !sameSelection(entry.selection, selection))) throw previewChangedError(opts.expect, shellQuote(preview));
       for (const sourceId of new Set(approved.items.map(entry => entry.source_id))) {
         const named = await busySyncPath(engine, sourceId, approved.items.filter(entry => entry.source_id === sourceId));
@@ -585,7 +584,7 @@ export const frontmatterRepair: RepairHandler = {
     const found = await scan(engine, scope, selection, residuals, warnings);
     await reportSkippedSegmented(engine, scope.source_ids, residuals, warnings);
     for (const path of found.unknownOnly) warnings.push(`--only ${path}: no such Markdown file or hold in scope; check the source-relative path.`);
-    const sources = await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+    const sources = await engine.listSourceIncarnations(scope.source_ids);
     const approvedItems = found.prepared.map(entry => entry.approved);
     const hash = previewHash({ kind: 'frontmatter-v1', brain_id: scope.brain_id, sources, selection, items: approvedItems });
     if (approvedItems.length) await saveApprovedSet<ApprovedSetItem>(engine, { command: 'frontmatter', hash }, approvedItems.map(entry => ({ ...entry, selection })));
@@ -635,8 +634,7 @@ export const frontmatterRepair: RepairHandler = {
 
 async function rootFor(engine: BrainEngine, repair: ApprovedRepair): Promise<{ root: string; incarnation: string }> {
   if (repair.mode === 'managed') return managedRepairRoot(engine, repair.source_id);
-  const [row] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1', [repair.source_id]);
-  const root = row?.local_path ?? (repair.source_id === 'default' ? await engine.getConfig('sync.repo_path') : null);
+  const root = (await engine.readSourceLocalPath(repair.source_id)) ?? (repair.source_id === 'default' ? await engine.getConfig('sync.repo_path') : null);
   if (!root) throw opError('source_changed', `Source ${repair.source_id} has no local checkout any more, so nothing was written.`, 'Preview the repair again on the host that holds the checkout.');
   return { root, incarnation: '' };
 }
@@ -690,8 +688,7 @@ async function applyRepair(ctx: OperationContext, repair: ApprovedRepair, select
   }
   const imported = await importFromFile(ctx.engine, target, repair.source_path, { sourceId: repair.source_id, noEmbed: !embed });
   const ok = imported.status !== 'error' && !imported.refusal;
-  const holdCleared = ok && await clearGitHold(ctx.engine, { sourceId: repair.source_id, incarnation: (await ctx.engine.executeRaw<{ incarnation: string }>(
-    'SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [repair.source_id]))[0]!.incarnation, path: repair.path, observedAt: new Date().toISOString() });
+  const holdCleared = ok && await clearGitHold(ctx.engine, { sourceId: repair.source_id, incarnation: (await ctx.engine.readSourceIncarnation(repair.source_id))!.incarnation, path: repair.path, observedAt: new Date().toISOString() });
   return { applied: ok, outcome: ok ? 'repaired' : 'import_refused', ...(ok ? {} : { reason: imported.error ?? 'the import refused the repaired file' }),
     detail: { path: repair.path, written: repair.before !== repair.after, ...(backup ? { backup } : {}), imported: imported.status, hold_cleared: holdCleared,
       committed: 'commit_step', commit_step: commitPushCommand(root, [repair.path], [`fix(frontmatter): repair ${repair.path}`]) } };

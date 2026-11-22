@@ -366,8 +366,8 @@ export const relationalFanout: StoreMember<[seeds: string[], opts?: RelationalFa
       depth,
       includeMentions: !!opts?.includeMentions,
       limit,
-      requireSafeChunks: requiresSafeChunks(opts),
       temporal: walkTemporal(opts),
+      requireSafeChunks: requiresSafeChunks(opts),
     };
     return storeCall({ member: 'relationalFanout' }, () => brain.relationalFanout(seeds, wire));
   };

@@ -4,13 +4,13 @@
  * small eval reads (last prompt version, captured queries). The text and binds are the ones the callers built
  * inline; the engines run them through typed members.
  */
+import { ownerOnlyTakeAllowedSql } from '../search/private-visibility.ts';
 import type { EngineRawRead } from './cli-reads-ops.ts';
 import { renderFragment, sqlFragment } from './fragment.ts';
 import { NON_EMPLOYER_PREFIXES, NON_EMPLOYER_TYPES } from '../link-target-roles.ts';
 import { entityTypePredicateSql, type EntityTypeFilter } from '../schema-pack/entity-types.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { pageReadFilter } from '../search/read-policy-sql.ts';
-import { ownerOnlyTakeAllowedSql } from '../search/private-visibility.ts';
 import { chunkVisibleFilter, requiresSafeChunks, safeChunksFilter } from '../search/safe-chunks.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import type { PageReadPolicy } from '../types.ts';

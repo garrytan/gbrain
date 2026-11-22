@@ -263,8 +263,7 @@ const NAME_KEY_PAGE_DIRS: [&str; 8] = [
 /// remote provenance floor, `remoteProvenanceFloorSql`, for a caller that is not labelled-only),
 /// which judges no entity or holding page. A missing page hides nothing. `restricted` is the
 /// caller record's flag: false (a brain that holds no member-access restrictions) renders the
-/// member-access part as `page_readers IS NULL AND folder_rule_ids IS NULL`, with no origin test:
-/// a page that names readers or that a folder rule stamps fails it, whatever the rule covers.
+/// member-access part as `page_readers IS NULL AND folder_rule_ids IS NULL`, with no origin test.
 /// Both forms end with the page owner-only test in the policy's form.
 pub(crate) fn hidden_by_provenance_page(
     read: &dyn KvRead,
@@ -350,7 +349,7 @@ pub(crate) fn page_hidden_with(
 }
 
 /// `holdingSlugSql`: `memory/unattributed`, or a slug ending in `/memory/unattributed`.
-fn holding_slug(slug: &str) -> bool {
+pub(super) fn holding_slug(slug: &str) -> bool {
     slug == "memory/unattributed" || slug.ends_with("/memory/unattributed")
 }
 

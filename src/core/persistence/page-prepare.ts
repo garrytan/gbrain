@@ -670,7 +670,7 @@ export async function preparePrivateTransition(engine: BrainEngine, row: Pick<Wr
   if (!row.worktree_id || !await sourceCanonicalGit(engine, row.source_id)) return undefined;
   return prepareFileTarget(engine, row, snapshot, null, undefined, { ...options, deleting: true });
 }
-export async function pageDatabaseOnlyPublication(engine: SqlEngine, row: WriteRequest, file: PreparedMutation['file']): Promise<Pick<PreparedMutation, 'databaseOnlyReason'>> {
+export async function pageDatabaseOnlyPublication(engine: SqlEngine & Pick<BrainEngine, 'readPageDatabaseOnlyReason'>, row: WriteRequest, file: PreparedMutation['file']): Promise<Pick<PreparedMutation, 'databaseOnlyReason'>> {
   const reason = databaseOnlyPublication(row, file);
   if (reason.databaseOnlyReason && (await sourceMirrorReadOnly(engine, row.source_id) || await isMirrorOnlyPage(engine, row.source_id, row.slug))) {
     return { databaseOnlyReason: 'mirror_read_only' };

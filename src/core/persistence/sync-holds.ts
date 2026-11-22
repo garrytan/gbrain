@@ -64,9 +64,11 @@ import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP } from '../engine-sql/persistence-jour
 import * as holdStore from '../engine-sql/sync-hold-store.ts';
 import { GIT_HOLD_SUMMARY_COUNTERS as SUMMARY_COUNTERS, SYNC_CONVERSION_OP, gitHoldFingerprint, summaryFingerprint, type GitHoldSummaryWeights as SummaryWeights } from '../engine-sql/sync-hold-store.ts';
 export { gitHoldFingerprint, summaryFingerprint } from '../engine-sql/sync-hold-store.ts';
+import { requestGitHoldRetry as requestGitHoldRetryOver } from '../engine-sql/git-holds.ts';
 import { GIT_HOLD_RETRY_OP, readGitHoldRecords as readGitHoldRecordsOver, readGitHoldRetryRequest as readGitHoldRetryRequestOver, readGitHoldReportInputs as readGitHoldReportInputsOver, type GitHoldRecordsQuery, type GitHoldReportInputs } from '../engine-sql/sync-hold-reads.ts';
 export { GIT_HOLD_OP, GIT_HOLD_RETRY_OP, GIT_HOLD_SUMMARY_OP };
-export const SYNC_IMPORT_PROVENANCE_OP = 'sync-import-provenance';
+import { SYNC_IMPORT_PROVENANCE_OP } from './sync-pass-pages-sql.ts';
+export { SYNC_IMPORT_PROVENANCE_OP };
 /** One row per source incarnation: the blocked requests recent managed syncs converted in place. */
 export { SYNC_CONVERSION_OP };
 /** How many conversions the log keeps per source. */
@@ -384,7 +386,7 @@ const READ_HOLD_RECORD_SQL = `CASE WHEN COALESCE(s.config->>'mirror_read_only','
  * run past the file. Idempotent on (path, upstream_version); returns `skipped`
  * when a newer run already wrote this path's hold.
  */
-export async function writeGitHold(tx: Exec, input: Omit<GitHoldRecord, 'version' | 'held_at' | 'updated_at'>): Promise<'inserted' | 'updated' | 'skipped'> {
+export async function writeGitHold(tx: Exec & Pick<BrainEngine, 'readOpCheckpointRecord'>, input: Omit<GitHoldRecord, 'version' | 'held_at' | 'updated_at'>): Promise<'inserted' | 'updated' | 'skipped'> {
   await lockSummary(tx, input.source_id, input.incarnation);
   const existing = await readRow(tx, input.source_id, input.incarnation, input.path);
   if (existing && existing.observed_at > input.observed_at) return 'skipped';
@@ -1170,16 +1172,14 @@ export async function readSyncConversions(engine: HoldStore, sourceIds: string[]
   return out;
 }
 
-/** `sources retry-held` on a Git source: the next sync re-screens these paths even if Git did not touch them. */
-export async function requestGitHoldRetry(engine: Exec, sourceId: string, incarnation: string, paths: string[]): Promise<void> {
-  await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
-      VALUES($1,$2,jsonb_build_array(jsonb_build_object('version',1,'source_id',$3::text,'incarnation',$5::text,'paths',$4::text::jsonb,'requested_at',now())))
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array(jsonb_build_object('version',1,'source_id',$3::text,'incarnation',$5::text,
-      'paths',(SELECT COALESCE(jsonb_agg(DISTINCT p),'[]'::jsonb) FROM (
-        SELECT jsonb_array_elements_text(COALESCE(op_checkpoints.completed_keys->0->'paths','[]'::jsonb)) AS p
-        UNION SELECT jsonb_array_elements_text($4::text::jsonb)) paths),
-      'requested_at',now())),updated_at=now()`,
-  [GIT_HOLD_RETRY_OP, summaryFingerprint(sourceId, incarnation), sourceId, JSON.stringify(paths), incarnation]);
+/**
+ * `sources retry-held` on a Git source: the next sync re-screens these paths even if Git did not touch them. The request
+ * keeps each path once, in byte order, stamped now.
+ */
+export async function requestGitHoldRetry(engine: Exec & Partial<Pick<BrainEngine, 'requestGitHoldRetry'>>, sourceId: string, incarnation: string, paths: string[]): Promise<void> {
+  const requestedAt = new Date().toISOString();
+  if (engine.requestGitHoldRetry) await engine.requestGitHoldRetry(sourceId, incarnation, paths, requestedAt);
+  else await requestGitHoldRetryOver(engine, sourceId, incarnation, paths, requestedAt);
 }
 
 export async function readGitHoldRetryPaths(engine: RetryReader, sourceId: string, incarnation: string): Promise<string[]> {
@@ -1340,36 +1340,32 @@ export function syncImportParsers(schemaPack: string | null): (path: string) => 
 
 const provenanceFingerprint = (sourceId: string, incarnation: string, pageId: number) => `${sourceId}:${incarnation}:${pageId}`;
 
-export async function recordSyncImportProvenance(tx: Exec, value: Omit<SyncImportProvenance, 'recorded_at' | 'validated'>): Promise<void> {
+/** The engine members the provenance records go through (engine-sql/op-checkpoint.ts), so a Rust brain serves them from its store. */
+type ProvenanceExec = Pick<BrainEngine, 'readOpCheckpointRecords' | 'writeOpCheckpointRecords'>;
+
+export async function recordSyncImportProvenance(tx: ProvenanceExec, value: Omit<SyncImportProvenance, 'recorded_at' | 'validated'>): Promise<void> {
   const record: SyncImportProvenance = { ...value, validated: true, recorded_at: new Date().toISOString() };
-  await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
-  [SYNC_IMPORT_PROVENANCE_OP, provenanceFingerprint(value.source_id, value.incarnation, value.page_id), JSON.stringify([record])]);
+  await tx.writeOpCheckpointRecords(SYNC_IMPORT_PROVENANCE_OP, [{ fingerprint: provenanceFingerprint(value.source_id, value.incarnation, value.page_id), record }]);
 }
 
 /** Several pages' provenance in one statement (a waiver run); the last value for a page wins. */
-export async function recordSyncImportProvenances(tx: Exec, values: ReadonlyArray<Omit<SyncImportProvenance, 'recorded_at' | 'validated'>>): Promise<void> {
+export async function recordSyncImportProvenances(tx: ProvenanceExec, values: ReadonlyArray<Omit<SyncImportProvenance, 'recorded_at' | 'validated'>>): Promise<void> {
   if (!values.length) return;
   const recorded_at = new Date().toISOString();
   const rows = new Map(values.map(value => [provenanceFingerprint(value.source_id, value.incarnation, value.page_id), { ...value, validated: true, recorded_at }]));
-  await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
-    SELECT $1, entry->>'fingerprint', jsonb_build_array(entry->'record') FROM jsonb_array_elements($2::text::jsonb) AS entry
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
-  [SYNC_IMPORT_PROVENANCE_OP, JSON.stringify([...rows].map(([fingerprint, record]) => ({ fingerprint, record })))]);
+  await tx.writeOpCheckpointRecords(SYNC_IMPORT_PROVENANCE_OP, [...rows].map(([fingerprint, record]) => ({ fingerprint, record })));
 }
 
 /** The provenance of several pages in one statement, keyed by page id; pages without a record are absent. */
-export async function readSyncImportProvenances(engine: Exec, sourceId: string, incarnation: string, pageIds: readonly number[]): Promise<Map<number, SyncImportProvenance>> {
+export async function readSyncImportProvenances(engine: ProvenanceExec, sourceId: string, incarnation: string, pageIds: readonly number[]): Promise<Map<number, SyncImportProvenance>> {
   if (!pageIds.length) return new Map();
-  const rows = await engine.executeRaw<{ record: SyncImportProvenance }>('SELECT completed_keys->0 AS record FROM op_checkpoints WHERE op=$1 AND fingerprint = ANY($2::text[])',
-    [SYNC_IMPORT_PROVENANCE_OP, pageIds.map(id => provenanceFingerprint(sourceId, incarnation, id))]);
-  return new Map(rows.map(row => [Number(row.record.page_id), row.record]));
+  const records = await engine.readOpCheckpointRecords(SYNC_IMPORT_PROVENANCE_OP, pageIds.map(id => provenanceFingerprint(sourceId, incarnation, id))) as SyncImportProvenance[];
+  return new Map(records.map(record => [Number(record.page_id), record]));
 }
 
-export async function readSyncImportProvenance(engine: Exec, sourceId: string, incarnation: string, pageId: number): Promise<SyncImportProvenance | null> {
-  const [row] = await engine.executeRaw<{ record: SyncImportProvenance }>('SELECT completed_keys->0 AS record FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',
-    [SYNC_IMPORT_PROVENANCE_OP, provenanceFingerprint(sourceId, incarnation, pageId)]);
-  return row?.record ?? null;
+export async function readSyncImportProvenance(engine: ProvenanceExec, sourceId: string, incarnation: string, pageId: number): Promise<SyncImportProvenance | null> {
+  const [record] = await engine.readOpCheckpointRecords(SYNC_IMPORT_PROVENANCE_OP, [provenanceFingerprint(sourceId, incarnation, pageId)]) as Array<SyncImportProvenance | null>;
+  return record ?? null;
 }
 
 export interface RecoveredFrontmatter {

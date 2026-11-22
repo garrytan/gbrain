@@ -70,7 +70,7 @@ export async function scanFactsHome(engine: BrainEngine, sourceId: string): Prom
   const counts = Object.fromEntries(FACTS_HOME_GROUPS.map(group => [group, 0])) as Record<FactsHomeGroup, number>;
   const out: FactsHomeScan = { source_id: sourceId, strict: await isStrictSource(engine, sourceId), rows: [], counts, homeable: [] };
   const add = (row: FactsHomeRow) => { out.rows.push(row); counts[row.group]++; };
-  const unfenced = await engine.scanUnfencedFactRows(sourceId);
+  const unfenced = await engine.listFactsHomeCandidates(sourceId);
   for (const row of unfenced) {
     const base = { id: Number(row.id), entity_slug: row.entity_slug };
     if (row.dimension != null) { add({ ...base, group: 'ontology_observation', reason: row.dimension }); continue; }
@@ -85,7 +85,7 @@ export async function scanFactsHome(engine: BrainEngine, sourceId: string): Prom
     add({ ...base, group: entity === null ? 'no_entity' : 'entity_page_missing', home: home.slug });
     out.homeable.push({ ...row, home: home.slug });
   }
-  const held = await engine.listHeldFactRows(sourceId, String(HELD_TOO_LONG_DAYS));
+  const held = await engine.listHeldHomeRows(sourceId, HELD_TOO_LONG_DAYS);
   const waiting = new Map<string, typeof held>();
   const targets = new Map<string, Awaited<ReturnType<typeof heldFactTarget>>>();
   for (const row of held) {
@@ -100,7 +100,7 @@ export async function scanFactsHome(engine: BrainEngine, sourceId: string): Prom
   for (const [slug, group] of waiting) {
     for (const [id, reason] of await heldUnmovable(engine, sourceId, slug, group)) add({ id, entity_slug: slug, group: reason ? 'held_fact_unmovable' : 'entity_page_exists', ...(reason ? { reason } : {}) });
   }
-  const orphaned = await engine.listFencedFactsOfMissingPages(sourceId);
+  const orphaned = await engine.listOrphanedFenceRows(sourceId);
   for (const row of orphaned) add({ id: Number(row.id), entity_slug: null, group: 'fenced_page_missing', reason: row.slug });
   return out;
 }

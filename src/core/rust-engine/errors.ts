@@ -64,12 +64,13 @@ export function requireManagedPersistence(engine: object, step: string, why: str
 }
 
 /**
- * The named refusal of a step whose statements are raw SQL, on an engine that reports a capability set without
- * `raw_sql` (the Rust engine). The step calls it before it reads or writes anything, so nothing of it ran. PGLite,
- * Postgres and transaction handles (no capability set) pass.
+ * The named refusal of a step that still runs raw SQL (a repair's page or fact write, a privacy scan, a twin fold, the
+ * refresh writer), on an engine without `raw_sql` (the Rust engine). The step calls it before it reads or writes, so
+ * `step` names what did not run. PGLite, Postgres and transaction handles (no capability set) pass, so no SQL engine
+ * path raises it. `capability` names a narrower missing family when there is one; `outcome` says what already ran.
  */
-export function requireRawSql(engine: object, step: string, why: string): void {
-  if (!servesRawSql(engine)) throw capabilityMissing('raw_sql', `${step} (${why})`);
+export function requireRawSql(engine: object, step: string, opts: { capability?: Capability; outcome?: CapabilityOutcome } = {}): void {
+  if (!reports(engine, 'raw_sql')) throw capabilityMissing(opts.capability ?? 'raw_sql', step, opts.outcome);
 }
 
 /**
@@ -104,8 +105,8 @@ export function managesWorktrees(engine: object): boolean {
 }
 
 /**
- * Whether `engine` serves raw SQL. The owner's idle probe asks it before its one raw statement, so an engine without
- * `raw_sql` (the Rust engine) answers from typed members. PGLite, Postgres and transaction handles answer true.
+ * Whether `engine` serves raw SQL. Callers with one raw statement ask it first, so an engine without `raw_sql` (the
+ * Rust engine) answers from typed members or refuses plainly. PGLite, Postgres and transaction handles answer true.
  */
 export function servesRawSql(engine: object): boolean {
   return reports(engine, 'raw_sql');

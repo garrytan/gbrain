@@ -61,6 +61,7 @@ pub(crate) fn read_head_blocker_rows_in(
     let all = all_requests(read)?;
     let pending = pending(&all);
     let now = env.now_micros();
+    let worktrees = super::write_claim_terms::WorktreeClaims::new(read, &all)?;
     let claim = ClaimableSpec::default();
     let mut out = Vec::new();
     for r in all
@@ -93,7 +94,7 @@ pub(crate) fn read_head_blocker_rows_in(
             "owner_host_id": Value::Null,
             "worktree_state": Value::Null,
             "backoff_until": backoff.unwrap_or(Value::Null),
-            "claimable": claimable(r, &pending, priority, &claim, &[], now),
+            "claimable": claimable(r, &pending, &worktrees, priority, &claim, &[], now)?,
             "fence": Value::Null,
             "effect_recovery": Value::Null,
             "mirrors": Value::Null,

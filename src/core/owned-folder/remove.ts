@@ -15,14 +15,16 @@ import { defaultCheckout } from './destination.ts';
 import { isOwnedFolderKind, OWNED_FOLDER_ROOT, ownedFolderRel } from './paths.ts';
 import { adoptRedactions, commitOwnedBatch, OWNER_FILE, readOwnedState, README_FILE, writeOwnedState, type OwnedFolderState } from './writer.ts';
 
-type Exec = Pick<BrainEngine, 'executeRaw'> & Partial<Pick<BrainEngine, 'getConfig'>>;
+type Exec = Pick<BrainEngine, 'executeRaw' | 'readSourceIncarnation'> & Partial<Pick<BrainEngine, 'getConfig'>>;
 
 export interface OwnedRemoval { files: number; removed: number; kept: string[]; sha: string | null; kept_storage: boolean }
 
+/** The source's incarnation and config through the typed source read, so a removal of any other kind of source needs no raw SQL. */
 async function ownedSource(engine: Exec, sourceId: string) {
-  const [src] = await engine.executeRaw<{ incarnation: string; local_path: string | null; config: Record<string, unknown> | null }>(
-    'SELECT incarnation::text AS incarnation, local_path, config FROM sources WHERE id=$1', [sourceId]);
-  return src && isOwnedFolderKind(src.config) ? src : null;
+  const src = await engine.readSourceIncarnation(sourceId);
+  if (!src) return null;
+  const config = src.config as Record<string, unknown> | null;
+  return isOwnedFolderKind(config) ? { incarnation: String(src.incarnation), config } : null;
 }
 
 async function ownedRecord(engine: Exec, sourceId: string) {

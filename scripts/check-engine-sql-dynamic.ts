@@ -58,6 +58,10 @@ const CONSTANT_ALLOWLIST: Record<string, string> = {
   ACTIVE_UNLINKED_FACT_SQL: 'src/core/engine-sql/fact-relink-writes.ts: constant live-row-with-no-entity predicate over the facts alias f; no input',
   FACT_POOL_COLUMNS: 'src/core/engine-sql/facts-trust.ts: constant select list of the facts pool columns (no input)',
   RELEASE_STAGED_CTE: 'src/core/persistence/limits.ts: constant CTE releasing upload reservations of a preceding gone CTE (no input)',
+  EXPIRED_ARCHIVE_SQL: 'src/core/engine-sql/sources.ts: constant archive-window-elapsed predicate over sources (no input)',
+  UNVERIFIED_ARCHIVE_SQL: 'src/core/engine-sql/sources.ts: constant missing-or-epoch archive-time predicate over sources (no input)',
+  CREDENTIAL_RESEAL_HELD: 'src/core/page-state/credential-reseal-hold.ts: constant live-credential-re-chunk-hold predicate over the pages alias p; the op and producer are module constants (no input)',
+  NOT_CONVERSATION_SLOT_SQL: 'src/core/chronicle/ontology.ts: constant conversation-source prefix exclusion over the facts source column (no input)',
 };
 
 const VETTED_BUILDERS: Record<string, string> = {
@@ -113,6 +117,8 @@ const VETTED_BUILDERS: Record<string, string> = {
   derivationPrivateSql: 'src/core/search/private-visibility.ts: constant derivation-private predicate over a caller page alias; no values',
   expiryTextSql: 'src/core/engine-sql/facts-repair.ts: constant to_char UTC microsecond text of a caller column expression (code-provided); no values',
   instantTextSql: 'src/core/engine-sql/facts-repair.ts: constant to_char UTC microsecond text of a caller column expression (code-provided); no values',
+  DUPLICATE_SQL: 'src/core/engine-sql/facts-repair.ts: constant same-dedup-key EXISTS over a caller facts alias (code-provided); no values',
+  syncDeleteOrigin: 'src/core/persistence/sync-delete-tombstones.ts: constant managed-sync-deletion EXISTS predicate over a caller pages alias (code-provided); the op, intent kind and state are module constants; no values',
 
   // files-ops.ts builders
   fileReadableSql: 'src/core/engine-sql/files-ops.ts: the literal TRUE, or the constant files-readable NOT EXISTS predicate over the files alias f with the vetted caller private-pages filter spliced in; the choice is a boolean; no values',
@@ -151,9 +157,10 @@ const VETTED_BUILDERS: Record<string, string> = {
   buildHardExcludeClause: 'src/core/search/sql-ranking.ts: LIKE-escaped and SQL-escaped slug prefix literals (buildLikePrefixLiteral), the ranked-search hard-exclude clause',
   buildRecencyComponentSql: 'src/core/search/sql-ranking.ts: inlines LIKE literals + numeric coefficients from the decay map, as master (planner behavior)',
   readPolicyFragment: 'src/core/search/private-visibility.ts: accessAllowedForAllSql (readers identities checked by validIdentity before they are quoted in) AND the constant privacyPartSql or TRUE over a caller page alias; no values',
+  renderWriterReadPolicy: 'src/core/engine-sql/remote-links.ts: readPolicyFragment over a code-provided alias, ANDed (labelled-only writer) with labelledOnlyForSql, whose identities pass validIdentity and rule ids validQualifiedRuleId before they are quoted in; no values',
+  privacyPartSql: 'src/core/search/private-visibility.ts: the constant privacy part (snapshot, derived-origin and declared-lineage tests) over a code-provided page alias; no values',
   privatePagesFilterFragment: 'src/core/search/private-visibility.ts: constant visibility predicate over a caller alias',
   callerAccessAllowedSql: 'src/core/search/private-visibility.ts: the member-access part of privatePagesFilterForCaller alone (callerAccessSql); readers identities pass validIdentity before they are quoted in, and a satisfied rule id that is not a valid qualified id empties the set (fail closed); no values',
-  privacyPartSql: 'src/core/search/private-visibility.ts: the constant privacy rules (privateSnapshotFilterFragment, derivedOriginPrivateSql, declaredLineagePrivateSql) over a caller page alias; the alias-honoring switch picks between constant fragments; no values',
   dependentsSql: 'src/core/repair/dependents-sql.ts: the constant dependents statement (namingSql and privacyPartSql over constant aliases); its $1-$4 placeholders (cleared ids, source ids, slugs, label keys) are bound by the caller as four arrays; the mode picks between constant texts; no values',
   privatePagesFilterForCaller: 'src/core/search/private-visibility.ts: privatePagesFilterFragment ORed with the private-readable source ids, each checked by isValidSourceId (alphabet [a-z0-9-], no quote) before it is quoted in',
   privateLinkOriginFilterForCaller: 'src/core/search/private-visibility.ts: constant link-origin predicate ORed with isValidSourceId-checked private-readable source ids',
@@ -177,6 +184,8 @@ const VETTED_BUILDERS: Record<string, string> = {
   chunkGenerationFilter: 'src/core/search/safe-chunks.ts: constant live body generation predicate over caller page/chunk aliases (Wave B)',
   chunkManifestJoin: 'src/core/search/safe-chunks.ts: constant LEFT JOIN onto the live page_body_manifest row over caller aliases (Wave B)',
   chunkDocumentOrder: 'src/core/search/safe-chunks.ts: constant ORDER BY column list over caller chunk/manifest aliases (Wave B)',
+  syncImportPagesSql: 'src/core/persistence/sync-pass-pages-sql.ts: the constant sync pass I⋈P statement (module constants MARKDOWN_CHUNKER_VERSION and syncDeleteOrigin(\'p\') only), its placeholders $1..$5 bound by the caller; the keyset LIMIT is a Number.isSafeInteger-checked integer',
+  syncAdmissionEffectsSql: 'src/core/persistence/sync-admission-sql.ts: the constant sync.admission effective-probe statement (effectProbes over literal $1..$7 placeholders only), every value bound by the caller',
   quoteIdentifier: 'src/core/search/embedding-column.ts: double-quoted identifier (embedded quotes doubled); callers pass registry-resolved or COLUMN_NAME_REGEX-checked embedding column names',
   vectorCastSuffix: 'src/core/search/embedding-column.ts: constant ::vector / ::halfvec cast suffix from the resolved column type',
   safeChunksFilter: 'src/core/search/safe-chunks.ts: constant safe-chunk predicate over a caller alias',
@@ -193,6 +202,10 @@ const VETTED_BUILDERS: Record<string, string> = {
   privateProvenanceFilterFragment: 'src/core/search/private-visibility.ts: constant fact-provenance visibility predicate over a caller alias',
   readersAllowedSql: 'src/core/search/private-visibility.ts: GBRA-218 readers predicate over a caller alias; splices only identities that pass validIdentity (member:/group: plus [a-z0-9._-]), else none',
   callerReadersAllowedSql: 'src/core/search/private-visibility.ts: GBRA-231 readersAllowedSql for the current caller, one conjunct per audience identity; each identity passes validIdentity',
+  atomOriginSlugSql: 'src/core/persistence/atom-origin.ts: the constant origin-slug expression (the atom\'s source_slug, else its rename target) over a caller-given constant pages alias; engine-sql/stale-atom-reads.ts passes only the literal alias a; no values',
+  managedAtomCompletedSql: 'src/core/persistence/managed-atom-sql.ts: the constant failure-free managed-atoms checkpoint predicate over the op_checkpoints alias ac, for caller-given constant column expressions; engine-sql/stale-atom-reads.ts passes only the atom CTE columns; no values',
+  atomRetirementsSql: 'src/core/persistence/atom-retirement-hold.ts: the constant re-extraction retirement CTE over the pages alias p with a scope predicate spliced in; engine-sql/atom-restore-reads.ts passes only module constants (the source-id ANY($1) predicate, optionally with atomOriginScopeSql over $2); no values',
+  atomOriginScopeSql: 'src/core/persistence/atom-retirement-hold.ts: the constant same-source-and-origin predicate over the pages alias p for the atom id placeholder it is given; engine-sql/atom-restore-reads.ts passes only the literal $2::bigint; no values',
   privacyForCaller: 'src/core/search/private-visibility.ts: the caller privacy arm (TRUE, or the given predicate ORed with private-readable source ids checked by isValidSourceId); callers pass a constant alias and a vetted predicate builder',
   factVisibilitySql: 'src/core/access/member-facts.ts: visibility values filtered to the constant set world/private; widened only by memberFactAdmitSql, whose member id passed ACCESS_ID_RE (no quote) and whose page test is privatePagesFilterForCaller; no values',
   heldRowSql: 'src/core/eligibility/fence-overlay.ts: the held fence-cell test over constant key column aliases; widened only by memberFactAdmitSql (member id passed ACCESS_ID_RE) and grantedPrivateFactSql (each source id checked by isValidSourceId before it is quoted in); no values',

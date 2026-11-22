@@ -641,10 +641,19 @@ describe('a page write sent whole to an owner that reports persistence_journal',
   });
 });
 
+/**
+ * The explicit no-journal fixture: a Rust engine with persistence_journal and managed_persistence taken off this one
+ * instance, as an owner on a build whose store did not serve them reports. The store reports the journal now
+ * (store-capabilities.ts), so the describes that pin the refusal take it off here.
+ */
+function withoutJournal<E extends { capabilities: ReadonlySet<string> }>(engine: E): E {
+  for (const capability of ['persistence_journal', 'managed_persistence']) (engine.capabilities as Set<string>).delete(capability);
+  return engine;
+}
+
 // A real Rust owner, built from the addon `bun run rust:build` writes (GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes a missing
-// addon an error). The store holds persistence_journal back (store-capabilities.ts HELD_FOR_CALLERS), so a client
-// refuses a whole write at once (the describe below). This block lifts that one capability on one owner instance, so a
-// forwarded put_page runs the real Rust journal end to end: the journal admits the write, the page store writes inside
+// addon an error). The store reports persistence_journal (store-capabilities.ts), so a forwarded put_page runs the real
+// Rust journal end to end: the journal admits the write, the page store writes inside
 // the publication transaction, the store keeps the publication's effects (insertPublicationEffects), and the request
 // commits. No raw SQL is asked for inside the publication.
 const ADDON_TARGET = detectAddonTarget();
@@ -666,9 +675,8 @@ describe.skipIf(!HAVE_ADDON)('a page write sent whole to a real Rust owner on th
     mkdirSync(db, { recursive: true });
     const addon = await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: ADDON_BUILT } });
     owner = openRustEngine({ addon, databasePath: db });
-    expect(owner.capabilities.has('persistence_journal')).toBe(false);
-    // Lifted before connect: the owner socket's hello names the capabilities the engine reports when it is elected.
-    (owner.capabilities as Set<string>).add('persistence_journal');
+    // The released state: the store reports the journal before connect, so the owner socket's hello names it.
+    expect(owner.capabilities.has('persistence_journal')).toBe(true);
     // Record each executeRaw refusal, on the owner and on its transaction-bound clones (they inherit this property). The
     // owner's background writer loops also ask for raw SQL outside any transaction; the publication runs inside one.
     const refuse = (RustEngine.prototype as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>).executeRaw!;
@@ -1253,7 +1261,7 @@ describe('a CLI write on a Rust brain whose owner is gbrain serve', () => {
 });
 
 describe('a Rust owner whose engine does not report persistence_journal', () => {
-  // The Rust engine shell is the owner: kind 'rust' and no capabilities, as a real Rust owner is today.
+  // The Rust engine shell is the owner: kind 'rust', with the journal taken off (withoutJournal), as an older Rust owner is.
   const addon = { target: 'linux-x64-glibc', engine_abi: 1 } as never;
   let dir: string;
   let db: string;
@@ -1269,7 +1277,8 @@ describe('a Rust owner whose engine does not report persistence_journal', () => 
     config = { engine: 'rust', database_path: db } as never;
     mkdirSync(join(dir, '.gbrain'), { recursive: true });
     writeFileSync(join(dir, '.gbrain', 'config.json'), JSON.stringify(config));
-    rust = openRustEngine({ addon, databasePath: db });
+    rust = withoutJournal(openRustEngine({ addon, databasePath: db }));
+    expect(rust.capabilities.has('persistence_journal')).toBe(false);
     // Count every member the owner is asked to run, so a refusal made at the client is proven to send nothing.
     for (const member of ['executeRaw', 'getPage', 'putPage', 'transaction', 'searchKeyword']) {
       const refuse = (RustEngine.prototype as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[member]!;
@@ -1412,7 +1421,8 @@ describe('gbrain CLI in a second process on a Rust brain', () => {
 
   test('with a Rust serve owner that lacks persistence_journal the CLI takes the engine path at once and the owner runs nothing', async () => {
     const { home, db } = rustHome('gbrain-owner-ipc-cli-rust-');
-    const rust = openRustEngine({ addon: { target: 'linux-x64-glibc', engine_abi: 1 } as never, databasePath: db });
+    const rust = withoutJournal(openRustEngine({ addon: { target: 'linux-x64-glibc', engine_abi: 1 } as never, databasePath: db }));
+    expect(rust.capabilities.has('persistence_journal')).toBe(false);
     const ownerServer = await serveOwnerEngine(rust as unknown as BrainEngine, ownerSocketPath(db), { serve: true, wholeOperations: ownerWholeOperations() });
     try {
       expect(ownerServer).not.toBeNull();
@@ -1428,8 +1438,8 @@ describe('gbrain CLI in a second process on a Rust brain', () => {
   }, 60_000);
 
   describe.skipIf(!HAVE_ADDON)('with a real Rust serve owner on the real write journal', () => {
-    // The owner is a connected Rust engine with persistence_journal lifted on that one instance (the store holds it
-    // back, store-capabilities.ts HELD_FOR_CALLERS), serving the real persistence provider; no PGLite stand-in.
+    // The owner is a connected Rust engine that reports persistence_journal (store-capabilities.ts), serving the real
+    // persistence provider; no PGLite stand-in.
     let served: ReturnType<typeof rustHome>;
     let owner: RustEngine;
     let binding: Awaited<ReturnType<typeof startPersistenceIpcServer>> = null;
@@ -1440,7 +1450,7 @@ describe('gbrain CLI in a second process on a Rust brain', () => {
       served = rustHome('gbrain-owner-ipc-cli-rust-journal-');
       const addon = await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: ADDON_BUILT } });
       owner = openRustEngine({ addon, databasePath: served.db });
-      (owner.capabilities as Set<string>).add('persistence_journal');
+      expect(owner.capabilities.has('persistence_journal')).toBe(true);
       const refuse = (RustEngine.prototype as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>).executeRaw!;
       Object.defineProperty(owner, 'executeRaw', { configurable: true, writable: true, value(this: RustEngine, ...a: unknown[]) {
         return refuse.apply(this, a).catch((e: OperationError) => {
@@ -1484,7 +1494,7 @@ describe('gbrain CLI in a second process on a Rust brain', () => {
   });
 
   describe('with a serve owner that reports persistence_journal', () => {
-    // The owner hosts PGLite, which reports persistence_journal; the Rust engine does not yet (see the test above).
+    // The owner hosts PGLite, which reports persistence_journal (a Rust owner that reports it is the describe above).
     let served: ReturnType<typeof rustHome>;
     let engine: PGLiteEngine;
     let binding: Awaited<ReturnType<typeof startPersistenceIpcServer>> = null;

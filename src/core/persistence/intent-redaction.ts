@@ -219,7 +219,8 @@ export async function findRequestsHoldingStagings(engine: Pick<BrainEngine, 'lis
 export async function cancelRequestsHoldingStagings(tx: BrainEngine, targets: readonly IntentRedactionTarget[], exclude?: string): Promise<number> {
   const ids = targets.map(t => t.id).filter(id => id !== exclude);
   if (!ids.length) return 0;
-  const rows = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE', [ids]);
+  // The typed request lock (engine-sql/persistence-journal.ts lockWriteRequestsById): the rows in id order, FOR UPDATE.
+  const rows = await tx.lockWriteRequestsById(ids);
   const blocked = rows.find(row => (!isTerminal(row) && row.state !== 'queued' && row.state !== 'deferred') || row.recovery);
   if (blocked) {
     throw opError('purge_blocked_pending_recovery', 'A pending write is publishing a staged body that holds this content, so nothing was purged.',
@@ -251,7 +252,7 @@ export async function redactRequestIntents(tx: BrainEngine, targets: readonly In
   const ids = targets.map(t => t.id).filter(id => id !== exclude);
   if (!ids.length) return 0;
   await lockCounters(tx, ['brain', ...redactionCounterKeys(targets)]);
-  const rows = await tx.lockWriteRequests(ids);
+  const rows = await tx.lockWriteRequestsById(ids);
   // A page purge leaves later queued writes for the slug in place (they fail on the missing page); a fact purge refuses.
   const blocked = opts.skipPending ? undefined : rows.find(row => !isTerminal(row) || row.recovery);
   if (blocked) {

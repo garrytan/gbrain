@@ -41,7 +41,7 @@ type Sql = Pick<BrainEngine, 'executeRaw'> & Partial<Pick<BrainEngine, 'capabili
  * with `engine_capability_missing` naming it, before any lock, purge or write, never part of the way through.
  */
 function refuseWithoutRawSql(engine: Partial<Pick<BrainEngine, 'capabilities'>>, member: string): void {
-  requireRawSql(engine, member, "the concept rebuild's stated-row, access and held-concept reads are raw SQL");
+  requireRawSql(engine, `${member} (the concept rebuild's stated-row, access and held-concept reads are raw SQL)`);
 }
 
 /** The tombstone a synthesis rebuilds: its row, delete instant and revision, and the members (at the revisions read). */

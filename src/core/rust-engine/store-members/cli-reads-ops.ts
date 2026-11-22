@@ -8,7 +8,7 @@ import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, Extrac
 import type { ExactIdentityRow, ExactIdentityStatementOpts } from '../../engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from '../../engine-sql/graph-rank.ts';
 import type { ExactBatchRow, ExactScanOpts } from '../../search/exact-scan.ts';
-import { storeCall, takeOptions, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
 
 /**
@@ -45,7 +45,9 @@ function withRemotePolicy<T extends { remote?: { excludePrivate?: boolean } }>(m
   return { ...opts, remote: { ...opts.remote, policy: storePagePolicy(member, true, { callerReaders: true }) } };
 }
 
+/** A phone probe refuses: the store matches no stored `phone` / `phones` value and returns neither. */
 export const listExactIdentityCandidates: StoreMember<[opts: ExactIdentityStatementOpts], ExactIdentityRow[]> = (brain, opts) => {
+  if (opts.probes.phones?.length) refuseMember('listExactIdentityCandidates', 'a phone probe');
   const sent = withRemotePolicy('listExactIdentityCandidates', opts);
   return storeCall({ member: 'listExactIdentityCandidates' }, () => brain.listExactIdentityCandidates(sent));
 };

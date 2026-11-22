@@ -22,6 +22,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { OperationError, opError } from '../ops/contract.ts';
+import { lacksRawSql } from '../engine-capabilities.ts';
 import { PERSISTENCE_REQUEST_ONLINE_INDEXES, PERSISTENCE_SYNC_RUN_INDEXES } from './schema.ts';
 import { docsAnchor } from './connector-errors.ts';
 import type { SyncProcessingOptions } from './sync-authority.ts';
@@ -116,10 +117,13 @@ export interface RequestIndexState {
 /**
  * A fresh read of the online-built request indexes (#5762's checkpoint pair and #6511's slug index by default): valid,
  * missing, INVALID, or still being built by another session. The checkpoint timeout hint reads the pair it depends on.
+ * An engine without raw SQL (Rust) has no SQL indexes, so every name reads as valid.
  */
 export async function readRequestIndexStates(engine: Pick<BrainEngine, 'executeRaw' | 'kind'>,
   indexes: ReadonlyArray<{ name: string }> = PERSISTENCE_REQUEST_ONLINE_INDEXES): Promise<RequestIndexState[]> {
   const names = indexes.map(index => index.name);
+  // The Rust store keeps no SQL indexes: its request keys serve these reads, so there is nothing to build or rebuild.
+  if (lacksRawSql(engine)) return names.map(name => ({ name, state: 'valid' }));
   if (engine.kind !== 'postgres') {
     const rows = await engine.executeRaw<{ name: string; present: boolean }>(
       'SELECT n.name, to_regclass(n.name) IS NOT NULL AS present FROM unnest($1::text[]) AS n(name)', [names]);

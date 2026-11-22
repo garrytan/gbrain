@@ -96,7 +96,7 @@ export function stubSourceMembers(sources: readonly StubSourceRow[] | (() => rea
       const r = rows().find(row => row.id === id);
       return r ? { config: r.config, incarnation: r.incarnation } : null;
     },
-    /** readSourceState (engine-sql/write-misc.ts): an archived source still answers, with `archived: true`. */
+    /** The source row's incarnation, archived flag, local path and config (readSourceState), or null for an unknown id. */
     async readSourceState(id: string): Promise<SourceStateRow | null> {
       enter('readSourceState');
       const r = rows().find(row => row.id === id);

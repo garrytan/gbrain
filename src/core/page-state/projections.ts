@@ -11,7 +11,7 @@ import { resolveMaxChunkTokens } from '../embedding-input-limit.ts';
 import { assertPageRevision, PageProjectionConflictError, PageRevisionConflictError, type PageSnapshot, type ProjectionConflictField } from './types.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { digest } from '../persistence/digest.ts';
-import { quoteIdentifier, resolveWriteColumnFromConfigRows } from '../search/embedding-column.ts';
+import { resolveWriteColumnFromConfigRows } from '../search/embedding-column.ts';
 import { getFtsLanguage } from '../fts-language.ts';
 import { getEmbeddingModel } from '../ai/gateway.ts';
 import { jsonRowBatches } from '../batch-rows.ts';
@@ -26,10 +26,9 @@ import { projectionClassSql } from './projection-class.ts';
 import { advanceProjectionCursor, ineligibleKey, rememberIneligible, type ProjectionScanCursor } from './projection-window.ts';
 import { acceptedEmbeddingInputHashes, embeddingInputHash, plainEmbeddingTier, synopsisBodyHash,
   type EmbeddingInputContext, type EmbeddingTier } from '../embedding-input-hash.ts';
-import { chunkModelMatchesSql } from '../embedding-invalidation.ts';
 import { isRetryableConnError } from '../retry-matcher.ts';
 import { ACTIVATION_SERVED_REVISION } from '../search/safe-chunks.ts';
-import { projectionJobProbes } from '../engine-sql/projection-rebuild.ts';
+import { DEFERRED_CHUNK_CLAIM, DEFERRED_CHUNK_REPLACEMENT, projectionJobProbes } from '../engine-sql/projection-rebuild.ts';
 import { lacksRawSql } from '../engine-capabilities.ts';
 
 export { sealPageTextProjection } from './text-seal.ts';
@@ -152,10 +151,10 @@ async function readGuardedProjectionSnapshot(tx: BrainEngine, slug: string, sour
     ...(fenceOverlay ? { fenceOverlay } : {}) };
 }
 
-/** #7172: the queue reason of a revision whose publication left its chunk replacement to `continueDeferredProjection`. */
-export const DEFERRED_CHUNK_REPLACEMENT = 'chunk_replacement_deferred';
-/** #7172: `<claim>:<token>`, the reason while a continuation holds the replacement (renewed each step, as a segmented projection claim is). */
-export const DEFERRED_CHUNK_CLAIM = 'chunk_replacement_continuing';
+/** #7172: DEFERRED_CHUNK_REPLACEMENT is the queue reason of a revision whose publication left its chunk replacement to
+ * `continueDeferredProjection`; `<claim>:<token>` is the reason while a continuation holds the replacement (renewed each
+ * step, as a segmented projection claim is). */
+export { DEFERRED_CHUNK_CLAIM, DEFERRED_CHUNK_REPLACEMENT };
 
 /**
  * Which stored rows a projection of `chunks` keeps (#5553, A4): each row holding a new chunk at its own index, and
@@ -211,11 +210,8 @@ interface DeferredReplacement {
 }
 
 /** The page's chunk rows as (id, index) pairs, hashed; no chunk text is read. */
-async function chunkRowsFingerprint(tx: BrainEngine, pageId: number): Promise<string> {
-  // chunk-visibility-ok: identity of a deferred replacement's rows (ids and indexes), never returned to a reader
-  const [row] = await tx.executeRaw<{ f: string }>(`SELECT count(*)::text||':'||COALESCE(sum(hashtext(id::text||':'||chunk_index::text)::bigint),0)::text AS f
-    FROM content_chunks WHERE page_id=$1`, [pageId]);
-  return row!.f;
+function chunkRowsFingerprint(tx: BrainEngine, pageId: number): Promise<string> {
+  return tx.readChunkRowsFingerprint(pageId);
 }
 
 /** Reads the page under its guard and plans its replacement; the rows it does not keep are deleted here (no index entry). */
@@ -227,11 +223,8 @@ async function planDeferredReplacement(tx: BrainEngine, sourceId: string, slug: 
   const { chunks } = await preparePageProjection(prepared);
   const context = await indexingContext(tx, current, prepared.maxChunkTokensOverride);
   const plan = await planProjectionKeep(tx, current, context, prepared.chunks, chunks);
-  await tx.executeRaw('DELETE FROM content_chunks WHERE page_id=$1 AND NOT(id=ANY($2::int[]))', [pageId, plan.kept.map(chunk => Number(chunk.id))]);
-  // chunk-visibility-ok: the kept rows of a deferred replacement whose vector the current page no longer accepts
-  const stale = (await tx.executeRaw<{ id: number }>(`SELECT id FROM content_chunks WHERE page_id=$1 AND ${quoteIdentifier(context.column.name)} IS NOT NULL
-    AND (NOT ${chunkModelMatchesSql('model', '$2', `vector_dims(${quoteIdentifier(context.column.name)}) = ${context.column.dimensions}`)} OR embedded_text_hash <> md5(chunk_text) OR NOT(id=ANY($3::int[]))) ORDER BY chunk_index`,
-  [pageId, plan.provenanceModel, plan.current])).map(row => Number(row.id));
+  await tx.deleteUnkeptChunks(pageId, plan.kept.map(chunk => Number(chunk.id)));
+  const stale = await tx.listStaleChunkVectors(pageId, plan.provenanceModel, context.column, plan.current);
   const moved = new Set(plan.moves.map(move => move.id));
   const occupied = new Set([...plan.kept.filter(row => !moved.has(Number(row.id))).map(row => row.chunk_index), ...plan.moves.map(move => move.to)]);
   return { current, pageId, column: context.column, moves: plan.moves, at: new Map(plan.kept.map(chunk => [chunk.chunk_index, Number(chunk.id)])), stale,
@@ -254,13 +247,9 @@ export async function continueDeferredProjectionStep(engine: BrainEngine, source
   const claim = `${DEFERRED_CHUNK_CLAIM}:${state.token ??= randomUUID()}`;
   const [step, next] = await engine.transaction(async (tx): Promise<['sealed' | 'more' | 'skipped' | 'held', DeferredReplacement?]> => {
     await tx.lockPageKeys([{ sourceId, slug }]);
-    const [head] = await tx.executeRaw<{ id: number; revision: string; sealed: boolean }>(`SELECT id, knowledge_revision::text AS revision,
-      text_projection_revision IS NOT DISTINCT FROM knowledge_revision AS sealed FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL`, [sourceId, slug]);
+    const head = await tx.readProjectionHead(sourceId, slug);
     if (!head || head.sealed) return ['skipped'];
-    const [held] = await tx.executeRaw(`SELECT 1 FROM page_projection_jobs j JOIN sources s ON s.incarnation=j.source_incarnation
-      WHERE s.id=$1 AND j.slug=$2 AND j.revision=$3::uuid AND split_part(j.reason,':',1)=$4 AND j.reason<>$5
-        AND j.updated_at>=now()-interval '${SEGMENTED_PROJECTION_LEASE_SECONDS} seconds'`, [sourceId, slug, head.revision, DEFERRED_CHUNK_CLAIM, claim]);
-    if (held) return ['held'];
+    if (await tx.isDeferredReplacementHeld(sourceId, slug, head.revision, claim)) return ['held'];
     const carried = state.plan?.current.revision === head.revision && state.plan.pageId === Number(head.id)
       && state.plan.fingerprint === await chunkRowsFingerprint(tx, Number(head.id)) ? state.plan : null;
     const base = carried ?? await planDeferredReplacement(tx, sourceId, slug);
@@ -268,18 +257,15 @@ export async function continueDeferredProjectionStep(engine: BrainEngine, source
     const { current, pageId } = base;
     const waves = planMoveWaves(base.moves, base.at, budget);
     await applyMoveWaves(tx, pageId, waves.waves);
-    const job = [current.sourceIncarnation, slug, current.revision];
+    const job = { sourceIncarnation: current.sourceIncarnation, slug, revision: current.revision };
     if (!waves.done) {
-      await tx.executeRaw('UPDATE page_projection_jobs SET reason=$4,updated_at=now() WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid', [...job, claim]);
+      await tx.renewDeferredReplacementClaim(job, claim);
       return ['more', { ...base, moves: waves.pending, at: waves.at, fingerprint: await chunkRowsFingerprint(tx, pageId) }];
     }
-    if (base.stale.length) {
-      await tx.executeRaw(`UPDATE content_chunks SET ${quoteIdentifier(base.column.name)}=NULL,embedded_at=NULL,embedded_text_hash=NULL,embedding_input_hash=NULL,
-        embedding_pending_since=COALESCE(embedding_pending_since,now()) WHERE page_id=$1 AND id=ANY($2::int[])`, [pageId, base.stale]);
-    }
+    if (base.stale.length) await tx.clearChunkVectors(pageId, base.column, base.stale);
     if (base.inserts.length) await tx.upsertChunks(slug, base.inserts, { sourceId, embeddingColumn: base.column, sealChunkerVersion: MARKDOWN_CHUNKER_VERSION, pageId, deferSeal: true });
     await sealImportedPage(tx, slug, sourceId, current, MARKDOWN_CHUNKER_VERSION, pageId);
-    await tx.executeRaw('DELETE FROM page_projection_jobs WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid', job);
+    await tx.deleteProjectionJob(job);
     return ['sealed'];
   });
   state.plan = next;
@@ -292,8 +278,7 @@ export async function continueDeferredProjectionStep(engine: BrainEngine, source
  */
 export async function continueDeferredProjection(engine: BrainEngine, sourceId: string, slug: string, until: () => boolean = () => false): Promise<'sealed' | 'more' | 'skipped' | 'held'> {
   const state: { token?: string } = {};
-  const release = () => engine.executeRaw(`UPDATE page_projection_jobs SET reason=$1 WHERE slug=$2 AND reason=$3`,
-    [DEFERRED_CHUNK_REPLACEMENT, slug, `${DEFERRED_CHUNK_CLAIM}:${state.token}`]).catch(() => undefined);
+  const release = () => engine.releaseDeferredReplacementClaim(slug, `${DEFERRED_CHUNK_CLAIM}:${state.token}`).catch(() => undefined);
   try {
     for (;;) {
       const step = await continueDeferredProjectionStep(engine, sourceId, slug, state);
@@ -469,10 +454,8 @@ export async function resealSafeChunks(engine: BrainEngine, slug: string, source
     && prepared.snapshot.page.text_projection_revision === prepared.snapshot.revision) return null;
   const projection = await preparePageProjection(prepared);
   await installPageProjection(engine, prepared, projection.chunks, { seal: true, preserveEmbeddings: true, code: projection.code });
-  const [pending] = await engine.executeRaw<{ chunks: number; chars: number }>(`SELECT COUNT(*)::int AS chunks,
-    COALESCE(SUM(length(chunk_text)),0)::int AS chars FROM content_chunks
-    WHERE page_id=$1 AND ${quoteIdentifier(prepared.embeddingColumn.name)} IS NULL AND modality='text'`, [prepared.snapshot.page.id]);
-  return { pendingChunks: Number(pending?.chunks ?? 0), pendingChars: Number(pending?.chars ?? 0) };
+  const pending = await engine.countPendingTextChunks(prepared.snapshot.page.id, prepared.embeddingColumn);
+  return { pendingChunks: pending.chunks, pendingChars: pending.chars };
 }
 
 export async function preparePageProjection(prepared: ProjectionSnapshot) {
@@ -641,13 +624,7 @@ async function selectWindowJobs(engine: BrainEngine, cursor: ProjectionScanCurso
     seen.add(key);
     return true;
   });
-  const probed = candidates.length ? await engine.executeRaw<{ i: number; source_id: string | null; archived: boolean | null; page_kind: string | null; body_storage: string | null }>(
-    `SELECT k.i,s.id AS source_id,s.archived,p.page_kind,p.body_storage
-      FROM jsonb_to_recordset($1::text::jsonb) AS k(i int, source_incarnation uuid, slug text)
-      LEFT JOIN LATERAL (SELECT s.id,s.archived FROM sources s WHERE s.incarnation=k.source_incarnation OFFSET 0) s ON true
-      LEFT JOIN LATERAL (SELECT p.page_kind,p.body_storage FROM (SELECT p.id FROM pages p WHERE p.source_id=s.id AND p.slug=k.slug OFFSET 0) q
-        JOIN pages p ON p.id=q.id WHERE p.deleted_at IS NULL) p ON true`,
-    [JSON.stringify(candidates.map((row, i) => ({ i, source_incarnation: row.source_incarnation, slug: row.slug })))]) : [];
+  const probed = candidates.length ? await engine.probeProjectionWindowCandidates(candidates) : [];
   const jobs: Array<QueuedJob & { ord: number }> = [];
   for (const probe of probed.sort((a, b) => Number(a.i) - Number(b.i))) {
     const row = candidates[Number(probe.i)]!;
@@ -760,7 +737,6 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
   // false: a refused or dropped connection handed this page back and this worker stops.
   const runJob = async (index: number): Promise<boolean> => {
     const job = jobs[index]!;
-    const observed = [job.source_incarnation, job.slug, job.revision];
     const key = { sourceIncarnation: job.source_incarnation, slug: job.slug, revision: job.revision };
     try {
       const prepared = await engine.transaction(async tx => {
@@ -770,9 +746,7 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
         if (pending === DEFERRED_CHUNK_REPLACEMENT || pending.split(':')[0] === DEFERRED_CHUNK_CLAIM) return 'deferred';
         const read = await readGuardedProjectionSnapshot(tx, job.slug, job.source_id, { allowUnsealed: true });
         if (!read) {
-          const [segmented] = await tx.executeRaw(`SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND body_storage='segmented' AND deleted_at IS NULL`,
-            [job.source_id, job.slug]);
-          return segmented ? 'segmented' : null;
+          return await tx.hasSegmentedPage(job.source_id, job.slug) ? 'segmented' : null;
         }
         const { snapshot } = read;
         if (snapshot.sourceIncarnation === job.source_incarnation && snapshot.revision === job.revision) return read;
@@ -780,8 +754,7 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
           await tx.deleteProjectionJob(key);
           return 'removed';
         }
-        await tx.executeRaw(`UPDATE page_projection_jobs SET revision=$4::uuid,updated_at=now()
-          WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid`, [...observed, snapshot.revision]);
+        await tx.rekeyProjectionJob(key, snapshot.revision);
         return read;
       });
       if (!prepared) { superseded++; return true; }
@@ -795,17 +768,14 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
         else {
           superseded++;
           // A skipped page (sealed meanwhile, or no longer inline Markdown) goes back to the ordinary rebuild.
-          await engine.executeRaw(`UPDATE page_projection_jobs SET updated_at=now()${step === 'skipped' ? ",reason='canonical_change'" : ''}
-            WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid`, observed);
+          await engine.stampDeferredProjectionJob(key, step === 'skipped');
         }
         return true;
       }
       if (prepared === 'segmented') {
         const built = await buildSegmentedProjection(engine, { sourceId: job.source_id, slug: job.slug });
-        await engine.executeRaw(built.sealed
-          ? 'DELETE FROM page_projection_jobs WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid'
-          : `UPDATE page_projection_jobs j SET updated_at=now() WHERE j.source_incarnation=$1::uuid AND j.slug=$2 AND j.revision=$3::uuid
-            AND NOT ${SEGMENTED_PROJECTION_CLAIMED_SQL}`, observed);
+        if (built.sealed) await engine.deleteProjectionJob(key);
+        else await engine.touchUnclaimedProjectionJob(key);
         if (built.sealed) rebuilt++;
         else superseded++;
         return true;
@@ -822,17 +792,14 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
         return false;
       }
       if (!(error instanceof PageRevisionConflictError)) {
-        await engine.executeRaw(`UPDATE page_projection_jobs j SET reason='rebuild_failed',updated_at=now()
-          WHERE j.source_incarnation=$1::uuid AND j.slug=$2 AND j.revision=$3::uuid AND NOT ${SEGMENTED_PROJECTION_CLAIMED_SQL}`, observed);
+        await engine.markProjectionRebuildFailed(key);
         if (opts.onFailure) opts.onFailure({ source_id: job.source_id, slug: job.slug, reason: (error instanceof Error ? error.message : String(error)).split('\n')[0].slice(0, 300) });
         else process.stderr.write('[gbrain] Projection rebuild failed; work remains queued. Inspect projection readiness and the recorded source path.\n');
         return true;
       }
       // The page moved under its install: defer the exact row this call listed
       // (a newer trigger-queued row already carries its own stamp) and report it.
-      const deferred = await engine.executeRaw(`UPDATE page_projection_jobs SET updated_at=now()
-        WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid RETURNING slug`, observed);
-      if (!deferred.length) { superseded++; return true; }
+      if (!(await engine.deferProjectionJob(key))) { superseded++; return true; }
       opts.onHeal?.({ kind: 'deferred', source_id: job.source_id, slug: job.slug });
       opts.onFailure?.({ source_id: job.source_id, slug: job.slug, reason: `revision_conflict: ${error.message.split('\n')[0].slice(0, 280)}` });
     }

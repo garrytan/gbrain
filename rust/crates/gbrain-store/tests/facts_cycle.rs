@@ -175,6 +175,32 @@ fn fact_subject_is_the_page_else_the_entity() {
 }
 
 #[test]
+fn fact_for_forget_reads_the_target_columns() {
+    let b = brain("cycle-forget-target");
+    let ids = insert(
+        &b,
+        "default",
+        json!([
+            { "fact": "fenced", "entity_slug": "people/a", "source_markdown_slug": "people/a", "row_num": 2, "visibility": "world" },
+            { "fact": "bare" },
+        ]),
+    );
+    let target = |id: u64| b.read_fact_for_forget(id as f64).unwrap();
+    assert_eq!(
+        target(ids[0]),
+        json!({ "id": ids[0], "source_id": "default", "entity_slug": "people/a", "row_num": 2,
+            "source_markdown_slug": "people/a", "expired_at": null, "visibility": "world" })
+    );
+    assert_eq!(
+        target(ids[1]),
+        json!({ "id": ids[1], "source_id": "default", "entity_slug": null, "row_num": null,
+            "source_markdown_slug": null, "expired_at": null, "visibility": "private" })
+    );
+    assert_eq!(target(999), Value::Null);
+    assert!(b.read_fact_for_forget(1.5).is_err());
+}
+
+#[test]
 fn facts_for_page_skip_conversation_and_soft_expired_legacy_rows() {
     let b = brain("cycle-page-facts");
     insert(

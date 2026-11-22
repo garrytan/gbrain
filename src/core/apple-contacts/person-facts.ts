@@ -147,8 +147,9 @@ export async function retireAllPersonFacts(engine: BrainEngine, contactsSourceId
 
 /** The step every source removal runs before the row delete: an apple-contacts source retires its person-page rows first. */
 export async function retirePersonFactsBeforeRemove(engine: BrainEngine, sourceId: string): Promise<void> {
-  const [src] = await engine.executeRaw<{ kind: string | null }>("SELECT config->>'kind' AS kind FROM sources WHERE id=$1", [sourceId]);
-  if (src?.kind === 'apple-contacts') await retireAllPersonFacts(engine, sourceId);
+  const src = await engine.readSourceIncarnation(sourceId);
+  const kind = (src?.config as { kind?: unknown } | null | undefined)?.kind;
+  if (kind === 'apple-contacts') await retireAllPersonFacts(engine, sourceId);
 }
 
 export type PersonFactHolders = Record<string, string>;

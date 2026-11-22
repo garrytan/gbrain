@@ -108,11 +108,14 @@ pub const ENTITY_IDENTITY: u8 = b'i';
 /// revisions. The byte after the tag names the table; the module owns the sub-tags.
 pub const ACCESS_RULES: u8 = b'z';
 /// Family `reason_tombstones` (`reason_tombstones.rs`): the purged `(commit, path)` pairs of
-/// `reason_purge_tombstones`, `y source \0 commit \0 path`.
-pub const REASON_TOMBSTONE: u8 = b'y';
+/// `reason_purge_tombstones`, `1 source \0 commit \0 path`. Every letter is taken, so this family
+/// uses a digit; `y` is `SESSION_STATE`.
+pub const REASON_TOMBSTONE: u8 = b'1';
 /// Family `embedding_holds` (`embedding_holds.rs`): a page's `page_embedding_budget` state and
-/// reason, `h page_id`.
-pub const EMBEDDING_HOLD: u8 = b'h';
+/// reason, `2 page_id`. A digit for the same reason; `h` is `DERIVED_GENERATION`.
+pub const EMBEDDING_HOLD: u8 = b'2';
+/// Family `persistence_journal`, the `derived_generations` ledger (`generations.rs`).
+pub const DERIVED_GENERATION: u8 = b'h';
 
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];

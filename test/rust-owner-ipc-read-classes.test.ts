@@ -27,10 +27,10 @@
  * change no row, so resending such a read repeats nothing. The reads that only take locks, as the scan finds them, are
  * LOCK_ONLY_READS below and this test checks the list is complete, so the header stays true:
  * getTrustProposal, listFenceFactRows, listGitEffectsCarryingReason, listGuardedTakeRows, listHeldRows,
- * listPageGitEffectsForStrip, readAccessTokenWriteGrant, readFactWithdrawalClaim, readForgetTarget, readLiveStoredBody,
- * readNoopEmbeddingCandidates, readOAuthClientWriteGrant, readPairFactRow, readReplacementTarget, readSourceMembership,
- * readSourceState, selectClaimableEffect, selectClaimableWrite, and the port's lockHeldConcept, lockLiveConceptMembers,
- * lockLivePagesByKey, lockSourceForUpdate, lockWriteRequests and readWriterAdminState.
+ * listConnectorSources, listPageGitEffectsForStrip, lockBodyStagingState, lockLivePagesByKey, readConfigForUpdate, readFactSnapshots, readLoopFactState, readAccessTokenWriteGrant, readFactWithdrawalClaim, readForgetTarget,
+ * readLiveStoredBody, readNoopEmbeddingCandidates, readOAuthClientWriteGrant, readPairFactRow, readReplacementTarget,
+ * readSourceMembership, readSourceState, readWorktreeAdmission, readWriterAdminState, selectClaimableEffect,
+ * selectClaimableWrite.
  *
  * Limits (no_claim): a write behind a call this scan cannot resolve (a function passed as an argument, three or more
  * same-named functions in other files) is not seen; names decide nothing, but resolution does.
@@ -47,18 +47,30 @@ const ROOT = join(import.meta.dir, '..');
 /** Reads that only take row or advisory locks, found by the scan; the header names them too. */
 const LOCK_ONLY_READS: readonly string[] = [
   'getTrustProposal', 'listFenceFactRows', 'listGitEffectsCarryingReason', 'listGuardedTakeRows', 'listHeldRows',
-  'listPageGitEffectsForStrip', 'readAccessTokenWriteGrant', 'readFactWithdrawalClaim', 'readForgetTarget', 'readLiveStoredBody',
-  'readNoopEmbeddingCandidates', 'readOAuthClientWriteGrant', 'readPairFactRow', 'readReplacementTarget', 'readSourceMembership',
-  'readSourceState', 'selectClaimableEffect', 'selectClaimableWrite',
-  // The purge, git hold, notifier, access policy, belief and sync status members the port typed.
-  'lockHeldConcept', 'lockLiveConceptMembers', 'lockLivePagesByKey', 'lockSourceForUpdate', 'lockWriteRequests', 'readWriterAdminState',
+  'listConnectorSources', 'listPageGitEffectsForStrip', 'lockBodyStagingState', 'lockLivePagesByKey', 'readConfigForUpdate', 'readFactSnapshots', 'readLoopFactState', 'readAccessTokenWriteGrant', 'readFactWithdrawalClaim', 'readForgetTarget',
+  'readLiveStoredBody', 'readNoopEmbeddingCandidates', 'readOAuthClientWriteGrant', 'readPairFactRow', 'readReplacementTarget',
+  'readSourceMembership', 'readSourceState', 'readWorktreeAdmission', 'readWriterAdminState', 'selectClaimableEffect',
+  'selectClaimableWrite',
+  // Ours (the page purge port):
+  'lockHeldConcept', 'lockLiveConceptMembers', 'lockSourceForUpdate',
 ];
 
 /**
  * Members the scan cannot follow to the end, each with the reason it is still a read. Empty unless a reason is written
  * here; a member added to this list must be read by hand first.
  */
-const UNRESOLVED_OK: Readonly<Record<string, string>> = {};
+const UNRESOLVED_OK: Readonly<Record<string, string>> = {
+  // Only the Rust store implements it; the SQL engines answer the same rows with the one SELECT in search/dedup.ts
+  // `segmentRegions`, so no engine-sql function of that name exists. The Rust store function is scanned by the test below.
+  readSegmentRegions: 'a Rust-store-only member; the SQL engines run the caller\'s SELECT in search/dedup.ts, which writes nothing',
+  // Store members that read through the Snapshot helper of store-members/managed-sync-orphans.ts (one read-only snapshot of the
+  // source list and the checkpoint rows: brain.listSourceRecords, brain.readSourceIncarnation, the checkpoint row reads); hand-read.
+  listArchivedSourceIds: 'reads the source list through the read-only Snapshot helper',
+  listManagedSyncFailureKeys: 'reads checkpoint rows through the read-only Snapshot helper',
+  listManagedSyncOrphanRows: 'reads the source list and checkpoint rows through the read-only Snapshot helper',
+  // The napi function is list_source_oauth_clients; the test's snake-case rule splits `OAuth` into o_auth.
+  listSourceOAuthClients: 'its napi function list_source_oauth_clients only lists the source\'s OAuth clients',
+};
 
 // ------------------------------------------------------------------------------------------------ source walking
 
@@ -247,10 +259,31 @@ function matchBrace(t: string, open: number): number {
 
 interface RustFn { name: string; file: string; line: number; body: string; bodyAt: number; text: string; napi: boolean }
 
+/**
+ * The files of the modules a `#[cfg(test)] mod name;` line declares (`dir/name.rs` and everything under `dir/name/`,
+ * where `dir` is the declaring file's module directory): test-only code, skipped like an inline `#[cfg(test)] mod`.
+ */
+function testModuleFiles(files: readonly string[]): Set<string> {
+  const out = new Set<string>();
+  for (const file of files) {
+    const text = readFileSync(file, 'utf8');
+    const base = file.replace(/\.rs$/, '');
+    const dir = /\/(?:lib|main|mod)\.rs$/.test(file) ? file.replace(/\/[^/]+$/, '') : base;
+    for (const m of text.matchAll(/#\[cfg\(test\)\]\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;/g)) {
+      const mod = join(dir, m[1]!);
+      for (const candidate of files) if (candidate === `${mod}.rs` || candidate === join(mod, 'mod.rs') || candidate.startsWith(`${mod}/`)) out.add(candidate);
+    }
+  }
+  return out;
+}
+
 function buildRustIndex(): Map<string, RustFn[]> {
   const fns = new Map<string, RustFn[]>();
   for (const crate of ['gbrain-store', 'gbrain-napi']) {
-    for (const file of listFiles(join(ROOT, 'rust/crates', crate, 'src'), '.rs')) {
+    const files = listFiles(join(ROOT, 'rust/crates', crate, 'src'), '.rs');
+    const testOnly = testModuleFiles(files);
+    for (const file of files) {
+      if (testOnly.has(file)) continue;
       let t = stripRust(readFileSync(file, 'utf8'));
       const test = /#\[cfg\(test\)\]\s*mod\s+\w+\s*\{/g;
       for (let m = test.exec(t); m; m = test.exec(t)) {

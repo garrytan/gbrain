@@ -61,6 +61,9 @@ use serde_json::Value;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
+mod orphans;
+pub use orphans::AliasTarget;
+
 const SLUG_ALIAS: u8 = 0x01;
 const PAGE_ALIAS: u8 = 0x02;
 const PAGE_ALIAS_BY_SLUG: u8 = 0x03;
@@ -998,9 +1001,10 @@ impl Store {
     /// there is none). The page is versioned as it stood first, then moved by
     /// `pages::rename_page`; a real move records `old -> new` in the rename history and the slug aliases, moves the records
     /// other families key by slug (`cascade::rename_slug_rows`) and moves the page's alias rows. `invalid_slug` for a bad new slug, `constraint_violation` when the new
-    /// slug is taken; either keeps nothing. A segmented page (NULL body) is refused with `invalid_state` before anything
-    /// is written, as `create_version` refuses it: PGLite versions it as a reference to its live body generation, and
-    /// this store keeps no such reference, so the version would hold no body.
+    /// slug is taken; either keeps nothing. A segmented page is versioned as a reference to its live body generation
+    /// (`pages::snapshot_in`, PGLite's `insertSegmentedVersion`), so its body never moves. A NULL body with no segmented
+    /// generation behind it is refused with `invalid_state` before anything is written: PGLite's CHECK makes that row
+    /// impossible, and its version would hold no body.
     pub fn update_slug(
         &self,
         old_slug: &str,
@@ -1023,10 +1027,14 @@ impl Store {
             let Some(page) = read_page(&*tx, source, old_slug)? else {
                 return Ok(0);
             };
-            if page.compiled_truth.is_null() {
+            if page.compiled_truth.is_null()
+                && crate::page_body::segmented_reference(&*tx, page.id)?.is_none()
+            {
                 return Err(StoreError::new(
                     INVALID_STATE,
-                    format!("updateSlug refuses segmented page {old_slug} (source={source})"),
+                    format!(
+                        "updateSlug refuses page {old_slug} (source={source}): its body is NULL and no segmented body generation holds it"
+                    ),
                 ));
             }
             snapshot_in(tx, &*self.env, &page)?;

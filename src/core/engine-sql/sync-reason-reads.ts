@@ -1,8 +1,7 @@
 /**
- * The source purge epoch read the sync change-reason scan (reason-trailers.ts) and the belief ledger's purge check ran
- * through `executeRaw` (Rust engine lane 11). The statement text is the caller's, byte for byte
- * (test/engine-sql-caller-raw-sql-pins.test.ts), so PGLite and Postgres answer exactly as before. The purged change
- * reasons themselves are read by `readReasonPurgeTombstones` (engine-sql/sources.ts), which every engine serves.
+ * The purge epoch read the sync change-reason scan (reason-trailers.ts cachedSyncReasonScan) ran through `executeRaw`
+ * (Rust engine lane 11). The statement text is the caller's, byte for byte (test/engine-sql-caller-raw-sql-pins.test.ts),
+ * so PGLite and Postgres answer exactly as before. The tombstone reads and writes live in engine-sql/sources.ts.
  */
 import type { HoldRead } from './sync-hold-reads.ts';
 

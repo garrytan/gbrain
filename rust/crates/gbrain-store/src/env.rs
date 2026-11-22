@@ -6,6 +6,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub trait Env: Send + Sync {
     /// Microseconds since the Unix epoch, UTC.
     fn now_micros(&self) -> i64;
+    /// Microseconds since the Unix epoch at the moment of the call, as Postgres `clock_timestamp()`. The same as
+    /// `now_micros` except inside a bound transaction, whose `now_micros` stays at its start (`now()`).
+    fn clock_micros(&self) -> i64 {
+        self.now_micros()
+    }
     /// A fresh random UUID (version 4 text form).
     fn new_uuid(&self) -> String;
 }

@@ -5,7 +5,10 @@
  * plan or a result on Postgres alone, which PGLite parity cannot see.
  *
  * Protects: the queue listing the rebuild sends for five option sets, and each member's text and binds, equal the old
- * raw statements (the texts below were recorded from the raw callers before the move). The queue listing, the keep
+ * raw statements (the texts below were recorded from the raw callers before the move). That includes the deferred
+ * chunk replacement's reads and writes (continueDeferredProjectionStep) and the rebuild loop's queue stamps (re-key,
+ * deferred stamp in both modes, unclaimed touch, defer), resealSafeChunks's pending count and the resident's window probe; the failed mark reuses markProjectionRebuildFailed, whose
+ * text differs from the old one only in whitespace. The queue listing, the keep
  * plan and the vector clear are composed with sqlFragment, which numbers placeholders in text order: they are compared
  * with each placeholder replaced by the value it binds, so only the numbering may differ. The other statements match
  * byte for byte. Fails when a member reorders a clause, binds a value differently or in a different place, or moves
@@ -14,11 +17,12 @@
 import { expect, test } from 'bun:test';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { rebuildPendingPageProjections } from '../src/core/page-state/projections.ts';
-import { makeFakeSql } from './helpers/fake-postgres-sql.ts';
-import { DELETE_PROJECTION_JOB_SQL } from '../src/core/engine-sql/persistence-housekeeping.ts';
+import { makeFakeSql, type Responder } from './helpers/fake-postgres-sql.ts';
+import { DELETE_PROJECTION_JOB_SQL, MARK_PROJECTION_REBUILD_FAILED_SQL } from '../src/core/engine-sql/persistence-housekeeping.ts';
+import { DEFERRED_CHUNK_CLAIM } from '../src/core/engine-sql/projection-rebuild.ts';
 
-function recordingEngine() {
-  const fake = makeFakeSql();
+function recordingEngine(responder?: Responder) {
+  const fake = makeFakeSql(responder);
   const engine = new PostgresEngine();
   (engine as unknown as { _sql: unknown })._sql = fake.sql;
   const last = () => {
@@ -56,6 +60,27 @@ const OLD = {
   del: "DELETE FROM page_projection_jobs WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid",
   drained: "SELECT 1 FROM page_projection_jobs j\n      CROSS JOIN LATERAL (SELECT s.id FROM sources s\n      WHERE s.incarnation=j.source_incarnation AND NOT s.archived OFFSET 0) s\n    CROSS JOIN LATERAL (SELECT p.page_kind FROM pages p WHERE p.id=(SELECT k.id FROM pages k WHERE k.source_id=s.id AND k.slug=j.slug)\n      AND p.deleted_at IS NULL AND p.page_kind IN ('markdown','code') AND p.body_storage IS DISTINCT FROM 'segmented' OFFSET 0) p\n      WHERE j.reason<>'rebuild_failed' LIMIT 1",
   drainedMedia: "SELECT 1 FROM page_projection_jobs j\n      CROSS JOIN LATERAL (SELECT s.id FROM sources s\n      WHERE s.incarnation=j.source_incarnation AND NOT s.archived OFFSET 0) s\n    CROSS JOIN LATERAL (SELECT p.page_kind FROM pages p WHERE p.id=(SELECT k.id FROM pages k WHERE k.source_id=s.id AND k.slug=j.slug)\n      AND p.deleted_at IS NULL AND ((p.page_kind IN ('markdown','code') AND p.body_storage IS DISTINCT FROM 'segmented') OR (p.page_kind = 'image' AND p.body_storage IS DISTINCT FROM 'segmented' AND NOT (CASE WHEN p.body_storage = 'segmented' THEN p.body_flags->>'has_protected' IS DISTINCT FROM 'false'\n    ELSE (COALESCE(p.compiled_truth, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->' OR COALESCE(p.timeline, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->') END)\n    AND p.chunker_version >= 4 AND (SELECT count(*) = 1 AND bool_and(c.chunk_index = 0 AND c.chunk_source = 'image_asset' AND c.modality = 'image'\n      AND char_length(c.chunk_text) < 65536 AND c.chunk_text = COALESCE(NULLIF(left(coalesce(p.compiled_truth, p.truth_lead), 65536), ''), p.title))\n    FROM content_chunks c WHERE c.page_id = p.id AND ((c.body_generation IS NULL AND p.body_storage <> 'segmented')\n       OR (c.body_generation <= p.body_generation\n           AND EXISTS (SELECT 1 FROM page_body_manifest lm WHERE lm.page_id = c.page_id AND lm.occurrence_id = c.occurrence_id\n             AND lm.staging_id IS NULL AND lm.gen_from <= p.body_generation AND (lm.gen_to IS NULL OR lm.gen_to > p.body_generation))))) IS TRUE)) OFFSET 0) p\n      WHERE j.reason<>'rebuild_failed' LIMIT 1",
+};
+
+/** The deferred chunk replacement's statements and the rebuild loop's queue stamps, recorded before the move. */
+const OLD_STEP = {
+  fingerprint: "SELECT count(*)::text||':'||COALESCE(sum(hashtext(id::text||':'||chunk_index::text)::bigint),0)::text AS f\n    FROM content_chunks WHERE page_id=$1",
+  deleteUnkept: "DELETE FROM content_chunks WHERE page_id=$1 AND NOT(id=ANY($2::int[]))",
+  stale: "SELECT id FROM content_chunks WHERE page_id=$1 AND \"embedding\" IS NOT NULL\n    AND (NOT EXISTS (SELECT 1 FROM (SELECT $2::text AS m) target WHERE model IS NOT DISTINCT FROM target.m OR (model = substr(target.m, strpos(target.m, ':') + 1) AND vector_dims(\"embedding\") = 1536)) OR embedded_text_hash <> md5(chunk_text) OR NOT(id=ANY($3::int[]))) ORDER BY chunk_index",
+  head: "SELECT id, knowledge_revision::text AS revision,\n      text_projection_revision IS NOT DISTINCT FROM knowledge_revision AS sealed FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL",
+  held: "SELECT 1 FROM page_projection_jobs j JOIN sources s ON s.incarnation=j.source_incarnation\n      WHERE s.id=$1 AND j.slug=$2 AND j.revision=$3::uuid AND split_part(j.reason,':',1)=$4 AND j.reason<>$5\n        AND j.updated_at>=now()-interval '60 seconds'",
+  renew: "UPDATE page_projection_jobs SET reason=$4,updated_at=now() WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid",
+  release: "UPDATE page_projection_jobs SET reason=$1 WHERE slug=$2 AND reason=$3",
+  clearVectors: "UPDATE content_chunks SET \"embedding\"=NULL,embedded_at=NULL,embedded_text_hash=NULL,embedding_input_hash=NULL,\n        embedding_pending_since=COALESCE(embedding_pending_since,now()) WHERE page_id=$1 AND id=ANY($2::int[])",
+  segmented: "SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND body_storage='segmented' AND deleted_at IS NULL",
+  rekey: "UPDATE page_projection_jobs SET revision=$4::uuid,updated_at=now()\n          WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid",
+  touchDeferred_skipped: "UPDATE page_projection_jobs SET updated_at=now(),reason='canonical_change'\n            WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid",
+  touchDeferred_more: "UPDATE page_projection_jobs SET updated_at=now()\n            WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid",
+  touchUnclaimed: "UPDATE page_projection_jobs j SET updated_at=now() WHERE j.source_incarnation=$1::uuid AND j.slug=$2 AND j.revision=$3::uuid\n            AND NOT (split_part(j.reason,':',1)='segmented_projecting' AND j.updated_at>=now()-interval '60 seconds')",
+  failed: "UPDATE page_projection_jobs j SET reason='rebuild_failed',updated_at=now()\n          WHERE j.source_incarnation=$1::uuid AND j.slug=$2 AND j.revision=$3::uuid AND NOT (split_part(j.reason,':',1)='segmented_projecting' AND j.updated_at>=now()-interval '60 seconds')",
+  defer: "UPDATE page_projection_jobs SET updated_at=now()\n        WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid RETURNING slug",
+  pending: "SELECT COUNT(*)::int AS chunks,\n    COALESCE(SUM(length(chunk_text)),0)::int AS chars FROM content_chunks\n    WHERE page_id=$1 AND \"embedding\" IS NULL AND modality='text'",
+  window: "SELECT k.i,s.id AS source_id,s.archived,p.page_kind,p.body_storage\n      FROM jsonb_to_recordset($1::text::jsonb) AS k(i int, source_incarnation uuid, slug text)\n      LEFT JOIN LATERAL (SELECT s.id,s.archived FROM sources s WHERE s.incarnation=k.source_incarnation OFFSET 0) s ON true\n      LEFT JOIN LATERAL (SELECT p.page_kind,p.body_storage FROM (SELECT p.id FROM pages p WHERE p.source_id=s.id AND p.slug=k.slug OFFSET 0) q\n        JOIN pages p ON p.id=q.id WHERE p.deleted_at IS NULL) p ON true",
 };
 
 const KEY = { sourceIncarnation: '00000000-0000-0000-0000-0000000000aa', slug: 'notes/a', revision: '00000000-0000-0000-0000-0000000000bb' };
@@ -119,4 +144,77 @@ test('the drained probe sends the recorded statement, with and without media', a
   expect(last()).toEqual({ text: OLD.drained, params: [] });
   expect(await engine.hasDrainableProjectionJob({ media: true })).toBe(false);
   expect(last()).toEqual({ text: OLD.drainedMedia, params: [] });
+});
+
+test('the deferred replacement reads send the recorded statements', async () => {
+  const { engine, last } = recordingEngine(stmt => stmt.text.includes(' AS f\n') ? [{ f: '0:0' }] : undefined);
+  expect(await engine.readChunkRowsFingerprint(9)).toBe('0:0');
+  expect(last()).toEqual({ text: OLD_STEP.fingerprint, params: [9] });
+  expect(await engine.listStaleChunkVectors(9, 'm', COLUMN, [3, 4])).toEqual([]);
+  expect(last()).toEqual({ text: OLD_STEP.stale, params: [9, 'm', [3, 4]] });
+  expect(await engine.readProjectionHead('src-a', 'notes/a')).toBeNull();
+  expect(last()).toEqual({ text: OLD_STEP.head, params: ['src-a', 'notes/a'] });
+  expect(await engine.isDeferredReplacementHeld('src-a', 'notes/a', KEY.revision, `${DEFERRED_CHUNK_CLAIM}:t`)).toBe(false);
+  expect(last()).toEqual({ text: OLD_STEP.held, params: ['src-a', 'notes/a', KEY.revision, DEFERRED_CHUNK_CLAIM, `${DEFERRED_CHUNK_CLAIM}:t`] });
+  expect(await engine.hasSegmentedPage('src-a', 'notes/a')).toBe(false);
+  expect(last()).toEqual({ text: OLD_STEP.segmented, params: ['src-a', 'notes/a'] });
+});
+
+test("the re-seal's pending count sends the recorded statement and reads its numbers", async () => {
+  const { engine, last } = recordingEngine(stmt => stmt.text.includes(' AS chunks,') ? [{ chunks: 2, chars: 7 }] : undefined);
+  expect(await engine.countPendingTextChunks(9, COLUMN)).toEqual({ chunks: 2, chars: 7 });
+  expect(last()).toEqual({ text: OLD_STEP.pending, params: [9] });
+  const empty = recordingEngine();
+  expect(await empty.engine.countPendingTextChunks(9, COLUMN)).toEqual({ chunks: 0, chars: 0 });
+});
+
+test("the resident's window probe sends the recorded statement and binds", async () => {
+  const { engine, last } = recordingEngine();
+  const candidates = [{ source_incarnation: KEY.sourceIncarnation, slug: 'notes/a' }, { source_incarnation: KEY.sourceIncarnation, slug: 'notes/b' }];
+  expect(await engine.probeProjectionWindowCandidates(candidates)).toEqual([]);
+  expect(last()).toEqual({ text: OLD_STEP.window, params: [JSON.stringify([
+    { i: 0, source_incarnation: KEY.sourceIncarnation, slug: 'notes/a' }, { i: 1, source_incarnation: KEY.sourceIncarnation, slug: 'notes/b' }])] });
+});
+
+test('the deferred replacement writes send the recorded statements', async () => {
+  const { engine, last } = recordingEngine();
+  await engine.deleteUnkeptChunks(9, [3, 4]);
+  expect(last()).toEqual({ text: OLD_STEP.deleteUnkept, params: [9, [3, 4]] });
+  await engine.clearChunkVectors(9, COLUMN, [3]);
+  expect(last()).toEqual({ text: OLD_STEP.clearVectors, params: [9, [3]] });
+  await engine.renewDeferredReplacementClaim(KEY, `${DEFERRED_CHUNK_CLAIM}:t`);
+  expect(last()).toEqual({ text: OLD_STEP.renew, params: [...KEY_PARAMS, `${DEFERRED_CHUNK_CLAIM}:t`] });
+  await engine.releaseDeferredReplacementClaim('notes/a', `${DEFERRED_CHUNK_CLAIM}:t`);
+  expect(last()).toEqual({ text: OLD_STEP.release, params: ['chunk_replacement_deferred', 'notes/a', `${DEFERRED_CHUNK_CLAIM}:t`] });
+});
+
+test('the rebuild loop queue stamps send the recorded statements', async () => {
+  const { engine, last } = recordingEngine();
+  const next = '00000000-0000-0000-0000-0000000000cc';
+  await engine.rekeyProjectionJob(KEY, next);
+  expect(last()).toEqual({ text: OLD_STEP.rekey, params: [...KEY_PARAMS, next] });
+  await engine.stampDeferredProjectionJob(KEY, true);
+  expect(last()).toEqual({ text: OLD_STEP.touchDeferred_skipped, params: KEY_PARAMS });
+  await engine.stampDeferredProjectionJob(KEY, false);
+  expect(last()).toEqual({ text: OLD_STEP.touchDeferred_more, params: KEY_PARAMS });
+  await engine.touchUnclaimedProjectionJob(KEY);
+  expect(last()).toEqual({ text: OLD_STEP.touchUnclaimed, params: KEY_PARAMS });
+  expect(await engine.deferProjectionJob(KEY)).toBe(false);
+  expect(last()).toEqual({ text: OLD_STEP.defer, params: KEY_PARAMS });
+});
+
+test('the defer reports whether the job was still at its revision', async () => {
+  const { engine } = recordingEngine(stmt => stmt.text.includes('RETURNING slug') ? [{ slug: KEY.slug }] : undefined);
+  expect(await engine.deferProjectionJob(KEY)).toBe(true);
+});
+
+// The failed mark reuses persistence_journal's markProjectionRebuildFailed: its text differs from the old raw text
+// only in the whitespace after a comma, which Postgres parses the same.
+test('the failed mark differs from the recorded statement only in whitespace', async () => {
+  const { engine, last } = recordingEngine();
+  await engine.markProjectionRebuildFailed(KEY);
+  expect(last()).toEqual({ text: MARK_PROJECTION_REBUILD_FAILED_SQL, params: KEY_PARAMS });
+  expect(MARK_PROJECTION_REBUILD_FAILED_SQL).not.toBe(OLD_STEP.failed);
+  const squash = (text: string) => text.replace(/\s+/g, ' ').replace(/, /g, ',');
+  expect(squash(MARK_PROJECTION_REBUILD_FAILED_SQL)).toBe(squash(OLD_STEP.failed));
 });

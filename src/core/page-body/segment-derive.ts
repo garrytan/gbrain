@@ -337,10 +337,8 @@ export async function deleteRewrittenDerivations(engine: BrainEngine, pageId: nu
     }
   }
   if (!touched.size) return 0;
-  return (await engine.executeRaw(`DELETE FROM page_segment_derivations WHERE page_id=$1
-    AND (occurrence_id = ANY($2::bigint[]) OR (pipeline = 'links' AND occurrence_id = ANY($3::bigint[]))
-      OR (pipeline = ANY($4::text[]) AND NOT (occurrence_id = ANY($5::bigint[])))) RETURNING 1`,
-  [pageId, [...touched], [...reach], Object.keys(SEGMENT_PIPELINE_VERSIONS), rows.map(row => row.occurrenceId)])).length;
+  return engine.deleteRewrittenSegmentDerivations({ pageId, touchedOccurrenceIds: [...touched], linkReachOccurrenceIds: [...reach],
+    pipelines: Object.keys(SEGMENT_PIPELINE_VERSIONS), liveOccurrenceIds: rows.map(row => row.occurrenceId) });
 }
 
 /**

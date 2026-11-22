@@ -80,6 +80,11 @@ impl Env for TransactionClock {
         self.started_us
     }
 
+    /// The moment of the call, never before the transaction's start.
+    fn clock_micros(&self) -> i64 {
+        self.inner.clock_micros().max(self.started_us)
+    }
+
     fn new_uuid(&self) -> String {
         self.inner.new_uuid()
     }
@@ -953,7 +958,7 @@ mod tests {
     #[test]
     fn a_failed_commit_poisons_every_later_write_in_the_process() {
         let file = crate::test_support::FlakyFile::default();
-        let s = crate::test_support::store_on(&file);
+        let s = crate::test_support::store_on_file(&file);
         let t = s.begin_transaction(false).unwrap();
         t.put_page("notes/t", &note("t"), &Default::default())
             .unwrap();
@@ -974,7 +979,7 @@ mod tests {
     #[test]
     fn after_a_failed_commit_and_a_reopen_the_id_counter_matches_the_stored_rows() {
         let file = crate::test_support::FlakyFile::default();
-        let s = crate::test_support::store_on(&file);
+        let s = crate::test_support::store_on_file(&file);
         let t = s.begin_transaction(false).unwrap();
         let handed = t
             .put_page("notes/t", &note("t"), &Default::default())
@@ -986,7 +991,7 @@ mod tests {
         assert!(t.commit_transaction().is_err());
         drop(t);
         drop(s);
-        let s = crate::test_support::store_on(&file);
+        let s = crate::test_support::store_on_file(&file);
         let stored = s
             .read_page_snapshot("notes/t", &Default::default())
             .unwrap()

@@ -4,7 +4,7 @@
 //! `facts::purge_ledger`); it has no key range of its own.
 //!
 //! - `withdrawals`: per `(visibility, fact_hash)` the earliest withdrawal of the source under
-//!   subject `*` or the page's slug (`trust::withdrawals::page_withdrawals`), then per `(visibility, fact_hash)` the earliest tombstone under
+//!   subject `*` or the page's slug, then per `(visibility, fact_hash)` the earliest tombstone under
 //!   the slug (`purged: true`), each part in `(visibility, fact_hash)` order.
 //! - `globalPurges`: `{count, latest, world_only}` of the source's tombstones under subject `*`,
 //!   only when there is one.
@@ -19,7 +19,7 @@ use crate::env::iso;
 use crate::error::Result;
 use crate::facts::purge_ledger::purges_under_subject;
 use crate::kv::KvRead;
-use crate::trust::withdrawals::page_withdrawals;
+use crate::trust::withdrawals::under_subject;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 
@@ -76,15 +76,13 @@ pub(crate) fn snapshot_withdrawals(
     slug: &str,
     world_only: bool,
 ) -> Result<Map<String, Value>> {
-    // The withdrawal ledger's part is `trust::withdrawals::page_withdrawals`; `world_only` keeps the
-    // world rows of it, as Postgres filters `visibility='world'`.
-    let mut withdrawals = page_withdrawals(read, source_id, slug)?;
-    if world_only {
-        withdrawals.retain(|row| row["visibility"] == "world");
-    }
+    let withdrawn = earliest(world_only, &["*", slug], &|vis, subject| {
+        under_subject(read, source_id, vis, subject)
+    })?;
     let purged = earliest(world_only, &[slug], &|vis, subject| {
         purges_under_subject(read, source_id, vis, subject)
     })?;
+    let mut withdrawals = rows(withdrawn, false);
     withdrawals.extend(rows(purged, true));
     let mut out = Map::new();
     out.insert("withdrawals".into(), Value::Array(withdrawals));

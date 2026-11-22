@@ -48,6 +48,8 @@ const TYPED_SQL_READS = new Set<PropertyKey>([
   'sampleEffectiveDates', 'sampleEffectiveDateSources', // effective_date_health
   'countZeroWeightWithTakes', // the salience count
   'listTrustScanRows', 'countUnscannedTrustRows', // trust_scan (src/core/eligibility/scan.ts)
+  'listOwnedContentRows', // canonical_content_writes and sync_freshness (src/core/shared-skills/content-freshness.ts)
+  'countPageChildOrphans', 'countAccessReaderDrift', 'readOriginIndexState', 'listOriginTwinCounts', // child_table_orphans, member access, origin_twins
   'readSourceState', // shared_skills_sources (src/core/shared-skills/source-opt-out.ts)
 ]);
 

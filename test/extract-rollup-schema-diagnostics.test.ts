@@ -103,11 +103,10 @@ test('sync freshness surfaces real errors from the owned-content probe instead o
   await real.executeRaw(`INSERT INTO sources (id, name, local_path, last_sync_at) VALUES ('w17-fresh', 'w17-fresh', '/tmp/w17-fresh', now())`);
   const failing = (error: Error) => new Proxy(real, {
     get(target, prop, receiver) {
-      if (prop !== 'executeRaw') return Reflect.get(target, prop, receiver);
-      return async (sql: string, params?: unknown[]) => {
-        if (sql.includes('persistence_source_bindings')) throw error;
-        return target.executeRaw(sql, params as never);
-      };
+      // The owned-content probe is the typed listOwnedContentRows read (engine-sql/owned-content.ts).
+      if (prop === 'listOwnedContentRows') return async () => { throw error; };
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
     },
   }) as BrainEngine;
   const denied = Object.assign(new Error('role "gbrain_reader" does not exist'), { code: '42704' });

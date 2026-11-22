@@ -751,7 +751,11 @@ export async function expireFactSuperseded(raw: EngineRawRead, factId: number, v
       WHERE id = $1 AND expired_at IS NULL`, [factId, validUntil]);
 }
 
-/** Ends an active fact on `today` (a date) and expires it. Runs in the caller's transaction. */
+/**
+ * Ends an active fact on `today` (a date) and expires it, as master's forget file-mirror stamp did. Runs in the caller's
+ * transaction. PGLite casts the day text to midnight in the session TimeZone; postgres.js turns it into a Date
+ * (`new Date(text)`), so Postgres stores UTC midnight; the Rust store stores UTC midnight.
+ */
 export async function expireFactAtDate(raw: EngineRawRead, factId: number, today: string): Promise<void> {
   await raw(`UPDATE facts SET valid_until = $1, expired_at = now()
          WHERE id = $2 AND expired_at IS NULL`, [today, factId]);

@@ -81,6 +81,8 @@
     "deleteFactsForPage#excludeSourcePrefixes+preserveExpiredLegacy": {},
     "deletePage#default": {},
     "deletePages#default": {},
+    "deleteSourceRecord#default": {},
+    "deleteSourceRecord#expiredArchiveOnly": {},
     "discoverOntologyDimensions#default": {},
     "discoverOntologyDimensions#sourceIds": {},
     "expireFact#default": {},
@@ -344,6 +346,9 @@
     },
     "markPagesAttendanceBlocked#default": {},
     "markPagesExtractedBatch#default": {},
+    "markSourceSynced#default": {
+      "raw": 1
+    },
     "mergeOntologyFact#corroborate": {},
     "mergeOntologyFact#insert": {},
     "mergeOntologyFact#supersede": {},
@@ -401,6 +406,7 @@
     "readSourceChunkerVersion#default": {
       "raw": 1
     },
+    "readSourceDeleteImpact#default": {},
     "readSourceRow#default": {
       "raw": 1
     },

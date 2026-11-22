@@ -6,7 +6,7 @@
 //! cap) have no record here: the embedding plan that reads and writes them still runs raw SQL on
 //! PGLite and Postgres, and refuses on this engine.
 //!
-//! Keys (tag `h`, `keys::EMBEDDING_HOLD`): `h page_id` (big-endian), value `{ state, reason }`. A
+//! Keys (tag `2`, `keys::EMBEDDING_HOLD`): `2 page_id` (big-endian), value `{ state, reason }`. A
 //! hard page delete removes it (`ON DELETE CASCADE` of `pages.id`, `cascade::remove_page_rows`); a
 //! soft delete and a restore keep it, as the row stays while the page row stays.
 

@@ -2,7 +2,7 @@
 //! src/core/engine-sql/page-purge-sweep.ts): the source's proposals that name the page, one of its facts or one of its
 //! takes as target or related row, removed with their index entries.
 
-use super::{ProposalRecord, all_records, remove_record};
+use super::{ProposalRecord, all_records, delete_record};
 use crate::Store;
 use crate::error::Result;
 use crate::kv::KvRead;
@@ -59,7 +59,7 @@ impl Store {
                         || record.names_any("facts", &facts)
                         || record.names_any("takes", &takes))
                 {
-                    remove_record(tx, &record)?;
+                    delete_record(tx, &record)?;
                     deleted += 1;
                 }
             }

@@ -49,6 +49,7 @@ import { TAKES_FENCE_BEGIN, parseTakesFence, type ParsedTake } from '../takes-fe
 import { countOutsideCode } from '../fence-scan.ts';
 import { takesPreparation } from '../takes-write.ts';
 import { afterCursor, repairRequestId, type RepairCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairScope } from './core.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 export type SupersessionEvidence = 'journal' | 'database' | 'fence_structure';
 
@@ -166,12 +167,8 @@ async function readPage(engine: BrainEngine, page: TakePage): Promise<PageState>
   if (countOutsideCode(content, TAKES_FENCE_BEGIN) !== 1) return { skipped: 'unparsed' };
   const parsed = parseTakesFence(content);
   if (parsed.warnings.length || !parsed.takes.length) return { skipped: 'unparsed' };
-  const stored = await engine.executeRaw<{ row_num: number; superseded_by: number | null }>(
-    'SELECT row_num, superseded_by FROM takes WHERE page_id = $1', [snapshot.page.id]);
-  const journal = await engine.executeRaw<{ old_row: string | null; new_row: string | null }>(
-    `SELECT outcome->>'old_row' AS old_row, outcome->>'new_row' AS new_row FROM persistence_requests
-      WHERE operation = 'takes_supersede' AND state = 'committed' AND source_id = $1
-        AND (page_id = $2 OR (page_id IS NULL AND slug = $3))`, [page.source_id, snapshot.page.id, page.slug]);
+  const stored = await engine.listTakePointers(snapshot.page.id);
+  const journal = await engine.listTakeSupersedeReceipts(page.source_id, snapshot.page.id, page.slug);
   const pairs = (rows: Array<[unknown, unknown]>): Array<[number, number]> => rows
     .map(([o, n]) => [Number(o), Number(n)] as [number, number])
     .filter(([o, n]) => Number.isSafeInteger(o) && Number.isSafeInteger(n) && o > 0 && n > 0);
@@ -214,7 +211,7 @@ const revisionConflict = (page: TakePage) => opError('revision_conflict', 'The p
 
 async function writeReprojection(tx: BrainEngine, plan: PagePlan): Promise<void> {
   for (const row of plan.reproject) {
-    await tx.executeRaw('UPDATE takes SET superseded_by = $3 WHERE page_id = $1 AND row_num = $2', [plan.page.id, row.row_num, row.to]);
+    await tx.setTakeSupersededBy(plan.page.id, row.row_num, row.to);
   }
 }
 
@@ -302,6 +299,8 @@ export const takeSupersessionRepair: RepairHandler = {
     if (!state || 'skipped' in state) return { applied: false, outcome: 'unchanged', reason: 'the page or its takes fence is no longer readable' };
     if (state.analysis.ambiguous.length) return { applied: false, outcome: 'ambiguous', reason: ambiguityFix(page, state.analysis.ambiguous) };
     if (state.analysis.fence_changed) {
+      // The relinked fence goes through put_page, lane 7's page write, which the Rust engine does not serve yet.
+      requireRawSql(ctx.engine, 'repair take-supersession page write');
       await submitPageMutation(ctx, { operation: 'put_page', params: { slug: page.slug, source_id: page.source_id,
         content: takesPreparation.replaceFence(state.content, state.analysis.takes), expected_revision: state.revision,
         request_id: await repairRequestId(ctx, 'take-supersession', entry, state.revision) } });

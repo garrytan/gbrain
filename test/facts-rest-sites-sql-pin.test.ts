@@ -29,6 +29,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, test } from 'bun:test';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { makeFakeSql } from './helpers/fake-postgres-sql.ts';
+import { KEEP_HIDDEN_AT } from '../src/core/facts/derivation-inputs.ts';
 
 type Responder = Parameters<typeof makeFakeSql>[0];
 
@@ -286,12 +287,11 @@ const PINS: Pin[] = [
   {
     from: "src/core/facts/derivation-inputs.ts:95 hideDerivedRows",
     member: 'markNeedsRederive',
-    run: e => e.markNeedsRederive('facts', ['1', '2'], 's1', null, 'why', ['2']),
+    run: e => e.markNeedsRederive('pages', ['1', '2'], 's1', null, 'why', ['2']),
     statements: [{ text: `INSERT INTO needs_rederive(derived_table,derived_id,source_id,request_id,reason,marked_at)
       SELECT $1,d.id,$3,$4::uuid,$5,COALESCE((SELECT p.deleted_at FROM pages p WHERE d.id=ANY($6::text[]) AND p.id::text=d.id),now()) FROM unnest($2::text[]) AS d(id)
       ON CONFLICT (derived_table,derived_id) DO UPDATE SET reason=EXCLUDED.reason,request_id=EXCLUDED.request_id,
-        marked_at=CASE WHEN EXCLUDED.derived_id=ANY($6::text[]) THEN EXCLUDED.marked_at ELSE CASE WHEN needs_rederive.derived_table='pages' AND EXISTS (SELECT 1 FROM pages hp
-  WHERE hp.id::text=needs_rederive.derived_id AND hp.deleted_at=needs_rederive.marked_at) THEN needs_rederive.marked_at ELSE now() END END`, params: ['facts', ['1', '2'], 's1', null, 'why', ['2']] }],
+        marked_at=CASE WHEN EXCLUDED.derived_id=ANY($6::text[]) THEN EXCLUDED.marked_at ELSE ${KEEP_HIDDEN_AT} END`, params: ['pages', ['1', '2'], 's1', null, 'why', ['2']] }],
   },
   {
     from: "src/core/facts/single-prepare.ts:97 memberPageWithdrawal",

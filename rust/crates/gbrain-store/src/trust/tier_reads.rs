@@ -164,7 +164,7 @@ fn listed_versions(read: &dyn crate::kv::KvRead, ids: &[i64]) -> Result<Vec<Vers
 }
 
 /// Every version record (`V page_id id` keys).
-fn all_versions(read: &dyn crate::kv::KvRead) -> Result<Vec<VersionRecord>> {
+pub(crate) fn all_versions(read: &dyn crate::kv::KvRead) -> Result<Vec<VersionRecord>> {
     let mut out = Vec::new();
     let mut failure = None;
     scan_prefix(read, &[keys::VERSION], false, &mut |_, v| {

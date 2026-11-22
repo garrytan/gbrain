@@ -5,8 +5,7 @@
  *
  * Answered here, without a store call, because the store keeps no such rows:
  * - `listStagingPartEdges`: the raw upload parts (`page_body_staging_parts`) are not kept, so no part edge exists.
- * - `listDerivedRows`: the store keeps no derivation edges (`derivation_inputs`; `recordDerivationEdges` refuses on
- *   Rust), so no row is derived.
+ * - `listDerivedRows` is facts-purge.ts's: the store keeps no derivation edges, so no row is derived.
  * - `setPurgeProbeTimeout`: a store read has no statement deadline to set.
  *
  * The inventory probes (`countPurgeProbe`, `listPurgeProbeItems`) send the probe's shape (purgeProbeShape). The store
@@ -144,9 +143,6 @@ export const listRequestsCarryingClaim: Member<'listRequestsCarryingClaim'> = (b
 
 export const listRequestsHoldingStagings: Member<'listRequestsHoldingStagings'> = (brain, sourceId, stagingIds) =>
   storeCall({ member: 'listRequestsHoldingStagings' }, () => brain.listRequestsHoldingStagings({ sourceId, stagingIds: [...stagingIds] }));
-
-/** The store keeps no derivation edges, so no row is derived from the frontier. */
-export const listDerivedRows: Member<'listDerivedRows'> = async () => [];
 
 /** (store `listSegmentedPurgeBodies`, the live pages) */
 export const listSegmentedPageBodies: Member<'listSegmentedPageBodies'> = (brain, sourceId, limit) =>

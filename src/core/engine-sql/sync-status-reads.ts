@@ -21,16 +21,17 @@ export interface SyncStatusProbeOptions { timeoutMs?: number; signal?: AbortSign
 /**
  * `sync status`'s source read: the live source row with the drain-lock probe, its pass row (`P`) and withheld-delete
  * record (`W`), the admission setting with its probes, the failed writeback of the pass and the open worktree refresh
- * (`F`; Postgres hands back an object, PGLite may hand back JSON text).
+ * (`F`; Postgres hands back an object, PGLite may hand back JSON text), and the source's Apple Contacts identity-review
+ * and held-delete records (their whole `completed_keys`, null when none).
  */
 export interface SyncStatusSourceRow<P = Record<string, unknown>, W = Record<string, unknown>, F = Record<string, unknown>> {
   incarnation: string; last_commit: string | null; last_sync_at: Date | string | null; drain_lock: boolean;
   pass_value: P | null; pass_updated_at: Date | string | null; pass_read_at: Date | string; withheld: W | null;
   admission_stored: string | null; admission_row_value: string | null; admission_set_at: string | null; admission_pinned: boolean | null; admission_destructive: boolean | null;
   writeback_failed: string | null; refresh: F | string | null;
-  /** GST-3256: the apple-contacts identity-review and pending-delete checkpoint values of the source (`completed_keys`), null when none. */
+  /** GST-3256: the source's apple-contacts identity-review and held-delete records (`completed_keys`), null when absent. */
   identity_reviews: unknown; held_deletes: unknown;
-  /** GST-3329: the source's `config` column, whose `syncEnabled` the status reports as `automatic_sync`. */
+  /** GST-3329: the source's config, for `automatic_sync` (`config.syncEnabled`). */
   config: unknown;
 }
 

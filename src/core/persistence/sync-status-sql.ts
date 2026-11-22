@@ -6,11 +6,11 @@
  * They live outside engine-sql because they splice those builders' hand-numbered placeholders
  * (docs/ci-guards.md#engine-sql-dynamic-sql, CONSTANT_ALLOWLIST).
  */
+import { APPLE_CONTACTS_PENDING_DELETES_OP, APPLE_CONTACTS_REVIEW_OP } from '../apple-contacts/review-status.ts';
 import { MANAGED_SYNC_PASS_OP } from '../engine-sql/sync-hold-store.ts';
 import { SYNC_DELETES_WITHHELD_OP } from './sync-pass-row.ts';
 import { SYNC_ADMISSION_SETTING_PARAMS, syncAdmissionEffectParams, syncAdmissionEffectSql, syncAdmissionSettingSql } from './sync-admission.ts';
 import { ACTIVE_REFRESH_STATES_SQL } from './worktree-refresh-schema.ts';
-import { APPLE_CONTACTS_PENDING_DELETES_OP, APPLE_CONTACTS_REVIEW_OP } from '../apple-contacts/review-status.ts';
 
 /** The error codes of a Git effect whose commit is local but whose push did not land (git-push-holds.ts re-exports it). */
 export const GIT_PUSH_CODES = ['git_push_unavailable', 'push_unconfirmed', 'integrate_conflict', 'publish_secret_found', 'publish_scan_unreadable', 'push_credential_refused'] as const;
@@ -22,8 +22,8 @@ const admissionSql = syncAdmissionSettingSql(4);
 
 /**
  * `sync status`'s source read (#6712 PR 4b): the live source row with the drain-lock probe, the pass row and the
- * withheld-delete record (primary-key probes), the admission setting and its probes, the failed writeback of the pass
- * the open worktree refresh and the apple-contacts review and held-delete checkpoints (GST-3256). `$1` source id, `$2` pass op, `$3` withheld op, `$4`..`$6` the setting params,
+ * withheld-delete record (primary-key probes), the admission setting and its probes, the failed writeback of the pass,
+ * the open worktree refresh and the apple-contacts identity reviews and held deletes (GST-3256). `$1` source id, `$2` pass op, `$3` withheld op, `$4`..`$6` the setting params,
  * `$7`..`$9` the probe params (`syncStatusSourceParams`).
  */
 export const SYNC_STATUS_SOURCE_SQL = `SELECT s.incarnation::text AS incarnation, s.last_commit, s.last_sync_at, EXISTS (SELECT 1 FROM gbrain_cycle_locks l WHERE l.id=$7) AS drain_lock,

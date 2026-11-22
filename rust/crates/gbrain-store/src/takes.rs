@@ -63,7 +63,10 @@ pub use nudges::{TakeNudgeFilter, TakeNudgeInput, WaveSpec};
 pub use proposals::{
     ProposeTakesCandidateScope, TakeProposalInput, TakeProposalListSpec, TakeProposalPageKey,
 };
-pub use reads::{LiveTakeAt, McpResolvedInput, PurgeTakesInput, RevertResolutionsSpec};
+pub use reads::{
+    HeldFenceTakeSpec, IncomingTakeRow, LiveTakeAt, McpResolvedInput, PurgeTakesInput,
+    RevertResolutionsSpec, TakePreimageInput,
+};
 
 const NEXT_TAKE_ID: &str = "next_take_id";
 const TAKE: u8 = 0x01;
@@ -648,6 +651,19 @@ fn delete_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
     tx.delete(&horizons::horizon_key(take.id))?;
     crate::embeddings::remove_take_vector(tx, take.id)?;
     tx.delete(&take_key(take.id))
+}
+
+/// `deletePurgedTakes` (a fact purge): deletes the takes with these ids, each with its evidence
+/// and embedding (`ON DELETE CASCADE`); how many existed.
+pub(crate) fn delete_takes_by_id(tx: &mut dyn KvWrite, ids: &BTreeSet<u64>) -> Result<u64> {
+    let mut deleted = 0;
+    for id in ids {
+        if let Some(take) = read_take(&*tx, *id)? {
+            delete_take(tx, &take)?;
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
 }
 
 /// Deletes evidence rows by their `A 0x03` keys, with their reverse index rows.

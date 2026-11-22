@@ -206,10 +206,10 @@ pub struct FanoutOptions {
     pub depth: u32,
     pub include_mentions: bool,
     pub limit: usize,
-    /// `requiresSafeChunks(opts)`: a node's canonical chunk is read only from a page sealed at the safe fence.
-    pub require_safe_chunks: bool,
     /// `temporal` with the walk's `excludePrivate`: the relationship filter on every step edge.
     pub temporal: Option<EdgeTemporalPolicy>,
+    /// `requiresSafeChunks(opts)`: a node's canonical chunk is read only from a page sealed at the safe fence.
+    pub require_safe_chunks: bool,
 }
 
 /// `ChainHopOpts`, the part the store reads. `neighborCap` arrives clamped to 1..=1000.

@@ -170,6 +170,10 @@ Reserved tags:
 | telemetry | `a`, one sub-tag per table (below) | `TELEMETRY` | no |
 | jobs, the `dream_synthesis_completions` archive | `f` | `DREAM_SYNTHESIS_COMPLETION` | no |
 | entity_identities | `i` | `ENTITY_IDENTITY` | yes |
+| persistence_journal, the `derived_generations` ledger (with its attempt counters and valve windows) | `h` | `DERIVED_GENERATION` | no (a source delete removes its rows) |
+| access_rules (folder rules, pending prefixes, policy state and revisions; the module owns the sub-tags) | `z` | `ACCESS_RULES` | no |
+| reason_purge_tombstones | `1` | `REASON_TOMBSTONE` | no |
+| embedding_holds, a page's `page_embedding_budget` state and reason | `2` | `EMBEDDING_HOLD` | yes (a hard page delete removes it) |
 
 The telemetry family (`telemetry.rs`) holds search telemetry (`src/core/search/telemetry.ts`), MCP usage
 (`src/core/mcp-usage.ts`), retrieval feedback (`src/core/feedback/`) and the budget ledger
@@ -188,6 +192,7 @@ in its module header:
 | `0x08` | `TELEMETRY_RETRIEVAL_WEIGHT` | `retrieval_weights` |
 | `0x09` | `TELEMETRY_BUDGET_LEDGER` | `budget_ledger` |
 | `0x0A` | `TELEMETRY_BUDGET_RESERVATION` | `budget_reservations` |
+| `0x0B` | `TELEMETRY_CHAT_USAGE` | `chat_usage_log` |
 
 `eval_candidates` stays with eval_capture (`Z`). A new telemetry table takes the next unused sub-tag in a reviewed
 change to this table and to `keys.rs`.
@@ -548,7 +553,14 @@ store keeps the same rule in `pages.rs`.
   [`rust/docs/store/access-flag.md`](../../rust/docs/store/access-flag.md).
 - **Fence reads.** The fence projection's retire read and the fence guard's trust read are typed engine members
   (`listFenceRetireCandidates`, capability `facts`, SQL in `engine-sql/facts.ts`; `listFenceFactRows`, capability
-  `facts`, SQL in `engine-sql/trust-fence.ts`). The store answers them in `facts/fence.rs` in the default write
+  `facts`, SQL in `engine-sql/trust-fence.ts`), and the fact rows adapter's before-state read and restore (`readFactPreimages`,
+  `restoreFactPreimage`, capability `facts`, SQL in `engine-sql/facts.ts`; its consolidation reads `readGenerationRestored`
+  and `clearTieHeldGenerationRows` are capability `persistence_journal`, SQL in `engine-sql/derived-generations.ts`), the extracted facts adapter's own-row read and retire (`listFactIdsBySourcePrefix`, `expireFactRows`, capability `facts`,
+  SQL in `engine-sql/facts.ts`), the page generation adapters' page row read (`readGenerationPageRows`, capability
+  `persistence_journal`, SQL in `engine-sql/generation-page-rows.ts`, store in `generations/page_rows.rs`), the atoms adapter's input and legacy evidence reads (`readAtomOriginInput`,
+  `listProducerVersionRows`, `listAtomWriteReceipts`, capability `persistence_journal`, SQL in
+  `engine-sql/generation-atom-reads.ts`, store in `generations/atom_reads.rs`), and the take rows
+  adapter's before-state read (`readTakePreimages`, capability `takes`, SQL in `engine-sql/takes-reads.ts`, store in `takes/reads.rs`). The store answers them in `facts/fence.rs` in the default write
   context (no writer tier, nothing opened), so `listFenceFactRows` is empty until the Rust write context supplies the
   writer's tier and the opened ids. See [`rust/docs/store/facts.md`](../../rust/docs/store/facts.md).
 - **Parity case:** `pages.test.ts`: putPage records source_path and refuses a second live page of the same file.
@@ -947,6 +959,16 @@ Facts and their supersession chains.
     FTS language and the `CORRECTION_CUE` cue only. Pinned by `test/engine-parity/facts-trust-owner.test.ts`.
     `listExtractorFactsForClassification` (`store-members/facts-repair.ts`, `facts/extractor_classify.rs`) reads its
     receipts from the write journal's committed requests. Pinned by `test/engine-parity/facts-repair.test.ts`.
+    The four repair previews that list facts (`gbrain repair consolidate-ties`, `facts-rehome`, `ontology-facts` and `duplicate-facts`)
+    read through `listClosedConsolidationTies`, `listPagelessEntityFacts`, `listOntologyFactCandidates` and `listDuplicateFactRows`
+    (`facts/repair_previews.rs`); the apply of each still writes through raw SQL. Pinned by
+    `test/engine-parity/repair-facts-previews.test.ts`.
+    The previews of `fact-claim-dates` (`listFactsOnValidDay`), `url-clone-fences` (`readLivePageByPath`) and `purged-page-facts`
+    (`listPurgedPageFactCandidates`) are typed the same way, and the `captured-facts` preview was already served. The applies of
+    `captured-facts`, `url-clone-fences` and `purged-page-facts` stop on a Rust brain by name (`engine_capability_missing`, raw_sql:
+    "repair captured-facts page write", "repair url-clone-fences page write", "repair purged-page-facts expire") before their first
+    write, until the page write door and the fact expiry move to typed members. Pinned by `test/engine-parity/repair-facts-previews-2.test.ts`.
+    The scan of `facts-home` (`listFactsHomeCandidates`, `listHeldHomeRows`, `listOrphanedFenceRows`) and `readFacts`' snapshots (`readFactSnapshots`) are served from `facts/repair_home.rs`, so a strict source's preview of facts that need no folder-access read is equal on Rust; `holdingPageFor` rethrows a capability refusal rather than reading it as `access_unreadable`. `visibility` (except its `facts` class) and `open-facts` stop by name before any read (`engine_capability_missing`, raw_sql: "repair visibility privacy scan", "repair open-facts privacy scan"), as their reads build privacy predicates the store does not carry; the applies of `facts-home` and `visibility` stop at "repair facts-home page write" and "repair visibility page write". Pinned by `test/engine-parity/repair-facts-previews-3.test.ts`.
   - Held fence cells. The world-only fact read's check of which facts-fence row lines a caller may not see
     (`eligibility/stamp.ts` `heldFenceLines`, under get_page, get_chunks, think and search_exact) is the typed member
     `listHeldFenceCells` (capability `facts`, SQL in `engine-sql/cli-reads-ops.ts`, one statement for PGLite and
@@ -1476,7 +1498,7 @@ the same rows into one member, so the member counts here are smaller than the si
 
 These four sections are design only. No file, tag, constant or list entry below exists yet. The tags are proposed:
 core adds them to the reserved block in `keys.rs` and to the reserved tag table above in one reviewed change, and
-until then no family writes under them. The free lowercase bytes today are `h i x y z` (`g` is the code traversal cache) (`d`, `m` and `t` are now reserved above, `a` is telemetry and `f` is the dream synthesis completion archive).
+until then no family writes under them. The free lowercase bytes today are `i x y z` (`g` is the code traversal cache) (`d`, `m` and `t` are now reserved above, `a` is telemetry, `f` is the dream synthesis completion archive and `h` is the derived generation ledger).
 
 | Family | Proposed tag | Proposed constant | Cascade on page delete | Owner |
 |---|---|---|---|---|
@@ -1925,6 +1947,10 @@ and write provenance on content rows, and the trust records.
     The store prunes versions as PGLite does (`version_prune.rs`), so the pick reads the same marks, and it serves the
     fence fact append's holding-page prune (`pruneHoldingPageVersions`), its occupied-row read (`readFenceRowOccupant`)
     and its page tier restore (`restorePageTrust`, through the same trust stamp as the PGLite `UPDATE`).
+    The fact purge's segmented writes are typed members the store serves (`engine-sql/segmented-purge-writes.ts`): the
+    flip's staging lock (`lockBodyStagingState`) and stale chunk delete (`deleteUnstagedSegmentChunks`), the delete of the
+    derivation rows a rewritten segment may hold (`deleteRewrittenSegmentDerivations`), the version read
+    (`listPurgeVersionBodies`, `purge_version_bodies.rs`), and `createVersion` with the purge's `preimage`.
   - `resolveAliases` serves the floor, the flagged-page filter and `excludePrivate` on both the alias page and its
     title shadow (`alias-trust.test.ts`), a caller's reader identity and private-readable grant included; it still
     refuses `excludePrivate` for a caller whose member pages, grants or lineage widen the page policy, and the search

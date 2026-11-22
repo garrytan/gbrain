@@ -13,43 +13,6 @@ use crate::store_binding::Brain;
 
 #[napi]
 impl Brain {
-    /// `deletePurgeReviewQueue`: deletes the source's review queue rows naming one of the refs; resolves how many.
-    #[napi]
-    pub fn delete_purge_review_queue<'env>(
-        &self,
-        env: &'env Env,
-        source_id: String,
-        refs: Vec<String>,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.delete_purge_review_queue(&source_id, &refs))
-    }
-
-    /// `deletePurgeReviewProposals`: deletes the source's review proposals naming one of the refs; resolves how many.
-    #[napi]
-    pub fn delete_purge_review_proposals<'env>(
-        &self,
-        env: &'env Env,
-        source_id: String,
-        refs: Vec<String>,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.delete_purge_review_proposals(&source_id, &refs)
-        })
-    }
-
-    /// `deletePurgeDecideProposals`: deletes the source's supersede proposals naming one of the facts; resolves how many.
-    #[napi]
-    pub fn delete_purge_decide_proposals<'env>(
-        &self,
-        env: &'env Env,
-        source_id: String,
-        fact_ids: Vec<i64>,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.delete_purge_decide_proposals(&source_id, &fact_ids)
-        })
-    }
-
     /// `deletePurgedPageTrustProposals`: deletes the source's trust proposals naming the page, its facts or its takes; resolves how many.
     #[napi]
     pub fn delete_purged_page_trust_proposals<'env>(

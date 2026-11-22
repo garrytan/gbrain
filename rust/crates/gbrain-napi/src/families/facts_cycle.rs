@@ -84,6 +84,19 @@ impl Brain {
         })
     }
 
+    /// `readFactForForget(id)`: resolves forget's target columns, or null for no such row.
+    #[napi]
+    pub fn read_fact_for_forget<'env>(
+        &self,
+        env: &'env Env,
+        id: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let id: f64 = required(id, "readFactForForget id")?;
+            s.read_fact_for_forget(id)
+        })
+    }
+
     /// `listFactsForPage`: resolves the page coordinate's fence-owned rows.
     #[napi]
     pub fn list_facts_for_page<'env>(

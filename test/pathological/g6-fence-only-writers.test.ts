@@ -52,7 +52,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         await engine.addTimelineEntry(slug, { date: '2024-02-01', source: 'markdown', summary: 'second' });
         expect((await pruneTimelineOrphans(engine, { dryRun: true })).orphans).toBe(1);
 
-        const racing = editingAt(engine, (method, args) => method === 'executeRaw' && String(args[0]).includes('FROM page_versions v JOIN pages p'), () => false,
+        const racing = editingAt(engine, (method) => method === 'listTimelineVersionWitnesses', () => false,
           () => engine.putPage(slug, person('- **2024-01-01** | first\n- **2024-02-01** | second')));
         const applied = await pruneTimelineOrphans(racing, { dryRun: false });
         expect(applied.removed).toBe(0);

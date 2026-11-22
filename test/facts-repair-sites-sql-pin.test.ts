@@ -142,12 +142,6 @@ const PINS: Pin[] = [
      ORDER BY f.source_id, f.entity_slug`,
   },
   {
-    from: 'src/core/repair/facts-rehome.ts:85 sourcesOf',
-    member: 'listSourceIncarnations',
-    runs: [{ run: e => e.listSourceIncarnations(['s1']), params: [['s1']] }],
-    text: `SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id`,
-  },
-  {
     from: 'src/core/repair/facts-rehome.ts:134 apply',
     member: 'readEntityRehomeState',
     runs: [{ run: e => e.readEntityRehomeState('s1', 'old/slug', 'new/slug'), params: ['s1', 'old/slug', 'new/slug'] }],

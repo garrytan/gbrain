@@ -178,6 +178,18 @@ export function findTopologyChanges(exec: LegacyUnscopedRead, principalId: strin
     [principalId, requestIds]);
 }
 
+/**
+ * The topology recovery scan (topology-recovery.ts recoverSourceTopologies): the changes with a recovery record whose
+ * worktree host `hostId` owns, after cursor `after` (a change id, or null), in id order, at most `limit`.
+ */
+export const TOPOLOGY_RECOVERIES_SQL = `SELECT c.* FROM persistence_topology_changes c
+    JOIN persistence_worktrees w ON w.id=(c.recovery->>'worktreeId')::uuid
+    WHERE c.recovery IS NOT NULL AND w.owner_host_id=$1::uuid AND ($2::uuid IS NULL OR c.id>$2::uuid)
+    ORDER BY c.id LIMIT $3`;
+export function listTopologyRecoveries(exec: LegacyUnscopedRead, hostId: string, after: string | null, limit: number): Promise<TopologyChange[]> {
+  return exec.executeRaw<TopologyChange>(TOPOLOGY_RECOVERIES_SQL, [hostId, after, limit]);
+}
+
 /** Whether a claim would find a row now (read-only: no lock and no claim); `priority` is the switch's environment override. */
 export async function hasClaimableWrite(exec: LegacyUnscopedRead, hostId: string, excludeRoots: string[], opts: { priority?: boolean | null } & QueryOpts = {}): Promise<boolean> {
   const { priority, ...query } = opts;

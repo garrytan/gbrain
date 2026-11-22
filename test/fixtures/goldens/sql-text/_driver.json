@@ -5159,6 +5159,30 @@
           }
         ]
       },
+      "deleteSourceRecord": {
+        "default": [
+          {
+            "paramCount": 12,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ],
+        "expiredArchiveOnly": [
+          {
+            "paramCount": 12,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "getSource": {
         "default": [
           {
@@ -5328,6 +5352,19 @@
           }
         ]
       },
+      "markSourceSynced": {
+        "default": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "readLiveIdentityHolders": {
         "default": [
           {
@@ -5403,6 +5440,19 @@
         ]
       },
       "readSourceChunkerVersion": {
+        "default": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "readSourceDeleteImpact": {
         "default": [
           {
             "paramCount": 1,

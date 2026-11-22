@@ -5,11 +5,13 @@
  * which persistence/sync-status.ts, sync-failures.ts, sync-drain.ts and sync-identity-downgrades.ts call instead of raw SQL.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: the source row carries the source's incarnation, last commit, drain lock, pass row and admission
+ *  - Contract: the source row carries the source's incarnation, last commit, drain lock, pass row, Apple Contacts
+ *    identity reviews and held deletes, and admission
  *    probes (null while the stored admission reads as normal; otherwise pinned only while an open pass row holds the
  *    live drain lease); an archived or missing source has no row. A brain with no managed write has no committed page,
  *    held push or fence, head request, recovery record, cursor, failure or identity downgrade. A managed-sync cursor
  *    reads with its failure and manifest path, the failed cursor first; an old incarnation's cursor counts as retired.
+ *    The source row also carries the source's Apple Contacts identity-review and held-deletion checkpoints, raw.
  *  - Regression: an engine that refuses these as raw SQL (the Rust engine did, which failed `gbrain sync status`
  *    outright and turned its oldest-blocker and recovery probes `unknown`), or answers a pinned admission wrongly.
  *  - Why existing coverage misses it: the sync-status tests run on PGLite and Postgres only, and the pins test checks
@@ -23,6 +25,7 @@ import { syncLockId } from '../../src/core/db-lock.ts';
 import { writePassRow } from '../../src/core/persistence/sync-pass-row.ts';
 import { readManagedSyncFailures } from '../../src/core/persistence/sync-failures.ts';
 import { listIdentityDowngrades } from '../../src/core/sync-identity-downgrades.ts';
+import { APPLE_CONTACTS_PENDING_DELETES_OP, APPLE_CONTACTS_REVIEW_OP } from '../../src/core/apple-contacts/review-status.ts';
 import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -72,6 +75,22 @@ describe('engine parity: sync status reads', () => {
         header: null, retired: null, failures: [], scopedFailures: [], orphaned: [], head: null,
         recovery: { n: 0, request_id: null, slug: null, blocked: null },
         downgrades: [], callers: { failures: [], downgrades: [] },
+      });
+      return result;
+    });
+
+  parityTest('the source row carries the Apple Contacts identity reviews and held deletes recorded for that source only',
+    { methods: ['readSyncStatusSourceRow', 'writeOpCheckpointKeys'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'repo', {}, '/srv/brain/repo');
+      await createSource(engine, backend, 'other', {}, '/srv/brain/other');
+      await engine.writeOpCheckpointKeys(APPLE_CONTACTS_REVIEW_OP, 'repo', ['review-a', 'review-b']);
+      await engine.writeOpCheckpointKeys(APPLE_CONTACTS_PENDING_DELETES_OP, 'repo', ['delete-a']);
+      const pick = (row: Awaited<ReturnType<typeof sourceRow>>) => row && { reviews: row.identity_reviews, held: row.held_deletes };
+      const result = { repo: pick(await sourceRow(engine, 'repo')), other: pick(await sourceRow(engine, 'other')) };
+      expect(result).toEqual({
+        repo: { reviews: ['review-a', 'review-b'], held: ['delete-a'] },
+        other: { reviews: null, held: null },
       });
       return result;
     });
@@ -145,6 +164,28 @@ describe('engine parity: sync status reads', () => {
         ],
         orphaned: ['k-orphan'],
       });
+      return result;
+    });
+
+  parityTest('the source row carries the source\'s identity-review and held-deletion checkpoints, and not another source\'s (written with executeRaw, so a Rust brain stops at the write)',
+    { methods: ['readSyncStatusSourceRow'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'repo', {}, '/srv/brain/repo');
+      await createSource(engine, backend, 'other', {}, '/srv/brain/other');
+      const put = (op: string, fingerprint: string, keys: unknown[]) => engine.executeRaw(
+        'INSERT INTO op_checkpoints (op, fingerprint, completed_keys) VALUES ($1, $2, $3::text::jsonb)', [op, fingerprint, JSON.stringify(keys)]);
+      const review = [{ slug: 'people/alice-example', candidates: [{ source_id: 'repo', slug: 'people/alice-example' }], decided: null }];
+      const held = [{ ids: ['c1'], held: { code: 'apple_contacts_delete_floor', contacts: 3, owned: 4, since: '2026-01-01T00:00:00.000Z' } }];
+      await put(APPLE_CONTACTS_REVIEW_OP, 'repo', review);
+      await put(APPLE_CONTACTS_PENDING_DELETES_OP, 'repo', held);
+      const decode = (raw: unknown) => typeof raw === 'string' ? JSON.parse(raw) : raw;
+      const row = await engine.readSyncStatusSourceRow('repo');
+      const other = await engine.readSyncStatusSourceRow('other');
+      const result = {
+        repo: { identity_reviews: decode(row!.identity_reviews), held_deletes: decode(row!.held_deletes) },
+        other: { identity_reviews: other!.identity_reviews, held_deletes: other!.held_deletes },
+      };
+      expect(result as unknown).toEqual({ repo: { identity_reviews: review, held_deletes: held }, other: { identity_reviews: null, held_deletes: null } });
       return result;
     });
 });

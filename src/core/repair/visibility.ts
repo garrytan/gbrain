@@ -64,6 +64,7 @@ import type { PageSnapshot } from '../page-state/types.ts';
 import { loadApprovedSet, previewChangedError, previewHash, retireAfterLastItem, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { createProgress, startHeartbeat } from '../progress.ts';
 import { cliOptsToProgressOptions, getCliOptions } from '../cli-options.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 interface DerivedRow { id: number; source_id: string; slug: string; type: string; visibility: string | null; chars: number }
 interface AtomRow extends DerivedRow { source_slug: string | null; origin_id: number | null; origin_type: string | null; origin_frontmatter: Record<string, unknown> | null; origin_folder_restricted: boolean; origin_moved_private: boolean }
@@ -87,26 +88,11 @@ const bounded = { timeoutMs: PLAN_STATEMENT_MS };
 /** Extracted atoms and synthesized concepts: the only class that reads concept-provenance links. */
 async function planLineage(engine: BrainEngine, sourceIds: string[], only?: { id: number; type: string }) {
   const conceptIds = only === undefined ? null : only.type === 'concept' ? [only.id] : [];
-  const concepts = conceptIds?.length === 0 ? [] : await engine.executeRaw<DerivedRow>(`SELECT c.id,c.source_id,c.slug,c.type,c.frontmatter->>'visibility' AS visibility,
-      length(c.compiled_truth) AS chars
-    FROM pages c WHERE c.type='concept' AND c.frontmatter->>'synthesized_by' IS NOT NULL AND c.deleted_at IS NULL
-      AND c.source_id=ANY($1::text[]) AND ($2::integer[] IS NULL OR c.id=ANY($2::integer[])) ORDER BY c.id`, [sourceIds, conceptIds], bounded);
+  const concepts = conceptIds?.length === 0 ? [] : await engine.listConceptLineageRows(sourceIds, conceptIds, PLAN_STATEMENT_MS);
   // A member recovered only from an atom's `concepts:` list has no provenance
   // edge, so a later private flip could not reach the concept: it stays private.
   // Set-based: provenance edges by page id, `concepts:` references by a hash join on the concept name.
-  const inputs = concepts.length ? await engine.executeRaw<InputRow>(`WITH c AS MATERIALIZED (
-      SELECT id,source_id,regexp_replace(slug,'^concepts/','') AS name FROM pages WHERE id=ANY($1::integer[])),
-    refs AS MATERIALIZED (
-      SELECT a.id AS atom_id,a.source_id,regexp_replace(ref,'^.*/','') AS name FROM pages a
-        CROSS JOIN LATERAL jsonb_array_elements_text(CASE WHEN jsonb_typeof(a.frontmatter->'concepts')='array' THEN a.frontmatter->'concepts' ELSE '[]'::jsonb END) ref
-        WHERE a.type='atom' AND a.deleted_at IS NULL AND a.source_id IN (SELECT source_id FROM c)),
-    members AS (
-      SELECT l.from_page_id AS concept_id,l.to_page_id AS atom_id,true AS linked FROM links l
-        JOIN c ON c.id=l.from_page_id JOIN pages a ON a.id=l.to_page_id AND a.source_id=c.source_id AND a.type='atom' AND a.deleted_at IS NULL
-        WHERE l.link_source='concept-provenance' AND l.link_type='synthesized_from'
-      UNION ALL
-      SELECT c.id,r.atom_id,false FROM refs r JOIN c ON c.source_id=r.source_id AND c.name=r.name)
-    SELECT concept_id,atom_id,bool_or(linked) AS linked FROM members GROUP BY concept_id,atom_id`, [concepts.map(c => Number(c.id))], bounded) : [];
+  const inputs = concepts.length ? await engine.listConceptInputRows(concepts.map(c => Number(c.id)), PLAN_STATEMENT_MS) : [];
   const inputsByConcept = new Map<number, InputRow[]>();
   for (const row of inputs) {
     const list = inputsByConcept.get(Number(row.concept_id));
@@ -180,9 +166,7 @@ async function planAliases(engine: BrainEngine, sourceIds: string[], only?: numb
  * the guard without a write.
  */
 async function planNamed(engine: BrainEngine, sourceIds: string[], slugs: string[]) {
-  const rows = await engine.executeRaw<DerivedRow & { guarded: boolean }>(`SELECT p.id,p.source_id,p.slug,p.type,p.frontmatter->>'visibility' AS visibility,COALESCE(p.body_bytes, 0) AS chars,
-      EXISTS (SELECT 1 FROM page_label_guards g WHERE g.page_id = p.id) AS guarded
-    FROM pages p WHERE p.deleted_at IS NULL AND p.source_id=ANY($1::text[]) AND p.slug=ANY($2::text[]) ORDER BY p.id`, [sourceIds, slugs], bounded);
+  const rows = await engine.listNamedVisibilityRows(sourceIds, slugs, PLAN_STATEMENT_MS);
   const changes = rows.flatMap(page => {
     const next = tightened(page.visibility, 'private') ?? (page.visibility === 'private' && !page.guarded ? 'private' : null);
     return next ? [{ id: Number(page.id), source_id: page.source_id, slug: page.slug, phase: 5 as const, from: page.visibility, to: next }] : [];
@@ -408,6 +392,9 @@ export const visibilityRepair: RepairHandler = {
       'Name pages with --slug to make exactly them private, or preview a class with --class.');
     const selection: Selection = { source_ids: scope.source_ids, class: selectedClass(opts), ...(named.length ? { slugs: named } : {}) };
     const classes: readonly VisibilityClass[] = named.length ? ['pages'] : selection.class ? [selection.class] : VISIBILITY_CLASSES;
+    // The events, alias and atom-lineage reads build a privacy predicate (folder rules, privacy aliases) and a named page's listing runs the open-twins scan
+    // (readers and folder rules); none is ported to the Rust store, so a Rust brain stops here by name, before any read. The facts class reads no predicate.
+    if (classes.some(cls => cls !== 'facts')) requireRawSql(engine, 'repair visibility privacy scan');
     const command = visibilityPreviewCommand(scope, selection, true);
     if (named.length && opts?.apply && !opts.expect) throw opError('invalid_params', 'gbrain repair visibility --slug applies only the set a preview printed.',
       `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`);
@@ -538,6 +525,8 @@ export const visibilityRepair: RepairHandler = {
     const item = entry as VisibilityItem;
     const target = item.target ?? item.cursor;
     if (target.phase === READERS_PHASE) return applyReaders(ctx.engine, item as ReadersItem, (snapshot, content, edit, batch) => labelWrite(ctx, { ...item, cursor: target }, snapshot, content, edit, batch));
+    // The fact tightening, the page label guard and the page write door all write through raw SQL, so a Rust brain stops here by name, before its first write.
+    requireRawSql(ctx.engine, 'repair visibility page write');
     return retireAfterLastItem(ctx.engine, 'visibility', item.hash, !!item.last, async () => {
       if (target.phase === 4) return await applyFactItem(ctx, item, target.id);
       const snapshot = await ctx.engine.readPageSnapshot(item.slug, { sourceId: item.source_id });

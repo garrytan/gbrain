@@ -4,7 +4,8 @@
 //! listFactsSince, listFactsKeyset, listFactsBySession, listSupersessions,
 //! countUnconsolidatedFacts, findCandidateDuplicates, consolidateFact, findTrajectory,
 //! getFactsHealth, migrateFactsToCanonical, the `listUnattributedFacts` review-list read and
-//! the `pageCollapseFacts` search read (`facts/collapse.rs`). Other families read the rows
+//! the `pageCollapseFacts` search read (`facts/collapse.rs`) and the `moveKeptFactRows` fence
+//! row move (`facts/kept_rows.rs`). Other families read the rows
 //! through `fact_exists`
 //! (eval capture) and write them through `write_fact` / `delete_fact` (ontology).
 //!
@@ -47,12 +48,16 @@ pub mod contest;
 pub mod cycle;
 pub mod doctor;
 mod embedding;
+/// Postgres `md5(text)`, for the timeline retraction check's version digests.
+pub(crate) use embedding::md5_hex;
 pub mod extractor_classify;
 mod fence;
 mod fence_overlay;
 pub mod generations;
 mod held_cells;
 pub mod holding_purges;
+mod kept_rows;
+pub mod label_repair;
 pub mod loops;
 pub(crate) mod page_purge_journal;
 pub(crate) mod page_purge_reads;
@@ -66,13 +71,17 @@ pub mod purge_ledger;
 pub mod purge_plan;
 pub(crate) mod purge_probe;
 pub mod purge_store_probe;
+pub mod purge_writes;
 pub mod quote;
 pub mod reconcile;
 pub mod relink;
 pub mod relink_writes;
 pub mod repair;
+pub mod repair_home;
+pub mod repair_previews;
 pub mod saved_match;
 pub mod take_purges;
+pub mod text_repair;
 pub mod trust;
 pub mod trust_owner;
 pub mod trust_reads;
@@ -84,7 +93,7 @@ pub mod withdrawal_pages;
 pub use crate::owner_only::OwnerOnlyForm;
 pub(crate) use crate::owner_only::OwnerOnlySources;
 pub(crate) use fence::jsonb_time;
-pub use fence::{FenceContext, FenceTarget};
+pub use fence::{FactRestore, FactSourcePrefix, FenceContext, FenceTarget};
 pub use fence_overlay::{FenceOverlayIncomingRow, FenceOverlayInput};
 pub use held_cells::{HeldFenceCellKey, HeldFenceCellsInput, HeldFenceMember};
 pub(crate) use page_purges::has_page_purges;
@@ -223,7 +232,8 @@ impl FactRecord {
 
     /// The content tuple the attribution trigger compares
     /// (`WRITE_ATTRIBUTION_CONTENT_COLUMNS.facts`). The withdrawal-stamp exemption
-    /// (`gbrain.fact_withdrawal_stamp`) never applies: the store keeps no withdrawal ledger.
+    /// (`gbrain.fact_withdrawal_stamp`) never applies: the store has no such setting (its withdrawal
+    /// ledger, trust/withdrawals.rs, writes no fact row).
     fn attribution_content_changed(&self, new: &FactRecord) -> bool {
         use crate::write_receipt::float_distinct;
         let a = self;
@@ -1108,6 +1118,14 @@ pub struct ExpireFactArgs {
     pub successor_from: Option<String>,
 }
 
+/// `expireFactUntil(id, until)`: `until` is ISO text, or null for the row's own end.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExpireFactUntilArgs {
+    pub id: f64,
+    pub until: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct PageDeleteArgs {
@@ -1246,6 +1264,18 @@ pub struct TrajectoryQuery {
 
 fn time_arg(op: &str, what: &str, text: &str) -> Result<i64> {
     parse_iso(text).ok_or_else(|| invalid(format!("{op}: {what} is not an ISO time: \"{text}\"")))
+}
+
+/// An ISO time, or a bare `YYYY-MM-DD` day at UTC midnight (`'2026-06-01'::timestamptz` with TimeZone UTC).
+fn day_or_time(op: &str, what: &str, text: &str) -> Result<i64> {
+    let day = text.len() == 10 && text.as_bytes()[4] == b'-' && text.as_bytes()[7] == b'-';
+    match day
+        .then(|| parse_iso(&format!("{text}T00:00:00Z")))
+        .flatten()
+    {
+        Some(us) => Ok(us),
+        None => time_arg(op, what, text),
+    }
 }
 
 fn opt_time(op: &str, what: &str, text: &Option<String>) -> Result<Option<i64>> {
@@ -1706,6 +1736,39 @@ impl Store {
             if let Some(successor) = successor {
                 new.valid_until_us = Some(closed_until(&old, successor, now));
             }
+            write_fact(tx, trust, Some(&old), &new)?;
+            Ok(true)
+        })
+    }
+
+    /// `expireFactUntil(id, until)`: expire an unexpired row now and end it at `until`, or, without
+    /// one, at its own earlier end or now, never before it began (`COALESCE($2, GREATEST(valid_from,
+    /// LEAST(COALESCE(valid_until, now()), now())))`). True when a row changed.
+    ///
+    /// A `'YYYY-MM-DD'` text (forget's file-mirror stamp) is `$2::timestamptz` in the store's zone, UTC: that
+    /// day's midnight. PG and PGLite cast it in the session TimeZone (PGLite's default is UTC).
+    pub fn expire_fact_until(&self, args: &ExpireFactUntilArgs) -> Result<bool> {
+        const OP: &str = "expireFactUntil";
+        let now = self.env.now_micros();
+        let until = args
+            .until
+            .as_deref()
+            .map(|t| day_or_time(OP, "until", t))
+            .transpose()?;
+        let trust = &self.write_trust()?;
+        self.write(|tx| {
+            let Some(old) = fact_by_number(tx, OP, "id", args.id)? else {
+                return Ok(false);
+            };
+            if old.expired_at_us.is_some() {
+                return Ok(false);
+            }
+            let mut new = old.clone();
+            new.expired_at_us = Some(now);
+            new.valid_until_us = Some(until.unwrap_or_else(|| {
+                old.valid_from_us
+                    .max(old.valid_until_us.unwrap_or(now).min(now))
+            }));
             write_fact(tx, trust, Some(&old), &new)?;
             Ok(true)
         })
@@ -2507,6 +2570,20 @@ mod tests {
     use super::*;
     use crate::kv::KvRead;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn a_day_text_is_utc_midnight_and_an_iso_time_is_kept() {
+        let day = day_or_time("expireFactUntil", "until", "2026-06-01").unwrap();
+        assert_eq!(Some(day), parse_iso("2026-06-01T00:00:00Z"));
+        let at = day_or_time("expireFactUntil", "until", "2026-03-04T05:06:07.000Z").unwrap();
+        assert_eq!(Some(at), parse_iso("2026-03-04T05:06:07.000Z"));
+        for bad in ["2026-13-01", "2026-6-01", "June 1", "2026-06-01T00:00:00"] {
+            assert!(
+                day_or_time("expireFactUntil", "until", bad).is_err(),
+                "accepted {bad}"
+            );
+        }
+    }
 
     struct MapRead(BTreeMap<Vec<u8>, Vec<u8>>);
 

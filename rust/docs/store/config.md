@@ -27,6 +27,9 @@ written with no model of its own carries the brain's model, as on PGLite. In Rus
 | `brain.listConfigKeys(prefix)` | sorted `string[]`; the prefix is literal (`%` and `_` are plain characters) | `listConfigKeys` |
 | `brain.getAllConfig()` | `{ [key]: value }` | `getAllConfig` |
 
+The engine's `readStoredConfigValue(key)` (`src/core/rust-engine/store-members/config.ts`, the `sync.admission` read of
+`readSyncAdmission`) is `brain.getConfig(key)`: the stored row, `null` without one.
+
 ## Dream map rows
 
 The dream breaker and the write deferrals keep a JSON map in one config row each (`src/core/engine-sql/dream-cycle.ts`).

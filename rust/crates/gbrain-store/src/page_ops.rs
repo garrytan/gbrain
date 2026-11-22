@@ -40,8 +40,10 @@ use serde_json::{Map, Value, json};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+mod atom_restore;
 mod relational;
 pub(crate) mod retrievals;
+mod stale_atoms;
 pub(crate) use retrievals::remove_page_rows;
 
 /// The code `revertToVersion` refuses with when the page or the version is segmented. The
