@@ -219,7 +219,7 @@ describe('engine parity: the page purge sweep, its segment storage and its slug 
     methods: ['putPage', 'insertFacts', 'insertFact', 'addTakesBatch', 'listTakes', 'insertDecideProposal', 'insertDecideReviewProposal', 'applyDecideReviewQueue', 'insertTrustProposal',
       'upsertWriteGateHold', 'upsertWriteGateReceipt', 'upsertFile', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow',
       'transaction', 'listDecideProposals', 'listDecideReviewProposals', 'listDueDecideReviewQueue', 'listTrustProposals', 'listWriteGateHoldRows',
-      'listWriteGateReceiptsFor', 'listFilesForPage', 'listFactsSince', 'executeRaw'],
+      'listWriteGateReceiptsFor', 'listFilesForPage', 'listFactsSince'],
     timeout: 120_000,
   }, async (engine, backend) => {
     const s = await seed(engine, backend);
