@@ -54,6 +54,12 @@ export function stubSourceMembers(sources: readonly StubSourceRow[] | (() => rea
     if (error) throw error;
   };
   return {
+    /** Content setup's source read (engine-sql/content-setup.ts): the live source with its incarnation and path, or null. */
+    async readContentSetupSource(sourceId: string): Promise<{ id: string; incarnation: string; local_path: string | null } | null> {
+      enter('readContentSetupSource');
+      const row = rows().find(r => r.id === sourceId && !r.archived);
+      return row ? { id: row.id, incarnation: row.incarnation, local_path: row.local_path } : null;
+    },
     async listAllSources(o?: { includeArchived?: boolean; localPathOnly?: boolean }): Promise<SourceRow[]> {
       enter('listAllSources');
       return defaultFirst(rows())
