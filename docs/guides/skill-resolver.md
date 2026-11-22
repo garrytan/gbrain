@@ -431,6 +431,11 @@ What it does on each turn:
 | `skills.resolver.router_timeout_ms` | 1500 in Claude Code, 2000 elsewhere | the longest a turn waits (200-2500); Claude Code waits at most 2000, inside its 3-second hook limit |
 | `skills.resolver.router_max_usd_per_day` | 0.50 | the daily spend cap in USD (0-100; 0 stops every call) |
 
+A larger model picks better but slower. Claude Opus, Sonnet and Fable 5.x
+can't turn thinking off, so they pick with adaptive thinking at low effort:
+Opus took about 1.2 seconds at the median, close to Claude Code's 1.5-second
+wait. For a model OpenAI hosts, use its `openai:` id rather than `compat:`.
+
 **Your own model.** Any model behind an OpenAI-compatible Chat Completions
 endpoint can be the picker, a self-hosted or fine-tuned one included: set
 `router_model` to `compat:<model id>` and three more settings.
@@ -439,7 +444,7 @@ endpoint can be the picker, a self-hosted or fine-tuned one included: set
 |---|---|
 | `skills.resolver.router_base_url` | the endpoint's base URL up to `/v1`, like `https://models.example.com/v1` (https, or http to localhost only); required |
 | `skills.resolver.router_api_key_env` | the name of the environment variable holding its key, like `MY_MODEL_API_KEY`; unset sends no key |
-| `skills.resolver.router_usd_per_mtok` | `[input, output]` in USD per million tokens, so the daily cap holds; required (`0,0` for a free one) |
+| `skills.resolver.router_usd_per_mtok` | `[input, output]` or `[input, output, cached input]` in USD per million tokens, so the daily cap holds; required (`0,0` for a free one). Without the third value, cached input is charged at the input rate |
 
 ```bash
 gbrain config set skills.resolver.router_model compat:acme/skill-picker-1

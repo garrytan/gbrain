@@ -214,6 +214,8 @@ describe('a compat: model on an OpenAI-compatible endpoint', () => {
     seen.push({ path, auth: req.headers.get('authorization'), body: await req.json() });
     if (path.startsWith('/denied/') || path.startsWith('/gdeny/')) return new Response('{"error": "forbidden"}', { status: 403 });
     if (path.startsWith('/hop/')) return new Response(null, { status: 307, headers: { location: '/v1/chat/completions' } });
+    if (path.startsWith('/a/')) return Response.json({ content: [{ type: 'text', text: '{"needed": true, "skills": ["gbrain:people"]}' }], stop_reason: 'end_turn', usage: { input_tokens: 1000, output_tokens: 10 } });
+    if (path.startsWith('/o/')) return Response.json({ output: [{ type: 'message', content: [{ type: 'output_text', text: '{"needed": true, "skills": ["gbrain:people"]}' }] }], usage: { input_tokens: 1000, output_tokens: 10 } });
     if (path.startsWith('/g/')) return Response.json({ candidates: [{ content: { parts: [{ text: '{"needed": true, "skills": ["gbrain:people"]}' }] }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 1000, candidatesTokenCount: 10, thoughtsTokenCount: 150 } });
     const answer = '"choices": [{"message": {"content": "{\\"needed\\": true, \\"skills\\": [\\"gbrain:people\\"]}"}, "finish_reason": "stop"}]';
     if (path.startsWith('/huge/')) return new Response('{' + answer + ', "usage": {"prompt_tokens": 1e400, "completion_tokens": 10}}', { headers: { 'content-type': 'application/json' } });
@@ -296,6 +298,37 @@ describe('a compat: model on an OpenAI-compatible endpoint', () => {
     const r = await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: h, catalogs: ['c'], router: true, env });
     expect(r.output.router?.est_usd).toBe(0.00102);
     expect((await readRouterSpend(h)).charged_usd).toBe(0.00102);
+  });
+
+  test('a third router_usd_per_mtok value prices cached input', async () => {
+    const h = await home(compat({ router_base_url: `http://127.0.0.1:${server.port}/cached/v1`, router_usd_per_mtok: [1, 2, 0.1] }));
+    const r = await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: h, catalogs: ['c'], router: true, env });
+    expect(r.output.router?.est_usd).toBe(0.00021);
+    expect((await readRouterSpend(h)).charged_usd).toBe(0.00021);
+  });
+
+  test('Opus, Sonnet and Fable 5.x think at low effort when they pick; Haiku keeps thinking off', async () => {
+    const aenv = { ...process.env, ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.port}/a`, ANTHROPIC_API_KEY: 'k-test' };
+    for (const [model, want] of [['claude-opus-5-5', 'adaptive'], ['claude-sonnet-5-5', 'adaptive'], ['claude-fable-5-1', 'adaptive'], ['claude-haiku-5-5', 'disabled']] as const) {
+      seen.length = 0;
+      const h = await home({ router: true, router_model: `anthropic:${model}` });
+      const r = await resolveSkills({ message: 'who is alice', harness: 'codex' }, { home: h, catalogs: ['c'], router: true, env: aenv });
+      expect([model, r.output.router?.answered_by]).toEqual([model, 'picker']);
+      const body = seen.find(s => s.path === '/a/v1/messages')!.body;
+      expect([model, body.thinking]).toEqual([model, { type: want }]);
+      expect([model, body.output_config]).toEqual([model, want === 'adaptive' ? { effort: 'low' } : undefined]);
+    }
+  });
+
+  test('GPT-6.2 Sol is priced and asks for low reasoning effort; models that accept none keep it', async () => {
+    const oenv = { ...process.env, OPENAI_BASE_URL: `http://127.0.0.1:${server.port}/o`, OPENAI_API_KEY: 'k-test' };
+    for (const [model, effort] of [['gpt-6.2-sol', 'low'], ['gpt-6.1-sol', 'low'], ['gpt-6-luna', 'none']] as const) {
+      seen.length = 0;
+      const h = await home({ router: true, router_model: `openai:${model}` });
+      const r = await resolveSkills({ message: 'who is alice', harness: 'codex' }, { home: h, catalogs: ['c'], router: true, env: oenv });
+      expect([model, r.output.router?.answered_by]).toEqual([model, 'picker']);
+      expect([model, seen.find(s => s.path === '/o/v1/responses')!.body.reasoning]).toEqual([model, { effort }]);
+    }
   });
 
   test('Gemini thinking tokens are charged as output', async () => {

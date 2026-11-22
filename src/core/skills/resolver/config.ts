@@ -27,8 +27,10 @@
  *     (https, or http to localhost only); required for compat:
  *   skills.resolver.router_api_key_env  the environment variable holding its
  *     key, read by name (unset: no key is sent)
- *   skills.resolver.router_usd_per_mtok  [input, output] USD per million
- *     tokens, so the daily cap holds; required for compat: ([0, 0] when free)
+ *   skills.resolver.router_usd_per_mtok  [input, output] or [input, output,
+ *     cached input] USD per million tokens, so the daily cap holds; required
+ *     for compat: ([0, 0] when free); without the third, cached input is
+ *     charged at the input rate
  *   A bad router value does not refuse the turn: the picker stays off for it
  *     and the turn reports router.fallback.code config_invalid.
  *
@@ -85,7 +87,9 @@ const ROUTER_KEY_ENV_RE = /^[A-Z_][A-Z0-9_]{0,63}$/;
 export const ROUTER_USD_PER_MTOK_MAX = 1000;
 
 /** The picker's settings; `invalid` names the first bad key (the picker then stays off and reports config_invalid). */
-export interface RouterSettings { on: boolean; model: string | null; timeoutMs: number | null; maxUsdPerDay: number; baseUrl: string | null; keyEnv: string | null; usdPerMtok: [number, number] | null; invalid: string | null }
+export interface RouterSettings { on: boolean; model: string | null; timeoutMs: number | null; maxUsdPerDay: number; baseUrl: string | null; keyEnv: string | null; usdPerMtok: RouterUsdPerMtok | null; invalid: string | null }
+/** [input, output] or [input, output, cached input] in USD per million tokens. */
+export type RouterUsdPerMtok = [number, number] | [number, number, number];
 
 export function validateRouterModel(v: unknown, key: string): string {
   if (typeof v === 'string' && ROUTER_MODEL_RE.test(v)) return v;
@@ -105,10 +109,10 @@ export function validateRouterKeyEnv(v: unknown, key: string): string {
   throw configInvalid(key, 'must be the name of an environment variable, like MY_MODEL_API_KEY');
 }
 
-export function validateRouterUsdPerMtok(v: unknown, key: string): [number, number] {
+export function validateRouterUsdPerMtok(v: unknown, key: string): RouterUsdPerMtok {
   const ok = (x: unknown) => typeof x === 'number' && Number.isFinite(x) && x >= 0 && x <= ROUTER_USD_PER_MTOK_MAX;
-  if (Array.isArray(v) && v.length === 2 && ok(v[0]) && ok(v[1])) return [v[0], v[1]];
-  throw configInvalid(key, `must be [input, output] in US dollars per million tokens, each 0 to ${ROUTER_USD_PER_MTOK_MAX}, like [0.1, 0.5]`);
+  if (Array.isArray(v) && (v.length === 2 || v.length === 3) && v.every(ok)) return v.length === 3 ? [v[0], v[1], v[2]] : [v[0], v[1]];
+  throw configInvalid(key, `must be [input, output] or [input, output, cached input] in US dollars per million tokens, each 0 to ${ROUTER_USD_PER_MTOK_MAX}, like [0.1, 0.5]`);
 }
 
 export function validateRouterTimeout(v: unknown, key: string): number {

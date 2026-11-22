@@ -121,7 +121,7 @@ export function parseOpenAIChatId(id: string): ParsedOpenAIChatId | null {
  * repair default), but not eligible as a discovered tier default: one priced
  * member of a newer family would otherwise become every tier's default.
  */
-const METERED_ONLY: ReadonlySet<string> = new Set(['gpt-6.1-sol', 'gpt-6-luna']);
+const METERED_ONLY: ReadonlySet<string> = new Set(['gpt-6.1-sol', 'gpt-6.2-sol', 'gpt-6-luna']);
 
 function familyCmp(a: [number, number], b: [number, number]): number {
   return a[0] !== b[0] ? a[0] - b[0] : a[1] - b[1];

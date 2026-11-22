@@ -54,6 +54,11 @@ function counts(input: unknown, output: unknown, cacheRead: unknown = 0, cacheWr
   return ok(input) && ok(output) && ok(cacheRead) && ok(cacheWrite) ? { input, cacheRead, cacheWrite, output } : null;
 }
 
+/** Anthropic models that refuse thinking 'disabled' (Opus, Sonnet and Fable 5.x) get adaptive thinking at low effort; checked live on 2026-11-22. */
+const ANTHROPIC_ADAPTIVE = /^claude-(opus|sonnet|fable)-5/;
+/** OpenAI models that refuse reasoning effort 'none' (the 6.x Astra models and every Sol after gpt-6-sol) get 'low'; checked live on 2026-11-22. */
+const OPENAI_EFFORT_LOW = /^gpt-6(\.\d+)?-astra$|^gpt-6\.\d+-sol$/;
+
 const BASE_URL_ENV: Record<Exclude<PickerProvider, 'compat'>, string> = { anthropic: 'ANTHROPIC_BASE_URL', openai: 'OPENAI_BASE_URL', google: 'GOOGLE_GENERATIVE_AI_BASE_URL' };
 
 /** True when `provider` is answered by the provider itself: not a compat: endpoint, and no base-URL override pointing it at a proxy that may bill. */
@@ -79,7 +84,7 @@ export async function pickerChat(req: PickerRequest, key: string, env: NodeJS.Pr
   const model = req.model.slice(req.model.indexOf(':') + 1);
   if (provider === 'anthropic') {
     const j = await post(`${base(env, 'ANTHROPIC_BASE_URL', 'https://api.anthropic.com')}/v1/messages`, { 'x-api-key': key, 'anthropic-version': '2023-06-01' }, {
-      model, max_tokens: req.maxTokens, thinking: { type: 'disabled' },
+      model, max_tokens: req.maxTokens, ...(ANTHROPIC_ADAPTIVE.test(model) ? { thinking: { type: 'adaptive' }, output_config: { effort: 'low' } } : { thinking: { type: 'disabled' } }),
       system: [{ type: 'text', text: req.system, cache_control: { type: 'ephemeral' } }], messages: [{ role: 'user', content: req.message }],
     }, req.signal);
     const u = j.usage;
@@ -98,7 +103,7 @@ export async function pickerChat(req: PickerRequest, key: string, env: NodeJS.Pr
   }
   if (provider === 'openai') {
     const j = await post(`${base(env, 'OPENAI_BASE_URL', 'https://api.openai.com')}/v1/responses`, { authorization: `Bearer ${key}` }, {
-      model, instructions: req.system, input: req.message, max_output_tokens: req.maxTokens, reasoning: { effort: 'none' },
+      model, instructions: req.system, input: req.message, max_output_tokens: req.maxTokens, reasoning: { effort: OPENAI_EFFORT_LOW.test(model) ? 'low' : 'none' },
     }, req.signal);
     const u = j.usage;
     const cached = u?.input_tokens_details?.cached_tokens ?? 0;

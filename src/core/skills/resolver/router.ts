@@ -147,7 +147,7 @@ async function callPicker(home: string, message: string, skills: readonly Picker
   const { model, key } = routerModel(s, home, env);
   if (!model || key === null) return { ok: false, code: 'missing_key', model, usd: 0 };
   const compat = model.startsWith('compat:');
-  const price: { input: number; output: number; cache_read?: number; cache_write?: number } | null | undefined = compat ? (s.usdPerMtok ? { input: s.usdPerMtok[0], output: s.usdPerMtok[1] } : null) : (await import('../../model-pricing.ts')).canonicalLookup(model);
+  const price: { input: number; output: number; cache_read?: number; cache_write?: number } | null | undefined = compat ? (s.usdPerMtok ? { input: s.usdPerMtok[0], output: s.usdPerMtok[1], ...(s.usdPerMtok[2] !== undefined ? { cache_read: s.usdPerMtok[2] } : {}) } : null) : (await import('../../model-pricing.ts')).canonicalLookup(model);
   if (!price) return { ok: false, code: 'no_pricing', model, usd: 0 };
   const readRate = price.cache_read ?? price.input;
   const writeRate = price.cache_write ?? price.input;
