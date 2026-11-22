@@ -15,9 +15,16 @@ export interface RelaunchDeps {
   spawnRelauncher: (pid: number, argv: string[]) => void;
 }
 
-/** #8840: a detached shell that waits for `pid` to exit, then runs `argv` with this process's environment, directory and output. */
+/**
+ * #8840: a detached shell that waits for `pid` to exit, then runs `argv` with this process's environment, directory and output.
+ * An exited process whose parent never reaps it (a container bootstrap that execs the agent after starting the wrapper)
+ * stays a zombie, which `kill -0` still finds, so a zombie state (from /proc, else ps) also counts as exited.
+ */
 export function spawnRelauncher(pid: number, argv: string[]): void {
-  const child = spawn('/bin/sh', ['-c', 'while kill -0 "$0" 2>/dev/null; do sleep 1; done; exec "$@"', String(pid), ...argv],
+  const wait = 'while kill -0 "$0" 2>/dev/null; do'
+    + ' case "$(sed -n \'s/^.*) \\(.\\).*/\\1/p\' "/proc/$0/stat" 2>/dev/null || ps -o stat= -p "$0" 2>/dev/null)" in *Z*) break;; esac;'
+    + ' sleep 1; done; exec "$@"';
+  const child = spawn('/bin/sh', ['-c', wait, String(pid), ...argv],
     { detached: true, stdio: ['ignore', 'inherit', 'inherit'], cwd: process.cwd(), env: process.env });
   child.unref();
 }

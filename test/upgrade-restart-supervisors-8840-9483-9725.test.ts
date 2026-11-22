@@ -168,6 +168,21 @@ describe('#8840: the autopilot swap never exits into nothing', () => {
     expect(await relaunchAfterSwap(d)).toEqual({ by: 'stay', reason: 'Could not resolve the gbrain CLI path' });
   });
 
+  test('the relauncher runs the command once the exiting pid is a zombie its parent never reaps', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-8840-'));
+    const parent = spawn('/bin/sh', ['-c', 'sleep 1 & echo $!; exec sleep 10'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    try {
+      const marker = join(dir, 'relaunched');
+      const pid = await new Promise<number>(r => parent.stdout!.once('data', d => r(Number(String(d).trim()))));
+      spawnRelauncher(pid, ['/bin/sh', '-c', `touch '${marker}'`]);
+      for (let i = 0; i < 24 && !existsSync(marker); i++) await new Promise(r => setTimeout(r, 250));
+      expect(existsSync(marker)).toBe(true);
+    } finally {
+      parent.kill();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 15_000);
+
   test('the relauncher waits for the exiting pid, then runs the command', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-8840-'));
     try {
