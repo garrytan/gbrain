@@ -32,6 +32,8 @@ import { appendDailyLog, appendDailyLogSync, DAILY_LOG_DAY_CAP_BYTES, dailyLogFi
 import { EXCLUDE_MAX, STAT_CHECK_SLICE } from '../src/core/skills/resolver/resolve.ts';
 import { RACY_MTIME_MS } from '../src/core/skills/resolver/build.ts';
 import { TOP_GATE_DEFAULT } from '../src/core/skills/resolver/limits.ts';
+import { DEFAULT_SESSION_TOKEN_BUDGET } from '../src/core/skills/resolver/config.ts';
+import { CODES } from '../src/core/error-registry.ts';
 
 const scratch: string[] = [];
 afterAll(() => { for (const d of scratch) rmSync(d, { recursive: true, force: true }); });
@@ -379,6 +381,11 @@ describe('sessions', () => {
     const r = await resolveSkills({ message: 'deploy', session_id: 'default-budget' }, { home });
     expect([r.output.budget_exhausted, r.output.ranker.k]).toEqual([false, 5]);
     expect(r.output.block).not.toBe('');
+    expect(sessionStatus('default-budget', { home }).budget).toBe(8000);
+  });
+
+  test('the config error names the current default budget', () => {
+    expect(CODES.skill_resolver_config_invalid.suggestion).toContain(`default budget ${DEFAULT_SESSION_TOKEN_BUDGET}`);
   });
 
   test('budget exhaustion empties the block until a compaction resets the session', async () => {
