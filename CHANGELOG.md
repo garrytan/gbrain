@@ -10,6 +10,53 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.763.0] - 2026-11-22
+
+**Spending caps saved with `gbrain config set` now bind in every paid dream phase, a saved 0 spends nothing, and each `gbrain serve` maintenance sweep no longer re-reads unfenced facts it can never fence.**
+
+<!-- behavior-change: dream_stored_caps_bind_gst3490 -->
+
+### Fixed
+- The calibration phases `propose_takes`, `grade_takes` and `calibration_profile` read their per-run cap only from the file config, so a cap saved with `gbrain config set` was never seen and the $5, $3 and $0.50 defaults always applied, even over a saved 0. They now read the saved cap, after an explicit caller value and the file config. Reported and first fixed by @tmarcatto (#9678).
+- `extract_atoms`, `enrich_thin` and `conversation_facts_backfill` treated a saved cap of 0 as unset and ran under their defaults ($0.30, $1 or $5). A saved 0 now spends nothing, as it already did for `synthesize`, `drift` and the calibration phases' documented behavior.
+- Every `gbrain serve` maintenance sweep read all unfenced active facts of the source, including those with no entity or no page, which it can never fence and which came back on the next sweep. On a Postgres brain with many unattributed facts and several serve processes this was most of the database egress. The sweep now counts those rows on the server and reads only the rows it can fence; its counters are unchanged. On a synthetic brain with 10,340 unfenced facts (10,000 with no entity), one sweep read 40 rows instead of 10,340. Reported by @joelsartain (#10005); first fixed by @Masashi-Ono0611 (#10009).
+
+**`gbrain publish` no longer puts frontmatter lines after an indented `---` into the shared file.**
+
+<!-- behavior-change: publish_frontmatter_fence_column_zero -->
+
+### Fixed
+- An indented `---` line inside a multi-line frontmatter value (for example under `notes: |`) was taken as the end of the frontmatter, so `gbrain publish` put every frontmatter line after it into the shared page. The end of the frontmatter is now found the way gbrain reads frontmatter everywhere else, as a `---` line that starts at the beginning of the line. A page whose frontmatter opens with `---yaml`, `---yml` or `---json`, which gbrain also reads as frontmatter, is now stripped too instead of published whole. A page whose frontmatter is closed only by an indented `---` never closes, so publish refuses it with `invalid_frontmatter` instead of sharing it. The same fix keeps `gbrain check-backlinks fix` from writing inside such a frontmatter value (a page whose frontmatter never closes is now skipped and left untouched), stops a Timeline heading quoted inside frontmatter from counting as the page's Timeline section on `put_page`, and lets a remote `put_page` remove a copied read's quote fence from a frontmatter value after such a line.
+
+**`gbrain publish` no longer puts a guest page's frontmatter into the shared file when the page was saved from `gbrain get`.**
+
+<!-- behavior-change: publish_guest_attribution_frontmatter -->
+
+### Fixed
+- `gbrain get` prints a guest page with its `[outside guest · …]` warning line above the frontmatter. Saved to a file and published, the page no longer started with `---`, so `gbrain publish` did not see the frontmatter and put all of it, private values included, into the shared HTML or markdown. Publish now drops that exact warning line when frontmatter opens right after it, then strips the frontmatter as usual. Frontmatter that opens after the warning line and never closes (a `---` line that starts at the beginning of the line) is refused with `invalid_frontmatter`, the same as any other unclosed frontmatter.
+
+**`gbrain publish` refuses a page whose frontmatter sits below other text instead of putting the frontmatter into the shared file.**
+
+<!-- behavior-change: publish_refuse_wrapped_frontmatter -->
+
+### Fixed
+- `gbrain publish` strips frontmatter only when it starts the file. A page saved from a thin client's paged `gbrain get` starts with a quote fence above the frontmatter, and so does a page with any other line above it. In both cases publish did not see the frontmatter and put all of it, private values included, into the shared HTML or markdown. Publish now refuses with `invalid_frontmatter` when a frontmatter block starts in the first five non-blank lines without starting the file. A block starts with an unindented `---yaml`, `---yml` or `---json` line, with an unindented `---` line followed directly by a `key:` line or a `{` mapping (closed or not), or with a pair of unindented `---` lines that has a `key:` line between them. A page with an early horizontal rule still publishes when no `Word:` line follows the rule. A rule followed by a line such as `Note: …` is refused, so reword that line or move the rule. Save the page with plain `gbrain get <slug>` or delete the lines above the frontmatter, then publish again.
+- The quote fence label for an outside guest note now escapes its saved date the way the `[outside guest · …]` warning line does, so a stored date can no longer add brackets, quotes or line breaks to the label.
+
+**A brain checkout whose unpushed commits hold many secret-looking values publishes again instead of holding the push lock for minutes and stopping past its budget.**
+
+### Fixed
+- Planning the redaction of unpushed commits searched every known value across the rest of each file, once per hit, so a file with many distinct values took time that grew with hits × values × file size: 1,000 values in a 2 MB file took about 40 seconds, and larger ranges ran for many minutes at full CPU while holding the push lock. It now walks each file once, with the same result.
+- `--scan-timeout` (default 300 s) now bounds the whole publish: the secret scan, the redaction, the scan of the rebuilt commits and the redaction's wait for the commit lock share it, instead of each getting a fresh budget. A publish holds the push lock for at most that long plus one fetch or push already under way.
+- The background retry after a managed checkout's publish runs past its budget now gets 2 times the budget (`--scan-timeout 600`, at most 10 minutes holding the push lock) instead of 4 times.
+- A redaction whose budget runs out just after the branch moves now still records the move, so the next maintenance run reconciles it, instead of reporting that nothing was rewritten.
+
+**A remote caller with a reveal grant now gets a secret's original only when it can see that secret's marker itself.**
+
+### Fixed
+- `reveal_secret` over MCP used to return an original to any token with a reveal grant that could read some page where the marker was once recorded. Now each recorded place counts only when the caller's own read shows the marker: `get_page` for a page's text, and `takes_list`, `get_timeline`, `recall`, `get_raw_data` or `get_links` for a row, each only when the token may call that operation. Owner-only rows, stripped takes and private-facts fences, takes held by someone the caller can't read, removed markers, edited or deleted rows and places recorded only from a git commit no longer count, and the reply lists only the places that counted. The refusal is still `secret_reveal_forbidden`.
+- The brain owner and the local `gbrain secrets reveal` command are unchanged.
+
 ## [0.60.762.0] - 2026-11-22
 
 **Apple Contacts can now fill themselves in from your brain, adding only and off until you switch it on.**
