@@ -12,7 +12,7 @@
  */
 import type {
   HeldFenceTakeRow, HeldFenceTakeSpec, HorizonBasis, HorizonScanRow, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakeGrade, TakeGradeFilter,
-  TakeGradeKey, TakeGradeRow, TakeHorizonRow, TakeNudgeInput, TakePreimage, TakesLeavingFence,
+  TakeGradeKey, TakeGradeRow, TakeHorizonRow, TakeNudgeFilter, TakeNudgeInput, TakeNudgeRow, TakePreimage, TakesLeavingFence,
 } from '../../engine-sql/takes-reads.ts';
 import { storedTrustTier } from '../../trust/tier.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
@@ -225,4 +225,16 @@ export const insertTakeNudge: StoreMember<[n: TakeNudgeInput], number> = async (
   if (n.waveVersion !== undefined) input.waveVersion = n.waveVersion;
   if (n.firedAt !== undefined) input.firedAt = n.firedAt;
   return Number(await storeCall({ member: 'insertTakeNudge' }, () => brain.insertTakeNudge(input)));
+};
+
+export const listTakeNudges: StoreMember<[f: TakeNudgeFilter], TakeNudgeRow[]> = async (brain, f) => {
+  ints('listTakeNudges', [f.takeId, f.proposalId].filter((v): v is number => v !== null && v !== undefined));
+  const rows = await storeCall({ member: 'listTakeNudges' }, () => brain.listTakeNudges({
+    sourceId: f.sourceId, takeId: f.takeId ?? null, proposalId: f.proposalId ?? null, nudgePattern: f.nudgePattern ?? null, waveVersion: f.waveVersion ?? null,
+  })) as TakeNudgeRow[];
+  return rows.map(r => ({
+    id: Number(r.id), source_id: r.source_id, take_id: r.take_id === null ? null : Number(r.take_id),
+    proposal_id: r.proposal_id === null ? null : Number(r.proposal_id), nudge_pattern: r.nudge_pattern,
+    fired_at: new Date(r.fired_at).toISOString(), channel: r.channel, wave_version: r.wave_version,
+  }));
 };

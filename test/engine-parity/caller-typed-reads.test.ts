@@ -440,7 +440,7 @@ async function calibration(engine: BrainEngine, args: string[]) {
 
 describe('engine parity: gbrain calibration --undo-wave', () => {
   parityTest('undo-wave counts a wave on a dry run, then reverts the same resolutions, verdicts, profiles and nudges', {
-    methods: ['putPage', 'addTakesBatch', 'findTakeId', 'resolveTake', 'insertTakeGrade', 'insertCalibrationProfile', 'insertTakeNudge',
+    methods: ['putPage', 'addTakesBatch', 'findTakeId', 'resolveTake', 'insertTakeGrade', 'insertCalibrationProfile', 'insertTakeNudge', 'listTakeNudges',
       'listWaveAppliedTakeIds', 'revertWaveTakeResolutions', 'unapplyWaveTakeGrades', 'purgeCalibrationProfilesByWave', 'purgeTakeNudgesByWave',
       'listTakes', 'listLatestTakeGrades'],
   }, async (engine, backend) => {
@@ -473,6 +473,18 @@ describe('engine parity: gbrain calibration --undo-wave', () => {
     await nudge(2, wave, 'other');
     await nudge(1, old);
     const badNudge = await engine.insertTakeNudge({ sourceId: 'default', nudgePattern: 'stale-take', waveVersion: wave }).then(() => 'ok', (e: Error) => e.message);
+    // listTakeNudges, insertTakeNudge's confirming read: a source's rows by id, narrowed by target, pattern and wave; the take
+    // ids are shown as the row of the take, since each engine numbers its takes itself.
+    const listed = async (f: Parameters<typeof engine.listTakeNudges>[0]) => (await engine.listTakeNudges(f)).map(n =>
+      [n.id > 0, n.source_id, ids.indexOf(n.take_id ?? -1) + 1, n.proposal_id, n.nudge_pattern, n.channel, n.wave_version, !Number.isNaN(Date.parse(n.fired_at))]);
+    const listedNudges = {
+      source: await listed({ sourceId: 'default' }),
+      byTake: await listed({ sourceId: 'default', takeId: ids[0]! }),
+      byWave: await listed({ sourceId: 'default', waveVersion: wave }),
+      byPattern: await listed({ sourceId: 'other', nudgePattern: 'stale-take' }),
+      none: await listed({ sourceId: 'default', nudgePattern: 'held' }),
+      noSource: await listed({ sourceId: 'missing' }),
+    };
     const undo = async (...args: string[]) => {
       const run = await calibration(engine, ['--undo-wave', ...args]);
       return { ...run, stdout: args.includes('--json') ? JSON.parse(run.stdout) : run.stdout };
@@ -483,6 +495,7 @@ describe('engine parity: gbrain calibration --undo-wave', () => {
     });
     const got = {
       badNudge,
+      listedNudges,
       dryRun: await undo(wave, '--dry-run', '--json'),
       afterDryRun: await state(),
       real: await undo(wave),
@@ -501,6 +514,14 @@ describe('engine parity: gbrain calibration --undo-wave', () => {
     };
     expect(got).toEqual({
       badNudge: 'new row for relation "take_nudge_log" violates check constraint "take_nudge_log_target_xor"',
+      listedNudges: {
+        source: [[true, 'default', 1, null, 'stale-take', 'stderr', wave, true], [true, 'default', 1, null, 'stale-take', 'stderr', old, true]],
+        byTake: [[true, 'default', 1, null, 'stale-take', 'stderr', wave, true], [true, 'default', 1, null, 'stale-take', 'stderr', old, true]],
+        byWave: [[true, 'default', 1, null, 'stale-take', 'stderr', wave, true]],
+        byPattern: [[true, 'other', 2, null, 'stale-take', 'stderr', wave, true]],
+        none: [],
+        noSource: [],
+      },
       dryRun: { stdout: counts(true, 2, 1, 2, 3), stderr: stderr(true) },
       afterDryRun: before,
       real: { stderr: stderr(false), stdout: 'reverted:\n  2 take resolutions\n  1 calibration profile(s)\n  2 nudge log row(s)\n  3 grade-cache rows marked unapplied\n' },

@@ -2,7 +2,7 @@
 //! take or a take proposal. `gbrain calibration --undo-wave` deletes a wave's rows
 //! (`src/core/calibration/undo-wave.ts`, SQL in `src/core/engine-sql/takes-reads.ts`).
 //!
-//! Members: insertTakeNudge, purgeTakeNudgesByWave.
+//! Members: insertTakeNudge, listTakeNudges, purgeTakeNudgesByWave.
 //!
 //! Key: `A 0x07 <nudge id u64 BE>` -> `NudgeRecord` (JSON). Id counter: `M next_take_nudge_id`, taken
 //! before the row's checks as the `BIGSERIAL` default is. The table's checks, in Postgres's order:
@@ -38,6 +38,21 @@ pub struct TakeNudgeInput {
     pub wave_version: Option<String>,
     #[serde(default)]
     pub fired_at: Option<String>,
+}
+
+/// `listTakeNudges` filter: a source's nudges, narrowed to whichever of the other fields are set.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TakeNudgeFilter {
+    pub source_id: String,
+    #[serde(default)]
+    pub take_id: Option<i64>,
+    #[serde(default)]
+    pub proposal_id: Option<i64>,
+    #[serde(default)]
+    pub nudge_pattern: Option<String>,
+    #[serde(default)]
+    pub wave_version: Option<String>,
 }
 
 /// A wave and whether the call only counts: `purgeTakeNudgesByWave` and `unapplyWaveTakeGrades`.
@@ -153,6 +168,45 @@ impl Store {
         })
     }
 
+    /// `listTakeNudges(filter)`: the source's nudge rows, oldest first (`ORDER BY id`), narrowed to the
+    /// take, proposal, pattern and wave the filter sets. `fired_at` crosses as ISO 8601. It is the
+    /// confirming read of `insertTakeNudge` on the owner socket.
+    pub fn list_take_nudges(&self, f: &TakeNudgeFilter) -> Result<Vec<serde_json::Value>> {
+        const OP: &str = "listTakeNudges";
+        let mut texts = vec![("source_id", f.source_id.as_str())];
+        if let Some(p) = &f.nudge_pattern {
+            texts.push(("nudge_pattern", p));
+        }
+        if let Some(w) = &f.wave_version {
+            texts.push(("wave_version", w));
+        }
+        no_nul(OP, &texts)?;
+        Ok(all_nudges(&*self.read()?)?
+            .into_iter()
+            .filter(|r| {
+                r.source_id == f.source_id
+                    && f.take_id.is_none_or(|t| r.take_id == Some(t))
+                    && f.proposal_id.is_none_or(|p| r.proposal_id == Some(p))
+                    && f.nudge_pattern
+                        .as_ref()
+                        .is_none_or(|p| &r.nudge_pattern == p)
+                    && f.wave_version.as_ref().is_none_or(|w| &r.wave_version == w)
+            })
+            .map(|r| {
+                serde_json::json!({
+                    "id": r.id,
+                    "source_id": r.source_id,
+                    "take_id": r.take_id,
+                    "proposal_id": r.proposal_id,
+                    "nudge_pattern": r.nudge_pattern,
+                    "fired_at": crate::env::iso(r.fired_at_us),
+                    "channel": r.channel,
+                    "wave_version": r.wave_version,
+                })
+            })
+            .collect())
+    }
+
     /// `purgeTakeNudgesByWave(spec)`: the number of the wave's nudge rows; deletes them unless a dry
     /// run.
     pub fn purge_take_nudges_by_wave(&self, spec: &WaveSpec) -> Result<u64> {
@@ -226,6 +280,33 @@ mod tests {
             .insert_take_nudge(&nudge("default", None, Some(1), "w1"))
             .unwrap_err();
         assert!(proposal.message.contains("take_nudge_log_proposal_id_fkey"));
+        let filter = |take: Option<i64>, wave: Option<&str>| TakeNudgeFilter {
+            source_id: "default".into(),
+            take_id: take,
+            proposal_id: None,
+            nudge_pattern: None,
+            wave_version: wave.map(str::to_string),
+        };
+        let ids = |rows: Vec<serde_json::Value>| -> Vec<u64> {
+            rows.iter().map(|r| r["id"].as_u64().unwrap()).collect()
+        };
+        assert_eq!(
+            ids(store.list_take_nudges(&filter(None, None)).unwrap()),
+            vec![a, b, a + 2]
+        );
+        assert_eq!(
+            ids(store.list_take_nudges(&filter(Some(8), None)).unwrap()),
+            vec![b]
+        );
+        assert_eq!(
+            ids(store.list_take_nudges(&filter(None, Some("w2"))).unwrap()),
+            vec![a + 2]
+        );
+        let other = TakeNudgeFilter {
+            source_id: "nope".into(),
+            ..filter(None, None)
+        };
+        assert!(store.list_take_nudges(&other).unwrap().is_empty());
         let spec = |dry_run| WaveSpec {
             wave_version: "w1".into(),
             dry_run,

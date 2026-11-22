@@ -131,7 +131,7 @@ import type { AccessTokenInsert, ActiveAccessTokenRow } from './engine-sql/acces
 import type { ExtractReceiptSlot, ExtractRollupDelta } from './engine-sql/extract-bookkeeping.ts';
 import type { PurgedSlugStoreRows } from './engine-sql/purge-slug-stores.ts';
 import type { ProposeTakesCandidateScope, ProposeTakesPageRow, TakeProposalClaim, TakeProposalInsert, TakeProposalPageKey, TakeProposalRow, TakeProposalTombstone } from './engine-sql/take-proposals.ts';
-import type { HeldFenceTakeRow, HeldFenceTakeSpec, HorizonBasis, HorizonScanRow, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakeGrade, TakeGradeFilter, TakeGradeKey, TakeGradeRow, TakeHorizonRow, TakeNudgeInput, TakePreimage, TakesLeavingFence } from './engine-sql/takes-reads.ts';
+import type { HeldFenceTakeRow, HeldFenceTakeSpec, HorizonBasis, HorizonScanRow, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakeGrade, TakeGradeFilter, TakeGradeKey, TakeGradeRow, TakeHorizonRow, TakeNudgeFilter, TakeNudgeInput, TakeNudgeRow, TakePreimage, TakesLeavingFence } from './engine-sql/takes-reads.ts';
 import type {
   BeliefHistoryRowQuery, CorePageRow, CorePageRowSpec, TrustScanRow, TrustScanRowSpec, UnscannedTrustSpec, ValidTimeIdentityRow,
   ValidTimeIdentitySpec, ValidTimePickSpec, AmendmentsNotAppliedSpec, AmendmentNotAppliedRow, PageVersionEditionRow, CursorEditionRow, PageIdRef, PageKeyRef, PageQuoteTier, PageQuoteTierSpec,
@@ -5509,6 +5509,8 @@ export interface BrainEngine {
   purgeTakeNudgesByWave(spec: { waveVersion: string; dryRun: boolean }): Promise<number>;
   /** Log a fired nudge at a take or a take proposal; its id. */
   insertTakeNudge(n: TakeNudgeInput): Promise<number>;
+  /** A source's take_nudge_log rows, oldest first, narrowed by take, proposal, pattern and wave: what insertTakeNudge's confirming read lists. */
+  listTakeNudges(f: TakeNudgeFilter): Promise<TakeNudgeRow[]>;
   /** The take proposal queue (SQL in engine-sql/take-proposals.ts): pending proposals, newest first (limit clamped to 1..500). */
   listPendingTakeProposals(opts: { sourceId?: string; limit: number }): Promise<TakeProposalRow[]>;
   /** One proposal by id, whatever its status; with `sourceId`, another source's proposal reads as null. */

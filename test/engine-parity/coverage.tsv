@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1437/1444
+# covered: 1438/1445
 # lifecycle: 12/12
 # pages: 60/60
 # search: 7/7
@@ -22,7 +22,7 @@
 # timeline: 20/20
 # ontology: 10/10
 # raw_files: 25/25
-# takes: 59/59
+# takes: 60/60
 # dream: 37/37
 # contradictions: 22/22
 # facts: 15/15
@@ -393,6 +393,7 @@ revertWaveTakeResolutions	takes	yes	1	no	yes	yes	serves
 unapplyWaveTakeGrades	takes	yes	1	no	yes	yes	serves
 purgeTakeNudgesByWave	takes	yes	2	no	yes	yes	serves
 insertTakeNudge	takes	yes	2	no	yes	yes	serves
+listTakeNudges	takes	yes	1	no	yes	yes	serves
 listPendingTakeProposals	takes	yes	8	no	yes	yes	serves
 readTakeProposal	takes	yes	4	no	yes	yes	serves
 claimTakeProposal	takes	yes	3	no	yes	yes	serves

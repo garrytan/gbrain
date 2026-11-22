@@ -3561,6 +3561,17 @@
         ],
         "flagOnScopes": []
       },
+      "listTakeNudges#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listTakes#default": {
         "flagOffLanes": [
           "pool"
@@ -7365,6 +7376,7 @@
         "listSynthesisPageBodies": "none",
         "listTakeHorizons": "none",
         "listTakeIdsLeavingFence": "none",
+        "listTakeNudges": "none",
         "listTakePreimages": "none",
         "listTakeProposalTombstones": "none",
         "listTakeRowsForPage": "none",

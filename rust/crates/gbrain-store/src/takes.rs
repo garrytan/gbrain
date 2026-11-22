@@ -59,7 +59,7 @@ mod reads;
 pub use extract::{FenceRowClaim, IncomingTake, TakesLeavingFence};
 pub use grades::{TakeGradeFilter, TakeGradeInput, TakeGradeKey};
 pub use horizons::TakeHorizonInput;
-pub use nudges::{TakeNudgeInput, WaveSpec};
+pub use nudges::{TakeNudgeFilter, TakeNudgeInput, WaveSpec};
 pub use proposals::{
     ProposeTakesCandidateScope, TakeProposalInput, TakeProposalListSpec, TakeProposalPageKey,
 };

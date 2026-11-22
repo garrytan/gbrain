@@ -6,8 +6,8 @@
 
 use gbrain_store::takes::{
     IncomingTake, LiveTakeAt, McpResolvedInput, PurgeTakesInput, RevertResolutionsSpec,
-    TakeGradeFilter, TakeGradeInput, TakeGradeKey, TakeHorizonInput, TakeNudgeInput,
-    TakesLeavingFence, WaveSpec,
+    TakeGradeFilter, TakeGradeInput, TakeGradeKey, TakeHorizonInput, TakeNudgeFilter,
+    TakeNudgeInput, TakesLeavingFence, WaveSpec,
 };
 use napi::Env;
 use napi::bindgen_prelude::Object;
@@ -335,6 +335,19 @@ impl Brain {
         self.run(env, move |s| {
             let spec: WaveSpec = required(input, "unapplyWaveTakeGrades spec")?;
             s.unapply_wave_take_grades(&spec)
+        })
+    }
+
+    /// `listTakeNudges({ sourceId, takeId?, proposalId?, nudgePattern?, waveVersion? })`: the source's nudge rows, oldest first.
+    #[napi]
+    pub fn list_take_nudges<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let f: TakeNudgeFilter = required(input, "listTakeNudges filter")?;
+            s.list_take_nudges(&f)
         })
     }
 

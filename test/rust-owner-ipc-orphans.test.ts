@@ -196,12 +196,72 @@ describe('a write whose caller stopped waiting while the owner still runs it', (
   });
 });
 
+type Nudge = { sourceId: string; takeId: number; nudgePattern: string; waveVersion: string };
+type NudgeRow = { id: number; source_id: string; take_id: number; nudge_pattern: string; wave_version: string };
+type NudgeClient = { insertTakeNudge(n: Nudge): Promise<number>; listTakeNudges(f: { sourceId: string; takeId?: number; nudgePattern?: string; waveVersion?: string }): Promise<NudgeRow[]> };
+
+/** An owner whose insertTakeNudge ignores its abort and logs the nudge only after `open()`; listTakeNudges answers at once. */
+async function gatedNudgeOwner() {
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-nudges-'));
+  const rows: NudgeRow[] = [];
+  let open!: () => void;
+  const gate = new Promise<void>(resolve => { open = resolve; });
+  const owner = {
+    kind: 'pglite', capabilities: new Set<string>(),
+    insertTakeNudge: async (n: Nudge) => { await gate; rows.push({ id: rows.length + 1, source_id: n.sourceId, take_id: n.takeId, nudge_pattern: n.nudgePattern, wave_version: n.waveVersion }); return rows.length; },
+    listTakeNudges: async (f: { sourceId: string; takeId?: number }) => rows.filter(r => r.source_id === f.sourceId && (f.takeId === undefined || r.take_id === f.takeId)),
+  } as unknown as BrainEngine;
+  const server = await serveOwnerEngine(owner, join(dir, 'owner.sock'), { permits: 4 });
+  if (!server) throw new Error('no socket');
+  cleanups.push(async () => { open(); await server.close(); rmSync(dir, { recursive: true, force: true }); });
+  return { server, rows, open };
+}
+
+describe('a nudge write whose reply was lost, then replayed by a caller that follows the advice', () => {
+  // Value: protects=a take nudge whose insertTakeNudge forward timed out or was cancelled is logged once when the caller reads
+  // the nudges the advice names and replays it only when its row is missing; fails_when=insertTakeNudge has no confirming read
+  // entry, so the owner answers the (unnamed) read at once while the orphaned insert is still running, the caller sees no row,
+  // replays, and the log holds the nudge twice; why_new=insertTakeNudge was one of the four members the port left unclassed;
+  // seam=none; no_claim=how the Rust store orders commits
+  for (const how of ['timeout', 'cancel'] as const) {
+    test(`after a ${how}, the nudge is logged once`, async () => {
+      const owner = await gatedNudgeOwner();
+      const connection = await connectOwner(owner.server.socketPath);
+      const engine = { kind: 'rust', capabilities: new Set<string>() } as unknown as NudgeClient;
+      cleanups.push(installOwnerClient(engine as unknown as BrainEngine, connection));
+      const nudge: Nudge = { sourceId: 'default', takeId: 7, nudgePattern: 'stale-take', waveVersion: 'v9.9.9.0' };
+      const controller = new AbortController();
+      const first = how === 'timeout'
+        ? withReadDeadline(Date.now() + 100, () => engine.insertTakeNudge(nudge)).then(() => null, e => e as OperationError)
+        : withRequestSignal(controller.signal, () => engine.insertTakeNudge(nudge)).then(() => null, e => e as OperationError);
+      await until(() => owner.server.stats().active === 1);
+      if (how === 'cancel') controller.abort();
+      const error = await first;
+      expect(error).toMatchObject({ code: 'owner_unavailable', reason: 'outcome_unknown', retryable: false });
+      // Follow the advice: read the source's nudges for that take, replay only when the pattern and wave are not there. The
+      // gate opens 150 ms later, as the orphaned write finishes; a read the owner does not hold back finds nothing before that.
+      setTimeout(owner.open, 150);
+      const followed = engine.listTakeNudges({ sourceId: nudge.sourceId, takeId: nudge.takeId }).then(async rows => {
+        if (!rows.some(r => r.nudge_pattern === nudge.nudgePattern && r.wave_version === nudge.waveVersion)) await engine.insertTakeNudge(nudge);
+        return rows;
+      });
+      const seen = await followed;
+      await until(() => owner.server.stats().active === 0);
+      expect(owner.rows.map(r => [r.source_id, r.take_id, r.nudge_pattern, r.wave_version])).toEqual([['default', 7, 'stale-take', 'v9.9.9.0']]);
+      expect(seen).toHaveLength(1);
+      expect(error!.suggestion).toContain('run listTakeNudges for that source and the take or proposal the call named (look for that pattern and wave, fired since the call began)');
+      expect(error!.suggestion).toContain('only after the earlier insertTakeNudge call has ended');
+    });
+  }
+});
+
 describe('which members an orphan holds back', () => {
   // Value: protects=the hold follows the confirming read each write names; fails_when=executeRaw (whose read is a
   // SELECT through executeRaw) holds nothing, or a write whose rerun repeats nothing holds anything; why_new=new;
   // seam=none; no_claim=key-level precision (the hold is by member)
   test('the confirming read members, the write itself for executeRaw, and nothing for a no-op rerun', () => {
     expect([...membersWaitingFor('insertFact')]).toEqual(['listFactsByEntity']);
+    expect([...membersWaitingFor('insertTakeNudge')]).toEqual(['listTakeNudges']);
     expect([...membersWaitingFor('executeRaw')]).toEqual(['executeRaw']);
     expect([...membersWaitingFor('importFromContent')]).toEqual(['getPage']);
     expect([...membersWaitingFor('importManagedFiles')]).toEqual(['getPage']);

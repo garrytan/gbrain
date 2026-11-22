@@ -1415,6 +1415,7 @@ export const RUST_ENGINE_MEMBERS = {
   unapplyWaveTakeGrades: 'takes',
   purgeTakeNudgesByWave: 'takes',
   insertTakeNudge: 'takes',
+  listTakeNudges: 'takes',
   // take_proposals: the propose_takes cycle step and `gbrain takes propose` (store A 0x08/0x09, takes/proposals.rs), with the
   // op checkpoint document of its failure ledger and the accept's write requests under one request id.
   listPendingTakeProposals: 'takes',

@@ -480,3 +480,40 @@ export async function insertTakeNudge(tx: Raw, n: TakeNudgeInput): Promise<numbe
     [n.sourceId, n.takeId ?? null, n.proposalId ?? null, n.nudgePattern, n.firedAt ?? null, n.channel ?? null, n.waveVersion ?? null]);
   return Number(row!.id);
 }
+
+/** Which take_nudge_log rows `listTakeNudges` reads: a source's, narrowed by whichever of the other fields are set. */
+export interface TakeNudgeFilter {
+  sourceId: string; takeId?: number | null; proposalId?: number | null; nudgePattern?: string | null; waveVersion?: string | null;
+}
+
+/** A take_nudge_log row as `listTakeNudges` reads it; `fired_at` is an ISO 8601 UTC string. */
+export interface TakeNudgeRow {
+  id: number; source_id: string; take_id: number | null; proposal_id: number | null; nudge_pattern: string;
+  fired_at: string; channel: string; wave_version: string;
+}
+
+/**
+ * The nudges of a source (take_nudge_log), oldest first (by id), narrowed to the take, proposal, pattern and wave
+ * the filter names. It is the confirming read of insertTakeNudge: a nudge that committed is a row with its target,
+ * pattern and wave.
+ */
+export async function listTakeNudges(tx: Raw, f: TakeNudgeFilter): Promise<TakeNudgeRow[]> {
+  const rows = await tx.executeRaw<Omit<TakeNudgeRow, 'id' | 'take_id' | 'proposal_id' | 'fired_at'> & {
+    id: number | string; take_id: number | string | null; proposal_id: number | string | null; fired_at: string | Date;
+  }>(
+    `SELECT id, source_id, take_id, proposal_id, nudge_pattern, fired_at, channel, wave_version
+       FROM take_nudge_log
+      WHERE source_id = $1
+        AND ($2::bigint IS NULL OR take_id = $2)
+        AND ($3::bigint IS NULL OR proposal_id = $3)
+        AND ($4::text IS NULL OR nudge_pattern = $4)
+        AND ($5::text IS NULL OR wave_version = $5)
+      ORDER BY id`,
+    [f.sourceId, f.takeId ?? null, f.proposalId ?? null, f.nudgePattern ?? null, f.waveVersion ?? null],
+  );
+  return rows.map(r => ({
+    id: Number(r.id), source_id: r.source_id, take_id: r.take_id === null ? null : Number(r.take_id),
+    proposal_id: r.proposal_id === null ? null : Number(r.proposal_id), nudge_pattern: r.nudge_pattern,
+    fired_at: new Date(r.fired_at).toISOString(), channel: r.channel, wave_version: r.wave_version,
+  }));
+}
