@@ -305,11 +305,12 @@ export async function runSkillResolverLane(event: string, harness: LaneHarness, 
     if (!ctl.worker) { ctl.turnStart = 0; arm(deadlineMs); return; }
     arm(startMs);
     void laneWorkerReady().then((loaded) => {
-      if (fired) return;
+      if (fired || elapsed() >= startMs) return;
       ctl.turnStart = elapsed();
       if (loaded) ctl.workerMs = ctl.turnStart;
       arm(deadlineMs);
     });
+    if (env.GBRAIN_TEST_SKILL_LANE_STALL === 'start-race') { const end = performance.now() + startMs + 300; while (performance.now() < end) { /* forced main-thread stall past the start bound */ } }
   });
   const work = laneTurn(event, harness, home, env, io, ctl, turnLeft).catch((): Turn => ({ outcome: 'error', code: 'skill_resolver_internal' }));
   const result = await Promise.race([work, deadline]);

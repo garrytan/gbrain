@@ -228,6 +228,17 @@ describe('skill-resolver lane: deadline, measured outside the process', () => {
     expect(last.ms).toBeLessThan(LANE_WORKER_START_MS + 250);
   });
 
+  test('start-race: a ready message handled after the start bound has passed does not restart the turn', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    await setup(b, 'claude-code');
+    const cmd = wired(b, 'claude-code');
+    const r = await hook(b, cmd, { prompt: 'please deploy the widget to staging', session_id: 'sess-race' }, { GBRAIN_TEST_SKILL_LANE_STALL: 'start-race', GBRAIN_TEST_SKILL_LANE_DEADLINE_MS: '10000', GBRAIN_TEST_SKILL_LANE_START_MS: '100' });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe('');
+    expect(sessions(b).some((s) => readFileSync(join(b.home, '.gbrain', 'skill-index', 'sessions', s), 'utf8').includes('deploy-widget'))).toBe(false);
+  });
+
   for (const stall of ['load-error', 'exit'] as const) {
     test(`${stall}: a worker that fails before answering is logged as skill_resolver_internal, not as a timeout`, async () => {
       const b = box();

@@ -16,7 +16,9 @@
  * the thread ends without answering); commit-held and commit-written
  * (hook-lane.ts) stop the main thread's commit once it holds the lease, or
  * once its temp file is written; gc (hook-lane.ts) makes the session GC pass
- * after the logged turn never settle. GBRAIN_TEST_SKILL_LANE_DEADLINE_MS (tests only, hook-lane.ts)
+ * after the logged turn never settle; start-race (hook-lane.ts) holds the
+ * main thread past the start bound so the ready message and the start timer
+ * are both pending. GBRAIN_TEST_SKILL_LANE_DEADLINE_MS (tests only, hook-lane.ts)
  * widens the lane's deadline so a loaded test machine can assert delivery;
  * GBRAIN_TEST_SKILL_LANE_START_MS (tests only, hook-lane.ts) widens the
  * bound on the worker's load.
