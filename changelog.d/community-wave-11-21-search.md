@@ -1,0 +1,6 @@
+**Three community-reported search fixes: the alias hop respects `--types`, keyword-only CJK search degrades instead of erroring on a statement timeout, and get_page's "cannot combine" error shows a call that works.**
+
+### Fixed
+- `search --types company` (or `--type`) no longer injects an aliased page of another type at rank 1. The alias hop now applies the same type gate as the exact-lookup tier, so a page the caller filtered out is never added back. Reported and first fixed by @Masashi-Ono0611 (#9923).
+- Keyword-only CJK search (`search --match keyword`, and `search` with `search.mcp_keyword_only` on) no longer fails with `internal_error: canceling statement due to statement timeout` on a large brain. The CJK read is bounded like hybrid search's CJK arm, and a cut read returns what it has, stamped degraded `keyword_candidates_incomplete`. Reported and first fixed by @Masashi-Ono0611 (#9936).
+- `get_page`'s refusal of `section` with `include_content` or `grep` (and the other slice conflicts) now suggests a full call that works, such as `get_page {"slug": "notes/acme-example-log", "section": "Goals"}` over MCP or `gbrain get notes/acme-example-log --section Goals` on the CLI, instead of a malformed example agents copied straight back into the same error. Reported by @donfan2323, first fixed by @Masashi-Ono0611 (#9808).

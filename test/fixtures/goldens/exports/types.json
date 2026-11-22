@@ -8930,7 +8930,9 @@
           "excludeSlugs?: string[] | undefined",
           "requireSafeChunks?: boolean | undefined",
           "sourceId?: string | undefined",
-          "sourceIds?: string[] | undefined"
+          "sourceIds?: string[] | undefined",
+          "type?: string | undefined",
+          "types?: string[] | undefined"
         ],
         "name": "IdentityTierOpts"
       },
