@@ -229,13 +229,20 @@ impl Brain {
         })
     }
 
-    /// `readProjectionReadinessGeneration`: the generation the probe's cached answer depends on.
+    /// `readProjectionReadinessGeneration`: the generation the probe's cached answer depends on, or null
+    /// inside a transaction.
     #[napi]
     pub fn read_projection_readiness_generation<'env>(
         &self,
         env: &'env Env,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.projection_readiness_generation())
+    }
+
+    /// `readHealthMemoClock`: the brain and its commit sequence.
+    #[napi]
+    pub fn read_health_memo_clock<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.health_memo_clock())
     }
 
     /// `readProjectionReadiness`: a coverage scope: `{ pending, by_design }`.
