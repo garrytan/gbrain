@@ -80,7 +80,7 @@ deleted is itself owner-only lineage (strict form), it marks that page and each 
 good, even when the source is later flipped off. The marks live under `M owner_only_mark/<table>/<row id>`; a page delete
 also marks the page's takes and timeline rows and every row derived from them through `derivation_inputs`. Removing
 only the provenance link, or turning the owner-only flag off with nothing deleted, records no mark, as in SQL. A page
-whose recorded inputs reach an owner-only row, transitively, is hidden too ([derivation-inputs.md](derivation-inputs.md)). The
+whose recorded inputs reach an owner-only row, transitively, is hidden too ([facts.md, "Derivation inputs"](facts.md#derivation-inputs-generationsderivation_inputsrs)). The
 engine serves no source delete yet, so a page is deleted by `deletePage`, `deletePages` or `purgeDeletedPages` here.
 
 The safe-chunks rule keeps a page only when its recorded `chunker_version` is at least the safe fence chunker (4), as

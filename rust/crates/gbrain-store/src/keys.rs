@@ -118,10 +118,6 @@ pub const ACCESS_RULES: u8 = b'z';
 /// `reason_purge_tombstones`, `1 source \0 commit \0 path`. Every letter is taken, so this family
 /// uses a digit; `y` is `SESSION_STATE`.
 pub const REASON_TOMBSTONE: u8 = b'1';
-/// Family `derivation_inputs` (`derivation_inputs.rs`): the edges `0x01 derived_table \0 derived_id \0 input_table \0
-/// input_id` and their reverse index `0x02 input_table \0 input_id \0 derived_table \0 derived_id`. A digit: every
-/// letter is taken, and `2` stays clear for the dropped `embedding_holds` family.
-pub const DERIVATION_INPUT: u8 = b'3';
 // Tag `2` is free. It held the `embedding_holds` family (a page's hold state and reason), dropped
 // at the main join: a page's embedding hold now lives only in its `page_embedding_budget` ledger
 // record (`page_embedding_budget.rs`). No store holds a record under it, so a new family may take it.

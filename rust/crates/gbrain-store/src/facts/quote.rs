@@ -51,19 +51,15 @@ fn page_of_type(read: &dyn KvRead, source_id: &str, slug: &str, types: &[String]
 /// Whether one of fact `id`'s recorded input pages has a type in `types` (an input id that is not a page id matches
 /// nothing, as the SQL's `CASE WHEN input_id ~ '^[0-9]{1,18}$'` gives NULL).
 fn derived_from_quoted_page(read: &dyn KvRead, id: u64, types: &[String]) -> Result<bool> {
-    let fact = crate::derivation_inputs::EdgeRef {
-        table: "facts".into(),
-        id: id.to_string(),
-    };
-    for input in crate::derivation_inputs::inputs_of(read, &fact)? {
-        if input.table != "pages"
-            || input.id.is_empty()
-            || input.id.len() > 18
-            || !input.id.bytes().all(|b| b.is_ascii_digit())
+    for (table, input_id) in crate::generations::inputs_of(read, "facts", &id.to_string())? {
+        if table != "pages"
+            || input_id.is_empty()
+            || input_id.len() > 18
+            || !input_id.bytes().all(|b| b.is_ascii_digit())
         {
             continue;
         }
-        if let Ok(page_id) = input.id.parse::<u64>()
+        if let Ok(page_id) = input_id.parse::<u64>()
             && read_page_by_id(read, page_id)?.is_some_and(|p| types.contains(&p.page_type))
         {
             return Ok(true);

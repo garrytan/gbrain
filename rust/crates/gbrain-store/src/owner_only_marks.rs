@@ -18,7 +18,7 @@
 //! source is still owner-only then, so each page goes through `mark_before_delete`.
 
 use crate::Result;
-use crate::derivation_inputs::{EdgeRef, derived_closure};
+use crate::generations::derived_closure;
 use crate::keys;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::in_links;
@@ -94,21 +94,12 @@ pub(crate) fn mark_before_delete(tx: &mut dyn KvWrite, page: &PageRecord) -> Res
         return Ok(());
     }
     // `seed`: the page, its takes and its timeline rows; `down`: what the edges derive from them; `concepts`.
-    let mut seed = vec![EdgeRef {
-        table: "pages".into(),
-        id: page.id.to_string(),
-    }];
+    let mut seed = vec![("pages".to_string(), page.id.to_string())];
     for take in crate::takes::page_takes(&*tx, page.id)? {
-        seed.push(EdgeRef {
-            table: "takes".into(),
-            id: take.id.to_string(),
-        });
+        seed.push(("takes".to_string(), take.id.to_string()));
     }
     for entry in timeline_rows(&*tx, Some(page.id))? {
-        seed.push(EdgeRef {
-            table: "timeline_entries".into(),
-            id: entry.id.to_string(),
-        });
+        seed.push(("timeline_entries".to_string(), entry.id.to_string()));
     }
     let mut doomed = seed.clone();
     doomed.extend(derived_closure(&*tx, &seed)?);
@@ -118,14 +109,11 @@ pub(crate) fn mark_before_delete(tx: &mut dyn KvWrite, page: &PageRecord) -> Res
             && let Some(from) = read_page_by_id(&*tx, link.from_page_id)?
             && matches!(from.page_type.as_str(), "concept" | "question")
         {
-            doomed.push(EdgeRef {
-                table: "pages".into(),
-                id: from.id.to_string(),
-            });
+            doomed.push(("pages".to_string(), from.id.to_string()));
         }
     }
-    for row in doomed {
-        tx.put(&mark_key(&row.table, &row.id), b"1")?;
+    for (table, id) in doomed {
+        tx.put(&mark_key(&table, &id), b"1")?;
     }
     Ok(())
 }
@@ -246,12 +234,12 @@ mod tests {
                 .to_string()
         };
         let edge = |derived: String, input: String| {
-            let spec: crate::derivation_inputs::DerivationEdges = serde_json::from_value(json!({
+            let args: crate::generations::DerivationInputsArgs = serde_json::from_value(json!({
                 "derived": { "table": "pages", "id": derived }, "sourceId": "default",
-                "edges": [{ "table": "pages", "id": input }],
+                "inputs": [{ "table": "pages", "id": input }],
             }))
             .unwrap();
-            store.record_derivation_edges(&spec).unwrap();
+            store.record_derivation_inputs(&args).unwrap();
         };
         edge(id("default", "atoms/one"), id("vault", "notes/vault"));
         edge(id("default", "notes/summary"), id("default", "atoms/one"));

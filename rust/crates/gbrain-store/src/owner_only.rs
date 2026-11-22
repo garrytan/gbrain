@@ -31,9 +31,9 @@ use serde_json::{Map, Value};
 use std::collections::HashSet;
 
 use crate::Result;
-use crate::derivation_inputs::{EdgeRef, lineage_inputs};
 use crate::facts::concept_inputs;
 use crate::facts::read_fact;
+use crate::generations::lineage_reaches;
 use crate::kv::KvRead;
 use crate::owner_only_marks::{any_marked, is_marked, is_row_marked, timeline_rows};
 use crate::pages::{PageRecord, read_page_by_id};
@@ -147,36 +147,24 @@ impl OwnerOnlySources {
     /// recorded inputs of `(table, id)` reach, transitively, is marked, or (an id of digits) is a page,
     /// fact, take or timeline row held in an owner-only source.
     fn derived_from_owner_only(&self, read: &dyn KvRead, table: &str, id: &str) -> Result<bool> {
-        let start = EdgeRef {
-            table: table.into(),
-            id: id.into(),
-        };
-        for input in lineage_inputs(read, &start)? {
-            if is_row_marked(read, &input.table, &input.id)?
-                || self.input_owner_only(read, &input)?
-            {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        lineage_reaches(read, table, id, &mut |t, row_id| {
+            Ok(is_row_marked(read, t, row_id)? || self.input_owner_only(read, t, row_id)?)
+        })
     }
 
     /// An input row held in an owner-only source (`up.id ~ '^[0-9]{1,18}$'` and the row's own or its
     /// page's source).
-    fn input_owner_only(&self, read: &dyn KvRead, input: &EdgeRef) -> Result<bool> {
-        if input.id.is_empty()
-            || input.id.len() > 18
-            || !input.id.bytes().all(|b| b.is_ascii_digit())
-        {
+    fn input_owner_only(&self, read: &dyn KvRead, table: &str, row_id: &str) -> Result<bool> {
+        if row_id.is_empty() || row_id.len() > 18 || !row_id.bytes().all(|b| b.is_ascii_digit()) {
             return Ok(false);
         }
-        let Ok(id) = input.id.parse::<u64>() else {
+        let Ok(id) = row_id.parse::<u64>() else {
             return Ok(false);
         };
         let page_held = |page_id: u64| -> Result<bool> {
             Ok(read_page_by_id(read, page_id)?.is_some_and(|p| self.holds(&p.source_id)))
         };
-        match input.table.as_str() {
+        match table {
             "pages" => page_held(id),
             "facts" => Ok(read_fact(read, id)?.is_some_and(|f| self.holds(&f.source_id))),
             "takes" => match read_take(read, id)? {

@@ -115,7 +115,7 @@ getPage	pages	yes	155	yes	yes	yes	serves
 readPageSnapshot	pages	yes	46	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	2	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	874	yes	yes	yes	serves
+putPage	pages	yes	873	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	31	yes	yes	yes	serves
@@ -1345,7 +1345,7 @@ lockAgentWritebackSetting	facts_trust	yes	1	no	yes	yes	refuses:facts
 listFactsToRetireFromPage	facts_trust	yes	1	no	yes	yes	refuses:facts
 listContestedProposalPairs	facts_trust	yes	1	no	yes	yes	refuses:facts
 listFactProvenance	facts_trust	yes	3	no	yes	yes	serves
-recordDerivationEdges	facts_trust	yes	6	no	yes	yes	serves
+recordDerivationEdges	facts_trust	yes	7	no	yes	yes	serves
 expireDerivedFacts	facts_trust	yes	1	no	yes	yes	refuses:facts
 deactivateDerivedTakes	facts_trust	yes	1	no	yes	yes	refuses:facts
 softDeleteDerivedPages	facts_trust	yes	1	no	yes	yes	refuses:facts
