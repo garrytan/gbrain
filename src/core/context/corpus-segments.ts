@@ -802,8 +802,8 @@ export interface CorpusBacklog {
   held: number;
 }
 
-/** Count corpus turn files still waiting for extraction. Missing dir = empty backlog; never throws. */
-export function corpusBacklog(dir: string, retentionMs: number, now = Date.now()): CorpusBacklog {
+/** Count corpus turn files still waiting for extraction (minus `exclude`, files a sweep cannot extract). Missing dir = empty backlog; never throws. */
+export function corpusBacklog(dir: string, retentionMs: number, now = Date.now(), exclude?: ReadonlySet<string>): CorpusBacklog {
   const backlog: CorpusBacklog = { pending: 0, oldestPendingMtimeMs: null, pastRetention: 0, held: 0 };
   let names: string[];
   try {
@@ -813,7 +813,7 @@ export function corpusBacklog(dir: string, retentionMs: number, now = Date.now()
   }
   const present = new Set(names);
   for (const name of names) {
-    if (!name.endsWith('.txt')) continue;
+    if (!name.endsWith('.txt') || exclude?.has(name)) continue;
     if (present.has(name + INGESTED_SUFFIX) && !corpusFileAwaitsExtraction(join(dir, name), name)) continue;
     let mtimeMs: number;
     try {
