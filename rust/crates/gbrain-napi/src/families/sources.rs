@@ -68,6 +68,18 @@ impl Brain {
         })
     }
 
+    /// `advanceSyncCheckpoint(input)`: `{ advanced, pinnedSlugMode }`.
+    #[napi]
+    pub fn advance_sync_checkpoint<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.advance_sync_checkpoint(&required(input, "advanceSyncCheckpoint input")?)
+        })
+    }
+
     /// `setSourceArchived(id, archived)`: whether the source exists.
     #[napi]
     pub fn set_source_archived<'env>(

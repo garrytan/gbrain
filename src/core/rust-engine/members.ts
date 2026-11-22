@@ -224,6 +224,7 @@ export const RUST_ENGINE_MEMBERS = {
   listAllSources: 'sources',
   updateSourceConfig: 'sources',
   markSourceSynced: 'sources',
+  advanceSyncCheckpoint: 'sources',
   readSourceState: 'sources',
   readAdmissionSource: 'sources',
   attachSourcePath: 'sources',

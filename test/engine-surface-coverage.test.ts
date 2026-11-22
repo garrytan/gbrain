@@ -124,6 +124,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'countRepoBoundSources', 'listNotifierHostSourceRows', 'advanceSourceCommit', 'listSourcePathPages', 'listQuarantinedSlugs', 'readRenameIdentityRows', 'readLiveIdentityHolders', 'readPageSizeRows', 'holdPageEmbedding', 'readReasonPurgeTombstones', 'writeReasonPurgeTombstones',
   'readSoleSourceId', 'readFirstSourceId', 'lockAllSourceRows', 'listSourceIds', 'advanceSourcePurgeEpoch', 'readPageIdentity',
   'writeSourceSyncHeartbeat', 'writeSourceUpstreamObservation',
+  'advanceSyncCheckpoint',
   // Hybrid search reads (engine-sql/search-reads.ts) and the onboarding signal count (engine-sql/health.ts)
   'cosinesByChunkIds', 'hasSupersedeEdges', 'supersedingPageSlugs', 'aliasCanonicalRefs', 'pageCollapseFacts', 'slugsEndingIn',
   'generatedPagesIn', 'livePageIdsAt', 'pagesLinkingTo', 'countOnboardSignal', 'countBrainLivePages', 'countLivePagesBySource', 'countChunksBySource', 'readBrainMaturity',

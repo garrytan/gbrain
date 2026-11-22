@@ -153,7 +153,7 @@ import type {
 import type {
   DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PlainSyncSourceRow, RenameIdentityRow, SourceCheckRow, SourceInsert, PageSizeRow,
   ReasonPurgeTombstone, SourcePathPageRow, SourceRoutingRow, SourceSyncStampOptions, SourceDeleteImpact, SourceDeleteResult,
-  SourceIncarnationListRow as SourcesIncarnationRow, SourceUpstreamObservation, PageIdentityRow,
+  SourceIncarnationListRow as SourcesIncarnationRow, SourceUpstreamObservation, PageIdentityRow, SyncCheckpointAdvance,
 } from './engine-sql/sources.ts';
 import type {
   Coverage as NotifierCoverage, MarkerIntent, NotifierHostSourceRow, NotifierLeaseClaim, NotifierLeaseClaimInput, NotifierLeaseHolder,
@@ -1678,6 +1678,8 @@ export interface BrainEngine {
   readSourceLastCommit(sourceId: string): Promise<string | null>;
   /** Sets the source's last sync time to now; false for an unknown source, which changes nothing (engine-sql/sources.ts). */
   markSourceSynced(sourceId: string, opts?: SourceSyncStampOptions): Promise<boolean>;
+  /** The managed sync checkpoint (persistence/sync-prepare.ts): an incarnation- and from-guarded anchor advance (engine-sql/sources.ts). */
+  advanceSyncCheckpoint(input: SyncCheckpointAdvance): Promise<{ advanced: boolean; pinnedSlugMode: string | null }>;
   /** Pages of one source, soft-deleted pages only with `includeDeleted`; an unknown source has none (engine-sql/sources.ts). */
   countSourcePages(sourceId: string, opts?: { includeDeleted?: boolean }): Promise<number>;
   /** Inserts one source row (id, name, local_path, config); a taken id or name throws and writes nothing. */

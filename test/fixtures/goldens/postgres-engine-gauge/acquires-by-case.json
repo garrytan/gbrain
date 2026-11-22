@@ -30,6 +30,9 @@
     "advanceSourceCommit#newest": {
       "raw": 1
     },
+    "advanceSyncCheckpoint#default": {
+      "raw": 1
+    },
     "batchLoadEmotionalInputs#default": {},
     "batchLoadEmotionalInputs#slugs": {},
     "clearCodeTraversalCache#allSources": {

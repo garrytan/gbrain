@@ -231,6 +231,47 @@ export async function markSourceSynced(exec: SqlExecutor, sourceId: string, opts
   return rows.length > 0;
 }
 
+/** `advanceSyncCheckpoint` input: the managed sync checkpoint of src/core/persistence/sync-prepare.ts. */
+export interface SyncCheckpointAdvance {
+  sourceId: string;
+  /** The source incarnation the run started under; another incarnation changes nothing. */
+  incarnation: string;
+  /** The commit the checkpoint moves to (`last_commit`). */
+  commit: string;
+  /** The `last_commit` the run started from (null before the first sync). */
+  from: string | null;
+  /** Also accept a checkpoint already at `commit` (an overtaken run, and every pass stamp). */
+  acceptAtCommit: boolean;
+  /** The slug mode the run used; written to `config.slug_root_mode`. */
+  slugMode: string;
+  /** An empty scope: both modes give the same slugs, so a pinned mode stays and never refuses. */
+  keepPinnedSlugMode: boolean;
+}
+
+/**
+ * The managed sync checkpoint: when the source is still `incarnation` and its `last_commit` is still `from` (or already
+ * `commit` with `acceptAtCommit`), and its pinned slug mode allows the run, sets `last_commit`, `last_sync_at` (the
+ * database clock), `newest_content_at` (the newest `updated_at` of the source's live pages, or null) and
+ * `config.slug_root_mode`. A refused checkpoint changes nothing; `pinnedSlugMode` then names a pinned mode that
+ * differs from the run's (not read when the run keeps the pinned mode), else null.
+ */
+export async function advanceSyncCheckpoint(exec: SqlExecutor, input: SyncCheckpointAdvance): Promise<{ advanced: boolean; pinnedSlugMode: string | null }> {
+  const { rows: changed } = await exec.run<{ id: string }>(sqlFragment`
+    UPDATE sources SET last_commit = ${input.commit}, last_sync_at = now(),
+      config = jsonb_set(${trustedSql(SOURCE_CONFIG_OBJECT_SQL)}, '{slug_root_mode}',
+        to_jsonb(CASE WHEN ${input.keepPinnedSlugMode}::boolean THEN COALESCE(config->>'slug_root_mode', ${input.slugMode}::text) ELSE ${input.slugMode}::text END)),
+      newest_content_at = (SELECT MAX(updated_at) FROM pages WHERE source_id = ${input.sourceId} AND deleted_at IS NULL)
+    WHERE id = ${input.sourceId} AND incarnation = ${input.incarnation}::uuid
+      AND (last_commit IS NOT DISTINCT FROM ${input.from}::text OR (${input.acceptAtCommit}::boolean AND last_commit = ${input.commit}))
+      AND (${input.keepPinnedSlugMode}::boolean OR config->>'slug_root_mode' IS NULL OR config->>'slug_root_mode' = ${input.slugMode})
+    RETURNING id`);
+  if (changed.length > 0) return { advanced: true, pinnedSlugMode: null };
+  if (input.keepPinnedSlugMode) return { advanced: false, pinnedSlugMode: null };
+  const [row] = await exec.executeRaw<{ mode: string | null }>(
+    "SELECT config->>'slug_root_mode' AS mode FROM sources WHERE id = $1 AND incarnation = $2::uuid", [input.sourceId, input.incarnation]);
+  return { advanced: false, pinnedSlugMode: row?.mode != null && row.mode !== input.slugMode ? row.mode : null };
+}
+
 /**
  * Ids of live sources whose last sync is more than seven days old by the database clock (`now()`), by id: the
  * advisor's stale-sync read. Unscoped on master. Throws on a schema without `last_sync_at` or `archived`.

@@ -60,7 +60,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
     // the batch 7 stale-atoms read (engine-sql/stale-atom-reads.ts)
     'listStaleAtoms',
     'listLivePagesSharingFrontmatterId', 'hasSegmentedHistory', 'readLivePagesByIds',
-    'listSourceIds', 'readSoleSourceId', 'readFirstSourceId', 'lockAllSourceRows', 'readPageIdentity', 'writeSourceSyncHeartbeat', 'writeSourceUpstreamObservation', 'advanceSourcePurgeEpoch', 'pageTypeTotals', 'pagePrefixSamples', 'countPagesByTypeForSource'],
+    'listSourceIds', 'readSoleSourceId', 'readFirstSourceId', 'lockAllSourceRows', 'readPageIdentity', 'writeSourceSyncHeartbeat', 'writeSourceUpstreamObservation', 'advanceSourcePurgeEpoch', 'pageTypeTotals', 'pagePrefixSamples', 'countPagesByTypeForSource',
+    'advanceSyncCheckpoint'],
   search: ['searchKeyword', 'countKeywordPages', 'searchKeywordPages', 'searchTitles', 'searchVector', 'getEmbeddingsByChunkIds',
     'searchKeywordChunks'],
   search_reads: ['cosinesByChunkIds', 'hasSupersedeEdges', 'supersedingPageSlugs', 'aliasCanonicalRefs', 'pageCollapseFacts',

@@ -126,6 +126,49 @@ impl From<SourceRecord> for SourceDetailRow {
     }
 }
 
+/// `advanceSyncCheckpoint(input)`: the managed sync checkpoint (`SyncCheckpointAdvance` in
+/// `src/core/engine-sql/sources.ts`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SyncCheckpointAdvance {
+    pub source_id: String,
+    pub incarnation: String,
+    pub commit: String,
+    pub from: Option<String>,
+    pub accept_at_commit: bool,
+    pub slug_mode: String,
+    pub keep_pinned_slug_mode: bool,
+}
+
+/// `config->>'key'`: the text of the value, a string without its quotes, SQL NULL for a JSON
+/// null or a missing key.
+fn config_text(config: &Map<String, Value>, key: &str) -> Option<String> {
+    match config.get(key)? {
+        Value::Null => None,
+        Value::String(text) => Some(text.clone()),
+        other => Some(crate::cli_reads::pg_text::jsonb_text(other)),
+    }
+}
+
+/// `(SELECT MAX(updated_at) FROM pages WHERE source_id = $1 AND deleted_at IS NULL)`.
+fn newest_live_page_us(read: &dyn KvRead, source_id: &str) -> Result<Option<i64>> {
+    let mut prefix = keys::text(keys::PAGE, &[source_id]);
+    prefix.push(0);
+    let mut newest: Option<i64> = None;
+    let mut failure = None;
+    scan_prefix(read, &prefix, false, &mut |_, v| {
+        match serde_json::from_slice::<crate::pages::PageRecord>(v) {
+            Ok(page) if page.source_id == source_id && page.deleted_at_us.is_none() => {
+                newest = Some(newest.map_or(page.updated_at_us, |n| n.max(page.updated_at_us)));
+            }
+            Ok(_) => {}
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    failure.map_or(Ok(newest), Err)
+}
+
 /// `markSourceSynced` options: `incarnation` stamps only a source still of that incarnation;
 /// `newest_content_at` (timestamptz text) also sets the newest content time, and null or absent
 /// keeps it (`COALESCE($n::timestamptz, newest_content_at)`).
@@ -417,6 +460,61 @@ impl Store {
             record.upstream_commit = Some(commit.to_owned());
             record.upstream_behind = behind;
             put_json(tx, &source_key(source_id), &record)
+        })
+    }
+
+    /// `advanceSyncCheckpoint(input)`: when the source is still `incarnation`, its `last_commit` is
+    /// still `from` (or already `commit` with `accept_at_commit`) and its pinned slug mode allows the
+    /// run, sets `last_commit`, `last_sync_at` (the store clock), `newest_content_at` (the newest
+    /// `updated_at` of its live pages, or none) and `config.slug_root_mode`, in one write. A refused
+    /// checkpoint writes nothing and names a pinned mode that differs from the run's (unless the run
+    /// keeps the pinned mode). Mirrors `advanceSyncCheckpoint` in `engine-sql/sources.ts`.
+    pub fn advance_sync_checkpoint(&self, input: &SyncCheckpointAdvance) -> Result<Value> {
+        if !crate::env::is_uuid(&input.incarnation) {
+            return Err(StoreError::invalid(format!(
+                "invalid input syntax for type uuid: \"{}\"",
+                input.incarnation
+            )));
+        }
+        let want = input.incarnation.to_lowercase();
+        self.write(|tx| {
+            let refused = |pinned: Option<String>| {
+                Ok(serde_json::json!({ "advanced": false, "pinnedSlugMode": pinned }))
+            };
+            let Some(mut record) = read_source(&*tx, &input.source_id)? else {
+                return refused(None);
+            };
+            if record.incarnation.to_lowercase() != want {
+                return refused(None);
+            }
+            let pinned = config_text(&record.config, "slug_root_mode");
+            let at_from = record.last_commit == input.from;
+            let at_commit = input.accept_at_commit
+                && record.last_commit.as_deref() == Some(input.commit.as_str());
+            let mode_ok = input.keep_pinned_slug_mode
+                || pinned.is_none()
+                || pinned.as_deref() == Some(input.slug_mode.as_str());
+            if !(at_from || at_commit) || !mode_ok {
+                let mismatch = if input.keep_pinned_slug_mode {
+                    None
+                } else {
+                    pinned.filter(|mode| *mode != input.slug_mode)
+                };
+                return refused(mismatch);
+            }
+            let mode = if input.keep_pinned_slug_mode {
+                pinned.unwrap_or_else(|| input.slug_mode.clone())
+            } else {
+                input.slug_mode.clone()
+            };
+            record
+                .config
+                .insert("slug_root_mode".into(), Value::String(mode));
+            record.last_commit = Some(input.commit.clone());
+            record.last_sync_at_us = Some(self.env.now_micros());
+            record.newest_content_at_us = newest_live_page_us(&*tx, &input.source_id)?;
+            put_json(tx, &source_key(&input.source_id), &record)?;
+            Ok(serde_json::json!({ "advanced": true, "pinnedSlugMode": null }))
         })
     }
 
