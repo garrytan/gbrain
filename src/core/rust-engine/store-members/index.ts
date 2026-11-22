@@ -91,6 +91,7 @@ import * as linkTemporal from './link-temporal.ts';
 import * as aliasFanoutReads from './alias-fanout-reads.ts';
 import * as entityIdentities from './entity-identities.ts';
 import * as writeGuards from './write-guards.ts';
+import * as ownerOnlyMarks from './owner-only-marks.ts';
 import * as pageVisibility from './page-visibility.ts';
 import * as largePage from './large-page.ts';
 import * as trustFence from './trust-fence.ts';
@@ -192,6 +193,8 @@ export const STORE_MEMBERS = {
   ...writeGuards, ...trustFence, ...trustProposals,
   // The page visibility guards a remote page write runs (rust/docs/store/page-visibility.md).
   ...pageVisibility,
+  // The owner-only mark state; the store marks in code and has no SQL triggers (rust/docs/store/keyword.md).
+  ...ownerOnlyMarks,
   // The large-page write guard's stored body size read (rust/docs/store/large-page.md).
   ...largePage,
   // The connect gate's persistence reads, answered from the unmanaged brain the store keeps (rust/docs/store/journal.md).
