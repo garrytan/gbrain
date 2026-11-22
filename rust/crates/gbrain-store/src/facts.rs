@@ -2532,6 +2532,13 @@ mod tests {
     use std::collections::BTreeMap;
 
     #[test]
+    fn lower_and_the_space_class_match_pglite_on_every_code_point() {
+        use crate::fingerprint_fixture::{lower_mismatches, space_mismatches};
+        assert_eq!(lower_mismatches(pg_lower_char), Vec::<String>::new());
+        assert_eq!(space_mismatches(pg_space), Vec::<String>::new());
+    }
+
+    #[test]
     fn a_day_text_is_utc_midnight_and_an_iso_time_is_kept() {
         let day = day_or_time("expireFactUntil", "until", "2026-06-01").unwrap();
         assert_eq!(Some(day), parse_iso("2026-06-01T00:00:00Z"));

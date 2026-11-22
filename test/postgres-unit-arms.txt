@@ -191,6 +191,7 @@ test/engine-parity/export-bytes.test.ts
 test/engine-parity/extract-takes-reads.test.ts
 test/engine-parity/extract-takes.test.ts
 test/engine-parity/extraction.test.ts
+test/engine-parity/fact-fingerprint-corpus.test.ts
 test/engine-parity/fact-future-order.test.ts
 test/engine-parity/fact-pool-widening.test.ts
 test/engine-parity/fact-purge-commit.test.ts
@@ -400,6 +401,7 @@ test/extract-timeline-from-meetings-managed.test.ts
 test/extraction-watermark-atoms.test.ts
 test/fact-embedding-oversized-7211.test.ts
 test/fact-fence-adoption-exits.test.ts
+test/fact-fingerprint-corpus.test.ts
 test/fact-purge-lookup-timeout-6511.test.ts
 test/fact-reads-page-access.test.ts
 test/facts-absorb-stalled-receipt-7439.test.ts

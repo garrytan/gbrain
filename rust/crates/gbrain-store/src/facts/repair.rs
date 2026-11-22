@@ -762,6 +762,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_space_class_matches_pglite_on_every_code_point() {
+        let mismatches = crate::fingerprint_fixture::space_mismatches(posix_space);
+        assert_eq!(mismatches, Vec::<String>::new());
+    }
+
+    #[test]
     fn the_context_head_is_the_text_before_the_first_separator() {
         assert_eq!(context_head("notes/a \u{2014} b \u{2014} c"), "notes/a");
         assert_eq!(context_head("notes/a"), "notes/a");

@@ -18,6 +18,8 @@ pub mod cli_reads;
 pub mod config;
 pub mod env;
 pub mod error;
+#[cfg(test)]
+mod fingerprint_fixture;
 #[cfg(feature = "fjall")]
 pub mod fjall_kv;
 pub mod format;
