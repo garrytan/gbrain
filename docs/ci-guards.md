@@ -179,9 +179,7 @@ the catches that turn a failed read into an empty answer: `catch_empty` (a
 (`get`, `list`, `load`, `read`, `find`, ...), minus the named write-only
 methods in `WRITE_ONLY_METHODS` (`setConfig`, `putPage`, ...; one list, one
 reason per entry, never a name prefix). A leading `rethrowCapabilityRefusal(err)`
-(or an inline `.catch(err => rethrowCapabilityRefusal(err))`) does not exempt a site, and neither does a guard `if` that only throws
-(`if (isEngineCapabilityRefusal(err)) throw err; return [];`): the failures it lets through are not the ones the handler
-hides. An `if` that can answer or do other work still keeps the handler out of the count. The user then hears "nothing found" or "healthy" when
+(or an inline `.catch(err => rethrowCapabilityRefusal(err))`) does not exempt a site. The user then hears "nothing found" or "healthy" when
 the truth is "I could not look", and the Rust engine copies that answer. The
 header of the script lists the shapes it does not count.
 

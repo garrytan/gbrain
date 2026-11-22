@@ -294,41 +294,16 @@ function isEmptyAnswerStatement(st: ts.Statement, site: SiteContext): boolean {
   return false;
 }
 
-/** Does `n` hold a `return` outside nested functions. */
-function containsReturn(n: ts.Node): boolean {
-  let found = false;
-  const visit = (c: ts.Node): void => {
-    if (found || ts.isFunctionLike(c)) return;
-    if (ts.isReturnStatement(c)) { found = true; return; }
-    ts.forEachChild(c, visit);
-  };
-  visit(n);
-  return found;
-}
-
-/**
- * A guard `if`: no else, and a body that never returns and ends in `throw` (`if (isEngineCapabilityRefusal(err)) throw err;`).
- * It lets some failures through and leaves the rest to the statements after it, so it does not change what the handler answers.
- */
-function isThrowGuard(st: ts.Statement): boolean {
-  if (!ts.isIfStatement(st) || st.elseStatement) return false;
-  const then = st.thenStatement;
-  if (ts.isThrowStatement(then)) return true;
-  return ts.isBlock(then) && then.statements.length > 0 && ts.isThrowStatement(then.statements[then.statements.length - 1])
-    && !containsReturn(then);
-}
-
 /**
  * The handler answers nothing: it is empty, or it returns / assigns / pushes an empty answer as its last
- * statement. Before that it may only rethrow a typed refusal (also behind a guard `if` that only throws),
- * declare a local, or assign other empty answers.
+ * statement. Before that it may only rethrow a typed refusal, declare a local, or assign other empty answers.
  */
 export function handlerAnswersEmpty(site: SiteContext): boolean {
   const stmts = site.handlerStatements;
   if (stmts.length === 0) return true;
   const last = stmts[stmts.length - 1];
   for (const st of stmts.slice(0, -1)) {
-    if (isRethrowCall(st) || isThrowGuard(st) || ts.isVariableStatement(st) || isEmptyAnswerStatement(st, site)) continue;
+    if (isRethrowCall(st) || ts.isVariableStatement(st) || isEmptyAnswerStatement(st, site)) continue;
     return false;
   }
   return isRethrowCall(last) || isEmptyAnswerStatement(last, site);
