@@ -145,6 +145,8 @@ CHECKS=(
   "check:skills-manifest"
   # GBRA-225: skills.lock.history.json covers the lock and only grows.
   "check:skills-lock-history"
+  # G3: once skills/moved-skills.json names a destination, no unlisted skill folder.
+  "check:moved-skills"
   "check:no-pii-agent-voice"
   "check:synthetic-corpus-privacy"
   "check:operations-filter-bypass"

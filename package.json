@@ -130,6 +130,7 @@
     "check:tool-catalog": "bash scripts/check-tool-catalog-fresh.sh",
     "check:skills-manifest": "bash scripts/check-skills-manifest-fresh.sh",
     "check:skills-lock-history": "bun scripts/check-skills-lock-history.ts",
+    "check:moved-skills": "bun scripts/check-moved-skills.ts",
     "check:test-names": "bash scripts/check-test-real-names.sh",
     "check:test-fragment-reads": "bash scripts/check-test-fragment-reads.sh",
     "check:progress": "bash scripts/check-progress-to-stdout.sh",
