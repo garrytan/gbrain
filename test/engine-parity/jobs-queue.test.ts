@@ -929,6 +929,40 @@ describe('engine parity: minion queue', () => {
       };
     });
 
+  parityTest('listUnfinishedJobsByName lists every unfinished job of the names by id, whatever its status, and no finished one',
+    { methods: ['admitJob', 'claimNextJob', 'completeJob', 'failJob', 'pauseJob', 'cancelJobs', 'listUnfinishedJobsByName'] }, async (engine) => {
+      const waiting = await add(engine, 'm-waiting');
+      const running = await active(engine, 'm-active', 'w1:a');
+      const delayed = await add(engine, 'm-delayed', { status: 'delayed', delay_until: FAR });
+      const paused = await add(engine, 'm-paused');
+      await engine.pauseJob(paused);
+      const children = await add(engine, 'm-children', { status: 'waiting-children' });
+      const done = await finished(engine, 'm-done', 'completed');
+      const failed = await finished(engine, 'm-failed', 'failed');
+      const dead = await finished(engine, 'm-dead', 'dead');
+      const cancelled = await add(engine, 'm-cancelled');
+      await engine.cancelJobs([cancelled]);
+      const second = await add(engine, 'm-waiting');
+      const outside = await add(engine, 'm-elsewhere');
+      const names = ['m-waiting', 'm-active', 'm-delayed', 'm-paused', 'm-children', 'm-done', 'm-failed', 'm-dead', 'm-cancelled'];
+      const view = (rows: Array<{ id: number; name: string; status: string }>) => rows.map(r => ({ id: r.id - waiting, name: r.name, status: r.status }));
+      return {
+        all: view(await engine.listUnfinishedJobsByName(names)),
+        some: view(await engine.listUnfinishedJobsByName(['m-paused', 'm-done', 'm-waiting'])),
+        finishedOnly: await engine.listUnfinishedJobsByName(['m-done', 'm-failed', 'm-dead', 'm-cancelled']),
+        nobody: await engine.listUnfinishedJobsByName(['nobody']), none: await engine.listUnfinishedJobsByName([]),
+        ids: [waiting, running, delayed, paused, children, done, failed, dead, cancelled, second, outside].map(id => id - waiting),
+      };
+    });
+
+  parityTest('listUnfinishedJobsByName reads every matching job in one go: 1,001 waiting jobs of one name come back whole, by id',
+    { methods: ['admitJob', 'listUnfinishedJobsByName'], timeout: 180_000 }, async (engine) => {
+      const first = await add(engine, 'm-many');
+      for (let i = 1; i < 1001; i++) await admit(engine, { insert: values('m-many') });
+      const rows = await engine.listUnfinishedJobsByName(['m-many']);
+      return { count: rows.length, ordered: rows.every((r, i) => i === 0 || rows[i - 1]!.id < r.id), first: rows[0]!.id - first, last: rows[1000]!.id - first, statuses: [...new Set(rows.map(r => r.status))] };
+    });
+
   parityTest('readJobStats counts by status, name, drain and queue depth, the stalled leases and one queue\'s wedge signature',
     { methods: ['admitJob', 'claimNextJob', 'completeJob', 'failJob', 'cancelJobs', 'pauseJob', 'readJobStats'] }, async (engine) => {
       const normalize = (s: JobStatsRead) => ({

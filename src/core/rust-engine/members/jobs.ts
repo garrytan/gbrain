@@ -57,6 +57,7 @@ export const JOBS_MEMBERS = {
   listOwnedPrivateQueues: 'minion_queue',
   readPrivateQueueState: 'minion_queue',
   listStaleWaitingJobIds: 'minion_queue',
+  listUnfinishedJobsByName: 'minion_queue',
   countTtlExpiredWaiting: 'minion_queue',
   readJobStats: 'minion_queue',
   readQueueFamilyStats: 'minion_queue',

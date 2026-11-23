@@ -1424,3 +1424,39 @@ fn job_source_state_reads_archived_and_the_creation_stamp() {
         }))
     );
 }
+
+#[test]
+fn unfinished_jobs_by_name_lists_every_live_row_of_the_names_by_id() {
+    let b = brain("s2-unfinished");
+    let a = add(&b, "manual", json!({}));
+    let other = add(&b, "other", json!({}));
+    let c = add(&b, "manual", json!({}));
+    let d = add(&b, "manual", json!({}));
+    add(&b, "elsewhere", json!({}));
+    b.pause_job(c).unwrap().unwrap();
+    b.cancel_jobs(&[d], &cancel_opts(json!({"rootStatuses": null})))
+        .unwrap();
+    let names = vec!["manual".to_string(), "other".to_string()];
+    let got: Vec<(i64, String, String)> = b
+        .list_unfinished_jobs_by_name(&names)
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["id"].as_i64().unwrap(),
+                r["name"].as_str().unwrap().to_string(),
+                r["status"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            (a, "manual".to_string(), "waiting".to_string()),
+            (other, "other".to_string(), "waiting".to_string()),
+            (c, "manual".to_string(), "paused".to_string()),
+        ],
+        "paused is unfinished, cancelled is not, other names are left out, by id"
+    );
+    assert!(b.list_unfinished_jobs_by_name(&[]).unwrap().is_empty());
+}

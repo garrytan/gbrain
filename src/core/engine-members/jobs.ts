@@ -6,7 +6,7 @@ import type { AccessTokenInsert, ActiveAccessTokenRow } from '../engine-sql/acce
 import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow, ListJobsFilter } from '../engine-sql/jobs.ts';
 import type { AgentClientSpendRow, ClientReserveOutcome, ClientReserveSpec, GroupReserveOutcome, GroupReserveSpec, GroupSpendRow, OauthClientInsert, SettleLogOutcome, SpendLogInsert } from '../engine-sql/spend-log.ts';
 import type { BudgetOwnerRow, EmbedBackfillState, FailedJobError, JobStatusCount, JobStatusFilter, LastAutopilotCycles, QueueDepth, SourceJobCounts, TtlCancelledCount, WaitingScopeState } from '../engine-sql/jobs-status.ts';
-import type { CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobSourceState, JobStatsRead, JobTokenCounts, PrivateQueueState, PruneJobsSpec, QueueFamilyRow, RetryJobPolicy, SynthesisCompletion, SynthesisCompletionPrefix } from '../engine-sql/jobs-queue.ts';
+import type { CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobSourceState, JobStatsRead, JobTokenCounts, PrivateQueueState, PruneJobsSpec, QueueFamilyRow, RetryJobPolicy, SynthesisCompletion, SynthesisCompletionPrefix, UnfinishedJobRow } from '../engine-sql/jobs-queue.ts';
 import type { DeadDreamSubmissionSpec, FactsAbsorbJobRow, FactsAbsorbStillDead, GlobalMaintenanceDeaths, LastFailedGlobalMaintenanceJob, LegacyJobAuthorityRead, QueuedSpendRows } from '../engine-sql/jobs-checks.ts';
 import type { ExpireSpendScope, JobSpendTreeSpec, LeasePressureFilter, LeasePressureInsert, LeasePressureRow, SettleSpendOutcome, SpendReservationInsert, SpendTreeRow } from '../engine-sql/jobs-spend.ts';
 import type { JobInsightRows, JobInsightSpec } from '../engine-sql/jobs-insight.ts';
@@ -132,6 +132,8 @@ export interface JobsMembers {
   readPrivateQueueState(queue: string): Promise<PrivateQueueState>;
   /** Ids of jobs of `name` waiting since before `hours` ago, oldest first, at most `limit`. */
   listStaleWaitingJobIds(name: string, hours: number, limit: number): Promise<number[]>;
+  /** Every unfinished job of `names` (any status but completed, failed, dead, cancelled), by id, in one read with no limit. */
+  listUnfinishedJobsByName(names: readonly string[]): Promise<UnfinishedJobRow[]>;
   /** How many jobs of `name` have waited since before `hours` ago. */
   countTtlExpiredWaiting(name: string, hours: number): Promise<number>;
   /** The raw counts behind the queue statistics, with the wedge signature of `queue`. */

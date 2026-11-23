@@ -125,7 +125,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listSessionFactsForClassification', 'listSettledSessionFacts', 'listSharedSkillPackRoots',
   'listSimilarActiveFacts', 'listSingleFactMetadata', 'listSlotRows', 'listSourceIncarnations',
   'listSourceLastCommits', 'listSourceRecords', 'listSourceRoutingRows', 'listStagingPartEdges',
-  'listStagingsHoldingClaim', 'listStaleSyncSourceIds', 'listStaleWaitingJobIds', 'listStalledEmbedBackfillSources',
+  'listStagingsHoldingClaim', 'listStaleSyncSourceIds', 'listStaleWaitingJobIds', 'listUnfinishedJobsByName', 'listStalledEmbedBackfillSources',
   'listStandingPreferences', 'listStoredFenceFactRows', 'listStoredTimelineRows', 'listStoredTimelineRowsOrdered',
   'listStruckHeldRows', 'listStuckActiveJobsByName', 'listSubagentMessages', 'listSubagentOneshotLedger',
   'listSubagentPutPageSlugs', 'listSubagentPutPageWrites', 'listSubagentRetainedPutPages', 'listSubagentStagedPages',

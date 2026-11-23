@@ -1099,7 +1099,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'retryJob': OOS.minionJobs, 'postInboxMessage': OOS.minionJobs, 'readJobInbox': OOS.minionJobs,
   'readChildCompletions': OOS.minionJobs, 'listOpenJobIdsInQueue': OOS.minionJobs,
   'renewPrivateQueueLease': OOS.minionJobs, 'listOwnedPrivateQueues': OOS.minionJobs,
-  'readPrivateQueueState': OOS.minionJobs, 'listStaleWaitingJobIds': OOS.minionJobs,
+  'readPrivateQueueState': OOS.minionJobs, 'listStaleWaitingJobIds': OOS.minionJobs, 'listUnfinishedJobsByName': OOS.minionJobs,
   'countTtlExpiredWaiting': OOS.minionJobs, 'readJobStats': OOS.minionJobs, 'readQueueFamilyStats': OOS.minionJobs,
   'hasOverdueWatchdogSuspect': OOS.minionJobs, 'listUnreviewedJobs': OOS.minionJobs,
   'getFailedJobForRetry': OOS.minionJobs, 'countOpenJobsByOwner': OOS.minionJobs, 'readJobSourceState': OOS.minionJobs, 'lockOAuthClient': OOS.minionJobs, 'listJobPage': OOS.minionJobs, 'listJobAttachmentNames': OOS.minionJobs,

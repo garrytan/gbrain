@@ -370,6 +370,16 @@ impl Brain {
         })
     }
 
+    /// `listUnfinishedJobsByName(names)`: `{ id, name, status }` of every unfinished job of those names, by id.
+    #[napi]
+    pub fn list_unfinished_jobs_by_name<'env>(
+        &self,
+        env: &'env Env,
+        names: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_unfinished_jobs_by_name(&names))
+    }
+
     /// `countTtlExpiredWaiting(name, hours)`: a count.
     #[napi]
     pub fn count_ttl_expired_waiting<'env>(
