@@ -1878,7 +1878,7 @@ ledger. Nothing is written to the brain database, the config table or the brain 
 **Say to your agent:** *"Turn on Rust engine shadow mode for my brain and show me the report."*
 
 ```bash
-gbrain engine shadow start --plan                  # preview the plan and its plan_hash, writes nothing (also reports whether the brain can swap)
+gbrain engine shadow start --plan                  # preview the plan and its plan_hash, writes nothing to the shadow directory or the brain's tables (also reports whether the brain can swap)
 gbrain engine shadow start --yes --expect <hash>   # turn it on (loads the Rust addon first; refuses without it)
 gbrain engine shadow status [--json]
 gbrain engine shadow report [--json]               # prints the report; writes reports/provisional.{json,md} only once the shadow directory exists
@@ -1902,7 +1902,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   refuses them (`engine_swap_refused`, reason `managed_storage`, which `gbrain engine swap` still returns and shadow
   mode never does). `start` (the preview, `--plan` and `--yes`) opens the brain database once, best-effort, and reads one
   row: `persistence_brain.enabled`. A PGLite brain opens without recording its managed roots and without repairing a
-  damaged log, so the open writes no marker file and renames nothing. A brain with an open repair episode is left unread (`repair_episode_open`), because a healthy open would close the episode and prune its backups. A managed brain prints `storage: this brain cannot swap while it uses managed
+  damaged log, so the open writes no ownership marker or registry entry and renames nothing; like any PGLite open it takes the datastore's process lock until `start` closes the brain. A brain with an open repair episode is left unread (`repair_episode_open`), because a healthy open would close the episode and prune its backups. A managed brain prints `storage: this brain cannot swap while it uses managed
   storage` in the plan and after `--yes`, and `state.json` records `storage: { managed: true, checked_at }` (`false` for
   an unmanaged brain). A brain whose mode cannot be read (the database is down, another process holds a PGLite brain, a
   PGLite path holds no brain which `start` never creates, or the row is missing or malformed) does not block `start`: it
@@ -1916,9 +1916,9 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   it` when `managed` is null, and null for an unmanaged brain; `storage` is null for a state written before the field
   existed. `status` and the report print the note as a line. `status` and the report read the recorded value; they do
   not open the database.
-- **Why this is safe for the primary.** `start` reads one row and writes nothing. The mirror replays sampled reads
+- **Why this is safe for the primary.** `start` reads one row and writes no table row, source file, ownership marker or registry entry (a PGLite open holds the datastore's process lock until it closes). The mirror replays sampled reads
   into the Rust store under the shadow directory. Nothing in shadow mode writes the primary database, its worktrees, its
-  write effects or its locks. The residual risk is to the evidence: a write the owner process or an effect worker
+  write effects or its coordination locks. The residual risk is to the evidence: a write the owner process or an effect worker
   applies outside the wrapped engine is not seen by shadow mode, so the comparison for it may differ; such a write
   shows up as a difference or a miss in the counts, never as silent equality.
 - **No network in the background.** gbrain downloads no addon. `start --yes`, the child
