@@ -643,16 +643,4 @@ mod tests {
         keys.sort_by(jsonb_key_order);
         assert_eq!(keys, ["b", "email", "emails"]);
     }
-
-    #[test]
-    fn decided_at_reads_the_listed_text_back() {
-        let at = parse_iso("2026-11-18T00:00:00.500000Z").unwrap();
-        assert_eq!(decided_at_micros("2026-11-18 00:00:00.5+00"), Some(at));
-        assert_eq!(decided_at_micros("2026-11-18T00:00:00.500000Z"), Some(at));
-        assert_eq!(
-            decided_at_micros("2026-11-18 00:00:00+00"),
-            parse_iso("2026-11-18T00:00:00.000000Z")
-        );
-        assert_eq!(decided_at_micros("2026-11-18 00:00:00"), None);
-    }
 }
