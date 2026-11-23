@@ -179,10 +179,10 @@ Errors from the addon are real `Error` objects with a `code`:
 | `store_closed` | The brain is not open on this handle. |
 | `store_io` | The file system or the storage engine failed; the write did not commit. |
 | `store_corrupt` | The records fail their integrity check, or `FORMAT` names another brain. A restore rotates the brain id in the format record first and `FORMAT` after; a `FORMAT` that still names the id the record says it rotated from is stale, not another brain, and the next open rebuilds it. |
-| `invalid_state` | The call does not fit the handle's state (`open` on an open handle), or `finishWrite` met a request that already ended. |
+| `invalid_state` | The call does not fit the handle's state (`open` on an open handle; `restoreQuarantine` inside a transaction), or `finishWrite` met a request that already ended. |
 | `read_only_transaction` | A write inside a read-only transaction (Postgres SQLSTATE `25006`). Nothing was written. |
 | `restore_refused` | `restoreQuarantine` changed nothing: the store holds unfinished write work, a recovery record, a missing purge or a record of a kind this build has not classified. The message is `<reason>: <count>`, with the kinds named in parentheses for `unclassified_state` (for example `access tokens (jobs 0x2b)`); the reasons are `pending_requests`, `recovery_required`, `purge_replay`, `unclassified_state`. `gbrain backup restore` maps it to `restore_step_unsupported`. |
-| `invalid_argument` | A malformed argument. |
+| `invalid_argument` | A malformed argument. `restoreQuarantine` also refuses, changing nothing, a plan whose sources or settings do not match the store, whose settings list leaves one out or names one twice. |
 | `invalid_slug` | The slug failed `validateSlug`. |
 | `source_not_found` | A page write named a source that does not exist. |
 | `page_not_found` | `addTag`, `addPageTagsById`, `createVersion`, `addLink` or `addTimelineEntry` named a page that does not exist. |

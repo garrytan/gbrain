@@ -960,3 +960,168 @@ fn a_refused_or_failed_restore_keeps_the_brain_id() {
         old
     );
 }
+
+#[test]
+fn a_restore_inside_an_open_transaction_is_refused_and_leaves_the_brain_id_pair_intact() {
+    let (store, dir) = on_disk("bound");
+    let (old, format_before) = (store.brain_id(), format_file(&dir));
+    let tx = store.begin_transaction(false).unwrap();
+    assert_eq!(
+        tx.restore_quarantine(&default_only()).unwrap_err().code,
+        "invalid_state"
+    );
+    assert_eq!(
+        (tx.brain_id(), store.brain_id()),
+        (old.clone(), old.clone())
+    );
+    tx.rollback_transaction().unwrap();
+    drop(tx);
+    store.close();
+    assert_eq!(format_file(&dir), format_before);
+    let reopened = Store::open_dir(&dir, Default::default()).unwrap();
+    assert_eq!(
+        reopened.brain_id(),
+        old,
+        "the brain still opens, with its own id"
+    );
+}
+
+#[test]
+fn rebased_origins_that_would_collide_refuse_the_restore_and_change_nothing() {
+    let managed = |origin_b: &str| {
+        let store = store();
+        source(&store, "managed", Some("/old/m"), json!({}));
+        page(&store, "managed", "notes/a", "/old/m/a.md");
+        page(&store, "managed", "notes/b", origin_b);
+        store
+    };
+    let moved = || {
+        plan(
+            json!([{ "id": "default", "local_path": null, "rebased_path": null },
+                   { "id": "managed", "local_path": "/old/m", "rebased_path": "/new/m" }]),
+            json!([]),
+        )
+    };
+    // B already sits where A would land: two live pages on /new/m/a.md.
+    let store = managed("/new/m/a.md");
+    let (before, generation, id) = (
+        dump(&store),
+        store.commit_version().unwrap(),
+        store.brain_id(),
+    );
+    assert_eq!(
+        store.restore_quarantine(&moved()).unwrap_err().code,
+        "origin_claimed"
+    );
+    assert_eq!(
+        (
+            dump(&store),
+            store.commit_version().unwrap(),
+            store.brain_id()
+        ),
+        (before, generation, id)
+    );
+    // The same restore with no collision goes through.
+    let report = managed("/new/m/b.md").restore_quarantine(&moved()).unwrap();
+    assert_eq!(report.rebased_origins, 1);
+}
+
+#[test]
+fn a_settings_plan_that_does_not_cover_the_store_refuses_and_changes_nothing() {
+    let held = [
+        ("autopilot.x.enabled", "true"),
+        ("connectors.slack.auto_sync", "true"),
+        ("sync.repo_path", "/old/repo"),
+    ];
+    let change = |key: &str| {
+        let value = if key == "sync.repo_path" {
+            json!("/new/repo")
+        } else {
+            json!("false")
+        };
+        json!({ "key": key, "value": value })
+    };
+    let with = |keys: &[&str]| {
+        plan(
+            json!([{ "id": "default", "local_path": null, "rebased_path": null }]),
+            Value::Array(keys.iter().map(|k| change(k)).collect()),
+        )
+    };
+    let all: Vec<&str> = held.iter().map(|(k, _)| *k).collect();
+    let fresh = || {
+        let store = store();
+        for (k, v) in held {
+            store.set_config(k, v).unwrap();
+        }
+        store
+    };
+    let late = fresh();
+    late.set_config("autopilot.late.enabled", "true").unwrap();
+    // The plan was made for `held` only; a key that appeared since is not covered.
+    let cases = [
+        ("one setting missing", fresh(), with(&all[..2])),
+        ("every setting missing", fresh(), with(&[])),
+        (
+            "a setting listed twice",
+            fresh(),
+            with(&[all[0], all[0], all[1], all[2]]),
+        ),
+        ("a key added after the census", late, with(&all)),
+    ];
+    for (label, store, plan) in cases {
+        let (before, generation, id) = (
+            dump(&store),
+            store.commit_version().unwrap(),
+            store.brain_id(),
+        );
+        assert_eq!(
+            store.restore_quarantine(&plan).unwrap_err().code,
+            "invalid_argument",
+            "{label}"
+        );
+        assert_eq!(
+            (
+                dump(&store),
+                store.commit_version().unwrap(),
+                store.brain_id()
+            ),
+            (before, generation, id),
+            "{label}"
+        );
+        assert_eq!(
+            store.get_config("autopilot.x.enabled").unwrap().as_deref(),
+            Some("true"),
+            "{label}"
+        );
+    }
+    let store = fresh();
+    store.restore_quarantine(&with(&all)).unwrap();
+    assert_eq!(
+        store.get_config("autopilot.x.enabled").unwrap().as_deref(),
+        Some("false")
+    );
+}
+
+#[test]
+fn a_windows_origin_the_restore_cannot_rebase_is_named_in_the_report() {
+    let store = store();
+    source(&store, "managed", Some("C:\\old\\files"), json!({}));
+    page(&store, "managed", "notes/a", "C:\\old\\files\\a.md");
+    page(&store, "managed", "notes/u", "\\\\host\\share\\u.md");
+    let report = store
+        .restore_quarantine(&plan(
+            json!([{ "id": "default", "local_path": null, "rebased_path": null },
+                   { "id": "managed", "local_path": "C:\\old\\files", "rebased_path": "/new/files" }]),
+            json!([]),
+        ))
+        .unwrap();
+    assert_eq!(report.rebased_origins, 0);
+    assert!(
+        report
+            .reconnect
+            .iter()
+            .any(|l| l.contains("2 legacy absolute page origins were preserved")),
+        "{:?}",
+        report.reconnect
+    );
+}

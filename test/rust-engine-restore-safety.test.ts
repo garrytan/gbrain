@@ -227,8 +227,13 @@ describe('one restore scenario, both engines', () => {
       expect(await store.brain.getConfig('autopilot.x.enabled')).toBe('true');
       await store.brain.finishWrite(principal, held.request_id, { state: 'cancelled' });
       expect((await store.restoreCensus([])).blockers).toEqual([]);
-      await expect(store.restoreQuarantine({ ...plan, settings: [] })).resolves.toMatchObject({ jobs_cancelled: 0 });
-      await expect(store.restoreQuarantine({ ...plan, settings: [] })).rejects.toMatchObject({ code: 'invalid_state' });
+      // A plan that leaves a held setting out is refused whole: the archived automation stays as it was.
+      await expect(store.restoreQuarantine({ ...plan, settings: [] })).rejects.toMatchObject({ code: 'invalid_argument' });
+      expect(await store.brain.getConfig('autopilot.x.enabled')).toBe('true');
+      const complete = { ...plan, settings: [{ key: 'autopilot.x.enabled', value: 'false' }] };
+      await expect(store.restoreQuarantine(complete)).resolves.toMatchObject({ jobs_cancelled: 0 });
+      expect(await store.brain.getConfig('autopilot.x.enabled')).toBe('false');
+      await expect(store.restoreQuarantine(complete)).rejects.toMatchObject({ code: 'invalid_state' });
     } finally { await store.close(); }
   });
 });

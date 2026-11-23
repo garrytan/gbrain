@@ -18,7 +18,8 @@
 
 use crate::config::ConfigValueRow;
 use crate::error::{
-    INVALID_ARGUMENT, INVALID_STATE, RESTORE_REFUSED, Result, STORE_CORRUPT, StoreError,
+    INVALID_ARGUMENT, INVALID_STATE, ORIGIN_CLAIMED, RESTORE_REFUSED, Result, STORE_CORRUPT,
+    StoreError,
 };
 use crate::kv::{KvRead, KvWrite, prefix_end, scan_prefix};
 use crate::pages::{PageRecord, claimed_origin};
@@ -217,6 +218,18 @@ fn plain_relative(rel: &str) -> bool {
         })
 }
 
+/// An absolute path of the machine the archive came from: POSIX, a Windows drive or a UNC path.
+/// Only the first kind is rebased; the others are kept unchanged and named in the report.
+fn is_absolute_origin(origin: &str) -> bool {
+    let b = origin.as_bytes();
+    origin.starts_with('/')
+        || origin.starts_with("\\\\")
+        || (b.len() >= 3
+            && b[0].is_ascii_alphabetic()
+            && b[1] == b':'
+            && matches!(b[2], b'\\' | b'/'))
+}
+
 /// `origin` moved from under `from` to under `to`; `None` when it is not under `from` or what
 /// follows is not a plain relative path (the caller keeps it unchanged).
 fn rebase_origin(origin: &str, from: &str, to: &str) -> Option<String> {
@@ -314,6 +327,23 @@ fn purge_ids_present(read: &dyn KvRead, wanted: &BTreeSet<String>) -> Result<BTr
     Ok(present)
 }
 
+/// Every config row a restore may change (`setting_kind`), as the store holds it now.
+fn safety_settings(read: &dyn KvRead) -> Result<Vec<ConfigValueRow>> {
+    let mut settings = Vec::new();
+    scan_prefix(read, &[keys::CONFIG], false, &mut |k, v| {
+        if let (Ok(key), Ok(value)) = (std::str::from_utf8(&k[1..]), std::str::from_utf8(v))
+            && setting_kind(key).is_some()
+        {
+            settings.push(ConfigValueRow {
+                key: key.into(),
+                value: value.into(),
+            });
+        }
+        true
+    })?;
+    Ok(settings)
+}
+
 fn census_in(read: &dyn KvRead, purge_ids: &[String], store: StoreIdentity) -> Result<Census> {
     let mut requests = BTreeMap::<String, u64>::new();
     let (mut claims, mut recovery_records) = (0, 0);
@@ -345,18 +375,7 @@ fn census_in(read: &dyn KvRead, purge_ids: &[String], store: StoreIdentity) -> R
     let wanted: BTreeSet<String> = purge_ids.iter().map(|id| id.to_lowercase()).collect();
     let present = purge_ids_present(read, &wanted)?;
     let missing: Vec<String> = wanted.difference(&present).cloned().collect();
-    let mut settings = Vec::new();
-    scan_prefix(read, &[keys::CONFIG], false, &mut |k, v| {
-        if let (Ok(key), Ok(value)) = (std::str::from_utf8(&k[1..]), std::str::from_utf8(v))
-            && setting_kind(key).is_some()
-        {
-            settings.push(ConfigValueRow {
-                key: key.into(),
-                value: value.into(),
-            });
-        }
-        true
-    })?;
+    let settings = safety_settings(read)?;
     let text =
         |s: &SourceRecord, key: &str| s.config.get(key).and_then(Value::as_str).map(str::to_owned);
     let sources = all_sources(read)?
@@ -457,6 +476,10 @@ fn quarantine_source(
     if let (false, Some(from), Some(to)) = (external, &original, &planned.rebased_path) {
         let mut moved = Vec::new();
         let mut preserved = 0;
+        // The live origin each page will hold, moved or kept: two pages on one origin refuse the
+        // restore before anything is written (`pages_live_origin_key`).
+        let mut finals = BTreeMap::<String, u64>::new();
+        let mut claimed = false;
         each_record(
             &*tx,
             &keys::text(keys::PAGE, &[&id, ""]),
@@ -464,12 +487,26 @@ fn quarantine_source(
                 let Some(origin) = page.source_path.clone() else {
                     return;
                 };
-                match rebase_origin(&origin, from, to) {
+                let next = rebase_origin(&origin, from, to);
+                let mut after = page.clone();
+                after.source_path = Some(next.clone().unwrap_or(origin.clone()));
+                if let Some(live) = claimed_origin(&after) {
+                    claimed |= finals.insert(live, page.id).is_some_and(|p| p != page.id);
+                }
+                match next {
                     Some(next) => moved.push((page, next)),
-                    None => preserved += u64::from(origin.starts_with('/')),
+                    None => preserved += u64::from(is_absolute_origin(&origin)),
                 }
             },
         )?;
+        if claimed {
+            return Err(StoreError::new(
+                ORIGIN_CLAIMED,
+                format!(
+                    "source {id}: the rebased page origins would give two live pages one origin"
+                ),
+            ));
+        }
         report.rebased_origins += moved.len() as u64;
         for (before, next) in moved {
             let mut after = before.clone();
@@ -510,6 +547,14 @@ impl Store {
     /// The restore changes, in one write transaction (see the module text). A second call with
     /// the same `restore_id` is `invalid_state`; a blocker is `restore_refused`.
     pub fn restore_quarantine(&self, plan: &QuarantinePlan) -> Result<QuarantineReport> {
+        // The new id and `FORMAT` are published at once; inside an outer transaction a rollback
+        // would leave them naming a brain the records never had.
+        if self.bound.is_some() {
+            return Err(StoreError::new(
+                INVALID_STATE,
+                "a restore changes the brain's identity and cannot run inside a transaction",
+            ));
+        }
         if plan.restore_id.is_empty() || plan.restore_id.contains('\0') {
             return Err(StoreError::new(
                 INVALID_ARGUMENT,
@@ -553,6 +598,16 @@ impl Store {
             for record in records {
                 let planned = declared[record.id.as_str()];
                 quarantine_source(tx, record, planned, &plan.restore_id, &mut report, &mut sources)?;
+            }
+            // Every setting the store holds is accounted for, once: a plan that leaves one out would
+            // leave archived automation or an old machine's path switched on.
+            let held: BTreeSet<String> = safety_settings(&*tx)?.into_iter().map(|r| r.key).collect();
+            let planned_keys: BTreeSet<&String> = plan.settings.iter().map(|c| &c.key).collect();
+            if planned_keys.len() != plan.settings.len()
+                || planned_keys.len() != held.len()
+                || !held.iter().all(|k| planned_keys.contains(k))
+            {
+                return Err(StoreError::new(INVALID_ARGUMENT, "the settings plan does not match the archived store"));
             }
             let mut settings = Vec::new();
             for change in &plan.settings {
