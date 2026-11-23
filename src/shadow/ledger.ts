@@ -3,7 +3,9 @@
  *
  *   ledger/YYYY-MM-DD.jsonl   one row per comparison, appended by the child (UTC day)
  *   summaries/<id>.json       running counts of one child process, rewritten by that child
- *   faults.jsonl              child exits, restarts and why mirroring stopped, appended by the serving process
+ *   faults.jsonl              child exits, restarts and why mirroring stopped, appended by the serving process, and the
+ *                             child's own `rust_internal_error` lines
+ *   usage/YYYY-MM-DD.jsonl    per-operation call counts the serving processes append (usage.ts)
  *
  * A ledger row holds time, operation, outcome, reason code, both latencies and row counts: never a slug, title,
  * query, page content or source id. Every file is mode 0600. Each child owns its own summary file, so several
@@ -19,6 +21,10 @@ export interface ShadowLedgerRow {
   op: string;
   outcome: ShadowOutcome;
   reason?: string;
+  /** The evidence epoch of the child that compared it (evidence-epoch.ts); a row without one counts for no epoch. */
+  epoch_id?: string;
+  /** For stale, inconclusive and collation_order rows: the mismatch that was found. */
+  mismatch?: 'diff' | 'order_diff';
   primary_ms: number;
   rust_ms: number | null;
   primary_rows: number | null;
@@ -52,8 +58,12 @@ export interface ShadowSummary {
 
 export interface ShadowFault {
   ts: string;
-  kind: 'child_exit' | 'child_hung' | 'spawn_failed' | 'mirroring_disabled' | 'privacy_pause';
+  kind: 'child_exit' | 'child_hung' | 'spawn_failed' | 'mirroring_disabled' | 'privacy_pause'
+    // The child's own record of a Rust panic or internal error (evidence-epoch.ts); one union member of its own.
+    | 'rust_internal_error';
   detail: string;
+  /** The evidence epoch current when it was recorded; `rust_internal_error` always has it (evidence-epoch.ts). */
+  epoch_id?: string;
 }
 
 function ensureDir(dir: string): void {
@@ -91,6 +101,32 @@ export function writeSummaryFile(shadowDir: string, summary: ShadowSummaryFile):
 export function appendFault(shadowDir: string, fault: ShadowFault): void {
   ensureDir(shadowDir);
   appendFileSync(faultsPath(shadowDir), JSON.stringify(fault) + '\n', { mode: 0o600 });
+}
+
+/**
+ * The records of one append-only JSON-lines file. A torn LAST line (a writer is mid-append, or the disk filled) is
+ * skipped; an unparsable line anywhere else, or a file that cannot be read, gives null: missing evidence is never read
+ * as a smaller number.
+ */
+export function readJsonlStrict<T>(path: string): T[] | null {
+  let text: string;
+  try { text = readFileSync(path, 'utf8'); } catch { return null; } // silent-read-ok: null is the unreadable marker; callers leave their field absent, never zero
+  const lines = text.split('\n');
+  const out: T[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i]) continue;
+    try { out.push(JSON.parse(lines[i]!) as T); } catch { if (i !== lines.length - 1) return null; }
+  }
+  return out;
+}
+
+/** The whole fault history (a torn line is skipped); null when the file exists and cannot be read. */
+export function readAllFaults(shadowDir: string): ShadowFault[] | null {
+  const path = faultsPath(shadowDir);
+  if (!existsSync(path)) return [];
+  let text: string;
+  try { text = readFileSync(path, 'utf8'); } catch { return null; } // silent-read-ok: null is the unreadable marker; child health stays absent, never zero
+  return text.split('\n').flatMap((line) => { try { return line ? [JSON.parse(line) as ShadowFault] : []; } catch { return []; } });
 }
 
 export function readFaults(shadowDir: string, limit = 20): ShadowFault[] {

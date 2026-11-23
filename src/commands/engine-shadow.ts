@@ -15,8 +15,9 @@ import { loadConfig } from '../core/config.ts';
 import type { EngineConfig } from '../core/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
-import { readFaults, readShadowSummary } from '../shadow/ledger.ts';
-import { buildFollowStatus, renderFollowStatus } from '../shadow/follow-status.ts';
+import { shadowStatusDocument } from '../shadow/status-document.ts';
+import { renderEvidenceStatus } from '../shadow/evidence.ts';
+import { renderFollowStatus } from '../shadow/follow-status.ts';
 import { readSeedRecord, runSeed, SeedBudgetError, writeSeedRecord, type SeedRecord, type SeedTarget } from '../shadow/seed.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown, writeProvisionalReport } from '../shadow/report.ts';
 import {
@@ -159,7 +160,7 @@ export async function runEngineShadow(args: string[], deps: EngineShadowDeps = {
     }
     const brain = resolveBrain(deps);
     if (sub === 'start') return await start(brain, parseStart(rest), deps, out, err, now);
-    if (sub === 'status') return status(brain, flags(rest, ['--json'], 'status').has('--json'), out);
+    if (sub === 'status') return status(brain, flags(rest, ['--json'], 'status').has('--json'), out, now);
     if (sub === 'stop') return stop(brain, flags(rest, ['--delete'], 'stop').has('--delete'), out, now);
     if (sub === 'report') return report(brain, flags(rest, ['--json'], 'report').has('--json'), out, now);
     if (sub === 'seed') return await seed(brain, flags(rest, ['--json', '--reseed'], 'seed'), deps, out, err, now);
@@ -215,34 +216,24 @@ async function start(
   return 0;
 }
 
-function status(brain: { key: string; dir: string }, json: boolean, out: (l: string) => void): number {
-  const state = readShadowState(brain.dir);
-  const summary = existsSync(brain.dir) ? readShadowSummary(brain.dir) : null;
-  const faults = existsSync(brain.dir) ? readFaults(brain.dir, 5) : [];
-  const totals: Record<string, number> = {};
-  for (const counts of Object.values(summary?.by_op ?? {})) {
-    for (const [outcome, n] of Object.entries(counts)) totals[outcome] = (totals[outcome] ?? 0) + (n ?? 0);
-  }
+function status(brain: { key: string; dir: string }, json: boolean, out: (l: string) => void, now: () => Date): number {
+  const doc = shadowStatusDocument(brain, now());
   if (json) {
-    out(JSON.stringify({
-      schema_version: 1, brain: brain.key, enabled: state?.enabled === true, state, directory: brain.dir,
-      totals, by_op: summary?.by_op ?? {}, serving: summary?.primary ?? null, child_shed: summary?.child_shed ?? 0,
-      children: summary?.children ?? 0, recent_faults: faults,
-      ...buildFollowStatus(brain.dir, state),
-    }, null, 2));
+    out(JSON.stringify(doc, null, 2));
     return 0;
   }
+  const { state, totals, recent_faults: faults } = doc;
   out(`Shadow mode: ${state?.enabled ? 'on' : 'off'} (brain ${brain.key})`);
   if (state) out(`  started ${state.started_at}${state.stopped_at ? `, stopped ${state.stopped_at}` : ''}; sample rate ${state.sample_rate}`);
   const compared = Object.values(totals).reduce((a, b) => a + b, 0);
   out(`  comparisons: ${compared}${compared ? ` (${Object.entries(totals).map(([k, v]) => `${k} ${v}`).join(', ')})` : ''}`);
-  if (summary) {
-    const p = summary.primary;
+  if (doc.serving) {
+    const p = doc.serving;
     out(`  serving: offered ${p.offered}, sent ${p.sent}, sampled out ${p.sampled_out}, shed ${p.shed_queue_full + p.shed_too_large + p.shed_transport + p.shed_unmirrorable}, in transaction ${p.skipped_in_transaction}`);
   }
   const seeded = readSeedRecord(brain.dir);
   out(seeded ? `  seed ${seeded.seed_id} finished ${seeded.finished_at}; unseeded gap rows ${seeded.unseeded_gap_rows_total}` : '  seed: none (gbrain engine shadow seed)');
-  if (seeded) for (const line of renderFollowStatus(buildFollowStatus(brain.dir, state))) out(line);
+  if (seeded) for (const line of [...renderFollowStatus(doc), ...renderEvidenceStatus(doc)]) out(line);
   for (const f of faults) out(`  fault ${f.ts} ${f.kind}: ${f.detail}`);
   return 0;
 }

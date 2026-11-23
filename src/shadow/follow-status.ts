@@ -12,6 +12,7 @@
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { readEpoch } from './evidence-epoch.ts';
 import { readSeedRecord } from './seed.ts';
 import type { ShadowState } from './state.ts';
 
@@ -26,7 +27,10 @@ export interface ProbeRecord {
 export interface Watermark { valid: boolean; through: string | null; invalidated_reason: string | null }
 export interface FollowerFile {
   version: 1;
+  /** Written as the seed id; the evidence epoch lives in evidence/epoch.json (evidence-epoch.ts), not here. */
   epoch_id: string;
+  /** The seed this follower state belongs to; the Rust store's calls and the status match on it. */
+  seed_id: string;
   epoch_started_at: string;
   updated_at: string;
   applied_rows: number;
@@ -80,7 +84,8 @@ export const followerPath = (dir: string): string => join(dir, 'follower.json');
 export const passesPath = (dir: string): string => join(dir, 'reconcile', 'passes.jsonl');
 
 export function readFollowerFile(dir: string): FollowerFile | null {
-  try { const parsed = JSON.parse(readFileSync(followerPath(dir), 'utf8')) as FollowerFile; return parsed?.version === 1 ? parsed : null; } catch { return null; }
+  // A file written before `seed_id` existed named the seed in `epoch_id`.
+  try { const parsed = JSON.parse(readFileSync(followerPath(dir), 'utf8')) as FollowerFile; return parsed?.version === 1 ? { ...parsed, seed_id: parsed.seed_id ?? parsed.epoch_id } : null; } catch { return null; }
 }
 
 export function writeFollowerFile(dir: string, file: FollowerFile): void {
@@ -124,7 +129,9 @@ export interface FollowStatus {
 export function buildFollowStatus(dir: string, state: ShadowState | null, now: Date = new Date()): FollowStatus {
   const seed = readSeedRecord(dir);
   const file = seed ? readFollowerFile(dir) : null;
-  const live = file && file.epoch_id === seed?.seed_id ? file : null;
+  const live = file && file.seed_id === seed?.seed_id ? file : null;
+  // The status's epoch is the evidence epoch (evidence-epoch.ts), not the seed; null until a child has opened one.
+  const epoch = readEpoch(dir);
   const passes = readPasses(dir);
   const last = passes.at(-1) ?? null;
   const fulls = passes.filter((p) => p.kind === 'full');
@@ -144,8 +151,8 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
   const lastFull = fulls.at(-1);
   const { error, nonterminal_refresh_rows: _refreshes, ...lastPass } = last ?? ({} as PassRecord);
   return {
-    epoch_id: seed?.seed_id ?? null,
-    epoch_started_at: seed?.finished_at ?? null,
+    epoch_id: epoch?.epoch_id ?? null,
+    epoch_started_at: epoch?.started_at ?? null,
     follower: {
       state: followerState, lag_ms: live ? live.lag_ms : null, lag_ms_p99_24h: lagP99(last24), lag_ms_p99_epoch: lagP99(live?.lag.epoch ?? []),
       queue_depth: queue, applied_rows: live?.applied_rows ?? 0, coverage_watermark: watermark,
