@@ -1255,3 +1255,4 @@ src/mcp/source-preflight.ts	execute_raw	1
 src/shadow/fingerprints.ts	execute_raw	3	the fingerprint probe and fact-fingerprint check run the primary's own SQL functions (gbrain_fact_fingerprint, server version, collation); the comparison is against the primary's SQL by design
 src/shadow/follow.ts	execute_raw	1	selectWhere: the shadow follow producer reads page ids and the keys of rows a delete removes, on the engine or transaction the write runs on
 src/shadow/follower.ts	execute_raw	1	the shadow follower re-reads the changed keys from the primary in one read-only REPEATABLE READ transaction; only the primary's rows can say what the Rust store must hold
+src/shadow/writer-observations.ts	execute_raw	2	swap eligibility's writer observations live in the primary only while a Rust shadow follows it (Rust never holds them): one upsert per writing process after commit, and the eligibility read; the primary's own table by design
