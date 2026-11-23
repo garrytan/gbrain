@@ -1,0 +1,21 @@
+import { test } from 'bun:test';
+import { openRustBrain, removeBrainDir } from './engine-parity/rust-arm.ts';
+test('probe worker', async () => {
+  const { engine, dir } = await openRustBrain();
+  const e: any = engine;
+  const { MinionQueue } = await import('../src/core/minions/queue.ts');
+  const { MinionWorker } = await import('../src/core/minions/worker.ts');
+  const q = new MinionQueue(e);
+  const w = new MinionWorker(e, { queue: 'default', pollInterval: 50, healthCheckInterval: 200, dbFailExitAfter: 2, dbProbeTimeoutMs: 1000, stallWarnAfterMs: 100, stallExitAfterMs: 100000, stalledInterval: 100000 } as any);
+  const events: unknown[] = [];
+  w.on('unhealthy', (i: any) => { events.push(i); console.log('PROBE unhealthy', JSON.stringify(i).slice(0, 300)); });
+  w.register('noop', async () => ({ ok: true }));
+  const j = await q.add('noop', {}, {});
+  const run = w.start().then(() => console.log('PROBE start returned'), (er: any) => console.log('PROBE start threw', er?.code, String(er?.message).slice(0, 200)));
+  await new Promise(r => setTimeout(r, 2500));
+  const got = await q.getJob(j.id);
+  console.log('PROBE job status', got?.status, 'events', events.length);
+  w.requestShutdown?.();
+  await Promise.race([run, new Promise(r => setTimeout(r, 3000))]);
+  removeBrainDir(dir);
+}, 30000);

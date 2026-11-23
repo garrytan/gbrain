@@ -19,6 +19,9 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import { submitAutoDrains } from '../src/commands/autopilot-dispatch.ts';
+import { isSourceInCooldown, readRecentSourceFailures } from '../src/commands/autopilot-fanout.ts';
+import { existsSync } from 'node:fs';
+import { openRustBrain, removeBrainDir, rustArmAddonPath } from './engine-parity/rust-arm.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
 import { autopilotUsesMinionsDispatch, probeNoWorkerPeer, type AutopilotDaemonState } from '../src/commands/autopilot-daemon.ts';
@@ -92,5 +95,32 @@ describe('autopilot refusal-swallow sites', () => {
     await expect(drain(refusingOn(pg, 'idempotency_key = $1', REFUSAL))).rejects.toMatchObject({ code: 'engine_capability_missing' });
     await drain(refusingOn(pg, 'idempotency_key = $1', () => new Error('connection reset')));
     expect(await pg.executeRaw(`SELECT id FROM minion_jobs WHERE name = 'extract-atoms-drain'`)).toHaveLength(0);
+  });
+
+  test('S3 readRecentSourceFailures: a capability refusal surfaces (no cooldown data is not an answer); another error still fails open', async () => {
+    await expect(readRecentSourceFailures(stubEngine(async () => { throw REFUSAL(); }))).rejects.toMatchObject({ code: 'engine_capability_missing' });
+    expect((await readRecentSourceFailures(stubEngine(async () => { throw new Error('relation "minion_jobs" does not exist'); }))).size).toBe(0);
+  });
+
+  const rustRun = existsSync(rustArmAddonPath()) || process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1' ? test : test.skip;
+  rustRun('S3 on a Rust brain: the claim-time cooldown guard refuses instead of answering "not in cooldown"', async () => {
+    const { engine, dir } = await openRustBrain();
+    try {
+      await expect(isSourceInCooldown(engine as unknown as BrainEngine, 'default')).rejects.toMatchObject({ code: 'engine_capability_missing' });
+    } finally {
+      await engine.disconnect();
+      removeBrainDir(dir);
+    }
+  });
+
+  test('S4 isSourceInCooldown: the source row is read through the typed getSource, so an engine whose raw SQL refuses answers as PGLite does', async () => {
+    const queue = new MinionQueue(pg);
+    await pg.executeRaw('INSERT INTO sources(id,name,config) VALUES($1,$1,$2::jsonb)', ['s4', JSON.stringify({ last_source_cycle_at: new Date(Date.now() + 60_000).toISOString() })]);
+    const job = await queue.add('autopilot-cycle', { source_id: 's4' }, { queue: 'default' });
+    await pg.executeRaw(`UPDATE minion_jobs SET status = 'dead', finished_at = now() WHERE id = $1`, [job.id]);
+    // The failure is recent, but a success after it ends the cooldown: PGLite answers false.
+    expect(await isSourceInCooldown(pg, 's4')).toBe(false);
+    // A brain whose raw SQL refuses the sources read must give the same answer, not "no success, so in cooldown".
+    expect(await isSourceInCooldown(refusingOn(pg, 'FROM sources', REFUSAL), 's4')).toBe(false);
   });
 });
