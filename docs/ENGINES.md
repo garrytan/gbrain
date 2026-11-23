@@ -1883,6 +1883,7 @@ ledger. Nothing is written to the brain database, the config table or the brain 
 gbrain engine shadow seed [--json]                 # copy the brain into the Rust store once (shadow mode off)
 gbrain engine shadow start --plan                  # preview the plan and its plan_hash, writes nothing to the shadow directory or the brain's tables (also reports whether the brain can swap)
 gbrain engine shadow start --yes --expect <hash>   # turn it on (loads the Rust addon first; refuses without it)
+gbrain engine shadow reconcile [--full] [--json]   # compare the whole brain with the Rust store and repair differences
 gbrain engine shadow status [--json]
 gbrain engine shadow report [--json]               # prints the report; writes reports/provisional.{json,md} only once the shadow directory exists
 gbrain engine shadow stop [--delete]               # turn it off; --delete removes the shadow directory
@@ -1976,8 +1977,64 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   (`seed` exits 1 with `could not open the brain (repair_episode_open)`), because a healthy open would close the episode
   and prune its repair backups. A repair episode recorded while `seed` waits for the datastore lock is left open too, and
   its backups stay.
-- **Provisional report.** The verdict is always `NOT READY`: this phase compares reads only, the seeded store does
-  not follow later writes yet, and writes and the readiness decision come in later phases of the plan
+- **Follow.** A seeded brain is followed while shadow mode is on. Each committed write through the wrapped engine is
+  read back from the brain, in its own short read-only `REPEATABLE READ` transaction (on Postgres, a dedicated
+  one-connection pool, so the serving pool is never used), and applied to the Rust store, so stored ids and fact
+  fingerprints stay identical. A rolled-back transaction changes nothing. The coverage watermark says whether every
+  committed write is in the store. It goes invalid on a shed, a gap in the write sequence, a failed read, a relation
+  the follower cannot describe row by row (which then needs a pass for that relation), or rows the store had to
+  displace. **Every session that owns the store starts invalid**, even after a clean stop, and becomes valid again
+  only when a full reconcile pass that started after the session start has proven the store. A relation marked dirty
+  is settled by a pass for that relation that started after the mark. Only the process that owns the Rust store
+  applies writes. A second process cannot apply: its child leaves a line in `follower-invalidations.jsonl` (at most
+  one per second while it sees writes) and the owner reads those lines before it advances the watermark, treating the
+  second after each line as unproven. A write by a second process is therefore unproven for a short moment before its
+  line lands, and a read-only command leaves no line.
+- **Reconcile.** `reconcile` compares every seeded relation with the Rust store in 500-row key intervals and replaces
+  any interval that differs, then checks allocators and the fingerprint probe. Each interval is its own short read of
+  the primary (with a pause between intervals) and nothing is held open while the pass talks to the Rust store, so a
+  pass is not one snapshot: each interval is protected by the generation taken just before its read. `reconcile` and
+  `reconcile --full` both run a full pass. It needs the Rust store to be free (stop the serving process first). A full
+  pass also runs on its own a minute after a serving process starts if the watermark is still invalid, every 24 hours
+  while the follower runs, and again when the watermark is invalid and the last pass is over an hour old. A pass that
+  displaced rows does not restore the watermark; the relation gets another pass and the full restore waits for the
+  next full pass. A displaced page also marks `tags` dirty, because its tags go with it. An interval that already
+  matches is still rewritten, so its generation fence stops a follower read that began before the pass from
+  overwriting what the pass verified; every full pass therefore rewrites rows that were already correct.
+  **A seed written before follow existed has no digest entries**, so nothing is followed and `reconcile` refuses it:
+  `status` says the brain needs a reseed (`follower.state` is `needs_reseed`, with the steps in `follower.action`).
+  Reseed with `gbrain engine shadow stop --delete`, then `gbrain engine shadow seed`, then `gbrain engine shadow start`.
+- **Status fields.** `status --json` adds: `follower.state` (`not_seeded`, `needs_reseed`, `stopped`, `invalid`, `behind`,
+  `following`), `follower.action` (the reseed steps, or `null`), `lag_ms`, `lag_ms_p99_24h` and `lag_ms_p99_epoch` (a power-of-two bucket upper bound, not an exact
+  value), `queue_depth`, `applied_rows`, `coverage_watermark`; `reconcile.state` (`never_run`, `ok`, `repaired`,
+  `error`), `last_pass` (with `repaired_rows`, `repaired_by_relation` and `follower_misses`: repaired rows found while the
+  watermark claimed coverage), `consecutive_clean_full_passes`, `next_full_pass_due`; `fingerprints` (`checked_rows`,
+  `mismatches`, and a `probe`, described below); `allocators`;
+  `seed`; `primary_refreshes` (`nonterminal_rows`: primary `gbrain sources refresh` rows that are neither completed nor
+  aborted, counted by the last full pass, with its `checked_at`; `null` before one; a swap must drain them first, and
+  this is a reading, not the swap's own check); and `write_comparisons`, which is `capability_missing` until write comparisons are built. The
+  `write_comparisons` and `fingerprints` counts are totals for the current epoch; one epoch is one seed.
+- **Fingerprint probe.** Withdrawals and purge tombstones key on the fact fingerprint, so a primary whose `lower()` or
+  `[[:space:]]` answers differ from PGLite's (and Rust's) for some code point would fingerprint a claim holding it
+  differently, and a withdrawn fact would not match on Rust. At follower start and on each full pass the probe reads, in
+  one read-only set-based query, `lower(chr(cp))` and `chr(cp) ~ '[[:space:]]'` for every Unicode scalar value (surrogates
+  and U+0000 excluded) plus the word-final sigma rule, and compares them with PGLite's tables in
+  `rust/crates/gbrain-store/tests/fixtures/fact_fingerprints.json`. It also runs every hand row and every sixth seeded row of
+  that corpus through `gbrain_fact_fingerprint` and `gbrain_fact_fingerprint_v1` (texts as bind parameters, never logged).
+  If any code point differs it counts the stored `facts` rows whose claim holds one (a count, never the text). The query costs
+  about 0.5 s on Postgres 16 and 17 with a glibc database, 0.7 s with an ICU database and 0.7 s on PGLite, measured on a dev
+  container; it reads only. `probe` carries
+  `state` (`pass`, `fail`, `not_run`), `checked_at`, `server_version`, `mismatches` (the fixed 20-claim corpus against Rust), the
+  database's `collation`, `ctype`, `locale_provider` (`c` libc, `i` ICU, `b` builtin) and `locale` (`datlocale` on Postgres 17,
+  `daticulocale` on 16, `null` where absent), `differing_code_points` (the first 50 as `U+XXXX`) with
+  `differing_code_points_total`, `corpus_mismatches` with `corpus_mismatch_rows` (the first five row names, never text) and
+  `facts_with_differing_code_points`. `state` is `fail` when code points differ and at least one stored fact holds one, or when
+  a corpus row or the fixed corpus differs and no differing code point explains it; otherwise `pass`, and a pass still lists the
+  differing code points so a swap report can name them. A probe that errors is `not_run`. A glibc `en_US.utf8` host differs
+  (U+0085, U+1680, circled letters and more); a C-ctype host differs on every cased non-ASCII letter, so it fails once a fact
+  holds one.
+- **Provisional report.** The verdict is always `NOT READY`: this phase compares reads only, write comparisons
+  are not built yet, and the readiness decision come in later phases of the plan
   (`docs/designs/RUST_ENGINE.md`, Phase S). Until the Rust engine serves reads, comparisons record
   `capability_missing`.
 

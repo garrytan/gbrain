@@ -48,7 +48,7 @@ const OP_CHECKPOINTS = {
 async function planLeaving(left: string): Promise<SeedPlan> {
   const tables = await primaryTables(query);
   return {
-    relations: tables.filter(t => t !== left && t !== 'op_checkpoints').map(relation => ({ relation, key: ['id'] })),
+    relations: tables.filter(t => t !== left && t !== 'op_checkpoints').map(relation => ({ relation, key: ['id'], removable: true })),
     carried: [],
     not_copied: [OP_CHECKPOINTS],
     gap_columns: [],
@@ -80,7 +80,7 @@ describe('countSeedGaps', () => {
     await checkpoint(IDENTITY_DOWNGRADE_OP, '41');
     const tables = await primaryTables(query);
     expect(tables).toContain('op_checkpoints');
-    const plan: SeedPlan = { relations: tables.map(relation => ({ relation, key: ['id'] })), carried: [], not_copied: [], gap_columns: [] };
+    const plan: SeedPlan = { relations: tables.map(relation => ({ relation, key: ['id'], removable: true })), carried: [], not_copied: [], gap_columns: [] };
     expect(await countSeedGaps(plan, query)).toEqual({});
   });
 
@@ -90,7 +90,7 @@ describe('countSeedGaps', () => {
     await engine.executeRaw(`UPDATE pages SET deleted_at = now() WHERE slug = 'notes/gone'`);
     const tables = await primaryTables(query);
     const plan: SeedPlan = {
-      relations: tables.map(relation => ({ relation, key: ['id'] })),
+      relations: tables.map(relation => ({ relation, key: ['id'], removable: true })),
       carried: [],
       not_copied: [],
       gap_columns: [

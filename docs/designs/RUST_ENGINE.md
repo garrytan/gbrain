@@ -596,6 +596,17 @@ The shadow is an eventual-state copy, not a commit-log replica. Three mechanisms
 - **Allocators.** Row imports keep stored ids; sequence and allocator state is copied separately as a manifest, including values consumed by rolled-back transactions (`graduation-copy.ts` sequence transfer), and verified with the sequence check in `graduation-verify.ts`.
 - **Policies.** The graduation adapter gets explicit `migration`, `live-shadow` and `reverse-shadow` policies. The migration-time transforms (jobs reset to waiting, running effects requeued, managed persistence disabled, caches discarded; `graduation-inventory.ts`) apply only at cutover. A shadow store never starts job, persistence-effect, sync or maintenance workers. A versioned comparison inventory separates carried data, runtime-only state, derived indexes and excluded caches, and every exclusion is reported.
 
+**Known losses of the first follow and reconcile build.**
+
+- Reconcile cannot find Rust-side drift after import.
+- Write comparisons check typed read-backs, not the full mutation set.
+- A write by a second process on the same brain is covered by a one-second lease after the line it leaves, not by an exact record: there is a short window between its commit and that line.
+- A reconcile pass is not one snapshot. Each interval is read on its own and consistency across intervals rests on generations and on the store's tombstones and interval fences.
+- Rows the store displaced make the full restore wait for the next full pass, up to the hour-long retry.
+- Every full pass rewrites rows that were already correct, so that each interval's generation fence stands; this costs time on a large brain.
+- A seed written before follow existed has no digest entries and is not followed: `status` says the brain needs a reseed and gives the commands.
+- The write map names what each member writes, including trigger and cleanup effects (owner marks, slug-keyed stores, the restriction flag); a member added later without an entry is reported as unmapped and invalidates the watermark.
+
 The shadow lives on one host, the **shadow host**: the machine that would own the brain after a swap. On Postgres brains with several hosts, the others keep writing to Postgres as today and reconcile picks their writes up.
 
 ### What is compared

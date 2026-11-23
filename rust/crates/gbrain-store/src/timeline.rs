@@ -219,6 +219,24 @@ fn raise_latest(tx: &mut dyn KvWrite, page_id: u64, created_at_us: i64) -> Resul
     Ok(())
 }
 
+/// The shadow follow (`seed/follow.rs`): removes the entry `id` of `page_id` on `date`, with its
+/// dedup key, and sets the page's newest `created_at` to what the remaining entries hold. `false`
+/// when there is no such entry.
+pub(crate) fn remove_entry_by_id(
+    tx: &mut dyn KvWrite,
+    page_id: u64,
+    date: &str,
+    id: u64,
+) -> Result<bool> {
+    let Some(old) = crate::get_json::<TimelineRecord>(&*tx, &keys::timeline(page_id, date, id))?
+    else {
+        return Ok(false);
+    };
+    remove_entry(tx, &old)?;
+    recompute_latest(tx, page_id)?;
+    Ok(true)
+}
+
 /// The next timeline entry id, from the same counter `addTimelineEntry` uses (the `serial`).
 // timeline_queries (upsertEventProjection) is the first caller.
 #[cfg_attr(not(test), allow(dead_code))]

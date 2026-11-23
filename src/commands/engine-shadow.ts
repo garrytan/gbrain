@@ -18,8 +18,9 @@ import type { EngineConfig } from '../core/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
 import { readFaults, readShadowSummary } from '../shadow/ledger.ts';
+import { buildFollowStatus, renderFollowStatus } from '../shadow/follow-status.ts';
 import { readManagedStorage, storageLine, storageReport, type ManagedStorageRecord, type StorageReport } from '../shadow/managed-gate.ts';
-import { readSeedRecord, runSeed, SeedBudgetError, writeSeedRecord, type SeedRecord, type SeedTarget } from '../shadow/seed.ts';
+import { readSeedRecord, RESEED_STEPS, runSeed, SeedBudgetError, writeSeedRecord, type SeedRecord, type SeedTarget } from '../shadow/seed.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown, writeProvisionalReport } from '../shadow/report.ts';
 import {
   brainIdentity, DEFAULT_SHADOW_QUEUE_BOUND, DEFAULT_SHADOW_SAMPLE_RATE, readShadowState, shadowBrainKey, shadowDirFor,
@@ -40,6 +41,8 @@ export interface EngineShadowDeps {
   runChild?: (dir: string) => Promise<number>;
   /** The connected primary brain `seed` reads and `start` opens to read its storage mode (closed after); default the configured brain, opened without shadow mode. */
   openPrimary?: () => Promise<BrainEngine>;
+  /** Test seam for `reconcile`: the supervisor options (argv, spawn) of the child that holds the Rust store. */
+  reconcileSupervisor?: Partial<import('../shadow/supervisor.ts').ShadowSupervisorOptions>;
   /** Opens the Rust store `seed` writes; default openRustStore on the loaded addon at `<dir>/store`. */
   openStore?: (addon: object, storePath: string) => Promise<SeedTarget & { close(): Promise<void> }>;
 }
@@ -53,6 +56,7 @@ Usage:
   gbrain engine shadow stop [--delete]
   gbrain engine shadow report [--json]
   gbrain engine shadow seed [--json] [--reseed]
+  gbrain engine shadow reconcile [--full] [--json]
 
 Shadow mode is off by default. When on, a sample of reads this brain answers is sent, after the answer, to a
 supervised child process that runs the same read on the Rust engine and records match, diff or why it could not
@@ -69,6 +73,12 @@ takes its process lock, and PGLite rewrites its own control and log files. A bra
 opened. A store is seeded once: to seed again, delete the shadow directory first.
 seed runs on a brain that uses managed storage too; only the swap refuses such a brain. seed reads the brain's storage
 mode right before its snapshot and records it in seed.json; a mode it cannot read does not stop the seed.
+
+A seeded brain is followed: each committed write is read back from the brain and applied to the Rust store. reconcile
+compares the whole store with the brain (digests per 500-row interval) and repairs what differs; it needs the Rust
+store to be free, so run it when no serving process holds it. Plain reconcile and --full both run a full pass. status
+shows the follower's lag and coverage, the last pass, fingerprint checks and the allocator check; the fingerprint and
+comparison counts are totals for the current seed.
 
 The report is provisional and always says NOT READY.`;
 
@@ -181,6 +191,7 @@ export async function runEngineShadow(args: string[], deps: EngineShadowDeps = {
     if (sub === 'stop') return stop(brain, flags(rest, ['--delete'], 'stop').has('--delete'), out, now);
     if (sub === 'report') return report(brain, flags(rest, ['--json'], 'report').has('--json'), out, now);
     if (sub === 'seed') return await seed(brain, flags(rest, ['--json', '--reseed'], 'seed'), deps, out, err, now);
+    if (sub === 'reconcile') return await reconcileCommand(brain, flags(rest, ['--json', '--full'], 'reconcile').has('--json'), deps, out, err);
     throw new UsageError(`Unknown engine shadow subcommand: ${sub}`);
   } catch (e) {
     if (e instanceof UsageError) {
@@ -298,7 +309,8 @@ function status(brain: { key: string; dir: string }, json: boolean, out: (l: str
     out(JSON.stringify({
       schema_version: 1, brain: brain.key, enabled: state?.enabled === true, state, directory: brain.dir,
       totals, by_op: summary?.by_op ?? {}, serving: summary?.primary ?? null, child_shed: summary?.child_shed ?? 0,
-      children: summary?.children ?? 0, recent_faults: faults, storage: storageReport(state?.storage), seed: seedStatus(readSeedRecord(brain.dir)),
+      children: summary?.children ?? 0, recent_faults: faults, storage: storageReport(state?.storage),
+      ...buildFollowStatus(brain.dir, state), seed: seedStatus(readSeedRecord(brain.dir)), // the seed block carries the recorded storage mode
     }, null, 2));
     return 0;
   }
@@ -316,6 +328,7 @@ function status(brain: { key: string; dir: string }, json: boolean, out: (l: str
   out(seeded ? `  seed ${seeded.seed_id} finished ${seeded.finished_at}; unseeded gap rows ${seeded.unseeded_gap_rows_total}` : '  seed: none (gbrain engine shadow seed)');
   const seedStorage = storageLine(seeded?.storage);
   if (seedStorage) out(`  storage: ${seedStorage}`);
+  if (seeded) for (const line of renderFollowStatus(buildFollowStatus(brain.dir, state))) out(line);
   for (const f of faults) out(`  fault ${f.ts} ${f.kind}: ${f.detail}`);
   return 0;
 }
@@ -330,8 +343,7 @@ export function seedStatus(record: SeedRecord | null): {
   };
 }
 
-const RESEED_STEP = 'A Rust store is seeded once. To seed again, start from a new shadow directory: '
-  + 'gbrain engine shadow stop --delete (deletes the store, ledger and reports), then gbrain engine shadow seed.';
+const RESEED_STEP = `A Rust store is seeded once. To seed again, start from a new shadow directory: ${RESEED_STEPS}.`;
 
 async function seed(
   brain: { key: string; dir: string; engine: string }, f: Set<string>, deps: EngineShadowDeps,
@@ -413,6 +425,35 @@ async function seedFrom(
     throw e;
   } finally {
     await store.close().catch(() => undefined);
+  }
+}
+
+/** One full reconcile pass from the CLI, through a child that holds the Rust store. */
+async function reconcileCommand(
+  brain: { key: string; dir: string }, json: boolean, deps: EngineShadowDeps, out: (l: string) => void, err: (l: string) => void,
+): Promise<number> {
+  const seeded = readSeedRecord(brain.dir);
+  if (seeded?.digests !== true) { err(seeded ? `engine shadow: this seed was written before follow existed, so reconcile cannot guard its rows. Reseed: ${RESEED_STEPS}.` : 'engine shadow: reconcile needs a seeded store. Run gbrain engine shadow seed first.'); return 1; }
+  const [{ Reconciler }, { ShadowSupervisor }, { shadowChildArgv }, { openReadSource }] = await Promise.all([
+    import('../shadow/reconcile.ts'), import('../shadow/supervisor.ts'), import('../shadow/attach.ts'), import('../shadow/read-pool.ts'),
+  ]);
+  const primary = await (deps.openPrimary ?? openConfiguredPrimary)();
+  const supervisor = new ShadowSupervisor({ dir: brain.dir, argv: shadowChildArgv(brain.dir), stillEnabled: () => true, ...deps.reconcileSupervisor });
+  const reads = openReadSource(primary);
+  try {
+    const reconciler = new Reconciler({ dir: brain.dir, reads, rpc: (method, args, timeoutMs) => supervisor.request(method, args, timeoutMs) });
+    const pass = await reconciler.run('full');
+    if (json) out(JSON.stringify(pass, null, 2));
+    else {
+      out(`Reconcile ${pass.id}: ${pass.error ? `failed (${pass.error})` : `repaired ${pass.repaired_rows} rows, follower misses ${pass.follower_misses}`}.`);
+      for (const [relation, n] of Object.entries(pass.repaired_by_relation)) out(`  ${relation}: ${n}`);
+    }
+    if (/not_owner|store_closed|rust_store_locked/.test(pass.error ?? '')) err('engine shadow: another process holds the Rust store. Stop it (or the serving process) and run reconcile again.');
+    return pass.error ? 1 : 0;
+  } finally {
+    supervisor.stop();
+    await reads.close();
+    await primary.disconnect();
   }
 }
 

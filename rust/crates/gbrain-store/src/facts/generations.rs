@@ -330,6 +330,48 @@ fn covers_fact(read: &dyn KvRead, f: &FactRecord, subject: &str) -> Result<bool>
     withdrawal_covers(read, f, subject)
 }
 
+/// The shadow follow (`seed/follow.rs`): removes the generation `id` with its items. `false` when
+/// there is none.
+pub(crate) fn remove_generation(tx: &mut dyn KvWrite, id: u64) -> Result<bool> {
+    if tx.get(&key(id))?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&key(id))?;
+    Ok(true)
+}
+
+/// The shadow follow: replaces the header of generation `id` and keeps its items, as an `UPDATE`
+/// of the row does. Stores a new generation when there is none.
+pub(crate) fn replace_generation(
+    tx: &mut dyn KvWrite,
+    id: u64,
+    mut record: GenerationRecord,
+) -> Result<()> {
+    if let Some(old) = get_json::<GenerationRecord>(&*tx, &key(id))? {
+        record.items = old.items;
+    }
+    crate::put_json(tx, &key(id), &record)
+}
+
+/// The shadow follow: removes the item `item_key` of generation `generation_id`. `false` when
+/// there is none.
+pub(crate) fn remove_item(
+    tx: &mut dyn KvWrite,
+    generation_id: u64,
+    item_key: &str,
+) -> Result<bool> {
+    let Some(mut generation) = get_json::<GenerationRecord>(&*tx, &key(generation_id))? else {
+        return Ok(false);
+    };
+    let before = generation.items.len();
+    generation.items.retain(|i| i.item_key != item_key);
+    if generation.items.len() == before {
+        return Ok(false);
+    }
+    crate::put_json(tx, &key(generation_id), &generation)?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
