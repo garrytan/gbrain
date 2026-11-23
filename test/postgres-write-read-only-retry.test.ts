@@ -29,6 +29,7 @@ import { OWNER_IPC_ROUTES, ownerMemberOnlyReads } from '../src/core/rust-engine/
 import { auditWrites, declaredMembers, executorReferences } from './helpers/postgres-write-executor-audit.ts';
 import { makeFakeSql, type RecordedStatement } from './helpers/fake-postgres-sql.ts';
 
+// test-reads-source-ok[structural]: the guard audits which executor each typed write member runs on, so it reads the engine's own member bodies.
 const ENGINE_SOURCE = readFileSync(join(import.meta.dir, '..', 'src', 'core', 'postgres-engine.ts'), 'utf8');
 
 /** Public engine members that are not on the owner socket: none of them writes. */
