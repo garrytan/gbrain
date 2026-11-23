@@ -6,8 +6,8 @@ This family answers `getStats`, `getHealth`, `countOnboardSignal`, `countBrainLi
 This family answers `pingStore`, `getStats`, `getHealth`, `countOnboardSignal`, `readBrainMaturity`, `listEnrichCandidates` and
 `findAnomalies` from the
 records the other families keep (pages, chunks, links, tags, timeline entries, sources, config),
-and keeps one table of its own: PGLite's `ingest_log`. The key tag is the reserved `n`;
-`FORMAT_VERSION` stays 1.
+and keeps one table of its own: PGLite's `ingest_log`. The key tag is the reserved `n`. It took no format
+number; the store is at format 5 now ([format.md](format.md)).
 
 | Key | Value | Mirrors |
 | --- | --- | --- |

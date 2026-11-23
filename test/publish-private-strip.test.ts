@@ -2,6 +2,7 @@ import { describe, test, expect } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { spawnSync } from 'child_process';
 import { makeShareable, runPublish } from '../src/commands/publish.ts';
 
 const SECRET = 'private log entry';
@@ -16,6 +17,7 @@ describe('makeShareable drops every private section, whatever comes before it (#
     ['<!--timeline--> sentinel', '# Test\n\nBody.\n\n<!--timeline-->\n- 2026-01-01 ' + SECRET + '\n'],
     ['--- timeline --- sentinel', '# Test\n\nBody.\n\n--- timeline ---\n\n- 2026-01-01 ' + SECRET + '\n'],
     ['--- timeline --- sentinel with trailing whitespace', '# Test\n\nBody.\n\n--- timeline --- \t\n\n- 2026-01-01 ' + SECRET + '\n'],
+    ['--- timeline --- sentinel with non-breaking spaces', '# Test\n\nBody.\n\n---\u00a0timeline\u00a0---\n\n- 2026-01-01 ' + SECRET + '\n'],
     ['bold heading', '# Test\n\nBody.\n\n## **Timeline**\n\n- 2026-01-01 ' + SECRET + '\n'],
     ['heading with an emoji', '# Test\n\nBody.\n\n## \u{1F4C5} Timeline\n\n- 2026-01-01 ' + SECRET + '\n'],
     ['plural heading', '# Test\n\nBody.\n\n## Timelines\n\n- 2026-01-01 ' + SECRET + '\n'],
@@ -74,6 +76,74 @@ describe('makeShareable drops every private section, whatever comes before it (#
   test('a page without private sections keeps its body', () => {
     const input = '# Test\n\nBody.\n\n---\n\n## Notes\n\nPublic notes about a timeline of events.\n';
     expect(makeShareable(input)).toBe('# Test\n\nBody.\n\n---\n\n## Notes\n\nPublic notes about a timeline of events.');
+  });
+});
+
+describe('makeShareable stays fast on long whitespace lines', () => {
+  test('a line of 50,000 spaces strips in well under a second', () => {
+    const lines = ['# Test', '', ' '.repeat(50000) + 'x', '#' + ' '.repeat(50000) + 'x', ' '.repeat(50000), '', 'Body.'].join('\n');
+    const start = performance.now();
+    expect(makeShareable(lines)).toContain('Body.');
+    expect(performance.now() - start).toBeLessThan(500);
+  });
+});
+
+describe('gbrain publish --markdown writes the stripped page for other renderers (brain-pdf)', () => {
+  test('writes the same stripped markdown publish shares, and no HTML', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'publish-md-'));
+    try {
+      const page = join(dir, 'page.md');
+      const out = join(dir, 'clean.md');
+      const input = '---\ntitle: T\nemail: ' + SECRET + '\n---\n# Test\n\nBody.\n\n## Timeline\n\n- 2026-01-01 ' + SECRET + '\n';
+      writeFileSync(page, input);
+      const log = console.log;
+      console.log = () => {};
+      try { await runPublish([page, '--markdown', '--out', out]); } finally { console.log = log; }
+      const written = readFileSync(out, 'utf8');
+      expect(written).toBe(makeShareable(input) + '\n');
+      expect(written).not.toContain(SECRET);
+      expect(written).not.toContain('<html');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('refuses --password, since a markdown file cannot be encrypted', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'publish-md-'));
+    try {
+      const page = join(dir, 'page.md');
+      writeFileSync(page, '# Test\n\nBody.\n');
+      await expect(runPublish([page, '--markdown', '--password', 'pw', '--out', join(dir, 'x.md')])).rejects.toThrow(/--password/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('refuses an --out that is the page itself, and leaves the page whole', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'publish-md-'));
+    try {
+      const page = join(dir, 'page.md');
+      const input = '# Test\n\nBody.\n\n## Timeline\n\n- 2026-01-01 ' + SECRET + '\n';
+      writeFileSync(page, input);
+      await expect(runPublish([page, '--markdown', '--out', join(dir, '.', 'page.md')])).rejects.toThrow(/is the page itself/);
+      expect(readFileSync(page, 'utf8')).toBe(input);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('without --out, never replaces an existing <name>.shared.md', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'publish-md-'));
+    try {
+      writeFileSync(join(dir, 'page.md'), '# Test\n\nBody.\n');
+      writeFileSync(join(dir, 'page.shared.md'), 'an existing page\n');
+      const r = spawnSync(process.execPath, [join(import.meta.dir, '..', 'src', 'cli.ts'), 'publish', 'page.md', '--markdown'], { cwd: dir, encoding: 'utf-8' });
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toContain('already exists');
+      expect(readFileSync(join(dir, 'page.shared.md'), 'utf8')).toBe('an existing page\n');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

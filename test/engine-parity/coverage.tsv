@@ -6,9 +6,9 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2017/2033
+# covered: 2006/2022
 # lifecycle: 9/9
-# pages: 91/92
+# pages: 81/82
 # search: 7/7
 # search_reads: 9/9
 # link_reads: 15/15
@@ -74,7 +74,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 16/16
 # wanted_links: 2/2
-# write_misc: 93/96
+# write_misc: 92/95
 # repair_bookkeeping: 55/55
 # write_attribution: 5/5
 # telemetry: 14/14
@@ -124,8 +124,8 @@ transaction	lifecycle	yes	303	no	yes	yes	serves
 transactionDirect	lifecycle	yes	14	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	204	yes	yes	yes	serves
-readPageSnapshot	pages	yes	60	no	yes	yes	serves
+getPage	pages	yes	205	yes	yes	yes	serves
+readPageSnapshot	pages	yes	61	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
 lockPageKeys	pages	yes	14	no	yes	yes	serves
 putPage	pages	yes	1091	yes	yes	yes	serves
@@ -134,7 +134,7 @@ findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	37	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	291	yes	yes	yes	serves
+softDeletePage	pages	yes	289	yes	yes	yes	serves
 softDeletePages	pages	yes	3	yes	yes	yes	serves
 restorePage	pages	yes	14	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	6	no	yes	yes	serves
@@ -201,22 +201,12 @@ hasSegmentedHistory	pages	yes	2	no	yes	yes	serves
 readLivePagesByIds	pages	yes	1	no	yes	yes	serves
 listStaleAtoms	pages	yes	2	no	yes	yes	serves
 getPageSealState	pages	yes	5	no	yes	yes	serves
-refreshPageOrigin	pages	yes	8	no	yes	yes	serves
+refreshPageOrigin	pages	yes	6	no	yes	yes	serves
 readLivePageIdBySlug	pages	yes	2	no	yes	yes	serves
 readPageTierRef	pages	yes	1	no	yes	yes	serves
 readPageTierRows	pages	yes	1	no	yes	yes	serves
 pageHasFrontmatterKey	pages	yes	1	no	yes	yes	serves
-countLivePagesAtPathPrefix	pages	yes	1	no	yes	yes	serves
-probeUntypedPathPrefix	pages	yes	1	no	yes	yes	serves
-invalidateQueryCacheRows	pages	yes	1	no	yes	yes	serves
-readUnscopedReadRefusal	pages	yes	1	no	yes	yes	serves
-insertAccessReadLogRows	pages	yes	1	no	yes	yes	serves
-pruneAccessReadLog	pages	yes	1	no	yes	yes	serves
-readAccessReadLog	pages	yes	1	no	yes	yes	serves
-listAccessReadPageRefs	pages	yes	1	no	yes	yes	serves
-readAccessReadsOfPages	pages	yes	1	no	yes	yes	serves
-tallyAccessReadsOfPages	pages	yes	1	no	yes	yes	serves
-searchKeyword	search	yes	43	yes	yes	yes	serves
+searchKeyword	search	yes	44	yes	yes	yes	serves
 countKeywordPages	search	yes	12	no	yes	yes	serves
 searchKeywordPages	search	yes	17	no	yes	yes	serves
 searchTitles	search	yes	21	yes	yes	yes	serves
@@ -224,8 +214,8 @@ searchVector	search	yes	15	yes	yes	yes	serves
 getEmbeddingsByChunkIds	search	yes	1	no	yes	yes	serves
 searchKeywordChunks	search	yes	16	yes	yes	yes	serves
 cosinesByChunkIds	search_reads	yes	1	no	yes	yes	serves
-hasSupersedeEdges	search_reads	yes	1	no	yes	yes	serves
-supersedingPageSlugs	search_reads	yes	11	no	yes	yes	serves
+hasSupersedeEdges	search_reads	yes	3	no	yes	yes	serves
+supersedingPageSlugs	search_reads	yes	14	no	yes	yes	serves
 aliasCanonicalRefs	search_reads	yes	11	no	yes	yes	serves
 pageCollapseFacts	search_reads	yes	3	no	yes	yes	serves
 slugsEndingIn	search_reads	yes	2	no	yes	yes	serves
@@ -295,7 +285,7 @@ deleteChunksForPages	chunks	yes	3	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	6	no	yes	yes	serves
 upsertChunks	chunks	yes	56	yes	yes	yes	serves
-sealChunks	chunks	yes	84	no	yes	yes	serves
+sealChunks	chunks	yes	85	no	yes	yes	serves
 getChunks	chunks	yes	58	yes	yes	yes	serves
 getChunkPage	chunks	yes	14	no	yes	yes	serves
 getChunkWindows	chunks	yes	13	no	yes	yes	serves
@@ -337,7 +327,7 @@ listFactsFencePages	extraction	no	0	no	-	-	-
 listSweepStalePages	extraction	yes	1	no	yes	yes	serves
 listSweepDeferredPages	extraction	no	0	no	-	-	-
 listPageRefsForSlugs	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	145	yes	yes	yes	serves
+addLink	links	yes	148	yes	yes	yes	serves
 addLinksBatch	links	yes	38	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	18	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
@@ -536,8 +526,8 @@ hasActiveFactText	facts	yes	2	no	yes	yes	serves
 readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
-insertFact	facts	yes	160	yes	yes	yes	serves
-insertFacts	facts	yes	221	no	yes	yes	serves
+insertFact	facts	yes	161	yes	yes	yes	serves
+insertFacts	facts	yes	220	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	84	no	yes	yes	serves
 listFactsByEntity	facts	yes	52	yes	yes	yes	serves
@@ -553,7 +543,7 @@ listFactIdsBySourcePrefix	facts	yes	1	no	yes	yes	serves
 expireFactRows	facts	yes	1	no	yes	yes	serves
 findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
 consolidateFact	facts	yes	9	no	yes	yes	serves
-findTrajectory	facts	yes	6	yes	yes	yes	serves
+findTrajectory	facts	yes	7	yes	yes	yes	serves
 getFactsHealth	facts	yes	3	yes	yes	yes	serves
 allocateBodyOccurrenceIds	segmented_body	yes	28	no	yes	yes	serves
 stageSegmentTexts	segmented_body	yes	27	no	yes	yes	serves
@@ -613,7 +603,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	2	no	yes	yes	serves
 getConfig	config	yes	49	no	yes	yes	serves
-setConfig	config	yes	74	no	yes	yes	serves
+setConfig	config	yes	73	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	5	no	yes	yes	serves
 getAllConfig	config	yes	3	no	yes	yes	serves
@@ -905,7 +895,7 @@ readNamedEntitySlugs	entity_reads	yes	2	no	yes	yes	serves
 findFuzzyEntityCandidates	entity_reads	yes	3	no	yes	yes	serves
 findExactBasenameCandidates	entity_reads	yes	2	no	yes	yes	serves
 readRetirementHop	entity_reads	yes	7	no	yes	yes	serves
-readEntityCardRows	entity_reads	yes	3	no	yes	yes	serves
+readEntityCardRows	entity_reads	yes	4	no	yes	yes	serves
 listUnretiredPagesBySlugPattern	entity_reads	yes	2	no	yes	yes	serves
 listNameVariantCandidates	entity_reads	yes	2	no	yes	yes	serves
 countDistinctInboundLinkers	entity_reads	yes	2	no	yes	yes	serves
@@ -1532,7 +1522,7 @@ listSegmentedPages	withdrawal_pages	yes	2	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	2	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	176	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	177	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	4	yes	yes	yes	serves
@@ -1721,7 +1711,6 @@ deleteOAuthClient	write_misc	yes	9	no	yes	yes	serves
 listAudienceAccessMembers	write_misc	yes	5	no	yes	yes	serves
 readAccessGroups	write_misc	yes	4	no	yes	yes	serves
 listPagesNamingReader	write_misc	yes	5	no	yes	yes	serves
-hasLabelledOnlyMemberAmong	write_misc	yes	1	no	yes	yes	serves
 listSourceIncarnations	repair_bookkeeping	yes	14	no	yes	yes	serves
 listOrphanBindings	repair_bookkeeping	yes	4	no	yes	yes	serves
 deleteOrphanBinding	repair_bookkeeping	yes	3	no	yes	yes	serves
@@ -1924,11 +1913,11 @@ readOAuthClientMemberGrant	access_grants	yes	1	no	yes	yes	serves
 readAccessTokenMemberGrant	access_grants	yes	1	no	yes	yes	serves
 readLocalWriterMemberGrant	access_grants	yes	6	no	yes	yes	serves
 readSharedSkillServingEpoch	access_grants	yes	5	no	yes	yes	serves
-insertAccessMember	access_members	yes	35	no	yes	yes	serves
+insertAccessMember	access_members	yes	34	no	yes	yes	serves
 setAccessMemberDisabled	access_members	yes	15	no	yes	yes	serves
 setAccessMemberEmail	access_members	yes	2	no	yes	yes	serves
 setAccessMemberKind	access_members	yes	2	no	yes	yes	serves
-setAccessMemberLabelledOnly	access_members	yes	3	no	yes	yes	serves
+setAccessMemberLabelledOnly	access_members	yes	2	no	yes	yes	serves
 tombstoneAccessMember	access_members	yes	14	no	yes	yes	serves
 addAccessGroupMembers	access_members	yes	3	no	yes	yes	serves
 removeAccessGroupMembers	access_members	yes	1	no	yes	yes	serves
