@@ -71,3 +71,31 @@ export const listOpenFactsWindow: Member<'listOpenFactsWindow'> = (brain, sel, a
 export const countOpenFactReasons: Member<'countOpenFactReasons'> = (brain, sel) =>
   storeCall({ member: 'countOpenFactReasons' }, () => brain.countOpenFactReasons({ sourceId: sel.sourceId, createdBefore: sel.createdBefore,
     ids: factIds('countOpenFactReasons', sel.ids) }));
+
+/** `listLabelledPages` (gbrain repair private-labels), served from facts/private_label_scans.rs. */
+export const listLabelledPages: Member<'listLabelledPages'> = (brain, sourceIds, after, ids) => {
+  if (!Number.isSafeInteger(after)) refuseMember('listLabelledPages', 'a page id cursor that is not an integer');
+  return storeCall({ member: 'listLabelledPages' }, () => brain.listLabelledPages({ sourceIds: [...sourceIds], after, ids: pageIds('listLabelledPages', ids) }));
+};
+
+/** `listLiveLabelRows` (gbrain repair private-labels restore), served from facts/private_label_scans.rs. */
+export const listLiveLabelRows: Member<'listLiveLabelRows'> = (brain, ids) =>
+  storeCall({ member: 'listLiveLabelRows' }, () => brain.listLiveLabelRows({ ids: pageIds('listLiveLabelRows', ids) }));
+
+/**
+ * `listClearDependents` (gbrain repair private-labels), served from facts/private_label_scans.rs. `honorAliases` is read
+ * off the rendered snapshot filter, which the caller's readHonorAliases set for this brain.
+ */
+export const listClearDependents: Member<'listClearDependents'> = (brain, cleared) => {
+  const honorAliases = privateSnapshotFilterFragment('p').includes(privacyAliasSql('p'));
+  return storeCall({ member: 'listClearDependents' }, () => brain.listClearDependents({ ids: pageIds('listClearDependents', cleared.ids) ?? [],
+    sourceIds: [...cleared.sourceIds], slugs: [...cleared.slugs], keys: [...cleared.keys], honorAliases }));
+};
+
+/** `listContextualRetrievalModes` (the private-labels re-embedding preview), served from facts/private_label_scans.rs. */
+export const listContextualRetrievalModes: Member<'listContextualRetrievalModes'> = (brain, ids) =>
+  storeCall({ member: 'listContextualRetrievalModes' }, () => brain.listContextualRetrievalModes({ ids: pageIds('listContextualRetrievalModes', ids) }));
+
+/** `listUnembeddedChunkPages` (the private-labels re-embedding preview), served from facts/private_label_scans.rs. */
+export const listUnembeddedChunkPages: Member<'listUnembeddedChunkPages'> = (brain, ids) =>
+  storeCall({ member: 'listUnembeddedChunkPages' }, () => brain.listUnembeddedChunkPages({ ids: pageIds('listUnembeddedChunkPages', ids) }));

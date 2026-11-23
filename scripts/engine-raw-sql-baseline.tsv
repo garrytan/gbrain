@@ -627,7 +627,6 @@ src/core/repair/open-facts.ts	execute_raw	9
 src/core/repair/origin-carry.ts	execute_raw	4
 src/core/repair/origin-twins-heal.ts	execute_raw	4
 src/core/repair/origin-twins.ts	execute_raw	2
-src/core/repair/private-labels.ts	execute_raw	5
 src/core/repair/provenance.ts	execute_raw	1
 src/core/repair/readers.ts	execute_raw	3
 src/core/repair/rename-identity.ts	execute_raw	6

@@ -11,6 +11,7 @@ use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
 use gbrain_store::facts::open_facts_scans::OpenFactsArgs;
+use gbrain_store::facts::private_label_scans::{ClearDependentsArgs, LabelScanArgs};
 use gbrain_store::facts::visibility_scans::{OpenTwinArgs, VisibilityScanArgs};
 
 #[napi]
@@ -38,6 +39,71 @@ impl Brain {
         self.run(env, move |s| {
             let a: OpenFactsArgs = required(args, "countOpenFactReasons args")?;
             s.count_open_fact_reasons(&a)
+        })
+    }
+
+    /// `listLabelledPages({ sourceIds, after, ids })`: the pages a label makes private.
+    #[napi]
+    pub fn list_labelled_pages<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: LabelScanArgs = required(args, "listLabelledPages args")?;
+            s.list_labelled_pages(&a)
+        })
+    }
+
+    /// `listLiveLabelRows({ ids })`: the live rows of the named pages.
+    #[napi]
+    pub fn list_live_label_rows<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: LabelScanArgs = required(args, "listLiveLabelRows args")?;
+            s.list_live_label_rows(&a)
+        })
+    }
+
+    /// `listContextualRetrievalModes({ ids })`: `[{ id, mode }]`.
+    #[napi]
+    pub fn list_contextual_retrieval_modes<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: LabelScanArgs = required(args, "listContextualRetrievalModes args")?;
+            s.list_contextual_retrieval_modes(&a)
+        })
+    }
+
+    /// `listUnembeddedChunkPages({ ids })`: the page ids.
+    #[napi]
+    pub fn list_unembedded_chunk_pages<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: LabelScanArgs = required(args, "listUnembeddedChunkPages args")?;
+            s.list_unembedded_chunk_pages(&a)
+        })
+    }
+
+    /// `listClearDependents({ ids, sourceIds, slugs, keys, honorAliases })`: `[{ id, cleared_id, category }]`.
+    #[napi]
+    pub fn list_clear_dependents<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: ClearDependentsArgs = required(args, "listClearDependents args")?;
+            s.list_clear_dependents(&a)
         })
     }
 

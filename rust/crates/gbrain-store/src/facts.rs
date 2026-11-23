@@ -64,6 +64,7 @@ pub mod ontology_repair;
 pub mod open_facts_scans;
 pub mod page_purges;
 pub(crate) mod privacy;
+pub mod private_label_scans;
 pub mod provenance;
 pub mod purge;
 pub mod purge_ledger;

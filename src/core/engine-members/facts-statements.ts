@@ -18,6 +18,7 @@ import type * as RepairAppliesSql from '../engine-sql/repair-applies.ts';
 import type * as VisibilityScansSql from '../engine-sql/visibility-scans.ts';
 import type * as OpenTwinsSql from '../engine-sql/open-twins.ts';
 import type * as OpenFactsScansSql from '../engine-sql/open-facts-scans.ts';
+import type * as PrivateLabelScansSql from '../engine-sql/private-label-scans.ts';
 import type * as FactsTrustSql from '../engine-sql/facts-trust.ts';
 import type { LocalWriterInsert, LocalWriterRow } from '../engine-sql/persistence-state.ts';
 import type { PageReadScope } from '../types.ts';
@@ -786,6 +787,16 @@ export interface FactsStatementMembers {
   listOpenFactsWindow(sel: OpenFactsScansSql.OpenFactsSelection, after: number, upper: number | null, classes: readonly string[], limit: number, timeoutMs: number): Promise<OpenFactsScansSql.OpenFactsWindowRow[]>;
   /** open-facts: the selection's private facts counted by class and by the reason they stay private. Reads the same tables. */
   countOpenFactReasons(sel: OpenFactsScansSql.OpenFactsSelection, timeoutMs: number): Promise<Array<{ cls: string; reason: string; n: number }>>;
+  /** private-labels: the live pages of these sources a label makes private, by id after `after` (only `ids` when given), at most 5000. Reads pages and sources. */
+  listLabelledPages(sourceIds: string[], after: number, ids: number[] | null, timeoutMs: number): Promise<PrivateLabelScansSql.LabelledPageRow[]>;
+  /** private-labels: the live rows of the named pages, as a restore rereads them. Reads pages. */
+  listLiveLabelRows(ids: number[], timeoutMs: number): Promise<Array<Omit<PrivateLabelScansSql.LabelledPageRow, 'git'>>>;
+  /** private-labels: the pages a window of clears exposes besides themselves, by (id, cleared id). Reads pages, links and slug_aliases. */
+  listClearDependents(cleared: PrivateLabelScansSql.ClearedLabels, timeoutMs: number): Promise<PrivateLabelScansSql.ClearDependentRow[]>;
+  /** private-labels: the named pages stored under a contextual-retrieval mode, with that mode. Reads pages. */
+  listContextualRetrievalModes(ids: number[], timeoutMs: number): Promise<Array<{ id: number; mode: string }>>;
+  /** private-labels: the named pages with a live-body chunk that has no vector yet. Reads content_chunks and pages. */
+  listUnembeddedChunkPages(ids: number[], timeoutMs: number): Promise<number[]>;
   /** url-clone-fences: makes the fact at a fence row of the page database-only; the ids it changed. Writes facts. */
   detachFenceRowFacts(sourceId: string, slug: string, rowNum: number): Promise<number[]>;
   /** url-clone-fences: whether the entity already holds a database-only fact with this claim text. Reads facts. */

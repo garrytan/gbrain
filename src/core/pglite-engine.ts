@@ -217,6 +217,8 @@ import * as repairAppliesImpl from './engine-sql/repair-applies.ts';
 import * as visibilityScansImpl from './engine-sql/visibility-scans.ts';
 import * as openTwinsImpl from './engine-sql/open-twins.ts';
 import * as openFactsScansImpl from './engine-sql/open-facts-scans.ts';
+import * as privateLabelScansImpl from './engine-sql/private-label-scans.ts';
+import type * as PrivateLabelScansSql from './engine-sql/private-label-scans.ts';
 import type * as OpenFactsScansSql from './engine-sql/open-facts-scans.ts';
 import type * as OpenTwinsSql from './engine-sql/open-twins.ts';
 import type * as RepairAppliesSql from './engine-sql/repair-applies.ts';
@@ -2090,6 +2092,11 @@ export class PGLiteEngine implements BrainEngine {
   listTypePageBodies(opts: { type: string; sourceId?: string; limit: number }) { return repairAppliesImpl.listTypePageBodies(this.rawRead, opts); }
   listOpenFactsWindow(sel: OpenFactsScansSql.OpenFactsSelection, after: number, upper: number | null, classes: readonly string[], limit: number, timeoutMs: number) { return openFactsScansImpl.listOpenFactsWindow(this.rawRead, sel, after, upper, classes, limit, timeoutMs); }
   countOpenFactReasons(sel: OpenFactsScansSql.OpenFactsSelection, timeoutMs: number) { return openFactsScansImpl.countOpenFactReasons(this.rawRead, sel, timeoutMs); }
+  listLabelledPages(sourceIds: string[], after: number, ids: number[] | null, timeoutMs: number) { return privateLabelScansImpl.listLabelledPages(this.rawRead, sourceIds, after, ids, timeoutMs); }
+  listLiveLabelRows(ids: number[], timeoutMs: number) { return privateLabelScansImpl.listLiveLabelRows(this.rawRead, ids, timeoutMs); }
+  listClearDependents(cleared: PrivateLabelScansSql.ClearedLabels, timeoutMs: number) { return privateLabelScansImpl.listClearDependents(this.rawRead, cleared, timeoutMs); }
+  listContextualRetrievalModes(ids: number[], timeoutMs: number) { return privateLabelScansImpl.listContextualRetrievalModes(this.rawRead, ids, timeoutMs); }
+  listUnembeddedChunkPages(ids: number[], timeoutMs: number) { return privateLabelScansImpl.listUnembeddedChunkPages(this.rawRead, ids, timeoutMs); }
   detachFenceRowFacts(sourceId: string, slug: string, rowNum: number) { return repairAppliesImpl.detachFenceRowFacts(this.rawRead, sourceId, slug, rowNum); }
   hasDatabaseOnlyClaim(sourceId: string, entitySlug: string, fact: string) { return repairAppliesImpl.hasDatabaseOnlyClaim(this.rawRead, sourceId, entitySlug, fact); }
   readSourceCloneRow(sourceId: string) { return repairAppliesImpl.readSourceCloneRow(this.rawRead, sourceId); }

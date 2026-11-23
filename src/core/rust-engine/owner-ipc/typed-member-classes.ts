@@ -364,6 +364,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   // The repair applies' rechecks (engine-sql/repair-applies.ts).
   'listLiveDuplicateRows', 'listCommittedRestorePages', 'listActivePositionedFactIds', 'readFactRestorePage', 'readSourceCloneRow', 'readPageVersionRow', 'hasDatabaseOnlyClaim', 'readAtomGeneration', 'listPageAccessKeys',
   'listAtomLineageRows', 'listChronicleEventVisibilityRows', 'listAliasOnlyPrivatePages', 'listCheckoutFilePages', 'listOpenTwinRows', 'listTypePageBodies', 'listOpenFactsWindow', 'countOpenFactReasons',
+  'listLabelledPages', 'listLiveLabelRows', 'listClearDependents', 'listContextualRetrievalModes', 'listUnembeddedChunkPages',
 ];
 
 const nothingSetting = 'nothing: the setting lasts only for the call, so running it again repeats no write';

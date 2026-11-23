@@ -472,8 +472,8 @@ describe('engine parity: the history repair kinds of batch 6a', () => {
       throw err;
     }
   }));
-  parityTest('private-labels previews an alias-labelled page on the SQL arms, and the Rust engine refuses the privacy scan by name', {
-    methods: ['putPage'], requires: 'raw_sql', timeout: 60_000,
+  parityTest('private-labels previews an alias-labelled page the same way on every arm', {
+    methods: ['putPage'], timeout: 60_000,
   }, async (engine, backend) => withDir(async () => {
     await engine.putPage('notes/aliased', { type: 'note', title: 'Aliased', compiled_truth: 'Aliased body.', timeline: '', frontmatter: { access: 'private' } }, { sourceId: 'default' });
     try {
@@ -484,6 +484,32 @@ describe('engine parity: the history repair kinds of batch 6a', () => {
       if (backend === 'rust') expect(refusalText(err)).toContain('repair private-labels privacy scan');
       throw err;
     }
+  }));
+  parityTest('private-labels lists the pages a clear would expose, and its scans answer the same rows on every arm', {
+    methods: ['putPage', 'listLabelledPages', 'listLiveLabelRows', 'listClearDependents'], timeout: 60_000,
+  }, async (engine) => withDir(async () => {
+    const put = (slug: string, type: string, frontmatter: Record<string, unknown>) =>
+      engine.putPage(slug, { type: type as never, title: slug, compiled_truth: `${slug} body.`, timeline: '', frontmatter }, { sourceId: 'default' });
+    const aliased = await put('notes/aliased', 'note', { access: 'private' });
+    await put('notes/strong', 'note', { access: 'restricted' });
+    await put('notes/declared', 'note', { visibility: 'world', derived_from: ['notes/aliased.md'] });
+    await put('atoms/from-aliased', 'atom', { visibility: 'world', source_slug: 'notes/aliased' });
+    // A Life Chronicle event whose origin is the aliased page: private now (its origin is not visible), public once the clear applies.
+    await put('events/from-aliased', 'event', { visibility: 'world', captured_via: 'life-chronicle:example', event: { depth: 'notes/aliased' } });
+    await put('notes/unrelated', 'note', { visibility: 'world' });
+    const name = new Map<number, string>();
+    const labelled = (await engine.listLabelledPages(['default'], 0, null, 60_000)).map(row => { name.set(Number(row.id), row.slug); return [row.slug, row.git, row.chars]; });
+    const live = (await engine.listLiveLabelRows([aliased.id], 60_000)).map(row => [row.slug, row.revision === null ? null : typeof row.revision]);
+    const ids = new Map<number, string>();
+    for (const slug of ['notes/declared', 'atoms/from-aliased', 'events/from-aliased', 'notes/unrelated', 'notes/aliased']) {
+      const page = await engine.getPage(slug, { sourceId: 'default' });
+      ids.set(Number(page!.id), slug);
+    }
+    const dependents = (await engine.listClearDependents({ ids: [aliased.id], sourceIds: ['default'], slugs: ['notes/aliased'], keys: ['access'] }, 60_000))
+      .map(row => [ids.get(Number(row.id)) ?? row.id, ids.get(Number(row.cleared_id)) ?? row.cleared_id, row.category]);
+    expect(dependents).toEqual([['events/from-aliased', 'notes/aliased', 'life_chronicle']]);
+    const previewed = shape(await runKind(engine, 'private-labels', false));
+    return { labelled, live, dependents, previewed };
   }));
   parityTest('the version, overwrite and moved-page reads answer the same rows on every arm', {
     methods: ['insertWriteRequest', 'completeWriteRow', 'setWriteContext', 'putPage', 'createVersion', 'listOverwriteCandidates', 'listVersionsAfter',
