@@ -38,20 +38,20 @@ export async function setMemberLabelledOnly(engine: BrainEngine, rawId: unknown,
   }
   if (on && await ownerMemberId(engine) === member.id) throw labelledOnlyOwnerError(member.id, 'grant');
   if (member.labelled_only === on) return { member, changed: false };
-  await engine.executeRaw('UPDATE access_members SET labelled_only = $2, updated_at = now() WHERE id = $1 AND tombstoned_at IS NULL', [member.id, on]);
+  await engine.setAccessMemberLabelledOnly(member.id, on);
   return { member: (await getMember(engine, member.id))!, changed: true };
 }
 
 /** The enabled labelled-only members, sorted; empty when none. */
 export async function labelledOnlyMemberIds(engine: Pick<BrainEngine, 'executeRaw'>): Promise<string[]> {
   const rows = await engine.executeRaw<{ id: string }>(
-    'SELECT id FROM access_members WHERE labelled_only AND disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id');
+    'SELECT id FROM access_members WHERE labelled_only AND disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id COLLATE "C"');
   return rows.map(r => r.id);
 }
 
 /** The enabled labelled-only members, sorted, each with how many credentials are bound to it (doctor's audit list). */
 export async function labelledOnlyMembers(engine: BrainEngine): Promise<Array<{ id: string; credentials: number }>> {
-  return Promise.all((await labelledOnlyMemberIds(engine)).map(async id => ({ id, credentials: (await boundCredentials(engine, id)).length })));
+  return Promise.all((await engine.listLabelledOnlyMemberIds()).map(async id => ({ id, credentials: (await boundCredentials(engine, id)).length })));
 }
 
 /** Whether any member carries the grant: the one cheap test a write runs before resolving its writer. Unreadable counts as yes. */

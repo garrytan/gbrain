@@ -44,7 +44,7 @@ Numbers: arithmetic widens the f32 weight to a double first, as Postgres does fo
 - Source scope: a non-empty `sourceIds` wins over a truthy `sourceId`; neither is no scope.
 - `takesHoldersAllowList`: honoured (see above).
 - `excludePrivate` (any truthy value, as `pageReadFilter` tests it) applies the page policy on both reads; see
-  "Private pages" below. Links and timeline reads still refuse it. The input carries the policy as
+  "Private pages" below. The input carries the policy as
   `exclude_private` (`{ honorAliases, entityPrivacy, ownerOnly }`); a page it hides, an owner-only page included, is
   not scored or ranked. A read finds the owner-only sources once, on the first page it judges (`OwnerOnlyCache`).
 - `minTrust` and `suppressFlagged` apply on `getSalienceScores` (its SQL applies `pageEligibleSql`) through
@@ -68,16 +68,18 @@ PGLite adds `privatePagesFilterForCaller('p')` (`src/core/search/private-visibil
 The store copies it with `page_hidden` (`facts/privacy.rs`), lane 4's private-provenance rules applied to the read's
 own page: a page is hidden when it names readers, when a non-plain page's origin names readers, or, with
 `entityPrivacy`, when its snapshot, derived origin or declared lineage is private (the rules table in
-[facts.md](facts.md#private-provenance-policy-factsprivacyrs)). The store keeps no folder rules or pending folder
-coverage, so `folder_rule_ids IS NULL` and the `access_pending_coverage` clause always pass there. The filter drops a
-page before `getRecentSalience` ranks and limits.
+[facts.md](facts.md#private-provenance-policy-factsprivacyrs)). A page under a folder rule of its source
+(`folder_rule_ids IS NOT NULL`) passes only when the caller satisfies every rule on it, and a page under a pending
+prefix passes only when the caller's record names no coverage of it (the store's own pending rows count only for a
+caller with no record). The filter drops a page before `getRecentSalience` ranks and limits.
 
 The member (`store-members/private-provenance.ts` `storePagePolicy`) renders `privatePagesFilterForCaller('p')` in
 the current context and outside any caller record. Both reads opt in with `callerReaders`: when the two differ, the
 member renders the policy again for a record of only the caller's reader identity and private-readable grant, and when
 the caller's text equals that, it also sends `identity` and `privateReadableSources`, which `page_hidden` reads (a page
-whose readers name a principal of the identity, and a non-pinned page of a granted source, pass). Any other caller
-(folder grants, lineage, an owner read) refuses with `engine_capability_missing`. The member sends
+whose readers name a principal of the identity, and a non-pinned page of a granted source, pass) with the folder
+rules it satisfies (`satisfiedRuleIds`) and the pending prefixes its record holds (`folderCoverage`). Any other caller
+(lineage, an owner read) refuses with `engine_capability_missing`. The member sends
 `honorAliases` (the text holds `privacyAliasSql('p')`, 791) and `entityPrivacy` (the text holds
 `privateSnapshotFilterFragment('p')`, 707, which is absent when privacy is relaxed).
 

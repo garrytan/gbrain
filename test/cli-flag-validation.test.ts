@@ -26,6 +26,7 @@ import {
 import { CLI_FLAG_REGISTRY } from '../src/core/cli-flag-registry.generated.ts';
 import { operations, operationsByName } from '../src/core/operations.ts';
 import { buildFlagRegistry } from '../scripts/generate-flag-registry.ts';
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 const BOGUS = '--definitely-not-a-real-flag-xyz';
 const EXEMPT = new Set(['call', 'config']); // jobs is exempt only for `submit`
@@ -174,14 +175,14 @@ describe('#2185 parseOpArgs inline = form (regression rule: changed token consum
     expect(p.limit).toBe(5);
   });
 
-  test('boolean =false negates; =0 keeps the raw!==false rule (pinned semantics)', async () => {
+  test('boolean =false negates; =0 is refused, never read as true (#9918)', async () => {
     const { parseOpArgs } = await import('../src/cli/main.ts');
     const withBool = operations.find(o =>
       o.cliHints && Object.values(o.params).some(pp => pp.type === 'boolean'))!;
     const key = Object.entries(withBool.params).find(([, pp]) => pp.type === 'boolean')![0];
     const flag = `--${key.replace(/_/g, '-')}`;
     expect(parseOpArgs(withBool, [`${flag}=false`])[key]).toBe(false);
-    expect(parseOpArgs(withBool, [`${flag}=0`])[key]).toBe(true);
+    expect(() => parseOpArgs(withBool, [`${flag}=0`])).toThrow(`${flag}=… takes only true or false`);
   });
 
   test('undeclared =-form key keeps the historical junk-fallthrough (validator rejects it first)', async () => {
@@ -287,7 +288,7 @@ describe('#2185 subprocess smokes — end-to-end error surface', () => {
     spawnSync('bun', ['src/cli.ts', ...args], {
       encoding: 'utf-8',
       timeout: 30_000,
-      env: { ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1' },
+      env: { ...envWithoutDatabaseUrl(), GBRAIN_SKIP_STARTUP_HOOKS: '1' },
     });
 
   test('init --migrate-only --dry-run fails loud BEFORE any engine work', () => {
@@ -402,7 +403,7 @@ describe('#5700 subprocess smoke — the reported invocation fails loud', () => 
     spawnSync('bun', ['src/cli.ts', ...args], {
       encoding: 'utf-8',
       timeout: 30_000,
-      env: { ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1' },
+      env: { ...envWithoutDatabaseUrl(), GBRAIN_SKIP_STARTUP_HOOKS: '1' },
     });
 
   test('put --content --source <id> exits 2 naming both flags', () => {

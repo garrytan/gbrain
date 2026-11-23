@@ -228,7 +228,7 @@ describe('frontmatter walkers — git-visible file parity', () => {
       writeFileSync(join(repo, 'local-skills', 'SKILL.md'), '---\nname: bad\n# malformed frontmatter\n');
 
       const engine = {
-        executeRaw: async () => [{ id: 'repo', local_path: repo }],
+        readDoctorSources: async () => [{ id: 'repo', local_path: repo }],
       } as any;
       const report = await scanBrainSources(engine, { sourceId: 'repo' });
 

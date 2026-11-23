@@ -85,31 +85,46 @@ describe('engine parity: the chronicle executor', () => {
   });
 
 /**
- * The named stop of case 3 on the Rust arm until the generations publication is typed there (row L7-2): the phase runs
- * every chronicle statement through `chronicleStore()`, and its first `raw_sql` refusal comes from this generations
- * frame. Delete the pin when rust-engine/main (with generation-writes) is merged in and case 3 is equal on Rust.
+ * The named stop of case 3 on the Rust arm: the generations publication is typed there now (generation-writes, on
+ * rust-engine/main), and the event publication's derivation edges (facts/derivation-inputs.ts, the
+ * `recordDerivationEdges` member) are the first refusal, until rust-engine/derivation-inputs-rust-recut (lane 7, trunk
+ * batch 11) reaches main. Delete the pin with that merge (chronicle step 6) and expect case 3 equal on Rust.
  */
-const RUST_GENERATIONS_STOP = { capability: 'raw_sql', member: 'executeRaw', site: 'orphanedDepthKeys', frame: 'src/core/generations/adapters/chronicle-events.ts', owner: 'lane 7', due: '5 PM PST Nov 28' };
+const RUST_GENERATIONS_STOP = { capability: 'facts', member: 'recordDerivationEdges', frame: 'src/core/facts/derivation-inputs.ts',
+  owner: 'lane 7, rust-engine/derivation-inputs-rust-recut (batch 11)', due: '5 PM PST Nov 28' };
 
 /**
- * On the Rust arm, run `fn` and require its first refusal to be the pinned one: `executeRaw` refused for `raw_sql` in
- * the pinned generations frame. The refusal is rethrown so the harness counts the case as stopped. Any other first
- * refusal, or none, fails the case. Other arms run `fn` as is.
+ * On the Rust arm, run `fn` and require its first capability refusal to be the pinned one: `recordDerivationEdges`
+ * refused for `facts` from the pinned frame, inside a transaction of the publication (the phase catches it and retries
+ * the row later, so the run itself returns). The refusal is rethrown so the harness counts the case as stopped. Any
+ * other first refusal, or none, fails the case. Other arms run `fn` as is.
  */
 async function atGenerationsStop<T>(engine: BrainEngine, backend: string, fn: () => Promise<T>): Promise<T> {
   if (backend !== 'rust') return fn();
-  const target = engine as unknown as { executeRaw: (...args: unknown[]) => Promise<unknown> };
-  const original = target.executeRaw;
-  let first: { code?: unknown; stack?: unknown } | undefined;
-  target.executeRaw = async (...args: unknown[]) => {
-    try { return await original.apply(engine, args); } catch (error) { first ??= error as never; throw error; }
+  let first: { code?: unknown; stack?: unknown; message?: unknown } | undefined;
+  const note = (error: unknown) => { if ((error as { code?: unknown })?.code === 'engine_capability_missing') first ??= error as never; };
+  const target = engine as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
+  const originals = { executeRaw: target.executeRaw, transaction: target.transaction, recordDerivationEdges: target.recordDerivationEdges };
+  const watch = (obj: Record<string, (...args: unknown[]) => Promise<unknown>>, name: string, self: unknown) => {
+    const original = obj[name];
+    if (typeof original !== 'function') return;
+    obj[name] = async (...args: unknown[]) => { try { return await original.apply(self, args); } catch (error) { note(error); throw error; } };
   };
-  // A refusal the phase did not catch (one outside the publication) ends the run; it is the stop then.
-  try { await fn(); } catch (error) { first ??= error as never; } finally { target.executeRaw = original; }
-  const frame = String(first?.stack ?? '').split('\n').find(line => line.includes('/src/core/') && !line.includes('/src/core/rust-engine')
-    && !line.includes('/src/core/ops/contract.ts'));
-  if (first?.code !== 'engine_capability_missing' || !frame?.includes(`${RUST_GENERATIONS_STOP.site} (`) || !frame.includes(RUST_GENERATIONS_STOP.frame)) {
-    throw new Error(`case 3 no longer stops at its pin (${JSON.stringify(RUST_GENERATIONS_STOP)}): first refusal ${String(first?.code)} at ${frame}`);
+  watch(target, 'executeRaw', engine);
+  watch(target, 'recordDerivationEdges', engine);
+  target.transaction = (fnTx: (tx: unknown) => Promise<unknown>) => originals.transaction.call(engine, (tx: unknown) => fnTx(new Proxy(tx as object, {
+    get(obj, prop) {
+      const value = Reflect.get(obj, prop, obj);
+      if ((prop === 'recordDerivationEdges' || prop === 'executeRaw') && typeof value === 'function') {
+        return async (...args: unknown[]) => { try { return await value.apply(obj, args); } catch (error) { note(error); throw error; } };
+      }
+      return typeof value === 'function' ? value.bind(obj) : value;
+    },
+  })));
+  try { await fn(); } catch (error) { note(error); first ??= error as never; } finally { Object.assign(target, originals); }
+  const frame = String(first?.stack ?? '').split('\n').find(line => line.includes(RUST_GENERATIONS_STOP.frame));
+  if (first?.code !== 'engine_capability_missing' || !String(first?.message ?? '').includes(RUST_GENERATIONS_STOP.member) || !frame) {
+    throw new Error(`case 3 no longer stops at its pin (${JSON.stringify(RUST_GENERATIONS_STOP)}): first refusal ${String(first?.code)} ${String(first?.message ?? '').slice(0, 160)}`);
   }
   throw first;
 }

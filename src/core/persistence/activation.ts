@@ -1,4 +1,5 @@
 import { existsSync, realpathSync } from 'node:fs';
+import { sortSourcesById } from '../source-rows.ts';
 import { isAbsolute, join, resolve } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
@@ -102,12 +103,14 @@ async function gitDurabilityWarnings(bindings: WorktreeBinding[]): Promise<{ war
   return warnings.length ? { warnings } : {};
 }
 interface SourceRoot { id: string; incarnation: string; root: string | null; connector: boolean; }
-const quiescence = () => new OperationError('writer_not_quiesced', 'Managed activation requires all older writers and maintenance jobs to be stopped.',
+export const quiescence = () => new OperationError('writer_not_quiesced', 'Managed activation requires all older writers and maintenance jobs to be stopped.',
   WRITER_INSPECTION_HINT);
 
 const writerStatusFix = (why: string, sourceId?: string): Action => readFix(why,
   { argv: ['gbrain', 'sources', 'writer', 'status', ...(sourceId ? ['--source', sourceId] : []), '--json'] });
 
+// Plain ORDER BY id on purpose, not COLLATE "C": with `lock` this is a row-lock order shared with sources.ts lockAllSourceRows, topology-locks.ts and core-guard.ts, so every locker must take the sources in the same order.
+// The rows are then sorted by byte id, so the sources activation lists come out in the same order on every engine and locale.
 async function configuredSources(engine: BrainEngine, lock = false): Promise<SourceRoot[]> {
   const sources = await (await engine.writerReleaseStore()).configuredSources(lock);
   const fallback = await engine.getConfig('sync.repo_path');

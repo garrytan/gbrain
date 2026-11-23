@@ -69,7 +69,7 @@ export async function findCodeDefinitions(exec: LegacyUnscopedRead, symbol: stri
          WHEN 'type' THEN 4 WHEN 'enum' THEN 5 WHEN 'struct' THEN 6
          ELSE 7
        END,
-       p.slug, cc.start_line, p.source_id
+       p.slug COLLATE "C", cc.start_line, p.source_id COLLATE "C", cc.id
      LIMIT ${limit}`,
   );
 }
@@ -78,13 +78,13 @@ export async function findCodeDefinitions(exec: LegacyUnscopedRead, symbol: stri
 export async function listSymbolTypesForName(exec: LegacyUnscopedRead, symbol: string, opts: Omit<CodeSymbolQuery, 'limit'> = {}): Promise<Array<string | null>> {
   const found = await rows<{ symbol_type: string | null }>(exec,
     // chunk-visibility-ok: master's code-def probe, every stored row of a served code page (codeReadFilter)
-    sqlFragment`SELECT DISTINCT cc.symbol_type
+    sqlFragment`SELECT DISTINCT cc.symbol_type COLLATE "C"
      FROM content_chunks cc
      JOIN pages p ON p.id = cc.page_id
      WHERE cc.symbol_name = ${symbol}
        ${symbolFilters(opts)}
        AND p.page_kind = 'code'
-     ORDER BY cc.symbol_type
+     ORDER BY cc.symbol_type COLLATE "C"
      LIMIT 20`,
   );
   return found.map(r => r.symbol_type);
@@ -103,7 +103,7 @@ export async function findCodeRefChunks(exec: LegacyUnscopedRead, symbol: string
      WHERE p.page_kind = 'code'
        AND cc.chunk_text ILIKE ${`%${symbol}%`}
        ${symbolFilters(opts)}
-     ORDER BY p.slug, cc.start_line NULLS LAST, p.source_id
+     ORDER BY p.slug COLLATE "C", cc.start_line NULLS LAST, p.source_id COLLATE "C", cc.id
      LIMIT ${limit}`,
   );
 }

@@ -15,6 +15,9 @@
     "scripts/serial-files.tsv": [
       "test/scripts/serial-files.test.ts"
     ],
+    "test/engine-parity/rust-tally.tsv": [
+      "test/rust-parity-tally.test.ts"
+    ],
     "docs/contracts/qm-memory-provider/v1.json": [
       "test/qm-memory-contract.test.ts"
     ],

@@ -65,12 +65,21 @@ export const CHRONICLE_STATE_SQL = {
   pendingAuto: `SELECT 1 FROM chronicle_page_state WHERE source_id=$1 AND page_id=$2 AND state='pending'
       AND trigger='auto' AND no_extract=false AND extractor_version=$3 LIMIT 1`,
   dailyCount: "SELECT count(*) AS n FROM chronicle_judge_reservations WHERE reserved_at > now() - interval '24 hours'",
+  truthLead: 'SELECT truth_lead FROM pages WHERE id=$1',
+} as const;
+
+/**
+ * The chronicle judge reservation's lock, insert and prune, kept apart from CHRONICLE_STATE_SQL's reads so the
+ * owner-socket read scan (test/rust-owner-ipc-read-classes.test.ts) sees that those reads reach no write.
+ */
+export const CHRONICLE_RESERVATION_SQL = {
   reserveLock: "SELECT pg_advisory_xact_lock(hashtext('gbrain:chronicle:daily_reservation'))",
   reserveInsert: 'INSERT INTO chronicle_judge_reservations (source_id, page_id, content_hash) VALUES ($1, $2, $3)',
   pruneReservations: "DELETE FROM chronicle_judge_reservations WHERE reserved_at < now() - interval '48 hours'",
-  insertConfigIfAbsent: 'INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING',
-  truthLead: 'SELECT truth_lead FROM pages WHERE id=$1',
 } as const;
+
+/** The chronicle activation stamp's insert, apart from CHRONICLE_STATE_SQL's reads for the same reason. */
+export const CHRONICLE_ACTIVATION_SQL = 'INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING';
 
 /** The ledger row at `key`, every column, or null. */
 export async function readChronicleRow(tx: Raw, key: ChronicleRowKey): Promise<ChronicleLedgerRow | null> {
@@ -105,21 +114,21 @@ export interface ChronicleJudgeKey {
  */
 export function reserveChronicleJudgeSlot(engine: Pick<BrainEngine, 'transaction'>, limit: number, key: ChronicleJudgeKey): Promise<boolean> {
   return engine.transaction(async (tx) => {
-    await tx.executeRaw(CHRONICLE_STATE_SQL.reserveLock);
+    await tx.executeRaw(CHRONICLE_RESERVATION_SQL.reserveLock);
     if (await countRecentChronicleReservations(tx) >= limit) return false;
-    await tx.executeRaw(CHRONICLE_STATE_SQL.reserveInsert, [key.sourceId, key.pageId, key.contentHash]);
+    await tx.executeRaw(CHRONICLE_RESERVATION_SQL.reserveInsert, [key.sourceId, key.pageId, key.contentHash]);
     return true;
   });
 }
 
 /** Deletes the reservations older than 48 hours (the window serves 24; doctor reads two days). */
 export async function pruneChronicleReservations(tx: Raw): Promise<void> {
-  await tx.executeRaw(CHRONICLE_STATE_SQL.pruneReservations);
+  await tx.executeRaw(CHRONICLE_RESERVATION_SQL.pruneReservations);
 }
 
 /** Sets a config key only when it has none; an existing value stays. */
 export async function insertConfigIfAbsent(tx: Raw, key: string, value: string): Promise<void> {
-  await tx.executeRaw(CHRONICLE_STATE_SQL.insertConfigIfAbsent, [key, value]);
+  await tx.executeRaw(CHRONICLE_ACTIVATION_SQL, [key, value]);
 }
 
 /** The stored `truth_lead` of page `pageId` (a segmented page's body prefix), or null. */

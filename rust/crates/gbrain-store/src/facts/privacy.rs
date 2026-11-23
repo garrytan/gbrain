@@ -48,6 +48,7 @@
 use super::FactRecord;
 use crate::Result;
 use crate::access_flag::RESTRICTIONS_PRESENT_KEY;
+use crate::access_policy::kept_rules;
 use crate::access_rules::{
     AccessRuleRecord, folder_rules, pending_covers, rule_covers, stamped, valid_prefix,
 };
@@ -112,6 +113,12 @@ pub struct PrivacyPolicy {
     /// holds is. An entry with an invalid source id or prefix hides every page.
     #[serde(default)]
     pub folder_coverage: Vec<FolderCoverage>,
+    /// The policy is a caller record's rendering (`coverageSql` inside a record): the record's
+    /// `folder_coverage` is the whole pending test, so a prefix the store holds pending but the
+    /// record does not name hides nothing. Unset, the store's pending prefixes are read live, as
+    /// the no-caller rendering reads them.
+    #[serde(default)]
+    pub caller_record: bool,
 }
 
 /// One entry of [`PrivacyPolicy::folder_coverage`]: `''` covers the whole source.
@@ -128,6 +135,8 @@ pub struct FolderCoverage {
 struct FolderAccess<'a> {
     satisfied: &'a [String],
     coverage: &'a [FolderCoverage],
+    /// [`PrivacyPolicy::caller_record`]: `coverage` replaces the live pending prefixes.
+    record: bool,
 }
 
 impl FolderAccess<'_> {
@@ -183,7 +192,7 @@ const PRIVACY_ALIASES: [(&str, &[&str]); 2] = [
 ];
 
 /// `edgeTrimSql`: the ASCII blanks, plus the Unicode spaces a UTF-8 database adds.
-const EDGE_SPACE: &[char] = &[
+pub(crate) const EDGE_SPACE: &[char] = &[
     ' ', '\t', '\n', '\u{0B}', '\u{0C}', '\r', '\u{A0}', '\u{1680}', '\u{2000}', '\u{2001}',
     '\u{2002}', '\u{2003}', '\u{2004}', '\u{2005}', '\u{2006}', '\u{2007}', '\u{2008}', '\u{2009}',
     '\u{200A}', '\u{2028}', '\u{2029}', '\u{202F}', '\u{205F}', '\u{3000}', '\u{FEFF}',
@@ -349,7 +358,7 @@ pub(crate) fn page_hidden_with(
 }
 
 /// `holdingSlugSql`: `memory/unattributed`, or a slug ending in `/memory/unattributed`.
-fn holding_slug(slug: &str) -> bool {
+pub(super) fn holding_slug(slug: &str) -> bool {
     slug == "memory/unattributed" || slug.ends_with("/memory/unattributed")
 }
 
@@ -364,14 +373,17 @@ fn member_access_allows(
     derived: bool,
     owner_only: &OwnerOnlySources,
 ) -> Result<bool> {
-    // `satisfiedFor(identity)`: the record's folder access holds for the record's own identity.
-    let folders = if !identity.is_empty() && identity == policy.identity.as_slice() {
-        FolderAccess {
-            satisfied: &policy.satisfied_rule_ids,
-            coverage: &policy.folder_coverage,
-        }
+    // `satisfiedFor(identity)`: the record's satisfied rules hold for the record's own identity;
+    // `coverageSql` reads the record's coverage whatever identity is judged.
+    let satisfied: &[String] = if !identity.is_empty() && identity == policy.identity.as_slice() {
+        &policy.satisfied_rule_ids
     } else {
-        FolderAccess::default()
+        &[]
+    };
+    let folders = FolderAccess {
+        satisfied,
+        coverage: &policy.folder_coverage,
+        record: policy.caller_record,
     };
     Ok(
         readers_allowed(read, page, identity, folders, policy.open, derived)?
@@ -424,6 +436,22 @@ pub(crate) fn caller_version_hidden(
             && (fm.contains_key("pinned_question")
                 || !(private_source_open(page, policy)
                     || snapshot_fields_allow(page_type, fm, policy.honor_aliases))))
+}
+
+/// Whether a version's successor (the next version of the page) withholds the version's change
+/// reason from a policy reader (`replacedBecauseSql`): the successor names readers none of which is
+/// in the policy's identity, or its own fields are private (`privateSnapshotFilterFragment`). The
+/// successor is judged by its fields alone, whatever the policy's entity privacy part or
+/// private-readable grant, as the SQL does.
+pub(crate) fn successor_withholds_reason(
+    page_type: &str,
+    fm: &Map<String, Value>,
+    policy: &PrivacyPolicy,
+) -> bool {
+    let readers_allowed = !fm.contains_key("readable_by")
+        || access_readers(fm)
+            .is_some_and(|readers| readers.iter().any(|r| policy.identity.contains(r)));
+    !readers_allowed || !snapshot_fields_allow(page_type, fm, policy.honor_aliases)
 }
 
 /// `frontmatter ->> key`.
@@ -537,7 +565,7 @@ fn names_readers(page: &PageRecord) -> bool {
 
 /// The folder rules stamped on a page (`folder_rule_ids`): none unless its source holds access
 /// state, else every rule whose prefix its slug starts with.
-fn stamped_rules(read: &dyn KvRead, page: &PageRecord) -> Result<Vec<AccessRuleRecord>> {
+pub(crate) fn stamped_rules(read: &dyn KvRead, page: &PageRecord) -> Result<Vec<AccessRuleRecord>> {
     if !stamped(read, &page.source_id, &page.slug)? {
         return Ok(Vec::new());
     }
@@ -607,7 +635,9 @@ pub(crate) fn access_readers(frontmatter: &Map<String, Value>) -> Option<Vec<Str
 
 /// The member-access part (`accessAllowedSql`) for `identity`: no readers of its own or readers
 /// that name one of its principals (`readersAllowedSql`), no folder rule the caller does not
-/// satisfy (`folderRulesAllowedSql` with an empty satisfied set) and no restricted origin. With
+/// satisfy (`folderRulesAllowedSql` with an empty satisfied set) and no restricted origin. A
+/// caller record's rendering reads its own coverage for the pending test, any other the store's
+/// pending prefixes. With
 /// `open` (the short form) a page that names readers or is stamped fails for any identity, and the
 /// rest runs only when the store's flag is set: unset, no stored page names readers. The full form
 /// also fails a page under a pending prefix, and with `derived` counts only the rules that cover
@@ -620,7 +650,15 @@ fn readers_allowed(
     open: bool,
     derived: bool,
 ) -> Result<bool> {
-    let rules = stamped_rules(read, page)?;
+    // A caller record's rendering reads no live pending prefix, so a page under one is judged by
+    // the ids its last stamp kept (`folder_rule_ids`), not the rules installed since; elsewhere the
+    // live pending prefix hides the page, and the kept ids equal the rules after the restamp.
+    let pending = pending_covers(read, &page.source_id, &page.slug)?;
+    let rules = if folders.record && pending {
+        kept_rules(read, &page.source_id, page.id)?
+    } else {
+        stamped_rules(read, page)?
+    };
     if open && (names_readers(page) || !restrictions_present(read)?) {
         return Ok(!names_readers(page) && rules.is_empty());
     }
@@ -631,10 +669,7 @@ fn readers_allowed(
     } else {
         !folders.satisfies_all(rules.iter())
     };
-    if folder_closed
-        || (!open && folders.covers(page))
-        || pending_covers(read, &page.source_id, &page.slug)?
-    {
+    if folder_closed || (!open && folders.covers(page)) || (!folders.record && pending) {
         return Ok(false);
     }
     if names_readers(page)
@@ -713,7 +748,11 @@ fn chronicle_depth(page: &PageRecord) -> Option<String> {
 }
 
 /// `privacyPartSql`: the page's own fields, its derived origin and its declared lineage.
-fn privacy_allows(read: &dyn KvRead, page: &PageRecord, honor_aliases: bool) -> Result<bool> {
+pub(crate) fn privacy_allows(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    honor_aliases: bool,
+) -> Result<bool> {
     Ok(snapshot_allows(page, honor_aliases)
         && !derived_origin_private(read, page, honor_aliases)?
         && !declared_lineage_private(read, page)?)
@@ -726,7 +765,11 @@ fn snapshot_allows(page: &PageRecord, honor_aliases: bool) -> bool {
 }
 
 /// `privateSnapshotFilterFragment` over a row's type and frontmatter.
-fn snapshot_fields_allow(page_type: &str, fm: &Map<String, Value>, honor_aliases: bool) -> bool {
+pub(crate) fn snapshot_fields_allow(
+    page_type: &str,
+    fm: &Map<String, Value>,
+    honor_aliases: bool,
+) -> bool {
     let visibility = text(fm, "visibility");
     let effective = visibility
         .as_deref()
@@ -741,7 +784,7 @@ fn snapshot_fields_allow(page_type: &str, fm: &Map<String, Value>, honor_aliases
 }
 
 /// `privacyAliasSql`: an alias value, trimmed of edge spaces and ASCII lower-cased, is private.
-fn alias_private(frontmatter: &Map<String, Value>) -> bool {
+pub(crate) fn alias_private(frontmatter: &Map<String, Value>) -> bool {
     PRIVACY_ALIASES.iter().any(|(key, values)| {
         text(frontmatter, key).is_some_and(|v| {
             let v = v.trim_matches(EDGE_SPACE).to_ascii_lowercase();
@@ -902,6 +945,28 @@ mod tests {
             assert!(!allowed(&raw, open, false));
         }
         assert!(!allowed(&queued, false, false));
+        // A caller record's rendering reads only its own coverage: a prefix the store holds pending
+        // but the record does not name hides nothing (`coverageSql` inside a record).
+        let record = |coverage: &[FolderCoverage]| {
+            readers_allowed(
+                &*read,
+                &queued,
+                &identity,
+                FolderAccess {
+                    satisfied: &[],
+                    coverage,
+                    record: true,
+                },
+                false,
+                false,
+            )
+            .unwrap()
+        };
+        assert!(record(&[]));
+        assert!(!record(&[FolderCoverage {
+            source_id: queued.source_id.clone(),
+            prefix: String::new(),
+        }]));
         // As a fact's origin a raw-only rule does not count; a derived-covering rule does.
         assert!(allowed(&raw, false, true));
         assert!(!allowed(&private, false, true));
@@ -938,6 +1003,7 @@ mod tests {
         let named = FolderAccess {
             satisfied: &satisfied,
             coverage: &[],
+            record: false,
         };
         assert!(allowed(&private, named, false, false));
         assert!(
@@ -953,11 +1019,13 @@ mod tests {
         let covered = FolderAccess {
             satisfied: &satisfied,
             coverage: &coverage,
+            record: false,
         };
         assert!(!allowed(&private, covered, false, false));
         let invalid = FolderAccess {
             satisfied: &satisfied,
             coverage: &bad,
+            record: false,
         };
         assert!(!allowed(&private, invalid, false, false));
         let policy = PrivacyPolicy {
@@ -1116,5 +1184,44 @@ mod tests {
         source("vault", json!({}));
         assert!(hidden(OwnerOnlyForm::Closed, &open) && hidden(OwnerOnlyForm::Closed, &bare));
         assert!(!hidden(OwnerOnlyForm::Fn, &open) && !hidden(OwnerOnlyForm::Fn, &in_vault));
+    }
+
+    /// `privateEntityFilterForCaller`'s keyed arm (GBRA-574): a bare name key is covered by the privacy
+    /// of the page at `<dir>/<key>` in each name-key directory, as a slugged entity is by its own page.
+    #[test]
+    fn a_bare_entity_key_is_hidden_by_its_private_directory_page() {
+        let store = crate::test_support::store();
+        let put = |slug: &str, frontmatter: Value| {
+            let input: crate::pages::PageInput = serde_json::from_value(json!({
+                "type": "person", "title": slug, "compiled_truth": "body", "timeline": "", "frontmatter": frontmatter,
+            }))
+            .unwrap();
+            store.put_page(slug, &input, &Default::default()).unwrap();
+        };
+        put("people/alice-example", json!({ "visibility": "private" }));
+        put("companies/acme-example", json!({}));
+        put("notes/alice-example", json!({ "visibility": "private" }));
+        let fact = |entity: &str| FactRecord {
+            source_id: "default".into(),
+            entity_slug: Some(entity.into()),
+            visibility: "world".into(),
+            ..Default::default()
+        };
+        let hidden = |row: &FactRecord| {
+            let read = store.read().unwrap();
+            let policy = PrivacyPolicy {
+                honor_aliases: true,
+                entity_privacy: true,
+                owner_only: OwnerOnlyForm::Fn,
+                ..Default::default()
+            };
+            hidden_by_private_provenance(&*read, row, &policy).unwrap()
+        };
+        assert!(hidden(&fact("alice-example")));
+        assert!(hidden(&fact("people/alice-example")));
+        assert!(!hidden(&fact("acme-example")));
+        // Only the name-key directories cover a bare key; a slugged key is judged by its own page only.
+        assert!(!hidden(&fact("bob-example")));
+        assert!(!hidden(&fact("notes/bob-example")));
     }
 }

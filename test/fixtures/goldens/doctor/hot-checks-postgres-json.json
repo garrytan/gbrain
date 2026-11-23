@@ -640,6 +640,20 @@
           {
             "category": "ops",
             "details": {
+              "count": 0,
+              "docs": "docs/ENGINES.md#topology-recovery-on-the-rust-engine",
+              "more": false,
+              "recovering": [],
+              "stop": null
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No topology change is recovering on this host.",
+            "name": "topology_recovery_stopped",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
               "docs": "docs/guides/repair.md#receipt-compaction",
               "last_compaction": {
                 "at": "<ts>",
@@ -796,14 +810,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
-                "1024"
+                "1024",
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -1401,7 +1417,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 190/190 public tables",
+            "message": "RLS enabled on 191/191 public tables",
             "name": "rls",
             "status": "ok"
           },
@@ -1460,7 +1476,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 190 table(s) the applied migrations create exist.",
+            "message": "All 191 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -1485,14 +1501,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
-                "1024"
+                "1024",
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -1533,14 +1551,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
-                "1024"
+                "1024",
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -1843,6 +1863,10 @@
                 },
                 {
                   "name": "persistence_requests_slug_sequence",
+                  "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_source_slug_c",
                   "state": "valid"
                 }
               ],
@@ -5135,14 +5159,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
-                "1024"
+                "1024",
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -6205,6 +6231,20 @@
           {
             "category": "ops",
             "details": {
+              "count": 0,
+              "docs": "docs/ENGINES.md#topology-recovery-on-the-rust-engine",
+              "more": false,
+              "recovering": [],
+              "stop": null
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No topology change is recovering on this host.",
+            "name": "topology_recovery_stopped",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
               "docs": "docs/guides/repair.md#receipt-compaction",
               "last_compaction": {
                 "at": "<ts>",
@@ -6361,14 +6401,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
-                "1024"
+                "1024",
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -6966,7 +7008,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 190/190 public tables",
+            "message": "RLS enabled on 191/191 public tables",
             "name": "rls",
             "status": "ok"
           },
@@ -7025,7 +7067,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 190 table(s) the applied migrations create exist.",
+            "message": "All 191 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -7050,14 +7092,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
-                "1024"
+                "1024",
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -7098,14 +7142,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
-                "1024"
+                "1024",
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -7408,6 +7454,10 @@
                 },
                 {
                   "name": "persistence_requests_slug_sequence",
+                  "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_source_slug_c",
                   "state": "valid"
                 }
               ],
@@ -10712,14 +10762,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
-                "1024"
+                "1024",
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"

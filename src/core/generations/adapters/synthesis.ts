@@ -30,10 +30,8 @@ function assertKey(key: GenerationKey): void {
 
 /** Item keys the live generation of `key` records (still owned whatever file they name). */
 async function recordedKeys(db: BrainEngine, key: GenerationKey): Promise<Set<string>> {
-  const rows = await db.executeRaw<{ item_key: string }>(
-    `SELECT i.item_key FROM derived_generation_items i JOIN derived_generations g ON g.id=i.generation_id
-      WHERE g.source_id=$1 AND g.kind=$2 AND g.owner_key=$3 AND g.state='live' AND i.action <> 'retired'`, [key.sourceId, key.kind, key.ownerKey]);
-  return new Set(rows.map(row => row.item_key));
+  const live = await db.readLiveGenerationRow({ sourceId: key.sourceId, kind: key.kind, ownerKey: key.ownerKey });
+  return new Set((live?.items ?? []).map(item => item.item_key));
 }
 
 export const synthesisAdapter: GenerationAdapter<SynthesisGenerationContext> = {
@@ -50,8 +48,7 @@ export const synthesisAdapter: GenerationAdapter<SynthesisGenerationContext> = {
     assertKey(key);
     const recorded = await recordedKeys(engine, key);
     const locator = context?.locator ?? null;
-    const rows = await readPageRows(engine, key.sourceId, `p.slug = ANY($2::text[]) OR (p.deleted_at IS NULL AND $3::text IS NOT NULL
-      AND p.frontmatter->>'raw_source' = $3 AND p.frontmatter->>'dream_generated' = 'true')`, [[...new Set([...itemKeys, ...recorded])], locator]);
+    const rows = await readPageRows(engine, { sourceId: key.sourceId, match: 'synthesis', slugs: [...new Set([...itemKeys, ...recorded])], locator });
     return new Map(rows.map(row => [row.slug, pageItemRow(row, row.frontmatter?.dream_generated === true
       && (recorded.has(row.slug) || (locator !== null && row.frontmatter?.raw_source === locator)))]));
   },

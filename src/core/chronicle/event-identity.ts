@@ -87,6 +87,6 @@ export async function resolveChronicleEventSlugs(engine: BrainEngine, sourceId: 
   events: BuiltChronicleEvent[]): Promise<BuiltChronicleEvent[]> {
   if (events.length === 0) return events;
   const candidates = new Set(events.flatMap((ev) => [ev.slug, suffixedEventSlug(ev.slug, discriminatorOf(ev))]));
-  const rows = await (await engine.chronicleStore()).eventDiscriminators(sourceId, [...candidates]);
+  const rows = await engine.listChronicleEventSlotRows(sourceId, [...candidates]);
   return assignChronicleEventSlugs(events, new Map(rows.map((r) => [r.slug, eventDiscriminator(r)])));
 }

@@ -326,7 +326,7 @@ may read (see below).
 | claude-code | `~/.claude/CLAUDE.md` (`--scope project`: `./CLAUDE.local.md`) |
 | codex | `$CODEX_HOME/AGENTS.md`, or a non-empty `AGENTS.override.md` (the file Codex loads) |
 | opencode | `~/.config/opencode/AGENTS.md` |
-| openclaw | `<workspace>/AGENTS.md` (`agents.defaults.workspace`, else `~/.openclaw/workspace`; several agents need `--workspace`) |
+| openclaw | `<workspace>/AGENTS.md` (`agents.defaults.workspace`, else `~/.openclaw/workspace`, under `$OPENCLAW_HOME` when set; several agents need `--workspace`) |
 | hermes | `$HERMES_HOME/SOUL.md`, after the identity text; never created, since a SOUL.md replaces Hermes's default identity |
 | cursor | `./.cursor/rules/gbrain-brain-first.mdc` (an always-applied project rule) |
 
@@ -395,7 +395,7 @@ claimed from documentation alone.
 | codex | local stdio | supported | native-verified: on codex-cli 0.162.1, after a fresh `gbrain setup codex`, the `UserPromptSubmit` hook put a randomized brain item into a fresh native `codex exec` session, which answered it with no tool call (3 of 3 installs); a `--no-hooks` control answered NONE |
 | openclaw | local context engine | instruction block; MCP per [its guide](../mcp/OPENCLAW.md) | native-pending |
 | openclaw | thin client | instruction block; MCP per [its guide](../mcp/OPENCLAW.md) | unsupported |
-| hermes | local stdio | instruction block; MCP per [its guide](../mcp/HERMES.md) | unsupported |
+| hermes | local stdio | instruction block and turn hook; MCP through `hermes mcp add` ([its guide](../mcp/HERMES.md)) | unsupported |
 
 ## How setup relates to the other entry points
 

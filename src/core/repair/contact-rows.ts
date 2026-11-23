@@ -39,7 +39,7 @@ function previewCommand(scope: RepairScope, slugs: string[]): string {
 }
 
 const hashOf = async (engine: BrainEngine, scope: RepairScope, selection: Selection, pages: PlannedPage[]) => previewHash({ kind: 'contact-rows-v1', brain_id: scope.brain_id,
-  sources: await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]),
+  sources: await engine.listSourceIncarnations(scope.source_ids),
   selection, pages });
 
 /** One request id per page of an approved set: a resumed apply replays it, and the plan knows which pages already published. */
@@ -70,12 +70,7 @@ async function scan(engine: BrainEngine, scope: RepairScope, selection: Selectio
   const listing: RepairListing[] = [];
   const residuals: Record<string, number> = { pages_to_dedupe: 0, rows_to_remove: 0, needs_reconcile: 0 };
   for (let cursor = 0; ;) {
-    const batch = await engine.executeRaw<{ id: number; source_id: string; slug: string }>(
-      `SELECT id, source_id, slug FROM pages
-        WHERE source_id=ANY($1::text[]) AND deleted_at IS NULL AND body_storage='inline' AND id>$2
-          AND CASE WHEN jsonb_typeof(frontmatter->'contacts')='array' THEN jsonb_array_length(frontmatter->'contacts') ELSE 0 END>1
-          AND (cardinality($3::text[])=0 OR slug=ANY($3::text[]))
-        ORDER BY id LIMIT ${BATCH}`, [scope.source_ids, cursor, selection.slugs]);
+    const batch = await engine.listContactRowPages(scope.source_ids, { afterId: cursor, limit: BATCH, slugs: selection.slugs });
     for (const row of batch) {
       cursor = Number(row.id);
       const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
@@ -121,9 +116,8 @@ export const contactRowsRepair: RepairHandler = {
       emptyHash: () => hashOf(engine, scope, selection, []) })).items;
     if (approved.some(page => digest(page.selection) !== digest(selection))) throw previewChangedError(expect, command);
     const pages = approved.map(({ selection: _selection, ...page }) => page);
-    const published = new Set((await engine.executeRaw<{ request_id: string }>(
-      "SELECT request_id::text AS request_id FROM persistence_requests WHERE request_id=ANY($1::uuid[]) AND state='committed'",
-      [pages.map(page => requestIdOf(expect, page))])).map(row => row.request_id));
+    const published = new Set((await engine.listWriteRequestsByRequestIds(pages.map(page => requestIdOf(expect, page))))
+      .filter(row => row.state === 'committed').map(row => String(row.request_id).toLowerCase()));
     // Every page not yet published under this hash still has the revision the user saw, or nothing is written.
     for (const page of pages) {
       if (published.has(requestIdOf(expect, page))) continue;
@@ -138,7 +132,7 @@ export const contactRowsRepair: RepairHandler = {
     try {
       const requestId = requestIdOf(hash, page);
       const detail = { rows_before: page.rows_before, rows_after: page.rows_after };
-      const [done] = await ctx.engine.executeRaw<{ state: string }>('SELECT state FROM persistence_requests WHERE request_id=$1::uuid', [requestId]);
+      const [done] = await ctx.engine.listWriteRequestsByRequestIds([requestId]);
       if (done?.state === 'committed') return { applied: true, outcome: 'deduped', detail };
       const snapshot = await ctx.engine.readPageSnapshot(page.slug, { sourceId: page.source_id });
       if (!snapshot || snapshot.revision !== page.revision) return { applied: false, outcome: 'changed_since_preview', reason: 'the page changed since the preview' };

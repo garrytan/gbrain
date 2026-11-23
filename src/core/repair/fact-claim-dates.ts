@@ -27,6 +27,7 @@
  * remediation plan.
  */
 import type { BrainEngine } from '../engine.ts';
+import type { FactClaimDayRow } from '../engine-sql/facts-repair.ts';
 import type { Page } from '../types.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
@@ -39,6 +40,7 @@ import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 const DOCS = 'docs/guides/repair.md#fact-claim-dates';
 /** Rows a listing line names before it counts the rest. */
@@ -52,8 +54,7 @@ interface Selection { source_ids: string[]; day: string | null }
 interface Approved { selection: Selection; page?: PagePlan; facts?: FactsPlan }
 interface ClaimItem extends RepairItem { approved: Approved; hash: string; last: boolean }
 
-interface FactRow { id: number | string; entity_slug: string | null; fact: string; row_num: number | string | null; source_markdown_slug: string | null;
-  valid_from: string; valid_until_day: string | null }
+type FactRow = FactClaimDayRow;
 
 interface Plan { hash: string; days: BulkFactDay[]; pages: PagePlan[]; facts: FactsPlan[]; residuals: Record<string, number>; listing: RepairListing[] }
 
@@ -124,9 +125,7 @@ async function buildPlan(engine: BrainEngine, scope: RepairScope, selection: Sel
   const byPage = new Map<string, Array<{ row: FactRow; day: string; date: string }>>();
   const byEntity = new Map<string, FactsPlan>();
   for (const day of dayList) {
-    const rows = await engine.executeRaw<FactRow>(`SELECT f.id, f.entity_slug, f.fact, f.row_num, f.source_markdown_slug, f.valid_from::text AS valid_from,
-        to_char(f.valid_until AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS valid_until_day
-      FROM facts f WHERE f.source_id = $1 AND f.expired_at IS NULL AND (f.valid_from AT TIME ZONE 'UTC')::date = $2::date ORDER BY f.id`, [sourceId, day]);
+    const rows = await engine.listFactsOnValidDay(sourceId, day);
     for (const row of rows) {
       const found = claimDate(row.fact, day);
       if ('skip' in found) { count(found.skip); continue; }
@@ -164,7 +163,7 @@ async function buildPlan(engine: BrainEngine, scope: RepairScope, selection: Sel
     listing.push({ item: `${sourceId}:${group.entity_slug ?? '(no entity)'}`, class: 'update',
       detail: `${group.rows.length} database-only fact(s) take the date their claim states: ${group.rows.slice(0, LISTED_ROWS).map(row => `fact ${row.id} -> ${row.date}`).join(', ')}` });
   }
-  const [brain] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id = $1', [sourceId]);
+  const brain = await engine.readSourceIncarnation(sourceId);
   const hash = previewHash({ kind: 'fact-claim-dates-v1', brain_id: scope.brain_id, source: { id: sourceId, incarnation: brain?.incarnation ?? null }, selection,
     days: dayList, pages: pages.map(({ slug, revision, section, rows }) => ({ slug, revision, section, rows })), facts });
   return { hash, days, pages, facts, residuals, listing };
@@ -218,6 +217,9 @@ export const factClaimDatesRepair: RepairHandler = {
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const { approved, hash, last } = entry as ClaimItem;
+    // The page move goes through the page write door and the fact move updates facts, both raw SQL, so a Rust brain stops
+    // here by name, before its first write.
+    requireRawSql(ctx.engine, approved.page ? 'repair fact-claim-dates page write' : 'repair fact-claim-dates fact write');
     const outcome = approved.page ? await movePage(ctx, entry, approved.page) : await moveFacts(ctx.engine, approved.facts!);
     if (last) await clearApprovedSet(ctx.engine, { command: 'fact-claim-dates', hash });
     return outcome;

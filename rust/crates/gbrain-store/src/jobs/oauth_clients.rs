@@ -1,8 +1,9 @@
 //! Jobs: the `oauth_clients` table, every column of it, as the members of `src/core/engine-sql/oauth-clients.ts` and
 //! `spend-log.ts` run them (rust/docs/store/spend-log.md, rust/docs/store/oauth-clients.md).
 //!
-//! Members: insertOauthClient, updateOauthClientBudget, readClientBudgetUsd, readOauthClient, and the client reads the
-//! admission and the agent spend view make (`budget_cents`, `agent_clients`).
+//! Members: insertOauthClient, updateOauthClientBudget, readClientBudgetUsd, readOauthClient, listSourceOAuthClients,
+//! and the client reads the admission and the agent spend view make (`budget_cents`, `agent_clients`); and the credential
+//! members of `src/core/engine-sql/access-credentials.ts`: deleteOAuthClient, oauthClientLive and setOauthClientTokenTtl.
 //!
 //! Keys, all under `keys::JOBS` (`m`), sub-tag 0x2A (this file only):
 //! - `m 0x2A client_id -> ClientRecord`: one client, the full row (the 41 columns of the table after every migration,
@@ -12,9 +13,13 @@
 //! (`oauth_clients_complete_agent_grant`, src/core/grants/schema.ts), the five value lists and the `sources` foreign
 //! key. A refusal is `constraint_violation` with the Postgres message (`new row for relation "oauth_clients" violates
 //! check constraint "..."`); the TypeScript member gives it the SQLSTATE and constraint name PGLite and Postgres raise.
-//! Not kept: the `trust_generation_update` trigger, the secondary indexes (a read scans the table) and the
-//! `ON DELETE RESTRICT` of `sources` (deleting a source a client names is not refused here).
+//! Not kept: the `trust_generation_update` trigger and the secondary indexes (a read scans the table). A source
+//! delete runs [`remove_source_rows`]: the `ON DELETE RESTRICT` of `source_id` and the `ON DELETE SET NULL` of
+//! `bound_source_id`. The store keeps the client's `oauth_tokens` (`oauth_tokens.rs`) and removes them with the client, as
+//! the `ON DELETE CASCADE` does, and so it does the client's `oauth_codes` (`oauth_codes.rs`).
 
+use super::oauth_codes::delete_client_codes;
+use super::oauth_tokens::delete_client_tokens;
 use super::spend::numeric_fixed;
 use super::*;
 use crate::env::{iso, parse_iso};
@@ -225,7 +230,7 @@ impl ClientRecord {
     }
 
     /// The row as `SELECT *` returns it on the SQL engines: times as ISO text, the cap as `NUMERIC` text.
-    fn to_row(&self) -> Value {
+    pub(super) fn to_row(&self) -> Value {
         let t = |m: Option<i64>| m.map(iso);
         let mut row = json!({
             "client_id": self.client_id,
@@ -276,6 +281,44 @@ impl ClientRecord {
     }
 }
 
+impl ClientRecord {
+    /// The row as `to_jsonb(c) - 'client_secret_hash'` returns it (the bearer check's `current_grant`): the same columns
+    /// as `to_row`, but the way `to_jsonb` prints them: the cap and the times (`+00:00`, no trailing zeros) as JSON
+    /// numbers and text.
+    pub(super) fn to_grant_json(&self) -> Value {
+        let mut row = self.to_row();
+        let Some(map) = row.as_object_mut() else {
+            return row;
+        };
+        map.remove("client_secret_hash");
+        map.insert(
+            "budget_usd_per_day".into(),
+            self.budget.map_or(Value::Null, |h| json!(h as f64 / 100.0)),
+        );
+        for (name, micros) in [
+            ("deleted_at", self.deleted_at),
+            ("created_at", Some(self.created_at)),
+            ("reads_unscoped", self.reads_unscoped),
+        ] {
+            map.insert(
+                name.into(),
+                micros.map_or(Value::Null, |m| json!(jsonb_time(m))),
+            );
+        }
+        row
+    }
+}
+
+/// A timestamp as `to_jsonb` prints one in a UTC session: `2026-01-02T03:04:05.5+00:00` (the fraction without trailing
+/// zeros, and none when it is zero).
+fn jsonb_time(micros: i64) -> String {
+    let text = iso(micros);
+    let (whole, frac) = text.trim_end_matches('Z').split_at(19);
+    let frac = frac.trim_end_matches('0');
+    let frac = if frac == "." { "" } else { frac };
+    format!("{whole}{frac}+00:00")
+}
+
 pub(super) fn load_client(read: &dyn KvRead, client_id: &str) -> Result<Option<ClientRecord>> {
     get_json(read, &client_key(client_id))
 }
@@ -284,6 +327,31 @@ pub(super) fn load_client(read: &dyn KvRead, client_id: &str) -> Result<Option<C
 pub(super) fn put_client(tx: &mut dyn KvWrite, record: &ClientRecord) -> Result<()> {
     record.check(&*tx)?;
     put_json(tx, &client_key(&record.client_id), record)
+}
+
+/// The `sources` delete side of the client's foreign keys: refuses, as `ON DELETE RESTRICT` does, when a client's
+/// `source_id` names `source_id`, revoked clients included (the key is physical), with the error Postgres raises;
+/// else clears every `bound_source_id` that names it (`ON DELETE SET NULL`).
+pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
+    let clients = all_clients(&*tx)?;
+    if clients
+        .iter()
+        .any(|c| c.source_id.as_deref() == Some(source_id))
+    {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            format!(
+                "update or delete on table \"sources\" violates foreign key constraint \"oauth_clients_source_id_fkey\" on table \"{TABLE}\""
+            ),
+        ));
+    }
+    for mut client in clients {
+        if client.bound_source_id.as_deref() == Some(source_id) {
+            client.bound_source_id = None;
+            put_json(tx, &client_key(&client.client_id), &client)?;
+        }
+    }
+    Ok(())
 }
 
 /// Every client, by client id.
@@ -403,7 +471,7 @@ fn budget_text(hundredths: i64) -> String {
     format!("{sign}{}.{:02}", abs / 100, abs % 100)
 }
 
-fn budget_hundredths(usd: f64) -> Result<i64> {
+pub(super) fn budget_hundredths(usd: f64) -> Result<i64> {
     numeric_fixed(usd, 2, 8, "budget_usd_per_day")
 }
 
@@ -510,63 +578,67 @@ impl Store {
     /// `NUMERIC(10,2)`, a row that breaks a CHECK of the table (the agent-grant check first among them) and a
     /// `source_id` no source has; `invalid_argument` for a time that is not ISO text.
     pub fn insert_oauth_client(&self, row: &ClientInsert) -> Result<()> {
+        self.write(|tx| self.insert_client_in(tx, row))
+    }
+
+    /// The insert inside a write the caller holds: `insert_oauth_client`, and the scoped-client insert that writes its
+    /// register audit row beside the client (`client_grants.rs`).
+    pub(super) fn insert_client_in(&self, tx: &mut dyn KvWrite, row: &ClientInsert) -> Result<()> {
         let budget = row.budget_usd_per_day.map(budget_hundredths).transpose()?;
         let deleted_at = iso_micros(&row.deleted_at, "deleted_at")?;
         let reads_unscoped = iso_micros(&row.reads_unscoped, "reads_unscoped")?;
         let created_at = iso_micros(&row.created_at, "created_at")?;
-        self.write(|tx| {
-            if load_client(tx, &row.client_id)?.is_some() {
-                return Err(StoreError::new(
-                    CONSTRAINT_VIOLATION,
-                    "duplicate key value violates unique constraint \"oauth_clients_pkey\"",
-                ));
-            }
-            let record = ClientRecord {
-                client_id: row.client_id.clone(),
-                client_secret_hash: row.client_secret_hash.clone(),
-                client_name: row.client_name.clone(),
-                redirect_uris: row.redirect_uris.clone(),
-                grant_types: row.grant_types.clone(),
-                scope: row.scope.clone(),
-                token_endpoint_auth_method: row.token_endpoint_auth_method.clone(),
-                client_id_issued_at: row.client_id_issued_at,
-                client_secret_expires_at: row.client_secret_expires_at,
-                token_ttl: row.token_ttl,
-                deleted_at,
-                source_id: row.source_id.clone(),
-                federated_read: row.federated_read.clone(),
-                budget,
-                bound_tools: row.bound_tools.clone(),
-                bound_source_id: row.bound_source_id.clone(),
-                bound_brain_id: row.bound_brain_id.clone(),
-                bound_slug_prefixes: row.bound_slug_prefixes.clone(),
-                bound_max_concurrent: row.bound_max_concurrent,
-                surface: row.surface.clone(),
-                surface_set_by: row.surface_set_by.clone(),
-                allowed_operations: row.allowed_operations.clone(),
-                delegated_slug_prefixes: row.delegated_slug_prefixes.clone(),
-                delegated_namespace: row.delegated_namespace.clone(),
-                grant_profile: row.grant_profile.clone(),
-                grant_revision: row.grant_revision,
-                read_shared_revision: row.read_shared_revision,
-                grant_repair_reasons: row.grant_repair_reasons.clone(),
-                created_at: created_at.unwrap_or_else(|| self.env.now_micros()),
-                source_grant: row.source_grant.clone(),
-                takes_holders: row.takes_holders.clone(),
-                min_trust: row.min_trust.clone(),
-                registered_via: row.registered_via.clone(),
-                private_pages: row.private_pages.clone(),
-                member_id: row.member_id.clone(),
-                may_act_for: row.may_act_for.clone(),
-                attest_actor: row.attest_actor.clone(),
-                attest_ops: row.attest_ops.clone(),
-                attest_sources: row.attest_sources.clone(),
-                attest_read: row.attest_read.clone(),
-                reads_unscoped,
-                private_facts: row.private_facts.clone(),
-            };
-            put_client(tx, &record)
-        })
+        if load_client(tx, &row.client_id)?.is_some() {
+            return Err(StoreError::new(
+                CONSTRAINT_VIOLATION,
+                "duplicate key value violates unique constraint \"oauth_clients_pkey\"",
+            ));
+        }
+        let record = ClientRecord {
+            client_id: row.client_id.clone(),
+            client_secret_hash: row.client_secret_hash.clone(),
+            client_name: row.client_name.clone(),
+            redirect_uris: row.redirect_uris.clone(),
+            grant_types: row.grant_types.clone(),
+            scope: row.scope.clone(),
+            token_endpoint_auth_method: row.token_endpoint_auth_method.clone(),
+            client_id_issued_at: row.client_id_issued_at,
+            client_secret_expires_at: row.client_secret_expires_at,
+            token_ttl: row.token_ttl,
+            deleted_at,
+            source_id: row.source_id.clone(),
+            federated_read: row.federated_read.clone(),
+            budget,
+            bound_tools: row.bound_tools.clone(),
+            bound_source_id: row.bound_source_id.clone(),
+            bound_brain_id: row.bound_brain_id.clone(),
+            bound_slug_prefixes: row.bound_slug_prefixes.clone(),
+            bound_max_concurrent: row.bound_max_concurrent,
+            surface: row.surface.clone(),
+            surface_set_by: row.surface_set_by.clone(),
+            allowed_operations: row.allowed_operations.clone(),
+            delegated_slug_prefixes: row.delegated_slug_prefixes.clone(),
+            delegated_namespace: row.delegated_namespace.clone(),
+            grant_profile: row.grant_profile.clone(),
+            grant_revision: row.grant_revision,
+            read_shared_revision: row.read_shared_revision,
+            grant_repair_reasons: row.grant_repair_reasons.clone(),
+            created_at: created_at.unwrap_or_else(|| self.env.now_micros()),
+            source_grant: row.source_grant.clone(),
+            takes_holders: row.takes_holders.clone(),
+            min_trust: row.min_trust.clone(),
+            registered_via: row.registered_via.clone(),
+            private_pages: row.private_pages.clone(),
+            member_id: row.member_id.clone(),
+            may_act_for: row.may_act_for.clone(),
+            attest_actor: row.attest_actor.clone(),
+            attest_ops: row.attest_ops.clone(),
+            attest_sources: row.attest_sources.clone(),
+            attest_read: row.attest_read.clone(),
+            reads_unscoped,
+            private_facts: row.private_facts.clone(),
+        };
+        put_client(tx, &record)
     }
 
     /// `updateOauthClientBudget(clientId, usd)`: sets (or clears, with None) the daily cap; whether the client exists.
@@ -597,6 +669,22 @@ impl Store {
         Ok(load_client(&*read, client_id)?.map(|c| c.to_row()))
     }
 
+    /// `[{ id, name }]` (`client_id`, `client_name`) of the clients whose id is one of `ids`, by id; an id no client has is
+    /// left out. The names `get_write_attribution` shows for an OAuth client.
+    pub fn read_oauth_client_names(&self, ids: &[String]) -> Result<Value> {
+        let read = self.read()?;
+        let mut wanted: Vec<&String> = ids.iter().collect();
+        wanted.sort();
+        wanted.dedup();
+        let mut rows = Vec::new();
+        for id in wanted {
+            if let Some(c) = load_client(&*read, id)? {
+                rows.push(json!({ "id": c.client_id, "name": c.client_name }));
+            }
+        }
+        Ok(Value::Array(rows))
+    }
+
     /// `listOauthClients()`: every client's whole row (as `read_oauth_client` returns it), by name then id in byte
     /// order, as `ORDER BY client_name COLLATE "C", client_id COLLATE "C"` sorts.
     pub fn list_oauth_clients(&self) -> Result<Value> {
@@ -607,6 +695,78 @@ impl Store {
                 .cmp(&(b.client_name.as_bytes(), b.client_id.as_bytes()))
         });
         Ok(Value::Array(clients.iter().map(|c| c.to_row()).collect()))
+    }
+
+    /// `listSourceOAuthClients(sourceId)`: every client that names the source, revoked ones
+    /// included (`deleted` is whether `deleted_at` is set), by client id in byte order. These are
+    /// the clients whose `ON DELETE RESTRICT` blocks a source delete on the SQL engines.
+    pub fn list_source_oauth_clients(&self, source_id: &str) -> Result<Value> {
+        let read = self.read()?;
+        let mut clients: Vec<ClientRecord> = all_clients(&*read)?
+            .into_iter()
+            .filter(|c| c.source_id.as_deref() == Some(source_id))
+            .collect();
+        clients.sort_by(|a, b| a.client_id.as_bytes().cmp(b.client_id.as_bytes()));
+        Ok(Value::Array(
+            clients
+                .iter()
+                .map(|c| {
+                    serde_json::json!({
+                        "client_id": c.client_id,
+                        "client_name": c.client_name,
+                        "deleted": c.deleted_at.is_some(),
+                    })
+                })
+                .collect(),
+        ))
+    }
+}
+
+impl Store {
+    /// `deleteOAuthClient(clientId)`: removes the client row in one write; `(client_id, client_name)` of the row it
+    /// removed, or None.
+    pub fn delete_oauth_client(&self, client_id: &str) -> Result<Option<(String, String)>> {
+        self.write(|tx| {
+            let Some(record) = load_client(tx, client_id)? else {
+                return Ok(None);
+            };
+            tx.delete(&client_key(client_id))?;
+            delete_client_tokens(tx, client_id)?;
+            delete_client_codes(tx, client_id)?;
+            Ok(Some((record.client_id, record.client_name)))
+        })
+    }
+
+    /// `listUnboundClientIds()`: the ids of the clients not deleted and bound to no member, in byte order
+    /// (`ORDER BY client_id COLLATE "C"`).
+    pub fn list_unbound_client_ids(&self) -> Result<Vec<String>> {
+        let read = self.read()?;
+        let mut ids: Vec<String> = all_clients(&*read)?
+            .into_iter()
+            .filter(|c| c.deleted_at.is_none() && c.member_id.is_none())
+            .map(|c| c.client_id)
+            .collect();
+        ids.sort();
+        Ok(ids)
+    }
+
+    /// `oauthClientLive(clientId)`: whether a client not deleted (`deleted_at IS NULL`) has this id.
+    pub fn oauth_client_live(&self, client_id: &str) -> Result<bool> {
+        let read = self.read()?;
+        Ok(load_client(&*read, client_id)?.is_some_and(|c| c.deleted_at.is_none()))
+    }
+
+    /// `setOauthClientTokenTtl(clientId, ttl)`: sets the client's `token_ttl`; whether the client exists. The row is
+    /// held to the table's constraints (`constraint_violation`), and then is untouched.
+    pub fn set_oauth_client_token_ttl(&self, client_id: &str, ttl: i32) -> Result<bool> {
+        self.write(|tx| {
+            let Some(mut record) = load_client(tx, client_id)? else {
+                return Ok(false);
+            };
+            record.token_ttl = Some(ttl);
+            put_client(tx, &record)?;
+            Ok(true)
+        })
     }
 }
 
@@ -621,6 +781,22 @@ mod tests {
         assert_eq!(budget_text(-50), "-0.50");
         assert_eq!(budget_text(0), "0.00");
         assert_eq!(budget_text(1250), "12.50");
+    }
+
+    #[test]
+    fn a_jsonb_time_has_the_offset_and_no_trailing_zeros() {
+        assert_eq!(
+            jsonb_time(1_800_000_000_000_000),
+            "2027-01-15T08:00:00+00:00"
+        );
+        assert_eq!(
+            jsonb_time(1_800_000_000_500_000),
+            "2027-01-15T08:00:00.5+00:00"
+        );
+        assert_eq!(
+            jsonb_time(1_800_000_000_000_001),
+            "2027-01-15T08:00:00.000001+00:00"
+        );
     }
 
     #[test]

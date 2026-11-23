@@ -6,6 +6,8 @@ src/core/access/policy-git.ts	fs_import	1	W7: filesystem boundary moves to the l
 src/core/access/policy-git.ts	process_env	4	W6: settings plane out of the core
 src/core/access/policy-git.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/access/policy-transfer.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/access/read-log.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context (GST-2476 gap 1: the page ids one dispatched read returns)
+src/core/access/read-log.ts	module_collection	2	W6: per-engine state, or mark as a constant table (GST-2476 gap 1: per-engine read log buffers, like search/telemetry.ts)
 src/core/access/scope-read.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context (GST-1158 E1 read mode per attested call)
 src/core/advisor/collect-setup-smells.ts	process_env	1	W6: settings plane out of the core
 src/core/advisor/collect-uninstalled-brain-pack.ts	fs_import	1	W7: filesystem boundary moves to the local app
@@ -67,6 +69,9 @@ src/core/ai/recipes/llama-server.ts	process_env	1	W3: AI settings arrive on the 
 src/core/ai/recipes/lmstudio.ts	process_env	1	W3: AI settings arrive on the engine
 src/core/ai/reranker-readiness-engine.ts	load_config	1	W3: AI settings arrive on the engine
 src/core/ai/reranker-readiness-engine.ts	process_env	1	W3: AI settings arrive on the engine
+src/core/apple-contacts/apple-contacts-source.ts	fs_import	1	W7: filesystem boundary moves to the local app (GST-3256: a Git-recorded source checks its checkout for a hand-authored page, as people-calendar-sweep.ts does)
+src/core/apple/contacts-client.ts	fs_import	1	W7: filesystem boundary moves to the local app (GST-3256: lstat and read of the 0600 token file the source names)
+src/core/apple/contacts-write-client.ts	fs_import	1	W7: filesystem boundary moves to the local app (GST-3278: lstat and read of the 0600 owner key and write token files, the same check as contacts-client.ts)
 src/core/archive-crawler-config.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/atomic-write.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/attendance-repair.ts	process_env	1	W6: settings plane out of the core
@@ -928,8 +933,10 @@ src/core/rust-engine/addon-loader.ts	fs_import	1	Rust engine addon: reads the ca
 src/core/rust-engine/addon-loader.ts	process_env	1	Rust engine addon: the default deps read GBRAIN_RUST_ENGINE_ADDON once; every other path takes env from the deps; stays until the Rust engine's own storage settles (plan PR 8)
 src/core/rust-engine/owned-brains.ts	fs_import	1	Rust owned brains: realpath of the store path, so readiness matches the open store through a symlink, like pglite-lock.ts; W7: filesystem boundary moves to the local app
 src/core/rust-engine/owned-brains.ts	module_collection	1	Rust owned brains: the stores this process owns, as pglite-lock.ts keeps its held locks; W6: per-engine state
-src/core/rust-engine/owner-ipc/client.ts	module_collection	2	Rust owner IPC: WeakMaps keyed by engine object (its owner connection) and by grouper function (its countPagesBy table); entries die with the engine or the call; stays until engine state moves per engine (W6)
+src/core/rust-engine/owner-ipc/client.ts	fs_import	1	Rust owner IPC: lstat of the owner socket file and its directory before connecting (socket owner and mode check); the socket is a filesystem object, so this stays with the local app (W7)
+src/core/rust-engine/owner-ipc/client.ts	module_collection	3	Rust owner IPC: WeakMaps keyed by engine object (its owner connection), by connection (its engine's election rerun after the owner exits) and by grouper function (its countPagesBy table); entries die with the engine, connection or call; stays until engine state moves per engine (W6)
 src/core/rust-engine/owner-ipc/election.ts	fs_import	1	Rust owner IPC: creates the parent directory of the owner lock (beside the store directory); filesystem boundary moves to the local app (W7)
+src/core/rust-engine/owner-ipc/protocol.ts	fs_import	1	Rust owner IPC: resolves symlinks in the store path (realpath) so every alias of one brain names one owner lock and socket, as pglite-lock.ts does; filesystem boundary moves to the local app (W7)
 src/core/rust-engine/owner-ipc/server.ts	fs_import	1	Rust owner IPC: removes only a stale socket file and sets 0600 on the owner socket, like persistence/ipc.ts; filesystem boundary moves to the local app (W7)
 src/core/schema-events.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/schema-migration-lock.ts	als_store	1	stays: GBRA-467 reentrancy scope of the schema migration lock held by this process (coordination state, not a setting)
@@ -1243,8 +1250,7 @@ src/core/skills/resolver/hook-lane.ts	process_env	2	GBRA-377 PR B skill-resolver
 src/core/skills/resolver/hook-lane.ts	spawn_import	1	GBRA-377 PR B skill-resolver hook lane: runs in the hook process with no brain or engine, reading config.json, harness settings and the skill index; env carries GBRAIN_HOME and its test seams; it spawns the detached catalog build; stays
 src/core/skills/resolver/hook-lane.ts	process_global	1	GBRA-377 PR B skill-resolver hook lane: at its 50 ms deadline the hook process exits at once without waiting on the abandoned worker (the lane is the whole process); stays
 src/core/setup/openclaw-skill-plugin.ts	fs_import	1	GBRA-435 OpenClaw skill-resolver plugin: setup writes the plugin files, its state and the library under GBRAIN_HOME and reads openclaw.json directly (no brain or engine is opened); stays
-src/core/setup/openclaw-skill-plugin.ts	process_env	3	GBRA-435 OpenClaw skill-resolver plugin: PATH to find openclaw and node, and the env handed to the openclaw child and the self-test; stays
-src/core/setup/openclaw-skill-plugin.ts	spawn_import	1	GBRA-435 OpenClaw skill-resolver plugin: setup runs the openclaw CLI (install, enable, allow, inspect) and the Node self-test; stays
+src/core/setup/openclaw-skill-plugin.ts	process_env	1	GBRA-435 OpenClaw skill-resolver plugin: PATH to find openclaw and node, and the env handed to the openclaw child and the self-test; stays
 src/core/setup/skill-pins.ts	fs_import	1	GBRA-435 skill pins: reads a catalog's receipt under GBRAIN_HOME/skill-index to check pin names (no brain or engine is opened); stays
 src/core/setup/hermes-skill-pins.ts	fs_import	1	GBRA-435 Hermes skill pins: reads SOUL.md under HERMES_HOME to place or remove the pinned-skills block (no brain or engine is opened); stays
 src/core/setup/pi-skill-extension.ts	fs_import	1	GBRA-435 Pi skill-resolver extension: setup writes the extension files under the Pi agent dir and its state under GBRAIN_HOME (no brain or engine is opened); stays
@@ -1256,3 +1262,8 @@ src/core/setup/cursor-skill-pins.ts	spawn_import	1	GBRA-435 Cursor pinned skills
 src/core/entities/identity-decisions.ts	fs_import	1	W7: filesystem boundary moves to the local app (decision files under .gbrain/identity/, same door as access/policy-git.ts)
 src/core/entities/identity-decisions.ts	process_env	4	W7: the commit-lock marker (COMMIT_LOCK_ENV) exported to commitAndPush while the lock is held, as in access/policy-git.ts; it moves with the filesystem boundary
 src/core/entities/identity-decisions.ts	spawn_import	1	W7: process-wide effects move to src/cli (git show of the committed decision file)
+src/core/owned-folder/destination.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-3022 owned folders: checks the default source checkout exists and resolves its real top level before any file is written there
+src/core/owned-folder/paths.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-3022 owned folders: realpath of a sync root, import target or uploaded file, so a symlink cannot reach .gbrain-owned/
+src/core/owned-folder/remove.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-3022 owned folders: checks OWNER.json and prunes the directories a source removal leaves empty, never following a symlink
+src/core/owned-folder/writer.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-3022 owned folders: the one writer of the folder: OWNER.json, the README and the day files, with lstat symlink checks
+src/core/remote-caller.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context; marks an MCP handler's caller remote so the Rust owner client keeps its writes off the owner socket

@@ -14,7 +14,7 @@ import { detectManifestScope, storedManifestScope, worktreeManifest, type Stored
 import { hostIdFor } from './identity.ts';
 import { repairWedgedReservation, resolveCoordinationLock } from './coordination-lock.ts';
 import type { RawSqlEngine, SqlEngine, WriteRequest } from './model.ts';
-import type { WorktreeOwnerRow } from '../engine-sql/publication-journal.ts';
+import type { PublicationJournalStore, WorktreeOwnerRow } from '../engine-sql/publication-journal.ts';
 import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
 import { acquireShared, deferToLease, exclusiveAcquired, foreignWaiterAhead, joinLease, noteWaiting, yieldLease } from './worktree-lease.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
@@ -261,9 +261,15 @@ export async function probeWorktreeWriter(binding: WorktreeBinding, engine?: Bra
   await lock.release();
   return true;
 }
-export async function guardOwnership(tx: SqlEngine & Pick<BrainEngine, 'publicationJournalStore'>, row: WriteRequest, hostId: string): Promise<WorktreeBinding | null> {
+/**
+ * The live owner binding of a bound request, checked under the worktree row's share lock. `journal` is the
+ * transaction's publication journal store, opened by the caller before it starts sending: a caller that pipelines this
+ * with its source locks (group-publish.ts) relies on the worktree lock going out synchronously, first, so worktrees
+ * stay locked before sources (scripts/persistence/lock-order.ts `worktrees_before_sources`). Opening the store here
+ * would yield before the lock and let the caller's source locks go out ahead of it.
+ */
+export async function guardOwnership(tx: SqlEngine, journal: PublicationJournalStore, row: WriteRequest, hostId: string): Promise<WorktreeBinding | null> {
   if (!row.worktree_id) return null;
-  const journal = await tx.publicationJournalStore();
   // The worktree lock and the binding read are sent together; the server takes the lock first.
   const [owner, binding] = await pipelined(tx, [
     () => journal.shareWorktreeOwner(row.worktree_id!),

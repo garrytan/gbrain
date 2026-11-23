@@ -232,7 +232,7 @@ async function listInterim(ctx: OperationContext, opts: AdoptOptions, includeDel
       EXISTS (SELECT 1 FROM tags t WHERE t.page_id = p.id AND t.tag = $4) AS tagged
     FROM pages p
     WHERE p.source_id = $1 AND p.type = $2 AND left(p.slug, length($3)) = $3 AND p.slug <> $3 || 'index'${includeDeleted ? '' : ' AND p.deleted_at IS NULL'}
-    ORDER BY p.slug`, [opts.sourceId, STORED_OBJECT_TYPE, opts.prefix, ADOPTED_TAG]);
+    ORDER BY p.slug COLLATE "C"`, [opts.sourceId, STORED_OBJECT_TYPE, opts.prefix, ADOPTED_TAG]);
 }
 
 async function assertInterimSource(ctx: OperationContext, opts: AdoptOptions): Promise<void> {

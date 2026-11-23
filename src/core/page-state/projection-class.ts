@@ -38,13 +38,22 @@ export function sealableImageSql(p: string): string {
     AND ${safeChunksFilter(p)} AND ${importerChunkSql(p)} IS TRUE)`;
 }
 
+function textPageSql(p: string): string {
+  return `(${p}.page_kind IS DISTINCT FROM 'image' OR ${p}.body_storage = 'segmented')`;
+}
+
+/** The `text` class without the image branches: a page of a live source the resident drain rebuilds by itself. */
+export function textClassSql(p: string, s: string): string {
+  return `(NOT ${s}.archived AND ${textPageSql(p)})`;
+}
+
 /**
  * The class of a page's unsealed projection: `p` a live page, `s` its source
  * (internal aliases with every column).
  */
 export function projectionClassSql(p: string, s: string): string {
   return `(CASE WHEN ${s}.archived THEN 'archived'
-    WHEN ${p}.page_kind IS DISTINCT FROM 'image' OR ${p}.body_storage = 'segmented' THEN 'text'
+    WHEN ${textPageSql(p)} THEN 'text'
     WHEN ${protectedBodyFilter(p)} THEN 'protected'
     WHEN ${p}.chunker_version >= ${SAFE_FENCE_CHUNKER_VERSION} AND ${importerChunkSql(p)} IS TRUE THEN 'sealable'
     ELSE 'reimport' END)`;

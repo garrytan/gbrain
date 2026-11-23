@@ -288,10 +288,10 @@ const SAMPLE = 10;
 
 /** Default: every active source. `--source` narrows to one active source. */
 export async function resolveRepairScope(engine: BrainEngine, source?: string): Promise<RepairScope> {
-  const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1').catch(() => []);
+  const brainId = await engine.readPersistenceBrainId().catch(() => null);
   const rows = sortSourcesById(await engine.listAllSources()).filter(row => !source || row.id === source);
   if (source && !rows.length) throw new OperationError('invalid_params', `Source '${source}' does not exist or is archived.`, 'Run `gbrain sources list` and pass an active source id.');
-  return { brain_id: brain?.brain_id ?? 'host', source_ids: rows.map(row => row.id) };
+  return { brain_id: brainId ?? 'host', source_ids: rows.map(row => row.id) };
 }
 
 /** A preview-bound apply keeps its cursor under its approval hash, so a new preview never resumes an older set's cursor. */
@@ -300,20 +300,15 @@ function fingerprint(kind: RepairKind, scope: RepairScope, approval?: string): s
 }
 
 async function readCursor(engine: BrainEngine, kind: RepairKind, scope: RepairScope, approval?: string): Promise<{ cursor: RepairCursor | null; runId: string | null }> {
-  const [row] = await engine.executeRaw<{ completed_keys: Array<{ cursor?: RepairCursor | null; run_id?: string }> }>(
-    "SELECT completed_keys FROM op_checkpoints WHERE op='repair' AND fingerprint=$1", [fingerprint(kind, scope, approval)]);
-  return { cursor: row?.completed_keys[0]?.cursor ?? null, runId: row?.completed_keys[0]?.run_id ?? null };
+  const row = await engine.readOpCheckpointRecord('repair', fingerprint(kind, scope, approval));
+  const [first] = Array.isArray(row?.completed_keys) ? row.completed_keys as Array<{ cursor?: RepairCursor | null; run_id?: string }> : [];
+  return { cursor: first?.cursor ?? null, runId: first?.run_id ?? null };
 }
 
 /** Stores the run's cursor and id; with neither, the run is finished and the row is cleared. */
 async function writeCursor(engine: BrainEngine, kind: RepairKind, scope: RepairScope, cursor: RepairCursor | null, runId: string | null, approval?: string): Promise<void> {
-  if (!cursor && !runId) {
-    await engine.executeRaw("DELETE FROM op_checkpoints WHERE op='repair' AND fingerprint=$1", [fingerprint(kind, scope, approval)]);
-    return;
-  }
-  await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('repair',$1,$2::text::jsonb)
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
-  [fingerprint(kind, scope, approval), JSON.stringify([{ kind, scope, cursor, run_id: runId }])]);
+  await engine.writeOpCheckpointRecord('repair', fingerprint(kind, scope, approval),
+    !cursor && !runId ? null : [{ kind, scope, cursor, run_id: runId }]);
 }
 
 /** Cumulative journal counters this repair's admissions consume, with their 90% stop line (also the keep_db policy's headroom gate). */
@@ -321,8 +316,7 @@ export async function capacity(ctx: OperationContext) {
   // A dry run never registers a writer; an unregistered installation has consumed nothing yet.
   const principal = await requestPrincipalForContext(ctx).then(principalKey, () => 'principal:unregistered');
   const limits = await readJournalLimits(ctx.engine);
-  const rows = await ctx.engine.executeRaw<{ key: string; lifetime_ids: string; terminal_bytes: string }>(
-    'SELECT key,lifetime_ids::text,terminal_bytes::text FROM persistence_counters WHERE key=ANY($1::text[])', [['brain', principal]]);
+  const rows = await ctx.engine.readCounterRows(['brain', principal]);
   return (['brain', principal] as const).flatMap(key => {
     const row = rows.find(r => r.key === key);
     const scope = key === 'brain' ? 'brain' : 'principal';

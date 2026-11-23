@@ -90,6 +90,7 @@ test/codex-plugin-manifest.test.ts	codex mcp.json	3	readFileSync
 test/codex-plugin-manifest.test.ts	curated tree membership + scanner guard	6	readFileSync
 test/codex-plugin-manifest.test.ts	generator negative fixtures (a guard that cannot fail is not coverage)	9	readFileSync
 test/codex-plugin-manifest.test.ts	variant ${def.plugin_name} (persona ${personaName})	5	readFileSync
+test/company-brainify-export-purge.test.ts	company-brainify copies	1	readFileSync
 test/compile-context-core.serial.test.ts	compile-context core arm	5	readFileSync
 test/compile-view.test.ts	compileView — determinism	3	readFileSync
 test/compile-view.test.ts	compileView — source isolation + read errors	3	readFileSync
@@ -123,7 +124,8 @@ test/detached-stderr.test.ts	jobs.ts detach branch (source pin, #4418)	2	source-
 test/divergence-safe-pull-5429.serial.test.ts	--no-autostash (#5429, bug fix)	4	readFileSync
 test/docs-mcp-deploy.test.ts	DEPLOY.md documents the owner magic-link flow (#5007)	1	readFileSync,source-surface-helper
 test/docs-navigation.test.ts	primary documentation navigation	2	readFileSync
-test/doctor-atom-provenance-drift.test.ts	computeAtomProvenanceDriftCheck	19	doctor-source-helper
+test/doctor-acc-sql.test.ts	doctor reads, second set: statement text	2	readFileSync
+test/doctor-atom-provenance-drift.test.ts	computeAtomProvenanceDriftCheck	19	readFileSync
 test/doctor-embedding-env-override.test.ts	cross-surface parity (source-grep regression guard)	1	doctor-source-helper
 test/doctor-fix.test.ts	gbrain doctor --fix CLI integration	3	readFileSync
 test/doctor-frontmatter-partial.test.ts	doctor frontmatter_integrity — load-bearing render strings	5	doctor-source-helper
@@ -138,17 +140,17 @@ test/doctor-volunteer-channels.test.ts	checkVolunteerChannels	9	doctor-source-he
 test/doctor-wedged-queue.test.ts	issue #1801 fix #3 — computeWedgedQueueCheck	14	doctor-source-helper
 test/doctor-wedged-queue.test.ts	issue #1801 fix #3 — remote queue_health state→status regression	1	doctor-source-helper
 test/doctor.test.ts	BUG 4 — in-progress sync via live lock, not stale freshness	8	doctor-source-helper
-test/doctor.test.ts	doctor command	35	doctor-source-helper
+test/doctor.test.ts	doctor command	35	doctor-source-helper,source-surface-helper
 test/doctor.test.ts	issue #972 — link_resolution_opportunity check	8	doctor-source-helper
 test/doctor.test.ts	stub_guard_24h check (v0.34.5)	5	doctor-source-helper
 test/doctor.test.ts	supervisor crash classifier wiring (v0.35.x)	4	doctor-source-helper,source-surface-helper
-test/doctor.test.ts	sync_freshness — clone-unavailable content-lag fallback	6	doctor-source-helper
+test/doctor.test.ts	sync_freshness — clone-unavailable content-lag fallback	6	doctor-source-helper,source-surface-helper
 test/doctor.test.ts	v0.31.8 — wedge migration force-retry hint (D19)	4	doctor-source-helper
-test/doctor.test.ts	v0.32.4 — sync_freshness check	13	doctor-source-helper
+test/doctor.test.ts	v0.32.4 — sync_freshness check	13	doctor-source-helper,source-surface-helper
 test/doctor.test.ts	v0.40.4 — graph_signals_coverage check	7	doctor-source-helper
-test/doctor.test.ts	v0.41.27.0 — sync_freshness git short-circuit	9	doctor-source-helper
-test/doctor.test.ts	v0.41.32.0 — commit-relative staleness	5	doctor-source-helper
-test/doctor.test.ts	v0.42 (#1699) — quarantined_pages + flagged_pages checks	1	doctor-source-helper
+test/doctor.test.ts	v0.41.27.0 — sync_freshness git short-circuit	9	doctor-source-helper,source-surface-helper
+test/doctor.test.ts	v0.41.32.0 — commit-relative staleness	5	doctor-source-helper,source-surface-helper
+test/doctor.test.ts	v0.42 (#1699) — quarantined_pages + flagged_pages checks	1	doctor-source-helper,readFileSync,source-surface-helper
 test/drain-lease-key-share-7442.test.ts	#7442: the drain-lease fence lets the renewal through and still holds off a takeover	5	readFileSync
 test/dry-fix.test.ts	autoFixDryViolations	12	readFileSync
 test/e2e/bootstrap-real-codex.serial.test.ts	bootstrap rendered protocol — ambient boundaries (always runs)	5	readFileSync
@@ -189,6 +191,7 @@ test/fence-extraction.test.ts	Layer 8 D2 — markdown fence extraction	18	readFi
 test/fence-format-reference.test.ts	docs/guides/fence-format.md	3	readFileSync
 test/fence-format-reference.test.ts	write-refusals fence reason rows	3	readFileSync
 test/fence-refusal.test.ts	every PR1 reason routes to the fence repair, never to frontmatter repair	3	readFileSync
+test/file-upload-fail-closed.test.ts	file_upload fail-closed (#4302)	6	readFileSync
 test/files.test.ts	collectFiles (production import)	9	readFileSync
 test/files.test.ts	files upload-raw git-storage branch (#2297)	6	readFileSync
 test/files.test.ts	files verify git lane (per-source root resolution)	1	readFileSync
@@ -219,6 +222,7 @@ test/harness-onboarding.test.ts	harness identity and private handoff	6	readFileS
 test/hook-command.serial.test.ts	user-prompt	18	source-surface-helper
 test/hook-push-spawn-env.test.ts	spawnDetachedPush env handoff	2	readFileSync
 test/hook-push-spawn-env.test.ts	tryExecAsync env handoff	1	readFileSync
+test/imessage-owned-folder.test.ts	owned folder (${kind})	28	readFileSync
 test/imessage-source.test.ts	repo-less brain (${kind})	10	readFileSync
 test/import-calls.test.ts	operations filter guard	1	exec-scan
 test/import-private-hold-callers-7897.test.ts	import entry points hold a non-canonical private request (#7897)	2	readFileSync
@@ -297,6 +301,7 @@ test/pregate-allowlist-cache-keys.test.ts	(file-level)	6	readFileSync
 test/private-visibility.test.ts	shared private predicate lives once (#4352 remediation)	1	readFileSync
 test/purge-root-metafile-7613.test.ts	(file-level)	3	readFileSync
 test/q2-typing-package.test.ts	(file-level)	3	readFileSync
+test/readers-noncanonical.test.ts	the readers_noncanonical fix text says what the rename does and how to check it	4	readFileSync
 test/redos-hardening.test.ts	#1569 --no-schema-pack + heartbeat wiring (structural)	2	readFileSync,source-surface-helper
 test/redos-hardening.test.ts	megawave vm-watchdog removal (bootstrap-verify freeze)	5	readFileSync
 test/register-client-source-normalize.test.ts	register-client route wiring (structural)	1	readFileSync
@@ -385,6 +390,7 @@ test/scripts/run-verify-parallel.test.ts	guard registration ⇒ execution covera
 test/scripts/run-verify-parallel.test.ts	run-verify-parallel.sh — no-timeout-binary fallback rc capture (regression)	8	readFileSync
 test/scripts/rust-cli-parity-workflow.test.ts	Rust CLI parity workflow	5	readFileSync
 test/scripts/serial-files.test.ts	scripts/serial-files.tsv (serial lane manifest)	5	readFileSync
+test/scripts/sql-move-check.test.ts	sql-move-check: the real engine-sql copies	2	readFileSync
 test/scripts/stable-daily.test.ts	stable-daily.yml	2	readFileSync
 test/scripts/stress-gate.test.ts	docs anchors	1	readFileSync
 test/scripts/stress-gate.test.ts	gate plan	8	readFileSync
@@ -444,6 +450,7 @@ test/skillpack-scaffold.test.ts	runScaffold — IRON-RULE regressions (R1, R2)	3
 test/skillpack-scaffold.test.ts	runScaffold — happy path	3	readFileSync
 test/skillpack-scrub-legacy.test.ts	runScrubLegacy	8	readFileSync
 test/skillpack-writer-guard.test.ts	(file-level)	6	readFileSync
+test/skills-refusal-honesty.test.ts	agent-loaded text reports refusals and asks for narrow access	2	readFileSync
 test/slug-move-keeps-trust-9735.test.ts	#9735 slug move census	2	readFileSync
 test/snapshot-shape-guard.test.ts	(file-level)	10	readFileSync
 test/sources-webhook.test.ts	Webhook sync job extraction contract	1	source-surface-helper

@@ -32,7 +32,10 @@ ISO strings. Derivation `createdAt` and `updatedAt` are `YYYY-MM-DDTHH:MM:SS.fff
 | `brain.readSegmentDerivations(pageId, { kind?, occurrenceIds? }?)` | derivation rows by kind, then occurrence; `[]` for an empty `occurrenceIds` | `readSegmentDerivations` |
 | `brain.upsertSegmentDerivations(rows)` | `null`. A row with the same `(page, kind, occurrence)` is replaced and keeps its `createdAt` | `upsertSegmentDerivations` |
 | `brain.retireSegmentDerivations(pageId, liveOccurrenceIds, { kind? }?)` | the number of rows deleted whose occurrence is not live | `retireSegmentDerivations` |
-| `brain.readSegmentedSealLead(pageId)` | `{ lead, revision }`: the page's stored `timeline_lead` (`""` when none) and `knowledge_revision`, or `null` for a missing page. Not a member: `sealSegmentedPage` reads it | (`sealSegmentedPage`'s page read) |
+| `brain.lockBodyStagingState(stagingId)` | the staging's state, or `null` when no staging has that id; a value that is not a uuid is refused (`invalid_argument`). The flip of a create checks it (`applySegmentedBody`) | `lockBodyStagingState` |
+| `brain.deleteUnstagedSegmentChunks(pageId, generation, keepChunkIndexes)` | `null`. Deletes the page's segment chunks at `generation` whose chunk index is not kept (rows a dead preparation staged), with their postings | `deleteUnstagedSegmentChunks` |
+| `brain.deleteRewrittenSegmentDerivations({ pageId, touchedOccurrenceIds, linkReachOccurrenceIds, pipelines, liveOccurrenceIds })` | the number of rows deleted: every row of a touched occurrence, the `links` rows of an occurrence in reach, and the rows of a listed pipeline whose occurrence is not live (`deleteRewrittenDerivations`) | `deleteRewrittenSegmentDerivations` |
+| `brain.readSegmentedSealLead(pageId)` | `{ lead, revision, slug, sourceId }`: the page's stored `timeline_lead` (`""` when none), `knowledge_revision` and identity, or `null` for a missing page. Not a member: `sealSegmentedPage` reads it | (`sealSegmentedPage`'s page read) |
 | `brain.sealSegmentedPage(pageId, timeline, expectedRevision?)` | `null`. See "The seal" | `sealSegmentedPage` |
 | `brain.refreshPageBody(slug, sourceId, compiledTruth, timeline, contentHash)` | `null`. Sets the body, timeline, hash and `updated_at` of a live inline page; a missing or soft-deleted page is left alone. A new revision only when the body or timeline changed. No re-chunk and no version. A live page's sealed search timeline goes, also when nothing changed, since PGLite's `UPDATE … SET timeline` fires the search vector trigger | `refreshPageBody` |
 
@@ -127,9 +130,11 @@ also deletes the chunks family's segment view of the page (`chunks::forget_segme
 ## The seal
 
 `sealSegmentedPage(pageId, opts?)` makes a flipped segmented page's chunks and search text visible at
-its current revision, as engine-sql/page-body.ts does. The TypeScript member reads the stored lead and
-revision (`readSegmentedSealLead`), takes `opts.timelineLead` in place of the lead when given,
-sanitizes it with `sanitizeRemoteBody`, and calls `seal_segmented_page`. In one store write it:
+its current revision, as engine-sql/page-body.ts does. The TypeScript member reads the stored lead,
+revision, slug and source (`readSegmentedSealLead`), takes `opts.timelineLead` in place of the lead when
+given, overlays it with the page's ledger rows (`overlayStoreLead` over the page snapshot read with
+`includeDeleted`: purged fence rows drop, withdrawn ones are struck, as PGLite's `overlayCanonicalBodies`
+does), sanitizes it with `sanitizeRemoteBody`, and calls `seal_segmented_page`. In one store write it:
 
 1. Does nothing for a missing page.
 2. Refuses `revision_conflict` when the page's `knowledge_revision` is no longer the one read.
@@ -139,8 +144,10 @@ sanitizes it with `sanitizeRemoteBody`, and calls `seal_segmented_page`. In one 
    shows the published segment chunks.
 4. Records the text as the page's sealed search timeline (`pages::record_search_timeline`).
 
-PGLite overlays the page's withdrawals and global purges on the stored lead first. The store keeps no
-withdrawal ledger or purge markers, so here that overlay is the identity.
+PGLite overlays the page's withdrawals and global purges on the stored lead first. Here that overlay is the
+identity: the seal reads the stored lead directly and the store keeps no purge markers, so the stored lead is the
+lead sealed. `readPageSnapshot` does report the page's withdrawals, for the overlay a reader applies to a
+segmented page's lead.
 
 ## The sweep
 
@@ -188,7 +195,10 @@ page. Malformed input (a bad uuid, a NUL in text, a number outside int4, a negat
 database's own.
 
 Deleting a page for good removes its manifest rows, derivations, body state and stagings; its texts
-stay, as in PGLite, for the sweep. Deleting a source removes its texts and stagings, and refuses
+stay, as in PGLite, for the sweep. The retention purge (`purgeDeletedPages`) differs, as PGLite's
+does: in its transaction it also deletes every staging at a purged source and slug (a create
+staging names no page), then each text the purged pages named that no manifest row or live staging
+still needs. Deleting a source removes its texts and stagings, and refuses
 `constraint_violation` while a manifest row of any page names one of its texts (PGLite's manifest
 foreign key to the texts has no cascade).
 

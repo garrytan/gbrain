@@ -61,7 +61,7 @@ export async function withTopologyLocks<T>(engine: BrainEngine, sourceId: string
       const local = await engine.executeRaw<TopologyBinding>(`SELECT w.id AS worktree_id,w.owner_host_id,w.owner_epoch,w.state,w.topology_generation,
         h.local_path,h.coordination_path FROM persistence_host_bindings h JOIN persistence_worktrees w ON w.id=h.worktree_id WHERE h.host_id=$1::uuid`,[hostIdFor(engine)]);
       for (const row of local) if (row.local_path&&(containsPath(row.local_path,additionalRoot) || containsPath(additionalRoot,row.local_path))) {
-        const [member]=await engine.executeRaw<{source_id:string}>('SELECT source_id FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id LIMIT 1',[row.worktree_id]);
+        const [member]=await engine.executeRaw<{source_id:string}>('SELECT source_id FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id COLLATE "C" LIMIT 1',[row.worktree_id]);
         const other = member?await getWorktreeBinding(engine,member.source_id):{...row,source_id:'',source_incarnation:'00000000-0000-0000-0000-000000000000',relative_path:'',unbound:true};
         if (other && !bindings.some(item=>item.worktree_id===other.worktree_id)) bindings.push(other);
       }
@@ -135,8 +135,10 @@ export async function lockTopologyRows(tx: BrainEngine, sourceId: string, bindin
   if (refresh) throw catalogueError('refresh_in_progress',
     `Refresh ${refresh.id} of the worktree holding source ${refresh.source_ids[0]} is ${refresh.state}; source topology cannot change until it finishes.`,
     `gbrain sources refresh ${refresh.source_ids[0]} --resume, then retry this source command with the same request_id.`);
+  // The member order never reaches output: the members are re-sorted in JS on the next line and only name the source rows to lock.
   const members = await tx.executeRaw<{ source_id: string }>('SELECT source_id FROM persistence_source_bindings WHERE worktree_id=ANY($1::uuid[]) ORDER BY source_id', [ids]);
   const sources = [...new Set([sourceId,...members.map(row => row.source_id)])].sort();
+  // Plain ORDER BY id on purpose, not COLLATE "C": this only sets the lock order, the same as lockAllSourceRows (engine-sql/sources.ts), so no deadlock.
   await tx.executeRaw('SELECT id FROM sources WHERE id=ANY($1::text[]) ORDER BY id FOR UPDATE', [sources]);
   for (const before of bindings) {
     if(before.unbound){

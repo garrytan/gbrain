@@ -53,6 +53,7 @@ import { readManagedModeTyped } from '../core/persistence/ownership.ts';
 import { readPageBodyPolicy } from '../core/page-body/limits.ts';
 import { importSourceRefusal } from './import-source-refusal.ts';
 import { rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
+import { usesPostgresImportWorkers } from '../core/sync-concurrency.ts';
 
 /** Return a refusal when an import target lies outside every admitted root. */
 export function configuredRootImportError(dir: string, configuredRoots: string[]): string | null {
@@ -273,7 +274,7 @@ export async function runImport(
     commit?: string; /** GBRA-217: a full sync's reason and history-gap note per file (absolute path) for the snapshot its import archives. */ history?: (filePath: string) => import('../core/page-state/versions.ts').VersionHistory | undefined;
     strategy?: SyncStrategy;
     sourceId?: string;
-    managedBookmark?: boolean;
+    managedBookmark?: boolean; /** #8079: managed plain-directory sync, whose imports never replace a database-only edit. */ plainDirectorySync?: boolean;
     /** GST-2462: the run the privacy_label_ignored notice names. */ noticeRun?: 'sync';
     /** Paths the caller keeps out of this run (#5988 holds, #8620 reserved skill paths); skipped without importing, not failures. */
     heldPaths?: Pick<ReadonlySet<string>, 'has'>;
@@ -517,6 +518,7 @@ export async function runImport(
     console.error(`Import target is not readable: ${dirArg} (${e instanceof Error ? e.message : String(e)})`);
     throw new ImportAbortError(`import target not readable: ${dirArg}`);
   }
+  const ownedRefusal = (await import('./import-source-refusal.ts')).ownedFolderImportRefusal(dir); if (ownedRefusal) throw new ImportAbortError(ownedRefusal.message, 1, undefined, ownedRefusal);
   if (args.includes('--calls')) return (await import('./import-calls.ts')).runCallImport(engine, dir, args, { sourceId, json: jsonOutput });
 
   const managedImport = await readManagedModeTyped(engine);
@@ -744,7 +746,7 @@ export async function runImport(
       // unreachable when the gate is off; defense-in-depth check anyway.
       if (settled?.status === 'rejected') throw settled.reason;
       const result = settled ? settled.value : company ? await importCompanyBrainFile(eng, filePath, sourceId!) : managedImport
-        ? await importManagedFile(eng, filePath, importRelPath, { noEmbed, sourceId, activePack: importActivePack, signal, slugRoot: opts.slugRoot })
+        ? await importManagedFile(eng, filePath, importRelPath, { noEmbed, sourceId, activePack: importActivePack, signal, slugRoot: opts.slugRoot, plainDirectorySync: opts.plainDirectorySync })
         : isImageFilePath(relativePath) && process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true'
         ? await importImageFile(eng, filePath, importRelPath, { noEmbed, sourceId })
         : await importFile(eng, filePath, importRelPath, { noEmbed, sourceId, activePack: importActivePack, bodyPolicy, firstCommitAt: firstCommits?.get(filePath), history: opts.history?.(filePath) });
@@ -858,7 +860,7 @@ export async function runImport(
 
   async function processBatch(eng: BrainEngine, batch: string[]) {
     const settled = batch.length > 1 && !signal?.aborted ? await settleManagedImportBatch(eng, batch, file => opts.slugRoot ? relative(opts.slugRoot, file)
-      : relative(importRoot, file), rel => !!opts.heldPaths?.has(rel), { noEmbed, sourceId, activePack: importActivePack, signal, slugRoot: opts.slugRoot }) : undefined;
+      : relative(importRoot, file), rel => !!opts.heldPaths?.has(rel), { noEmbed, sourceId, activePack: importActivePack, signal, slugRoot: opts.slugRoot, plainDirectorySync: opts.plainDirectorySync }) : undefined;
     for (const [i, file] of batch.entries()) await processFile(eng, file, settled?.[i]);
   }
   let workerError: unknown;
@@ -869,7 +871,7 @@ export async function runImport(
       // string sniff) and fall back to serial when database_url is unset. Both
       // checks belt-and-suspenders so we never crash on a null assertion.
       const config = loadConfig();
-      if (engine.kind === 'pglite' || !config?.database_url) {
+      if (!config?.database_url || !usesPostgresImportWorkers(engine.kind, config.database_url)) {
         for (let i = 0, batch: string[]; i < files.length && !signal?.aborted; i += batch.length) await processBatch(engine, batch = nextImportBatch(files, i, managedImport && !company));
       } else {
         const { PostgresEngine } = await import('../core/postgres-engine.ts');
@@ -1136,10 +1138,7 @@ export async function runImport(
   const totalMalformed = malformedExcluded.length + malformedFileSkips;
   if (sourceId && failures.length === 0 && totalMalformed === 0 && !opts.managedBookmark && !managedImport) {
     try {
-      const [row] = await engine.executeRaw<{ local_path: string | null; config: unknown }>(
-        `SELECT local_path, config FROM sources WHERE id = $1`,
-        [sourceId],
-      );
+      const row = await engine.readSourceRow(sourceId);
       const { sourceConfigHasRemoteUrl, parseSourceConfig } = await import('../core/sources-load.ts');
       // Connector-managed sources (config.kind: github/google, v0.47 API-backed
       // shapes) own their last_sync_at via the connector's sync path — a google
@@ -1177,7 +1176,9 @@ export async function runImport(
       }
       if (row?.local_path && coversRegisteredRoot && !sourceConfigHasRemoteUrl(row.config) && !isGitTracked && !isConnectorManaged) {
         throwIfInterrupted();
-        await engine.executeRaw(`UPDATE sources SET last_sync_at = now() WHERE id = $1`, [sourceId]);
+        // A typed member, not raw SQL: an engine that runs no SQL (Rust) would refuse the statement and the catch
+        // below would swallow it, leaving the folder source "never synced".
+        await engine.markSourceSynced(sourceId);
       }
     } catch (error) {
       if (error instanceof ImportAbortError) throw error;

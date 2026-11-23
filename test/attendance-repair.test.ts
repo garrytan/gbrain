@@ -749,9 +749,9 @@ for (const kind of testBackends()) {
       await expect(apply(receipt)).rejects.toThrow(); expect(checkpoints).toHaveLength(0);
     });
 
-    test('one-row slug windows traverse punctuation and Unicode in database order without duplicates', async () => {
+    test('one-row slug windows traverse punctuation and Unicode in byte order without duplicates', async () => {
       for (const slug of ['topics/a-example', 'topics/a_example', 'topics/é-example', 'topics/z-example']) await seed(slug, 'concept', 'Fixture');
-      const expected = (await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1 ORDER BY slug', [sourceId])).map(page => page.slug);
+      const expected = (await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1 ORDER BY slug COLLATE "C"', [sourceId])).map(page => page.slug);
       const seen: string[] = [];
       let afterSlug = '';
       for (let index = 0; index < expected.length; index++) {

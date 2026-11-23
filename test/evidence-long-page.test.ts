@@ -253,7 +253,7 @@ describe('other callers stay byte-identical with the key on', () => {
 describe('selection limits (size preflight)', () => {
   const plan = { requestedUnit: 'auto', unit: 'auto', window: 1, budgetTokens: 24000, explicitUnit: false, budgetExplicit: false, packing: 'cap_only', longPage: { unit: 'section', minChars: DEFAULT_LONG_PAGE_MIN_CHARS } } as EvidencePlan;
   const hit = (page_id: number, slug = `notes/p${page_id}`): SearchResult => ({ slug, page_id, title: slug, type: 'note', chunk_text: 'x', chunk_source: 'compiled_truth', chunk_id: page_id * 10, chunk_index: 0, score: 1, stale: false });
-  const sized = (sizes: Record<number, number | [chars: number, bytes: number]>) => ({ executeRaw: async () => Object.entries(sizes).map(([id, v]) => ({ id: Number(id), chars: Array.isArray(v) ? v[0] : v, bytes: Array.isArray(v) ? v[1] : v })) }) as unknown as BrainEngine;
+  const sized = (sizes: Record<number, number | [chars: number, bytes: number]>) => ({ readLongPageSizes: async () => Object.entries(sizes).map(([id, v]) => ({ id: Number(id), chars: Array.isArray(v) ? v[0] : v, bytes: Array.isArray(v) ? v[1] : v })) }) as unknown as BrainEngine;
 
   test(`long means at least ${DEFAULT_LONG_PAGE_MIN_CHARS} characters, not bytes; no long page is effectivePlan exactly (null without a conversation)`, async () => {
     expect(await selectLongPages(sized({ 1: DEFAULT_LONG_PAGE_MIN_CHARS - 1 }), plan, [hit(1)], {})).toEqual({ plan: null });
@@ -279,13 +279,13 @@ describe('selection limits (size preflight)', () => {
 
   test('conversation and saved-fact hits are never preflighted', async () => {
     let asked: unknown[] = [];
-    const spy = { executeRaw: async (_sql: string, params: unknown[]) => { asked = params[0] as unknown[]; return []; } } as unknown as BrainEngine;
+    const spy = { readLongPageSizes: async (ids: readonly number[]) => { asked = [...ids]; return []; } } as unknown as BrainEngine;
     await selectLongPages(spy, plan, [hit(1, 'chat/a'), { ...hit(2), fact_row: { id: 1, valid_from: '2026-01-01', valid_until: null } }, hit(3)], {});
     expect(asked).toEqual([3]);
   });
 
   test('a late preflight is the off path; with a conversation hit it is reported as long_page_deadline', async () => {
-    const hanging = { executeRaw: () => new Promise(() => {}) } as unknown as BrainEngine;
+    const hanging = { readLongPageSizes: () => new Promise(() => {}) } as unknown as BrainEngine;
     expect(await selectLongPages(hanging, plan, [hit(1)], {})).toEqual({ plan: null });
     const mixed = await selectLongPages(hanging, plan, [hit(1), hit(2, 'chat/a')], {});
     expect(mixed.plan).toBe(plan);

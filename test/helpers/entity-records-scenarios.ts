@@ -290,8 +290,15 @@ export async function readFailureGivesUnavailable(engine: BrainEngine): Promise<
   await seedRecordsWorld(engine);
   await engine.setConfig('entity.record_types', 'contract');
   const broken = Object.create(engine) as BrainEngine;
+  const fail = () => Promise.reject(new Error('synthetic referrer failure'));
   broken.executeRaw = ((sql: string, params?: unknown[]) => sql.includes('refs AS MATERIALIZED')
-    ? Promise.reject(new Error('synthetic referrer failure')) : engine.executeRaw(sql, params as never)) as never;
+    ? fail() : engine.executeRaw(sql, params as never)) as never;
+  // The referrer reads that moved to typed members (engine-sql/link-temporal.ts) fail the same way.
+  broken.readReferrerGroupRows = fail as never;
+  broken.readReferrerTargetCounts = fail as never;
+  broken.readReferrerRecordCandidates = fail as never;
+  broken.countReferrerRows = fail as never;
+  broken.readReferrerRows = fail as never;
   const card = await call(broken, 'entity', { name: 'crm/acme-example' });
   expect(card.body.card.references_unavailable).toBe('read_failed');
   expect(card.body.card.referenced_by).toBeUndefined();

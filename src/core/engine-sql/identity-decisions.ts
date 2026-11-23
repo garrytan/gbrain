@@ -10,6 +10,12 @@
  * deleted. Rows any other actor wrote (a hand link) are never touched. A member whose page is missing, or sits in
  * another group, is pending: listIdentityDecisions names it, and the next apply retries it.
  *
+ * The company sweep's links ('dedupe:auto', core/entities/company-auto-link.ts) are written here too, so they change in the
+ * same locked transaction as the decisions they depend on. A planned automatic group is written only when every member
+ * page still exists at the generation the sweep read and sits in no other group; otherwise it is skipped and the next
+ * sweep plans it again. Every apply also removes the automatic groups a decision now covers (a member of a "same"
+ * decision, whose confirm takes over, or two members of one "different" decision) and any left with one member, no canonical member or a deleted member.
+ *
  * Every apply takes one transaction-scoped advisory lock on Postgres, so applies run one at a time; an apply given the
  * revision of the rows its caller read writes nothing when they changed since (a projection planned from an older read).
  */
@@ -38,6 +44,8 @@ export interface IdentityDecision {
   origin: 'database' | 'git';
   home_source_id: string | null;
   git_blob: string | null;
+  /** On a "different" decision: each member's fingerprint (pageFingerprint) when it was recorded; null when none was kept. */
+  evidence: string[] | null;
 }
 
 /** page_missing: no live page; unlinked: the page exists and sits in no group (the next apply links it); other_group: it sits in another group. */
@@ -48,14 +56,26 @@ export interface IdentityDecisionsRead { decisions: IdentityDecision[]; pending:
 
 export interface ApplyIdentityDecisionsInput {
   /** Decisions written as given (decided_at defaults to now). */
-  upsert?: Array<Omit<IdentityDecision, 'decided_at'> & { decided_at?: string }>;
+  upsert?: Array<Omit<IdentityDecision, 'decided_at' | 'evidence'> & { decided_at?: string; evidence?: string[] | null }>;
   /** Decision ids removed. */
   remove?: string[];
   /** decisionsRevision of the rows the caller read; when the rows changed since, nothing is written and the result is stale. */
   expectRevision?: string;
+  /** The company sweep's plan: automatic groups to write, and automatic groups (by entity_id) to remove first. */
+  auto?: { link: AutoLinkGroup[]; unlink: string[] };
 }
 
-export interface ApplyIdentityDecisionsResult { upserted: number; removed: number; linked: number; unlinked: number; stale?: true }
+export interface AutoLinkGroup {
+  entity_id: string;
+  canonical_page_id: number;
+  members: Array<{ source_id: string; page_id: number; generation: number }>;
+}
+
+export interface ApplyIdentityDecisionsResult {
+  upserted: number; removed: number; linked: number; unlinked: number; stale?: true;
+  /** Automatic groups written, removed, and skipped because a member changed or joined another group since the sweep read it. */
+  auto?: { linked: number; unlinked: number; skipped: number };
+}
 
 /** A revision of the decision rows: every row's id, verdict, entity, origin and blob, in id order. */
 function decisionsRevision(decisions: ReadonlyArray<Pick<IdentityDecision, 'decision_id' | 'verdict' | 'entity_id' | 'origin' | 'git_blob'>>): string {
@@ -66,7 +86,7 @@ function decisionsRevision(decisions: ReadonlyArray<Pick<IdentityDecision, 'deci
 interface DecisionRow {
   decision_id: string; verdict: IdentityVerdict; members: unknown; group_id: string | null; entity_id: string | null;
   canonical_source_id: string | null; canonical_slug: string | null; decided_by: string; decided_at: string | Date;
-  origin: 'database' | 'git'; home_source_id: string | null; git_blob: string | null;
+  origin: 'database' | 'git'; home_source_id: string | null; git_blob: string | null; evidence: unknown;
 }
 
 const MEMBER_PAGES = `entity_identity_reviews r
@@ -76,7 +96,7 @@ const MEMBER_PAGES = `entity_identity_reviews r
 export async function listIdentityDecisions(exec: LegacyUnscopedRead): Promise<IdentityDecisionsRead> {
   const { rows } = await exec.run<DecisionRow>(sqlFragment`
     SELECT decision_id, verdict, members, group_id, entity_id, canonical_source_id, canonical_slug, decided_by,
-           decided_at::text AS decided_at, origin, home_source_id, git_blob
+           decided_at::text AS decided_at, origin, home_source_id, git_blob, evidence
       FROM entity_identity_reviews
      ORDER BY decision_id`);
   const { rows: pending } = await exec.query<PendingIdentityMember>(`
@@ -93,6 +113,7 @@ export async function listIdentityDecisions(exec: LegacyUnscopedRead): Promise<I
       group_id: r.group_id, entity_id: r.entity_id,
       canonical: r.canonical_source_id && r.canonical_slug ? { source_id: r.canonical_source_id, slug: r.canonical_slug } : null,
       decided_by: r.decided_by, decided_at: String(r.decided_at), origin: r.origin, home_source_id: r.home_source_id, git_blob: r.git_blob,
+      evidence: (typeof r.evidence === 'string' ? JSON.parse(r.evidence) : r.evidence ?? null) as string[] | null,
     })),
     pending: pending.map(p => ({ decision_id: p.decision_id, source_id: p.source_id, slug: p.slug, reason: p.reason })),
     revision: decisionsRevision(rows),
@@ -124,16 +145,70 @@ export async function applyIdentityDecisions(exec: SqlExecutor, input: ApplyIden
   for (const d of input.upsert ?? []) {
     await exec.run(sqlFragment`
       INSERT INTO entity_identity_reviews (decision_id, verdict, members, group_id, entity_id, canonical_source_id, canonical_slug,
-                                           decided_by, decided_at, origin, home_source_id, git_blob)
+                                           decided_by, decided_at, origin, home_source_id, git_blob, evidence)
       VALUES (${d.decision_id}, ${d.verdict}, ${jsonbParam(d.members)}, ${d.group_id}, ${d.entity_id}, ${d.canonical?.source_id ?? null},
               ${d.canonical?.slug ?? null}, ${d.decided_by}, COALESCE(${d.decided_at ?? null}::timestamptz, now()), ${d.origin},
-              ${d.home_source_id}, ${d.git_blob})
+              ${d.home_source_id}, ${d.git_blob}, ${d.evidence?.length ? jsonbParam(d.evidence) : null})
       ON CONFLICT (decision_id) DO UPDATE SET
         verdict = EXCLUDED.verdict, members = EXCLUDED.members, group_id = EXCLUDED.group_id, entity_id = EXCLUDED.entity_id,
         canonical_source_id = EXCLUDED.canonical_source_id, canonical_slug = EXCLUDED.canonical_slug,
         decided_by = EXCLUDED.decided_by, decided_at = EXCLUDED.decided_at, origin = EXCLUDED.origin,
-        home_source_id = EXCLUDED.home_source_id, git_blob = EXCLUDED.git_blob`);
+        home_source_id = EXCLUDED.home_source_id, git_blob = EXCLUDED.git_blob, evidence = EXCLUDED.evidence`);
   }
+  let autoUnlinked = input.auto?.unlink.length
+    ? Number((await exec.run<{ n: number | string }>(sqlFragment`
+        WITH gone AS (DELETE FROM entity_identities WHERE established_by = 'dedupe:auto' AND entity_id = ANY(${input.auto.unlink}::text[]) RETURNING entity_id)
+        SELECT count(DISTINCT entity_id) AS n FROM gone`)).rows[0]?.n ?? 0) : 0;
+  autoUnlinked += Number((await exec.query<{ n: number | string }>(`
+    WITH gone AS (DELETE FROM entity_identities ei
+     WHERE ei.established_by = 'dedupe:auto'
+       AND ei.entity_id IN (
+         SELECT a.entity_id FROM entity_identities a JOIN pages p ON p.id = a.page_id
+           JOIN entity_identity_reviews r ON r.verdict = 'same'
+            AND r.members @> jsonb_build_array(jsonb_build_object('source_id', p.source_id, 'slug', p.slug))
+          WHERE a.established_by = 'dedupe:auto'
+         UNION
+         SELECT a.entity_id FROM entity_identities a JOIN pages p ON p.id = a.page_id
+           JOIN entity_identities b ON b.entity_id = a.entity_id AND b.page_id <> a.page_id
+           JOIN pages pb ON pb.id = b.page_id
+           JOIN entity_identity_reviews r ON r.verdict = 'different'
+            AND r.members @> jsonb_build_array(jsonb_build_object('source_id', p.source_id, 'slug', p.slug))
+            AND r.members @> jsonb_build_array(jsonb_build_object('source_id', pb.source_id, 'slug', pb.slug))
+          WHERE a.established_by = 'dedupe:auto')
+     RETURNING ei.entity_id)
+    SELECT count(DISTINCT entity_id) AS n FROM gone`)).rows[0]?.n ?? 0);
+  const plan = input.auto?.link.flatMap(g => g.members.map(m => ({ ...m, entity_id: g.entity_id, canonical_page_id: g.canonical_page_id }))) ?? [];
+  let autoLinked = 0, autoSkipped = 0;
+  if (plan.length) {
+    const { rows: counts } = await exec.run<{ planned: number | string; ok: number | string; linked: number | string }>(sqlFragment`
+      WITH plan AS (
+        SELECT * FROM unnest(${plan.map(m => m.entity_id)}::text[], ${plan.map(m => m.source_id)}::text[], ${plan.map(m => m.page_id)}::int[],
+                             ${plan.map(m => m.generation)}::bigint[], ${plan.map(m => m.canonical_page_id)}::int[]) AS m(entity_id, source_id, page_id, generation, canonical_page_id)),
+      ok AS (
+        SELECT pl.entity_id FROM plan pl
+          LEFT JOIN pages p ON p.id = pl.page_id AND p.source_id = pl.source_id AND p.generation = pl.generation AND p.deleted_at IS NULL
+          LEFT JOIN entity_identities x ON x.source_id = pl.source_id AND x.page_id = pl.page_id AND x.entity_id <> pl.entity_id
+         GROUP BY pl.entity_id
+        HAVING count(p.id) = count(*) AND count(x.id) = 0),
+      ins AS (
+        INSERT INTO entity_identities (entity_id, source_id, page_id, confidence, established_by, canonical)
+        SELECT pl.entity_id, pl.source_id, pl.page_id, 1.0, 'dedupe:auto', pl.page_id = pl.canonical_page_id FROM plan pl JOIN ok ON ok.entity_id = pl.entity_id
+        ON CONFLICT (source_id, page_id) DO NOTHING
+        RETURNING entity_id)
+      SELECT (SELECT count(DISTINCT entity_id) FROM plan) AS planned, (SELECT count(*) FROM ok) AS ok, (SELECT count(DISTINCT entity_id) FROM ins) AS linked`);
+    autoLinked = Number(counts[0]?.linked ?? 0);
+    autoSkipped = Number(counts[0]?.planned ?? 0) - Number(counts[0]?.ok ?? 0);
+  }
+  autoUnlinked += Number((await exec.query<{ n: number | string }>(`
+    WITH gone AS (DELETE FROM entity_identities ei
+     WHERE ei.established_by = 'dedupe:auto'
+       AND ei.entity_id IN (
+         SELECT o.entity_id FROM entity_identities o LEFT JOIN pages p ON p.id = o.page_id
+          WHERE o.established_by = 'dedupe:auto'
+          GROUP BY o.entity_id
+         HAVING count(*) < 2 OR NOT bool_or(o.canonical) OR bool_or(p.id IS NULL OR p.deleted_at IS NOT NULL))
+     RETURNING ei.entity_id)
+    SELECT count(DISTINCT entity_id) AS n FROM gone`)).rows[0]?.n ?? 0);
   const unlinked = (await exec.query(`
     DELETE FROM entity_identities ei
      WHERE ei.established_by = 'dedupe:confirm'
@@ -164,5 +239,5 @@ export async function applyIdentityDecisions(exec: SqlExecutor, input: ApplyIden
              ORDER BY r.entity_id, r.decision_id) c
      WHERE ei.entity_id = c.entity_id AND ei.source_id = c.source_id AND ei.page_id = c.page_id
        AND NOT EXISTS (SELECT 1 FROM entity_identities x WHERE x.entity_id = c.entity_id AND x.canonical)`);
-  return { upserted: input.upsert?.length ?? 0, removed, linked, unlinked };
+  return { upserted: input.upsert?.length ?? 0, removed, linked, unlinked, ...(input.auto ? { auto: { linked: autoLinked, unlinked: autoUnlinked, skipped: autoSkipped } } : {}) };
 }

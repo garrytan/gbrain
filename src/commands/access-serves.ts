@@ -195,7 +195,7 @@ async function plan(engine: BrainEngine, roster: string[], sourceId: string, lab
     else {
       const held = textList(token.federated_read);
       const adds = desired.filter(s => !held.includes(s));
-      const active = new Set(await engine.listUnarchivedSourceIds(held));
+      const active = new Set(await engine.filterUnarchivedSourceIds(held));
       const reads = [...held.filter(s => active.has(s)), ...adds];
       const minted = setupReads(token.permissions);
       if (!active.has(sourceId)) {

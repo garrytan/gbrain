@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { routeCommand } from '../src/cli/command-route.ts';
 import { loadSchema, validate } from './helpers/json-schema-lite.ts';
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
 const dirs: string[] = [];
@@ -24,7 +25,7 @@ const tmp = () => { const d = mkdtempSync(join(tmpdir(), 'skres-cli-')); dirs.pu
 
 function cli(home: string, args: string[], stdin?: string) {
   const r = Bun.spawnSync([process.execPath, 'src/cli.ts', ...args], {
-    cwd: ROOT, env: { ...process.env, GBRAIN_HOME: home }, stdin: stdin === undefined ? 'ignore' : Buffer.from(stdin), stdout: 'pipe', stderr: 'pipe',
+    cwd: ROOT, env: { ...envWithoutDatabaseUrl(), GBRAIN_HOME: home }, stdin: stdin === undefined ? 'ignore' : Buffer.from(stdin), stdout: 'pipe', stderr: 'pipe',
   });
   return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
 }

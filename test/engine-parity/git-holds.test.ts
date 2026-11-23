@@ -22,7 +22,7 @@ import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import {
   clearGitHold, countGitHolds, readGitHoldCodeCounts, readGitHoldListing, readGitImageHoldCounts, readGitSourceHolds, readSyncConversions,
-  recordHoldAttempt, recordSyncConversion, writeGitHold, type GitHoldRecord,
+  readGitHoldRetryPaths, recordHoldAttempt, recordSyncConversion, requestGitHoldRetry, writeGitHold, type GitHoldRecord,
 } from '../../src/core/persistence/sync-holds.ts';
 import { readLivePassRows, readPassRow, writePassRow } from '../../src/core/persistence/sync-pass-row.ts';
 import { heldFileCount } from '../../src/core/persistence/applied-watermark.ts';
@@ -224,4 +224,14 @@ describe('engine parity: git sync holds', () => {
       return { counted, contract: engine.kind === 'rust' ? 'error' in failed : (failed as { count: number }).count === 0 };
     });
 
+  parityTest('a retry request keeps each path once, in byte order, across requests on every engine', {
+    methods: ['readSourceState', 'requestGitHoldRetry', 'readGitHoldRetryRequest'],
+  }, async (engine) => {
+    const inc = await incarnationOf(engine, 'default');
+    const none = await readGitHoldRetryPaths(engine, 'default', inc);
+    await requestGitHoldRetry(engine, 'default', inc, ['b.md', 'B.md', 'b.md', 'a/z.md']);
+    const first = await readGitHoldRetryPaths(engine, 'default', inc);
+    await engine.requestGitHoldRetry('default', inc, ['a.md', 'b.md', 'Z.md'], '2026-01-02T00:00:00.000Z');
+    return { none, first, merged: await readGitHoldRetryPaths(engine, 'default', inc) };
+  });
 });

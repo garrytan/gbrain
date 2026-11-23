@@ -28,6 +28,9 @@ import { publicCategory, type PublicCategory } from './public-category.ts';
 import { ownerMarkerRestoreFix } from './owner-marker.ts';
 import { GRANDFATHER_RETIRED } from './publication-failure.ts';
 import { FILE_DRIFT_APPLY_STEP } from './sync-holds.ts';
+import { TERMINAL_FIXED_IN, LEGACY_PUBLICATION_PREFIX, PAGE_REMOVAL_OPERATIONS, CONNECTOR_RETRY_LINEAGE_MAX_DEPTH, CONNECTOR_WRITE_KIND_LIST } from './terminal-constants.ts';
+// The constants live in a leaf module so the Rust store member can splice them without this module's import closure.
+export { TERMINAL_FIXED_IN, LEGACY_PUBLICATION_PREFIX, PAGE_REMOVAL_OPERATIONS, CONNECTOR_RETRY_LINEAGE_MAX_DEPTH, CONNECTOR_WRITE_KIND_LIST };
 
 export type TerminalCategory =
   | 'recovery_pending' | 'recovery_blocked'
@@ -91,23 +94,9 @@ export interface TerminalVerdict {
   action: Action;
 }
 
-/** #6650: classes a release fixed. A row written by an older build is history: it does not warn. */
-export const TERMINAL_FIXED_IN = {
-  // #6643: the run re-freezes its own knock-ons and the checkpoint no longer waits on them.
-  knock_on: '0.60.216.0',
-  // #5974/#5982: a guard P0001 is classified (writer_coordinator_required, origin database_guard) and the misread is fixed;
-  // an unclassified "Publication failed (P0001)" receipt can only come from an older build.
-  legacy_publication_refusal: '0.60.40.0',
-  // #6657: a refused fact-fence adoption is no longer resubmitted every cycle and keeps its metadata.
-  fence_unrenderable: '0.60.218.0',
-  // #7814: the v0.13.1 grandfather writes nothing; a queued managed_grandfather request only an older build admitted ends refused.
-  retired_operation: '0.60.479.0',
-} as const satisfies Partial<Record<TerminalCategory, string>>;
 
 /** The connection-loss texts `classifySyncFault` reads as `connection_lost`; POSIX-compatible, so readers match it in SQL (`~*`). */
 export const CONNECTION_MESSAGE_PATTERN = 'ECONN|ETIMEDOUT|EPIPE|connection.*closed|CONNECTION_ENDED';
-/** The prefix of an unclassified database refusal written before #5974. */
-export const LEGACY_PUBLICATION_PREFIX = 'Publication failed (P0001)';
 
 const DEFECTS = new Set<TerminalCategory>(['outside_fence', 'writer_guard', 'database_refusal', 'owner_exception', 'gbrain_defect', 'fence_unrenderable', 'needs_engine_upgrade']);
 const FAULT_CODES = new Set(SYNC_FAULT_TABLE.map(rule => rule.code));
@@ -376,7 +365,7 @@ function schemaMissingVerdict(input: TerminalInput, code: string, origin: string
 /** #7630: the caller-submitted page and memory writes a caller resubmits; no sync replays them. */
 const RESUBMITTED_WRITES = new Set(['put_page', 'put_pages', 'capture', 'delete_page', 'restore_page', 'revert_version', 'edit_page', 'append_page', 'remember', 'forget', 'forget_fact',
   'add_tag', 'remove_tag', 'add_link', 'remove_link', 'add_timeline_entry', 'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve', 'takes_remove',
-  'loops_close', 'decide_proposal', 'trust_owner_page', 'trust_release', 'relink_facts']);
+  'loops_close', 'decide_proposal', 'trust_owner_page', 'trust_release', 'relink_facts', 'retire_connector_facts']);
 
 /**
  * #7630: the operation a fault's fix depends on. A reconcile or managed write (import, repair, quarantine clear,
@@ -444,8 +433,6 @@ export function terminalKnockOnSql(alias: string): string {
   return `(${syncKnockOnSql(a)} AND CASE WHEN ${a}.error_detail->>'origin' = '${SYNC_KNOCK_ON_ORIGIN}' THEN (${a}.intent->>'kind' IS NULL OR ${sync}) ELSE COALESCE(${sync}, false) END)`;
 }
 
-/** Page removals: a later one supersedes any earlier write of the page. */
-export const PAGE_REMOVAL_OPERATIONS: readonly string[] = ['delete_page', 'purge_page'];
 
 /** The writes `gbrain repair failed-writes` replays: a caller's own `put_page` (no owner `kind`), `add_timeline_entry` and `remember`. */
 export const CALLER_REPLAYABLE_OPERATIONS: readonly string[] = ['put_page', 'add_timeline_entry', 'remember'];
@@ -484,9 +471,7 @@ export function supersessionSql(r: string, c: string, rKind?: string): string {
     OR ${connectorRetrySql(r, c, rKind)}))`;
 }
 
-/** Hops a connector retry's `retryOf` lineage is followed back; a longer chain leaves the refusal unresolved (fail closed). */
-export const CONNECTOR_RETRY_LINEAGE_MAX_DEPTH = 32;
-const CONNECTOR_WRITE_KINDS = `'connector_v2_import','connector_v2_delete','connector_v2_checkpoint'`;
+const CONNECTOR_WRITE_KINDS = CONNECTOR_WRITE_KIND_LIST.map(kind => `'${kind}'`).join(',');
 const UUID_TEXT = `'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'`;
 
 /**

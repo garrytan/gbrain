@@ -5,7 +5,7 @@
  */
 import { json } from './connector-fixture.ts';
 
-export interface FakeGmailThread { id: string; messages: Array<{ id: string; ms: number; body: string; subject?: string; from?: string }> }
+export interface FakeGmailThread { id: string; messages: Array<{ id: string; ms: number; body: string; subject?: string; from?: string; labelIds?: string[] }> }
 
 export interface FakeGmail {
   account: string;
@@ -63,7 +63,7 @@ export function gmailFetch(fx: FakeGmail) {
       if (fx.rateLimited.has(thread)) return json({ error: { message: 'rate limit' } }, 429, { 'retry-after': '0' });
       const t = fx.threads.get(thread);
       if (!t) return json({ error: { code: 404, message: 'not found' } }, 404);
-      return json({ id: t.id, messages: t.messages.map(m => ({ id: m.id, threadId: t.id, labelIds: ['INBOX'], internalDate: String(m.ms), payload: {
+      return json({ id: t.id, messages: t.messages.map(m => ({ id: m.id, threadId: t.id, labelIds: m.labelIds ?? ['INBOX'], internalDate: String(m.ms), payload: {
         mimeType: 'text/plain', headers: [{ name: 'From', value: m.from ?? 'Sender Example <sender@example.com>' }, { name: 'To', value: fx.account },
           { name: 'Subject', value: m.subject ?? `Subject ${t.id}` }], body: { data: b64(m.body) } } })) });
     }

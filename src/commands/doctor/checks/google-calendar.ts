@@ -15,8 +15,7 @@ import { agentFix } from '../check-fix.ts';
  */
 export async function googleCalendarReadableCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
   try {
-    const rows = await engine.executeRaw<ConnectorSourceRow>(
-      "SELECT id, incarnation::text AS incarnation, local_path, config FROM sources WHERE archived IS NOT TRUE AND config->>'kind' = 'google' ORDER BY id");
+    const rows = await engine.readDoctorSources('google_connectors') as ConnectorSourceRow[];
     const unreadable = [];
     for (const row of rows) {
       if (sourceIds && !sourceIds.includes(row.id)) continue;

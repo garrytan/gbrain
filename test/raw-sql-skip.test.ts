@@ -4,7 +4,8 @@
  * "nothing to analyze" on it without one `executeRaw` call, instead of refusing
  * the command. The graduation connect row and the retired-marker cleanup read
  * through typed members (engine-sql/connect-gate.ts; the Rust arm runs them in
- * test/engine-parity/connect-gate.test.ts). PGLite reports `raw_sql`, so each
+ * test/engine-parity/connect-gate.test.ts), and so does the segmented-gate writer
+ * evidence (engine-sql/writer-versions.ts; test/engine-parity/writer-versions.test.ts). PGLite reports `raw_sql`, so each
  * control below runs its SQL as before. Synthetic names only.
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
@@ -81,6 +82,8 @@ describe('startup persistence reads on an engine without raw SQL', () => {
     expect(rust.calls()).toBe(0);
   });
 
+  // segmentedGateEvidence reads through the typed engine member readSegmentedGateEvidence now (the journal flip), so it
+  // sends no raw SQL on any engine; the zero-call assertion below pins that, and the control counts other raw reads.
   test('the segmented-gate writer evidence is empty', async () => {
     const rust = counted(false);
     expect(await segmentedGateEvidence(rust.engine, 7)).toEqual([]);
@@ -90,6 +93,7 @@ describe('startup persistence reads on an engine without raw SQL', () => {
   test('control: PGLite runs the same reads through executeRaw', async () => {
     const pglite = counted(true);
     expect(await cleanupRetiredManagedMarkers(pglite.engine)).toEqual({ state: 'cleared', removed: [], pending: [] });
+    await readPlannerStatsState(pglite.engine);
     expect(Array.isArray(await segmentedGateEvidence(pglite.engine, 7))).toBe(true);
     expect(pglite.calls()).toBeGreaterThanOrEqual(2);
   });

@@ -53,10 +53,10 @@ export interface ExportWithdrawalRow { visibility: string; fact_hash: string; wi
 
 /** The source's withdrawals and purge tombstones, by visibility, fact hash and subject. */
 export async function listExportWithdrawals(tx: Raw, sourceId: string): Promise<ExportWithdrawalRow[]> {
-  return tx.executeRaw<ExportWithdrawalRow>(`SELECT visibility,fact_hash,withdrawn_at,subject,false AS purged
+  return tx.executeRaw<ExportWithdrawalRow>(`SELECT * FROM (SELECT visibility,fact_hash,withdrawn_at,subject,false AS purged
     FROM fact_withdrawals WHERE source_id=$1
-    UNION ALL SELECT visibility,fact_hash,purged_at,subject,true FROM fact_purges WHERE source_id=$1
-    ORDER BY visibility,fact_hash,subject`, [sourceId]);
+    UNION ALL SELECT visibility,fact_hash,purged_at,subject,true FROM fact_purges WHERE source_id=$1) w
+    ORDER BY visibility COLLATE "C",fact_hash COLLATE "C",subject COLLATE "C"`, [sourceId]);
 }
 
 /** A page the export writes, with its tags in tag order. */
@@ -70,7 +70,7 @@ export async function readExportPageRows(tx: Raw, ids: readonly string[]): Promi
   const rows = await tx.executeRaw<Record<string, unknown>>(`WITH export_page AS MATERIALIZED (
     SELECT * FROM pages WHERE id = ANY($1::bigint[])
   ) SELECT p.*,
-    COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS export_tags
+    COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS export_tags
     FROM export_page p WHERE p.deleted_at IS NULL`,
   [ids]);
   return rows.map(row => ({ page: rowToPage(row), tags: row.export_tags as string[] }));
@@ -193,5 +193,5 @@ export async function readSegmentedVersionBodyBytes(tx: Raw, pageId: number, gen
 
 /** The sources with an access policy (folder rules or pending coverage), in id order: the rulebooks an export of every source carries. */
 export async function listAccessPolicySourceIds(tx: Raw): Promise<string[]> {
-  return (await tx.executeRaw<{ source_id: string }>('SELECT source_id FROM access_policy_state ORDER BY source_id')).map(r => r.source_id);
+  return (await tx.executeRaw<{ source_id: string }>('SELECT source_id FROM access_policy_state ORDER BY source_id COLLATE "C"')).map(r => r.source_id);
 }

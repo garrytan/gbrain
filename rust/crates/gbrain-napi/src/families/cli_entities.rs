@@ -21,6 +21,49 @@ impl Brain {
         self.run(env, move |s| s.read_mention_last_pass(source_id.as_deref()))
     }
 
+    /// `readMentionIndexStatus({ sourceIds })`: the status rows of those sources, always empty on the store.
+    #[napi]
+    pub fn read_mention_index_status<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: gbrain_store::cli_reads::entities::MentionIndexStatusQuery =
+                required(query, "readMentionIndexStatus query")?;
+            s.read_mention_index_status(&q)
+        })
+    }
+
+    /// `countMentionDueSince({ sourceId, since })`: the source's live pages written at or after `since`.
+    #[napi]
+    pub fn count_mention_due_since<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: gbrain_store::cli_reads::entities::MentionDueSinceQuery =
+                required(query, "countMentionDueSince query")?;
+            s.count_mention_due_since(&q)
+        })
+    }
+
+    /// `recountMentionIndexStatus({ sourceId, pending, fingerprint, expectedFingerprint })`: a
+    /// no-op, since the store keeps no status rows.
+    #[napi]
+    pub fn recount_mention_index_status<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: gbrain_store::cli_reads::entities::MentionIndexRecount =
+                required(query, "recountMentionIndexStatus query")?;
+            s.recount_mention_index_status(&q)
+        })
+    }
+
     /// `countPagesDueForMentions({ sourceId? })`: the live pages in scope.
     #[napi]
     pub fn count_pages_due_for_mentions<'env>(
@@ -269,6 +312,99 @@ impl Brain {
                 &source_id,
                 &required(scope, "readIgnoredPrivacyLabelPages scope")?,
             )
+        })
+    }
+
+    /// `listUnretiredPagesBySlugPattern(sourceId, patterns, limit)`: live, unretired pages by slug.
+    #[napi]
+    pub fn list_unretired_pages_by_slug_pattern<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        patterns: Vec<String>,
+        limit: i64,
+    ) -> napi::Result<Object<'env>> {
+        let limit = u64::try_from(limit).unwrap_or(0);
+        self.run(env, move |s| {
+            s.list_unretired_pages_by_slug_pattern(&source_id, &patterns, limit)
+        })
+    }
+
+    /// `listNameVariantCandidates(sourceId, { types, slugPatterns, probes, limit })`.
+    #[napi]
+    pub fn list_name_variant_candidates<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_name_variant_candidates(
+                &source_id,
+                &required(query, "listNameVariantCandidates query")?,
+            )
+        })
+    }
+
+    /// `countDistinctInboundLinkers(sourceIds, slugs)`: distinct inbound linkers per page.
+    #[napi]
+    pub fn count_distinct_inbound_linkers<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+        slugs: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.count_distinct_inbound_linkers(&source_ids, &slugs)
+        })
+    }
+
+    /// `readLivePageFrontmatter(sourceId, slug)`: the live page's type and frontmatter, or null.
+    #[napi]
+    pub fn read_live_page_frontmatter<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_live_page_frontmatter(&source_id, &slug)
+        })
+    }
+
+    /// `readEntityAnchoredPages(sourceId, entitySlug)`: the live entity page and its anchored pages.
+    #[napi]
+    pub fn read_entity_anchored_pages<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        entity_slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_entity_anchored_pages(&source_id, &entity_slug)
+        })
+    }
+
+    /// `readTextMentionPages(sourceIds, slugs)`: the live pages at the slugs in the sources.
+    #[napi]
+    pub fn read_text_mention_pages<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+        slugs: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_text_mention_pages(&source_ids, &slugs))
+    }
+
+    /// `readPageTitlesById(ids)`: the title of each page id, deleted or not.
+    #[napi]
+    pub fn read_page_titles_by_id<'env>(
+        &self,
+        env: &'env Env,
+        ids: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_page_titles_by_id(&required::<Vec<i64>>(ids, "readPageTitlesById ids")?)
         })
     }
 }

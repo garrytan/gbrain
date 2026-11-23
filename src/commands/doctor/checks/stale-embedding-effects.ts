@@ -7,22 +7,13 @@
  */
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
-import { EMBEDDING_CANDIDATE_WHERE } from '../../../core/persistence/embedding-settlement.ts';
 import { loadConfigWithEngine } from '../../../core/config.ts';
-
-const SAMPLE = 10;
 
 export async function staleEmbeddingEffectsCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
   const name = 'stale_embedding_effects';
   try {
-    const where = `${EMBEDDING_CANDIDATE_WHERE} ${sourceIds ? 'AND r.source_id=ANY($1::text[])' : ''}`;
-    const params = sourceIds ? [sourceIds] : [];
-    const [{ count, failed, requeued }] = await engine.executeRaw<{ count: number; failed: number; requeued: number }>(`SELECT COUNT(*)::int AS count,
-      COUNT(*) FILTER (WHERE e.state='failed')::int AS failed, COUNT(*) FILTER (WHERE e.state='queued' AND e.data ? 'repair_requeued_at')::int AS requeued
-      FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id WHERE ${where}`, params);
-    const rows = await engine.executeRaw<{ effect_id: string; source_id: string; slug: string | null; request_id: string; state: string; updated_at: string }>(
-      `SELECT e.id::text AS effect_id,r.source_id,r.slug,r.request_id::text AS request_id,e.state,e.updated_at::text AS updated_at FROM persistence_effects e
-       JOIN persistence_requests r ON r.id=e.request_id WHERE ${where} ORDER BY e.id LIMIT ${SAMPLE}`, params);
+    const { count, failed, requeued } = await engine.readStaleEmbeddingCounts(sourceIds ?? null);
+    const rows = await engine.listStaleEmbeddingEffects(sourceIds ?? null);
     const sources = [...new Set(rows.map(row => row.source_id))];
     const repair = sources.length === 1 ? `gbrain repair embedding-effects --source ${sources[0]}` : 'gbrain repair embedding-effects';
     const effects = rows.map(row => ({ ...row, kind: 'embedding', inspect: `gbrain sources writer status ${row.source_id} --json` }));

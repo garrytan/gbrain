@@ -19,6 +19,7 @@ import { pendingTimelineRows } from '../persistence/canonical-projections.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { retractRemovedTimelineEntries, type StoredTimelineTuple } from '../timeline-extract.ts';
 import { repairRequestId, type RepairHandler, type RepairItem, type RepairScope, type RepairCursor } from './core.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 interface TimelinePage { id: number; source_id: string; slug: string; compiled_truth: string; timeline: string | null }
 
@@ -52,8 +53,7 @@ export async function recountTimelinePages(engine: BrainEngine, sourceIds: strin
   const counted: Array<{ id: number; materializable: number; unrenderable: number }> = [];
   const unreached: number[] = [];
   if (ids.length === 0) return { counted, unreached };
-  const pages = await engine.executeRaw<TimelinePage>(`SELECT p.id,p.source_id,p.slug,p.compiled_truth,p.timeline FROM pages p
-    WHERE p.id = ANY($1::bigint[]) AND p.source_id=ANY($2::text[]) AND p.deleted_at IS NULL AND p.body_storage='inline'`, [ids, sourceIds]);
+  const pages = await engine.listTimelineHistoryPages(sourceIds, { ids });
   const stored = await storedRowsByPage(engine, pages);
   const byId = new Map(pages.map(page => [Number(page.id), page]));
   for (const id of ids) {
@@ -74,10 +74,7 @@ export async function scanTimelineHistory(engine: BrainEngine, sourceIds: string
   const pages: Array<TimelinePage & { materializable: number; unrenderable: number }> = [];
   let cursor = afterId, inspected = 0, truncated = false;
   for (;;) {
-    const batch = await engine.executeRaw<TimelinePage>(`SELECT p.id,p.source_id,p.slug,p.compiled_truth,p.timeline FROM pages p
-      WHERE p.source_id=ANY($1::text[]) AND p.deleted_at IS NULL AND p.id>$2 AND p.body_storage='inline'
-        AND EXISTS (SELECT 1 FROM timeline_entries t WHERE t.page_id=p.id AND t.event_page_id IS NULL)
-      ORDER BY p.id LIMIT ${BATCH}`, [sourceIds, cursor]);
+    const batch = await engine.listTimelineHistoryPages(sourceIds, { afterId: cursor, limit: BATCH });
     const stored = await storedRowsByPage(engine, batch);
     for (const page of batch) {
       if ((budget.pages !== undefined && inspected >= budget.pages) || (budget.deadline !== undefined && Date.now() > budget.deadline)) {
@@ -137,6 +134,7 @@ export const timelineRepair: RepairHandler = {
     if (!snapshot) return false;
     const counts = await pendingTimelineRows(ctx.engine, { ...snapshot.page, timeline: snapshot.page.timeline ?? '' }, await removedRowIds(ctx.engine, snapshot.page));
     if (!counts.materializable) return false;
+    requireRawSql(ctx.engine, 'repair timeline page write');
     await submitPageMutation(ctx, { operation: 'put_page', params: { slug: item.slug, source_id: item.source_id,
       content: serializePageToMarkdown(snapshot.page, snapshot.tags), expected_revision: snapshot.revision,
       request_id: await repairRequestId(ctx, 'timeline', item, snapshot.revision) } });

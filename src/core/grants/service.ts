@@ -1,10 +1,11 @@
 import type { BrainEngine } from '../engine.ts';
-import { sqlQueryForEngine, type SqlQuery } from '../sql-query.ts';
+import type { OauthClientGrantInsert } from '../engine-sql/access-credentials.ts';
+import type { OauthClientGrantPersist } from '../engine-sql/client-grants.ts';
+import type { SqlQuery } from '../sql-query.ts';
 import { GrantError, grantFromRow, normalizeGrantBrain, validateClientGrant, type ClientGrant, type GrantPatch, type GrantValidationContext } from './model.ts';
 import { catalogProvenance, grantCatalog, type CatalogProvenance } from './profiles.ts';
 
 export type GrantDatabase = BrainEngine | SqlQuery;
-const query = (db: GrantDatabase): SqlQuery => typeof db === 'function' ? db : sqlQueryForEngine(db);
 
 /**
  * The client's grant row. An engine reads it through the typed `readOauthClient` member (the same `SELECT *` on PGLite and
@@ -70,9 +71,11 @@ function auditDocument(after: ClientGrant, before: ClientGrant | null): string {
  */
 export async function readClientCatalogProvenance(db: GrantDatabase, clientId: string, snapshot: readonly string[]): Promise<CatalogProvenance | null> {
   try {
-    const rows = await query(db)`SELECT after_grant FROM oauth_grant_audit
-      WHERE client_id = ${clientId} AND after_grant->'catalogProvenance' IS NOT NULL ORDER BY id DESC LIMIT 1`;
-    const raw = rows[0]?.after_grant;
+    // An engine reads the audit row through the typed member; a bare SqlQuery keeps the statement.
+    const raw = typeof db === 'function'
+      ? (await db`SELECT after_grant FROM oauth_grant_audit
+      WHERE client_id = ${clientId} AND after_grant->'catalogProvenance' IS NOT NULL ORDER BY id DESC LIMIT 1`)[0]?.after_grant
+      : await db.readLatestCatalogProvenanceAudit(clientId);
     const doc = (typeof raw === 'string' ? JSON.parse(raw) : raw) as { allowedOperations?: unknown; catalogProvenance?: CatalogProvenance } | null;
     const provenance = doc?.catalogProvenance;
     if (!Array.isArray(doc?.allowedOperations) || provenance?.version !== 1 || !Array.isArray(provenance.operations)) return null;
@@ -113,6 +116,25 @@ export async function insertClientGrant(sql: SqlQuery, grant: ClientGrant, metad
   await stampReadShared(sql, grant.clientId, grant.readShared === true, grant.revision, false);
 }
 
+/**
+ * The engine-neutral row `BrainEngine.insertOauthClientGrant` writes: the same columns and audit row insertClientGrant
+ * sends (engine-sql/access-credentials.ts CREDENTIAL_SQL.client_grant_insert is its text). The caller checks scope
+ * sources first (assertScopeSourceGrant), as insertClientGrant does.
+ */
+export function clientGrantInsert(grant: ClientGrant, metadata: GrantClientMetadata, actor = 'operator'): OauthClientGrantInsert {
+  return {
+    client_id: grant.clientId, client_name: grant.clientName, client_secret_hash: metadata.secretHash,
+    redirect_uris: metadata.redirectUris, grant_types: metadata.grantTypes, token_endpoint_auth_method: metadata.authMethod,
+    client_id_issued_at: metadata.issuedAt, scope: grant.scopes.join(' '), source_id: grant.sourceId, federated_read: grant.federatedRead,
+    bound_slug_prefixes: grant.boundSlugPrefixes, allowed_operations: grant.allowedOperations, bound_tools: grant.boundTools,
+    bound_source_id: grant.boundSourceId, bound_brain_id: grant.boundBrainId, delegated_slug_prefixes: grant.delegatedSlugPrefixes,
+    delegated_namespace: grant.delegatedNamespace, bound_max_concurrent: grant.boundMaxConcurrent, budget_usd_per_day: grant.budgetUsdPerDay,
+    surface: grant.surface, surface_set_by: grant.surfaceSetBy, token_ttl: grant.tokenTtlSeconds, grant_profile: grant.profile,
+    grant_revision: grant.revision, grant_repair_reasons: grant.repairReasons,
+    audit: { actor, after_grant: auditDocument(grant, null) },
+  };
+}
+
 /** Caller may supply a transaction engine; use the InTransaction export there. */
 export async function rescopeClientGrant(engine: BrainEngine, clientId: string, patch: GrantPatch, opts: GrantMutationOptions): Promise<GrantMutationResult> {
   return engine.transaction(tx => rescopeClientGrantInTransaction(tx, clientId, patch, opts));
@@ -120,14 +142,13 @@ export async function rescopeClientGrant(engine: BrainEngine, clientId: string, 
 
 export async function rescopeClientGrantInTransaction(db: GrantDatabase, clientId: string, patch: GrantPatch, opts: GrantMutationOptions): Promise<GrantMutationResult> {
   assertGrantPatch(patch);
-  const sql = query(db);
-  const rows = await sql`SELECT * FROM oauth_clients WHERE client_id = ${clientId} FOR UPDATE`;
-  if (!rows.length) throw new GrantError('client_not_found', `No OAuth client found with id "${clientId}"`);
-  if (!('grant_revision' in rows[0]) || !('takes_holders' in rows[0])) throw new GrantError('grant_schema_required', 'Run gbrain apply-migrations --yes before changing client grants');
-  if (patch.privatePages !== undefined && !('private_pages' in rows[0])) throw new GrantError('grant_schema_required', 'Run gbrain apply-migrations --yes before changing the private-pages grant');
-  if (patch.privateFacts !== undefined && !('private_facts' in rows[0])) throw new GrantError('grant_schema_required', 'Run gbrain apply-migrations --yes before changing the private-facts grant');
-  if (patch.readShared !== undefined && !('read_shared_revision' in rows[0])) throw new GrantError('grant_schema_required', 'Run gbrain apply-migrations --yes before changing the read-shared switch');
-  const before = grantFromRow(rows[0]);
+  const row = await lockedClientRow(db, clientId);
+  if (!row) throw new GrantError('client_not_found', `No OAuth client found with id "${clientId}"`);
+  if (!('grant_revision' in row) || !('takes_holders' in row)) throw new GrantError('grant_schema_required', 'Run gbrain apply-migrations --yes before changing client grants');
+  if (patch.privatePages !== undefined && !('private_pages' in row)) throw new GrantError('grant_schema_required', 'Run gbrain apply-migrations --yes before changing the private-pages grant');
+  if (patch.privateFacts !== undefined && !('private_facts' in row)) throw new GrantError('grant_schema_required', 'Run gbrain apply-migrations --yes before changing the private-facts grant');
+  if (patch.readShared !== undefined && !('read_shared_revision' in row)) throw new GrantError('grant_schema_required', 'Run gbrain apply-migrations --yes before changing the read-shared switch');
+  const before = grantFromRow(row);
   if (opts.expectedRevision !== undefined && before.revision !== opts.expectedRevision) {
     throw new GrantError('grant_conflict', `Grant changed (expected revision ${opts.expectedRevision}, current ${before.revision}); review a fresh preview`);
   }
@@ -155,8 +176,14 @@ export async function rescopeClientGrantInTransaction(db: GrantDatabase, clientI
     return { before, after: before, revision: before.revision, dryRun: opts.dryRun === true };
   }
   if (opts.dryRun) return { before, after, revision: before.revision, dryRun: true };
-  await persistGrant(sql, before, after, opts.actor, opts.repair ? 'repair' : 'rescope');
+  await persistGrant(db, before, after, opts.actor, opts.repair ? 'repair' : 'rescope');
   return { before, after, revision: after.revision, dryRun: false };
+}
+
+/** The client's whole row read FOR UPDATE in the caller's transaction: through the typed member on an engine, the statement on a bare SqlQuery. */
+async function lockedClientRow(db: GrantDatabase, clientId: string): Promise<Record<string, unknown> | null> {
+  if (typeof db !== 'function') return await db.readOauthClientForUpdate(clientId) as unknown as Record<string, unknown> | null;
+  return (await db`SELECT * FROM oauth_clients WHERE client_id = ${clientId} FOR UPDATE`)[0] ?? null;
 }
 
 /**
@@ -166,7 +193,8 @@ export async function rescopeClientGrantInTransaction(db: GrantDatabase, clientI
  * source moved under tokens it already holds.
  */
 export async function clientHoldsAuthorization(db: GrantDatabase, clientId: string): Promise<boolean> {
-  const [row] = await query(db)`SELECT EXISTS (SELECT 1 FROM oauth_tokens WHERE client_id = ${clientId})
+  if (typeof db !== 'function') return db.oauthClientHoldsAuthorization(clientId);
+  const [row] = await db`SELECT EXISTS (SELECT 1 FROM oauth_tokens WHERE client_id = ${clientId})
     OR EXISTS (SELECT 1 FROM oauth_codes WHERE client_id = ${clientId}) AS held`;
   return row?.held === true;
 }
@@ -182,33 +210,44 @@ export async function clientHoldsAuthorization(db: GrantDatabase, clientId: stri
  * share-locked and must be active, changed or not.
  */
 export async function recordFirstConsentInTransaction(db: GrantDatabase, clientId: string, sourceId: string | undefined, actor: string): Promise<GrantMutationResult> {
-  const sql = query(db);
-  const rows = await sql`SELECT * FROM oauth_clients WHERE client_id = ${clientId} FOR UPDATE`;
-  if (!rows.length) throw new GrantError('client_not_found', `No OAuth client found with id "${clientId}"`);
-  if (!('grant_revision' in rows[0]) || !('takes_holders' in rows[0])) throw new GrantError('grant_schema_required', 'Run gbrain apply-migrations --yes before changing client grants');
-  const before = grantFromRow(rows[0]);
+  const row = await lockedClientRow(db, clientId);
+  if (!row) throw new GrantError('client_not_found', `No OAuth client found with id "${clientId}"`);
+  if (!('grant_revision' in row) || !('takes_holders' in row)) throw new GrantError('grant_schema_required', 'Run gbrain apply-migrations --yes before changing client grants');
+  const before = grantFromRow(row);
   if (before.revision !== 0) throw new GrantError('grant_conflict', `Grant changed (expected revision 0, current ${before.revision}); review a fresh request`);
-  if (await clientHoldsAuthorization(sql, clientId)) throw new GrantError('grant_conflict', 'The client already holds an authorization; review a fresh request');
+  if (await clientHoldsAuthorization(db, clientId)) throw new GrantError('grant_conflict', 'The client already holds an authorization; review a fresh request');
   const after: ClientGrant = { ...before, revision: 1 };
   if (sourceId !== undefined && sourceId !== before.sourceId) Object.assign(after, { sourceId, federatedRead: [sourceId], sourcesNone: false });
   // Share-lock the final source through commit, so it cannot be archived between this check and the code insert.
   if (after.sourceId != null) {
-    const [source] = await sql`SELECT archived FROM sources WHERE id = ${after.sourceId} FOR SHARE`;
-    if (!source || source.archived === true) throw new GrantError('invalid_grant', `Source "${after.sourceId}" is not active; review a fresh request`);
+    const archived = typeof db === 'function'
+      ? await db`SELECT archived FROM sources WHERE id = ${after.sourceId} FOR SHARE`.then(([source]) => source ? source.archived === true : null)
+      : await db.readSourceArchivedForShare(after.sourceId);
+    if (archived !== false) throw new GrantError('invalid_grant', `Source "${after.sourceId}" is not active; review a fresh request`);
   }
   validateClientGrant(after, await grantValidationContext(db));
-  await persistGrant(sql, before, after, actor, 'consent');
+  await persistGrant(db, before, after, actor, 'consent');
   return { before, after, revision: 1, dryRun: false };
 }
 
-/** One UPDATE+audit statement: SQL-only provider callers get atomicity too. */
-export async function persistGrant(sql: SqlQuery, before: ClientGrant, after: ClientGrant, actor: string, action: string): Promise<void> {
+/**
+ * One UPDATE+audit statement: SQL-only provider callers get atomicity too. An engine writes it through the typed
+ * `persistOauthClientGrant` member (the same statement on PGLite and Postgres, a store write on the Rust engine); a bare
+ * SqlQuery keeps the statement, which engine-sql/client-grants.ts CLIENT_GRANT_SQL.persist carries byte for byte.
+ */
+export async function persistGrant(db: GrantDatabase, before: ClientGrant, after: ClientGrant, actor: string, action: string): Promise<void> {
   const { assertScopeSourceGrant, clientGrantReads } = await import('../access/attest-sources.ts');
   const widened = clientGrantReads(after).filter(s => !clientGrantReads(before).includes(s));
-  await assertScopeSourceGrant(sql, { kind: 'client', id: before.clientId }, widened, {
+  await assertScopeSourceGrant(db, { kind: 'client', id: before.clientId }, widened, {
     privatePages: after.privatePages === 'granted_sources' && before.privatePages !== 'granted_sources',
     privateFacts: after.privateFacts === 'granted_sources' && before.privateFacts !== 'granted_sources', writeSource: after.sourcesNone === true ? null : after.sourceId ?? 'default',
   });
+  if (typeof db !== 'function') {
+    if (!await db.persistOauthClientGrant(grantPersist(before, after, actor, action))) throw new GrantError('grant_conflict', 'Client grant changed; review a fresh preview');
+    await stampReadShared(db, before.clientId, after.readShared === true, after.revision, before.readShared === true);
+    return;
+  }
+  const sql = db;
   const result = await sql`
     WITH updated AS (
       UPDATE oauth_clients SET
@@ -265,9 +304,30 @@ export async function persistGrant(sql: SqlQuery, before: ClientGrant, after: Cl
  * that moved the revision. Skipped when the switch is off before and after, so a brain without the column (migration
  * pending) is never touched.
  */
-export async function stampReadShared(sql: SqlQuery, clientId: string, on: boolean, revision: number, wasOn: boolean): Promise<void> {
+export async function stampReadShared(db: GrantDatabase, clientId: string, on: boolean, revision: number, wasOn: boolean): Promise<void> {
   if (!on && !wasOn) return;
-  await sql`UPDATE oauth_clients SET read_shared_revision = ${on ? revision : null} WHERE client_id = ${clientId}`;
+  if (typeof db !== 'function') {
+    await db.setOauthClientReadSharedRevision(clientId, on ? revision : null);
+    return;
+  }
+  await db`UPDATE oauth_clients SET read_shared_revision = ${on ? revision : null} WHERE client_id = ${clientId}`;
+}
+
+function grantPersist(before: ClientGrant, after: ClientGrant, actor: string, action: string): OauthClientGrantPersist {
+  return {
+    client_id: before.clientId, expected_revision: before.revision, scope: after.scopes.join(' '), source_id: after.sourceId,
+    federated_read: after.federatedRead, source_grant: after.sourcesNone === true ? 'none' : null, takes_holders: after.takesHolders ?? null,
+    bound_slug_prefixes: after.boundSlugPrefixes, allowed_operations: after.allowedOperations, bound_tools: after.boundTools,
+    bound_source_id: after.boundSourceId, bound_brain_id: after.boundBrainId, delegated_slug_prefixes: after.delegatedSlugPrefixes,
+    delegated_namespace: after.delegatedNamespace, bound_max_concurrent: after.boundMaxConcurrent, budget_usd_per_day: after.budgetUsdPerDay,
+    surface: after.surface, surface_set_by: after.surfaceSetBy, token_ttl: after.tokenTtlSeconds, grant_profile: after.profile,
+    grant_revision: after.revision, grant_repair_reasons: after.repairReasons,
+    legacy_jobs: { brain_id: before.boundBrainId, federated_read: before.federatedRead, scopes: before.scopes, allowed_operations: before.allowedOperations,
+      max_concurrent: before.boundMaxConcurrent, budget_usd_per_day: before.budgetUsdPerDay },
+    audit: { actor, action, before_grant: JSON.stringify(before), after_grant: auditDocument(after, before) },
+    ...((after.privatePages ?? 'none') !== (before.privatePages ?? 'none') ? { private_pages: after.privatePages } : {}),
+    ...((after.privateFacts ?? 'none') !== (before.privateFacts ?? 'none') ? { private_facts: after.privateFacts } : {}),
+  };
 }
 
 export { GrantError, grantFromRow, validateClientGrant, delegationReasons, intersectGrantedScopes } from './model.ts';

@@ -9,6 +9,7 @@ import * as path from 'node:path';
 import { withEnv } from './helpers/with-env.ts';
 import { logRerankFailure } from '../src/core/rerank-audit.ts';
 import { doctorSource, doctorFileSource } from './helpers/doctor-source.ts';
+import { DOCTOR_SEARCH_SQL } from '../src/core/engine-sql/doctor-search.ts';
 import { surfaceFileSource } from './helpers/source-surface.ts';
 
 // Health fixtures configure fake provider keys. Clear the gateway snapshot as
@@ -501,11 +502,14 @@ describe('doctor command', () => {
       doctorTs.indexOf('// 11a-2. effective_date_health'),
     );
     expect(block.length).toBeGreaterThan(0);
-    expect(block).toContain('GROUP BY source_id');
-    expect(block).toContain("source_type = 'facts:absorb'");
+    // The grouped read is the typed engine member (lane 14); its SQL lives in engine-sql/doctor-checkpoints.ts.
+    expect(block).toContain('listFactsAbsorbFailureGroups');
+    const sql = surfaceFileSource('pglite-engine', 'src/core/engine-sql/doctor-checkpoints.ts');
+    expect(sql).toContain('GROUP BY source_id');
+    expect(sql).toContain("source_type = 'facts:absorb'");
     expect(block).toContain('facts.absorb_warn_threshold');
     // 24h window
-    expect(block).toMatch(/INTERVAL\s+'24\s*hours?'/i);
+    expect(sql).toMatch(/INTERVAL\s+'24\s*hours?'/i);
     // Pre-v47 fallback (column missing) reports skipped not warn
     expect(block).toContain("Skipped (ingest_log.source_id unavailable");
     // RLS deny gives a useful message
@@ -823,10 +827,16 @@ describe('v0.31.8 — wedge migration force-retry hint (D19)', () => {
 // ============================================================================
 
 describe('v0.32.4 — sync_freshness check', () => {
-  // Stub engine: only checkSyncFreshness's executeRaw matters. Per-case rows
+  // Stub engine: only checkSyncFreshness's engine reads matter. Per-case rows
   // shape is `{id, name, local_path, last_sync_at}`.
   function makeStubEngine(rows: any[], managed = false): any {
-    return { executeRaw: async (sql: string) => (sql.includes('FROM persistence_brain') ? [{ enabled: managed }] : sql.includes('shared_skill_packs') ? [] : rows) };
+    return {
+      executeRaw: async (sql: string) => (sql.includes('FROM persistence_brain') ? [{ enabled: managed }] : sql.includes('shared_skill_packs') ? [] : rows),
+      // The sources rows come from the typed sources read (readDoctorSources 'freshness'), not executeRaw; these
+      // sources carry no ownership receipt, so the owned-content read finds none.
+      readDoctorSources: async (variant: string) => (variant === 'freshness' ? rows : []),
+      listOwnedContentRows: async () => [],
+    };
   }
 
   function agoMs(ms: number): Date {
@@ -944,8 +954,10 @@ describe('v0.32.4 — sync_freshness check', () => {
 
   test('executeRaw throws → outer-catch returns warn (doctor keeps running)', async () => {
     const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    // The sources rows come from the typed sources read, so it throws too.
     const engine: any = {
       executeRaw: async () => { throw new Error('connection refused'); },
+      readDoctorSources: async () => { throw new Error('connection refused'); },
     };
     const result = await checkSyncFreshness(engine);
     expect(result.status).toBe('warn');
@@ -995,7 +1007,13 @@ describe('v0.41.27.0 — sync_freshness git short-circuit', () => {
   // Reuse the stub-engine pattern from v0.32.4 describe above. Row shape now
   // includes last_commit + chunker_version (extended SELECT in v0.41.27.0).
   function makeStubEngine(rows: any[]): any {
-    return { executeRaw: async (sql: string) => (sql.includes('shared_skill_packs') ? [] : rows) };
+    return {
+      executeRaw: async (sql: string) => (sql.includes('shared_skill_packs') ? [] : rows),
+      // The sources rows come from the typed sources read (readDoctorSources 'freshness'), not executeRaw; these
+      // sources carry no ownership receipt, so the owned-content read finds none.
+      readDoctorSources: async (variant: string) => (variant === 'freshness' ? rows : []),
+      listOwnedContentRows: async () => [],
+    };
   }
   function agoMs(ms: number): Date {
     return new Date(Date.now() - ms);
@@ -1253,7 +1271,13 @@ describe('v0.41.27.0 — sync_freshness git short-circuit', () => {
 // ============================================================================
 describe('v0.41.32.0 — commit-relative staleness', () => {
   function makeStubEngine(rows: any[]): any {
-    return { executeRaw: async (sql: string) => (sql.includes('shared_skill_packs') ? [] : rows) };
+    return {
+      executeRaw: async (sql: string) => (sql.includes('shared_skill_packs') ? [] : rows),
+      // The sources rows come from the typed sources read (readDoctorSources 'freshness'), not executeRaw; these
+      // sources carry no ownership receipt, so the owned-content read finds none.
+      readDoctorSources: async (variant: string) => (variant === 'freshness' ? rows : []),
+      listOwnedContentRows: async () => [],
+    };
   }
   function agoMs(ms: number): Date { return new Date(Date.now() - ms); }
   let currentChunkerVersion: string;
@@ -1741,7 +1765,9 @@ describe('issue #972 — link_resolution_opportunity check', () => {
     expect(source).toContain("progress.heartbeat('link_resolution_opportunity')");
     // Issue #972 (T3): scan is bounded to a most-recent sample, not a full
     // per-page getPage walk.
-    expect(source).toMatch(/ORDER BY id DESC LIMIT \$\{?SAMPLE_LIMIT\}?|ORDER BY id DESC LIMIT 1000/);
+    // The read is the typed engine member; its statement carries the bound.
+    expect(source).toContain('listRecentPageBodies(');
+    expect(DOCTOR_SEARCH_SQL.recentPageBodies).toMatch(/ORDER BY id DESC LIMIT 1000$/);
     expect(source).not.toMatch(/await engine\.getPage\(ref\.slug/);
   });
 });
@@ -1752,8 +1778,11 @@ describe('v0.42 (#1699) — quarantined_pages + flagged_pages checks', () => {
     expect(source).toContain("progress.heartbeat('quarantined_pages')");
     expect(source).toContain("progress.heartbeat('flagged_pages')");
     // quarantine HIDES (JSONB existence scan), content_flag WARNS.
-    expect(source).toContain("p.frontmatter ? 'quarantine'");
-    expect(source).toContain("p.frontmatter ? 'content_flag'");
+    // The two counts moved into engine-sql/doctor-pages.ts (countMarkedPages) in lane 14.
+    // test-reads-source-ok[structural]: pins the two marked-page predicates in the typed countMarkedPages statement.
+    const pagesSql = fs.readFileSync(path.join(import.meta.dir, '../src/core/engine-sql/doctor-pages.ts'), 'utf8');
+    expect(pagesSql).toContain("p.frontmatter ? 'quarantine'");
+    expect(pagesSql).toContain("p.frontmatter ? 'content_flag'");
     // Each emits a named check.
     expect(source).toMatch(/name: 'quarantined_pages'/);
     expect(source).toMatch(/name: 'flagged_pages'/);
@@ -1923,7 +1952,13 @@ describe('BUG 4 — in-progress sync via live lock, not stale freshness', () => 
 // ============================================================================
 describe('sync_freshness — clone-unavailable content-lag fallback', () => {
   function makeStubEngine(rows: any[]): any {
-    return { executeRaw: async (sql: string) => (sql.includes('shared_skill_packs') ? [] : rows) };
+    return {
+      executeRaw: async (sql: string) => (sql.includes('shared_skill_packs') ? [] : rows),
+      // The sources rows come from the typed sources read (readDoctorSources 'freshness'), not executeRaw; these
+      // sources carry no ownership receipt, so the owned-content read finds none.
+      readDoctorSources: async (variant: string) => (variant === 'freshness' ? rows : []),
+      listOwnedContentRows: async () => [],
+    };
   }
   function agoMs(ms: number): Date { return new Date(Date.now() - ms); }
   const HOURS = 60 * 60 * 1000;

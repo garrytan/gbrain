@@ -44,7 +44,7 @@ import { isConnectionLoss } from '../retry-matcher.ts';
 import { INSPECT_OWNER_RETRY_MS } from './health.ts';
 import { lockOpenOsError } from './native-lock.ts';
 import { boundPublication, publicationLeaseMs, readPublicationCeilingMs, type PublicationBound } from './publication-deadline.ts';
-import { servesRawSql } from '../rust-engine/errors.ts';
+import { isCapabilityMissing, servesRawSql } from '../rust-engine/errors.ts';
 
 type PhaseObservation = { name: string; started_at: string; deadline_exceeded: boolean; attempt: number; first_conn_ms?: number };
 /** #5373: set by a task that abandons a still-running preparation after losing its claim; its root is freed only once `until` settles. */
@@ -66,6 +66,8 @@ const DRAIN_NOTICE_EVERY_MS = 10_000;
 const CONNECTION_LOSS_RELEASE_MS = 30_000;
 /** #6650: how often a consumer looks for claims held by an owner it can prove dead. */
 export const DEAD_OWNER_SCAN_MS = 5_000;
+/** How long a named capability stop (topology-stop.ts) parks the owner's topology recovery scan before it asks again. */
+export const TOPOLOGY_STOP_BACKOFF_MS = 600_000;
 /** #5801: the phase a connection checkout belongs to, carried through its async chain. */
 const phaseScope = new AsyncLocalStorage<{ observation: PhaseObservation; startedAt: number }>();
 
@@ -230,6 +232,8 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
   private draining: { since: number; settled: number; ran: number; noticedAt: number } | undefined;
   private settleCursor: NoopSettleCursor | undefined;
   private topologyWorker: Promise<unknown> | undefined;
+  /** Until when a named capability stop parks the topology scan (scanTopologies). */
+  private topologyStoppedUntil = 0;
   private maintenanceWorker: Promise<unknown> | undefined;
   private nextMaintenance = 0;
   private publishedSinceMaintenance = 0;
@@ -418,11 +422,6 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     const excluded = [...this.activeRoots, ...this.barredRoots.keys(), ...[...this.rootRetryAfter].filter(([, at]) => at > now).map(([root]) => root)];
     for (const [id, at] of this.topologyRetryAfter) if (at <= now) this.topologyRetryAfter.delete(id);
     const retryingTopologies = [...this.topologyRetryAfter.keys()];
-    // An engine without raw SQL (the Rust engine) holds no worktree, recovery or projection window for the probe below to
-    // read. A claimable write is work; otherwise a full tick runs once the idle backoff reaches its cap, so lapsed claims
-    // and retried effects still drain on that cadence.
-    if (!servesRawSql(this.engine)) return await this.phase('idle_probe',
-      signal => hasClaimableWrite(this.engine, this.hostId, excluded, signal)) || this.idleDelayMs >= this.idleMaxMs;
     // On the direct route the probe needs no reserved pool lane: the direct pool is small and keeps its connections.
     const direct = consumerConnectionRoute(this.engine).lane === 'direct';
     // #6803: inline projection rows are probed through the resident's bounded window (projection-window.ts), which this
@@ -639,10 +638,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
         this.engine.kind === 'pglite' ? this.config.database_path : undefined, signal));
     }
     if (this.stopping) return;
-    if (scan && !this.topologyWorker) this.topologyWorker = import('./topology-recovery.ts')
-      .then(({ recoverSourceTopologies }) => recoverSourceTopologies(this.engine, { hostId: this.hostId, limit: 2,
-        onAttempt: (id, recovered) => { if (recovered) this.topologyRetryAfter.delete(id); else this.topologyRetryAfter.set(id, Date.now() + 30_000); } }))
-      .catch(error => this.report(error)).finally(() => { this.topologyWorker = undefined; });
+    if (scan) this.scanTopologies();
     if (!this.effectsWorker && !this.housekeepingOnly) this.effectsWorker = this.drainEffects().catch(error => this.report(error))
       .finally(() => { this.effectsWorker = undefined; });
     // Queue upkeep also follows publication volume, like autovacuum's scale
@@ -950,6 +946,21 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       throw error;
     }
     finally { clearTimeout(timer); this.abort.signal.removeEventListener('abort', stop); this.phaseObservation = undefined; }
+  }
+  /**
+   * Starts the topology recovery scan unless one runs. A named capability stop (topology-stop.ts: the Rust engine while a
+   * change is recovering) is reported once and parks the scan for TOPOLOGY_STOP_BACKOFF_MS, so the owner neither spins
+   * on the refusal nor logs it every tick; the change stays recorded and doctor names the stop.
+   */
+  private scanTopologies(): void {
+    if (this.topologyWorker || Date.now() < this.topologyStoppedUntil) return;
+    this.topologyWorker = import('./topology-recovery.ts')
+      .then(({ recoverSourceTopologies }) => recoverSourceTopologies(this.engine, { hostId: this.hostId, limit: 2,
+        onAttempt: (id, recovered) => { if (recovered) this.topologyRetryAfter.delete(id); else this.topologyRetryAfter.set(id, Date.now() + 30_000); } }))
+      .catch(error => {
+        if (isCapabilityMissing(error)) this.topologyStoppedUntil = Date.now() + TOPOLOGY_STOP_BACKOFF_MS;
+        this.report(error);
+      }).finally(() => { this.topologyWorker = undefined; });
   }
   private report(error: unknown, row?: WriteRequest): void {
     if (this.stopping && error === this.abort.signal.reason) return;

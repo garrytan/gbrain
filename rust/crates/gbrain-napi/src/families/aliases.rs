@@ -136,4 +136,31 @@ impl Brain {
             s.replace_derived_aliases(&slug, &source_id, &aliases)
         })
     }
+
+    /// `listAliasTargets(sourceIds?)`: resolves `{ source_id, slug, page, page_aliases,
+    /// slug_redirects }` for every alias target whose page is missing or soft-deleted, by source
+    /// then slug in byte order; every source when `sourceIds` is null.
+    #[napi]
+    pub fn list_alias_targets<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let source_ids: Option<Vec<String>> = arg(source_ids, "listAliasTargets sourceIds")?;
+            s.list_alias_targets(source_ids.as_deref())
+        })
+    }
+
+    /// `deleteOrphanedAliases(sourceId, slug)`: resolves how many alias rows of both tables went;
+    /// 0 when the slug has a page row, live or soft-deleted.
+    #[napi]
+    pub fn delete_orphaned_aliases<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.delete_orphaned_aliases(&source_id, &slug))
+    }
 }
