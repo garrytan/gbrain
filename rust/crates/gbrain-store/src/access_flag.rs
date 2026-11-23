@@ -38,7 +38,7 @@ use std::collections::BTreeMap;
 pub(crate) const RESTRICTIONS_PRESENT_KEY: &str = "access.restrictions_present";
 
 /// The meta record the open-time scan writes when it is done (`keys::meta`).
-const SCAN_DONE: &str = "access_flag_scan";
+pub(crate) const SCAN_DONE: &str = "access_flag_scan";
 
 /// Sets the flag when `record` carries a top-level `readable_by` frontmatter key and the flag is
 /// not already `'1'`.

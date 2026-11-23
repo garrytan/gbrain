@@ -360,6 +360,7 @@ src/commands/embed.ts#embedAllStale	catch_empty	2
 src/commands/embed.ts#embedAllStale>embedOneKey	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/commands/embed.ts#preflightDimMismatch	catch_empty	2
 src/commands/embed.ts#runEmbedCore	catch_empty	1
+src/commands/engine-shadow.ts#seedFrom	promise_catch_empty	1	added on the shadow seed branch (rust-engine/shadow-s3) before it merged this guard; known debt, fix by a typed degraded marker
 src/commands/engine-status.ts#mountFor	catch_empty	1
 src/commands/enrich.ts#retrieveEvidence	capability_refusal_swallowed	1
 src/commands/enrich.ts#retrieveEvidence	catch_empty	3
@@ -2194,4 +2195,5 @@ src/mcp/source-preflight.ts#assertStdioSourceBindable	capability_refusal_swallow
 src/mcp/surface.ts#resolveAdvertisedSurface	catch_empty	1
 src/mcp/surface.ts#resolveDefaultClientSurface	catch_empty	1
 src/mcp/surface.ts#sessionWidenAllowed	catch_empty	1
+src/shadow/seed.ts#readSeedRecord	catch_empty	1	added on the shadow seed branch (rust-engine/shadow-s3) before it merged this guard; known debt, fix by a typed degraded marker
 src/shadow/state.ts#readShadowState	catch_empty	1	shadow mode code written before master added this guard; known debt, fix by a typed degraded marker

@@ -65,7 +65,9 @@ const NOW = new Date('2026-03-04T05:06:07.000Z');
 async function run(args: string[], extra: Record<string, unknown> = {}) {
   const c = capture();
   const code = await runEngineShadow(args, { ...c.deps, config: () => config, loadAddon: okAddon, now: () => NOW, ...extra });
-  return { code, out: c.out, err: c.err, text: [...c.out, ...c.err].join('\n') };
+  // `start --yes` also warns when the Rust store is not seeded; that warning is not what these tests are about.
+  const err = c.err.filter((l) => !l.startsWith('engine shadow: warning: the Rust store is not seeded'));
+  return { code, out: c.out, err, text: [...c.out, ...c.err].join('\n') };
 }
 
 const reset = (): void => { rmSync(shadowDir(), { recursive: true, force: true }); };

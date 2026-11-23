@@ -39,7 +39,8 @@ function run(args: string[]) {
   const err: string[] = [];
   const loadAddon = async () => ({ ok: true as const, addon: { target: 'linux-x64-glibc', engineAbi: 1, engineBuild: 'b1' } as never });
   return runEngineShadow(args, { out: l => out.push(l), err: l => err.push(l), config: () => config, loadAddon, now: () => NOW })
-    .then(code => ({ code, out, err, text: [...out, ...err].join('\n') }));
+    // `start --yes` also warns when the Rust store is not seeded; that warning is not what these tests are about.
+    .then(code => ({ code, out, err: err.filter(l => !l.startsWith('engine shadow: warning: the Rust store is not seeded')), text: [...out, ...err].join('\n') }));
 }
 
 d('engine shadow start on a Postgres brain', () => {
