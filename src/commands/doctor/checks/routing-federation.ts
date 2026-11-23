@@ -277,7 +277,7 @@ export async function checkOauthClientScopeHealth(engine: BrainEngine): Promise<
           AND NOT EXISTS (
             SELECT 1 FROM oauth_clients c
              WHERE c.deleted_at IS NULL
-               AND (c.source_id = s.id OR s.id = ANY(c.federated_read))
+               AND (c.source_id = s.id OR c.federated_read @> ARRAY[s.id])
           )
         ORDER BY s.id`;
     let orphaned: Array<{ id: string }>;

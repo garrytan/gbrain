@@ -585,7 +585,10 @@ function labelledIdentity(access: LabelledRecord): string[] {
 function labelledOnlySql(alias: string, access: LabelledRecord, readers = true): string {
   const identity = textArraySql(labelledIdentity(access));
   const satisfied = textArraySql(access.satisfiedRuleIds.every(validQualifiedRuleId) ? access.satisfiedRuleIds : []);
-  const named = `(${readers ? `COALESCE(${alias}.page_readers && ${identity}, false) OR ` : ''}COALESCE(${alias}.folder_rule_ids && ${satisfied}, false))`;
+  // The explicit guards preserve false for NULL arrays and expose the partial GIN predicates to PostgreSQL.
+  const pageReaders = `(${alias}.page_readers IS NOT NULL AND ${alias}.page_readers && ${identity})`;
+  const folderRules = `(${alias}.folder_rule_ids IS NOT NULL AND ${alias}.folder_rule_ids && ${satisfied})`;
+  const named = `(${readers ? `${pageReaders} OR ` : ''}${folderRules})`;
   if (!access.lineage || access.owner) return named;
   return `(${named} OR ((${alias}.type IN ('atom', 'question', 'concept', 'event') OR ${alias}.frontmatter ? 'derived_from')
     AND gbrain_access_origin_labelled_for(${alias}.id, ${alias}.source_id, ${alias}.type, ${alias}.frontmatter, ${identity}, ${satisfied})))`;

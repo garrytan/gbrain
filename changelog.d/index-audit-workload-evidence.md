@@ -1,0 +1,1 @@
+The opt-in index audit can verify locally retained evidence for an uncommon index workload against the PostgreSQL cluster, database, index definition and physical object. PostgreSQL counters retain their original values. Folder-labelled search and the orphaned federation-scope check expose equivalent predicates to existing GIN indexes.

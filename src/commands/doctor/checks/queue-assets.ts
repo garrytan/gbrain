@@ -11,6 +11,7 @@ import * as db from '../../../core/db.ts';
 import { rethrowCapabilityRefusal } from '../../../core/engine-capability-refusal.ts';
 import { checkError } from '../check-fix.ts';
 import { summarizeIndexAudit, type IndexAuditCatalog } from './index-audit.ts';
+import { readIndexWorkloadEvidence, reconcileIndexWorkloadEvidence, type IndexAuditIdentity, type IndexAuditLocation } from './index-workload-evidence.ts';
 import { startHeartbeat } from '../../../core/progress.ts';
 import { computeQueueHealthCheck } from './queue-jobs.ts';
 import { checkSubagentCapability } from './search-eval.ts';
@@ -106,14 +107,19 @@ async function runIndexAudit(ctx: DoctorContext): Promise<Check[]> {
   }];
   try {
     const sql = db.getConnection();
-    const [catalog] = await sql<IndexAuditCatalog[]>`
+    const retained = readIndexWorkloadEvidence();
+    const [catalog] = await sql.begin('read only', async tx => {
+      // engine-sql-ok: Canonicalize PostgreSQL's catalog definitions inside this read-only audit transaction.
+      await tx`SET LOCAL search_path = pg_catalog`;
+      return tx<(IndexAuditCatalog & { pending: IndexAuditIdentity[]; location: IndexAuditLocation | null })[]>`
   WITH catalog AS (
     SELECT i.relname AS name, a.idx_scan AS scans,
            x.indisvalid AND x.indisready AND x.indislive AS usable,
            x.indisunique OR x.indisexclusion AS enforces_writes,
            CASE WHEN a.idx_scan = 0 AND t.relkind = 'r' AND am.amname = 'heap'
                 THEN pg_relation_size(t.oid, 'main') = 0 ELSE false END AS empty_heap,
-           i.relkind = 'i' AS physical
+           i.relkind = 'i' AS physical,
+           i.oid AS index_oid, t.oid AS table_oid
     FROM pg_catalog.pg_index x
     JOIN pg_catalog.pg_class i ON i.oid = x.indexrelid
     JOIN pg_catalog.pg_class t ON t.oid = x.indrelid
@@ -122,7 +128,7 @@ async function runIndexAudit(ctx: DoctorContext): Promise<Check[]> {
     LEFT JOIN pg_catalog.pg_stat_user_indexes a ON a.indexrelid = i.oid
     WHERE n.nspname = 'public'
   ), classified AS (
-    SELECT name, scans, CASE
+    SELECT name, scans, index_oid, table_oid, CASE
       WHEN NOT usable THEN 'unusable'
       WHEN NOT physical THEN 'partition_parent'
       WHEN scans IS NULL THEN 'missing_counter'
@@ -144,10 +150,30 @@ async function runIndexAudit(ctx: DoctorContext): Promise<Check[]> {
          current_setting('track_counts') = 'on' AS statistics_enabled,
          ARRAY(SELECT name FROM classified WHERE state IN ('unusable','missing_counter','unreviewed')
                ORDER BY CASE state WHEN 'unusable' THEN 0 WHEN 'missing_counter' THEN 1 ELSE 2 END, name
-               LIMIT 20) AS review_sample
+               LIMIT 20) AS review_sample,
+         CASE WHEN ${retained !== null}::boolean THEN COALESCE((
+           SELECT jsonb_agg(jsonb_build_object(
+             'name', name, 'index_oid', index_oid::text, 'table_oid', table_oid::text,
+             'index_filenode', pg_relation_filenode(index_oid)::text,
+             'table_filenode', pg_relation_filenode(table_oid)::text,
+             'definition_sha256', encode(sha256(convert_to(pg_get_indexdef(index_oid), 'UTF8')), 'hex')
+           )) FROM classified WHERE state = 'unreviewed'
+         ), '[]'::jsonb) ELSE '[]'::jsonb END AS pending,
+         CASE WHEN ${retained !== null}::boolean AND has_function_privilege('pg_catalog.pg_control_system()', 'EXECUTE')
+           THEN jsonb_build_object(
+             'cluster_system_identifier', (pg_catalog.pg_control_system()).system_identifier::text,
+             'database_oid', (SELECT oid::text FROM pg_catalog.pg_database WHERE datname = current_database()),
+             'postgres_major', current_setting('server_version_num')::integer / 10000
+           )
+         END AS location
   FROM classified`;
+    });
     if (!catalog) throw new Error('PostgreSQL did not return an index catalog census');
-    return [summarizeIndexAudit(catalog)];
+    const { pending, location, ...counts } = catalog;
+    if (!retained) return [summarizeIndexAudit(counts)];
+    if (pending.length !== counts.unreviewed_zero_scan) throw new Error('Index catalog changed during audit');
+    const reviewed = reconcileIndexWorkloadEvidence(pending, location, retained);
+    return [summarizeIndexAudit(counts, reviewed)];
   } catch (error) {
     rethrowCapabilityRefusal(error);
     return [checkError(name, 'read the PostgreSQL index catalog', error, { details: { health: 'unknown' } })];

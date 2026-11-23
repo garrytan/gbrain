@@ -124,7 +124,7 @@ src/commands/doctor/checks/provenance-stamp-drift.ts	execute_raw	1
 src/commands/doctor/checks/purge-mirror.ts	execute_raw	1
 src/commands/doctor/checks/purged-page-facts.ts	execute_raw	1
 src/commands/doctor/checks/queue-assets.ts	execute_raw	3
-src/commands/doctor/checks/queue-assets.ts	sql_template	1
+src/commands/doctor/checks/queue-assets.ts	sql_template	2	SET LOCAL fixes the search path for exact index definition identities inside the read-only catalog census.
 src/commands/doctor/checks/queue-jobs.ts	execute_raw	12
 src/commands/doctor/checks/routing-federation.ts	execute_raw	7
 src/commands/doctor/checks/rows-behind.ts	execute_raw	1
