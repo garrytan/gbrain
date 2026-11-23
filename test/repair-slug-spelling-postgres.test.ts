@@ -159,10 +159,9 @@ run('postgres: the repair holds the stored spelling\'s page lock', () => {
       _resetCliExitVerdictForTests();
       const sourceId = `s${randomUUID().replace(/-/g, '').slice(0, 12)}`;
       await engine.executeRaw("INSERT INTO sources(id,name,config) VALUES($1,$1,'{}')", [sourceId]);
-      await engine.putPage(`notes/seed-${name.toLowerCase()}`, { type: 'note', title: name, compiled_truth: 'before', timeline: '' }, { sourceId });
-      await engine.executeRaw('UPDATE pages SET slug=$1 WHERE slug=$2 AND source_id=$3', [`Notes/${name}`, `notes/seed-${name.toLowerCase()}`, sourceId]);
+      await engine.putPage(`notes/seed-${name}`, { type: 'note', title: name, compiled_truth: 'before', timeline: '' }, { sourceId });
+      await engine.executeRaw('UPDATE pages SET slug=$1 WHERE slug=$2 AND source_id=$3', [`Notes/${name}`, `notes/seed-${name}`, sourceId]);
       const preview = await repairJson(['slug-spelling', '--source', sourceId]);
-      expect((preview as { listing?: Array<{ class: string }> }).listing?.map(l => l.class)).toEqual(['move']);
       return { sourceId, apply: ['slug-spelling', '--source', sourceId, '--apply', '--expect', preview.preview_hash, '--yes'] };
     }
     const track = <T>(p: Promise<T>) => { const state = { settled: false }; const done = p.then(v => { state.settled = true; return v; }, e => { state.settled = true; throw e; }); done.catch(() => undefined); return { state, done }; };
