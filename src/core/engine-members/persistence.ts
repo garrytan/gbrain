@@ -38,6 +38,8 @@ import type { ReceiptCompactionCandidate, ReceiptCompactionWindow } from '../eng
 import type { RefreshTiming, WorktreeAdmission, WorktreeAdmissionKey } from '../engine-sql/persistence-admission.ts';
 import type { SegmentedGateEvidenceRow } from '../engine-sql/writer-versions.ts';
 import type { TerminalIntentCompaction, WriteRequestGroupInsert } from '../engine-sql/persistence-journal.ts';
+import type { HeadBlockerReadOpts, HeadBlockerRow, RecoveringHeadRow } from '../engine-sql/head-blocker.ts';
+import type { IncompleteSyncReceiptRow, IncompleteSyncReceiptSpec, OpenPassWorkSpec } from '../engine-sql/checkpoint-validation.ts';
 
 export interface PersistenceMembers {
   // Write-journal statements (engine-sql/persistence-journal.ts): the text journal.ts, limits.ts and held-reads.ts sent through executeRaw.
@@ -262,6 +264,16 @@ export interface PersistenceMembers {
   expireStaleWriteClaims(expiry: ClaimExpiry, opts?: { signal?: AbortSignal; direct?: boolean }): Promise<void>;
   /** Whether a claim would find a row now; `priority` overrides the foreground-priority config row when set. */
   hasClaimableWrite(hostId: string, excludeRoots: string[], opts?: { priority?: boolean | null; signal?: AbortSignal }): Promise<boolean>;
+  /** Head-blocker probe rows (engine-sql/head-blocker.ts): for each queued request in `ids`, whether a consumer on `hostId` may claim it and the facts naming why not. */
+  readHeadBlockerRows(ids: readonly string[], hostId: string | null, opts?: HeadBlockerReadOpts): Promise<HeadBlockerRow[]>;
+  /** A recovering head's recovery record and its worktree's owner host, or null when it has no recovery record or no worktree. */
+  readRecoveringHeadRow(id: string, opts?: { timeoutMs?: number; signal?: AbortSignal }): Promise<RecoveringHeadRow | null>;
+  /** The request id of a receipt that blocks a managed sync run's checkpoint on a worktree, or null (engine-sql/checkpoint-validation.ts); the 57014 timeout stays with the caller. */
+  readIncompleteSyncReceipt(spec: IncompleteSyncReceiptSpec): Promise<string | null>;
+  /** The request id of the work that blocks a pass stamp on a worktree (a recovery row, or another open managed-sync request), or null. */
+  readOpenPassWork(spec: OpenPassWorkSpec): Promise<string | null>;
+  /** Every receipt (up to 20, in sequence order) that would block the run's checkpoint now, with what `sync status` shows. */
+  readIncompleteSyncReceiptRows(spec: IncompleteSyncReceiptSpec): Promise<IncompleteSyncReceiptRow[]>;
   /** The request a FIFO claim takes next, locked FOR UPDATE SKIP LOCKED until the transaction ends, or null (journal.ts `claimNextWrite`). */
   selectClaimableWrite<R = Record<string, unknown>>(spec: ClaimHeadSpec): Promise<R | null>;
   /** Consumer rows (persistence/consumer-heartbeat.ts): the host's rows oldest first, and its live full rows other than the caller's. `direct`: the Postgres direct pool. */

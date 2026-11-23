@@ -196,13 +196,13 @@ impl Brain {
     /// `readWriteRequestsByRequestId(requestId)`: at most two `persistence_requests` rows with this
     /// request id, from any principal.
     #[napi]
-    pub fn list_write_requests_by_request_id<'env>(
+    pub fn read_write_requests_by_request_id<'env>(
         &self,
         env: &'env Env,
         request_id: String,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.list_write_requests_by_request_id(&request_id)
+            s.read_write_requests_by_request_id(&request_id)
         })
     }
 
@@ -754,6 +754,59 @@ impl Brain {
         code: String,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.has_rearmable_targets(&request_ids, &code))
+    }
+
+    /// `readHeadBlockerRows({ ids, priority })`: one head-blocker probe row per queued request
+    /// asked about (`src/core/engine-sql/head-blocker.ts`).
+    #[napi]
+    pub fn read_head_blocker_rows<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_head_blocker_rows(&required(spec, "readHeadBlockerRows spec")?)
+        })
+    }
+
+    /// `readIncompleteSyncReceipt(spec)`: the request id of a receipt that blocks a managed sync
+    /// run's checkpoint, or null (`src/core/engine-sql/checkpoint-validation.ts`).
+    #[napi]
+    pub fn read_incomplete_sync_receipt<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_incomplete_sync_receipt(&required(spec, "readIncompleteSyncReceipt spec")?)
+        })
+    }
+
+    /// `readOpenPassWork(spec)`: the request id of the work that blocks a pass stamp, or null.
+    #[napi]
+    pub fn read_open_pass_work<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_open_pass_work(&required(spec, "readOpenPassWork spec")?)
+        })
+    }
+
+    /// `readIncompleteSyncReceiptRows(spec)`: up to 20 receipts that block the run's checkpoint.
+    #[napi]
+    pub fn read_incomplete_sync_receipt_rows<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_incomplete_sync_receipt_rows(&required(
+                spec,
+                "readIncompleteSyncReceiptRows spec",
+            )?)
+        })
     }
 
     /// `probeIdleWork(spec)`: whether any worker of this host has work, and where the resident

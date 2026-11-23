@@ -270,6 +270,27 @@ export async function listPageRefsByIds(tx: Raw, ids: readonly number[]): Promis
   return got.map(r => ({ id: Number(r.id), source_id: r.source_id, slug: r.slug, type: r.type ?? null }));
 }
 
+/** The pages a quoting read names: by id (deleted or not), or by slug in the caller's sources (live pages only). */
+export type PageQuoteTierSpec = { ids: readonly number[] } | { slug: string; sourceIds: readonly string[] };
+
+/** A page's id, stored type and stored tier: what decides whether a remote reader gets its text quoted (quotesStored). */
+export interface PageQuoteTier { id: number; type: string | null; trust_tier: string | null }
+
+/**
+ * The stored type and tier of each page the spec names, by id: the listed ids, deleted pages included, or the live pages
+ * with the slug in the listed sources. No policy filter: the callers pass pages they already read under the caller's
+ * scope, and only decide how to quote what they return.
+ */
+export async function listPageQuoteTiers(tx: Raw, spec: PageQuoteTierSpec): Promise<PageQuoteTier[]> {
+  const got = 'ids' in spec
+    ? spec.ids.length === 0 ? [] : await rows<{ id: number | string; type: string | null; trust_tier: string | null }>(tx,
+      sqlFragment`SELECT id, type, trust_tier FROM pages WHERE id = ANY(${[...new Set(spec.ids.map(Number))]}::bigint[]) ORDER BY id`)
+    : spec.sourceIds.length === 0 ? [] : await rows<{ id: number | string; type: string | null; trust_tier: string | null }>(tx,
+      sqlFragment`SELECT id, type, trust_tier FROM pages
+        WHERE slug = ${spec.slug} AND source_id = ANY(${[...spec.sourceIds]}::text[]) AND deleted_at IS NULL ORDER BY id`);
+  return got.map(r => ({ id: Number(r.id), type: r.type ?? null, trust_tier: r.trust_tier ?? null }));
+}
+
 /** A page named by source and slug. */
 export interface PageKeyRef { source_id: string; slug: string }
 

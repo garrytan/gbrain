@@ -58,6 +58,14 @@ const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promi
   ['readSegmentedPageHead', 'segmenter_version, knowledge_revision::text AS revision FROM pages WHERE id=$1', e => e.readSegmentedPageHead(1)],
   ['readSourceIncarnation', 'SELECT config,incarnation FROM sources WHERE id=$1', e => e.readSourceIncarnation('default')],
   ['readStoredPageTier', 'SELECT trust_tier FROM pages WHERE source_id = $1 AND slug = $2', e => e.readStoredPageTier('default', 'a')],
+  ['readJournalCeiling', 'SELECT max(sequence)::text AS ceiling FROM persistence_requests', e => e.readJournalCeiling('default')],
+  ['sweepJournalChunk', 'WITH chunk AS MATERIALIZED', e => e.sweepJournalChunk({ sourceId: 'default', needles: ['a claim'], after: '0', ceiling: '9', limit: 10, ids: null, exclude: null })],
+  // The page purge's preparation (persistence/page-purge.ts preparePagePurge) and the managed sync's purged-page screen.
+  ['listPurgeClaimFacts', 'SELECT id,fact,source FROM facts WHERE source_id=', e => e.listPurgeClaimFacts('default', 'notes/a')],
+  ['listPurgeClaimTakes', 'SELECT id,claim FROM takes WHERE page_id=$1', e => e.listPurgeClaimTakes(1)],
+  ['listQueuedPagePurges', 'FROM persistence_requests r\n    LEFT JOIN pages p', e => e.listQueuedPagePurges('default', '0', 7)],
+  ['listPageLinkStreams', 'SELECT DISTINCT COALESCE(o.slug, f.slug) AS slug FROM links l', e => e.listPageLinkStreams('default', 1)],
+  ['listPagePurgeTombstones', 'SELECT content_hash,slug FROM page_purges WHERE source_id=$1', e => e.listPagePurgeTombstones('default', 10)],
   // The segmented-storage writer gate a page or sync preparation reads through readPageBodyPolicy (page-body/limits.ts).
   ['readSegmentedGateEvidence', 'FROM ingest_log l CROSS JOIN win', e => e.readSegmentedGateEvidence(7)],
   // The keyword timeout is resolved once per engine; its own read under a deadline has the test below.

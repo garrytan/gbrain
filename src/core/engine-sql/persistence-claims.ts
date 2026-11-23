@@ -32,11 +32,16 @@ export function foregroundPriorityText(priority: boolean | null | undefined): st
   return PRIORITY_SQL[priorityKey(priority)];
 }
 
+/** The same switch as a fragment, for statements that splice it beside `claimableWriteFragment`. */
+export function foregroundPriorityFragment(priority: boolean | null | undefined): ReturnType<typeof trustedSql> {
+  return trustedSql(PRIORITY_SQL[priorityKey(priority)]);
+}
+
 /**
  * `claimableWriteSql(priority, lanes)` (journal.ts): the rows `claimNextWrite` may claim. `hostId` and `excludeRoots`
  * bind as $1 and $2, the text the journal writes; with no `laneRoots` the lane list is the empty literal, as there.
  */
-export function claimableWriteFragment(priority: boolean | null | undefined, hostId: string, excludeRoots: string[], laneRoots?: string[]): SqlFragment {
+export function claimableWriteFragment(priority: boolean | null | undefined, hostId: string | null, excludeRoots: string[], laneRoots?: string[]): SqlFragment {
   const p = trustedSql(PRIORITY_SQL[priorityKey(priority)]);
   const lanes = laneRoots === undefined ? sqlFragment`'{}'::text[]` : sqlFragment`${laneRoots}::text[]`;
   return sqlFragment`(r.state='queued' OR (r.state='deferred' AND (r.deferred_refresh_id IS NOT NULL OR r.deferred_import_from IS NOT NULL)

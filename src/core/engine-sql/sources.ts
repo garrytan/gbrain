@@ -99,6 +99,15 @@ export async function lockSourceRow(exec: SqlExecutor, sourceId: string): Promis
 }
 
 /**
+ * Takes the source row's lock (`SELECT id FROM sources WHERE id=$1 FOR UPDATE`) for the rest of the caller's transaction,
+ * reading nothing back; an unknown source is a no-op. The publication transaction of a `sourceExclusive` mutation takes it
+ * before any other publication statement (persistence/coordinator.ts).
+ */
+export async function lockSourceForUpdate(exec: SqlExecutor, sourceId: string): Promise<void> {
+  await exec.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
+}
+
+/**
  * Whether a writer binding claims the source's current incarnation (classic sync refuses a claimed source while managed
  * persistence is off). False for an unknown source. The text is the statement sync-authority.ts ran through executeRaw.
  */

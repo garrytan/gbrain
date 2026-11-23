@@ -12,7 +12,7 @@
 //! the rest.
 
 use super::embedding::{cosine_distance, parse_vector, to_halfvec};
-use super::purge_probe::{ProbeCell, table_rows};
+use super::purge_probe::{ProbeCell, for_each_table_row, table_rows};
 use super::{fact_normalize, invalid, source_rows};
 use crate::Store;
 use crate::cli_reads::pg_text::{jsonb_text, pg_lower};
@@ -40,7 +40,7 @@ const MATCH_CHARS: usize = 160;
 const SOURCE_PATH_LIMIT: usize = 64;
 /// `FACT_NEIGHBOURS_SQL`'s LIMIT.
 const NEIGHBOURS: usize = 5;
-/// `probeItemsSql`: `ORDER BY 1 LIMIT 20`.
+/// `probeItemsSql`: `ORDER BY 1 COLLATE "C" LIMIT 20`, so byte order.
 const PROBE_ITEMS: usize = 20;
 
 fn lower_has(text: Option<&str>, needles: &[&str]) -> bool {
@@ -140,6 +140,19 @@ pub struct SegmentedBodiesArgs {
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct PurgeSourceArgs {
     pub source_id: String,
+}
+
+/// `{ claims }`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct DerivationClaimsArgs {
+    pub claims: Vec<String>,
+}
+
+/// `foldSql` (src/core/page-body/schema.ts): `replace(translate(x, 'ς', 'σ'), 'i\u0307', 'i')`, applied after the lowering both
+/// sides of a derivation match go through: a Greek final sigma reads as sigma and the dot a lowered Turkish İ keeps is dropped.
+pub(crate) fn derivation_fold(text: &str) -> String {
+    text.replace('ς', "σ").replace("i\u{307}", "i")
 }
 
 /// `{ pageIds }`.
@@ -325,6 +338,20 @@ impl PurgeProbeArgs {
                 }
             }
             other => {
+                // The swept stores stream: a count that reaches its bound leaves the later entries unread.
+                let streamed = for_each_table_row(read, other, &self.source_id, &mut |row| {
+                    if self.scoped && row.source_id.as_deref() != Some(self.source_id.as_str()) {
+                        return Ok(true);
+                    }
+                    if self.hit_cells(&row.cells)? {
+                        // A whole-table probe only counts; it names no row.
+                        out.push(ProbeHit { item: None });
+                    }
+                    Ok(out.len() < cap)
+                })?;
+                if streamed {
+                    return Ok(out);
+                }
                 let Some(rows) = table_rows(read, other, &self.source_id)? else {
                     return Err(invalid(format!(
                         "purge probe: this store does not probe {other}"
@@ -551,6 +578,22 @@ impl Store {
         Ok(Value::Array(rows.into_values().take(limit).collect()))
     }
 
+    /// `listDerivationClaimForms`: `SELECT DISTINCT f FROM (SELECT <foldSql>(gbrain_fact_normalize(c)) AS f FROM unnest($1) c) x
+    /// WHERE f <> '' ORDER BY f` (src/core/engine-sql/purge-receipt.ts). The forms come back distinct and without an empty one;
+    /// here in byte order, where Postgres sorts by the database's collation (a needle's position in the list matters to nothing).
+    pub fn list_derivation_claim_forms(&self, q: &DerivationClaimsArgs) -> Result<Vec<String>> {
+        for claim in &q.claims {
+            no_nul("listDerivationClaimForms", &[("claims", claim)])?;
+        }
+        let forms: BTreeSet<String> = q
+            .claims
+            .iter()
+            .map(|claim| derivation_fold(&fact_normalize(claim)))
+            .filter(|form| !form.is_empty())
+            .collect();
+        Ok(forms.into_iter().collect())
+    }
+
     /// `countLegacyDerivedPages`: `LEGACY_DERIVED_PAGES_SQL`. This store keeps no derivation edges, so
     /// every live atom or dream-generated page of the source counts.
     pub fn count_legacy_derived_pages(&self, q: &PurgeSourceArgs) -> Result<i64> {
@@ -679,7 +722,7 @@ impl Store {
 }
 
 /// The requests that pass `keep`, by sequence.
-fn requests(
+pub(super) fn requests(
     read: &dyn KvRead,
     keep: impl Fn(&RequestRecord) -> bool,
 ) -> Result<Vec<RequestRecord>> {

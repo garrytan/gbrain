@@ -117,3 +117,15 @@ rows in [persistence.md](persistence.md). The journal calls most of them inside 
 members (`listHostConsumerRows`, `probeLiveConsumerRows`, `renewConsumerRow`, `deleteConsumerRow`) keep no
 stored state; see "TypeScript members with no stored state" there. `stampWorktreeHeartbeats` stamps the
 worktree rows of "Worktree bindings" there.
+
+Gaps on the take path (`test/engine-parity/take-proposals.test.ts`, 3 equal / 5 refused on Rust). Three raw-SQL
+callers on the journal's take writes still refuse `raw_sql` on this engine, and the parity cases are pinned to that
+refusal until they are typed:
+
+- `takes propose --accept` runs `takes_add` through the persistence coordinator, whose `persistence/takes-prepare.ts`
+  (7 sites) and `page-state/projections.ts` raw SQL refuses, so the write parks as `write_pending` blocked on
+  `engine_capability_missing`.
+- The four propose_takes cycle cases write an extract receipt (typed: `readExtractReceiptSlot`,
+  `readExtractReceiptSeal`, see [extract-bookkeeping.md](extract-bookkeeping.md)), whose page write reaches
+  `page-state/projections.ts` (`planProjectionKeep`, `resealSafeChunks`). The fill-in is lane 3 cut 1 (7f1ee5198e +
+  resealSafeChunks :467), Nov 23; a case that then returns the PGLite answer loses its pin.

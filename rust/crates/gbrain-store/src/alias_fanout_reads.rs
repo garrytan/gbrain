@@ -55,6 +55,25 @@ fn alias_prefix(sub: u8, parts: &[&str]) -> Vec<u8> {
     key
 }
 
+/// Whether the source holds a page alias row of `alias_norm`, of any page and origin.
+pub(crate) fn alias_row_exists(
+    read: &dyn KvRead,
+    source_id: &str,
+    alias_norm: &str,
+) -> Result<bool> {
+    let mut found = false;
+    scan_prefix(
+        read,
+        &alias_prefix(PAGE_ALIAS, &[source_id, alias_norm]),
+        false,
+        &mut |_, _| {
+            found = true;
+            false
+        },
+    )?;
+    Ok(found)
+}
+
 /// Refuses text holding a NUL byte, as Postgres does for a text parameter.
 pub(crate) fn reject_nul<'a>(member: &str, items: impl IntoIterator<Item = &'a str>) -> Result<()> {
     for item in items {

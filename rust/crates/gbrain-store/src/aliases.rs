@@ -47,6 +47,7 @@
 use crate::error::{
     CONSTRAINT_VIOLATION, INVALID_ARGUMENT, INVALID_STATE, Result, STORE_CORRUPT, StoreError,
 };
+use crate::facts::purge_probe::{EachRow, ProbeCell, ProbeRow};
 use crate::facts::{OwnerOnlyCache, PrivacyPolicy};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::page_columns::PageColumns;
@@ -454,35 +455,76 @@ fn record_rename_history(tx: &mut dyn KvWrite, source: &str, old: &str, new: &st
     tx.put(&rename_key(source, old, new), &[])
 }
 
+/// The rows `scrub_purged_slug_stores` removed from each of the three stores, as the purge receipt counts them.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SlugStoreCounts {
+    pub page_aliases: u64,
+    pub slug_aliases: u64,
+    pub slug_rename_history: u64,
+}
+
 /// The three stores of `scrubPurgedSlugStores` this family keeps, in the order of its
 /// `SLUG_STORES` list (src/core/persistence/purge-slug-stores.ts:6): `page_aliases` by `slug`,
 /// `slug_aliases` by `canonical_slug` (an alias spelled like a purged slug that names another page
 /// stays), then `slug_rename_history` by `new_slug`. `deletePages` and `purgeDeletedPages`
 /// (`page_ops::scrub_purged_slugs`) call it in the purge's transaction, after the pages are gone,
-/// as src/core/engine-sql/pages.ts:237 and :397 do. A single `deletePage` and a soft delete keep
-/// every row.
+/// as src/core/engine-sql/pages.ts:237 and :397 do; the `deletePurgedSlugStoreRows` member
+/// (a page purge's scrub) calls it too and reports the counts. A single `deletePage` and a soft
+/// delete keep every row. A slug named twice is scrubbed once.
 pub(crate) fn scrub_purged_slug_stores(
     tx: &mut dyn KvWrite,
     source: &str,
     slugs: &[String],
-) -> Result<()> {
+) -> Result<SlugStoreCounts> {
+    let mut counts = SlugStoreCounts::default();
     if has_nul(&[source]) {
-        return Ok(());
+        return Ok(counts);
     }
-    for slug in slugs.iter().filter(|s| !has_nul(&[s.as_str()])) {
+    let slugs: Vec<String> = slugs
+        .iter()
+        .filter(|s| !has_nul(&[s.as_str()]))
+        .cloned()
+        .collect::<BTreeSet<String>>()
+        .into_iter()
+        .collect();
+    for slug in &slugs {
         for (alias, origin) in page_alias_rows(&*tx, source, slug)? {
             delete_page_alias(tx, source, &alias, slug, &origin)?;
+            counts.page_aliases += 1;
         }
     }
-    for slug in slugs.iter().filter(|s| !has_nul(&[s.as_str()])) {
+    for slug in &slugs {
         for (_, parts) in scan_tails(&*tx, &prefix(SLUG_ALIAS_BY_CANONICAL, &[source, slug]))? {
             if let [alias] = parts.as_slice() {
                 delete_slug_alias(tx, source, alias)?;
+                counts.slug_aliases += 1;
             }
         }
     }
-    scrub_purged_rename_history(tx, source, slugs)?;
-    Ok(())
+    counts.slug_rename_history = scrub_purged_rename_history(tx, source, &slugs)?;
+    Ok(counts)
+}
+
+/// A page purge receipt's probe of the alias stores (`countPurgeStoreProbe`): the `page_aliases` rows of the page at
+/// (`source`, `slug`) and the `slug_aliases` rows that name it as their canonical slug.
+pub(crate) fn count_alias_rows(
+    read: &dyn KvRead,
+    source: &str,
+    slug: &str,
+    canonical: bool,
+) -> Result<usize> {
+    if has_nul(&[source, slug]) {
+        return Ok(0);
+    }
+    if !canonical {
+        return Ok(page_alias_rows(read, source, slug)?.len());
+    }
+    Ok(
+        scan_tails(read, &prefix(SLUG_ALIAS_BY_CANONICAL, &[source, slug]))?
+            .iter()
+            .filter(|(_, parts)| parts.len() == 1)
+            .count(),
+    )
 }
 
 /// `scrubPurgedSlugStores` on `slug_rename_history`: drops the rows of `source` that end at a
@@ -1223,6 +1265,48 @@ fn live_titles(
         }
     }
     Ok(out)
+}
+
+/// The `page_aliases` rows of `source` as the table probe of a fact purge's receipt reads them (`facts/purge_probe.rs`), in page,
+/// alias, origin order. The probe is scoped by the source, so only its rows are read. A frontmatter row has no stored value (`alias_text`
+/// NULL); a derived one holds it.
+pub(crate) fn probe_page_aliases(read: &dyn KvRead, source: &str, f: EachRow) -> Result<()> {
+    if has_nul(&[source]) {
+        return Ok(());
+    }
+    let prefix = prefix(PAGE_ALIAS_BY_SLUG, &[source]);
+    let mut failure = None;
+    scan_prefix(read, &prefix, false, &mut |k, v| {
+        let parts = tail(k, prefix.len());
+        let [slug, alias_norm, origin] = parts.as_slice() else {
+            return true;
+        };
+        let alias_text = if v.is_empty() {
+            Ok(None)
+        } else {
+            serde_json::from_slice::<DerivedAliasValue>(v).map(|d| d.alias_text)
+        };
+        let step = alias_text.map_err(StoreError::from).and_then(|alias_text| {
+            f(ProbeRow {
+                source_id: Some(source.to_string()),
+                cells: vec![
+                    ("source_id", ProbeCell::text(source)),
+                    ("alias_norm", ProbeCell::text(alias_norm)),
+                    ("slug", ProbeCell::text(slug)),
+                    ("origin", ProbeCell::text(origin)),
+                    ("alias_text", ProbeCell::opt_text(alias_text.as_deref())),
+                ],
+            })
+        });
+        match step {
+            Ok(more) => more,
+            Err(e) => {
+                failure = Some(e);
+                false
+            }
+        }
+    })?;
+    failure.map_or(Ok(()), Err)
 }
 
 #[cfg(test)]

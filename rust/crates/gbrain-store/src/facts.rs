@@ -61,13 +61,18 @@ mod kept_rows;
 pub mod label_repair;
 pub mod loops;
 pub mod ontology_repair;
+pub(crate) mod page_purge_journal;
+pub(crate) mod page_purge_reads;
+pub(crate) mod page_purge_sweep;
 pub mod page_purges;
 pub(crate) mod privacy;
 pub mod provenance;
 pub mod purge;
+mod purge_claim_probe;
 pub mod purge_ledger;
 pub mod purge_plan;
 pub(crate) mod purge_probe;
+pub mod purge_store_probe;
 pub mod purge_writes;
 pub mod quote;
 pub mod quoted;
@@ -105,8 +110,9 @@ pub(crate) use page_purges::has_page_purges;
 pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
 pub(crate) use privacy::{
-    OwnerOnlyCache, access_readers, caller_version_hidden, concept_inputs,
-    hidden_by_provenance_page, page_hidden, page_hidden_with, privacy_allows, stamped_rules,
+    OwnerOnlyCache, access_readers, caller_version_hidden, chronicle_depth, concept_inputs,
+    declared_slugs, hidden_by_provenance_page, page_hidden, page_hidden_with, privacy_allows,
+    stamped_rules,
     successor_withholds_reason, version_hidden,
 };
 pub use widen::VisibilityWidening;
@@ -120,7 +126,7 @@ use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
 use crate::keyword::{
     or_of_lexemes, plainto_tsquery, to_tsvector, ts_matches, ts_rank_cd, with_query_stack,
 };
-use crate::kv::{KvRead, KvWrite, scan_prefix};
+use crate::kv::{KvRead, KvWrite, for_each_prefix_paged, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{next_id, read_page};
 use crate::sources::read_source;
@@ -769,6 +775,41 @@ pub(crate) fn count_unexpired(read: &dyn KvRead) -> Result<u64> {
 
 pub(crate) fn source_rows(read: &dyn KvRead, source_id: &str) -> Result<Vec<FactRecord>> {
     rows_under(read, &text_key(BY_SOURCE, &[source_id]))
+}
+
+/// Calls `f` with each fact of the source, in index order, until it returns false: the rows are read a page of ids at a time, so
+/// a stop leaves the later ones unread (the purge receipt's bounded probes stop at their cap).
+pub(crate) fn for_each_source_fact(
+    read: &dyn KvRead,
+    source_id: &str,
+    f: &mut dyn FnMut(&FactRecord) -> bool,
+) -> Result<()> {
+    for_each_prefix_paged(read, &text_key(BY_SOURCE, &[source_id]), 8, &mut |k, _| {
+        let id = k.get(k.len().saturating_sub(8)..).and_then(keys::be8);
+        match id.map(|id| read_fact(read, id)).transpose()?.flatten() {
+            Some(row) => Ok(f(&row)),
+            None => Ok(true),
+        }
+    })
+}
+
+/// Whether some fact of the source is keyed under an entity slug `pred` accepts (the `BY_ENTITY` index).
+pub(crate) fn any_entity_slug(
+    read: &dyn KvRead,
+    source_id: &str,
+    pred: &dyn Fn(&str) -> bool,
+) -> Result<bool> {
+    let prefix = text_key(BY_ENTITY, &[source_id]);
+    let mut found = false;
+    scan_prefix(read, &prefix, false, &mut |k, _| {
+        // `prefix entity_slug \0 id`: the id is the last 8 bytes.
+        let entity = k
+            .get(prefix.len()..k.len().saturating_sub(9))
+            .unwrap_or_default();
+        found = pred(&String::from_utf8_lossy(entity));
+        !found
+    })?;
+    Ok(found)
 }
 
 pub(crate) fn entity_rows(

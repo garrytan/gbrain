@@ -487,7 +487,7 @@ pub(crate) fn concept_inputs(read: &dyn KvRead, page: &PageRecord) -> Result<Vec
 
 /// The slugs a page names in `derived_from` (a list, or one string), each without a trailing
 /// `.md`; `None` when the field is neither.
-fn declared_slugs(frontmatter: &Map<String, Value>) -> Option<Vec<String>> {
+pub(crate) fn declared_slugs(frontmatter: &Map<String, Value>) -> Option<Vec<String>> {
     let items: Vec<&Value> = match frontmatter.get("derived_from")? {
         Value::Array(items) => items.iter().collect(),
         one @ Value::String(_) => vec![one],
@@ -739,7 +739,7 @@ fn life_chronicle(page: &PageRecord) -> bool {
 }
 
 /// `frontmatter -> 'event' ->> 'depth'`.
-fn chronicle_depth(page: &PageRecord) -> Option<String> {
+pub(crate) fn chronicle_depth(page: &PageRecord) -> Option<String> {
     page.frontmatter
         .get("event")
         .and_then(Value::as_object)

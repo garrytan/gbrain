@@ -146,7 +146,6 @@ src/core/cycle/phantom-redirect.ts	phantomHasResidue	field	SEGW	phantom stubs ar
 src/core/cycle/phantom-redirect.ts	tryRedirectPhantom	field	SEGW	canonical target asserted inline before the disk fence append; per-phantom throw is logged and the walk continues
 src/core/cycle/propose-takes.ts	ProposeTakesPhase.process	call:contentHash	META	
 src/core/cycle/propose-takes.ts	ProposeTakesPhase.process	field	STREAM	
-src/core/cycle/propose-takes.ts	listCandidatePages	sql	STREAM	
 src/core/cycle/synthesize-child-verify.ts	readTranscript	field	INLINE	a segmented conversation transcript is skipped: the child writes unverified and postprocessing verifies
 src/core/cycle/synthesize-child-verify.ts	verifyChildPages	call:serializeMarkdown	INLINE	serializes the child's own model output, never a stored body
 src/core/cycle/synthesize-child-verify.ts	verifyChildPages	field	INLINE	a segmented page it would replace skips child verification: postprocessing verifies
@@ -231,6 +230,9 @@ src/core/engine-sql/link-reads.ts	LINK_CONTEXT_ORIGIN_SQL	sql	INLINE	moved from 
 src/core/engine-sql/page-body.ts	createSegmentedPageShell	sql	NONE	not a reader: the segmented storage writer sets the body columns NULL on the shell row
 src/core/engine-sql/page-body.ts	flipBodyGeneration	sql	NONE	not a reader: the generation flip sets the body columns NULL and the segmented body columns
 src/core/engine-sql/page-body.ts	sealSegmentedPage	field	LEAD	the withdrawal overlay of the stored timeline_lead (a bounded prefix), indexed sanitized
+src/core/engine-sql/page-purge.ts	countPageCascadeRows	field	STREAM	moved from persistence/page-purge.ts purgePageInTransaction: counts the page cascade rows, reads no body text
+src/core/engine-sql/page-purge.ts	countPageCascadeRows	sql	STREAM	moved from persistence/page-purge.ts purgePageInTransaction
+src/core/engine-sql/page-purge.ts	listPageVersionBodiesForPurge	sql	STREAM	moved from persistence/page-purge.ts tombstonePage
 src/core/engine-sql/pages.ts	PAGE_VERSION_COLUMNS	sql	SEGW	lane 1e: versions of segmented pages carry no body
 src/core/engine-sql/pages.ts	listCorpusSample	sql	LEAD	segmented pages excluded from the sample in SQL (skip)
 src/core/engine-sql/pages.ts	listPrefixSampledPages	sql	LEAD	segmented pages excluded from the sample in SQL (skip)
@@ -535,10 +537,8 @@ src/core/persistence/page-prepare.ts	remoteCoreMarkingKept	call:serializePageToM
 src/core/persistence/page-prepare.ts	segmentedFileMatches	field	NONE	the body fields hold region digests (body-digests.ts) for the canonical comparison; no page body is read
 src/core/persistence/page-prepare.ts	unreadPageFile	call:serializePageToMarkdown	NONE	serializes the frontmatter head with an empty body; the body streams from the segments through segmentedExportMarkdown
 src/core/persistence/page-purge.ts	purgePageInTransaction	field	STREAM	
-src/core/persistence/page-purge.ts	purgePageInTransaction	sql	STREAM	
 src/core/persistence/page-purge.ts	tombstonePage	call:contentHash	META	
 src/core/persistence/page-purge.ts	tombstonePage	field	STREAM	
-src/core/persistence/page-purge.ts	tombstonePage	sql	STREAM	
 src/core/persistence/prepared-maintenance.ts	stampMaintenancePage	call:serializePageToMarkdown	SEGW	
 src/core/persistence/prepared-maintenance.ts	verifyMaintenanceOutputs	call:serializePageToMarkdown	SEGW	
 src/core/persistence/purged-intent.ts	intentCarriesPurgedContent	call:contentHash	META	
@@ -744,6 +744,8 @@ src/core/guests/promote.ts	promoteGuestNote	field	INLINE	assertInlineBody before
 src/core/rust-engine/store-codec.ts	guardNullBody	field	META	reads only whether the Rust store sent compiled_truth/timeline as null (a segmented shell, PGLite pages_body_storage_chk), never the body text; a null body becomes the guarded segmented page of rowToPage
 src/core/rust-engine/store-members/write-guards.ts	readLiveStoredBody	field	SEGW	the Rust readLiveStoredBody: the inline columns of readLivePageBody, NULL for a segmented page, and every caller holds it
 src/core/persistence/concept-rebuild.ts	STATED_SQL	sql	INLINE	reads only an inline page timeline for emptiness; a segmented page counts as unread and stays hidden
+src/core/engine-sql/purge-verify.ts	carriesClaim	sql	STREAM	moved from facts/purge-verify.ts verifyPagePurge unchanged: strpos over NULL never matches a segmented page; withSegmentedProse probes its segment texts
+src/core/engine-sql/take-proposals.ts	listProposeTakesCandidatePages	sql	STREAM	moved from cycle/propose-takes.ts listCandidatePages unchanged
 src/core/engine-sql/facts-repair.ts	listConceptLineageRows	sql	META	length(compiled_truth) only, the size the visibility preview prints; a segmented concept reads a NULL size
 src/core/engine-sql/label-repair-reads.ts	listLabelFactCandidates	sql	STREAM	moved from repair/conversation-labels.ts classifyLabelFacts
 src/core/engine-sql/lost-fence-reads.ts	listInlineVersionTexts	sql	INLINE	page_versions rows that hold a body copy (compiled_truth IS NOT NULL); a segmented version has none and is not read

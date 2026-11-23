@@ -61,6 +61,16 @@ import type {
 } from './engine-sql/write-misc.ts';
 import type { WorktreeClaimStore } from './engine-sql/worktree-claim.ts';
 import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/writer-admin.ts';
+import type { CheckoutFileRow, OriginDependentRow, OriginRefInput, PageLabelRow, PrivacyOriginRow } from './engine-sql/label-door.ts';
+import type * as PagePurgeSql from './engine-sql/page-purge.ts';
+import type * as PagePurgeSweepSql from './engine-sql/page-purge-sweep.ts';
+import type * as PagePurgeJournalSql from './engine-sql/page-purge-journal.ts';
+import type * as PurgeStoresSql from './engine-sql/purge-stores.ts';
+import type * as PurgeReceiptSql from './engine-sql/purge-receipt.ts';
+import type * as OriginHoldsSql from './engine-sql/origin-holds.ts';
+import type { DerivedOriginPark } from './persistence/derived-origin-hold.ts';
+import type { HeadBlockerReadOpts, HeadBlockerRow, RecoveringHeadRow } from './engine-sql/head-blocker.ts';
+import type { IncompleteSyncReceiptRow, IncompleteSyncReceiptSpec, OpenPassWorkSpec } from './engine-sql/checkpoint-validation.ts';
 import type {
   ActorAttributionRow, PageRevisionAttributionRow, RowAttributionRow, RowAttributionTarget, VersionAttributionRow, VersionRef,
   WriteAttributionNameIds, WriteAttributionNames,
@@ -1530,6 +1540,8 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   /** One source's id, local_path, raw config and archived flag, or null; `lockSourceRow` reads it FOR UPDATE (engine-sql/sources.ts). */
   readSourceRow(sourceId: string): Promise<SourceCheckRow | null>;
   lockSourceRow(sourceId: string): Promise<SourceCheckRow | null>;
+  /** Takes the source row's lock for the rest of the transaction and reads nothing; an unknown source is a no-op (`lockSourceForUpdate`, engine-sql/sources.ts). */
+  lockSourceForUpdate(sourceId: string): Promise<void>;
   /** Whether a writer binding claims the source's current incarnation; false for an unknown source (engine-sql/sources.ts). */
   isSourceClaimed(sourceId: string): Promise<boolean>;
   /** The source's stamped chunker version, or null (engine-sql/sources.ts). */
@@ -1638,6 +1650,20 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   listBlockingEffectRows(sourceId: string | null, limit: number, recoveringOnly: boolean): Promise<BlockingEffectRow[]>;
   /** The active worktree refreshes (of one source's worktree, or all), oldest first. */
   listActiveWorktreeRefreshRows(sourceId: string | null): Promise<ActiveWorktreeRefreshRow[]>;
+  /**
+   * delete_page's derived-origin carry and the label door (engine-sql/label-door.ts). The page at (sourceId, slug),
+   * soft-deleted or not, when it is a privacy origin (an atom, or hidden by privacyPartSql); else null. The caller reads
+   * the alias setting first (readHonorAliases).
+   */
+  readPrivacyOrigin(sourceId: string, slug: string): Promise<PrivacyOriginRow | null>;
+  /** The pages the removal of `origins` would open (private-labels.ts dependentsSql('remove')), by (id, cleared_id). */
+  listOriginDependents(origins: readonly OriginRefInput[]): Promise<OriginDependentRow[]>;
+  /** Each page among `pageIds` with a recorded file, with its source's checkout path, by id. */
+  listCheckoutFiles(pageIds: readonly number[]): Promise<CheckoutFileRow[]>;
+  /** The page at (sourceId, slug), soft-deleted or not: its id and stored frontmatter. */
+  readPageLabelRow(sourceId: string, slug: string): Promise<PageLabelRow | null>;
+  /** Sets the page's label guard (GST-2521) to `tier`, stamped now; null removes it. */
+  writePageLabelGuard(pageId: number, tier: import('./trust/tier.ts').TrustTier | null): Promise<void>;
   /**
    * The writer-admin store for writer lock and unlock and transfer prepare, accept and cancel (engine-sql/writer-admin.ts).
    * Call it on a transaction engine: it turns on durable commit, and every store call runs in that transaction.

@@ -40,6 +40,7 @@ pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Resul
     crate::page_ops::remove_page_rows(tx, page)?;
     crate::entity_identities::remove_page_rows(tx, page)?;
     crate::mention_state::remove_page_rows(tx, page)?;
+    crate::trust::label_guards::remove_page_rows(tx, page)?;
     Ok(())
 }
 
@@ -65,6 +66,8 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     crate::raw_files::remove_source_rows(tx, source_id)?;
     crate::page_body::remove_source_rows(tx, source_id)?;
     crate::takes::remove_source_rows(tx, source_id)?;
+    crate::takes::nudges::remove_source_rows(tx, source_id)?;
+    crate::takes::proposals::remove_source_rows(tx, source_id)?;
     crate::extraction::remove_source_rows(tx, source_id)?;
     crate::trust::remove_source_rows(tx, source_id)?;
     crate::facts::loops::remove_source_rows(tx, source_id)?;

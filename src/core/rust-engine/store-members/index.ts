@@ -92,6 +92,15 @@ import * as factsTrustReads from './facts-trust-reads.ts';
 import * as factsProvenance from './facts-provenance.ts';
 import * as factsTrustOwner from './facts-trust-owner.ts';
 import * as trustTierReads from './trust-tier-reads.ts';
+import * as headBlocker from './head-blocker.ts';
+import * as checkpointValidation from './checkpoint-validation.ts';
+import * as labelDoor from './label-door.ts';
+import * as pagePurge from './page-purge.ts';
+import * as pagePurgeHolds from './page-purge-holds.ts';
+import * as pagePurgeJournal from './page-purge-journal.ts';
+import * as pagePurgeScrubs from './page-purge-scrubs.ts';
+import * as purgeReceipt from './purge-receipt.ts';
+import * as pagePurgeSweep from './page-purge-sweep.ts';
 import * as memoryMutationReads from './memory-mutation-reads.ts';
 import * as withdrawalCommit from './withdrawal-commit.ts';
 import * as withdrawalDiscovery from './withdrawal-discovery.ts';
@@ -159,6 +168,7 @@ import * as doctorFactsTrust from './doctor-facts-trust.ts';
 import * as fenceCensus from './fence-census.ts';
 import * as doctorSources from './doctor-sources.ts';
 import * as sweepReads from './sweep-reads.ts';
+import * as graduationCatalog from './graduation-catalog.ts';
 import * as cliReadsExport from './cli-reads-export.ts';
 import * as beliefLedger from './belief-ledger.ts';
 import * as repairBookkeeping from './repair-bookkeeping.ts';
@@ -213,6 +223,20 @@ export const STORE_MEMBERS = {
   // Belief ledger writes and the append's reads (rust/docs/store/trust.md, "The belief ledger").
   ...beliefLedger,
   // The reads remember and forget make before admission (rust/docs/store/memory_mutation_reads.md).
+  ...headBlocker,
+  ...checkpointValidation,
+  ...labelDoor,
+  // The reads and tombstone edits of a page purge (rust/docs/store/facts.md).
+  ...pagePurge,
+  // The deletes and reads of a page purge's sweep, its segment storage and its slug stores (rust/docs/store/facts.md).
+  ...pagePurgeSweep,
+  // The journal statements of a page purge's sweep and intent redaction (rust/docs/store/persistence.md).
+  ...pagePurgeJournal,
+  ...pagePurgeScrubs,
+  // The reads a page purge's receipt and verification make on the brain's own tables (rust/docs/store/pages.md).
+  ...purgeReceipt,
+  // The parks and owed-purge records of a derived-origin purge (rust/docs/store/label_door.md).
+  ...pagePurgeHolds,
   ...memoryMutationReads,
   // The statements a forget's withdrawal commits and the fact_withdrawn refusal reads (rust/docs/store/trust.md).
   ...withdrawalCommit,
@@ -321,6 +345,8 @@ export const STORE_MEMBERS = {
   ...fenceCensus,
   // Group A: the decide store (rust/docs/store/decide-store.md).
   ...decideStore,
+  // The engine graduation inventory's catalog reads, answered from the store's keyspace list (rust/docs/store/keyspaces.md).
+  ...graduationCatalog,
   // The source-side reads of `gbrain migrate --to <engine>` (rust/docs/store/engine-migration.md).
   ...engineMigration,
   // The synopsis tier's configuration read (rust/docs/store/synopsis-tier.md).

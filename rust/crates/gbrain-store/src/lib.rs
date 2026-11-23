@@ -26,6 +26,7 @@ pub mod format;
 pub mod journal;
 pub(crate) mod jsonb;
 pub mod keys;
+pub mod keyspaces;
 pub mod kv;
 pub mod links;
 pub mod occ_kv;
@@ -65,6 +66,7 @@ pub mod embeddings;
 pub mod engine_migration;
 pub mod entity_identities;
 pub mod eval_capture;
+pub mod extract_bookkeeping;
 pub mod extraction;
 pub mod facts;
 pub mod field_usage;
@@ -74,6 +76,7 @@ pub mod identity_reviews;
 pub mod import_members;
 pub mod jobs;
 pub mod keyword;
+pub mod label_door;
 pub mod large_page;
 pub mod link_queries;
 pub mod memory_mutation_reads;
@@ -364,6 +367,8 @@ impl Store {
                 }
             }
         };
+        // Sweep records kept before their source index existed get it.
+        page_body::purge_record::backfill_source_index(&*kv)?;
         let index = keyword::open_index(&*kv)?;
         let flag_assumed = !created && access_flag::scan_at_open(&*kv)?;
         // The schema version is the config the TypeScript migrations keep; a brain that has none

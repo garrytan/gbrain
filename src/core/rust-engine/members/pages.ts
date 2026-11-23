@@ -151,6 +151,7 @@ export const PAGES_MEMBERS = {
   lockAllSourceRows: 'sources',
   readSourceRow: 'sources',
   lockSourceRow: 'sources',
+  lockSourceForUpdate: 'sources',
   countSourcePages: 'sources',
   readPageIdentity: 'sources',
   writeSourceSyncHeartbeat: 'sources',
@@ -294,6 +295,19 @@ export const PAGES_MEMBERS = {
   // Writer administration (the reviewed --expected-state digest, the operator lock, transfer prepare and cancel).
   readWriterAdminState: 'persistence_journal',
   writerAdminStore: 'persistence_journal',
+  // The head-blocker probe (engine-sql/head-blocker.ts).
+  readHeadBlockerRows: 'persistence_journal',
+  readRecoveringHeadRow: 'persistence_journal',
+  // The managed sync checkpoint's validation reads (engine-sql/checkpoint-validation.ts).
+  readIncompleteSyncReceipt: 'persistence_journal',
+  readOpenPassWork: 'persistence_journal',
+  readIncompleteSyncReceiptRows: 'persistence_journal',
+  // delete_page's derived-origin carry and the label door (engine-sql/label-door.ts).
+  readPrivacyOrigin: 'pages',
+  listOriginDependents: 'pages',
+  listCheckoutFiles: 'pages',
+  readPageLabelRow: 'pages',
+  writePageLabelGuard: 'pages',
   // Writer activation, deactivation and the pre-activation release; a topology receipt's counter charges.
   writerReleaseStore: 'persistence_journal',
   addPersistenceCounters: 'persistence_journal',

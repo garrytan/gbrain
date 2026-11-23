@@ -1967,7 +1967,7 @@ fn requests_by_request_id_span_principals_and_stop_at_two() {
     let store = open(&dir);
     assert!(
         store
-            .list_write_requests_by_request_id(REQ_1)
+            .read_write_requests_by_request_id(REQ_1)
             .unwrap()
             .is_empty()
     );
@@ -1975,7 +1975,7 @@ fn requests_by_request_id_span_principals_and_stop_at_two() {
         .insert_write_request(&insert_input(&store, REQ_1, "notes/a", json!({})))
         .unwrap();
     let one = store
-        .list_write_requests_by_request_id(&REQ_1.to_uppercase())
+        .read_write_requests_by_request_id(&REQ_1.to_uppercase())
         .unwrap();
     assert_eq!(one, vec![mine.clone()]);
     // A second principal admits the same request id: the read is ambiguous and says so.
@@ -1985,18 +1985,20 @@ fn requests_by_request_id_span_principals_and_stop_at_two() {
     let mut third = insert_input(&store, REQ_1, "notes/c", json!({}));
     third.principal_id = "third-writer".into();
     store.insert_write_request(&third).unwrap();
-    let rows = store.list_write_requests_by_request_id(REQ_1).unwrap();
+    let rows = store.read_write_requests_by_request_id(REQ_1).unwrap();
     assert_eq!(rows.len(), 2);
     assert!(rows.iter().all(|r| r["request_id"] == REQ_1));
+    // The list read returns every row the principals admitted under the id.
+    assert_eq!(store.list_write_requests_by_request_id(REQ_1).unwrap().len(), 3);
     assert!(
         store
-            .list_write_requests_by_request_id(REQ_2)
+            .read_write_requests_by_request_id(REQ_2)
             .unwrap()
             .is_empty()
     );
     assert_eq!(
         store
-            .list_write_requests_by_request_id("nope")
+            .read_write_requests_by_request_id("nope")
             .unwrap_err()
             .code,
         INVALID_ARGUMENT

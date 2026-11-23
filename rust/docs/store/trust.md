@@ -255,6 +255,7 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
 | `listVersionTrustTiers` | `list_version_trust_tiers`: the snapshot tier of each listed version, by id | `SELECT pv.id, pv.trust_tier FROM page_versions pv WHERE pv.id = ANY($1)` |
 | `listVersionReasonWriters` | `list_version_reason_writers`: the type and tier of the page's next snapshot, else of the page (deleted or not) | `LEFT JOIN LATERAL (… ORDER BY n.id LIMIT 1)` |
 | `listPageRefsByIds` | `list_page_refs_by_ids`: the source, slug and type of each listed page record (deleted or not), by id, once each; an unknown or negative id answers nothing | `SELECT id, source_id, slug, type FROM pages WHERE id = ANY($1::bigint[]) ORDER BY id` |
+| `listPageQuoteTiers` | `list_page_quote_tiers`: the type and tier of each listed page record (deleted or not) by id, or of the live pages with the slug in the listed sources, by id, once each; both forms or neither is an invalid argument | `SELECT id, type, trust_tier FROM pages WHERE id = ANY($1::bigint[])` / `… WHERE slug = $1 AND source_id = ANY($2::text[]) AND deleted_at IS NULL ORDER BY id` |
 | `listValidTimeIdentities` | `list_valid_time_identities` (`trust/valid_time.rs`): the live pages with the slug in the source scope, by source in byte order, at most six, with the source's checkout and the no-caller page policy's verdict | `… ORDER BY p.source_id COLLATE "C" LIMIT 6` |
 | `pickValidTimeEdition` | `pick_valid_time_edition`: the edition in force on a date over the page and its `V` version records, the competing ordinals, the history counts and the prune marks (`successor_pruned`, the page's `version_history_gap_at`) | the `WITH rows AS (…)` pick |
 
@@ -424,3 +425,12 @@ The store serves the purge statements of src/core/engine-sql/belief-purge.ts
 - `readPurgeReplaySchema` makes no store call: the store always has the live schema, so it answers every listed store
   and every probed table and column as present.
 - Pinned by `test/engine-parity/belief-purge-probes.test.ts` on every arm and by the unit tests in each module.
+## Label guards (`trust::label_guards`)
+
+The `page_label_guards` table (GST-2521): the trust tier an owner label write set on a page. One record per page:
+
+`t 0x0e page_id` (8 bytes, big-endian; `t 0x0a` is the belief ledger's page lifetimes) -> `{"tier": <tier>, "set_at_us": <i64>}`
+
+`writePageLabelGuard` ([label_door.md](label_door.md)) writes and deletes it. A hard page delete removes it (the
+table's `ON DELETE CASCADE`, through `cascade::remove_page_rows`). The guard's readers (`labelGuardTier` and the
+deletion and graduation inventories) still read the table through `executeRaw`, which the Rust engine refuses.
