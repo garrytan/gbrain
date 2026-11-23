@@ -2,7 +2,7 @@
  * Doctor persistence reads (src/core/engine-sql/doctor-persistence.ts).
  *
  * Served from the store (rust/crates/gbrain-store/src/cli_reads/doctor_persistence.rs): the reads over the request
- * journal and the counters, which the store keeps. Answered in TypeScript with no store call: the reads over a
+ * journal and the counters, which the store keeps, and the stale embedding effects (persistence/embedding_candidates.rs). Answered in TypeScript with no store call: the reads over a
  * relation the store has no writer for (worktrees, host bindings, consumers, effects, derivation
  * sweeps), which hold no row on this engine, so each answers the empty state the same read gives on a PGLite brain with
  * none. rust/docs/store/cli-reads-doctor-per.md names each member and the reason.
@@ -91,8 +91,13 @@ export const listParkedEffects: Member<'listParkedEffects'> = async () => [];
 export const listGitPushHoldRows: Member<'listGitPushHoldRows'> = async () => [];
 export const listStalledCatchupRows: Member<'listStalledCatchupRows'> = async () => [];
 export const listParkedGroupRows: Member<'listParkedGroupRows'> = async () => [];
-export const readStaleEmbeddingCounts: Member<'readStaleEmbeddingCounts'> = async () => ({ count: 0, failed: 0, requeued: 0 });
-export const listStaleEmbeddingEffects: Member<'listStaleEmbeddingEffects'> = async () => [];
+/** Stale queued and failed embedding effects of committed writes, served from the store's effect rows (persistence/embedding_candidates.rs). */
+export const readStaleEmbeddingCounts: Member<'readStaleEmbeddingCounts'> = async (brain, sourceIds) => {
+  const row = await storeCall({ member: 'readStaleEmbeddingCounts' }, () => brain.readStaleEmbeddingCounts(sourceIds ? [...sourceIds] : null)) as Record<string, unknown>;
+  return { count: Number(row.count), failed: Number(row.failed), requeued: Number(row.requeued) };
+};
+export const listStaleEmbeddingEffects: Member<'listStaleEmbeddingEffects'> = (brain, sourceIds) =>
+  storeCall({ member: 'listStaleEmbeddingEffects' }, () => brain.listStaleEmbeddingEffects(sourceIds ? [...sourceIds] : null));
 /** No worktree or source binding row exists, so none is orphaned. */
 export const listOrphanBindingRows: Member<'listOrphanBindingRows'> = async () => [];
 export const listWorktreeIds: Member<'listWorktreeIds'> = async () => [];

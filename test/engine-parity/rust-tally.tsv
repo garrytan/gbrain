@@ -196,7 +196,7 @@ test/engine-parity/page-visibility.test.ts	6	0
 test/engine-parity/page-write-readers.test.ts	1	0
 test/engine-parity/pages.test.ts	45	0
 test/engine-parity/persistence-declaration.test.ts	10	3
-test/engine-parity/persistence.test.ts	67	1
+test/engine-parity/persistence.test.ts	68	1
 test/engine-parity/person-duplicates.test.ts	5	0
 test/engine-parity/privacy-hold-reply.test.ts	1	0
 test/engine-parity/private-page-reads.test.ts	25	0

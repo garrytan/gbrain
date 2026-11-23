@@ -1049,6 +1049,58 @@ describe('engine parity: write journal', () => {
     return answers;
   });
 
+  // Doctor's stale_embedding_effects reads: the Rust engine answered them as always empty, though its store keeps the
+  // effect rows. A re-queued embedding effect of a committed write counts; one of an uncommitted write does not.
+  parityTest('readStaleEmbeddingCounts and listStaleEmbeddingEffects count and list the re-queued embedding effects of committed writes', {
+    methods: ['readStaleEmbeddingCounts', 'listStaleEmbeddingEffects', 'insertPublicationEffects', 'transactionDirect', 'declarePersistence',
+      'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow', 'putPage', 'getPage'],
+  }, async (engine) => {
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    await engine.putPage('notes/parity', { type: 'note', title: 'Parity', compiled_truth: 'twelve chars', timeline: 'abc' });
+    const pageId = (await engine.getPage('notes/parity'))!.id;
+    const queue = async (requestId: string) => {
+      const id = await admitDirect(engine, requestId);
+      await engine.transactionDirect(async tx => {
+        await tx.declarePersistence();
+        return tx.insertPublicationEffects({ requestId: id, revision: null, sourceId: 'default', sourceIncarnation: incarnation, worktreeId: null,
+          effects: [{ kind: 'embedding', data: { slug: 'notes/parity', page_id: pageId, repair_requeued_at: 'parity' } }, { kind: 'git', data: { relative_path: 'notes/parity.md' } }] });
+      });
+      return id;
+    };
+    const commit = async (id: string) => {
+      await engine.stampWriteClaim(id, TOKEN, 60_000, JSON.stringify({ phase: 'parity' }));
+      await engine.completeWriteRow({
+        id, state: 'committed', outcome: {}, errorCode: null, errorMessage: null, consumerVersion: 'parity', consumerHostId: null, errorDetail: null,
+        resultBytes: 0, counterKeys: KEYS, intentBytes: 100, retainedBytes: 0, terminalReservation: 4096, probePurges: false,
+      });
+    };
+    const view = (rows: Awaited<ReturnType<BrainEngine['listStaleEmbeddingEffects']>>) => rows.map(r => ({
+      source_id: r.source_id, slug: r.slug, request_id: r.request_id, state: r.state,
+      effect_id: /^\d+$/.test(r.effect_id) ? 'id' : r.effect_id, updated_at: /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(\.\d+)?\+00$/.test(r.updated_at) ? 'stamp' : r.updated_at,
+    }));
+    const empty = { counts: await engine.readStaleEmbeddingCounts(null), rows: await engine.listStaleEmbeddingEffects(null) };
+    const first = await queue('b0000000-0000-4000-8000-0000000000e6');
+    await queue('b0000000-0000-4000-8000-0000000000e7');
+    const uncommitted = await engine.readStaleEmbeddingCounts(null);
+    await commit(first);
+    const rows = await engine.listStaleEmbeddingEffects(null);
+    const answers = {
+      empty, uncommitted,
+      counts: await engine.readStaleEmbeddingCounts(null),
+      scoped: await engine.readStaleEmbeddingCounts(['default']),
+      other: await engine.readStaleEmbeddingCounts(['other']),
+      rows: view(rows),
+      otherRows: await engine.listStaleEmbeddingEffects(['other']),
+    };
+    const counts = (count: number) => ({ count, failed: 0, requeued: count });
+    expect(answers).toEqual({
+      empty: { counts: counts(0), rows: [] }, uncommitted: counts(0), counts: counts(1), scoped: counts(1), other: counts(0),
+      rows: [{ source_id: 'default', slug: 'notes/parity-example', request_id: 'b0000000-0000-4000-8000-0000000000e6', state: 'queued', effect_id: 'id', updated_at: 'stamp' }],
+      otherRows: [],
+    });
+    return answers;
+  });
+
   parityTest('the receipt-compaction reads list settled receipts before the cutoff and keep a receipt of an open managed-sync run', {
     methods: ['readReceiptCompactionWindow', 'listReceiptCompactionCandidates', 'countKeptFailedReceipts', 'writeOpCheckpointRecord', 'readSourceMembership',
       'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow'],
