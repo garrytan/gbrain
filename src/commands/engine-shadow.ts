@@ -189,7 +189,7 @@ async function openConfiguredPrimary(config: ResolvedBrain['config']): Promise<B
   const engine = await constructEngine(engineConfig);
   // Only a local brain (PGLite) has this open: no recording of its managed roots (that writes ownership markers into the
   // datastore and source checkouts) and, with repair off, no repair of a damaged log (that renames the primary's files).
-  const quiet = (engine as unknown as { connectForRestore?: (c: EngineConfig) => Promise<void> }).connectForRestore?.bind(engine);
+  const quiet = (engine as unknown as { connectForRestore?: (c: EngineConfig, o?: { keepRepairEpisode?: boolean }) => Promise<void> }).connectForRestore?.bind(engine);
   if (!quiet) {
     await engine.connect(engineConfig);
     return engine;
@@ -202,7 +202,8 @@ async function openConfiguredPrimary(config: ResolvedBrain['config']): Promise<B
   const savedRepair = process.env.GBRAIN_PGLITE_WAL_REPAIR;
   process.env.GBRAIN_PGLITE_WAL_REPAIR = 'off';
   try {
-    await quiet(engineConfig);
+    // The check above runs before the open takes the datastore lock; an episode recorded while it waits is still kept.
+    await quiet(engineConfig, { keepRepairEpisode: true });
   } finally {
     if (savedRepair === undefined) delete process.env.GBRAIN_PGLITE_WAL_REPAIR;
     else process.env.GBRAIN_PGLITE_WAL_REPAIR = savedRepair;

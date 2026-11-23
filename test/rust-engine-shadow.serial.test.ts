@@ -350,6 +350,7 @@ process.exit(0);
         heartbeatMs: 25,
         exit: (code) => { exitCode = code; },
       });
+      // gstack-timing-ok: the contract is the 200 ms open deadline, so the test must wait past it (3x) with input still open
       await new Promise((r) => setTimeout(r, 600)); // past the open deadline, input still open
       expect(heartbeats).toBe(0);
       finishOpen(); // the open completes after the child gave up on it

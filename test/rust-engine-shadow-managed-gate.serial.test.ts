@@ -154,11 +154,11 @@ describe('engine shadow start on a managed-storage brain', () => {
     await onBrain(MANAGED);
     const watched = (): { tree: Record<string, string>; registry: Record<string, string> } => ({
       tree: snapshotTree(contentRoot),
-      registry: existsSync(join(home, 'persistence')) ? snapshotTree(join(home, 'persistence')) : {},
+      registry: existsSync(join(home, '.gbrain', 'persistence')) ? snapshotTree(join(home, '.gbrain', 'persistence')) : {},
     });
     const markers = (): string[] => [join(contentRoot, '.gbrain-managed'), join(config.database_path!, '.gbrain-managed')].filter((p) => existsSync(p));
     for (const p of [join(contentRoot, '.gbrain-managed'), join(config.database_path!, '.gbrain-managed')]) rmSync(p, { force: true });
-    rmSync(join(home, 'persistence'), { recursive: true, force: true });
+    rmSync(join(home, '.gbrain', 'persistence'), { recursive: true, force: true });
     const before = watched();
     for (const args of [['start', '--plan'], ['start'], ['start', '--yes', '--expect', planHash()]]) {
       expect((await run(args)).err, args.join(' ')).toEqual([]);
@@ -169,7 +169,7 @@ describe('engine shadow start on a managed-storage brain', () => {
     reset();
     await onBrain(UNMANAGED);
     await onBrain(`DELETE FROM sources WHERE id='checkout'`);
-    rmSync(join(home, 'persistence'), { recursive: true, force: true });
+    rmSync(join(home, '.gbrain', 'persistence'), { recursive: true, force: true });
     for (const p of [join(contentRoot, '.gbrain-managed'), join(config.database_path!, '.gbrain-managed')]) rmSync(p, { force: true });
   });
 
@@ -191,6 +191,34 @@ describe('engine shadow start on a managed-storage brain', () => {
     rmSync(sidecar, { force: true });
     for (const b of backups) rmSync(b, { recursive: true, force: true });
   });
+
+  test('a repair episode recorded while start waits for the datastore lock is still left open, with every backup', async () => {
+    // The check for an open episode runs before the open takes the lock; a repair that finishes while start waits records its episode later.
+    const dir = config.database_path!;
+    const sidecar = `${dir}.wal-repair-attempt.json`;
+    const backups = [1, 2, 3, 4].map((n) => `${dir}.wal-repair-backup-${1_700_000_000_000 + n}`);
+    const watched = (): string[] => [readFileSync(sidecar, 'utf8'), ...backups.map((b) => String(existsSync(join(b, 'pg_wal', 'x'))))];
+    const holder = new PGLiteEngine();
+    await holder.connectForRestore(config);
+    let held = true;
+    try {
+      const starting = run(['start', '--plan']);
+      await new Promise((r) => setTimeout(r, 400)); // start has passed its check and is waiting for the lock
+      for (const b of backups) { mkdirSync(join(b, 'pg_wal'), { recursive: true }); writeFileSync(join(b, 'pg_wal', 'x'), b); }
+      writeFileSync(sidecar, JSON.stringify({ episodeStartedAt: 1_700_000_000_000, episodeBackupPath: backups[0], attempts: [] }));
+      const before = watched();
+      await holder.disconnect();
+      held = false;
+      const result = await starting;
+      expect(result.code, result.text).toBe(0);
+      expect(watched()).toEqual(before);
+      expect(before.slice(1)).toEqual(['true', 'true', 'true', 'true']);
+    } finally {
+      if (held) await holder.disconnect();
+      rmSync(sidecar, { force: true });
+      for (const b of backups) rmSync(b, { recursive: true, force: true });
+    }
+  }, 120_000);
 
   test('an unmanaged brain records managed: false and prints no storage line', async () => {
     await onBrain(UNMANAGED);

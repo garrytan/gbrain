@@ -45,10 +45,10 @@ describe('readManagedStorage', () => {
   });
 
   test('the reason is a code, never free-form error text', async () => {
-    const secret = 'postgresql://user:hunter2@host/db refused';
+    const secret = 'postgresql://host/db?app=VALUECANARY refused';
     for (const e of [new Error(secret), Object.assign(new Error(secret), { code: secret })]) {
       const r = await readManagedStorage(engineThrowing(e), AT);
-      expect(JSON.stringify(r)).not.toContain('hunter2');
+      expect(JSON.stringify(r)).not.toContain('VALUECANARY');
       expect(r.reason).toBe('read_failed');
     }
   });
