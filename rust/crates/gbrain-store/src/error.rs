@@ -55,6 +55,10 @@ pub const INVALID_STATE: &str = "invalid_state";
 /// it committed. `Store::write` runs the transaction again; callers do not see this code unless
 /// a write keeps losing until its retry budget is spent.
 pub const WRITE_CONFLICT: &str = "write_conflict";
+/// The brain is a shadow store the v0.60.766.0 Rust addon wrote (store format 5) and holds a record this
+/// build cannot carry over to its own shape (`seed/format_5.rs`); nothing was changed. The message names the
+/// record and the re-seed steps.
+pub const SHADOW_RESEED_REQUIRED: &str = "shadow_reseed_required";
 /// A write inside a read-only transaction (Postgres SQLSTATE 25006, `read_only_sql_transaction`).
 pub const READ_ONLY_TRANSACTION: &str = "read_only_transaction";
 

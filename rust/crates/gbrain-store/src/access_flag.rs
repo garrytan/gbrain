@@ -386,14 +386,17 @@ mod tests {
         //   `fjall_kv.rs`, and
         //   `occ_kv.rs` (its trait methods and the commit onto the base store);
         // - `lib.rs`: the brain-create write, the two arms of `Store::write`'s unbound loop, and
-        //   the format upgrade (no page records);
+        //   the format upgrade (no page records; the format-5 carry-over in `seed/format_5.rs` writes
+        //   purge tombstones, generations and oauth clients on it);
         // - `transactions.rs`: a transaction's exclusive base handle (its statements run through
         //   the bound arm of `Store::write`); a rollback writes its counters forward on that same
         //   handle, so it opens no second one;
         // - this module's open-time scan, the keyword index
         //   repair (`keyword/index_build.rs`, postings only);
         // - the keyword test modules (`index_build/tests.rs`, `index_writer/tests.rs`), which are
-        //   whole files under `#[cfg(test)]`.
+        //   whole files under `#[cfg(test)]`;
+        // - `seed/v0_60_766_tests.rs`, a whole file under `#[cfg(test)]` that writes an older
+        //   addon's records into an empty record file before any store opens it.
         let allowed: &[(&str, usize)] = &[
             ("access_flag.rs", 1),
             ("fjall_kv.rs", 1),
@@ -404,6 +407,7 @@ mod tests {
             ("lib.rs", 4),
             ("occ_kv.rs", 4),
             ("redb_kv.rs", 4),
+            ("seed/v0_60_766_tests.rs", 1),
             ("transactions.rs", 1),
         ];
         let opens = |c: &str| {

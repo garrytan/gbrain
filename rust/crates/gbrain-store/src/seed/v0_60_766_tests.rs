@@ -177,7 +177,7 @@ fn oauth_clients_the_old_seed_wrote_read_as_this_builds_seed_stores_them() {
 fn an_old_store_opens_on_the_new_format_and_says_so() {
     let old = old_store();
     assert_eq!(old.info().format_version, crate::format::FORMAT_VERSION);
-    assert!(crate::format::FORMAT_VERSION > 5);
+    const { assert!(crate::format::FORMAT_VERSION > 5) };
     let read = old.read().unwrap();
     let stored: Value = crate::get_json(&*read, &keys::meta("format"))
         .unwrap()
@@ -238,8 +238,7 @@ fn volatile(key: &[u8]) -> bool {
         b"Cwrite_gate.scan_baseline",
         &[keys::ACCESS_MEMBERS, 0x04],
     ]
-    .iter()
-    .any(|k| key == *k)
+    .contains(&key)
 }
 
 /// A record with the fields a fresh store draws at random or from its clock taken out: the
