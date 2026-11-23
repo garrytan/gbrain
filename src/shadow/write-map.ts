@@ -220,6 +220,8 @@ export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
   'dailyDecideSpend', 'decideConflictNoEntityCounts', 'decideSlotUsage',
   'normalizeFenceLines', 'sampleEffectiveDates', 'sampleEffectiveDateSources', 'sharedSkillPackTablePresent',
   'storedTimelineRowsByPageIds',
+  // Batch 11 typed reads (page purge port, caller-links, chronicle): row locks and statements that only read.
+  'factsOrAliasesMayMatch', 'lockHeldConcept', 'lockLiveConceptMembers', 'lockSourceForUpdate', 'relationExists', 'sweepJournalChunk', 'takeProposalCached',
   // The trunk's typed reads whose names carry no read prefix (the owner socket's read classes, owner-ipc/typed-member-classes.ts).
   'accessTokenLive', 'closedLoopWithActiveFact', 'codeChunksExist', 'computeFactFingerprints', 'currentCodeChunksExist',
   'edgeClosureLanded', 'edgeValidityCounts', 'entityFeatureCoverage', 'entityGraphCoverage', 'factReadableUnder',
@@ -349,6 +351,9 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'writeReasonPurgeTombstones', 'writeSharedSkillPolicy', 'writeSharedSkillRevision', 'writeSourceSyncHeartbeat',
   'writeSourceUpstreamObservation', 'writeSyncAdmissionStamp', 'writeSyncPassRow', 'writeTrustScanCursor',
   'writerAdminStore', 'writerReleaseStore',
+  // Batch 11 typed writes (page purge port, take grades, horizons and proposals, chronicle ledger, connector stamps, sync conversions,
+  // source rename): not mapped to a write plan yet, so they publish invalid like the rest of the list.
+  'carryConceptIncomingLinks', 'chronicleStore', 'claimTakeProposal', 'clearQueryCache', 'continueDerivationSweep', 'deleteFactPurgesByRequests', 'deleteOriginHoldRows', 'deletePagePurgeTombstones', 'deletePageSegmentTexts', 'deletePageStagings', 'deletePurgedFeedbackRows', 'deletePurgedNameStoreRows', 'deletePurgedPageFacts', 'deletePurgedPageFiles', 'deletePurgedPageGateReceipts', 'deletePurgedPageHolds', 'deletePurgedPageTrustProposals', 'deletePurgedSlugHolds', 'deletePurgedSlugStoreRows', 'deleteTakeGrade', 'deleteTakeHorizon', 'deleteTakeProposalTombstones', 'deleteTakePurgesByRequests', 'insertConfigIfAbsent', 'insertPageFactPurges', 'insertTakeGrade', 'insertTakeNudge', 'insertTakeProposal', 'pruneChronicleReservations', 'purgeTakeNudgesByWave', 'recordConnectorSyncAttempt', 'recordDerivationPurgeRow', 'recordOwedPurgeRows', 'recordSyncConversion', 'redactWriteRequestRow', 'rejectTakeProposal', 'releaseTakeProposalClaim', 'releaseTerminalBytes', 'renameSource', 'reserveChronicleJudgeSlot', 'revertWaveTakeResolutions', 'setTakeProposalPromotedRow', 'sweepPageTextsForClaims', 'unapplyWaveTakeGrades', 'upsertChronicleRow', 'upsertDerivedOriginPark', 'upsertExtractRollupDay', 'upsertTakeHorizon', 'writeConnectorDbCursor', 'writeOpCheckpointDoc', 'writePageLabelGuard',
 ]);
 export type MemberKind = 'read_name' | 'raw' | 'reserved' | 'ignored' | 'schema' | 'mapped' | 'unmapped';
 
