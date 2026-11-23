@@ -458,15 +458,12 @@ src/core/access/actor.ts#attestRightOf	capability_refusal_swallowed	1
 src/core/access/caller.ts#appliedAccessSummary	catch_empty	1
 src/core/access/caller.ts#resolveAudienceIdentities	catch_empty	1
 src/core/access/caller.ts#stdioMemberId	catch_empty	1
-src/core/access/handover.ts#previewHandover	capability_refusal_swallowed	2
-src/core/access/labelled-only.ts#labelledOnlyFor	capability_refusal_swallowed	1
 src/core/access/lineage.ts#membersReadLineageOn	catch_empty	1
 src/core/access/member-sources.ts#hiddenPersonalSources	capability_refusal_swallowed	1
 src/core/access/members.ts#audienceMemberIds	catch_empty	1
 src/core/access/open-pages.ts#printOpenPagesUpgradeNotice	catch_empty	1
 src/core/access/owner.ts#ownerMemberId	catch_empty	1
 src/core/access/owner.ts#ownerReadsRestrictedOn	catch_empty	1
-src/core/access/read-log.ts#ReadLogWriter.flush<anon@1>	capability_refusal_swallowed	1	landed on master (#10011) after this guard was written; known debt, fix by a typed degraded marker
 src/core/access/requester-scope.ts#credentialScopeFor	catch_empty	1
 src/core/advisor/collect-chronicle.ts#collectChronicle.collect	capability_refusal_swallowed	1
 src/core/advisor/collect-chronicle.ts#collectChronicle.collect	catch_empty	2
@@ -1462,15 +1459,11 @@ src/core/schema-migrations/v045-facts-hot-memory-v0-31.ts#v045.handler	catch_emp
 src/core/schema-migrations/v055-query-cache-search-lite.ts#v055.handler	catch_empty	2
 src/core/schema-pack/best-effort.ts#loadActivePackForLocalEngine	catch_empty	1
 src/core/schema-pack/candidate-audit.ts#readRecentCandidates	catch_empty	1
-src/core/schema-pack/lint-rules.ts#extractableEmptyCorpus	capability_refusal_swallowed	1
-src/core/schema-pack/lint-rules.ts#extractableEmptyCorpus	catch_empty	1
 src/core/schema-pack/lint-rules.ts#mutationCountAnomaly	catch_empty	1
 src/core/schema-pack/pack-lock.ts#readLockFile	catch_empty	1
-src/core/schema-pack/query-cache-invalidator.ts#invalidateQueryCache	capability_refusal_swallowed	1
 src/core/schema-pack/review.ts#runReviewCandidates	catch_empty	1
 src/core/schema-pack/stats.ts#detectDeadPrefixes	capability_refusal_swallowed	1
 src/core/schema-pack/stats.ts#fetchCountRows	capability_refusal_swallowed	1
-src/core/schema-pack/sync.ts#probePrefix	capability_refusal_swallowed	1
 src/core/schema-pack/write-vocabulary.ts#loadActivePackForWriteVocabulary	catch_empty	1
 src/core/search/alias-fanout.ts#aliasFanoutMax	promise_catch_empty	1
 src/core/search/alias-fanout.ts#namesOf	promise_catch_empty	1
@@ -1693,8 +1686,6 @@ src/core/source-resolver.ts#readDotfileWalk	catch_empty	1
 src/core/source-resolver.ts#requestSourceRows<anon@1>	promise_catch_empty	1
 src/core/source-resolver.ts#resolveSourceIdChain	promise_catch_empty	1
 src/core/source-resolver.ts#resolveSourceWithTierChain	promise_catch_empty	1
-src/core/sources-not-readable.ts#assertUnscopedReadReachesPages	capability_refusal_swallowed	1
-src/core/sources-not-readable.ts#assertUnscopedReadReachesPages	catch_empty	1
 src/core/sources-ops.ts#addSource	capability_refusal_swallowed	1
 src/core/sources-ops.ts#addSource	promise_catch_empty	1
 src/core/spend-log.ts#getTodaySpendCents	catch_empty	1	sync 13b: the read is a typed engine member on the Rust trunk; master's tree reads it through the sql tag or executeRaw, which this guard counts under another metric or not at all; the handler is unchanged from master (fail-open to 0 on a database hiccup, as the comment says)
