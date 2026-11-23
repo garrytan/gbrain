@@ -1950,7 +1950,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   being off, a `stop`, and a `start` that continues an existing epoch each count as one unknown writer path (recorded in
   `state.json` as `writer_coverage_stopped_at` and `writer_coverage_restarted_at`, so a failed gap insert cannot hide
   them) while they are inside the 7-day window, and for as long as shadow mode stays off; the swap is refused with
-  `writer_coverage_unknown` until the window has passed. A write that only takes a lock,
+  `writer_coverage_unknown` until the window has passed. The open engine decides whether the hooks must exist: a state file that names no primary engine, or another kind than the engine in hand, counts as one more unknown path. Known limit: criterion 11 reads role privileges as they are now, so a privilege repair inside the window can hide an earlier unrecorded write (follow-up: a durable coverage-break record across role and ACL changes). A write that only takes a lock,
   a log or a cache row counts as a write for the note, though the follower does not copy it. The plan's idea of
   counting how often an enabled process held no attached engine is not built: it cannot be measured from the shadow
   machine, and the database hooks replace it. Any

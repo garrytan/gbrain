@@ -160,6 +160,27 @@ describe('criterion 11 fails closed on a stop or a restart it cannot see inside'
   });
 });
 
+describe('criterion 11 does not trust a state file that disagrees with the open engine', () => {
+  const stateOf = (extra: Record<string, unknown>): ShadowState => ({
+    version: SHADOW_STATE_VERSION, enabled: true, started_at: new Date(Date.now() - 2 * 86_400_000).toISOString(), sample_rate: 1, queue_bound: 8, plan_hash: 'h', brain: 'b', ...extra,
+  }) as ShadowState;
+  const read = async (state: ShadowState) => {
+    const out = await buildEligibilityStatus({ dir, state, engine: primary, source: { name: 'test', unknownPaths: () => 0 }, brainId: () => 'host', addonTarget: () => 'linux-x64-glibc' });
+    const verdict = evaluateReadiness({ eligibility: out.eligibility } as ShadowStatus);
+    return { out, row: verdict.criteria.find(c => c.n === 11)! };
+  };
+
+  test('a state naming the same kind as the engine passes; a missing, unreadable or different primary_engine counts and refuses', async () => {
+    await observe('11111111-1111-4111-8111-111111111111', 'gbrain cli:1:aaaaaaaa');
+    expect((await read(stateOf({ primary_engine: 'pglite' }))).row.state).toBe('pass');
+    for (const bad of [{}, { primary_engine: 7 }, { primary_engine: 'postgres' }, { primary_engine: null }]) {
+      const { out, row } = await read(stateOf(bad));
+      expect([JSON.stringify(bad), out.eligibility.unknown_writer_paths]).toEqual([JSON.stringify(bad), 1]);
+      expect(row.state).toBe('fail');
+    }
+  });
+});
+
 describe('the status document the swap reads', () => {
   test('with the primary passed in it carries the writer fields; without it they are absent', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-elig-doc-'));

@@ -100,13 +100,18 @@ export async function buildEligibilityStatus(input: EligibilityInput): Promise<E
   };
   if (!input.engine) return { eligibility: fields };
   const since = eligibilityWindowStart(input.state, now);
+  // The open engine decides whether hooks must exist, never the state file alone: a state that names no primary engine (or an
+  // unreadable one) or names another kind than the engine in hand is not proof of anything, so it counts as an unknown path.
+  const hooksExpected = input.engine.capabilities?.has('postgres_admin') === true; // the server database: hooks and role rights exist only there
+  const stateKind = input.state?.primary_engine as unknown;
+  const stateDisagrees = input.state ? (typeof stateKind !== 'string' || primaryTakesWriterHooks(stateKind) !== hooksExpected) : false;
   let ev;
   try {
-    ev = await readWriterEvidence(input.engine, since, primaryTakesWriterHooks(input.state?.primary_engine), WRITER_HOOK_TRIGGER, WRITER_EVIDENCE_TABLES);
+    ev = await readWriterEvidence(input.engine, since, hooksExpected, WRITER_HOOK_TRIGGER, WRITER_EVIDENCE_TABLES);
   } catch (error) {
     return { eligibility: fields, eligibility_evidence: { state: 'read_failed', code: errorCode(error) } };
   }
   const source = input.source ?? planAsWrittenSource(input.dir);
-  const unknown = ev.unresolved + ev.gaps + ev.unhooked + ev.uncovered_roles + source.unknownPaths(since) + coverageBreaks(input.state, since);
+  const unknown = ev.unresolved + ev.gaps + ev.unhooked + ev.uncovered_roles + source.unknownPaths(since) + coverageBreaks(input.state, since) + (stateDisagrees ? 1 : 0);
   return { eligibility: { writer_hosts_7d: ev.hosts, unknown_writer_paths: unknown, ...fields } };
 }

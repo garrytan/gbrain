@@ -163,4 +163,22 @@ d('writer observations on Postgres', () => {
       });
     } finally { await locker.end({ timeout: 5 }).catch(() => undefined); }
   }, 90_000);
+
+  test('a state file without primary_engine cannot switch the Postgres writer checks off: an unclaimed session still refuses', async () => {
+    const dir = tempDir();
+    const { installWriterHooks } = await import('../../src/shadow/writer-hooks.ts');
+    await installWriterHooks(engine, dir);
+    const a = observer(engine, dir, '11111111-1111-4111-8111-111111111111', 'gbrain serve:10:aaaaaaaa');
+    a.note(); await settle(a);
+    const url = (engine as unknown as { connectedDatabaseUrl: string }).connectedDatabaseUrl;
+    const other = postgres(url, { max: 1, onnotice: () => undefined, prepare: false, connection: { application_name: 'psql' } });
+    try { await other`INSERT INTO config (key, value) VALUES ('hooks-no-primary-engine', '1') ON CONFLICT (key) DO NOTHING`; } finally { await other.end({ timeout: 5 }).catch(() => undefined); }
+    const base = { version: 1, enabled: true, started_at: new Date(Date.now() - 3_600_000).toISOString(), sample_rate: 1, queue_bound: 8, plan_hash: 'h', brain: 'b' };
+    const read = async (state: unknown) => (await buildEligibilityStatus({ dir, state: state as never, engine, source: { name: 't', unknownPaths: () => 0 }, brainId: () => 'host', addonTarget: () => 'linux-x64-glibc' })).eligibility.unknown_writer_paths!;
+    // With the field present, the unclaimed session is an unresolved writer; with it missing, the open engine still decides.
+    const withField = await read({ ...base, primary_engine: 'postgres' });
+    const without = await read(base);
+    expect(withField).toBeGreaterThanOrEqual(1);
+    expect(without).toBeGreaterThanOrEqual(withField + 1);
+  }, 60_000);
 });
