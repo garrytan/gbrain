@@ -20,7 +20,8 @@
 import { normalizeSlug } from '../core/utils.ts';
 import { isWriteTargetContained, isHostAbsolutePath, msysToNativePath } from '../core/path-confine.ts';
 import { resolveSourceLocalFilePath } from '../core/markdown.ts';
-import { sanitizeRecordedSourcePath, scannerSlugRootMode } from '../core/write-through.ts';
+import { scannerSlugRootMode } from '../core/write-through.ts';
+import { readOnlyCheckout } from '../core/persistence/mirror-read-only.ts';
 import { withNormalizedSlugParams } from '../core/ops/slug-params.ts';
 import { storedWriteSlug } from '../core/persistence/legacy-slug-put.ts';
 import { resolve as resolvePath } from 'node:path';
@@ -875,12 +876,16 @@ export function parseTakesBeforeCursor(rest: readonly string[]): { updatedAt: st
 }
 
 /**
- * The Markdown file `takes revisit` opens for the page stored as `slug`. A page that records a file (`pages.source_path`) opens
- * that file, placed under its source's root the way sync and `gbrain repair` place it: the source's own checkout, else the
- * configured brain repo (`.sources/<id>` for a source other than `default`). A page that records none opens `<repo>/<slug>.md`.
- * Either path must stay inside that root, symlinks followed; one that does not is refused, never opened and never created.
+ * The Markdown file `takes revisit` opens for the page stored as `slug`. A page that records a file (`pages.source_path`, a
+ * `.md` or `.mdx` path) opens that file, placed under its source's root the way sync and `gbrain repair` place it: the source's
+ * own checkout, else the configured brain repo (`.sources/<id>` for a source other than `default`); a name-only path from an
+ * older import is looked for under the slug's folder. A page that records none opens `<repo>/<slug>.md`. Either path must stay
+ * inside that root, symlinks followed; one that does not is refused, never opened and never created. A page in a read-only
+ * checkout (a mirror, or a clone gbrain pulls) is refused too, since the revisit marker would change a file gbrain never writes.
  */
-async function revisitFile(engine: BrainEngine, repoPath: string, slug: string): Promise<{ ok: true; filePath: string } | { ok: false }> {
+type RevisitTarget = { ok: true; filePath: string } | { ok: false; why: 'outside_root' } | { ok: false; why: 'read_only'; sourceId: string; reason: string };
+
+async function revisitFile(engine: BrainEngine, repoPath: string, slug: string): Promise<RevisitTarget> {
   const { join } = await import('node:path');
   const { existsSync, statSync } = await import('node:fs');
   // The page in the `default` source first, then any source; a live page before a deleted one.
@@ -889,24 +894,20 @@ async function revisitFile(engine: BrainEngine, repoPath: string, slug: string):
     row = await engine.getPage(slug, { sourceId: 'default', includeDeleted }) ?? await engine.getPage(slug, { includeDeleted });
     if (row) break;
   }
+  if (row) {
+    const reason = await readOnlyCheckout(engine, row.source_id);
+    if (reason) return { ok: false, why: 'read_only', sourceId: row.source_id, reason };
+  }
   const recorded = row?.source_path?.trim();
   if (!row || !recorded) {
     const filePath = join(repoPath, `${slug}.md`);
-    return isWriteTargetContained(filePath, repoPath) ? { ok: true, filePath } : { ok: false };
+    return isWriteTargetContained(filePath, repoPath) ? { ok: true, filePath } : { ok: false, why: 'outside_root' };
   }
   const local = (await engine.getSource(row.source_id))?.local_path;
-  let sourceRoot: string;
-  let filePath: string | null;
-  if (local) {
-    sourceRoot = msysToNativePath(local);
-    const usable = isHostAbsolutePath(sourceRoot) && existsSync(sourceRoot) && statSync(sourceRoot).isDirectory();
-    filePath = usable ? resolveSourceLocalFilePath(sourceRoot, recorded, slug, await scannerSlugRootMode(engine, row.source_id, sourceRoot)) : null;
-  } else {
-    sourceRoot = row.source_id === 'default' ? repoPath : join(repoPath, '.sources', row.source_id);
-    const relative = sanitizeRecordedSourcePath(recorded);
-    filePath = relative === null ? null : join(sourceRoot, relative);
-  }
-  return filePath && isWriteTargetContained(filePath, sourceRoot) ? { ok: true, filePath } : { ok: false };
+  const sourceRoot = local ? msysToNativePath(local) : row.source_id === 'default' ? repoPath : join(repoPath, '.sources', row.source_id);
+  const usable = !local || isHostAbsolutePath(sourceRoot) && existsSync(sourceRoot) && statSync(sourceRoot).isDirectory();
+  const filePath = usable ? resolveSourceLocalFilePath(sourceRoot, recorded, slug, await scannerSlugRootMode(engine, row.source_id, sourceRoot)) : null;
+  return filePath && isWriteTargetContained(filePath, sourceRoot) ? { ok: true, filePath } : { ok: false, why: 'outside_root' };
 }
 
 /**
@@ -938,7 +939,9 @@ async function cmdRevisit(engine: BrainEngine, rest: string[]): Promise<void> {
   const slug = await readSlug(engine, typed);
   const target = await revisitFile(engine, repoPath, slug);
   if (!target.ok) {
-    process.stderr.write(`Refusing to open the file recorded for ${typed}: it is not a Markdown file inside the source root.\n`);
+    process.stderr.write(target.why === 'read_only'
+      ? `Refusing to open ${typed}: its source ${target.sourceId} is a read-only checkout (${target.reason}), and the revisit marker would change a file gbrain does not write. Open the file in your editor directly.\n`
+      : `Refusing to open the file recorded for ${typed}: it is not a Markdown file inside the source root.\n`);
     process.exit(1);
   }
   const filePath = target.filePath;
