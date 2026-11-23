@@ -13,6 +13,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { doctorSource } from './helpers/doctor-source.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { withQueueMembers } from './helpers/queue-engine-members.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import {
   computeOrphanedPrivateQueueCheck,
@@ -28,11 +29,11 @@ beforeAll(async () => {
   base = new PGLiteEngine();
   await base.connect({});
   await base.initSchema();
-  // computeWedgedQueueCheck only reads .kind + .executeRaw.
-  pgLike = {
+  // computeWedgedQueueCheck reads .kind and the queue-health members, which run their statements on .executeRaw.
+  pgLike = withQueueMembers({
     kind: 'postgres',
     executeRaw: base.executeRaw.bind(base),
-  } as unknown as BrainEngine;
+  }) as unknown as BrainEngine;
 });
 
 afterAll(async () => {
