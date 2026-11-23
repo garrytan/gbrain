@@ -1988,7 +1988,11 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   that claims a chunk without a numeric chunk id, is never cleared and the diff counts. A new row is judged on the primary with the
   read policy, the safe-chunk fence the read asked for and the chunk visibility the primary used. "Nothing changed" is proven by one thing: the primary's WAL position
   (`pg_current_wal_insert_lsn()`, the insert position: a commit made with `synchronous_commit=off` is visible before its WAL is written out, never before it is inserted), read BEFORE the primary read started (never a newer one) and read again at the end of the check, must be
-  the same, with this process's write generation and the access tables' generation. Any committed write to any table, to the
+  the same, no transaction that was in progress at the capture (its xid, from the snapshot and from `pg_stat_activity`, because a
+  transaction can insert its COMMIT record and become visible later with no further WAL, as under `commit_delay` or a synchronous
+  standby wait) may have committed by then, and this process's write generation and the access tables' generation must be the
+  same. A role that is neither a superuser nor in `pg_read_all_stats` cannot see other sessions' transactions: its token is blind
+  and clears nothing. Any committed write to any table, to the
   catalog (a policy altered in place) or a change undone again (A, B, A) moves it, in this database or any other of the same
   cluster. When it moved, both engines and the reference are run again from a new position, up to 3 times; a sample still moving
   after that stays unresolved (`skipped:moved`) and counts into `reads.diverged_unexplained_7d` (criterion 3). So busy brains clear

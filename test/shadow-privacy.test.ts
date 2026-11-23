@@ -43,16 +43,18 @@ defineCheckScenarios({ primary: () => engine, dialect: 'pglite' });
 describe('policy generation', () => {
   test('an access rule added during the check moves the generation: inconclusive, never a pause', async () => {
     const ids = await privacyFixture(engine);
-    let transactions = 0;
+    let done = false;
     const moving = new Proxy(engine, { get: (target, prop) => {
       if (prop !== 'transaction') return Reflect.get(target, prop, target);
-      return async (fn: never, opts: never) => {
-        if (++transactions === 2) await target.executeRaw(`INSERT INTO access_rules(source_id,rule_id,prefix,readable_by,revision) VALUES('default','moved','elsewhere/',ARRAY['member:bob-example'],2)`);
-        return target.transaction(fn, opts); // the policy read is the second transaction, between the two generation reads
+      return async (fn: (tx: BrainEngine) => Promise<unknown>, opts: never) => {
+        let generationRead = false;
+        const result = await target.transaction(async (tx) => fn(new Proxy(tx, { get: (t, p) => (p === 'executeRaw' ? (text: string, ...a: never[]) => { if (text.includes('access_policy_revisions')) generationRead = true; return (t.executeRaw as Function).call(t, text, ...a); } : Reflect.get(t, p, t)) }) as BrainEngine), opts);
+        if (generationRead && !done) { done = true; await target.executeRaw(`INSERT INTO access_rules(source_id,rule_id,prefix,readable_by,revision) VALUES('default','moved','elsewhere/',ARRAY['member:bob-example'],2)`); } // the rule lands right after the first generation read: between the two
+        return result;
       };
     } }) as BrainEngine;
     const rig = await startRig({ primary: moving, unseeded: true });
-    transactions = 0; // the rig's own first policy fingerprint read is not the check
+    done = false; // the rig's own reads before the sample are not the check
     try {
       rig.rust.listPages = async () => [{ id: ids['priv/a'], slug: 'priv/a', source_id: 'default', title: 'x', type: 'note' }];
       await withCallerAccess(ALICE, () => rig.engine.listPages({ limit: 100, excludePrivate: true }));

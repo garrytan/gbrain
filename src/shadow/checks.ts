@@ -73,16 +73,65 @@ const CHANGED_AFTER_SQL = `SELECT (EXISTS (SELECT 1 FROM pages WHERE updated_at 
   OR EXISTS (SELECT 1 FROM access_pending_coverage WHERE created_at > to_timestamp($1::double precision / 1000.0))
   OR EXISTS (SELECT 1 FROM access_policy_revisions WHERE created_at > to_timestamp($1::double precision / 1000.0) OR applied_at > to_timestamp($1::double precision / 1000.0))) AS changed`;
 
-/** The primary's WAL insert position now (pg_current_wal_insert_lsn; PGLite has it too): any committed change to any table, to the catalog (a policy altered in place) or a change that is undone again (A, then B, then A) moves it. */
-const LSN_SQL = `SELECT pg_current_wal_insert_lsn()::text AS lsn`; // the INSERT position: a commit with synchronous_commit=off is visible before its WAL is written out, never before it is inserted
+/** The primary's WAL insert position now (pg_current_wal_insert_lsn; PGLite has it too): the insert position, because a commit made with `synchronous_commit=off` is visible before its WAL is written out, never before it is inserted. */
+const LSN_SQL = `SELECT pg_current_wal_insert_lsn()::text AS lsn`;
+/**
+ * The transactions in progress now, as xid8 text, and how many other client sessions this role cannot see into. A snapshot's xip list
+ * holds the in-progress xids BELOW its xmax only; a transaction that began after the last completed one (an xid at or above xmax) is
+ * invisible to the snapshot and unlisted, so the xids the sessions are running (pg_stat_activity.backend_xid, widened with the
+ * snapshot's epoch) are listed as well. Each such transaction may have inserted its COMMIT record already and still not be visible.
+ * A session this role may not see into (a role that is neither a superuser nor in pg_read_all_stats sees every other session with all columns NULL) makes the token blind (`!`), which is never proven: such a role clears nothing.
+ */
+const XIP_SQL = `WITH s AS (SELECT pg_current_snapshot() AS snap, pg_snapshot_xmax(pg_current_snapshot())::text::bigint AS xm)
+  SELECT
+    (SELECT string_agg(x, ',') FROM (
+      SELECT x::text AS x FROM s, pg_snapshot_xip(s.snap) x
+      UNION
+      SELECT (CASE WHEN c > xm + 2147483648 THEN c - 4294967296 WHEN c < xm - 2147483648 THEN c + 4294967296 ELSE c END)::text
+        FROM (SELECT (xm / 4294967296) * 4294967296 + a.backend_xid::text::bigint AS c, xm FROM pg_stat_activity a, s WHERE a.backend_xid IS NOT NULL AND a.pid <> pg_backend_pid()) t
+    ) u) AS xids,
+    (SELECT count(*) FROM pg_stat_activity WHERE backend_type IS NULL AND pid <> pg_backend_pid())::int AS blind`; // a row this role may not see has every column NULL, its backend type too
 const lsnOf = async (tx: BrainEngine): Promise<string> => String((await tx.executeRaw<{ lsn: string }>(LSN_SQL))[0]?.lsn);
 
 /**
- * The primary's WAL position, kept fresh off the request path. `current()` is synchronous (a read is captured on the request path):
- * it returns the latest position a refresh completed BEFORE this moment, so it is never newer than the read it is stored with,
- * and starts a refresh when the one it holds is older than `ttlMs`. A stale value only makes the proof fail, never pass: the
- * position at the end of a check equals it only when nothing was written between. `undefined` until the first refresh
- * completes, or when the engine has no WAL position (a sample captured then is never proven unchanged).
+ * The freshness token: the insert position, then (a transaction later, so its snapshot is never older than that position) the xids in
+ * progress (XIP_SQL). A transaction whose COMMIT record is inserted before the position but that becomes visible only after (a commit_delay, a
+ * synchronous standby wait) leaves the position unchanged, so it must be listed here to be seen. Any transaction that commits after
+ * the position was read inserts a COMMIT record past it and moves it. Read in two reads, one transaction each, in that order.
+ */
+async function captureToken(reads: ReadSource): Promise<string> {
+  const lsn = await reads.read(lsnOf);
+  const [row] = await reads.read((tx) => tx.executeRaw<{ xids: string | null; blind: number }>(XIP_SQL));
+  const xids = row?.xids ?? '';
+  return `${lsn}|${Number(row?.blind) > 0 ? '!' : xids}`;
+}
+
+/**
+ * True only when nothing was written and nothing became visible since `token` was captured: the insert position is the same and no
+ * transaction listed in it has committed now (one that is no longer known counts as committed). Called after the data a check judges
+ * has been read, so anything that becomes visible later does not touch what was read. A token that is not one (a sample captured
+ * before any was known) is never proven.
+ */
+async function unchangedSince(reads: ReadSource, token: string | undefined): Promise<boolean> {
+  if (token === undefined) return false;
+  const cut = token.indexOf('|');
+  if (cut < 0) return false;
+  if ((await reads.read(lsnOf)) !== token.slice(0, cut)) return false;
+  const rest = token.slice(cut + 1);
+  if (rest.includes('!')) return false; // sessions of other roles that this one cannot see into: nothing can be proven
+  const xips = rest.split(',').filter((x) => x !== '');
+  if (xips.length === 0) return true;
+  const [row] = await reads.read((tx) => tx.executeRaw<{ moved: boolean }>(
+    `SELECT COALESCE(bool_or(COALESCE(pg_xact_status(x::xid8), 'committed') NOT IN ('in progress', 'aborted')), false) AS moved FROM unnest($1::text[]) x`, [xips]));
+  return row?.moved === false;
+}
+
+/**
+ * The freshness token, kept fresh off the request path. `current()` is synchronous (a read is captured on the request path): it
+ * returns the latest token a refresh completed BEFORE this moment, so it is never newer than the read it is stored with (the pair
+ * is cached together), and starts a refresh when the one it holds is older than `ttlMs`. A stale token only makes the proof fail,
+ * never pass. `undefined` until the first refresh completes, or when the engine cannot give the pair (a sample captured then is never
+ * proven unchanged: it fails closed).
  */
 export interface LsnWatch { current(): string | undefined; live(): Promise<string>; ready(): Promise<void> }
 export function createLsnWatch(reads: ReadSource, now: () => number = Date.now, ttlMs = 200): LsnWatch {
@@ -90,12 +139,12 @@ export function createLsnWatch(reads: ReadSource, now: () => number = Date.now, 
   let at = -Infinity;
   let inflight: Promise<void> | null = null;
   const refresh = (): Promise<void> => (inflight ??= (async () => {
-    try { const v = await reads.read(lsnOf); value = v; at = now(); } catch { /* the value stays older: the proof fails, never passes */ }
+    try { const v = await captureToken(reads); value = v; at = now(); } catch { /* the value stays older: the proof fails, never passes */ }
     inflight = null;
   })());
   return {
     current: () => { if (now() - at >= ttlMs) void refresh(); return value; },
-    live: () => reads.read(lsnOf),
+    live: () => captureToken(reads),
     ready: () => refresh(),
   };
 }
@@ -130,9 +179,9 @@ async function policySnapshot(reads: ReadSource, access: Partial<CallerAccess> |
   }));
   const gen1 = generation();
   // The proof: nothing was written between the position known before the primary read started and the end of this check (any table, the catalog, or a change undone again).
-  const lsn1 = await reads.read(lsnOf);
+  const held = await unchangedSince(reads, base?.lsn);
   const unproven = !base || base.lsn === undefined || (hasFollower && base.gen === undefined);
-  const moved = unproven || lsn1 !== base?.lsn || changed || (hasFollower && (gen0 !== base?.gen || gen1 !== base?.gen)) || before !== await accessGeneration();
+  const moved = unproven || !held || changed || (hasFollower && (gen0 !== base?.gen || gen1 !== base?.gen)) || before !== await accessGeneration();
   return {
     moved, violations: rows.filter((r) => r.allowed !== true).length,
     pages: rows.map((r) => ({ id: Number(r.id), key: r.key })), chunks: chunks.map((c) => ({ id: Number(c.id), page_id: Number(c.page_id), sum: c.sum })),
@@ -256,8 +305,7 @@ async function vectorReference(d: AskDeps, sample: Sample, phase: 'sample' | 're
       return tx.executeRaw<Record<string, unknown>>(stmt.exactSql, params);
     });
   });
-  const lsn1 = await d.reads.read(lsnOf);
-  if (lsn1 !== base.lsn || (hasFollower && (gen0 !== base.gen || d.follower?.published !== base.gen))) throw coded('moved');
+  if (!(await unchangedSince(d.reads, base.lsn)) || (hasFollower && (gen0 !== base.gen || d.follower?.published !== base.gen))) throw coded('moved');
   return rankedKeys(encodeValue(rows.filter((r) => r.chunk_id !== null && r.chunk_id !== undefined)));
 }
 

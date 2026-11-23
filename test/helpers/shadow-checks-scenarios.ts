@@ -857,6 +857,80 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       } finally { await other.disconnect(); await reads.close(); }
     }, 120_000);
 
+    test('a commit whose COMMIT record is inserted before the capture but becomes visible after it leaves the position unchanged, yet the proof refuses: privacy and the reference are moved (Postgres only)', async () => {
+      if (ctx.dialect !== 'postgres') return; // PGLite has one connection: no concurrent transaction
+      const primary = ctx.primary();
+      const chunkOf = await vectorFixture(primary);
+      const ids = await privacyFixture(primary);
+      const top = chunkOf.get(3)!;
+      const reads = openReadSource(primary);
+      const { PostgresEngine } = await import('../../src/core/postgres-engine.ts');
+      const other = new PostgresEngine();
+      await other.connect({ engine: 'postgres', database_url: (primary as unknown as { connectedDatabaseUrl?: string }).connectedDatabaseUrl, poolSize: 1 } as never);
+      try {
+        const watch = createLsnWatch(reads);
+        const samples = new SampleRegistry();
+        const args = encodeValue([vec(3), { limit: 10, excludePrivate: true }]);
+        let clock = 0;
+        const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never, watch, now: () => (clock += 120_000) });
+        const literal = `[${Array.from(vec(89)).join(',')}]`;
+        await other.executeRaw(`SET commit_delay = 100000`); // (the server's maximum, 100 ms) the writer inserts its COMMIT record, then waits before it flushes and becomes visible
+        await other.executeRaw(`SET commit_siblings = 0`);
+        const writer = other.transaction(async (tx) => { await tx.executeRaw(`UPDATE content_chunks SET embedding = $2::vector WHERE id = $1`, [top, literal]); });
+        // The writer's COMMIT record is inserted, then it waits out commit_delay before it flushes and becomes visible. Poll the insert position until it moves (the record is in), then capture inside the delay.
+        let token = '';
+        let previous = '';
+        for (let i = 0; i < 80 && !token; i++) { // the writer's UPDATE is quick, then it sits in its 100 ms delay with its COMMIT record inserted: the position stops moving while its xid is still in progress
+          const t = await watch.live();
+          if (t.split('|')[1] !== '' && t === previous) token = t; else { previous = t; await new Promise((r) => setTimeout(r, 8)); }
+        }
+        expect(token).not.toBe(''); expect(token.split('|')[1]).not.toBe(''); // the capture found the writer in progress: its xid is in the token
+        const sid = samples.add({ op: 'searchVector', args, result: [], at: Date.now(), lsn: token }, 100);
+        const seen = await primary.executeRaw<{ e: string }>(`SELECT embedding::text AS e FROM content_chunks WHERE id = $1`, [top]);
+        expect(seen[0]!.e).not.toBe(literal); // the primary read (this one) still sees the old vector
+        await writer; // the writer becomes visible, with no further WAL from anyone
+        expect((await primary.executeRaw<{ e: string }>(`SELECT embedding::text AS e FROM content_chunks WHERE id = $1`, [top]))[0]!.e).toBe(literal);
+        const rows = [{ payload: 'p', id: ids['open/a'] }]; // an extra Rust row the caller may read: cleared only if nothing moved
+        expect(await handler({ id: 1, kind: 'privacy', sid, phase: 'sample', rows })).toEqual({ verdict: 'privacy_check_moved', complete: false });
+        await expect(handler({ id: 2, kind: 'vector', sid, phase: 'sample' })).rejects.toMatchObject({ code: 'moved' });
+      } finally {
+        await other.executeRaw(`SET commit_delay = 0`).catch(() => undefined);
+        await primary.executeRaw(`UPDATE content_chunks SET embedding = $2::vector WHERE id = $1`, [top, `[${Array.from(vec(3)).join(',')}]`]);
+        await other.disconnect(); await reads.close();
+      }
+    }, 60_000);
+
+    test('a session of another role that the reading role cannot see into makes the token blind, and a blind token is never proven (Postgres only)', async () => {
+      if (ctx.dialect !== 'postgres') return;
+      const primary = ctx.primary();
+      await vectorFixture(primary);
+      const url = (primary as unknown as { connectedDatabaseUrl?: string }).connectedDatabaseUrl!;
+      const role = `a2_blind_${process.pid}`;
+      const secret = (await import('node:crypto')).randomUUID();
+      const drop = async (): Promise<void> => { await primary.executeRaw(`DROP OWNED BY ${role}`).catch(() => undefined); await primary.executeRaw(`DROP ROLE IF EXISTS ${role}`).catch(() => undefined); };
+      await drop();
+      await primary.executeRaw(`CREATE ROLE ${role} LOGIN PASSWORD '${secret}'`);
+      await primary.executeRaw(`GRANT USAGE ON SCHEMA public TO ${role}`);
+      await primary.executeRaw(`GRANT SELECT ON ALL TABLES IN SCHEMA public TO ${role}`);
+      const { PostgresEngine } = await import('../../src/core/postgres-engine.ts');
+      const asRoleEngine = new PostgresEngine();
+      let reads: ReturnType<typeof openReadSource> | undefined;
+      try {
+        const asRole = new URL(url);
+        Object.assign(asRole, { username: role, password: secret });
+        await asRoleEngine.connect({ engine: 'postgres', database_url: asRole.toString(), poolSize: 1 } as never);
+        reads = openReadSource(asRoleEngine as never); // the shadow's reads, as a role that is not a superuser and not in pg_read_all_stats; the superuser pool of the brain is another role's session
+        const watch = createLsnWatch(reads);
+        const token = await watch.live();
+        expect(token.split('|')[1]).toBe('!');
+        const samples = new SampleRegistry();
+        const sid = samples.add({ op: 'searchVector', args: encodeValue([vec(3), { limit: 10 }]), at: Date.now(), lsn: token }, 100);
+        let clock = 0;
+        const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never, watch, now: () => (clock += 120_000) });
+        await expect(handler({ id: 1, kind: 'vector', sid, phase: 'sample' })).rejects.toMatchObject({ code: 'moved' });
+      } finally { await reads?.close(); await asRoleEngine.disconnect().catch(() => undefined); await drop(); }
+    }, 60_000);
+
     test('the reference has no candidate window: boosted true top results beyond the engine\'s window are found, and the windowed search misses them', async () => {
       const primary = ctx.primary();
       const unit = (v: Float32Array): Float32Array => { let n = 0; for (const x of v) n += x * x; return v.map((x) => x / Math.sqrt(n)); };
