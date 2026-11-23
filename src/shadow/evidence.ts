@@ -10,7 +10,8 @@
  * are never produced here (plan a2).
  *
  * Counting rules (the lane owner's rulings):
- *   - successful = a `match`; stale, inconclusive, order_diff, errors and dropped attempts are not coverage.
+ *   - successful = a `match` or a `collation_order` (explained: same rows in the C byte order Rust follows); stale,
+ *     inconclusive, order_diff, errors and dropped attempts are not coverage.
  *   - every operation class used in the epoch is listed, with 0 successes when none compared; each needs
  *     `MIN_SUCCESSFUL_PER_OP` (an engineering default, printed with the status); readiness keeps the 10,000 total.
  *   - every rust_error (error, timeout, addon_unavailable) in the epoch's last 7 days is unresolved; only a new epoch clears it.
@@ -58,7 +59,7 @@ export interface EvidenceStatus {
     panics_label: string;
     /** The build that opened the epoch (commit, version, addon target); absent when the epoch predates the field: unknown, never guessed. */
     build?: EpochBuild;
-    /** Comparisons per operation class that were explained as `collation_order` (exactness.ts), in the epoch. */
+    /** Comparisons per operation class explained as `collation_order` (exactness.ts), in the epoch; they also count as successful. */
     collation_order: Record<string, number>;
     /** `<op> <successful>/<minimum>` for each class under the minimum. */
     ops_lacking_samples: string[];
@@ -111,7 +112,7 @@ function foldLedger(dir: string, epoch: EpochManifest, now: number): ReadFold | 
       const recent = !(t < now - 7 * DAY_MS); // an unreadable time counts as recent: fail closed
       const arm = exactnessArm(r.op);
       const unexplained = (r.outcome === 'inconclusive' || r.outcome === 'diff') && arm !== null;
-      if (r.outcome === 'match') fold.matches.set(r.op, (fold.matches.get(r.op) ?? 0) + 1);
+      if (r.outcome === 'match' || r.outcome === 'collation_order') fold.matches.set(r.op, (fold.matches.get(r.op) ?? 0) + 1);
       if (r.outcome === 'collation_order') fold.collation.set(r.op, (fold.collation.get(r.op) ?? 0) + 1);
       if (recent && r.outcome === 'capability_missing') fold.capability_missing_7d++;
       if (recent && RUST_ERRORS.has(r.outcome)) fold.rust_error_unresolved_7d++;
@@ -203,7 +204,7 @@ export function renderEvidenceStatus(s: EvidenceStatus): string[] {
     lines.push(`  unexplained diverged in the last 7 days: ${s.reads.diverged_unexplained_7d}; capability_missing in the last 7 days: ${s.reads.capability_missing_7d}`);
   }
   const collation = Object.entries(e.collation_order).map(([op, n]) => `${op} ${n}`);
-  if (collation.length) lines.push(`  collation_order (explained: same rows, in the C byte order Rust follows; ICU and glibc hosts sort differently): ${collation.join(', ')}`);
+  if (collation.length) lines.push(`  collation_order (explained and counted as successful: same rows, in the C byte order Rust follows; ICU and glibc hosts sort differently): ${collation.join(', ')}`);
   const arm = (name: string, v: number | undefined): string => `${name} ${v ?? 'no comparisons'}`;
   lines.push(`  search disagreements: ${arm('trigram', s.search?.trigram_exact_disagreements)}; ${arm(`keyword/title (${SHADOW_KEYWORD_RANKER})`, s.search?.keyword_title?.exact_disagreements)}`);
   lines.push(s.child ? `  child: ${e.panics_label} ${s.child.panics}; faults (exits, failed spawns) ${s.child.faults}` : '  child: no fault evidence (the fault history cannot be read)');

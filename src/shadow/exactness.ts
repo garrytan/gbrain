@@ -12,7 +12,7 @@
  * One mismatch is explained instead: `collation_order`. A read whose output is ordered by text (the table below gives
  * each one's text key) answers in the host's collation on a Postgres primary, while Rust follows PGLite's C byte order by
  * design (RUST_ENGINE.md "Exactness hazards"; ICU and glibc hosts sort differently). Same rows in Rust's C order is that,
- * not a divergence; any other difference keeps the stale / inconclusive rule.
+ * not a divergence and counts as successful coverage (evidence.ts); any other difference keeps the stale / inconclusive rule.
  */
 import type { Classification } from './classify.ts';
 import { canonicalJson } from './codec.ts';

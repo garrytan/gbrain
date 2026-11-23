@@ -295,6 +295,13 @@ describe('evidence epoch in the child', () => {
     expect(manifest(dir).build).toEqual({ gbrain_commit: null, gbrain_version: VERSION, addon_target: detectAddonTarget() });
   });
 
+  test('the readiness policy hash defaults to policyHash(READINESS_POLICY) from engine-swap/policy.ts', async () => {
+    const dir = seeded();
+    await runChild(dir, [], { openEngine: () => ({ async connect() {}, async disconnect() {} }) as never, readinessPolicyHash: undefined });
+    const { policyHash, READINESS_POLICY } = await import('../src/core/engine-swap/policy.ts');
+    expect(manifest(dir).inputs.readiness_policy_hash).toBe(policyHash(READINESS_POLICY));
+  });
+
   test('an unseeded store has no epoch: its rows carry none', async () => {
     const dir = tmp();
     await runChild(dir, [read('getPage', ['a'], { slug: 'a' })], { openEngine: () => ({ async connect() {}, async disconnect() {}, getPage: async () => ({ slug: 'a' }) }) as never });

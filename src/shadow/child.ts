@@ -18,13 +18,14 @@ import { join } from 'node:path';
 import { gbrainPath } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { openRustEngine, type RustEngineAddonHandle } from '../core/rust-engine.ts';
+import { policyHash, READINESS_POLICY } from '../core/engine-swap/policy.ts';
 import { RUST_ENGINE_ABI } from '../core/rust-engine/addon-manifest.ts';
 import type { RustAddon } from '../core/rust-engine/addon-loader.ts';
 import { servedCapabilities } from '../core/rust-engine/store-capabilities.ts';
 import { loadRustEngineAddonOffline, type RustEngineAddonLoaderFn } from './addon.ts';
 import { classifyError, classifyResult, type Classification } from './classify.ts';
 import { decodeValue, encodeValue } from './codec.ts';
-import { capabilitySetHash, currentBuild, ensureEpoch, internalErrorRecorder, readinessPolicyHash, type EpochBuild, type EpochManifest } from './evidence-epoch.ts';
+import { capabilitySetHash, currentBuild, ensureEpoch, internalErrorRecorder, type EpochBuild, type EpochManifest } from './evidence-epoch.ts';
 import { qualifyMismatch, SHADOW_COMPARATOR_VERSION } from './exactness.ts';
 import { FollowChild, type FollowEvent, type FollowStore } from './follow-child.ts';
 import { appendFault, appendLedgerRows, writeSummaryFile, type ShadowLedgerRow, type ShadowSummaryFile } from './ledger.ts';
@@ -49,7 +50,7 @@ export interface ShadowChildDeps {
   heartbeatMs?: number;
   childId?: string;
   now?: () => number;
-  /** The approved readiness policy's hash, an evidence epoch input (evidence-epoch.ts); default the local copy of the formula. */
+  /** The approved readiness policy's hash, an evidence epoch input (evidence-epoch.ts); default `policyHash(READINESS_POLICY)` (engine-swap/policy.ts): the approved policy's hash, not an in-force one. */
   readinessPolicyHash?: () => string;
   /** SHA-256 of the loaded addon file, or null when it cannot be read; default hashes the file the loader opened. */
   addonSha256?: (addon: RustAddon) => string | null;
@@ -118,7 +119,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
         comparator_version: SHADOW_COMPARATOR_VERSION,
         adapter_version: `abi${RUST_ENGINE_ABI}.catalog${load.ok ? String(load.addon.catalogVersion) : 'none'}`,
         capability_set_hash: load.ok ? capabilitySetHash((deps.capabilities ?? servedCapabilities)()) : null,
-        readiness_policy_hash: (deps.readinessPolicyHash ?? readinessPolicyHash)(),
+        readiness_policy_hash: (deps.readinessPolicyHash ?? (() => policyHash(READINESS_POLICY)))(),
       }, now(), (deps.build ?? currentBuild)());
     } catch { epoch = null; }
   }

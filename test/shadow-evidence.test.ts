@@ -16,7 +16,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runEngineShadow } from '../src/commands/engine-shadow.ts';
 import { evaluateReadiness } from '../src/core/engine-swap/readiness.ts';
-import { capabilitySetHash, currentBuild, ensureEpoch, readEpoch, readinessPolicyHash, type EpochBuild, type EpochInputs } from '../src/shadow/evidence-epoch.ts';
+import { policyHash, READINESS_POLICY } from '../src/core/engine-swap/policy.ts';
+import { capabilitySetHash, currentBuild, ensureEpoch, readEpoch, type EpochBuild, type EpochInputs } from '../src/shadow/evidence-epoch.ts';
 import { buildEvidenceStatus, DEFAULT_READINESS_DAYS, MIN_SUCCESSFUL_PER_OP, renderEvidenceStatus } from '../src/shadow/evidence.ts';
 import { exactnessArm, isCollationOrder, qualifyMismatch } from '../src/shadow/exactness.ts';
 import { appendFault, appendLedgerRows, ledgerDir, type ShadowFault, type ShadowLedgerRow } from '../src/shadow/ledger.ts';
@@ -25,6 +26,7 @@ import { buildProvisionalReport, renderProvisionalMarkdown } from '../src/shadow
 import { writeSeedRecord, type SeedRecord } from '../src/shadow/seed.ts';
 import { SHADOW_STATE_VERSION, shadowBrainKey, shadowDirFor, writeShadowState } from '../src/shadow/state.ts';
 import { appendUsage, readEpochUsage } from '../src/shadow/usage.ts';
+import { readConfiguredShadowStatus } from '../src/shadow/status-document.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const dirs: string[] = [];
@@ -36,7 +38,7 @@ const DAY = 86_400_000;
 const STARTED = Date.parse('2026-11-24T00:00:00.000Z');
 const INPUTS: EpochInputs = {
   seed_id: 'seed-1', rust_addon_sha256: 'a'.repeat(64), comparator_version: 1, adapter_version: 'abi1.catalog3',
-  capability_set_hash: capabilitySetHash(['pages', 'search']), readiness_policy_hash: readinessPolicyHash(),
+  capability_set_hash: capabilitySetHash(['pages', 'search']), readiness_policy_hash: policyHash(READINESS_POLICY),
 };
 
 /** A directory with an epoch opened at STARTED; returns the dir and the epoch id. */
@@ -95,25 +97,21 @@ describe('evidence epoch manifest', () => {
     expect(ensureEpoch(x, next, STARTED + DAY).epoch_id).toBe(ensureEpoch(y, next, STARTED + DAY + 5).epoch_id);
   });
 
-  test('the readiness policy hash is the engine-swap policyHash formula, and a filled-in brain_ref does not change it or the epoch', () => {
-    // engine-swap/policy.ts policyHash(READINESS_POLICY) at origin/vorflux/engine-swap-run 73961727d0.
-    expect(readinessPolicyHash()).toBe('69c02b309b037f6b');
-    const formula = createHash('sha256').update(JSON.stringify({
+  test('the epoch input is the approved policy\'s policyHash; a filled-in brain_ref does not change it or the epoch', () => {
+    // Cross-check of the value policyHash(READINESS_POLICY) gave when this was written (origin/vorflux/engine-swap-run 73961727d0),
+    // and of the formula it documents: version, shadow_min and the unwaivable list.
+    expect(policyHash(READINESS_POLICY)).toBe('69c02b309b037f6b');
+    expect(policyHash(READINESS_POLICY)).toBe(createHash('sha256').update(JSON.stringify({
       v: 1, shadow_min: { kind: 'days', days: 14 },
       unwaivable: ['privacy', 'fingerprints', 'topology', 'platform', 'capabilities', 'recovery_drills', 'caught_up_following', 'final_digests'],
-    })).digest('hex').slice(0, 16);
-    expect(readinessPolicyHash()).toBe(formula);
-    const override = { id: 'c1-dec1-swap', brain_ref: null as string | null, shadow_min: { kind: 'days', days: 5 }, expires: '2026-12-08T08:00:00.000Z' };
-    const policy = { version: 1 as const, shadow_min: { kind: 'days', days: 14 }, overrides: [override] };
-    const before = ensureEpoch(tmp(), { ...INPUTS, readiness_policy_hash: readinessPolicyHash(policy) }, STARTED);
-    override.brain_ref = '0123456789abcdef'; // the brain this override binds to is filled in
-    expect(readinessPolicyHash(policy)).toBe(readinessPolicyHash());
+    })).digest('hex').slice(0, 16));
+    const unbound = { ...READINESS_POLICY, overrides: READINESS_POLICY.overrides!.map((o) => ({ ...o, brain_ref: null })) };
+    const bound = { ...READINESS_POLICY, overrides: READINESS_POLICY.overrides!.map((o) => ({ ...o, brain_ref: '0123456789abcdef' })) };
     const dir = tmp();
-    const a = ensureEpoch(dir, { ...INPUTS, readiness_policy_hash: readinessPolicyHash({ ...policy, overrides: [] }) }, STARTED);
-    expect(ensureEpoch(dir, { ...INPUTS, readiness_policy_hash: readinessPolicyHash(policy) }, STARTED + DAY)).toEqual(a);
-    expect(before.inputs.readiness_policy_hash).toBe(a.inputs.readiness_policy_hash);
+    const a = ensureEpoch(dir, { ...INPUTS, readiness_policy_hash: policyHash(unbound) }, STARTED);
+    expect(ensureEpoch(dir, { ...INPUTS, readiness_policy_hash: policyHash(bound) }, STARTED + DAY)).toEqual(a);
     // The duration itself is policy: a different default duration is a different policy and a new epoch.
-    expect(readinessPolicyHash({ version: 1, shadow_min: { kind: 'days', days: 5 } })).not.toBe(readinessPolicyHash());
+    expect(policyHash({ ...READINESS_POLICY, shadow_min: { kind: 'days', days: 5 } })).not.toBe(policyHash(READINESS_POLICY));
   });
 
   test('an unreadable manifest reads as no epoch', () => {
@@ -204,15 +202,15 @@ describe('collation order', () => {
     expect(qualifyMismatch('getTags', { outcome: 'match' }, false, sample)).toEqual({ outcome: 'match' });
   });
 
-  test('collation_order is explained: counted per operation class and printed, never a success and never unexplained', () => {
+  test('collation_order is explained and successful: counted per operation class and printed, never unexplained', () => {
     const { dir, epoch } = epochDir();
     put(dir, [...rowsOf(epoch, 'getTags', { match: 2, collation_order: 3, inconclusive: 1 }), ...rowsOf(epoch, 'listPages', { collation_order: 2 })]);
     const s = status(dir);
     expect(s.evidence!.collation_order).toEqual({ getTags: 3, listPages: 2 });
     expect(s.reads).toMatchObject({ diverged_unexplained_7d: 1 });
-    expect(s.reads!.ops).toEqual([{ op: 'getTags', successful: 2, minimum: 100 }, { op: 'listPages', successful: 0, minimum: 100 }]);
+    expect(s.reads!.ops).toEqual([{ op: 'getTags', successful: 5, minimum: 100 }, { op: 'listPages', successful: 2, minimum: 100 }]);
     const text = renderEvidenceStatus(s).join('\n');
-    expect(text).toContain('collation_order (explained: same rows, in the C byte order Rust follows; ICU and glibc hosts sort differently): getTags 3, listPages 2');
+    expect(text).toContain('collation_order (explained and counted as successful: same rows, in the C byte order Rust follows; ICU and glibc hosts sort differently): getTags 3, listPages 2');
     expect(status(epochDir().dir).evidence!.collation_order).toEqual({});
   });
 });
@@ -267,13 +265,24 @@ describe('reads', () => {
     expect(renderEvidenceStatus(s).join('\n')).toContain('lacking samples: getBacklinks 0/100 (offered 12, sampled out 12');
   });
 
-  test('a class at 99 is named while the total is over 10,000; successful means a match only', () => {
+  test('a class at 99 is named while the total is over 10,000; successful means a match or a collation_order', () => {
     const { dir, epoch } = epochDir();
     put(dir, rowsOf(epoch, 'getPage', { match: 10_500 }));
     put(dir, rowsOf(epoch, 'listPages', { match: 99, stale: 40, inconclusive: 3, order_diff: 5, error: 2, capability_missing: 1 }));
     const s = status(dir);
     expect(s.reads!.ops).toEqual([{ op: 'getPage', successful: 10_500, minimum: 100 }, { op: 'listPages', successful: 99, minimum: 100 }]);
     expect(s.evidence!.ops_lacking_samples).toEqual(['listPages 99/100']);
+  });
+
+  test('collation_order counts toward the class minimum and the total, with its own count kept', () => {
+    const { dir, epoch } = epochDir();
+    put(dir, [...rowsOf(epoch, 'getTags', { match: 98, collation_order: 2 }), ...rowsOf(epoch, 'listPages', { match: 99, collation_order: 0, stale: 1 })]);
+    const s = status(dir);
+    expect(s.reads!.ops).toEqual([{ op: 'getTags', successful: 100, minimum: 100 }, { op: 'listPages', successful: 99, minimum: 100 }]);
+    expect(s.evidence!.ops_lacking_samples).toEqual(['listPages 99/100']);
+    expect(s.evidence!.collation_order).toEqual({ getTags: 2 });
+    put(dir, rowsOf(epoch, 'getPage', { collation_order: 10_000 }));
+    expect(status(dir).reads!.ops.reduce((n, o) => n + o.successful, 0)).toBe(100 + 99 + 10_000); // the 10,000 total counts it too
   });
 
   test('counts are scoped to the current epoch: rows of another epoch or of none are kept in the ledger and counted for nothing', () => {
@@ -430,6 +439,9 @@ describe('through the status command, the report and the readiness evaluator', (
       expect(doc.epoch_started_at).toBe(epoch.started_at);
       expect(doc.reads.ops).toEqual([{ op: 'getPage', successful: 3, minimum: 100 }]);
       expect(doc.child).toEqual({ panics: 0, faults: 0 });
+      // The swap reads the same document through readConfiguredShadowStatus.
+      const viaSwap = await readConfiguredShadowStatus(() => config);
+      expect(viaSwap).toMatchObject({ epoch_id: epoch.epoch_id, reads: doc.reads, child: doc.child });
       expect(doc.search).toBeUndefined();
       expect(Object.keys(doc)).not.toContain('privacy_diverged');
       // The real document goes through the real evaluator: criterion 2 names the class lacking samples, 9 passes, 4 and 6 are missing.

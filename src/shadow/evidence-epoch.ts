@@ -60,22 +60,6 @@ const sha = (text: string): string => createHash('sha256').update(text).digest('
 /** The inputs in one fixed key order, as text. */
 const canonical = (i: EpochInputs): string => JSON.stringify([i.seed_id, i.rust_addon_sha256, i.comparator_version, i.adapter_version, i.capability_set_hash, i.readiness_policy_hash]);
 
-/**
- * What no policy can waive (the design's list), as engine-swap/policy.ts `UNWAIVABLE` names it. The readiness-policy
- * hash is an epoch input, so changing it starts a new epoch; callers inject the policy's own hash (`readinessPolicyHash`
- * seam on the child), and this copy of the formula is the default.
- */
-const UNWAIVABLE = ['privacy', 'fingerprints', 'topology', 'platform', 'capabilities', 'recovery_drills', 'caught_up_following', 'final_digests'] as const;
-
-/**
- * The same hash as `policyHash(policy)` in engine-swap/policy.ts: it covers the policy's version, its `shadow_min` and
- * the unwaivable list, and nothing else. Dated per-brain overrides and their `brain_ref` are not part of it, so filling
- * in a `brain_ref` does not rotate the epoch. Not an in-force hash.
- */
-export function readinessPolicyHash(policy: { version: 1; shadow_min: unknown; overrides?: unknown } = { version: 1, shadow_min: { kind: 'days', days: 14 } }): string {
-  return sha(JSON.stringify({ v: policy.version, shadow_min: policy.shadow_min, unwaivable: UNWAIVABLE })).slice(0, 16);
-}
-
 /** A stable hash of the capability names the Rust engine reports. */
 export function capabilitySetHash(capabilities: Iterable<string>): string {
   return sha(JSON.stringify([...capabilities].sort())).slice(0, 16);

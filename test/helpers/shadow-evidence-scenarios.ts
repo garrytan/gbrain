@@ -98,7 +98,9 @@ export function defineEvidenceScenarios(ctx: EvidenceScenarioContext): void {
         while (Date.now() < deadline && !file()) await new Promise((resolve) => setTimeout(resolve, 100));
         const rows = file().split('\n').filter(Boolean).map((l) => JSON.parse(l));
         expect(rows.map((r) => r.outcome)).toEqual([JSON.stringify(theirs) === JSON.stringify(cOrder) ? 'match' : 'collation_order']);
-        expect(buildEvidenceStatus({ dir: home }).evidence!.collation_order).toEqual(rows[0].outcome === 'match' ? {} : { getTags: 1 });
+        const evidence = buildEvidenceStatus({ dir: home });
+        expect(evidence.evidence!.collation_order).toEqual(rows[0].outcome === 'match' ? {} : { getTags: 1 });
+        expect(evidence.reads!.ops).toEqual([{ op: 'getTags', successful: 1, minimum: 100 }]); // explained or matching, either way a success
       });
     } finally { rmSync(home, { recursive: true, force: true }); }
   }, 120_000);
