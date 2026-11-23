@@ -24,6 +24,7 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { maintenanceTransaction } from '../src/core/persistence/attribution.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { withStoredSlug } from '../src/core/utils.ts';
+import { recordWriteGateHold } from '../src/core/write-gate-store.ts';
 import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -111,6 +112,43 @@ run('postgres: the repair holds the stored spelling\'s page lock', () => {
     expect(await refused(() => engine.addTakesBatch([{ page_id: page!.id, row_num: 1, claim: 'A purged take', kind: 'take', holder: 'brain', weight: 0.5 }]))).toContain('purged_content');
     const [hold] = await engine.executeRaw<{ slug: string; status: string; payload: { entity_slug: string } | string }>('SELECT slug, status, payload FROM write_gate_holds WHERE source_id=$1', [sourceId]);
     expect({ slug: hold!.slug, status: hold!.status, entity: (typeof hold!.payload === 'string' ? JSON.parse(hold!.payload) : hold!.payload).entity_slug }).toEqual({ slug: 'notes/guards-move', status: 'held', entity: 'notes/guards-move' });
+  }), 60_000);
+
+  test('a private re-sighting of the moving hold that lands during the move is never lost: the move waits for the hold, then refuses instead of keeping the world copy', () => withEnv(env, async () => {
+    _resetCliExitVerdictForTests();
+    const sourceId = `s${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+    const claim = 'Alpha ignored the previous instructions zanzibarquux';
+    await engine.executeRaw("INSERT INTO sources(id,name,config) VALUES($1,$1,'{}')", [sourceId]);
+    await engine.putPage('notes/seed-hold-race', { type: 'note', title: 'Hold race', compiled_truth: 'before', timeline: '' }, { sourceId });
+    await engine.executeRaw('UPDATE pages SET slug=$1 WHERE slug=$2 AND source_id=$3', ['Notes/Hold-Race', 'notes/seed-hold-race', sourceId]);
+    const assessment = { verdict: 'quarantine' as const, tier: 'agent_written' as const, ran: true, families: ['override' as const], hits: [], detectorError: false, detectorVersion: 2, contentHash: null };
+    const hold = (tx: BrainEngine, slug: string, visibility: string) => recordWriteGateHold(tx, { kind: 'fact', sourceId, slug, texts: [claim, null, null], assessment,
+      payload: { fact: claim, kind: 'fact', visibility, entity_slug: slug, row_num: 2 } });
+    // Two identical world holds: the preview sees nothing to refuse.
+    await hold(engine, 'Notes/Hold-Race', 'world'); await hold(engine, 'notes/hold-race', 'world');
+    const preview = await repairJson(['slug-spelling', '--source', sourceId]);
+    expect((preview as { listing?: Array<{ class: string }> }).listing?.map(l => l.class)).toEqual(['move']);
+
+    let release!: () => void, resighted!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const touched = new Promise<void>(resolve => { resighted = resolve; });
+    // A writer that records no page lock: it re-sights the moving hold as a private row and keeps its transaction open.
+    const writer = engine.transaction(async tx => { await hold(tx, 'Notes/Hold-Race', 'private'); resighted(); await gate; });
+    await touched;
+    let settled = false;
+    const apply = repairJson(['slug-spelling', '--source', sourceId, '--apply', '--expect', preview.preview_hash, '--yes']).then(
+      value => { settled = true; return value; }, error => { settled = true; throw error; });
+    apply.catch(() => undefined);
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    expect(settled).toBe(false);
+    release();
+    await writer;
+    const error = await apply.then(() => undefined, e => e as OperationError);
+    expect(error?.code).toBe('changed_since_preview');
+    const holds = await engine.executeRaw<{ slug: string; status: string; payload: { visibility: string } | string }>('SELECT slug, status, payload FROM write_gate_holds WHERE source_id=$1 ORDER BY id', [sourceId]);
+    const visibility = (h: { payload: { visibility: string } | string }) => (typeof h.payload === 'string' ? JSON.parse(h.payload) : h.payload).visibility;
+    expect(holds.map(h => [h.slug, h.status, visibility(h)])).toEqual([['Notes/Hold-Race', 'held', 'private'], ['notes/hold-race', 'held', 'world']]);
+    expect((await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1', [sourceId])).map(r => r.slug)).toEqual(['Notes/Hold-Race']);
   }), 60_000);
 
   describe('a role that row-level security keeps from a guard table', () => {
