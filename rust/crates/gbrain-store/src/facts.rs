@@ -103,7 +103,7 @@ pub use crate::owner_only::OwnerOnlyForm;
 pub(crate) use crate::owner_only::OwnerOnlySources;
 pub(crate) use fence::jsonb_time;
 pub use fence::{FactRestore, FactSourcePrefix, FenceContext, FenceTarget};
-pub use fence_overlay::{FenceOverlayIncomingRow, FenceOverlayInput};
+pub use fence_overlay::{FenceOverlayIncomingRow, FenceOverlayInput, FenceRowKey};
 pub use held_cells::{HeldFenceCellKey, HeldFenceCellsInput, HeldFenceMember};
 pub use page_purges::PagePurgeUpsert;
 pub(crate) use page_purges::has_page_purges;

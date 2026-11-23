@@ -17,6 +17,7 @@ import { OperationError, __registerOperationErrorRenderer, provesNotAdmitted, ty
 import { StructuredAgentError } from './errors.ts';
 import { canonicalCodeFor, codeEntry, codeClass, codeRetryable, exitCodeForCode } from './error-catalogue.ts';
 import { VERB_NAMES } from './verbs.ts';
+import { isEngineCapabilityRefusal } from './engine-capability-refusal.ts';
 import { classifyPgAccessError, formatDbAccessMarker } from './pg-access-classify.ts';
 import { isReadOnlyTransactionError } from './postgres-engine/read-write-transactions.ts';
 import { redactConnectionInfo } from './audit/redact-connection-info.ts';
@@ -587,6 +588,11 @@ const ROWS: Row[] = [
         ...(e.withdrawn ? { withdrawn: e.withdrawn } : {}),
         ...(e.writableSourceIds ? { writable_source_ids: e.writableSourceIds } : {}),
         ...(e.retryable !== undefined ? { retryable: e.retryable } : {}),
+        // MEMORY_VERBS v1 lists no engine_capability_missing code: a verb whose engine refuses a member it needs answers
+        // `unavailable` (a required dependency cannot serve), with the refusal named in `detail`.
+        ...(isVerbOp(ctx) && isEngineCapabilityRefusal(e)
+          ? { error: 'unavailable', code: 'unavailable', detail: e.detail ?? `${e.code}: ${e.message}`, protocol_version: 1 as const }
+          : {}),
       };
     },
   },

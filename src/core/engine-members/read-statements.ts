@@ -11,7 +11,7 @@ import type * as EmbeddingCatalogSql from '../engine-sql/embedding-catalog.ts';
 import type { EntityAnchoredPages, EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, FuzzyEntityCandidateRow, IgnoredLabelPageRow, InboundLinkerCountRow, LivePageTypeRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, NameVariantCandidateQuery, NameVariantCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, TextMentionPageRow, TrigramCandidateQuery, TrigramCandidateRow } from '../engine-sql/entity-reads.ts';
 import type { ExactBatchRow, ExactScanOpts } from '../search/exact-scan.ts';
 import type { ExactIdentityRow, ExactIdentityStatementOpts } from '../engine-sql/exact-identity.ts';
-import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow, LongPageSizeRow, PageTypeProbe, RankCoverageRow, UnattributedFactRow, WantedPageRow } from '../engine-sql/cli-reads-ops.ts';
+import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, FenceRowKey, FenceRowTrust, HeldFenceCellKey, HeldFenceCellRow, LongPageSizeRow, PageTypeProbe, RankCoverageRow, UnattributedFactRow, WantedPageRow } from '../engine-sql/cli-reads-ops.ts';
 import type { FactReadableSpec, FactWithdrawalClaim, FactWithdrawalClaimSpec, ForgetTargetRow, ForgetTargetSpec, LinkedFactCopiesSpec, LinkedFactCopy, OwnerReachSpec, SourceWriteRow } from '../engine.ts';
 import type { PageReadScope } from '../types.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from '../engine-sql/graph-rank.ts';
@@ -82,6 +82,8 @@ export interface ReadStatementMembers {
   listHeldFenceCells(keys: readonly HeldFenceCellKey[]): Promise<HeldFenceCellRow[]>;
   /** #5575 ENG-1: the fence overlay's read of one page's incoming world fence rows (eligibility/fence-overlay.ts loadFenceChunkOverlay), one row per incoming row in order; `hideHeld` adds heldRowSql for the caller in context. */
   readFenceOverlayRows(page: { sourceId: string; slug: string }, incoming: readonly FenceOverlayIncomingRow[], opts: { hideHeld: boolean }): Promise<FenceOverlayRow[]>;
+  /** #5575 37-1/37-2/A5: the newest live fact at each fence row key (eligibility/stamp.ts applyFenceRowTrust): tier, activation flag, pending supersede ref. */
+  listFenceRowTrust(keys: readonly FenceRowKey[]): Promise<FenceRowTrust[]>;
   /** Unverified auto-extracted pages visible in scope (`sourceIds` wins over `sourceId`), newest first. */
   listExtractionPendingPages(opts: { sourceIds?: string[]; sourceId?: string; limit: number; offset: number }): Promise<ExtractionPendingRow[]>;
   /** Active facts with no entity in `sourceIds`, newest id first; `worldOnly` keeps world facts, `excludePrivateProvenance` drops private-provenance facts. */

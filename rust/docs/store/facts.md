@@ -25,6 +25,7 @@ typed claims. Each member gives the answer PGLite gives today, odd behavior incl
 | `readFactPreimages` | The fact rows adapter's before-state of named facts of one source (`facts/fence.rs`). See "The fence guard's reads". |
 | `listHeldFenceCells` | The fence row lines a caller with world-only fact reads may not see (`facts/held_cells.rs`), member callers and callers with a private-facts grant included. See "Held fence cells". |
 | `readFenceOverlayRows` | The fence overlay's read of one page body's world fence rows (`facts/fence_overlay.rs`): page tier, newest row fact tier and flag, held hold, narrower fact. See "The fence overlay". |
+| `listFenceRowTrust` | The fence-row trust read of recall's query arm and synthesize (`eligibility/stamp.ts` `applyFenceRowTrust`; `facts/fence_overlay.rs`): for each fence row key, the newest live fact's tier, `activationSuppressedSql` flag and `contestedRefSql` ref; an expired fact gives no row. |
 | `migrateFactsToCanonical` | Moves a phantom page's active rows onto the canonical slug, `row_num` offset past the canonical page's largest. The ontology duplicates the move would make are dropped first, in its own write, as PGLite runs the two statements outside one transaction. |
 
 Rows go out with dates as microsecond ISO text, `embedding` as a number list (or null), and the

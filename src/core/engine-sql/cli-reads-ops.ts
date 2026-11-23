@@ -18,7 +18,7 @@ import { chunkVisibleFilter, safeChunksFilter } from '../search/safe-chunks.ts';
 import { unverifiedExtractionFragment } from '../extraction-review.ts';
 import { buildVisibilityClause } from '../search/sql-ranking.ts';
 import { privatePagesFilterForCaller, privateProvenanceFilterUnderPolicy } from '../search/private-visibility.ts';
-import { activationSuppressedSql, deletedPageProjectionHiddenSql } from '../eligibility/sql.ts';
+import { activationSuppressedSql, contestedRefSql, deletedPageProjectionHiddenSql } from '../eligibility/sql.ts';
 import { heldRowSql } from '../eligibility/fence-overlay.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 import { pageTypeProbeStatement } from '../search/page-type-probe.ts';
@@ -183,6 +183,32 @@ export async function readFenceOverlayRows(raw: EngineRawRead, page: { sourceId:
   ORDER BY i.ord`);
   const rows = await raw<{ row_num: number | string; page_tier: string | null; row_tier: string | null; row_flagged: boolean | null; purged: boolean; held: boolean; narrower: boolean }>(text, params);
   return rows.map(r => ({ row_num: Number(r.row_num), page_tier: r.page_tier, row_tier: r.row_tier, row_flagged: r.row_flagged, purged: r.purged === true, held: r.held === true, narrower: r.narrower === true }));
+}
+
+/** One facts-fence row a chunk names: its source, page slug and row number. */
+export interface FenceRowKey { source_id: string; slug: string; row_num: number }
+/** The current state of the newest live fact at a fence row: its stored tier, an activation flag and a pending supersede proposal ref. */
+export interface FenceRowTrust { source_id: string; slug: string; row_num: number; trust_tier: string; flagged: boolean; contested: string | null }
+
+/**
+ * #5575 37-1/37-2/A5: for each fence row key, the newest live fact at that row (an expired fact is skipped; the highest
+ * id wins), with its stored tier, whether it is activation-suppressed and its pending supersede proposal ref
+ * (`tp<id>:challenger` or `tp<id>:challenged`). A key with no live fact has no row. Rows come ordered by source id,
+ * slug and row number; an empty key list reads nothing. The statement is the one eligibility/stamp.ts
+ * applyFenceRowTrust ran through `executeRaw`, with its three key arrays bound through sqlFragment.
+ */
+export async function listFenceRowTrust(raw: EngineRawRead, keys: readonly FenceRowKey[]): Promise<FenceRowTrust[]> {
+  if (!keys.length) return [];
+  const flagged = trustedSql(activationSuppressedSql('facts', 'f'));
+  const contested = trustedSql(contestedRefSql('facts', 'f'));
+  const { text, params } = renderFragment(sqlFragment`SELECT DISTINCT ON (f.source_id, f.source_markdown_slug, f.row_num)
+    f.source_id, f.source_markdown_slug AS slug, f.row_num, f.trust_tier, ${flagged} AS flagged, ${contested} AS contested
+  FROM facts f JOIN unnest(${keys.map(k => k.source_id)}::text[], ${keys.map(k => k.slug)}::text[], ${keys.map(k => k.row_num)}::int[]) AS k(source_id, slug, row_num)
+    ON f.source_id = k.source_id AND f.source_markdown_slug = k.slug AND f.row_num = k.row_num
+  WHERE f.expired_at IS NULL
+  ORDER BY f.source_id, f.source_markdown_slug, f.row_num, f.id DESC`);
+  const rows = await raw<{ source_id: string; slug: string; row_num: number | string; trust_tier: string; flagged: boolean | null; contested: string | null }>(text, params);
+  return rows.map(r => ({ source_id: r.source_id, slug: r.slug, row_num: Number(r.row_num), trust_tier: r.trust_tier, flagged: r.flagged === true, contested: r.contested ?? null }));
 }
 
 export interface ExtractionPendingRow {

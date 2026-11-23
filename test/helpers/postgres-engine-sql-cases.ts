@@ -686,6 +686,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listExactRescanChunks': OOS.cliReadsOps,
   'listHeldFenceCells': OOS.cliReadsOps,
   'readFenceOverlayRows': OOS.cliReadsOps,
+  'listFenceRowTrust': OOS.cliReadsOps,
   'listSourceRecords': OOS.cliReadsImport,
   'readSourceIncarnation': OOS.cliReadsImport,
   'readGitHoldRecords': OOS.callerRawSql,

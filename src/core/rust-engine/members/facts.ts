@@ -25,6 +25,7 @@ export const FACTS_MEMBERS = {
   restorePageTrust: 'pages',
   listHeldFenceCells: 'facts',
   readFenceOverlayRows: 'facts',
+  listFenceRowTrust: 'facts',
   listHeldRows: 'timeline',
   findCandidateDuplicates: 'facts',
   consolidateFact: 'facts',
