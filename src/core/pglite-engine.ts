@@ -321,6 +321,8 @@ import * as volunteerEventsImpl from './engine-sql/volunteer-events.ts';
 import * as mentionReadsImpl from './engine-sql/mention-reads.ts';
 import * as segmentDeriveStoreImpl from './engine-sql/segment-derive-store.ts';
 import * as pageEmbeddingBudgetImpl from './engine-sql/page-embedding-budget.ts';
+import type { PageExtractionCommit, PageExtractionPipeline } from './engine-sql/page-extraction-state.ts';
+import * as pageExtractionStateImpl from './engine-sql/page-extraction-state.ts';
 import * as embeddingInstallImpl from './engine-sql/embedding-install.ts';
 import { applyForwardReferenceBootstrap, pgliteBootstrapTarget } from './engine-sql/bootstrap.ts';
 import { assertSchemaNotAhead } from './schema-client-behind.ts';
@@ -4749,6 +4751,12 @@ export class PGLiteEngine implements BrainEngine {
   openPageEmbeddingHold(pageId: number) { return pageEmbeddingBudgetImpl.openPageEmbeddingHold(this.engineSql, pageId); }
   reservePageEmbedding(pageId: number, input: Parameters<BrainEngine['reservePageEmbedding']>[1]) { return pageEmbeddingBudgetImpl.reservePageEmbedding(this.engineSql, pageId, input); }
   settlePageEmbeddingReservation(pageId: number, settle: Parameters<BrainEngine['settlePageEmbeddingReservation']>[1]) { return pageEmbeddingBudgetImpl.settlePageEmbeddingReservation(this.engineSql, pageId, settle); }
+  /** The extraction watermark and receipt (extraction-watermark.ts), on the engine's own executor, as its `executeRaw` ran. */
+  readPageExtractionWatermark(sourceId: string, slug: string, pipeline: PageExtractionPipeline) { return pageExtractionStateImpl.readPageExtractionWatermark(unscopedExecutor(this.engineSql, 'extraction watermark: read ran unscoped through executeRaw'), sourceId, slug, pipeline); }
+  commitPageExtraction(commit: PageExtractionCommit) { return pageExtractionStateImpl.commitPageExtraction(this.engineSql, commit); }
+  readPageExtractionReceipt(pageId: number, pipeline: PageExtractionPipeline) { return pageExtractionStateImpl.readPageExtractionReceipt(unscopedExecutor(this.engineSql, 'extraction receipt: read ran unscoped through executeRaw'), pageId, pipeline); }
+  clearPageExtractionState(pageId: number, pipeline: PageExtractionPipeline) { return pageExtractionStateImpl.clearPageExtractionState(this.engineSql, pageId, pipeline); }
+  writePageExtractionReceipt(pageId: number, pipeline: PageExtractionPipeline, pipelineVersion: number, receipt: Record<string, unknown>) { return pageExtractionStateImpl.writePageExtractionReceipt(this.engineSql, pageId, pipeline, pipelineVersion, receipt); }
   /** The embedding effect's install path, on the engine's own executor, as embedPage's and installPageEmbeddings' `executeRaw` ran. */
   readEmbeddingCompletion(pageId: number, opts: embeddingInstallImpl.EmbeddingCompletionOpts) { return embeddingInstallImpl.readEmbeddingCompletion(unscopedExecutor(this.engineSql, 'embedding effect: completion read ran unscoped through executeRaw'), pageId, opts); }
   lockEffectClaimRow(effectId: number | string) { return embeddingInstallImpl.lockEffectClaimRow(this.engineSql, effectId); }

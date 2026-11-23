@@ -336,6 +336,7 @@ test/engine-parity/owner-only-marks.test.ts
 test/engine-parity/owner-only-reads.test.ts
 test/engine-parity/owner-recovery-scans.test.ts
 test/engine-parity/page-embedding-budget.test.ts
+test/engine-parity/page-extraction-state.test.ts
 test/engine-parity/page-lock-anchors.test.ts
 test/engine-parity/page-purges.test.ts
 test/engine-parity/page-read-options.test.ts

@@ -46,6 +46,7 @@ import type { PageBodySizes } from './engine-sql/large-page.ts';
 import type { TrustTable } from './trust/schema.ts';
 import type { NewTrustProposal, PendingContradictionFilter, PendingContradictionRow, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
 import type { ImportedPageSeal, InlinePageRegionsRow, LivePageBodyRow, OriginClaimRow, PageIndexingState, PageIngestStamp, PageOriginRow, PageOriginTarget } from './engine-sql/write-guards.ts';
+import type { PageExtractionCommit, PageExtractionPipeline, PageExtractionWatermarkRow } from './engine-sql/page-extraction-state.ts';
 import type { PageEmbeddingBudgetRow, PageEmbeddingReservation, PageEmbeddingReserveInput } from './engine-sql/page-embedding-budget.ts';
 import type { EmbeddingCompletionOpts, EmbeddingCompletionRow } from './engine-sql/embedding-install.ts';
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from './engine-sql/page-visibility.ts';
@@ -3880,6 +3881,16 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   openPageEmbeddingHold(pageId: number): Promise<void>;
   reservePageEmbedding(pageId: number, input: PageEmbeddingReserveInput): Promise<PageEmbeddingReservation>;
   settlePageEmbeddingReservation(pageId: number, settle: { window: string | null; reservedUsd: number; bookedUsd: number; unpricedCalls: number }): Promise<void>;
+  /**
+   * The extraction watermark and partial-input receipt (engine-sql/page-extraction-state.ts; extraction-watermark.ts owns
+   * the policy), one row per page and pipeline: the live page's id with its stored watermark, the commit of a successful
+   * extraction, the receipt read, the row delete and the receipt upsert. A hard page delete and a source delete remove the rows.
+   */
+  readPageExtractionWatermark(sourceId: string, slug: string, pipeline: PageExtractionPipeline): Promise<PageExtractionWatermarkRow | null>;
+  commitPageExtraction(commit: PageExtractionCommit): Promise<void>;
+  readPageExtractionReceipt(pageId: number, pipeline: PageExtractionPipeline): Promise<Record<string, unknown> | null>;
+  clearPageExtractionState(pageId: number, pipeline: PageExtractionPipeline): Promise<void>;
+  writePageExtractionReceipt(pageId: number, pipeline: PageExtractionPipeline, pipelineVersion: number, receipt: Record<string, unknown>): Promise<void>;
   /**
    * The embedding effect's install path (engine-sql/embedding-install.ts): the page's visible chunks and which carry a
    * current vector, the effect claim under its row lock, the embedding switch's share lock and one batch of the install.

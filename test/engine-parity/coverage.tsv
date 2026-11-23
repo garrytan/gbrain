@@ -16,7 +16,7 @@
 # search_vector: 4/4
 # retrieval_coverage: 5/5
 # chunks: 47/48
-# extraction: 9/11
+# extraction: 14/16
 # links: 23/23
 # tags: 5/5
 # timeline: 33/33
@@ -104,7 +104,6 @@
 # doctor_persistence: 36/36
 # doctor_pages: 18/18
 # doctor_search: 10/10
-# volunteer_events: 5/5
 # doctor_reads_acc: 25/25
 # doctor_checkpoints: 18/18
 # doctor_sync: 3/3
@@ -129,11 +128,11 @@ getPage	pages	yes	204	yes	yes	yes	serves
 readPageSnapshot	pages	yes	60	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
 lockPageKeys	pages	yes	14	no	yes	yes	serves
-putPage	pages	yes	1095	yes	yes	yes	serves
+putPage	pages	yes	1091	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
-deletePage	pages	yes	37	yes	yes	yes	serves
-deletePages	pages	yes	3	yes	yes	yes	serves
+deletePage	pages	yes	38	yes	yes	yes	serves
+deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
 softDeletePage	pages	yes	292	yes	yes	yes	serves
 softDeletePages	pages	yes	3	yes	yes	yes	serves
@@ -324,6 +323,11 @@ markPagesAttendanceBlocked	extraction	yes	2	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	2	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
+readPageExtractionWatermark	extraction	yes	3	no	yes	yes	serves
+commitPageExtraction	extraction	yes	3	no	yes	yes	serves
+readPageExtractionReceipt	extraction	yes	3	no	yes	yes	serves
+clearPageExtractionState	extraction	yes	2	no	yes	yes	serves
+writePageExtractionReceipt	extraction	yes	4	no	yes	yes	serves
 listFactsFencePages	extraction	no	0	no	-	-	-
 listSweepStalePages	extraction	yes	1	no	yes	yes	serves
 listSweepDeferredPages	extraction	no	0	no	-	-	-
@@ -411,7 +415,7 @@ upsertCliFileRow	raw_files	yes	3	no	yes	yes	serves
 upsertRawFileRow	raw_files	yes	2	no	yes	yes	serves
 upsertSyncFileRow	raw_files	yes	2	no	yes	yes	serves
 sourceIdExists	raw_files	yes	2	no	yes	yes	serves
-readPageIdInSource	raw_files	yes	10	no	yes	yes	serves
+readPageIdInSource	raw_files	yes	15	no	yes	yes	serves
 readFileOwner	raw_files	yes	2	no	yes	yes	serves
 claimFilePage	raw_files	yes	2	no	yes	yes	serves
 upsertOpFileRow	raw_files	yes	3	no	yes	yes	serves
@@ -1523,7 +1527,7 @@ listSegmentedPages	withdrawal_pages	yes	2	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	2	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	168	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	169	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	4	yes	yes	yes	serves
@@ -1970,8 +1974,8 @@ readEmbeddingBacklogAge	doctor_derived	yes	1	no	yes	yes	serves
 listBudgetLimitedRows	doctor_derived	yes	1	no	yes	yes	serves
 readBudgetHoldAge	doctor_derived	yes	1	no	yes	yes	serves
 listImageAssetFiles	doctor_derived	yes	1	no	yes	yes	serves
-listAmbiguousExtractionInputs	doctor_derived	yes	1	no	yes	yes	serves
-listExtractionInputReceipts	doctor_derived	yes	1	no	yes	yes	serves
+listAmbiguousExtractionInputs	doctor_derived	yes	2	no	yes	yes	serves
+listExtractionInputReceipts	doctor_derived	yes	2	no	yes	yes	serves
 listUnpricedDerivationModels	doctor_derived	yes	1	no	yes	yes	serves
 listRestorableAtomRetirements	doctor_derived	yes	1	no	yes	yes	serves
 countLedgerCoveredAtomRetirements	doctor_derived	yes	1	no	yes	yes	serves
@@ -2045,11 +2049,6 @@ countPagesHiddenByPrefix	doctor_search	yes	1	no	yes	yes	serves
 listOrphanedAliasCounts	doctor_search	yes	1	no	yes	yes	serves
 readSoftDeletedAliasCounts	doctor_search	yes	1	no	yes	yes	serves
 listPageTypePairs	doctor_search	yes	1	no	yes	yes	serves
-insertVolunteerEventRows	volunteer_events	yes	8	no	yes	yes	serves
-listVolunteerUsage	volunteer_events	yes	1	no	yes	yes	serves
-deleteVolunteerEventsOlderThan	volunteer_events	yes	1	no	yes	yes	serves
-deleteVolunteerEventsForSlugs	volunteer_events	yes	1	no	yes	yes	serves
-countVolunteerEventsForSlug	volunteer_events	yes	6	no	yes	yes	serves
 listDecideReceiptStats	doctor_reads_acc	yes	8	no	yes	yes	serves
 isAccessStateUnreadable	doctor_reads_acc	yes	1	no	yes	yes	serves
 listRawOnlyRules	doctor_reads_acc	yes	1	no	yes	yes	serves
@@ -2074,7 +2073,7 @@ originIndexPresent	doctor_reads_acc	yes	1	no	yes	yes	serves
 readChronicleLedgerStats	doctor_reads_acc	yes	1	no	yes	yes	serves
 readChronicleDuplicateEvents	doctor_reads_acc	yes	1	no	yes	yes	serves
 readFeedbackStatus	doctor_reads_acc	yes	1	no	yes	yes	serves
-listVolunteerChannels	doctor_reads_acc	yes	3	no	yes	yes	serves
+listVolunteerChannels	doctor_reads_acc	yes	1	no	yes	yes	serves
 listFenceCandidateRecords	doctor_checkpoints	yes	3	no	yes	yes	serves
 listDerivedOriginParks	doctor_checkpoints	yes	1	no	yes	yes	serves
 listPurgeParks	doctor_checkpoints	yes	1	no	yes	yes	serves

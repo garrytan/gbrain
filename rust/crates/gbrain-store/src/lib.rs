@@ -82,6 +82,7 @@ pub mod moved_page_reads;
 pub mod ontology;
 pub mod page_body;
 pub mod page_embedding_budget;
+pub mod page_extraction_state;
 pub mod page_ops;
 pub mod page_visibility;
 pub mod persistence;

@@ -125,6 +125,7 @@ mod ontology;
 mod ontology_repair;
 mod page_body;
 mod page_embedding_budget;
+mod page_extraction_state;
 mod page_ops;
 mod purge_effects;
 mod purge_plan;

@@ -3,7 +3,7 @@
  *  - served from the store's records (rust/crates/gbrain-store/src/cli_reads/doctor_derived.rs,
  *    doctor_derived_health.rs and doctor_derived_ledgers.rs, rust/docs/store/cli-reads-doctor-derived.md);
  *  - answered empty with no store call, because the store keeps no writer for the relation the statement reads
- *    (`page_extraction_state`, `page_embedding_budget`, `derived_generations`, `derived_generation_items`,
+ *    (`page_embedding_budget`, `derived_generations`, `derived_generation_items`,
  *    `derived_generation_activations`, `belief_events`, `extract_rollup_7d`): no Rust brain ever holds a row there, so
  *    the empty answer is the one PGLite gives a brain that never wrote one.
  * Every member of `DOCTOR_DERIVED_MEMBERS` is one of the two; none is left to refuse with `engine_capability_missing`.
@@ -51,6 +51,8 @@ export const countDerivedVisibility: Member<'countDerivedVisibility'> = async (b
 export const listUntiledSegmentedPageRows: Member<'listUntiledSegmentedPageRows'> = async (brain, sourceIds, slugs, limit) =>
   storeCall({ member: 'listUntiledSegmentedPageRows' }, () =>
     brain.listUntiledSegmentedPageRows(sourceIds ? [...sourceIds] : null, slugs ? [...slugs] : null, limit));
+export const listAmbiguousExtractionInputs: Member<'listAmbiguousExtractionInputs'> = async (brain) =>
+  storeCall({ member: 'listAmbiguousExtractionInputs' }, () => brain.listAmbiguousExtractionInputs());
 export const listExtractionInputReceipts: Member<'listExtractionInputReceipts'> = async (brain) =>
   storeCall({ member: 'listExtractionInputReceipts' }, () => brain.listExtractionInputReceipts());
 export const listUnpricedDerivationModels: Member<'listUnpricedDerivationModels'> = async (brain) =>
@@ -62,8 +64,6 @@ export const listRecordedTombstones: Member<'listRecordedTombstones'> = async ()
 export const listBudgetLimitedRows: Member<'listBudgetLimitedRows'> = async () => [];
 /** The same table: no hold exists, so none is stale (the aggregate over no rows is 0 and a null oldest). */
 export const readBudgetHoldAge: Member<'readBudgetHoldAge'> = async () => ({ stale: 0, oldest: null });
-/** Page extraction state: the store keeps no `page_extraction_state`, so no page is held for an undetected format. */
-export const listAmbiguousExtractionInputs: Member<'listAmbiguousExtractionInputs'> = async () => [];
 /** Derived generations and their ledger: the store keeps none, so no retirement is ledger-covered. */
 export const countLedgerCoveredAtomRetirements: Member<'countLedgerCoveredAtomRetirements'> = async () => 0;
 export const listLiveGenerationRetirements: Member<'listLiveGenerationRetirements'> = async () => [];

@@ -14,9 +14,9 @@
  *  - Why existing coverage misses it: the cases used ids that sort the same in every locale, and CI's Postgres runs
  *    in C.UTF-8. Every case here mixes keys such as `a-z`, `ab`, `a.b` and `a_b`; run it against an en_US Postgres to see
  *    it fail.
- *  - Seam: none. The pages go through putPage, the derivation receipts through upsertSegmentDerivations and the
- *    volunteer events through insertVolunteerEventRows; the extraction receipts are the rows the writers leave, inserted
- *    with raw SQL where no engine method writes them.
+ *  - Seam: none. The pages go through putPage, the derivation receipts through upsertSegmentDerivations, the volunteer
+ *    events through insertVolunteerEventRows and the extraction receipts through writePageExtractionReceipt; the
+ *    retirement stamps are the rows the writers leave.
  */
 import { describe, expect } from 'bun:test';
 import { createSource, parityArms } from './harness.ts';
@@ -101,14 +101,12 @@ describe('doctor lists text keys by byte', () => {
   });
 
   parityTest('truncated-extraction groups list by byte kind within a pipeline', {
-    methods: ['putPage', 'executeRaw'], requires: 'raw_sql',
+    methods: ['putPage', 'readPageIdInSource', 'writePageExtractionReceipt'],
   }, async (engine) => {
     for (const [i, kind] of MIXED_IDS.entries()) {
       await engine.putPage(`notes/cut-${i}`, { type: 'note', title: `Cut ${i}`, compiled_truth: `Body ${i}.`, timeline: '' });
-      await engine.executeRaw(
-        `INSERT INTO page_extraction_state (page_id, pipeline, pipeline_version, input_truncated)
-         SELECT p.id, 'extract_atoms', 1, $2::text::jsonb FROM pages p WHERE p.slug = $1`,
-        [`notes/cut-${i}`, JSON.stringify({ kind })]);
+      const pageId = (await engine.readPageIdInSource(`notes/cut-${i}`, 'default'))!;
+      await engine.writePageExtractionReceipt(pageId, 'extract_atoms', 1, { kind });
     }
     const checks = await extractionInputTruncatedEntry.run(ctxFor(engine)) as Array<{ name: string; details: any }>;
     const groups = checks.find(c => c.name === 'extraction_input_truncated')!.details.groups.map((g: { kind: string }) => g.kind);

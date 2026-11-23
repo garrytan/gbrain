@@ -102,6 +102,15 @@ impl Brain {
         })
     }
 
+    /// `listAmbiguousExtractionInputs()`: `{ page, grammars, total }` rows.
+    #[napi]
+    pub fn list_ambiguous_extraction_inputs<'env>(
+        &self,
+        env: &'env Env,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_ambiguous_extraction_inputs())
+    }
+
     /// `listExtractionInputReceipts()`: `{ pipeline, kind, pages, samples }` rows.
     #[napi]
     pub fn list_extraction_input_receipts<'env>(

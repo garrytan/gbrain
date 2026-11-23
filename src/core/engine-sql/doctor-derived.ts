@@ -11,8 +11,8 @@
  * The Rust engine answers the same members from its store (rust/crates/gbrain-store/src/cli_reads/doctor_derived.rs,
  * doctor_derived_health.rs and doctor_derived_ledgers.rs, rust/docs/store/cli-reads-doctor-derived.md). Two answers, per member:
  *  - served from the store's records;
- *  - the empty answer where the store keeps no writer for the relation at all (`page_extraction_state`,
- *    `page_embedding_budget`, `derived_generations`, `derived_generation_items`, `derived_generation_activations`,
+ *  - the empty answer where the store keeps no writer for the relation at all (`page_embedding_budget`,
+ *    `derived_generations`, `derived_generation_items`, `derived_generation_activations`,
  *    `belief_events`, `extract_rollup_7d` never get a row on a Rust brain), so the empty answer is the true one.
  * No member is left to refuse with `engine_capability_missing`.
  */

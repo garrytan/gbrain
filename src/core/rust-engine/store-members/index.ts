@@ -107,6 +107,7 @@ import * as ownerScans from './owner-scans.ts';
 import * as effectWorker from './effect-worker.ts';
 import * as noopSettle from './noop-settle.ts';
 import * as pageEmbeddingBudget from './page-embedding-budget.ts';
+import * as pageExtractionState from './page-extraction-state.ts';
 import * as embeddingInstall from './embedding-install.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
@@ -241,7 +242,7 @@ export const STORE_MEMBERS = {
   // The commit notifier's host lease and host source list (rust/docs/store/persistence.md, "Commit notifier").
   ...notifier,
   // The page embedding ledger on the paid path (rust/docs/store/embeddings.md).
-  ...pageEmbeddingBudget,
+  ...pageEmbeddingBudget, ...pageExtractionState,
   ...embeddingInstall,
   ...writeMisc,
   // The unmanaged writer claim over the store's worktree bindings (rust/docs/store/persistence.md, "Worktree bindings").

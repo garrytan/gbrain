@@ -118,9 +118,12 @@ pub const ACCESS_RULES: u8 = b'z';
 /// `reason_purge_tombstones`, `1 source \0 commit \0 path`. Every letter is taken, so this family
 /// uses a digit; `y` is `SESSION_STATE`.
 pub const REASON_TOMBSTONE: u8 = b'1';
-// Tag `2` is free. It held the `embedding_holds` family (a page's hold state and reason), dropped
-// at the main join: a page's embedding hold now lives only in its `page_embedding_budget` ledger
-// record (`page_embedding_budget.rs`). No store holds a record under it, so a new family may take it.
+/// Family `page_extraction_state` (`page_extraction_state.rs`): the extraction watermark and the
+/// partial-input receipt of a page, one record per page and pipeline. Tag `2` held the
+/// `embedding_holds` family (a page's hold state and reason), dropped at the main join: a page's
+/// embedding hold now lives only in its `page_embedding_budget` ledger record
+/// (`page_embedding_budget.rs`). No store holds a record of that family under it.
+pub const PAGE_EXTRACTION_STATE: u8 = b'2';
 
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];

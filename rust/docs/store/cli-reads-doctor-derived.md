@@ -13,9 +13,9 @@ A doctor-derived member answers one of two ways on the Rust engine:
 1. Served from the store's records (the table below).
 2. Empty, with no store call, because the store keeps no writer for a relation the statement reads. No Rust brain ever holds a
    row there, so the empty answer is the one PGLite gives a brain that never wrote one. The relations: `belief_events`,
-   `page_embedding_budget`, `page_extraction_state`, `derived_generations`, `derived_generation_items`,
+   `page_embedding_budget`, `derived_generations`, `derived_generation_items`,
    `derived_generation_activations`, `extract_rollup_7d`. Members: `listRecordedTombstones`, `listBudgetLimitedRows`,
-   `readBudgetHoldAge`, `listAmbiguousExtractionInputs`, `countLedgerCoveredAtomRetirements`, `listLiveGenerationRetirements`,
+   `readBudgetHoldAge`, `countLedgerCoveredAtomRetirements`, `listLiveGenerationRetirements`,
    `listHeldGenerations`, `listPendingGenerationMembers`, `listOrphanGenerationCandidates`, `readExtractRollup7d`,
    `listRecordedHaltReasons7d`. If a Rust writer for one of these relations lands, its member must move to the first kind in the
    same change.
@@ -41,7 +41,8 @@ No member is refused any more: the nine that were (wave 1) are served now, and t
 | `brain.countDerivedVisibility(sourceIds)` | the six derived-visibility counts of the named sources | `countDerivedVisibility` |
 | `brain.listUntiledSegmentedPageRows(sourceIds?, slugs?, limit)` | live segmented pages whose published rows do not tile the body, by source and slug | `listUntiledSegmentedPageRows` |
 | `brain.listOntologyFactCandidates(sourceIds)` | facts an ontology stint wrote, in id order, with `withdrawn`, `consolidated` and `duplicate` verdicts | `listOntologyFactCandidates` |
-| `brain.listExtractionInputReceipts()` | `{ pipeline, kind, pages, samples }` per derivation receipt that says an extraction read only part of its input | `listExtractionInputReceipts` |
+| `brain.listAmbiguousExtractionInputs()` | `{ page, grammars, total }` per live conversation page held for an undetected format, newest first, at most 20 | `listAmbiguousExtractionInputs` |
+| `brain.listExtractionInputReceipts()` | `{ pipeline, kind, pages, samples }` per extraction-state or derivation receipt that says an extraction read only part of its input | `listExtractionInputReceipts` |
 | `brain.listUnpricedDerivationModels()` | `{ model, pipelines, pages, samples }` per model a derivation receipt says had no price | `listUnpricedDerivationModels` |
 
 ## How each read follows the SQL
@@ -82,9 +83,15 @@ No member is refused any more: the nine that were (wave 1) are served now, and t
   torn write.
 - `listOntologyFactCandidates`: `duplicate` is another fact with a different id sharing source, entity, dimension, value hash and valid-from
   whose source page is this fact's `source`. `withdrawn` is the withdrawal ledger's own claim match. `expired_at` is ISO text.
-- `listExtractionInputReceipts` and `listUnpricedDerivationModels`: the receipts of `page_segment_derivations` on live pages. The store keeps no
-  writer for `page_extraction_state`, so that half of the statement contributes nothing and the `detection_ambiguous` exclusion never fires.
-  Groups come by pipeline then kind; unpriced models by page count then model.
+- `listAmbiguousExtractionInputs`: the `conversation_facts` receipts of kind `detection_ambiguous` in `page_extraction_state`
+  ([page_extraction_state.md](page_extraction_state.md)) on live pages, newest `updated_at` first then page id, at most 20, each with
+  the receipt's `grammars` and `total`, the count of every held page.
+- `listExtractionInputReceipts`: the receipts of `page_extraction_state` (any kind but `detection_ambiguous` and `grammar_chosen`; a
+  receipt without a kind reads `unknown`) and of `page_segment_derivations` (any kind but `unpriced_model`, or the
+  `purge_sweep_pending` reason) on live pages. A page held for an undetected format hides its derivation receipts for that pipeline.
+  A page with both kinds of receipt under one pipeline and kind counts once and lists twice, as the SQL's `UNION ALL` does.
+  Groups come by pipeline then kind.
+- `listUnpricedDerivationModels`: the receipts of `page_segment_derivations` on live pages, unpriced models by page count then model.
 
 `crates/gbrain-store/tests/cli_reads_doctor_derived.rs` and `cli_reads_doctor_derived_health.rs` cover each read; `test/engine-parity/doctor-derived.test.ts` compares the
 engines.

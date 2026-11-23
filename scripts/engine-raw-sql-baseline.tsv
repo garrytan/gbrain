@@ -292,7 +292,6 @@ src/core/extract-timeline-from-meetings.ts	execute_raw	5
 src/core/extract/receipt-writer.ts	execute_raw	2
 src/core/extract/rollup-writer.ts	execute_raw	2
 src/core/extraction-lag.ts	execute_raw	1
-src/core/extraction-watermark.ts	execute_raw	5
 src/core/facts/derivation-inputs.ts	execute_raw	1	#9653: releaseHiddenMoment, a delete of an already-hidden page ends the automatic purge hold
 src/core/facts/held-fact-move.ts	execute_raw	1
 src/core/facts/purge-overlay.ts	execute_raw	1
