@@ -1522,7 +1522,7 @@ listSegmentedPages	withdrawal_pages	yes	2	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	2	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	147	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	146	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	4	yes	yes	yes	serves
@@ -1617,7 +1617,7 @@ filterPagesAtRevision	cli_reads_import	yes	1	no	yes	yes	serves
 lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	serves
 replaceWantedLinkRows	wanted_links	yes	9	no	yes	yes	serves
 listMarkdownPageSlugs	write_misc	yes	1	no	yes	yes	serves
-readPageAccessRows	write_misc	yes	1	no	yes	yes	serves
+readPageAccessRows	write_misc	yes	2	no	yes	yes	serves
 isSourceClaimed	write_misc	yes	5	no	yes	yes	serves
 readSourceState	write_misc	yes	11	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	2	no	yes	yes	serves

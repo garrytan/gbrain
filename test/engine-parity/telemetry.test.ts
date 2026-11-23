@@ -264,11 +264,12 @@ describe('engine parity: telemetry', () => {
     const members = Object.entries(RUST_ENGINE_MEMBERS).filter(([, cls]) => cls === 'telemetry').map(([m]) => m).sort();
     expect(members).toEqual([
       'countMcpRequestLogRows', 'countMcpRequestsLastDay', 'countMcpRequestsLastDayByToken',
-      'hasMcpLogRowsPastWindow', 'logChatUsage', 'logMcpRequest', 'pruneMcpRequestLogBatch', 'readChatUsage',
+      'hasMcpLogRowsPastWindow', 'applyRetrievalRatings', 'insertRetrievalEvents', 'insertVolunteerEvents',
+      'logChatUsage', 'logMcpRequest', 'pruneMcpRequestLogBatch', 'readChatUsage',
       'readClientOpUsage', 'readMcpLifetimeUsage', 'readMcpLogPruneCutoff', 'readMcpRequestLogBytes',
-      'readMcpRequestLogPage', 'readMcpRollupPrunedBefore', 'readPendingWriteHealth', 'readSearchStats',
-      'recordSearchTelemetry',
-    ]);
+      'readMcpRequestLogPage', 'readMcpRollupPrunedBefore', 'readPendingWriteHealth', 'readRetrievalEvent', 'readSearchStats',
+      'readVolunteerUsage', 'recordSearchTelemetry', 'reserveChronicleJudgeSlot', 'upsertChronicleRow',
+    ].sort());
     const served = members.filter((m) => m in STORE_MEMBERS);
     const reported = servedCapabilities();
     expect({ allServed: served.length === members.length, reported: reported.has('telemetry') })
