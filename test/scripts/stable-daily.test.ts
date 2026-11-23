@@ -780,6 +780,17 @@ describe('daily: the install canary gates stable', () => {
     expect(early.logs.some(l => l.startsWith('::warning::'))).toBe(false);
   });
 
+  test('a soaked release the canary failed is skipped before its matrix is judged or dispatched', async () => {
+    const RELEASES = { '1.0.1': 1, '1.0.2': 2, '1.0.3': 3, '1.0.4': 4 };
+    const red = matrixRun(704, 4, RELEASES, { event: 'workflow_dispatch' }, { red: ['v1.0.1__pglite__keyless__repo'], cells: [{ id: 'v1.0.1__pglite__keyless__repo', from: 'v1.0.1', verdict: 'fail' }] });
+    const held = world(base({ stable: old, runs: [soak(9, 3), soak(10, 4)], matrix: [red, matrixRun(MATRIX_ID + 3, 3, RELEASES)], canary: { '1.0.4': [canaryStatus('1.0.4', 'failure')] } }));
+    expect((await daily(held.deps)).action === 'promoted').toBe(true);
+    expect(held.tags.stable!.commit).toBe(3);
+    const none = world(base({ stable: old, runs: [soak(9, 3), soak(10, 4)], matrix: [matrixRun(MATRIX_ID + 3, 3, RELEASES)], canary: { '1.0.4': [canaryStatus('1.0.4', 'failure')] } }));
+    expect((await daily(none.deps)).action).toBe('promoted');
+    expect(none.posts).toEqual([]);
+  });
+
   test('statuses that cannot be read refuse the run instead of guessing', async () => {
     const w = world(base({ stable: old, runs: [soak(9, 3)], canary: { '1.0.3': 'error' } }));
     await expect(daily(w.deps)).rejects.toThrow(/install canary's statuses on v1\.0\.3 .*could not be read .*HTTP 403/);

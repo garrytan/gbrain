@@ -854,8 +854,10 @@ gh workflow run promote-stable.yml -f version=<VERSION> \
   release the canary failed or has not tested yet is refused unless a
   maintainer passes `canary_waiver`, which the record keeps as
   `install_canary: waived: <reason>`; a scheduled promotion never takes a
-  waiver. A rollback is not checked. If the statuses cannot be read the run
-  refuses, so re-run it. Both workflows need `statuses: read`.
+  waiver. A real rollback (to an older release, or back to one that was stable
+  before) is not checked; `rollback=true` on a newer release that was never
+  stable is. Every page of the commit's statuses is read, and if they cannot be
+  read the run refuses, so re-run it. Both workflows need `statuses: read`.
 - **Published release.** The tag's `VERSION` file must say the version, and
   its GitHub release must exist and not be a draft, so binary clients can
   fetch the stable release.
@@ -956,7 +958,8 @@ and keeps stable between one day and one week behind what matters:
 - **Install canary last.** The candidate also needs the install canary's pass
   on its release commit, checked as under "Install canary" above and again by
   `promote()`, and recorded as `install_canary`. A release the canary failed is
-  skipped, logged, and an older qualifying release is promoted instead. When the
+  skipped right after its soak, before its upgrade matrix is dispatched or
+  judged, and logged, and an older qualifying release is promoted instead. When the
   newest release has no soak yet, the soak is dispatched on it as usual. When it
   has one and no release qualifies, a candidate the canary has not tested yet
   makes the run wait (`waiting`, naming the version: "v<VERSION> is not tested

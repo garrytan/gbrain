@@ -341,7 +341,7 @@ export function renderSummary(p: Promotion, notPromotable: readonly NotPromotabl
     ['Soak run', p.soakRun],
     ['Scoreboard', p.scoreboard],
     ['Upgrade matrix', p.matrixRun || 'none (promoted without one)'],
-    ['Install canary', p.installCanary || 'not checked (rollback)'],
+    ['Install canary', p.installCanary || 'not checked (rollback, or a re-record of the current stable)'],
     ['Previous stable', p.previous ? `v${p.previous}` : 'none'],
     ['Rollback', p.rollback ? `yes: ${p.reason.trim()}` : 'no'],
     ['Known bad', p.knownBad.length ? p.knownBad.map(v => `v${v}`).join(', ') : 'none'],
@@ -494,7 +494,6 @@ export async function promote(deps: PromoteDeps, inputs: PromoteInputs): Promise
   if (current && !rollback && compareVersions(version, current.version) === 0) return recordCurrentStable(deps, inputs, { version, commit, tree }, current);
   checkOrder(version, current?.version ?? null, rollback, reason);
   const matrixRun = await checkMatrix(deps, inputs, { version, commit, tree });
-  const installCanary = await checkCanary(deps, inputs, { version, commit });
   deps.log(`[promote-stable] current stable is ${current ? `v${current.version}` : 'none'}; ${rollback ? `rollback to v${version}: ${reason.trim()}` : `v${version} is newer`}.`);
 
   const recordRef = `refs/tags/stable-v${version}`;
@@ -505,6 +504,7 @@ export async function promote(deps: PromoteDeps, inputs: PromoteInputs): Promise
     if (recordCommit !== commit) throw new Refusal(`stable-v${version} points at ${recordCommit}, not the release commit ${commit}; investigate the tags before promoting.`);
   }
   deps.log(`[promote-stable] record tag stable-v${version} ${recordExists ? 'exists (rollback re-promotion): keeping it' : 'is new: creating it'}.`);
+  const installCanary = await checkCanary(deps, inputs, { version, commit }, recordExists || (current !== null && compareVersions(version, current.version) < 0));
 
   const fields: TagFields = {
     version, commit, tree,
@@ -575,10 +575,11 @@ const MATRIX_DOCS = 'docs/RELEASING.md#daily-stable-check';
 /**
  * The install canary's verdict on a forward promotion (scripts/stable-canary.ts). A pass is recorded as its status
  * description. A failed or untested release is refused; a maintainer's canary_waiver promotes it anyway and is
- * recorded as `waived: <reason>`. A rollback is not checked. An unreadable status list refuses.
+ * recorded as `waived: <reason>`. A real rollback (to an older release, or back to one that was stable before) is
+ * not checked; rollback=true on a newer release that was never stable is. An unreadable status list refuses.
  */
-async function checkCanary(deps: PromoteDeps, inputs: PromoteInputs, release: { version: string; commit: string }): Promise<string> {
-  if (inputs.rollback) return '';
+async function checkCanary(deps: PromoteDeps, inputs: PromoteInputs, release: { version: string; commit: string }, wasStableOrOlder: boolean): Promise<string> {
+  if (inputs.rollback && wasStableOrOlder) return '';
   let statuses;
   try {
     statuses = await readCanaryStatuses(deps.ghApi, deps.repo, release.commit);

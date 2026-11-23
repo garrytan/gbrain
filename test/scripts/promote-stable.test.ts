@@ -23,7 +23,7 @@ import {
   type GitResult, type PromoteDeps, type PromoteInputs, type SoakRun, type TagFields,
 } from '../../scripts/promote-stable.ts';
 import type { MatrixReceipt } from '../../scripts/stable-matrix.ts';
-import { CANARY_CONTEXT, judgeCanary, parseCanaryPosters, type CommitStatus } from '../../scripts/stable-canary.ts';
+import { CANARY_CONTEXT, judgeCanary, parseCanaryPosters, readCanaryStatuses, type CommitStatus } from '../../scripts/stable-canary.ts';
 import { offeredVersion } from '../../src/core/self-upgrade.ts';
 import { upgradeSummary } from '../../src/core/upgrade-summary.ts';
 import { RECORD_MAX_BYTES } from '../../src/core/stable-channel.ts';
@@ -312,7 +312,7 @@ describe('promote', () => {
     const h = harness();
     const p = await promote(h.deps, inputs());
     expect(p).toMatchObject({ version: '0.60.361.0', commit: sha('b'), tree: sha('2'), previous: '0.60.360.0', scoreboard: RUN_URL, recordCreated: true, promotedAt: '2026-10-21T17:00:00Z' });
-    expect(h.api).toEqual([`repos/${REPO}/collaborators/alice-example/permission`, `repos/${REPO}/releases/tags/v0.60.361.0`, `repos/${REPO}/actions/runs/123456`, `repos/${REPO}/commits/${sha('b')}/statuses?per_page=100`, `repos/${REPO}/releases/latest`]);
+    expect(h.api).toEqual([`repos/${REPO}/collaborators/alice-example/permission`, `repos/${REPO}/releases/tags/v0.60.361.0`, `repos/${REPO}/actions/runs/123456`, `repos/${REPO}/commits/${sha('b')}/statuses?per_page=100&page=1`, `repos/${REPO}/releases/latest`]);
     const pushes = h.calls.filter(c => c.startsWith('push'));
     expect(pushes).toEqual([
       `push --atomic --force-with-lease=refs/tags/stable:tagobj-stable-old --force-with-lease=refs/heads/stable-record: origin refs/tags/stable-v0.60.361.0:refs/tags/stable-v0.60.361.0 refs/tags/stable:refs/tags/stable ${h.repo.recordBranch}:refs/heads/stable-record`,
@@ -850,6 +850,24 @@ describe('promote: the install canary', () => {
     expect(judgeCanary([{ ...live[0]!, state: 'failure', description: 'v0.60.761.0 run 20261123T025437Z-3567: fail openclaw/setup,hermes/setup' }], '0.60.761.0', ['capy-ai[bot]']).state).toBe('failure');
     expect(judgeCanary(live, '0.60.765.0', ['garrytan']).state).toBe('untested');
     expect(judgeCanary([{ ...live[0]!, state: 'failure', description: 'v0.60.766.0 run 20261123T1200Z-9: fail incomplete' }], '0.60.766.0', ['capy-ai[bot]'])).toMatchObject({ state: 'failure', why: 'the install canary failed v0.60.766.0 (v0.60.766.0 run 20261123T1200Z-9: fail incomplete)' });
+  });
+
+  test('rollback=true on a newer release that was never stable is still checked; a real rollback is not', async () => {
+    await refusedAsync(promote(harness({ canary: [canaryStatus('0.60.361.0', 'failure')] }).deps, inputs({ rollback: true, reason: 'not really a rollback' })), /the install canary failed v0\.60\.361\.0/);
+  });
+
+  test('readCanaryStatuses pages until a short page, so a pass behind 100 newer statuses is found', async () => {
+    const noise = Array.from({ length: 100 }, (_, i) => ({ context: 'ci/other', state: 'success', created_at: '2026-11-23T09:00:00Z', description: `n${i}` }));
+    const paths: string[] = [];
+    const rows = await readCanaryStatuses(async path => { paths.push(path); return path.endsWith('page=1') ? noise : [canaryStatus('0.60.361.0')]; }, REPO, sha('b'));
+    expect(paths).toEqual([1, 2].map(n => `repos/${REPO}/commits/${sha('b')}/statuses?per_page=100&page=${n}`));
+    expect(judgeCanary(rows, '0.60.361.0', parseCanaryPosters(undefined)).state).toBe('success');
+    await expect(readCanaryStatuses(async () => ({ message: 'nope' }), REPO, sha('b'))).rejects.toThrow(/not a list/);
+  });
+
+  test('a status with no created_at never outranks a dated one', () => {
+    const rows = [canaryStatus('0.60.361.0', 'success', { created_at: null }), canaryStatus('0.60.361.0', 'failure', { created_at: '2026-11-23T09:00:00Z' })];
+    expect(judgeCanary(rows, '0.60.361.0', parseCanaryPosters(undefined)).state).toBe('failure');
   });
 
   test('parseCanaryPosters defaults to the Capy bot the canary posts as, and lowercases a configured list', () => {

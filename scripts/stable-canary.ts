@@ -49,7 +49,8 @@ export function judgeCanary(statuses: readonly CommitStatus[], version: string, 
   const named = (d: string) => d.startsWith(tag) && (d.length === tag.length || /^[\s:]/.test(d.slice(tag.length)));
   const ours = statuses.filter(s => s.context === CANARY_CONTEXT);
   const trusted = ours.filter(s => allowed.has((s.creator?.login ?? '').toLowerCase()) && named((s.description ?? '').trim()));
-  const newest = [...trusted].sort((a, b) => Date.parse(b.created_at ?? '') - Date.parse(a.created_at ?? ''))[0];
+  const at = (s: CommitStatus) => Date.parse(s.created_at ?? '') || 0;
+  const newest = [...trusted].sort((a, b) => at(b) - at(a))[0];
   if (!newest) {
     const ignored = ours.length ? ` (${ours.length} ${CANARY_CONTEXT} status${ours.length === 1 ? '' : 'es'} ignored: not posted by ${[...allowed].join(', ')} or not naming v${version})` : '';
     return { state: 'untested', why: `v${version} is not tested yet: the install canary has posted no status for it${ignored}` };
@@ -60,9 +61,19 @@ export function judgeCanary(statuses: readonly CommitStatus[], version: string, 
   return { state: 'failure', why: `the install canary failed v${version} (${description})` };
 }
 
-/** The statuses on `commit`, newest first. A failed read throws, so a caller holds stable instead of guessing. */
+export const CANARY_STATUS_PAGES = 10;
+
+/**
+ * Every status on `commit` (GitHub pages them 100 at a time, newest first), up to CANARY_STATUS_PAGES pages. A failed
+ * read throws, so a caller holds stable instead of guessing.
+ */
 export async function readCanaryStatuses(ghApi: (path: string) => Promise<unknown>, repo: string, commit: string): Promise<CommitStatus[]> {
-  const rows = await ghApi(`repos/${repo}/commits/${commit}/statuses?per_page=100`);
-  if (!Array.isArray(rows)) throw new Error(`the commit statuses of ${commit} are not a list`);
-  return rows as CommitStatus[];
+  const all: CommitStatus[] = [];
+  for (let page = 1; page <= CANARY_STATUS_PAGES; page++) {
+    const rows = await ghApi(`repos/${repo}/commits/${commit}/statuses?per_page=100&page=${page}`);
+    if (!Array.isArray(rows)) throw new Error(`the commit statuses of ${commit} are not a list`);
+    all.push(...(rows as CommitStatus[]));
+    if (rows.length < 100) break;
+  }
+  return all;
 }

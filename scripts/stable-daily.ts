@@ -40,8 +40,9 @@
  *    active. A red or foreign run holds stable (a maintainer decides) and is never
  *    re-dispatched by the schedule. promote() checks the run again.
  * 3c. The candidate also needs the install canary's pass: a trusted gbrain/install-canary commit status on its
- *    release commit (scripts/stable-canary.ts judgeCanary). A release the canary failed is skipped for an older
- *    one; so is one it has not tested yet (no status, or a pending one). When no release qualifies because of the
+ *    release commit (scripts/stable-canary.ts judgeCanary), read right after the soak so a release the canary
+ *    failed is skipped for an older one before its matrix is dispatched or judged; one it has not tested yet (no
+ *    status, or a pending one) is skipped after its matrix passes. When no release qualifies because of the
  *    canary, the run waits for it (not tested yet) or holds for a maintainer (failed); it dispatches nothing,
  *    since the release already soaked. A status list that cannot be read stops the run.
  * 4. Nothing promotable yet: the newest release is soaked (one dispatch of the
@@ -258,7 +259,7 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
   }
   const oldestImportant = passing.reduce<string | null>((v, i) => (!v || compareVersions(i.version, v) < 0 ? i.version : v), null);
   let failedSoak: { version: string; run: SoakRunRow } | null = null;
-  let canaryBlock: { version: string; state: 'failure' | 'untested'; why: string } | null = null;
+  let canaryBlock = null as { version: string; state: 'failure' | 'untested'; why: string } | null;
   let newestSoaked = false;
   for (const rel of releases) {
     if (!weekly && oldestImportant && compareVersions(rel.version, oldestImportant) < 0) break;
@@ -274,6 +275,18 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
     }
     if (!chosen) { failedSoak ??= completed[0] ? { version: rel.version, run: completed[0] } : null; continue; }
     if (rel === releases[0]) newestSoaked = true;
+    let statuses;
+    try {
+      statuses = await readCanaryStatuses(deps.ghApi, deps.repo, rel.commit);
+    } catch (error) {
+      throw new Refusal(`the install canary's statuses on v${rel.version} (${rel.commit}) could not be read (${(error as Error).message.split('\n')[0]}), so stable holds; re-run the check.`);
+    }
+    const canary = judgeCanary(statuses, rel.version, deps.canaryPosters ?? parseCanaryPosters(undefined));
+    const skipCanary = () => {
+      deps.log(`[stable-daily] skipping v${rel.version}: ${canary.why}.`);
+      if (canary.state !== 'success' && (!canaryBlock || (canaryBlock.state === 'failure' && canary.state === 'untested'))) canaryBlock = { version: rel.version, state: canary.state, why: canary.why };
+    };
+    if (canary.state === 'failure') { skipCanary(); continue; }
     const matrix = await matrixRunFor(rel.version);
     if (!matrix) {
       if (activeMatrix) return { action: 'waiting', why: `${reason}; v${rel.version} passed its soak and upgrade matrix run ${activeMatrix.html_url} is still running.`, version: rel.version };
@@ -287,18 +300,7 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
       deps.log(`::warning::Daily stable check: ${why} Docs: docs/RELEASING.md#daily-stable-check`);
       return { action: 'held', why };
     }
-    let statuses;
-    try {
-      statuses = await readCanaryStatuses(deps.ghApi, deps.repo, rel.commit);
-    } catch (error) {
-      throw new Refusal(`the install canary's statuses on v${rel.version} (${rel.commit}) could not be read (${(error as Error).message.split('\n')[0]}), so stable holds; re-run the check.`);
-    }
-    const canary = judgeCanary(statuses, rel.version, deps.canaryPosters ?? parseCanaryPosters(undefined));
-    if (canary.state !== 'success') {
-      deps.log(`[stable-daily] skipping v${rel.version}: ${canary.why}.`);
-      if (!canaryBlock || (canaryBlock.state === 'failure' && canary.state === 'untested')) canaryBlock = { version: rel.version, state: canary.state, why: canary.why };
-      continue;
-    }
+    if (canary.state === 'untested') { skipCanary(); continue; }
     deps.log(`[stable-daily] ${canary.why}.`);
     if (deps.dryRun) return { action: 'dry_run', why: reason, would: `promote v${rel.version} on soak ${chosen.html_url} and upgrade matrix ${matrix.run.html_url}` };
     const excused = judged.excused.length ? `; upgrade break #${breakIssue!.number} excused for ${judged.excused.join(', ')}` : '';
