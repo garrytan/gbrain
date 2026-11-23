@@ -421,7 +421,7 @@ for (const kind of testBackends()) {
       const old = async (sources: string[]) => {
         const [counts] = await engine.executeRaw<{ pages: number; rows: number }>(MASTER_SEGMENTED_COUNT, [sources]);
         if (!counts?.pages) return { pages: 0, rows: 0, sample: [] };
-        const named = await engine.executeRaw<{ source_id: string; slug: string }>(MASTER_SEGMENTED_SAMPLE, [sources]);
+        const named = await engine.executeRaw<{ source_id: string; slug: string }>(MASTER_SEGMENTED_SAMPLE, [sources, MASTER_SAMPLE_LIMIT]);
         return { pages: Number(counts.pages), rows: Number(counts.rows), sample: named.map(r => `${r.source_id}:${r.slug}`) };
       };
       const answers = [];
@@ -441,7 +441,7 @@ for (const kind of testBackends()) {
         await engine.createSegmentedPageShell(slug, pageMeta(slug), { sourceId: 'default' });
         await engine.addTimelineEntry(slug, { date: '2026-02-01', summary: slug });
       }
-      const old = await engine.executeRaw<{ source_id: string; slug: string }>(MASTER_SEGMENTED_SAMPLE, [['default']]);
+      const old = await engine.executeRaw<{ source_id: string; slug: string }>(MASTER_SEGMENTED_SAMPLE, [['default'], MASTER_SAMPLE_LIMIT]);
       const now = await engine.countSegmentedTimelinePages(['default'], MASTER_SAMPLE_LIMIT);
       expect(now.pages).toBe(12);
       expect(now.sample).toEqual(old);
