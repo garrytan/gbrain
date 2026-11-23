@@ -306,7 +306,6 @@ src/core/feedback/store.ts	execute_raw	16
 src/core/fence-repair/attempts.ts	execute_raw	3
 src/core/fence-repair/census-store.ts	execute_raw	2
 src/core/fence-repair/hold-fix.ts	execute_raw	2
-src/core/fence-repair/uncommitted.ts	execute_raw	3
 src/core/forecast-journal.ts	execute_raw	3
 src/core/function-search-path.ts	execute_raw	3
 src/core/ghost-pages.ts	execute_raw	1

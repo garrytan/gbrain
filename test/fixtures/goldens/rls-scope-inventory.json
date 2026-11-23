@@ -9764,6 +9764,7 @@
         "listUnboundClientIds": "none",
         "listUnboundSourcePages": "none",
         "listUnboundTokenNames": "none",
+        "listUncommittedFenceRepairRows": "none",
         "listUnexpiredFactIds": "none",
         "listUnfencedFactRows": "none",
         "listUnfinishedManagedSyncCursors": "none",

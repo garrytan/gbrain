@@ -2616,6 +2616,12 @@ const PINS: Pin[] = [
     ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`],
   },
   {
+    from: 'src/core/fence-repair/uncommitted.ts:68 readUncommittedFenceRepairs (at b7b18e5ab3)',
+    case: { method: 'listUncommittedFenceRepairRows', variant: 'default', run: e => e.listUncommittedFenceRepairRows(['src']) },
+    texts: [`SELECT fingerprint, completed_keys->0 AS record FROM op_checkpoints
+    WHERE op=$1 AND ($2::text[] IS NULL OR completed_keys->0->>'source_id'=ANY($2::text[])) ORDER BY fingerprint COLLATE "C"`],
+  },
+  {
     from: 'src/core/persistence/sync-admission.ts:34 readSyncAdmission',
     case: { method: 'readStoredConfigValue', variant: 'default', run: e => e.readStoredConfigValue('sync.admission') },
     texts: ['SELECT value FROM config WHERE key=$1'],

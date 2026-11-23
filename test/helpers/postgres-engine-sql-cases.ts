@@ -1511,6 +1511,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'writeOpCheckpointKeys': OOS.writeMisc,
   'readOpCheckpointRecords': OOS.callerRawSql,
   'writeOpCheckpointRecords': OOS.callerRawSql,
+  'listUncommittedFenceRepairRows': OOS.callerRawSql,
   'readSyncImportPageRows': OOS.callerRawSql,
   'readStoredConfigValue': OOS.callerRawSql,
   'declareSyncImportPageCursor': OOS.callerRawSql,

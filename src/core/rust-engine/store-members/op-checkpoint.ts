@@ -7,6 +7,7 @@
 import { MARKDOWN_CHUNKER_VERSION } from '../../chunkers/recursive.ts';
 import type { SyncImportPageQuery, SyncImportPageRow, SyncImportPageWindow } from '../../engine-sql/sync-pass-pages.ts';
 import { storeCall, type StoreMember } from './common.ts';
+import { FENCE_UNCOMMITTED_OP } from '../../fence-repair/uncommitted-op.ts';
 import type { OpCheckpointRecord } from '../../engine-sql/write-misc.ts';
 
 /**
@@ -39,6 +40,31 @@ export const deleteOpCheckpointPaths: StoreMember<[op: string, fingerprint: stri
 /** Each found parent's first completed key (`completed_keys->0`, null for an empty array), one per parent found. */
 export const readOpCheckpointRecords: StoreMember<[op: string, fingerprints: readonly string[]], unknown[]> =
   (brain, op, fingerprints) => storeCall({ member: 'readOpCheckpointRecords' }, () => brain.readOpCheckpointRecords(op, [...fingerprints]));
+
+/**
+ * The uncommitted fence-repair notices: every `fence-repair-uncommitted` parent in key order (byte order of fingerprint,
+ * as `ORDER BY fingerprint COLLATE "C"`), with its first completed key (null for an empty or non-array value, as
+ * `completed_keys->0` reads), kept when `sourceIds` is null or names the record's `source_id` text.
+ */
+export const listUncommittedFenceRepairRows: StoreMember<[sourceIds: readonly string[] | null], Array<{ fingerprint: string; record: unknown }>> =
+  async (brain, sourceIds) => {
+    const rows = await storeCall({ member: 'listUncommittedFenceRepairRows' }, () => brain.listOpCheckpointRecords(FENCE_UNCOMMITTED_OP)) as Array<{ fingerprint: string; completed_keys: unknown }>;
+    const wanted = sourceIds === null ? null : new Set(sourceIds);
+    const out: Array<{ fingerprint: string; record: unknown }> = [];
+    for (const row of rows) {
+      const record = Array.isArray(row.completed_keys) ? row.completed_keys[0] ?? null : null;
+      const sourceId = jsonText((record as Record<string, unknown> | null)?.source_id);
+      if (wanted !== null && (sourceId === null || !wanted.has(sourceId))) continue;
+      out.push({ fingerprint: row.fingerprint, record });
+    }
+    return out;
+  };
+
+/** The text `->>` reads from a JSON value: a string as itself, any other non-null value as its JSON, null as null. */
+function jsonText(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  return typeof value === 'string' ? value : JSON.stringify(value);
+}
 
 /** Each row's parent set to `[record]`, stamped now; the child paths stay. A record holding NUL is refused whole. */
 export const writeOpCheckpointRecords: StoreMember<[op: string, rows: ReadonlyArray<{ fingerprint: string; record: unknown }>], void> = async (brain, op, rows) => {

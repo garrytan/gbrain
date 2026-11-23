@@ -176,7 +176,7 @@ describe('store listings come out by byte', () => {
     expect((await readCandidateRecords(engine, ['census-src'])).map(r => r.key)).toEqual([...BYTE_SLUGS]);
   });
 
-  parityTest('readUncommittedFenceRepairs lists notices by byte of fingerprint', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('readUncommittedFenceRepairs lists notices by byte of fingerprint', { methods: ['writeOpCheckpointRecord', 'listUncommittedFenceRepairRows'] }, async (engine) => {
     const root = mkdtempSync(join(tmpdir(), 'collate-uncommitted-'));
     try {
       for (const path of MIXED_SLUGS) {

@@ -10,6 +10,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { PURGE_STALE_CHECKPOINTS_SQL } from '../op-checkpoint-purge-sql.ts';
+import { FENCE_UNCOMMITTED_OP } from '../fence-repair/uncommitted-op.ts';
 
 type Direct = Pick<BrainEngine, 'executeRawDirect'>;
 type Raw = Pick<BrainEngine, 'executeRaw'>;
@@ -120,4 +121,19 @@ export async function writeOpCheckpointRecords(raw: Raw, op: string, rows: Reado
 export async function purgeStaleCheckpoints(raw: Raw, ttlDays: number): Promise<number> {
   const rows = await raw.executeRaw<{ count: string | number }>(PURGE_STALE_CHECKPOINTS_SQL, [String(ttlDays)]);
   return Number(rows[0]?.count ?? 0);
+}
+
+/** One uncommitted fence-repair notice row: its checkpoint fingerprint and its record (`completed_keys->0`). */
+export interface UncommittedFenceRepairRow { fingerprint: string; record: unknown }
+
+/** The statement fence-repair/uncommitted.ts readUncommittedFenceRepairs ran through executeRaw. */
+export const UNCOMMITTED_FENCE_REPAIR_ROWS_SQL = `SELECT fingerprint, completed_keys->0 AS record FROM op_checkpoints
+    WHERE op=$1 AND ($2::text[] IS NULL OR completed_keys->0->>'source_id'=ANY($2::text[])) ORDER BY fingerprint COLLATE "C"`;
+
+/**
+ * The uncommitted fence-repair notices (`fence-repair-uncommitted` checkpoints) whose record names one of `sourceIds`
+ * (every notice when null), by byte order of fingerprint. A failure is thrown unchanged.
+ */
+export function listUncommittedFenceRepairRows(raw: Raw, sourceIds: readonly string[] | null): Promise<UncommittedFenceRepairRow[]> {
+  return raw.executeRaw<UncommittedFenceRepairRow>(UNCOMMITTED_FENCE_REPAIR_ROWS_SQL, [FENCE_UNCOMMITTED_OP, sourceIds ? [...sourceIds] : null]);
 }

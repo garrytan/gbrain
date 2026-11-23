@@ -1678,6 +1678,8 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   readOpCheckpointRecords(op: string, fingerprints: readonly string[]): Promise<unknown[]>;
   /** Each row's checkpoint parent set to the one-element array `[record]`, stamped now; each fingerprint at most once (sync-holds.ts recordSyncImportProvenances). */
   writeOpCheckpointRecords(op: string, rows: ReadonlyArray<{ fingerprint: string; record: unknown }>): Promise<void>;
+  /** The uncommitted fence-repair notices of `sourceIds` (all when null), by byte order of fingerprint (fence-repair/uncommitted.ts). */
+  listUncommittedFenceRepairRows(sourceIds: readonly string[] | null): Promise<Array<{ fingerprint: string; record: unknown }>>;
   /**
    * A sync pass's `I⋈P` (engine-sql/sync-pass-pages.ts): the source's pages with a recorded origin and the fields of their
    * import records, for the named page ids or the keyset page after `after`, in page id order.
