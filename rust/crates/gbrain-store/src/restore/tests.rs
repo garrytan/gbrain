@@ -779,6 +779,10 @@ fn a_crash_between_the_record_and_format_leaves_a_pair_open_repairs() {
     let (store, dir) = on_disk("crash");
     let old_format = format_file(&dir);
     let report = store.restore_quarantine(&default_only()).unwrap();
+    assert_ne!(
+        report.brain_id, old_format.brain_id,
+        "the pair is a real rotation"
+    );
     store.close();
     // The record committed with the new id; the process died before FORMAT was renamed.
     format::write(&dir, &old_format).unwrap();
