@@ -714,6 +714,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readGitHoldCodeCountRows': OOS.callerRawSql,
   'readGitImageHoldCountRows': OOS.callerRawSql,
   'readSyncConversionRows': OOS.callerRawSql,
+  'recordSyncConversion': OOS.callerRawSql,
   'readSyncPassRow': OOS.callerRawSql,
   'readLiveSyncPassRows': OOS.callerRawSql,
   'writeSyncPassRow': OOS.callerRawSql,

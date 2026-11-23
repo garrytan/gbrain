@@ -708,6 +708,7 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   clearPageChildOrphans: 'countPageChildOrphans',
   deleteOrphanedAliases: 'listAliasTargets',
   deriveAccessReaders: 'countAccessReaderDrift',
+  recordSyncConversion: 'readSyncConversionRows for that source',
   requestGitHoldRetry: 'readGitHoldRetryRequest for that source',
   replaceVersionChangeReasons: 'listVersionsByChangeReason',
   rewriteTimelineRow: 'getTimeline for that page',
