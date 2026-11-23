@@ -13,7 +13,7 @@
  *  - Seam: none. Typed methods only (no executeRaw). Byte sizes are not compared: each engine measures its own storage.
  */
 import { describe, expect } from 'bun:test';
-import { parityArms } from './harness.ts';
+import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { withWriteAttribution } from '../../src/core/persistence/context.ts';
@@ -267,4 +267,40 @@ describe('doctor reads, second set', () => {
       return { none, found, other };
     },
   );
+
+  // The store keeps access rules and members, so on a brain that holds them these doctor reads list them on every arm
+  // (they once answered none on Rust).
+  parityTest('listRawOnlyRules lists the raw-only rules by source and id, and listAccessMemberRows lists members with their groups', {
+    methods: ['ensureAccessPolicyState', 'lockAccessPolicy', 'applyAccessRuleChanges', 'insertAccessMember', 'setAccessMemberDisabled', 'tombstoneAccessMember',
+      'listRawOnlyRules', 'listAccessMemberRows'],
+  }, async (engine, backend) => {
+    for (const id of ['work', 'alpha']) {
+      await createSource(engine, backend, id);
+      await engine.ensureAccessPolicyState(id);
+      await engine.transaction(async tx => {
+        await tx.lockAccessPolicy(id);
+        await tx.applyAccessRuleChanges(id, { remove: [], pending: [], revision: 1, actor: 'parity', insert: [
+          { rule_id: 'raw-b', prefix: 'raw-b/', readable_by: ['member:bob-example'], covers_derived: false },
+          { rule_id: 'kept', prefix: 'kept/', readable_by: ['member:bob-example'], covers_derived: true },
+          { rule_id: 'raw-a', prefix: 'raw-a/', readable_by: ['group:team-a'], covers_derived: false },
+        ] });
+      });
+    }
+    const member = (id: string, groups: string[]) => ({ id, displayName: `${id} name`, email: null, kind: 'person' as const, groups, bindTokenId: null });
+    await engine.insertAccessMember(member('carol-example', ['team-b', 'team-a']));
+    await engine.insertAccessMember(member('bob-example', []));
+    await engine.insertAccessMember(member('dave-example', ['team-a']));
+    await engine.setAccessMemberDisabled('bob-example', true);
+    await engine.tombstoneAccessMember('dave-example');
+    const view = (rows: Array<Record<string, unknown>>) => rows.map(({ created_at, disabled_at, tombstoned_at, ...r }) =>
+      ({ ...r, created: created_at instanceof Date, disabled: disabled_at instanceof Date, removed: tombstoned_at instanceof Date }));
+    const out = {
+      rawOnly: await engine.listRawOnlyRules(),
+      members: view(await engine.listAccessMemberRows(true) as Array<Record<string, unknown>>),
+      live: view(await engine.listAccessMemberRows(false) as Array<Record<string, unknown>>),
+    };
+    expect(out.rawOnly.map(r => `${r.source_id}:${r.rule_id}`)).toEqual(['alpha:raw-a', 'alpha:raw-b', 'work:raw-a', 'work:raw-b']);
+    expect(out.live.map(r => r.id)).toEqual(['bob-example', 'carol-example']);
+    return out;
+  });
 });

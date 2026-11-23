@@ -182,6 +182,7 @@ export const PAGES_MEMBERS = {
   readCompanyBrainEvidenceRows: 'pages',
   listCardRows: 'pages',
   readShelfPageRows: 'pages',
+  findCardRows: 'pages',
   readFirstLiveSlugAtPath: 'pages',
   listPathTwinSlugs: 'pages',
   listLiveSlugOrigins: 'pages',

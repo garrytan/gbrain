@@ -5,11 +5,9 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { PageReadScope } from '../types.ts';
-import { pageReadFilter } from '../search/read-policy-sql.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
-import { boundedBodyPrefixSql } from '../page-window/bounded-lead.ts';
 import { STORAGE_SOURCE_ID } from './door.ts';
-import { CARD_COLUMNS, cardFilterSql, type CardFilters, type CardRow } from '../engine-sql/list-reads.ts';
+import type { CardFilters, CardRow } from '../engine-sql/list-reads.ts';
 import { accessLabels, cardFromPage, STORED_OBJECT_TYPE, type AccessLabels, type Card } from './schema.ts';
 
 const STOPWORDS = new Set(['a', 'an', 'and', 'the', 'of', 'to', 'in', 'on', 'for', 'from', 'my', 'our', 'it', 'that', 'this', 'back', 'bring', 'restore', 'find', 'where', 'is', 'was', 'what', 'did', 'go', 'with', 'please']);
@@ -28,23 +26,7 @@ export { CARD_COLUMNS, cardFilterSql } from '../engine-sql/list-reads.ts';
 
 export async function findCards(engine: BrainEngine, query: string, opts: { limit: number; filters: CardFilters; policy?: PageReadScope }): Promise<FindResult> {
   const terms = queryTerms(query);
-  const params: unknown[] = [STORAGE_SOURCE_ID, STORED_OBJECT_TYPE, query.trim().toLowerCase(), normalizeAlias(query), terms];
-  const policy = pageReadFilter('p', opts.policy, params, true);
-  const filters = cardFilterSql('p', opts.filters, params);
-  const rows = await engine.executeRaw<CardRow & { exact_id: boolean; exact_alias: boolean; exact_title: boolean; matched: number; rank: number; similarity: number }>(`
-    SELECT ${CARD_COLUMNS},
-      p.slug = $3 AS exact_id,
-      EXISTS (SELECT 1 FROM page_aliases a WHERE a.source_id = p.source_id AND a.slug = p.slug AND a.alias_norm = $4) AS exact_alias,
-      lower(btrim(p.title)) = $3 AS exact_title,
-      (SELECT count(*) FROM unnest($5::text[]) t WHERE d.doc @@ plainto_tsquery('simple', t))::int AS matched,
-      GREATEST(word_similarity($3, lower(p.title)),
-        COALESCE((SELECT max(word_similarity($3, a.alias_norm)) FROM page_aliases a WHERE a.source_id = p.source_id AND a.slug = p.slug), 0))::float8 AS similarity
-    FROM pages p
-    CROSS JOIN LATERAL (SELECT to_tsvector('simple', p.title || ' ' || COALESCE((SELECT string_agg(a.alias_norm, ' ') FROM page_aliases a WHERE a.source_id = p.source_id AND a.slug = p.slug), '')
-      || ' ' || p.slug || ' ' || ${boundedBodyPrefixSql('p')}) AS doc) d
-    WHERE p.source_id = $1 AND p.type = $2 AND ${policy}${filters}
-    ORDER BY exact_id DESC, exact_alias DESC, exact_title DESC, matched DESC, similarity DESC, p.slug COLLATE "C"
-    LIMIT 500`, params);
+  const rows = await engine.findCardRows({ sourceId: STORAGE_SOURCE_ID, type: STORED_OBJECT_TYPE, query: query.trim().toLowerCase(), aliasNorm: normalizeAlias(query), terms, filters: opts.filters, policy: opts.policy });
   const needed = Math.max(1, Math.ceil(terms.length / 2));
   const strip = ({ exact_id: _e, exact_alias: _a, exact_title: _t, matched: _m, rank: _r, similarity: _s, ...card }: (typeof rows)[number]): CardRow => ({ ...card, stores: card.stores ?? [] });
   const hits: FindHit[] = [];

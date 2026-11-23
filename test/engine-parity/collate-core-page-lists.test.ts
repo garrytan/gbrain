@@ -187,7 +187,7 @@ describe('storage shelf and fact pool lists', () => {
     return walked;
   });
 
-  parityTest('findCards breaks a tie between equal cards by slug byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('findCards breaks a tie between equal cards by slug byte', { methods: ['putPage', 'findCardRows'] }, async (engine, backend) => {
     await createSource(engine, backend, 'storage');
     for (const slug of MIXED_SLUGS) {
       await engine.putPage(slug, { type: STORED, title: 'Zebra crate', compiled_truth: 'Same body.', timeline: '' } as never, { sourceId: 'storage' });
@@ -195,6 +195,31 @@ describe('storage shelf and fact pool lists', () => {
     const ids = (await findCards(engine, 'zebra crate', { limit: 10, filters: {} })).hits.map(h => h.id);
     expect(ids).toEqual([...BYTE_SLUGS]);
     return ids;
+  });
+
+  // The whole ranking on every arm: an exact id, an exact alias, an exact title, word matches over the body and the
+  // aliases, and the similarity of the rest, with the card columns and the store filter of each hit.
+  parityTest('findCards ranks by id, alias, title, words and similarity, with each card and its storage fields', { methods: ['putPage', 'setPageAliases', 'findCardRows'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'storage');
+    const card = (slug: string, title: string, body: string, storage: Record<string, unknown>) =>
+      engine.putPage(slug, { type: STORED, title, compiled_truth: body, timeline: '', frontmatter: { storage } } as never, { sourceId: 'storage' });
+    await card('red-kettle', 'Copper kettle', 'A copper kettle from the attic.', { status: 'stored', kind: 'object', locations: [{ store: 'b2' }, { store: 'attic' }, { store: 'b2' }], on_source_machine: 'true' });
+    await card('blue-kettle', 'Blue kettle', 'Enamel kettle, chipped.', { status: 'archived', locations: [{ store: 'attic' }, {}], on_source_machine: false });
+    await card('tea-set', 'Tea set', 'Six cups and a copper tray.', { status: 'stored', original_path: '/home/me/tea', locations: 'none' });
+    await card('red-mug', 'Red mug', 'No match here.', {});
+    await engine.setPageAliases('tea-set', 'storage', ['copper kettle tray']);
+    const view = async (q: string, filters = {}) => {
+      const found = await findCards(engine, q, { limit: 10, filters });
+      return { terms: found.terms, not_found: found.not_found,
+        hits: found.hits.map(({ updated_at: _u, ...h }) => h), closest: found.closest.map(({ updated_at: _u, ...c }) => c) };
+    };
+    const out = {
+      id: await view('red-kettle'), title: await view('Blue kettle'), words: await view('copper kettle'),
+      storeFilter: await view('kettle', { store: 'attic' }), statusFilter: await view('kettle', { status: 'stored' }),
+      machine: await view('kettle', { onSourceMachine: true }), closest: await view('kettel'),
+    };
+    expect(out.id.hits[0]).toMatchObject({ id: 'red-kettle', match: 'id' });
+    return out;
   });
 
   parityTest('readShelfCards lists the shelf by slug byte', { methods: ['putPage', 'readShelfPageRows'] }, async (engine, backend) => {

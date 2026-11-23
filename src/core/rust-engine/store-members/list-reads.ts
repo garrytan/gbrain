@@ -4,7 +4,7 @@
  * readRetainedSources is the connector status's "retained" flag (persistence/connector-status.ts).
  */
 import type { PageReadPolicy } from '../../types.ts';
-import type { AttendanceWindowRow, CardListQuery, ChatCensusRow, PredictionLedgerEvent, PredictionQuery, PredictionRow, TakeGradeRow, TakeHorizonRow, WhoCanReadRow, CardRow, CompanyBrainEvidenceRows, MentionScanLinkRow, MentionScanPageRow, PageBodyRow, PageSourceIdRow, RetypeProbeQuery, ShelfPageRow, SourceIdScope, TargetProbeSqlRow } from '../../engine-sql/list-reads.ts';
+import type { AttendanceWindowRow, CardFindQuery, CardHitRow, CardListQuery, ChatCensusRow, PredictionLedgerEvent, PredictionQuery, PredictionRow, TakeGradeRow, TakeHorizonRow, WhoCanReadRow, CardRow, CompanyBrainEvidenceRows, MentionScanLinkRow, MentionScanPageRow, PageBodyRow, PageSourceIdRow, RetypeProbeQuery, ShelfPageRow, SourceIdScope, TargetProbeSqlRow } from '../../engine-sql/list-reads.ts';
 import { storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy, storePageTextPolicy } from './private-provenance.ts';
 import { accessAllowedSql, currentCallerAccess, privatePagesFilterFragment } from '../../search/private-visibility.ts';
@@ -190,3 +190,12 @@ export const readLatestTakeGrades: StoreMember<[takeIds: readonly number[]], Tak
 
 export const readBeliefCoverageEvents: StoreMember<[sourceId: string], BeliefCoverageEventRow[]> = async (brain, sourceId) =>
   (await storeCall({ member: 'readBeliefCoverageEvents' }, () => brain.readBeliefCoverageEvents(sourceId))) as BeliefCoverageEventRow[];
+
+export const findCardRows: StoreMember<[q: CardFindQuery], CardHitRow[]> = async (brain, q) => {
+  const { sourceId, type, query, aliasNorm, terms, filters, policy } = takeOptions('findCardRows', q, ['sourceId', 'type', 'query', 'aliasNorm', 'terms', 'filters', 'policy']);
+  return (await storeCall({ member: 'findCardRows' }, () => brain.findCardRows({
+    sourceId, pageType: type, query, aliasNorm, terms: [...(terms as string[])],
+    filters: takeOptions('findCardRows', filters ?? {}, ['store', 'status', 'onSourceMachine']),
+    scope: policyScope('findCardRows', policy as PageReadPolicy | undefined),
+  }))) as CardHitRow[];
+};

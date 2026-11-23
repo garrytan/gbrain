@@ -7,12 +7,23 @@
 import type { BrainEngine } from '../../engine.ts';
 import { AVAILABLE_CHRONICLE_LEDGER_STATS } from '../../engine-sql/doctor-acc.ts';
 import { storeCall, type StoreMember } from './common.ts';
+import { withDates } from '../store-codec.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
 // Access state the rows below answer for (the member reads above read the store's member records).
 export const isAccessStateUnreadable: Member<'isAccessStateUnreadable'> = async () => false;
-export const listRawOnlyRules: Member<'listRawOnlyRules'> = async () => [];
+/** The store's rules (access_rules.rs) that keep only raw pages (`covers_derived` false), by (source, rule id) in byte order. */
+export const listRawOnlyRules: Member<'listRawOnlyRules'> = async (brain) => {
+  const sources = (await storeCall({ member: 'listRawOnlyRules' }, () => brain.listSourceRoutingRows())) as Array<{ id: string }>;
+  const out: Array<{ source_id: string; rule_id: string; prefix: string }> = [];
+  for (const { id } of sources) {
+    const rules = (await storeCall({ member: 'listRawOnlyRules', sourceId: id }, () => brain.listAccessRules(id))) as Array<{ rule_id: string; prefix: string; covers_derived: boolean }>;
+    for (const r of rules) if (!r.covers_derived) out.push({ source_id: id, rule_id: r.rule_id, prefix: r.prefix });
+  }
+  const key = (r: { source_id: string; rule_id: string }) => [r.source_id, r.rule_id] as const;
+  return out.sort((a, b) => { const [x, y] = [key(a), key(b)]; return x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : x[1] < y[1] ? -1 : x[1] > y[1] ? 1 : 0; });
+};
 /** The store keeps access members (access_members.rs): the enabled, unremoved members of one kind or with one grant, by id in byte order. */
 async function liveMemberIds(brain: Parameters<StoreMember<[], string[]>>[0], member: string, keep: (row: { kind: string; labelled_only: boolean }) => boolean): Promise<string[]> {
   const rows = (await storeCall({ member }, () => brain.readAccessMembers({}))) as
@@ -21,7 +32,10 @@ async function liveMemberIds(brain: Parameters<StoreMember<[], string[]>>[0], me
 }
 export const listAudienceMemberIds: Member<'listAudienceMemberIds'> = async (brain) => liveMemberIds(brain, 'listAudienceMemberIds', r => r.kind === 'audience');
 export const listLabelledOnlyMemberIds: Member<'listLabelledOnlyMemberIds'> = async (brain) => liveMemberIds(brain, 'listLabelledOnlyMemberIds', r => r.labelled_only === true);
-export const listAccessMemberRows: Member<'listAccessMemberRows'> = async () => [];
+/** The store's member records (access_members.rs) with their groups, by id; removed members only when asked. */
+export const listAccessMemberRows: Member<'listAccessMemberRows'> = async (brain, includeRemoved) =>
+  ((await storeCall({ member: 'listAccessMemberRows' }, () => brain.readAccessMembers({ includeRemoved }))) as Array<Record<string, unknown>>)
+    .map(row => withDates(row, ['disabled_at', 'tombstoned_at', 'created_at']));
 export const listAttestCredentialRows: Member<'listAttestCredentialRows'> = async () => [];
 export const listActiveAccessTokenRows: Member<'listActiveAccessTokenRows'> = async () => [];
 export const listActiveOauthClientRows: Member<'listActiveOauthClientRows'> = async () => [];

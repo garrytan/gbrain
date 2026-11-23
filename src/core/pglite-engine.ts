@@ -2766,6 +2766,7 @@ export class PGLiteEngine implements BrainEngine {
   readCompanyBrainEvidenceRows(sourceId: string) { return listReadsImpl.readCompanyBrainEvidenceRows(this.rawRead, sourceId); }
   listCardRows(query: listReadsImpl.CardListQuery) { return listReadsImpl.listCardRows(this.rawRead, query); }
   readShelfPageRows(sourceId: string) { return listReadsImpl.readShelfPageRows(this.rawRead, sourceId); }
+  findCardRows(q: listReadsImpl.CardFindQuery) { return listReadsImpl.findCardRows(this.rawRead, q); }
   readFirstLiveSlugAtPath(path: string) { return listReadsImpl.readFirstLiveSlugAtPath(this.rawRead, path); }
   listPathTwinSlugs(sourceId: string, paths: readonly string[]) { return listReadsImpl.listPathTwinSlugs(this.rawRead, sourceId, paths); }
   listLiveSlugOrigins(slugs: readonly string[], sourceId?: string) { return listReadsImpl.listLiveSlugOrigins(this.rawRead, slugs, sourceId); }

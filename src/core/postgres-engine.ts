@@ -2501,6 +2501,7 @@ export class PostgresEngine implements BrainEngine {
   readCompanyBrainEvidenceRows(sourceId: string) { return listReadsImpl.readCompanyBrainEvidenceRows(this.executeRaw.bind(this), sourceId); }
   listCardRows(query: listReadsImpl.CardListQuery) { return listReadsImpl.listCardRows(this.executeRaw.bind(this), query); }
   readShelfPageRows(sourceId: string) { return listReadsImpl.readShelfPageRows(this.executeRaw.bind(this), sourceId); }
+  findCardRows(q: listReadsImpl.CardFindQuery) { return listReadsImpl.findCardRows(this.executeRaw.bind(this), q); }
   readFirstLiveSlugAtPath(path: string) { return listReadsImpl.readFirstLiveSlugAtPath(this.executeRaw.bind(this), path); }
   listPathTwinSlugs(sourceId: string, paths: readonly string[]) { return listReadsImpl.listPathTwinSlugs(this.executeRaw.bind(this), sourceId, paths); }
   listLiveSlugOrigins(slugs: readonly string[], sourceId?: string) { return listReadsImpl.listLiveSlugOrigins(this.executeRaw.bind(this), slugs, sourceId); }

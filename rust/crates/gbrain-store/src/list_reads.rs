@@ -19,7 +19,10 @@ use crate::kv::scan_prefix;
 use crate::facts::PrivacyPolicy;
 use crate::facts::privacy::{page_access_allowed, page_folder_rules_allowed, stamped_rules};
 use crate::owner_only::{OwnerOnlyForm, OwnerOnlySources};
-use crate::keyword::sql_like;
+use crate::keyword::{plainto_tsquery_simple, sql_like, to_tsvector_simple, trgm_word_similarity, ts_matches};
+use crate::cli_reads::pg_text::{btrim, pg_lower};
+use crate::aliases::page_alias_rows;
+use crate::page_body::truth_lead;
 use crate::link_queries::all_links;
 use crate::page_ops::{PageReadScope, pages_in_read_scope};
 use crate::pages::{PageRecord, all_pages};
@@ -78,7 +81,7 @@ pub struct CardRow {
     pub title: String,
     pub status: Option<String>,
     pub kind: Option<String>,
-    pub stores: Vec<Option<String>>,
+    pub stores: Vec<String>,
     pub original_path: Option<String>,
     pub on_source_machine: Option<bool>,
     pub updated_at: String,
@@ -146,7 +149,8 @@ fn location_store(loc: &Value) -> Option<String> {
 }
 
 /// One page as `CARD_COLUMNS` reads it. `stores` is `array_agg(DISTINCT loc->>'store')`: each
-/// store once in byte order, one NULL last when a location names none, `[]` with no location.
+/// store once in byte order, then, when a location names none, the NULL element, which PGLite and
+/// Postgres both hand back as the text `NULL`; `[]` with no location.
 fn card_row(page: &PageRecord) -> CardRow {
     let fm = &page.frontmatter;
     let mut stores: Vec<Option<String>> = storage_locations(fm).iter().map(location_store).collect();
@@ -157,6 +161,10 @@ fn card_row(page: &PageRecord) -> CardRow {
         (None, None) => std::cmp::Ordering::Equal,
     });
     stores.dedup();
+    let stores = stores
+        .into_iter()
+        .map(|s| s.unwrap_or_else(|| "NULL".to_owned()))
+        .collect();
     CardRow {
         id: page.slug.clone(),
         title: page.title.clone(),
@@ -416,6 +424,38 @@ pub struct PredictionLedgerEvent {
     pub at: String,
 }
 
+/// `findCardRows(query)`: the ranked shelf lookup of `findCards`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct CardFindQuery {
+    pub source_id: String,
+    pub page_type: String,
+    /// The phrase, trimmed and lowercased.
+    pub query: String,
+    /// The phrase's alias form (`normalizeAlias`).
+    pub alias_norm: String,
+    pub terms: Vec<String>,
+    pub filters: CardFilters,
+    pub scope: Option<PageReadScope>,
+}
+
+/// One ranked card: the card columns plus the ranking columns `findCards` reads.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CardHitRow {
+    #[serde(flatten)]
+    pub card: CardRow,
+    pub exact_id: bool,
+    pub exact_alias: bool,
+    pub exact_title: bool,
+    pub matched: u64,
+    pub similarity: f64,
+}
+
+/// `left(text, n)`: the first `n` characters.
+fn left_chars(text: &str, n: usize) -> &str {
+    text.char_indices().nth(n).map_or(text, |(at, _)| &text[..at])
+}
+
 /// The pages at `slug` that the read policy admits with its live filter on, by source id.
 fn readable_copies(store: &Store, slug: &str, scope: &PageReadScope) -> Result<Vec<PageRecord>> {
     let read = store.read()?;
@@ -540,6 +580,84 @@ impl Store {
             total,
             cards: pages.iter().skip(offset).take(limit).map(card_row).collect(),
         })
+    }
+
+    /// `findCardRows(query)`: the shelf cards the read scope (live) and card filters admit, each
+    /// with `exact_id` (slug = query), `exact_alias` (an alias row equals `alias_norm`),
+    /// `exact_title` (`lower(btrim(title))` = query), `matched` (how many terms the `simple` text
+    /// search finds in `title aliases slug left(body, 65536)`, none when the page has no body) and
+    /// `similarity` (the best `word_similarity(query, ..)` over the lowered title and the aliases),
+    /// best first by those columns in that order, then slug in byte order, at most 500.
+    pub fn find_card_rows(&self, query: &CardFindQuery) -> Result<Vec<CardHitRow>> {
+        let read = self.read()?;
+        let scope = PageReadScope {
+            live: true,
+            ..query.scope.clone().unwrap_or_default()
+        };
+        let mut pages = pages_in_read_scope(
+            &*read,
+            all_pages(&*read)?
+                .into_iter()
+                .filter(|p| p.source_id == query.source_id && p.page_type == query.page_type)
+                .filter(|p| card_passes(p, &query.filters))
+                .collect(),
+            &scope,
+        )?;
+        pages.sort_by(|a, b| a.slug.cmp(&b.slug));
+        let tsqueries = query
+            .terms
+            .iter()
+            .map(|t| plainto_tsquery_simple(t))
+            .collect::<Result<Vec<_>>>()?;
+        let mut rows = Vec::with_capacity(pages.len());
+        for page in &pages {
+            let aliases: Vec<String> = page_alias_rows(&*read, &page.source_id, &page.slug)?
+                .into_iter()
+                .map(|(alias, _)| alias)
+                .collect();
+            let body = match page.compiled_truth.as_deref() {
+                Some(text) => Some(text.to_string()),
+                None => truth_lead(&*read, page.id)?,
+            };
+            let matched = match body {
+                Some(body) => {
+                    let doc = to_tsvector_simple(&format!(
+                        "{} {} {} {}",
+                        page.title,
+                        aliases.join(" "),
+                        page.slug,
+                        left_chars(&body, 64 * 1024)
+                    ))?;
+                    tsqueries.iter().filter(|q| ts_matches(&doc, q)).count() as u64
+                }
+                None => 0,
+            };
+            let alias_best = aliases
+                .iter()
+                .map(|a| trgm_word_similarity(&query.query, a))
+                .fold(None, |m: Option<f32>, s| Some(m.map_or(s, |m| m.max(s))))
+                .unwrap_or(0.0);
+            let similarity = trgm_word_similarity(&query.query, &pg_lower(&page.title)).max(alias_best);
+            rows.push(CardHitRow {
+                card: card_row(page),
+                exact_id: page.slug == query.query,
+                exact_alias: aliases.iter().any(|a| *a == query.alias_norm),
+                exact_title: pg_lower(btrim(&page.title)) == query.query,
+                matched,
+                similarity: f64::from(similarity),
+            });
+        }
+        // Stable: the rows are by slug byte, the last key.
+        rows.sort_by(|a, b| {
+            b.exact_id
+                .cmp(&a.exact_id)
+                .then(b.exact_alias.cmp(&a.exact_alias))
+                .then(b.exact_title.cmp(&a.exact_title))
+                .then(b.matched.cmp(&a.matched))
+                .then(b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal))
+        });
+        rows.truncate(500);
+        Ok(rows)
     }
 
     /// `readShelfPageRows(sourceId)`: every live page of the source as `{ slug, title, type,

@@ -5,7 +5,7 @@
 import type { PageReadPolicy } from '../types.ts';
 import type { OwnerOnlyForm } from '../access/owner-only.ts';
 import type { BeliefCoverageEventRow } from '../engine-sql/belief-ledger.ts';
-import type { AttendanceWindowRow, CardListQuery, ChatCensusRow, PredictionLedgerEvent, PredictionQuery, PredictionRow, TakeGradeRow, TakeHorizonRow, WhoCanReadRow, CardRow, CompanyBrainEvidenceRows, MentionScanLinkRow, MentionScanPageRow, PageBodyRow, PageSourceIdRow, RetypeProbeQuery, ShelfPageRow, SourceIdScope, TargetProbeSqlRow } from '../engine-sql/list-reads.ts';
+import type { AttendanceWindowRow, CardFindQuery, CardHitRow, CardListQuery, ChatCensusRow, PredictionLedgerEvent, PredictionQuery, PredictionRow, TakeGradeRow, TakeHorizonRow, WhoCanReadRow, CardRow, CompanyBrainEvidenceRows, MentionScanLinkRow, MentionScanPageRow, PageBodyRow, PageSourceIdRow, RetypeProbeQuery, ShelfPageRow, SourceIdScope, TargetProbeSqlRow } from '../engine-sql/list-reads.ts';
 
 export interface ListReadMembers {
   /** The sources holding a live page at `slug`, by id in byte order (page-ref ambiguity, quarantine clear, --grammar). */
@@ -20,6 +20,8 @@ export interface ListReadMembers {
   listCardRows(query: CardListQuery): Promise<{ total: number; cards: CardRow[] }>;
   /** Every live page of a source as `{ slug, title, type, frontmatter }`, by slug in byte order (the shelf read). */
   readShelfPageRows(sourceId: string): Promise<ShelfPageRow[]>;
+  /** The shelf cards ranked for a phrase, best first, at most 500 (`gbrain storage find`). */
+  findCardRows(q: CardFindQuery): Promise<CardHitRow[]>;
   /** The removed-path lookups of a git sync (sync-git.ts resolveSlugsForRemovedPaths): the first live page recording a path, by (source, slug); */
   readFirstLiveSlugAtPath(path: string): Promise<string | null>;
   /** the paths several live pages of a source record, with their slugs by byte; */

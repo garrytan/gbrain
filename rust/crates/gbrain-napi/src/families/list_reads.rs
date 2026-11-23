@@ -310,4 +310,10 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_belief_coverage_events(&source_id))
     }
+
+    /// `findCardRows(query)`: the ranked shelf cards, at most 500.
+    #[napi]
+    pub fn find_card_rows<'env>(&self, env: &'env Env, query: Value) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.find_card_rows(&required(query, "query")?))
+    }
 }

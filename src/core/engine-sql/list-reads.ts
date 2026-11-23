@@ -10,6 +10,7 @@ import { accessAllowedSql, folderRulesAllowedSql, privatePagesFilterFragmentFast
 import { ownerOnlyPageSql, type OwnerOnlyForm } from '../access/owner-only.ts';
 import { chunkGenerationFilter } from '../search/safe-chunks.ts';
 import type { EngineRawRead } from './cli-reads-ops.ts';
+import { boundedBodyPrefixSql } from '../page-window/bounded-lead.ts';
 import { LIVE_STAGING_STATES } from './page-body.ts';
 
 /** Filters on a storage-shelf card's frontmatter (storage-manifest/find.ts). */
@@ -504,4 +505,30 @@ export async function readLatestTakeGrades(raw: EngineRawRead, takeIds: readonly
     `SELECT DISTINCT ON (take_id) take_id, verdict, confidence, applied, judge_model_id, prompt_version, graded_at
        FROM take_grade_cache WHERE take_id = ANY($1::bigint[]) ORDER BY take_id, graded_at DESC`,
     [[...takeIds]]);
+}
+
+/** The ranked shelf lookup (storage-manifest/find.ts findCards): the phrase as typed, lowered and as an alias, and its terms. */
+export interface CardFindQuery { sourceId: string; type: string; query: string; aliasNorm: string; terms: readonly string[]; filters: CardFilters; policy?: PageReadScope }
+/** One ranked card. */
+export type CardHitRow = CardRow & { exact_id: boolean; exact_alias: boolean; exact_title: boolean; matched: number; rank?: number; similarity: number };
+
+/** The shelf cards ranked for a phrase, best first, at most 500 (storage-manifest/find.ts findCards). */
+export async function findCardRows(raw: EngineRawRead, q: CardFindQuery): Promise<CardHitRow[]> {
+  const params: unknown[] = [q.sourceId, q.type, q.query, q.aliasNorm, [...q.terms]];
+  const policy = pageReadFilter('p', q.policy, params, true);
+  const filters = cardFilterSql('p', q.filters, params);
+  return raw<CardHitRow>(`
+    SELECT ${CARD_COLUMNS},
+      p.slug = $3 AS exact_id,
+      EXISTS (SELECT 1 FROM page_aliases a WHERE a.source_id = p.source_id AND a.slug = p.slug AND a.alias_norm = $4) AS exact_alias,
+      lower(btrim(p.title)) = $3 AS exact_title,
+      (SELECT count(*) FROM unnest($5::text[]) t WHERE d.doc @@ plainto_tsquery('simple', t))::int AS matched,
+      GREATEST(word_similarity($3, lower(p.title)),
+        COALESCE((SELECT max(word_similarity($3, a.alias_norm)) FROM page_aliases a WHERE a.source_id = p.source_id AND a.slug = p.slug), 0))::float8 AS similarity
+    FROM pages p
+    CROSS JOIN LATERAL (SELECT to_tsvector('simple', p.title || ' ' || COALESCE((SELECT string_agg(a.alias_norm, ' ') FROM page_aliases a WHERE a.source_id = p.source_id AND a.slug = p.slug), '')
+      || ' ' || p.slug || ' ' || ${boundedBodyPrefixSql('p')}) AS doc) d
+    WHERE p.source_id = $1 AND p.type = $2 AND ${policy}${filters}
+    ORDER BY exact_id DESC, exact_alias DESC, exact_title DESC, matched DESC, similarity DESC, p.slug COLLATE "C"
+    LIMIT 500`, params);
 }
