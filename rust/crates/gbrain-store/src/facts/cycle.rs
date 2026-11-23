@@ -16,7 +16,7 @@
 use super::repair::folder_restricted;
 use super::{
     FactRecord, PrivacyPolicy, ROW, any_entity_slug, bigint, count_arg, fact_by_number,
-    hidden_by_deleted_page, hidden_by_policy, hidden_by_quarantine, page_rows, read_fact, real,
+    hidden_by_deleted_page, hidden_by_policy, hidden_by_quarantine, page_rows, real,
 };
 use crate::Store;
 use crate::alias_fanout_reads::alias_row_exists;
