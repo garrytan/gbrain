@@ -8,7 +8,7 @@
  *   stale              an exactness mismatch while the follower held older committed work it had not applied
  *   inconclusive       an exactness mismatch with no such evidence; counted as unexplained until a rerun exists
  *   collation_order    a text-ordered read whose rows are the primary's, in C byte order (exactness.ts); explained, not unexplained
- *   privacy_diverged   a Rust row whose source_id is outside the scope the call asked for (sourceId / sourceIds)
+ *   privacy_diverged   a Rust row outside the call's source scope (any source column it carries), or a private page the call excluded
  *   capability_missing Rust refused with engine_capability_missing; `reason` is the capability
  *   error              Rust threw anything else; `reason` is its code when it has one
  *   timeout            Rust did not answer in the child's per-call budget
@@ -37,16 +37,44 @@ export interface Classification {
 /** Score-like fields two rankers may legitimately compute differently; ignored by the order-insensitive pass. */
 const SCORE_FIELDS = new Set(['score', 'rank', 'similarity', 'distance', 'rrf_score', 'ts_rank']);
 
-/** The source scope a read asked for, from its options argument; null when unscoped. */
-export function requestedSourceScope(args: unknown[]): Set<string> | null {
+/** Reads that take their source by position, not in an options object: the index of the string (or list) naming it. */
+const POSITIONAL_SCOPE: Readonly<Record<string, number>> = { listFactsByEntity: 0, resolveSlugWithAlias: 1, findByTitleFuzzy: 3 };
+
+/** The columns a row can carry its source in; a link carries one per page it joins. */
+const SOURCE_COLUMNS = ['source_id', 'from_source_id', 'to_source_id', 'origin_source_id'] as const;
+/** A one-source link read scopes one end only (the primary returns the far end across sources): getLinks its from page, getBacklinks its to page. */
+const LINK_SCOPED_END: Readonly<Record<string, string>> = { getLinks: 'from_source_id', getBacklinks: 'to_source_id' };
+
+export interface SourceScope { ids: Set<string>; federated: boolean; op?: string }
+
+/** The source scope a read asked for, read as the primary applies it (list > single > none; an empty list with no single source allows nothing). */
+export function requestedSourceScope(args: unknown[], op?: string): SourceScope | null {
+  const at = op === undefined ? undefined : POSITIONAL_SCOPE[op];
+  const positional = at === undefined ? undefined : args[at];
+  if (typeof positional === 'string' && positional) return { ids: new Set([positional]), federated: false, op };
+  if (Array.isArray(positional)) return { ids: new Set(positional.filter((s): s is string => typeof s === 'string')), federated: true, op };
   for (let i = args.length - 1; i >= 0; i--) {
     const arg = args[i];
     if (!arg || typeof arg !== 'object' || Array.isArray(arg)) continue;
     const rec = arg as Record<string, unknown>;
-    if (Array.isArray(rec.sourceIds) && rec.sourceIds.length > 0) return new Set(rec.sourceIds.filter((s): s is string => typeof s === 'string'));
-    if (typeof rec.sourceId === 'string' && rec.sourceId) return new Set([rec.sourceId]);
+    const single = typeof rec.sourceId === 'string' && rec.sourceId ? rec.sourceId : null;
+    if (Array.isArray(rec.sourceIds)) {
+      const ids = rec.sourceIds.filter((s): s is string => typeof s === 'string' && s !== '');
+      if (ids.length > 0) return { ids: new Set(ids), federated: true, op };
+      return single ? { ids: new Set([single]), federated: false, op } : { ids: new Set(), federated: true, op };
+    }
+    if (single) return { ids: new Set([single]), federated: false, op };
   }
   return null;
+}
+
+/** True when the call asked to hide private rows (`excludePrivate` on its options, or on a find's `untrusted` policy). */
+export function requestedExcludePrivate(args: unknown[]): boolean {
+  return args.some((arg) => {
+    if (!arg || typeof arg !== 'object' || Array.isArray(arg)) return false;
+    const rec = arg as { excludePrivate?: unknown; untrusted?: { excludePrivate?: unknown } | null };
+    return rec.excludePrivate === true || rec.untrusted?.excludePrivate === true;
+  });
 }
 
 function rowsOf(encoded: unknown): unknown[] {
@@ -59,13 +87,26 @@ function rowsOf(encoded: unknown): unknown[] {
   return [];
 }
 
-/** First source_id on a Rust row outside `scope`, or null. */
-export function outOfScopeSource(encodedRust: unknown, scope: Set<string> | null): string | null {
-  if (!scope) return null;
+/** A page row the primary's `excludePrivate` hides: visibility private, a pinned question, or an unmarked derived page (isPrivacyPrivatePage). */
+function isPrivateRow(row: Record<string, unknown>): boolean {
+  const fm = row.frontmatter && typeof row.frontmatter === 'object' ? row.frontmatter as Record<string, unknown> : null;
+  if (!fm) return false;
+  const derived = row.type === 'atom' || row.type === 'question' || (row.type === 'concept' && fm.synthesized_by != null);
+  return fm.pinned_question != null || (fm.visibility ?? (derived ? 'private' : 'world')) === 'private';
+}
+
+/** Why a Rust row leaks: a source outside `scope` in any column the row carries, or a page `excludePrivate` hides; null when none does. */
+export function leakReason(encodedRust: unknown, scope: SourceScope | null, excludePrivate = false): 'row_outside_requested_sources' | 'private_row_returned' | null {
+  const columns = scope && !scope.federated && scope.op && LINK_SCOPED_END[scope.op] ? [LINK_SCOPED_END[scope.op]] : SOURCE_COLUMNS;
   for (const row of rowsOf(encodedRust)) {
     if (!row || typeof row !== 'object') continue;
-    const source = (row as Record<string, unknown>).source_id;
-    if (typeof source === 'string' && !scope.has(source)) return source;
+    const rec = row as Record<string, unknown>;
+    if (excludePrivate && isPrivateRow(rec)) return 'private_row_returned';
+    if (!scope) continue;
+    for (const column of columns) {
+      const source = rec[column];
+      if (typeof source === 'string' && !scope.ids.has(source)) return 'row_outside_requested_sources';
+    }
   }
   return null;
 }
@@ -85,9 +126,9 @@ function sameMultiset(a: unknown[], b: unknown[]): boolean {
 }
 
 /** Compares a successful Rust result with the primary's. Both are already encoded (codec.ts). */
-export function classifyResult(kind: ShadowReadKind, args: unknown[], encodedPrimary: unknown, encodedRust: unknown): Classification {
-  const leaked = outOfScopeSource(encodedRust, requestedSourceScope(args));
-  if (leaked !== null) return { outcome: 'privacy_diverged', reason: 'row_outside_requested_sources' };
+export function classifyResult(kind: ShadowReadKind, args: unknown[], encodedPrimary: unknown, encodedRust: unknown, op?: string): Classification {
+  const leaked = leakReason(encodedRust, requestedSourceScope(args, op), requestedExcludePrivate(args));
+  if (leaked !== null) return { outcome: 'privacy_diverged', reason: leaked };
   if (canonicalJson(encodedPrimary) === canonicalJson(encodedRust)) return { outcome: 'match' };
   if (kind === 'ranked' && Array.isArray(encodedPrimary) && Array.isArray(encodedRust) && sameMultiset(encodedPrimary, encodedRust)) {
     return { outcome: 'order_diff' };

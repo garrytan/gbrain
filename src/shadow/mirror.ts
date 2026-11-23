@@ -5,11 +5,12 @@
  * calls the capture function synchronously, before the caller sees the result, so the read is frozen into plain JSON
  * values (codec.ts `encodeValue`) at capture time: a caller that changes the result object afterwards cannot change
  * what the shadow compares. Only sampled reads the queue accepts pay that encode; a full queue sheds the event
- * without encoding it. The queue drains on `setImmediate`, stringifies each event to one NDJSON line there and hands
+ * without encoding it, and the encode itself stops at a 1 MiB budget (counted `too_large`). The queue drains on `setImmediate`, stringifies each event to one NDJSON line there and hands
  * it to the transport (the supervisor's child pipe); a line over the size cap is shed as `too_large`. Every shed, sample miss and in-transaction skip is counted, and the counts travel to the child as a
  * `stats` event so the ledger and the report show what was not observed.
  */
 import type { CallerAccess } from '../core/search/private-visibility.ts';
+import { CaptureTooLargeError } from './codec.ts';
 
 /** One captured primary read, frozen at capture time: `args` and `result` are already `encodeValue` output. */
 export interface CapturedRead {
@@ -137,25 +138,26 @@ export class MirrorQueue {
     let read: CapturedRead;
     try {
       read = capture();
-    } catch {
-      this.counters.encode_error++;
-      if (op) this.meter.note(op, 'unmirrorable');
+    } catch (error) {
+      const tooLarge = error instanceof CaptureTooLargeError;
+      this.counters[tooLarge ? 'shed_too_large' : 'encode_error']++;
+      if (op) this.meter.note(op, tooLarge ? 'shed' : 'unmirrorable');
       return;
     }
     this.items.push(read);
     this.kick();
   }
 
-  /** Stops accepting and drops what is queued. */
+  /** Delivers what is queued now (a short-lived process disconnects before the next tick), then stops accepting. */
   stop(): void {
+    while (this.items.length > 0) this.drain();
     this.stopped = true;
-    this.items.length = 0;
   }
 
   /** Sends a stats event now (also used at shutdown). */
   flushStats(): void {
     this.sinceStats = 0;
-    try { this.transport.send(JSON.stringify({ t: 'stats', at: Date.now(), counters: this.counters }) + '\n'); } catch { /* fail open */ }
+    try { this.transport.send(JSON.stringify({ t: 'stats', at: Date.now(), pid: process.pid, counters: this.counters }) + '\n'); } catch { /* fail open */ }
   }
 
   private kick(): void {

@@ -172,13 +172,15 @@ describe('gbrain engine shadow seed', () => {
     return { out, err, deps: { out: (l: string) => out.push(l), err: (l: string) => err.push(l) } };
   }
   const okAddon = async () => ({ ok: true as const, addon: {} as never });
+  // `seed` opens the primary and closes it when done; the tests share one engine, so hand it over with a no-op disconnect.
+  const keepOpen = (engine: PGLiteEngine): PGLiteEngine => Object.create(engine, { disconnect: { value: async () => {} } }) as PGLiteEngine;
 
   async function inHome<T>(fn: (dir: string, deps: Parameters<typeof runEngineShadow>[1]) => Promise<T>): Promise<T> {
     const home = tempDir();
     return withEnv({ GBRAIN_HOME: home }, () => {
       const config = { engine: 'pglite' as const, database_path: join(home, 'brain.pglite') };
       const dir = shadowDirFor(shadowBrainKey(config)!);
-      return fn(dir, { config: () => config, loadAddon: okAddon, openPrimary: async () => primary, openStore: async () => fakeTarget(PAGES_ONLY) });
+      return fn(dir, { config: () => config, loadAddon: okAddon, openPrimary: async () => keepOpen(primary), openStore: async () => fakeTarget(PAGES_ONLY) });
     });
   }
 

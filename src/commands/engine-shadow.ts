@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { loadConfig } from '../core/config.ts';
 import type { EngineConfig } from '../core/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
+import type { OperationError } from '../core/ops/contract.ts';
 import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
 import { shadowStatusDocument } from '../shadow/status-document.ts';
 import { renderEvidenceStatus } from '../shadow/evidence.ts';
@@ -26,6 +27,8 @@ import {
 } from '../shadow/state.ts';
 
 export interface EngineShadowDeps {
+  /** The brain this command selects (`--brain`, GBRAIN_BRAIN_ID, a mount); default resolved the way every command does. */
+  brainId?: () => string;
   /** The brain config; default loadConfig() (the host brain). */
   config?: () => Pick<EngineConfig, 'engine' | 'database_path' | 'database_url'> | null;
   /** The addon loader `start --yes` runs; default the real loader (installed addon only, no network). */
@@ -61,6 +64,8 @@ brain repo; everything lives in <gbrain home>/shadow/<brain>/. stop --delete rem
 
 seed copies this brain into the Rust store once, in one read-only snapshot, before shadow mode compares answers.
 It writes nothing to the brain. A store is seeded once: to seed again, delete the shadow directory first.
+A brain that uses managed storage is refused (exit 3): the Rust engine never holds managed storage, so seeding it
+copies data nothing can use. seed checks that first and writes nothing when it refuses.
 
 A seeded brain is followed: each committed write is read back from the brain and applied to the Rust store. reconcile
 compares the whole store with the brain (digests per 500-row interval) and repairs what differs; it needs the Rust
@@ -130,7 +135,20 @@ export function shadowPlan(brain: string, primaryEngine: string, dir: string, o:
   return { plan, hash };
 }
 
-function resolveBrain(deps: EngineShadowDeps): { key: string; dir: string; engine: string } {
+/** The brain this process resolved (--brain, GBRAIN_BRAIN_ID, .gbrain-mount, a mount path); 'unresolved' when resolution fails, so the command refuses. */
+async function defaultBrainId(): Promise<() => string> {
+  const { brainRoutingArgs } = await import('../core/brain-resolver.ts');
+  return () => brainRoutingArgs()[1] ?? 'unresolved';
+}
+
+async function resolveBrain(deps: EngineShadowDeps): Promise<{ key: string; dir: string; engine: string }> {
+  // Shadow state is keyed by the host brain's config. A selected mounted brain would silently read, start or delete the host's.
+  // Loaded here, not at the top, so the command's flag table does not grow by everything the resolver imports.
+  const { HOST_BRAIN_ID } = await import('../core/brain-registry.ts');
+  const selected = (deps.brainId ?? (await defaultBrainId()))();
+  if (selected !== HOST_BRAIN_ID) {
+    throw new UsageError(`Shadow mode covers the host brain only, and this command selects the brain ${selected}, so nothing was changed. Run it without --brain (and with GBRAIN_BRAIN_ID unset) to use the host brain.`);
+  }
   const config = (deps.config ?? (() => loadConfig()))();
   const id = config ? brainIdentity(config) : null;
   const key = config ? shadowBrainKey(config) : null;
@@ -158,7 +176,7 @@ export async function runEngineShadow(args: string[], deps: EngineShadowDeps = {
       });
       return await run(dir);
     }
-    const brain = resolveBrain(deps);
+    const brain = await resolveBrain(deps);
     if (sub === 'start') return await start(brain, parseStart(rest), deps, out, err, now);
     if (sub === 'status') return status(brain, flags(rest, ['--json'], 'status').has('--json'), out, now);
     if (sub === 'stop') return stop(brain, flags(rest, ['--delete'], 'stop').has('--delete'), out, now);
@@ -255,6 +273,46 @@ async function seed(
     err('engine shadow: stop shadow mode first (gbrain engine shadow stop): its child holds the Rust store. Nothing was written.');
     return 1;
   }
+  // The managed-storage gate: the Rust engine never holds managed storage, so seeding it copies data nothing can use.
+  // It runs before the addon loads, before the shadow directory exists, before the store opens and before the snapshot starts.
+  const { managedStorageRefusal, unopenableBrainRefusal } = await import('../shadow/managed-gate.ts');
+  let primary: BrainEngine;
+  try {
+    primary = await (deps.openPrimary ?? openConfiguredPrimary)();
+  } catch (e) {
+    return await refuseManaged(unopenableBrainRefusal(e), json, out, err);
+  }
+  try {
+    const refusal = await managedStorageRefusal(primary);
+    if (refusal) return await refuseManaged(refusal, json, out, err);
+    return await seedFrom(primary, brain, json, deps, out, err, now);
+  } finally {
+    await primary.disconnect().catch(() => undefined);
+  }
+}
+
+/** Renders the managed-storage refusal: one line, the why and the next step on stderr; with --json also the error envelope on stdout; exit 3 (consent). */
+function renderManagedRefusal(e: OperationError, err: (l: string) => void): number {
+  err(`engine shadow: ${e.code} (${e.reason}): ${e.message}`);
+  if (e.why) err(e.why);
+  if (e.detail && !e.why?.includes(e.detail)) err(`Detail: ${e.detail}`);
+  err(e.suggestion ?? 'Ask the user; nothing was written.');
+  return 3;
+}
+
+async function refuseManaged(e: OperationError, json: boolean, out: (l: string) => void, err: (l: string) => void): Promise<number> {
+  if (json) {
+    const { renderCliError } = await import('../core/agent-output.ts');
+    out(renderCliError(e, { json: true, command: 'engine shadow seed', tty: false }).stdout!.trimEnd());
+  }
+  return renderManagedRefusal(e, err);
+}
+
+/** The rest of `seed` once the primary is open and unmanaged: the addon, the shadow directory, the store, the snapshot. */
+async function seedFrom(
+  primary: BrainEngine, brain: { key: string; dir: string; engine: string }, json: boolean, deps: EngineShadowDeps,
+  out: (l: string) => void, err: (l: string) => void, now: () => Date,
+): Promise<number> {
   const load = await (deps.loadAddon ?? (async () => {
     const { loadRustEngineAddon } = await import('../core/rust-engine/addon-loader.ts');
     return loadRustEngineAddon();
@@ -277,9 +335,7 @@ async function seed(
     }
     throw e;
   }
-  let primary: BrainEngine | null = null;
   try {
-    primary = await (deps.openPrimary ?? openConfiguredPrimary)();
     const record = await runSeed(primary, store, {
       primaryEngine: brain.engine, now,
       onBatch: json ? undefined : (relation, rows) => err(`  seeding ${relation}: ${rows} rows`),
@@ -299,7 +355,6 @@ async function seed(
     }
     throw e;
   } finally {
-    await primary?.disconnect().catch(() => undefined);
     await store.close().catch(() => undefined);
   }
 }

@@ -54,11 +54,11 @@ export function missingPages(encodedPrimary: unknown, encodedRust: unknown): Pag
   return out;
 }
 
-/** Did the read ask for the read policy (`excludePrivate`, plain or under `remote`)? Only then is a missing row a policy question. */
+/** Did the read ask for the read policy (`excludePrivate`, plain, under `remote`, or on a find's `untrusted` policy)? Only then is a missing row a policy question. */
 export function policyApplies(args: unknown[]): boolean {
   return args.some((a) => {
-    const o = a as { excludePrivate?: unknown; remote?: { excludePrivate?: unknown } } | null;
-    return !!o && typeof o === 'object' && (o.excludePrivate === true || o.remote?.excludePrivate === true);
+    const o = a as { excludePrivate?: unknown; remote?: { excludePrivate?: unknown }; untrusted?: { excludePrivate?: unknown } | null } | null;
+    return !!o && typeof o === 'object' && (o.excludePrivate === true || o.remote?.excludePrivate === true || o.untrusted?.excludePrivate === true);
   });
 }
 

@@ -20,7 +20,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { registerEngineView } from '../core/persistence/switches.ts';
 import { callerAccessRecord } from '../core/search/private-visibility.ts';
-import { encodeValue } from './codec.ts';
+import { CAPTURE_BUDGET_BYTES, CaptureTooLargeError, encodeArgs, encodeValue } from './codec.ts';
 import { followRaw, followScope, followWrite, type FollowContext, type FollowOptions, type Frame } from './follow.ts';
 import type { CapturedRead, MirrorCounters, UsageField } from './mirror.ts';
 import { isShadowReadMember, SHADOW_TRANSACTION_MEMBERS } from './reads.ts';
@@ -71,6 +71,15 @@ export function wrapShadowEngine<E extends BrainEngine>(engine: E, sink: ShadowS
   return buildProxy(engine, sink, opts, false, null);
 }
 
+/** A real method, not an accessor: `get sql()` hands out the driver client, a function with its own properties that a bound copy would lose. */
+function isMethod(target: object, prop: PropertyKey): boolean {
+  for (let o: object | null = target; o; o = Object.getPrototypeOf(o)) {
+    const d = Object.getOwnPropertyDescriptor(o, prop);
+    if (d) return !d.get && !d.set;
+  }
+  return true;
+}
+
 function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: ShadowWrapperOptions, inTransaction: boolean, frame: Frame | null): E {
   const random = opts.random ?? Math.random;
   const now = opts.now ?? (() => performance.now());
@@ -100,10 +109,11 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
     }
     let encodedArgs: unknown;
     try {
-      encodedArgs = encodeValue(args);
-    } catch {
-      try { sink.counters.encode_error++; } catch { /* fail open */ }
-      use(op, 'unmirrorable');
+      encodedArgs = encodeArgs(args, { left: CAPTURE_BUDGET_BYTES });
+    } catch (error) {
+      const tooLarge = error instanceof CaptureTooLargeError;
+      try { sink.counters[tooLarge ? 'shed_too_large' : 'encode_error']++; } catch { /* fail open */ }
+      use(op, tooLarge ? 'shed' : 'unmirrorable');
       return fn.apply(engine, args);
     }
     const access = callerAccessRecord() ?? undefined; // frozen; none outside a caller's record, and then Rust runs under none (a record changes the page policy text Rust serves)
@@ -113,7 +123,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
     return out.then((result: unknown) => {
       const primaryMs = now() - started;
       try {
-        sink.offer(() => ({ op, args: encodedArgs, result: encodeValue(result), primary_ms: primaryMs, at: Date.now(), access }), op);
+        sink.offer(() => ({ op, args: encodedArgs, result: encodeValue(result, undefined, { left: CAPTURE_BUDGET_BYTES }), primary_ms: primaryMs, at: Date.now(), access }), op);
       } catch { /* the shadow never fails a call */ }
       return result;
     }, (error: unknown) => {
@@ -159,7 +169,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
   const proxy = new Proxy(engine, {
     get(target, prop) {
       const value = Reflect.get(target, prop, target);
-      if (typeof value !== 'function') return value;
+      if (typeof value !== 'function' || !isMethod(target, prop)) return value;
       const hit = cache.get(prop);
       if (hit && hit.original === value) return hit.wrapped;
       let wrapped: Function;

@@ -67,6 +67,6 @@ describe('page candidates', () => {
     expect(missingPages([a], [a, { page_id: 2, source_id: 's', slug: 'b' }, { source_id: 's', slug: 'c' }])).toEqual({ ids: [2], keys: ['s\u001fb', 's\u001fc'] });
     expect(missingPages(null, { id: 7, slug: 'p', source_id: 's' })).toEqual({ ids: [7], keys: ['s\u001fp'] });
     expect(missingPages([a], [{ page_id: 1, source_id: 's', slug: 'renamed' }])).toEqual({ ids: [], keys: [] });
-    expect([policyApplies([{ excludePrivate: true }]), policyApplies([{ remote: { excludePrivate: true } }]), policyApplies([{ limit: 1 }, 'x'])]).toEqual([true, true, false]);
+    expect([policyApplies([{ excludePrivate: true }]), policyApplies([{ remote: { excludePrivate: true } }]), policyApplies([{ untrusted: { excludePrivate: true } }]), policyApplies([{ limit: 1 }, 'x'])]).toEqual([true, true, true, false]);
   });
 });

@@ -88,6 +88,7 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   reconciler?.startNightly();
   engine.registerBeforeDisconnect(async () => {
     try {
+      queue.stop(); // delivers the reads still queued, so the child sees them and the counters add up
       if (supervisor.active() && supervisor.childPid !== null) queue.flushStats();
       // Let the follower finish reading what was just committed; a slow read is shed rather than waited on.
       if (follower) await Promise.race([follower.settle(), new Promise((resolve) => { setTimeout(resolve, 2_000).unref?.(); })]);
@@ -95,7 +96,6 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
       clearInterval(usageTimer);
       flushUsage();
       reconciler?.stop();
-      queue.stop();
       supervisor.stop();
       await reads?.close().catch(() => undefined);
       if (askReads !== reads) await askReads.close().catch(() => undefined);

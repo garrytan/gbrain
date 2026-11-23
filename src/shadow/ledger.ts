@@ -49,6 +49,8 @@ export interface ShadowSummaryFile {
   child_shed: number;
   /** The latest cumulative counters the serving process sent. */
   primary: MirrorCounters;
+  /** The serving process that sent them: a restarted child gets the same cumulative counters again. */
+  primary_pid?: number;
 }
 
 export interface ShadowSummary {
@@ -70,8 +72,14 @@ export interface ShadowFault {
   epoch_id?: string;
 }
 
-function ensureDir(dir: string): void {
+/**
+ * Creates a subdirectory of the shadow directory, never the shadow directory itself: `stop --delete` removes it,
+ * and a late write from a still-running child must not bring the evidence back. False when the shadow directory is gone.
+ */
+function ensureDir(dir: string, shadowDir: string): boolean {
+  if (!existsSync(shadowDir)) return false;
   mkdirSync(dir, { recursive: true, mode: 0o700 });
+  return true;
 }
 
 export function ledgerDir(shadowDir: string): string { return join(shadowDir, 'ledger'); }
@@ -82,7 +90,7 @@ export function faultsPath(shadowDir: string): string { return join(shadowDir, '
 export function appendLedgerRows(shadowDir: string, rows: readonly ShadowLedgerRow[]): void {
   if (rows.length === 0) return;
   const dir = ledgerDir(shadowDir);
-  ensureDir(dir);
+  if (!ensureDir(dir, shadowDir)) return;
   const byDay = new Map<string, string[]>();
   for (const row of rows) {
     const day = row.ts.slice(0, 10);
@@ -95,7 +103,7 @@ export function appendLedgerRows(shadowDir: string, rows: readonly ShadowLedgerR
 
 export function writeSummaryFile(shadowDir: string, summary: ShadowSummaryFile): void {
   const dir = summariesDir(shadowDir);
-  ensureDir(dir);
+  if (!ensureDir(dir, shadowDir)) return;
   const path = join(dir, `${summary.child_id}.json`);
   const tmp = `${path}.tmp`;
   writeFileSync(tmp, JSON.stringify(summary) + '\n', { mode: 0o600 });
@@ -103,7 +111,7 @@ export function writeSummaryFile(shadowDir: string, summary: ShadowSummaryFile):
 }
 
 export function appendFault(shadowDir: string, fault: ShadowFault): void {
-  ensureDir(shadowDir);
+  if (!existsSync(shadowDir)) return;
   appendFileSync(faultsPath(shadowDir), JSON.stringify(fault) + '\n', { mode: 0o600 });
 }
 
@@ -151,6 +159,7 @@ function maxIso(a: string | null, b: string | null): string | null { return !a ?
 export function readShadowSummary(shadowDir: string): ShadowSummary {
   const total: ShadowSummary = { children: 0, first_event_at: null, last_event_at: null, by_op: {}, child_shed: 0, primary: newMirrorCounters() };
   const dir = summariesDir(shadowDir);
+  const byPid = new Map<number | string, MirrorCounters>();
   if (!existsSync(dir)) return total;
   for (const name of readdirSync(dir).sort()) {
     if (!name.endsWith('.json')) continue;
@@ -165,7 +174,13 @@ export function readShadowSummary(shadowDir: string): ShadowSummary {
       const into = total.by_op[op] ?? (total.by_op[op] = {});
       for (const [outcome, n] of Object.entries(counts) as Array<[ShadowOutcome, number]>) into[outcome] = (into[outcome] ?? 0) + n;
     }
-    for (const key of Object.keys(total.primary) as Array<keyof MirrorCounters>) total.primary[key] += file.primary?.[key] ?? 0;
+    // Cumulative per serving process: the latest file of one process wins, files of different processes add.
+    const mine = byPid.get(file.primary_pid ?? name) ?? newMirrorCounters();
+    for (const key of Object.keys(mine) as Array<keyof MirrorCounters>) mine[key] = Math.max(mine[key], file.primary?.[key] ?? 0);
+    byPid.set(file.primary_pid ?? name, mine);
+  }
+  for (const counters of byPid.values()) {
+    for (const key of Object.keys(total.primary) as Array<keyof MirrorCounters>) total.primary[key] += counters[key];
   }
   return total;
 }

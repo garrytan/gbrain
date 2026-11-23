@@ -12,7 +12,7 @@
  * describe an empty store and mostly `diff`; the provisional report says so.
  */
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { join } from 'node:path';
 import { gbrainPath } from '../core/config.ts';
@@ -36,10 +36,13 @@ import { newMirrorCounters, type MirrorCounters } from './mirror.ts';
 import { appendRecall, IntervalGate, recallEligible, RECALL_INTERVAL_MS, scoreRecall, type RankedKey } from './recall.ts';
 import { isShadowReadMember, SHADOW_READ_MEMBERS, type ShadowReadMember } from './reads.ts';
 import { readSeedRecord } from './seed.ts';
+import { shadowStatePath } from './state.ts';
 
 export const SHADOW_CHILD_CALL_TIMEOUT_MS = 10_000;
 export const SHADOW_CHILD_QUEUE_BOUND = 1024;
 export const SHADOW_HEARTBEAT_MS = 5_000;
+/** Timed-out calls that may still be running at once; past it new reads are shed and the heartbeat stops, so the supervisor restarts the child. */
+export const SHADOW_CHILD_STALL_LIMIT = 4;
 
 type ShadowEngine = Pick<BrainEngine, 'connect' | 'disconnect'> & Record<string, unknown>;
 
@@ -118,11 +121,14 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   } catch (error) {
     load = { ok: false, code: 'rust_engine_addon_missing', reason: `loader_error:${classifyError(error).reason ?? 'unknown'}`, message: 'loader threw' };
   }
+  // `stop --delete` can land while the addon loads: opening the store now would recreate the directory it removed.
+  const hadState = existsSync(shadowStatePath(shadowDir));
+  const deleted = (): boolean => !existsSync(shadowDir) || (hadState && !existsSync(shadowStatePath(shadowDir)));
   // The evidence epoch this child session belongs to. Without a seed or a writable manifest there is no epoch: its rows
   // carry none and count for nothing.
   let epoch: EpochManifest | null = null;
   const seed = readSeedRecord(shadowDir);
-  if (seed) {
+  if (seed && !deleted()) { // a deleted shadow directory must not be recreated by the manifest
     try {
       epoch = ensureEpoch(shadowDir, {
         seed_id: seed.seed_id,
@@ -138,12 +144,19 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   const recordRustError = internalErrorRecorder(shadowDir, epochId, now);
   if (!load.ok) {
     unavailable = { outcome: 'addon_unavailable', reason: `${load.code}:${load.reason}` };
+  } else if (deleted()) {
+    unavailable = { outcome: 'error', reason: 'shadow_dir_deleted' };
   } else {
     try {
       const open = deps.openEngine ?? ((addon, store) => openRustEngine({ addon, databasePath: store }) as unknown as ShadowEngine);
       const storePath = join(shadowDir, 'store');
       engine = open(load.addon, storePath);
       await engine.connect({ database_path: storePath });
+      if (deleted()) {
+        await engine.disconnect().catch(() => {});
+        rmSync(shadowDir, { recursive: true, force: true });
+        throw Object.assign(new Error('shadow directory deleted while opening'), { code: 'shadow_dir_deleted' });
+      }
     } catch (error) {
       recordRustError('open', error);
       engine = null;
@@ -159,7 +172,12 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     owner: () => rustEngine?.ownerRole !== 'client',
     onRustError: recordRustError,
   });
-  const heartbeat = setInterval(() => { follow.tick(); try { deps.writeControl('{"t":"hb"}\n'); } catch { /* parent gone */ } }, deps.heartbeatMs ?? SHADOW_HEARTBEAT_MS);
+  const stalled = new Set<Promise<unknown>>();
+  const heartbeat = setInterval(() => {
+    if (stalled.size >= SHADOW_CHILD_STALL_LIMIT) return; // wedged in native work: go quiet so the watchdog restarts this child
+    follow.tick();
+    try { deps.writeControl('{"t":"hb"}\n'); } catch { /* parent gone */ }
+  }, deps.heartbeatMs ?? SHADOW_HEARTBEAT_MS);
   try { deps.writeControl('{"t":"hb"}\n'); } catch { /* parent gone */ }
 
   const pending: ReadEvent[] = [];
@@ -204,10 +222,15 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
 
   const ask = createAsker(deps.writeControl);
 
+  /** A call that never returns keeps its slot: that is what bounds the pile. */
+  const trackStall = (call: Promise<unknown>): void => { stalled.add(call); const settled = (): void => { stalled.delete(call); }; call.then(settled, settled); };
+
   /** The Rust read of `op`, under the caller access the primary read ran under. */
-  const callRust = (op: string, args: unknown[], access: CallerAccess | undefined, ms: number) => {
+  const callRust = (op: string, args: unknown[], access: CallerAccess | undefined, ms: number, onCall?: (call: Promise<unknown>) => void) => {
     const run = (): unknown => (engine![op] as (...a: unknown[]) => unknown).apply(engine, args);
-    return withTimeout(Promise.resolve(access ? withCallerAccess(access, run) : run()), ms);
+    const call = Promise.resolve(access ? withCallerAccess(access, run) : run());
+    onCall?.(call);
+    return withTimeout(call, ms);
   };
 
   /**
@@ -215,7 +238,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
    * mismatch on an exactness comparison is qualified as stale or inconclusive (`lagged`); a rerun passes null and keeps the raw mismatch.
    */
   const judge = async (op: string, encodedArgs: unknown[], primary: unknown, rust: unknown, access: CallerAccess | undefined, at: number, lagged: boolean | null): Promise<Classification> => {
-    const c = classifyResult(SHADOW_READ_MEMBERS[op as ShadowReadMember], encodedArgs, primary, rust);
+    const c = classifyResult(SHADOW_READ_MEMBERS[op as ShadowReadMember], encodedArgs, primary, rust, op);
     if (c.outcome === 'match' || c.outcome === 'privacy_diverged') return c;
     const args = decodeValue(encodedArgs) as unknown[];
     const { verdict, complete } = await privacyVerdict(ask, args, primary, rust, access, at);
@@ -236,7 +259,9 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     try {
       const answer = await ask({ kind: 'rerun', op: event.op, args: event.args, access: event.access, epoch_id: epochId }, RERUN_DEADLINE_MS) as { result: unknown; stamp: number; epoch_id: string };
       if (answer.epoch_id !== epochId) return skip('epoch_changed'); // an answer for another epoch is dropped, never restamped
-      const out = await follow.exclusive(answer.stamp, () => callRust(event.op, args, event.access, Math.max(1, Math.min(timeoutMs, deadline - now()))));
+      let call!: Promise<unknown>;
+      const out = await follow.exclusive(answer.stamp, () => callRust(event.op, args, event.access, Math.max(1, Math.min(timeoutMs, deadline - now())), (p) => { call = p; }));
+      if (out?.timedOut) trackStall(call);
       if (out === null || out.timedOut) return skip(out === null ? 'watermark_moved' : 'timeout');
       const c2 = await judge(event.op, event.args, answer.result, encodeValue(out.value), event.access, now(), null);
       if (c2.outcome === 'match') record(event, c, rustMs, rows, 'matched'); // closed as unsuccessful, never a match
@@ -272,16 +297,22 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     if (unavailable || !engine) { record(event, unavailable ?? { outcome: 'error', reason: 'no_engine' }, null, null); return; }
     const fn = engine[event.op];
     if (typeof fn !== 'function') { record(event, { outcome: 'capability_missing', reason: 'not_a_member' }, null, null); return; }
-    const args = decodeValue(event.args) as unknown[];
+    if (stalled.size >= SHADOW_CHILD_STALL_LIMIT) { record(event, { outcome: 'timeout', reason: 'stalled' }, null, null); return; }
     const started = performance.now();
     // Stale needs evidence: committed work older than this read that the follower had not applied, when the read
     // started or when it was compared.
     const capturedAt = event.at || now();
     let lagged = follow.pendingBefore(capturedAt);
     try {
-      const out = await callRust(event.op, args, event.access, timeoutMs);
+      const args = decodeValue(event.args) as unknown[]; // inside the try: one malformed event is recorded, never a wedged loop
+      let call!: Promise<unknown>;
+      const out = await callRust(event.op, args, event.access, timeoutMs, (p) => { call = p; });
       const rustMs = performance.now() - started;
-      if (out.timedOut) { record(event, { outcome: 'timeout' }, rustMs, null); return; }
+      if (out.timedOut) {
+        trackStall(call);
+        record(event, { outcome: 'timeout' }, rustMs, null);
+        return;
+      }
       const encoded = encodeValue(out.value);
       lagged ||= follow.pendingBefore(capturedAt);
       const c = await judge(event.op, event.args, event.result, encoded, event.access, capturedAt, lagged);
@@ -299,8 +330,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   let draining: Promise<void> | null = null;
   const drain = (): Promise<void> => {
     draining ??= (async () => {
-      while (pending.length > 0) await handle(pending.shift()!);
-      draining = null;
+      try { while (pending.length > 0) await handle(pending.shift()!); } finally { draining = null; }
     })();
     return draining;
   };
@@ -308,11 +338,11 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   const rl = createInterface({ input: deps.input, crlfDelay: Infinity });
   for await (const line of rl) {
     if (!line) continue;
-    let event: { t?: string; counters?: MirrorCounters };
+    let event: { t?: string; counters?: MirrorCounters; pid?: number };
     try { event = JSON.parse(line); } catch { continue; }
     if (event.t === 'apply' || event.t === 'watermark' || event.t === 'depth' || event.t === 'rpc') { follow.handle(event as FollowEvent); continue; }
     if (event.t === 'answer') { ask.answer(event as never); continue; }
-    if (event.t === 'stats' && event.counters) { summary.primary = { ...newMirrorCounters(), ...event.counters }; continue; }
+    if (event.t === 'stats' && event.counters) { summary.primary = { ...newMirrorCounters(), ...event.counters }; summary.primary_pid = event.pid; continue; }
     if (event.t !== 'read' || paused) continue;
     if (pending.length >= SHADOW_CHILD_QUEUE_BOUND) { summary.child_shed++; continue; }
     pending.push(event as ReadEvent);
