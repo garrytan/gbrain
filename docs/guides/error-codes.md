@@ -2096,6 +2096,16 @@ More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/
 
 More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
 
+### engine_shadow_refused
+
+<a id="engine_shadow_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| `gbrain engine shadow start` or `seed` was refused before it wrote anything: this brain uses managed storage, which the Rust engine never holds. | A brain with managed storage can never swap to Rust, so a shadow on it measures nothing it could use. A brain whose mode cannot be read or opened is refused the same way rather than passed. | Ask the user; nothing was written. Run: gbrain sources writer status --probe --json | agent | `repeat the read that failed` | 3 | no |
+
+Reasons: `managed_storage`.
+
 ### engine_swap_refused
 
 <a id="engine_swap_refused"></a>
@@ -5202,7 +5212,7 @@ More: [docs/guides/upgrades-auto-update.md#restart](../../docs/guides/upgrades-a
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| `gbrain backup restore` of a Rust brain stopped before it published anything: the archive holds work or state this runtime cannot make safe (unfinished write requests or recovery records, a purge that needs replay, a record kind it does not know), or the mode or addon cannot serve the restore. | A restored brain must not resume old work, bring purged content back or keep archived authority, and a Rust store cannot cancel requests with receipts or replay purges yet, so restore refuses by name instead of skipping the step. The restore target stays reserved with a private failed receipt and staging folder; the archive and the original brain are untouched, so running the same command again fails with restore_target_exists. | Read the reason: take a new backup of the original brain after pausing its writers, or restore with a gbrain build that supports the missing step, into a new absent --into. Never skip the quarantine. | user | `gbrain doctor --json` | 1 | no |
+| `gbrain backup restore` of a Rust brain stopped before it published anything: the archive holds work or state this runtime cannot make safe (unfinished write requests or recovery records, a purge that needs replay, a record kind it does not know), or the mode or addon cannot serve the restore. | A restored brain must not resume old work, bring purged content back or keep archived authority, and a Rust store cannot cancel requests with receipts or replay purges yet, so restore refuses by name instead of skipping the step. The restore target stays reserved with a private failed receipt and staging folder; the archive and the original brain are untouched, so running the same command again fails with restore_target_exists. | Read the reason: take a new backup of the original brain after pausing its writers, or restore with a newer release that supports the missing step, into a new absent --into. Never skip the quarantine. | user | `gbrain doctor --json` | 1 | no |
 
 Reasons: `purge_replay`, `purge_mirror_unreadable`, `pending_requests`, `recovery_required`, `unclassified_state`, `recovery_mode`, `restore_addon_too_old`.
 

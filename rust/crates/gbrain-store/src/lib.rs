@@ -89,7 +89,7 @@ pub mod write_trust;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 pub use crate::env::{Env, SystemEnv};
@@ -175,9 +175,9 @@ pub struct Store {
     /// True when the open-time scan could not store the member-access flag and this process reads
     /// it as `'1'` (`access_flag::scan_at_open`).
     pub(crate) flag_assumed: bool,
-    /// The brain directory, when the store was opened on one (`open_dir`, `open_dir_read_only`):
-    /// the snapshot copies its `FORMAT` (`snapshot.rs`). `None` over `open_kv`.
-    dir: Option<std::path::PathBuf>,
+    /// The brain directory, when the store was opened on one (`open_dir`, `open_dir_read_only`): where
+    /// `FORMAT` lives (the snapshot copies it, `snapshot.rs`; a restore rewrites it). `None` over `open_kv`.
+    pub(crate) dir: Option<PathBuf>,
 }
 
 /// The record file of a brain directory, with one writer or many. Only for the storage bake-off:
@@ -248,7 +248,12 @@ impl Store {
         // file) and repaired when it is behind the records.
         let record = store.format_record(&options)?;
         match existing {
-            Some(on_disk) if on_disk.brain_id != record.brain_id => {
+            // A restore that rotated the brain id committed the record first: FORMAT still names
+            // the id the record says it rotated from, and is rebuilt from the record below.
+            Some(on_disk)
+                if on_disk.brain_id != record.brain_id
+                    && !store.rotated_from(&on_disk.brain_id)? =>
+            {
                 return Err(StoreError::new(
                     error::STORE_CORRUPT,
                     "FORMAT names a different brain than the record file",
@@ -280,7 +285,10 @@ impl Store {
         };
         let mut store = Store::open_kv_in(kv, Arc::new(SystemEnv), options, FORMAT_VERSIONS)?;
         store.dir = Some(dir.to_path_buf());
-        if existing.is_some_and(|on_disk| on_disk.brain_id != store.info.brain_id) {
+        if let Some(on_disk) = existing
+            && on_disk.brain_id != store.info.brain_id
+            && !store.rotated_from(&on_disk.brain_id)?
+        {
             return Err(StoreError::new(
                 error::STORE_CORRUPT,
                 "FORMAT names a different brain than the record file",
@@ -319,6 +327,7 @@ impl Store {
                     format_version: FORMAT_VERSION,
                     brain_id: env.new_uuid(),
                     created_at_us: env.now_micros(),
+                    rotated_from: None,
                 };
                 let mut tx = kv.begin_write()?;
                 // Another handle may have created the brain between the read and this write.
@@ -379,6 +388,13 @@ impl Store {
             flag_assumed: self.flag_assumed,
             dir: self.dir.clone(),
         }
+    }
+
+    /// Whether the format record says this brain's id was rotated away from `id` (a restore gave
+    /// it a fresh one and `FORMAT` has not caught up yet).
+    fn rotated_from(&self, id: &str) -> Result<bool> {
+        let stored: Option<StoredFormat> = get_json(&*self.kv.snapshot()?, &keys::meta("format"))?;
+        Ok(stored.is_some_and(|s| s.rotated_from.as_deref() == Some(id)))
     }
 
     /// Starts the background build unless one is running on this store.
@@ -603,6 +619,10 @@ pub(crate) struct StoredFormat {
     pub format_version: u32,
     pub brain_id: String,
     pub created_at_us: i64,
+    /// Set by a restore that gave the brain a fresh id: the id it had before. `FORMAT` is rebuilt
+    /// from this record, so one that still names this id is stale, not another brain's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotated_from: Option<String>,
 }
 
 /// Upgrades a brain in an older format to `FORMAT_VERSION` in one write transaction, so a crash

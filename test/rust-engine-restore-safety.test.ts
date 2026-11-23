@@ -179,6 +179,27 @@ describe('one restore scenario, both engines', () => {
   withAddon('Rust: the typed restore ends in the same state', async () => {
     expect(await rustArm()).toEqual(EXPECTED);
   });
+  withAddon('Rust: the restored store has a fresh brain id in its records and in FORMAT, and opens again', async () => {
+    addon ??= await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: BUILT } });
+    const dir = join(temporary, 'fresh-id');
+    const first = await openRustStore(addon, dir);
+    let previous: string;
+    let fresh: string;
+    try {
+      const census = await first.restoreCensus([]);
+      previous = census.store.brain_id;
+      const report = await first.restoreQuarantine({ restore_id: 'r-id', sources: [{ id: 'default', local_path: null, rebased_path: null }], settings: [] });
+      fresh = report.brain_id;
+      expect(report.previous_brain_id).toBe(previous);
+      expect(fresh).not.toBe(previous);
+      expect(report.reconnect.some(line => line.includes(fresh) && line.includes(previous))).toBe(true);
+      expect(JSON.parse(readFileSync(join(dir, 'FORMAT'), 'utf8')).brain_id).toBe(fresh);
+    } finally { await first.close(); }
+    const again = await openRustStore(addon, dir);
+    try {
+      expect((await again.restoreCensus([])).store.brain_id).toBe(fresh);
+    } finally { await again.close(); }
+  });
   withAddon('Rust: unfinished work refuses by name, and the refusal changes nothing', async () => {
     addon ??= await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: BUILT } });
     const store = await openRustStore(addon, join(temporary, 'busy'));

@@ -17,11 +17,13 @@
 //! `unclassified`, which refuses. Page text, facts, links and source incarnations are not touched.
 
 use crate::config::ConfigValueRow;
-use crate::error::{INVALID_ARGUMENT, INVALID_STATE, RESTORE_REFUSED, Result, StoreError};
+use crate::error::{
+    INVALID_ARGUMENT, INVALID_STATE, RESTORE_REFUSED, Result, STORE_CORRUPT, StoreError,
+};
 use crate::kv::{KvRead, KvWrite, prefix_end, scan_prefix};
 use crate::pages::{PageRecord, claimed_origin};
 use crate::sources::{SourceRecord, all_sources, source_key};
-use crate::{Store, keys, put_json};
+use crate::{Store, StoredFormat, format, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -133,6 +135,9 @@ pub struct QuarantineReport {
     pub changed_settings: Vec<String>,
     pub jobs_cancelled: u64,
     pub revoked: Authority,
+    /// The brain id before the restore and the fresh one the restored store now has.
+    pub previous_brain_id: String,
+    pub brain_id: String,
     pub reconnect: Vec<String>,
     /// The config row that keeps what was replaced (an inert record a later backup carries).
     pub inventory_key: String,
@@ -514,7 +519,7 @@ impl Store {
         let identity = self.restore_identity()?;
         let inventory_key = format!("restore.{}.detached_execution", plan.restore_id);
         let config_key = keys::text(keys::CONFIG, &[&inventory_key]);
-        self.write(|tx| {
+        let report = self.write(|tx| {
             if tx.get(&config_key)?.is_some() {
                 return Err(StoreError::new(INVALID_STATE, format!("restore {} was already applied", plan.restore_id)));
             }
@@ -531,6 +536,8 @@ impl Store {
                 changed_settings: vec![],
                 jobs_cancelled: 0,
                 revoked: Authority::default(),
+                previous_brain_id: identity.brain_id.clone(),
+                brain_id: String::new(),
                 reconnect: vec![],
                 inventory_key: inventory_key.clone(),
             };
@@ -587,10 +594,30 @@ impl Store {
             if !report.revoked.oauth_clients.is_empty() {
                 report.reconnect.push(format!("Revoked {} OAuth client(s) the archive held ({}); register each again with gbrain auth register-client <name>, create new access tokens with gbrain auth create <name>, and have MCP users sign in again.", report.revoked.oauth_clients.len(), report.revoked.oauth_clients.join(", ")));
             }
+            // A fresh brain id, in the format record (committed with everything above). `FORMAT` follows
+            // after the commit; a crash between leaves a record that names the id it rotated from, and
+            // the next open rebuilds `FORMAT` from it.
+            let mut format: StoredFormat = get_json(&*tx, &keys::meta("format"))?
+                .ok_or_else(|| StoreError::new(STORE_CORRUPT, "the format record went missing"))?;
+            report.brain_id = self.env.new_uuid();
+            if report.brain_id == format.brain_id {
+                return Err(StoreError::new(INVALID_STATE, "the fresh brain id equals the old one"));
+            }
+            format.rotated_from = Some(std::mem::replace(&mut format.brain_id, report.brain_id.clone()));
+            put_json(tx, &keys::meta("format"), &format)?;
+            report.reconnect.push(format!("The restored brain has a new identity ({}; it was {}): anything that names the old brain id, such as local writer credential files and owner sockets, does not apply to it.", report.brain_id, report.previous_brain_id));
             let inventory = json!({ "sources": sources, "settings": settings, "reconnect": report.reconnect, "revoked": report.revoked });
             tx.put(&config_key, inventory.to_string().as_bytes())?;
             Ok(report)
-        })
+        })?;
+        // `FORMAT` follows the committed record by atomic rename; the next open repairs it if this is cut short.
+        if let Some(dir) = &self.dir
+            && let Some(mut on_disk) = format::read(dir)?
+        {
+            on_disk.brain_id = report.brain_id.clone();
+            format::write(dir, &on_disk)?;
+        }
+        Ok(report)
     }
 }
 

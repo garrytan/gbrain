@@ -178,7 +178,7 @@ Errors from the addon are real `Error` objects with a `code`:
 | `format_unknown` | `FORMAT` or the format record is not a version this build reads. Nothing was written. |
 | `store_closed` | The brain is not open on this handle. |
 | `store_io` | The file system or the storage engine failed; the write did not commit. |
-| `store_corrupt` | The records fail their integrity check, or `FORMAT` names another brain. |
+| `store_corrupt` | The records fail their integrity check, or `FORMAT` names another brain. A restore rotates the brain id in the format record first and `FORMAT` after; a `FORMAT` that still names the id the record says it rotated from is stale, not another brain, and the next open rebuilds it. |
 | `invalid_state` | The call does not fit the handle's state (`open` on an open handle), or `finishWrite` met a request that already ended. |
 | `snapshot_cancelled` | `snapshotTo` was cancelled with `snapshotCancel`. It removed what it wrote and released its read before it rejected. |
 | `read_only_transaction` | A write inside a read-only transaction (Postgres SQLSTATE `25006`). Nothing was written. |

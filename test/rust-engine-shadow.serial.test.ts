@@ -169,6 +169,31 @@ describe('rust_engine_addon doctor check', () => {
   });
 });
 
+describe('brain selection', () => {
+  test('a command that selects a mounted brain refuses and leaves the host brain alone, stop --delete included', async () => {
+    await inHome(async (_home, config) => {
+      await startShadow(config);
+      const dir = shadowDirFor(shadowBrainKey(config)!);
+      for (const sub of [['status'], ['report'], ['start', '--plan'], ['stop'], ['stop', '--delete']]) {
+        const c = capture();
+        expect(await runEngineShadow(sub, { ...c.deps, config: () => config, brainId: () => 'team' }), sub.join(' ')).toBe(2);
+        expect(c.err.join('\n')).toContain('host brain only');
+      }
+      expect(existsSync(dir)).toBe(true);
+      expect(readShadowState(dir)?.enabled).toBe(true);
+      const ok = capture();
+      expect(await runEngineShadow(['status'], { ...ok.deps, config: () => config, brainId: () => 'host' })).toBe(0);
+      // The default resolver reads GBRAIN_BRAIN_ID the way every command does.
+      await withEnv({ GBRAIN_BRAIN_ID: 'team' }, async () => {
+        const env = capture();
+        expect(await runEngineShadow(['stop', '--delete'], { ...env.deps, config: () => config })).toBe(2);
+        expect(env.err.join('\n')).toContain('selects the brain team');
+      });
+      expect(existsSync(dir)).toBe(true);
+    });
+  });
+});
+
 describe('real child process', () => {
   test('the supervisor spawns gbrain engine shadow __child, which records each read and exits on EOF', async () => {
     await inHome(async (_home, config) => {

@@ -35,7 +35,7 @@ const TEXT: Record<RestoreRefusalReason, RefusalText> = {
   pending_requests: {
     what: n => `The archive holds ${n} unfinished write request(s) or effect(s). A Rust brain cannot cancel them with receipts, and restoring them would let them run again.`,
     why: 'A backup of a busy brain can hold queued or running writes; restoring them unchanged would publish old work under a new brain.',
-    remedy: 'If the original brain is still readable, pause its writers and take a new backup, then restore that into a new absent --into. Otherwise restore with a gbrain build that cancels unfinished requests on Rust.',
+    remedy: 'If the original brain is still readable, pause its writers and take a new backup, then restore that into a new absent --into. Otherwise restore with a newer release that cancels unfinished requests on Rust.',
     argv: NEW_BACKUP,
   },
   recovery_required: {
@@ -47,7 +47,7 @@ const TEXT: Record<RestoreRefusalReason, RefusalText> = {
   purge_replay: {
     what: n => `${n} purge(s) that were committed after the archive's snapshot are missing from it, and this runtime cannot replay purges on a Rust brain.`,
     why: 'Publishing the archive would bring purged content back.',
-    remedy: 'Take a newer backup of the original brain (it then holds the purge) and restore that into a new absent --into, or restore with a gbrain build that replays purges on Rust. Do not skip the check.',
+    remedy: 'Take a newer backup of the original brain (it then holds the purge) and restore that into a new absent --into, or restore with a newer release that replays purges on Rust. Do not skip the check.',
     argv: NEW_BACKUP,
   },
   purge_mirror_unreadable: {
@@ -59,7 +59,7 @@ const TEXT: Record<RestoreRefusalReason, RefusalText> = {
   unclassified_state: {
     what: (n, detail) => `The archive holds ${n} kind(s) of record this build's restore does not know how to make safe${detail ? `: ${detail}` : ''} (access tokens and OAuth tokens are not revoked by this restore; shared-skill members and policies are not kept).`,
     why: 'Restore changes only state it knows; anything else could keep archived authority or work alive.',
-    remedy: 'Restore with a newer gbrain build that supports those records, into a new absent --into.',
+    remedy: 'Restore with a newer release that supports those records, into a new absent --into.',
     argv: NEW_RESTORE,
   },
   recovery_mode: {
@@ -71,7 +71,7 @@ const TEXT: Record<RestoreRefusalReason, RefusalText> = {
   restore_addon_too_old: {
     what: () => "This gbrain's Rust addon is older than the restore step, so it cannot make a restored brain safe.",
     why: 'Restore runs in a fresh process and checks the addon before it reserves a target; an older addon would have to skip the safety steps.',
-    remedy: 'Install the current gbrain and its Rust addon, then run the restore again into a new absent --into.',
+    remedy: 'Install the current release and its Rust addon, then run the restore again into a new absent --into.',
     argv: ['gbrain', 'upgrade'],
   },
 };
