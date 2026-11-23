@@ -508,7 +508,10 @@ mod tests {
             .unwrap();
     }
 
-    fn insert(store: &Store, rows: &[(&str, Option<f64>, &str, &str, Option<&str>)]) -> Vec<u64> {
+    /// A seeded row: fact, row number, visibility, source and page slug.
+    type Seed<'a> = (&'a str, Option<f64>, &'a str, &'a str, Option<&'a str>);
+
+    fn insert(store: &Store, rows: &[Seed<'_>]) -> Vec<u64> {
         let rows = rows
             .iter()
             .map(|(fact, row_num, visibility, source, slug)| NewFactInput {

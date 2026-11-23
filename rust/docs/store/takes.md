@@ -117,6 +117,6 @@ statement the projection sent through `executeRaw`. The writes join the engine's
   `takes_resolution_consistency` and then `takes_resolved_quality_values` refuse a bad pair or quality.
 
 `hasFenceAbsentHold(sourceId, kind, ownerKey)` (`generations.rs`) reads whether the key's held generation is held with
-`held_reason = 'fence_absent'`, and `readLiveSlugAliases(sourceId, slugs)` (`aliases.rs`, the link preparation) lists
-the aliases among `slugs` whose own page is not live and whose canonical page is, in alias byte order.
+`held_reason = 'fence_absent'`. The page write's link preparation reads its live aliases through `readLiveSlugAliases`
+(`links_preparation.rs`).
 

@@ -545,6 +545,7 @@ findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
 consolidateFact	facts	yes	9	no	yes	yes	serves
 findTrajectory	facts	yes	6	yes	yes	yes	serves
 getFactsHealth	facts	yes	3	yes	yes	yes	serves
+readLiveSlugAliases	facts	yes	1	no	yes	yes	serves
 listQuotedTakeRows	facts	yes	1	no	yes	yes	serves
 listPageFenceFactCells	facts	yes	2	no	yes	yes	serves
 hasPositionedPageFacts	facts	yes	1	no	yes	yes	serves
@@ -554,7 +555,6 @@ expireFenceFacts	facts	yes	2	no	yes	yes	serves
 refreshFenceFactFields	facts	yes	2	no	yes	yes	serves
 clearChangedTakeResolutions	facts	yes	2	no	yes	yes	serves
 writeFenceTakeResolutions	facts	yes	2	no	yes	yes	serves
-readLiveSlugAliases	facts	yes	1	no	yes	yes	serves
 detachFenceFactRows	facts	yes	1	no	yes	yes	serves
 listOccupiedFenceRowNums	facts	yes	2	no	yes	yes	serves
 moveGuardedFenceRows	facts	yes	1	no	yes	yes	serves

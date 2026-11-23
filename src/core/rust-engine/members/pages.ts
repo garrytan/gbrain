@@ -329,6 +329,8 @@ export const PAGES_MEMBERS = {
   readEntityCardRows: 'pages',
   readExtractionLagCounts: 'pages',
   readIgnoredPrivacyLabelPages: 'pages',
+  // pages: the reads link preparation made through executeRaw (engine-sql/links-preparation.ts)
+  readLiveSlugAliases: 'pages',
   listUnretiredPagesBySlugPattern: 'pages',
   listNameVariantCandidates: 'pages',
   countDistinctInboundLinkers: 'links',

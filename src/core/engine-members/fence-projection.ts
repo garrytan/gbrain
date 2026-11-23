@@ -1,6 +1,6 @@
 /**
- * The fence projection statements of BrainEngine: a page publication's fence projection and fence guard, the link
- * preparation's live alias read, a tier-only row change and the unwithdrawn-facts classifier's page body read.
+ * The fence projection statements of BrainEngine: a page publication's fence projection and fence guard, a tier-only
+ * row change and the unwithdrawn-facts classifier's page body read.
  * `BrainEngine` extends this interface. Each member runs the statement its caller ran through executeRaw.
  */
 export interface FenceProjectionMembers {
@@ -18,8 +18,6 @@ export interface FenceProjectionMembers {
   refreshFenceFactFields(sourceId: string, slug: string, fieldRows: string): Promise<void>;
   clearChangedTakeResolutions(pageId: number, claims: string): Promise<void>;
   writeFenceTakeResolutions(pageId: number, resolutions: string): Promise<void>;
-  /** The link preparation's live aliases of `slugs` (persistence/links-preparation.ts, engine-sql/fence-projection.ts). */
-  readLiveSlugAliases(sourceId: string, slugs: readonly string[]): Promise<Array<{ alias_slug: string; canonical_slug: string }>>;
   /** The fence guard's statements around its decisions (trust/fence-guard.ts, engine-sql/trust-fence.ts). */
   detachFenceFactRows(ids: readonly number[]): Promise<void>;
   listOccupiedFenceRowNums(sourceId: string, slug: string): Promise<number[]>;

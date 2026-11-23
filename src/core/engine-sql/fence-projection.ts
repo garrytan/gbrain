@@ -1,7 +1,6 @@
 /**
  * The statements of a page publication's fence projection (persistence/canonical-projections.ts
- * `prepareCanonicalProjections` and `refuseQuotedFenceLoss`) and of its link preparation (persistence/links-preparation.ts
- * `liveSlugAliases`), as typed engine members. A put_page that updates a page with a `## Facts` or `## Takes` fence runs
+ * `prepareCanonicalProjections` and `refuseQuotedFenceLoss`), as typed engine members. A put_page that updates a page with a `## Facts` or `## Takes` fence runs
  * them; before, they went through `executeRaw`, so such a write stopped on an engine without raw SQL.
  *
  * One SQL implementation for both engines; each statement is the text its caller sent through `executeRaw`, byte for
@@ -10,11 +9,10 @@
  * `trustedSql` pieces with no bound values, so the text stays the one the caller sent. The writer's opened fact ids
  * (`gbrain.write_open_facts`) are a transaction-local setting the expiry reads itself; no member passes them. The Rust
  * store serves the same members (rust/crates/gbrain-store/src/facts/fence_projection.rs, takes/fence_projection.rs,
- * generations.rs `held_for`, aliases.rs), as rust/docs/store/facts.md "The fence projection's statements" describes.
+ * generations.rs `held_for`), as rust/docs/store/facts.md "The fence projection's statements" describes.
  */
 import type { BrainEngine } from '../engine.ts';
 import { openedFactRowSql } from '../persistence/context.ts';
-import { isMissingSchemaObject } from '../utils.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
@@ -60,11 +58,6 @@ const WRITE_RESOLUTIONS_SQL = `UPDATE takes k SET resolved_at=r.resolved_at::tim
       WHERE k.page_id=$1 AND k.row_num=r.row_num AND (k.resolved_at,k.resolved_quality,k.resolved_outcome,k.resolved_source,k.resolved_value,k.resolved_unit,
         k.resolved_by) IS DISTINCT FROM (r.resolved_at::timestamptz,r.resolved_quality,r.resolved_outcome,r.resolved_source,r.resolved_value,r.resolved_unit,
         r.resolved_by)`;
-
-const LIVE_SLUG_ALIASES_SQL = `SELECT a.alias_slug, a.canonical_slug FROM slug_aliases a
-      WHERE a.source_id=$1 AND a.alias_slug IN (SELECT unnest($2::text[]))
-        AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=a.source_id AND p.slug=a.alias_slug AND p.deleted_at IS NULL)
-        AND EXISTS (SELECT 1 FROM pages c WHERE c.source_id=a.source_id AND c.slug=a.canonical_slug AND c.deleted_at IS NULL)`;
 
 /** The page's stored takes at `rowNums` (the rows a write drops), with their claims, for the quoted-fence check. */
 export async function listQuotedTakeRows(raw: Raw, pageId: number, rowNums: readonly number[]): Promise<QuotedTakeRow[]> {
@@ -121,19 +114,4 @@ export async function clearChangedTakeResolutions(raw: Raw, pageId: number, clai
 /** Writes each fence row's resolution cells (`resolutions`, the jsonb_to_recordset text) onto the page's take at that row number, where any differs. */
 export async function writeFenceTakeResolutions(raw: Raw, pageId: number, resolutions: string): Promise<void> {
   await raw.executeRaw(WRITE_RESOLUTIONS_SQL, [pageId, resolutions]);
-}
-
-/**
- * Of `targets`, the alias slugs of the source that hold no live page while their canonical page is live. A brain
- * without the `slug_aliases` table has none. (The same member as rust-engine/wikilink-put-rust's
- * engine-sql/links-preparation.ts readLiveSlugAliases: same name, signature and statement.)
- */
-export async function readLiveSlugAliases(raw: Raw, sourceId: string, targets: readonly string[]): Promise<Array<{ alias_slug: string; canonical_slug: string }>> {
-  if (!targets.length) return [];
-  try {
-    return await raw.executeRaw<{ alias_slug: string; canonical_slug: string }>(LIVE_SLUG_ALIASES_SQL, [sourceId, [...new Set(targets)]]);
-  } catch (error) {
-    if (isMissingSchemaObject(error, 'table', 'slug_aliases')) return [];
-    throw error;
-  }
 }

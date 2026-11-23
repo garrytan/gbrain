@@ -1,9 +1,8 @@
 //! The statements of a page publication's fence projection and fence guard
 //! (`gbrain_store::facts` `facts/fence_projection.rs`, `gbrain_store::takes`
-//! `takes/fence_projection.rs`, `gbrain_store::generations` `has_fence_absent_hold`,
-//! `gbrain_store::aliases` `read_live_slug_aliases`), a tier-only row change
-//! (`gbrain_store::trust` `trust/row_tier.rs`), and the unwithdrawn-facts repair's page body read
-//! (`facts/unwithdrawn_restore.rs`).
+//! `takes/fence_projection.rs`, `gbrain_store::generations` `has_fence_absent_hold`), a tier-only
+//! row change (`gbrain_store::trust` `trust/row_tier.rs`), and the unwithdrawn-facts repair's page
+//! body read (`facts/unwithdrawn_restore.rs`).
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 //! Each method decodes its arguments, runs one `Store` call on the pool through `Brain::run`, and
@@ -132,17 +131,6 @@ impl Brain {
         self.run(env, move |s| {
             s.write_fence_take_resolutions(page_id, &resolutions)
         })
-    }
-
-    /// `readLiveSlugAliases(sourceId, slugs)`: `[{ alias_slug, canonical_slug }]`.
-    #[napi]
-    pub fn read_live_slug_aliases<'env>(
-        &self,
-        env: &'env Env,
-        source_id: String,
-        slugs: Vec<String>,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.read_live_slug_aliases(&source_id, &slugs))
     }
 
     /// `detachFenceFactRows(ids)`: resolves once the rows are detached.

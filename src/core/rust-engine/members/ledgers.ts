@@ -26,7 +26,6 @@ export const LEDGER_MEMBERS = {
   clearChangedTakeResolutions: 'takes',
   writeFenceTakeResolutions: 'takes',
   hasFenceAbsentHold: 'takes',
-  readLiveSlugAliases: 'links',
   countMcpResolvedTakes: 'takes',
   listTopResolvedTakesForHolder: 'takes',
   listAbandonedTakes: 'takes',

@@ -55,9 +55,6 @@ export const writeFenceTakeResolutions: Member<'writeFenceTakeResolutions'> = as
   await storeCall({ member: 'writeFenceTakeResolutions' }, () => brain.writeFenceTakeResolutions(pageId, resolutions));
 };
 
-export const readLiveSlugAliases: Member<'readLiveSlugAliases'> = (brain, sourceId, targets) =>
-  targets.length === 0 ? Promise.resolve([]) : storeCall({ member: 'readLiveSlugAliases', sourceId }, () => brain.readLiveSlugAliases(sourceId, [...new Set(targets)]));
-
 export const detachFenceFactRows: Member<'detachFenceFactRows'> = async (brain, ids) => {
   await storeCall({ member: 'detachFenceFactRows' }, () => brain.detachFenceFactRows([...ids]));
 };

@@ -181,6 +181,7 @@ import * as largePageImpl from './engine-sql/large-page.ts';
 import * as relationalReadsImpl from './engine-sql/relational-reads.ts';
 import * as trustFenceImpl from './engine-sql/trust-fence.ts';
 import * as fenceProjectionImpl from './engine-sql/fence-projection.ts';
+import * as linksPreparationImpl from './engine-sql/links-preparation.ts';
 import * as rowTierImpl from './engine-sql/row-tier.ts';
 import * as unwithdrawnRestoreImpl from './engine-sql/unwithdrawn-restore.ts';
 import * as fenceHoldsImpl from './engine-sql/fence-holds.ts';
@@ -4777,7 +4778,7 @@ export class PGLiteEngine implements BrainEngine {
   refreshFenceFactFields(sourceId: string, slug: string, fieldRows: string) { return fenceProjectionImpl.refreshFenceFactFields(this, sourceId, slug, fieldRows); }
   clearChangedTakeResolutions(pageId: number, claims: string) { return fenceProjectionImpl.clearChangedTakeResolutions(this, pageId, claims); }
   writeFenceTakeResolutions(pageId: number, resolutions: string) { return fenceProjectionImpl.writeFenceTakeResolutions(this, pageId, resolutions); }
-  readLiveSlugAliases(sourceId: string, slugs: readonly string[]) { return fenceProjectionImpl.readLiveSlugAliases(this, sourceId, slugs); }
+  readLiveSlugAliases(sourceId: string, targets: readonly string[]) { return linksPreparationImpl.readLiveSlugAliases(this, sourceId, targets); }
   detachFenceFactRows(ids: readonly number[]) { return trustFenceImpl.detachFenceFactRows(this, ids); }
   listOccupiedFenceRowNums(sourceId: string, slug: string) { return trustFenceImpl.listOccupiedFenceRowNums(this, sourceId, slug); }
   moveGuardedFenceRows(moves: readonly trustFenceImpl.FenceRowMove[]) { return trustFenceImpl.moveGuardedFenceRows(this, moves); }

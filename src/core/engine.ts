@@ -8,6 +8,7 @@ import type { JobsMembers } from './engine-members/jobs.ts';
 import type { DoctorMembers } from './engine-members/doctor.ts';
 import type { MentionPassMembers } from './engine-members/mentions.ts';
 import type { FenceProjectionMembers } from './engine-members/fence-projection.ts';
+import type { LiveSlugAliasRow } from './engine-sql/links-preparation.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as AccessMembersSql from './engine-sql/access-members.ts';
 import type * as DreamCycleSql from './engine-sql/dream-cycle.ts';
@@ -3942,6 +3943,11 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   listHeldRows(q: HeldRowsQuery): Promise<Array<{ id: number; trust_tier: string }>>;
   /** The stored takes of a reconcile batch's pages that a lower-tier write may not change, by page and row, locked (engine-sql/trust-fence.ts). */
   listGuardedTakeRows(q: GuardedTakeRowsQuery): Promise<GuardedTakeRow[]>;
+  /**
+   * Of `targets`, the alias slugs of one source that hold no live page while their canonical page is live (the targets a
+   * link may follow through `slug_aliases`). A brain without the alias table has none. No order.
+   */
+  readLiveSlugAliases(sourceId: string, targets: readonly string[]): Promise<LiveSlugAliasRow[]>;
   /**
    * Trust decisions (engine-sql/trust-proposals.ts): inserts a pending proposal, or returns the pending one already recorded
    * for the same (action, target, related) with `created: false`. The proposer principal and request come from the

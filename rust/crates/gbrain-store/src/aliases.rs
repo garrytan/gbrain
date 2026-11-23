@@ -1074,31 +1074,6 @@ impl Store {
             }))
     }
 
-    /// `readLiveSlugAliases(sourceId, slugs)` (`engine-sql/fence-projection.ts`, the link
-    /// preparation): `{ alias_slug, canonical_slug }` of each of `slugs` that is an alias in
-    /// `source_id` whose own page is not live and whose canonical page is, in alias byte order (the
-    /// SQL sets no order; its caller builds a map).
-    pub fn read_live_slug_aliases(&self, source_id: &str, slugs: &[String]) -> Result<Vec<Value>> {
-        let read = self.read()?;
-        let live = |slug: &str| -> Result<bool> {
-            Ok(crate::pages::read_page(&*read, source_id, slug)?
-                .is_some_and(|p| p.deleted_at_us.is_none()))
-        };
-        let mut out = Vec::new();
-        for alias in slugs.iter().collect::<BTreeSet<_>>() {
-            let Some(record) = read_slug_alias(&*read, source_id, alias)? else {
-                continue;
-            };
-            if !live(alias)? && live(&record.canonical_slug)? {
-                out.push(serde_json::json!({
-                    "alias_slug": alias,
-                    "canonical_slug": record.canonical_slug,
-                }));
-            }
-        }
-        Ok(out)
-    }
-
     /// `listSlugAliases(sourceId)`: every `slug_aliases` row of `source_id` as `{ alias_slug,
     /// canonical_slug }`, in alias byte order (the SQL has no `ORDER BY`; its one caller, link
     /// extraction, builds a map). A source id with a NUL byte names no row.
