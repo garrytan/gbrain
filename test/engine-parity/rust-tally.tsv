@@ -33,7 +33,7 @@ test/engine-parity/code-eval-salience.test.ts	13	0
 test/engine-parity/collate-aggregated-lists.test.ts	3	3
 test/engine-parity/collate-belief-cycle-walks.test.ts	6	0
 test/engine-parity/collate-command-listings.test.ts	0	8
-test/engine-parity/collate-core-page-lists.test.ts	5	11
+test/engine-parity/collate-core-page-lists.test.ts	6	10
 test/engine-parity/collate-doctor-access.test.ts	11	0
 test/engine-parity/collate-doctor-persistence.test.ts	0	13
 test/engine-parity/collate-doctor.test.ts	9	1

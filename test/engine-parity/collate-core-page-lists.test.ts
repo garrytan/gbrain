@@ -248,7 +248,7 @@ describe('forecast journal', () => {
 });
 
 describe('stale-mention scan', () => {
-  parityTest('scanStaleMentions scans the byte-first pages under its limit and lists their links by byte', { methods: ['putPage', 'addLinksBatch', 'executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('scanStaleMentions scans the byte-first pages under its limit and lists their links by byte', { methods: ['putPage', 'addLinksBatch', 'listStaleMentionPages'] }, async (engine) => {
     for (const slug of [...MIXED_SLUGS, 'm-hub', 'target']) await engine.putPage(slug, note(slug));
     const mention = (from: string, to: string) => ({ from_slug: from, to_slug: to, link_type: 'mentions', context: '', link_source: 'mentions',
       from_source_id: 'default', to_source_id: 'default' });
