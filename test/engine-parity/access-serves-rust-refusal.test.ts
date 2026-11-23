@@ -82,6 +82,11 @@ describe('gbrain access serves several --yes on a Rust brain', () => {
       expect(await outcomeOf(serves(asRust(arm.engine), ['alice-example', 'bob-example'], dir, opts))).toBe('engine_capability_missing');
       expect(await stored(arm.engine, dir)).toBe(before);
     };
+    // A first run adds the people folder rules: refused before any write on every lane, not only the Rust arm.
+    await resetArm(arm);
+    await arm.engine.setConfig('version', String(LATEST_SCHEMA_VERSION));
+    for (const slug of ['people/alice-example/notes', 'people/bob-example/notes']) await arm.engine.putPage(slug, core(slug), { sourceId: 'default' });
+    await refusedUnchanged(home());
     // Keys already read the company source: a re-run adds nothing and runs; --labelled-only adds only the company/ rule.
     let dir = await fresh(true);
     // A preview (no --yes) of a run that would need raw SQL is never refused: the guard sits after the preview return.
