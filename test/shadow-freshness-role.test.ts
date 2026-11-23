@@ -24,7 +24,8 @@ import { evaluateReadiness, type ShadowStatus } from '../src/core/engine-swap/re
 import { runEngineShadow } from '../src/commands/engine-shadow.ts';
 import { shadowFreshnessTokenCheck, shadowFreshnessTokenEntry } from '../src/commands/doctor/checks/shadow-freshness-token.ts';
 import { categorizeCheck } from '../src/core/doctor-categories.ts';
-import { probeConfiguredFreshness } from '../src/shadow/freshness-role.ts';
+import { probeConfiguredFreshness, probeFreshnessBlind } from '../src/shadow/freshness-role.ts';
+import type { DoctorContext } from '../src/commands/doctor/context.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown } from '../src/shadow/report.ts';
 import { SHADOW_STATE_VERSION, readShadowState, shadowBrainKey, shadowDirFor, writeShadowState } from '../src/shadow/state.ts';
 import { readConfiguredShadowStatus } from '../src/shadow/status-document.ts';
@@ -58,6 +59,7 @@ describe.skipIf(!backends.includes('postgres'))('a Postgres role without pg_read
     const engine = { kind: 'postgres', capabilities: new Set(['postgres_admin']), executeRaw: async (query: string, params?: unknown[]) => [...(await sql.unsafe(query, params as never))], disconnect: async () => undefined } as unknown as BrainEngine;
     return { engine, config: { engine: 'postgres', database_url: url.toString() } };
   }
+  const pg16 = async (): Promise<boolean> => Number((await admin`SHOW server_version_num`)[0]!.server_version_num) >= 160000;
   const quoted = (role: string): string => (role === role.toLowerCase() && /^[a-z_][a-z0-9_]*$/.test(role) ? role : `"${role}"`);
 
   beforeAll(async () => {
@@ -93,7 +95,7 @@ describe.skipIf(!backends.includes('postgres'))('a Postgres role without pg_read
     const { engine, config } = await connectAs(PLAIN);
     await withShadow(config, async (dir) => {
       const now = new Date('2026-11-23T00:00:00Z');
-      const grant = `GRANT pg_read_all_stats TO ${PLAIN};`;
+      const grant = `GRANT pg_read_all_stats TO ${PLAIN}${await pg16() ? ' WITH INHERIT TRUE' : ''};`;
       const swapDoc = async () => (await readConfiguredShadowStatus(() => config, now, () => probeConfiguredFreshness(async () => lend(engine)))) as ShadowStatus | null;
       const criterion3 = async () => evaluateReadiness(await swapDoc(), now).criteria.find(c => c.n === 3)!;
 
@@ -128,7 +130,7 @@ describe.skipIf(!backends.includes('postgres'))('a Postgres role without pg_read
       expect(categorizeCheck('shadow_freshness_token')).toBe('ops');
 
       // The operator runs the fix; the next read of each surface no longer names it.
-      await admin.unsafe(`GRANT pg_read_all_stats TO ${PLAIN}`);
+      await admin.unsafe(grant); // the operator runs exactly the statement the finding printed
       expect((await statusJson(config, engine)).freshness_token).toBeUndefined();
       expect(buildProvisionalReport(dir, 'b', readShadowState(dir), now, null).why_not_ready.join('\n')).not.toContain(REASON);
       expect((await criterion3()).detail).not.toContain(REASON);
@@ -139,12 +141,82 @@ describe.skipIf(!backends.includes('postgres'))('a Postgres role without pg_read
     });
   }, 60_000);
 
+  test('the emitted fix repairs a LOGIN NOINHERIT role (PostgreSQL 16 and later)', async () => {
+    if (!(await pg16())) return;
+    const role = `gbrain_noinh_${suffix}`;
+    await admin.unsafe(`CREATE ROLE ${role} LOGIN NOINHERIT PASSWORD 'blind-example'`);
+    try {
+      const { engine, config } = await connectAs(role);
+      await withShadow(config, async () => {
+        const before = (await shadowFreshnessTokenCheck(config, engine))!;
+        expect(before.status).toBe('warn');
+        expect(before.details?.sql).toBe(`GRANT pg_read_all_stats TO ${role} WITH INHERIT TRUE;`);
+        expect((before.fix as { command: string }).command).toContain(`GRANT pg_read_all_stats TO ${role} WITH INHERIT TRUE;`);
+        await admin.unsafe(String(before.details!.sql));
+        expect(await shadowFreshnessTokenCheck(config, engine)).toMatchObject({ status: 'ok' });
+      });
+    } finally {
+      await admin.unsafe(`DROP ROLE IF EXISTS ${role}`).catch(() => undefined);
+    }
+  }, 60_000);
+
+  test('the emitted fix repairs a membership that was granted WITH INHERIT FALSE (PostgreSQL 16 and later)', async () => {
+    if (!(await pg16())) return;
+    const role = `gbrain_inhf_${suffix}`;
+    await admin.unsafe(`CREATE ROLE ${role} LOGIN PASSWORD 'blind-example'`);
+    await admin.unsafe(`GRANT pg_read_all_stats TO ${role} WITH INHERIT FALSE`);
+    try {
+      const { engine, config } = await connectAs(role);
+      await withShadow(config, async () => {
+        const before = (await shadowFreshnessTokenCheck(config, engine))!;
+        expect(before.status).toBe('warn');
+        await admin.unsafe(String(before.details!.sql));
+        expect(await shadowFreshnessTokenCheck(config, engine)).toMatchObject({ status: 'ok' });
+      });
+    } finally {
+      await admin.unsafe(`REVOKE pg_read_all_stats FROM ${role}`).catch(() => undefined);
+      await admin.unsafe(`DROP ROLE IF EXISTS ${role}`).catch(() => undefined);
+    }
+  }, 60_000);
+
+  test('doctor is silent for another brain: a different database, a mounted brain or a remote caller', async () => {
+    const other = `gbrain_blind_db_${suffix}`;
+    await admin.unsafe(`CREATE DATABASE ${other}`);
+    try {
+      const { engine, config } = await connectAs(PLAIN);
+      const otherUrl = new URL(config.database_url);
+      otherUrl.pathname = `/${other}`;
+      const mounted = postgres(otherUrl.toString(), { max: 1, prepare: false });
+      logins.push(mounted);
+      const mountEngine = { kind: 'postgres', capabilities: new Set(['postgres_admin']), executeRaw: async (query: string, params?: unknown[]) => [...(await mounted.unsafe(query, params as never))], disconnect: async () => undefined } as unknown as BrainEngine;
+      const ctx = (e: BrainEngine, extra: Partial<DoctorContext> = {}): DoctorContext => ({ engine: e, remote: undefined, progress: { heartbeat: () => undefined }, ...extra }) as unknown as DoctorContext;
+      await withShadow(config, async () => {
+        await withEnv({ GBRAIN_DATABASE_URL: config.database_url, DATABASE_URL: undefined, GBRAIN_BRAIN_ID: undefined }, async () => {
+          // Positive control: the host's own engine, host brain, local caller.
+          const host = (await shadowFreshnessTokenEntry.run(ctx(engine))) as Array<{ status: string }>;
+          expect(host.map(c => c.status)).toEqual(['warn']);
+          // The host's shadow is on, but this engine is another Postgres brain (a mount): no GRANT for its role.
+          expect(await shadowFreshnessTokenCheck(config, mountEngine)).toBeNull();
+          expect(await shadowFreshnessTokenEntry.run(ctx(mountEngine))).toEqual([]);
+          // `doctor --brain <mount>` routes to the mount even when the engine happens to be the host's database.
+          await withEnv({ GBRAIN_BRAIN_ID: 'some-mount' }, async () => {
+            expect(await shadowFreshnessTokenEntry.run(ctx(engine))).toEqual([]);
+          });
+          // A remote caller never reads a role name or a cluster-wide GRANT.
+          expect(await shadowFreshnessTokenEntry.run(ctx(engine, { remote: true }))).toEqual([]);
+        });
+      });
+    } finally {
+      await admin.unsafe(`DROP DATABASE IF EXISTS ${other} WITH (FORCE)`).catch(() => undefined);
+    }
+  }, 60_000);
+
   test('a role name that needs quoting is written as the server quotes it', async () => {
     const { engine, config } = await connectAs(MIXED);
     await withShadow(config, async () => {
       const check = (await shadowFreshnessTokenCheck(config, engine))!;
       expect(check.details?.role).toBe(`"${MIXED}"`);
-      expect((check.fix as { command: string }).command).toContain(`GRANT pg_read_all_stats TO "${MIXED}";`);
+      expect((check.fix as { command: string }).command).toContain(`GRANT pg_read_all_stats TO "${MIXED}"`);
     });
   }, 60_000);
 
@@ -189,4 +261,25 @@ describe('PGLite and no shadow', () => {
     });
     expect(shadowFreshnessTokenEntry.emits).toEqual(['shadow_freshness_token']);
   }, 60_000);
+});
+
+describe('the fix statement follows the server version and the inheritance of the role', () => {
+  const stub = (row: Record<string, unknown>): Pick<BrainEngine, 'capabilities' | 'executeRaw'> => ({ capabilities: new Set(['postgres_admin']), executeRaw: async () => [row] }) as unknown as Pick<BrainEngine, 'capabilities' | 'executeRaw'>;
+  const blind = { role: 'r', sees_all: false };
+
+  test('PostgreSQL 16 and later: WITH INHERIT TRUE, for the role and no other membership', async () => {
+    const f = (await probeFreshnessBlind(stub({ ...blind, version: 170000, inherits: false })))!;
+    expect(f.sql).toBe('GRANT pg_read_all_stats TO r WITH INHERIT TRUE;');
+    expect(f.fix.command).toContain('GRANT pg_read_all_stats TO r WITH INHERIT TRUE;');
+  });
+
+  test('before 16 the bare GRANT stays, and a NOINHERIT role is told it also needs ALTER ROLE ... INHERIT', async () => {
+    const noinherit = (await probeFreshnessBlind(stub({ ...blind, version: 150000, inherits: false })))!;
+    expect(noinherit.sql).toBe('GRANT pg_read_all_stats TO r;');
+    expect(noinherit.why).toContain('ALTER ROLE r INHERIT');
+    expect(noinherit.fix.why).toContain('ALTER ROLE r INHERIT');
+    const inherits = (await probeFreshnessBlind(stub({ ...blind, version: 150000, inherits: true })))!;
+    expect(inherits.sql).toBe('GRANT pg_read_all_stats TO r;');
+    expect(inherits.why).not.toContain('ALTER ROLE');
+  });
 });

@@ -25,24 +25,48 @@ export interface FreshnessBlind {
   why: string;
   /** The connected database role, as `quote_ident` writes it. */
   role: string;
+  /** The statement that ends the blindness for this role on this server (the same text as `fix.command` carries). */
+  sql: string;
   fix: RenderedAction;
 }
 
-/** The statement that ends the blindness; `role` is already quoted by the server. */
-export const grantStatement = (role: string): string => `GRANT pg_read_all_stats TO ${role};`;
+/** What the probe reads about the connected role and the server: the fix depends on both. */
+export interface FreshnessRoleFacts {
+  /** The connected role, as `quote_ident` writes it. */
+  role: string;
+  /** `server_version_num`. */
+  version: number;
+  /** The role's own INHERIT attribute (`pg_roles.rolinherit`). */
+  inherits: boolean | null;
+}
 
-export function freshnessBlindFinding(role: string): FreshnessBlind {
-  const statement = grantStatement(role);
+/**
+ * The statement that ends the blindness; `role` is already quoted by the server. PostgreSQL 16 and later keep an INHERIT option
+ * per membership: a bare GRANT gives a NOINHERIT login INHERIT FALSE and leaves an existing INHERIT FALSE grant as it is, and
+ * neither lets the role see other sessions, so the statement names the option for this membership only. Before 16 membership
+ * of a role that inherits is enough.
+ */
+export const grantStatement = (role: string, version = 160000): string =>
+  `GRANT pg_read_all_stats TO ${role}${version >= 160000 ? ' WITH INHERIT TRUE' : ''};`;
+
+export function freshnessBlindFinding(facts: FreshnessRoleFacts): FreshnessBlind {
+  const { role } = facts;
+  const statement = grantStatement(role, facts.version);
+  // Before 16 a NOINHERIT role stays blind even as a member: only ALTER ROLE changes that, and it changes every membership of the role.
+  const note = facts.version < 160000 && facts.inherits === false
+    ? ` Role ${role} is NOINHERIT, and before PostgreSQL 16 membership alone does not help such a role: also run ALTER ROLE ${role} INHERIT; (it applies to every role ${role} belongs to), or connect as a role that inherits.`
+    : '';
   const action: Action = {
     argv: ['psql', '-c', statement], consent: [], actor: 'host_admin', requires_exclusive: false, docs: DOCS,
-    why: `Lets role ${role} see other sessions' transactions, so the freshness token can be proven and samples can clear.`,
+    why: `Lets role ${role} see other sessions' transactions, so the freshness token can be proven and samples can clear.${note}`,
     verify: doctorVerify(FRESHNESS_BLIND_CHECK),
   };
   return {
     code: FRESHNESS_BLIND_CODE,
     message: FRESHNESS_BLIND_MESSAGE,
-    why: `Role ${role} is neither a superuser nor a member of pg_read_all_stats, so it cannot see other sessions' transactions and the shadow's freshness token is never proven: this brain clears no privacy sample and no recall score, and swap readiness criterion 3 stays failing. Run as a superuser (or a role with ADMIN OPTION on pg_read_all_stats): ${statement}`,
+    why: `Role ${role} is neither a superuser nor a member of pg_read_all_stats that inherits it, so it cannot see other sessions' transactions and the shadow's freshness token is never proven: this brain clears no privacy sample and no recall score, and swap readiness criterion 3 stays failing. Run as a superuser (or a role with ADMIN OPTION on pg_read_all_stats): ${statement}${note}`,
     role,
+    sql: statement,
     fix: renderAction(action, cliRenderContext()),
   };
 }
@@ -54,14 +78,16 @@ export function freshnessBlindFinding(role: string): FreshnessBlind {
  */
 export async function probeFreshnessBlind(engine: Pick<BrainEngine, 'capabilities' | 'executeRaw'>): Promise<FreshnessBlind | null> {
   if (!hasCapability(engine, 'postgres_admin')) return null;
-  const [row] = await engine.executeRaw<{ role: string; sees_all: boolean }>(
-    `SELECT quote_ident(current_user) AS role, pg_has_role(current_user, 'pg_read_all_stats', 'usage') AS sees_all`);
-  return row && row.sees_all === false ? freshnessBlindFinding(row.role) : null;
+  const [row] = await engine.executeRaw<{ role: string; sees_all: boolean; version: number | string; inherits: boolean | null }>(
+    `SELECT quote_ident(current_user) AS role, pg_has_role(current_user, 'pg_read_all_stats', 'usage') AS sees_all,
+            current_setting('server_version_num')::int AS version,
+            (SELECT rolinherit FROM pg_roles WHERE rolname = current_user) AS inherits`);
+  return row && row.sees_all === false ? freshnessBlindFinding({ role: row.role, version: Number(row.version), inherits: row.inherits }) : null;
 }
 
 /** The lines the status and the report print for a finding. */
 export function renderFreshnessBlind(f: FreshnessBlind): string[] {
-  return [`  ${f.message} (${f.code})`, `    why: ${f.why}`, `    fix (${f.fix.next}): ${f.fix.command ?? grantStatement(f.role)}`, `    verify: ${f.fix.verify?.argv?.join(' ') ?? ''}`];
+  return [`  ${f.message} (${f.code})`, `    why: ${f.why}`, `    fix (${f.fix.next}): ${f.fix.command ?? f.sql}`, `    verify: ${f.fix.verify?.argv?.join(' ') ?? ''}`];
 }
 
 /**
