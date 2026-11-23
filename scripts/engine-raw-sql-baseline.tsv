@@ -1236,7 +1236,7 @@ src/core/wakeshift/spool.ts	execute_raw	3
 src/core/wakeshift/terms.ts	execute_raw	2
 src/core/wanted-links-store.ts	execute_raw	6
 src/core/write-gate-scan.ts	execute_raw	2
-src/core/write-gate-store.ts	execute_raw	8
+src/core/write-gate-store.ts	execute_raw	10	The hold writers lock (pg_advisory_xact_lock) and the rename-alias lookup run beside the hold upsert, in the writer's own transaction; they need raw SQL on Postgres and PGLite only, and the Rust store refuses raw SQL.
 src/core/write-through.ts	execute_raw	2
 src/eval/brainbench/adapters/codex.ts	execute_raw	1
 src/eval/brainbench/metrics/continuity.ts	execute_raw	1
