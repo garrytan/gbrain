@@ -222,6 +222,27 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       expect((await rows(rig))[0]).toMatchObject({ outcome: 'inconclusive', rerun: 'skipped:epoch_changed' });
     });
   
+    test('a membership-only ranked read (a take search) whose rerun has the same rows in another order, with other scores, closes as matched; other rows still differ', async () => {
+      const primary = ctx.primary();
+      const take = (n: number, score: number) => ({ take_id: n, page_id: n, page_slug: `take/p${n}`, row_num: n, claim: `claim ${n}`, kind: 'fact', holder: 'garry', weight: 1, since_date: null, until_date: null, active: true, source_id: 'default', score });
+      const original = (primary as unknown as { searchTakes: unknown }).searchTakes;
+      (primary as unknown as { searchTakes: unknown }).searchTakes = async () => [take(1, 0.9), take(2, 0.8), take(3, 0.7)]; // the primary's rows, now and on the rerun
+      try {
+        for (const [name, later, expected] of [
+          ['the same rows reversed with other scores', () => [take(3, 0.1), take(2, 0.2), take(1, 0.3)], { outcome: 'inconclusive', rerun: 'matched' }],
+          ['a row fewer', () => [take(1, 0.9), take(2, 0.8)], { outcome: 'diff', reason: 'rerun_differs', rerun: 'differed' }],
+        ] as const) {
+          const rig = await mismatching('agrees');
+          let calls = 0;
+          rig.rust.searchTakes = async () => (++calls === 1 ? [] : later()); // the first answer lacks every row: a membership mismatch, then the rerun
+          await rig.settled();
+          await (rig.engine as unknown as { searchTakes: (q: string) => Promise<unknown> }).searchTakes('claim');
+          const out = (await rig.finish()).filter((r) => r.op === 'searchTakes');
+          expect([name, out[0]]).toEqual([name, expect.objectContaining(expected)]);
+        }
+      } finally { (primary as unknown as { searchTakes: unknown }).searchTakes = original; }
+    });
+
     test('a full queue leaves the overflow inconclusive and a closing child leaves the rest so; nothing reads as clean', async () => {
       const rig = await mismatching('differs');
       await rig.settled();
@@ -359,6 +380,48 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       expect((await rig.finish())[0]).toMatchObject({ outcome: 'inconclusive', reason: 'privacy_check_moved' });
     });
 
+    test('a list of more than 2,000 row identities, or one holding anything invalid, is never complete: a forbidden row after the limit is not cleared by its absence', async () => {
+      const crowd = (theirs: Rows, ids: Record<string, number>): Rows => [...Array.from({ length: 2000 }, () => theirs[0]!), { ...theirs[0], page_id: ids['priv/a'], slug: 'priv/a', source_id: 'default', chunk_id: 987_654, chunk_text: 'beyond the limit' }];
+      counts(await ranked((theirs, _spare, ids) => crowd(theirs, ids)));
+      // the serving process, asked directly: a list that is not a list, or holds a malformed identity, answers incomplete (clean as far as it goes)
+      const primary = ctx.primary();
+      const samples = new SampleRegistry();
+      const reads = openReadSource(primary);
+      try {
+        const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never });
+        const sid = samples.add({ op: 'searchVector', args: encodeValue([vec(3), { limit: 10, excludePrivate: true }]), result: [], at: Date.now(), fp: 'x' }, 100);
+        for (const rows of ['not a list', [{ payload: 'p', id: 'seven' }], [null]]) expect(await handler({ id: 1, kind: 'privacy', sid, phase: 'sample', rows })).toEqual({ verdict: 'clean', complete: false });
+        expect(await handler({ id: 2, kind: 'privacy', sid, phase: 'sample', rows: [] })).toEqual({ verdict: 'clean', complete: true }); // control: nothing extra, nothing invalid
+      } finally { await reads.close(); }
+    });
+
+    test('the fingerprint moves for a change no timestamp shows: a deleted_at, a chunker or projection seal, a knowledge revision, an embedding, a chunk generation, an access row', async () => {
+      const primary = ctx.primary();
+      await primary.putPage('fp/page', { type: 'note', title: 'fp/page', compiled_truth: 'fingerprint chunk text', timeline: '' });
+      await installFixtureChunks(primary, 'fp/page', [{ chunk_index: 0, chunk_text: 'fingerprint chunk text', chunk_source: 'compiled_truth', embedding: vec(503), model: MODEL, token_count: 3 }]);
+      await privacyFixture(primary);
+      const reads = openReadSource(primary);
+      const watch = createPolicyWatch(reads);
+      const page = (set: string, undo: string): [string, string] => [`UPDATE pages SET ${set} WHERE slug = 'fp/page'`, `UPDATE pages SET ${undo} WHERE slug = 'fp/page'`];
+      try {
+        const [orig] = await primary.executeRaw<{ cv: unknown; sealed: unknown }>(`SELECT chunker_version AS cv, text_projection_revision AS sealed FROM pages WHERE slug = 'fp/page'`);
+        const changes: Array<[string, string, string]> = [
+          ['deleted_at', ...page(`deleted_at = now()`, `deleted_at = NULL`)],
+          ['chunker seal', ...page(`chunker_version = 0`, `chunker_version = ${Number(orig!.cv ?? 4)}`)],
+          ['knowledge_revision', `UPDATE pages SET knowledge_revision = gen_random_uuid() WHERE slug = 'fp/page'`, `SELECT 1`],
+          ['projection seal', `UPDATE pages SET text_projection_revision = gen_random_uuid() WHERE slug = 'fp/page'`, orig!.sealed == null ? `UPDATE pages SET text_projection_revision = NULL WHERE slug = 'fp/page'` : `SELECT 1`],
+          ['embedding presence', `UPDATE content_chunks SET embedding = NULL WHERE page_id = (SELECT id FROM pages WHERE slug = 'fp/page')`, `SELECT 1`],
+          ['access row', `UPDATE access_rules SET readable_by = ARRAY['member:carol-example'] WHERE rule_id = 'r1'`, `UPDATE access_rules SET readable_by = ARRAY['member:bob-example'] WHERE rule_id = 'r1'`],
+        ];
+        for (const [name, change, undo] of changes) {
+          const before = await watch.live();
+          await primary.executeRaw(change);
+          expect([name, (await watch.live()) !== before]).toEqual([name, true]);
+          await primary.executeRaw(undo);
+        }
+      } finally { await reads.close(); await primary.executeRaw(`DELETE FROM pages WHERE slug = 'fp/page'`); }
+    });
+
     test('a write this process published after the read, and before the check, leaves the sample unresolved', async () => {
       const primary = ctx.primary();
       const ids = await privacyFixture(primary);
@@ -371,6 +434,31 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       rig.rust.getPage = async () => ({ id: ids['open/a'], slug: 'open/a', source_id: 'default', title: 'x', type: 'note' });
       await withCallerAccess(ALICE, () => rig.engine.getPage('missing/page', { excludePrivate: true } as never));
       expect((await rig.finish())[0]).toMatchObject({ outcome: 'inconclusive', reason: 'privacy_check_moved' });
+    });
+
+    test('the token a sample is held to is taken BEFORE the primary read starts: a corpus change or a published write while the read runs leaves it unresolved, and a refresh never adopts a newer one', async () => {
+      const primary = ctx.primary();
+      const ids = await privacyFixture(primary);
+      const original = primary.listPages.bind(primary);
+      try {
+        for (const during of ['a corpus change', 'a write published by this process'] as const) {
+          await primary.putPage('slow/gone', { type: 'note', title: 'gone', compiled_truth: 'gone soon', timeline: '' });
+          const rig = await start();
+          const slow = gate();
+          let started!: () => void;
+          const began = new Promise<void>((resolve) => { started = resolve; });
+          (primary as unknown as { listPages: unknown }).listPages = async (...a: never[]) => { started(); await slow.wait; return (original as (...x: unknown[]) => unknown)(...a); };
+          rig.rust.listPages = async () => [{ id: ids['priv/a'], slug: 'priv/a', source_id: 'default', title: 'x', type: 'note' }];
+          const read = withCallerAccess(ALICE, () => rig.engine.listPages({ limit: 100, excludePrivate: true }));
+          await began; // the primary read has started: its token is already taken
+          if (during === 'a corpus change') { await primary.executeRaw(`DELETE FROM pages WHERE slug = 'slow/gone'`); await rig.attached.policyWatch.ready(); } // and a refresh now sees the newer corpus
+          else rig.attached.follower!.publish(batch(1, [{ kind: 'relation', relation: 'config', reason: 'x' }]));
+          slow.open();
+          await read;
+          expect([during, (await rig.finish())[0]]).toEqual([during, expect.objectContaining({ outcome: 'inconclusive', reason: 'privacy_check_moved' })]);
+          await primary.executeRaw(`DELETE FROM pages WHERE slug = 'slow/gone'`);
+        }
+      } finally { (primary as unknown as { listPages: unknown }).listPages = original; await primary.executeRaw(`DELETE FROM pages WHERE slug = 'slow/gone'`); }
     });
 
     test('a derivative of a private origin whose origin is widened before the check is not cleared', async () => {
@@ -595,6 +683,25 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         const still = samples.add({ op: 'searchVector', args, at: Date.now(), fp: await watch.live() }, 100);
         expect(await handler(360_000)({ id: 4, kind: 'vector', sid: still })).toBeInstanceOf(Array); // unchanged since the capture: scored as before
       } finally { await reads.close(); await primary.executeRaw(`DELETE FROM pages WHERE slug = 'vec/late'`); }
+    });
+
+    test('a reference is refused (moved) when only the access policy changed after the capture: a rule, a pending coverage row or a grant, with no page touched', async () => {
+      const primary = ctx.primary();
+      await privacyFixture(primary);
+      await vectorFixture(primary);
+      const reads = openReadSource(primary);
+      try {
+        const watch = createPolicyWatch(reads);
+        const samples = new SampleRegistry();
+        const args = encodeValue([vec(3), { limit: 10, excludePrivate: true }]);
+        const handler = (now: number) => makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never, watch, now: () => now });
+        const captured = samples.add({ op: 'searchVector', args, at: Date.now(), fp: await watch.live() }, 100);
+        await primary.executeRaw(`UPDATE access_rules SET readable_by = ARRAY['member:carol-example'] WHERE rule_id = 'r1'`); // the policy moves; no page, chunk, link, source or config row does
+        await expect(handler(0)({ id: 1, kind: 'vector', sid: captured })).rejects.toMatchObject({ code: 'moved' });
+        await primary.executeRaw(`UPDATE access_rules SET readable_by = ARRAY['member:bob-example'] WHERE rule_id = 'r1'`);
+        const still = samples.add({ op: 'searchVector', args, at: Date.now(), fp: await watch.live() }, 100);
+        expect(await handler(120_000)({ id: 2, kind: 'vector', sid: still })).toBeInstanceOf(Array); // control: unchanged since the capture
+      } finally { await reads.close(); await primary.executeRaw(`UPDATE access_rules SET readable_by = ARRAY['member:bob-example'] WHERE rule_id = 'r1'`); }
     });
 
     test('the reference has no candidate window: boosted true top results beyond the engine\'s window are found, and the windowed search misses them', async () => {

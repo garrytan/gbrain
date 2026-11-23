@@ -31,8 +31,12 @@ import type { Classification } from './classify.ts';
 import { canonicalJson } from './codec.ts';
 import { SHADOW_READ_MEMBERS } from './reads.ts';
 
-/** Bump when classify.ts or this table changes what counts as a match: it starts a new evidence epoch. */
-export const SHADOW_COMPARATOR_VERSION = 2;
+/**
+ * Bump when classify.ts or this table changes what counts as a match: it starts a new evidence epoch. 3: the shadow
+ * privacy, rerun and recall rules (row-identity clearance, the proof that nothing moved, tie-aware recall) replace the
+ * ones an epoch of version 2 collected its records under, and those records must not count.
+ */
+export const SHADOW_COMPARATOR_VERSION = 3;
 /** The only keyword ranker Rust has (D5); the status names it so a better default ranker is a visible change. */
 export const SHADOW_KEYWORD_RANKER = 'ts_rank' as const;
 

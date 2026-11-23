@@ -39,6 +39,9 @@ const sha = (text: string): string => createHash('sha256').update(text).digest('
 /** The digest of an encoded result in the comparison form (codec.ts canonicalJson): what a rerun's answer carries instead of the result. */
 export const resultDigest = (encoded: unknown): string => sha(canonicalJson(encoded));
 
+/** The digest of a ranked answer's membership: its rows with scores out, in a fixed order; null when it is not a list of rows. Equal for the same rows in another order or with other scores. */
+export const membersDigest = (encoded: unknown): string | undefined => (Array.isArray(encoded) ? sha(encoded.map((r) => canonicalJson(stripScores(r))).sort().join('\n')) : undefined);
+
 /** The chunk a result row carries: its id and a digest of its text (null when the row has none), so a substituted chunk is not the same row. `invalid` is a row that claims a chunk it does not identify. */
 export type ChunkIdentity = { id: number; sum: string | null } | 'invalid';
 function chunkOf(row: Row): ChunkIdentity | undefined {

@@ -18,7 +18,8 @@ import { attachShadowParts } from '../src/shadow/attach.ts';
 import { encodeValue } from '../src/shadow/codec.ts';
 import { runShadowChild, type ShadowChildDeps } from '../src/shadow/child.ts';
 import { SHADOW_COMPARATOR_VERSION } from '../src/shadow/exactness.ts';
-import { epochWatch } from '../src/shadow/evidence-epoch.ts';
+import { ensureEpoch, epochWatch } from '../src/shadow/evidence-epoch.ts';
+import { appendRecall, readEpochRecall } from '../src/shadow/recall.ts';
 import { buildEvidenceStatus } from '../src/shadow/evidence.ts';
 import { MirrorQueue, newMirrorCounters, UsageMeter, zeroUsage } from '../src/shadow/mirror.ts';
 import { appendUsage } from '../src/shadow/usage.ts';
@@ -336,6 +337,24 @@ describe('evidence epoch in the child', () => {
     expect(second.inputs).toMatchObject({ seed_id: 'seed-1', rust_addon_sha256: 'b'.repeat(64), comparator_version: SHADOW_COMPARATOR_VERSION, readiness_policy_hash: 'p1' });
     expect(ledgerRows(dir).map((r) => r.epoch_id)).toEqual([first.epoch_id, first.epoch_id, second.epoch_id]);
     expect(JSON.parse(readFileSync(join(dir, 'evidence', 'epochs.jsonl'), 'utf8').trim()).epoch_id).toBe(first.epoch_id);
+  });
+
+  test('records an epoch of comparator version 2 collected stay out of the epoch the current comparator opens: their recall and clearance do not count', async () => {
+    expect(SHADOW_COMPARATOR_VERSION).toBeGreaterThanOrEqual(3); // the privacy, rerun and recall rules changed what a record means
+    const engine = () => ({ async connect() {}, async disconnect() {}, getPage: async () => ({ slug: 'a' }) }) as never;
+    const probe = seeded();
+    await runChild(probe, [], { openEngine: engine });
+    const inputs = manifest(probe).inputs; // what this child's epoch is made of, but for the comparator
+    const dir = seeded();
+    const old = ensureEpoch(dir, { ...inputs, comparator_version: 2 } as never, Date.parse('2026-11-24T00:00:00Z'));
+    for (let i = 0; i < 30; i++) appendRecall(dir, { ts: new Date().toISOString(), epoch_id: old.epoch_id, vector: 1, primary: 1, overlap: 1, ref_size: 10 }); // thirty perfect scores of the old rule
+    await runChild(dir, [], { openEngine: engine }); // the shadow restarts on the new build
+    const now = manifest(dir);
+    expect(now.epoch_id).not.toBe(old.epoch_id);
+    expect(now.inputs.comparator_version).toBe(SHADOW_COMPARATOR_VERSION);
+    expect(readEpochRecall(dir, now.epoch_id)).toEqual([]); // none of them counts in the new epoch
+    expect(readEpochRecall(dir, old.epoch_id)).toHaveLength(30); // and they are still on disk, as the first epoch's
+    expect(buildEvidenceStatus({ dir }).evidence?.recall_samples ?? 0).toBe(0);
   });
 
   test('the build (commit, version, addon target) is recorded when the epoch starts and survives a TS update that changes nothing relevant', async () => {

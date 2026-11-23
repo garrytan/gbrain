@@ -25,7 +25,7 @@ import type { RustAddon } from '../core/rust-engine/addon-loader.ts';
 import { servedCapabilities } from '../core/rust-engine/store-capabilities.ts';
 import { loadRustEngineAddonOffline, type RustEngineAddonLoaderFn } from './addon.ts';
 import { RERUN_DEADLINE_MS } from './checks.ts';
-import { createAsker, createSerialQueue, policyApplies, privacyVerdict, RERUN_QUEUE_BOUND, resultDigest, safeCode } from './child-checks.ts';
+import { createAsker, createSerialQueue, membersDigest, policyApplies, privacyVerdict, RERUN_QUEUE_BOUND, resultDigest, safeCode } from './child-checks.ts';
 import { classifyError, classifyResult, type Classification } from './classify.ts';
 import { decodeValue, encodeValue } from './codec.ts';
 import { adapterIdentity, capabilitySetHash, currentBuild, ensureEpoch, internalErrorRecorder, type EpochBuild, type EpochManifest } from './evidence-epoch.ts';
@@ -270,11 +270,16 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
    * mismatch on an exactness comparison is qualified as stale or inconclusive (`lagged`); a rerun passes null and keeps the raw mismatch.
    */
   const judge = async (op: string, encodedArgs: unknown[], primary: unknown, rust: unknown, sid: string | undefined, phase: 'sample' | 'rerun', at: number, lagged: boolean | null): Promise<Classification> => {
-    // A rerun holds the DIGEST of the primary's answer (the serving process keeps the answer: nothing but a digest crosses the control channel).
-    // Only a leak, or equality of the whole answer, is decided here; a rerun that is not equal is a plain diff, and the privacy question compares rows there.
+    // A rerun holds the DIGESTS of the primary's answer (the serving process keeps the answer: nothing but digests crosses the control channel): the whole
+    // answer, and for a ranked read its membership (rows without scores, in a fixed order). Only a leak, equality, or equal membership is decided here:
+    // the same rows in another order or with other scores are an order_diff, as on a first read; anything else is a plain diff, and the privacy question compares rows there.
     const kind = SHADOW_READ_MEMBERS[op as ShadowReadMember];
+    const asked = primary as { digest?: string; members?: string };
     const c = phase === 'rerun'
-      ? ((leak) => (leak.outcome === 'privacy_diverged' ? leak : resultDigest(rust) === primary ? { outcome: 'match' as const } : { outcome: 'diff' as const }))(classifyResult(kind, encodedArgs, null, rust, op))
+      ? ((leak) => (leak.outcome === 'privacy_diverged' ? leak
+        : resultDigest(rust) === asked.digest ? { outcome: 'match' as const }
+        : kind === 'ranked' && asked.members !== undefined && membersDigest(rust) === asked.members ? { outcome: 'order_diff' as const }
+        : { outcome: 'diff' as const }))(classifyResult(kind, encodedArgs, null, rust, op))
       : classifyResult(kind, encodedArgs, primary, rust, op);
     if (c.outcome === 'match' || c.outcome === 'privacy_diverged') return c;
     const args = decodeValue(encodedArgs) as unknown[];
@@ -294,14 +299,15 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     const skip = (why: string): void => record(event, c, rustMs, rows, `skipped:${why}`);
     const deadline = now() + RERUN_DEADLINE_MS;
     try {
-      const answer = await ask({ kind: 'rerun', sid: event.sid, epoch_id: curEpoch() }, RERUN_DEADLINE_MS) as { digest: string; stamp: number; epoch_id: string };
+      const answer = await ask({ kind: 'rerun', sid: event.sid, epoch_id: curEpoch() }, RERUN_DEADLINE_MS) as { digest: string; members?: string; stamp: number; epoch_id: string };
       if (curEpoch() === null || answer.epoch_id !== curEpoch()) return skip('epoch_changed'); // an answer for another epoch is dropped, never restamped
       let call!: Promise<unknown>;
       const out = await follow.exclusive(answer.stamp, () => callRust(event.op, args, event.access, Math.max(1, Math.min(timeoutMs, deadline - now())), (p) => { call = p; }));
       if (out?.timedOut) trackStall(call);
       if (out === null || out.timedOut) return skip(out === null ? 'watermark_moved' : 'timeout');
-      const c2 = await judge(event.op, event.args, answer.digest, encodeValue(out.value), event.sid, 'rerun', now(), null);
-      if (c2.outcome === 'match') record(event, c, rustMs, rows, 'matched'); // closed as unsuccessful, never a match
+      const c2 = await judge(event.op, event.args, { digest: answer.digest, members: answer.members }, encodeValue(out.value), event.sid, 'rerun', now(), null);
+      const orderOnly = c2.outcome === 'order_diff' && (exactnessArm(event.op) === 'membership' || exactnessArm(event.op) === 'private_ranked'); // these reads ignore order: the rows are the primary's
+      if (c2.outcome === 'match' || orderOnly) record(event, c, rustMs, rows, 'matched'); // closed as unsuccessful, never a match
       else if (c2.outcome === 'privacy_diverged') record(event, c2, rustMs, rows, 'differed');
       else if (c2.outcome === 'inconclusive') skip(c2.reason ?? 'privacy_check');
       else if (c2.reason === 'extra_rows_cleared') record(event, { outcome: 'diff', reason: 'extra_rows_cleared', mismatch: c.mismatch ?? 'diff' }, rustMs, rows, 'differed');

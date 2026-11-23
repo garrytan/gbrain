@@ -26,9 +26,9 @@ export interface CapturedRead {
   primary_ms: number;
   /** Epoch milliseconds when the primary call returned. */
   at: number;
-  /** The serving process's write generation when the read was captured (MirrorQueueOptions.generation). */
+  /** The serving process's write generation before the primary read started (MirrorQueue.token). */
   gen?: number;
-  /** The policy fingerprint the serving process held when the read was captured (MirrorQueueOptions.fingerprint). */
+  /** The policy fingerprint the serving process held before the primary read started (MirrorQueue.token). */
   fp?: string;
 }
 
@@ -159,6 +159,18 @@ export class MirrorQueue {
     this.fingerprint = opts.fingerprint;
   }
 
+  /**
+   * What the serving process knew BEFORE a primary read started (its write generation, the policy fingerprint): the wrapper takes it
+   * ahead of the call and hands it back in the capture. It is never taken later: a token adopted after the read's snapshot could
+   * name a newer corpus than the one the answer came from, and a sample without one is never proven unchanged.
+   */
+  token(): { gen?: number; fp?: string } {
+    const out: { gen?: number; fp?: string } = {};
+    try { out.gen = this.generation?.(); } catch { /* none: unresolved, never cleared */ }
+    try { out.fp = this.fingerprint?.(); } catch { /* none: unresolved, never cleared */ }
+    return out;
+  }
+
   /** Queued, not yet delivered. */
   get depth(): number { return this.items.length; }
 
@@ -183,8 +195,6 @@ export class MirrorQueue {
       if (op) this.meter.note(op, tooLarge ? 'shed' : 'unmirrorable');
       return;
     }
-    try { read.gen = this.generation?.(); } catch { /* a sample with no generation is unresolved, never cleared */ }
-    try { read.fp = this.fingerprint?.(); } catch { /* a sample with no fingerprint is unresolved, never cleared */ }
     this.items.push(read);
     this.kick();
   }

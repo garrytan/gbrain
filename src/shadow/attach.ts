@@ -68,6 +68,7 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   const sink = {
     counters: queue.counters,
     offer: (capture: Parameters<MirrorQueue['offer']>[0], op?: string) => queue.offer(capture, op),
+    token: () => queue.token(),
     use: (op: string, field: Parameters<MirrorQueue['meter']['note']>[1]) => queue.meter.note(op, field),
     active: () => supervisor.active(),
   };

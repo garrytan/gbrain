@@ -36,12 +36,12 @@ import { chunkVisibleFilter, requiresSafeChunks, safeChunksFilter } from '../cor
 import { buildVectorSearchStatement } from '../core/search/vector-statement.ts';
 import type { SearchOpts } from '../core/types.ts';
 import { decodeValue, encodeValue } from './codec.ts';
-import { candidatesOf, extraIds, resultDigest, rowIdentities, type ExtraRow, type RowIdentity } from './child-checks.ts';
+import { candidatesOf, extraIds, membersDigest, resultDigest, rowIdentities, type ExtraRow, type RowIdentity } from './child-checks.ts';
 import { readEpoch } from './evidence-epoch.ts';
 import type { ShadowFollower } from './follower.ts';
 import type { ReadSource } from './read-pool.ts';
 import { IntervalGate, rankedKeys, RECALL_INTERVAL_MS, RECALL_REFERENCE_LIMIT, type RankedKey } from './recall.ts';
-import { isShadowReadMember } from './reads.ts';
+import { isShadowReadMember, SHADOW_READ_MEMBERS, type ShadowReadMember } from './reads.ts';
 import type { Sample, SampleRegistry } from './samples.ts';
 
 export const RERUN_DEADLINE_MS = 30_000;
@@ -50,7 +50,8 @@ export const RERUN_DEADLINE_MS = 30_000;
 export interface PageCandidates { ids: number[]; keys: string[]; chunks: number[] }
 /** The serving process's verdict on a sample's Rust rows (never content). `complete`: every extra row was identified and judged. */
 export interface PrivacyAnswer { verdict: 'clean' | 'violation' | 'privacy_check_moved'; complete: boolean }
-export interface RerunAnswer { stamp: number; epoch_id: string; digest: string }
+/** `digest`: the whole answer; `members`: the same rows with scores and order taken out, for a ranked read (reads.ts), else absent. */
+export interface RerunAnswer { stamp: number; epoch_id: string; digest: string; members?: string }
 
 /** Runs `fn` as the captured caller, or outside any caller record when the read had none (a record changes the page policy text). */
 const asCaller = <T>(access: Partial<CallerAccess> | undefined, fn: () => T): T => (access ? withCallerAccess(access, fn) : withoutCallerAccess(fn));
@@ -72,18 +73,32 @@ const CHANGED_AFTER_SQL = `SELECT (EXISTS (SELECT 1 FROM pages WHERE updated_at 
   OR EXISTS (SELECT 1 FROM access_pending_coverage WHERE created_at > to_timestamp($1::double precision / 1000.0))
   OR EXISTS (SELECT 1 FROM access_policy_revisions WHERE created_at > to_timestamp($1::double precision / 1000.0) OR applied_at > to_timestamp($1::double precision / 1000.0))) AS changed`;
 
+/** The access tables as one hash: any added, removed or changed row moves it, small tables as they are. */
+const ACCESS_STATE_SQL = `md5(concat_ws('|',
+  (SELECT COALESCE(string_agg(t::text, ',' ORDER BY t::text), '') FROM access_policy_revisions t),
+  (SELECT COALESCE(string_agg(t::text, ',' ORDER BY t::text), '') FROM access_rules t),
+  (SELECT COALESCE(string_agg(t::text, ',' ORDER BY t::text), '') FROM access_pending_coverage t),
+  (SELECT COALESCE(string_agg(t::text, ',' ORDER BY t::text), '') FROM access_members t),
+  (SELECT COALESCE(string_agg(t::text, ',' ORDER BY t::text), '') FROM access_group_members t),
+  (SELECT COALESCE(string_agg(t::text, ',' ORDER BY t::text), '') FROM access_policy_state t)))`;
+
 /**
- * A fingerprint of everything the read policy, the safe fence and the vector corpus read that no timestamp or counter of this
- * process covers: pages (count and newest write, so a deletion shows), the concept-provenance links `privatePagesFilterForCaller`
- * reads (their rows, so a removed or re-pointed edge shows), the sources (config and archive state: owner-only sources), the
- * config rows and the chunks (count and newest embedding). Another process's write moves it; it does not tell which.
+ * A fingerprint of everything the read policy, the safe fence, the chunk visibility and the vector corpus read: the access tables
+ * (their rows), pages (count, newest write, and a hash of the columns a write can change without touching `updated_at`: deleted_at,
+ * the chunker seal, the text-projection seal and knowledge revision, the body storage and generation, the page readers and folder
+ * rules), the concept-provenance links `privatePagesFilterForCaller` reads (their rows, so a removed or re-pointed edge shows), the
+ * sources (config and archive state: owner-only sources), the config rows, and the chunks (count, newest embedding, and a hash of
+ * each chunk's generation and whether it has an embedding). Another process's write moves it; it does not tell which. Not covered,
+ * and so a known limit: the text of a page body or chunk, and frontmatter, change `updated_at` when written through the engine but
+ * not when edited in place.
  */
 export const POLICY_FINGERPRINT_SQL = `SELECT concat_ws('|',
-  (SELECT count(*) || ':' || COALESCE(max(updated_at)::text, '') FROM pages),
+  ${ACCESS_STATE_SQL},
+  (SELECT count(*) || ':' || COALESCE(max(updated_at)::text, '') || ':' || COALESCE(sum(hashtextextended(concat_ws('|', id, deleted_at, chunker_version, text_projection_revision, knowledge_revision, body_storage, body_generation, page_readers::text, folder_rule_ids::text), 0)::numeric), 0) FROM pages),
   (SELECT count(*) || ':' || md5(COALESCE(string_agg(id || '/' || from_page_id || '/' || to_page_id, ',' ORDER BY id), '')) FROM links WHERE link_source = 'concept-provenance' AND link_type = 'synthesized_from'),
   (SELECT md5(COALESCE(string_agg(id || '=' || config::text || archived::text, ',' ORDER BY id), '')) FROM sources),
   (SELECT md5(COALESCE(string_agg(key || '=' || value, ',' ORDER BY key), '')) FROM config),
-  (SELECT count(*) || ':' || COALESCE(max(embedded_at)::text, '') FROM content_chunks -- chunk-visibility-ok: the fingerprint covers every stored chunk row, staged and retired included: a change to any of them moves it
+  (SELECT count(*) || ':' || COALESCE(max(embedded_at)::text, '') || ':' || COALESCE(sum(hashtextextended(concat_ws('|', id, body_generation, (embedding IS NOT NULL)::text, embedded_at), 0)::numeric), 0) FROM content_chunks -- chunk-visibility-ok: the fingerprint covers every stored chunk row, staged and retired included: a change to any of them moves it
   )) AS fp`;
 
 const fingerprintOf = async (tx: BrainEngine): Promise<string> => String((await tx.executeRaw<{ fp: string }>(POLICY_FINGERPRINT_SQL))[0]?.fp);
@@ -96,7 +111,7 @@ const fingerprintOf = async (tx: BrainEngine): Promise<string> => String((await 
  * `undefined` until the first refresh completes (a sample captured before then is never proven).
  */
 export interface PolicyWatch { current(): string | undefined; live(): Promise<string>; ready(): Promise<void> }
-export function createPolicyWatch(reads: ReadSource, now: () => number = Date.now, ttlMs = 2000): PolicyWatch {
+export function createPolicyWatch(reads: ReadSource, now: () => number = Date.now, ttlMs = 5000): PolicyWatch {
   let value: string | undefined;
   let at = -Infinity;
   let inflight: Promise<void> | null = null;
@@ -114,6 +129,9 @@ export function createPolicyWatch(reads: ReadSource, now: () => number = Date.no
 /** Does the read's own scope ask for the safe-chunk fence (`requireSafeChunks`, else `excludePrivate`)? Any argument that does, does. */
 const safeFenceApplies = (args: unknown[]): boolean => args.some((a) => !!a && typeof a === 'object' && requiresSafeChunks(a as { requireSafeChunks?: boolean; excludePrivate?: boolean }))
   || args.some((a) => { const o = a as { remote?: unknown; untrusted?: unknown } | null; return !!o && typeof o === 'object' && [o.remote, o.untrusted].some((x) => !!x && typeof x === 'object' && requiresSafeChunks(x as { requireSafeChunks?: boolean; excludePrivate?: boolean })); });
+
+/** The most Rust row identities one privacy question holds; a longer list is never complete. */
+export const IDENTITY_LIMIT = 2000;
 
 interface Base { at: number; gen?: number; fp?: string }
 
@@ -159,9 +177,13 @@ async function privacyAnswer(d: AskDeps, sample: Sample, ask: { phase?: unknown;
   const base: Base | undefined = rerun ? sample.rerun : { at: sample.at, gen: sample.gen, fp: sample.fp };
   const primary = rerun ? sample.rerun?.result : sample.result;
   if (primary === undefined) throw coded('failed'); // what the primary answered is not known: nothing can be held against it
-  const rows = Array.isArray(ask.rows) ? ask.rows.filter(isRowIdentity).slice(0, 2000) : [];
+  // Only a whole, valid list of at most IDENTITY_LIMIT rows can complete a check: a list that is cut or holds anything invalid is judged as far as it goes
+  // (a violation in it still pauses) and is never complete, so a row beyond the limit is never cleared by its absence.
+  const list = Array.isArray(ask.rows) ? ask.rows : null;
+  const rows = (list ?? []).filter(isRowIdentity).slice(0, IDENTITY_LIMIT);
+  const whole = list !== null && list.length <= IDENTITY_LIMIT && rows.length === list.length;
   const extra = extraIds(rowIdentities(primary), rows);
-  if (extra.rows.length === 0) return { verdict: 'clean', complete: extra.unidentified === 0 };
+  if (extra.rows.length === 0) return { verdict: 'clean', complete: whole && extra.unidentified === 0 };
   const args = decodeValue(sample.args) as unknown[];
   const snap = await policySnapshot(d.reads, sample.access, candidatesOf(extra.rows), safeFenceApplies(args), base, () => d.follower?.published, d.follower !== undefined);
   if (snap.moved) return { verdict: 'privacy_check_moved', complete: false };
@@ -176,7 +198,7 @@ async function privacyAnswer(d: AskDeps, sample: Sample, ask: { phase?: unknown;
     const c = chunks.get(r.chunk.id);
     return !!c && c.page_id === page && r.chunk.sum !== null && c.sum === r.chunk.sum; // the chunk is that page's, visible and fenced as the primary served it, with the text the primary stores
   };
-  return { verdict: 'clean', complete: extra.unidentified === 0 && extra.rows.every(judged) };
+  return { verdict: 'clean', complete: whole && extra.unidentified === 0 && extra.rows.every(judged) };
 }
 
 export interface AskDeps {
@@ -221,7 +243,8 @@ async function stableRerun(d: AskDeps, watch: PolicyWatch, sid: string, sample: 
   const encoded = encodeValue(result);
   sample.rerun.result = encoded; // kept here for the privacy question; only its digest goes back
   d.samples.charge(sid, JSON.stringify(encoded)?.length ?? 0);
-  return { stamp: ack.stamp, epoch_id: epoch, digest: resultDigest(encoded) };
+  const members = SHADOW_READ_MEMBERS[sample.op as ShadowReadMember] === 'ranked' ? membersDigest(encoded) : undefined;
+  return { stamp: ack.stamp, epoch_id: epoch, digest: resultDigest(encoded), ...(members === undefined ? {} : { members }) };
 }
 
 /**

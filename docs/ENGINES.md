@@ -1987,12 +1987,18 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   field but the ranking ones; a row with a primary row's page and chunk but another payload (a substituted title or flag), or one
   that claims a chunk without a numeric chunk id, is never cleared and the diff counts. A new row is judged on the primary with the
   read policy, the safe-chunk fence the read asked for and the chunk visibility the primary used. "Nothing changed" is proven by this
-  process's write generation (read live before and after the check), a fingerprint of pages (deletions included), concept-provenance
-  links, sources, config and chunks that was captured with the sample, the access tables and the page timestamps; without that proof
-  the sample is `inconclusive` (`privacy_check_moved`). The vector reference is the engine's own exact statement with no candidate
+  process's write generation and a fingerprint of the access tables, pages (deletions, the chunker and text-projection seals, the
+  knowledge revision and the body generation included), concept-provenance links, sources, config and chunks, both taken BEFORE the
+  primary read started (never a newer one) and compared again at the check, and by the page timestamps; without that proof
+  the sample is `inconclusive` (`privacy_check_moved`). A list of more than 2,000 row identities, or one holding anything invalid,
+  is never complete. The vector reference is the engine's own exact statement with no candidate
   window and is used only when the same proof holds from the sample's capture to the end of the reference run; otherwise the sample is
   not scored. Tied rows at the cutoff count only for the top-ten places the strictly better rows leave, and a reference whose last row
-  (of 50) still ties the cutoff is not scored. Known limits, not fixed here: a Rust row on a page the primary did not return is
+  (of 50) still ties the cutoff is not scored. A stable rerun compares digests: the whole answer, and for a ranked read its rows without scores in a fixed order, so the same
+  rows in another order or with other scores are an `order_diff` (closed as matched on the reads that ignore order). The comparator
+  version is 3: an epoch opened under version 2 does not carry its recall or clearance records into the new rules. Known limits, not fixed here:
+  the fingerprint does not cover the text of a page body or chunk or frontmatter edited in place (a write through the engine moves
+  `updated_at`), and it is refreshed at most every 5 seconds with a hash over the pages and chunks tables; a Rust row on a page the primary did not return is
   judged by page policy, chunk identity and chunk text, not by its other fields; and a read the caller was authorized to make that
   returns a private page still reads `private_row_returned` and pauses comparison (it fails closed).
 - **Status fields.** `status --json` adds: `follower.state` (`not_seeded`, `stopped`, `invalid`, `behind`,
