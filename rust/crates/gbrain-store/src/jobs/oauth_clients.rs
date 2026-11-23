@@ -410,6 +410,25 @@ pub(crate) fn seed_client(
     Ok(true)
 }
 
+/// Format 5 to 6 (`seed/format_5.rs`): a client the v0.60.766.0 shadow seed stored kept only the spend columns
+/// (`client_id`, `client_name`, `scope`, `bound_tools`, `budget`, `deleted_at`) and no `created_at`. It is stored
+/// again as [`seed_client`] stores one: the epoch for `created_at`, the record's defaults for the rest. A record that
+/// has `created_at` is this build's and is left as it is.
+pub(crate) fn carry_over_format_5_clients(tx: &mut dyn KvWrite) -> Result<()> {
+    for (key, value) in crate::kv::collect_prefix(&*tx, &prefix(CLIENT), false, usize::MAX)? {
+        let mut row: serde_json::Map<String, Value> = serde_json::from_slice(&value)
+            .map_err(|e| StoreError::invalid(format!("oauth client record: {e}")))?;
+        if row.contains_key("created_at") {
+            continue;
+        }
+        row.insert("created_at".into(), Value::from(0));
+        let record: ClientRecord = serde_json::from_value(Value::Object(row))
+            .map_err(|e| StoreError::invalid(format!("oauth client record: {e}")))?;
+        put_json(tx, &key, &record)?;
+    }
+    Ok(())
+}
+
 /// `insertOauthClient(row)`: a column left out takes the table's default; `null` is NULL where the column allows it
 /// (`grant_types` defaults to `{client_credentials}` only when left out).
 #[derive(Debug, Clone, Deserialize)]

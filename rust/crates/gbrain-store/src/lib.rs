@@ -644,8 +644,9 @@ pub const DEFAULT_WRITE_GATE_DETECTOR_VERSION: u32 = 2;
 /// leaves either the old brain or the new one. Format 1 to 2 folds the JSON counter records into
 /// the per-counter records; 2 to 3 rewrites the projection jobs in their compact form
 /// (`format.rs`); an upgrade from format 3 or older starts an empty, incomplete keyword index
-/// (`keyword/index_build.rs`), and 4 to 5 rewrites nothing (a take stored before its trust tier
-/// reads `unknown`), so a format-4 brain keeps its postings. The format record is re-read inside the transaction:
+/// (`keyword/index_build.rs`), 4 to 5 rewrites nothing (a take stored before its trust tier
+/// reads `unknown`), so a format-4 brain keeps its postings, and 5 to 6 carries over the records
+/// the v0.60.766.0 addon's shadow seed kept in other shapes (`seed/format_5.rs`). The format record is re-read inside the transaction:
 /// another handle on the same records may have upgraded the brain first.
 fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     let mut tx = kv.begin_write_exclusive()?;
@@ -669,6 +670,21 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     // Format 5 stores a take's trust tier in its record. A take stored before reads `unknown`, the
     // column default, so the step rewrites nothing; the number keeps an older build from rewriting
     // a take without its tier.
+    // Format 6: the records the v0.60.766.0 addon's shadow seed wrote at format 5 in other shapes
+    // are carried over to this build's, or the brain is refused with the re-seed steps.
+    if stored.format_version <= 5 {
+        let from = stored.format_version;
+        seed::carry_over_format_5(&mut *tx).map_err(|e| {
+            StoreError::new(
+                error::SHADOW_RESEED_REQUIRED,
+                format!(
+                    "this brain was written by an older gbrain Rust addon (store format {from}) and holds a record this build cannot carry over: {}; nothing was changed. Re-seed the shadow store: {}",
+                    e.message,
+                    seed::RESEED_STEPS
+                ),
+            )
+        })?;
+    }
     stored.format_version = FORMAT_VERSION;
     put_json(&mut *tx, &keys::meta("format"), &stored)?;
     tx.commit()?;
