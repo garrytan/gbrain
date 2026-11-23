@@ -10,6 +10,209 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.765.0] - 2026-11-23
+
+**The backup check no longer reports a confident answer when it could not read something.**
+
+A backup-coverage read that fails now marks the verdict degraded, or the item unknown, in place of a confident answer. A healthy check prints exactly what it did before.
+
+<!-- behavior-change: backup_coverage_failed_read_degraded -->
+
+### Fixed
+- An install receipt that exists but cannot be read now shows as an unknown bootstrap workspace and keeps the verdict in warn; before, `gbrain doctor` could report the backup as ok while the bootstrap repo went unchecked. A receipt behind a directory that cannot be searched counts as unreadable too. A missing receipt is still simply empty.
+- A `gbrain.yml` that cannot be read (any read error except a missing file, also for a source inside the bootstrap workspace) now shows as an unknown `db_only` row instead of silently dropping the "these pages are not in git" row, and it keeps the verdict in warn.
+- When the page and fact count cannot be read, the verdict is marked degraded ("the database was unreadable during the check") instead of keeping a stale "young brain" count that silenced backup coaching.
+- When a full refresh fails and the check falls back to the cached verdict, it now marks that verdict degraded and drops the cached page and fact count, so `gbrain doctor` no longer says "Not urgent yet" on stale information.
+
+**Seven community-reported fixes: the right context window for 1M Claude models, strict takes weights, very large code pages on Postgres, upstream freshness after a failed fetch, the conversation archive's open-day hold, a faster concept-provenance lookup, and relayed Claude session messages kept out of your own words.**
+
+### Fixed
+- The context-pressure notice now uses the 1M window for a Claude 5-generation model gbrain's Anthropic recipe declares at 1M (`claude-opus-5-5`, `claude-sonnet-5-5` and the rest of that generation), read from the bare model id Claude Code records. Before, such a session was treated as 200k and warned at "96% full" with about a fifth of its window used. Claude 4.x models, which Claude Code runs at 200k unless the session opts in to 1M, keep the 200k default until the fill passes it. Reported by @tsukimiya, first fixed by @Masashi-Ono0611 (#9784).
+- A takes fence weight cell is read strictly as a plain number, or as `N%` read as N/100, so `50%` is 0.5. Anything else (`0.7abc`, `50 percent`) is a `TAKES_TABLE_MALFORMED` row, which takes writes refuse to rewrite, instead of being read by its leading digits and rewritten as `50.0`. Reported by @oakleaf, first fixed by @Masashi-Ono0611 (#9736).
+- A very large code page (a minified asset in a code source) no longer fails `gbrain projections drain` on Postgres with `MAX_PARAMETERS_EXCEEDED`. Postgres now batches multi-row writes below its driver's 65,534-parameter limit, like PGLite does below its own; code-edge inserts and segment-text staging both read that bound. Reported by @mweber82, first fixed by @Masashi-Ono0611 (#9780).
+- `sync_freshness` no longer counts a failed fetch as a fresh look at the upstream. A fetch that fails leaves an empty `FETCH_HEAD` with a new timestamp; an empty file is no longer an observation, so the last real one stands, either the tracking ref's reflog or a newer check gbrain already recorded for the same upstream commit. Reported by @Kkkkkuro, first fixed by @Masashi-Ono0611 (#9933).
+- The conversation archive opens a closed day's `archive_open_day` embedding hold in the same run that confirms its accepted closing write committed, instead of leaving the day held until a second run. Reported by @frxiaobei, first fixed by @Masashi-Ono0611 (#9785).
+- `synthesize_concepts` finds a concept's stale provenance edges through the links indexes, by the concept's page id, instead of reading every concept-provenance link and every page once per concept (on 160,000 pages: 89 ms to 0.1 ms per concept). Reported by @thomaskong119, first fixed by @Masashi-Ono0611 (#9721).
+- A Claude Code turn that relays a message from another Claude session ("Another Claude session sent a message:", or "... while you were working:") is no longer captured as something you said. Hook capture and the conversation archive skip it, turn by turn, and keep the session's typed prompts. Reported by @lloydsilvertwo, first fixed by @Masashi-Ono0611 (#9768).
+
+**CI splits tests across machines using last night's timings, so far fewer new test files run without a measured timing.**
+
+### Changed
+- Re-measured all three test timing maps (unit, serial and end-to-end) that CI uses to balance test shards, from the 2026-11-22 nightly runs. Test files with no measured timing drop from 93 to 25 in the unit lane, 1 to 0 in serial and 15 to 6 in end-to-end, and every unit shard still fits its 600 s budget.
+
+**`gbrain doctor` now says so when your brain's datastore is missing, instead of quietly creating an empty one and reporting healthy.**
+
+### Fixed
+- When the config names a PGLite datastore that is not there (an unmounted drive, a moved folder), `gbrain doctor`, `doctor --json` and `doctor --only connection --json` now stop before connecting, exit non-zero and print a `brain_missing` error (reason `missing_brain`, the same one `gbrain serve`'s status mode gives). Nothing is created on disk. Before, doctor built a new empty brain at that path, migrated it, and reported status healthy, health score 100, "Connected, 0 pages", and the next `gbrain serve` opened that empty brain. Mount the drive, move the folder back, or update `database_path`; a new empty brain is `gbrain init`, your decision. `doctor --fast` and filesystem-only `doctor --only` checks never connect and still run. One case is not covered yet. A brain folder with no `PG_VERSION` that holds a stale, corrupt `.gbrain-lock` and an old-format `.gbrain-owner.json` still gets an empty brain from doctor, and a follow-up fix is planned.
+
+<!-- behavior-change: doctor_missing_brain_health1 -->
+
+**`entity` no longer says "No entity found" when its page lookup failed; it is marked degraded instead.**
+
+### Fixed
+- When the database read that finds an entity's page fails (a timeout, a permission error), `gbrain entity` and the MCP `entity` tool (one name or `names`) used to answer `found: false` with exit 0 and nothing marking it partial, so an agent could tell the user a person is not in their brain. The answer now carries the degraded stage `entity_lookup_failed` (reason `timeout` or `provider_error`): `_meta.degraded` and a `[gbrain degraded: entity_lookup_failed]` block over MCP, a `degraded` key with `--json`, and the same line on stderr in text mode. The exit code stays 0, and `GBRAIN_FAIL_ON_EMPTY=1` no longer reports such a call as "nothing matched". The same holds for a name-variant candidate's retirement and redirect-target reads, and under `GBRAIN_ENFORCED_MEMBER`. A brain without the `page_aliases` table yet is unchanged, and an engine that refuses raw reads still ends on its typed `engine_capability_missing` refusal.
+- Normal entity output is unchanged byte for byte.
+
+<!-- behavior-change: entity_lookup_failed_degraded_contract01 -->
+
+**The skill-resolver hook now delivers its skill block on cold or busy machines instead of silently dropping it.**
+
+### Fixed
+- The hook's 50 ms turn deadline used to start when the hook process entered the lane, while the ranking worker thread was still loading its modules. On a cold or loaded machine that load alone could use the whole budget, so the block was dropped with only a timeout line in the lane log (0 of 6 turns delivered in a cold, loaded test; 8 of 8 after this change). The worker now reports when it has loaded, the 50 ms counts from that moment, and the load gets its own 250 ms bound. A worker that never loads still ends the turn at that bound with no output. The lane log line gains `worker_ms`, the time from lane entry until the worker was ready. Session-start turns have no worker and keep 50 ms from entry. Settings and hook output are unchanged.
+
+**Skill tooling built on gbrain gets a stable surface to rely on: Claude Code and Codex show your pinned skills and a note at every session start, `gbrain bundled-skill --json` names the installed skills folder, skills moving to another catalog stop counting as missing, and six bundled skills use generic examples.**
+
+<!-- behavior-change: skill_resolver_session_start_block -->
+<!-- behavior-change: bundled_skill_json_skills_root -->
+<!-- behavior-change: cross_modal_no_auto_retry_on_refusal -->
+
+### Added
+- With skill loading on (`gbrain setup claude-code --skill-loading resolve`, or `codex`), the SessionStart hook now prints the skills you pinned for that harness (`gbrain skills pin add <id> --catalog claude-code-user`, or `codex-user`) and the text in a new setting, `skills.resolver.per_harness.<claude-code|codex>.session_start`, on startup, resume, clear and after compaction, so neither is lost when the conversation is compacted. Pins use the same rules and 600-token cap as OpenClaw, Pi, Hermes and Cursor: a pin whose skill is gone is left out, a pin too long to fit is skipped while the pins after it still render, and Codex lines carry each SKILL.md path, as do Claude Code lines for a skill from a configured extra directory, which Claude Code's Skill tool cannot load by name. The note is plain text of at most 600 tokens, set with `gbrain config set skills.resolver.per_harness.claude-code.session_start "<text>"`; a bad value is refused with `skill_resolver_config_invalid`. The block is held to the harness's 10,000-character hook output cap, not `lane_payload_chars`, so a valid configuration is never dropped. With neither set the hook prints nothing, as before.
+- `gbrain skills pin add|remove|list --catalog claude-code-user` (or `codex-user`) now says the pins reach that harness at its next session start, or names the setup command when its SessionStart hook is missing or untrusted. Everything lives in `~/.gbrain/config.json`, so it works with no brain and no brain repository. An older install that has only the UserPromptSubmit entry (doctor shows it outdated) needs `gbrain setup <harness> --skill-loading resolve` once.
+- `gbrain bundled-skill --json` (with no skill name) has a new `skills_root` field: the absolute path of the `skills/` folder this gbrain was installed with, found from the running gbrain rather than the current directory, so another gbrain checkout in the working directory never answers. It is `null` for a single-file binary, whose skills live only inside it; read those with `gbrain bundled-skill <name> --asset <path>`.
+
+### Changed
+- `docs/contracts/public-surface.json`, which `bun run check:public-surface` compares on every pull request, now lists the `gbrain skills index` (`build`, `status`, `remove`), `resolve`, `library` and `pin` subcommands with all their flags, `gbrain skillpack health` and `doctor`, `gbrain setup --skill-loading`, the config keys `skills.resolver.top_k`, `top_gate`, `pinned`, `pins.<catalog>`, `session_token_budget` and `per_harness.<harness>.dirs`, the `block`, `no_skill` and `suggestions[].id` fields of `gbrain skills resolve --json`, and the `skills_root` field of `gbrain bundled-skill --json`. Tools built on the resolver can rely on them, because removing one now needs a deprecation announced at least 14 days ahead. A deprecation record for a command now also covers that command's subcommands, as it already covered its flags.
+- `gbrain check-resolvable` and `gbrain doctor` no longer report a skill as missing when another skill catalog on the machine provides it, for the 26 bundled skills listed as moving to another catalog (`skills/moved-skills.json`). Where they go is not announced yet, so gbrain still ships them and every command that names them behaves as before. A `RESOLVER.md` row or `manifest.json` entry for one of them that your skills folder lacks now counts as present when a catalog built with `gbrain skills index build` (other than one built from gbrain's own bundled skills) whose SKILL.md is still there, or a `<name>/SKILL.md` in a directory set in `skills.resolver.per_harness.<harness>.dirs`, provides it. For maintainers: once the destination is filled in, `bun scripts/announce-moved-skills.ts` writes the deprecation records, the upgrade notice and the announcement, and `check:moved-skills` refuses new skill folders that neither list names. Deprecation records can now name a bundled skill (`surface: bundled-skill`).
+- The archive-crawler, cron-scheduler, reports and strategic-reading skills, and the schema-unify and skillpack-harvest skills, no longer carry examples tied to one particular deployment or person; the instructions are otherwise unchanged. The voice-note-ingest skill's example of a verbatim quote no longer contains profanity, and book-mirror now keeps verbatim quotes to a sentence or two instead of whole passages.
+- The cross-modal-review skill no longer retries a refused review on other models by itself. The `next_in_chain` option and its model list are gone, a refusal is reported naming the model, and another model reviews only when you pick one. A copy still set to `next_in_chain` is read as `report`, with a one-line notice.
+
+**A managed sync no longer re-reads every page when another writer keeps committing.**
+
+### Fixed
+- When another writer commits during a managed `gbrain sync` pass, the pass re-reads only the database rows that changed since its previous round, instead of every page and import record. The next pass reuses the last read the same way after a pass that stopped early and can resume, not only after one that finished. So each pass stays cheap, and a short pause in commits is enough for the sync to catch up.
+- `gbrain sync status --json` reports `convergence.levels`: how many commits the newest pass read, and how many of its rounds read the pages in full or patched the previous read. The sync progress line says when a round patched the previous read.
+
+**Contributors: CI's silent-failure check now catches one shape it used to miss. Nothing you run or see changes.**
+
+### Fixed
+- An inline opt-out with no reason (`catch { /* silent-read-ok: */ return []; }`) now fails with "needs a reason". The code after the comment used to be read as the reason, so it passed. No existing site relied on an empty inline reason, so `scripts/silent-read-catches-baseline.tsv` is unchanged and still counts 2527 sites (`catch_empty` 1295, `promise_catch_empty` 458, `capability_refusal_swallowed` 774).
+
+**Contributors: CI now fails a change that adds a database read whose failure answers "nothing found" or "ok". Nothing you run or see changes.**
+
+### Added
+- `bun run check:silent-read-catches` (part of `bun run verify`) counts every `catch` and `.catch(...)` around a read whose handler answers `[]`, `{}`, null, 0, false, "ok" or an empty Map or Set, per function. A new one fails CI, and the fix is to return a typed degraded marker, use `checkError` in a doctor check, or write `// silent-read-ok: <reason>` where an empty answer is truly right.
+- The same check counts each `try`/`catch` and inline `.catch(fn)` around a raw-SQL engine call (directly or inside a callback the try awaits) that can fall back before it rethrows a capability refusal, so a Rust brain's "I cannot run this" is not turned into a quiet default. A new one fails CI; the fix is `rethrowCapabilityRefusal(err)` first, or `// capability-refusal-ok: <reason>`.
+- The existing sites are listed in `scripts/silent-read-catches-baseline.tsv`, each audited one with its finding; the counts only fall as each fix removes its row.
+- docs/ci-guards.md explains the guard and how to add a rule.
+
+**A file you restore after `gbrain delete` is no longer ignored by sync: it is held for the file-drift step, which asks you first before the page comes back.**
+
+<!-- behavior-change: sync_restored_file_asks_first_lc1 -->
+
+### Fixed
+- When `gbrain delete` removed a page's file and the same file came back (`git checkout -- <path>`, a revert, a commit that re-adds it), managed sync settled it as "Already up to date" and never imported it. After the 72-hour retention purge the page was gone for good, and doctor's `gbrain sources retry-held --unindexed` found nothing to import. Now sync holds the file `file_drift` on the deleted side (`tombstone_edited`, or `purged_differs` after the purge, with `restored: true`), `gbrain sources status` and doctor list it, and `gbrain repair file-drift --held --side deleted --state <state> --prefer file` previews bringing the page back and does it only on your yes (`--prefer database` keeps the deletion). The first managed sync after the upgrade reads the checkout once more, so it finds such a file even when nothing else changed. A deletion that stands still settles with no hold: a delete that left the file (`sync.write_through` off, a read-only mirror), a delete whose removal is not committed yet, a `--purge` delete, and a git-canonical source.
+
+**The Rust engine plan now aims for a Rust engine that matches today's engines on the maintainer's own brain by Dec 1, 2026, merges to master default off, and defines what "equal or better" means for ranked search.**
+
+### Changed
+- `docs/designs/RUST_ENGINE.md` (D21): the first goal is 1x parity by 2026-12-01. On the maintainer's own brain, the Rust engine must give the same CLI, JSON and MCP output and the same markdown brain format as today, and pass the engine parity suite for every method that brain uses. It runs in shadow mode first, then by an opt-in swap. The store bake-off takes 2 days, SQL removal starts now by subsystem, and a "Dec 1 schedule" table lists the workstreams and milestones.
+- D22 records the maintainer's Nov 17 rulings: the owner process lands before the freeze, Dec 1 uses one writer, PGLite's `stale` rule applies, names are kept, and the concurrent-writer store comes after parity.
+- D23: Rust engine code merges to master when it works and stays default off. Performance is measured and reported but gates only turning Rust on by default, later. Under the C1 ruling, speed does not block the Dec 1 opt-in swap.
+- D24 defines "equal or better" for ranked-search recall: the 95% paired lower bound against each TypeScript engine is at least −0.018 (the smallest detectable difference at N = 470), with identical top-k ids counted as ties. It gates only the later default-on decision.
+- This is a plan change only. No code ships and nothing changes for any brain.
+
+**On the experimental Rust engine, tests now show that `gbrain bootstrap verify` and the Apple Contacts fact sync reach a brain's owner process as local callers, and the error a second process gets for a page or memory write no longer says that write is sent to the owner; nothing selects the Rust engine yet, so PGLite and Postgres brains are unchanged.**
+
+### Changed
+- The `engine_capability_missing` advice a second process of a Rust brain gets now says that a page write, a memory write or an import cannot run from that process yet. Before, it said such writes are sent to the owner as one request, which no code does yet.
+
+**On the experimental Rust engine, a write a model picks inside a local job or a SkillOpt run now reaches the owner as a remote call and is refused, and the owner no longer picks up the permissions of the call that started it; nothing selects the Rust engine yet, so PGLite and Postgres brains are unchanged.**
+
+### Fixed
+- A brain tool a subagent job runs, and a tool a SkillOpt run gives its model, now count as remote callers on a Rust brain, as an MCP call does. Before, such a write reached the owner as a trusted local call. The job's own writes stay local.
+- A Rust brain's owner now starts with no caller's permissions, remote mark or cancel signal, even when a remote job is the first to load the engine.
+- If a Rust brain refuses to start its owner because the runtime would pass on the caller's context, the next connect tries again instead of failing for the rest of the process.
+
+### Changed
+- The `owner_unavailable` advice now says the owner holds back every call to the member that would confirm a started write, not only calls on the same key.
+- The `owner_ipc_peer_refused` advice now says a socket may have group or other permission bits only inside a private 0700 directory of this user, and names the systems where only file permissions guard the owner socket.
+
+**/ship's secrets check no longer stops a Rust change on seven lines that are Rust syntax, not keys.**
+
+### Fixed
+- The local pre-landing check reads a line such as `key: &RelationshipKey,` or `token: Option<&str>,` as a secret-named assignment with a random-looking value, because it treats the Rust text after the colon as the value. It failed the Rust engine's store landing on seven such lines, six of them type annotations and one a tokenizer match arm. The base policy now names those lines with five entries, each limited to one file and to a pattern that matches only that text. Nothing else in those files, and no other Rust file, is exempt, and a real value on a line like `token: "sk-live-..."` is still flagged. This changes only what /ship checks before a push; nothing in gbrain runs differently.
+
+**The experimental Rust storage engine's code is updated to its latest tested state, part 1 of 2; nothing changes for users yet.**
+
+### Changed
+- The Rust engine's storage core now includes its newer key-value layers, page, link, fact, keyword and vector reads and writes, and write guards. Its design docs and a few smaller modules follow in part 2. It is still not selectable as an engine, so no brain behaves differently today.
+
+**Search warnings on the terminal no longer print raw database error text.**
+
+### Fixed
+- When a search arm fails (the keyword, title, embedding or vector part of `search` and `query`, or the image fallback), the one-time warning on stderr used to include the error's own message. A database driver's message can carry a connection string or password. The warning now names the arm and the failure class only (`timeout`, `provider_error` or `skipped_after_timeout`), the same as the supersession warning. Search results and the `_meta.degraded` markers are unchanged.
+
+**Search no longer shows an outdated page as current without saying so: a failed supersession check is reported, and a new `supersedes` link applies to the next search.**
+
+<!-- behavior-change: search_supersession_currency -->
+
+When the supersession check fails, search and query now return the degraded marker `supersede_check_failed` instead of an unmarked ranking, and a `supersedes` link written while a server runs is seen at once.
+
+### Fixed
+- When the check for pages a newer page replaced fails (statement timeout, dropped connection), in the ranking or in the top-slot lookup for a slug-shaped query, `search` and `query` now report the degraded stage `supersede_check_failed` (reason `timeout` or `provider_error`) in `_meta.degraded`, and the CLI and MCP notice says results may include outdated pages. Before, the outdated page ranked first with no `superseded` flag and no marker. A brain that has no links table yet still answers as before.
+- A long-running `gbrain serve` no longer keeps showing an outdated page as current for up to 5 minutes after the first `supersedes` link is added. Only a positive "this brain has supersedes links" answer is remembered, so a link written by this process or by another one reaches the next search.
+
+### For contributors
+- `supersede_check_failed` is a recall-affecting stage (not in `RANKING_ONLY_DEGRADED_STAGES`): a failed check is transient, so a degraded result takes the short cache TTL and the next query can re-check. `runPostFusionStages` takes the response's degraded list as an optional fourth argument.
+- Engine parity: `supersedingPageSlugs` is held on every arm to reject a read it cannot run (never an empty map) and to see a link written after an empty answer; the Rust arm stops on its typed refusal of a non-integer page id.
+
+**Skill scripts can read a PGLite brain while the agent's `gbrain serve` holds it: `gbrain find`, `list`, `search`, `query`, `backlinks`, `waiting` and other everyday reads now go through the running server instead of failing with `pglite_busy`.**
+
+<!-- behavior-change: cli_reads_through_live_pglite_serve -->
+
+### Fixed
+- On the default install, `gbrain setup claude-code` (or `codex`) starts a stdio `gbrain serve` that holds the PGLite brain's single-writer lock for the whole agent session, so CLI reads from skill scripts refused with `pglite_busy` and told the user to stop the server. These reads now ask that server, through the same local socket CLI writes already use, and print the same output with the same exit codes as with no server running: `gbrain find`, `list`, `search`, `query`, `get`, `tags`, `links`, `backlinks`, `timeline`, `history`, `graph`, `whois`, `entity`, `search-exact` and `gbrain waiting`. Commands that need the database to themselves (admin commands, migrations) still refuse with `pglite_busy` as before, and so does a read run with environment settings the server does not share (a read-affecting `GBRAIN_*` variable or a provider key set differently). Edits to `config.json` reach the server's answers only after the server restarts. A server from an older gbrain answers `owner_unavailable` and asks for an upgrade and restart.
+
+**The skill resolver now finds skills that installers symlink into a skills folder, such as a gstack install.**
+
+<!-- behavior-change: skill_resolver_symlinked_skills_gst3459 -->
+
+### Fixed
+- `gbrain skills index build --dir` skipped every symlink whose target left the folder it was reading. gstack installs its skills as links into its own checkout, so on a machine with gstack the resolver indexed 2 of its 65 Claude Code skills and none of its Codex skills. A symlink that leaves the folder is now followed when it points at a skill folder (a directory holding SKILL.md) or at a SKILL.md file, and the skill is indexed under the link's path, so its plugin namespace and the path in the block stay the ones the harness sees. Any other symlink that leaves the folder is still skipped as `symlink_outside_root`, and loops are still cut by real path.
+
+**`gbrain eval trajectory` and `gbrain founder scorecard` no longer call falling churn, burn or cost a regression; they flag the rise instead.**
+
+### Fixed
+- For lower-is-better metrics (the exact names `burn_rate`, `churn_rate`, `cac`, `burn`, `churn`, and any metric with the whole word cost, expense, loss, latency, payback or debt, plus costs, expenses, losses, debts), a rise of 10% or more is the regression ("burn rose 33.3%") and a drop is not. Every other metric keeps "a 10% drop is a regression". `lossless`, `costco` and `debtor` do not match. A name that also holds `saving`, `savings`, `saved`, `recovered`, `recovery`, `reduction`, `reduced`, `avoided`, `coverage`, `ratio` or `ratios` (`cost_savings`, `revenue_loss_recovered`, `debt_service_coverage_ratio`, `benefit_cost_ratio`) is not lower-is-better: a rise is good news and a drop is the regression. A series of a lower-is-better metric that starts negative (a loss stored as -50000) compares magnitudes at every step, chosen once per series: -50000 to -100000 is a +100% rise, -50000 to a profit of 100000 is an improvement, and 100000 back to -50000 is a rise. A series that starts positive uses the plain change. A change of exactly the threshold is flagged even when float rounding puts it a hair under (`0.05` to `0.055`). The whole list is one constant, `LOWER_IS_BETTER` in src/core/trajectory.ts, so a later change is one edit.
+- Each `regressions[]` entry in `find_trajectory` and `eval trajectory --json` gains an optional `direction` (`down` or `up`); `schema_version` stays 1. The text marker reads `[REGRESSION ↑N%]` for a rise.
+- The scorecard's `growth_trajectory` delta now divides by the absolute prior value, so a loss shrinking from -100000 to -50000 reads `up`, +50%, like the regression math.
+
+<!-- behavior-change: trajectory_lower_is_better_memory01 -->
+
+**New: `gbrain engine status --probe` prints `brain_ref`, a one-way reference to your brain, also while `gbrain serve` holds it.**
+
+### Added
+- `brain_ref` is a 16-character digest of the brain's persistence identity. A reviewed policy, such as a dated override of the engine swap's shadowing rule, can name one brain with it. It cannot be turned back into the identity, and gbrain never prints the identity itself.
+- A PGLite brain that a running `gbrain serve` holds still reports its `brain_ref`: the serve records it at start in a private file next to the brain, and the probe trusts that file only while that same serve holds the brain.
+
+<!-- behavior-change: engine_status_brain_ref -->
+
+**New: `gbrain engine swap --to rust --plan` previews moving a brain to the opt-in Rust engine, and writes nothing.**
+
+### Added
+- `gbrain engine swap --to rust --plan [--json]` shows whether a brain is ready to move to the Rust engine: the verdict, one row per readiness criterion with what was measured or which evidence is missing, the variables and service definitions on this machine that select the current engine (names only, never values), the free disk space and a plan hash. Speed is reported but never blocks this opt-in move. The move itself arrives in a later release.
+- The plan refuses with `engine_swap_refused` (reason `refresh_unsettled`) while a `gbrain sources refresh` is unfinished, before it reads anything else, and names each refresh and the command that finishes it. The Rust engine cannot resume a refresh, so moving one across would block its sources.
+- The plan previews only this machine's own brain and never creates one. A mounted brain is refused (`engine_swap_refused`, reason `team_brain`), and a configured path with no brain in it is refused with `no_brain` before anything is opened.
+- READY needs the shadow follower's current lag, queue and coverage, and exactly one observed writer host. Zero observed writers is not ready (`writer_coverage_unknown`).
+
+<!-- behavior-change: engine_swap_plan_s5a -->
+
+**On a Rust brain, one large page with a withdrawn claim no longer blanks the leads of the other pages shown with it.**
+
+### Fixed
+- On a Rust brain, the lead of a large (segmented) page that has a withdrawal on record is shown blank, because the Rust engine cannot yet strike a single claim out of a lead. This blank lead is visible: snippets, synopses, entity-card summaries and think anchors for that page show empty text. Before this fix, the same failure also blanked the lead of every other page read in the same call, inline pages included. Now only the affected page's lead is blank, and the other pages keep their leads. PGLite and Postgres brains do not change.
+
+**Fixed: `gbrain engine swap --plan` marks a service definition it cannot read as unreadable instead of listing it as setting no engine variables.**
+
+### Fixed
+- The swap preview lists launchd and systemd service definitions that mention gbrain and the engine-selecting variables each one sets. A file it could not read was listed as setting none, which looked like a clean route. It is now marked `unread: "read_failed"` in the JSON plan and "unreadable, names unknown" in the text plan.
+
+**Fixed: `gbrain engine swap --plan` refuses a brain that uses managed storage instead of showing a plan the swap could not finish.**
+
+### Fixed
+- The Rust engine never holds managed storage, so a swap of a managed brain would fail partway, after writes were paused. The swap plan now checks first and refuses with `engine_swap_refused` (reason `managed_storage`, exit 3) and asks you whether the brain should stay on its current engine. Nothing is read past that check and nothing is written.
+
 ## [0.60.764.0] - 2026-11-22
 
 **Three community-reported search fixes: the alias hop respects `--types`, keyword-only CJK search degrades instead of erroring on a statement timeout, and get_page's "cannot combine" error shows a call that works.**
