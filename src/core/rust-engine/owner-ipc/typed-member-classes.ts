@@ -681,6 +681,8 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   lowerTrustTier: 'readStoredPageTier for each page id (a take or timeline row: readTakePreimages or listEventProjectionRows of its page)',
   markGenerationActivated: 'readGenerationActivationState for that activation',
   moveKeptFactRows: 'readFactPreimages for those fact ids (their row numbers)',
+  recordConnectorSyncAttempt: 'readOpCheckpointRecord for that source\'s connector state row',
+  writeConnectorDbCursor: 'readOpCheckpointRecord for that cursor row',
   recordGenerationActivation: 'readGenerationActivationState for that activation',
   recordHeldGenerationRow: 'heldGenerationRowsForInput for that key and input pin',
   restoreEventProjection: 'readEventProjectionId for that depth page and date',

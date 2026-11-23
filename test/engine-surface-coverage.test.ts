@@ -111,6 +111,9 @@ const INTERFACE_METHODS: readonly string[] = [
   'readMeetingPage',
   // The attendance lookup of link extraction (engine-sql/attendance-pages.ts; test/engine-parity/attendance-pages.test.ts)
   'listAttendanceMatches',
+  // The connector attempt stamp and cursor write (engine-sql/connector-attempts.ts, connector-db-cursor.ts;
+  // test/engine-parity/connector-attempts.test.ts)
+  'recordConnectorSyncAttempt', 'writeConnectorDbCursor',
   // The batch 7 generation repair reads (engine-sql/lost-fence-reads.ts, stale-atom-reads.ts;
   // test/engine-parity/repair-generation-kinds.test.ts)
   'listRetiredFenceItems', 'listInlineVersionTexts', 'hasActiveFactText', 'hasTakeClaim', 'readFactTrustTier', 'listFenceFactRowNums',

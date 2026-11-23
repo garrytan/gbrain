@@ -65,7 +65,9 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listSourceIds', 'readSoleSourceId', 'readFirstSourceId', 'lockAllSourceRows', 'readPageIdentity', 'writeSourceSyncHeartbeat', 'writeSourceUpstreamObservation', 'advanceSourcePurgeEpoch', 'pageTypeTotals', 'pagePrefixSamples', 'countPagesByTypeForSource',
     'advanceSyncCheckpoint', 'lockSourceForUpdate',
     // the meetings connector's page lookup (engine-sql/meeting-pages.ts) and the attendance lookup of frontmatter link extraction (engine-sql/attendance-pages.ts)
-    'readMeetingPage', 'listAttendanceMatches'],
+    'readMeetingPage', 'listAttendanceMatches',
+    // the connector sync attempt stamp and cursor write (engine-sql/connector-attempts.ts, connector-db-cursor.ts)
+    'recordConnectorSyncAttempt', 'writeConnectorDbCursor'],
   search: ['searchKeyword', 'countKeywordPages', 'searchKeywordPages', 'searchTitles', 'searchVector', 'getEmbeddingsByChunkIds',
     'searchKeywordChunks'],
   search_reads: ['cosinesByChunkIds', 'hasSupersedeEdges', 'supersedingPageSlugs', 'aliasCanonicalRefs', 'pageCollapseFacts',

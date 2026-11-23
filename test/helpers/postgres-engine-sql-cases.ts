@@ -814,6 +814,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'listLivePagesSharingFrontmatterId': OOS.repairHistoryKinds,
   'readMeetingPage': OOS.callerRawSql,
   'listAttendanceMatches': OOS.callerRawSql,
+  'recordConnectorSyncAttempt': OOS.callerRawSql,
+  'writeConnectorDbCursor': OOS.callerRawSql,
   'hasSegmentedHistory': OOS.repairHistoryKinds,
   'readLivePagesByIds': OOS.repairHistoryKinds,
   'listRetiredFenceItems': OOS.repairGenerationKinds,

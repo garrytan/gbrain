@@ -308,6 +308,19 @@ export const readSyncConversionRows: StoreMember<[sourceIds: readonly string[]],
   return out;
 };
 
+/**
+ * Stamps the source's first connector sync attempt once: one store write that reads the source's incarnation, keys
+ * the state row as connectorStateKey does, and keeps an existing stamp (rust/crates/gbrain-store/src/persistence/connector_attempts.rs).
+ */
+export const recordConnectorSyncAttempt: StoreMember<[sourceId: string, at: string, seed: readonly unknown[]], boolean> =
+  (brain, sourceId, at, seed) =>
+    storeCall({ member: 'recordConnectorSyncAttempt', sourceId }, () => brain.recordConnectorSyncAttempt(sourceId, at, [...seed])) as Promise<boolean>;
+
+/** Writes an unmanaged connector's cursor row as engine-sql/connector-db-cursor.ts does: one store write (connector_attempts.rs). */
+export const writeConnectorDbCursor: StoreMember<[key: string, record: readonly unknown[]], void> = async (brain, key, record) => {
+  await storeCall({ member: 'writeConnectorDbCursor' }, () => brain.writeConnectorDbCursor(key, [...record]));
+};
+
 /** The pending `sources retry-held` request's keys for this fingerprint, or null. */
 export const readGitHoldRetryRequest: StoreMember<[fingerprint: string], Array<{ paths?: unknown }> | null> = async (brain, fingerprint) => {
   const row = await readRow(brain, 'readGitHoldRetryRequest', GIT_HOLD_RETRY_OP, fingerprint);

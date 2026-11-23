@@ -190,6 +190,32 @@ impl Brain {
         })
     }
 
+    /// `recordConnectorSyncAttempt(sourceId, at, seed)`: resolves false for an unknown source; stamps
+    /// the source's first connector sync attempt once.
+    #[napi]
+    pub fn record_connector_sync_attempt<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        at: String,
+        seed: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.record_connector_sync_attempt(&source_id, &at, &seed)
+        })
+    }
+
+    /// `writeConnectorDbCursor(key, record)`: writes an unmanaged connector's cursor row.
+    #[napi]
+    pub fn write_connector_db_cursor<'env>(
+        &self,
+        env: &'env Env,
+        key: String,
+        record: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.write_connector_db_cursor(&key, &record))
+    }
+
     /// `readRepairBusyRows(sourceId, incarnation)`.
     #[napi]
     pub fn read_repair_busy_rows<'env>(

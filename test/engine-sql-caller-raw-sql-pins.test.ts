@@ -2839,6 +2839,21 @@ const PINS: Pin[] = [
     WHERE h.op=$1 AND s.id=ANY($2::text[]) AND COALESCE((h.completed_keys->0->>'images')::int,0)>0`],
   },
   {
+    from: 'src/core/persistence/connector-state.ts:151 recordConnectorSyncAttempt (at 0eb4da776e)',
+    case: { method: 'recordConnectorSyncAttempt', variant: 'default', rows: [[/^SELECT incarnation::text AS incarnation FROM sources/, [{ incarnation: '1' }]]],
+      run: e => e.recordConnectorSyncAttempt('default', '2026-01-01T00:00:00.000Z', [{ version: 1 }]) },
+    texts: ['SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', `INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
+    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_set(op_checkpoints.completed_keys, ARRAY['0','first_attempt_at'], to_jsonb($4::text), true), updated_at=now()
+    WHERE op_checkpoints.completed_keys->0->>'first_attempt_at' IS NULL`],
+  },
+  {
+    from: 'src/core/connectors/db-cursor.ts:37 writeConnectorDbCursor (at 0eb4da776e)',
+    case: { method: 'writeConnectorDbCursor', variant: 'default', run: e => e.writeConnectorDbCursor('cursor-key', [{ version: 1, state: {}, last_run: null }]) },
+    texts: [`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
+    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array(jsonb_build_object('version',1,'state',EXCLUDED.completed_keys->0->'state',
+      'last_run',COALESCE(EXCLUDED.completed_keys->0->'last_run',op_checkpoints.completed_keys->0->'last_run'))),updated_at=now()`],
+  },
+  {
     from: 'src/core/link-extraction.ts:1836 makeResolver resolveAttendance (at 34057d8e2f)',
     case: { method: 'listAttendanceMatches', variant: 'default', run: e => e.listAttendanceMatches('default', ['people/a'], 'A') },
     texts: [`SELECT slug FROM pages

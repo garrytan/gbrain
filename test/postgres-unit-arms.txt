@@ -207,6 +207,7 @@ test/engine-parity/collate-ties.test.ts
 test/engine-parity/concept-rebuild.test.ts
 test/engine-parity/config-ingest.test.ts
 test/engine-parity/connect-gate.test.ts
+test/engine-parity/connector-attempts.test.ts
 test/engine-parity/core-page-member-reads.test.ts
 test/engine-parity/credential-grant-writes.test.ts
 test/engine-parity/cycle-locks.test.ts
@@ -333,6 +334,7 @@ test/engine-parity/links.test.ts
 test/engine-parity/loop-mutes.test.ts
 test/engine-parity/mcp-get-tags.test.ts
 test/engine-parity/meeting-pages.test.ts
+test/engine-parity/meetings-sync.test.ts
 test/engine-parity/memory-mutation-reads.test.ts
 test/engine-parity/memory-proposal-reads.test.ts
 test/engine-parity/mention-coverage.test.ts

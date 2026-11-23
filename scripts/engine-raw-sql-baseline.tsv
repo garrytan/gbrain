@@ -227,8 +227,6 @@ src/core/company-brain/verification.ts	execute_raw	3
 src/core/config-values.ts	execute_raw	1	the keyed config read for a narrow executeRaw-only handle (a test fake or wrapper without getConfigValues); real engines take the typed getConfigValues read, and 23 config sites moved here from their own executeRaw
 src/core/connection-manager.ts	sql_template	3
 src/core/connectors/api-source.ts	execute_raw	2
-src/core/connectors/connector-hold-session.ts	execute_raw	1
-src/core/connectors/db-cursor.ts	execute_raw	2
 src/core/connectors/item-holds-store.ts	execute_raw	9
 src/core/content-drift-sweep.ts	execute_raw	2
 src/core/context/compile-view.ts	execute_raw	1
@@ -445,7 +443,7 @@ src/core/persistence/connector-checkpoint-migration.ts	execute_raw	8
 src/core/persistence/connector-google-receipts.ts	execute_raw	1
 src/core/persistence/connector-path.ts	execute_raw	3
 src/core/persistence/connector-reset.ts	execute_raw	1
-src/core/persistence/connector-state.ts	execute_raw	7
+src/core/persistence/connector-state.ts	execute_raw	5
 src/core/persistence/connector-sync.ts	execute_raw	26
 src/core/persistence/consumer-lane.ts	execute_raw	2
 src/core/persistence/consumer.ts	execute_raw	3

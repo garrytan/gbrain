@@ -85,6 +85,8 @@ export const PAGES_MEMBERS = {
   listLivePagesSharingFrontmatterId: 'pages',
   readMeetingPage: 'pages',
   listAttendanceMatches: 'pages',
+  recordConnectorSyncAttempt: 'persistence_journal',
+  writeConnectorDbCursor: 'persistence_journal',
   hasSegmentedHistory: 'pages',
   readLivePagesByIds: 'pages',
   listRetiredFenceItems: 'persistence_journal',
