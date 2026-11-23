@@ -41,11 +41,23 @@ After the copy, in the same snapshot, it counts the unseeded gap rows (`countSee
 `not_copied` table, the unfinished `minion_jobs` (status other than `completed`, `failed`, `dead`, `cancelled`) and
 the segmented pages, and writes `<shadow dir>/seed.json` (0600): `seed_id`, `started_at`, `finished_at`,
 `primary_engine`, per relation `{ rows_read, imported, skipped, dropped, unmapped_columns }`, `losses { values,
-not_copied, gaps }`, `unseeded_gap_rows` and its total, `non_terminal_jobs`, `segmented_pages` and `digests: true` (the store holds a digest entry for every row it copied; a
+not_copied, gaps }`, `unseeded_gap_rows` and its total, `non_terminal_jobs`, `segmented_pages`, `storage { managed, checked_at, reason? }` (whether the brain used managed storage
+when the seed read it, right before the snapshot; a seed written before the field existed has none) and `digests: true` (the store holds a digest entry for every row it copied; a
 `seed.json` without it was written before follow existed, is not followed and makes `reconcile` refuse it). `status --json`
-shows `seed { seed_id, finished_at, unseeded_gap_rows_total }` (nulls before a seed), and the provisional report names
+shows `seed { seed_id, finished_at, unseeded_gap_rows_total, storage }` (nulls before a seed, and a null `storage` for a seed
+written before the field; otherwise `storage` is `{ managed, checked_at, note, reason? }`), and the provisional report names
 the seed, its age, the segmented pages and each gap that holds rows. `seedSwapCheck` refuses a swap with no seed
 (`not_seeded`) or while any gap holds a row (`unseeded_gaps`).
+
+### What the seed writes
+
+The seed reads the primary in one read-only snapshot and writes nothing to it: no table row, source file, managed-root
+ownership marker or registry entry. A PGLite open takes the datastore lock, and PGLite rewrites its own control and WAL files
+until the seed closes the brain; that is the one change to the primary's files, and it is PGLite's own. A brain with an
+open repair episode is not opened (`repair_episode_open`), because a healthy open would close the episode and prune its
+backups, and a PGLite brain another process holds is not opened either (`pglite_busy`): the seed exits 1 with
+`could not open the brain (<code>)` before it creates anything. What the seed does write is under the shadow directory:
+the Rust store and `seed.json`.
 
 ## Rows
 
@@ -231,6 +243,10 @@ Some unmapped columns are expected, not losses:
 | Column | Why it shows in `unmapped_columns` | Readers |
 | --- | --- | --- |
 | `pages.generation` | unmapped, known value: the primary's cache clock; the Rust store keeps 1 | the `query_cache` freshness check (`query_cache` is not copied) and the dedupe plan fence (`identity-decisions.ts`, applied only when `p.generation = pl.generation`), which a Rust identity-decisions family must replace. The store refuses `applyIdentityDecisions` today, so no read differs yet |
+
+## The seed calls
+
+The JS methods of the seed on `RustStore` (`src/core/rust-engine/store.ts`):
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
