@@ -5398,6 +5398,19 @@
           }
         ]
       },
+      "lockSourceForUpdate": {
+        "default": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "lockSourceRow": {
         "default": [
           {
@@ -5590,19 +5603,6 @@
         ]
       },
       "renameSource": {
-        "default": [
-          {
-            "paramCount": 2,
-            "unsafeOptions": {
-              "cancelFence": false,
-              "prepare": true,
-              "simple": false
-            },
-            "via": "unsafe"
-          }
-        ]
-      },
-      "replaceSourceConfig": {
         "default": [
           {
             "paramCount": 2,

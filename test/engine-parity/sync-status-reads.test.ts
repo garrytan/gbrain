@@ -17,7 +17,7 @@
  *    recorded `old_deleted_at`, in the record's source), oldest `recorded_at` first, with the live slugs of its source
  *    at its new path (null when none); a malformed `old_deleted_at` refuses as the timestamptz cast does.
  *    `listIdentityDowngrades` offers the restore on a bound source, a connector source and a source with no checkout;
- *    on an unbound source with a checkout only a PGLite brain not activated database-only offers it.
+ *    on an unbound source with a checkout only a single-process brain (PGLite or Rust) not activated database-only offers it.
  *  - Regression: an engine that refuses these as raw SQL (the Rust engine did, which failed `gbrain sync status`
  *    outright and turned its oldest-blocker and recovery probes `unknown`), or answers a pinned admission wrongly. The
  *    Rust engine also refused readIdentityDowngradeRows once one record existed, rather than join its pages, and
@@ -261,7 +261,7 @@ describe('engine parity: sync status reads', () => {
       return result;
     });
 
-  parityTest('listIdentityDowngrades offers the restore on a bound, a connector and a checkout-less source; an unbound checkout only on PGLite not activated database-only',
+  parityTest('listIdentityDowngrades offers the restore on a bound, a connector and a checkout-less source; an unbound checkout only on a single-process engine not activated database-only',
     { methods: ['putPage', 'softDeletePage', 'readPageOrigin', 'readIdentityDowngradeRows', 'getSource', 'getWorktreeBinding', 'setConfig', 'worktreeClaimStore'] },
     async (engine, backend) => {
       await createSource(engine, backend, 'bound', {}, '/var/tmp/restore-bound');
@@ -286,9 +286,9 @@ describe('engine parity: sync status reads', () => {
       const scoped = (await listIdentityDowngrades(engine, ['loose'])).map(r => [r.source_id, r.restore_available]);
       await engine.setConfig(DATABASE_ONLY_SOURCES_KEY, JSON.stringify(['loose']));
       const activated = await offered();
-      // The unbound checkout follows decideUnboundWrite: PGLite claims it unless it is activated database-only; Postgres
-      // and Rust refuse it. Each arm answers whether it gave its engine's rule.
-      const pglite = backend === 'pglite';
+      // The unbound checkout follows decideUnboundWrite: a single-process engine (PGLite and Rust) claims it unless it is
+      // activated database-only; Postgres refuses it. Each arm answers whether it gave its engine's rule.
+      const pglite = backend !== 'postgres';
       const result: Record<string, unknown> = {
         all: { ...all, loose: all.loose === pglite }, scoped: scoped.map(([id, v]) => [id, v === pglite]),
         activated: { ...activated, loose: activated.loose === false },

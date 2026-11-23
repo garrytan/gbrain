@@ -646,7 +646,8 @@ export async function listContestedProposalPairs(raw: EngineRawRead, ids: number
 
 /** The stored provenance (`facts.source`) of these facts of the source. */
 export async function listFactProvenance(raw: EngineRawRead, sourceId: string, ids: number[]): Promise<Array<{ id: number | string; source: string | null }>> {
-  return raw<{ id: number | string; source: string | null }>('SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[]) ORDER BY id', [sourceId, ids]);
+  const rows = await raw<{ id: number | string; source: string | null }>('SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[]) ORDER BY id', [sourceId, ids]);
+  return rows.map(r => ({ id: Number(r.id), source: r.source }));
 }
 
 /** A row reference in the derivation graph: the owning table's name and the row's primary key (stringified). */

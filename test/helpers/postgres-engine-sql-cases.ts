@@ -2175,7 +2175,6 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('updateSourceConfig', [['default', (e) => e.updateSourceConfig(SRC, { federated: true })]]),
   ...variants('markSourceSynced', [['default', (e) => e.markSourceSynced(SRC)]]),
   ...variants('advanceSyncCheckpoint', [['default', (e) => e.advanceSyncCheckpoint({ sourceId: SRC, incarnation: '00000000-0000-4000-8000-000000000000', commit: 'c1', from: null, acceptAtCommit: false, slugMode: 'git-root', keepPinnedSlugMode: false })]]),
-  ...variants('replaceSourceConfig', [['default', (e) => e.replaceSourceConfig(SRC, { federated: true })]]),
   ...variants('renameSource', [['default', (e) => e.renameSource(SRC, 'Name')]]),
   ...variants('getSource', [['default', (e) => e.getSource(SRC)]]),
   ...variants('listStaleSyncSourceIds', [['default', (e) => e.listStaleSyncSourceIds()]]),

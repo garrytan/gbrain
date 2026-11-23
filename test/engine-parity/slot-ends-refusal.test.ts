@@ -11,12 +11,10 @@
  *  - Regression: a blanket catch turned the Rust engine's refusal into "no slot ends", so Rust recall answered with
  *    the old employer still current and no sign of a skipped read.
  *  - Why existing coverage misses it: test/facts-slot-windows-gbra574.test.ts runs on PGLite and Postgres only, where
- *    the read never refuses; test/engine-parity/caller-typed-reads.test.ts pins the Rust stop but not the fail-open path.
+ *    the read never refuses; test/engine-parity/caller-typed-reads.test.ts pins the recall split but not the fail-open path.
  *  - Seam: applySlotEnds through a stub engine whose only member, listSlotRows, rejects with the error a read can
  *    raise (a plain test: the failure is injected, so no engine arm runs), then, on every arm, the `gbrain recall`
  *    command in process and the `recall` op handler over stored slot rows.
- * Rust known stop (the second case): listSlotRows, owner lane 4 (listSlotRows, due 5 PM PST Nov 25), as in
- * test/engine-parity/caller-typed-reads.test.ts RUST_KNOWN_STOP. The lane that serves it removes the Rust branch below.
  */
 import { describe, expect, test } from 'bun:test';
 import { runRecall } from '../../src/commands/recall.ts';
@@ -65,7 +63,7 @@ describe('engine parity: read-time slot ends on a failed slot read', () => {
 
   parityTest('recall and the recall op show an employer a later one ended as ended, as before the refusal was let through', {
     methods: ['insertFacts', 'listSlotRows'],
-  }, async (engine, backend) => {
+  }, async (engine) => {
     const P1 = new Date('2024-01-10T00:00:00Z');
     const P2 = new Date('2024-06-10T00:00:00Z');
     const said = (fact: string, valid: Date, slug: string, row: number, value?: string): NewFact & { row_num: number; source_markdown_slug: string } => ({
@@ -97,14 +95,6 @@ describe('engine parity: read-time slot ends on a failed slot read', () => {
       cli: await cli([ALICE]), cliHistory: await cli([ALICE, '--include-expired']),
       op: await op({ entity: ALICE }), opHistory: await op({ entity: ALICE, include_expired: true }),
     });
-    if (backend === 'rust') {
-      // Rust known stop (lane 4, listSlotRows): the case fails as soon as Rust answers instead of refusing.
-      const stop = await answer().then(() => null, (e: unknown) => e);
-      expect({ message: (stop as Error | null)?.message ?? null, detail: (stop as { detail?: unknown } | null)?.detail ?? null }).toEqual({
-        message: "This brain's engine does not support listSlotRows (owner lane 4 (rust-5a 12bee2c026), due 5 PM PST Nov 25) yet (it needs the facts capability), so nothing ran.",
-        detail: 'member=listSlotRows capability=facts outcome=none written=nothing owner="lane 4 (rust-5a 12bee2c026)" due="5 PM PST Nov 25"' });
-      throw stop;
-    }
     const got = await answer();
     const open = { 'Alice Example joined Beta Example.': null, 'Alice Example likes green tea.': null };
     const history = { ...open, 'Alice Example works at Acme Example.': '2024-06-10' };

@@ -54,7 +54,7 @@ async function claimedWrite(engine: BrainEngine, slug: string) {
 
 describe('engine parity: the publication transaction\'s exclusive source lock', () => {
   parityTest('a sourceExclusive mutation publishes through publishMutation and commits', {
-    methods: ['readSourceMembership', 'transaction', 'transactionDirect', 'lockSourceForUpdate'],
+    methods: ['readSourceMembership', 'transaction', 'transactionDirect'],
     timeout: 60_000,
   }, async (engine) => {
     const row = await claimedWrite(engine, 'notes/parity-exclusive');

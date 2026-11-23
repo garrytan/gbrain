@@ -133,19 +133,6 @@ async function recall(engine: BrainEngine, args: string[]) {
   return { facts: facts?.map(f => `${f.entity_slug}: ${f.fact}`) ?? null, stderr };
 }
 
-/**
- * Rust known stop (the recall case below): recall's read-time slot ends (search/slot-ends.ts applySlotEnds) read
- * listSlotRows, which the Rust engine does not serve yet, so Rust recall refuses by name instead of skipping slot ends.
- * Owner: lane 4 (listSlotRows, due 5 PM PST Nov 25). The Rust arm asserts this exact refusal and rethrows it, so the
- * case counts as stopped; the pin fails as soon as Rust stops refusing, and the lane that serves listSlotRows removes
- * it and shows the case equal on all three arms (rust-tally.tsv caller-typed-reads goes back to 8 equal, 0 stopped).
- */
-const RUST_KNOWN_STOP = {
-  owner: 'lane 4 (listSlotRows, due 5 PM PST Nov 25)',
-  message: "This brain's engine does not support listSlotRows (owner lane 4 (rust-5a 12bee2c026), due 5 PM PST Nov 25) yet (it needs the facts capability), so nothing ran.",
-  detail: 'member=listSlotRows capability=facts outcome=none written=nothing owner="lane 4 (rust-5a 12bee2c026)" due="5 PM PST Nov 25"',
-} as const;
-
 describe('engine parity: the name-and-topic split of gbrain recall', () => {
   parityTest('recall "<name> <topic>" finds the name by a fact slug or a page alias; the pre-check matches a slug segment or an alias of the source only', {
     methods: ['putPage', 'insertFact', 'setPageAliases', 'factsOrAliasesMayMatch'],
@@ -175,13 +162,6 @@ describe('engine parity: the name-and-topic split of gbrain recall', () => {
     // Fail-soft: a failed pre-check answers "may match" and runs every span, so the case pins the output and that no
     // refusal was caught on the way (the harness counts caught refusals on the Rust arm).
     const answer = async () => ({ member, bySlug: await recall(engine, ['acme example seed']), byAlias: await recall(engine, ['widget co hiring']) });
-    if (backend === 'rust') {
-      // RUST_KNOWN_STOP: the pin fails if Rust answers instead of refusing.
-      const stop = await answer().then(() => null, (e: unknown) => e);
-      expect({ owner: RUST_KNOWN_STOP.owner, message: (stop as Error | null)?.message ?? null, detail: (stop as { detail?: unknown } | null)?.detail ?? null })
-        .toEqual({ owner: RUST_KNOWN_STOP.owner, message: RUST_KNOWN_STOP.message, detail: RUST_KNOWN_STOP.detail });
-      throw stop;
-    }
     const got = await answer();
     const note = (phrase: string, name: string, slug: string, topic: string) =>
       `[recall] no facts matched '${phrase}' as one entity or text; '${name}' is ${slug}: showing its 1 fact(s), those mentioning '${topic}' first. ` +
