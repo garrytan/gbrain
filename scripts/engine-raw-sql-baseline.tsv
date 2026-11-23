@@ -314,9 +314,9 @@ src/core/git/redact-finish.ts	execute_raw	8	GST-2988 PR 2 publish redaction fini
 src/core/git/untrack-admission.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/github-source.ts	execute_raw	2
 src/core/google/attachment-backfill.ts	execute_raw	2
-src/core/google/counterparty.ts	execute_raw	2
-src/core/google/file-modes.ts	execute_raw	2
-src/core/google/google-source.ts	execute_raw	5	+1 GST-3452: re-tier pages whose participants joined the private-senders list (one read of connector email pages, until the Google connector moves behind engine methods)
+src/core/google/counterparty.ts	execute_raw	1
+src/core/google/file-modes.ts	execute_raw	1
+src/core/google/google-source.ts	execute_raw	4	+1 GST-3452: re-tier pages whose participants joined the private-senders list (one read of connector email pages, until the Google connector moves behind engine methods)
 src/core/google/ingest-tiers.ts	execute_raw	1	GST-3452: which participants have a person page (one alias read per thread, as counterparty.ts does, until the Google connector moves behind engine methods)
 src/core/google/loop-catchup.ts	execute_raw	8
 src/core/google/loops-exclusion.ts	execute_raw	4

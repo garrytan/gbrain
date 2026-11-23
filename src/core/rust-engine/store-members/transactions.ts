@@ -169,7 +169,12 @@ interface BoundEngine extends RustEngine {
 function boundEngine(parent: RustEngine, scope: RustTransactionScope, held: HeldPageKeys): BoundEngine {
   // The shadow seed copies into the engine's own store, never through a transaction's handle.
   const refuseSeed = (member: string) => async (): Promise<never> => { throw capabilityMissing('transactions', member); };
-  const store: RustStore = { brain: scope.brain, importRelation: refuseSeed('importRelation'), seedPlan: refuseSeed('seedPlan'), close: async () => undefined };
+  const store: RustStore = {
+    brain: scope.brain, close: async () => undefined,
+    importRelation: refuseSeed('importRelation'), replaceRelationRows: refuseSeed('replaceRelationRows'), replaceInterval: refuseSeed('replaceInterval'),
+    relationDigest: refuseSeed('relationDigest'), relationEntries: refuseSeed('relationEntries'), allocatorCheck: refuseSeed('allocatorCheck'),
+    factFingerprints: refuseSeed('factFingerprints'), seedPlan: refuseSeed('seedPlan'),
+  };
   return Object.create(parent, {
     _txScope: { value: scope, writable: false, enumerable: false },
     _heldPageKeys: { value: held, writable: false, enumerable: false },
