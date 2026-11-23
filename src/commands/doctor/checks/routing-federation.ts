@@ -23,6 +23,17 @@ export const DCR_PRIVILEGED_SCOPES: ReadonlyArray<string> = Object.freeze(
 );
 
 /**
+ * The conversation archive's target source and its owner-only twin. The archive registers its source before
+ * its first archived day, so it legitimately has zero pages; that is not a routing collapse.
+ */
+async function archiveTargetSourceIds(engine: BrainEngine): Promise<Set<string>> {
+  const { ARCHIVE_SOURCE_KEY, DEFAULT_ARCHIVE_SOURCE } = await import('../../../core/transcripts/archive.ts');
+  let configured = DEFAULT_ARCHIVE_SOURCE;
+  try { configured = (await engine.getConfig(ARCHIVE_SOURCE_KEY))?.trim() || DEFAULT_ARCHIVE_SOURCE; } catch { /* default */ }
+  return new Set([configured, configured + '-owner']);
+}
+
+/**
  * v0.37.7.0 — Tier 5K source_routing_health (D5 lock: 200-page total cap).
  *
  * On a multi-source brain, sample up to 200 recent pages across all
@@ -62,7 +73,8 @@ export async function checkSourceRoutingHealth(engine: BrainEngine): Promise<Che
     }
     const packSources = zeroPageSources.length > 0 ? await adoptedSkillPackSourceIds(engine) : new Set<string>();
     const skillPackSources = zeroPageSources.filter((id) => packSources.has(id));
-    const emptySources = zeroPageSources.filter((id) => !packSources.has(id));
+    const archiveSources = zeroPageSources.length > 0 ? await archiveTargetSourceIds(engine) : new Set<string>();
+    const emptySources = zeroPageSources.filter((id) => !packSources.has(id) && !archiveSources.has(id));
     if (emptySources.length > 0) {
       return {
         name: 'source_routing_health',
