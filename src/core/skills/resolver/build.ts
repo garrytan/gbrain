@@ -27,7 +27,7 @@ import { TOKENIZER_ID } from './tokenize.ts';
 import { BLOCK_TOKEN_CAP, BLOCK_TOKENIZER, HARNESSES } from './block.ts';
 import { readResolverSettings } from './config.ts';
 import { PICKER_DESCRIPTION_CHARS } from './router.ts';
-import { embedCatalog, vectorsIneligible, type VectorsReceipt } from './vectors.ts';
+import { embedCatalog, turnEmbedder, vectorsIneligible, type VectorsReceipt } from './vectors.ts';
 import type { EmbedSkipCode } from './embed-http.ts';
 
 export const RECEIPT_SCHEMA_VERSION = 1;
@@ -205,6 +205,11 @@ export async function buildSkillIndex(input: BuildInput, opts: { home?: string; 
   const dir = catalogDir(home, input.catalog);
   ensureDir(dir);
   const previous = readReceipt(home, input.catalog);
+  const scope = input.scope ?? 'user';
+  const env = opts.env ?? process.env;
+  const ineligible = vectorsIneligible(input.harness, scope);
+  const early = ineligible === null && !('skip' in turnEmbedder(home, env)) ? await prepare(input).catch(() => null) : null;
+  const earlyVectors = early ? await embedCatalog(early.records, early.catalog_hash, ineligible, home, env) : null;
   const lease = await acquireLease(join(dir, 'lock'), { purpose: 'build', leaseMs: BUILD_LEASE_MS, generation: (previous?.build.generation ?? 0) + 1, retries: 3, waitMs: 250, now: opts.now });
   const { args, fix } = buildArgs(input);
   try {
@@ -212,8 +217,7 @@ export async function buildSkillIndex(input: BuildInput, opts: { home?: string; 
     const { variant, share } = chooseVariant(p.records, previous?.ranker.variant);
     const { bytes, truncatedSkills } = encodeIndex(p.records, variant);
     const header = JSON.parse(new TextDecoder().decode(bytes.subarray(44, 44 + new DataView(bytes.buffer).getUint32(8, true))));
-    const scope = input.scope ?? 'user';
-    const vectors = await embedCatalog(p.records, p.catalog_hash, vectorsIneligible(input.harness, scope), home, opts.env ?? process.env);
+    const vectors = earlyVectors && early!.catalog_hash === p.catalog_hash ? earlyVectors : await embedCatalog(p.records, p.catalog_hash, ineligible, home, env);
     const receipt: BuildReceipt = {
       schema_version: RECEIPT_SCHEMA_VERSION, gbrain_version: VERSION, gbrain_commit: gbrainCommit(),
       catalog: {

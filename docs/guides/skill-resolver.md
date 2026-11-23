@@ -444,7 +444,8 @@ turn embeds the message with the same model and compares the two.
   model's floor (below) join the word ranking, and the two lists are fused by
   rank (reciprocal rank fusion, k = 60, the same fusion the brain's own search
   uses). A skill found only by meaning shows with
-  `match_strength: "vector"` and a reason like `meaning: cosine 0.412`.
+  `match_strength: "vector"` and a reason like `meaning: cosine 0.412`, and
+  `--explain-target <id>` adds the skill's `vector` cosine and floor.
 - **The no-skill gate.** For a catalog with vectors, the floor replaces
   [`top_gate`](#top_gate-the-no-skill-gate-on-by-default): the block is
   empty (`weak_top_match`) unless some skill it would show reaches the floor.
@@ -457,12 +458,19 @@ turn embeds the message with the same model and compares the two.
   and `vectors.fallback.code` in the `--json` output says why (the hook lane
   log has the same code). The codes: `missing_key`, `provider_error`,
   `timeout`, `bad_reply`, `stale_vectors` (the brain's embedding model or
-  width changed since the build; the next build fixes it), and `not_needed`
+  width changed since the build), and `not_needed`
   (the picker answered). The build receipt's `vectors` field is either
   `{model, dims, count}` or `{skipped: <code>}`, where the codes add
   `no_embedder`, `embedding_disabled`, `unsupported_provider`,
   `not_this_harness`, `project_scope`, `too_many_skills` (over 64 MB of
   vectors) and `unmeasured_model`.
+- **Keeping them current.** A turn marks the catalog stale (`meta.index_stale`)
+  when its vectors no longer match the brain: the embedding model or width
+  changed, an embedding model or key was added since the build, or the build's
+  embedding failed (`provider_error`, `timeout`, `bad_reply`) more than 10
+  minutes ago. With auto-rebuild on, the hook lane then rebuilds it, at most
+  once a minute. The skills are embedded before the build takes the catalog's
+  lock, so a slow provider never holds up another build or `setup`.
 
 **The floors.** A floor is a cosine below which a skill is not shown on
 meaning alone. It is set per model, since each model spreads cosines

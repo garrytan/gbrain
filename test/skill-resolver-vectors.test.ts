@@ -18,10 +18,12 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:tes
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { __setEmbedTransportForTests, EMBED_SKIP_CODES, type EmbedRequest } from '../src/core/skills/resolver/embed-http.ts';
+import { __setEmbedTransportForTests, EMBED_SKIP_CODES, embedOverHttp, type EmbedRequest } from '../src/core/skills/resolver/embed-http.ts';
+import { releaseLease, tryAcquireLease } from '../src/core/skills/resolver/lock.ts';
+import { catalogFile } from '../src/core/skills/resolver/paths.ts';
 import { __setPickerTransportForTests } from '../src/core/skills/resolver/router-http.ts';
 import { buildSkillIndex, resolveSkills } from '../src/core/skills/resolver/index.ts';
-import { __setVectorFloorForTests, RRF_K, skillVectorText, VECTOR_FLOOR, vectorFloor } from '../src/core/skills/resolver/vectors.ts';
+import { __setVectorFloorForTests, RRF_K, skillVectorText, VECTOR_FLOOR, vectorFloor, VECTOR_RETRY_MS } from '../src/core/skills/resolver/vectors.ts';
 import { RRF_K as SEARCH_RRF_K } from '../src/core/search/hybrid.ts';
 import { loadSchema, validate } from './helpers/json-schema-lite.ts';
 
@@ -127,6 +129,9 @@ describe('vectors in a turn', () => {
     expect(r.suggestions[0]).toMatchObject({ match_strength: 'vector', reason: 'meaning: cosine 1.000' });
     expect(r.vectors).toMatchObject({ used: true, model: 'voyage:voyage-4', fallback: null });
     expect(calls.at(-1)).toMatchObject({ inputType: 'query', texts: ['can we go live with it today?'] });
+    const why = await turn(h, 'can we go live with it today?', {}, { explainTarget: 'deploy' });
+    expect(why.explain).toMatchObject({ rank: null, in_block: true, vector: { cosine: 1, floor: VECTOR_FLOOR['voyage:voyage-4'] } });
+    expect(validate(loadSchema('skill-resolver.v1.turn-output'), JSON.parse(JSON.stringify({ ...why.output, explain: why.explain })))).toEqual([]);
     __setEmbedTransportForTests(null);
     const words = (await turn(h, 'can we go live with it today?', {}, { env: { PATH: process.env.PATH } })).output;
     expect(words.block).toBe('');
@@ -158,7 +163,9 @@ describe('vectors in a turn', () => {
     expect(slow.vectors).toMatchObject({ used: false, fallback: { code: 'timeout' } });
     expect(strip(slow)).toBe(strip(words));
     embedder(async () => [[1, 0]]);
-    expect((await turn(h, 'summarize meeting notes')).output.vectors).toMatchObject({ used: false, fallback: { code: 'stale_vectors' } });
+    const narrow = (await turn(h, 'summarize meeting notes')).output;
+    expect(narrow.vectors).toMatchObject({ used: false, fallback: { code: 'stale_vectors' } });
+    expect(narrow.meta.index_stale).toBe(true);
     writeFileSync(join(h, 'config.json'), JSON.stringify({ embedding_model: 'voyage:voyage-4-large' }));
     embedder();
     const moved = (await turn(h, 'summarize meeting notes')).output;
@@ -219,3 +226,88 @@ describe('vectors in a turn', () => {
     expect(vectorFloor('voyage:voyage-code-4')).toBeNull();
   });
 });
+
+describe('vectors: freshness, the build lease and mixed catalogs', () => {
+  test('a turn asks for a rebuild when the vectors no longer match the brain: model changed, embedder added, or a passing failure gone stale', async () => {
+    embedder();
+    const h = await home(CONFIG);
+    const stale = async (at?: number) => (await turn(h, 'summarize meeting notes', {}, at === undefined ? {} : { now: () => at })).output.meta.index_stale;
+    expect(await stale()).toBe(false);
+    writeFileSync(join(h, 'config.json'), JSON.stringify({ embedding_model: 'voyage:voyage-4-large' }));
+    expect(await stale()).toBe(true);
+    writeFileSync(join(h, 'config.json'), JSON.stringify({ embedding_model: 'voyage:voyage-code-4' }));
+    expect(await stale()).toBe(false);
+    const added = await home(null);
+    writeFileSync(join(added, 'config.json'), JSON.stringify(CONFIG));
+    expect((await turn(added, 'summarize meeting notes')).output.meta.index_stale).toBe(true);
+    const failed = tmp();
+    writeFileSync(join(failed, 'config.json'), JSON.stringify(CONFIG));
+    const f = join(tmp('skvec-src-'), 'catalog.json');
+    writeFileSync(f, JSON.stringify(SKILLS));
+    embedder(async () => { throw new Error('HTTP 503'); });
+    const r = await buildSkillIndex({ catalog: 'c', fromJson: f }, { home: failed });
+    expect(r.vectors).toEqual({ skipped: 'provider_error' });
+    const built = Date.parse(r.build.built_at);
+    const at = async (ms: number) => (await turn(failed, 'summarize meeting notes', {}, { now: () => ms })).output.meta.index_stale;
+    expect(await at(built + 60_000)).toBe(false);
+    expect(await at(built + VECTOR_RETRY_MS)).toBe(true);
+    __setEmbedTransportForTests(null);
+    expect((await turn(failed, 'summarize meeting notes', {}, { env: { PATH: process.env.PATH }, now: () => built + VECTOR_RETRY_MS })).output.meta.index_stale).toBe(false);
+  });
+
+  test('the build lease is not held while the skills are embedded', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(r => { release = r; });
+    embedder(async req => { await gate; return req.texts.map(vectorOf); });
+    const h = tmp();
+    writeFileSync(join(h, 'config.json'), JSON.stringify(CONFIG));
+    const f = join(tmp('skvec-src-'), 'catalog.json');
+    writeFileSync(f, JSON.stringify(SKILLS));
+    const build = buildSkillIndex({ catalog: 'c', fromJson: f }, { home: h });
+    while (calls.length === 0) await Bun.sleep(5);
+    const probe = tryAcquireLease(catalogFile(h, 'c', 'lock'), { purpose: 'probe', leaseMs: 1000 });
+    expect('token' in probe).toBe(true);
+    if ('token' in probe) releaseLease(probe);
+    release();
+    expect((await build).vectors).toEqual({ model: 'voyage:voyage-4', dims: 4, count: 3 });
+  });
+
+  test('a merged turn gates each catalog its own way: the floor where it has vectors, top_gate where it has none', async () => {
+    embedder();
+    const h = await home(CONFIG);
+    const f = join(tmp('skvec-src-'), 'catalog.json');
+    writeFileSync(f, JSON.stringify([{ id: 'weather', name: 'weather', description: 'Check the weather forecast for a city' }]));
+    await buildSkillIndex({ catalog: 'b', fromJson: f, harness: 'openclaw' }, { home: h });
+    const both = (await resolveSkills({ message: 'check the weather forecast for paris', harness: 'claude-code' }, { home: h, catalogs: ['c', 'b'] })).output;
+    expect(ids(both)).toEqual(['weather']);
+    expect((await turn(h, 'deploy the service now')).output.block).toBe('');
+    __setEmbedTransportForTests(null);
+    expect(ids((await turn(h, 'deploy the service now', {}, { env: { PATH: process.env.PATH } })).output)).toContain('deploy');
+  });
+});
+
+describe('vectors: the provider request shapes', () => {
+  async function serve(reply: unknown, run: (base: string) => Promise<number[][]>) {
+    const seen: { path: string; headers: Headers; body: any }[] = [];
+    const s = Bun.serve({ port: 0, async fetch(r) { seen.push({ path: new URL(r.url).pathname, headers: r.headers, body: await r.json() }); return Response.json(reply); } });
+    try { return { seen, vectors: await run(`http://127.0.0.1:${s.port}`) }; } finally { s.stop(true); }
+  }
+  const req = (provider: 'voyage' | 'google', id: string, dims: number, baseUrl: string) => ({ provider, id, dims, texts: ['a', 'b'], inputType: 'query' as const, signal: new AbortController().signal, baseUrl });
+
+  test('voyage: /v1/embeddings with input_type and output_dimension; replies reordered by index', async () => {
+    const { seen, vectors } = await serve({ data: [{ index: 1, embedding: [0, 1] }, { index: 0, embedding: [1, 0] }] }, base => embedOverHttp(req('voyage', 'voyage-4', 1024, base), 'k-test'));
+    expect(seen[0]!.path).toBe('/v1/embeddings');
+    expect(seen[0]!.headers.get('authorization')).toBe('Bearer k-test');
+    expect(seen[0]!.body).toEqual({ model: 'voyage-4', input: ['a', 'b'], input_type: 'query', output_dimension: 1024 });
+    expect(vectors).toEqual([[1, 0], [0, 1]]);
+  });
+
+  test('google: batchEmbedContents with taskType and outputDimensionality', async () => {
+    const { seen, vectors } = await serve({ embeddings: [{ values: [1, 0] }, { values: [0, 1] }] }, base => embedOverHttp(req('google', 'gemini-embedding-001', 768, base), 'k-test'));
+    expect(seen[0]!.path).toBe('/v1beta/models/gemini-embedding-001:batchEmbedContents');
+    expect(seen[0]!.headers.get('x-goog-api-key')).toBe('k-test');
+    expect(seen[0]!.body.requests[1]).toEqual({ model: 'models/gemini-embedding-001', content: { parts: [{ text: 'b' }] }, taskType: 'RETRIEVAL_QUERY', outputDimensionality: 768 });
+    expect(vectors).toEqual([[1, 0], [0, 1]]);
+  });
+});
+

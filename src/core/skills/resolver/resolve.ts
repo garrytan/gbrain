@@ -71,7 +71,7 @@ import { isAcknowledgement, maxIdf, mentionsSkill, rankIndex, reasonText, type R
 import { commitSession, freshState, loadSession, sessionKey, type SessionState, type TurnDelta } from './session.ts';
 import { PICKER_FULL_CATALOG_MAX, PICKER_SHORTLIST, pickSkills, routerTimeoutMs, type PickerSkill, type PickOutcome, type RouterFallbackCode } from './router.ts';
 import { readBounded } from './fsutil.ts';
-import { cosine, embedQuery, readCatalogVectors, RRF_K, turnEmbedder, vectorFloor, VECTOR_WAIT_MS, type CatalogVectors, type EmbedSkipCode, type QueryOutcome } from './vectors.ts';
+import { cosine, embedQuery, readCatalogVectors, RRF_K, turnEmbedder, vectorFloor, vectorsOutdated, VECTOR_WAIT_MS, type CatalogVectors, type EmbedSkipCode, type QueryOutcome } from './vectors.ts';
 
 export const SCHEMA_VERSION = 1;
 export const MESSAGE_CAP_BYTES = 8192;
@@ -153,6 +153,8 @@ export interface Explain {
   in_block: boolean;
   skip_reason: string | null;
   session: { turn: number; spent: number; budget: number; remaining: number } | null;
+  /** With skill vectors in the turn: the target's cosine with the message and its catalog's floor. `rank` and `score` stay the word ranking's. */
+  vector?: { cosine: number; floor: number };
 }
 
 export interface ResolveResult {
@@ -264,7 +266,7 @@ export function openCatalogIndex(home: string, name: string): OpenedCatalog {
  * catalog gbrain can rebuild gets stale.stamp once (no fsync; an existing
  * stamp is left alone); an adapter-owned stdin catalog never does.
  */
-function turnStaleness(home: string, c: OpenedCatalog, now: number, autoRebuild: boolean): string | null {
+function turnStaleness(home: string, c: OpenedCatalog, now: number, autoRebuild: boolean, want: () => string | null): string | null {
   const { name, receipt } = c;
   let stale: string | null = c.publishing ? 'publishing' : null;
   if (!stale && receipt.gbrain_version !== VERSION) stale = 'gbrain_version_changed';
@@ -280,11 +282,16 @@ function turnStaleness(home: string, c: OpenedCatalog, now: number, autoRebuild:
       try { writeFileAtomic(stamp, JSON.stringify({ verdict: slice.changed ? 'stale' : 'fresh', cursor: slice.changed ? 0 : slice.next })); } catch { /* read-only home: check again next turn */ }
     }
   }
-  if (stale && autoRebuild && receipt.build?.rebuild_argv) {
-    const stamp = catalogFile(home, name, 'stale.stamp');
-    if (!existsSync(stamp)) { try { writeFileAtomic(stamp, `${JSON.stringify({ reason: stale })}\n`); } catch { /* best effort */ } }
-  }
+  if (!stale && vectorsOutdated(receipt, now, want)) stale = 'vectors_changed';
+  if (stale) stampStale(home, c, stale, autoRebuild);
   return stale;
+}
+
+/** Leave stale.stamp (once) on a catalog gbrain can rebuild, so the lane schedules its rebuild. */
+function stampStale(home: string, c: OpenedCatalog, reason: string, autoRebuild: boolean): void {
+  if (!autoRebuild || !c.receipt.build?.rebuild_argv) return;
+  const stamp = catalogFile(home, c.name, 'stale.stamp');
+  if (!existsSync(stamp)) { try { writeFileAtomic(stamp, `${JSON.stringify({ reason })}\n`); } catch { /* best effort */ } }
 }
 
 function emptyOutput(input: { shadow?: boolean }, extra: Partial<TurnOutput>): TurnOutput {
@@ -357,8 +364,14 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
   const budget = opts.sessionTokenBudget === undefined ? settings.sessionTokenBudget : validateSessionTokenBudget(opts.sessionTokenBudget, 'sessionTokenBudget');
   const names = opts.catalogs?.length ? [...new Set(opts.catalogs.map(assertCatalogName))] : defaultCatalogs(home);
   const loaded: Loaded[] = [];
+  const env = opts.env ?? process.env;
+  let wanted: string | null | undefined;
+  const want = () => {
+    if (wanted === undefined) { const f = turnEmbedder(home, env); wanted = 'skip' in f || vectorFloor(f.embedder.model) === null ? null : f.embedder.model; }
+    return wanted;
+  };
   try {
-    for (const n of names) { const l: Loaded = { ...source.open(home, n), stale: null }; loaded.push(l); l.stale = turnStaleness(home, l, now, settings.autoRebuild); check(); }
+    for (const n of names) { const l: Loaded = { ...source.open(home, n), stale: null }; loaded.push(l); l.stale = turnStaleness(home, l, now, settings.autoRebuild, want); check(); }
     const single = loaded.length === 1 ? loaded[0]! : null;
     const catalog = loaded.map(l => l.name).join('+');
     const catalogHash = single ? single.receipt.catalog.catalog_hash : sha(JSON.stringify(loaded.map(l => [l.name, l.receipt.catalog.catalog_hash])));
@@ -398,7 +411,6 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
     let vecs: (CatalogVectors | null)[] = [];
     let query: Promise<QueryOutcome> | null = null;
     const cancelQuery = new AbortController();
-    const env = opts.env ?? process.env;
     if (loaded.some(l => l.receipt.vectors && 'model' in l.receipt.vectors)) {
       const found = turnEmbedder(home, env);
       const t = 'skip' in found || vectorFloor(found.embedder.model) !== null ? found : { skip: 'unmeasured_model' as const };
@@ -427,7 +439,8 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
       if (!q.ok) { report.fallback = { code: q.code }; return; }
       loaded.forEach((l, c) => {
         const v = vecs[c];
-        if (!v || v.dims !== q.vector.length) return;
+        if (!v) return;
+        if (v.dims !== q.vector.length) { stampStale(home, l, 'vectors_changed', settings.autoRebuild); base.meta.index_stale = true; return; }
         const a = new Float64Array(l.ix.n).fill(-1);
         for (let d = 0; d < l.ix.n; d++) { const row = v.rows.get(metaOf(c, d).id); if (row) a[d] = cosine(row, q.vector); }
         cos[c] = a;
@@ -576,6 +589,7 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
         target, indexed: Boolean(f), catalog: f ? loaded[f.c]!.name : null, rank: pos >= 0 ? pos + 1 : null, score: pos >= 0 ? round4(ranks[f!.c]!.ranked[pos]!.score) : null,
         fields: f ? ranks[f.c]!.matchedFields(f.doc).fields : {}, excluded: excluded.has(target), deduped: deduped.includes(target), in_block: suggestions.some(s => s.id === target),
         skip_reason: skip?.reason ?? null, session: key ? { turn: state.turn, spent: state.spent, budget, remaining } : null,
+        ...(f && cos[f.c] ? { vector: { cosine: round4(cos[f.c]![f.doc]!), floor: floorFor } } : {}),
       };
     }
     return finish(out, { tokens: r.tokens, suggested: kept.map(x => x.id), resuggested: resuggested.filter(id => kept.some(x => x.id === id)) }, explain);

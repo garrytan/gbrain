@@ -9322,7 +9322,8 @@
           "score: number | null",
           "session: { turn: number; spent: number; budget: number; remaining: number; } | null",
           "skip_reason: string | null",
-          "target: string"
+          "target: string",
+          "vector?: { cosine: number; floor: number; } | undefined"
         ],
         "name": "Explain"
       },

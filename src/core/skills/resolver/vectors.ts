@@ -35,6 +35,9 @@ const BUILD_CONCURRENCY = 4;
 export const BUILD_EMBED_TIMEOUT_MS = 60_000;
 /** The longest a turn waits for its message's vector when the picker is off; with the picker on, the wait counts inside the picker's. */
 export const VECTOR_WAIT_MS = 1000;
+/** A build whose embedding failed for a passing reason is retried by the turn's auto-rebuild once its receipt is this old. */
+export const VECTOR_RETRY_MS = 10 * 60_000;
+export const VECTOR_RETRY_CODES: readonly EmbedSkipCode[] = ['provider_error', 'timeout', 'bad_reply'];
 /**
  * The no-skill gate with vectors on: a block shows only when one of its
  * skills from a catalog with vectors has a cosine at or above this floor
@@ -177,6 +180,24 @@ export function turnEmbedder(home: string, env: NodeJS.ProcessEnv): { embedder: 
   if ('skip' in e) return e;
   const key = embedKey(e.provider, home, env);
   return key === null ? { skip: 'missing_key' } : { embedder: e, key };
+}
+
+/**
+ * Whether a catalog's vectors no longer match what a build would make now: the
+ * brain has a measured embedder with a key and the receipt names another model,
+ * none (embedder added, or a key found), or a passing failure older than
+ * VECTOR_RETRY_MS. A changed width shows only in the message's vector, so the
+ * turn marks that one itself (resolve.ts). With no usable embedder here it never asks for a
+ * rebuild, so a hook without the key cannot drop vectors another build made.
+ */
+export function vectorsOutdated(receipt: { vectors?: VectorsReceipt | { skipped: EmbedSkipCode }; catalog: { harness: string | null; scope: 'user' | 'project' }; build: { built_at: string } }, now: number, want: () => string | null): boolean {
+  const v = receipt.vectors;
+  if (!v || vectorsIneligible(receipt.catalog.harness ?? undefined, receipt.catalog.scope) !== null) return false;
+  if ('skipped' in v && v.skipped === 'too_many_skills') return false;
+  if ('skipped' in v && VECTOR_RETRY_CODES.includes(v.skipped) && now - Date.parse(receipt.build.built_at) < VECTOR_RETRY_MS) return false;
+  const w = want();
+  if (!w) return false;
+  return 'skipped' in v || v.model !== w;
 }
 
 export type { EmbedProvider, EmbedSkipCode };

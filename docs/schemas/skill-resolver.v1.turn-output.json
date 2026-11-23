@@ -428,6 +428,23 @@
             "null"
           ]
         },
+        "vector": {
+          "type": "object",
+          "description": "Present only when skill vectors ranked the turn: the target's cosine with the message and its catalog's floor; rank and score stay the word ranking's.",
+          "additionalProperties": false,
+          "required": [
+            "cosine",
+            "floor"
+          ],
+          "properties": {
+            "cosine": {
+              "type": "number"
+            },
+            "floor": {
+              "type": "number"
+            }
+          }
+        },
         "session": {
           "type": [
             "object",
