@@ -290,10 +290,13 @@ jobs:
           GBRAIN_TEST_RUST_ARM: '1'
         run: |
           set -euo pipefail
-          bun test --timeout=60000 test/rust-engine-store.test.ts test/rust-engine-shell.test.ts test/rust-engine-differential.test.ts
+          bun test --timeout=60000 test/rust-engine-store.test.ts test/rust-engine-shell.test.ts test/rust-engine-differential.test.ts || echo PROBE_HEAD_FAILED
+          failed=""
           for file in test/engine-parity/*.test.ts; do
-            bun test --timeout=60000 "$file"
+            bun test --timeout=60000 "$file" || failed="$failed $file"
           done
+          echo "PROBE_FAILED_FILES:$failed"
+          test -z "$failed"
       # A withdrawn world claim stays out of a large page's lead on a Rust brain. GBRAIN_TEST_REQUIRE_RUST_ADDON
       # makes a missing addon an error instead of a skip, and the next step fails the lane when no test ran.
       # This job owns the file, so the stress gate does not stress it where no addon exists.
