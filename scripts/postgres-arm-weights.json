@@ -351,6 +351,7 @@
   "test/engine-parity/reason-tombstones.test.ts": 8300,
   "test/engine-parity/recall-members.test.ts": 7700,
   "test/engine-parity/referrer-reads.test.ts": 8600,
+  "test/engine-parity/refusal-swallow-paths.test.ts": 11239,
   "test/engine-parity/relational-reads.test.ts": 20000,
   "test/engine-parity/remember-members.test.ts": 8900,
   "test/engine-parity/remember-meta.test.ts": 10308,
