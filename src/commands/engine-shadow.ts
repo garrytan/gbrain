@@ -4,7 +4,9 @@
  * Shadow mode mirrors a sample of the host brain's reads to the Rust engine in a supervised child process and
  * records whether the answers agree. It is off by default and writes nothing to the brain database, its config
  * table or the brain repo: every file lives in `<gbrain home>/shadow/<brain>/`. `start` previews a plan with a hash
- * and needs `--yes --expect <hash>`; the installed addon is loaded then, in the foreground. The
+ * and needs `--yes --expect <hash>`; the installed addon is loaded then, in the foreground. Shadow mode gathers evidence on
+ * managed-storage brains too; only the swap refuses them. `start` opens the brain once, best-effort, to read its storage
+ * mode, reports a brain that cannot swap, records the mode in state.json, and never refuses over it. The
  * hidden `__child <dir>` is the child the serving process spawns. `seed` copies the brain into the Rust store
  * once, in one read-only snapshot, and writes `seed.json` (src/shadow/seed.ts).
  */
@@ -16,7 +18,7 @@ import type { EngineConfig } from '../core/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
 import { readFaults, readShadowSummary } from '../shadow/ledger.ts';
-import { readManagedStorage, storageLine, storageReport, type StorageReport } from '../shadow/managed-gate.ts';
+import { readManagedStorage, storageLine, storageReport, type ManagedStorageRecord, type StorageReport } from '../shadow/managed-gate.ts';
 import { readSeedRecord, runSeed, SeedBudgetError, writeSeedRecord, type SeedRecord, type SeedTarget } from '../shadow/seed.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown, writeProvisionalReport } from '../shadow/report.ts';
 import {
@@ -36,7 +38,7 @@ export interface EngineShadowDeps {
   now?: () => Date;
   /** The `__child` loop; default runShadowChild on stdin/stdout. */
   runChild?: (dir: string) => Promise<number>;
-  /** The connected primary brain `seed` reads; default the configured brain, opened without shadow mode. */
+  /** The connected primary brain `seed` reads and `start` opens to read its storage mode (closed after); default the configured brain, opened without shadow mode. */
   openPrimary?: () => Promise<BrainEngine>;
   /** Opens the Rust store `seed` writes; default openRustStore on the loaded addon at `<dir>/store`. */
   openStore?: (addon: object, storePath: string) => Promise<SeedTarget & { close(): Promise<void> }>;
@@ -56,6 +58,10 @@ Shadow mode is off by default. When on, a sample of reads this brain answers is 
 supervised child process that runs the same read on the Rust engine and records match, diff or why it could not
 compare. The primary answer never waits for the child. It writes nothing to the brain database, its config or the
 brain repo; everything lives in <gbrain home>/shadow/<brain>/. stop --delete removes that directory.
+
+start runs on a brain that uses managed storage too; only the swap refuses such a brain. start opens the brain
+database once to read its storage mode, even with --plan, prints a line when the brain cannot swap, and records the mode
+in state.json. A brain whose mode cannot be read is not refused: the mode is recorded as unread.
 
 seed copies this brain into the Rust store once, in one read-only snapshot, before shadow mode compares answers.
 It writes no table row, source file, ownership marker or registry entry of the brain. Opening a PGLite brain still
@@ -132,7 +138,9 @@ async function defaultBrainId(): Promise<() => string> {
   return () => brainRoutingArgs()[1] ?? 'unresolved';
 }
 
-async function resolveBrain(deps: EngineShadowDeps): Promise<{ key: string; dir: string; engine: string }> {
+interface ResolvedBrain { key: string; dir: string; engine: string; config: Pick<EngineConfig, 'engine' | 'database_path' | 'database_url'> }
+
+async function resolveBrain(deps: EngineShadowDeps): Promise<ResolvedBrain> {
   // Shadow state is keyed by the host brain's config. A selected mounted brain would silently read, start or delete the host's.
   // Loaded here, not at the top, so the command's flag table does not grow by everything the resolver imports.
   const { HOST_BRAIN_ID } = await import('../core/brain-registry.ts');
@@ -144,7 +152,7 @@ async function resolveBrain(deps: EngineShadowDeps): Promise<{ key: string; dir:
   const id = config ? brainIdentity(config) : null;
   const key = config ? shadowBrainKey(config) : null;
   if (!config || !id || !key) throw new UsageError('No brain is configured here (gbrain init sets one up); shadow mode needs a brain to compare against.');
-  return { key, dir: shadowDirFor(key), engine: id.engine };
+  return { key, dir: shadowDirFor(key), engine: id.engine, config };
 }
 
 export async function runEngineShadow(args: string[], deps: EngineShadowDeps = {}): Promise<number> {
@@ -161,8 +169,8 @@ export async function runEngineShadow(args: string[], deps: EngineShadowDeps = {
       const dir = rest[0];
       if (!dir) throw new UsageError('__child needs the shadow directory');
       const run = deps.runChild ?? (async (d: string) => {
-        const { runShadowChild } = await import('../shadow/child.ts');
-        await runShadowChild(d, { input: process.stdin, writeControl: (s) => { process.stdout.write(s); } });
+        const { runShadowChild, pipeControlWriter } = await import('../shadow/child.ts');
+        await runShadowChild(d, { input: process.stdin, writeControl: pipeControlWriter(process.stdout), exit: (code) => process.exit(code) });
         return 0;
       });
       return await run(dir);
@@ -183,8 +191,57 @@ export async function runEngineShadow(args: string[], deps: EngineShadowDeps = {
   }
 }
 
+/** Opens the configured brain the way the primary opens it, minus shadow mode (that attaches in createEngine only). */
+async function openStartPrimary(config: ResolvedBrain['config']): Promise<BrainEngine> {
+  const { constructEngine } = await import('../core/engine-construct.ts');
+  const engineConfig: EngineConfig = { engine: config.engine, database_path: config.database_path, database_url: config.database_url };
+  // PGLite runs initdb on a missing or uninitialized directory when it connects; a preview must not make a brain (engine swap refuses the same way).
+  if (!engineConfig.database_url && (!engineConfig.database_path || !existsSync(join(engineConfig.database_path, 'PG_VERSION')))) {
+    throw Object.assign(new Error(`no brain exists at ${engineConfig.database_path ?? '(no path configured)'}`), { code: 'no_brain' });
+  }
+  const engine = await constructEngine(engineConfig);
+  // Only a local brain (PGLite) has this open: no recording of its managed roots (that writes ownership markers into the
+  // datastore and source checkouts) and, with repair off, no repair of a damaged log (that renames the primary's files).
+  const quiet = (engine as unknown as { connectForRestore?: (c: EngineConfig, o?: { keepRepairEpisode?: boolean }) => Promise<void> }).connectForRestore?.bind(engine);
+  if (!quiet) {
+    await engine.connect(engineConfig);
+    return engine;
+  }
+  // A healthy open also closes an open repair episode and prunes older repair backups; a preview must not, so it leaves that brain unread.
+  const { readRepairSidecar } = await import('../core/pglite-repair.ts');
+  if (readRepairSidecar(engineConfig.database_path!).episodeStartedAt !== null) {
+    throw Object.assign(new Error('a repair episode is open on this brain; opening it would close the episode and prune its backups'), { code: 'repair_episode_open' });
+  }
+  const savedRepair = process.env.GBRAIN_PGLITE_WAL_REPAIR;
+  process.env.GBRAIN_PGLITE_WAL_REPAIR = 'off';
+  try {
+    // The check above runs before the open takes the datastore lock; an episode recorded while it waits is still kept.
+    await quiet(engineConfig, { keepRepairEpisode: true });
+  } finally {
+    if (savedRepair === undefined) delete process.env.GBRAIN_PGLITE_WAL_REPAIR;
+    else process.env.GBRAIN_PGLITE_WAL_REPAIR = savedRepair;
+  }
+  return engine;
+}
+
+/** The brain's storage mode, read best-effort: a brain that cannot be opened or read is `managed: null` with a reason, never a refusal. */
+async function readStorage(brain: ResolvedBrain, deps: EngineShadowDeps, now: () => Date): Promise<ManagedStorageRecord> {
+  const { readManagedStorage, unopenableManagedStorage } = await import('../shadow/managed-gate.ts');
+  let primary: BrainEngine;
+  try {
+    primary = await (deps.openPrimary ?? (() => openStartPrimary(brain.config)))();
+  } catch (e) {
+    return unopenableManagedStorage(e, now());
+  }
+  try {
+    return await readManagedStorage(primary, now());
+  } finally {
+    await primary.disconnect().catch(() => undefined);
+  }
+}
+
 async function start(
-  brain: { key: string; dir: string; engine: string }, o: StartOpts, deps: EngineShadowDeps,
+  brain: ResolvedBrain, o: StartOpts, deps: EngineShadowDeps,
   out: (l: string) => void, err: (l: string) => void, now: () => Date,
 ): Promise<number> {
   const { plan, hash } = shadowPlan(brain.key, brain.engine, brain.dir, o);
@@ -194,6 +251,8 @@ async function start(
     out(`  sample rate ${plan.sample_rate}, serving-process queue bound ${plan.queue_bound}`);
     for (const w of plan.writes) out(`  writes: ${w}`);
     out(`  never writes: ${plan.never_writes.join(', ')}`);
+    const line = storageLine(await readStorage(brain, deps, now));
+    if (line) out(`  storage: ${line}`);
     out(`  the installed Rust engine addon is loaded and verified now`);
     out(`plan_hash: ${hash}`);
     out(`To turn it on: gbrain engine shadow start --yes --expect ${hash}${o.sampleRate !== DEFAULT_SHADOW_SAMPLE_RATE ? ` --sample-rate ${o.sampleRate}` : ''}${o.queueBound !== DEFAULT_SHADOW_QUEUE_BOUND ? ` --queue-bound ${o.queueBound}` : ''}`);
@@ -212,13 +271,16 @@ async function start(
     err('Shadow mode stays off; nothing was written.');
     return 1;
   }
+  const storage = await readStorage(brain, deps, now);
   mkdirSync(brain.dir, { recursive: true, mode: 0o700 });
   const state: ShadowState = {
     version: SHADOW_STATE_VERSION, enabled: true, started_at: now().toISOString(), sample_rate: o.sampleRate,
-    queue_bound: o.queueBound, plan_hash: hash, brain: brain.key, primary_engine: brain.engine,
+    queue_bound: o.queueBound, plan_hash: hash, brain: brain.key, primary_engine: brain.engine, storage,
   };
   writeShadowState(brain.dir, state);
   out(`Shadow mode is on for brain ${brain.key}. Processes that open this brain from now on mirror reads.`);
+  const line = storageLine(storage);
+  if (line) out(`storage: ${line}`);
   if (!readSeedRecord(brain.dir)) err('engine shadow: warning: the Rust store is not seeded, so most comparisons will differ. Stop shadow mode and run gbrain engine shadow seed first.');
   out('gbrain engine shadow status shows the counts; gbrain engine shadow stop turns it off.');
   return 0;
@@ -236,12 +298,14 @@ function status(brain: { key: string; dir: string }, json: boolean, out: (l: str
     out(JSON.stringify({
       schema_version: 1, brain: brain.key, enabled: state?.enabled === true, state, directory: brain.dir,
       totals, by_op: summary?.by_op ?? {}, serving: summary?.primary ?? null, child_shed: summary?.child_shed ?? 0,
-      children: summary?.children ?? 0, recent_faults: faults, seed: seedStatus(readSeedRecord(brain.dir)),
+      children: summary?.children ?? 0, recent_faults: faults, storage: storageReport(state?.storage), seed: seedStatus(readSeedRecord(brain.dir)),
     }, null, 2));
     return 0;
   }
   out(`Shadow mode: ${state?.enabled ? 'on' : 'off'} (brain ${brain.key})`);
   if (state) out(`  started ${state.started_at}${state.stopped_at ? `, stopped ${state.stopped_at}` : ''}; sample rate ${state.sample_rate}`);
+  const line = storageLine(state?.storage);
+  if (line) out(`  storage: ${line}`);
   const compared = Object.values(totals).reduce((a, b) => a + b, 0);
   out(`  comparisons: ${compared}${compared ? ` (${Object.entries(totals).map(([k, v]) => `${k} ${v}`).join(', ')})` : ''}`);
   if (summary) {
