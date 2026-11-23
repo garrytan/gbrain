@@ -101,6 +101,19 @@ describe('gbrain recall --today', () => {
     expect(captured).toContain('local-day-fact');
     expect(captured).toContain(`# Hot memory — ${localDay}`);
   });
+
+  // The heading follows the window, not the render-time clock: a --watch run past midnight keeps its window's day.
+  test('the heading names the day the window starts on, read in local time', async () => {
+    await engine.insertFact(
+      { fact: 'window-day-fact', kind: 'event', entity_slug: 'render-test-window', source: 'test' },
+      { source_id: 'default' },
+    );
+    await withEnv({ TZ: 'Pacific/Kiritimati' }, () => runRecall(engine, ['--today', '--since', '2026-01-05T00:30:00']));
+    process.stdout.write = origWrite;
+
+    expect(captured).toContain('window-day-fact');
+    expect(captured).toContain('# Hot memory — 2026-01-05\n');
+  });
 });
 
 describe('gbrain recall --json', () => {

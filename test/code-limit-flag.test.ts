@@ -94,6 +94,18 @@ describe('code-* --limit validation', () => {
       expect(err).toContain(`'abc'`);
     });
 
+    test(`${name} with a trailing --limit and no value exits 2 instead of using the default cap`, async () => {
+      const { out, exit } = await run(() => fn(engine, [symbol, '--all-sources', '--json', '--limit']));
+      expect(exit).toBe(2);
+      expect(JSON.parse(out).error.code).toBe('invalid_params');
+    });
+
+    test(`${name} --limit +1 is still read as 1, as parseInt read it`, async () => {
+      const { out, exit } = await run(() => fn(engine, [symbol, '--all-sources', '--limit', '+1', '--json']));
+      expect(exit).toBeNull();
+      expect(JSON.parse(out)[rows].length).toBe(1);
+    });
+
     test(`${name} --limit 1 still answers, capped at one row`, async () => {
       const { out, exit } = await run(() => fn(engine, [symbol, '--all-sources', '--limit', '1', '--json']));
       expect(exit).toBeNull();

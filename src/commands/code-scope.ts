@@ -71,15 +71,15 @@ export function parseFlag(args: string[], name: string): string | undefined {
 
 /**
  * The row cap of a code-* command: `fallback` when the limit flag is absent, else its value as a positive whole
- * number. Anything else (`abc`, `5abc`, `0`, `-5`, `1.5`) exits 2 with `invalid_params` naming the value,
+ * number. Anything else (`abc`, `5abc`, `0`, `-5`, `1.5`, or the flag with no value) exits 2 with `invalid_params`,
  * where a bare parseInt used to hand NaN or a negative number to the SQL LIMIT and fail as an `unknown` error.
  */
 export function parseCodeLimit(args: string[], command: string, fallback: number, jsonMode: boolean): number {
   const raw = parseFlag(args, '--limit');
-  if (raw === undefined) return fallback;
+  if (raw === undefined && !args.includes('--limit')) return fallback;
   const n = Number(raw);
-  if (/^\d+$/.test(raw.trim()) && Number.isSafeInteger(n) && n > 0) return n;
-  const message = `${command}: --limit must be a whole number of 1 or more (default ${fallback}); got '${inertText(raw, 40)}'`;
+  if (raw !== undefined && /^\+?\d+$/.test(raw.trim()) && Number.isSafeInteger(n) && n > 0) return n;
+  const message = `${command}: --limit must be a whole number of 1 or more (default ${fallback}); got '${inertText(raw ?? '', 40)}'`;
   exitUsage(jsonMode, errorFor({ class: 'UsageError', code: 'invalid_params', message }).envelope, message);
 }
 
