@@ -27,7 +27,9 @@ import { OBSERVATION_REFRESH_MS, WriterObserver, readWriterHosts } from '../src/
 import { planAsWrittenSource } from '../src/shadow/writer-coverage.ts';
 import { buildEligibilityStatus, eligibilityWindowStart, isPreviewTarget, ELIGIBILITY_WINDOW_MS } from '../src/shadow/eligibility.ts';
 import { writerIdentity } from '../src/shadow/attach.ts';
-import { shadowPlan } from '../src/commands/engine-shadow.ts';
+import { runEngineShadow, shadowPlan } from '../src/commands/engine-shadow.ts';
+import { shadowBrainKey, shadowDirFor, writeShadowState } from '../src/shadow/state.ts';
+import { withEnv } from './helpers/with-env.ts';
 import { SHADOW_STATE_VERSION, type ShadowState } from '../src/shadow/state.ts';
 
 const HOST_A = '11111111-1111-4111-8111-111111111111';
@@ -276,5 +278,23 @@ describe('start plan', () => {
     const old = { ...plan, writes: plan.writes.filter(w => !w.includes('engine_writer_observations')), never_writes: ['the brain database', 'the brain config table', 'the brain repo'] };
     const { createHash } = require('node:crypto') as typeof import('node:crypto');
     expect(createHash('sha256').update(JSON.stringify(old)).digest('hex').slice(0, 16)).not.toBe(hash);
+  });
+});
+
+describe('status --json', () => {
+  test('never opens the database: it exits 0 with team_brain and preview_target and no writer fields', async () => {
+    const home = tempDir();
+    const out: string[] = [];
+    await withEnv({ GBRAIN_HOME: home }, async () => {
+      // The brain file does not exist: a status that tried to open it would fail.
+      const config = { engine: 'pglite' as const, database_path: join(home, 'missing', 'brain.pglite') };
+      const dir = shadowDirFor(shadowBrainKey(config)!);
+      mkdirSync(dir, { recursive: true });
+      writeShadowState(dir, state('2026-11-20T00:00:00.000Z'));
+      expect(await runEngineShadow(['status', '--json'], { config: () => config, out: (l) => out.push(l) })).toBe(0);
+    });
+    const doc = JSON.parse(out.join('\n')) as { eligibility: Record<string, unknown>; eligibility_evidence?: unknown };
+    expect(Object.keys(doc.eligibility).sort()).toEqual(['preview_target', 'team_brain']);
+    expect(doc.eligibility_evidence).toBeUndefined();
   });
 });

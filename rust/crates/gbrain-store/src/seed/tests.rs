@@ -769,6 +769,7 @@ fn the_not_copied_list_is_pinned_sorted_and_disjoint_from_the_relations() {
             "code_traversal_cache",
             "conversation_parser_llm_cache",
             "dream_verdicts",
+            "engine_writer_observations",
             "eval_candidates",
             "eval_capture_failures",
             "eval_contradictions_cache",
