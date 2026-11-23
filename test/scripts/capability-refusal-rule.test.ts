@@ -94,6 +94,18 @@ describe('capability-refusal rule', () => {
     expect(flagged(`async function f(e) { try { await e.executeRaw('x'); } catch (err) { switch (err.code) { case '42P01': break; default: return []; } rethrowCapabilityRefusal(err); return []; } }`)).toBe(1);
   });
 
+  test('keeps flagging the shapes a looser rule would let through: a promise stored in a callback local, a helper on a shadowed or overwritten error', () => {
+    // A pin, not a fail-first test: the rule already flags every one of these. A change that follows callback locals
+    // or reads past a `switch` must keep each at one site, or a swallowed capability refusal slips through.
+    const swallowed = [
+      `async function f(e) { try { await e.transaction(tx => { let p; p = tx.executeRaw('x'); return p; }); } catch { return ['fallback']; } }`,
+      `async function f(e) { try { await e.transaction(tx => { const ps = []; ps.push(tx.executeRaw('x')); return Promise.all(ps); }); } catch { return ['fallback']; } }`,
+      `async function f(e) { try { await e.executeRaw('x'); } catch (err) { switch (err.code) { default: { const err = new Error('ordinary'); return rethrowCapabilityRefusal(err); } } rethrowCapabilityRefusal(err); return ['fallback']; } }`,
+      `async function f(e) { try { await e.executeRaw('x'); } catch (err) { switch (err.code) { default: ({ err } = { err: new Error('ordinary') }); } rethrowCapabilityRefusal(err); return ['fallback']; } }`,
+    ];
+    for (const text of swallowed) expect({ text, n: flagged(text) }).toEqual({ text, n: 1 });
+  });
+
   test('ignores engine implementation files, which Rust never runs', () => {
     const text = `async function f(e) { try { await e.executeRaw('x'); } catch { return []; } }`;
     expect(flagged(text, 'src/core/pglite-engine.ts')).toBe(0);

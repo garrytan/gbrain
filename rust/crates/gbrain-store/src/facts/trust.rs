@@ -9,7 +9,7 @@
 //! - the row's provenance page (same source, `source_markdown_slug`) carries no `quarantine` key.
 //!   `quarantinedProvenanceFilterFragment` does not look at `deleted_at`, so a soft-deleted
 //!   quarantined page still hides the row; `hidden_by_quarantine` (live pages only) is not used;
-//! - `worldOnly`: `visibility = 'world'`;
+//! - `worldOnly`: `visibility = 'world'`, or a private row `widen` admits (`facts/widen.rs`);
 //! - `excludePrivate`: the private-provenance policy (`facts/privacy.rs`);
 //! - `projectionEligibleSql('facts')`: a soft-deleted page hides the row. The quarantine clause
 //!   of that predicate is the live-page case of the check above. Its `needs_rederive` clause is
@@ -18,21 +18,21 @@
 //!   filter (`suppressFlagged`) read the row's stamped `trust_tier` and its write-gate receipts
 //!   (`trust::TrustPolicy`).
 //!
-//! Refused (no store member): `matchSavedFacts`, `readFactForOwnerAction`,
-//! `listStandingPreferences`, `listLexicalContestCandidates`, `listRestatedPrivateCopies` and
-//! `countDerivedFactTaint`. The store keeps the columns they read (`trust_tier`, `write_origin`,
-//! the write-gate receipts), but no store read for them is built yet. The `entity_ended` history
+//! `matchSavedFacts` is served by `facts/saved_match.rs`; `listLexicalContestCandidates` by `facts/contest.rs`.
+//! `listRestatedPrivateCopies` is served by `facts/trust_reads.rs`; `readFactForOwnerAction`, `listStandingPreferences`
+//! and `countDerivedFactTaint` by `facts/trust_owner.rs`. The `entity_ended` history
 //! arm reads the withdrawal ledger through `gbrain_fact_fingerprint`, which no store read joins yet.
 //!
 //! `similarity` is `1 - (embedding <=> query)` for a row whose embedding is comparable (a vector
 //! of the query's model and length whose `embedded_text_hash` is `md5(fact)`), else NULL.
 
 use super::embedding::{cosine_distance, md5_hex, parse_vector, to_halfvec};
+use super::widen::world_admits;
 use super::{
     AUDIT_ROW_SOURCES, FactRecord, count_arg, entity_rows, hidden_by_deleted_page,
     hidden_by_policy, invalid, like, opt_time, source_rows,
 };
-use super::{PrivacyPolicy, QUARANTINE_KEY};
+use super::{PrivacyPolicy, QUARANTINE_KEY, VisibilityWidening};
 use crate::Store;
 use crate::env::iso;
 use crate::error::Result;
@@ -59,6 +59,9 @@ pub struct EntityRef {
 pub struct PoolArgs {
     pub source_ids: Vec<String>,
     pub world_only: bool,
+    /// With `worldOnly`, the private rows the caller's member page or private-facts grant also
+    /// admits (`facts/widen.rs`).
+    pub widen: Option<VisibilityWidening>,
     /// `excludePrivate`: the private-provenance policy (`facts/privacy.rs`).
     pub exclude_private: Option<PrivacyPolicy>,
     /// `minTrust`: `trustFloorSql` over the row's stored tier; null sets none.
@@ -162,7 +165,7 @@ impl<'a> Pool<'a> {
         if quarantined_provenance(read, row)? {
             return Ok(false);
         }
-        if a.world_only && row.visibility != "world" {
+        if a.world_only && !world_admits(read, &a.widen, row)? {
             return Ok(false);
         }
         if hidden_by_policy(read, row, &a.exclude_private)? || hidden_by_deleted_page(read, row)? {
@@ -267,7 +270,8 @@ impl Store {
     /// row's cosine to the query vector when it is comparable. The keyword arm keeps the rows
     /// whose `to_tsvector('english', fact || ' ' || entity name)` matches the OR of the terms'
     /// lexemes, best `ts_rank_cd` first, then `valid_from` and `id` descending; the entity arm
-    /// reads the named entity's rows, `valid_from` and `id` descending.
+    /// reads the named entity's rows newest first (a future-dated row as of its `created_at`),
+    /// then `id` descending.
     pub fn list_facts_for_relevance(&self, q: &RelevanceQuery) -> Result<Vec<Value>> {
         const OP: &str = "listFactsForRelevance";
         let keyword = match q.arm.as_str() {
@@ -335,9 +339,19 @@ impl Store {
             ranked.push((rank, row));
         }
         // Postgres sorts `real` with NaN above every number, as `total_cmp` does for a positive NaN.
+        // The keyword arm breaks ties on `valid_from`; the entity arm ranks a future-dated fact by
+        // when it was written.
+        let now = self.env.now_micros();
+        let time = |r: &FactRecord| {
+            if keyword {
+                r.valid_from_us
+            } else {
+                super::ranked_time(r, now)
+            }
+        };
         ranked.sort_by(|(sa, a), (sb, b)| {
             sb.total_cmp(sa)
-                .then(b.valid_from_us.cmp(&a.valid_from_us))
+                .then(time(b).cmp(&time(a)))
                 .then(b.id.cmp(&a.id))
         });
         Ok(ranked

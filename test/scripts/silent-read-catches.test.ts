@@ -217,6 +217,21 @@ describe('opt-out marker and the CLI', () => {
     }
   });
 
+  test('an inline block-comment marker takes its reason only from inside the comment', () => {
+    const inline = (marker: string) => `export async function f(engine: any) {\n  try { return await engine.getPage("a"); } catch { ${marker} return []; }\n}\n`;
+    for (const marker of ['/* silent-read-ok: */', '/* silent-read-ok:*/', '/* silent-read-ok */', '/*silent-read-ok:   */']) {
+      for (const baseline of [[], ['src/a.ts#f\tcatch_empty\t1']]) {
+        const r = runGuard({ 'src/a.ts': inline(marker) }, baseline);
+        expect({ marker, status: r.status, needsReason: r.out.includes('needs a reason') }).toEqual({ marker, status: 1, needsReason: true });
+      }
+    }
+    // a reason inside the comment still passes, and so does one in a line comment after the code
+    expect(runGuard({ 'src/a.ts': inline('/* silent-read-ok: a pre-migration brain has no pages table */') }).status).toBe(0);
+    expect(runGuard({ 'src/a.ts': inline('/* silent-read-ok: pre-migration brain */') }).out).not.toContain('needs a reason');
+    const after = 'export async function f(engine: any) {\n  try { return await engine.getPage("a"); } catch { return []; } // silent-read-ok: pre-migration brain has no pages table\n}\n';
+    expect(runGuard({ 'src/a.ts': after }).status).toBe(0);
+  });
+
   test('--print lists rows, --list lists sites with lines, --prune lowers a stale row', () => {
     const printed = runGuard({ 'src/a.ts': SILENT }, [], ['--print']);
     expect(printed.out).toContain('src/a.ts#f\tcatch_empty\t1');

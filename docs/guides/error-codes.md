@@ -844,6 +844,16 @@ More: [docs/guides/bootstrap.md#cleanup-pending](../../docs/guides/bootstrap.md#
 |---|---|---|---|---|---|---|
 | The bootstrapped benchmark awaits human review. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### brain_missing
+
+<a id="brain_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The configured PGLite brain is not at its datastore path (an unmounted drive or a moved folder?), so doctor did not connect and created nothing there. | A health check never creates the thing it checks: connecting to a missing PGLite path would build a new empty brain there, migrate it and report it healthy while the real notes sit elsewhere. Creating a new empty brain is `gbrain init`, a decision for the user. | Mount or reconnect the drive that holds the brain, move the folder back, or point `database_path` in the gbrain config at where the brain lives now; then run `gbrain doctor --only connection --json` again. | user | `gbrain doctor --json` | 1 | no |
+
+Reasons: `missing_brain`.
+
 ### bridge_ownership_conflict
 
 <a id="bridge_ownership_conflict"></a>
@@ -2085,6 +2095,40 @@ More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/
 | A setting passed to openEngine is missing or malformed (engine kind, database url or path, pool size, host or writer id, writer credential or lane, embedding identity), so nothing was opened or registered. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the setting the message names and call again. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
+
+### engine_swap_refused
+
+<a id="engine_swap_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The move to another engine (`gbrain engine swap`) was refused before anything changed; the current engine keeps authority. | A swap needs a settled, unmanaged brain and readiness evidence that cannot be waived: managed storage, unfinished worktree refreshes, failing readiness criteria, more than one writer host, a team brain, a lagging follower, differing digests or fingerprints, an engine-selecting override, or host access that would change. Each reason has one recovery row in docs/guides/engine-swap.md. | Correct the request using the message above, then retry. Run: gbrain engine swap --to rust --plan --json | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `refresh_unsettled`, `managed_storage`, `not_ready`, `multiple_writer_hosts`, `writer_coverage_unknown`, `team_brain`, `follower_behind`, `digest_mismatch`, `route_override`, `host_access_unbound`, `host_access_changed`, `fingerprint_semantics_differ`.
+
+Override: reason `refresh_unsettled`: retryable, exit 1, retryable.
+
+Override: reason `managed_storage`: consent, exit 3, not retryable.
+
+Override: reason `follower_behind`: retryable, exit 1, retryable.
+
+Override: reason `multiple_writer_hosts`: consent, exit 3, not retryable.
+
+Override: reason `writer_coverage_unknown`: consent, exit 3, not retryable.
+
+Override: reason `team_brain`: consent, exit 3, not retryable.
+
+Override: reason `route_override`: consent, exit 3, not retryable.
+
+Override: reason `host_access_unbound`: consent, exit 3, not retryable.
+
+Override: reason `host_access_changed`: consent, exit 3, not retryable.
+
+Override: reason `digest_mismatch`: unavailable, exit 1, not retryable.
+
+Override: reason `fingerprint_semantics_differ`: unavailable, exit 1, not retryable.
+
+More: [docs/guides/engine-swap.md#refusals](../../docs/guides/engine-swap.md#refusals)
 
 ### entity_types_unavailable
 

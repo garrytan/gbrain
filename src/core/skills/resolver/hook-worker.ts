@@ -7,7 +7,9 @@
  * carrier reads. It posts {ready: true} once its modules have loaded, which
  * starts the lane's turn deadline; the turn arrives as one message. It posts
  * the prepared turn and its pending commit; it never commits: the main thread does,
- * after delivery and before the deadline.
+ * after delivery and before the deadline. At SessionStart the message
+ * carries the harness's stored pins instead, and it posts their rendered
+ * block (pinned-block.ts sessionStartPinnedBlock) as pinned.
  *
  * GBRAIN_TEST_SKILL_LANE_STALL (tests only) forces a slow stage: block
  * (synchronous 10 s busy loop), hang (never answers), late (answers after
@@ -24,17 +26,19 @@
  * bound on the worker's load.
  */
 import { parentPort, workerData } from 'node:worker_threads';
+import { parsePins, sessionStartPinnedBlock } from './pinned-block.ts';
 import { resolveSkills } from './resolve.ts';
 
 export interface LaneWorkerData { stall?: string }
 export interface LaneWorkerTurn { input: unknown; home: string; catalogs: string[]; deadlineMs: number }
+export interface LaneWorkerPins { pins: unknown; harness: 'claude-code' | 'codex'; home: string }
 
 const { stall } = (workerData ?? {}) as LaneWorkerData;
 if (stall === 'load-error') throw new Error('forced worker load failure');
 if (stall === 'slow-start') await new Promise(r => setTimeout(r, 1500));
 if (stall === 'start-hang') await new Promise(() => setInterval(() => {}, 60_000));
 parentPort!.postMessage({ ready: true });
-const { input, home, catalogs, deadlineMs } = await new Promise<LaneWorkerTurn>(resolve => parentPort!.once('message', resolve));
+const message = await new Promise<LaneWorkerTurn | LaneWorkerPins>(resolve => parentPort!.once('message', resolve));
 
 if (stall === 'block') { const end = Date.now() + 10_000; while (Date.now() < end) { /* forced synchronous stall */ } }
 if (stall === 'hang') await new Promise(() => setInterval(() => {}, 60_000));
@@ -42,8 +46,12 @@ if (stall === 'exit') await new Promise(() => {});
 if (stall === 'late') await new Promise(r => setTimeout(r, 300));
 
 try {
-  const r = await resolveSkills(input, { home, catalogs, deadlineMs, failOpen: true });
-  parentPort!.postMessage({ output: r.output, pending: r.pending ?? null });
+  if ('pins' in message) {
+    parentPort!.postMessage({ pinned: sessionStartPinnedBlock(message.home, message.harness, parsePins(message.pins)).block });
+  } else {
+    const r = await resolveSkills(message.input, { home: message.home, catalogs: message.catalogs, deadlineMs: message.deadlineMs, failOpen: true });
+    parentPort!.postMessage({ output: r.output, pending: r.pending ?? null });
+  }
 } catch (e) {
   const code = (e as { code?: unknown }).code;
   parentPort!.postMessage({ error: { code: typeof code === 'string' ? code : 'skill_resolver_internal' } });

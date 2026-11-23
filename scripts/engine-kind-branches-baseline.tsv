@@ -47,6 +47,7 @@ src/commands/doctor/checks/session-lane.ts	kind_compare	1
 src/commands/doctor/checks/vector-plan.ts	kind_compare	1
 src/commands/doctor/checks/verbs-reflex.ts	kind_compare	3
 src/commands/doctor/last-known.ts	kind_compare	1
+src/commands/doctor/missing-brain.ts	kind_compare	1	the doctor missing-brain preflight must pick the folder the connector opens (an engine pglite config opens database_path even with a database_url); the engine is the connector's own switch key (health-1)
 src/commands/doctor/registry.ts	kind_compare	2
 src/commands/doctor/remediate.ts	kind_compare	1
 src/commands/doctor/report-remote.ts	kind_compare	2

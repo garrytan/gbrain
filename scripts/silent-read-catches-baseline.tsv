@@ -1816,7 +1816,7 @@ src/core/search/evidence-delivery.ts#withLongPagePolicy	promise_catch_empty	2
 src/core/search/evidence-packing.ts#configPacking	catch_empty	1
 src/core/search/evidence-packing.ts#queryBudgetUsesAuto	catch_empty	1
 src/core/search/evidence-tail-trim.ts#evidenceTailTrimEnabled	catch_empty	1
-src/core/search/exact-lookup.ts#structuralExactLookup	catch_empty	3
+src/core/search/exact-lookup.ts#structuralExactLookup	catch_empty	2
 src/core/search/exact-scan.ts#runExactScan	capability_refusal_swallowed	1
 src/core/search/fact-relevance.ts#wordStems	capability_refusal_swallowed	1
 src/core/search/fact-relevance.ts#wordStems	catch_empty	1
@@ -1828,7 +1828,6 @@ src/core/search/facts-arm.ts#queryFactsBlockEnabled	catch_empty	1
 src/core/search/facts-arm.ts#temporalFactReserveEnabled	catch_empty	1
 src/core/search/filter-hint.ts#filterHint	promise_catch_empty	1
 src/core/search/filter-hint.ts#packTypeNames	catch_empty	1
-src/core/search/hybrid.ts#readSupersededBy	catch_empty	1	audit RET-02: the supersession lookup answers "no superseded pages" when the read fails
 src/core/search/hybrid.ts#runPostFusionStages	catch_empty	1
 src/core/search/hybrid.ts#stampContentFlags	catch_empty	1
 src/core/search/hybrid.ts#stampUnverifiedExtractions	catch_empty	1
@@ -2000,7 +1999,7 @@ src/core/skills/resolver/build.ts#catalogStatus	catch_empty	2
 src/core/skills/resolver/build.ts#gbrainCommit	catch_empty	1
 src/core/skills/resolver/catalog-files.ts#listCatalogs	catch_empty	1
 src/core/skills/resolver/catalog-files.ts#readReceipt	catch_empty	1
-src/core/skills/resolver/config.ts#readResolverSettings	catch_empty	1
+src/core/skills/resolver/config.ts#readResolverSection	catch_empty	1
 src/core/skills/resolver/daily-log.ts#appendDailyLog	promise_catch_empty	1
 src/core/skills/resolver/daily-log.ts#appendDailyLogSync	catch_empty	1
 src/core/skills/resolver/daily-log.ts#readRecentDailyLog	catch_empty	1
