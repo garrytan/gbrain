@@ -149,7 +149,7 @@ describe('the docs list the members the owner socket refuses', () => {
     expect(refused).toContain('worktreeClaimStore');
     expect(refused).toContain('writerAdminStore');
     const design = doc('docs/designs/RUST_ENGINE.md');
-    const sentence = design.slice(design.indexOf('So `transaction`, `transactionDirect`'), design.indexOf('The four `import*` members'));
+    const sentence = design.slice(design.indexOf('So `transaction`, `transactionDirect`'), design.indexOf('`owner-ipc/whole-op.ts` can send the four'));
     expect(sentence.length).toBeGreaterThan(200);
     expect(named(sentence)).toEqual(refused);
     const keyFiles = doc('docs/architecture/key-files/engines-2-more.md');
