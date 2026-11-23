@@ -3,7 +3,10 @@
  * split. An import before v0.46.25.0 (#2225) kept a body's bare dated `## Timeline` section in compiled_truth with an
  * empty timeline, and a file rendered from such a row before #7738 has no sentinel, so today's parse of the unchanged file
  * moves the section to the timeline. Every write to such a page refused `source_changed` (file_database_drift) and sync held
- * its next edit `file_drift`. A real difference in any line still refuses. PGLite, and Postgres when DATABASE_URL is set.
+ * its next edit `file_drift`. A real difference in any line still refuses and stays held with both copies kept. A
+ * database-side hold (the file unchanged since its import) whose page and file agree now releases through the
+ * `release_hold` route: its re-screen runs as database-side drift, which imports only when the file holds the page.
+ * PGLite, and Postgres when DATABASE_URL is set.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
@@ -20,10 +23,12 @@ import { registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/
 import { liveFileDrift } from '../src/core/persistence/drift-conflicts.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { fileMatchesSnapshot } from '../src/core/persistence/page-prepare.ts';
-import { FILE_DRIFT_VERSION, holdRescreenDue } from '../src/core/persistence/sync-holds.ts';
+import { FILE_DRIFT_VERSION, holdRescreenDue, requestGitHoldRetry, writeGitHold } from '../src/core/persistence/sync-holds.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { operationsByName } from '../src/core/operations.ts';
+import { resolveRepairScope } from '../src/core/repair/core.ts';
+import { repairRunner } from '../src/core/repair/registry.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -183,5 +188,86 @@ for (const backend of testBackends()) {
     await performManagedSync(engine, SYNC);
     expect(await holds(engine)).toEqual([]);
     expect((await engine.readPageSnapshot(SLUG, { sourceId: 'default' }))!.page.timeline).toContain(later);
+  }, opts(backend)), 240_000);
+
+  test(`${backend}: a page whose file moved ahead in the body imports only when the row still holds the file's last import; lines on both sides stay held with both copies kept`, () => managedBrain(async ({ engine, root }) => {
+    await registerLocalWriter(engine, 'cli');
+    expect((await performManagedSync(engine, SYNC)).status).toBe('first_sync');
+    const path = join(root, `${SLUG}.md`);
+    const row = async () => { const s = (await engine.readPageSnapshot(SLUG, { sourceId: 'default' }))!; return { compiled_truth: s.page.compiled_truth, timeline: s.page.timeline }; };
+    // The file gains body lines; the row still holds the last import, its timeline in the body: the file's lines import, every bullet kept.
+    const fileLine = 'A paragraph the file gained after its last import.';
+    await raw(engine, "UPDATE pages SET compiled_truth=$1, timeline='', knowledge_revision=gen_random_uuid() WHERE source_id='default' AND slug=$2", [folded(), SLUG]);
+    writeFileSync(path, SOURCE.replace(PROSE, `${PROSE}\n\n${fileLine}`)); git(root, 'commit', '-qam', 'file ahead');
+    await performManagedSync(engine, SYNC);
+    expect(await holds(engine)).toEqual([]);
+    const imported = await row();
+    for (const line of [PROSE, fileLine, ...BULLETS]) expect(`${imported.compiled_truth}\n${imported.timeline}`).toContain(line);
+
+    // Both sides now hold a line the other lacks: held, and neither copy changes, before and after an earlier version's hold is checked again.
+    const dbLine = 'A paragraph only the database holds.';
+    await raw(engine, "UPDATE pages SET compiled_truth=$1, timeline='', knowledge_revision=gen_random_uuid() WHERE source_id='default' AND slug=$2",
+      [folded(BULLETS, `${PROSE}\n\n${fileLine}\n\n${dbLine}`), SLUG]);
+    const secondLine = 'Another paragraph only the file holds.';
+    writeFileSync(path, readFileSync(path, 'utf8').replace(fileLine, `${fileLine}\n\n${secondLine}`)); git(root, 'commit', '-qam', 'both ahead');
+    const before = { file: readFileSync(path, 'utf8'), row: await row() };
+    await performManagedSync(engine, SYNC);
+    expect(await holds(engine)).toEqual([{ path: `${SLUG}.md`, code: 'file_drift' }]);
+    await raw(engine, "UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys, '{0,meta,drift_version}', '3'::jsonb) WHERE op='sync-hold'");
+    await performManagedSync(engine, SYNC);
+    expect(await holds(engine)).toEqual([{ path: `${SLUG}.md`, code: 'file_drift' }]);
+    expect({ file: readFileSync(path, 'utf8'), row: await row() }).toEqual(before);
+    expect(before.row.compiled_truth).toContain(dbLine);
+  }, opts(backend)), 240_000);
+
+  test(`${backend}: a database-side hold (file unchanged since its import) previews release_hold only when the split alone differs; the release keeps every line, and a row that really differs stays held with both copies kept`, () => managedBrain(async ({ engine, root }) => {
+    await registerLocalWriter(engine, 'cli');
+    expect((await performManagedSync(engine, SYNC)).status).toBe('first_sync');
+    const path = join(root, `${SLUG}.md`);
+    const rowBody = async () => (await engine.readPageSnapshot(SLUG, { sourceId: 'default' }))!.page.compiled_truth;
+    // The hold an earlier release wrote when only the database had moved since the import, at the page's current revision.
+    const seedHold = async () => {
+      await raw(engine, "DELETE FROM op_checkpoints WHERE op='sync-hold'");
+      const [row] = await engine.executeRaw<{ id: string; revision: string; incarnation: string }>(`SELECT p.id::text AS id, p.knowledge_revision::text AS revision,
+        s.incarnation::text AS incarnation FROM pages p JOIN sources s ON s.id=p.source_id WHERE p.source_id='default' AND p.slug=$1`, [SLUG]);
+      await engine.transaction(tx => writeGitHold(tx, { source_id: 'default', incarnation: row!.incarnation, path: `${SLUG}.md`, source_path: `${SLUG}.md`, slug: SLUG,
+        page_id: Number(row!.id), code: 'file_drift', message: `${SLUG}.md is held: file drift (database)`, upstream_version: null, observed_at: new Date().toISOString(), run_id: null, mode: 'managed',
+        meta: { recovery_version: RECOVERY_VERSION, sides: 'database', attempts: 1, drift_version: 3, page_revision: row!.revision, blob_oid: git(root, 'rev-parse', `HEAD:${SLUG}.md`) } }));
+    };
+    type Plan = { preview_hash?: string; listing?: Array<{ item: string; class: string }>; outcomes?: Record<string, number>; pages?: Array<{ slug: string; would: string }> };
+    const repair = (options: Record<string, unknown>) => withVerifiedLocalRegistration(engine, registration, async () => (await repairRunner(engine, { apply: options.expect !== undefined, logger: { info() {}, warn() {}, error() {} } }))
+      .run('file-drift', await resolveRepairScope(engine, 'default'), { explicit: true, sourceFlag: 'default', ...options })) as Promise<Plan>;
+    // The read-only comparison of the held pages, then the release a release_hold verdict names: --slug with --prefer file.
+    const compared = async () => JSON.stringify(await repair({ held: true }));
+    const preview = (expect?: string) => repair({ slugs: [SLUG], prefer: 'file', ...(expect ? { expect } : {}) });
+    const registration = await registerLocalWriter(engine, 'cli');
+    const classes = (plan: Awaited<ReturnType<typeof preview>>) => (plan.listing ?? []).map(row => row.class);
+
+    await raw(engine, "UPDATE pages SET compiled_truth=$1, timeline='', knowledge_revision=gen_random_uuid() WHERE source_id='default' AND slug=$2",
+      [folded(BULLETS.slice(0, 1), 'Alice Example is a synthetic person, rewritten in the database.'), SLUG]);
+    await seedHold();
+    const before = { file: readFileSync(path, 'utf8'), row: await rowBody() };
+    expect(await compared()).not.toContain('release_hold');
+    expect(classes(await preview())).not.toContain('release_hold');
+    await performManagedSync(engine, SYNC);
+    expect(await holds(engine)).toEqual([{ path: `${SLUG}.md`, code: 'file_drift' }]);
+    // Asked to re-screen anyway (sources retry-held), its guarded import refuses: held again, neither copy changes.
+    const [source] = await engine.executeRaw<{ i: string }>("SELECT incarnation::text AS i FROM sources WHERE id='default'");
+    await requestGitHoldRetry(engine, 'default', source!.i, [`${SLUG}.md`]);
+    await performManagedSync(engine, SYNC);
+    expect(await holds(engine)).toEqual([{ path: `${SLUG}.md`, code: 'file_drift' }]);
+    expect({ file: readFileSync(path, 'utf8'), row: await rowBody() }).toEqual(before);
+
+    await raw(engine, "UPDATE pages SET compiled_truth=$1, timeline='', knowledge_revision=gen_random_uuid() WHERE source_id='default' AND slug=$2", [folded(), SLUG]);
+    await seedHold();
+    expect(await compared()).toContain('"release_hold"');
+    const ready = await preview();
+    expect(classes(ready)).toEqual(['release_hold']);
+    expect((await preview(ready.preview_hash!)).outcomes).toEqual({ repaired: 1 });
+    await performManagedSync(engine, SYNC);
+    expect(await holds(engine)).toEqual([]);
+    const page = (await engine.readPageSnapshot(SLUG, { sourceId: 'default' }))!.page;
+    for (const line of [PROSE, ...BULLETS]) expect(`${page.compiled_truth}\n${page.timeline}`).toContain(line);
+    expect(readFileSync(path, 'utf8')).toBe(SOURCE);
   }, opts(backend)), 240_000);
 }
