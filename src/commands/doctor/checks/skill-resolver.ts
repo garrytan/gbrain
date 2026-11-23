@@ -13,6 +13,7 @@
  *
  * Read-only apart from catalogStatus's session sweep; warns, never fails.
  */
+import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Check } from '../../doctor.ts';
 import { doctorVerify } from '../check-fix.ts';
@@ -22,7 +23,7 @@ import { logsDir } from '../../../core/skills/resolver/paths.ts';
 import { LANE_LOG, readRecentDailyLog } from '../../../core/skills/resolver/daily-log.ts';
 import { CLAUDE_PLUGINS_CATALOG, projectCatalogPrefix, userCatalogName } from '../../../core/skills/resolver/hook-lane.ts';
 import { readResolverConfig, resolverHarnesses } from '../../../core/setup/skill-resolver-config.ts';
-import { routerSettings } from '../../../core/skills/resolver/config.ts';
+import { ROUTER_MAX_USD_PER_DAY_MAX, routerSettings } from '../../../core/skills/resolver/config.ts';
 import { readRouterSpend } from '../../../core/skills/resolver/router.ts';
 import { inspectSkillResolverHook, type ResolverHarness, type ResolverHookState } from '../../../core/setup/skill-resolver-hook.ts';
 import { describeOpenclawSkill, openclawSkillView, type OpenclawSkillView } from './skill-resolver-openclaw.ts';
@@ -51,25 +52,33 @@ export interface SkillResolverView {
   cursor?: CursorSkillView;
 }
 
-export interface SkillResolverRouterView { turns: number; picker: number; fallbacks: Record<string, number>; spent_usd: number; cap_usd: number; day: string }
+export interface SkillResolverRouterView { turns: number; picker: number; fallbacks: Record<string, number>; last: string | null; last_at: string | null; spent_usd: number; cap_usd: number; day: string; today: string }
 /** Below this many picker turns in 24 hours, the fallback rate is not judged. */
 const ROUTER_MIN_TURNS = 10;
 /** A fallback share at or above this warns. */
 const ROUTER_FALLBACK_WARN = 0.2;
-/** Fallbacks that need the user: one is enough to warn. */
-const ROUTER_SETUP_CODES = ['daily_cap', 'missing_key', 'no_pricing', 'config_invalid'];
+/** Fallbacks that need the user: the newest picker turn ending in one warns. */
+const ROUTER_SETUP_CODES = ['missing_key', 'no_pricing', 'config_invalid'];
+/** A daily_cap fallback warns while today's spend is at least this share of the cap (a call is refused once its largest cost would pass the cap), or while today's newest picker turn was refused. */
+const ROUTER_CAP_NEAR = 0.8;
 
-function recentRouter(home: string, now = Date.now()): Omit<SkillResolverRouterView, 'spent_usd' | 'cap_usd' | 'day'> {
+function recentRouter(home: string, now = Date.now()): Omit<SkillResolverRouterView, 'spent_usd' | 'cap_usd' | 'day' | 'today'> {
   const text = readRecentDailyLog(logsDir(home), LANE_LOG, LOG_TAIL_BYTES * 16, now) ?? '';
-  const out = { turns: 0, picker: 0, fallbacks: {} as Record<string, number> };
+  const out = { turns: 0, picker: 0, fallbacks: {} as Record<string, number>, last: null as string | null, last_at: null as string | null };
   for (const line of text.split('\n')) {
     let j: { at?: unknown; router?: { by?: unknown; code?: unknown } };
     try { j = JSON.parse(line); } catch { continue; }
     if (!j.router || typeof j.at !== 'string' || now - Date.parse(j.at) > 86_400_000) continue;
+    if (j.router.by !== 'picker' && typeof j.router.code !== 'string') continue;
     out.turns++;
     if (j.router.by === 'picker') out.picker++;
     if (typeof j.router.code === 'string') out.fallbacks[j.router.code] = (out.fallbacks[j.router.code] ?? 0) + 1;
+    out.last = typeof j.router.code === 'string' ? j.router.code : null;
+    out.last_at = j.at;
   }
+  try {
+    if (out.last_at && statSync(join(home, 'config.json')).mtimeMs > Date.parse(out.last_at)) { out.last = null; out.last_at = null; }
+  } catch { /* silent-read-ok: no config.json means no change since the newest turn */ }
   return out;
 }
 
@@ -118,7 +127,8 @@ export async function skillResolverView(home = configDir()): Promise<SkillResolv
   if (harnesses.length === 0 && !recent && !(cfg.state === 'ok' && on.length) && !openclaw && !pi && !cursor) return null;
   const section = cfg.state === 'ok' ? ((cfg.doc.skills as { resolver?: Record<string, unknown> } | undefined)?.resolver ?? {}) : {};
   const rs = routerSettings(section);
-  const router = rs.on ? { ...recentRouter(home), ...(await readRouterSpend(home).then(x => ({ spent_usd: x.charged_usd, day: x.day }))), cap_usd: rs.maxUsdPerDay } : null;
+  const now = Date.now();
+  const router = rs.on ? { ...recentRouter(home, now), ...(await readRouterSpend(home, now).then(x => ({ spent_usd: x.charged_usd, day: x.day }))), cap_usd: rs.maxUsdPerDay, today: new Date(now).toISOString().slice(0, 10) } : null;
   return { config: cfg.state, harnesses, recent: recent ?? { turns: 0, outcomes: {}, errors: {} }, ...(router ? { router } : {}), ...(openclaw ? { openclaw } : {}), ...(pi ? { pi } : {}), ...(cursor ? { cursor } : {}) };
 }
 
@@ -158,8 +168,6 @@ export function skillResolverCheck(v: SkillResolverView | null): Check | null {
       fix: { argv: setupArgv(broken.harness), consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify: doctorVerify(name),
         why: `Rebuilds the ${broken.harness} user catalog and rewrites only the skill-resolver hook entry; --skill-loading off removes it instead.` } };
   }
-  const router = v.router ? routerProblem(v.router) : null;
-  if (router) return { name, status: 'warn', message: `${describeSkillResolver(v)} ${router.what}`, details: { ...details, code: `skill_router_${router.code}` }, fix: router.fix };
   const oc = v.openclaw ? describeOpenclawSkill(v.openclaw).problem : null;
   if (oc) {
     return { name, status: 'warn', message: `${describeSkillResolver(v)} OpenClaw: ${oc.what}.`, details: { ...details, code: oc.code },
@@ -178,28 +186,42 @@ export function skillResolverCheck(v: SkillResolverView | null): Check | null {
       fix: { argv: setupArgv('cursor'), consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify: doctorVerify(name), docs: `docs/guides/skill-resolver.md#${cursor.code}`,
         why: `Run it in ${cursor.project}: it rebuilds that project's catalog and rewrites its pinned-skills rule; gbrain setup cursor --skill-loading off there removes them instead.` } };
   }
+  const router = v.router ? routerProblem(v.router) : null;
+  if (router) return { name, status: 'warn', message: `${describeSkillResolver(v)} ${router.what}`, details: { ...details, code: `skill_router_${router.code}` }, fix: router.fix };
   return { name, status: 'ok', message: describeSkillResolver(v), details };
 }
 
-/** The model picker's problem worth a warning, or null: a fallback that needs the user, or a high fallback rate. */
+/** The model picker's problem worth a warning, or null: today's spend at the cap, a setup fallback on the newest picker turn, or a high fallback rate. */
 function routerProblem(r: SkillResolverRouterView): { code: string; what: string; fix: NonNullable<Check['fix']> } | null {
   const docs = (code: string) => `docs/guides/skill-resolver.md#router_fallback-${code}`;
   const base = { requires_exclusive: false, verify: doctorVerify(name) };
-  const setup = ROUTER_SETUP_CODES.find(c => r.fallbacks[c]);
-  if (setup === 'daily_cap') {
-    return { code: setup, what: `The model picker reached its daily cap: ${r.spent_usd.toFixed(4)} of ${r.cap_usd.toFixed(2)} USD spent on ${r.day} (UTC), so the word matcher answers until the cap resets at 00:00 UTC.`,
-      fix: { ...base, argv: ['gbrain', 'config', 'set', 'skills.resolver.router_max_usd_per_day', String(Math.max(1, r.cap_usd * 2))], consent: ['paid'], actor: 'agent', docs: docs(setup),
+  const spent = r.spent_usd >= r.cap_usd * ROUTER_CAP_NEAR;
+  if (r.fallbacks.daily_cap && r.cap_usd > 0 && (spent || (r.last === 'daily_cap' && r.last_at?.slice(0, 10) === r.today))) {
+    const raise = Math.min(ROUTER_MAX_USD_PER_DAY_MAX, Math.max(1, r.cap_usd * 2));
+    const told = spent
+      ? `The skill picker spent its ${r.cap_usd.toFixed(2)} USD daily cap`
+      : `The skill picker refuses its calls: one call's largest cost is more than what is left of its ${r.cap_usd.toFixed(2)} USD daily cap`;
+    const what = spent
+      ? `The model picker reached its daily cap: ${r.spent_usd.toFixed(4)} of ${r.cap_usd.toFixed(2)} USD spent on ${r.day} (UTC), so the word matcher answers until the cap resets at 00:00 UTC.`
+      : `The model picker refuses its calls: one call's largest cost is more than what is left of the ${r.cap_usd.toFixed(2)} USD daily cap (${r.spent_usd.toFixed(4)} spent on ${r.day}, UTC), so the word matcher answers.`;
+    return { code: 'daily_cap', what, fix: raise > r.cap_usd
+      ? { ...base, argv: ['gbrain', 'config', 'set', 'skills.resolver.router_max_usd_per_day', String(raise)], consent: ['paid'], actor: 'agent', docs: docs('daily_cap'),
         why: 'Raises the daily spend cap for the model picker; each turn costs about $0.0001 to $0.001.',
-        user_message: `The skill picker spent its ${r.cap_usd.toFixed(2)} USD daily cap and resets at 00:00 UTC. Raise the cap to ${Math.max(1, r.cap_usd * 2)} USD a day?` } };
+        user_message: `${told}${spent ? ' and resets at 00:00 UTC' : ''}. Raise the cap to ${raise} USD a day?` }
+      : { ...base, consent: [], actor: 'user', docs: docs('daily_cap'), why: `The cap is already at its ${ROUTER_MAX_USD_PER_DAY_MAX} USD maximum.`,
+        user_message: `${told}, the most it allows; ${spent ? 'it resets at 00:00 UTC' : 'a cheaper skills.resolver.router_model is the fix'}.` } };
   }
-  if (setup) {
-    const what = { missing_key: 'has no key for its model (set an Anthropic, OpenAI or Google key, or skills.resolver.router_model)', no_pricing: 'names a model gbrain has no price for, so its daily cap cannot be enforced (set skills.resolver.router_model to a priced model)', config_invalid: 'has a bad setting under skills.resolver.router_*' }[setup]!;
-    return { code: setup, what: `The model picker is on but ${what}, so the word matcher answers.`,
-      fix: { ...base, argv: ['gbrain', 'config', 'get', 'skills.resolver.router_model'], consent: [], actor: 'user', docs: docs(setup), why: 'Shows the picker model in use; the docs section names the fix for this code.' } };
+  if (r.last && ROUTER_SETUP_CODES.includes(r.last)) {
+    const what = { missing_key: 'has no key for its model (set an Anthropic, OpenAI or Google key, or skills.resolver.router_model)', no_pricing: 'names a model gbrain has no price for, so its daily cap cannot be enforced (set skills.resolver.router_model to a priced model)', config_invalid: 'has a bad setting under skills.resolver.router_*' }[r.last]!;
+    return { code: r.last, what: `The model picker is on but ${what}, so the word matcher answers.`,
+      fix: { ...base, consent: [], actor: 'user', docs: docs(r.last), why: 'The docs section for this code names the setting to change.',
+        user_message: `The skill picker is on but ${what}. See ${docs(r.last)}.` } };
   }
-  const fell = r.turns - r.picker;
+  const fallbacks = Object.entries(r.fallbacks).filter(([c]) => c !== 'daily_cap');
+  const fell = fallbacks.reduce((n, [, k]) => n + k, 0);
   if (r.turns < ROUTER_MIN_TURNS || fell / r.turns < ROUTER_FALLBACK_WARN) return null;
-  const top = Object.entries(r.fallbacks).sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'timeout';
+  const top = fallbacks.sort((a, b) => b[1] - a[1])[0]![0];
   return { code: top, what: `The model picker fell back on ${fell} of ${r.turns} turns in 24 hours (mostly ${top}), so the word matcher answered them.`,
-    fix: { ...base, argv: ['gbrain', 'config', 'get', 'skills.resolver.router_timeout_ms'], consent: [], actor: 'user', docs: docs(top), why: 'A slow or failing provider; the docs section for the code names the fix.' } };
+    fix: { ...base, consent: [], actor: 'user', docs: docs(top), why: 'A slow or failing provider; the docs section for the code names the fix.',
+      user_message: `The skill picker fell back to word matching on ${fell} of ${r.turns} turns in the last day, mostly ${top}. See ${docs(top)}.` } };
 }

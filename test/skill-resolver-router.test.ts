@@ -16,9 +16,10 @@ import { afterAll, afterEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { __setPickerTransportForTests, type PickerRequest } from '../src/core/skills/resolver/router-http.ts';
+import { __setPickerTransportForTests, PickerHttpError, type PickerRequest } from '../src/core/skills/resolver/router-http.ts';
 import { buildSkillIndex, resolveSkills } from '../src/core/skills/resolver/index.ts';
-import { parsePickerReply, PICKER_DESCRIPTION_CHARS, readRouterSpend } from '../src/core/skills/resolver/router.ts';
+import { parsePickerReply, PICKER_DESCRIPTION_CHARS, readRouterSpend, routerTimeoutMs } from '../src/core/skills/resolver/router.ts';
+import { routerSettings } from '../src/core/skills/resolver/config.ts';
 import { canonicalLookup } from '../src/core/model-pricing.ts';
 
 const scratch: string[] = [];
@@ -154,6 +155,35 @@ describe('the picker in a turn', () => {
     expect(out.suggestions[0]?.id).toBe('gbrain:reports');
   });
 
+  test('a turn cut off after its call went out reports the reservation the ledger keeps', async () => {
+    const h = await home({ router: true, router_timeout_ms: 200 });
+    reply('{"needed": true, "skills": ["gbrain:people"]}', 2000);
+    const out = (await turn(h, 'write the weekly status reports')).output;
+    expect(out.router?.fallback).toEqual({ code: 'timeout' });
+    expect(out.router!.est_usd).toBeGreaterThan(0);
+    expect((await readRouterSpend(h)).charged_usd).toBeCloseTo(out.router!.est_usd, 6);
+  });
+
+  test('Claude Code waits at most 2000 ms for the picker, whatever router_timeout_ms says', () => {
+    const s = routerSettings({ router: true, router_timeout_ms: 2500 });
+    expect(routerTimeoutMs('claude-code', s)).toBe(2000);
+    expect(routerTimeoutMs('codex', s)).toBe(2500);
+    expect(routerTimeoutMs('claude-code', routerSettings({ router: true }))).toBe(1500);
+  });
+
+  test('above 150 skills, a message sharing no word with any skill makes no call', async () => {
+    const h = tmp();
+    const f = join(tmp('skrouter-src-'), 'catalog.json');
+    writeFileSync(f, JSON.stringify(Array.from({ length: 151 }, (_, i) => ({ id: `gbrain:skill-${i}`, name: `skill-${i}`, description: `Prepare report number ${i} for the team` }))));
+    await buildSkillIndex({ catalog: 'c', fromJson: f }, { home: h });
+    writeFileSync(join(h, 'config.json'), JSON.stringify({ skills: { resolver: { router: true } } }));
+    reply('{"needed": true, "skills": ["gbrain:skill-1"]}');
+    const out = (await turn(h, 'zzqx')).output;
+    expect(calls.length).toBe(0);
+    expect(out.router).toMatchObject({ answered_by: 'words', fallback: null, est_usd: 0 });
+    expect(out.no_skill).toBe(true);
+  });
+
   test('a reply naming no catalog skill falls back with no_known_ids', async () => {
     const h = await home({ router: true });
     reply('{"needed": true, "skills": ["not-a-skill"]}');
@@ -182,6 +212,7 @@ describe('a compat: model on an OpenAI-compatible endpoint', () => {
   const server = Bun.serve({ port: 0, hostname: '127.0.0.1', async fetch(req) {
     const path = new URL(req.url).pathname;
     seen.push({ path, auth: req.headers.get('authorization'), body: await req.json() });
+    if (path.startsWith('/denied/') || path.startsWith('/gdeny/')) return new Response('{"error": "forbidden"}', { status: 403 });
     if (path.startsWith('/hop/')) return new Response(null, { status: 307, headers: { location: '/v1/chat/completions' } });
     if (path.startsWith('/g/')) return Response.json({ candidates: [{ content: { parts: [{ text: '{"needed": true, "skills": ["gbrain:people"]}' }] }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 1000, candidatesTokenCount: 10, thoughtsTokenCount: 150 } });
     const answer = '"choices": [{"message": {"content": "{\\"needed\\": true, \\"skills\\": [\\"gbrain:people\\"]}"}, "finish_reason": "stop"}]';
@@ -274,6 +305,29 @@ describe('a compat: model on an OpenAI-compatible endpoint', () => {
     const price = canonicalLookup('google:gemini-3.5-flash-lite')!;
     expect(r.output.router?.answered_by).toBe('picker');
     expect(r.output.router!.est_usd).toBeCloseTo((1000 * price.input + 160 * price.output) / 1e6, 6);
+  });
+
+  test('a 4xx from Anthropic, OpenAI or Google itself is refunded', async () => {
+    const h = await home({ router: true, router_model: 'google:gemini-3.5-flash-lite' });
+    const direct = { ...env, GOOGLE_GENERATIVE_AI_BASE_URL: undefined };
+    __setPickerTransportForTests(async () => { throw new PickerHttpError(403); });
+    const g = await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: h, catalogs: ['c'], router: true, env: direct });
+    expect(g.output.router).toMatchObject({ fallback: { code: 'provider_error' }, est_usd: 0 });
+    expect((await readRouterSpend(h)).charged_usd).toBe(0);
+  });
+
+  test('a 4xx through a base-URL proxy or a compat endpoint keeps the reservation', async () => {
+    const h = await home({ router: true, router_model: 'google:gemini-3.5-flash-lite' });
+    const genv = { ...process.env, GOOGLE_GENERATIVE_AI_BASE_URL: `http://127.0.0.1:${server.port}/gdeny`, GEMINI_API_KEY: 'k-test' };
+    const g = await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: h, catalogs: ['c'], router: true, env: genv });
+    expect(g.output.router?.fallback).toEqual({ code: 'provider_error' });
+    expect(g.output.router!.est_usd).toBeGreaterThan(0);
+    expect((await readRouterSpend(h)).charged_usd).toBeCloseTo(g.output.router!.est_usd, 6);
+    const c = await home(compat({ router_base_url: `http://127.0.0.1:${server.port}/denied/v1`, router_usd_per_mtok: [1, 2] }));
+    const r = await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: c, catalogs: ['c'], router: true, env });
+    expect(r.output.router?.fallback).toEqual({ code: 'provider_error' });
+    expect(r.output.router!.est_usd).toBeGreaterThan(0);
+    expect((await readRouterSpend(c)).charged_usd).toBeCloseTo(r.output.router!.est_usd, 6);
   });
 
   test('a cap of 0 stops a free model too, before any call', async () => {

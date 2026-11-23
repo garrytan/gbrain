@@ -434,9 +434,11 @@ What it does on each turn:
   do, whatever the config says; a library caller does only when it passes
   `router: true`.
 - **What it reads.** Every skill while the catalogs hold up to 150, else the top
-  40 of the word ranking. Descriptions come from `picker.json`, which each
-  build writes beside the index (cut at 400 characters). A project catalog's
-  skills are sent by id only, as their hints are never shown.
+  40 of the word ranking; when no skill shares a word with the message there,
+  it makes no call and the word matcher answers, with no fallback code.
+  Descriptions come from `picker.json`, which each build writes beside the
+  index (cut at 400 characters). A project catalog's skills are sent by id
+  only, as their hints are never shown.
 - **What it shows.** Its picks, best first, with `match_strength: "picked"`,
   under the same rules as any suggestion: `exclude`, the `min_match_strength`
   floor, the session's no-repeat rule, pacing and the token budget. `top_gate`
@@ -450,7 +452,7 @@ What it does on each turn:
 |---|---|---|
 | `skills.resolver.router` | `false` | turns the picker on |
 | `skills.resolver.router_model` | Claude Haiku 5.5 with an Anthropic key, else `openai:gpt-6-luna`, else `google:gemini-3.5-flash-lite` | an `anthropic:`, `openai:` or `google:` model id, or `compat:` (below) |
-| `skills.resolver.router_timeout_ms` | 1500 in Claude Code, 2000 elsewhere | the longest a turn waits (200-2500); Claude Code's hook limit is 3 seconds |
+| `skills.resolver.router_timeout_ms` | 1500 in Claude Code, 2000 elsewhere | the longest a turn waits (200-2500); Claude Code waits at most 2000, inside its 3-second hook limit |
 | `skills.resolver.router_max_usd_per_day` | 0.50 | the daily spend cap in USD (0-100; 0 stops every call) |
 
 **Your own model.** Any model behind an OpenAI-compatible Chat Completions
@@ -487,12 +489,15 @@ redirect from that address is refused, so the request goes nowhere else. Keys co
 `anthropic_api_key`, `openai_api_key` or `google_api_key` in
 `~/.gbrain/config.json`; `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL` and
 `GOOGLE_GENERATIVE_AI_BASE_URL` point it at a proxy. The message is sent as
-text to route: only skill ids from your catalog are kept from the reply.
+text to route: only skill ids from your catalog are kept from the reply. A
+refused request (an HTTP 4xx) from the provider itself is not charged to the
+daily cap; through a proxy or a `compat:` endpoint it is, since that endpoint
+may bill it.
 
 ### router_fallback: timeout
 
 The picker did not answer within `router_timeout_ms`. Occasional timeouts are
-normal; many mean a slow provider or network. Raise the wait (at most 2500)
+normal; many mean a slow provider or network. Raise the wait (at most 2500, or 2000 in Claude Code)
 with `gbrain config set skills.resolver.router_timeout_ms 2000`, or pick a
 faster model with `skills.resolver.router_model`.
 
@@ -511,7 +516,9 @@ set `skills.resolver.router_model` to a model whose key you have. For a
 
 Today's spend (UTC) reached `router_max_usd_per_day`; the word matcher answers
 until 00:00 UTC. `gbrain doctor` shows the spend and the cap. To raise it:
-`gbrain config set skills.resolver.router_max_usd_per_day 1`.
+`gbrain config set skills.resolver.router_max_usd_per_day 1`. A cap below one
+call's largest cost refuses every call, even with nothing spent; raising the
+cap is the fix.
 
 ### router_fallback: parse_failed
 

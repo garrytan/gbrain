@@ -54,11 +54,21 @@ function counts(input: unknown, output: unknown, cacheRead: unknown = 0, cacheWr
   return ok(input) && ok(output) && ok(cacheRead) && ok(cacheWrite) ? { input, cacheRead, cacheWrite, output } : null;
 }
 
+const BASE_URL_ENV: Record<Exclude<PickerProvider, 'compat'>, string> = { anthropic: 'ANTHROPIC_BASE_URL', openai: 'OPENAI_BASE_URL', google: 'GOOGLE_GENERATIVE_AI_BASE_URL' };
+
+/** True when `provider` is answered by the provider itself: not a compat: endpoint, and no base-URL override pointing it at a proxy that may bill. */
+export const firstParty = (provider: PickerProvider | null, env: NodeJS.ProcessEnv): boolean => provider !== null && provider !== 'compat' && !env[BASE_URL_ENV[provider]];
+
 const base = (env: NodeJS.ProcessEnv, name: string, fallback: string) => (env[name] || fallback).replace(/\/+$/, '').replace(/\/v1(beta)?$/, '');
+
+/** A provider's HTTP error answer, with its status. */
+export class PickerHttpError extends Error {
+  constructor(readonly status: number) { super(`provider answered HTTP ${status}`); }
+}
 
 async function post(url: string, headers: Record<string, string>, body: unknown, signal: AbortSignal): Promise<Record<string, any>> {
   const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body), signal, redirect: 'error' });
-  if (!res.ok) throw new Error(`provider answered HTTP ${res.status}`);
+  if (!res.ok) throw new PickerHttpError(res.status);
   return await res.json() as Record<string, any>;
 }
 
