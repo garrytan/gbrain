@@ -2,7 +2,7 @@
  * Postgres twin of test/rust-engine-shadow-managed-gate.serial.test.ts: `gbrain engine shadow start` on a managed-storage
  * Postgres brain, through the real default open path (the configured database_url, no injected engine).
  *
- * Protects: a Postgres brain with persistence_brain.enabled = true is refused (exit 3, engine_shadow_refused /
+ * Protects: a Postgres brain with persistence_brain.enabled = true is refused (exit 3, engine_swap_refused /
  * managed_storage) by --plan, the bare preview and --yes --expect, before the addon loads and before any shadow
  * file exists; the same brain with enabled = false still gets its plan.
  * Regression it catches: start that reads the mode only on PGLite, or that writes state.json before checking.
@@ -65,7 +65,7 @@ d('engine shadow start on a Postgres brain', () => {
     for (const args of [['start', '--plan'], ['start'], ['start', '--yes', '--expect', hash()]]) {
       const r = await run(args);
       expect(r.code, args.join(' ')).toBe(3);
-      expect(r.err[0], args.join(' ')).toBe('engine shadow: engine_shadow_refused (managed_storage): Shadow mode is refused: this brain uses managed storage.');
+      expect(r.err[0], args.join(' ')).toBe('engine shadow: engine_swap_refused (managed_storage): Shadow mode is refused: this brain uses managed storage.');
       expect(existsSync(dir()), args.join(' ')).toBe(false);
     }
   }, 60_000);

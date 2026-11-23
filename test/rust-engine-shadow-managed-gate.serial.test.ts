@@ -2,7 +2,7 @@
  * `gbrain engine shadow start` refuses a brain that uses managed storage (src/shadow/managed-gate.ts).
  *
  * Protects: the Rust engine never holds managed storage, so a shadow on such a brain measures nothing it could use.
- * The preview, `--plan` and `--yes --expect <hash>` each exit 3 with `engine_shadow_refused (managed_storage)` before
+ * The preview, `--plan` and `--yes --expect <hash>` each exit 3 with `engine_swap_refused (managed_storage)` before
  * the addon loads and before any shadow file exists; a brain whose mode cannot be read or opened refuses the same way
  * (never a silent pass); an unmanaged brain still gets its plan. Uses a real PGLite brain on disk and the real default
  * open path (no injected engine). Serial because it sets GBRAIN_HOME.
@@ -72,7 +72,7 @@ describe('engine shadow start on a managed-storage brain', () => {
     for (const args of [['start', '--plan'], ['start'], ['start', '--yes', '--expect', hash]]) {
       const r = await run(args);
       expect(r.code, args.join(' ')).toBe(3);
-      expect(r.err[0], args.join(' ')).toBe('engine shadow: engine_shadow_refused (managed_storage): Shadow mode is refused: this brain uses managed storage.');
+      expect(r.err[0], args.join(' ')).toBe('engine shadow: engine_swap_refused (managed_storage): Shadow mode is refused: this brain uses managed storage.');
       const text = r.err.join('\n');
       expect(text).toContain('The Rust engine never holds managed storage, so this brain can never swap to Rust');
       expect(text).toContain('Ask the user');
@@ -98,7 +98,7 @@ describe('engine shadow start on a managed-storage brain', () => {
   test('a brain that cannot be opened refuses and names the open error', async () => {
     const r = await run(['start', '--plan'], { openPrimary: async () => { throw new Error('connection refused by the test'); } });
     expect(r.code).toBe(3);
-    expect(r.err[0]).toBe('engine shadow: engine_shadow_refused (managed_storage): Shadow mode is refused: gbrain could not confirm that this brain does not use managed storage.');
+    expect(r.err[0]).toBe('engine shadow: engine_swap_refused (managed_storage): Shadow mode is refused: gbrain could not confirm that this brain does not use managed storage.');
     expect(r.err.join('\n')).toContain('connection refused by the test');
     expect(r.err.join('\n')).not.toMatch(/refused: this brain uses managed storage|This brain uses managed storage/);
     expect(existsSync(shadowDir())).toBe(false);
@@ -108,7 +108,7 @@ describe('engine shadow start on a managed-storage brain', () => {
     const busy = Object.assign(new Error('A running gbrain holds the PGLite lock.'), { code: 'pglite_busy' });
     const r = await run(['start', '--plan'], { openPrimary: async () => { throw busy; } });
     expect(r.code).toBe(3);
-    expect(r.err[0]).toBe('engine shadow: engine_shadow_refused (managed_storage): Shadow mode is refused: gbrain could not confirm that this brain does not use managed storage.');
+    expect(r.err[0]).toBe('engine shadow: engine_swap_refused (managed_storage): Shadow mode is refused: gbrain could not confirm that this brain does not use managed storage.');
     const text = r.err.join('\n');
     expect(text).toContain('pglite_busy');
     expect(text).toContain('stop `gbrain serve`');
@@ -132,7 +132,7 @@ describe('engine shadow start on a managed-storage brain', () => {
       const odd = { executeRaw: async () => rows, disconnect: async () => { disconnected++; } } as unknown as BrainEngine;
       const r = await run(['start', '--plan'], { openPrimary: async () => odd });
       expect(r.code, JSON.stringify(rows)).toBe(3);
-      expect(r.err[0]).toContain('engine_shadow_refused (managed_storage)');
+      expect(r.err[0]).toContain('engine_swap_refused (managed_storage)');
       expect(r.err.join('\n')).toContain('persistence_mode_unknown');
       expect(disconnected).toBe(1);
     }
@@ -142,7 +142,7 @@ describe('engine shadow start on a managed-storage brain', () => {
     await onBrain('DELETE FROM persistence_brain WHERE singleton=1');
     const r = await run(['start', '--plan']);
     expect(r.code).toBe(3);
-    expect(r.err[0]).toContain('engine_shadow_refused (managed_storage)');
+    expect(r.err[0]).toContain('engine_swap_refused (managed_storage)');
     expect(r.err.join('\n')).toContain('storage_error');
     expect(existsSync(shadowDir())).toBe(false);
   });

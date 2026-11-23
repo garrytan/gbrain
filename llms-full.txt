@@ -6002,7 +6002,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
 - **Managed storage is refused.** The Rust engine never holds managed storage, so a brain that uses it can never swap
   to Rust and a shadow on it would measure nothing it could use. Brains made by a default `gbrain init` use managed
   storage and cannot be shadowed or swapped yet. `start` (the preview, `--plan` and `--yes`) opens the brain database
-  to read its storage mode, writes nothing to it, and refuses a managed-storage brain with `engine_shadow_refused`
+  to read its storage mode, writes nothing to it, and refuses a managed-storage brain with `engine_swap_refused`
   (`managed_storage`, exit 3), telling the agent to ask the user. The next step names the ways out that exist today.
   For a new brain, `gbrain init --db-only` creates one without managed storage. For an existing managed brain, `gbrain
   sources writer deactivate --dry-run` previews converting it back to classic mode; the real deactivate needs your

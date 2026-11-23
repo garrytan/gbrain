@@ -1,7 +1,7 @@
 /**
  * `managedStorageRefusal` (src/shadow/managed-gate.ts): the one check `gbrain engine shadow start` and `seed` share.
  *
- * Protects: a managed-storage brain (persistence_brain.enabled = true) gets the `engine_shadow_refused` /
+ * Protects: a managed-storage brain (persistence_brain.enabled = true) gets the `engine_swap_refused` /
  * `managed_storage` refusal (consent class, exit 3, ask the user); an unmanaged brain gets null; any failure to read
  * the mode (query error, missing, duplicated or non-boolean singleton) is also a refusal that carries the read error,
  * never a pass. Regression it catches: a gate that lets a brain through because its mode could not be read.
@@ -22,7 +22,7 @@ describe('managedStorageRefusal', () => {
   test('a managed brain is refused with the consent shape', async () => {
     const e = (await managedStorageRefusal(engineReading([{ enabled: true }])))!;
     expect(e).not.toBeNull();
-    expect(e.code).toBe('engine_shadow_refused');
+    expect(e.code).toBe('engine_swap_refused');
     expect(e.reason).toBe('managed_storage');
     expect(e.message).toBe('Shadow mode is refused: this brain uses managed storage.');
     expect(e.why).toBe('This brain uses managed storage. The Rust engine never holds managed storage, so this brain can never swap to Rust and a shadow on it measures nothing it could use. Brains made by a default `gbrain init` use managed storage and cannot be shadowed or swapped yet.');
@@ -36,7 +36,7 @@ describe('managedStorageRefusal', () => {
     expect(e.detail).toBeUndefined();
     expect(e.fix).toMatchObject({ ask_user: true, actor: 'user', consent: [], requires_exclusive: false, verify: { argv: ['gbrain', 'sources', 'writer', 'status', '--probe', '--json'] } });
     const envelope = toAgentError(e, { transport: 'cli', command: 'engine shadow', render: cliRenderContext() });
-    expect(envelope.code).toBe('engine_shadow_refused');
+    expect(envelope.code).toBe('engine_swap_refused');
     expect(envelope.class).toBe('consent');
     expect(exitCodeForCode(envelope.code, envelope.reason)).toBe(3);
     expect(envelope.fix?.next).toBe('ask_user');
