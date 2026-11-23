@@ -186,6 +186,29 @@ for (const backend of backends) {
       expect((listed.details as { total: number; items: Array<{ hold_ref: string; candidate_pages: number }> }).total).toBe(before + 1);
       expect((listed.details as { items: Array<{ hold_ref: string; candidate_pages: number }> }).items.find(i => i.hold_ref === `h${holdId}`)).toMatchObject({ candidate_pages: 2 });
     });
+
+    // Pins decision L for candidate-marked holds (review finding 1): a hold the upgrade marked with candidate pages is held for each of
+    // them, so purging one candidate (hard delete, or a tombstone expiry) takes only that page out of the list; the hold goes when none is left.
+    test('purging one candidate page keeps a candidate-marked hold for the surviving candidate, and the last purge removes it', async () => {
+      const sourceId = await source();
+      const first = await putPage(sourceId, 'notes/cand-a'), second = await putPage(sourceId, 'notes/cand-b'), third = await putPage(sourceId, 'notes/cand-c');
+      const holdId = await holdFenceRow(engine(), { sourceId, slug: 'notes/cand-a', claim: HELD, rowNum: 1 });
+      await engine().executeRaw('UPDATE write_gate_holds SET page_id = NULL, page_candidates = $2::bigint[] WHERE id=$1', [holdId, [first, second, third]]);
+
+      expect(await engine().deletePages(['notes/cand-a'], { sourceId })).toEqual(['notes/cand-a']);
+      expect((await holds(sourceId)).map(h => [h.id, h.page_id, h.page_candidates])).toEqual([[holdId, null, [second, third]]]);
+      await expectHeldHidden(engine(), sourceId, 'notes/cand-b');
+
+      expect(await engine().softDeletePage('notes/cand-b', { sourceId })).toEqual({ slug: 'notes/cand-b' });
+      await Bun.sleep(20);
+      expect((await engine().purgeDeletedPages(0)).slugs).toContain('notes/cand-b');
+      expect((await holds(sourceId)).map(h => [h.id, h.page_candidates])).toEqual([[holdId, [third]]]);
+      await expectHeldHidden(engine(), sourceId, 'notes/cand-c');
+
+      expect(await engine().deletePages(['notes/cand-c'], { sourceId })).toEqual(['notes/cand-c']);
+      expect(await holds(sourceId)).toEqual([]);
+      expect(await engine().executeRaw("SELECT 1 FROM write_gate_receipts WHERE target_table='write_gate_holds' AND target_id=$1", [String(holdId)])).toEqual([]);
+    });
   });
 }
 
@@ -307,6 +330,36 @@ describe('release and purge of holds that follow a page (PGLite, managed brain)'
     await purge(beta);
     await settleManagedGitEffects(engine);
     expect(await left()).toBe(0);
+    expect(await engine.executeRaw("SELECT 1 FROM write_gate_receipts WHERE target_table='write_gate_holds' AND target_id=$1", [String(holdId)])).toEqual([]);
+  }, { setup }), 240_000);
+  // Pins decision L through the managed door for a candidate-marked hold (review finding 1): purging one candidate keeps the hold for the
+  // other, the purge's own verification reports no residue, and purging the last candidate removes the hold with its receipt.
+  test('the purge door keeps a candidate-marked hold while a candidate page survives', () => managedBrain(async ({ engine, ctx }) => {
+    const other = 'people/cora-example';
+    await submitPageMutation(ctx, { operation: 'put_page', params: { slug: alpha, request_id: randomUUID(), content: doc('Bea Example') } });
+    await submitPageMutation(ctx, { operation: 'put_page', params: { slug: other, request_id: randomUUID(), content: doc('Cora Example') } });
+    await settleManagedGitEffects(engine);
+    await enableTrustProtections(engine);
+    const ref = await heldRemember(ctx, alpha);
+    const holdId = Number(ref.slice(1));
+    const id = async (slug: string) => Number((await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE source_id='default' AND slug=$1", [slug]))[0]!.id);
+    const alphaId = await id(alpha), otherId = await id(other);
+    await engine.executeRaw('UPDATE write_gate_holds SET page_id = NULL, page_candidates = $2::bigint[] WHERE id=$1', [holdId, [alphaId, otherId]]);
+    const purge = async (slug: string) => {
+      const snapshot = await engine.readPageSnapshot(slug, { sourceId: 'default' });
+      return operationsByName.delete_page.handler(ctx, { slug, purge: true, request_id: randomUUID(), expected_revision: snapshot!.revision }) as Promise<Record<string, any>>;
+    };
+    const state = async () => (await engine.executeRaw<{ status: string; candidates: string[] | null }>('SELECT status, page_candidates::text[] AS candidates FROM write_gate_holds WHERE id=$1', [holdId]))[0];
+
+    const first = await purge(alpha);
+    await settleManagedGitEffects(engine);
+    expect(await state()).toEqual({ status: 'held', candidates: [String(otherId)] });
+    const store = (JSON.stringify(first).match(/"store":"write_gate_holds"[^}]*/) ?? [''])[0];
+    expect(store).not.toContain('incomplete');
+
+    await purge(other);
+    await settleManagedGitEffects(engine);
+    expect(await state()).toBeUndefined();
     expect(await engine.executeRaw("SELECT 1 FROM write_gate_receipts WHERE target_table='write_gate_holds' AND target_id=$1", [String(holdId)])).toEqual([]);
   }, { setup }), 240_000);
 });
