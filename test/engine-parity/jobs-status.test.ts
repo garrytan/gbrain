@@ -237,6 +237,25 @@ describe('engine parity: minion status reads', () => {
       };
     });
 
+  parityTest('listRecentSourceCycleFailures names a source by its jsonb text (objects and arrays with Postgres spacing, numbers, booleans), and an empty source filter is no filter',
+    { methods: ['admitJob', 'claimNextJob', 'failJob', 'listRecentSourceCycleFailures'] }, async (engine) => {
+      const ids: unknown[] = [{ x: 1 }, { a: [1, { b: 'c' }] }, [1, 2], ['a'], 5, true, 'plain'];
+      for (const source of ids) {
+        const id = await active(engine, 'autopilot-cycle', { data: { source_id: source } });
+        await engine.failJob(id, `st:${id}`, 'boom', 'dead');
+      }
+      const past = '2000-01-01T00:00:00.000Z';
+      const names = (rows: Array<{ source_id: string; fail_count: number }>) => rows.map(r => [r.source_id, r.fail_count]);
+      const all = await engine.listRecentSourceCycleFailures({ cutoff: past });
+      return {
+        all: names(all),
+        emptyFilter: names(await engine.listRecentSourceCycleFailures({ cutoff: past, sourceId: '' })),
+        nullFilter: names(await engine.listRecentSourceCycleFailures({ cutoff: past, sourceId: null })),
+        object: names(await engine.listRecentSourceCycleFailures({ cutoff: past, sourceId: '{"x": 1}' })),
+        compactMiss: names(await engine.listRecentSourceCycleFailures({ cutoff: past, sourceId: '{"x":1}' })),
+      };
+    });
+
   parityTest('readLastCompletedJobAt reads the freshest updated_at of a completed job, and nothing else moves it',
     { methods: ['admitJob', 'claimNextJob', 'completeJob', 'failJob', 'getJob', 'readLastCompletedJobAt'] }, async (engine) => {
       const empty = await engine.readLastCompletedJobAt();
