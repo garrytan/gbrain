@@ -272,7 +272,7 @@ export async function replayPurgesInRestore(tx: BrainEngine, input: { lines: Pur
   const { PURGE_SWEEP_STORES } = await import('../persistence/page-purge.ts');
   const schema = await tx.readPurgeReplaySchema(PURGE_SWEEP_STORES);
   const ledger = schema.beliefEvents;
-  const sources = await tx.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources ORDER BY id');
+  const sources = await tx.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources ORDER BY id COLLATE "C"');
   const replays: ReplayRecord[] = [];
   if (input.lines) {
     const committed = new Set(input.lines.filter(l => l.kind === 'committed').map(l => l.request));

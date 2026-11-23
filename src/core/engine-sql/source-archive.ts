@@ -64,13 +64,13 @@ export async function listArchivedSourceRows(exec: LegacyUnscopedRead): Promise<
 /** The archives past their recovery window, by id. */
 export async function listExpiredArchivedSources(exec: LegacyUnscopedRead): Promise<ExpiredArchivedSourceRow[]> {
   return exec.executeRaw<ExpiredArchivedSourceRow>(
-    `SELECT id, incarnation, config, local_path FROM sources WHERE ${EXPIRED_ARCHIVE_SQL} ORDER BY id`,
+    `SELECT id, incarnation, config, local_path FROM sources WHERE ${EXPIRED_ARCHIVE_SQL} ORDER BY id COLLATE "C"`,
   );
 }
 
 /** The archives whose times are missing or not real, by id. */
 export async function listUnverifiedArchivedSourceIds(exec: LegacyUnscopedRead): Promise<string[]> {
-  const rows = await exec.executeRaw<{ id: string }>(`SELECT id FROM sources WHERE ${UNVERIFIED_ARCHIVE_SQL} ORDER BY id`);
+  const rows = await exec.executeRaw<{ id: string }>(`SELECT id FROM sources WHERE ${UNVERIFIED_ARCHIVE_SQL} ORDER BY id COLLATE "C"`);
   return rows.map(r => r.id);
 }
 

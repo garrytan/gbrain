@@ -271,6 +271,8 @@ fn rank_coverage_counts_only_the_pages_the_caller_may_read() {
         source_id: "default".into(),
         version_ts: Some("2020-01-01T00:00:00Z".into()),
         mention_types: mentions,
+        mention_version: 7,
+        alias_version: 4,
         exclude_private: policy,
     };
     // Both pages are unstamped: the open one owes link extraction.

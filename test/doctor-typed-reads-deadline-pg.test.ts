@@ -30,7 +30,7 @@ const reads: ReadonlyArray<readonly [string, Run]> = [
   ['executeRaw', e => e.executeRaw('SELECT 1 AS n FROM pages')],
   ['getConfigValues', e => e.getConfigValues(['a.key'])],
   // In the bounded set, built on this.executeRaw.
-  ['countPageChildOrphans', e => e.countPageChildOrphans('tags.page_id')],
+  ['countPageChildOrphans', e => e.countPageChildOrphans({ table: 'tags', col: 'page_id' })],
   // Doctor-path moves outside the bounded set.
   ['readChunkColumnTypes', e => e.readChunkColumnTypes(['embedding'])],
   ['countChunkColumnCoverage', e => e.countChunkColumnCoverage('embedding')],

@@ -15,19 +15,19 @@ import { ownerOnlyFormIn, storePagePolicy, storePageTextPolicy, type StorePrivac
 export const readMentionLastPass: StoreMember<[sourceId?: string | null], string | null> = (brain, sourceId) =>
   storeCall({ member: 'readMentionLastPass', sourceId: sourceId ?? undefined }, () => brain.readMentionLastPass(sourceId ?? null));
 
-/** The store keeps no mention-index status, so every source reads as having no row (coverage counts its live pages). */
+/** The mention pass's status rows (the store's mention state); a source the pass never ran on has none, and coverage counts its live pages. */
 export const readMentionIndexStatus: StoreMember<[sourceIds: readonly string[]], MentionIndexStatusRow[]> = (brain, sourceIds) =>
   storeCall({ member: 'readMentionIndexStatus' }, () => brain.readMentionIndexStatus({ sourceIds: [...sourceIds] }));
 
-/** With no mention state every live page is due, so the store's due count for one source is its live-page count. */
+/** The source's live pages: the due count at a version no page state holds (-1), so every live page is due whatever the pass has scanned. */
 export const countLivePagesInSource: StoreMember<[sourceId: string], number> = async (brain, sourceId) =>
-  Number(await storeCall({ member: 'countLivePagesInSource', sourceId }, () => brain.countPagesDueForMentions({ sourceId })));
+  Number(await storeCall({ member: 'countLivePagesInSource', sourceId }, () => brain.countPagesDueForMentions({ sourceId, mentionVersion: -1 })));
 
-/** With no mention state every live page is unscanned, so this counts the source's live pages written at or after `since`. */
-export const countMentionDueSince: StoreMember<[sourceId: string, since: string, mentionVersion: number], number> = async (brain, sourceId, since) =>
-  Number(await storeCall({ member: 'countMentionDueSince', sourceId }, () => brain.countMentionDueSince({ sourceId, since })));
+/** The source's live pages written at or after `since` that have no mention state at their content and `mentionVersion`. */
+export const countMentionDueSince: StoreMember<[sourceId: string, since: string, mentionVersion: number], number> = async (brain, sourceId, since, mentionVersion) =>
+  Number(await storeCall({ member: 'countMentionDueSince', sourceId }, () => brain.countMentionDueSince({ sourceId, since, mentionVersion })));
 
-/** The store keeps no mention-index status rows, so the compare-and-set matches nothing; the store checks the arguments and writes nothing. */
+/** The compare-and-set on the source's status row's fingerprint; a source with no row is untouched. */
 export const recountMentionIndexStatus: StoreMember<[sourceId: string, recount: MentionIndexRecount], void> = async (brain, sourceId, recount) => {
   const r = takeOptions('recountMentionIndexStatus', recount, ['pending', 'fingerprint', 'expectedFingerprint']);
   await storeCall({ member: 'recountMentionIndexStatus', sourceId }, () =>
@@ -37,7 +37,7 @@ export const recountMentionIndexStatus: StoreMember<[sourceId: string, recount: 
 export const countPagesDueForMentions: StoreMember<[q: MentionDueQuery], number> = async (brain, q) => {
   const opts = takeOptions('countPagesDueForMentions', q, ['sourceId', 'mentionVersion', 'aliases']);
   return Number(await storeCall({ member: 'countPagesDueForMentions', sourceId: q.sourceId ?? undefined }, () =>
-    brain.countPagesDueForMentions({ sourceId: opts.sourceId ?? null })));
+    brain.countPagesDueForMentions({ sourceId: opts.sourceId ?? null, mentionVersion: opts.mentionVersion, aliases: opts.aliases ?? null })));
 };
 
 export const readIdentitySiblingCandidates: StoreMember<[sourceId: string, q: SiblingCandidateQuery], SiblingCandidateRow[]> = (brain, sourceId, q) => {

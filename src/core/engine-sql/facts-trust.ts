@@ -543,7 +543,7 @@ export async function countClaimConflictPairs(raw: EngineRawRead, sourceId: stri
 
 /** The ids of every source that is not archived, in id order (the claim-conflict sweep's default scope). */
 export async function listUnarchivedSourceRows(raw: EngineRawRead): Promise<Array<{ id: string }>> {
-  return raw<{ id: string }>('SELECT id FROM sources WHERE NOT archived ORDER BY id');
+  return raw<{ id: string }>('SELECT id FROM sources WHERE NOT archived ORDER BY id COLLATE "C"');
 }
 
 /** The ids of every source that is not archived, in byte order of the id (the same read as `listUnarchivedSourceRows`). */

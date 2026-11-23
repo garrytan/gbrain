@@ -72,6 +72,308 @@ interface Pin {
 }
 
 const PINS: Pin[] = [
+  // The segmented page projection check and the derive pass's conditional store, then the mention pass, the gazetteer, the extract walk's snapshot, the by-mention rebuild and explain, copied verbatim
+  {
+    from: 'src/core/persistence/searchable.ts:33 (at 0af1a6ecf0)',
+    case: { method: 'readSegmentedPageSealed', variant: 'default', run: e => e.readSegmentedPageSealed('default', 'notes/x') },
+    texts: () => [`SELECT text_projection_revision=knowledge_revision AS sealed FROM pages
+    WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL`],
+  },
+  {
+    from: 'src/core/page-body/segment-derive.ts:220 storeRuns (at 0af1a6ecf0)',
+    case: { method: 'storeSegmentDerivationsIfLive', variant: 'default', run: e => e.storeSegmentDerivationsIfLive(1, 2, []) },
+    texts: () => [`WITH live AS (SELECT id FROM pages WHERE id=$1 AND body_storage='segmented' AND body_generation=$2 FOR SHARE)
+      INSERT INTO page_segment_derivations (page_id, pipeline, occurrence_id, pipeline_version, segment_sha256, context_hash, state, output, receipt)
+      SELECT live.id, d.pipeline, d.occurrence_id, d.pipeline_version, decode(d.segment_sha256, 'hex'), decode(d.context_hash, 'hex'), 'done', d.output, NULL
+      FROM live, jsonb_to_recordset($3::text::jsonb) AS d(pipeline text, occurrence_id bigint, pipeline_version int, segment_sha256 text, context_hash text, output jsonb)
+      ON CONFLICT (page_id, pipeline, occurrence_id) DO UPDATE SET pipeline_version = EXCLUDED.pipeline_version, segment_sha256 = EXCLUDED.segment_sha256,
+        context_hash = EXCLUDED.context_hash, state = EXCLUDED.state, output = EXCLUDED.output, receipt = EXCLUDED.receipt, updated_at = now()
+      RETURNING 1`],
+  },
+  // from the callers at 0af1a6ecf0 (a literal's own variables are set as the caller set them).
+  {
+    // Not the caller's text: `COLLATE "C"` was added so a Postgres server with a linguistic locale orders the ids in byte
+    // order, as PGLite and the Rust engine do (the sources id byte-order guard, test/source-id-order-collation.test.ts).
+    from: 'src/core/mentions/pass.ts:148 (at 0af1a6ecf0), plus COLLATE "C"',
+    case: { method: 'listMentionSourceIds', variant: 'default', run: e => e.listMentionSourceIds() },
+    texts: () => { return ['SELECT id FROM sources ORDER BY id COLLATE "C"']; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:162 (at 0af1a6ecf0)',
+    case: { method: 'writeMentionIndexStatus', variant: 'default', run: e => e.writeMentionIndexStatus('default', { state: 'pending', pending: null, lastPassAt: null, error: null, bumpGeneration: true, fingerprint: null, setFingerprint: false }) },
+    texts: () => { return [`INSERT INTO mention_index_status (source_id, generation, state, pending, counted_at, last_pass_at, policy_fingerprint, error, updated_at)
+     VALUES ($1, CASE WHEN $6::boolean THEN 1 ELSE 0 END, $2, COALESCE($3::int, 0), now(), $4::timestamptz, $7, $5, now())
+     ON CONFLICT (source_id) DO UPDATE SET
+       state = EXCLUDED.state,
+       pending = COALESCE($3::int, mention_index_status.pending),
+       counted_at = CASE WHEN $3::int IS NULL THEN mention_index_status.counted_at ELSE now() END,
+       last_pass_at = COALESCE($4::timestamptz, mention_index_status.last_pass_at),
+       error = $5,
+       generation = mention_index_status.generation + CASE WHEN $6::boolean THEN 1 ELSE 0 END,
+       policy_fingerprint = CASE WHEN $8::boolean THEN $7 ELSE mention_index_status.policy_fingerprint END,
+       updated_at = now()`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:183 (at 0af1a6ecf0)',
+    case: { method: 'lockMentionSources', variant: 'shared', run: e => e.lockMentionSources(['default'], true) },
+    texts: () => { const shared = true; return [`SELECT count(${shared ? 'pg_advisory_xact_lock_shared' : 'pg_advisory_xact_lock'}(hashtext('gbrain:mention-publish:' || s)::bigint))
+    FROM (SELECT DISTINCT s FROM unnest($1::text[]) AS x(s) ORDER BY s) k`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:183 (at 0af1a6ecf0)',
+    case: { method: 'lockMentionSources', variant: 'exclusive', run: e => e.lockMentionSources(['default'], false) },
+    texts: () => { const shared = false; return [`SELECT count(${shared ? 'pg_advisory_xact_lock_shared' : 'pg_advisory_xact_lock'}(hashtext('gbrain:mention-publish:' || s)::bigint))
+    FROM (SELECT DISTINCT s FROM unnest($1::text[]) AS x(s) ORDER BY s) k`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:236 (at 0af1a6ecf0)',
+    case: { method: 'listMentionLinkOrigins', variant: 'default', run: e => e.listMentionLinkOrigins('default') },
+    texts: () => { return [`SELECT DISTINCT f.slug FROM links l JOIN pages f ON f.id = l.from_page_id
+        WHERE f.source_id = $1 AND l.link_source = 'mentions' AND (l.link_kind IS NULL OR l.link_kind = 'plain')`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:239 (at 0af1a6ecf0)',
+    case: { method: 'deleteSourceMentionLinks', variant: 'default', run: e => e.deleteSourceMentionLinks('default', null) },
+    texts: () => { return [`DELETE FROM links l USING pages f
+        WHERE f.id = l.from_page_id AND f.source_id = $1 AND l.link_source = 'mentions'
+          AND (l.link_kind IS NULL OR l.link_kind = 'plain') AND ($2::text[] IS NULL OR f.slug = ANY($2::text[])) RETURNING l.id`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:245; src/core/mentions/pass.ts:246; src/core/mentions/pass.ts:247 (at 0af1a6ecf0)',
+    case: { method: 'clearMentionSourceIndex', variant: 'default', run: e => e.clearMentionSourceIndex('default') },
+    texts: () => { return [`DELETE FROM page_aliases WHERE source_id = $1 AND origin IN ('declared','subject')`, 'DELETE FROM mention_gazetteer_entries WHERE source_id = $1', 'DELETE FROM page_mention_state WHERE source_id = $1']; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:342 (at 0af1a6ecf0)',
+    case: { method: 'listStaleDerivedAliasSlugs', variant: 'default', run: e => e.listStaleDerivedAliasSlugs('default', ['person']) },
+    texts: () => { return [`SELECT DISTINCT pa.slug FROM page_aliases pa
+       LEFT JOIN pages p ON p.slug = pa.slug AND p.source_id = pa.source_id
+      WHERE pa.source_id = $1 AND pa.origin IN ('declared','subject')
+        AND (p.id IS NULL OR p.deleted_at IS NOT NULL OR NOT (p.type = ANY($2::text[])))`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:348 (at 0af1a6ecf0)',
+    case: { method: 'deleteDerivedAliasesForSlugs', variant: 'default', run: e => e.deleteDerivedAliasesForSlugs('default', ['people/alice-example']) },
+    texts: () => { return [`DELETE FROM page_aliases WHERE source_id = $1 AND slug = ANY($2::text[]) AND origin IN ('declared','subject')`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:356 (at 0af1a6ecf0)',
+    case: { method: 'listAliasDuePages', variant: 'default', run: e => e.listAliasDuePages('default', ['person'], 0, 4, 200) },
+    texts: () => { return [`SELECT p.id, p.slug, p.source_id, p.knowledge_revision::text AS revision, p.title, p.type, p.compiled_truth, p.timeline, NULL AS mention_ignore, p.frontmatter
+         FROM pages p LEFT JOIN page_mention_state s ON s.page_id = p.id
+        WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.body_storage = 'inline' AND p.type = ANY($2::text[]) AND p.id > $3
+          AND (s.page_id IS NULL OR s.alias_revision IS DISTINCT FROM p.knowledge_revision OR s.alias_version IS DISTINCT FROM $4)
+        ORDER BY p.id LIMIT $5`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:365 (at 0af1a6ecf0)',
+    case: { method: 'listDerivedAliasRows', variant: 'default', run: e => e.listDerivedAliasRows('default', ['people/alice-example']) },
+    texts: () => { return [`SELECT slug, alias_norm, origin, case_sensitive, alias_text FROM page_aliases
+        WHERE source_id = $1 AND slug = ANY($2::text[]) AND origin IN ('declared','subject')`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:382 (at 0af1a6ecf0)',
+    case: { method: 'readMentionPageRevisions', variant: 'plain', run: e => e.readMentionPageRevisions([1], { forShare: false }) },
+    texts: () => { return [`SELECT id, knowledge_revision::text AS revision FROM pages WHERE id = ANY($1::int[]) AND deleted_at IS NULL`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:564 (at 0af1a6ecf0)',
+    case: { method: 'readMentionPageRevisions', variant: 'for_share', run: e => e.readMentionPageRevisions([1], { forShare: true }) },
+    texts: () => { return [`SELECT id, knowledge_revision::text AS revision FROM pages WHERE id = ANY($1::int[]) AND deleted_at IS NULL FOR SHARE`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:392 (at 0af1a6ecf0)',
+    case: { method: 'insertDerivedAliasRows', variant: 'default', run: e => e.insertDerivedAliasRows('default', [{ slug: 'people/alice-example', alias_norm: 'alice', origin: 'declared', case_sensitive: false, alias_text: 'Alice' }]) },
+    texts: () => { return [`INSERT INTO page_aliases (source_id, alias_norm, slug, origin, case_sensitive, alias_text)
+             SELECT $1, a, s, o, c::boolean, t FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::text[]) AS x(a, s, o, c, t)
+             ON CONFLICT DO NOTHING`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:400 (at 0af1a6ecf0)',
+    case: { method: 'upsertPageAliasState', variant: 'default', run: e => e.upsertPageAliasState('default', [{ id: 1, revision: '00000000-0000-4000-8000-000000000001' }], 4) },
+    texts: () => { return [`INSERT INTO page_mention_state (page_id, source_id, alias_revision, alias_version, aliases_refreshed_at)
+           SELECT id, $1, rev::uuid, $4, now() FROM unnest($2::int[], $3::text[]) AS x(id, rev)
+           ON CONFLICT (page_id) DO UPDATE SET alias_revision = EXCLUDED.alias_revision, alias_version = EXCLUDED.alias_version,
+             aliases_refreshed_at = EXCLUDED.aliases_refreshed_at`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:423 (at 0af1a6ecf0)',
+    case: { method: 'listMentionCandidatePages', variant: 'ascii', run: e => e.listMentionCandidatePages(['default'], 0, 500, ['%alice%']) },
+    texts: () => { const ascii = true; return [`SELECT id, slug, source_id, body_storage, COALESCE(title, '') || E'\\n\\n' || COALESCE(compiled_truth, '') || E'\\n\\n' || COALESCE(timeline, '') AS body,
+              frontmatter->'mention_ignore' AS mention_ignore
+         FROM pages WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) AND id > $2
+          ${ascii ? `AND (body_storage = 'segmented' OR lower(COALESCE(title, '') || ' ' || COALESCE(compiled_truth, '') || ' ' || COALESCE(timeline, '')) LIKE ANY($4::text[]))` : ''}
+        ORDER BY id LIMIT $3`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:423 (at 0af1a6ecf0)',
+    case: { method: 'listMentionCandidatePages', variant: 'all', run: e => e.listMentionCandidatePages(['default'], 0, 500, null) },
+    texts: () => { const ascii = false; return [`SELECT id, slug, source_id, body_storage, COALESCE(title, '') || E'\\n\\n' || COALESCE(compiled_truth, '') || E'\\n\\n' || COALESCE(timeline, '') AS body,
+              frontmatter->'mention_ignore' AS mention_ignore
+         FROM pages WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) AND id > $2
+          ${ascii ? `AND (body_storage = 'segmented' OR lower(COALESCE(title, '') || ' ' || COALESCE(compiled_truth, '') || ' ' || COALESCE(timeline, '')) LIKE ANY($4::text[]))` : ''}
+        ORDER BY id LIMIT $3`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:462 (at 0af1a6ecf0)',
+    case: { method: 'listGazetteerEntryKeys', variant: 'default', run: e => e.listGazetteerEntryKeys('default') },
+    texts: () => { return ['SELECT source_id, name_norm, target_slug, case_sensitive FROM mention_gazetteer_entries WHERE source_id = $1']; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:474 (at 0af1a6ecf0)',
+    case: { method: 'listMentionLinkersOfTargets', variant: 'default', run: e => e.listMentionLinkersOfTargets('default', ['people/alice-example']) },
+    texts: () => { return [`SELECT DISTINCT l.from_page_id AS id FROM links l JOIN pages t ON t.id = l.to_page_id
+        WHERE t.source_id = $1 AND t.slug = ANY($2::text[]) AND l.link_source = 'mentions'`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:483 (at 0af1a6ecf0)',
+    case: { method: 'lockMentionEntries', variant: 'default', run: e => e.lockMentionEntries('default') },
+    texts: () => { return ['SELECT pg_advisory_xact_lock(hashtext($1)::bigint)']; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:488; src/core/mentions/pass.ts:494 (at 0af1a6ecf0)',
+    case: { method: 'applyGazetteerEntryChanges', variant: 'both', run: e => e.applyGazetteerEntryChanges('default', [{ source_id: 'default', name_norm: 'bob', target_slug: 'people/bob-example', case_sensitive: false }], [{ source_id: 'default', name_norm: 'alice', target_slug: 'people/alice-example', case_sensitive: false }]) },
+    texts: () => { return [`DELETE FROM mention_gazetteer_entries e USING unnest($2::text[], $3::text[], $4::text[]) AS x(n, t, c)
+          WHERE e.source_id = $1 AND e.name_norm = x.n AND e.target_slug = x.t AND e.case_sensitive = x.c::boolean`, `INSERT INTO mention_gazetteer_entries (source_id, name_norm, target_slug, case_sensitive)
+         SELECT $1, n, t, c::boolean FROM unnest($2::text[], $3::text[], $4::text[]) AS x(n, t, c) ON CONFLICT DO NOTHING`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:500 (at 0af1a6ecf0)',
+    case: { method: 'resetMentionRevisions', variant: 'sources', run: e => e.resetMentionRevisions({ sourceIds: ['default'] }) },
+    texts: () => { return ['UPDATE page_mention_state SET mention_revision = NULL WHERE source_id = ANY($1::text[])']; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:502 (at 0af1a6ecf0)',
+    case: { method: 'resetMentionRevisions', variant: 'pages', run: e => e.resetMentionRevisions({ pageIds: [1] }) },
+    texts: () => { return ['UPDATE page_mention_state SET mention_revision = NULL WHERE page_id = ANY($1::int[])']; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:510 (at 0af1a6ecf0)',
+    case: { method: 'readMentionGenerations', variant: 'plain', run: e => e.readMentionGenerations(['default'], false) },
+    texts: () => { const lock = false; return [`SELECT source_id, generation::text AS generation FROM mention_index_status WHERE source_id = ANY($1::text[])${lock ? ' FOR SHARE' : ''}`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:510 (at 0af1a6ecf0)',
+    case: { method: 'readMentionGenerations', variant: 'for_share', run: e => e.readMentionGenerations(['default'], true) },
+    texts: () => { const lock = true; return [`SELECT source_id, generation::text AS generation FROM mention_index_status WHERE source_id = ANY($1::text[])${lock ? ' FOR SHARE' : ''}`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:530 (at 0af1a6ecf0)',
+    case: { method: 'listMentionDuePages', variant: 'default', run: e => e.listMentionDuePages('default', 7, 0, 200) },
+    texts: () => { const DUE_PREDICATE = `(s.page_id IS NULL OR s.mention_revision IS DISTINCT FROM p.knowledge_revision OR s.mention_version IS DISTINCT FROM $2)`; return [`SELECT p.id, p.slug, p.source_id, p.knowledge_revision::text AS revision, p.title, p.type, p.compiled_truth, p.timeline,
+              p.frontmatter->'mention_ignore' AS mention_ignore, p.body_storage
+         FROM pages p LEFT JOIN page_mention_state s ON s.page_id = p.id
+        WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.id > $3 AND ${DUE_PREDICATE}
+        ORDER BY p.id LIMIT $4`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:569 (at 0af1a6ecf0)',
+    case: { method: 'listPageOutLinks', variant: 'default', run: e => e.listPageOutLinks([1]) },
+    texts: () => { return [`SELECT l.id, l.from_page_id, t.slug AS to_slug, t.source_id AS to_source_id,
+                (l.link_source = 'mentions' AND (l.link_kind IS NULL OR l.link_kind = 'plain')) AS plain
+           FROM links l JOIN pages t ON t.id = l.to_page_id WHERE l.from_page_id = ANY($1::int[])`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:589 (at 0af1a6ecf0)',
+    case: { method: 'deleteLinksById', variant: 'default', run: e => e.deleteLinksById([1]) },
+    texts: () => { return ['DELETE FROM links WHERE id = ANY($1::int[])']; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:596 (at 0af1a6ecf0)',
+    case: { method: 'upsertPageMentionState', variant: 'default', run: e => e.upsertPageMentionState('default', [{ id: 1, revision: '00000000-0000-4000-8000-000000000001' }], 7, '0') },
+    texts: () => { return [`INSERT INTO page_mention_state (page_id, source_id, mention_revision, mention_version, mention_generation, mentions_scanned_at)
+         SELECT id, $1, rev::uuid, $4, $5::bigint, now() FROM unnest($2::int[], $3::text[]) AS x(id, rev)
+         ON CONFLICT (page_id) DO UPDATE SET mention_revision = EXCLUDED.mention_revision, mention_version = EXCLUDED.mention_version,
+           mention_generation = EXCLUDED.mention_generation, mentions_scanned_at = EXCLUDED.mentions_scanned_at`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:626 (at 0af1a6ecf0)',
+    case: { method: 'readMentionStatusStates', variant: 'default', run: e => e.readMentionStatusStates(['default']) },
+    texts: () => { return ['SELECT source_id, state FROM mention_index_status WHERE source_id = ANY($1::text[])']; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:648 (at 0af1a6ecf0)',
+    case: { method: 'readMentionPolicyFingerprints', variant: 'default', run: e => e.readMentionPolicyFingerprints(['default']) },
+    texts: () => { return ['SELECT source_id, policy_fingerprint FROM mention_index_status WHERE source_id = ANY($1::text[])']; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:657 (at 0af1a6ecf0)',
+    case: { method: 'resetSourceMentionIndexRevisions', variant: 'default', run: e => e.resetSourceMentionIndexRevisions('default') },
+    texts: () => { return ['UPDATE page_mention_state SET mention_revision = NULL, alias_revision = NULL WHERE source_id = $1']; },
+  },
+  {
+    from: 'src/core/by-mention.ts:517 (at 0af1a6ecf0)',
+    case: { method: 'listLivePageSourceIds', variant: 'default', run: e => e.listLivePageSourceIds() },
+    texts: () => { return ['SELECT DISTINCT source_id AS id FROM pages WHERE deleted_at IS NULL']; },
+  },
+  {
+    from: 'src/core/by-mention.ts:527 (at 0af1a6ecf0)',
+    case: { method: 'listGazetteerPages', variant: 'default', run: e => e.listGazetteerPages(['person'], ['x_handle', 'twitter', 'twitter_handle', 'x']) },
+    texts: () => { return [`SELECT slug, source_id, title, type, (frontmatter ->> 'google_contact_id') IS NOT NULL AS connector_stub,
+            frontmatter ->> $2 AS h1, frontmatter ->> $3 AS h2, frontmatter ->> $4 AS h3, frontmatter ->> $5 AS h4
+     FROM pages
+     WHERE type = ANY($1::text[])
+       AND deleted_at IS NULL`]; },
+  },
+  {
+    from: 'src/core/by-mention.ts:550 (at 0af1a6ecf0)',
+    case: { method: 'listGazetteerAliases', variant: 'default', run: e => e.listGazetteerAliases(['person']) },
+    texts: () => { return [`SELECT pa.alias_norm, pa.slug, pa.source_id, p.title, p.type, pa.origin, pa.case_sensitive, pa.alias_text, p.frontmatter->>'identity' AS identity
+       FROM page_aliases pa
+       JOIN pages p ON p.slug = pa.slug AND p.source_id = pa.source_id
+       WHERE p.type = ANY($1::text[])
+         AND p.deleted_at IS NULL`]; },
+  },
+  {
+    from: 'src/commands/extract.ts:207 (at 0af1a6ecf0)',
+    case: { method: 'readPageStampTimes', variant: 'default', run: e => e.readPageStampTimes(['people/alice-example'], ['default']) },
+    texts: () => { return [`SELECT p.slug, p.source_id,
+              to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at_iso
+         FROM pages p
+         JOIN unnest($1::text[], $2::text[]) AS v(slug, source_id)
+           ON p.slug = v.slug AND p.source_id = v.source_id
+        WHERE p.deleted_at IS NULL`]; },
+  },
+  {
+    from: 'src/commands/extract.ts:2599 (at 0af1a6ecf0)',
+    case: { method: 'readPageRevisionForShare', variant: 'default', run: e => e.readPageRevisionForShare('default', 'people/alice-example') },
+    texts: () => { return ['SELECT knowledge_revision::text AS revision FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL FOR SHARE']; },
+  },
+  {
+    from: 'src/commands/extract-mentions-explain.ts:80 (at 0af1a6ecf0)',
+    case: { method: 'readExplainPage', variant: 'default', run: e => e.readExplainPage('default', 'people/alice-example') },
+    texts: () => { return ['SELECT slug, type, title FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL']; },
+  },
+  {
+    from: 'src/commands/extract-mentions-explain.ts:102 (at 0af1a6ecf0)',
+    case: { method: 'readExplainScanPage', variant: 'default', run: e => e.readExplainScanPage('default', 'notes/x', 7) },
+    texts: () => { return [`SELECT p.id, p.slug, p.title, p.compiled_truth, p.timeline, p.frontmatter->'mention_ignore' AS mention_ignore,
+            (s.page_id IS NULL OR s.mention_revision IS DISTINCT FROM p.knowledge_revision OR s.mention_version IS DISTINCT FROM $3) AS due
+       FROM pages p LEFT JOIN page_mention_state s ON s.page_id = p.id
+      WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL`]; },
+  },
+  {
+    from: 'src/commands/extract-mentions-explain.ts:117 (at 0af1a6ecf0)',
+    case: { method: 'countMentionLinksTo', variant: 'default', run: e => e.countMentionLinksTo(1, 'default', ['people/alice-example']) },
+    texts: () => { return [`SELECT count(*)::int AS n FROM links l JOIN pages t ON t.id = l.to_page_id
+      WHERE l.from_page_id = $1 AND l.link_source = 'mentions' AND t.source_id = $2 AND t.slug = ANY($3::text[])`]; },
+  },
+  {
+    from: 'src/commands/extract-mentions-explain.ts:134 (at 0af1a6ecf0)',
+    case: { method: 'readPageNameText', variant: 'default', run: e => e.readPageNameText('default', 'people/alice-example') },
+    texts: () => { return ['SELECT title, compiled_truth, timeline, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL']; },
+  },
+  {
+    from: 'src/commands/extract-mentions-explain.ts:138 (at 0af1a6ecf0)',
+    case: { method: 'listFrontmatterAliasNorms', variant: 'default', run: e => e.listFrontmatterAliasNorms('default', 'people/alice-example') },
+    texts: () => { return [`SELECT alias_norm FROM page_aliases WHERE source_id = $1 AND slug = $2 AND origin = 'frontmatter' ORDER BY alias_norm`]; },
+  },
+  {
+    from: 'src/commands/extract-mentions-explain.ts:152 (at 0af1a6ecf0)',
+    case: { method: 'listRejectedDeclarationPages', variant: 'default', run: e => e.listRejectedDeclarationPages('default', ['person'], '%alice%') },
+    texts: () => { return [`SELECT title, compiled_truth, timeline, frontmatter FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND type = ANY($2::text[])
+        AND (compiled_truth ILIKE $3 OR title ILIKE $3) LIMIT 50`]; },
+  },
   {
     from: 'src/commands/sync/preflight.ts:195 the 0-change sync heartbeat',
     case: { method: 'writeSourceSyncHeartbeat', variant: 'default', run: e => e.writeSourceSyncHeartbeat('default') },

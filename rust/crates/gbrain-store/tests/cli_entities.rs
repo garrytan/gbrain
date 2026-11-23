@@ -123,7 +123,7 @@ fn seeded(dir: &TempDir) -> Store {
 }
 
 #[test]
-fn mention_state_is_absent_so_every_live_page_is_due() {
+fn with_no_pass_run_every_live_page_is_due() {
     let dir = TempDir::new("cli-mentions");
     let store = seeded(&dir);
     assert_eq!(store.read_mention_last_pass(None).unwrap(), None);
@@ -132,6 +132,8 @@ fn mention_state_is_absent_so_every_live_page_is_due() {
         store
             .count_pages_due_for_mentions(&MentionDueQuery {
                 source_id: source.map(String::from),
+                mention_version: 7,
+                aliases: None,
             })
             .unwrap()
     };
@@ -142,7 +144,7 @@ fn mention_state_is_absent_so_every_live_page_is_due() {
 }
 
 #[test]
-fn mention_coverage_reads_see_no_status_rows() {
+fn mention_coverage_reads_see_no_status_rows_before_a_pass_ran() {
     let dir = TempDir::new("cli-mention-coverage");
     let store = seeded(&dir);
     let status = |ids: &[&str]| {
@@ -158,6 +160,7 @@ fn mention_coverage_reads_see_no_status_rows() {
         store.count_mention_due_since(&MentionDueSinceQuery {
             source_id: source.into(),
             since: since.into(),
+            mention_version: 0,
         })
     };
     assert_eq!(since("default", "-infinity").unwrap(), 11);

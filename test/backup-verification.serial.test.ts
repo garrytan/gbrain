@@ -12,8 +12,7 @@ import { pushStatusPathForRoot } from '../src/core/workspace-push.ts';
 import { assessBackupRepository, BACKUP_REMOTE_PROBE_CAP, BACKUP_REMOTE_BUDGET_MS, BACKUP_REMOTE_TIMEOUT_MS } from '../src/core/backup/repository.ts';
 import { makeGitFixture } from './helpers/git-fixture.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { readBrainMaturity as readBrainMaturitySql } from '../src/core/engine-sql/health.ts';
-import { countLivePages as countLivePagesSql } from '../src/core/engine-sql/doctor-pages.ts';
+import { countBrainLivePages as countBrainLivePagesSql, readBrainMaturity as readBrainMaturitySql } from '../src/core/engine-sql/health.ts';
 
 let tmp: string;
 let oldHome: string | undefined;
@@ -54,10 +53,9 @@ function engine(roots: string[]): BrainEngine {
   const sources = () => roots.map((root, i) => ({ id: `fixture-${i}`, name: 'fixture', local_path: root, archived: false, config: {} }));
   return {
     kind: 'pglite',
-    // loadAllSources reads the typed member; the page count is the typed countLivePages; maturity is the typed readBrainMaturity.
+    // loadAllSources reads the typed member; the page count still runs executeRaw.
     listSourceRecords: async () => sources(),
-    // The live-page count is the typed doctor-pages member, run on this stub's executeRaw.
-    countLivePages() { const e = this as unknown as { executeRaw(sql: string, params?: unknown[]): Promise<never[]> }; return countLivePagesSql((sql, params) => e.executeRaw(sql, params)); },
+    countBrainLivePages() { return countBrainLivePagesSql(this as never); },
     readBrainMaturity() { return readBrainMaturitySql(this as never); },
     executeRaw: async (sql: string) => sql.includes('FROM pages') ? [{ n: 1 }] : sources(),
   } as unknown as BrainEngine;

@@ -28,6 +28,7 @@
  * LOCK_ONLY_READS below and this test checks the list is complete, so the header stays true:
  * getTrustProposal, listFenceFactRows, listGitEffectsCarryingReason, listGuardedTakeRows, listHeldRows,
  * listConnectorSources, listPageGitEffectsForStrip, lockBodyStagingState, lockLivePagesByKey, readConfigForUpdate, readFactSnapshots, readLoopFactState, readAccessTokenWriteGrant, readFactWithdrawalClaim, readForgetTarget,
+ * readMentionGenerations, readMentionPageRevisions, readPageRevisionForShare,
  * readLiveStoredBody, readNoopEmbeddingCandidates, readOAuthClientWriteGrant, readPairFactRow, readReplacementTarget,
  * readSourceMembership, readSourceState, readWorktreeAdmission, readWriterAdminState, selectClaimableEffect,
  * selectClaimableWrite, and the credential, source and shared-skill row-lock reads the batch 10 lanes added (the list below).
@@ -51,7 +52,7 @@ const ROOT = join(import.meta.dir, '..');
 const LOCK_ONLY_READS: readonly string[] = [
   'getTrustProposal', 'listFenceFactRows', 'listGitEffectsCarryingReason', 'listGuardedTakeRows', 'listHeldRows',
   'listConnectorSources', 'listPageGitEffectsForStrip', 'lockBodyStagingState', 'lockLivePagesByKey', 'readConfigForUpdate', 'readFactSnapshots', 'readLoopFactState', 'readAccessTokenWriteGrant', 'readFactWithdrawalClaim', 'readForgetTarget',
-  'readLiveStoredBody', 'readNoopEmbeddingCandidates', 'readOAuthClientWriteGrant', 'readPairFactRow', 'readReplacementTarget',
+  'readMentionGenerations', 'readMentionPageRevisions', 'readPageRevisionForShare', 'readLiveStoredBody', 'readNoopEmbeddingCandidates', 'readOAuthClientWriteGrant', 'readPairFactRow', 'readReplacementTarget',
   'readSourceMembership', 'readSourceState', 'readWorktreeAdmission', 'readWriterAdminState', 'selectClaimableEffect',
   'selectClaimableWrite',
   // Added when the batch 10 lanes merged (credential, source and shared-skill reads that lock the row they read):

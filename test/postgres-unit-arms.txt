@@ -65,7 +65,7 @@ test/belief-ledger-page-at-time.test.ts
 test/belief-ledger-privacy.test.ts
 test/belief-ledger-purge-review.test.ts
 test/belief-ledger-purge.test.ts
-test/belief-ledger-restore.test.ts
+test/belief-ledger-restore.serial.test.ts
 test/belief-ledger-touched.test.ts
 test/belief-ledger-trust.test.ts
 test/belief-ledger-w5-time-model.test.ts
@@ -80,7 +80,7 @@ test/claim-fifo-foreground-waiting.test.ts
 test/claim-head-deferred-decisions.test.ts
 test/claim-lease-holder-only-6712.test.ts
 test/claude-cli-output-cap.test.ts
-test/cli-page-writes.test.ts
+test/cli-page-writes.serial.test.ts
 test/code-edges-parity.test.ts
 test/collate-agent-session-takes.test.ts
 test/collate-body-tiling.test.ts
@@ -318,6 +318,7 @@ test/engine-parity/loop-mutes.test.ts
 test/engine-parity/memory-mutation-reads.test.ts
 test/engine-parity/memory-proposal-reads.test.ts
 test/engine-parity/mention-coverage.test.ts
+test/engine-parity/mention-pass.test.ts
 test/engine-parity/migrate-engine-source.test.ts
 test/engine-parity/notifier-freshness.test.ts
 test/engine-parity/notifier-resident.test.ts
@@ -501,6 +502,7 @@ test/extract-atoms-world-fence-rows.test.ts
 test/extract-endpoint-revision.serial.test.ts
 test/extract-entities-managed.test.ts
 test/extract-facts-fence-failure-health-8758.test.ts
+test/extract-mentions-engines.serial.test.ts
 test/extract-stale-frontmatter-loop-9295.test.ts
 test/extract-stale-managed-signal-gbra438.test.ts
 test/extract-timeline-from-meetings-managed.test.ts
@@ -1064,7 +1066,7 @@ test/search-transcript-quote-legacy-claim.test.ts
 test/search-transcript-quote-tiers.test.ts
 test/search-transcript-quote.test.ts
 test/search-vector-scope-parity.test.ts
-test/search/coverage-capped-count.test.ts
+test/search/coverage-capped-count.serial.test.ts
 test/search/page-rank-cut.test.ts
 test/search/rebuild-progress-steady-state.test.ts
 test/search/rerank-gate-hybrid.test.ts
