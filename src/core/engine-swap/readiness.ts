@@ -307,7 +307,7 @@ export const CRITERIA: ReadonlyArray<{ n: number; name: string }> = [
 
 /**
  * Evaluates every criterion against the shadow status. `doc` null means no shadow runs for this brain: every gating
- * criterion is `missing` and the verdict is NOT READY (`not_ready`).
+ * criterion is `missing` and the verdict is NOT READY (`no_shadow`).
  */
 export function evaluateReadiness(doc: ShadowStatus | null, now: Date = new Date()): ReadinessVerdict {
   const r = new Reader(doc);
@@ -340,7 +340,8 @@ export function evaluateReadiness(doc: ShadowStatus | null, now: Date = new Date
   const ready = criteria.every(c => !c.gating || c.state === 'pass');
   let reason: SwapRefusalReason | null = null;
   if (!ready) {
-    if (elig.reason) reason = elig.reason;
+    if (doc === null) reason = 'no_shadow';
+    else if (elig.reason) reason = elig.reason;
     else if (doc?.fingerprints?.probe?.state === 'fail') reason = 'fingerprint_semantics_differ';
     else if (followerBehind(doc)) reason = 'follower_behind';
     else reason = 'not_ready';
