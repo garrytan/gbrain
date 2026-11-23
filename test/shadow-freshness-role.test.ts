@@ -56,7 +56,7 @@ describe.skipIf(!backends.includes('postgres'))('a Postgres role without pg_read
     if (role) { url.username = role; url.password = 'blind-example'; } // null: the test database's own login
     const sql = postgres(url.toString(), { max: 1, prepare: false });
     logins.push(sql);
-    const engine = { kind: 'postgres', capabilities: new Set(['postgres_admin']), executeRaw: async (query: string, params?: unknown[]) => [...(await sql.unsafe(query, params as never))], disconnect: async () => undefined } as unknown as BrainEngine;
+    const engine = { kind: 'postgres', capabilities: new Set(['postgres_admin']), executeRaw: async (query: string, params?: unknown[]) => [...(await sql.unsafe(query, params as never))], disconnect: async () => undefined, connectedDatabaseUrl: url.toString() } as unknown as BrainEngine;
     return { engine, config: { engine: 'postgres', database_url: url.toString() } };
   }
   const pg16 = async (): Promise<boolean> => Number((await admin`SHOW server_version_num`)[0]!.server_version_num) >= 160000;
@@ -188,7 +188,7 @@ describe.skipIf(!backends.includes('postgres'))('a Postgres role without pg_read
       otherUrl.pathname = `/${other}`;
       const mounted = postgres(otherUrl.toString(), { max: 1, prepare: false });
       logins.push(mounted);
-      const mountEngine = { kind: 'postgres', capabilities: new Set(['postgres_admin']), executeRaw: async (query: string, params?: unknown[]) => [...(await mounted.unsafe(query, params as never))], disconnect: async () => undefined } as unknown as BrainEngine;
+      const mountEngine = { kind: 'postgres', capabilities: new Set(['postgres_admin']), executeRaw: async (query: string, params?: unknown[]) => [...(await mounted.unsafe(query, params as never))], disconnect: async () => undefined, connectedDatabaseUrl: otherUrl.toString() } as unknown as BrainEngine;
       const ctx = (e: BrainEngine, extra: Partial<DoctorContext> = {}): DoctorContext => ({ engine: e, remote: undefined, progress: { heartbeat: () => undefined }, ...extra }) as unknown as DoctorContext;
       await withShadow(config, async () => {
         await withEnv({ GBRAIN_DATABASE_URL: config.database_url, DATABASE_URL: undefined, GBRAIN_BRAIN_ID: undefined }, async () => {
@@ -220,13 +220,12 @@ describe.skipIf(!backends.includes('postgres'))('a Postgres role without pg_read
     };
     // PGDATABASE names the database.
     const viaEnv = pathless(config.database_url);
+    const viaEnvEngine = { ...engine, connectedDatabaseUrl: viaEnv.database_url } as unknown as BrainEngine; // the engine reports the URL it was configured with
     await withEnv({ PGDATABASE: dbName }, async () => withShadow(viaEnv, async () => {
-      const before = (await shadowFreshnessTokenCheck(viaEnv, engine))!;
+      const before = (await shadowFreshnessTokenCheck(viaEnv, viaEnvEngine))!;
       expect(before).toMatchObject({ name: 'shadow_freshness_token', status: 'warn' });
       await admin.unsafe(String(before.details!.sql));
-      try { expect(await shadowFreshnessTokenCheck(viaEnv, engine)).toMatchObject({ status: 'ok' }); } finally { await admin.unsafe(`REVOKE pg_read_all_stats FROM ${PLAIN}`); }
-      // A different PGDATABASE is another brain: silent.
-      await withEnv({ PGDATABASE: `${dbName}_other` }, async () => { expect(await shadowFreshnessTokenCheck(viaEnv, engine)).toBeNull(); });
+      try { expect(await shadowFreshnessTokenCheck(viaEnv, viaEnvEngine)).toMatchObject({ status: 'ok' }); } finally { await admin.unsafe(`REVOKE pg_read_all_stats FROM ${PLAIN}`); }
     }));
   }, 60_000);
 
@@ -244,7 +243,7 @@ describe.skipIf(!backends.includes('postgres'))('a Postgres role without pg_read
       byLogin.database_url = byLogin.database_url.replace(/^(postgres(?:ql)?:\/\/)[^@]*@/, `$1${login}:blind-example@`);
       const sql = postgres(byLogin.database_url, { max: 1, prepare: false });
       logins.push(sql);
-      const loginEngine = { kind: 'postgres', capabilities: new Set(['postgres_admin']), executeRaw: async (query: string, params?: unknown[]) => [...(await sql.unsafe(query, params as never))], disconnect: async () => undefined } as unknown as BrainEngine;
+      const loginEngine = { kind: 'postgres', capabilities: new Set(['postgres_admin']), executeRaw: async (query: string, params?: unknown[]) => [...(await sql.unsafe(query, params as never))], disconnect: async () => undefined, connectedDatabaseUrl: byLogin.database_url } as unknown as BrainEngine;
       await withEnv({ PGDATABASE: undefined, PGUSER: undefined, PGUSERNAME: undefined }, async () => withShadow(byLogin, async () => {
         const before = (await shadowFreshnessTokenCheck(byLogin, loginEngine))!;
         expect(before).toMatchObject({ name: 'shadow_freshness_token', status: 'warn' });
@@ -255,6 +254,32 @@ describe.skipIf(!backends.includes('postgres'))('a Postgres role without pg_read
       await admin.unsafe(`DROP DATABASE IF EXISTS ${login} WITH (FORCE)`).catch(() => undefined);
       await admin.unsafe(`DROP ROLE IF EXISTS ${login}`).catch(() => undefined);
     }
+  }, 60_000);
+
+  test('a hostless URL (postgres:///db, the host and user from PGHOST and PGUSER) is the host brain: doctor warns and the fix clears it', async () => {
+    const base = new URL(process.env.DATABASE_URL!);
+    const db = decodeURIComponent(base.pathname.slice(1));
+    const config = { engine: 'postgres' as const, database_url: `postgres:///${db}` };
+    await withEnv({ PGHOST: base.hostname, PGPORT: base.port || '5432', PGUSER: PLAIN, PGPASSWORD: 'blind-example', PGDATABASE: undefined }, async () => {
+      const sql = postgres(config.database_url, { max: 1, prepare: false });
+      logins.push(sql);
+      const engine = { kind: 'postgres', capabilities: new Set(['postgres_admin']), executeRaw: async (query: string, params?: unknown[]) => [...(await sql.unsafe(query, params as never))], disconnect: async () => undefined, connectedDatabaseUrl: config.database_url } as unknown as BrainEngine;
+      await withShadow(config, async () => {
+        const before = (await shadowFreshnessTokenCheck(config, engine))!;
+        expect(before).toMatchObject({ name: 'shadow_freshness_token', status: 'warn', details: { role: PLAIN } });
+        await admin.unsafe(String(before.details!.sql));
+        try { expect(await shadowFreshnessTokenCheck(config, engine)).toMatchObject({ status: 'ok' }); } finally { await admin.unsafe(`REVOKE pg_read_all_stats FROM ${PLAIN}`); }
+      });
+    });
+  }, 60_000);
+
+  test('an engine whose connection identity cannot be read is not taken for the host brain', async () => {
+    const { engine, config } = await connectAs(PLAIN);
+    const anonymous = { ...engine, connectedDatabaseUrl: undefined } as unknown as BrainEngine;
+    await withShadow(config, async () => {
+      expect(await shadowFreshnessTokenCheck(config, engine)).toMatchObject({ status: 'warn' }); // positive control: the same login with an identity
+      expect(await shadowFreshnessTokenCheck(config, anonymous)).toBeNull();
+    });
   }, 60_000);
 
   test('a role name that needs quoting is written as the server quotes it', async () => {

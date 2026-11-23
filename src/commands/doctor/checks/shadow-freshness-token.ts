@@ -6,7 +6,7 @@
  * pg_read_all_stats TO <role>` for the connected role (`tell_user_to_run`: the host operator runs it). Not applicable on
  * PGLite or with no shadow on: it says nothing there. Read-only: one catalog query.
  */
-import { userInfo } from 'node:os';
+import { basename } from 'node:path';
 import { HOST_BRAIN_ID } from '../../../core/brain-registry.ts';
 import { brainRoutingArgs } from '../../../core/brain-resolver.ts';
 import { loadConfig } from '../../../core/config.ts';
@@ -14,18 +14,19 @@ import type { BrainEngine } from '../../../core/engine.ts';
 import { hasCapability } from '../../../core/engine-capabilities.ts';
 import type { EngineConfig } from '../../../core/types.ts';
 import { FRESHNESS_BLIND_CHECK, probeFreshnessBlind } from '../../../shadow/freshness-role.ts';
-import { shadowStateFor } from '../../../shadow/state.ts';
+import { shadowBrainKey, shadowStateFor } from '../../../shadow/state.ts';
 import type { Check } from '../../doctor.ts';
 import { checkError } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 
 /** The check for a config and a connected engine; null (silent) when shadow mode is off or the brain is not on Postgres. */
 export async function shadowFreshnessTokenCheck(config: EngineConfig | null, engine: Pick<BrainEngine, 'capabilities' | 'executeRaw'>): Promise<Check | null> {
-  if (!hasCapability(engine, 'postgres_admin') || !config || !shadowStateFor(config)) return null;
+  const shadow = hasCapability(engine, 'postgres_admin') && config ? shadowStateFor(config) : null;
+  if (!shadow) return null;
+  // The shadow state belongs to the host brain's config. An engine on another brain (a mounted brain, a graduation source) is not that
+  // brain, and a GRANT for its role would be cluster-wide privilege for a brain this shadow never covered: stay silent.
+  if (!engineIsShadowBrain(shadow.dir, engine)) return null;
   try {
-    // The shadow state belongs to the host brain's config. An engine on another database (a mounted brain, a graduation source) is not
-    // that brain, and a GRANT for its role would be cluster-wide privilege for a brain this shadow never covered: stay silent.
-    if (!(await engineIsConfiguredDatabase(config, engine))) return null;
     const blind = await probeFreshnessBlind(engine);
     if (!blind) {
       return { name: FRESHNESS_BLIND_CHECK, status: 'ok', message: 'The database role can see other sessions, so the shadow freshness token can be proven.' };
@@ -40,26 +41,15 @@ export async function shadowFreshnessTokenCheck(config: EngineConfig | null, eng
 }
 
 /**
- * The database a Postgres URL connects to, read the way the driver reads it (vendor/postgres/src/index.js parseOptions): the URL
- * path, else PGDATABASE, else the user name, which is the URL's user, else PGUSERNAME, PGUSER or the operating-system user.
+ * True when the engine is connected to the brain this shadow state belongs to: the brain identity of the URL the engine reports
+ * it connected with (`connectedDatabaseUrl`, as postgres-tls.ts reads it) is the identity the shadow state directory is named
+ * for (`shadowBrainKey`, the same function that named it). An engine that reports no URL has no readable identity: not that brain.
  */
-export function configuredDatabaseName(databaseUrl: string, env: NodeJS.ProcessEnv = process.env): string | null {
-  let url: URL;
-  try { url = new URL(databaseUrl.replace(/^postgres(ql)?:\/\//, 'http://')); } catch { return null; }
-  let user = url.username ? decodeURIComponent(url.username) : '';
-  if (!user) {
-    user = env.PGUSERNAME || env.PGUSER || '';
-    if (!user) { try { user = userInfo().username; } catch { user = env.USERNAME || env.USER || env.LOGNAME || ''; } }
-  }
-  return url.pathname.slice(1) || env.PGDATABASE || user || null;
-}
-
-/** True when the engine is connected to the database `config` names (that name against `current_database()`). */
-async function engineIsConfiguredDatabase(config: EngineConfig, engine: Pick<BrainEngine, 'executeRaw'>): Promise<boolean> {
-  const name = config.database_url ? configuredDatabaseName(config.database_url) : null;
-  if (!name) return false;
-  const [row] = await engine.executeRaw<{ db: string }>('SELECT current_database() AS db');
-  return row?.db === name;
+function engineIsShadowBrain(shadowDir: string, engine: object): boolean {
+  const url = (engine as { connectedDatabaseUrl?: string }).connectedDatabaseUrl;
+  if (!url) return false;
+  const key = shadowBrainKey({ engine: 'postgres', database_url: url });
+  return key !== null && key === basename(shadowDir);
 }
 
 async function runShadowFreshnessToken(ctx: DoctorContext): Promise<Check[]> {
