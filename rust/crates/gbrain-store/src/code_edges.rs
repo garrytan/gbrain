@@ -31,7 +31,7 @@
 //! fallback) reads every chunk record once.
 
 use crate::dream::jsonb_check;
-use crate::error::{Result, StoreError};
+use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
 use crate::jsonb::ordered;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
@@ -92,7 +92,7 @@ impl Table {
         }
     }
 
-    fn sequence(self) -> &'static str {
+    pub(crate) fn sequence(self) -> &'static str {
         match self {
             Table::Chunk => "next_code_edge_chunk",
             Table::Symbol => "next_code_edge_symbol",
@@ -295,6 +295,32 @@ fn delete_for_chunks(tx: &mut dyn KvWrite, chunk_ids: &[u64]) -> Result<()> {
 /// page.
 pub(crate) fn remove_page_rows(_tx: &mut dyn KvWrite, _page: &PageRecord) -> Result<()> {
     Ok(())
+}
+
+/// The shadow seed (`seed.rs`): stores `edge`, a row copied from another engine with its own id and
+/// `created_at`, with its unique key and every index key `add_code_edges` writes. `false` when the
+/// id already holds a row of the table; the unique key held by another id is the unique violation.
+/// The caller checked the chunks and the source.
+pub(crate) fn seed_edge(tx: &mut dyn KvWrite, edge: &EdgeRecord) -> Result<bool> {
+    if tx.get(&row_key(edge.table, edge.id))?.is_some() {
+        return Ok(false);
+    }
+    let all = edge.keys();
+    if tx.get(&all[1])?.is_some() {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            format!(
+                "duplicate key value violates unique constraint \"{}_unique\"",
+                edge.table.name()
+            ),
+        ));
+    }
+    tx.put(&all[1], &edge.id.to_be_bytes())?;
+    for key in &all[2..] {
+        tx.put(key, &[])?;
+    }
+    put_json(tx, &all[0], edge)?;
+    Ok(true)
 }
 
 /// Deletes the rows of chunks that are gone (`cascade::remove_chunk_rows`): every row of either

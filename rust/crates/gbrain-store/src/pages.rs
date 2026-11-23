@@ -38,8 +38,8 @@ const HASH_EPHEMERAL_KEYS: &[&str] = &[
     "trust_tier",
 ];
 
-const NEXT_PAGE_ID: &str = "next_page_id";
-const NEXT_VERSION_ID: &str = "next_version_id";
+pub(crate) const NEXT_PAGE_ID: &str = "next_page_id";
+pub(crate) const NEXT_VERSION_ID: &str = "next_version_id";
 
 /// A text column of `pages` that PGLite lets be NULL: `compiled_truth` and `timeline` (migration v248).
 ///
@@ -2351,6 +2351,18 @@ pub(crate) fn snapshot_in(
     // PGLite's `createPageVersion` prunes the page's history after it inserts, in the same write.
     crate::version_prune::prune_after_snapshot(tx, env, &row)?;
     Ok(row)
+}
+
+/// The shadow seed (`seed.rs`): stores `row`, a snapshot copied from another engine with its own
+/// id and `snapshot_at`, where `snapshot_in` stores one. `false` when the page already holds that
+/// version. The caller checked the page.
+pub(crate) fn seed_version(tx: &mut dyn KvWrite, row: &VersionRecord) -> Result<bool> {
+    let key = keys::version(row.page_id, row.id);
+    if tx.get(&key)?.is_some() {
+        return Ok(false);
+    }
+    put_json(tx, &key, row)?;
+    Ok(true)
 }
 
 // ---------------------------------------------------------------------------------------------

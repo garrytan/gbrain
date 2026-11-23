@@ -818,7 +818,9 @@ through `executeRaw`, so they refuse on this engine.
 - Times: the store reads `YYYY-MM-DDTHH:MM:SS[.ffffff]Z`. The member rewrites an ISO time with an
   offset and at most 3 fractional digits through `Date#toISOString`. It sends any other spelling (a
   bare date, a time with no zone) as written, and the store refuses it with `invalid_argument`, where
-  Postgres would read it in the session time zone.
+  Postgres would read it in the session time zone. A day the calendar lacks (such as `02-30`) is refused the
+  same way, as PGLite refuses it. Postgres reads it as the next valid day (`02-30` becomes `03-02`), because
+  postgres.js rolls the date over before the statement is sent, so the Rust engine is stricter than Postgres here.
 - Deleting a source removes its loops (`ON DELETE CASCADE`).
 
 ### Mutes and the thread verdict (`facts/loops/mutes.rs`)

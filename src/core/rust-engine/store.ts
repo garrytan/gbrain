@@ -59,7 +59,60 @@ interface StoreAddon { Pool: new (threads: number) => StorePool; Brain: new (poo
 /** An open store: the brain and the pool it runs on. */
 export interface RustStore {
   readonly brain: StoreBrain;
+  /**
+   * Copies one batch of a primary relation into this store for the shadow seed (rust/docs/store/seed.md).
+   * Every value is the column's text form (`::text`, UTC) or null. Not a BrainEngine member.
+   */
+  importRelation(seedId: string, relation: string, rows: SeedRow[]): Promise<SeedImportResult>;
+  /**
+   * The seed plan: the relations `importRelation` takes in import order (with the key columns to read each
+   * by), the tables carried inside them, and the tables the seed leaves behind on purpose. Any other primary
+   * table is a gap (rust/docs/store/seed.md).
+   */
+  seedPlan(): Promise<SeedPlan>;
   close(): Promise<void>;
+}
+
+/** One primary row: column name to its `::text` value, or null. */
+export type SeedRow = Record<string, string | null>;
+
+/** One relation of the seed plan: the primary table and its primary key columns. */
+export interface SeedRelationPlan {
+  relation: string;
+  key: string[];
+}
+
+/** A primary table the seed leaves behind on purpose, and the read that differs on the seeded store. */
+export interface SeedNotCopied {
+  table: string;
+  kind: 'jobs' | 'telemetry' | 'cache' | 'machine_local' | 'segmented_body';
+  read: string;
+  /** Rows of the table that are brain state: counted as the gap `gap`, not lost. */
+  gap_rows: { gap: string; column: string; equals: string } | null;
+}
+
+export interface SeedPlan {
+  relations: SeedRelationPlan[];
+  /** `[table, relation]`: a table whose rows ride in the rows of `relation`. */
+  carried: [string, string][];
+  not_copied: SeedNotCopied[];
+  /** Columns of copied relations the store cannot keep yet: a non-null value is the gap `gap`. */
+  gap_columns: SeedGapColumn[];
+}
+
+export interface SeedGapColumn {
+  table: string;
+  column: string;
+  gap: string;
+}
+
+/** What one `importRelation` batch did. `losses` counts values the store could not keep, by kind. */
+export interface SeedImportResult {
+  imported: number;
+  skipped: number;
+  dropped: number;
+  unmapped_columns: string[];
+  losses: Record<string, number>;
 }
 
 /**
@@ -82,6 +135,20 @@ export async function openRustStore(addon: object, databasePath: string, embeddi
   }
   return {
     brain,
+    async importRelation(seedId, relation, rows) {
+      try {
+        return await brain.importRelation(seedId, relation, rows) as SeedImportResult;
+      } catch (error) {
+        throw mapStoreError(error, { member: 'importRelation' });
+      }
+    },
+    async seedPlan() {
+      try {
+        return await brain.seedPlan() as SeedPlan;
+      } catch (error) {
+        throw mapStoreError(error, { member: 'seedPlan' });
+      }
+    },
     async close() {
       try { await brain.close(); } finally { await pool.shutdown(STORE_SHUTDOWN_WAIT_MS).catch(() => undefined); }
     },

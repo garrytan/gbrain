@@ -26,6 +26,7 @@ import { transactionAborted } from '../../postgres-engine/transaction-abort.ts';
 import { validateSlug } from '../../utils.ts';
 import type { RustEngine, RustTransactionScope } from '../../rust-engine.ts';
 import { opError } from '../../ops/contract.ts';
+import { capabilityMissing } from '../errors.ts';
 import { mapStoreError, storeErrorCode } from '../store-errors.ts';
 import type { RustStore, StoreBrain } from '../store.ts';
 import { storeCall } from './common.ts';
@@ -166,7 +167,9 @@ interface BoundEngine extends RustEngine {
 
 /** A clone of `parent` whose served members run on the transaction's store handle. */
 function boundEngine(parent: RustEngine, scope: RustTransactionScope, held: HeldPageKeys): BoundEngine {
-  const store: RustStore = { brain: scope.brain, close: async () => undefined };
+  // The shadow seed copies into the engine's own store, never through a transaction's handle.
+  const refuseSeed = (member: string) => async (): Promise<never> => { throw capabilityMissing('transactions', member); };
+  const store: RustStore = { brain: scope.brain, importRelation: refuseSeed('importRelation'), seedPlan: refuseSeed('seedPlan'), close: async () => undefined };
   return Object.create(parent, {
     _txScope: { value: scope, writable: false, enumerable: false },
     _heldPageKeys: { value: held, writable: false, enumerable: false },

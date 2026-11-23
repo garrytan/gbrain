@@ -87,8 +87,8 @@ mod spend_log;
 mod status;
 mod subagent;
 mod sweeps;
-mod synthesis_completions;
-mod wake;
+pub(crate) mod synthesis_completions;
+pub(crate) mod wake;
 
 pub(crate) use access_tokens::bind_token_member;
 pub use access_tokens::{TokenGrantColumns, TokenInsert};
@@ -107,13 +107,16 @@ pub use insight::InsightSpec;
 use mutations::add_token;
 pub use mutations::{DelayOpts, TokenDelta};
 pub(crate) use oauth_clients::remove_source_rows as remove_oauth_source_rows;
+pub(crate) use oauth_clients::seed_client;
 pub use oauth_clients::{ClientInsert, ClientPatch, ClientPatchGuard};
 pub use oauth_codes::OauthCodeInsert;
 pub use oauth_tokens::OauthTokenInsert;
 pub use private_queues::PrivateQueueState;
 pub use reads::{JobPageCursor, JobPageSpec, OverdueSpec};
 pub use spend::{ExpireScope, LeaseFilter, LeaseInsert, SpendInsert, SpendTreeSpec};
+pub(crate) use spend::{SeedReservation, seed_reservation};
 pub use spend_log::{ClientReserve, GroupReserve, LogInsert};
+pub(crate) use spend_log::{SeedLog, seed_log};
 pub use status::StatusFilter;
 pub use subagent::{FailureFallback, MessageInsert, ToolInsert, ToolStart, ToolTarget};
 pub(crate) use subagent::{purge_probe_message_rows, purge_probe_tool_rows};
@@ -305,6 +308,17 @@ fn next_seq(tx: &mut dyn KvWrite, name: &str) -> Result<i64> {
         .map_err(|_| StoreError::new(crate::error::STORE_CORRUPT, "bad job id sequence"))?;
     put_json(tx, &k, &next)?;
     Ok(next)
+}
+
+/// Raises the sequence `name` so the next [`next_seq`] returns a value above `id` (the shadow
+/// seed, which copies rows with their ids).
+pub(crate) fn raise_seq(tx: &mut dyn KvWrite, name: &str, id: i64) -> Result<()> {
+    let mut k = prefix(SEQ);
+    k.extend_from_slice(name.as_bytes());
+    if get_json::<i64>(tx, &k)?.unwrap_or(0) < id {
+        put_json(tx, &k, &id)?;
+    }
+    Ok(())
 }
 
 /// One `minion_jobs` row. Timestamps are µs; JSON columns are kept as given.

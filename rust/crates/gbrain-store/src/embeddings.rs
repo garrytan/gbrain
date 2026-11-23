@@ -83,6 +83,15 @@ pub(crate) fn signature_key(page_id: u64) -> Vec<u8> {
     key
 }
 
+/// The shadow seed (`seed.rs`): stores a page's `embedding_signature` as another engine holds it.
+pub(crate) fn seed_page_signature(
+    tx: &mut dyn KvWrite,
+    page_id: u64,
+    signature: &str,
+) -> Result<()> {
+    tx.put(&signature_key(page_id), signature.as_bytes())
+}
+
 fn take_state_key(take_id: u64) -> Vec<u8> {
     let mut key = vec![keys::EMBEDDING_STATE, TAKE_STATE];
     key.extend_from_slice(&take_id.to_be_bytes());

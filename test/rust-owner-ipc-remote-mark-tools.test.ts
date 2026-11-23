@@ -153,7 +153,7 @@ describe('a locally queued job: the model-chosen write is remote, the job\'s own
     expect(seen.jobIsRemote).toBe(false);
     expect(seen.tool).toBe('engine_capability_missing');
     const toolWrites = seen.toolWrites as Array<{ member: string; remote: boolean; outcome: string }>;
-    expect(toolWrites.length).toBeGreaterThan(0);
+    // The trunk's owner runs whole operations (owner-ipc/whole-op.ts): a remote caller's put_page is refused before a member is asked, so none may be listed.
     expect(toolWrites.filter(call => !call.remote || call.outcome !== 'engine_capability_missing')).toEqual([]);
     expect(seen.toolWritesAtOwner).toEqual([]);
     expect(seen.ownWrite).toBe('sent');
@@ -244,7 +244,10 @@ describe('a local caller\'s own writes on a Rust brain still reach the owner', (
   /** Every write member the client was asked for went out as a local call, was sent, and reached the owner. */
   async function expectLocalWritesSent(): Promise<string[]> {
     const writes = await writesAsked();
-    expect(writes.length).toBeGreaterThan(0);
+    // The trunk classes the cycle's own calls as reads or runs them locally, so a cycle may ask no write member; it must
+    // still have reached the owner, and as a local caller.
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked.filter(call => call.remote)).toEqual([]);
     expect(writes.filter(call => call.remote || call.outcome !== 'sent')).toEqual([]);
     expect(writesReachedOwner().length).toBe(writes.length);
     return writes.map(call => call.member);
@@ -311,11 +314,11 @@ describe('a local caller\'s own writes on a Rust brain still reach the owner', (
     expect(report.checks.find(c => c.id === 'doctor_green')).toMatchObject({ ok: true });
     const roundtrip = report.checks.find(c => c.id === 'roundtrip');
     expect(roundtrip?.ok).toBe(false);
-    expect(roundtrip?.detail).toContain('transaction cannot run from a second process');
+    // Master's client stops at write admission (`transaction`); the trunk's whole-operation forward stops the journaled write first (`runOperation`). Neither is the remote-caller refusal.
+    expect(roundtrip?.detail).toMatch(/(transaction|runOperation) cannot run from a second process/);
     expect(roundtrip?.detail).not.toContain('remote caller');
     const calls = await expectNoRemoteCall();
-    expect(calls).toContainEqual(admissionRefusal);
-    expect(calls.filter(call => call.outcome !== 'sent' && call.member !== 'transaction')).toEqual([]);
+    expect(calls.filter(call => call.outcome !== 'sent' && !['transaction', 'runOperation'].includes(call.member))).toEqual([]);
     expect(writesReachedOwner()).not.toContain('transaction');
     // The refusal a client's write meets says it cannot run from this process; it no longer claims the write is sent.
     const refusal = await client.transaction(async () => undefined).then(() => null, (error: unknown) => error as OperationError);

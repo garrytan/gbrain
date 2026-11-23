@@ -462,6 +462,9 @@ test/spec-refresh-barrier.test.ts	spec/tla/README.md documents the refresh-barri
 test/spec-refresh-barrier.test.ts	the TLA+ workflow runs when anything a refresh-barrier mutant names changes	1	readFileSync
 test/spend-off-switch.test.ts	reindex / onboard off-switch dispatch (regression guards)	3	bun-file
 test/spring-skill-index.test.ts	spring-loaded skill index	10	readFileSync
+test/st-write-move-parity.test.ts	moved writes before and after (${kind})	10	readFileSync
+test/st-write-move-parity.test.ts	the Postgres write members send master\'s statement text (no database)	3	readFileSync
+test/st-write-move-parity.test.ts	the strict call sites keep master\'s scope and order	3	readFileSync
 test/strict-source-unmanaged-import.test.ts	(file-level)	2	readFileSync
 test/supervisor.test.ts	recovery hook timeout bound (structural)	1	source-surface-helper
 test/sync-failures.test.ts	#4543 blocked output names failing files	4	doctor-source-helper,source-surface-helper

@@ -37,9 +37,11 @@ use std::collections::BTreeMap;
 
 mod calibrations;
 mod receipts;
+pub(crate) use calibrations::{CALIBRATION_ID, CalibrationRecord, seed_calibration};
 pub use calibrations::{DecideCalibrationInput, DecideQualificationInput};
 pub use receipts::DecideReceiptInput;
 pub(crate) use receipts::purge_probe_rows as purge_probe_receipt_rows;
+pub(crate) use receipts::{RECEIPT_ID, ReceiptRecord, seed_receipt};
 
 const STATE: u8 = 0x10;
 const SPEND: u8 = 0x11;
@@ -103,6 +105,25 @@ fn float8(value: &Value, member: &str, column: &str) -> Result<Option<f64>> {
             "{member}: {column} must be a number, got {value}"
         ))),
     }
+}
+
+/// The shadow seed (`seed.rs`): stores a `decide_state` row copied from another engine, with its
+/// own `updated_at`. `false` when `key` already holds a row.
+pub(crate) fn seed_state(
+    tx: &mut dyn KvWrite,
+    key: &str,
+    value: &str,
+    updated_at_us: i64,
+) -> Result<bool> {
+    if load_state(&*tx, key)?.is_some() {
+        return Ok(false);
+    }
+    let record = StateRecord {
+        value: value.to_string(),
+        updated_at_us,
+    };
+    put_json(tx, &state_key(key), &record)?;
+    Ok(true)
 }
 
 fn state_value_required(value: Option<&str>) -> Result<&str> {
@@ -177,19 +198,19 @@ fn spend_time_key(created_at_us: i64, seq: u64) -> Vec<u8> {
 
 /// One `decide_spend` row.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct SpendRecord {
-    request_id: String,
-    created_at_us: i64,
-    source_id: Option<String>,
-    slot: String,
-    provider: String,
-    model_resolved: Option<String>,
-    lane: String,
-    remote: bool,
-    input_tokens: i32,
+pub(crate) struct SpendRecord {
+    pub request_id: String,
+    pub created_at_us: i64,
+    pub source_id: Option<String>,
+    pub slot: String,
+    pub provider: String,
+    pub model_resolved: Option<String>,
+    pub lane: String,
+    pub remote: bool,
+    pub input_tokens: i32,
     /// `cost_usd`, as `f64::to_bits`.
-    cost_bits: u64,
-    outcome: String,
+    pub cost_bits: u64,
+    pub outcome: String,
 }
 
 impl SpendRecord {
@@ -296,6 +317,23 @@ fn prune_spend_before(tx: &mut dyn KvWrite, cutoff_us: i64) -> Result<u64> {
         tx.delete(index_key)?;
     }
     Ok(doomed.len() as u64)
+}
+
+/// The shadow seed (`seed.rs`): stores a `decide_spend` row copied from another engine, with its
+/// own `created_at`, and its time-index entry as [`Store::insert_decide_spend`] writes it (the
+/// sequence number comes from `M decide_spend_seq`, so rows seeded later sort after earlier ones
+/// of the same instant). `false` when the request id already holds a row.
+pub(crate) fn seed_spend(tx: &mut dyn KvWrite, record: &SpendRecord) -> Result<bool> {
+    if tx.get(&spend_key(&record.request_id))?.is_some() {
+        return Ok(false);
+    }
+    let seq = next_id(tx, SPEND_SEQ)?;
+    put_json(tx, &spend_key(&record.request_id), record)?;
+    tx.put(
+        &spend_time_key(record.created_at_us, seq),
+        record.request_id.as_bytes(),
+    )?;
+    Ok(true)
 }
 
 impl Store {

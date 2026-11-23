@@ -80,7 +80,8 @@ import * as db from './db.ts';
 import { ConnectionManager, DEFAULT_DIRECT_POOL_SIZE } from './connection-manager.ts';
 import { logConnectionEvent } from './connection-audit.ts';
 import { drainBackgroundWorkBeforeDisconnect } from './background-work.ts';
-import { requestSignal, throwIfRequestAborted } from './request-signal.ts';
+import { abortGuarded, requestSignal, throwIfRequestAborted } from './request-signal.ts';
+import { refuseAborted } from './engine-sql/abort-aware.ts';
 import {
   validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding,
   isUndefinedTableError, warnOncePerProcess,
@@ -249,6 +250,7 @@ import * as transactionSettingsImpl from './engine-sql/transaction-settings.ts';
 import * as writerVersionsImpl from './engine-sql/writer-versions.ts';
 import * as connectGateImpl from './engine-sql/connect-gate.ts';
 import * as beliefImpl from './engine-sql/belief.ts';
+import * as searchVectorImpl from './engine-sql/search-vector.ts';
 import * as configImpl from './engine-sql/config.ts';
 import * as accessControlImpl from './engine-sql/access-control.ts';
 import * as accessPolicyImpl from './engine-sql/access-policy.ts';
@@ -298,7 +300,6 @@ import * as chunksImpl from './engine-sql/chunks.ts';
 import * as searchReadsImpl from './engine-sql/search-reads.ts';
 import * as linkReadsImpl from './engine-sql/link-reads.ts';
 import * as linkTemporalImpl from './engine-sql/link-temporal.ts';
-import * as searchVectorImpl from './engine-sql/search-vector.ts';
 import * as retrievalCoverageImpl from './engine-sql/retrieval-coverage.ts';
 import { backfillChunkVectors, backfillPageVectors, type VectorBackfillOpts } from './search-vector-backfill.ts';
 import { ensureFactsFtsIndex } from './facts/fts-index.ts';
@@ -431,6 +432,9 @@ export function getPostgresSchema(
 // See TODOS.md item: "err.code-based connection-error matching" for the
 // follow-up that will reintroduce a typed retry mechanism.
 
+/** Runs `fn` unless the request's signal already fired, as `executeRaw` and `decideRead` do (GBRA-156): an aborted request sends no statement. */
+async function whenNotAborted<T>(fn: () => Promise<T>): Promise<T> { throwIfRequestAborted(); return fn(); }
+
 export class PostgresEngine implements BrainEngine {
   readonly [ENGINE_ROOT]: object = this;
   private vectorIterativeScan?: Promise<boolean>;
@@ -532,15 +536,15 @@ export class PostgresEngine implements BrainEngine {
    * returns the tx handle) runs migrated domain SQL inside its transaction.
    */
   private get engineSql(): SqlExecutor {
-    return this.engineSqlOn(this.sql);
+    return refuseAborted(this.engineSqlOn(this.sql));
   }
 
   /** engineSql whose statements a read-only session default refused (25006) run once more in BEGIN READ WRITE, as executeRaw's do (#7183). */
   private get autocommitSql(): SqlExecutor {
-    return postgresExecutor(this.sql, {
+    return refuseAborted(postgresExecutor(this.sql, {
       runUnsafe: (c, sql, params, opts) => retryReadOnlyAutocommit(c, cc => this.runUnsafe(cc, sql, params, opts)),
       gauge: this.checkoutGauge,
-    });
+    }));
   }
 
   /** Executor over a handle the engine yielded (e.g. `withScopedReadTransaction`'s `tx`). */
@@ -638,9 +642,10 @@ export class PostgresEngine implements BrainEngine {
    * a transaction or a locking read (`unbounded`) uses the current connection. A clock abort discards it at once (#8155).
    */
   private preparationRead<T>(fn: (exec: SqlExecutor) => Promise<T>, unbounded?: boolean): Promise<T> {
+    try { throwIfRequestAborted(); } catch (error) { return Promise.reject(error); } // a cancelled request reserves no connection and sends no BEGIN, as executeRaw refused it (R2)
     const deadlineAt = this._pageTransaction || unbounded ? undefined : readDeadline();
     if (deadlineAt === undefined) return fn(this.autocommitSql);
-    return runDeadlineRead(this.sql, deadlineAt, tx => fn(this.engineSqlOn(tx)), this.checkoutGauge, cancelSettleMs(), readDeadlineSignal());
+    return runDeadlineRead(this.sql, deadlineAt, tx => fn(refuseAborted(this.engineSqlOn(tx))), this.checkoutGauge, cancelSettleMs(), readDeadlineSignal());
   }
 
   /** A typed read master ran on `engineSql`: still so, or `preparationRead` under a read deadline. */
@@ -1319,17 +1324,17 @@ export class PostgresEngine implements BrainEngine {
   scanExactBatch(opts: ExactScanOpts, afterPageId: number, batchPages: number, timeoutMs: number) { return cliReadsOpsImpl.scanExactBatch(this.executeRaw.bind(this), opts, afterPageId, batchPages, timeoutMs); }
   nextLivePageAfter(afterPageId: number) { return cliReadsOpsImpl.nextLivePageAfter(this.executeRaw.bind(this), afterPageId); }
   listExportPageKeys(q: exportReadsImpl.ExportPageKeyQuery) { return exportReadsImpl.listExportPageKeys(this, q); }
-  readExportWithdrawalLedgerBytes(sourceId: string) { return exportReadsImpl.readExportWithdrawalLedgerBytes(this, sourceId); }
-  listExportWithdrawals(sourceId: string) { return exportReadsImpl.listExportWithdrawals(this, sourceId); }
+  readExportWithdrawalLedgerBytes(sourceId: string) { return this.engineRead(exec => exportReadsImpl.readExportWithdrawalLedgerBytes(exec, sourceId)); }
+  listExportWithdrawals(sourceId: string) { return this.engineRead(exec => exportReadsImpl.listExportWithdrawals(exec, sourceId)); }
   readExportPageRows(ids: readonly string[]) { return exportReadsImpl.readExportPageRows(this, ids); }
   normalizeFenceLines(bodies: readonly string[], timelines: readonly string[]) { return exportReadsImpl.normalizeFenceLines(this, bodies, timelines); }
   readSegmentedPageHead(pageId: number) { return this.ownRawRead(exec => exportReadsImpl.readSegmentedPageHead(exec, pageId)); }
   readBodyManifestRows(pageId: number, generation: number | null) { return exportReadsImpl.readBodyManifestRows(this, pageId, generation); }
   readBodyManifestMeta(pageId: number, occurrenceIds: readonly number[], generation: number) { return exportReadsImpl.readBodyManifestMeta(this, pageId, occurrenceIds, generation); }
   readBodyManifestOutline(pageId: number, occurrenceIds: readonly number[], generation: number) { return exportReadsImpl.readBodyManifestOutline(this, pageId, occurrenceIds, generation); }
-  listForcedCutSeqs(pageId: number, generation: number) { return exportReadsImpl.listForcedCutSeqs(this, pageId, generation); }
+  listForcedCutSeqs(pageId: number, generation: number) { return this.engineRead(exec => exportReadsImpl.listForcedCutSeqs(exec, pageId, generation)); }
   readManifestSeqAt(pageId: number, generation: number, byteOffset: number) { return exportReadsImpl.readManifestSeqAt(this, pageId, generation, byteOffset); }
-  readSegmentedVersionBodyBytes(pageId: number, generation: number) { return exportReadsImpl.readSegmentedVersionBodyBytes(this, pageId, generation); }
+  readSegmentedVersionBodyBytes(pageId: number, generation: number) { return this.engineRead(exec => exportReadsImpl.readSegmentedVersionBodyBytes(exec, pageId, generation)); }
   listAccessPolicySourceIds() { return exportReadsImpl.listAccessPolicySourceIds(this); }
   probePageTypes(sets: readonly (readonly string[])[], scope: PageReadScope) { return cliReadsOpsImpl.probePageTypes(this.executeRaw.bind(this), sets, scope); }
   readLongPageSizes(ids: readonly number[], scope: PageReadScope, opts: { includeTimeline: boolean }) { return cliReadsOpsImpl.readLongPageSizes(this.executeRaw.bind(this), ids, scope, opts); }
@@ -2127,6 +2132,7 @@ export class PostgresEngine implements BrainEngine {
   listRetiredDeactivations() { return connectGateImpl.listRetiredDeactivations(unscopedExecutor(this.engineSql, 'connect gate: persistence read ran unscoped through executeRaw')); }
   // Group A (decide store). The reads a doctor check reaches run bounded: they honour a read deadline as the typed preparation reads do (statement-deadline.ts BOUNDED_TYPED_READS).
   private async decideRead<T>(fn: (exec: ReturnType<typeof unscopedExecutor>) => Promise<T>): Promise<T> { throwIfRequestAborted(); return this.preparationRead(exec => fn(unscopedExecutor(exec, 'decide store: master engine.executeRaw, unscoped (it refused an aborted request, GBRA-156)'))); }
+  private async engineRead<T>(fn: (exec: ReturnType<typeof unscopedExecutor>) => Promise<T>): Promise<T> { throwIfRequestAborted(); return this.preparationRead(exec => fn(unscopedExecutor(abortGuarded(exec), 'N3 typed read: master engine.executeRaw, unscoped (it refused an aborted request and kept its deadline)'))); } // master's executeRaw reads: refuse an aborted request (GBRA-156); end at a doctor deadline or preparation clock (BOUNDED_TYPED_READS, TYPED_PREPARATION_READS)
   readDecideState(key: string) { return this.decideRead(exec => decideStoreImpl.readDecideState(exec, key)); }
   upsertDecideState(key: string, value: string) { return decideStoreImpl.upsertDecideState(this, key, value); }
   deleteDecideState(key: string) { return decideStoreImpl.deleteDecideState(this, key); }
@@ -2171,7 +2177,7 @@ export class PostgresEngine implements BrainEngine {
   releasePurgeRedactionsForField(row: beliefPurgeImpl.PurgeRedactionRelease) { return beliefPurgeImpl.releasePurgeRedactionsForField(this.engineSql, row); }
   replayPagePurges(row: beliefPurgeImpl.ReplayPagePurges) { return beliefPurgeImpl.replayPagePurges(this.engineSql, row); }
   readPurgeReplaySchema(stores: readonly string[]) { return beliefPurgeImpl.readPurgeReplaySchema(unscopedExecutor(this.engineSql, 'belief: the purge replay ran these probes through executeRaw unscoped'), stores); }
-  async listCoveredSources(subjectKey: string) { return beliefImpl.listCoveredSources(this, subjectKey); }
+  async listCoveredSources(subjectKey: string) { return this.engineRead(exec => beliefImpl.listCoveredSources(exec, subjectKey)); }
   isFolderRestricted(sourceId: string, slug: string) { return this.preparationRead(exec => accessControlImpl.isFolderRestricted(unscopedExecutor(exec, 'access: folder rule read ran unscoped through executeRaw'), sourceId, slug)); }
   // The member lookup and the folder access read run through this engine's executeRaw, as access/caller.ts did; under a
   // preparer's read deadline they run as the other typed preparation reads do (preparationRead), ending at the deadline.
@@ -2436,7 +2442,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async hasNotifierCoverage(): Promise<boolean> {
-    return notifierImpl.hasNotifierCoverage(this.autocommitSql);
+    return whenNotAborted(() => this.preparationRead(exec => notifierImpl.hasNotifierCoverage(exec)));
   }
 
   async upsertWantedMarker(marker: notifierImpl.WantedMarkerInput): Promise<notifierImpl.WantedMarker | null> {
@@ -2522,11 +2528,11 @@ export class PostgresEngine implements BrainEngine {
   writerReleaseStore(): Promise<WriterReleaseStore> { return writerReleaseImpl.writerReleaseStore(this); }
   publicationJournalStore() { return publicationJournalImpl.publicationJournalStore(this); }
   addPersistenceCounters(key: string, delta: Partial<Record<CounterColumn, number>>): Promise<void> { return writerReleaseImpl.addPersistenceCounters(this, key, delta); }
-  hasExtractedEvents(sourceId: string, pageId: number) { return writeMiscImpl.hasExtractedEvents(this.writeMiscReads, sourceId, pageId); }
-  listActiveAccessMembers() { return writeMiscImpl.listActiveAccessMembers(this.writeMiscReads); }
-  hasLabelledOnlyMember() { return this.engineSqlRead(exec => writeMiscImpl.hasLabelledOnlyMember(unscopedExecutor(exec, 'write misc: page writes ran these unscoped through executeRaw'))); }
-  listAccessTokens() { return accessCredentials.listAccessTokens(this); }
-  readOpCheckpointKeys(op: string, fingerprint: string) { return this.engineSqlRead(exec => writeMiscImpl.readOpCheckpointKeys(unscopedExecutor(exec, 'write misc: page writes ran these unscoped through executeRaw'), op, fingerprint)); }
+  hasExtractedEvents(sourceId: string, pageId: number) { return whenNotAborted(() => writeMiscImpl.hasExtractedEvents(this.writeMiscReads, sourceId, pageId)); }
+  listActiveAccessMembers() { return whenNotAborted(() => writeMiscImpl.listActiveAccessMembers(this.writeMiscReads)); }
+  hasLabelledOnlyMember() { return whenNotAborted(() => this.engineSqlRead(exec => writeMiscImpl.hasLabelledOnlyMember(unscopedExecutor(exec, 'write misc: page writes ran these unscoped through executeRaw')))); }
+  listAccessTokens() { return whenNotAborted(() => accessCredentials.listAccessTokens(this)); }
+  readOpCheckpointKeys(op: string, fingerprint: string) { return whenNotAborted(() => this.engineSqlRead(exec => writeMiscImpl.readOpCheckpointKeys(unscopedExecutor(exec, 'write misc: page writes ran these unscoped through executeRaw'), op, fingerprint))); }
   // Resumable-op checkpoint writes (engine-sql/op-checkpoint.ts) run on executeRawDirect and the purge on executeRaw, as op-checkpoint.ts ran them.
   writeOpCheckpointKeys(op: string, fingerprint: string, keys: string[]) { return opCheckpointImpl.writeOpCheckpointKeys(this, op, fingerprint, keys); }
   appendOpCheckpointPaths(op: string, fingerprint: string, paths: string[]) { return opCheckpointImpl.appendOpCheckpointPaths(this, op, fingerprint, paths); }
@@ -2613,8 +2619,8 @@ export class PostgresEngine implements BrainEngine {
   readVersionAttributions(versions: VersionRef[]) { return writeAttributionImpl.readVersionAttributions(this.attributionReads, versions); }
   readOldestVersionAttribution(pageId: number) { return writeAttributionImpl.readOldestVersionAttribution(this.attributionReads, pageId); }
   readRowAttribution(target: RowAttributionTarget) { return writeAttributionImpl.readRowAttribution(this.attributionReads, target); }
-  readHealthMemoClock() { return writeMiscImpl.readHealthMemoClock(this.writeMiscReads); }
-  listSynopsisSourceIds() { return writeMiscImpl.listSynopsisSourceIds(this.writeMiscReads); }
+  readHealthMemoClock() { return whenNotAborted(() => writeMiscImpl.readHealthMemoClock(this.writeMiscReads)); }
+  listSynopsisSourceIds() { return whenNotAborted(() => writeMiscImpl.listSynopsisSourceIds(this.writeMiscReads)); }
   readSynopsisTierSources(skipFrontmatter: boolean) { return synopsisTierImpl.readSynopsisTierSources(this, skipFrontmatter); }
   setSourceContextualMode(sourceId: string, mode: string | null) { return sourceCrModeImpl.setSourceContextualMode(this, sourceId, mode); }
   hasSynopsisFrontmatterOverride() { return writeMiscImpl.hasSynopsisFrontmatterOverride(this.writeMiscReads); }
@@ -2638,14 +2644,14 @@ export class PostgresEngine implements BrainEngine {
   readLinkedMember(system: string, externalId: string) { return this.ownRawRead(exec => accessMembersImpl.readLinkedMember(exec, system, externalId)); }
   writeCredentialBinding(target: AccessMembersSql.CredentialTarget, binding: AccessMembersSql.CredentialBinding) { return accessMembersImpl.writeCredentialBinding(this.engineSql, target, binding); }
   writeCredentialReadsUnscoped(target: AccessMembersSql.CredentialTarget, readsUnscoped: boolean) { return accessMembersImpl.writeCredentialReadsUnscoped(this.engineSql, target, readsUnscoped); }
-  expireMemoryProposals(reason: string) { return writeMiscImpl.expireMemoryProposals(this.engineSql, reason); }
-  listAwaitingMemoryProposals(limit: number) { return writeMiscImpl.listAwaitingMemoryProposals(this.writeMiscReads, limit); }
-  readMemoryProposal(principalKind: string, principalId: string, requestId: string) { return writeMiscImpl.readMemoryProposal(this.writeMiscReads, principalKind, principalId, requestId); }
-  purgeMemoryProposals(retentionDays: number) { return writeMiscImpl.purgeMemoryProposals(this.engineSql, retentionDays); }
-  readPendingProposalSummary() { return writeMiscImpl.readPendingProposalSummary(this.writeMiscReads); }
-  listMemoryProposalRows(query: writeMiscImpl.ProposalListQuery) { return writeMiscImpl.listMemoryProposalRows(this.writeMiscReads, query); }
-  listOwnerProposalRows(requestId: string) { return writeMiscImpl.listOwnerProposalRows(this.writeMiscReads, requestId); }
-  attachSourcePath(sourceId: string, localPath: string, opts?: writeMiscImpl.AttachSourcePathOptions) { return writeMiscImpl.attachSourcePath(this.engineSql, sourceId, localPath, opts); }
+  expireMemoryProposals(reason: string) { return whenNotAborted(() => writeMiscImpl.expireMemoryProposals(this.engineSql, reason)); }
+  listAwaitingMemoryProposals(limit: number) { return whenNotAborted(() => writeMiscImpl.listAwaitingMemoryProposals(this.writeMiscReads, limit)); }
+  readMemoryProposal(principalKind: string, principalId: string, requestId: string) { return whenNotAborted(() => writeMiscImpl.readMemoryProposal(this.writeMiscReads, principalKind, principalId, requestId)); }
+  purgeMemoryProposals(retentionDays: number) { return whenNotAborted(() => writeMiscImpl.purgeMemoryProposals(this.engineSql, retentionDays)); }
+  readPendingProposalSummary() { return whenNotAborted(() => writeMiscImpl.readPendingProposalSummary(this.writeMiscReads)); }
+  listMemoryProposalRows(query: writeMiscImpl.ProposalListQuery) { return whenNotAborted(() => writeMiscImpl.listMemoryProposalRows(this.writeMiscReads, query)); }
+  listOwnerProposalRows(requestId: string) { return whenNotAborted(() => writeMiscImpl.listOwnerProposalRows(this.writeMiscReads, requestId)); }
+  attachSourcePath(sourceId: string, localPath: string, opts?: writeMiscImpl.AttachSourcePathOptions) { return whenNotAborted(() => writeMiscImpl.attachSourcePath(this.engineSql, sourceId, localPath, opts)); }
   listLinkPageMetadata(sourceId?: string) { return cliReadsImpl.listLinkPageMetadata(this.cliReads, sourceId); }
   listLinkPageMetadataForSlugs(sourceId: string, slugs: readonly string[]) { return cliReadsImpl.listLinkPageMetadataForSlugs(this.cliReads, sourceId, slugs); }
   listAttendedOriginSlugs(sourceId: string, slugs?: readonly string[]) { return cliReadsImpl.listAttendedOriginSlugs(this.cliReads, sourceId, slugs); }
@@ -3270,15 +3276,16 @@ export class PostgresEngine implements BrainEngine {
   listContextualModeCandidates(sourceIds: string[]) { return chunkReadsImpl.listContextualModeCandidates(this.chunkRead, sourceIds); }
   async resolveFrozenHits(hits: FrozenHitKey[], scope: PageReadScope) { return chunkReadsImpl.resolveFrozenHits(this.chunkRead, hits, scope, await chunkManifestReads(this)); }
   private get timelineRead() { return unscopedExecutor(this.engineSql, 'timeline reads: master engine.executeRaw, unscoped'); }
-  sampleEffectiveDates() { return timelineReadsImpl.sampleEffectiveDates(this.timelineRead); }
-  sampleEffectiveDateSources() { return timelineReadsImpl.sampleEffectiveDateSources(this.timelineRead); }
-  readMaxTimelineEntryId() { return timelineReadsImpl.readMaxTimelineEntryId(this.timelineRead); }
-  listStoredTimelineRowsOrdered(pageId: number) { return this.preparationRead(exec => timelineReadsImpl.listStoredTimelineRowsOrdered(unscopedExecutor(exec, 'timeline reads: master engine.executeRaw, unscoped'), pageId)); }
-  deleteTimelineRows(pageId: number, deletions: readonly TimelineRowDeletion[]) { return timelineReadsImpl.deleteTimelineRows(this.autocommitSql, pageId, deletions); }
-  storedTimelineRowsByPageIds(pageIds: readonly number[]) { return timelineReadsImpl.storedTimelineRowsByPageIds(this.timelineRead, pageIds); }
-  countSegmentedTimelinePages(sourceIds: readonly string[], limit: number) { return timelineReadsImpl.countSegmentedTimelinePages(this.timelineRead, sourceIds, limit); }
-  countTimelineCommentMarkupRows(sourceIds: readonly string[]) { return timelineReadsImpl.countTimelineCommentMarkupRows(this.timelineRead, sourceIds); }
-  listTimelineOrphanPages(opts: { afterId: number; limit: number; sourceId?: string }) { return timelineReadsImpl.listTimelineOrphanPages(this.timelineRead, opts); }
+  private timelineBoundedRead<T>(fn: (exec: ReturnType<typeof unscopedExecutor>) => Promise<T>) { return whenNotAborted(() => this.preparationRead(exec => fn(unscopedExecutor(exec, 'timeline reads: master engine.executeRaw, unscoped')))); }
+  sampleEffectiveDates() { return whenNotAborted(() => timelineReadsImpl.sampleEffectiveDates(this.timelineRead)); }
+  sampleEffectiveDateSources() { return whenNotAborted(() => timelineReadsImpl.sampleEffectiveDateSources(this.timelineRead)); }
+  readMaxTimelineEntryId() { return this.timelineBoundedRead(exec => timelineReadsImpl.readMaxTimelineEntryId(exec)); }
+  listStoredTimelineRowsOrdered(pageId: number) { return whenNotAborted(() => this.preparationRead(exec => timelineReadsImpl.listStoredTimelineRowsOrdered(unscopedExecutor(exec, 'timeline reads: master engine.executeRaw, unscoped'), pageId))); }
+  deleteTimelineRows(pageId: number, deletions: readonly TimelineRowDeletion[]) { return whenNotAborted(() => timelineReadsImpl.deleteTimelineRows(this.autocommitSql, pageId, deletions)); }
+  storedTimelineRowsByPageIds(pageIds: readonly number[]) { return this.timelineBoundedRead(exec => timelineReadsImpl.storedTimelineRowsByPageIds(exec, pageIds)); }
+  countSegmentedTimelinePages(sourceIds: readonly string[], limit: number) { return this.timelineBoundedRead(exec => timelineReadsImpl.countSegmentedTimelinePages(exec, sourceIds, limit)); }
+  countTimelineCommentMarkupRows(sourceIds: readonly string[]) { return whenNotAborted(() => timelineReadsImpl.countTimelineCommentMarkupRows(this.timelineRead, sourceIds)); }
+  listTimelineOrphanPages(opts: { afterId: number; limit: number; sourceId?: string }) { return whenNotAborted(() => timelineReadsImpl.listTimelineOrphanPages(this.timelineRead, opts)); }
   listTimelineHistoryPages(sourceIds: readonly string[], q: timelineRepairImpl.TimelineHistoryQuery) { return timelineRepairImpl.listTimelineHistoryPages(this.timelineRead, sourceIds, q); }
   listTimelineVersionWitnesses(sourceId: string, slug: string) { return timelineRepairImpl.listTimelineVersionWitnesses(this.timelineRead, sourceId, slug); }
   readTimelineVersionBody(pageId: number, versionId: number) { return timelineRepairImpl.readTimelineVersionBody(this.timelineRead, pageId, versionId); }
@@ -3305,10 +3312,10 @@ export class PostgresEngine implements BrainEngine {
   readFieldUsageSamples(query: fieldUsageImpl.FieldUsageQuery) { return fieldUsageImpl.readFieldUsageSamples(unscopedExecutor(this.engineSql, 'field usage samples: master engine.executeRaw, unscoped'), query); }
   private get aliasFanoutRead() { return unscopedExecutor(this.engineSql, 'alias fan-out reads: master engine.executeRaw, unscoped'); }
   findPagesByTitles(titleNorms: readonly string[], sourceIds: readonly string[], types: readonly string[], opts?: { excludePrivate?: boolean }) { return aliasFanoutReadsImpl.findPagesByTitles(this.aliasFanoutRead, titleNorms, sourceIds, types, opts); }
-  resolveCaseSensitiveAliases(aliasNorms: readonly string[], sourceIds: readonly string[]) { return aliasFanoutReadsImpl.resolveCaseSensitiveAliases(this.aliasFanoutRead, aliasNorms, sourceIds); }
-  readPageTitle(sourceId: string, slug: string) { return aliasFanoutReadsImpl.readPageTitle(this.aliasFanoutRead, sourceId, slug); }
-  readPageAliasRows(sourceIds: readonly string[], slugs: readonly string[]) { return aliasFanoutReadsImpl.readPageAliasRows(this.aliasFanoutRead, sourceIds, slugs); }
-  readEntityAliasRows(sourceId: string, slugs: readonly string[]) { return aliasFanoutReadsImpl.readEntityAliasRows(this.aliasFanoutRead, sourceId, slugs); }
+  resolveCaseSensitiveAliases(aliasNorms: readonly string[], sourceIds: readonly string[]) { return this.engineRead(exec => aliasFanoutReadsImpl.resolveCaseSensitiveAliases(exec, aliasNorms, sourceIds)); }
+  readPageTitle(sourceId: string, slug: string) { return this.engineRead(exec => aliasFanoutReadsImpl.readPageTitle(exec, sourceId, slug)); }
+  readPageAliasRows(sourceIds: readonly string[], slugs: readonly string[]) { return this.engineRead(exec => aliasFanoutReadsImpl.readPageAliasRows(exec, sourceIds, slugs)); }
+  readEntityAliasRows(sourceId: string, slugs: readonly string[]) { return this.engineRead(exec => aliasFanoutReadsImpl.readEntityAliasRows(exec, sourceId, slugs)); }
   listSlugAliases(sourceId: string) { return aliasFanoutReadsImpl.listSlugAliases(this.aliasFanoutRead, sourceId); }
 
   // v0.41.18.0: lazy-cached resolveBulkRetryOpts result. Constructor-time
@@ -3713,7 +3720,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async pruneFrontmatterTags(slug: string, keep: readonly string[], opts?: { sourceId?: string }): Promise<void> {
-    return tagsImpl.pruneFrontmatterTags(this.autocommitSql, slug, keep, opts);
+    return tagsImpl.pruneFrontmatterTags(refuseAborted(this.autocommitSql), slug, keep, opts);
   }
 
   async addPageTagsById(pageId: number, tags: readonly string[], opts?: { tagSource?: 'frontmatter' }): Promise<void> {
@@ -4796,6 +4803,7 @@ export class PostgresEngine implements BrainEngine {
 
   /** A config read: retried on a pooler drop (#1603), or under a preparer's read deadline its bounded read-only transaction (`preparationRead`). */
   private configRead<T>(run: (sql: ReturnType<typeof postgres>) => Promise<T>): Promise<T> {
+    throwIfRequestAborted(); // a cancelled request starts no config read, as executeRaw refused it (R2)
     const deadlineAt = this._pageTransaction ? undefined : readDeadline();
     if (deadlineAt === undefined) return this.connRetry(() => run(this.sql));
     return runDeadlineRead(this.sql, deadlineAt, run, this.checkoutGauge, cancelSettleMs(), readDeadlineSignal());
@@ -5173,15 +5181,15 @@ export class PostgresEngine implements BrainEngine {
   async getJobAttachment(jobId: number, filename: string) { return jobsQueue.getJobAttachment(this, jobId, filename); }
   async deleteJobAttachment(jobId: number, filename: string) { return jobsQueue.deleteJobAttachment(this, jobId, filename); }
   // Queue health reads (lane 5 group A; engine-sql/jobs-health.ts).
-  async readQueueHealthSignals(spec: QueueHealthSpec) { return jobsHealth.readQueueHealthSignals(this, spec); }
-  async listWaitingByQueue() { return jobsHealth.listWaitingByQueue(this); }
-  async readQueueDivergence(spec: QueueDivergenceSpec) { return jobsHealth.readQueueDivergence(this, spec); }
-  async listQueueWedgeCounts() { return jobsHealth.listQueueWedgeCounts(this); }
-  async listPrivateQueueHealth() { return jobsHealth.listPrivateQueueHealth(this); }
-  async readWedgeSignals(queue: string, handlerNames: readonly string[], opts?: { signal?: AbortSignal }) { return jobsHealth.readWedgeSignals(this, queue, handlerNames, opts); }
-  async readOldestWaitingAge(queue: string, opts?: { signal?: AbortSignal }) { return jobsHealth.readOldestWaitingAge(this, queue, opts); }
+  async readQueueHealthSignals(spec: QueueHealthSpec) { return this.engineRead(exec => jobsHealth.readQueueHealthSignals(exec, spec)); }
+  async listWaitingByQueue() { return this.engineRead(exec => jobsHealth.listWaitingByQueue(exec)); }
+  async readQueueDivergence(spec: QueueDivergenceSpec) { return this.engineRead(exec => jobsHealth.readQueueDivergence(exec, spec)); }
+  async listQueueWedgeCounts() { return this.engineRead(exec => jobsHealth.listQueueWedgeCounts(exec)); }
+  async listPrivateQueueHealth() { return this.engineRead(exec => jobsHealth.listPrivateQueueHealth(exec)); }
+  async readWedgeSignals(queue: string, handlerNames: readonly string[], opts?: { signal?: AbortSignal }) { return this.engineRead(exec => jobsHealth.readWedgeSignals(exec, queue, handlerNames, opts)); }
+  async readOldestWaitingAge(queue: string, opts?: { signal?: AbortSignal }) { return this.engineRead(exec => jobsHealth.readOldestWaitingAge(exec, queue, opts)); }
   async countWaitingJobs(excludeFactsAbsorb: boolean) { return jobsHealth.countWaitingJobs(this, excludeFactsAbsorb); }
-  async listStuckActiveJobsByName() { return jobsHealth.listStuckActiveJobsByName(this); }
+  async listStuckActiveJobsByName() { return this.engineRead(exec => jobsHealth.listStuckActiveJobsByName(exec)); }
   // Engine migration source reads (engine-sql/engine-migration.ts).
   async readEngineMigrationHistory() { return engineMigration.readEngineMigrationHistory(this); }
   async readMigrationRows(table: engineMigration.MigrationTable) { return engineMigration.readMigrationRows(this, table); }
@@ -5479,10 +5487,10 @@ export class PostgresEngine implements BrainEngine {
   readFactWithdrawnRow(spec: trustWithdrawalsImpl.FactWithdrawnSpec) { return trustWithdrawalsImpl.readFactWithdrawnRow(unscopedExecutor(this.engineSql, 'trust: the withdrawal and purge ledger read ran through executeRaw unscoped'), spec); }
   readFactWithdrawnBacking(spec: trustWithdrawalsImpl.FactWithdrawnSpec) { return trustWithdrawalsImpl.readFactWithdrawnBacking(unscopedExecutor(this.engineSql, 'trust: the withdrawal and purge ledger read ran through executeRaw unscoped'), spec); }
   // Open loops (engine-sql/open-loops.ts), through the raw path as before.
-  upsertOpenLoop(loop: OpenLoopUpsertInput) { return openLoopsImpl.upsertOpenLoop(this.engineSql, loop); }
-  closeOpenLoop(sourceId: string | null, id: number, status: Exclude<OpenLoopStatus, 'open'>, closedBy: string) { return openLoopsImpl.closeOpenLoop(this.engineSql, sourceId, id, status, closedBy); }
-  listOpenLoops(opts?: OpenLoopListOpts) { return openLoopsImpl.listOpenLoops(unscopedExecutor(this.engineSql, 'open loops: the list read ran through executeRaw unscoped'), opts); }
-  readEntityOpenLoops(slug: string, sourceId: string, limit: number) { return openLoopsImpl.readEntityOpenLoops(unscopedExecutor(this.engineSql, 'open loops: the entity card read ran through executeRaw unscoped'), slug, sourceId, limit); }
+  upsertOpenLoop(loop: OpenLoopUpsertInput) { return whenNotAborted(() => openLoopsImpl.upsertOpenLoop(this.engineSql, loop)); }
+  closeOpenLoop(sourceId: string | null, id: number, status: Exclude<OpenLoopStatus, 'open'>, closedBy: string) { return whenNotAborted(() => openLoopsImpl.closeOpenLoop(this.engineSql, sourceId, id, status, closedBy)); }
+  listOpenLoops(opts?: OpenLoopListOpts) { return whenNotAborted(() => openLoopsImpl.listOpenLoops(unscopedExecutor(this.engineSql, 'open loops: the list read ran through executeRaw unscoped'), opts)); }
+  readEntityOpenLoops(slug: string, sourceId: string, limit: number) { return whenNotAborted(() => openLoopsImpl.readEntityOpenLoops(unscopedExecutor(this.engineSql, 'open loops: the entity card read ran through executeRaw unscoped'), slug, sourceId, limit)); }
   // Loop mutes (engine-sql/loop-mutes.ts), through the raw path as before.
   addLoopSuppression(sourceId: string, kind: loopMutesImpl.SuppressionKind, value: string) { return loopMutesImpl.addLoopSuppression(this.engineSql, sourceId, kind, value); }
   removeLoopSuppression(sourceId: string, kind: loopMutesImpl.SuppressionKind, value: string) { return loopMutesImpl.removeLoopSuppression(this.engineSql, sourceId, kind, value); }
