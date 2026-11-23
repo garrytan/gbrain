@@ -57,7 +57,8 @@ fn insert(name: &str, data: Value) -> Value {
 
 fn add(b: &Brain, name: &str, data: Value) -> i64 {
     let spec: AdmitSpec =
-        serde_json::from_value(json!({ "insert": insert(name, data), "maxSpawnDepth": 5 })).unwrap();
+        serde_json::from_value(json!({ "insert": insert(name, data), "maxSpawnDepth": 5 }))
+            .unwrap();
     b.admit_job(&spec).unwrap().row["id"].as_i64().unwrap()
 }
 
@@ -101,14 +102,24 @@ fn filtered_job_reads_do_not_retain_unrelated_rows() {
     for n in 0..UNRELATED {
         let token = format!("w:{n}");
         let id = add(&b, "work", blob.clone());
-        let row = b.claim_next_job(&claim_spec(&token, "work")).unwrap().unwrap();
+        let row = b
+            .claim_next_job(&claim_spec(&token, "work"))
+            .unwrap()
+            .unwrap();
         assert_eq!(row["id"].as_i64(), Some(id));
-        b.fail_job(id, &token, "boom", "dead", None, None).unwrap().unwrap();
+        b.fail_job(id, &token, "boom", "dead", None, None)
+            .unwrap()
+            .unwrap();
     }
     let cycle = add(&b, "autopilot-cycle", json!({ "source_id": "a" }));
-    let row = b.claim_next_job(&claim_spec("c:1", "autopilot-cycle")).unwrap().unwrap();
+    let row = b
+        .claim_next_job(&claim_spec("c:1", "autopilot-cycle"))
+        .unwrap()
+        .unwrap();
     assert_eq!(row["id"].as_i64(), Some(cycle));
-    b.fail_job(cycle, "c:1", "boom", "dead", None, None).unwrap().unwrap();
+    b.fail_job(cycle, "c:1", "boom", "dead", None, None)
+        .unwrap()
+        .unwrap();
     let (failures, added) = peak_added(|| {
         b.list_recent_source_cycle_failures("2000-01-01T00:00:00.000Z", None)
             .unwrap()
