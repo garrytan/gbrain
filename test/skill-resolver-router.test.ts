@@ -308,6 +308,16 @@ describe('a compat: model on an OpenAI-compatible endpoint', () => {
     expect(spend).toBeCloseTo(r.output.router!.est_usd, 6);
   });
 
+  test('the reservation counts router_extra_body as billable input', async () => {
+    const spent = async (extra: Record<string, unknown>) => {
+      const h = await home(compat({ router_base_url: `http://127.0.0.1:${server.port}/nousage/v1`, router_usd_per_mtok: [1, 2], ...extra }));
+      await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: h, catalogs: ['c'], router: true, env });
+      return (await readRouterSpend(h)).charged_usd;
+    };
+    const body = { chat_template_kwargs: { note: 'x'.repeat(3000) } };
+    expect(await spent({ router_extra_body: body }) - await spent({})).toBeCloseTo(Buffer.byteLength(JSON.stringify(body)) / 1e6, 6);
+  });
+
   test('partial or non-finite token counts keep the whole reservation, and the ledger stays a number', async () => {
     for (const route of ['partial', 'huge']) {
       const h = await home(compat({ router_base_url: `http://127.0.0.1:${server.port}/${route}/v1`, router_usd_per_mtok: [1, 2] }));
@@ -336,12 +346,13 @@ describe('a compat: model on an OpenAI-compatible endpoint', () => {
     expect(seen[0]!.body.messages.map((m: any) => m.role)).toEqual(['system', 'user']);
   });
 
-  test('router_extra_body refuses owned fields, non-objects, oversized bodies and non-compat models', () => {
+  test('router_extra_body takes only sampling and reasoning controls, and refuses non-objects, oversized bodies and non-compat models', () => {
     const c = { router: true, router_model: 'compat:acme/picker-1', router_base_url: 'https://models.example.com/v1' };
-    for (const k of ['model', 'messages', 'stream', 'n', 'max_tokens', 'max_completion_tokens']) {
+    for (const k of ['model', 'messages', 'stream', 'n', 'max_tokens', 'max_completion_tokens', 'n_predict', 'max_new_tokens', 'min_tokens', 'best_of', 'ignore_eos', 'tools', 'tool_choice', 'response_format', 'logit_bias', 'stop']) {
       expect(routerSettings({ ...c, router_extra_body: { [k]: 1 } }).invalid).toStartWith('skills.resolver.router_extra_body must be');
     }
-    for (const v of [[], 'reasoning_effort=none', null, 3, { pad: 'x'.repeat(4096) }]) expect(routerSettings({ ...c, router_extra_body: v }).invalid).toStartWith('skills.resolver.router_extra_body must be');
+    expect(routerSettings({ ...c, router_extra_body: { temperature: 0, top_p: 1, top_k: 20, min_p: 0, seed: 1, presence_penalty: 0, frequency_penalty: 0, repetition_penalty: 1, reasoning_effort: 'low', thinking: { type: 'disabled' }, chat_template_kwargs: { enable_thinking: false } } }).invalid).toBeNull();
+    for (const v of [[], 'reasoning_effort=none', null, 3, { chat_template_kwargs: { pad: 'x'.repeat(4096) } }]) expect(routerSettings({ ...c, router_extra_body: v }).invalid).toStartWith('skills.resolver.router_extra_body must be');
     expect(routerSettings({ ...c, router_extra_body: { reasoning_effort: 'none' } })).toMatchObject({ invalid: null, extraBody: { reasoning_effort: 'none' } });
     expect(routerSettings({ router: true, router_model: 'anthropic:claude-haiku-5-5', router_extra_body: { top_p: 1 } }).invalid).toStartWith('skills.resolver.router_extra_body applies only');
     expect(routerSettings({ router: true, router_extra_body: { top_p: 1 } }).invalid).toStartWith('skills.resolver.router_extra_body applies only');

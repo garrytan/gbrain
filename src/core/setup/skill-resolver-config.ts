@@ -173,10 +173,12 @@ export function runSkillResolverConfigKey(args: string[], home: string): boolean
   const skills = (doc.skills && typeof doc.skills === 'object' && !Array.isArray(doc.skills) ? doc.skills : {}) as Record<string, unknown>;
   if (Object.keys(section).length) skills.resolver = section; else delete skills.resolver;
   if (Object.keys(skills).length) doc.skills = skills; else delete doc.skills;
+  const text = `${JSON.stringify(doc, null, 2)}\n`;
+  if (Buffer.byteLength(text) > CONFIG_CAP_BYTES) return fail(`${key}: the config file would be over 1 MB, which gbrain cannot read back. Nothing was written.`);
   if (Object.keys(doc).length === 0) unlinkSync(read.path);
-  else atomicWriteTextFile(read.path, `${JSON.stringify(doc, null, 2)}\n`, { freshMode: 0o600 });
+  else atomicWriteTextFile(read.path, text, { freshMode: 0o600 });
   console.log(action === 'set' ? `Set ${key} = ${JSON.stringify(holder[field])} (file plane: ${read.path})` : `Unset ${key} (file plane)`);
   const invalid = !nested && leaf.startsWith('router') ? routerSettings(section).invalid : null;
-  if (invalid) console.error(`[config] warning: ${invalid} The picker stays off and reports config_invalid until this is fixed.`);
+  if (invalid) console.error(`[config] warning: ${invalid} Until this is fixed the picker does not run, and turns with router on report config_invalid.`);
   return true;
 }

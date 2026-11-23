@@ -159,7 +159,7 @@ async function callPicker(home: string, message: string, skills: readonly Picker
   if (s.maxUsdPerDay <= 0) return { ok: false, code: 'daily_cap', model, usd: 0, detail: 'router_max_usd_per_day is 0' };
   const system = pickerPrompt(skills);
   const maxTokens = pickerReasons(model) ? PICKER_REASONING_OUTPUT_TOKENS : PICKER_MAX_OUTPUT_TOKENS;
-  const estimate = round6(((Buffer.byteLength(system) + Buffer.byteLength(message) + PICKER_OVERHEAD_TOKENS) * Math.max(price.input, readRate, writeRate) + maxTokens * price.output) / 1e6);
+  const estimate = round6(((Buffer.byteLength(system) + Buffer.byteLength(message) + (compat && s.extraBody ? Buffer.byteLength(JSON.stringify(s.extraBody)) : 0) + PICKER_OVERHEAD_TOKENS) * Math.max(price.input, readRate, writeRate) + maxTokens * price.output) / 1e6);
   if (signal.aborted) return { ok: false, code: 'timeout', model, usd: 0 };
   const reserved = await withLedger<{ ok: boolean; spent: number; day: string }>(home, stored => {
     const day = ledgerDay(stored.day, now());

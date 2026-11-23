@@ -94,7 +94,8 @@ const ROUTER_MODEL_RE = /^(?:(?:anthropic|openai|google):[A-Za-z0-9][\w.\-]{0,12
 const ROUTER_KEY_ENV_RE = /^[A-Z_][A-Z0-9_]{0,63}$/;
 export const ROUTER_USD_PER_MTOK_MAX = 1000;
 export const ROUTER_EXTRA_BODY_MAX_BYTES = 4096;
-const ROUTER_EXTRA_BODY_OWNED = ['model', 'messages', 'stream', 'n', 'max_tokens', 'max_completion_tokens'];
+/** The only fields router_extra_body may set: sampling and reasoning controls, none of which adds billable input or lifts the output cap the daily-cap reservation counts on. */
+const ROUTER_EXTRA_BODY_FIELDS = ['temperature', 'top_p', 'top_k', 'min_p', 'seed', 'presence_penalty', 'frequency_penalty', 'repetition_penalty', 'reasoning_effort', 'thinking', 'chat_template_kwargs'];
 
 /** The picker's settings; `invalid` names the first bad key (the picker then stays off and reports config_invalid). */
 export interface RouterSettings { on: boolean; model: string | null; timeoutMs: number | null; maxUsdPerDay: number; baseUrl: string | null; keyEnv: string | null; usdPerMtok: RouterUsdPerMtok | null; extraBody: Record<string, unknown> | null; promptVersion: number | null; invalid: string | null }
@@ -126,9 +127,9 @@ export function validateRouterUsdPerMtok(v: unknown, key: string): RouterUsdPerM
 }
 
 export function validateRouterExtraBody(v: unknown, key: string): Record<string, unknown> {
-  const owned = v && typeof v === 'object' && !Array.isArray(v) ? ROUTER_EXTRA_BODY_OWNED.filter(k => Object.hasOwn(v, k)) : [];
-  if (v && typeof v === 'object' && !Array.isArray(v) && !owned.length && Buffer.byteLength(JSON.stringify(v)) <= ROUTER_EXTRA_BODY_MAX_BYTES) return v as Record<string, unknown>;
-  throw configInvalid(key, `must be a JSON object of at most ${ROUTER_EXTRA_BODY_MAX_BYTES} bytes, like {"reasoning_effort": "none"}, without ${ROUTER_EXTRA_BODY_OWNED.join(', ')} (the picker sets those)${owned.length ? `; remove ${owned.join(', ')}` : ''}`);
+  const other = v && typeof v === 'object' && !Array.isArray(v) ? Object.keys(v).filter(k => !ROUTER_EXTRA_BODY_FIELDS.includes(k)) : [];
+  if (v && typeof v === 'object' && !Array.isArray(v) && !other.length && Buffer.byteLength(JSON.stringify(v)) <= ROUTER_EXTRA_BODY_MAX_BYTES) return v as Record<string, unknown>;
+  throw configInvalid(key, `must be a JSON object of at most ${ROUTER_EXTRA_BODY_MAX_BYTES} bytes, like {"reasoning_effort": "none"}, with only ${ROUTER_EXTRA_BODY_FIELDS.join(', ')}${other.length ? `; remove ${other.join(', ')}` : ''}`);
 }
 
 export function validateRouterPromptVersion(v: unknown, key: string): number {
