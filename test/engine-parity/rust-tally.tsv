@@ -31,7 +31,7 @@ test/engine-parity/cli-reads-import.test.ts	19	1
 test/engine-parity/cli-reads-ops.test.ts	22	0
 test/engine-parity/code-eval-salience.test.ts	13	0
 test/engine-parity/collate-aggregated-lists.test.ts	3	3
-test/engine-parity/collate-belief-cycle-walks.test.ts	2	4
+test/engine-parity/collate-belief-cycle-walks.test.ts	6	0
 test/engine-parity/collate-command-listings.test.ts	0	8
 test/engine-parity/collate-core-page-lists.test.ts	5	11
 test/engine-parity/collate-doctor-access.test.ts	11	0
@@ -54,6 +54,7 @@ test/engine-parity/connect-gate.test.ts	7	0
 test/engine-parity/core-page-member-reads.test.ts	1	0
 test/engine-parity/credential-grant-writes.test.ts	6	0
 test/engine-parity/cycle-locks.test.ts	11	0
+test/engine-parity/cycle-reads.test.ts	6	0
 test/engine-parity/decide-proposals.test.ts	8	0
 test/engine-parity/decide-store.test.ts	36	0
 test/engine-parity/delegated-grant.test.ts	2	0
@@ -121,13 +122,13 @@ test/engine-parity/files-ops-sites.test.ts	8	0
 test/engine-parity/first-due.test.ts	1	0
 test/engine-parity/floor-folder-rule.test.ts	1	0
 test/engine-parity/forget-commit.test.ts	3	0
-test/engine-parity/forget-fence-path.test.ts	2	1
+test/engine-parity/forget-fence-path.test.ts	3	0
 test/engine-parity/forget-members.test.ts	3	0
 test/engine-parity/forget-reach-reads.test.ts	4	1
 test/engine-parity/forget-rebuild.test.ts	1	0
 test/engine-parity/forget-remember.test.ts	2	0
 test/engine-parity/forget-whole-cli.test.ts	2	0
-test/engine-parity/forget-whole.test.ts	4	1
+test/engine-parity/forget-whole.test.ts	5	0
 test/engine-parity/generation-output-parity.test.ts	15	0
 test/engine-parity/generation-page-rows-order.test.ts	1	0
 test/engine-parity/generation-write-parity.test.ts	1	2
@@ -291,7 +292,7 @@ test/engine-parity/take-vector-search.test.ts	3	0
 test/engine-parity/takes.test.ts	32	0
 test/engine-parity/telemetry.test.ts	10	0
 test/engine-parity/think-gather-takes.test.ts	1	0
-test/engine-parity/tie-break-stale-orphan-edge-downgrade.test.ts	1	3
+test/engine-parity/tie-break-stale-orphan-edge-downgrade.test.ts	4	0
 test/engine-parity/tie-purge-files-links-facts.test.ts	0	5
 test/engine-parity/timeline-add.test.ts	6	0
 test/engine-parity/timeline-held-rows.test.ts	2	0

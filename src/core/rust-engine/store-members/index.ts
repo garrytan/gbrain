@@ -165,6 +165,8 @@ import * as doctorSources from './doctor-sources.ts';
 import * as sweepReads from './sweep-reads.ts';
 import * as cliReadsExport from './cli-reads-export.ts';
 import * as beliefLedger from './belief-ledger.ts';
+import * as cycleReads from './cycle-reads.ts';
+import * as segmentedRewrite from './segmented-rewrite.ts';
 import * as repairBookkeeping from './repair-bookkeeping.ts';
 import * as managedSyncOrphans from './managed-sync-orphans.ts';
 import * as repairPageReads from './repair-page-reads.ts';
@@ -215,7 +217,7 @@ export const STORE_MEMBERS = {
   // Typed reads of stamped trust tiers (rust/docs/store/trust.md, "Tier reads").
   ...trustTierReads,
   // Belief ledger writes and the append's reads (rust/docs/store/trust.md, "The belief ledger").
-  ...beliefLedger,
+  ...beliefLedger, ...cycleReads, ...segmentedRewrite,
   // The reads remember and forget make before admission (rust/docs/store/memory_mutation_reads.md).
   ...memoryMutationReads,
   // The statements a forget's withdrawal commits and the fact_withdrawn refusal reads (rust/docs/store/trust.md).

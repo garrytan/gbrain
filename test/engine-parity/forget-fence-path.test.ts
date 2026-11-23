@@ -13,8 +13,9 @@
  *  - Why existing coverage misses it: test/large-pages/forget-reason-segmented.test.ts and test/e2e/facts-forget.test.ts
  *    open PGLite and Postgres only, and test/engine-parity/forget-whole.test.ts forgets facts that sit on no page.
  *  - Seam: none. The checkout, page, writer and facts come from typed members and the import path; the files live in a
- *    temporary directory. The segmented case still stops on the Rust arm in the segmented body write
- *    (persistence/segmented-apply.ts), which segment-embed changes.
+ *    temporary directory. The segmented case runs on the Rust arm through the typed segmented write members (the page
+ *    read and deleted_at restore of the fence rewrite, the projection's chunk probes and retirement, the retired chunk
+ *    vectors and the typed fence normalization).
  */
 import { afterAll, describe, expect } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';

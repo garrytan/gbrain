@@ -66,6 +66,7 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     crate::raw_files::remove_source_rows(tx, source_id)?;
     crate::page_body::remove_source_rows(tx, source_id)?;
     crate::takes::remove_source_rows(tx, source_id)?;
+    crate::take_proposals::remove_source_rows(tx, source_id)?;
     crate::extraction::remove_source_rows(tx, source_id)?;
     crate::trust::remove_source_rows(tx, source_id)?;
     crate::facts::loops::remove_source_rows(tx, source_id)?;

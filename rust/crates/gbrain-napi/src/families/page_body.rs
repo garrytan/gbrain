@@ -337,4 +337,106 @@ impl Brain {
             s.delete_rewritten_segment_derivations(&spec)
         })
     }
+
+    /// `readSegmentedRewritePage(pageId)`: the page a live fence rewrite reads, or null.
+    #[napi]
+    pub fn read_segmented_rewrite_page<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_segmented_rewrite_page(page_id))
+    }
+
+    /// `restorePageDeletedAt(pageId, deletedAt)`: `deletedAt` as an ISO string.
+    #[napi]
+    pub fn restore_page_deleted_at<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        deleted_at: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.restore_page_deleted_at(page_id, &deleted_at)
+        })
+    }
+
+    /// `readSegmentedProjectionPage(sourceId, slug)`: the live segmented page a projection builds, or null.
+    #[napi]
+    pub fn read_segmented_projection_page<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_segmented_projection_page(&source_id, &slug)
+        })
+    }
+
+    /// `listChunkedOccurrences(pageId, occurrenceIds, generation)`: the occurrences with a chunk row.
+    #[napi]
+    pub fn list_chunked_occurrences<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        occurrence_ids: Vec<i64>,
+        generation: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_chunked_occurrences(page_id, &occurrence_ids, generation)
+        })
+    }
+
+    /// `hasStaleSegmentChunks(pageId, generation, live)`: whether a chunk row is stale.
+    #[napi]
+    pub fn has_stale_segment_chunks<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        generation: i64,
+        live: Vec<i64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.has_stale_segment_chunks(page_id, generation, &live)
+        })
+    }
+
+    /// `retireStaleSegmentChunks(pageId, generation, live, maxRows)`: how many stale rows it deleted.
+    #[napi]
+    pub fn retire_stale_segment_chunks<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        generation: i64,
+        live: Vec<i64>,
+        max_rows: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.retire_stale_segment_chunks(page_id, generation, &live, max_rows)
+        })
+    }
+
+    /// `readSegmentedLivePage(pageId)`: the page a segmented write diffs against, or null.
+    #[napi]
+    pub fn read_segmented_live_page<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_segmented_live_page(page_id))
+    }
+
+    /// `readRetiredChunkVectors(pageId, occurrences)`: the vectors of those occurrences' visible chunks.
+    #[napi]
+    pub fn read_retired_chunk_vectors<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        occurrences: Vec<i64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_retired_chunk_vectors(page_id, &occurrences)
+        })
+    }
 }

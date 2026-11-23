@@ -185,7 +185,7 @@ src/core/backup/quarantine.ts	execute_raw	9
 src/core/backup/snapshot.ts	execute_raw	5
 src/core/belief/backfill.ts	execute_raw	8
 src/core/belief/changes.ts	execute_raw	2
-src/core/belief/coverage-report.ts	execute_raw	10
+src/core/belief/coverage-report.ts	execute_raw	9
 src/core/belief/identity.ts	execute_raw	2
 src/core/belief/ledger.ts	execute_raw	1
 src/core/belief/page-at-time.ts	execute_raw	8
@@ -198,7 +198,6 @@ src/core/bootstrap/harness-skills.ts	execute_raw	1
 src/core/bootstrap/verify.ts	execute_raw	6
 src/core/brainstorm/domain-bank.ts	execute_raw	1
 src/core/budget/daily-ledger.ts	execute_raw	5
-src/core/by-mention.ts	execute_raw	2
 src/core/calibration/domain-aggregators.ts	execute_raw	4
 src/core/calibration/think-ab.ts	execute_raw	2
 src/core/calibration/undo-wave.ts	execute_raw	7
@@ -248,9 +247,8 @@ src/core/cycle/inline-drain.ts	execute_raw	3
 src/core/cycle/pattern-claim-sources.ts	execute_raw	1
 src/core/cycle/patterns-plan.ts	execute_raw	1
 src/core/cycle/patterns.ts	execute_raw	7
-src/core/cycle/propose-takes-failures.ts	execute_raw	5
+src/core/cycle/propose-takes-failures.ts	execute_raw	3
 src/core/cycle/propose-takes.ts	execute_raw	5
-src/core/cycle/source-window.ts	execute_raw	4
 src/core/cycle/transcript-discovery.ts	execute_raw	2
 src/core/cycle/unindexed-files.ts	execute_raw	1
 src/core/db-lock.ts	execute_raw	2
@@ -334,7 +332,6 @@ src/core/guests/stamp-readable.ts	execute_raw	1
 src/core/heal-audit.ts	execute_raw	3
 src/core/identity/speaker-owner.ts	execute_raw	2	GST-3216 PR 2: the speaker-owner trust read joins a page's live revision to its write request, source kind and member bindings in one statement, and the connector stamp reads a source's bound members; both move behind typed reads when the access and journal tables get engine methods
 src/core/imessage/imessage-source.ts	execute_raw	2	#9634, pre-ratchet: reads the source row (incarnation, local_path, config), checks a page slug exists, and stamps sources.last_sync_at/newest_content_at; no typed engine method exists yet
-src/core/import-chunk-reuse.ts	execute_raw	1
 src/core/import-file.ts	execute_raw	1
 src/core/import-identity.ts	execute_raw	1
 src/core/ingestion/applied-captures.ts	execute_raw	5
@@ -395,13 +392,10 @@ src/core/output/writer.ts	execute_raw	1
 src/core/oversized-backfill.ts	execute_raw	6
 src/core/owned-folder/destination.ts	execute_raw	1	GST-3022 owned folders, no typed engine method yet: reads the default source's local_path and config
 src/core/owned-folder/status.ts	execute_raw	1	GST-3022 owned folders, no typed engine method yet: reads the owned-folder sources' rows for pages_in
-src/core/page-body/ingest.ts	execute_raw	1
-src/core/page-body/projection.ts	execute_raw	3
 src/core/page-body/rechunk.ts	execute_raw	7
 src/core/page-body/segment-derive.ts	execute_raw	28
 src/core/page-body/segment-facts.ts	execute_raw	1
-src/core/page-body/segment-ledger.ts	execute_raw	1
-src/core/page-body/segment-rewrite.ts	execute_raw	8
+src/core/page-body/segment-rewrite.ts	execute_raw	6
 src/core/page-body/segmented-embedding.ts	execute_raw	7
 src/core/page-body/splice.ts	execute_raw	1
 src/core/page-embedding-budget.ts	execute_raw	4
@@ -540,7 +534,7 @@ src/core/persistence/refusal-breaker.ts	execute_raw	1
 src/core/persistence/resolve-paths.ts	execute_raw	5
 src/core/persistence/rows-behind.ts	execute_raw	4
 src/core/persistence/searchable.ts	execute_raw	1
-src/core/persistence/segmented-apply.ts	execute_raw	7
+src/core/persistence/segmented-apply.ts	execute_raw	6
 src/core/persistence/skill-activation.ts	execute_raw	11
 src/core/persistence/soak-counters.ts	execute_raw	3
 src/core/persistence/source-lifecycle.ts	execute_raw	33
@@ -632,7 +626,6 @@ src/core/repair/provenance.ts	execute_raw	1
 src/core/repair/purged-page-facts.ts	execute_raw	2
 src/core/repair/readers.ts	execute_raw	3
 src/core/repair/rename-identity.ts	execute_raw	6
-src/core/repair/rotation.ts	execute_raw	2
 src/core/repair/secret-spans.ts	execute_raw	24	secret-spans --apply also redacts retained page_versions (selects and updates compiled_truth/frontmatter per version); no typed engine method for version redaction exists yet
 src/core/repair/segmented-mirror.ts	execute_raw	2
 src/core/repair/segmented-tiling.ts	execute_raw	6
@@ -720,7 +713,7 @@ src/core/sync-anchor.ts	execute_raw	2
 src/core/sync-attempt.ts	execute_raw	1
 src/core/sync-cost-gate.ts	execute_raw	1
 src/core/sync-git.ts	execute_raw	3
-src/core/sync-identity-downgrades.ts	execute_raw	7
+src/core/sync-identity-downgrades.ts	execute_raw	4
 src/core/sync-pending.ts	execute_raw	1
 src/core/sync-policy.ts	execute_raw	1
 src/core/sync-status-report.ts	execute_raw	1

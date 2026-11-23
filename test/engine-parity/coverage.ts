@@ -347,6 +347,9 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'markBeliefCommits', 'readOpenBeliefLifetimes', 'endBeliefLifetime', 'mintBeliefLifetime', 'renameBeliefLifetime', 'readMovedBeliefLifetimes',
     'readLatestBeliefCoverage', 'hasBeliefBaseline', 'listBeliefBaselinePending', 'countBeliefBaselineSlugs', 'readBeliefStateRows',
     'readBeliefFactsById', 'listBeliefDriftCandidates', 'readNewestBeliefEvent'],
+  // cycle, identity-downgrade and stale-mention reads (engine-sql/cycle-reads.ts) and a segmented page's write statements (engine-sql/segmented-rewrite.ts)
+  cycle_reads: ['recordFailureTombstone', 'listFailureTombstones', 'readCycleListingInstant', 'listSourceChangedPagesAfter', 'readSoftDeletedPageAtOrigin', 'listLivePagesAtOrigin', 'countPageCarryRows', 'listStaleMentionPages', 'listStaleMentionLinks', 'listOrphanLifetimes'],
+  segmented_write_reads: ['readSegmentedRewritePage', 'restorePageDeletedAt', 'readSegmentedProjectionPage', 'listChunkedOccurrences', 'hasStaleSegmentChunks', 'retireStaleSegmentChunks', 'readSegmentedLivePage', 'readRetiredChunkVectors'],
   // the belief side of a purge: epoch, ledger probe, purge suppressions, restore replay (engine-sql/belief-purge.ts)
   belief_purge: ['bumpSourcePurgeEpoch', 'hasBeliefEvents', 'registerPurgeRedaction', 'releasePurgeRedactionsForField', 'replayPagePurges',
     'readPurgeReplaySchema'],

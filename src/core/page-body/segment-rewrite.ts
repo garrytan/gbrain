@@ -171,11 +171,7 @@ export interface LiveFenceRewrite {
  * stays deleted. Null when no fence changed (nothing is written).
  */
 export async function rewriteLiveSegmentedFences(tx: BrainEngine, pageId: number, transform: FenceTransform): Promise<LiveFenceRewrite | null> {
-  const [page] = await tx.executeRaw<{ id: number; slug: string; source_id: string; title: string; type: string; page_kind: string; frontmatter: JsonObject | null;
-    body_generation: number | string; body_bytes: number | string; body_flags: JsonObject | null; body_storage: string; deleted_at: string | null; tags: string[];
-    contextual_retrieval_mode: string | null; corpus_generation: string | null }>(`SELECT p.id,p.slug,p.source_id,p.title,
-      p.type,p.page_kind,p.frontmatter,p.body_generation,p.body_bytes,p.body_flags,p.body_storage,p.deleted_at,p.contextual_retrieval_mode,p.corpus_generation,
-      COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id=p.id),'[]'::jsonb) AS tags FROM pages p WHERE p.id=$1`, [pageId]);
+  const page = await tx.readSegmentedRewritePage(pageId);
   if (page?.body_storage !== 'segmented') return null;
   const sourceId = page.source_id, slug = page.slug, frontmatter = page.frontmatter ?? {};
   const generation = Number(page.body_generation);
@@ -191,7 +187,7 @@ export async function rewriteLiveSegmentedFences(tx: BrainEngine, pageId: number
   const { flipRetireMaxRows } = await readPageBodyPolicy(tx);
   const applied = await withPageTierKept(tx, { sourceId, slug }, () => applySegmentedBody(tx, { slug, sourceId, pageId, prepared, promotion: false,
     retireMaxRows: flipRetireMaxRows, meta: { title: page.title, type: page.type as never, frontmatter, page_kind: page.page_kind as never } }));
-  if (page.deleted_at) await tx.executeRaw('UPDATE pages SET deleted_at=$2 WHERE id=$1', [pageId, page.deleted_at]);
+  if (page.deleted_at) await tx.restorePageDeletedAt(pageId, page.deleted_at);
   if (applied.complete) await sealSegmentedPage(tx, pageId);
   const derivations = await deleteRewrittenDerivations(tx, pageId, rows, units);
   return { replaced: replacedShas(rows, units), sealed: applied.complete, derivations };

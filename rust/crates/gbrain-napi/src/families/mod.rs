@@ -80,6 +80,7 @@ mod calibration_profiles;
 mod chunk_queries;
 mod code_edges;
 mod contradictions;
+mod cycle_reads;
 mod decide_store;
 mod derivation_trust;
 mod dream;

@@ -1,0 +1,155 @@
+/**
+ * BrainEngine parity — the cycle, identity-downgrade, stale-mention and segmented-write reads that ran through
+ * `executeRaw` and are typed members now (src/core/engine-sql/cycle-reads.ts and segmented-rewrite.ts).
+ *
+ * Authoring gate (docs/TESTING.md#authoring-gate):
+ *  - Contract: on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1)
+ *    each member answers the same: the propose_takes failure tombstones (recorded once, listed by slug bytes), the cycle's
+ *    changed-page window (live pages after a cursor, by time then slug bytes), the identity-downgrade page reads (the
+ *    latest soft-deleted page of a file, the live pages at a path, what a carry would move), the stale-mention scan's
+ *    pages and links, the belief ledger's orphan lifetimes, and a segmented page's write statements (the rewrite's page
+ *    read and deleted_at restore, the projection page, the chunk probes and retirement, the live page and the retired
+ *    chunk vectors) over an inline page that holds no segmented rows.
+ *  - Regression: each of these was raw SQL, so a Rust brain refused the cycle window, the stale-mention scan, the
+ *    identity-downgrade record, the failure tombstones and the segmented fence rewrite.
+ *  - Why existing coverage misses it: the cases of collate-belief-cycle-walks, tie-break-stale-orphan-edge-downgrade and
+ *    forget-whole reach the members through their callers; none calls one directly or covers its edges (an unknown source,
+ *    a NUL byte, an empty list).
+ *  - Seam: none. Real engines, typed members only.
+ */
+import { describe, expect } from 'bun:test';
+import { parityArms } from './harness.ts';
+import { testBackends } from '../helpers/test-backends.ts';
+import type { BrainEngine } from '../../src/core/engine.ts';
+
+const { parityTest } = parityArms(testBackends());
+
+const note = (title: string, extra: Record<string, unknown> = {}) =>
+  ({ type: 'note', title, compiled_truth: `${title} body`, timeline: '', ...extra }) as never;
+
+/** Pages written in one transaction share one updated_at, so only the slug orders them. */
+async function putTied(engine: BrainEngine, slugs: readonly string[]): Promise<void> {
+  await engine.transaction(async tx => { for (const slug of slugs) await tx.putPage(slug, note(slug)); });
+}
+
+const TOMBSTONE = '(extraction failed: llm_error)';
+const tombstone = (slug: string, claimText = TOMBSTONE) =>
+  ({ sourceId: 'default', slug, contentHash: 'h', promptVersion: 'v1', proposalRunId: 'run', claimText, modelId: 'm' });
+
+describe('engine parity: cycle and sync reads', () => {
+  parityTest('failure tombstones record once and list by slug bytes', { methods: ['recordFailureTombstone', 'listFailureTombstones'] }, async (engine) => {
+    const first = await Promise.all(['ab', 'a0', 'a-z'].map(async slug => engine.recordFailureTombstone(tombstone(slug))));
+    const again = await engine.recordFailureTombstone(tombstone('ab'));
+    const other = await engine.recordFailureTombstone(tombstone('ab', 'a different claim'));
+    const listed = await engine.listFailureTombstones('default', '(extraction failed: ');
+    const answer = { first, again, other, slugs: listed.map(r => r.page_slug), claim: listed[0]?.claim_text, prompt: listed[0]?.prompt_version,
+      stamped: /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(\.\d+)?\+00$/.test(listed[0]?.proposed_at ?? ''),
+      noSource: await engine.listFailureTombstones('no-such-source', '(extraction failed: '), noMatch: await engine.listFailureTombstones('default', 'zzz') };
+    expect(answer).toEqual({ first: [true, true, true], again: false, other: true, slugs: ['a-z', 'a0', 'ab'], claim: TOMBSTONE, prompt: 'v1', stamped: true, noSource: [], noMatch: [] });
+    return answer;
+  });
+
+  parityTest('the changed-page window lists live pages after a cursor by time then slug bytes', {
+    methods: ['putPage', 'transaction', 'softDeletePage', 'readCycleListingInstant', 'listSourceChangedPagesAfter'],
+  }, async (engine) => {
+    await putTied(engine, ['ab', 'a0', 'a-z', 'gone']);
+    await engine.softDeletePage('gone', { sourceId: 'default' });
+    const all = await engine.listSourceChangedPagesAfter('default', null, '', 10);
+    const cursor = all[0]!.updated_at;
+    const after = await engine.listSourceChangedPagesAfter('default', cursor, 'a-z', 10);
+    const instant = await engine.readCycleListingInstant();
+    const answer = { slugs: all.map(r => r.slug), stampsAlike: new Set(all.map(r => r.updated_at)).size, micros: /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/.test(cursor),
+      after: after.map(r => r.slug), limited: (await engine.listSourceChangedPagesAfter('default', null, '', 2)).map(r => r.slug),
+      otherSource: await engine.listSourceChangedPagesAfter('no-such-source', null, '', 10), instant: /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/.test(instant ?? '') };
+    expect(answer).toEqual({ slugs: ['a-z', 'a0', 'ab'], stampsAlike: 1, micros: true, after: ['a0', 'ab'], limited: ['a-z', 'a0'], otherSource: [], instant: true });
+    return answer;
+  });
+
+  parityTest('the identity-downgrade reads name the old file\'s latest soft-deleted page, the live pages at a path and a carry\'s rows', {
+    methods: ['putPage', 'transaction', 'softDeletePage', 'addLink', 'readSoftDeletedPageAtOrigin', 'listLivePagesAtOrigin', 'countPageCarryRows'],
+  }, async (engine) => {
+    const ids: Record<string, number> = {};
+    await engine.transaction(async tx => {
+      for (const slug of ['notes/m', 'notes/c']) {
+        ids[slug] = (await tx.putPage(slug, note(slug, { source_path: 'notes/old.md' }))).id;
+        await tx.softDeletePage(slug, { sourceId: 'default' });
+      }
+    });
+    ids['notes/bare'] = (await engine.putPage('notes/bare', note('bare'))).id;
+    await engine.softDeletePage('notes/bare', { sourceId: 'default' });
+    ids['notes/b'] = (await engine.putPage('notes/b', note('b', { source_path: 'notes/new.md' }))).id;
+    await engine.putPage('notes/a', note('a'));
+    await engine.addLink('notes/b', 'notes/a', '', 'mentions');
+    await engine.addLink('notes/a', 'notes/b', '', 'mentions');
+    await engine.addLink('notes/b', 'notes/b', '', 'mentions');
+    const old = await engine.readSoftDeletedPageAtOrigin('default', 'notes/old.md', 'notes/none');
+    const bare = await engine.readSoftDeletedPageAtOrigin('default', 'elsewhere.md', 'notes/bare');
+    const answer = { oldSlug: old?.slug, oldIsLowest: old?.id === Math.min(ids['notes/m']!, ids['notes/c']!), bare: bare?.slug,
+      none: await engine.readSoftDeletedPageAtOrigin('default', 'nothing.md', 'nothing'),
+      live: (await engine.listLivePagesAtOrigin('default', 'notes/new.md')).map(r => r.slug), noLive: await engine.listLivePagesAtOrigin('default', 'notes/old.md'),
+      carry: await engine.countPageCarryRows('default', 'notes/b', ids['notes/b']!) };
+    expect(answer).toEqual({ oldSlug: 'notes/m', oldIsLowest: true, bare: 'notes/bare', none: null, live: ['notes/b'], noLive: [], carry: { facts: 0, links: 3, aliases: 0 } });
+    return answer;
+  });
+
+  parityTest('the stale-mention reads scan pages with mention links by slug bytes', {
+    methods: ['putPage', 'addLinksBatch', 'listStaleMentionPages', 'listStaleMentionLinks'],
+  }, async (engine) => {
+    for (const slug of ['ab', 'a0', 'a-z', 'target', 'plain']) await engine.putPage(slug, note(slug));
+    const link = (from: string, source: string) => ({ from_slug: from, to_slug: 'target', link_type: 'mentions', context: '', link_source: source });
+    await engine.addLinksBatch([link('ab', 'mentions'), link('a0', 'mentions'), link('a-z', 'mentions'), link('plain', 'manual')]);
+    const pages = await engine.listStaleMentionPages(2);
+    const links = await engine.listStaleMentionLinks(2);
+    const answer = { pages: pages.map(p => [p.slug, p.body, p.body_storage]), links: links.map(l => [l.from_slug, l.to_slug, l.link_type]),
+      all: (await engine.listStaleMentionPages(10)).map(p => p.slug), none: await engine.listStaleMentionPages(0) };
+    expect(answer).toEqual({ pages: [['a-z', 'a-z\n\na-z body\n\n', 'inline'], ['a0', 'a0\n\na0 body\n\n', 'inline']], links: [['a-z', 'target', 'mentions'], ['a0', 'target', 'mentions']],
+      all: ['a-z', 'a0', 'ab'], none: [] });
+    return answer;
+  });
+
+  parityTest('the orphan lifetimes read counts open lifetimes with no page and, deep, events naming a lifetime that does not exist', {
+    methods: ['putPage', 'readLedgerSource', 'mintBeliefLifetime', 'insertBeliefEvents', 'softDeletePage', 'listOrphanLifetimes'],
+  }, async (engine) => {
+    const { incarnation } = (await engine.readLedgerSource('default'))!;
+    const life = (n: number) => `00000000-0000-4000-8000-00000000000${n}`;
+    await engine.putPage('kept', note('kept'));
+    await engine.putPage('soft', note('soft'));
+    await engine.softDeletePage('soft', { sourceId: 'default' });
+    for (const [n, slug] of [[1, 'kept'], [2, 'ab'], [3, 'a-z'], [4, 'soft']] as const) await engine.mintBeliefLifetime({ lifetime: life(n), sourceId: 'default', incarnation, slug, pageId: n });
+    const ghost = '00000000-0000-4000-8000-0000000000ff';
+    const event = (key: string, ord: number, lifetime: string) => ({ event_key: key, source_id: 'default', source_incarnation: incarnation, page_lifetime: lifetime, slug: 'ab',
+      subject_kind: 'page', subject_key: 'page', event_type: 'page.baseline', origin: 'live', trust_tier: 'unknown', writer_tier: null, tier_basis: 'unknown', visibility: 'world',
+      publication_id: '00000000-0000-4000-8000-0000000000d2', ord, source_time: null, valid_from: null, valid_until: null, value: null, value_hash: null, prior_hash: null,
+      state_hash: '', cause: '{}', claim_fp: null, purged: false, redacted_fields: null });
+    await engine.insertBeliefEvents([event('a1', 0, ghost), event('a2', 1, ghost), event('a3', 2, life(2))]);
+    const answer = { shallow: await engine.listOrphanLifetimes('default', 1, false), noDeep: (await engine.listOrphanLifetimes('default', 9, false)).count,
+      deep: await engine.listOrphanLifetimes('default', 9, true), minimum: (await engine.listOrphanLifetimes('default', 0, true)).samples.length,
+      unknown: (await engine.listOrphanLifetimes('no-such-source', 9, true)).count };
+    expect(answer).toEqual({ shallow: { count: 2, samples: [{ slug: 'a-z', page_lifetime: life(3), reason: 'no_page' }] }, noDeep: 2,
+      deep: { count: 3, samples: [{ slug: 'a-z', page_lifetime: life(3), reason: 'no_page' }, { slug: 'ab', page_lifetime: life(2), reason: 'no_page' }, { slug: 'ab', page_lifetime: ghost, reason: 'no_lifetime' }] },
+      minimum: 1, unknown: 0 });
+    return answer;
+  });
+
+  parityTest('a segmented page\'s write statements answer an inline page, a missing page and an empty list', {
+    methods: ['putPage', 'addTag', 'readSegmentedRewritePage', 'restorePageDeletedAt', 'readSegmentedProjectionPage', 'listChunkedOccurrences', 'hasStaleSegmentChunks',
+      'retireStaleSegmentChunks', 'readSegmentedLivePage', 'readRetiredChunkVectors'],
+  }, async (engine) => {
+    const id = (await engine.putPage('notes/x', note('x'))).id;
+    for (const tag of ['b', 'a', 'B']) await engine.addTag('notes/x', tag);
+    const read = await engine.readSegmentedRewritePage(id);
+    const live = await engine.readSegmentedLivePage(id);
+    await engine.restorePageDeletedAt(id, '2027-02-01T00:00:00.000Z');
+    const deleted = await engine.readSegmentedRewritePage(id);
+    const answer = { read: read && { slug: read.slug, storage: read.body_storage, generation: Number(read.body_generation), deleted: read.deleted_at, tags: read.tags },
+      live: live && { storage: live.body_storage, generation: Number(live.body_generation), title: live.title, type: live.type },
+      deleted: deleted?.deleted_at === null ? null : new Date(deleted!.deleted_at as string).toISOString(), missing: await engine.readSegmentedRewritePage(id + 999),
+      missingLive: await engine.readSegmentedLivePage(id + 999), projection: await engine.readSegmentedProjectionPage('default', 'notes/x'),
+      chunked: await engine.listChunkedOccurrences(id, [1, 2], 1), noChunked: await engine.listChunkedOccurrences(id, [], 1),
+      stale: await engine.hasStaleSegmentChunks(id, 1, []), retired: await engine.retireStaleSegmentChunks(id, 1, [], 10),
+      vectors: await engine.readRetiredChunkVectors(id, [1], 'embedding'), noVectors: await engine.readRetiredChunkVectors(id, [], 'embedding') };
+    expect(answer).toEqual({ read: { slug: 'notes/x', storage: 'inline', generation: 0, deleted: null, tags: ['B', 'a', 'b'] }, live: { storage: 'inline', generation: 0, title: 'x', type: 'note' },
+      deleted: '2027-02-01T00:00:00.000Z', missing: null, missingLive: null, projection: null, chunked: [], noChunked: [], stale: false, retired: 0, vectors: [], noVectors: [] });
+    return answer;
+  });
+});

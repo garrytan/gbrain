@@ -49,6 +49,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 pub(crate) mod health;
 pub(crate) mod purge_scan;
+mod segment_rewrite;
+pub use segment_rewrite::SegmentedRewritePage;
 
 const TEXT: u8 = 0x01;
 const MANIFEST: u8 = 0x02;

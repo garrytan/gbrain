@@ -616,6 +616,8 @@ const INTERFACE_METHODS: readonly string[] = [
     'lockBodyStagingState', 'deleteUnstagedSegmentChunks', 'deleteRewrittenSegmentDerivations',
   // Belief ledger writes (engine-sql/belief-ledger.ts)
   'readLatestBeliefCoverage', 'hasBeliefBaseline', 'listBeliefBaselinePending', 'countBeliefBaselineSlugs', 'listBeliefDriftCandidates', 'readNewestBeliefEvent',
+  // Cycle, identity-downgrade and stale-mention reads (engine-sql/cycle-reads.ts); a segmented page's write statements (engine-sql/segmented-rewrite.ts)
+  'recordFailureTombstone', 'listFailureTombstones', 'readCycleListingInstant', 'listSourceChangedPagesAfter', 'readSoftDeletedPageAtOrigin', 'listLivePagesAtOrigin', 'countPageCarryRows', 'listStaleMentionPages', 'listStaleMentionLinks', 'listOrphanLifetimes', 'readSegmentedRewritePage', 'restorePageDeletedAt', 'readSegmentedProjectionPage', 'listChunkedOccurrences', 'hasStaleSegmentChunks', 'retireStaleSegmentChunks', 'readSegmentedLivePage', 'readRetiredChunkVectors',
   'readBeliefTombstones', 'readBeliefRedactions', 'insertBeliefRedaction', 'releaseBeliefRedactions', 'insertBeliefEvents',
   'markBeliefCommits', 'readOpenBeliefLifetimes', 'endBeliefLifetime', 'mintBeliefLifetime', 'renameBeliefLifetime', 'readMovedBeliefLifetimes',
   // Belief ledger state reads (engine-sql/belief-state.ts)

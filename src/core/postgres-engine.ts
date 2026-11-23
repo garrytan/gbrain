@@ -235,6 +235,8 @@ import * as lostFenceReads from './engine-sql/lost-fence-reads.ts';
 import * as staleAtomReads from './engine-sql/stale-atom-reads.ts';
 import * as filesOpsImpl from './engine-sql/files-ops.ts';
 import * as contradictionsCycleImpl from './engine-sql/contradictions-cycle.ts';
+import * as cycleReadsImpl from './engine-sql/cycle-reads.ts';
+import * as segmentedRewriteImpl from './engine-sql/segmented-rewrite.ts';
 import * as ontologyRepairImpl from './engine-sql/ontology-repair.ts';
 import * as adminReadsImpl from './engine-sql/admin-reads.ts';
 import * as factsRecallImpl from './engine-sql/facts-recall.ts';
@@ -2165,6 +2167,24 @@ export class PostgresEngine implements BrainEngine {
   countBeliefBaselineSlugs(sourceId: string, runId: string) { return beliefLedgerImpl.countBeliefBaselineSlugs(unscopedExecutor(this.engineSql, 'belief: the ledger activation ran this read through executeRaw unscoped'), sourceId, runId); }
   listBeliefDriftCandidates(sourceId: string, incarnation: string) { return beliefLedgerImpl.listBeliefDriftCandidates(unscopedExecutor(this.engineSql, 'belief: the ledger activation ran this read through executeRaw unscoped'), sourceId, incarnation); }
   readNewestBeliefEvent(sourceId: string, incarnation: string, slug: string) { return beliefLedgerImpl.readNewestBeliefEvent(unscopedExecutor(this.engineSql, 'belief: the ledger activation ran this read through executeRaw unscoped'), sourceId, incarnation, slug); }
+  recordFailureTombstone(input: cycleReadsImpl.FailureTombstoneInput) { return cycleReadsImpl.recordFailureTombstone(this.executeRaw.bind(this), input); }
+  listFailureTombstones(sourceId: string, claimPrefix: string) { return cycleReadsImpl.listFailureTombstones(this.executeRaw.bind(this), sourceId, claimPrefix); }
+  readCycleListingInstant() { return cycleReadsImpl.readCycleListingInstant(this.executeRaw.bind(this)); }
+  listSourceChangedPagesAfter(sourceId: string, since: string | null, slug: string, limit: number) { return cycleReadsImpl.listSourceChangedPagesAfter(this.executeRaw.bind(this), sourceId, since, slug, limit); }
+  readSoftDeletedPageAtOrigin(sourceId: string, path: string, slug: string) { return cycleReadsImpl.readSoftDeletedPageAtOrigin(this.executeRaw.bind(this), sourceId, path, slug); }
+  listLivePagesAtOrigin(sourceId: string, sourcePath: string) { return cycleReadsImpl.listLivePagesAtOrigin(this.executeRaw.bind(this), sourceId, sourcePath); }
+  countPageCarryRows(sourceId: string, slug: string, pageId: number) { return cycleReadsImpl.countPageCarryRows(this.executeRaw.bind(this), sourceId, slug, pageId); }
+  listStaleMentionPages(limit: number) { return cycleReadsImpl.listStaleMentionPages(this.executeRaw.bind(this), limit); }
+  listStaleMentionLinks(limit: number) { return cycleReadsImpl.listStaleMentionLinks(this.executeRaw.bind(this), limit); }
+  listOrphanLifetimes(sourceId: string, limit: number, deep: boolean) { return cycleReadsImpl.listOrphanLifetimes(this.executeRaw.bind(this), sourceId, limit, deep); }
+  readSegmentedRewritePage(pageId: number) { return segmentedRewriteImpl.readSegmentedRewritePage(this.executeRaw.bind(this), pageId); }
+  restorePageDeletedAt(pageId: number, deletedAt: string) { return segmentedRewriteImpl.restorePageDeletedAt(this.executeRaw.bind(this), pageId, deletedAt); }
+  readSegmentedProjectionPage(sourceId: string, slug: string) { return segmentedRewriteImpl.readSegmentedProjectionPage(this.executeRaw.bind(this), sourceId, slug); }
+  listChunkedOccurrences(pageId: number, occurrenceIds: readonly number[], generation: number) { return segmentedRewriteImpl.listChunkedOccurrences(this.executeRaw.bind(this), pageId, occurrenceIds, generation); }
+  hasStaleSegmentChunks(pageId: number, generation: number, live: readonly number[]) { return segmentedRewriteImpl.hasStaleSegmentChunks(this.executeRaw.bind(this), pageId, generation, live); }
+  retireStaleSegmentChunks(pageId: number, generation: number, live: readonly number[], maxRows: number) { return segmentedRewriteImpl.retireStaleSegmentChunks(this.executeRaw.bind(this), pageId, generation, live, maxRows); }
+  readSegmentedLivePage(pageId: number) { return segmentedRewriteImpl.readSegmentedLivePage(this.executeRaw.bind(this), pageId); }
+  readRetiredChunkVectors(pageId: number, occurrences: readonly number[], column: string) { return segmentedRewriteImpl.readRetiredChunkVectors(this.executeRaw.bind(this), pageId, occurrences, column); }
   readBeliefRedactions(sourceId: string, subjectKeys: readonly string[], fieldHashes: readonly string[]) { return beliefLedgerImpl.readBeliefRedactions(unscopedExecutor(this.engineSql, 'belief: the ledger write path ran this read through executeRaw unscoped'), sourceId, subjectKeys, fieldHashes); }
   insertBeliefRedaction(row: beliefLedgerImpl.BeliefRedactionInsert) { return beliefLedgerImpl.insertBeliefRedaction(this.engineSql, row); }
   releaseBeliefRedactions(ids: readonly number[], publicationId: string, releasedHash: string) { return beliefLedgerImpl.releaseBeliefRedactions(this.engineSql, ids, publicationId, releasedHash); }

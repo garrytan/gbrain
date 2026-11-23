@@ -76,10 +76,8 @@ export async function saveFailureLedger(engine: BrainEngine, sourceId: string, l
 
 /** Pages of a source that carry a failure tombstone, with the code it names. */
 export async function listFailedProposals(engine: BrainEngine, sourceId: string): Promise<Array<{ slug: string; code: string; prompt_version: string; proposed_at: string }>> {
-  const rows = await engine.executeRaw<{ slug: string; claim_text: string; prompt_version: string; proposed_at: string }>(
-    `SELECT page_slug AS slug, claim_text, prompt_version, proposed_at::text AS proposed_at FROM take_proposals
-      WHERE source_id = $1 AND status = 'rejected' AND acted_at IS NULL AND starts_with(claim_text, $2) ORDER BY page_slug COLLATE "C"`, [sourceId, TOMBSTONE_PREFIX]);
-  return rows.map(row => ({ slug: row.slug, code: row.claim_text.slice(TOMBSTONE_PREFIX.length, -1), prompt_version: row.prompt_version, proposed_at: row.proposed_at }));
+  const rows = await engine.listFailureTombstones(sourceId, TOMBSTONE_PREFIX);
+  return rows.map(row => ({ slug: row.page_slug, code: row.claim_text.slice(TOMBSTONE_PREFIX.length, -1), prompt_version: row.prompt_version, proposed_at: row.proposed_at }));
 }
 
 /** Deletes the failure tombstones (and ledger records) of one page or every page of a source, so the next run re-extracts them. */
@@ -190,14 +188,8 @@ export class ProposeTakesFailures {
         : (prior?.code === failure.code ? prior.attempts : 0) + 1;
       const held = attempts >= PROPOSE_TAKES_HOLD_RUNS;
       if (held) {
-        await engine.executeRaw(
-          `INSERT INTO take_proposals
-             (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
-              claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id, status)
-           VALUES ($1, $2, $3, $4, $5, $6, 'fact', 'brain', 0, NULL, '[]'::jsonb, $7, 'rejected')
-           ON CONFLICT (source_id, page_slug, content_hash, prompt_version, md5(claim_text)) DO NOTHING`,
-          [sourceId, slug, contentHash, this.promptVersion, run.proposalRunId, failureTombstoneText(failure.code), run.modelId],
-        );
+        await engine.recordFailureTombstone({ sourceId, slug, contentHash, promptVersion: this.promptVersion, proposalRunId: run.proposalRunId,
+          claimText: failureTombstoneText(failure.code), modelId: run.modelId });
         tombstones += 1;
         delete ledger.pages[slug];
       } else {

@@ -21,7 +21,7 @@ use crate::error::Result;
 use crate::facts::source_rows;
 use crate::kv::{KvRead, scan_prefix};
 use crate::links::no_nul;
-use crate::pages::PageRecord;
+use crate::pages::{PageRecord, read_page};
 use crate::sources::read_source;
 use crate::{Store, get_json, keys};
 use serde::Serialize;
@@ -42,6 +42,23 @@ pub struct NewestEvent {
     pub id: u64,
     pub state_hash: String,
     pub recorded_at: String,
+}
+
+/// One orphan finding of [`Store::list_orphan_lifetimes`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OrphanLifetime {
+    pub slug: String,
+    pub page_lifetime: String,
+    /// `no_page` (an open lifetime with no page row at its slug) or `no_lifetime` (an event naming a lifetime
+    /// no lifetime record holds).
+    pub reason: &'static str,
+}
+
+/// `orphanLifetimes`' answer: how many findings, and the first `limit` in byte order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OrphanLifetimes {
+    pub count: u64,
+    pub samples: Vec<OrphanLifetime>,
 }
 
 /// `t 0x09 0x05 source \0 run \0`, or with the slug: `... slug \0`.
@@ -226,6 +243,78 @@ impl Store {
         // The map is in byte order already; a stable sort keeps it within a tie.
         slugs.sort_by_key(|(_, at)| std::cmp::Reverse(*at));
         Ok(slugs.into_iter().map(|(slug, _)| slug).collect())
+    }
+
+    /// `listOrphanLifetimes`: the source's open lifetimes of its current incarnation with no page row at
+    /// their slug (a soft-deleted page is still a row), and, when `deep`, the events of the source (any
+    /// incarnation) naming a page lifetime no lifetime record holds (in any source, as the SQL tests it),
+    /// one finding per distinct slug and lifetime. Findings sort by slug then lifetime bytes; `count` is
+    /// all of them and `samples` the first `max(1, limit)`. An unknown source has no open lifetimes, but
+    /// its events still answer the deep read.
+    pub fn list_orphan_lifetimes(
+        &self,
+        source_id: &str,
+        limit: u32,
+        deep: bool,
+    ) -> Result<OrphanLifetimes> {
+        no_nul("listOrphanLifetimes", &[("sourceId", source_id)])?;
+        let read = self.read()?;
+        let mut found: BTreeSet<(Vec<u8>, String, &'static str)> = BTreeSet::new();
+        if let Some(source) = read_source(&*read, source_id)? {
+            let open = open_prefix(&source.incarnation);
+            let mut lifetimes = Vec::new();
+            scan_prefix(&*read, &open, false, &mut |_, v| {
+                lifetimes.push(String::from_utf8_lossy(v).into_owned());
+                true
+            })?;
+            for lifetime in lifetimes {
+                let Some(rec) = get_json::<LifetimeRecord>(&*read, &record_key(&lifetime))? else {
+                    continue;
+                };
+                if rec.source_id == source_id && read_page(&*read, source_id, &rec.slug)?.is_none()
+                {
+                    found.insert((rec.slug.into_bytes(), lifetime, "no_page"));
+                }
+            }
+        }
+        if deep {
+            let prefix = part_key(&[keys::TRUST, EVENTS, EVENT], &[source_id], None);
+            let mut named: BTreeSet<(String, String)> = BTreeSet::new();
+            let mut failure = None;
+            scan_prefix(&*read, &prefix, false, &mut |_, v| {
+                match serde_json::from_slice::<EventRecord>(v) {
+                    Ok(e) => {
+                        if let Some(lifetime) = e.page_lifetime {
+                            named.insert((e.slug, lifetime));
+                        }
+                    }
+                    Err(err) => {
+                        failure = Some(crate::error::StoreError::from(err));
+                        return false;
+                    }
+                }
+                true
+            })?;
+            if let Some(e) = failure {
+                return Err(e);
+            }
+            for (slug, lifetime) in named {
+                if get_json::<LifetimeRecord>(&*read, &record_key(&lifetime))?.is_none() {
+                    found.insert((slug.into_bytes(), lifetime, "no_lifetime"));
+                }
+            }
+        }
+        let count = found.len() as u64;
+        let samples = found
+            .into_iter()
+            .take((limit as usize).max(1))
+            .map(|(slug, page_lifetime, reason)| OrphanLifetime {
+                slug: String::from_utf8_lossy(&slug).into_owned(),
+                page_lifetime,
+                reason,
+            })
+            .collect();
+        Ok(OrphanLifetimes { count, samples })
     }
 
     /// `readNewestBeliefEvent`: the newest event of the slug in the source's `incarnation` that is
@@ -659,6 +748,85 @@ mod tests {
                 .read_newest_belief_event("other", &inc, "people/a")
                 .unwrap(),
             None
+        );
+    }
+    #[test]
+    fn the_orphan_lifetimes_are_open_lifetimes_with_no_page_row_and_deep_events_with_no_lifetime() {
+        use crate::trust::belief_lifetimes::LifetimeMint;
+        let store = store();
+        let inc = incarnation(&store);
+        let mint = |lifetime: &str, slug: &str| {
+            store
+                .mint_belief_lifetime(&LifetimeMint {
+                    lifetime: Some(lifetime.into()),
+                    source_id: Some("default".into()),
+                    incarnation: Some(inc.clone()),
+                    slug: Some(slug.into()),
+                    page_id: Some(1),
+                })
+                .unwrap();
+        };
+        const L1: &str = "00000000-0000-4000-8000-000000000001";
+        const L2: &str = "00000000-0000-4000-8000-000000000002";
+        const L3: &str = "00000000-0000-4000-8000-000000000003";
+        const L4: &str = "00000000-0000-4000-8000-000000000004";
+        page(&store, "kept");
+        mint(L1, "kept");
+        mint(L2, "ab");
+        mint(L3, "a-z");
+        // A soft-deleted page is still a row, so its open lifetime is not an orphan.
+        page(&store, "soft");
+        store.soft_delete_page("soft", Some("default")).unwrap();
+        mint(L4, "soft");
+        let shallow = store.list_orphan_lifetimes("default", 1, false).unwrap();
+        assert_eq!(shallow.count, 2);
+        assert_eq!(
+            shallow.samples,
+            [OrphanLifetime {
+                slug: "a-z".into(),
+                page_lifetime: L3.into(),
+                reason: "no_page"
+            }]
+        );
+        // Events that name a lifetime no record holds count only when deep, once per slug and lifetime.
+        let ghost = "00000000-0000-4000-8000-0000000000ff";
+        event(&store, "a1", json!({"slug": "ab", "page_lifetime": ghost}));
+        event(&store, "a2", json!({"slug": "ab", "page_lifetime": ghost}));
+        event(&store, "a3", json!({"slug": "ab", "page_lifetime": L2}));
+        assert_eq!(
+            store
+                .list_orphan_lifetimes("default", 9, false)
+                .unwrap()
+                .count,
+            2
+        );
+        let deep = store.list_orphan_lifetimes("default", 9, true).unwrap();
+        let found: Vec<(&str, &str, &str)> = deep
+            .samples
+            .iter()
+            .map(|o| (o.slug.as_str(), o.page_lifetime.as_str(), o.reason))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("a-z", L3, "no_page"),
+                ("ab", L2, "no_page"),
+                ("ab", ghost, "no_lifetime")
+            ]
+        );
+        assert_eq!(deep.count, 3);
+        assert_eq!(
+            store
+                .list_orphan_lifetimes("default", 0, true)
+                .unwrap()
+                .samples
+                .len(),
+            1
+        );
+        // An unknown source has no open lifetimes and no events of its own.
+        assert_eq!(
+            store.list_orphan_lifetimes("nope", 9, true).unwrap().count,
+            0
         );
     }
 }

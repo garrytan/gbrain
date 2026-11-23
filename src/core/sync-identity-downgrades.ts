@@ -20,7 +20,7 @@ import { getWorktreeBinding } from './persistence/ownership.ts';
 import { autoClaimsUnboundSource } from './persistence/unbound-source.ts';
 import { readManagedMode } from './persistence/managed-mode.ts';
 import { previewHash } from './persistence/preview-approval.ts';
-import { canonicalOriginPage, pickCanonicalOrigin } from './persistence/origin-guard.ts';
+import { pickCanonicalOrigin } from './persistence/origin-guard.ts';
 import { resolveSlugForPath, type DowngradedRename, type RenameDowngradeReason } from './sync.ts';
 
 import { IDENTITY_DOWNGRADE_OP } from './persistence/sync-status-sql.ts';
@@ -82,25 +82,17 @@ export const identityDowngradeReasonText = (reason: RenameDowngradeReason): stri
 export async function recordIdentityDowngrades(engine: BrainEngine, sourceId: string, pairs: DowngradedRename[]): Promise<IdentityDowngrade[]> {
   const records: IdentityDowngrade[] = [];
   for (const pair of pairs) {
-    const [old] = await engine.executeRaw<{ id: number | string; slug: string; deleted_at: string }>(
-      `SELECT id, slug, deleted_at::text AS deleted_at FROM pages WHERE source_id = $1 AND deleted_at IS NOT NULL
-        AND (source_path = $2 OR (source_path IS NULL AND slug = $3)) ORDER BY deleted_at DESC, id LIMIT 1`,
-      [sourceId, pair.from, resolveSlugForPath(pair.from)]);
+    const old = await engine.readSoftDeletedPageAtOrigin(sourceId, pair.from, resolveSlugForPath(pair.from));
     if (!old) continue;
-    const owner = await canonicalOriginPage(engine, sourceId, pair.to);
+    const owner = pickCanonicalOrigin(await engine.listLivePagesAtOrigin(sourceId, pair.to), pair.to);
     const fresh = owner && !('ambiguous' in owner) ? owner : null;
-    const [counts] = await engine.executeRaw<{ facts: number | string; links: number | string; aliases: number | string }>(`SELECT
-        (SELECT count(*) FROM facts WHERE source_id = $1 AND entity_slug = $2) AS facts,
-        (SELECT count(*) FROM links WHERE from_page_id = $3 OR to_page_id = $3) AS links,
-        (SELECT count(*) FROM page_aliases WHERE source_id = $1 AND slug = $2) AS aliases`, [sourceId, old.slug, Number(old.id)]);
+    const counts = await engine.countPageCarryRows(sourceId, old.slug, old.id);
     const recorded = new Date(old.deleted_at);
     const record: IdentityDowngrade = { source_id: sourceId, from: pair.from, to: pair.to, similarity: pair.similarity, reason: pair.reason, ...(pair.read ? { read: pair.read } : {}),
       old_slug: old.slug, old_page_id: Number(old.id), new_slug: fresh?.slug ?? null,
-      facts: Number(counts?.facts ?? 0), links: Number(counts?.links ?? 0), aliases: Number(counts?.aliases ?? 0),
+      facts: counts.facts, links: counts.links, aliases: counts.aliases,
       recorded_at: recorded.toISOString(), old_deleted_at: old.deleted_at };
-    await engine.executeRaw(`INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at) VALUES ($1, $2, $3::text::jsonb, now())
-      ON CONFLICT (op, fingerprint) DO UPDATE SET completed_keys = EXCLUDED.completed_keys, updated_at = now()`,
-      [IDENTITY_DOWNGRADE_OP, String(record.old_page_id), JSON.stringify([record])]);
+    await engine.writeOpCheckpointRecord(IDENTITY_DOWNGRADE_OP, String(record.old_page_id), [record]);
     records.push(record);
   }
   return records;

@@ -13,10 +13,11 @@
  *  - Why existing coverage misses it: the tests of these readers use slugs that sort the same in every locale, and CI's
  *    Postgres runs in C.UTF-8. Every case here uses slugs that differ by byte and by en_US; run it against an en_US
  *    Postgres to see it fail.
- *  - Seam: pages are written through the engine. The baseline walk reads its events back through the ledger's history
- *    reader, and the drift case rewrites the titles in one transaction (one shared updated_at, so slug breaks the tie), both
- *    typed, so those two cases run on the Rust arm. Harness-only SQL deletes a page row (an orphan lifetime), inserts failure
- *    tombstones and stamps the window cursor; those four cases still stop on the Rust arm on raw_sql.
+ *  - Seam: none. Pages are written through the engine (the tie cases write them in one transaction, which stamps one
+ *    updated_at, so slug breaks the tie); the baseline walk reads its events back through the ledger's history reader, the
+ *    drift case rewrites the titles in one transaction, the orphan case hard-deletes the pages with `deletePage` (which
+ *    tells the ledger nothing), the failed proposals are recorded with `recordFailureTombstone` and the window cursor is
+ *    stamped with `updateSourceConfig`, all typed members the Rust store serves.
  */
 import { describe, expect } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -39,15 +40,14 @@ const { parityTest } = parityArms(testBackends());
 
 /** Root slugs (no `/`): en_US sorts them `a0, ab, a-z`; bytes put `a-z` first. */
 const ROOT_SLUGS = ['ab', 'a0', 'a-z'];
-const STAMP = '2026-01-01T00:00:00Z';
 
 async function put(engine: BrainEngine, slugs: readonly string[]): Promise<void> {
   for (const slug of slugs) await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `${slug} body`, timeline: '' });
 }
 
-/** One shared updated_at, so only the slug orders the pages. */
-async function tie(engine: BrainEngine): Promise<void> {
-  await engine.executeRaw(`UPDATE pages SET updated_at = $1::timestamptz WHERE source_id = 'default'`, [STAMP]);
+/** Writes the pages in one transaction: they share its updated_at, so only the slug breaks the tie. */
+async function putTied(engine: BrainEngine, slugs: readonly string[]): Promise<void> {
+  await engine.transaction(tx => put(tx, slugs));
 }
 
 describe('belief walks and cycle listings take pages by byte', () => {
@@ -71,26 +71,27 @@ describe('belief walks and cycle listings take pages by byte', () => {
     expect(scan.drifted.map(d => d.slug)).toEqual(BYTE_SLUGS.slice(0, 2));
   });
 
-  parityTest('orphanLifetimes samples by byte', { methods: ['putPage', 'executeRaw', 'transaction'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('orphanLifetimes samples by byte', { methods: ['putPage', 'transaction', 'deletePage', 'listOrphanLifetimes'] }, async (engine) => {
     await put(engine, MIXED_SLUGS);
     await enableBeliefLedger(engine, 'default');
-    await engine.executeRaw(`DELETE FROM pages WHERE source_id = 'default' AND slug = ANY($1::text[])`, [[...MIXED_SLUGS]]);
+    // A hard delete the ledger is not told about: each page row goes and its lifetime stays open.
+    for (const slug of MIXED_SLUGS) await engine.deletePage(slug, { sourceId: 'default' });
     const orphans = await orphanLifetimes(engine, 'default', 2);
     expect(orphans.count).toBe(3);
     expect(orphans.samples.map(s => s.slug)).toEqual(BYTE_SLUGS.slice(0, 2));
   });
 
-  parityTest('listFailedProposals lists pages by byte', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('listFailedProposals lists pages by byte', { methods: ['recordFailureTombstone', 'listFailureTombstones'] }, async (engine) => {
     for (const slug of MIXED_SLUGS) {
-      await engine.executeRaw(`INSERT INTO take_proposals(source_id, page_slug, content_hash, prompt_version, proposal_run_id, status, claim_text, kind, holder, weight, model_id)
-        VALUES ('default', $1, 'h', 'v1', 'run', 'rejected', $2, 'take', 'self', 0, 'm')`, [slug, failureTombstoneText('llm_error')]);
+      await engine.recordFailureTombstone({ sourceId: 'default', slug, contentHash: 'h', promptVersion: 'v1', proposalRunId: 'run', claimText: failureTombstoneText('llm_error'), modelId: 'm' });
     }
     expect((await listFailedProposals(engine, 'default')).map(r => r.slug)).toEqual([...BYTE_SLUGS]);
   });
 
-  parityTest('listSourceChangedPages pages a timestamp tie by byte without a skip', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine) => {
-    await put(engine, MIXED_SLUGS);
-    await tie(engine);
+  parityTest('listSourceChangedPages pages a timestamp tie by byte without a skip', {
+    methods: ['putPage', 'transaction', 'readCycleListingInstant', 'readSourceState', 'listSourceChangedPagesAfter', 'updateSourceConfig'],
+  }, async (engine) => {
+    await putTied(engine, MIXED_SLUGS);
     const limit = sourceWindow.pageLimit;
     sourceWindow.pageLimit = 1;
     try {
@@ -100,8 +101,7 @@ describe('belief walks and cycle listings take pages by byte', () => {
         const window = await listSourceChangedPages(engine, 'default', since);
         seen.push(...window.slugs);
         if (!window.next?.slug) break;
-        await engine.executeRaw(`UPDATE sources SET config = config || jsonb_build_object('last_source_cycle_window_at', $2::text, 'last_source_cycle_window_slug', $3::text)
-          WHERE id = $1`, ['default', window.next.at, window.next.slug]);
+        await engine.updateSourceConfig('default', { last_source_cycle_window_at: window.next.at, last_source_cycle_window_slug: window.next.slug });
         since = window.next.at;
       }
       expect(seen).toEqual([...BYTE_SLUGS]);
@@ -110,7 +110,7 @@ describe('belief walks and cycle listings take pages by byte', () => {
     }
   });
 
-  parityTest('runPhantomRedirectPass walks root pages by byte and rotates its cursor through them', { methods: ['putPage', 'getPage', 'executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('runPhantomRedirectPass walks root pages by byte and rotates its cursor through them', { methods: ['putPage', 'getPage', 'listRootPageSlugsAfter', 'readOpCheckpointRecords', 'writeOpCheckpointRecords'] }, async (engine) => {
     await put(engine, ROOT_SLUGS);
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-collate-phantom-'));
     try {
