@@ -1912,11 +1912,29 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   value), `queue_depth`, `applied_rows`, `coverage_watermark`; `reconcile.state` (`never_run`, `ok`, `repaired`,
   `error`), `last_pass` (with `repaired_rows`, `repaired_by_relation` and `follower_misses`: repaired rows found while the
   watermark claimed coverage), `consecutive_clean_full_passes`, `next_full_pass_due`; `fingerprints` (`checked_rows`,
-  `mismatches`, and a `probe` that runs a fixed text corpus through the primary's fingerprint SQL); `allocators`;
+  `mismatches`, and a `probe`, described below); `allocators`;
   `seed`; `primary_refreshes` (`nonterminal_rows`: primary `gbrain sources refresh` rows that are neither completed nor
   aborted, counted by the last full pass, with its `checked_at`; `null` before one; a swap must drain them first, and
   this is a reading, not the swap's own check); and `write_comparisons`, which is `capability_missing` until write comparisons are built. The
   `write_comparisons` and `fingerprints` counts are totals for the current epoch; one epoch is one seed.
+- **Fingerprint probe.** Withdrawals and purge tombstones key on the fact fingerprint, so a primary whose `lower()` or
+  `[[:space:]]` answers differ from PGLite's (and Rust's) for some code point would fingerprint a claim holding it
+  differently, and a withdrawn fact would not match on Rust. At follower start and on each full pass the probe reads, in
+  one read-only set-based query, `lower(chr(cp))` and `chr(cp) ~ '[[:space:]]'` for every Unicode scalar value (surrogates
+  and U+0000 excluded) plus the word-final sigma rule, and compares them with PGLite's tables in
+  `rust/crates/gbrain-store/tests/fixtures/fact_fingerprints.json`. It also runs every hand row and every sixth seeded row of
+  that corpus through `gbrain_fact_fingerprint` and `gbrain_fact_fingerprint_v1` (texts as bind parameters, never logged).
+  If any code point differs it counts the stored `facts` rows whose claim holds one (a count, never the text). The query costs
+  about 0.5 s on Postgres 16 and 0.7 s on PGLite on a dev container (about 1.6 s on Postgres 17); it reads only. `probe` carries
+  `state` (`pass`, `fail`, `not_run`), `checked_at`, `server_version`, `mismatches` (the fixed 20-claim corpus against Rust), the
+  database's `collation`, `ctype`, `locale_provider` (`c` libc, `i` ICU, `b` builtin) and `locale` (`datlocale` on Postgres 17,
+  `daticulocale` on 16, `null` where absent), `differing_code_points` (the first 50 as `U+XXXX`) with
+  `differing_code_points_total`, `corpus_mismatches` with `corpus_mismatch_rows` (the first five row names, never text) and
+  `facts_with_differing_code_points`. `state` is `fail` when code points differ and at least one stored fact holds one, or when
+  a corpus row or the fixed corpus differs and no differing code point explains it; otherwise `pass`, and a pass still lists the
+  differing code points so a swap report can name them. A probe that errors is `not_run`. A glibc `en_US.utf8` host differs
+  (U+0085, U+1680, circled letters and more); a C-ctype host differs on every cased non-ASCII letter, so it fails once a fact
+  holds one.
 - **Provisional report.** The verdict is always `NOT READY`: this phase compares reads only, write comparisons
   are not built yet, and the readiness decision come in later phases of the plan
   (`docs/designs/RUST_ENGINE.md`, Phase S). Until the Rust engine serves reads, comparisons record
