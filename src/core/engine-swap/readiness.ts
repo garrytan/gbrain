@@ -56,7 +56,13 @@ export interface ShadowStatus {
   privacy_diverged?: number;
   bench?: { pairs?: number; rust_no_worse?: boolean; filtered_vector_margin_met?: boolean; losses?: string[] };
   child?: { panics?: number; faults?: number };
-  drills?: { backup_restore_passed?: boolean; eval_gates_e1_e3?: boolean };
+  drills?: {
+    backup_restore_passed?: boolean;
+    eval_gates_e1_e3?: boolean;
+    /** Why a half is not a pass (codes from src/shadow/drill-status.ts); printed in the criterion's detail. */
+    backup_reason?: string;
+    eval_gates_reason?: string;
+  };
   eligibility?: {
     /** Writer hosts seen by durable writer observations in the last 7 days; null when no observation table exists. */
     writer_hosts_7d?: number | null;
@@ -120,6 +126,12 @@ class Reader {
   n(path: string): number | undefined { return this.get<number>(path, num); }
   b(path: string): boolean | undefined { return this.get<boolean>(path, v => typeof v === 'boolean'); }
   s(path: string): string | undefined { return this.get<string>(path, v => typeof v === 'string' && v.length > 0); }
+  /** An optional text field: its value, or undefined without recording it as missing. */
+  optional(path: string): string | undefined {
+    let cur: unknown = this.doc;
+    for (const key of path.split('.')) cur = cur !== null && typeof cur === 'object' ? Object.getOwnPropertyDescriptor(cur, key)?.value : undefined;
+    return typeof cur === 'string' ? cur : undefined;
+  }
 }
 
 function missingCheck(fields: string[]): Check { return { state: 'missing', detail: `no evidence: ${fields.join(', ')}` }; }
@@ -254,14 +266,20 @@ function speed(r: Reader): Check {
   return { state: 'reported', detail: `${parts.join('; ')} (reported, not gating: D23)` };
 }
 
+/** Where the eval half can first pass: the FINAL file for the Nov 26 tag lands about two days after the tag. */
+const EVAL_GATES_TIMING = 'it can first pass about Sat Nov 28 (the final eval file lands about 2 days after the Nov 26 tag), 3 days before Dec 1';
+
 function drills(r: Reader): Check {
   return guarded(r, () => {
     const backup = r.b('drills.backup_restore_passed');
     const evals = r.b('drills.eval_gates_e1_e3');
     if (backup === undefined || evals === undefined) return { state: 'missing', detail: '' };
     const fails: string[] = [];
-    if (!backup) fails.push('no passed backup and restore drill on the shadow store');
-    if (!evals) fails.push('the release does not carry eval gates E1 to E3');
+    const why = (reason: string | undefined): string => (reason && /^[a-z0-9_:., -]{1,200}$/i.test(reason) ? ` (${reason})` : '');
+    const backupReason = r.optional('drills.backup_reason');
+    const evalsReason = r.optional('drills.eval_gates_reason');
+    if (!backup) fails.push(`no passed backup and restore drill on the shadow store${why(backupReason)}`);
+    if (!evals) fails.push(`the release does not carry eval gates E1 to E3${why(evalsReason)}${evalsReason === 'eval_gates_missing' ? `; ${EVAL_GATES_TIMING}` : ''}`);
     return fails.length ? { state: 'fail', detail: fails.join('; ') } : { state: 'pass', detail: 'restore drill passed; E1 to E3 carried' };
   });
 }
