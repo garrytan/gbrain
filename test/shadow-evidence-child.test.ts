@@ -334,6 +334,7 @@ describe('evidence epoch in the child', () => {
     await runChild(dir, [read('getPage', ['a'], { slug: 'a' })], { openEngine: () => engine() as never, addonSha256: () => 'b'.repeat(64) });
     const second = manifest(dir);
     expect(second.epoch_id).not.toBe(first.epoch_id);
+    // pregate-literal: SHADOW_COMPARATOR_VERSION=1 the 1 on this line is the end of the seed id and of the policy hash, not a comparator version
     expect(second.inputs).toMatchObject({ seed_id: 'seed-1', rust_addon_sha256: 'b'.repeat(64), comparator_version: SHADOW_COMPARATOR_VERSION, readiness_policy_hash: 'p1' });
     expect(ledgerRows(dir).map((r) => r.epoch_id)).toEqual([first.epoch_id, first.epoch_id, second.epoch_id]);
     expect(JSON.parse(readFileSync(join(dir, 'evidence', 'epochs.jsonl'), 'utf8').trim()).epoch_id).toBe(first.epoch_id);
