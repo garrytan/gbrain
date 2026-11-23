@@ -106,17 +106,18 @@ describe(`think --save and --take on a managed brain (GST-3612, ${databaseUrl ? 
     }, { databaseUrl });
   }, 120_000);
 
-  test('the write gate judges a take at the tier of what the synthesis read', async () => {
+  for (const [mode, refusal] of [['reject', 'Refused by the write gate'], ['quarantine', 'write_held']] as const)
+  test(`the write gate judges a take at the tier of what the synthesis read (${mode})`, async () => {
     await managedBrain(async ({ engine, ctx, root }) => {
       await engine.setConfig('sync.repo_path', root);
       await putPage.handler(ctx, { slug: 'people/alice-example', content: ALICE });
       await putPage.handler(ctx, { slug: 'meetings/source-example', content: '---\ntype: meeting\ntitle: Source Example\n---\n\nMet people.\n', content_origin: 'tool_output' });
-      await engine.setConfig('write_gate.external_mode', 'reject');
+      await engine.setConfig('write_gate.external_mode', mode);
       const before = readFileSync(join(root, 'people/alice-example.md'), 'utf8');
       const persisted = await persistTakeFromSynthesis(engine, { ...synthesis(await pageId(engine, 'meetings/source-example')), answer: INJECTION },
         { anchor: 'people/alice-example' });
       expect(persisted.take_row).toBeNull();
-      expect(persisted.warnings[0]).toStartWith('TAKE_WRITE_FAILED: Refused by the write gate');
+      expect(persisted.warnings[0]).toStartWith(`TAKE_WRITE_FAILED: ${refusal}`);
       expect(await takeRows(engine)).toEqual([]);
       expect(readFileSync(join(root, 'people/alice-example.md'), 'utf8')).toBe(before);
     }, { databaseUrl });

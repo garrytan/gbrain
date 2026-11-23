@@ -248,6 +248,14 @@ describe('think --take writes to the resolved source (GST-3612)', () => {
     expect(captured.take).toEqual([{ anchor: 'people/alice-example', sourceId: 'workspace' }]);
   });
 
+  test('a save still publishing prints the answer, then exits 10 with its receipt', async () => {
+    writers.savePending = true;
+    const r = await runCli(['plain', 'question', '--save']);
+    expect(r.code).toBe(10);
+    expect(r.out.join('\n')).toContain('Stub answer.');
+    expect(r.err.join('\n')).toContain('save-request-example');
+  });
+
   test('a save still publishing keeps its receipt when the take is then refused', async () => {
     writers.savePending = true; writers.takeRow = null;
     const r = await runCli(['plain', 'question', '--save', '--take', '--anchor', 'people/alice-example']);

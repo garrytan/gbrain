@@ -39,6 +39,7 @@ import { resolveTakesRepoDir, addTakeToPage, TakesWriteError } from '../takes-wr
 import { declareDerivation, deriveTrust, derivedMaintenanceTransaction } from '../trust/taint.ts';
 import { maintenancePreflight, submitMaintenanceIntent, THINK_TAKE_INTENT } from '../persistence/prepared-maintenance.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
+import { throwIfHeld } from '../trust/gate-outcomes.ts';
 import { derivedFileTarget } from '../cycle/derived-write-through.ts';
 import { fileDatabaseDriftToken, mirroredBody, readStoredBody } from '../facts/file-body-guard.ts';
 import { stripTakesFence, TAKES_FENCE_BEGIN } from '../takes-fence.ts';
@@ -132,8 +133,8 @@ export async function persistTakeFromSynthesis(
     if (maintenance) {
       const snapshot = await engine.readPageSnapshot(opts.anchor, { sourceId });
       if (!snapshot) throw new TakesWriteError('page_not_found', `Page ${opts.anchor} not found in source ${sourceId}.`);
-      const receipt = await submitMaintenanceIntent(engine, maintenance, opts.anchor, { kind: THINK_TAKE_INTENT, expected_revision: snapshot.revision,
-        claim, holder, source: 'think', derivation: declareDerivation(derivation.trust, derivation.inputs) });
+      const receipt = throwIfHeld(await submitMaintenanceIntent(engine, maintenance, opts.anchor, { kind: THINK_TAKE_INTENT, expected_revision: snapshot.revision,
+        claim, holder, source: 'think', derivation: declareDerivation(derivation.trust, derivation.inputs) }), false);
       const file = await derivedFileTarget(engine, opts.anchor, sourceId);
       return { take_row: Number(receipt.row_num), ...(file.ok ? { path: file.target.filePath } : {}), warnings };
     }
