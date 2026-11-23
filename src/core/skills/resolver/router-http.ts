@@ -54,10 +54,25 @@ function counts(input: unknown, output: unknown, cacheRead: unknown = 0, cacheWr
   return ok(input) && ok(output) && ok(cacheRead) && ok(cacheWrite) ? { input, cacheRead, cacheWrite, output } : null;
 }
 
-/** Anthropic models that refuse thinking 'disabled' (Opus, Sonnet and Fable 5.x) get adaptive thinking at low effort; checked live on 2026-11-22. */
-const ANTHROPIC_ADAPTIVE = /^claude-(opus|sonnet|fable)-5/;
+/** Anthropic models that refuse thinking 'disabled' (Opus and Fable 5.x) get adaptive thinking at low effort; checked live on 2026-11-22. */
+const ANTHROPIC_ADAPTIVE = /^claude-(opus|fable)-5/;
+/** Sonnet 5.x refuses 'disabled' too; 'between_tools' is its off switch when no tools are offered (thinking-off.ts). */
+const ANTHROPIC_BETWEEN_TOOLS = /^claude-sonnet-5/;
 /** OpenAI models that refuse reasoning effort 'none' (the 6.x Astra models and every Sol after gpt-6-sol) get 'low'; checked live on 2026-11-22. */
-const OPENAI_EFFORT_LOW = /^gpt-6(\.\d+)?-astra$|^gpt-6\.\d+-sol$/;
+const OPENAI_EFFORT_LOW = /^(gpt-6(\.\d+)?-astra|gpt-6\.\d+-sol)(-\d{4}-\d{2}-\d{2})?$/;
+
+/** True when `model` (provider:id) reasons before it answers, so its reasoning tokens count against the output cap. */
+export function pickerReasons(model: string): boolean {
+  const provider = providerOf(model);
+  const id = model.slice(model.indexOf(':') + 1);
+  return provider === 'anthropic' ? ANTHROPIC_ADAPTIVE.test(id) : provider === 'openai' && OPENAI_EFFORT_LOW.test(id);
+}
+
+function anthropicThinking(model: string): Record<string, unknown> {
+  if (ANTHROPIC_ADAPTIVE.test(model)) return { thinking: { type: 'adaptive' }, output_config: { effort: 'low' } };
+  if (ANTHROPIC_BETWEEN_TOOLS.test(model)) return { thinking: { type: 'between_tools' }, output_config: { effort: 'low' } };
+  return { thinking: { type: 'disabled' } };
+}
 
 const BASE_URL_ENV: Record<Exclude<PickerProvider, 'compat'>, string> = { anthropic: 'ANTHROPIC_BASE_URL', openai: 'OPENAI_BASE_URL', google: 'GOOGLE_GENERATIVE_AI_BASE_URL' };
 
@@ -84,7 +99,7 @@ export async function pickerChat(req: PickerRequest, key: string, env: NodeJS.Pr
   const model = req.model.slice(req.model.indexOf(':') + 1);
   if (provider === 'anthropic') {
     const j = await post(`${base(env, 'ANTHROPIC_BASE_URL', 'https://api.anthropic.com')}/v1/messages`, { 'x-api-key': key, 'anthropic-version': '2023-06-01' }, {
-      model, max_tokens: req.maxTokens, ...(ANTHROPIC_ADAPTIVE.test(model) ? { thinking: { type: 'adaptive' }, output_config: { effort: 'low' } } : { thinking: { type: 'disabled' } }),
+      model, max_tokens: req.maxTokens, ...anthropicThinking(model),
       system: [{ type: 'text', text: req.system, cache_control: { type: 'ephemeral' } }], messages: [{ role: 'user', content: req.message }],
     }, req.signal);
     const u = j.usage;

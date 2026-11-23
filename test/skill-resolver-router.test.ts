@@ -16,7 +16,7 @@ import { afterAll, afterEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { __setPickerTransportForTests, PickerHttpError, type PickerRequest } from '../src/core/skills/resolver/router-http.ts';
+import { __setPickerTransportForTests, PickerHttpError, pickerReasons, type PickerRequest } from '../src/core/skills/resolver/router-http.ts';
 import { buildSkillIndex, resolveSkills } from '../src/core/skills/resolver/index.ts';
 import { parsePickerReply, PICKER_DESCRIPTION_CHARS, readRouterSpend, routerTimeoutMs } from '../src/core/skills/resolver/router.ts';
 import { routerSettings } from '../src/core/skills/resolver/config.ts';
@@ -300,6 +300,15 @@ describe('a compat: model on an OpenAI-compatible endpoint', () => {
     expect((await readRouterSpend(h)).charged_usd).toBe(0.00102);
   });
 
+  test('a dated snapshot id reasons like its model', () => {
+    expect(['openai:gpt-6.2-sol-2026-11-01', 'openai:gpt-6.2-astra-2026-11-01', 'anthropic:claude-opus-5-5-20261001', 'openai:gpt-6-luna-2026-11-01', 'anthropic:claude-haiku-5-5-20261001'].map(pickerReasons)).toEqual([true, true, true, false, false]);
+  });
+
+  test('router_usd_per_mtok takes two or three prices, never four', async () => {
+    expect(routerSettings({ router: true, router_model: 'compat:acme/picker-1', router_usd_per_mtok: [1, 2, 0.1, 3] }).invalid).toStartWith('skills.resolver.router_usd_per_mtok must be');
+    expect(routerSettings({ router: true, router_model: 'compat:acme/picker-1', router_usd_per_mtok: [1, 2, 0.1] }).usdPerMtok).toEqual([1, 2, 0.1]);
+  });
+
   test('a third router_usd_per_mtok value prices cached input', async () => {
     const h = await home(compat({ router_base_url: `http://127.0.0.1:${server.port}/cached/v1`, router_usd_per_mtok: [1, 2, 0.1] }));
     const r = await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: h, catalogs: ['c'], router: true, env });
@@ -307,27 +316,29 @@ describe('a compat: model on an OpenAI-compatible endpoint', () => {
     expect((await readRouterSpend(h)).charged_usd).toBe(0.00021);
   });
 
-  test('Opus, Sonnet and Fable 5.x think at low effort when they pick; Haiku keeps thinking off', async () => {
+  test('Opus and Fable 5.x think at low effort with room to answer; Sonnet 5.5 and Haiku keep thinking off', async () => {
     const aenv = { ...process.env, ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.port}/a`, ANTHROPIC_API_KEY: 'k-test' };
-    for (const [model, want] of [['claude-opus-5-5', 'adaptive'], ['claude-sonnet-5-5', 'adaptive'], ['claude-fable-5-1', 'adaptive'], ['claude-haiku-5-5', 'disabled']] as const) {
+    for (const [model, want, effort, maxTokens] of [['claude-opus-5-5', 'adaptive', 'low', 1024], ['claude-fable-5-1', 'adaptive', 'low', 1024], ['claude-fable-5-2', 'adaptive', 'low', 1024], ['claude-sonnet-5-5', 'between_tools', 'low', 200], ['claude-haiku-5-5', 'disabled', undefined, 200]] as const) {
       seen.length = 0;
       const h = await home({ router: true, router_model: `anthropic:${model}` });
       const r = await resolveSkills({ message: 'who is alice', harness: 'codex' }, { home: h, catalogs: ['c'], router: true, env: aenv });
       expect([model, r.output.router?.answered_by]).toEqual([model, 'picker']);
       const body = seen.find(s => s.path === '/a/v1/messages')!.body;
       expect([model, body.thinking]).toEqual([model, { type: want }]);
-      expect([model, body.output_config]).toEqual([model, want === 'adaptive' ? { effort: 'low' } : undefined]);
+      expect([model, body.output_config]).toEqual([model, effort ? { effort } : undefined]);
+      expect([model, body.max_tokens]).toEqual([model, maxTokens]);
     }
   });
 
-  test('GPT-6.2 Sol is priced and asks for low reasoning effort; models that accept none keep it', async () => {
+  test('GPT-6.x Sol and Astra are priced and reason at low effort with room to answer; models that accept none keep it', async () => {
     const oenv = { ...process.env, OPENAI_BASE_URL: `http://127.0.0.1:${server.port}/o`, OPENAI_API_KEY: 'k-test' };
-    for (const [model, effort] of [['gpt-6.2-sol', 'low'], ['gpt-6.1-sol', 'low'], ['gpt-6-luna', 'none']] as const) {
+    for (const [model, effort, maxTokens] of [['gpt-6.2-sol', 'low', 1024], ['gpt-6.1-sol', 'low', 1024], ['gpt-6.2-astra', 'low', 1024], ['gpt-6-astra', 'low', 1024], ['gpt-6-luna', 'none', 200]] as const) {
       seen.length = 0;
       const h = await home({ router: true, router_model: `openai:${model}` });
       const r = await resolveSkills({ message: 'who is alice', harness: 'codex' }, { home: h, catalogs: ['c'], router: true, env: oenv });
       expect([model, r.output.router?.answered_by]).toEqual([model, 'picker']);
-      expect([model, seen.find(s => s.path === '/o/v1/responses')!.body.reasoning]).toEqual([model, { effort }]);
+      const body = seen.find(s => s.path === '/o/v1/responses')!.body;
+      expect([model, body.reasoning, body.max_output_tokens]).toEqual([model, { effort }, maxTokens]);
     }
   });
 

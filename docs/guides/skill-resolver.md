@@ -431,10 +431,13 @@ What it does on each turn:
 | `skills.resolver.router_timeout_ms` | 1500 in Claude Code, 2000 elsewhere | the longest a turn waits (200-2500); Claude Code waits at most 2000, inside its 3-second hook limit |
 | `skills.resolver.router_max_usd_per_day` | 0.50 | the daily spend cap in USD (0-100; 0 stops every call) |
 
-A larger model picks better but slower. Claude Opus, Sonnet and Fable 5.x
-can't turn thinking off, so they pick with adaptive thinking at low effort:
+A larger model picks better but slower. Claude Opus 5.5 and Fable 5.x
+can't turn thinking off, so they pick with adaptive thinking at low effort,
+and GPT-6.1 Sol and later and the GPT-6.x Astra models reason at low effort:
 Opus took about 1.2 seconds at the median, close to Claude Code's 1.5-second
-wait. For a model OpenAI hosts, use its `openai:` id rather than `compat:`.
+wait, and Fable 5.2 took about 3 seconds in one check, past it. The picker only calls a model
+it has a price for (the daily cap needs one); others report `no_pricing`.
+For a model OpenAI hosts, use its `openai:` id rather than `compat:`.
 
 **Your own model.** Any model behind an OpenAI-compatible Chat Completions
 endpoint can be the picker, a self-hosted or fine-tuned one included: set
