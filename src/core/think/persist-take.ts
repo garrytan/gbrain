@@ -94,7 +94,9 @@ export function claimFromAnswer(answer: string): string | null {
  * Append the synthesis claim as a take row on the anchor page. Never throws
  * for the expected refusal shapes (no repo, empty answer, failed synthesis) —
  * those return take_row:null with a machine-stable warning so both callers
- * (CLI + op) surface the same story.
+ * (CLI + op) surface the same story. A managed take accepted but still
+ * publishing throws write_pending with its receipt (GST-3612): it is progress,
+ * not a refusal, and both callers keep the answer and name the receipt.
  */
 export async function persistTakeFromSynthesis(
   engine: BrainEngine,

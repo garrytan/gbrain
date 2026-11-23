@@ -83,6 +83,28 @@ describe(`think --save and --take on a managed brain (GST-3612, ${databaseUrl ? 
     }, { databaseUrl });
   }, 120_000);
 
+  test('a synthesis page that changed after the run read it is refused, not overwritten', async () => {
+    await managedBrain(async ({ engine, ctx }) => {
+      await putPage.handler(ctx, { slug: 'people/alice-example', content: ALICE });
+      const first = await persistSynthesis(engine, synthesis(await pageId(engine, 'people/alice-example')));
+      const stale = (await engine.readPageSnapshot(first.slug, { sourceId: 'default' }))!.revision;
+      // Another run of the question saves meanwhile; this run still holds the revision it read before gathering.
+      await persistSynthesis(engine, { ...synthesis(await pageId(engine, 'people/alice-example')), answer: 'An answer saved meanwhile.' });
+      await expect(persistSynthesis(engine, { ...synthesis(await pageId(engine, 'people/alice-example')),
+        persist_base: { sourceId: 'default', slug: first.slug, revision: stale } })).rejects.toMatchObject({ code: 'revision_conflict' });
+      expect((await synthesisRow(engine, first.slug))!.compiled_truth).toContain('An answer saved meanwhile.');
+    }, { databaseUrl });
+  }, 120_000);
+
+  test('a take on a missing anchor page warns and submits nothing', async () => {
+    await managedBrain(async ({ engine }) => {
+      const persisted = await persistTakeFromSynthesis(engine, synthesis(0), { anchor: 'people/missing-example' });
+      expect(persisted.take_row).toBeNull();
+      expect(persisted.warnings[0]).toStartWith('TAKE_WRITE_FAILED: page_not_found');
+      expect(await receipts(engine, 'people/missing-example')).toEqual([]);
+    }, { databaseUrl });
+  }, 120_000);
+
   test('a refused generation publish names the managed mode it failed in', async () => {
     await managedBrain(async ({ engine }) => {
       const lines: string[] = [];
