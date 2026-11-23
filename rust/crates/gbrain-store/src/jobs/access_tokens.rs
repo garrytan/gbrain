@@ -876,8 +876,12 @@ mod tests {
         assert_eq!(writes.load(SeqCst) - base, 1, "a due touch writes once");
         touch(&id);
         assert_eq!(writes.load(SeqCst) - base, 1, "inside 60 s: no write");
+        // At exactly 60 s the stamp is not due (`last_used_at < now() - interval '60 seconds'`).
+        clock.0.fetch_add(60_000_000, SeqCst);
+        touch(&id);
+        assert_eq!(writes.load(SeqCst) - base, 1, "at 60 s: no write");
         // Past the debounce the token is stamped again, with the new time, in exactly one write.
-        clock.0.fetch_add(60_000_001, SeqCst);
+        clock.0.fetch_add(1, SeqCst);
         touch(&id);
         assert_eq!(writes.load(SeqCst) - base, 2, "past 60 s: one more write");
         let row = by_hash_of(&s, "a").unwrap();

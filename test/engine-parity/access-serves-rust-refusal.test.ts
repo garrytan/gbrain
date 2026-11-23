@@ -84,6 +84,10 @@ describe('gbrain access serves several --yes on a Rust brain', () => {
     };
     // Keys already read the company source: a re-run adds nothing and runs; --labelled-only adds only the company/ rule.
     let dir = await fresh(true);
+    // A preview (no --yes) of a run that would need raw SQL is never refused: the guard sits after the preview return.
+    const preview = await withEnv({ GBRAIN_HOME: dir, GBRAIN_SETUP_ABORT_AFTER: undefined }, () =>
+      labelSeveral(asRust(arm.engine), ['alice-example', 'bob-example', 'carol-example'], 'default', false, true));
+    expect({ applied: preview.applied, rules: preview.rules.some(r => r.action === 'add') }).toEqual({ applied: false, rules: true });
     expect(await outcomeOf(serves(asRust(arm.engine), ['alice-example', 'bob-example'], dir))).not.toContain('engine_capability_missing');
     await refusedUnchanged(dir, { labelledOnly: true, owner: 'owner-example' });
     // The company source arrives after the keys: the re-run's only write that needs raw SQL is widening the kept keys.
