@@ -256,7 +256,11 @@ function classifier(cols: Columns, assumeClaimed: readonly string[] = [], ceilin
       terms.push(`CASE WHEN x.source LIKE 'take\\_proposals#%' THEN ${rank('agent_written')} END`);
     }
     if (cols.has(table, 'write_request_id')) { const q = request('r'); if (q) terms.push(q); }
-    return { from: `${table} x ${pageJoins('pg', 'ps', 'pr', 'pg.id = x.page_id')} ${requestJoin(table, 'write_request_id', 'r', 'x')}`,
+    // A Life Chronicle projection row (`event_page_id`) ranks no higher than its event page, as the page does (#9284).
+    const projected = table === 'timeline_entries' && cols.has(table, 'event_page_id');
+    if (projected) terms.push(`CASE WHEN ev.id IS NULL THEN NULL ELSE LEAST(${rank('agent_written')}, ${pageTaint('ev', 'evs', 'evr')}) END`);
+    return { from: `${table} x ${pageJoins('pg', 'ps', 'pr', 'pg.id = x.page_id')} ${requestJoin(table, 'write_request_id', 'r', 'x')}
+      ${projected ? pageJoins('ev', 'evs', 'evr', 'ev.id = x.event_page_id') : ''}`,
       rule: least(terms), src: 'pg.source_id' };
   };
   return { forTable, signals, hasTrust };
