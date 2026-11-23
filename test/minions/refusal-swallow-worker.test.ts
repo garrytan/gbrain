@@ -12,7 +12,7 @@
  *  - Seam: a PGLite engine wrapped so `executeRaw` throws the real refusal (test/helpers/refusing-engine.ts); the Rust
  *    cases need the addon and are skipped without it unless GBRAIN_TEST_RUST_ADDON_REQUIRED=1.
  */
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,6 +21,10 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { MinionQueue } from '../../src/core/minions/queue.ts';
 import { MinionWorker } from '../../src/core/minions/worker.ts';
 import { terminalHookNotifier } from '../../src/core/minions/terminal-hook.ts';
+import { jobSpendAuthorization, runWithJobSpend, SpendGroupRefusedError } from '../../src/core/minions/spend-authorization.ts';
+import { chatInvocation } from '../../src/core/ai/guarded-generation.ts';
+import { invokeAI } from '../../src/core/ai/invocation-guard.ts';
+import type { MinionJob, MinionJobContext } from '../../src/core/minions/types.ts';
 import { refusingEngine } from '../helpers/refusing-engine.ts';
 import { openRustBrain, removeBrainDir, rustArmAddonPath } from '../engine-parity/rust-arm.ts';
 
@@ -73,6 +77,130 @@ describe('worker refusal-swallow sites', () => {
     } finally {
       await engine.disconnect();
       removeBrainDir(brainDir);
+    }
+  }, 30_000);
+
+  test('S7 recordRefusal: a spend refusal still ends the job with the refusal when the engine cannot record its result row, and says so', async () => {
+    await pg.executeRaw('DELETE FROM minion_jobs');
+    const record = jobSpendAuthorization({ consented_effects: ['paid'], cap_usd: 1, cap_source: 'user', via: 'yes' },
+      { command: 'book-mirror', est_usd: 0.5, of: 1, argv: ['gbrain', 'book-mirror', '--slug', 'a-book'] });
+    await new MinionQueue(pg).add('subagent', { prompt: 'x' }, {}, { allowProtectedSubmit: true, spendAuthorization: record });
+    const job = (await new MinionQueue(pg).claim('tok-s7', 60_000, 'default', ['subagent']))!;
+    const ctx = { id: job.id, name: job.name, data: job.data, attempts_made: 0 } as unknown as MinionJobContext;
+    const engine = refusingEngine(pg, { needle: 'UPDATE minion_jobs SET result' });
+    const lines: string[] = [];
+    const err = spyOn(console, 'error').mockImplementation(((...a: unknown[]) => { lines.push(a.map(String).join(' ')); }) as never);
+    try {
+      const refusal = await runWithJobSpend(engine, job as MinionJob, ctx, async () => invokeAI(chatInvocation('test-unpriced', 'openrouter:example/unpriced-model', 1000),
+        async () => 'unexpected', () => null)).catch((e) => e as Error);
+      expect(refusal).toBeInstanceOf(SpendGroupRefusedError);
+    } finally { err.mockRestore(); }
+    expect(lines.join('\n')).toContain('cannot record the spend refusal');
+    expect(lines.join('\n')).toContain('engine_capability_missing');
+  });
+
+  /** A claimed `noop` job on `engine`, and a worker over `workerEngine` to call its private release paths on. */
+  async function claimedJob(engine: BrainEngine): Promise<{ job: MinionJob; token: string }> {
+    const queue = new MinionQueue(engine);
+    await queue.add('noop', {}, {});
+    const token = `tok-${Math.random().toString(36).slice(2)}`;
+    const job = await queue.claim(token, 60_000, 'default', ['noop']);
+    if (!job) throw new Error('nothing claimed');
+    return { job, token };
+  }
+  const releases = (worker: MinionWorker) => worker as unknown as {
+    releaseClaimForPause(job: MinionJob, token: string): Promise<void>;
+    handleQuietHoursDefer(job: MinionJob, token: string, verdict: 'skip' | 'defer'): Promise<void>;
+  };
+
+  test('S10 releaseClaimForPause: a capability refusal surfaces (the claim is not left to expire quietly); another error is logged and the worker goes on', async () => {
+    await pg.executeRaw('DELETE FROM minion_jobs');
+    const { job, token } = await claimedJob(pg);
+    await expect(releases(new MinionWorker(refusingEngine(pg), { healthCheckInterval: 0 })).releaseClaimForPause(job, token))
+      .rejects.toMatchObject({ code: 'engine_capability_missing' });
+    const err = spyOn(console, 'error').mockImplementation((() => {}) as never);
+    try {
+      await releases(new MinionWorker(refusingEngine(pg, { error: () => new Error('connection reset') }), { healthCheckInterval: 0 })).releaseClaimForPause(job, token);
+    } finally { err.mockRestore(); }
+  });
+
+  rustRun('S10 on a Rust brain: releasing a claim for the pause marker refuses instead of leaving the claim to expire', async () => {
+    const { engine, dir } = await openRustBrain();
+    try {
+      const e = engine as unknown as BrainEngine;
+      const { job, token } = await claimedJob(e);
+      await expect(releases(new MinionWorker(e, { healthCheckInterval: 0 })).releaseClaimForPause(job, token))
+        .rejects.toMatchObject({ code: 'engine_capability_missing' });
+    } finally {
+      await engine.disconnect();
+      removeBrainDir(dir);
+    }
+  });
+
+  test('S11 handleQuietHoursDefer: a capability refusal surfaces for a defer and for a skip; another error is logged and the worker goes on', async () => {
+    for (const verdict of ['defer', 'skip'] as const) {
+      await pg.executeRaw('DELETE FROM minion_jobs');
+      const { job, token } = await claimedJob(pg);
+      await expect(releases(new MinionWorker(refusingEngine(pg), { healthCheckInterval: 0 })).handleQuietHoursDefer(job, token, verdict))
+        .rejects.toMatchObject({ code: 'engine_capability_missing' });
+      const err = spyOn(console, 'error').mockImplementation((() => {}) as never);
+      try {
+        await releases(new MinionWorker(refusingEngine(pg, { error: () => new Error('connection reset') }), { healthCheckInterval: 0 })).handleQuietHoursDefer(job, token, verdict);
+      } finally { err.mockRestore(); }
+    }
+  });
+
+  rustRun('S11 on a Rust brain: a quiet-hours defer of a claimed job refuses instead of leaving the claim to expire', async () => {
+    const { engine, dir } = await openRustBrain();
+    try {
+      const e = engine as unknown as BrainEngine;
+      const { job, token } = await claimedJob(e);
+      await expect(releases(new MinionWorker(e, { healthCheckInterval: 0 })).handleQuietHoursDefer(job, token, 'defer'))
+        .rejects.toMatchObject({ code: 'engine_capability_missing' });
+    } finally {
+      await engine.disconnect();
+      removeBrainDir(dir);
+    }
+  });
+
+  /** Starts a worker with a 50 ms health check, runs it `ms`, and returns the 'unhealthy' payloads it emitted. */
+  async function unhealthyAfter(engine: BrainEngine, ms: number): Promise<Array<{ reason: string; message?: string }>> {
+    const worker = new MinionWorker(engine, { pollInterval: 25, healthCheckInterval: 50, dbFailExitAfter: 1, dbProbeTimeoutMs: 1000, stallWarnAfterMs: 20, stallExitAfterMs: 600_000 });
+    const events: Array<{ reason: string; message?: string }> = [];
+    worker.on('unhealthy', (info) => { events.push(info as { reason: string; message?: string }); });
+    worker.register('noop', async () => ({}));
+    const running = worker.start();
+    await new Promise((r) => setTimeout(r, ms));
+    worker.stop();
+    await running;
+    return events;
+  }
+
+  test('S9 worker stall check: a capability refusal on the waiting-job count stops the worker as unhealthy instead of skipping the check', async () => {
+    const events = await unhealthyAfter(refusingEngine(pg, { needle: 'AS cnt FROM minion_jobs' }), 800);
+    expect(events.map((e) => e.reason)).toEqual(['db_dead']);
+    expect(events[0]!.message).toContain('does not support executeRaw');
+  }, 20_000);
+
+  rustRun('S9 finding: on a Rust brain the health check never reaches the stall count; its DB-liveness probe is refused first and ends the worker as db_dead', async () => {
+    const { engine, dir } = await openRustBrain();
+    try {
+      const statements: string[] = [];
+      const e = new Proxy(engine as unknown as BrainEngine, {
+        get(target, property) {
+          if (property === 'executeRaw') return async (sql: string) => { statements.push(sql); return (target.executeRaw as (s: string) => Promise<unknown>)(sql); };
+          const value = Reflect.get(target, property);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      const events = await unhealthyAfter(e, 800);
+      expect(events.map((x) => x.reason)).toEqual(['db_dead']);
+      expect(events[0]!.message).toContain('does not support executeRaw');
+      expect(statements.length).toBeGreaterThan(0);
+      expect(new Set(statements)).toEqual(new Set(['SELECT 1']));
+    } finally {
+      await engine.disconnect();
+      removeBrainDir(dir);
     }
   }, 30_000);
 });
