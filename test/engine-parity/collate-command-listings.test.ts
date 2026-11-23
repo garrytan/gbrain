@@ -53,14 +53,13 @@ async function sources(engine: BrainEngine, backend: Backend) {
   for (const id of MIXED_SOURCES) await createSource(engine, backend, id);
 }
 
-/** A page in `sourceId` with `frontmatter` set by SQL (putPage's guards do not apply to this seed). */
+/** A page in `sourceId` with `frontmatter`, written by putPage. */
 async function page(engine: BrainEngine, sourceId: string, slug: string, frontmatter: Record<string, unknown> = {}, body = `${slug} body`) {
-  await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: body, timeline: '' }, { sourceId });
-  await engine.executeRaw('UPDATE pages SET frontmatter = $3::text::jsonb WHERE source_id = $1 AND slug = $2', [sourceId, slug, JSON.stringify(frontmatter)]);
+  await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: body, timeline: '', frontmatter }, { sourceId });
 }
 
 describe('command listings sort text keys by byte', () => {
-  parityTest('pagesReadByNobodyNaming lists pages by source id, then slug', { methods: ['executeRaw', 'putPage'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('pagesReadByNobodyNaming lists pages by source id, then slug', { methods: ['putPage', 'listPagesNamingReader'] }, async (engine, backend) => {
     await sources(engine, backend);
     for (const source of MIXED_SOURCES) for (const slug of MIXED_SLUGS) await page(engine, source, slug, { readable_by: ['member:gone-example'] });
     const { pages, truncated } = await pagesReadByNobodyNaming(engine, 'gone-example');
@@ -95,14 +94,15 @@ describe('command listings sort text keys by byte', () => {
     } finally { rmSync(out, { recursive: true, force: true }); }
   });
 
-  parityTest('scanIntegrity under a limit reads the first pages by byte slug', { methods: ['executeRaw', 'putPage'], requires: 'raw_sql' }, async (engine, backend) => {
+  // Postgres reads a limited scan in one batch statement (integrity.ts), so only putPage is called on every arm.
+  parityTest('scanIntegrity under a limit reads the first pages by byte slug', { methods: ['putPage'] }, async (engine, backend) => {
     for (const slug of MIXED_SLUGS) await page(engine, 'default', slug, {}, 'He tweeted about the launch last week.');
     const scan = await scanIntegrity(engine, { limit: 2 });
     expect(scan.pagesScanned).toBe(2);
     expect(scan.bareHits.map(h => h.slug)).toEqual(BYTE_SLUGS.slice(0, 2));
   });
 
-  parityTest('scanIntegrity under a limit reads pages by source id, then slug, on the batch and sequential paths', { methods: ['executeRaw', 'putPage'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('scanIntegrity under a limit reads pages by source id, then slug, on the batch and sequential paths', { methods: ['putPage', 'listAllPageRefs'] }, async (engine, backend) => {
     await sources(engine, backend);
     // Slug order runs opposite to source order, so a slug-first walk reads `aa` first and the source-first batch `zz`.
     const slugOf: Record<string, string> = { 'a-z': 'zz', a0: 'mm', ab: 'aa' };
@@ -160,9 +160,9 @@ describe('command listings sort text keys by byte', () => {
     });
   });
 
-  parityTest('files verify reports its rows by byte storage path', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('files verify reports its rows by byte storage path', { methods: ['upsertCliFileRow', 'listFileRowsForVerify'] }, async (engine) => {
     for (const path of MIXED_SLUGS) {
-      await engine.executeRaw("INSERT INTO files (filename, storage_path, content_hash) VALUES ($1, $2, 'sha256:abc')", [path, `files/${path}`]);
+      await engine.upsertCliFileRow({ page_slug: null, filename: path, storage_path: `files/${path}`, mime_type: null, size_bytes: 3, content_hash: 'sha256:abc' }, {});
     }
     const lines: string[] = [];
     const errors = spyOn(console, 'error').mockImplementation((...a: unknown[]) => { lines.push(a.join(' ')); });
