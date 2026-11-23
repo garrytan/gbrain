@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { BAR_MS, checkArm, combine, failureMessage, summarize, type Baseline, type Call } from '../../scripts/bench/production-soak/search-gate.ts';
+import { acceptBaseline, BAR_MS, checkArm, combine, failureMessage, summarize, type Baseline, type Call, type Config } from '../../scripts/bench/production-soak/search-gate.ts';
 
 const calls = (ms: number[], meta = 0): Call[] => ms.map(m => ({ ms: m, timings: { stages_ms: { rerank: 300, response: meta + 30 }, parts_ms: { response: { meta, evidence: 30 } } } }));
 const base: Baseline = { version: '0.60.722.0', run_url: null, arms: [{ jit: 'off', p50_ms: 1007, p95_ms: 1300 }, { jit: 'on', p50_ms: 1100, p95_ms: 1400 }] };
@@ -48,6 +48,16 @@ describe('production soak search speed gate', () => {
     expect(arm.p50_ms).toBe(1200);
     expect(checkArm(arm, null).every(c => c.pass)).toBe(true);
     expect(arm.readings).toHaveLength(2);
+  });
+
+  test('only a passing, unoverridden result on the same fixture size and probe becomes the baseline', () => {
+    const config: Config = { fixture_pages: 600_000, rtt_ms: 2, n: 60, warmup: 5, embed_ms: 200, rerank_ms: 300, parked: 9400 };
+    const g = { pass: true, override: null, config, arms: base.arms };
+    expect(acceptBaseline(g, 'v0.60.760.0', 'u', config)).toEqual({ version: '0.60.760.0', run_url: 'u', arms: base.arms });
+    expect(acceptBaseline({ ...g, pass: false }, 'v1', null, config)).toBeNull();
+    expect(acceptBaseline({ ...g, override: { reason: 'noise' } }, 'v1', null, config)).toBeNull();
+    expect(acceptBaseline({ ...g, config: { ...config, fixture_pages: 20_000 } }, 'v1', null, config)).toBeNull();
+    expect(acceptBaseline({ ...g, config: { ...config, n: 10 } }, 'v1', null, config)).toBeNull();
   });
 
   test('the failure message names the numbers, the slowest part, the hold and the override', () => {

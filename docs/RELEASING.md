@@ -1012,9 +1012,11 @@ An overridden run never serves as the next release's baseline. To compare two
 builds on one loaded brain, run the script again with `--repo <other
 checkout>`.
 
-Cost: the soak already ran on nearly every release (about 9.5 hours of Ubicloud
-standard-16 time, about $6 per release at $0.010 a minute); the gate adds about
-10 to 15 minutes per cell, about $0.30.
+Cost: each release now gets its own soak, about 9.5 hours of Ubicloud
+standard-16 time (about $6 at $0.010 a minute), so the daily cost is $6 times
+the releases cut that day, and soaks on consecutive tags run at the same time.
+Before this, a soak was dispatched by hand on nearly every release. The gate
+itself adds about 10 to 15 minutes per cell, about $0.30.
 
 ### The `publish-template` job
 

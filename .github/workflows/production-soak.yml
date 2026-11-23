@@ -107,6 +107,8 @@ jobs:
           cat "$RUNNER_TEMP/soak-out/scoreboard.md" >> "$GITHUB_STEP_SUMMARY"
       - name: Search speed gate
         timeout-minutes: 45
+        # The 65 ms cell records only: a harness error or timeout there must not turn the soak red.
+        continue-on-error: ${{ matrix.rtt != 2 }}
         env:
           RTT: ${{ matrix.rtt }}
           MODE: ${{ matrix.rtt == 2 && 'block' || 'record' }}

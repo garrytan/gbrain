@@ -47,7 +47,7 @@ export type Jit = 'on' | 'off';
 export interface Call { ms: number; error?: string; timings?: { stages_ms?: Record<string, number>; parts_ms?: Record<string, Record<string, number>> } }
 export interface Reading { n: number; errors: number; p50_ms: number | null; p95_ms: number | null; slowest: { part: string; p50_ms: number } | null; server_jit: string }
 export interface Arm extends Reading { jit: Jit; readings: Reading[] }
-export interface Config { rtt_ms: number; n: number; warmup: number; embed_ms: number; rerank_ms: number; parked: number }
+export interface Config { fixture_pages: number; rtt_ms: number; n: number; warmup: number; embed_ms: number; rerank_ms: number; parked: number }
 export interface Baseline { version: string; run_url: string | null; arms: Array<Pick<Arm, 'jit' | 'p50_ms' | 'p95_ms'>> }
 export interface Check { arm: Jit; id: string; value: number | null; limit: number | null; pass: boolean; why: string }
 
@@ -101,11 +101,19 @@ export function failureMessage(arm: Arm, checks: Check[], rtt: number, pages: nu
 
 const cmpVersion = (a: string, b: string) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] ?? 0) - (y[i] ?? 0); if (d) return d; } return 0; };
 
+/** A release's search-gate.json serves as a baseline only when it passed without an override, on the same fixture size and probe shape. */
+export function acceptBaseline(g: { pass?: unknown; override?: unknown; config?: unknown; arms?: Baseline['arms'] }, tag: string, url: string | null, config: Config): Baseline | null {
+  if (g.pass !== true || g.override || JSON.stringify(g.config) !== JSON.stringify(config) || !Array.isArray(g.arms)) return null;
+  return { version: tag.replace(/^v/, ''), run_url: url, arms: g.arms };
+}
+
+export type BaselineLookup = { baseline: Baseline | null; lookup: 'given' | 'found' | 'none' | 'failed'; detail?: string };
+
 /** The newest earlier release whose soak passed this gate with the same probe shape, from its run's artifact. */
-function findBaseline(repo: string, version: string, config: Config): Baseline | null {
+function findBaseline(repo: string, version: string, config: Config): BaselineLookup {
   const gh = (args: string[]) => spawnSync('gh', args, { encoding: 'utf8', maxBuffer: 1 << 26 });
   const list = gh(['api', 'repos/' + repo + '/actions/workflows/production-soak.yml/runs?status=success&per_page=100', '--jq', '.workflow_runs[] | [.id, .head_branch, .html_url] | @tsv']);
-  if (list.status !== 0) { console.error('[search-gate] could not list soak runs: ' + list.stderr.trim()); return null; }
+  if (list.status !== 0) return { baseline: null, lookup: 'failed', detail: 'could not list soak runs: ' + list.stderr.trim().split('\n').at(-1) };
   const runs = list.stdout.trim().split('\n').map(l => l.split('\t')).filter(r => /^v\d+(\.\d+){3}$/.test(r[1] ?? '') && cmpVersion(r[1]!.slice(1), version) < 0)
     .sort((a, b) => cmpVersion(b[1]!.slice(1), a[1]!.slice(1)));
   for (const [id, tag, url] of runs.slice(0, 6)) {
@@ -114,22 +122,21 @@ function findBaseline(repo: string, version: string, config: Config): Baseline |
       if (gh(['run', 'download', id!, '-R', repo, '-n', 'production-soak-rtt' + config.rtt_ms, '-D', dir]).status !== 0) continue;
       const file = join(dir, 'search-gate.json');
       if (!existsSync(file)) continue;
-      const g = JSON.parse(readFileSync(file, 'utf8'));
-      if (g.pass !== true || g.override || JSON.stringify(g.config) !== JSON.stringify(config)) continue;
-      return { version: tag!.slice(1), run_url: url ?? null, arms: g.arms };
+      const baseline = acceptBaseline(JSON.parse(readFileSync(file, 'utf8')), tag!, url ?? null, config);
+      if (baseline) return { baseline, lookup: 'found' };
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }
-  return null;
+  return { baseline: null, lookup: 'none' };
 }
 
 async function main() {
   const argv = process.argv.slice(2);
   const flag = (name: string, fallback = '') => { const i = argv.indexOf('--' + name); return i >= 0 ? argv[i + 1]! : fallback; };
   const FIXTURE = resolve(flag('fixture')), WORK = resolve(flag('work')), OUT = resolve(flag('out')), CHECKOUT = resolve(flag('repo', REPO));
-  const config: Config = { rtt_ms: Number(flag('rtt-ms', '2')), n: Number(flag('n', '60')), warmup: Number(flag('warmup', '5')), embed_ms: Number(flag('embed-ms', '200')), rerank_ms: Number(flag('rerank-ms', '300')), parked: Number(flag('parked', '9400')) };
   const mode = flag('mode', 'block') as 'block' | 'record', override = flag('override').trim();
   if (!['block', 'record'].includes(mode)) throw new Error('--mode must be block or record');
   const manifest = JSON.parse(readFileSync(join(FIXTURE, 'manifest.json'), 'utf8'));
+  const config: Config = { fixture_pages: Number(manifest.options?.pages ?? manifest.pages), rtt_ms: Number(flag('rtt-ms', '2')), n: Number(flag('n', '60')), warmup: Number(flag('warmup', '5')), embed_ms: Number(flag('embed-ms', '200')), rerank_ms: Number(flag('rerank-ms', '300')), parked: Number(flag('parked', '9400')) };
   const ready = JSON.parse(readFileSync(join(WORK, 'ready.json'), 'utf8'));
   const HOME = join(WORK, 'home'), CLI = join(CHECKOUT, 'src', 'cli.ts');
   const version = readFileSync(join(CHECKOUT, 'VERSION'), 'utf8').trim();
@@ -190,8 +197,10 @@ async function main() {
     return summarize(calls, serverJit);
   };
 
-  const baseline = flag('baseline') ? (() => { const g = JSON.parse(readFileSync(resolve(flag('baseline')), 'utf8')); return { version: String(g.version), run_url: g.run_url ?? null, arms: g.arms } as Baseline; })()
-    : flag('baseline-repo') ? findBaseline(flag('baseline-repo'), version, config) : null;
+  const lookup: BaselineLookup = flag('baseline') ? (() => { const g = JSON.parse(readFileSync(resolve(flag('baseline')), 'utf8')); return { baseline: { version: String(g.version), run_url: g.run_url ?? null, arms: g.arms }, lookup: 'given' as const }; })()
+    : flag('baseline-repo') ? findBaseline(flag('baseline-repo'), version, config) : { baseline: null, lookup: 'none' };
+  const baseline = lookup.baseline;
+  if (lookup.lookup === 'failed') console.log('::warning title=Search speed gate::The last release\'s result could not be read (' + lookup.detail + '), so this run has no regression check; the fixed bars still apply.');
   const arms: Arm[] = [];
   const checks: Check[] = [];
   try {
@@ -214,10 +223,10 @@ async function main() {
   const pass = checks.every(c => c.pass);
   const pages = ready.counts?.pages ?? null;
   const result = { schema: 'gbrain-production-soak-search-gate/1', version, gbrain_version: gbrainVersion, rev: spawnSync('git', ['-C', CHECKOUT, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim() || null,
-    pages, config, parked_rows: parked, bar_ms: BAR_MS, regression: REGRESSION, baseline, arms, checks, mode, override: override ? { reason: override, actor: process.env.GITHUB_ACTOR ?? null } : null, pass };
+    pages, config, parked_rows: parked, bar_ms: BAR_MS, regression: REGRESSION, baseline, baseline_lookup: lookup.lookup, arms, checks, mode, override: override ? { reason: override, actor: process.env.GITHUB_ACTOR ?? null } : null, pass };
   writeFileSync(join(OUT, 'search-gate.json'), JSON.stringify(result, null, 2) + '\n');
   const md = ['## Search speed gate (' + config.rtt_ms + ' ms RTT, ' + mode + ')', '',
-    'v' + version + ' on ' + (pages ?? '?') + ' pages with ' + parked + ' upgrade rows parked on image pages; ' + config.n + ' warm MCP searches per reading (mock embed ' + config.embed_ms + ' ms, rerank ' + config.rerank_ms + ' ms). Bars: p50 under ' + ms(BAR_MS.p50) + ', p95 under ' + ms(BAR_MS.p95) + (baseline ? '; against v' + baseline.version : '; no earlier release passed this gate yet, so no regression check') + '.', '',
+    'v' + version + ' on ' + (pages ?? '?') + ' pages with ' + parked + ' upgrade rows parked on image pages; ' + config.n + ' warm MCP searches per reading (mock embed ' + config.embed_ms + ' ms, rerank ' + config.rerank_ms + ' ms). Bars: p50 under ' + ms(BAR_MS.p50) + ', p95 under ' + ms(BAR_MS.p95) + (baseline ? '; against v' + baseline.version : (lookup.lookup === 'failed' ? '; the last release\'s result could not be read (' + lookup.detail + '), so no regression check' : '; no earlier release passed this gate with this fixture and probe, so no regression check')) + '.', '',
     '| JIT | p50 | p95 | errors | readings | slowest part |', '|---|---|---|---|---|---|',
     ...arms.map(a => '| ' + a.jit + ' | ' + ms(a.p50_ms) + ' | ' + ms(a.p95_ms) + ' | ' + a.errors + ' | ' + a.readings.length + ' | ' + (a.slowest ? a.slowest.part + ' ' + ms(a.slowest.p50_ms) : '-') + ' |'), '',
     pass ? '**Pass.**' : '**Fail**: ' + checks.filter(c => !c.pass).map(c => 'JIT ' + c.arm + ' ' + c.why).join('; ') + '.', ...(override ? ['', 'Overridden by ' + (process.env.GITHUB_ACTOR ?? 'an operator') + ': ' + override] : []), ''].join('\n');
