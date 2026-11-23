@@ -785,7 +785,9 @@ gh workflow run promote-stable.yml -f version=<VERSION> \
   message: a title line (`gbrain`, then `stable channel: v<VERSION>`), then one
   `key: value` line each for `version`, `commit`, `tree`, `soak_run`,
   `scoreboard`, `matrix_run` (only when the promotion named one; `stable.json`
-  always has the key, `null` without one), `promoted_by`, `promoted_at` (UTC), `previous`
+  always has the key, `null` without one), `install_canary` (the install
+  canary's status description, or `waived: <reason>`; absent on a rollback,
+  `null` in `stable.json`), `promoted_by`, `promoted_at` (UTC), `previous`
   (`none` on the first promotion), `rollback` and `reason` (`-` when
   empty).
 - **Inputs.** `version` (an existing `v<VERSION>` release tag),
@@ -797,7 +799,8 @@ gh workflow run promote-stable.yml -f version=<VERSION> \
   `withdraw` (versions added to the carried-forward `known_bad` list;
   clients on one are offered the current stable, even when older), and
   `not_promotable` with `not_promotable_reason` and `not_promotable_fixed_in`,
-  and `not_promotable_remove` (see below).
+  and `not_promotable_remove` (see below), and `canary_waiver` (optional:
+  why to promote a release the install canary failed or has not tested yet).
 - **Not promotable.** A release can soak clean and still be bad, when the
   evidence comes from outside the soak (a regression found on a large brain,
   say). Record it so the daily check never soaks or promotes it: dispatch this
@@ -835,6 +838,24 @@ gh workflow run promote-stable.yml -f version=<VERSION> \
   without one, for example past an upgrade break the matrix found: the record
   then says `matrix_run: null` and names the maintainer as `promoted_by`. A
   scheduled promotion always names one.
+- **Install canary.** The install canary installs each release tag into every
+  supported agent harness and reports by posting a commit status with context
+  `gbrain/install-canary` on the tag's commit: `success` when the release is
+  promotable, `failure` when a failure blocks stable, `pending` when its job
+  starts. The description starts with the tag, as `v<VERSION> run <run id>: pass`
+  or `v<VERSION> run <run id>: fail <harness,...>`, and the newest status wins
+  (`scripts/stable-canary.ts` `judgeCanary`). Only statuses posted by an account
+  on the `STABLE_CANARY_POSTERS` repository variable count (comma-separated
+  GitHub logins, `capy-ai[bot]`, the account the canary posts as, when
+  unset), so the list can change with no
+  workflow edit; a status from anyone else, or naming another tag, is ignored.
+  A release with no counted status, or whose newest one is `pending` (a job
+  that died leaves one behind), is not tested yet. A forward promotion of a
+  release the canary failed or has not tested yet is refused unless a
+  maintainer passes `canary_waiver`, which the record keeps as
+  `install_canary: waived: <reason>`; a scheduled promotion never takes a
+  waiver. A rollback is not checked. If the statuses cannot be read the run
+  refuses, so re-run it. Both workflows need `statuses: read`.
 - **Published release.** The tag's `VERSION` file must say the version, and
   its GitHub release must exist and not be a draft, so binary clients can
   fetch the stable release.
@@ -932,6 +953,15 @@ and keeps stable between one day and one week behind what matters:
   newest release it dispatches the matrix on that release too. A red or
   foreign run holds stable with a warning and is never re-dispatched by the
   schedule: a maintainer fixes the break or promotes by hand.
+- **Install canary last.** The candidate also needs the install canary's pass
+  on its release commit, checked as under "Install canary" above and again by
+  `promote()`, and recorded as `install_canary`. A release the canary failed is
+  skipped, logged, and an older qualifying release is promoted instead. When no
+  release qualifies, a candidate the canary has not tested yet makes the run wait
+  (`waiting`, naming the version: "v<VERSION> is not tested yet") with nothing
+  dispatched or pushed, and a later run promotes once the canary passes it; a
+  candidate only the canary failed holds stable with a warning until a maintainer
+  fixes it or promotes by hand with `canary_waiver`.
 - **Upgrade breaks hold.** While the matrix's own break issue is open (the
   one the nightly run opens with the `<!-- gbrain-upgrade-matrix:nightly -->`
   marker; another issue with the `upgrade-break` label holds nothing), the

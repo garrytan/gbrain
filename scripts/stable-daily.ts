@@ -39,6 +39,11 @@
  *    run yet: one matrix dispatch on the candidate tag, unless a matrix run is
  *    active. A red or foreign run holds stable (a maintainer decides) and is never
  *    re-dispatched by the schedule. promote() checks the run again.
+ * 3c. The candidate also needs the install canary's pass: a trusted gbrain/install-canary commit status on its
+ *    release commit (scripts/stable-canary.ts judgeCanary). A release the canary failed is skipped for an older
+ *    one; so is one it has not tested yet (no status, or a pending one). When no release qualifies because of the
+ *    canary, the run waits for it (not tested yet) or holds for a maintainer (failed); it dispatches nothing,
+ *    since the release already soaked. A status list that cannot be read stops the run.
  * 4. Nothing promotable yet: the newest release is soaked (one dispatch of the
  *    soak on its tag, with an upgrade matrix dispatch on the same tag when it has
  *    no run) unless a soak is already running, or a soak on any newer
@@ -55,6 +60,7 @@ import {
   authorize, compareVersions, currentStable, DOCS, onReleaseBranch, processDeps, promote, readPriorRecord, refExists, Refusal, requireSoakWorkflow, scheduleAuthorized, STABLE_REF,
   type PromoteDeps, type Promotion,
 } from './promote-stable.ts';
+import { judgeCanary, parseCanaryPosters, readCanaryStatuses } from './stable-canary.ts';
 import {
   BREAK_PASS_CLASSES, breakIssueQuery, findBreakIssue, fragmentImportance, isGateRun, judgeMatrixRun, MATRIX_WORKFLOW, receiptNames,
   type MatrixReceipt, type MatrixRunRow,
@@ -252,6 +258,7 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
   }
   const oldestImportant = passing.reduce<string | null>((v, i) => (!v || compareVersions(i.version, v) < 0 ? i.version : v), null);
   let failedSoak: { version: string; run: SoakRunRow } | null = null;
+  let canaryBlock: { version: string; state: 'failure' | 'untested'; why: string } | null = null;
   for (const rel of releases) {
     if (!weekly && oldestImportant && compareVersions(rel.version, oldestImportant) < 0) break;
     const tree = await treeOf(deps, rel.commit);
@@ -278,6 +285,19 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
       deps.log(`::warning::Daily stable check: ${why} Docs: docs/RELEASING.md#daily-stable-check`);
       return { action: 'held', why };
     }
+    let statuses;
+    try {
+      statuses = await readCanaryStatuses(deps.ghApi, deps.repo, rel.commit);
+    } catch (error) {
+      throw new Refusal(`the install canary's statuses on v${rel.version} (${rel.commit}) could not be read (${(error as Error).message.split('\n')[0]}), so stable holds; re-run the check.`);
+    }
+    const canary = judgeCanary(statuses, rel.version, deps.canaryPosters ?? parseCanaryPosters(undefined));
+    if (canary.state !== 'success') {
+      deps.log(`[stable-daily] skipping v${rel.version}: ${canary.why}.`);
+      canaryBlock ??= { version: rel.version, state: canary.state, why: canary.why };
+      continue;
+    }
+    deps.log(`[stable-daily] ${canary.why}.`);
     if (deps.dryRun) return { action: 'dry_run', why: reason, would: `promote v${rel.version} on soak ${chosen.html_url} and upgrade matrix ${matrix.run.html_url}` };
     const excused = judged.excused.length ? `; upgrade break #${breakIssue!.number} excused for ${judged.excused.join(', ')}` : '';
     const promotion = await promote(deps, {
@@ -287,6 +307,12 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
     return { action: 'promoted', why: reason, promotion };
   }
 
+  if (canaryBlock?.state === 'untested') return { action: 'waiting', why: `${reason}; ${canaryBlock.why}, and no older release qualifies, so stable waits for the install canary`, version: canaryBlock.version };
+  if (canaryBlock) {
+    const why = `${reason}; ${canaryBlock.why}, and no older release qualifies, so stable holds and a maintainer decides`;
+    deps.log(`::warning::Daily stable check: ${why}. Docs: docs/RELEASING.md#daily-stable-check`);
+    return { action: 'held', why };
+  }
   const newest = releases[0]!;
   const active = runs.find(r => r.status !== 'completed');
   if (active) return { action: 'waiting', why: `${reason}; soak ${active.html_url} is still running.`, version: newest.version };
