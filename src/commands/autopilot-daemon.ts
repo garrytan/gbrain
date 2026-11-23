@@ -34,6 +34,7 @@ import {
   shouldSpawnAutopilotWorker,
 } from './autopilot.ts';
 import { restartServeAfterSelfUpgrade } from './upgrade-restart.ts';
+import { rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 
 /**
  * Mutable daemon state shared by the tick loop, the shutdown path and the tick
@@ -617,6 +618,8 @@ export async function probeNoWorkerPeer(engine: BrainEngine, state: AutopilotDae
         state.noWorkerConsecutiveIdle = 0;
       }
     } catch (e) {
+      // A capability refusal is not a blip: the engine cannot answer, so the warning could never fire. Let it out.
+      rethrowCapabilityRefusal(e);
       // Probe failures never block the main dispatch loop. Log once per
       // failure class; ignore repeated errors (common shape: DB reconnect
       // blip between ticks).
