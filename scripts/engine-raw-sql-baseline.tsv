@@ -1236,7 +1236,7 @@ src/core/wakeshift/forget.ts	sql_template	6
 src/core/wakeshift/spool.ts	execute_raw	3
 src/core/wakeshift/terms.ts	execute_raw	2
 src/core/wanted-links-store.ts	execute_raw	6
-src/core/write-gate-binding.ts	execute_raw	4	the identity carry of holds (merge identical twins, move, mark differing twins, repoint candidates), one statement each; the held-write page binding (v337): the holds follow their page by id; no typed engine member is added (no new BrainEngine member in this change), the Rust engine's own hold store and rename paths take the contract in the PR description
+src/core/write-gate-binding.ts	execute_raw	6	the identity carry of holds (merge identical twins, move, mark differing twins, repoint candidates) and the purge's removal of a purged page from candidate-marked holds (update, then delete the emptied ones), one statement each; the held-write page binding (v337): the holds follow their page by id; no typed engine member is added (no new BrainEngine member in this change), the Rust engine's own hold store and rename paths take the contract in the PR description
 src/core/write-gate-scan.ts	execute_raw	2
 src/core/write-gate-store.ts	execute_raw	9	the hold writer now runs up to three statements (bind by the producer's page id, bind by the page at the slug, unbound); the held-write page binding (v337): the holds follow their page by id; no typed engine member is added (no new BrainEngine member in this change), the Rust engine's own hold store and rename paths take the contract in the PR description
 src/core/write-through.ts	execute_raw	2
