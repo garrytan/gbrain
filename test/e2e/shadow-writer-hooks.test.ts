@@ -22,6 +22,7 @@ import { join } from 'node:path';
 import postgres from '#postgres';
 import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { hasDatabase } from './helpers.ts';
+import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 import { persistencePostgresTemplate } from '../helpers/persistence-postgres.ts';
 import {
   ensureWriterHooks, installWriterHooks, listHookedTables, readWriterHooksManifest, removeWriterHooks, WRITER_EVIDENCE_TABLES, WRITER_HOOK_TRIGGER,
@@ -65,7 +66,7 @@ async function brainTableCount(): Promise<number> {
 }
 
 d('writer hooks on Postgres', () => {
-  beforeAll(async () => { template = await persistencePostgresTemplate(process.env.DATABASE_URL!); }, 120_000);
+  beforeAll(async () => { assertSafeE2eDatabaseUrl(process.env.DATABASE_URL!); template = await persistencePostgresTemplate(process.env.DATABASE_URL!); }, 120_000);
   afterAll(async () => { await template.dispose(); });
   beforeEach(async () => { ({ engine, close } = await template.clone()); }, 60_000);
   afterEach(async () => {
@@ -738,14 +739,15 @@ d('writer hooks on Postgres', () => {
     const config = { engine: 'postgres' as const, database_url: url };
     const out: string[] = [];
     const err: string[] = [];
-    const deps = { config: () => config, out: (l: string) => out.push(l), err: (l: string) => err.push(l), openPrimary: async () => engine, loadAddon: async () => ({ ok: true }) as never };
+    // The shared engine must survive each command's disconnect (start, even with --plan, opens the brain to read its
+    // storage mode): hand every command a view whose disconnect does nothing.
+    const view = new Proxy(engine, { get: (t, p) => (p === 'disconnect' ? async () => undefined : Reflect.get(t, p, t)) });
+    const deps = { config: () => config, out: (l: string) => out.push(l), err: (l: string) => err.push(l), openPrimary: async () => view as never, loadAddon: async () => ({ ok: true }) as never };
     await withEnv({ GBRAIN_HOME: home }, async () => {
       expect(await runEngineShadow(['start', '--plan'], deps)).toBe(0);
       const planHash = out.find(l => l.startsWith('plan_hash: '))!.slice('plan_hash: '.length);
       expect(out.join('\n')).toContain('gbrain_writer_note');
-      // The shared engine must survive the command's disconnect: hand it a view whose disconnect does nothing.
-      const view = new Proxy(engine, { get: (t, p) => (p === 'disconnect' ? async () => undefined : Reflect.get(t, p, t)) });
-      const keep = { ...deps, openPrimary: async () => view as never };
+      const keep = deps;
       expect(await runEngineShadow(['start', '--yes', '--expect', planHash], keep)).toBe(0);
       expect((await listHookedTables(engine)).length).toBe(await brainTableCount());
       expect(await runEngineShadow(['stop'], { ...keep, openPrimary: async () => { throw Object.assign(new Error('down'), { code: 'ECONNREFUSED' }); } })).toBe(1);

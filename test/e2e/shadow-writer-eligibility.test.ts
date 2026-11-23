@@ -19,6 +19,7 @@ import { join } from 'node:path';
 import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { hasDatabase } from './helpers.ts';
+import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 import { persistencePostgresTemplate } from '../helpers/persistence-postgres.ts';
 import { wrapShadowEngine } from '../../src/shadow/wrapper.ts';
 import { newMirrorCounters } from '../../src/shadow/mirror.ts';
@@ -58,7 +59,7 @@ const sink = { counters: newMirrorCounters(), offer: () => undefined, active: ()
 const put = (e: BrainEngine, slug: string) => e.putPage(slug, { type: 'note', title: slug, compiled_truth: `body of ${slug}`, timeline: '' } as never);
 
 d('writer observations on Postgres', () => {
-  beforeAll(async () => { template = await persistencePostgresTemplate(process.env.DATABASE_URL!); }, 120_000);
+  beforeAll(async () => { assertSafeE2eDatabaseUrl(process.env.DATABASE_URL!); template = await persistencePostgresTemplate(process.env.DATABASE_URL!); }, 120_000);
   afterAll(async () => { await template.dispose(); });
   beforeEach(async () => { ({ engine, close } = await template.clone()); }, 60_000);
   afterEach(async () => {

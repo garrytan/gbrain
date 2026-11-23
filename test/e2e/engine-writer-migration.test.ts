@@ -12,6 +12,7 @@ import postgres from '#postgres';
 import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { v332 } from '../../src/core/schema-migrations/v332-engine-writer-observations.ts';
 import { hasDatabase } from './helpers.ts';
+import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 import { persistencePostgresTemplate } from '../helpers/persistence-postgres.ts';
 
 const d = hasDatabase() ? describe : describe.skip;
@@ -49,7 +50,7 @@ async function snapshot(): Promise<string> {
 }
 
 d('migration v332 on a populated Postgres brain', () => {
-  beforeAll(async () => { template = await persistencePostgresTemplate(process.env.DATABASE_URL!); }, 120_000);
+  beforeAll(async () => { assertSafeE2eDatabaseUrl(process.env.DATABASE_URL!); template = await persistencePostgresTemplate(process.env.DATABASE_URL!); }, 120_000);
   afterAll(async () => { await template.dispose(); });
   beforeEach(async () => {
     ({ engine, close } = await template.clone());
