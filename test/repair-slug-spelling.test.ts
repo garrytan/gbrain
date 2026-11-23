@@ -5,7 +5,8 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  1. Contract: the preview lists every page of one source whose slug is not its normal slug, as `move`, `needs_human`
- *     (a page already holds the normal slug, or two stored spellings share it) or `rename_file_first` (the page's file
+ *     (a page already holds the normal slug, or two stored spellings share it, or the page has a held write under either
+ *     spelling: never moved, the owner releases or drops the holds first) or `rename_file_first` (the page's file
  *     in a checkout is not at the normal path). `--apply --expect <hash> --yes` moves only the movable pages, one
  *     transaction per page, keeping the page id, versions, tags, timeline, links, facts, withdrawals, aliases and
  *     attachments (`files.page_slug`; ids, storage paths and bytes unchanged); another source's rows are untouched.

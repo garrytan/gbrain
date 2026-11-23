@@ -2083,8 +2083,7 @@ Each page in the preview is one of:
   search aliases follow; the attachments' page name follows (their ids, storage paths and bytes do not change); the old
   spelling becomes an alias, so `gbrain get` by it still answers. The guards that name the page by its slug follow it
   too: the purge tombstones of its facts and takes are copied to the normal slug (so a purged claim stays refused and an
-  import still drops it), and every held write (a quarantined fence row) is re-keyed to it, so held text stays out of
-  what is delivered until its owner releases it. The apply takes the page lock of the stored spelling as well as the
+  import still drops it). The apply takes the page lock of the stored spelling as well as the
   normal one, so an edit under way waits for the move (or the move refuses, below). A database role that row-level security
   keeps from `fact_purges`, `take_purges` or `write_gate_holds` reads them as empty, so the preview and the apply refuse
   with [`writer_coordinator_required`](error-codes.md#writer_coordinator_required) naming the table, before anything moves;
@@ -2093,13 +2092,18 @@ Each page in the preview is one of:
   soft-deleted) already holds the normal slug, or two stored spellings share it. Nothing moves, because that would merge
   two pages. The listing names the pages to compare; keep the content you want in one, soft-delete the other with
   `gbrain delete`, and preview again.
-- **needs_human** ([`slug_spelling_hold_conflict`](error-codes.md#slug_spelling_hold_conflict)): a held write of the page
-  matches a held write already at the normal slug (same text) but the two would publish different fields (visibility,
-  attribution, entity or row), so merging them would publish the kept one's fields at the owner's release. Nothing moves;
-  release or drop one with `gbrain trust release` / `gbrain trust drop`, then preview again. Held writes that would publish
-  identically are merged. The apply locks both spellings' held-write rows while it compares and merges, so a held write
-  recorded meanwhile either waits for the move or makes it refuse `changed_since_preview`; a held write is never dropped
-  for a copy with other fields.
+- **needs_human** ([`slug_spelling_held_writes`](error-codes.md#slug_spelling_held_writes)): the page has a held write
+  (an active quarantine hold of a fact or take, a row kept out of delivered text) under either of its spellings in the
+  source. The repair never moves, re-keys or merges a held write: it stays out of delivered text only while it names the
+  page's exact slug, and the code that records holds takes no page lock, so a move could not keep the two in step.
+  Nothing moves. List the holds with `gbrain trust review`, release or drop each with `gbrain trust release h<id>` /
+  `gbrain trust drop h<id>`, then preview again. Released and dropped holds are decided records and do not block the
+  move; they keep the spelling they were recorded under. The apply checks again under the page locks: a hold that appeared
+  after the preview refuses [`changed_since_preview`](error-codes.md#changed_since_preview) for that page, and a hold row
+  being re-opened by a transaction still in flight makes the move wait for it and then refuse.
+  One race remains: a new hold recorded for the old spelling by a transaction that commits while the move runs can still
+  name the old spelling after the move (the hold writer takes no page lock, and a row that does not exist yet has nothing
+  to lock). The doctor check `legacy_slug_spellings` and a rerun of the preview list the page again.
 - **rename_file_first** ([`rename_file_first`](error-codes.md#rename_file_first)): the page's file in the source's
   checkout is not at the path of the normal slug (or the recorded file is not in the checkout, or a file sits at the old spelling's path). Moving only
   the row would split the page from its file. `git mv` the file to the normal path, commit and sync; sync carries the page

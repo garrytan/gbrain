@@ -13,8 +13,10 @@
  *  - `move`: the normal slug is free in the source and the page's file evidence agrees.
  *  - `needs_human` (`slug_spelling_collision`): a page (live or soft-deleted) already holds the normal slug, or two stored
  *    spellings share it. Moving one would merge two pages, so nothing moves; the listing names the pages to compare.
- *  - `needs_human` (`slug_spelling_hold_conflict`): a held write of the page matches a hold at the normal slug but the two would publish
- *    different fields; merging them would publish the kept one's. Nothing moves until the owner releases or drops one.
+ *  - `needs_human` (`slug_spelling_held_writes`): the page has a held write (an active quarantine hold of a fact or take) under
+ *    either of its spellings. A held write is omitted from delivered text only while it names the page's slug, and a hold
+ *    cannot be moved safely while its writer may still record it, so nothing moves until the owner releases or drops
+ *    the holds (`gbrain trust release h<id>` / `gbrain trust drop h<id>`; `gbrain trust review` lists them).
  *  - `rename_file_first` (`rename_file_first`): the page has a file in the source's checkout, and it is not at the path
  *    of the normal slug (or cannot be found on disk), or a file sits at the path of the old spelling. Moving only the
  *    database row would split the page from its file; the owner renames the file in Git, then syncs, and sync carries the page.
@@ -24,7 +26,7 @@
  * Apply moves each approved page in its own `maintenanceTransaction`: both page keys (the stored spelling and the normal slug) are locked, every bound fact is read
  * again (a change refuses `changed_since_preview` and nothing moves), the normal slug must still be free, then `updateSlug`
  * moves the page (version preimage, redirect alias, slug-keyed facts, withdrawals, search aliases) and the attachments'
- * `files.page_slug` follow, and the page's purge tombstones and held writes are carried to the normal slug (slug-spelling-guards.ts).
+ * `files.page_slug` follow, and the page's purge tombstones are copied to the normal slug (slug-spelling-guards.ts). Held writes are re-read under the same locks: one that appeared since the preview refuses `changed_since_preview` for that page.
  * The transaction runs under `withStoredSlug`, so the lock on the stored spelling is taken like any writer's. A fault in any step rolls the whole page back. Page ids, versions, tags, timeline, links,
  * attachment ids, storage paths and bytes do not change. The page keeps its recorded origin only because the file
  * evidence proved the file is at the normal path (or the source has no checkout). Applying a set again moves nothing.
@@ -48,7 +50,7 @@ import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { slugSpellingPreviewArgv } from '../persistence/legacy-slug-put.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
-import { assertGuardTablesReadable, carryGuards, HoldConflictError, holdConflicts, lockHolds } from './slug-spelling-guards.ts';
+import { assertGuardTablesReadable, carryGuards, heldWrites, HeldWritesError, lockHolds, type HeldWrites } from './slug-spelling-guards.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
 
 const DOCS = 'docs/guides/repair.md#slug-spelling';
@@ -68,8 +70,8 @@ const REASON_PREFIX = 'A folder prefix, not the slug of one page.';
 export const SLUG_COLUMNS_MOVED: readonly string[] = [
   'pages.slug', 'facts.entity_slug', 'facts.source_markdown_slug', 'fact_withdrawals.subject', 'page_aliases.slug', 'secret_store_occurrence.slug',
   'slug_aliases.alias_slug', 'slug_aliases.canonical_slug', 'slug_rename_history.old_slug', 'slug_rename_history.new_slug', 'files.page_slug',
-  // Active guards the repair carries to the normal slug itself (`carryGuards`): purge tombstones are copied (the old rows stay), held writes are re-keyed.
-  'fact_purges.subject', 'take_purges.subject', 'write_gate_holds.slug',
+  // Active guards the repair carries to the normal slug itself (`carryGuards`): purge tombstones are copied (the old rows stay).
+  'fact_purges.subject', 'take_purges.subject',
 ];
 
 /** Every other slug-holding column, with why the repair leaves it. test/repair-slug-spelling.test.ts scans the schema so a new one cannot be missed. */
@@ -108,6 +110,7 @@ export const SLUG_COLUMNS_EXEMPT: Readonly<Record<string, string>> = {
   'session_context_state.surfaced_slugs': REASON_DERIVED,
   'take_proposals.page_slug': REASON_RECORD,
   'wake_subscriptions.target': REASON_RECORD,
+  'write_gate_holds.slug': 'A page with a held write is never moved (slug_spelling_held_writes), so no hold is re-keyed; released and dropped holds are decided records and keep the spelling they were recorded under.',
 };
 
 export type SlugSpellingClass = 'move' | 'needs_human' | 'rename_file_first';
@@ -123,10 +126,12 @@ export interface FileEvidence {
 export interface SpellingPage { page_id: number; slug: string; normal: string; revision: string; deleted: boolean; source_path: string | null; evidence: FileEvidence }
 export interface SpellingEntry extends SpellingPage {
   class: SlugSpellingClass;
-  /** `slug_spelling_collision` or `slug_spelling_hold_conflict` (needs_human), or `rename_file_first`; absent for `move`. */
-  code?: 'slug_spelling_collision' | 'slug_spelling_hold_conflict' | 'rename_file_first';
+  /** `slug_spelling_collision` or `slug_spelling_held_writes` (needs_human), or `rename_file_first`; absent for `move`. */
+  code?: 'slug_spelling_collision' | 'slug_spelling_held_writes' | 'rename_file_first';
   /** The other pages (ids and slugs) that print the same name. */
   holders?: Array<{ page_id: number; slug: string }>;
+  /** `slug_spelling_held_writes`: the active holds that block the move. */
+  held?: HeldWrites;
   reason?: string;
 }
 export interface SpellingScan { source_id: string; incarnation: string; entries: SpellingEntry[]; inspected: number; truncated: boolean }
@@ -231,7 +236,7 @@ export async function scanSlugSpellings(engine: Pick<BrainEngine, 'executeRaw'>,
       holders.set(row.slug, [...holders.get(row.slug) ?? [], { page_id: Number(row.id), slug: row.slug }]);
     }
   }
-  const conflicts = await holdConflicts(engine, sourceId, candidates.map(row => ({ from: row.slug, to: normalizeSlug(row.slug) })));
+  const held = await heldWrites(engine, sourceId, candidates.map(row => ({ from: row.slug, to: normalizeSlug(row.slug) })));
   const byNormal = new Map<string, PageRow[]>();
   for (const row of candidates) byNormal.set(normalizeSlug(row.slug), [...byNormal.get(normalizeSlug(row.slug)) ?? [], row]);
   const entries: SpellingEntry[] = [];
@@ -242,10 +247,10 @@ export async function scanSlugSpellings(engine: Pick<BrainEngine, 'executeRaw'>,
       evidence: fileEvidence(source.local_path, { slug: row.slug, normal, source_path: row.source_path }) };
     const others = [...holders.get(normal) ?? [], ...(byNormal.get(normal) ?? []).filter(other => other !== row).map(other => ({ page_id: Number(other.id), slug: other.slug }))];
     if (others.length) { entries.push({ ...base, class: 'needs_human', code: 'slug_spelling_collision', holders: others }); continue; }
-    const conflict = conflicts.get(row.slug);
-    if (conflict) {
-      entries.push({ ...base, class: 'needs_human', code: 'slug_spelling_hold_conflict',
-        reason: `held write h${conflict.hold_id} of this page and held write h${conflict.other_id} at ${normal} are the same text but would publish different fields (visibility, attribution, entity or row)` });
+    const blockingHolds = held.get(row.slug);
+    if (blockingHolds) {
+      entries.push({ ...base, class: 'needs_human', code: 'slug_spelling_held_writes', held: blockingHolds,
+        reason: `it has ${blockingHolds.hold_ids.length} held write(s) (${blockingHolds.hold_ids.map(id => `h${id}`).join(', ')}) under its spellings` });
       continue;
     }
     const blocked = fileBlocks(base.evidence, !!base.source_path?.trim());
@@ -273,9 +278,9 @@ export async function countSlugSpellings(engine: Pick<BrainEngine, 'executeRaw'>
 }
 
 const entryAction = (sourceId: string, entry: SpellingEntry, root: string | null): Action => {
-  if (entry.code === 'slug_spelling_hold_conflict') {
-    return { consent: [], actor: 'user', why: 'Merging the two held writes would publish the kept one\'s fields at the owner\'s release, so the owner decides which to keep.',
-      user_message: `Decide the two held writes of ${entry.slug} with gbrain trust release or gbrain trust drop, then preview again.`,
+  if (entry.code === 'slug_spelling_held_writes') {
+    return { consent: [], actor: 'user', why: 'A held write names the page by its spelling and is kept out of delivered text only while it does; the repair never moves or merges a held write, so the owner decides each one first.',
+      user_message: `Release or drop the held writes of ${entry.slug} (${(entry.held?.hold_ids ?? []).map(id => `gbrain trust release h${id} / gbrain trust drop h${id}`).join('; ')}; gbrain trust review lists them), then preview again.`,
       verify: { argv: [...slugSpellingPreviewArgv(sourceId), '--json'] }, requires_exclusive: false };
   }
   if (entry.code === 'slug_spelling_collision') {
@@ -292,9 +297,10 @@ const entryAction = (sourceId: string, entry: SpellingEntry, root: string | null
 };
 
 const entryMessage = (sourceId: string, entry: SpellingEntry): string => {
-  if (entry.code === 'slug_spelling_hold_conflict') {
-    return `Page ${entry.slug} (id ${entry.page_id}) is not moved because ${entry.reason}; merging them would publish the kept one's fields when the owner releases it, so nothing moves. `
-      + 'Release or drop one of the two with gbrain trust release / gbrain trust drop (gbrain trust review lists them), then preview again.';
+  if (entry.code === 'slug_spelling_held_writes') {
+    const ids = (entry.held?.hold_ids ?? []).map(id => `h${id}`).join(', ');
+    return `Page ${entry.slug} (id ${entry.page_id}) is not moved because ${entry.reason}; a held write is kept out of delivered text only while it names the page's slug, and the repair never moves or merges one, so nothing moves. `
+      + `Release or drop each (${ids}) with gbrain trust release h<id> / gbrain trust drop h<id> (gbrain trust review lists them), then preview again.`;
   }
   if (entry.code === 'slug_spelling_collision') {
     const names = entry.holders!.map(h => `${h.slug} (id ${h.page_id})`).join(', ');
@@ -399,7 +405,7 @@ function changedFact(page: SpellingPage, current: SpellingEntry): string | null 
   if (current.deleted !== page.deleted) return 'the page was deleted or restored';
   if (current.source_path !== page.source_path) return 'the page\'s recorded origin changed';
   if (JSON.stringify(current.evidence) !== JSON.stringify(page.evidence)) return 'the file evidence in the checkout changed';
-  if (current.code === 'slug_spelling_hold_conflict') return `${current.reason} (slug_spelling_hold_conflict)`;
+  if (current.code === 'slug_spelling_held_writes') return `${current.reason} (slug_spelling_held_writes)`;
   if (current.class === 'needs_human') return 'another page now prints the same name (slug_spelling_collision)';
   if (current.class === 'rename_file_first') return `${current.reason} (rename_file_first)`;
   return null;
@@ -430,17 +436,20 @@ async function movePageUnderStoredSlug(engine: BrainEngine, sourceId: string, pa
     }
     await assertGuardTablesReadable(tx, sourceId);
     await lockHolds(tx, sourceId, page.slug, page.normal);
+    // Held writes are read again under the locks; one that appeared since the preview refuses the move.
+    const heldNow = (await heldWrites(tx, sourceId, [{ from: page.slug, to: page.normal }])).get(page.slug);
+    if (heldNow) throw changedSincePreview(sourceId, page.slug, `it now has held write(s) ${heldNow.hold_ids.map(id => `h${id}`).join(', ')} (slug_spelling_held_writes)`);
     const [taken] = await tx.executeRaw('SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, page.normal]);
     if (taken) throw changedSincePreview(sourceId, page.slug, `another page now holds ${page.normal} (slug_spelling_collision)`);
-    let attachments = 0, guards: Awaited<ReturnType<typeof carryGuards>> = { fact_purges: 0, take_purges: 0, holds: 0 };
+    let attachments = 0, guards: Awaited<ReturnType<typeof carryGuards>> = { fact_purges: 0, take_purges: 0 };
     await lockedBeliefBatch(tx, { sourceId, slugs: [page.slug, page.normal], publicationId, op: 'slug_spelling', remote: false, report }, async () => {
       if (await tx.updateSlug(page.slug, page.normal, { sourceId }) !== 1) throw changedSincePreview(sourceId, page.slug, `page ${page.slug} could not move to ${page.normal}`);
       // Attachments carry the page's slug beside its id: this source's rows of the page, and rows with no page id that name the old slug.
       const files = await tx.executeRaw('UPDATE files SET page_slug = $3 WHERE source_id = $1 AND page_slug = $2 AND (page_id = $4 OR page_id IS NULL) RETURNING id', [sourceId, page.slug, page.normal, page.page_id]);
       attachments = files.length;
       guards = await carryGuards(tx, sourceId, page.slug, page.normal).catch(error => {
-        if (!(error instanceof HoldConflictError)) throw error;
-        throw changedSincePreview(sourceId, page.slug, `${error.message} (slug_spelling_hold_conflict)`);
+        if (!(error instanceof HeldWritesError)) throw error;
+        throw changedSincePreview(sourceId, page.slug, `${error.message} (slug_spelling_held_writes)`);
       });
     });
     return { applied: true, outcome: 'moved', detail: { page_id: page.page_id, from: page.slug, to: page.normal, attachments_moved: attachments, kept_source_path: page.source_path, guards_carried: guards } } satisfies RepairItemOutcome;
