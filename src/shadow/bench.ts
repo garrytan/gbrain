@@ -92,7 +92,7 @@ const interval = (ci: [number, number]): string => `95% CI ${fmt(ci[0])} to ${fm
 function sampleText(s: MetricSample | null, other: string): string {
   if (!s) return 'sample count not recorded';
   if (s.kind === 'throughput_reps') return `over ${s.reps} reps`;
-  if (s.kind === 'cold_starts') return `over ${s.rust} Rust and ${s.reference} ${other} starts`;
+  if (s.kind === 'cold_starts') return `over ${s.rust ?? 'an unrecorded number of'} Rust and ${s.reference ?? 'an unrecorded number of'} ${other} starts`;
   return 'single point';
 }
 

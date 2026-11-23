@@ -591,6 +591,48 @@ describe('round 1 review fixes: attribution, stored size, zero samples, and not 
   });
 });
 
+describe('round 2 review fixes: a recorded sample count is never read as absent', () => {
+  test.each([[-1], [0.5], ['0'], [null]])('a throughput that records reps %p is refused and the earlier evidence stays byte for byte', async (reps) => {
+    await withShadow(async (c) => {
+      await importOk(c, receipt());
+      const before = readFileSync(benchSummaryPath(c.dir), 'utf8');
+      const x = await c.json(['bench', '--import', c.file(receipt((r) => { pair(r, 'pglite').throughput[0].reps = reps; })), '--json']);
+      expect(x.code).toBe(2);
+      expect(x.out.code).toBe('invalid_params');
+      expect(x.out.message).toContain('records reps');
+      expect(x.err).toContain('previous bench evidence unchanged');
+      expect(readFileSync(benchSummaryPath(c.dir), 'utf8')).toBe(before);
+    });
+  });
+
+  test.each([['0'], [5]])('cold-start repetitions recorded as %p (not a list) are refused', async (reps) => {
+    await withShadow(async (c) => {
+      const x = await c.json(['bench', '--import', c.file(receipt((r) => { r.arms.rust.cold_start.reps = reps; })), '--json']);
+      expect(x.code).toBe(2);
+      expect(x.out.message).toContain('cold-start repetitions');
+    });
+  });
+
+  test('a recorded zero cold-start count stays known when the other arm count is absent, whichever arm it is', async () => {
+    await withShadow(async (c) => {
+      const zero = `${LOSS}cold start vs PGLite not measured (the receipt records zero samples)`;
+      const rustZero = await importOk(c, receipt((r) => { r.arms.rust.cold_start.reps = []; delete r.arms.pglite.cold_start.reps; }));
+      expect(rustZero.rust_no_worse).toBe(false);
+      expect(rustZero.losses).toContain(zero);
+      const refZero = await importOk(c, receipt((r) => { delete r.arms.rust.cold_start.reps; r.arms.pglite.cold_start.reps = []; }));
+      expect(refZero.rust_no_worse).toBe(false);
+      expect(refZero.losses).toContain(zero);
+      const bothAbsent = await importOk(c, receipt((r) => { r.arms.rust.cold_start.reps = []; delete r.arms.pglite.cold_start.reps; delete r.arms.postgres.cold_start.reps; }));
+      expect(bothAbsent.rust_no_worse).toBe(false);
+      expect(bothAbsent.losses).toEqual([zero, `${LOSS}cold start vs Postgres not measured (the receipt records zero samples)`]);
+      // positive control: a known non-zero Rust count with the other arm's count absent is measured, and its text says what is unrecorded
+      const known = await importOk(c, receipt((r) => { r.arms.rust.cold_start.reps = new Array(5).fill({ total_ms: 1 }); delete r.arms.pglite.cold_start.reps; }));
+      expect(known.rust_no_worse).toBe(true);
+      expect((await c.run(['status'])).out).toContain('over 5 Rust and an unrecorded number of PGLite starts');
+    });
+  });
+});
+
 function readyDoc(): ShadowStatus {
   return {
     epoch_id: 'e1', epoch_started_at: '2026-11-10T00:00:00Z',

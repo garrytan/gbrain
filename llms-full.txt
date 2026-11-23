@@ -6097,12 +6097,16 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   `schema_version: 1`, 10,000 pages, Rust against PGLite and Postgres) into `evidence/bench/engine-bench-speed.json` and
   fills `bench.pairs`, `bench.rust_no_worse` and `bench.losses` in `status --json`. The file must be a regular file under
   256 MiB (a pipe, directory, device or symbolic link is refused without being read); a receipt with other margins, a
-  Rust arm that refused, or a malformed number is refused and the earlier evidence stays. The rule is the evals' own:
+  Rust arm that refused, a metric that names another engine than its pair, a recorded sample count that is not a
+  non-negative integer, a reduced summary over 8 MiB, or a malformed number is refused and the earlier evidence stays. The rule is the evals' own:
   for each of the 13 operation classes, at p50 and p99, against each TypeScript engine, Rust is **worse** when the 95%
   interval of the Rust over other ratio lies above 1, **better** below 1, and **not shown** otherwise; a class with
-  fewer than 100 pairs, one Rust refused, or one the receipt leaves out is **not measured** and never passes. Cold start,
+  fewer than 100 pairs, one Rust refused, one with zero recorded samples, or one the receipt leaves out is **not measured**
+  and never passes. Cold start,
   RSS, import and throughput follow the same direction rule. Every loss and every not-measured row is named in `losses`
   (each starts with "bench corpus:") and `rust_no_worse` is true only when everything was measured against both engines.
+  Readiness row 8 says "Rust slower" only when a measured loss exists; when every open row is not measured it says "Rust not
+  shown to be no worse (rows not measured)".
   The build in the receipt is compared with the evidence epoch's build (same, differs or unknown, reported and not gating).
   These are numbers from the benchmark corpus, not from this brain: replaying your own reads on both engines
   (`gbrain engine shadow bench` with no `--import`) is not built, so that source reads "not measured". The D14 margin for

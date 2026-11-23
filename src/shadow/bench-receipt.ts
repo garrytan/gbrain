@@ -49,7 +49,7 @@ export interface Ratio { ratio: number | null; ci95: [number, number] | null }
 export interface LatencyEntry { n: number; p50_ratio: Ratio; p99_ratio: Ratio }
 export type MetricSample =
   | { kind: 'throughput_reps'; reps: number }
-  | { kind: 'cold_starts'; rust: number; reference: number }
+  | { kind: 'cold_starts'; rust: number | null; reference: number | null }
   | { kind: 'single_point' };
 export interface MetricEntry { metric: string; direction: Direction; ratio: number | null; ci95: [number, number] | null; status: 'pass' | 'fail' | 'inconclusive' | 'missing'; core: boolean; sample: MetricSample | null }
 export interface BenchPair { against: TsEngine; missing: Record<string, string>; latency: Record<string, LatencyEntry>; metrics: MetricEntry[] }
@@ -110,7 +110,7 @@ function checkSample(s: unknown, where: string): string | null {
   if (s === null) return null;
   if (!isObj(s)) return `${where} must be null or an object`;
   if (s.kind === 'throughput_reps') return isCount(s.reps) ? null : `${where}.reps must be a non-negative integer`;
-  if (s.kind === 'cold_starts') return isCount(s.rust) && isCount(s.reference) ? null : `${where} counts must be non-negative integers`;
+  if (s.kind === 'cold_starts') return (s.rust === null || isCount(s.rust)) && (s.reference === null || isCount(s.reference)) && (s.rust !== null || s.reference !== null) ? null : `${where} counts must be non-negative integers or null, and not both null`;
   return s.kind === 'single_point' ? null : `${where}.kind is ${show(s.kind)}`;
 }
 
@@ -201,9 +201,12 @@ function sampleFor(name: string, pair: Raw, arms: Raw, ref: string): MetricSampl
     return t && isCount(t.reps) ? { kind: 'throughput_reps', reps: t.reps } : null;
   }
   if (known?.kind === 'cold_start') {
+    // Each arm's count is kept on its own: a recorded zero stays known when the other arm's count is absent.
     const a = arms.rust?.cold_start?.reps;
     const b = arms[ref]?.cold_start?.reps;
-    return Array.isArray(a) && Array.isArray(b) ? { kind: 'cold_starts', rust: a.length, reference: b.length } : null;
+    const rust = Array.isArray(a) ? a.length : null;
+    const reference = Array.isArray(b) ? b.length : null;
+    return rust === null && reference === null ? null : { kind: 'cold_starts', rust, reference };
   }
   return null;
 }
@@ -237,6 +240,10 @@ export function summarizeReceipt(json: unknown, source: { file: string; sha256: 
     }
     const missing: Record<string, string> = {};
     for (const [op, why] of Object.entries(isObj(p.missing) ? p.missing : {})) missing[op] = typeof why === 'string' ? sanitizeText(why) : (why as string);
+    const badReps = (Array.isArray(p.throughput) ? p.throughput : []).find((x: Raw) => isObj(x) && x.reps !== undefined && !isCount(x.reps));
+    if (badReps) return no(`the ${sanitizeText(badReps.kind, 12)} throughput at ${sanitizeText(badReps.clients, 8)} clients in the pair against ${ref} records reps ${show(badReps.reps)} (expected a non-negative integer)`);
+    const badCold = [['rust', arms.rust], [ref, arms[ref]]].find(([, a]) => isObj(a) && isObj((a as Raw).cold_start) && (a as Raw).cold_start.reps !== undefined && !Array.isArray((a as Raw).cold_start.reps));
+    if (badCold) return no(`the cold-start repetitions of the ${badCold[0]} arm are ${show((badCold[1] as Raw).cold_start.reps)} (expected a list of runs)`);
     const stray = (Array.isArray(p.metrics) ? p.metrics : []).find((x: Raw) => isObj(x) && x.against !== ref);
     if (stray) return no(`the metric ${sanitizeText(stray.metric, 64)} in the pair against ${ref} says it is against ${show(stray.against)} (a metric must name its own pair's engine)`);
     const metrics: MetricEntry[] = (Array.isArray(p.metrics) ? p.metrics : []).map((x: Raw) => ({
