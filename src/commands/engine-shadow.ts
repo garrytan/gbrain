@@ -2,8 +2,9 @@
  * `gbrain engine shadow start|status|stop|report|seed` (plan PR S1, the read half of S2 and the seed of S3).
  *
  * Shadow mode mirrors a sample of the host brain's reads to the Rust engine in a supervised child process and
- * records whether the answers agree. It is off by default and writes nothing to the brain database, its config
- * table or the brain repo: every file lives in `<gbrain home>/shadow/<brain>/`. `start` previews a plan with a hash
+ * records whether the answers agree. It is off by default. Its only writes to the brain database are the swap-eligibility
+ * writer evidence (engine_writer_observations, and on Postgres the hooks and engine_writer_sessions / _coverage_gaps);
+ * it never writes brain content, the config table or the brain repo, and every other file lives in `<gbrain home>/shadow/<brain>/`. `start` previews a plan with a hash
  * and needs `--yes --expect <hash>`; the installed addon is loaded then, in the foreground. The
  * hidden `__child <dir>` is the child the serving process spawns. `seed` copies the brain into the Rust store
  * once, in one read-only snapshot, and writes `seed.json` (src/shadow/seed.ts).
@@ -59,7 +60,7 @@ supervised child process that runs the same read on the Rust engine and records 
 compare. The primary answer never waits for the child. Its only write to the brain database is one row per writing
 process in engine_writer_observations (host id, connection name, command kind, version, first and last write time), at
 most every 10 minutes, which the swap's eligibility check reads. On a Postgres brain, start also adds one trigger to
-every brain table that notes which connections write (engine_writer_sessions; it never fails or blocks a write), and
+every brain table that notes which connections write (engine_writer_sessions; it never fails a write and waits at most 50 ms on its own tables), and
 stop removes them. It writes nothing to the brain config or the brain repo; everything else lives in
 <gbrain home>/shadow/<brain>/. stop --delete removes that directory.
 
@@ -130,7 +131,7 @@ export function shadowPlan(brain: string, primaryEngine: string, dir: string, o:
     writes: [`${dir}/state.json`, `${dir}/store (the Rust engine's own store)`, `${dir}/ledger, summaries, faults.jsonl, reports, child.log`,
       'the brain database: one row per writing process in engine_writer_observations, at most every 10 minutes (swap eligibility)',
       ...(primaryTakesWriterHooks(primaryEngine) ? [
-        'the brain database: one statement-level trigger (gbrain_writer_note) on every brain table while shadow mode is on, removed by stop; each records the writing connection in engine_writer_sessions at most every 10 minutes per connection, never fails or blocks the write (an error becomes a row in engine_writer_coverage_gaps), and takes a short lock on each table when it is added or removed',
+        'the brain database: one statement-level trigger (gbrain_writer_note) on every brain table while shadow mode is on, removed by stop; each records the writing connection in engine_writer_sessions at most every 10 minutes per connection, never fails the write and waits at most 50 ms on its own tables (an error becomes a row in engine_writer_coverage_gaps), and takes a short lock on each table when it is added or removed',
         `${dir}/writer-hooks.json (which tables were hooked, written before the first trigger)`,
       ] : [])],
     never_writes: ['brain content (pages, chunks, facts, links)', 'the brain config table', 'the brain repo'],

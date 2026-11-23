@@ -120,7 +120,6 @@
       "drift_decisions.drift_decisions_pkey": "p PRIMARY KEY (id)",
       "drift_decisions.drift_decisions_recommended_weight_check": "c CHECK (((recommended_weight >= (0)::double precision) AND (recommended_weight <= (1)::double precision)))",
       "drift_decisions.drift_decisions_take_id_fkey": "f FOREIGN KEY (take_id) REFERENCES takes(id) ON DELETE CASCADE",
-      "engine_writer_coverage_gaps.engine_writer_coverage_gaps_pkey": "p PRIMARY KEY (id)",
       "engine_writer_observations.engine_writer_observations_pkey": "p PRIMARY KEY (host_id, application_name)",
       "engine_writer_sessions.engine_writer_sessions_pkey": "p PRIMARY KEY (application_name, client_addr, backend_pid)",
       "entity_identities.entity_identities_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
@@ -683,7 +682,7 @@
       "gbrain_guard_skill_publication()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=e854c0d058e75a65c3a90127c5c417380975100e83fc34288f6085e786df10a9",
       "gbrain_lease_shared_skill_delivery()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=5e493c1ac8dce8cb025a736629e563437c4b214744137c302c532c20bf7e7acf",
       "gbrain_mark_derivation_scope_entry()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=592e9e3bcab2cf339197544185dc0ae3664698acecaf77cc6a1588c4134d7a93",
-      "gbrain_note_writer()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=77fb0dfe9d77c727a96b4a6371fd454dbb3df55dd7216613b9f5370468ecbd42",
+      "gbrain_note_writer()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp; lock_timeout=50ms] body_sha256=2f65414978e9891528df3000a5a84c48cf9ce9f0580d0aac218fd4f613124fb3",
       "gbrain_owner_only_held()": "RETURNS boolean kind=f lang=sql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=3ac19a365e702c6f242ec3897d798549d9db51965b90f7fbd1cff623aee4071f",
       "gbrain_owner_only_hold()": "RETURNS void kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=d0ee3312051b94da21f27c362f3d2c14bfff3fc1580a3b1f40b5deefde9f67ee",
       "gbrain_owner_only_lineage()": "RETURNS boolean kind=f lang=sql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=b2a72ae1d405880ca463581b749956b12636a0b90bd1e3b565eb2514e25e5f86",
@@ -1409,7 +1408,6 @@
       "dream_verdicts_expires_idx": "CREATE INDEX dream_verdicts_expires_idx ON public.dream_verdicts USING btree (expires_at)",
       "dream_verdicts_pkey": "CREATE UNIQUE INDEX dream_verdicts_pkey ON public.dream_verdicts USING btree (file_path, content_hash)",
       "drift_decisions_pkey": "CREATE UNIQUE INDEX drift_decisions_pkey ON public.drift_decisions USING btree (id)",
-      "engine_writer_coverage_gaps_pkey": "CREATE UNIQUE INDEX engine_writer_coverage_gaps_pkey ON public.engine_writer_coverage_gaps USING btree (id)",
       "engine_writer_observations_pkey": "CREATE UNIQUE INDEX engine_writer_observations_pkey ON public.engine_writer_observations USING btree (host_id, application_name)",
       "engine_writer_sessions_pkey": "CREATE UNIQUE INDEX engine_writer_sessions_pkey ON public.engine_writer_sessions USING btree (application_name, client_addr, backend_pid)",
       "entity_identities_canonical_uniq": "CREATE UNIQUE INDEX entity_identities_canonical_uniq ON public.entity_identities USING btree (entity_id) WHERE canonical",
@@ -1879,7 +1877,6 @@
       "decision_receipts_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=decision_receipts.id",
       "derived_generations_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=derived_generations.id",
       "drift_decisions_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=drift_decisions.id",
-      "engine_writer_coverage_gaps_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=engine_writer_coverage_gaps.id",
       "entity_identities_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=entity_identities.id",
       "eval_candidates_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=eval_candidates.id",
       "eval_capture_failures_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=eval_capture_failures.id",
@@ -2704,9 +2701,9 @@
       },
       "engine_writer_coverage_gaps": {
         "columns": [
-          "1 id bigint/int8 NOT NULL DEFAULT nextval('engine_writer_coverage_gaps_id_seq'::regclass)",
-          "2 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
-          "3 code text/text NOT NULL"
+          "1 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT clock_timestamp()",
+          "2 code text/text NOT NULL",
+          "3 backend_pid integer/int4 NOT NULL DEFAULT 0"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
@@ -2726,8 +2723,8 @@
           "1 application_name text/text NOT NULL",
           "2 client_addr text/text NOT NULL",
           "3 backend_pid integer/int4 NOT NULL",
-          "4 first_seen timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
-          "5 last_seen timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+          "4 first_seen timestamp with time zone/timestamptz NOT NULL DEFAULT clock_timestamp()",
+          "5 last_seen timestamp with time zone/timestamptz NOT NULL DEFAULT clock_timestamp()"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

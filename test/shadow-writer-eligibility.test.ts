@@ -25,6 +25,7 @@ import { wrapShadowEngine, type ShadowSink } from '../src/shadow/wrapper.ts';
 import { newMirrorCounters } from '../src/shadow/mirror.ts';
 import { OBSERVATION_REFRESH_MS, WriterObserver, readWriterEvidence } from '../src/shadow/writer-observations.ts';
 import { WRITER_EVIDENCE_TABLES, WRITER_HOOK_TRIGGER } from '../src/shadow/writer-hooks.ts';
+import { IGNORED_MEMBERS, IGNORED_WRITE_MEMBERS } from '../src/shadow/write-map.ts';
 import { planAsWrittenSource } from '../src/shadow/writer-coverage.ts';
 import { buildEligibilityStatus, eligibilityWindowStart, isPreviewTarget, ELIGIBILITY_WINDOW_MS } from '../src/shadow/eligibility.ts';
 import { writerIdentity } from '../src/shadow/attach.ts';
@@ -180,6 +181,99 @@ describe('writer observations', () => {
     expect(planAsWrittenSource(dir).unknownPaths(new Date(Date.now() + 60_000))).toBe(0);
   });
 
+  test('a stopped shadow neither notes nor repairs hooks, and a process notes again once shadow mode is on', async () => {
+    let on = false;
+    let repairs = 0;
+    const o = new WriterObserver({
+      primary, dir: tempDir(), now: () => 5_000_000,
+      identity: () => ({ hostId: HOST_A, applicationName: 'gbrain cli:1:abcdef01', processKind: 'cli', gbrainVersion: 'test' }),
+      enabled: () => on, beforeFirstNote: async () => { repairs++; },
+    });
+    observers.push(o);
+    o.note();
+    await settle(o);
+    expect([repairs, (await rows()).length]).toEqual([0, 0]);
+    on = true;
+    // The throttle interval has not passed for the stopped attempt, so the process notes at its next interval.
+    const later = new WriterObserver({
+      primary, dir: tempDir(), identity: () => ({ hostId: HOST_A, applicationName: 'gbrain cli:2:abcdef02', processKind: 'cli', gbrainVersion: 'test' }),
+      enabled: () => on, beforeFirstNote: async () => { repairs++; },
+    });
+    observers.push(later);
+    later.note();
+    await settle(later);
+    expect([repairs, (await rows()).length]).toEqual([1, 1]);
+    // An unreadable state file reads as off.
+    const broken = new WriterObserver({ primary, dir: tempDir(), identity: () => ({ hostId: HOST_B, applicationName: 'x', processKind: 'cli', gbrainVersion: 'test' }), enabled: () => { throw new Error('torn'); } });
+    observers.push(broken);
+    broken.note();
+    await settle(broken);
+    expect((await rows()).length).toBe(1);
+  });
+
+  test('a failed note is retried by the next write, and a failed hook repair is recorded without stopping the note', async () => {
+    const dir = tempDir();
+    let failures = 1;
+    const flaky = Object.create(primary) as BrainEngine;
+    flaky.transaction = (async (fn: (tx: BrainEngine) => Promise<unknown>) => {
+      if (failures-- > 0) throw Object.assign(new Error('boom'), { code: '40001' });
+      return primary.transaction(fn as never);
+    }) as never;
+    const faults: string[] = [];
+    const o = new WriterObserver({
+      primary: flaky, dir, recordFailure: (c) => faults.push(c),
+      identity: () => ({ hostId: HOST_A, applicationName: 'gbrain cli:3:abcdef03', processKind: 'cli', gbrainVersion: 'test' }),
+      beforeFirstNote: async () => { throw Object.assign(new Error('no rights'), { code: '42501' }); },
+    });
+    observers.push(o);
+    o.note();
+    await settle(o);
+    expect(faults).toEqual(['hooks_42501', '40001']);
+    expect((await rows()).length).toBe(0);
+    // No waiting for the refresh interval: a failure clears the throttle, so the very next write retries.
+    o.note();
+    await settle(o);
+    expect((await rows()).length).toBe(1);
+    expect(faults).toEqual(['hooks_42501', '40001']);
+  });
+
+  test('which calls note: raw writes and ignored members that write (locks, logs) do; raw reads, a rejected write and a throwing observer never change the call', async () => {
+    let notes = 0;
+    const engine = wrapShadowEngine(primary, sink(true), { sampleRate: 0, onCommittedWrite: () => { notes++; } });
+    await engine.executeRaw('SELECT 1');
+    expect(notes).toBe(0);
+    await engine.executeRaw(`INSERT INTO config (key, value) VALUES ('writer-raw', '1') ON CONFLICT (key) DO NOTHING`);
+    expect(notes).toBe(1);
+    // logIngest is ignored by the follower (not copied) but is a database write: it must note.
+    await engine.logIngest({ source_type: 'test', source_ref: 'writer-elig', pages_updated: [], summary: 'x' });
+    expect(notes).toBe(2);
+    await expect(engine.executeRaw('INSERT INTO table_that_does_not_exist VALUES (1)')).rejects.toThrow();
+    expect(notes).toBe(2);
+    const noisy = wrapShadowEngine(primary, sink(true), { sampleRate: 0, onCommittedWrite: () => { throw new Error('observer broke'); } });
+    expect(await noisy.executeRaw(`SELECT 7 AS n`)).toEqual([{ n: 7 }]);
+    await noisy.executeRaw(`INSERT INTO config (key, value) VALUES ('writer-raw-2', '1') ON CONFLICT (key) DO NOTHING`);
+    // Lifecycle members never note.
+    await engine.holdsDatastoreLock?.();
+    expect(notes).toBe(2);
+  });
+
+  test('every ignored member that writes the database is an ignored member', () => {
+    for (const name of IGNORED_WRITE_MEMBERS) expect([name, IGNORED_MEMBERS.has(name)]).toEqual([name, true]);
+  });
+
+  test('a write that a caught inner rollback undid does not make the outer transaction a writer; an inner commit does', async () => {
+    let notes = 0;
+    const engine = wrapShadowEngine(primary, sink(true), { sampleRate: 0, onCommittedWrite: () => { notes++; } });
+    await engine.transaction(async (tx) => {
+      await tx.transaction(async (inner) => { await putPage(inner, 'notes/inner-rolled-back'); throw new Error('undo'); }).catch(() => undefined);
+    });
+    expect(notes).toBe(0);
+    await engine.transaction(async (tx) => {
+      await tx.transaction(async (inner) => { await putPage(inner, 'notes/inner-commits'); });
+    });
+    expect(notes).toBe(1);
+  });
+
   test('the observer identity names connections the way the pools do', () => {
     expect(writerIdentity(primary).applicationName).toBe(gbrainApplicationName());
   });
@@ -200,6 +294,17 @@ describe('coverage source (plan as written)', () => {
     pass(dir, iso(now - 1_800_000), 4, 4); // follower misses
     pass(dir, iso(now - 900_000), 3, 0); // repaired while the watermark was invalid
     expect(planAsWrittenSource(dir).unknownPaths(new Date(now - ELIGIBILITY_WINDOW_MS))).toBe(2);
+  });
+
+  test('a record that parses to a non-object, and a record file that cannot be read, count as incomplete evidence', () => {
+    const dir = tempDir();
+    mkdirSync(join(dir, 'reconcile'), { recursive: true });
+    appendFileSync(join(dir, 'reconcile', 'passes.jsonl'), 'null\n17\n[1]\n"x"\n');
+    expect(planAsWrittenSource(dir).unknownPaths(new Date(0))).toBe(4);
+    // A directory where the faults file should be: reading it fails, which is incomplete evidence, never a crash.
+    const other = tempDir();
+    mkdirSync(join(other, 'faults.jsonl'), { recursive: true });
+    expect(planAsWrittenSource(other).unknownPaths(new Date(0))).toBe(1);
   });
 
   test('a torn record is incomplete evidence and counts', () => {
@@ -238,6 +343,19 @@ describe('eligibility builder', () => {
     expect(JSON.stringify(out)).not.toContain('SECRET');
     const noCode = await buildEligibilityStatus({ dir: tempDir(), state: null, engine: { executeRaw: async () => { throw new Error('x'); } } as unknown as BrainEngine, brainId: () => 'host', addonTarget: () => null });
     expect(noCode.eligibility_evidence).toEqual({ state: 'read_failed', code: 'unknown' });
+  });
+
+  test('malformed counts from the SELECT leave the writer fields out and name writer_evidence_malformed', async () => {
+    const answers: unknown[][] = [
+      [], [{ hosts: null, unresolved: 0, gaps: 0, unhooked: 0, uncovered_roles: 0 }], [{ hosts: 1, unresolved: -1, gaps: 0, unhooked: 0, uncovered_roles: 0 }],
+      [{ hosts: 1, unresolved: 0, gaps: 'x', unhooked: 0, uncovered_roles: 0 }], [{ hosts: 1.5, unresolved: 0, gaps: 0, unhooked: 0, uncovered_roles: 0 }],
+      [{ hosts: 1, unresolved: 0, gaps: 0, unhooked: 0 }],
+    ];
+    for (const rowsBack of answers) {
+      const engine = { executeRaw: async () => rowsBack } as unknown as BrainEngine;
+      const out = await buildEligibilityStatus({ dir: tempDir(), state: null, engine, brainId: () => 'host', addonTarget: () => null });
+      expect(out).toEqual({ eligibility: { team_brain: false, preview_target: false }, eligibility_evidence: { state: 'read_failed', code: 'writer_evidence_malformed' } });
+    }
   });
 
   test('a mounted brain is a team brain; an unresolvable brain is never called personal', async () => {

@@ -24,7 +24,7 @@ import { followRaw, followScope, followWrite, type FollowContext, type FollowOpt
 import type { CapturedRead, MirrorCounters } from './mirror.ts';
 import { isShadowReadMember, SHADOW_TRANSACTION_MEMBERS } from './reads.ts';
 import { sqlWrites } from './sql-writes.ts';
-import { memberKind } from './write-map.ts';
+import { IGNORED_WRITE_MEMBERS, memberKind } from './write-map.ts';
 
 export interface ShadowSink {
   readonly counters: MirrorCounters;
@@ -77,10 +77,11 @@ export function wrapShadowEngine<E extends BrainEngine>(engine: E, sink: ShadowS
   return buildProxy(engine, sink, opts, false, null, null);
 }
 
-/** Whether a member call may write: a mapped or unmapped member, schema work, a reserved connection, or raw SQL with a write statement. A false yes only notes a process that writes anyway. */
+/** Whether a member call may write: a mapped or unmapped member, schema work, a reserved connection, raw SQL with a write statement, or an ignored member that writes the database (locks, logs, caches). A false yes only notes a process that writes anyway. */
 function mayWrite(name: string, args: unknown[]): boolean {
   const kind = memberKind(name);
-  if (kind === 'ignored' || kind === 'read_name') return false;
+  if (kind === 'ignored') return IGNORED_WRITE_MEMBERS.has(name);
+  if (kind === 'read_name') return false;
   if (kind === 'raw') {
     try { return typeof args[0] !== 'string' || sqlWrites(args[0]).length > 0; } catch { return true; }
   }
@@ -136,13 +137,18 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
 
   const wrapTransaction = (fn: Function): Function => function shadowTransaction(this: unknown, callback: unknown, ...rest: unknown[]) {
     if (typeof callback !== 'function') return fn.apply(engine, [callback, ...rest]);
-    const writes: TxWrites = txWrites ?? { wrote: false };
+    // A nested transaction (a savepoint) keeps its own mark and hands it to the enclosing one only when it succeeds, so a write
+    // that a caught inner rollback undid does not make the outer transaction look like it wrote.
+    const outer = txWrites;
+    const writes: TxWrites = { wrote: false };
     const call = (scope: Frame | null) => fn.apply(engine, [
       (tx: BrainEngine) => (callback as (tx: BrainEngine) => unknown)(tx && typeof tx === 'object' ? buildProxy(tx, sink, opts, true, scope, writes) : tx),
       ...rest,
     ]);
     const out = follow ? followScope(followCtx(engine, frame, inTransaction), false, call) : call(null);
-    return txWrites ? out : afterCommit(out, () => writes.wrote);
+    if (!outer) return afterCommit(out, () => writes.wrote);
+    const merge = (value: unknown): unknown => { if (writes.wrote) outer.wrote = true; return value; };
+    return isThenable(out) ? out.then(merge) : merge(out);
   };
 
   /** Calls onCommittedWrite once `out` resolves (a thenable) or now (a plain value), when `wrote()` says so. */

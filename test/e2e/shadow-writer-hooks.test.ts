@@ -6,6 +6,12 @@
  * writer path even after it disconnects or a later claimed write overwrites the same row; the trigger never fails or
  * blocks the writer (a broken evidence table becomes a gap row, a broken gap table only a warning); a table added
  * later and a role that cannot record evidence are counted; the start plan declares the hooks.
+ * Review round 1 (the maintainer's three conditions): nothing but the empty tables exists before `start --yes`, and
+ * triggers exist only between start and stop (the install, kill and stop tests); `stop` removes every trigger,
+ * including after a crash mid-start and for a process that is still open (the stop tests); a trigger never fails a
+ * write and never waits on an evidence table beyond its 50 ms bound (the lock tests); a role counts as covered only
+ * with a complete recording route, a hook counts only while it fires for every write, and the trigger stamps the
+ * time it ran, not the start of the writer's transaction.
  * Regression it catches: the unseen-second-host hole the plan review found in process-only observations, a trigger
  * that aborts or waits on a user write, and orphan triggers after a crash. Needs DATABASE_URL; skips without it.
  */
@@ -22,6 +28,8 @@ import {
 } from '../../src/shadow/writer-hooks.ts';
 import { readWriterEvidence, WriterObserver } from '../../src/shadow/writer-observations.ts';
 import { runEngineShadow, shadowPlan } from '../../src/commands/engine-shadow.ts';
+import { attachShadowParts } from '../../src/shadow/attach.ts';
+import { SHADOW_STATE_VERSION, writeShadowState, type ShadowState } from '../../src/shadow/state.ts';
 import { withEnv } from '../helpers/with-env.ts';
 
 const d = hasDatabase() ? describe : describe.skip;
@@ -154,7 +162,7 @@ d('writer hooks on Postgres', () => {
     await installWriterHooks(engine, dir);
     await engine.executeRaw('CREATE TABLE hooks_late_table (id int)');
     expect((await evidence()).unhooked).toBe(1);
-    expect(await ensureWriterHooks(engine)).toEqual(['hooks_late_table']);
+    expect(await ensureWriterHooks(engine, dir)).toEqual(['hooks_late_table']);
     const ev = await evidence();
     expect(ev.unhooked).toBe(0);
     expect(ev.gaps).toBe(1);
@@ -179,6 +187,226 @@ d('writer hooks on Postgres', () => {
       await engine.executeRaw(`REVOKE ALL ON engine_writer_coverage_gaps FROM ${role}`).catch(() => undefined);
       await engine.executeRaw(`DROP ROLE ${role}`).catch(() => undefined);
     }
+  }, 60_000);
+
+  /** A throwaway LOGIN role with a password, and a connection as that role. */
+  async function roleConnection(grants: string[], bypass: boolean): Promise<{ sql: ReturnType<typeof postgres>; role: string; drop: () => Promise<void> }> {
+    const role = `hooks_r_${process.pid}_${Math.floor(Math.random() * 1e6)}`;
+    await engine.executeRaw(`CREATE ROLE ${role} LOGIN PASSWORD 'pw-${role}'${bypass ? ' BYPASSRLS' : ''}`);
+    for (const g of grants) await engine.executeRaw(g.replace(/\$ROLE/g, role));
+    const url = new URL((engine as unknown as { connectedDatabaseUrl: string }).connectedDatabaseUrl);
+    url.username = role;
+    url.password = `pw-${role}`;
+    const sql = postgres(url.toString(), { max: 1, connection: { application_name: `gbrain cli:900:${role.slice(-8)}` }, onnotice: () => undefined });
+    sockets.push(sql);
+    return {
+      sql, role,
+      drop: async () => {
+        await sql.end({ timeout: 5 }).catch(() => undefined);
+        sockets.splice(sockets.indexOf(sql), 1);
+        await engine.executeRaw(`REVOKE ALL ON ALL TABLES IN SCHEMA public FROM ${role}`).catch(() => undefined);
+        await engine.executeRaw(`DROP ROLE IF EXISTS ${role}`).catch(() => undefined);
+      },
+    };
+  }
+
+  function shadowState(): ShadowState {
+    return { version: SHADOW_STATE_VERSION, enabled: true, started_at: new Date().toISOString(), sample_rate: 1, queue_bound: 8, plan_hash: 'x', brain: 'pg-hooks-test', primary_engine: 'postgres' };
+  }
+
+  async function observationRows(): Promise<number> {
+    return (await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM engine_writer_observations`))[0]!.n;
+  }
+
+  test('stop ends bookkeeping in a process that is still open: its next write neither notes nor puts the hooks back', async () => {
+    const dir = tempDir();
+    const state = shadowState();
+    await installWriterHooks(engine, dir);
+    writeShadowState(dir, state);
+    // A resident process that opened the brain while shadow mode was on and has not written yet.
+    const resident = attachShadowParts(engine, dir, state);
+    // `stop`, from another process: state off, hooks removed, manifest gone.
+    writeShadowState(dir, { ...state, enabled: false, stopped_at: new Date().toISOString() });
+    await removeWriterHooks(engine, dir);
+    expect(await listHookedTables(engine)).toEqual([]);
+    await resident.engine.executeRaw(`INSERT INTO config (key, value) VALUES ('after-stop', '1') ON CONFLICT (key) DO NOTHING`);
+    while (resident.observer.inFlight) await resident.observer.inFlight;
+    expect(await listHookedTables(engine)).toEqual([]);
+    expect(await observationRows()).toBe(0);
+    // The same resident, once shadow mode is on again (start installed the hooks), notes and keeps the hooks.
+    await installWriterHooks(engine, dir);
+    writeShadowState(dir, state);
+    expect(await ensureWriterHooks(engine, dir)).toEqual([]);
+  }, 60_000);
+
+  test('a repair that finds the manifest not `installed` does nothing, so it cannot undo a stop or an install in progress', async () => {
+    const dir = tempDir();
+    await installWriterHooks(engine, dir);
+    await engine.executeRaw('DROP TRIGGER gbrain_writer_note ON config');
+    await removeWriterHooks(engine, dir);
+    expect(await ensureWriterHooks(engine, dir)).toEqual([]);
+    expect(await listHookedTables(engine)).toEqual([]);
+    // Killed start: the manifest says `installing`; a live process still must not hook.
+    await expect(installWriterHooks(engine, dir, { afterTable: (_t, i) => { if (i === 2) throw new Error('killed'); } })).rejects.toThrow('killed');
+    expect(readWriterHooksManifest(dir)?.state).toBe('installing');
+    expect(await ensureWriterHooks(engine, dir)).toEqual([]);
+    expect(await listHookedTables(engine)).toEqual([]);
+  }, 60_000);
+
+  test('a repair running while stop removes the hooks cannot leave a hook behind', async () => {
+    const dir = tempDir();
+    await installWriterHooks(engine, dir);
+    await engine.executeRaw('DROP TRIGGER gbrain_writer_note ON config');
+    // Run the repair and the removal together, several times, in both start orders; the catalog must end with no hook.
+    for (let i = 0; i < 4; i++) {
+      await installWriterHooks(engine, dir);
+      await engine.executeRaw('DROP TRIGGER gbrain_writer_note ON config');
+      const results = await Promise.allSettled(i % 2 === 0
+        ? [ensureWriterHooks(engine, dir), removeWriterHooks(engine, dir)]
+        : [removeWriterHooks(engine, dir), ensureWriterHooks(engine, dir)]);
+      expect(results.every(r => r.status === 'fulfilled')).toBe(true);
+      expect(await listHookedTables(engine)).toEqual([]);
+    }
+  }, 60_000);
+
+  test('a gap needs no sequence: a restricted login that can only insert a gap row still leaves evidence, and the write commits', async () => {
+    const dir = tempDir();
+    await installWriterHooks(engine, dir);
+    const baseline = await evidence();
+    const gapOnly = await roleConnection(['GRANT INSERT ON config TO $ROLE', 'GRANT INSERT ON engine_writer_coverage_gaps TO $ROLE'], true);
+    try {
+      // Covered by the gap route: the audit counts the role as able to record.
+      expect((await evidence()).uncovered_roles).toBe(baseline.uncovered_roles);
+      await gapOnly.sql`INSERT INTO config (key, value) VALUES ('hooks-gap-only', '1')`;
+      expect((await engine.executeRaw<{ value: string }>(`SELECT value FROM config WHERE key = 'hooks-gap-only'`))[0]!.value).toBe('1');
+      const ev = await evidence();
+      expect(ev.gaps).toBe(baseline.gaps + 1);
+      expect((await engine.executeRaw<{ code: string; backend_pid: number }>(`SELECT code, backend_pid FROM engine_writer_coverage_gaps ORDER BY created_at DESC LIMIT 1`))[0]!.code).toBe('42501');
+    } finally { await gapOnly.drop(); }
+  }, 60_000);
+
+  test('a role with only part of a recording route is uncovered, and its write leaves no evidence', async () => {
+    const dir = tempDir();
+    await installWriterHooks(engine, dir);
+    const baseline = await evidence();
+    // Session INSERT without SELECT or UPDATE, and no gap right: neither route works.
+    const insertOnly = await roleConnection(['GRANT INSERT ON config TO $ROLE', 'GRANT INSERT ON engine_writer_sessions TO $ROLE'], true);
+    try {
+      expect((await evidence()).uncovered_roles).toBe(baseline.uncovered_roles + 1);
+      await insertOnly.sql`INSERT INTO config (key, value) VALUES ('hooks-partial-1', '1')`;
+      expect((await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM config WHERE key = 'hooks-partial-1'`))[0]!.n).toBe(1);
+      const ev = await evidence();
+      expect(ev.unresolved).toBe(baseline.unresolved);
+      expect(ev.gaps).toBe(baseline.gaps);
+    } finally { await insertOnly.drop(); }
+    // SELECT and INSERT on sessions but no UPDATE: the first note works, a refresh would not, so still uncovered.
+    const noUpdate = await roleConnection(['GRANT INSERT ON config TO $ROLE', 'GRANT SELECT, INSERT ON engine_writer_sessions TO $ROLE'], true);
+    try {
+      expect((await evidence()).uncovered_roles).toBe(baseline.uncovered_roles + 1);
+    } finally { await noUpdate.drop(); }
+    // The full session route (and no gap right) is covered.
+    const full = await roleConnection(['GRANT INSERT ON config TO $ROLE', 'GRANT SELECT, INSERT, UPDATE ON engine_writer_sessions TO $ROLE'], true);
+    try {
+      expect((await evidence()).uncovered_roles).toBe(baseline.uncovered_roles);
+      await full.sql`INSERT INTO config (key, value) VALUES ('hooks-full-route', '1')`;
+      expect((await evidence()).unresolved).toBe(baseline.unresolved + 1);
+    } finally { await full.drop(); }
+  }, 60_000);
+
+  test('a hook that does not fire for every write counts as no hook: disabled, replica-only, wrong events; repair records a gap', async () => {
+    const dir = tempDir();
+    await installWriterHooks(engine, dir);
+    expect((await evidence()).unhooked).toBe(0);
+    const unclaimed = connection('psql');
+    for (const [name, sqlText] of [
+      ['disabled', 'ALTER TABLE config DISABLE TRIGGER gbrain_writer_note'],
+      ['replica-only', 'ALTER TABLE config ENABLE REPLICA TRIGGER gbrain_writer_note'],
+      ['wrong events', 'DROP TRIGGER gbrain_writer_note ON config; CREATE TRIGGER gbrain_writer_note AFTER INSERT ON config FOR EACH STATEMENT EXECUTE FUNCTION gbrain_note_writer()'],
+      ['always-enabled', 'DROP TRIGGER gbrain_writer_note ON config; CREATE TRIGGER gbrain_writer_note AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON config FOR EACH STATEMENT EXECUTE FUNCTION gbrain_note_writer(); ALTER TABLE config DISABLE TRIGGER gbrain_writer_note; ALTER TABLE config ENABLE ALWAYS TRIGGER gbrain_writer_note'],
+    ] as const) {
+      await engine.executeRaw(sqlText);
+      const broken = name !== 'always-enabled';
+      expect([name, (await evidence()).unhooked]).toEqual([name, broken ? 1 : 0]);
+      if (broken) {
+        // A write from a connection no gbrain process claims: the swap's unknown count must refuse while the hook is broken.
+        await unclaimed`INSERT INTO config (key, value) VALUES (${`hooks-${name}`}, '1') ON CONFLICT (key) DO NOTHING`;
+        const before = (await evidence()).gaps;
+        expect(await ensureWriterHooks(engine, dir)).toEqual(['config']);
+        const after = await evidence();
+        expect(after.unhooked).toBe(0);
+        expect(after.gaps).toBe(before + 1);
+      }
+    }
+    // The disabled hook, written through while disabled, left no session row: only the repair's gap row records the window.
+    expect((await listHookedTables(engine)).length).toBe(await brainTableCount());
+  }, 60_000);
+
+  test('the trigger never waits on an evidence table: a writer commits within a bound while the table is locked, and a gap row records it', async () => {
+    const dir = tempDir();
+    await installWriterHooks(engine, dir);
+    const locker = connection('gbrain serve:901:abcdef01');
+    const writer = connection('gbrain cli:902:abcdef02');
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    const locked = locker.begin(async (t) => { await t`LOCK TABLE engine_writer_sessions IN ACCESS EXCLUSIVE MODE`; await held; });
+    await new Promise((r) => setTimeout(r, 300));
+    const baseline = (await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM engine_writer_coverage_gaps`))[0]!.n;
+    const started = Date.now();
+    await writer`INSERT INTO config (key, value) VALUES ('hooks-locked', '1') ON CONFLICT (key) DO NOTHING`;
+    expect(Date.now() - started).toBeLessThan(1_500);
+    // The caller's own settings are untouched by the function's lock_timeout.
+    expect((await writer`SHOW lock_timeout`)[0]!.lock_timeout).toBe('0');
+    expect((await engine.executeRaw<{ value: string }>(`SELECT value FROM config WHERE key = 'hooks-locked'`))[0]!.value).toBe('1');
+    expect((await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM engine_writer_coverage_gaps`))[0]!.n).toBe(baseline + 1);
+    // Both evidence tables locked: the write still commits (the trigger only warns).
+    const both = locker.begin(async (t) => { await t`LOCK TABLE engine_writer_coverage_gaps IN ACCESS EXCLUSIVE MODE`; await new Promise<void>((r) => setTimeout(r, 1_200)); });
+    await new Promise((r) => setTimeout(r, 150));
+    const bothStarted = Date.now();
+    await writer`INSERT INTO config (key, value) VALUES ('hooks-locked-both', '1') ON CONFLICT (key) DO NOTHING`;
+    expect(Date.now() - bothStarted).toBeLessThan(1_500);
+    release();
+    await Promise.all([locked, both].map(p => p.catch(() => undefined)));
+    expect((await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM config WHERE key = 'hooks-locked-both'`))[0]!.n).toBe(1);
+  }, 60_000);
+
+  test('a session row held by another transaction is skipped, not waited on; the next write refreshes it once it is free', async () => {
+    const dir = tempDir();
+    await installWriterHooks(engine, dir);
+    const writer = connection('gbrain serve:903:abcdef03');
+    const holder = connection('psql');
+    await writer`INSERT INTO config (key, value) VALUES ('hooks-row-1', '1') ON CONFLICT (key) DO NOTHING`;
+    const age = async (): Promise<number> => (await engine.executeRaw<{ s: number }>(
+      `SELECT extract(epoch FROM clock_timestamp() - last_seen)::int AS s FROM engine_writer_sessions WHERE application_name = 'gbrain serve:903:abcdef03'`))[0]!.s;
+    await engine.executeRaw(`UPDATE engine_writer_sessions SET last_seen = clock_timestamp() - interval '11 minutes' WHERE application_name = 'gbrain serve:903:abcdef03'`);
+    expect(await age()).toBeGreaterThanOrEqual(660);
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    const tx = holder.begin(async (t) => { await t`SELECT 1 FROM engine_writer_sessions WHERE application_name = 'gbrain serve:903:abcdef03' FOR UPDATE`; await held; });
+    await new Promise((r) => setTimeout(r, 200));
+    const started = Date.now();
+    await writer`UPDATE config SET value = '2' WHERE key = 'hooks-row-1'`;
+    expect(Date.now() - started).toBeLessThan(1_500);
+    expect(await age()).toBeGreaterThanOrEqual(660);
+    release();
+    await tx;
+    await writer`UPDATE config SET value = '3' WHERE key = 'hooks-row-1'`;
+    expect(await age()).toBeLessThan(60);
+  }, 60_000);
+
+  test('the trigger stamps the time it ran, not the start of the writer transaction: a late write in an old transaction is inside the window', async () => {
+    const dir = tempDir();
+    await installWriterHooks(engine, dir);
+    const old = connection('psql');
+    let since!: Date;
+    await old.begin(async (t) => {
+      await t`SELECT 1`;
+      await new Promise((r) => setTimeout(r, 1_200));
+      since = new Date();
+      await new Promise((r) => setTimeout(r, 50));
+      await t`INSERT INTO config (key, value) VALUES ('hooks-old-txn', '1') ON CONFLICT (key) DO NOTHING`;
+    });
+    const ev = await readWriterEvidence(engine, since, true, WRITER_HOOK_TRIGGER, WRITER_EVIDENCE_TABLES);
+    expect(ev.unresolved).toBe(1);
   }, 60_000);
 
   test('start --yes hooks the tables before turning on; stop removes them; stop with the database down exits 1 and says so', async () => {

@@ -15,7 +15,7 @@ import { openReadSource } from './read-pool.ts';
 import { Reconciler } from './reconcile.ts';
 import { readSeedRecord } from './seed.ts';
 import { MirrorQueue } from './mirror.ts';
-import type { ShadowState } from './state.ts';
+import { readShadowState, type ShadowState } from './state.ts';
 import { ShadowSupervisor, type ShadowSupervisorOptions } from './supervisor.ts';
 import { wrapShadowEngine } from './wrapper.ts';
 import { WriterObserver, type WriterIdentity } from './writer-observations.ts';
@@ -74,7 +74,9 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   reconciler?.startNightly();
   const observer = new WriterObserver({
     primary: engine, dir, identity: () => writerIdentity(engine),
-    ...(primaryTakesWriterHooks(state.primary_engine) ? { beforeFirstNote: () => ensureWriterHooks(engine) } : {}),
+    // A process opened while shadow mode was on outlives `stop`: it notes and repairs hooks only while state.json still says on.
+    enabled: () => readShadowState(dir)?.enabled === true,
+    ...(primaryTakesWriterHooks(state.primary_engine) ? { beforeFirstNote: () => ensureWriterHooks(engine, dir) } : {}),
   });
   engine.registerBeforeDisconnect(async () => {
     observer.stop();

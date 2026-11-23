@@ -1908,9 +1908,19 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   brain table, and `stop` removes them. Each trigger records the writing connection (its `application_name`, client
   address and backend pid) in `engine_writer_sessions`, at most every 10 minutes per connection, so a writer that is
   not a gbrain process on the shadow machine (another machine, `psql`, an older gbrain) still leaves a row. A trigger
-  never fails or blocks the write: it skips a row another transaction holds, and any error becomes a row in
-  `engine_writer_coverage_gaps`. Adding or removing the triggers takes a short lock on each table (start refuses after
-  5 seconds rather than queue writers). `<shadow dir>/writer-hooks.json` is written before the first trigger, the
+  never fails the write and never waits on the evidence tables: its own `lock_timeout` of 50 ms (set on the function,
+  so the writer's settings are untouched afterwards) turns a lock wait into an error it catches, it skips a row
+  another transaction holds, and any error becomes a row in `engine_writer_coverage_gaps` (that table has no
+  sequence, so an INSERT alone records a gap). It stamps the time it ran, not the start of the writer's transaction.
+  If both evidence tables are unusable at once, the trigger can only warn; a table that is missing or locked then
+  makes the eligibility read fail (`eligibility_evidence`, NOT READY), and a role with no usable route is counted by
+  the role check, so a stretch with no evidence cannot read as clean while the damage lasts. Two limits remain: a
+  statement timeout that fires inside the trigger is not caught (the 50 ms bound keeps it far below any timeout), and
+  a writer whose write lands while both evidence tables are locked by someone else at the same moment, and the locks
+  are gone before the swap reads, leaves no row. `stop` ends the bookkeeping of processes that are still open: they
+  note and repair only while `state.json` says shadow mode is on, and a repair acts only while the hooks file says
+  `installed`. Adding or removing the triggers takes a short lock on each table (start refuses after 5 seconds
+  rather than queue writers). `<shadow dir>/writer-hooks.json` is written before the first trigger, the
   install is one transaction (a killed start leaves nothing), and the next `start` or `stop` removes triggers a crash
   left. PGLite brains are not hooked: one process on one machine opens them. Measured cost on a local Postgres 16,
   one client, 1,500 writes each, two rounds: a one-statement write went from about 1.08 to 1.34 ms at p50 (p99 1.46
@@ -1919,8 +1929,14 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
 - **Eligibility.** The swap reads the evidence with one read-only query: `eligibility.writer_hosts_7d` counts the
   machines that claimed writes in the last 7 days (from the shadow start at the earliest, with 10 minutes of slack),
   and `eligibility.unknown_writer_paths` counts what no claim accounts for: a writing connection no gbrain process on
-  the shadow machine claimed, a gap row, a brain table without the hook, a login role that can write brain tables but
-  cannot record evidence, reconcile follower misses, repairs made while coverage was invalid, and a lost note. Any
+  the shadow machine claimed, a gap row, a brain table whose hook is missing or does not fire for every write
+  (disabled, replica-only, the wrong events or another function; the next note repairs it and leaves a gap row), a
+  login role that can write brain tables but has no complete way to record evidence (SELECT, INSERT and UPDATE on
+  `engine_writer_sessions`, or INSERT on `engine_writer_coverage_gaps`, and row-level security that lets it in),
+  reconcile follower misses, repairs made while coverage was invalid, and a lost note. A write that only takes a lock,
+  a log or a cache row counts as a write for the note, though the follower does not copy it. The plan's idea of
+  counting how often an enabled process held no attached engine is not built: it cannot be measured from the shadow
+  machine, and the database hooks replace it. Any
   one of them refuses the swap (`writer_coverage_unknown`). A connection pooler in transaction mode hides the client's
   connection name, so its writes read as unclaimed. `gbrain engine shadow status` never opens the database, so it
   shows only `team_brain` and `preview_target`; the swap passes in the brain it already has open.

@@ -28,11 +28,18 @@ export interface WriterCoverageSource {
 
 function jsonLines<T>(path: string): { rows: T[]; torn: number } {
   if (!existsSync(path)) return { rows: [], torn: 0 };
+  let text: string;
+  // silent-read-ok: not silent; a record file that cannot be read is incomplete evidence and counts as one torn record
+  try { text = readFileSync(path, 'utf8'); } catch { return { rows: [], torn: 1 }; }
   const rows: T[] = [];
   let torn = 0;
-  for (const line of readFileSync(path, 'utf8').split('\n')) {
+  for (const line of text.split('\n')) {
     if (!line) continue;
-    try { rows.push(JSON.parse(line) as T); } catch { torn++; }
+    // A line that parses to something other than an object (null, a number, an array) is as incomplete as a torn one.
+    try {
+      const row: unknown = JSON.parse(line);
+      if (row !== null && typeof row === 'object' && !Array.isArray(row)) rows.push(row as T); else torn++;
+    } catch { torn++; }
   }
   return { rows, torn };
 }

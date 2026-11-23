@@ -11,11 +11,14 @@ import type { Migration } from './types.ts';
 // On a Postgres primary, `gbrain engine shadow start` also hooks every brain table with a statement-level trigger that
 // calls gbrain_note_writer(): it records the writing connection (application_name, client address, backend pid) in
 // engine_writer_sessions, so a writer that is not a wrapped gbrain process (another machine, psql, an old binary)
-// still leaves a row the swap can count. The function never fails or blocks the writer: it skips a row another
-// transaction holds, refreshes at most every 10 minutes per connection, and turns any error into a row in
-// engine_writer_coverage_gaps. It runs with the writer's own rights (no SECURITY DEFINER, #7659); the eligibility read
-// counts any role that can write brain tables but not these as a coverage gap. This migration creates the function
-// only; triggers exist only while a shadow runs.
+// still leaves a row the swap can count. The function never fails the writer and never waits on the evidence tables:
+// a function-scoped lock_timeout of 50 ms turns a lock wait into 55P03, which it catches like any error. It skips a
+// row another transaction holds, refreshes at most every 10 minutes per connection, and turns any error into a row in
+// engine_writer_coverage_gaps (which has no sequence, so an INSERT alone records a gap). It stamps with
+// clock_timestamp(), not now(): now() is the start of the writer's transaction, which can lie before the shadow
+// window for a transaction that wrote only after the hooks existed. It runs with the writer's own rights (no
+// SECURITY DEFINER, #7659); the eligibility read counts any role without a complete recording route as a coverage
+// gap. This migration creates the function only; triggers exist only while a shadow runs.
 // Operational state, not brain content: the shadow seed does not copy these tables and graduation discards them.
 // RLS is enabled here (v275's list is frozen). No schema.sql mirror: like v331, it exists only through migrations.
 export const v332: Migration = {
@@ -37,19 +40,19 @@ CREATE TABLE IF NOT EXISTS engine_writer_sessions (
   application_name TEXT NOT NULL,
   client_addr TEXT NOT NULL,
   backend_pid INTEGER NOT NULL,
-  first_seen TIMESTAMPTZ NOT NULL DEFAULT now(),
-  last_seen TIMESTAMPTZ NOT NULL DEFAULT now(),
+  first_seen TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  last_seen TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   PRIMARY KEY (application_name, client_addr, backend_pid)
 );
 CREATE INDEX IF NOT EXISTS idx_engine_writer_sessions_last_seen ON engine_writer_sessions (last_seen);
 CREATE TABLE IF NOT EXISTS engine_writer_coverage_gaps (
-  id BIGSERIAL PRIMARY KEY,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  code TEXT NOT NULL
+  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  code TEXT NOT NULL,
+  backend_pid INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_engine_writer_coverage_gaps_time ON engine_writer_coverage_gaps (created_at);
 CREATE OR REPLACE FUNCTION gbrain_note_writer() RETURNS trigger
-LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp SET lock_timeout = '50ms' AS $fn$
 DECLARE
   schema_name text := TG_TABLE_SCHEMA;
   app text := coalesce(current_setting('application_name', true), '');
@@ -59,17 +62,17 @@ BEGIN
   BEGIN
     EXECUTE format('SELECT last_seen FROM %I.engine_writer_sessions WHERE application_name = $1 AND client_addr = $2 AND backend_pid = $3', schema_name)
       INTO seen USING app, addr, pg_backend_pid();
-    IF seen IS NOT NULL AND seen > now() - interval '600 seconds' THEN RETURN NULL; END IF;
+    IF seen IS NOT NULL AND seen > clock_timestamp() - interval '600 seconds' THEN RETURN NULL; END IF;
     IF seen IS NULL THEN
-      EXECUTE format('INSERT INTO %I.engine_writer_sessions (application_name, client_addr, backend_pid) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', schema_name)
+      EXECUTE format('INSERT INTO %I.engine_writer_sessions (application_name, client_addr, backend_pid, first_seen, last_seen) VALUES ($1, $2, $3, clock_timestamp(), clock_timestamp()) ON CONFLICT DO NOTHING', schema_name)
         USING app, addr, pg_backend_pid();
     ELSE
-      EXECUTE format('UPDATE %I.engine_writer_sessions SET last_seen = now() WHERE ctid IN (SELECT ctid FROM %I.engine_writer_sessions WHERE application_name = $1 AND client_addr = $2 AND backend_pid = $3 FOR UPDATE SKIP LOCKED)', schema_name, schema_name)
+      EXECUTE format('UPDATE %I.engine_writer_sessions SET last_seen = clock_timestamp() WHERE ctid IN (SELECT ctid FROM %I.engine_writer_sessions WHERE application_name = $1 AND client_addr = $2 AND backend_pid = $3 FOR UPDATE SKIP LOCKED)', schema_name, schema_name)
         USING app, addr, pg_backend_pid();
     END IF;
   EXCEPTION WHEN OTHERS THEN
     BEGIN
-      EXECUTE format('INSERT INTO %I.engine_writer_coverage_gaps (code) VALUES ($1)', schema_name) USING SQLSTATE;
+      EXECUTE format('INSERT INTO %I.engine_writer_coverage_gaps (created_at, code, backend_pid) VALUES (clock_timestamp(), $1, $2)', schema_name) USING SQLSTATE, pg_backend_pid();
     EXCEPTION WHEN OTHERS THEN
       RAISE WARNING 'gbrain_note_writer: could not record a writer or a gap (%)', SQLSTATE;
     END;

@@ -18,6 +18,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { registerBackgroundWorkDrainer } from '../core/background-work.ts';
 import { appendFault } from './ledger.ts';
+import { effectiveHookSql } from './writer-hooks.ts';
 
 /** A process refreshes its row at most this often; eligibility subtracts the same slack from its window start. */
 export const OBSERVATION_REFRESH_MS = 10 * 60_000;
@@ -31,15 +32,19 @@ WHERE engine_writer_observations.last_seen < now() - interval '${OBSERVATION_REF
 /**
  * The eligibility read, one read-only statement: hosts that claimed writes in the window; on a hooked (Postgres)
  * primary also the writing connections no process claimed, the gap rows, the brain tables with no hook, and the login
- * roles that can write a brain table but cannot record evidence (missing rights, or row security they do not bypass;
- * a role's inherited rights count, so a member of pg_write_all_data is judged as itself).
+ * roles that can write a brain table but have no complete way to record evidence. A role records through one of two
+ * routes: the session route (SELECT, INSERT and UPDATE on engine_writer_sessions) or the gap route (INSERT on
+ * engine_writer_coverage_gaps, which has no sequence), and either needs row-level security to let the role in (not
+ * enabled, or the role is a superuser, bypasses it, or owns the table and the table does not force it). A role's
+ * inherited rights count, so a member of pg_write_all_data is judged as itself. A brain table counts as unhooked
+ * unless its hook is enabled for ordinary writes, statement-level, on all four events and calls gbrain_note_writer().
  * $1 window start, $2 hooks expected, $3 evidence tables, $4 trigger name.
  */
 const EVIDENCE_SQL = `WITH brain AS (
   SELECT c.oid, c.relowner FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
   WHERE n.nspname = current_schema() AND c.relkind IN ('r', 'p') AND c.relname::text <> ALL($3::text[])
 ), evidence AS (
-  SELECT c.oid, c.relrowsecurity, c.relowner FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+  SELECT c.oid, c.relname::text AS name, c.relrowsecurity, c.relforcerowsecurity, c.relowner FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
   WHERE n.nspname = current_schema() AND c.relname IN ('engine_writer_sessions', 'engine_writer_coverage_gaps')
 )
 SELECT
@@ -47,18 +52,20 @@ SELECT
   CASE WHEN $2::boolean THEN (SELECT count(*) FROM (SELECT DISTINCT s.application_name, s.client_addr FROM engine_writer_sessions s
     WHERE s.last_seen >= $1::timestamptz AND NOT EXISTS (SELECT 1 FROM engine_writer_observations o WHERE o.application_name = s.application_name)) u)::int ELSE 0 END AS unresolved,
   (SELECT count(*) FROM engine_writer_coverage_gaps WHERE created_at >= $1::timestamptz)::int AS gaps,
-  CASE WHEN $2::boolean THEN (SELECT count(*) FROM brain b WHERE NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = b.oid AND t.tgname = $4))::int ELSE 0 END AS unhooked,
+  CASE WHEN $2::boolean THEN (SELECT count(*) FROM brain b WHERE NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = b.oid AND ${effectiveHookSql('$4')}))::int ELSE 0 END AS unhooked,
   CASE WHEN $2::boolean THEN (SELECT count(*) FROM pg_roles r
     WHERE r.rolcanlogin AND EXISTS (SELECT 1 FROM brain b WHERE has_table_privilege(r.oid, b.oid, 'INSERT, UPDATE, DELETE, TRUNCATE'))
-      AND NOT EXISTS (SELECT 1 FROM evidence e WHERE has_table_privilege(r.oid, e.oid, 'INSERT')
-        AND (NOT e.relrowsecurity OR r.rolsuper OR r.rolbypassrls OR pg_has_role(r.oid, e.relowner, 'USAGE'))))::int ELSE 0 END AS uncovered_roles`;
+      AND NOT EXISTS (SELECT 1 FROM evidence e
+        WHERE (NOT e.relrowsecurity OR r.rolsuper OR r.rolbypassrls OR (pg_has_role(r.oid, e.relowner, 'USAGE') AND NOT e.relforcerowsecurity))
+          AND ((e.name = 'engine_writer_sessions' AND has_table_privilege(r.oid, e.oid, 'SELECT') AND has_table_privilege(r.oid, e.oid, 'INSERT') AND has_table_privilege(r.oid, e.oid, 'UPDATE'))
+            OR (e.name = 'engine_writer_coverage_gaps' AND has_table_privilege(r.oid, e.oid, 'INSERT')))))::int ELSE 0 END AS uncovered_roles`;
 
 export interface WriterEvidence { hosts: number; unresolved: number; gaps: number; unhooked: number; uncovered_roles: number }
 
 /** The eligibility read: one read-only SELECT. Throws what the engine throws; the caller turns that into an omission. */
 export async function readWriterEvidence(engine: BrainEngine, since: Date, hooksExpected: boolean, trigger: string, evidenceTables: readonly string[]): Promise<WriterEvidence> {
   const [row] = await engine.executeRaw<Record<keyof WriterEvidence, unknown>>(EVIDENCE_SQL, [since.toISOString(), hooksExpected, [...evidenceTables], trigger]);
-  const n = (v: unknown): number => { const x = Number(v); if (!Number.isInteger(x) || x < 0) throw Object.assign(new Error('writer evidence: bad count'), { code: 'writer_evidence_malformed' }); return x; };
+  const n = (v: unknown): number => { const x = typeof v === 'number' || typeof v === 'bigint' || (typeof v === 'string' && /^\d+$/.test(v)) ? Number(v) : Number.NaN; if (!Number.isInteger(x) || x < 0) throw Object.assign(new Error('writer evidence: bad count'), { code: 'writer_evidence_malformed' }); return x; };
   if (!row) throw Object.assign(new Error('writer evidence: no row'), { code: 'writer_evidence_malformed' });
   return { hosts: n(row.hosts), unresolved: n(row.unresolved), gaps: n(row.gaps), unhooked: n(row.unhooked), uncovered_roles: n(row.uncovered_roles) };
 }
@@ -80,8 +87,10 @@ export interface WriterObserverOptions {
   now?: () => number;
   /** Seam for tests: where a failure is recorded. */
   recordFailure?: (code: string) => void;
-  /** Run once, before the first note (a hooked primary: rehook a table that has no hook). A failure is recorded. */
+  /** Run once, before the first note (a hooked primary: repair a table whose hook is missing or broken). A failure is recorded. */
   beforeFirstNote?: () => Promise<unknown>;
+  /** Whether shadow mode is still on for this brain. Checked before each note and before the first-note repair; a stopped shadow neither notes nor repairs. */
+  enabled?: () => boolean;
 }
 
 function errorCode(error: unknown): string {
@@ -131,10 +140,16 @@ export class WriterObserver {
 
   private firstDone = false;
 
+  private enabledNow(): boolean {
+    // silent-read-ok: a state file that cannot be read means the shadow cannot be shown to be on, so this process notes nothing
+    try { return this.o.enabled ? this.o.enabled() : true; } catch { return false; }
+  }
+
   private async write(): Promise<void> {
+    if (!this.enabledNow()) return;
     if (!this.firstDone && this.o.beforeFirstNote) {
       this.firstDone = true;
-      // silent-read-ok: not silent; a failed rehook becomes a writer_observation_failed fault that eligibility counts as unknown
+      // silent-read-ok: not silent; a failed repair becomes a writer_observation_failed fault that eligibility counts as unknown
       try { await this.o.beforeFirstNote(); } catch (error) { this.fail(`hooks_${errorCode(error)}`); }
     }
     try {
