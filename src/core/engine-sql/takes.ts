@@ -599,7 +599,9 @@ export async function resolveTake(exec: SqlExecutor, pageId: number, rowNum: num
 export async function getScorecard(exec: LegacyUnscopedRead, opts: TakesScorecardOpts, allowList: string[] | undefined): Promise<TakesScorecard> {
     const allowed = allowList ? sqlFragment`AND holder = ANY(${allowList}::text[])` : sqlFragment``;
     const holderClause = opts.holder ? sqlFragment`AND holder = ${opts.holder}` : sqlFragment``;
-    const domainClause = opts.domainPrefix
+    const domainClause = opts.domainPrefix && opts.domainPrefixAlso?.length
+      ? sqlFragment`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.slug LIKE ANY(${[opts.domainPrefix, ...opts.domainPrefixAlso].map(prefix => prefix + '%')}::text[]))`
+      : opts.domainPrefix
       ? sqlFragment`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.slug LIKE ${opts.domainPrefix + '%'})`
       : sqlFragment``;
     const sinceClause = opts.since ? sqlFragment`AND since_date >= ${opts.since}` : sqlFragment``;

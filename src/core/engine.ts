@@ -545,6 +545,7 @@ export interface TakesScorecard {
 export interface TakesScorecardOpts extends PageReadScope {
   holder?: string;
   domainPrefix?: string; // e.g. 'companies/' to scope the scorecard
+  domainPrefixAlso?: string[]; // more prefixes read with `domainPrefix` (one name stored under another spelling)
   since?: string;        // ISO date 'YYYY-MM-DD'
   until?: string;        // ISO date 'YYYY-MM-DD'
   /** Federated/source scope via the take's page.source_id (array wins over scalar). */
