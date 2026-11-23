@@ -80,6 +80,7 @@ and otherwise kept. `sealChunks` (replace) writes what it is given.
 | `brain.getTakeEmbeddings(ids)` | `[{ id, embedding }]` for takes with a current vector | `getTakeEmbeddings` |
 | `brain.countStaleTakes(opts)` / `brain.listStaleTakes(opts)` | active takes on live pages with no current vector, or one of another model or width; the list is by id, at most 100000 | `countStaleTakes`, `listStaleTakes` |
 
+
 ## Page embedding ledger
 
 The paid path meters each page's embedding spend on one ledger row (`gbrain_store::page_embedding_budget`;
@@ -89,6 +90,7 @@ the policy is `src/core/page-embedding-budget.ts`, the SQL copy `src/core/engine
 | --- | --- | --- |
 | `brain.readPageEmbeddingBudget(pageId)` | the hold marker (`transcript_archive.embedding_hold`, else `call_import.embedding_hold`) and the row's state, reason, signature, spent, reserved, cap, unpriced count and reservation window; all null for a missing page | the plan's hold read |
 | `brain.recordPageEmbeddingHold(pageId, reason)` | a held row for a page with no row; a page with a row keeps it | `INSERT ... ON CONFLICT DO NOTHING` |
+| `brain.holdPageEmbedding(pageId, reason)` | the row is `held` with `reason`: added when the page has none, a held row's reason replaced, an open row re-held; the spend columns are kept. An unknown page refuses `page_not_found`, a reason with a NUL byte `invalid_argument` | `INSERT ... ON CONFLICT (page_id) DO UPDATE SET state = 'held', reason = EXCLUDED.reason` |
 | `brain.openPageEmbeddingHold(pageId)` | opens the row; no row is a no-op | the small-page approval |
 | `brain.reservePageEmbedding(pageId, input)` | `held`, `needs_junk` (an open, unapproved page with no junk verdict yet) or a `grant` of the newest chunks that fit the cap | the grant transaction |
 | `brain.settlePageEmbeddingReservation(pageId, settle)` | books the spend and drops the hold, only while the grant's window is still open | `settleLedgerReservation` |
@@ -108,6 +110,7 @@ stale at once (PGLite compares `embedded_text_hash` with `md5(claim)`). `addTake
 vector when it changes a claim, as Postgres nulls the column; that raises the vector generation, so a warm
 vector index (vectors.rs) rebuilds and `searchTakesVector` stops ranking the old claim's vector. Test: `a_take_vector_is_current_only_at_the_claim_revision` in
 `rust/crates/gbrain-store/tests/embedding_catalog.rs`.
+
 
 ## Embedding install
 
@@ -138,6 +141,10 @@ text hash where PGLite keeps md5; both answer "the text has not changed since th
 | `brain.hasStoredVectors({ name })` | whether `content_chunks`, `facts` or `takes` holds a vector (a take's only at its current claim revision); `query_cache` is always false | `hasStoredVectors` |
 
 `listEmbeddingStores` is answered in TS (every table of `PRIMARY_EMBEDDING_TABLES`).
+`readChunkColumnTypes` (doctor embedding_column_registry) is answered in TS from `readChunkVectorColumn`: each
+column that exists reads as `vector(<dims>)`, because the store keeps no `halfvec`. `countChunkColumnCoverage` is
+answered from `getStats` (every chunk, soft-deleted pages too): `embedding` covers the chunks with a stored vector, a
+fixed column covers none, and any other column fails with Postgres's `column "<name>" does not exist`.
 `embedding_image` and `embedding_multimodal` are declared `vector(1024)` on every Postgres and PGLite brain
 (`src/schema.sql`, `engine-sql/bootstrap.ts`, migration v078) and no migration changes their width, so the
 store reports them present at 1024, as PGLite does. The store keeps no vector for them: a chunk image vector
@@ -145,8 +152,9 @@ is still refused on write.
 
 ## Known edges
 
-- `reservePageSpend`'s embedding branch, `listBudgetLimitedPages`, `readPageSizeStates` and
-  `holdPageEmbedding` are still raw SQL, so a Rust brain refuses them (`engine_capability_missing`).
+- `reservePageSpend`'s embedding branch, `listBudgetLimitedPages` and `readPageSizeStates` are still raw SQL,
+  so a Rust brain refuses them (`engine_capability_missing`). `holdPageEmbedding` and `readPageSizeRows` are
+  served from the ledger row.
 - The stale reads (`countStaleChunks`, `sumStaleChunkChars`, `listStaleChunks`), `readEmbeddingStateCounts`,
   `listEmbeddingStateRows` and the `includeUnsealed` reads take PGLite's `chunkGenerationFilter`: an inline chunk only
   on a page that is not segmented, and a segmented chunk only at or below the page's generation with a live manifest

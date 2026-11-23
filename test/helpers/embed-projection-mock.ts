@@ -18,6 +18,9 @@ export function mockEmbedProjectionEngine(overrides: Partial<Record<string, any>
     readChunkVectorColumn: async () => ({ exists: false, dims: null }),
     // One well-formed unmanaged mode row (#6482), read through the typed import guard method.
     readManagedModeRows: async () => [{ enabled: false }],
+    // No held or capped large pages, as the empty raw budget reads answered before the typed members existed.
+    listBudgetLimitedRows: async () => [],
+    readBudgetHoldAge: async () => undefined,
     // The cycle lock (src/core/db-lock.ts) is always free and always held by us in this single-process mock.
     acquireCycleLock: async (lockId: string) => ({ id: lockId, fence: '1' }),
     refreshCycleLock: async () => true,
@@ -70,7 +73,7 @@ export function mockEmbedProjectionEngine(overrides: Partial<Record<string, any>
   overrides.countEmbedPendingProjections ??= (scope: embedStaleWork.PendingProjectionScope) => embedStaleWork.countEmbedPendingProjections(raw, scope);
   overrides.listEmbedPendingProjections ??= (scope: embedStaleWork.PendingProjectionScope, limit: number) => embedStaleWork.listEmbedPendingProjections(raw, scope, limit);
   overrides.listEmbedProjectionRepairPages ??= (scope: embedStaleWork.PendingProjectionScope, after: number, limit: number) => embedStaleWork.listEmbedProjectionRepairPages(raw, scope, after, limit);
-  overrides.isSegmentedPage ??= (pageId: number) => embedStaleWork.isSegmentedPage(raw, pageId);
+  overrides.readPageIsSegmented ??= (pageId: number) => embedStaleWork.readPageIsSegmented(raw, pageId);
   overrides.hasEmbeddingSignatureDrift ??= (opts: embedStaleWork.SignatureDriftOpts) => embedStaleWork.hasEmbeddingSignatureDrift(raw, opts);
   overrides.lockContentDriftState ??= (key: string, initial: string) => embedStaleWork.lockContentDriftState(raw, key, initial);
   overrides.invalidateContentDriftChunks ??= (window: embedStaleWork.ContentDriftChunkWindow) => embedStaleWork.invalidateContentDriftChunks(raw, window);

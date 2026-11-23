@@ -237,7 +237,7 @@ const numOrNull = (v: unknown): number | null => (v === null || v === undefined 
 
 /**
  * Receipt counts over the last `sinceHours` hours, per slot, mode, outcome and error reason (aggregates only, never text),
- * in that order (the database's own collation).
+ * in that order, by byte (`COLLATE "C"`, as PGLite sorts).
  */
 export async function listDecideReceiptStats(tx: Raw, opts: { slot?: string; sinceHours: number }): Promise<DecideReceiptStat[]> {
   const rows = await tx.executeRaw<Record<string, unknown>>(
@@ -248,7 +248,7 @@ export async function listDecideReceiptStats(tx: Raw, opts: { slot?: string; sin
        FROM decision_receipts
       WHERE created_at >= now() - ($1::int * interval '1 hour') AND ($2::text IS NULL OR slot = $2)
       GROUP BY slot, mode, outcome, error_reason
-      ORDER BY slot, mode, outcome, error_reason`,
+      ORDER BY slot COLLATE "C", mode COLLATE "C", outcome COLLATE "C", error_reason COLLATE "C"`,
     [opts.sinceHours, opts.slot ?? null],
   );
   return rows.map((r) => ({
@@ -268,7 +268,7 @@ export async function decideSlotUsage(tx: Raw, sinceHours: number): Promise<Deci
             SUM(CASE WHEN outcome = 'skipped' THEN 1 ELSE 0 END)::int AS skipped,
             SUM(CASE WHEN error_reason LIKE 'egress%' OR error_reason IN ('denied_source','missing_provenance') THEN 1 ELSE 0 END)::int AS egress
        FROM decision_receipts WHERE created_at >= now() - ($1::int * interval '1 hour')
-      GROUP BY slot ORDER BY slot`,
+      GROUP BY slot ORDER BY slot COLLATE "C"`,
     [sinceHours],
   );
   return rows.map((r) => ({ slot: String(r.slot), decisions: Number(r.decisions), rows: Number(r.rows), input_tokens: Number(r.input_tokens), errors: Number(r.errors), skipped: Number(r.skipped), egress: Number(r.egress) }));
@@ -294,12 +294,12 @@ export interface DecideReplayReceipt {
   outcome: string;
 }
 
-/** The decision rows of `slot` over the last `sinceHours` hours that a replay reads, by decision id, then rank (null last), then insertion order. */
+/** The decision rows of `slot` over the last `sinceHours` hours that a replay reads, by decision id (byte order), then rank (null last), then insertion order. */
 export async function listDecideReplayReceipts(tx: Raw, slot: string, sinceHours: number): Promise<DecideReplayReceipt[]> {
   const rows = await tx.executeRaw<Record<string, unknown>>(
     `SELECT decision_id, answer_value, protected, rank, min_keep, outcome FROM decision_receipts
       WHERE slot = $1 AND created_at >= now() - ($2::int * interval '1 hour') AND outcome IN ('kept','pruned','margin_hold','pass','reject','quarantine','insufficient_context')
-      ORDER BY decision_id, rank`,
+      ORDER BY decision_id COLLATE "C", rank`,
     [slot, sinceHours],
   );
   return rows.map((r) => ({
@@ -442,7 +442,7 @@ export async function listDecideCalibrations(tx: Raw, opts: { slot?: string; inc
   const rows = await tx.executeRaw<Record<string, unknown>>(
     `SELECT * FROM decide_calibrations
       WHERE ($1::text IS NULL OR slot = $1) AND ($2::boolean OR retired_at IS NULL)
-      ORDER BY slot, created_at DESC, id DESC`,
+      ORDER BY slot COLLATE "C", created_at DESC, id DESC`,
     [opts.slot ?? null, opts.includeRetired ?? false],
   );
   return rows.map(toDecideCalibration);

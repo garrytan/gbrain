@@ -263,8 +263,10 @@ describe('engine parity: telemetry', () => {
   test('the Rust capability list gains telemetry only when every telemetry member is served', () => {
     const members = Object.entries(RUST_ENGINE_MEMBERS).filter(([, cls]) => cls === 'telemetry').map(([m]) => m).sort();
     expect(members).toEqual([
-      'logChatUsage', 'logMcpRequest', 'pruneMcpRequestLogBatch', 'readChatUsage', 'readClientOpUsage',
-      'readMcpLifetimeUsage', 'readMcpLogPruneCutoff', 'readMcpRollupPrunedBefore', 'readSearchStats',
+      'countMcpRequestLogRows', 'countMcpRequestsLastDay', 'countMcpRequestsLastDayByToken',
+      'hasMcpLogRowsPastWindow', 'logChatUsage', 'logMcpRequest', 'pruneMcpRequestLogBatch', 'readChatUsage',
+      'readClientOpUsage', 'readMcpLifetimeUsage', 'readMcpLogPruneCutoff', 'readMcpRequestLogBytes',
+      'readMcpRequestLogPage', 'readMcpRollupPrunedBefore', 'readPendingWriteHealth', 'readSearchStats',
       'recordSearchTelemetry',
     ]);
     const served = members.filter((m) => m in STORE_MEMBERS);

@@ -27,6 +27,9 @@ const MAX_NAME_WORDS = 5;
 
 export interface VariantRow { slug: string; title: string | null; type: string | null; frontmatter: Record<string, unknown> | null }
 
+/** The plain VariantRow projection; with no private-page predicate it reads through typed engine members. */
+export const VARIANT_ROW_COLUMNS = 'slug, title, type, frontmatter';
+
 export interface VariantMatch<R extends VariantRow> { row: R; kind: NameMatchKind }
 
 export interface VariantResult<R extends VariantRow> {
@@ -74,20 +77,25 @@ export async function resolveNameVariant<R extends VariantRow>(
 ): Promise<VariantResult<R>> {
   const words = probeWords(name);
   if (!words.length || parsePersonName(name).core.length > MAX_NAME_WORDS || name.includes('/')) return { matches: [] };
+  const typed = opts.selectColumns === VARIANT_ROW_COLUMNS && opts.privatePredicate === '';
+  const types = [...opts.entityTypes, 'person', 'company', 'fund', 'organization'];
+  const slugPatterns = ['people/%', 'companies/%', 'funds/%', 'orgs/%', 'organizations/%'];
   let rows: Array<R & { probe_hits: number }>;
   try {
-    rows = await engine.executeRaw<R & { probe_hits: number }>(
-      `SELECT ${opts.selectColumns},
-              (SELECT count(*)::int FROM unnest($4::text[]) w WHERE pages.title ILIKE w OR pages.slug ILIKE w) AS probe_hits
-         FROM pages
-        WHERE deleted_at IS NULL AND source_id = $1
-          AND (type = ANY($2::text[]) OR slug LIKE ANY($3::text[]))
-          AND (title ILIKE ANY($4::text[]) OR slug ILIKE ANY($4::text[]))${opts.privatePredicate}
-        ORDER BY probe_hits DESC, length(title), slug
-        LIMIT ${VARIANT_CANDIDATE_CAP + 1}`,
-      [sourceId, [...opts.entityTypes, 'person', 'company', 'fund', 'organization'],
-        ['people/%', 'companies/%', 'funds/%', 'orgs/%', 'organizations/%'], words.map(likeWord)],
-    );
+    // The plain projection with no private-page predicate reads through the typed member (engine-sql/entity-reads.ts).
+    rows = typed
+      ? await engine.listNameVariantCandidates(sourceId, { types, slugPatterns, probes: words.map(likeWord), limit: VARIANT_CANDIDATE_CAP + 1 }) as Array<R & { probe_hits: number }>
+      : await engine.executeRaw<R & { probe_hits: number }>(
+        `SELECT ${opts.selectColumns},
+                (SELECT count(*)::int FROM unnest($4::text[]) w WHERE pages.title ILIKE w OR pages.slug ILIKE w) AS probe_hits
+           FROM pages
+          WHERE deleted_at IS NULL AND source_id = $1
+            AND (type = ANY($2::text[]) OR slug LIKE ANY($3::text[]))
+            AND (title ILIKE ANY($4::text[]) OR slug ILIKE ANY($4::text[]))${opts.privatePredicate}
+          ORDER BY probe_hits DESC, length(title), slug COLLATE "C"
+          LIMIT ${VARIANT_CANDIDATE_CAP + 1}`,
+        [sourceId, types, slugPatterns, words.map(likeWord)],
+      );
   } catch {
     return { matches: [] };
   }
@@ -103,9 +111,11 @@ export async function resolveNameVariant<R extends VariantRow>(
     if (!live || exclude.has(live.slug)) continue;
     let target: R | undefined = live.slug === row.slug ? row : rows.find(r => r.slug === live.slug);
     if (!target) {
-      const [fetched] = await engine.executeRaw<R>(
-        `SELECT ${opts.selectColumns} FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = $2${opts.privatePredicate}`,
-        [sourceId, live.slug]).catch(() => [] as R[]);
+      const [fetched] = typed
+        ? await liveStubs(engine, sourceId, [live.slug]).catch(() => []) as R[]
+        : await engine.executeRaw<R>(
+          `SELECT ${opts.selectColumns} FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = $2${opts.privatePredicate}`,
+          [sourceId, live.slug]).catch(() => [] as R[]);
       if (!fetched || (opts.omitQuarantined && isQuarantined(fetched.frontmatter))) continue;
       target = fetched;
     }

@@ -82,6 +82,16 @@ only the provenance link, or turning the owner-only flag off with nothing delete
 store keeps no `derivation_inputs`, so a page that only that table ties to an owner-only row is not hidden by it. The
 engine serves no source delete yet, so a page is deleted by `deletePage`, `deletePages` or `purgeDeletedPages` here.
 
+`ownerOnlyMarkTriggers` (doctor's `owner_only_marks_triggers`, `owner_only_marks.rs` `owner_only_mark_state`) reads the
+state the SQL member reads from the triggers, the marks and the catalog. No trigger is ever missing: the store marks in
+code on every delete path, so `ensure` has nothing to create. It never writes the SQL `*` marks (`unguarded`, a delete
+trigger was missing; `row_security`, a delete by a login whose reads row-level security limits), so `closed` and
+`rowSecurity` are false. `held` is true while the brain holds an owner-only source or a mark; SQL's held flag also
+stays set after the last owner-only source is turned off with nothing deleted, which no doctor message prints. The
+store has no database logins and no row-level security, so no login reads lineage closed (`closedLogins`) or cannot
+add marks (`deniedLogins`), and its marks need no held flag a data copy could drop (`unflagged` is false). `role` is
+`postgres`, the role PGLite reports, which only the fix line of a missing trigger prints.
+
 The safe-chunks rule keeps a page only when its recorded `chunker_version` is at least the safe fence chunker (4), as
 SQL's `chunker_version >= 4`: a page with no recorded version is dropped too (the comparison is NULL). The store stamps
 4 when `sealChunks` seals a page's chunks (a put's own chunks are not certified and never stamp 4) and -1 when a later `upsertChunks` changes them (`chunk_queries.md`).

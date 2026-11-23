@@ -290,9 +290,11 @@ for a file that is laned, has no arm or is gone fails.
 #### Engine parity arms
 
 `test/engine-parity/` runs each case on PGLite, then on Postgres when
-`DATABASE_URL` is set, then on Rust when `GBRAIN_TEST_RUST_ARM=1`. To run the
-Postgres arm locally, use the CI image with its default `en_US.utf8` locale
-(a C-locale server hides text-order differences):
+`DATABASE_URL` is set, then on Rust when `GBRAIN_TEST_RUST_ARM=1`. The harness
+creates each Postgres arm database from `template0` with the `en_US.utf8`
+locale, whatever the server's default is, because a C-locale database hides
+text-order differences. A server without that locale fails the file with one
+line naming it; there is no fall back to C. The CI image has it:
 
 ```bash
 docker run -d --name parity-pg -e POSTGRES_PASSWORD=postgres -p 127.0.0.1:55432:5432 pgvector/pgvector:pg16
@@ -305,7 +307,7 @@ docker rm -f parity-pg
 ```
 
 The database name must contain `test`, or the guard refuses it. The harness
-creates one fresh database per file from that URL and empties it between
+creates one fresh en_US database per file from that URL and empties it between
 cases without restarting its sequences. A case must not compare or pass raw
 generated ids: count them from the case's first row, or compare by name.
 For the Rust arm, run `bun run rust:build`, then add
@@ -315,7 +317,9 @@ the Rust arm answers equal to PGLite and how many stop on a typed refusal. A
 file with fewer equal or more stopped cases than its pin fails, so a member
 that falls back to a refusal cannot pass. A file that does better prints the
 new counts. After a change to Rust coverage, or at each merge, regenerate the
-pin with `bun test/engine-parity/rust-tally.ts --write` and commit it.
+pin with `bun test/engine-parity/rust-tally.ts --write` and commit it. A row can end in a
+one-line reason its stopped cases stop by design; the regenerate keeps it while
+the file still has stopped cases.
 
 With the same `DATABASE_URL` set, also run the Postgres SQL goldens:
 

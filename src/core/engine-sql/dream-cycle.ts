@@ -289,7 +289,7 @@ export async function listDreamAtomPages(raw: EngineRawRead, sourceId: string): 
 export async function listSynthesisPageBodies(raw: EngineRawRead, sourceId: string, slugs: string[]): Promise<Array<{ slug: string; title: string | null; body: string | null }>> {
   return raw<{ slug: string; title: string | null; body: string | null }>(
     `SELECT slug, title, COALESCE(compiled_truth, '') || E'\\n' || COALESCE(timeline, '') AS body FROM pages
-      WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL AND body_storage <> 'segmented' ORDER BY slug`, [sourceId, slugs]);
+      WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL AND body_storage <> 'segmented' ORDER BY slug COLLATE "C"`, [sourceId, slugs]);
 }
 
 /** Committed-or-pending requests on the output page after the child's put_page, oldest first. */

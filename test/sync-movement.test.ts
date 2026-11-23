@@ -388,8 +388,11 @@ describe('doctor managed_sync_not_moving and the serve notice', () => {
 describe('#6781: a failed backlog read is unknown, never nothing_pending', () => {
   /** The reporter's two arms: the same engine, except that the backlog SELECT alone rejects in the second. */
   const BACKLOG_SQL = /FROM op_checkpoints WHERE op='managed-sync' AND COALESCE\(completed_keys->0->>'done','false'\)<>'true'/;
+  // The cli-members line reads the backlog through the typed listManagedSyncBacklogHeaders member (engine-sql/
+  // doctor-checkpoints.ts, the same SELECT), which runs on the target engine, so the failure is injected there too.
   const failingBacklog = (target: BrainEngine): BrainEngine => new Proxy(target, {
     get(t, prop) {
+      if (prop === 'listManagedSyncBacklogHeaders') return () => Promise.reject(new Error('OFFLINE_SENTINEL backlog read failed'));
       if (prop === 'executeRaw') {
         return (sql: string, params?: unknown[]) => BACKLOG_SQL.test(sql) ? Promise.reject(new Error('OFFLINE_SENTINEL backlog read failed')) : t.executeRaw(sql, params);
       }

@@ -111,7 +111,7 @@ export async function listEmbedProjectionRepairPages(raw: EngineRawRead, scope: 
 }
 
 /** Whether the page with this id keeps its body in segments. */
-export async function isSegmentedPage(raw: EngineRawRead, pageId: number): Promise<boolean> {
+export async function readPageIsSegmented(raw: EngineRawRead, pageId: number): Promise<boolean> {
   const [segmented] = await raw(`SELECT 1 FROM pages WHERE id=$1 AND body_storage='segmented'`, [pageId]);
   return segmented !== undefined;
 }

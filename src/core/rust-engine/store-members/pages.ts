@@ -95,8 +95,8 @@ function listColumns(page: Page): Page {
   const { id, source_id, slug, type, title, created_at, updated_at, updated_at_iso, deleted_at, effective_date,
     effective_date_source, body_storage, body_bytes } = page;
   return {
-    id, source_id, slug, type, title, compiled_truth: '', timeline: '', frontmatter: {}, created_at, updated_at,
-    content_hash: undefined, emotional_weight: undefined,
+    id, source_id, slug, type, title, compiled_truth: '', timeline: '', frontmatter: {}, content_hash: undefined,
+    emotional_weight: undefined, created_at, updated_at,
     ...(updated_at_iso !== undefined && { updated_at_iso }),
     ...(deleted_at !== undefined && { deleted_at }),
     ...(effective_date !== undefined && { effective_date }),

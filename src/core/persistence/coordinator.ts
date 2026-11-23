@@ -44,7 +44,7 @@ import { assertManagedFilesystemWrite } from './filesystem-guard.ts';
 import { beforeStagePath, fileContentBytes, fileContentHash, hashDescriptor, hashFile, isStreamedContent, LARGE_FILE_MIN_BYTES, stageBeforeCopy, stageStreamedContent, type StreamedFileContent } from './large-file.ts';
 import { declarePublication, publicationTransaction } from './publication-deadline.ts';
 import { PAGE_CHANGED_DURING_PREPARATION_MESSAGE, writeFailureDiagnostic } from './verb-errors.ts';
-import { assertMutationProtocol, assertSharedSkillPersistence, declareDurablePersistence, isPersistenceDeclaration, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
+import { assertMutationProtocol, assertSharedSkillPersistence, declareDurablePersistence, isPersistenceDeclaration } from './protocol.ts';
 import { assertBundleRecoveryBinding, bundleFileHash, prepareBundleRecovery, publishStagedBundleFile, stageBundleFile, type MutationFile } from './bundle-files.ts';
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { classifyMirrorPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
@@ -556,11 +556,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       }
       // Recheck after native exclusion, before reserving or touching any sink.
       // A terminal receipt may still own unresolved physical cleanup.
-      const blocked = await engine.executeRaw(`SELECT 1 FROM persistence_requests
-        WHERE worktree_id=$1::uuid AND id<>$2::uuid AND recovery IS NOT NULL
-        UNION ALL SELECT 1 FROM persistence_effects WHERE worktree_id=$1::uuid AND recovery IS NOT NULL LIMIT 1`,
-      [row.worktree_id, row.id]);
-      if (blocked.length) {
+      if (await (await engine.publicationJournalStore()).recoveryBlocker(row.worktree_id!, row.id)) {
         await releaseUnpublishedClaim(engine, row, 'recovery_required');
         return (await getWriteRequestById(engine, row.id))!;
       }
@@ -630,8 +626,9 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
     }
     const done = await publicationTransaction(engine, async tx => {
       await declarePublication(tx);
-      const liveBinding = await guardOwnership(tx, row, hostId);
-      if (prepared.sourceExclusive && !prepared.exclusiveSources?.length) await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [row.source_id]);
+      const journal = await tx.publicationJournalStore();
+      const liveBinding = await guardOwnership(tx, journal, row, hostId);
+      if (prepared.sourceExclusive && !prepared.exclusiveSources?.length) await journal.lockSource(row.source_id);
       if (prepared.exclusiveSources?.length) await lockCoreSources(tx, prepared.sourceExclusive ? [row.source_id, ...prepared.exclusiveSources] : prepared.exclusiveSources);
       if (binding && String(liveBinding?.owner_epoch) !== String(binding.owner_epoch)) throw opError('owner_unavailable', 'Owner epoch changed before publication.',
         `Source ${row.source_id}'s canonical owner changed (a transfer or re-claim) after request ${row.request_id} was prepared, so this host published nothing for it. Inspect the owner and the request before resubmitting; do not claim or transfer the source to push this write through.`,
@@ -642,7 +639,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       // A file publication stamps `publication_started` on the row lock it takes anyway; the stamp lives and dies
       // with this transaction either way (control.ts reads a rolled-back stamp as "never started").
       const current = recovery
-        ? (await tx.executeRaw<WriteRequest>('UPDATE persistence_requests SET publication_started=true WHERE id=$1::uuid RETURNING *', [row.id]))[0]
+        ? await journal.markPublicationStarted(row.id)
         : await tx.lockWriteRequest(row.id);
       if (!current || current.execution_token !== row.execution_token || current.state !== 'running') throw opError('write_claim_lost', 'Execution claim changed before publication.',
         `Another worker took over request ${row.request_id} (its execution claim expired or was reassigned) before this attempt published, so this attempt wrote nothing and the current holder decides the outcome. Inspect the request rather than resubmitting it.`,
@@ -807,9 +804,7 @@ export async function recoverPublication(engine: BrainEngine, id: string, hostId
   const releaseCapacity = capacityAlreadyHeld ? null : tryAcquirePublicationCapacity(engine);
   try {
     if (!capacityAlreadyHeld && !releaseCapacity) {
-      const [blocked] = await engine.executeRaw<WriteRequest>(`UPDATE persistence_requests SET blocked_reason='writer_pool_capacity',updated_at=now()
-        WHERE id=$1::uuid AND recovery IS NOT NULL AND state IN ('running','recovering') AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING *`, [id]);
-      return blocked ?? row;
+      return await (await engine.publicationJournalStore()).blockCapacity(id) ?? row;
     }
     if (!isTerminal(row)) await upgradeRecoveryStaging(engine, 'persistence_requests', id, row.worktree_id!, 'restore');
     const adoption = isTerminal(row) ? null : await adoptionRecoveryEvidence(engine, row, binding);
@@ -817,9 +812,10 @@ export async function recoverPublication(engine: BrainEngine, id: string, hostId
     const pinned = adoptionPin(row);
     row = await engine.transaction(async tx => {
       await declareDurablePersistence(tx);
-      await tx.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [row!.worktree_id]);
+      const journal = await tx.publicationJournalStore();
+      await journal.shareWorktree(row!.worktree_id!);
       await lockCounters(tx, ['brain', principalKey(requestPrincipal(row!)), `worktree:${row!.worktree_id}`]);
-      const [current] = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE', [id]);
+      const current = (await tx.lockWriteRequest(id))!;
       if (!current.recovery) return current;
       // #8869: the adoption proof was read before this transaction; a request or HEAD that moved since leaves the recovery pending.
       if (adoption && !isTerminal(current) && (adoptionPin(current) !== pinned || await headCommit(adoption.root) !== adoption.head)) throw opError('recovery_required',
@@ -829,7 +825,7 @@ export async function recoverPublication(engine: BrainEngine, id: string, hostId
       const records = recoveryFiles(current.recovery);
       let landed: string | null = null;
       if (isBundleRecovery(current.recovery)) {
-        const owner = await guardOwnership(tx, current, hostId);
+        const owner = await guardOwnership(tx, journal, current, hostId);
         if (!owner) throw opError('owner_unavailable', 'Skill recovery requires its canonical owner.',
           `This host no longer holds source ${current.source_id}'s current owner epoch, so shared-skill request ${current.request_id} stays recovering until its owner finishes it. Inspect the owner; its resident writer finishes the recovery.`,
           { fix: ownerStatusFix(current.source_id) });
@@ -884,10 +880,7 @@ export async function recoverPublication(engine: BrainEngine, id: string, hostId
       catch (error) {
         if (!(error instanceof OperationError) || !['unexpected_staging_bytes','unexpected_file_bytes','storage_error'].includes(error.code)) throw error;
         const reason = error.code === 'unexpected_staging_bytes' ? error.code : 'unexpected_file_bytes';
-        const [blocked] = await tx.executeRaw<WriteRequest>(`UPDATE persistence_requests SET
-          state=CASE WHEN state IN ('committed','conflict','failed','cancelled') THEN state ELSE 'recovering' END,
-          blocked_reason=$2,updated_at=now() WHERE id=$1::uuid RETURNING *`, [id, reason]);
-        return blocked;
+        return (await journal.blockRecovery(id, reason))!;
       }
       // A delivered or durable terminal outcome is immutable. Only its known
       // temporary files are cleaned; its canonical file is never restored.
@@ -904,12 +897,8 @@ export async function recoverPublication(engine: BrainEngine, id: string, hostId
       // G7b: a door commit that landed before its row is named on the receipt, whatever the replay's outcome.
       const kept = landed ? { persistence: { git_state: 'committed', git_commit: landed, landed_before_row: true } } : null;
       if (failure && !replayLanded) return completeWrite(tx, current, failureState(failure.code), kept ?? {}, failure);
-      for (const key of ['brain', `worktree:${current.worktree_id}`]) await tx.executeRaw('UPDATE persistence_counters SET recovery_bytes=recovery_bytes-$2 WHERE key=$1', [key, Number(current.recovery_bytes)]);
-      const [queued] = await tx.executeRaw<WriteRequest>(`UPDATE persistence_requests SET state='queued',execution_token=NULL,
-        claim_expires_at=NULL,recovery=NULL,recovery_bytes=0,publication_started=false,blocked_reason=NULL,outcome=COALESCE($2::text::jsonb,outcome),
-        ${failure ? 'error_code=NULL,error_message=NULL,error_detail=NULL,' : ''}updated_at=now()
-        WHERE id=$1::uuid RETURNING *`, [id, kept ? JSON.stringify(kept) : null]);
-      return queued;
+      for (const key of ['brain', `worktree:${current.worktree_id}`]) await tx.addPersistenceCounters(key, { recovery_bytes: -Number(current.recovery_bytes) });
+      return (await journal.requeueRecovered(id, kept, failure !== undefined))!;
     });
     if (isTerminal(row) && row.blocked_reason !== 'unexpected_staging_bytes') {
       await faultPoint('publication_recovery:before_clear', { requestId: row.request_id, sourceId: row.source_id, operation: row.operation });

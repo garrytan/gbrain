@@ -23,6 +23,7 @@ keys.
 | `brain.readInlinePageRegions(pageId)` | `{ compiled_truth, timeline }` of the page with id `pageId`, live or a tombstone, or `null` when no page has the id. A column the page does not store inline reads `null` | `readInlinePageRegions` |
 | `brain.readStoredPageTier(sourceId, slug)` | the page's stored `trust_tier` as text, live or a tombstone, or `null` when the source has no such page. A record that stores no tier reads `unknown`, the column default | `readStoredPageTier` |
 | `brain.readLivePageBody(slug, sourceId)` (as `readLiveStoredBody`) | `{ compiled_truth, timeline }` of the live page, or `null`. The TypeScript member takes no row lock: the store runs one write transaction at a time | `readLiveStoredBody` |
+
 | `brain.hasSegmentStorage()` | `true` when any segment text or body staging record exists | `hasSegmentStorage` |
 | `brain.detachPageOrigin(pageId, reason)` | nothing. The page, live or a tombstone, forgets `source_path` and `source_uri` and records `reason` as its `database_only_reason`; its `knowledge_revision` stays | `detachPageOrigin` |
 | `brain.readPageDatabaseOnlyReason(sourceId, slug)` | the page's `database_only_reason`, live or a tombstone, or `null` without one or without a page | `readPageDatabaseOnlyReason` |

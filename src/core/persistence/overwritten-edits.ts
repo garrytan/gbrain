@@ -107,3 +107,8 @@ export async function scanOverwrittenEdits(engine: Pick<BrainEngine, 'listOverwr
   const edits = [...newest.values()];
   return { source_id: sourceId, high: edits.filter(edit => edit.confidence === 'high').length, unknown: edits.filter(edit => edit.confidence === 'unknown').length, edits, truncated };
 }
+
+export const CONTENT_COLUMNS = (v: string) => `${v}.body_storage, ${v}.title, ${v}.type, ${v}.compiled_truth, ${v}.timeline, ${v}.frontmatter`;
+
+export const MANAGED_IMPORT = (r: string) => `(${r}.intent->>'kind' = 'managed_sync_import'
+  OR (${r}.intent IS NULL AND ${r}.outcome->>'imported_file' = 'true' AND NOT (${r}.outcome ? 'connector_database')))`;

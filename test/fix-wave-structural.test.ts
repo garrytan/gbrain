@@ -99,7 +99,8 @@ describe('v0.36.1.x #1077 — admin register-client supports PKCE public clients
     // cathedral-6: the dup-check + INSERT run in ONE engine.transaction under
     // the SAME name-scoped advisory lock the CLI lane takes — two concurrent
     // same-name requests can no longer both pass the autocommit pre-check.
-    expect(src).toMatch(/pg_advisory_xact_lock\(hashtext\(\$1\)::bigint\)`,\s*\[registerClientNameLockKey\(name\)\]/);
+    // The lock is the engine member (engine-sql/client-grants.ts takes pg_advisory_xact_lock(hashtext($1)::bigint)).
+    expect(src).toMatch(/tx\.lockOauthClientName\(registerClientNameLockKey\(name\)\)/);
     // cathedral-6 (C1): tokenTtl validates BEFORE the tx (integer within the
     // shared bounds → structured 400, never an in-tx integer-cast 500).
     expect(src).toMatch(/invalid_token_ttl/);

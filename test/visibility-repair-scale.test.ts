@@ -102,6 +102,15 @@ function recording(engine: BrainEngine, fail?: (sql: string) => boolean) {
   return { engine: proxy as BrainEngine, statements, readsLinks: () => statements.some(sql => /\blinks\b/.test(sql)) };
 }
 
+/** The engine with one typed member failing on the statement timeout, as `recording` fails a raw statement. */
+function timingOut(engine: BrainEngine, member: keyof BrainEngine): BrainEngine {
+  return new Proxy(engine, { get(target, key) {
+    if (key === member) return async () => { throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }); };
+    const value = Reflect.get(target, key);
+    return typeof value === 'function' ? value.bind(target) : value;
+  } });
+}
+
 const SMALL = { origins: 50, atoms: 120, concepts: 6, events: 30, aliased: 10, facts: 40, filler: 0 };
 const privateFacts = (engine: BrainEngine) => engine.executeRaw<{ id: number }>("SELECT id FROM facts WHERE visibility='private' ORDER BY id");
 const preview = (engine: BrainEngine, opts: { driftClass?: string; limit?: number } = {}) =>
@@ -167,7 +176,8 @@ describe('GBRA-159 visibility repair plans by class, facts first, without links 
       expect(result.details).toMatchObject({ window: { timed_out: ['lineage'], not_read: [] } });
       expect(new Set(result.listing!.map(entry => entry.class))).toEqual(new Set(['facts', 'events', 'aliases']));
       expect(result.warnings!.join(' ')).toContain('Class lineage did not finish within');
-      const doctor = await derivedVisibilityCheck(recording(engine, sql => sql.trimStart().startsWith('WITH derived')).engine);
+      // The derived counts are a typed engine read (countDerivedVisibility), so its timeout is injected on the member.
+      const doctor = await derivedVisibilityCheck(timingOut(engine, 'countDerivedVisibility'));
       expect(doctor.status).toBe('warn');
       expect(doctor.details).toMatchObject({ derived_counts: 'unknown', count: 'lower_bound' });
       expect(Number(doctor.details!.world_facts_remotely_readable)).toBeGreaterThan(0);

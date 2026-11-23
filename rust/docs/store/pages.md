@@ -28,6 +28,7 @@ secondary indexes yet.
 | `brain.removeTag(slug, tag, { sourceId? }?)` | `null`; no error when the page or tag is absent | `removeTag` |
 | `brain.createVersion(slug, { sourceId?, reason?, reasonSource?, historyGap? }?)` | the version row, with `reason` as its `change_reason` when given (and only if the prune kept the new version; a non-empty `reason` whose `reasonSource` `{ commit, path }` a purge tombstoned for the source is dropped, as `stampableReason` does), `historyGap` recording the page's `version_history_gap_at` before the snapshot, with the page's stamped `trust_tier` and `write_origin` copied into the snapshot (`snapshot_version_trust`; never the snapshot writer's own); `page_not_found` for a missing page. A segmented page's snapshot references its body generation (page_body.md, "The sweep"). The member ignores a caller's `preimage`: a Rust transaction runs its calls in order, so the store snapshots the page the caller read | `createVersion` |
 | `brain.getVersions(slug, { sourceId?, sourceIds?, limit?, includeBody?, excludePrivate? }?)` | version rows, newest first, each with its change reason as `replaced_because`; `includeBody: false` leaves out `compiled_truth` and `timeline`; `excludePrivate` (the caller's page policy) drops a hidden page's versions and each version whose own readers or fields the caller may not read, before `limit`; under `excludePrivate` a version's `replaced_because` is null when the next version is one the caller may not read, or was pruned (`replacedBecauseSql`) | `getVersions` |
+| `brain.createVersion(slug, { sourceId?, reason?, historyGap? }?)` | the version row, with `reason` as its `change_reason` when given (and only if the prune kept the new version), `historyGap` recording the page's `version_history_gap_at` before the snapshot, with the page's stamped `trust_tier` and `write_origin` copied into the snapshot (`snapshot_version_trust`; never the snapshot writer's own); `page_not_found` for a missing page. A segmented page's snapshot references its body generation (page_body.md, "The sweep") | `createVersion` |
 | `brain.readLatestVersionId(pageId)` | the page's newest version id, or `null` when it has none or the id is not a page's | `readLatestVersionId` |
 | `brain.readLatestVersionIdAtTier(pageId, tier)` | the page's newest version id whose snapshot `trust_tier` is `tier` (a version with no stored tier reads as `unknown`), or `null`; `invalid_argument` for a NUL byte | `readLatestVersionIdAtTier` |
 | `brain.stampVersionChangeReason({ pageId, afterVersionId, reason })` | how many versions took the reason: it sets `change_reason` on each of the page's versions with an id over `afterVersionId`, in one write; `invalid_argument` for a NUL byte | `stampVersionChangeReason` |
@@ -56,6 +57,7 @@ secondary indexes yet.
   restamped (`src/core/trust/fence-append.ts`). It goes through the same trust stamp as the PGLite `UPDATE`: a lower
   always lands, and a raise lands only under a promotion that covers it, else the stored tier stays. `writeOrigin` is
   JSON text or null; a tier that is not a trust tier is refused.
+
 
 
 `putPage` follows PGLite:

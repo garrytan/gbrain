@@ -31,7 +31,10 @@
  * readMentionGenerations, readMentionPageRevisions, readPageRevisionForShare,
  * readLiveStoredBody, readNoopEmbeddingCandidates, readOAuthClientWriteGrant, readPairFactRow, readReplacementTarget,
  * readSourceMembership, readSourceState, readWorktreeAdmission, readWriterAdminState, selectClaimableEffect,
- * selectClaimableWrite.
+ * selectClaimableWrite, and the credential, source and shared-skill row-lock reads the batch 10 lanes added (the list below).
+ *
+ * A constant that maps names to statements (`CREDENTIAL_SQL = { token_list: '...', client_token_ttl: '...' }`) is read per
+ * statement: a function that names `CREDENTIAL_SQL.token_list` is charged with that statement, not with its siblings.
  *
  * Limits (no_claim): a write behind a call this scan cannot resolve (a function passed as an argument, three or more
  * same-named functions in other files) is not seen; names decide nothing, but resolution does.
@@ -52,6 +55,8 @@ const LOCK_ONLY_READS: readonly string[] = [
   'readMentionGenerations', 'readMentionPageRevisions', 'readPageRevisionForShare', 'readLiveStoredBody', 'readNoopEmbeddingCandidates', 'readOAuthClientWriteGrant', 'readPairFactRow', 'readReplacementTarget',
   'readSourceMembership', 'readSourceState', 'readWorktreeAdmission', 'readWriterAdminState', 'selectClaimableEffect',
   'selectClaimableWrite',
+  // Added when the batch 10 lanes merged (credential, source and shared-skill reads that lock the row they read):
+  'lockActiveAccessTokens', 'lockAllSourceRows', 'lockLegacyAccessTokens', 'lockSharedSkillBrainId', 'readAccessTokenMemberGrant', 'readAccessTokenReceiptGrant', 'readCredentialBindingForUpdate', 'readLocalWriterMemberGrant', 'readOAuthClientMemberGrant', 'readOAuthClientReceiptGrant', 'readOauthClientForUpdate', 'readOauthCodeForUpdate', 'readOauthRefreshTokenForUpdate', 'readScopeSourceConfigs', 'readSharedSkillDeliveryBatch', 'readSharedSkillMember', 'readSharedSkillPolicyRow', 'readSourceArchivedForShare',
 ];
 
 /**
@@ -99,7 +104,7 @@ const SQL_WRITE = new RegExp(
 const SQL_LOCK = /\bFOR\s+(?:NO\s+KEY\s+)?(?:UPDATE|SHARE)\b|pg_(?:try_)?advisory\w*lock\w*/i;
 
 interface Literal { file: string; line: number; text: string }
-interface FnDef { name: string; file: string; line: number; calls: Set<string>; idents: Set<string>; literals: Literal[] }
+interface FnDef { name: string; file: string; line: number; calls: Set<string>; idents: Set<string>; props: Map<string, Set<string>>; locals: Set<string>; literals: Literal[] }
 
 /** Names that are the transport, not the statement: following them would reach every statement in the engine. */
 const SQL_SKIP = new Set(['executeRaw', 'executeRawDirect', 'execute', 'runJitOffStatement', 'query', 'rawRead', 'rawWrite', 'run',
@@ -109,7 +114,9 @@ const SQL_SKIP = new Set(['executeRaw', 'executeRawDirect', 'execute', 'runJitOf
   'trim', 'split', 'replace', 'test', 'exec', 'match', 'startsWith', 'endsWith', 'concat', 'reverse', 'fill', 'assign', 'freeze',
   'String', 'Number', 'Boolean', 'Array', 'Object', 'Map', 'Set', 'JSON', 'Error', 'Date', 'Promise', 'BigInt', 'require', 'super']);
 
-interface SqlIndex { defs: Map<string, FnDef[]>; consts: Map<string, Map<string, Literal[]>> }
+/** A module-level constant's literals: all of them, and per key when it is an object literal (a map of named statements). */
+interface ConstLits { all: Literal[]; props: Map<string, Literal[]> }
+interface SqlIndex { defs: Map<string, FnDef[]>; consts: Map<string, Map<string, ConstLits>> }
 
 function isStringLike(node: ts.Node): boolean {
   return ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateExpression(node);
@@ -130,28 +137,47 @@ function literalsOf(sf: ts.SourceFile, file: string, node: ts.Node): Literal[] {
 function fnFrom(sf: ts.SourceFile, file: string, name: string, node: ts.Node, body: ts.Node): FnDef {
   const calls = new Set<string>();
   const idents = new Set<string>();
+  // `ID.key` and `ID['key']` on an identifier: the function names one statement of a constant that maps names to
+  // statements, so the scan reads that statement and not every other one in the map.
+  const props = new Map<string, Set<string>>();
+  // Names declared inside the function (a local `const plan = PLANS[variant]; plan(scope)` is not the class method `plan`).
+  const locals = new Set<string>();
   const walk = (n: ts.Node): void => {
+    if ((ts.isVariableDeclaration(n) || ts.isParameter(n)) && ts.isIdentifier(n.name)) locals.add(n.name.text);
     if (ts.isCallExpression(n)) {
       const e = n.expression;
       if (ts.isIdentifier(e)) calls.add(e.text);
       else if (ts.isPropertyAccessExpression(e)) calls.add(e.name.text);
-    } else if (ts.isIdentifier(n)) idents.add(n.text);
+    }
+    if (ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression)) {
+      const set = props.get(n.expression.text) ?? new Set<string>();
+      set.add(n.name.text);
+      props.set(n.expression.text, set);
+      return;
+    }
+    if (ts.isElementAccessExpression(n) && ts.isIdentifier(n.expression) && ts.isStringLiteralLike(n.argumentExpression)) {
+      const set = props.get(n.expression.text) ?? new Set<string>();
+      set.add(n.argumentExpression.text);
+      props.set(n.expression.text, set);
+      return;
+    }
+    if (ts.isIdentifier(n)) idents.add(n.text);
     ts.forEachChild(n, walk);
   };
   walk(body);
-  return { name, file, line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1, calls, idents, literals: literalsOf(sf, file, body) };
+  return { name, file, line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1, calls, idents, props, locals, literals: literalsOf(sf, file, body) };
 }
 
 function buildSqlIndex(): SqlIndex {
   const defs = new Map<string, FnDef[]>();
-  const consts = new Map<string, Map<string, Literal[]>>();
+  const consts = new Map<string, Map<string, ConstLits>>();
   const add = (d: FnDef) => { const l = defs.get(d.name); if (l) l.push(d); else defs.set(d.name, [d]); };
   const files = listFiles(join(ROOT, 'src/core'), '.ts').filter(f => !f.includes('/rust-engine/') && !f.endsWith('/rust-engine.ts'));
   for (const file of files) {
     const text = readFileSync(file, 'utf8');
     const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
     const r = rel(file);
-    const fileConsts = new Map<string, Literal[]>();
+    const fileConsts = new Map<string, ConstLits>();
     consts.set(r, fileConsts);
     for (const st of sf.statements) {
       if (ts.isFunctionDeclaration(st) && st.name && st.body) add(fnFrom(sf, r, st.name.text, st, st.body));
@@ -160,7 +186,18 @@ function buildSqlIndex(): SqlIndex {
           if (!ts.isIdentifier(d.name) || !d.initializer) continue;
           const init = d.initializer;
           if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) add(fnFrom(sf, r, d.name.text, d, init.body));
-          else { const lits = literalsOf(sf, r, init); if (lits.length) fileConsts.set(d.name.text, lits); }
+          else {
+            const lits = literalsOf(sf, r, init);
+            if (!lits.length) continue;
+            const props = new Map<string, Literal[]>();
+            const obj = ts.isAsExpression(init) ? init.expression : init;
+            if (ts.isObjectLiteralExpression(obj)) {
+              for (const p of obj.properties) {
+                if (ts.isPropertyAssignment(p) && (ts.isIdentifier(p.name) || ts.isStringLiteralLike(p.name))) props.set(p.name.text, literalsOf(sf, r, p.initializer));
+              }
+            }
+            fileConsts.set(d.name.text, { all: lits, props });
+          }
         }
       } else if (ts.isClassDeclaration(st)) {
         for (const m of st.members) {
@@ -192,14 +229,22 @@ function scanSql(ix: SqlIndex, member: string): { writes: Hit[]; locks: Hit[]; r
     seen.add(d);
     scan(d.literals, chain);
     const fileConsts = ix.consts.get(d.file);
-    for (const id of d.idents) {
+    const scanConst = (c: ConstLits, id: string): void => {
+      // A constant that maps names to statements: only the statements this function names, when it names any and does
+      // not use the constant whole.
+      const named = d.props.get(id);
+      if (named && !d.idents.has(id) && c.props.size) {
+        for (const key of named) scan(c.props.get(key) ?? c.all, [...chain, `${id}.${key}`]);
+      } else scan(c.all, [...chain, id]);
+    };
+    for (const id of new Set([...d.idents, ...d.props.keys()])) {
       const own = fileConsts?.get(id);
-      if (own) scan(own, [...chain, id]);
-      else if (/^[A-Z][A-Z0-9_]{3,}$/.test(id)) for (const m of ix.consts.values()) { const c = m.get(id); if (c) scan(c, [...chain, id]); }
+      if (own) scanConst(own, id);
+      else if (/^[A-Z][A-Z0-9_]{3,}$/.test(id)) for (const m of ix.consts.values()) { const c = m.get(id); if (c) scanConst(c, id); }
     }
     if (depth >= 3) return;
     for (const c of d.calls) {
-      if (SQL_SKIP.has(c) || c === d.name) continue;
+      if (SQL_SKIP.has(c) || c === d.name || d.locals.has(c)) continue;
       const all = ix.defs.get(c);
       if (!all) continue;
       const same = all.filter(x => x.file === d.file);

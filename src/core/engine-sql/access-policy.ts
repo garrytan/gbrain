@@ -66,12 +66,12 @@ export const WRITE_ACCESS_STORE_SQL = `UPDATE sources SET config = jsonb_set(COA
 export const ENSURE_POLICY_STATE_SQL = 'INSERT INTO access_policy_state (source_id) VALUES ($1) ON CONFLICT (source_id) DO NOTHING';
 export const LOCK_SOURCE_SQL = 'SELECT 1 FROM sources WHERE id = $1 FOR NO KEY UPDATE';
 export const LOCK_POLICY_STATE_SQL = 'SELECT 1 FROM access_policy_state WHERE source_id = $1 FOR UPDATE';
-export const APPLIED_RULES_SQL = 'SELECT rule_id, prefix, readable_by, covers_derived FROM access_rules WHERE source_id = $1 ORDER BY rule_id';
+export const APPLIED_RULES_SQL = 'SELECT rule_id, prefix, readable_by, covers_derived FROM access_rules WHERE source_id = $1 ORDER BY rule_id COLLATE "C"';
 export const RECENT_REVISIONS_SQL = 'SELECT * FROM access_policy_revisions WHERE source_id = $1 ORDER BY revision DESC LIMIT $2';
 export const LATEST_REVISION_SQL = 'SELECT * FROM access_policy_revisions WHERE source_id = $1 ORDER BY revision DESC LIMIT 1';
 export const REVISION_SQL = 'SELECT * FROM access_policy_revisions WHERE source_id = $1 AND revision = $2';
 export const OPERATION_REVISION_SQL = 'SELECT * FROM access_policy_revisions WHERE operation_id = $1';
-export const COVERAGE_ROWS_SQL = 'SELECT prefix, reason, revision, detail FROM access_pending_coverage WHERE source_id = $1 ORDER BY reason, prefix';
+export const COVERAGE_ROWS_SQL = 'SELECT prefix, reason, revision, detail FROM access_pending_coverage WHERE source_id = $1 ORDER BY reason COLLATE "C", prefix COLLATE "C"';
 export const STATE_UNREADABLE_SQL = 'SELECT gbrain_access_state_unreadable() AS unreadable';
 export const DELETE_RULE_SQL = 'DELETE FROM access_rules WHERE source_id = $1 AND rule_id = $2';
 export const INSERT_RULE_SQL = 'INSERT INTO access_rules (source_id, rule_id, prefix, readable_by, revision, created_by, covers_derived) VALUES ($1, $2, $3, $4::text[], $5, $6, $7)';
@@ -90,8 +90,8 @@ export const INSERT_REVISION_SQL = `INSERT INTO access_policy_revisions (source_
       VALUES ($1, $2, $3::text::jsonb, $4, $5, $6, $7, $8, $9, CASE WHEN $10::boolean THEN now() END)`;
 export const APPROVE_REVISION_SQL = 'UPDATE access_policy_revisions SET approved_by = $3, approved_at = now() WHERE source_id = $1 AND revision = $2';
 export const POLICY_STATE_COUNT_SQL = 'SELECT count(*)::int AS n FROM access_policy_state WHERE source_id = $1';
-export const PREFIX_SLUGS_SQL = 'SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND starts_with(slug, $2) ORDER BY slug';
-export const PREFIXES_SLUGS_SQL = 'SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM unnest($2::text[]) AS pfx WHERE starts_with(slug, pfx)) ORDER BY slug';
+export const PREFIX_SLUGS_SQL = 'SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND starts_with(slug, $2) ORDER BY slug COLLATE "C"';
+export const PREFIXES_SLUGS_SQL = 'SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM unnest($2::text[]) AS pfx WHERE starts_with(slug, pfx)) ORDER BY slug COLLATE "C"';
 export const POLICY_MARKS_SQL = 'SELECT max(revision) FILTER (WHERE applied_at IS NOT NULL) AS applied, max(revision) FILTER (WHERE approved_at IS NOT NULL) AS approved FROM access_policy_revisions WHERE source_id = $1';
 export const OPERATION_MARKS_SQL = 'SELECT revision, applied_at, approved_at FROM access_policy_revisions WHERE source_id = $1 AND operation_id = $2';
 export const DELETE_INVALID_SQL = `DELETE FROM access_pending_coverage WHERE source_id = $1 AND reason = 'invalid'`;

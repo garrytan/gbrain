@@ -38,8 +38,8 @@ export const listEmbedProjectionRepairPages: Member<'listEmbedProjectionRepairPa
   return storeCall({ member: 'listEmbedProjectionRepairPages' }, () => brain.listEmbedProjectionRepairPages({ ...scope }, afterPageId, limit));
 };
 
-export const isSegmentedPage: Member<'isSegmentedPage'> = async (brain, pageId) =>
-  (await storeCall({ member: 'isSegmentedPage' }, () => brain.isSegmentedPage(pageId))) === true;
+export const readPageIsSegmented: Member<'readPageIsSegmented'> = async (brain, pageId) =>
+  (await storeCall({ member: 'readPageIsSegmented' }, () => brain.readPageIsSegmented(pageId))) === true;
 
 export const hasEmbeddingSignatureDrift: Member<'hasEmbeddingSignatureDrift'> = async (brain, opts) => {
   storeColumn('hasEmbeddingSignatureDrift', opts.column);

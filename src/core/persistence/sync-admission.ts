@@ -47,7 +47,7 @@ const SET_FINGERPRINT = 'brain';
 /** The destructive request kinds (design §8): a managed delete, and the DB-wins reconcile keep_db admits. */
 export const SYNC_ADMISSION_DESTRUCTIVE_KINDS = ['managed_sync_delete', 'canonical_reconcile'] as const;
 
-type Exec = Pick<BrainEngine, 'executeRaw'>;
+type Exec = Pick<BrainEngine, 'executeRaw' | 'readSyncAdmissionSettingRow'>;
 const iso = (value: Date | string | null | undefined) => value == null ? null : new Date(value).toISOString();
 
 export interface SyncAdmissionSetting {
@@ -81,11 +81,7 @@ export const syncAdmissionSettingSql = (k: number) => ({
 export const SYNC_ADMISSION_SETTING_PARAMS = [SYNC_ADMISSION_KEY, SYNC_ADMISSION_SET_OP, SET_FINGERPRINT];
 
 async function readSetting(engine: Exec): Promise<Omit<SyncAdmissionSetting, 'set_at'> & { raw_set_at: string | null }> {
-  const [row] = await engine.executeRaw<SyncAdmissionSettingRow>(
-    `SELECT c.value AS stored, o.completed_keys->0->>'value' AS row_value, o.completed_keys->0->>'set_at' AS set_at
-       FROM (SELECT 1) one LEFT JOIN config c ON c.key=$1 LEFT JOIN op_checkpoints o ON o.op=$2 AND o.fingerprint=$3`,
-    SYNC_ADMISSION_SETTING_PARAMS);
-  return settingOf(row);
+  return settingOf(await engine.readSyncAdmissionSettingRow(SYNC_ADMISSION_KEY, SYNC_ADMISSION_SET_OP, SET_FINGERPRINT));
 }
 function settingOf(row: SyncAdmissionSettingRow | undefined): Omit<SyncAdmissionSetting, 'set_at'> & { raw_set_at: string | null } {
   const stored = row?.stored ?? null;

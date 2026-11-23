@@ -83,6 +83,11 @@ pub struct DreamVerdictInput {
     pub triage_version: Option<f64>,
 }
 
+/// A JSON value in the key order a Postgres `jsonb` value prints ([`crate::jsonb::ordered`]).
+pub(crate) fn jsonb(value: &Value) -> Value {
+    ordered(value)
+}
+
 /// Refuses a JSON value Postgres `jsonb` refuses: a string or key holding U+0000
 /// (`unsupported Unicode escape sequence`).
 pub(crate) fn jsonb_check(op: &str, column: &str, value: &Value) -> Result<()> {

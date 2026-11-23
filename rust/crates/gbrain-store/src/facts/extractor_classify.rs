@@ -6,8 +6,8 @@
 //! - `cand`: facts of the sources whose `source` starts with `cli:extract-conversation-facts`,
 //!   expired, with no fence row number, with a provenance page slug, whose `context` does not
 //!   carry `retired: conversation-labels`, and of `slug` when one is given;
-//! - `page_id` / `page_deleted`: the provenance page (a soft-deleted page still counts), null
-//!   for no page;
+//! - `page_id` / `page_deleted`: the provenance page (a soft-deleted page still counts); `page_id`
+//!   is null for no page and `page_deleted` is false, as `deleted_at IS NOT NULL` over a LEFT JOIN is;
 //! - `withdrawn`: a `fact_withdrawals` row of the source at the fact's visibility with its
 //!   fingerprint or v1 fingerprint, under subject `*` or the fact's entity (only `*` when the
 //!   fact has no entity);
@@ -184,7 +184,8 @@ impl Store {
                 "fingerprint": fingerprint,
                 "expired_at": iso(expired),
                 "page_id": page.as_ref().map(|p| p.id),
-                "page_deleted": page.as_ref().map(|p| p.deleted_at_us.is_some()),
+                // `p.deleted_at IS NOT NULL` over the LEFT JOIN: false when there is no page.
+                "page_deleted": page.as_ref().is_some_and(|p| p.deleted_at_us.is_some()),
                 "withdrawn": withdrawn(&*read, &row)?,
                 "active_duplicate": active_duplicate,
                 "fence_history": fence_history,

@@ -24,6 +24,8 @@ import {
   type EngineRawRead, type EngineRawTransaction, type FactPoolFilters, type FactPoolScope, type RelevanceVector,
 } from './facts-trust.ts';
 import type { FactRowSqlShape } from './facts.ts';
+import { pageReadFilter } from '../search/read-policy-sql.ts';
+import type { PageReadScope } from '../types.ts';
 
 // The vetted builder below is named in scripts/check-engine-sql-dynamic.ts: it wraps one constant fragment.
 function conversationSlotSql(): string { return CONVERSATION_SLOT_SQL; }
@@ -69,8 +71,12 @@ export async function listNearestFacts(raw: EngineRawRead, transaction: EngineRa
   const v = q.vector;
   const cast = v.type === 'halfvec' ? '::halfvec' : '::vector';
   const dimsMatch = q.declared ? sqlFragment`` : sqlFragment` AND vector_dims(f.embedding) = ${v.dims}`;
-  const { text, params } = renderFragment(sqlFragment`SELECT ${trustedSql(FACT_POOL_COLUMNS)}, ${relevanceSimilarity(v)} FROM facts f WHERE ${poolWhere(q.scope, q.filters)} AND f.embedding IS NOT NULL AND f.embedding_model = ${v.model}${dimsMatch}
-       ORDER BY f.embedding <=> ${v.literal}${trustedSql(cast)} LIMIT ${q.limit}`);
+  // The inner query orders by distance alone so the HNSW index (and its iterative scan) serves it; the outer sort breaks ties
+  // inside the limit by fact id. Which rows tie at the cut stays approximate, as any ANN read is.
+  const { text, params } = renderFragment(sqlFragment`SELECT ${trustedSql(FACT_POOL_COLUMNS)}, f.similarity FROM (
+       SELECT ${trustedSql(FACT_POOL_COLUMNS)}, ${relevanceSimilarity(v)}, f.embedding <=> ${v.literal}${trustedSql(cast)} AS distance FROM facts f WHERE ${poolWhere(q.scope, q.filters)} AND f.embedding IS NOT NULL AND f.embedding_model = ${v.model}${dimsMatch}
+        ORDER BY f.embedding <=> ${v.literal}${trustedSql(cast)} LIMIT ${q.limit}) f
+       ORDER BY f.distance, f.id`);
   if (!q.hnswIterativeScan) return raw<PoolFactRow>(text, params);
   const mode = q.hnswIterativeScan;
   return transaction(async tx => {
@@ -98,9 +104,9 @@ export async function listSlotRows(raw: EngineRawRead, scope: FactPoolScope,
  * policy and have no live page at that slug (an unbacked name key), at most `limit`, by source then slug.
  */
 export async function listPoolUnbackedKeys(raw: EngineRawRead, scope: FactPoolScope, keys: readonly string[], limit: number): Promise<Array<{ source_id: string; entity_slug: string }>> {
-  const { text, params } = renderFragment(sqlFragment`SELECT DISTINCT f.source_id, f.entity_slug FROM facts f WHERE ${poolWhere(scope, undefined)} AND f.entity_slug = ANY(${[...keys]}::text[])
+  const { text, params } = renderFragment(sqlFragment`SELECT DISTINCT f.source_id COLLATE "C", f.entity_slug COLLATE "C" FROM facts f WHERE ${poolWhere(scope, undefined)} AND f.entity_slug = ANY(${[...keys]}::text[])
        AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)
-     ORDER BY f.source_id, f.entity_slug LIMIT ${limit}`);
+     ORDER BY f.source_id COLLATE "C", f.entity_slug COLLATE "C" LIMIT ${limit}`);
   return raw<{ source_id: string; entity_slug: string }>(text, params);
 }
 
@@ -118,11 +124,26 @@ export async function listCallOffCueFacts(raw: EngineRawRead, scope: FactPoolSco
 
 /** The distinct (source_id, entity_slug) pairs with a fact in the authorized, filtered pool (the namesake check runs on these before any ranking). */
 export async function listPoolEntityPairs(raw: EngineRawRead, scope: FactPoolScope, filters: FactPoolFilters): Promise<Array<{ source_id: string; entity_slug: string }>> {
-  const { text, params } = renderFragment(sqlFragment`SELECT DISTINCT f.source_id, f.entity_slug FROM facts f WHERE ${poolWhere(scope, filters)} AND f.entity_slug IS NOT NULL ORDER BY f.source_id, f.entity_slug`);
+  const { text, params } = renderFragment(sqlFragment`SELECT DISTINCT f.source_id COLLATE "C", f.entity_slug COLLATE "C" FROM facts f WHERE ${poolWhere(scope, filters)} AND f.entity_slug IS NOT NULL ORDER BY f.source_id COLLATE "C", f.entity_slug COLLATE "C"`);
   return raw<{ source_id: string; entity_slug: string }>(text, params);
 }
 
 /** The whole fact rows of these ids within these sources (recall's final read; the caller strips the embedding). */
 export async function listFactRowsByIds(raw: EngineRawRead, sourceIds: readonly string[], ids: readonly number[]): Promise<FactRowSqlShape[]> {
   return raw<FactRowSqlShape>('SELECT * FROM facts WHERE source_id = ANY($1::text[]) AND id = ANY($2::bigint[])', [[...sourceIds], [...ids]]);
+}
+
+const READABLE_PAGE_SLUGS_HEAD = 'SELECT p.slug FROM pages p WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND ';
+
+/**
+ * Of `slugs` in source `sourceId`, the live pages `scope`'s read policy admits (its source filter is not applied: the
+ * source is `sourceId`), at most `limit` (search/slot-history.ts entityKeys).
+ */
+export async function listReadablePageSlugs(raw: EngineRawRead, sourceId: string, slugs: readonly string[], scope: PageReadScope,
+  limit: number): Promise<string[]> {
+  if (!Number.isFinite(limit)) throw new Error(`listReadablePageSlugs: limit must be a finite number, got ${limit}`);
+  const params: unknown[] = [sourceId, [...slugs]];
+  const filter = pageReadFilter('p', { ...scope, sourceId: undefined, sourceIds: undefined }, params, true);
+  const rows = await raw<{ slug: string }>(`${READABLE_PAGE_SLUGS_HEAD}${filter} LIMIT ${limit}`, params);
+  return rows.map(r => r.slug);
 }

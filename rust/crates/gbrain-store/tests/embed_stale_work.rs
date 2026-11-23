@@ -196,8 +196,8 @@ fn pending_projections_read_unsealed_pages_of_the_scope() {
             .unwrap()
             .is_empty()
     );
-    assert!(!b.is_segmented_page(unsealed).unwrap());
-    assert!(!b.is_segmented_page(987_654_321).unwrap());
+    assert!(!b.read_page_is_segmented(unsealed).unwrap());
+    assert!(!b.read_page_is_segmented(987_654_321).unwrap());
 }
 
 #[test]

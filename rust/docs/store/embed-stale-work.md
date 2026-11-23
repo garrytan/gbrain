@@ -18,7 +18,7 @@ TypeScript side is `src/core/rust-engine/store-members/embed-stale-work.ts`; the
 | `brain.countEmbedPendingProjections(scope)` | live, non-`embed_skip`, unsealed pages of the scope (`sourceId`, `activeSourcesOnly`, `existingChunksOnly`, and with `stale` a segmented body or a chunk with embedding work) |
 | `brain.listEmbedPendingProjections(scope, limit)` | the first `limit` of them in active sources, by page id: `{ source_id, slug, page_kind }` |
 | `brain.listEmbedProjectionRepairPages(scope, afterPageId, limit)` | the next `limit` of them in active sources after `afterPageId` that are markdown, code or segmented: `{ slug, source_id, id }` |
-| `brain.isSegmentedPage(pageId)` | whether the page keeps its body in segments |
+| `brain.readPageIsSegmented(pageId)` | whether the page keeps its body in segments |
 | `brain.hasEmbeddingSignatureDrift({ column, signature, sourceId, includeNullSignature, nullSignatureOnly })` | whether a live, non-`embed_skip`, not budget-limited page of a live source with a live-body chunk that has a vector carries a signature the rule names |
 | `brain.ensureConfig(key, initial)` | `lockContentDriftState`: stores `initial` when the key has no value and returns the stored value |
 | `brain.invalidateContentDriftChunks({ column, afterChunkId, limit, sourceId })` | examines the next `limit` chunk records after `afterChunkId` in id order and drops the vector of each whose text changed since it was embedded, on a live, non-`embed_skip`, not budget-limited page of a live source: `{ last_id, checked, drifted }` |
@@ -27,8 +27,8 @@ Text and NULL rules: `md5(chunk_text)` is the store's text hash (sha256 of the t
 with a NULL side is false, the archived-work and pending reads look at every chunk record of a page (the SQL reads
 `content_chunks` with no generation filter), and the drift probe reads live-body chunks (`chunkGenerationFilter`).
 "Budget-limited" is `pageBudgetLimitedFilter`: a held or capped row that still applies (the page is large, or the reason is
-`archive_backfill`, `archive_open_day` or `call_import`). The store keeps that row in two places, the hold
-(`embedding_holds.rs`) and the paid-path ledger (`page_embedding_budget.rs`); either applies.
+`archive_backfill`, `archive_open_day` or `call_import`). The store keeps that row in the page's ledger
+record (`page_embedding_budget.rs`).
 
 Differences from the SQL a caller can see on a Rust brain:
 

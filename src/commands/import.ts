@@ -53,6 +53,7 @@ import { readManagedModeTyped } from '../core/persistence/ownership.ts';
 import { readPageBodyPolicy } from '../core/page-body/limits.ts';
 import { importSourceRefusal } from './import-source-refusal.ts';
 import { rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
+import { usesPostgresImportWorkers } from '../core/sync-concurrency.ts';
 
 /** Return a refusal when an import target lies outside every admitted root. */
 export function configuredRootImportError(dir: string, configuredRoots: string[]): string | null {
@@ -870,7 +871,7 @@ export async function runImport(
       // string sniff) and fall back to serial when database_url is unset. Both
       // checks belt-and-suspenders so we never crash on a null assertion.
       const config = loadConfig();
-      if (engine.kind === 'pglite' || !config?.database_url) {
+      if (!config?.database_url || !usesPostgresImportWorkers(engine.kind, config.database_url)) {
         for (let i = 0, batch: string[]; i < files.length && !signal?.aborted; i += batch.length) await processBatch(engine, batch = nextImportBatch(files, i, managedImport && !company));
       } else {
         const { PostgresEngine } = await import('../core/postgres-engine.ts');

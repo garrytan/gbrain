@@ -12,6 +12,7 @@ import { authorizedSlug, type SqlEngine, type WriteAuthority } from './model.ts'
 import type { BrainEngine } from '../engine.ts';
 import type { PagePolicyPart } from '../engine-sql/page-visibility.ts';
 import { renderWriterReadPolicy, type WriterReadPolicy } from '../engine-sql/remote-links.ts';
+import { requireOauthClientColumns } from '../engine-sql/oauth-clients.ts';
 import { noGrantFloorReads } from '../source-resolver.ts';
 import { hasScope } from '../scope.ts';
 import { viewedEngine } from './switches.ts';
@@ -19,7 +20,7 @@ import { ownerOnlySourcesPresent, sourceIsOwnerOnly } from '../access/owner-only
 
 /** An engine that also reads a stored writer's slug fence (storedOwnerSpeaksForItself and the checks that call it). */
 /** An engine that resolves a writer's live member identity (access/caller.ts memberIdentityFor). */
-export type MemberEngine = SqlEngine & Pick<BrainEngine, 'readLiveMember' | 'hasLabelledOnlyMember'>;
+export type MemberEngine = SqlEngine & Pick<BrainEngine, 'readLiveMember' | 'hasLabelledOnlyMember' | 'getConfig' | 'readLinkedMember'>;
 export type FenceEngine = MemberEngine & Pick<BrainEngine, 'readWriterSlugFence'>;
 
 /** An engine that also runs the opening probe of a page write's visibility check (authorizePageVisibility). */
@@ -298,23 +299,19 @@ export async function remoteReadersChecked<T extends { parsedPage: { frontmatter
 export async function defaultSourceMemberWriter(engine: BrainEngine, authority: Pick<WriteAuthority, 'remote' | 'actingFor' | 'principal' | 'sourceId'>): Promise<string | null> {
   const { principal } = authority;
   if (!authority.remote || authority.actingFor || (principal.kind !== 'legacy_token' && principal.kind !== 'oauth_client')) return null;
-  const [row] = await engine.executeRaw<{ member_id: string | null }>(principal.kind === 'legacy_token'
-    ? 'SELECT member_id FROM access_tokens WHERE id::text = $1'
-    : 'SELECT member_id FROM oauth_clients WHERE client_id = $1', [principal.id]);
-  return row?.member_id && await noGrantFloorReads(engine, authority.sourceId) ? `member:${row.member_id}` : null;
+  const member = await engine.readCredentialMemberId({ kind: principal.kind === 'legacy_token' ? 'token' : 'client', id: principal.id });
+  return member && await noGrantFloorReads(engine, authority.sourceId) ? `member:${member}` : null;
 }
 
 /**
  * GST-2059: whether a default-source member writer is the brain owner (config access.owner_member, an enabled member),
  * whose new pages stay shared. A disabled or removed owner member is not the owner here, so its pages keep the stamp.
  */
-export async function defaultSourceWriterIsOwner(engine: SqlEngine, writer: string | null): Promise<boolean> {
+export async function defaultSourceWriterIsOwner(engine: Pick<BrainEngine, 'getConfig' | 'readLiveMember'>, writer: string | null): Promise<boolean> {
   if (!writer) return false;
-  const [row] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key=$1', [OWNER_MEMBER_KEY]);
-  const owner = row?.value?.trim();
+  const owner = (await engine.getConfig(OWNER_MEMBER_KEY))?.trim();
   if (!owner || !ACCESS_ID_RE.test(owner) || writer !== `member:${owner}`) return false;
-  const [live] = await engine.executeRaw<{ id: string }>('SELECT id FROM access_members WHERE id = $1 AND disabled_at IS NULL AND tombstoned_at IS NULL', [owner]);
-  return !!live;
+  return (await engine.readLiveMember('member', owner)) !== null;
 }
 
 /**

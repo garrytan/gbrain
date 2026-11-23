@@ -116,7 +116,7 @@ export async function listManagedSyncOrphanRows(exec: LegacyUnscopedRead, source
       AND r.principal_kind=c.completed_keys->0->'authority'->'writer'->'principal'->>'kind'
     WHERE c.op='managed-sync' AND COALESCE(c.completed_keys->0->>'done','false')<>'true'
       AND (${ids}::text[] IS NULL OR s.id=ANY(${ids}::text[]))
-    ORDER BY s.id,c.updated_at,c.fingerprint`);
+    ORDER BY s.id COLLATE "C",c.updated_at,c.fingerprint COLLATE "C"`);
   const failures = await read<ManagedSyncFailureRow>(sqlFragment`
     SELECT f.fingerprint AS cursor_key,s.id AS source_id,s.incarnation::text AS source_incarnation,f.completed_keys->0->>'run_id' AS run_id,
       f.completed_keys->0->>'request_id' AS request_id,to_char(f.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
@@ -124,7 +124,7 @@ export async function listManagedSyncOrphanRows(exec: LegacyUnscopedRead, source
     JOIN sources s ON s.id=f.completed_keys->0->>'source_id' AND s.incarnation::text=f.completed_keys->0->>'source_incarnation' AND NOT COALESCE(s.archived,false)
     WHERE f.op='managed-sync-failure' AND (${ids}::text[] IS NULL OR s.id=ANY(${ids}::text[]))
       AND NOT EXISTS(SELECT 1 FROM op_checkpoints c WHERE c.op IN ('managed-sync','managed-sync-pass') AND c.fingerprint=f.fingerprint)
-    ORDER BY s.id,f.fingerprint`);
+    ORDER BY s.id COLLATE "C",f.fingerprint COLLATE "C"`);
   const passes = await read<ManagedSyncPassRow>(sqlFragment`
     SELECT p.fingerprint AS cursor_key,s.id AS source_id,s.incarnation::text AS source_incarnation,p.completed_keys->0->'telemetry'->>'pass_id' AS run_id,
       ${trustedSql(passStampSql)}::text AS request_id,(SELECT m.state FROM persistence_requests m WHERE m.source_id=s.id AND m.request_id=${trustedSql(passStampSql)}) AS state,
@@ -132,7 +132,7 @@ export async function listManagedSyncOrphanRows(exec: LegacyUnscopedRead, source
     FROM op_checkpoints p
     JOIN sources s ON p.fingerprint=s.id||':'||s.incarnation::text AND NOT COALESCE(s.archived,false)
     WHERE p.op='managed-sync-pass' AND (${ids}::text[] IS NULL OR s.id=ANY(${ids}::text[])) AND ${passSlugModeRefusedSql(stamp)}
-    ORDER BY s.id`);
+    ORDER BY s.id COLLATE "C"`);
   // #6518: rows keyed under an incarnation the source no longer has. The join is on the source id alone; the live
   // pending-request guard stays, the live-writer guard does not apply (no current key can select these rows).
   const retiredCursors = await read<ManagedSyncRetiredCursorRow>(sqlFragment`
@@ -146,7 +146,7 @@ export async function listManagedSyncOrphanRows(exec: LegacyUnscopedRead, source
     LEFT JOIN persistence_requests r ON r.source_id=s.id AND r.request_id=(c.completed_keys->0->'pending'->>'requestId')::uuid
     WHERE c.op='managed-sync' AND COALESCE(c.completed_keys->0->>'done','false')<>'true'
       AND (${ids}::text[] IS NULL OR s.id=ANY(${ids}::text[]))
-    ORDER BY s.id,c.updated_at,c.fingerprint`);
+    ORDER BY s.id COLLATE "C",c.updated_at,c.fingerprint COLLATE "C"`);
   // A retired failure row rides with its unfinished cursor when one exists under its key (the cursor's retirement deletes it).
   const retiredFailures = await read<ManagedSyncFailureRow>(sqlFragment`
     SELECT f.fingerprint AS cursor_key,s.id AS source_id,f.completed_keys->0->>'source_incarnation' AS source_incarnation,f.completed_keys->0->>'run_id' AS run_id,
@@ -155,7 +155,7 @@ export async function listManagedSyncOrphanRows(exec: LegacyUnscopedRead, source
     JOIN sources s ON s.id=f.completed_keys->0->>'source_id' AND s.incarnation::text<>f.completed_keys->0->>'source_incarnation' AND NOT COALESCE(s.archived,false)
     WHERE f.op='managed-sync-failure' AND (${ids}::text[] IS NULL OR s.id=ANY(${ids}::text[]))
       AND NOT EXISTS(SELECT 1 FROM op_checkpoints c WHERE c.op='managed-sync' AND c.fingerprint=f.fingerprint AND COALESCE(c.completed_keys->0->>'done','false')<>'true')
-    ORDER BY s.id,f.fingerprint`);
+    ORDER BY s.id COLLATE "C",f.fingerprint COLLATE "C"`);
   return { cursors, failures, passes, retiredCursors, retiredFailures };
 }
 

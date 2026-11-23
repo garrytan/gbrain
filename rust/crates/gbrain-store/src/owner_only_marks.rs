@@ -14,6 +14,8 @@
 //! delete (`sources::archive`) removes each page of the source through `pages::remove_page` first, and the
 //! source is still owner-only then, so each page goes through `mark_before_delete`.
 
+use serde::Serialize;
+
 use crate::Result;
 use crate::keys;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
@@ -71,6 +73,46 @@ pub(crate) fn mark_before_delete(tx: &mut dyn KvWrite, page: &PageRecord) -> Res
     Ok(())
 }
 
+/// One database login that reads owner-only lineage closed (`OwnerOnlyTriggerState.closedLogins`): its quoted name, the
+/// quoted policy name doctor prints and the lineage tables it cannot read in full.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ClosedLogin {
+    pub login: String,
+    pub policy: String,
+    pub tables: Vec<String>,
+}
+
+/// The store side of `ownerOnlyMarkTriggers` (`readState` in `src/core/engine-sql/owner-only-marks.ts`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OwnerOnlyMarkState {
+    /// The `('*', 'unguarded')` mark. SQL writes it when a delete trigger was missing; the store marks in code on
+    /// every delete path, so no trigger can be missing and it never writes it.
+    pub closed: bool,
+    /// The `('*', 'row_security')` mark. SQL writes it when a role whose reads row-level security limits deletes a
+    /// row; the store has no row-level security, so its marking walk reads every row and it never writes it.
+    pub row_security: bool,
+    /// `gbrain_owner_only_held()`: the brain holds an owner-only source or a mark.
+    pub held: bool,
+    /// `CLOSED_LOGINS_SQL` on a held brain: the logins that read `sources` but not every row of a lineage table. The
+    /// store has no database logins and no row-level security: its one caller, the process that opened it, reads every
+    /// row, so the list is empty on every brain.
+    pub closed_logins: Vec<ClosedLogin>,
+}
+
+impl crate::Store {
+    /// `ownerOnlyMarkTriggers()` (the store side): what the SQL member reads from `owner_only_marks` and the catalog.
+    pub fn owner_only_mark_state(&self) -> Result<OwnerOnlyMarkState> {
+        let read = self.read()?;
+        Ok(OwnerOnlyMarkState {
+            closed: false,
+            row_security: false,
+            held: OwnerOnlySources::read(&*read)?.guarded(),
+            closed_logins: Vec::new(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -106,6 +148,24 @@ mod tests {
         let read = store.read().unwrap();
         let page = read_page(&*read, source, slug).unwrap().unwrap();
         is_marked(&*read, page.id).unwrap()
+    }
+
+    /// The mark state: not held on a fresh store, held once a source is owner-only; never closed, no logins.
+    #[test]
+    fn mark_state_is_held_once_a_source_is_owner_only() {
+        let store = crate::test_support::store();
+        let state = |held| OwnerOnlyMarkState {
+            closed: false,
+            row_security: false,
+            held,
+            closed_logins: Vec::new(),
+        };
+        assert_eq!(store.owner_only_mark_state().unwrap(), state(false));
+        let source: SourceInput =
+            serde_json::from_value(json!({ "id": "vault", "config": { "owner_only": true } }))
+                .unwrap();
+        store.upsert_source(&source).unwrap();
+        assert_eq!(store.owner_only_mark_state().unwrap(), state(true));
     }
 
     /// A hard delete of an owner-only page marks the page and the concepts that name it, and only those; a brain that holds

@@ -148,11 +148,7 @@ export function notHeld(forecast: CarryForecast): PurgeFilter {
 interface RecordedTombstone { id: number; source_id: string; slug: string; deleted_us: string; key: string; park?: PurgePark }
 
 async function recordedTombstones(engine: BrainEngine, hours: string, released: readonly number[] = []): Promise<RecordedTombstone[]> {
-  const rows = await engine.executeRaw<{ id: number; source_id: string; slug: string; deleted_us: string }>(`SELECT p.id, p.source_id, p.slug,
-      floor(extract(epoch FROM p.deleted_at)*1000000)::bigint::text AS deleted_us FROM pages p
-    WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND ${identityDowngradePurgeHold('p')} AND ${atomRetirementPurgeHold('p')} AND ${derivedRetirementPurgeHold('p')} AND (${derivedOriginPurgeHold('p')} OR p.id = ANY($2::int[]))
-      AND EXISTS (SELECT 1 FROM belief_events e WHERE e.source_id = p.source_id AND e.subject_kind = 'coverage')
-    ORDER BY p.deleted_at ASC, p.source_id ASC, p.slug ASC`, [hours, [...released]]);
+  const rows = await engine.listRecordedTombstones(hours, released);
   const parks = rows.length ? await readPurgeParks(engine) : new Map<string, PurgePark>();
   return rows.map(row => {
     const key = purgeParkKey(row.source_id, row.slug, row.deleted_us);
@@ -319,7 +315,7 @@ export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours:
     `SELECT p.id, p.source_id, p.slug, (now() - ($1 || ' hours')::interval)::text AS cutoff,
       floor(extract(epoch FROM p.deleted_at)*1000000)::bigint::text AS deleted_us FROM pages p JOIN sources s ON s.id = p.source_id
       WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND ${purgeHoldsSql('p', 's', '$2::int[]')} AND p.id <> ALL($3::int[])
-      ORDER BY p.deleted_at ASC, p.source_id ASC, p.slug ASC`, [String(hours), release, hold]);
+      ORDER BY p.deleted_at ASC, p.source_id COLLATE "C" ASC, p.slug COLLATE "C" ASC`, [String(hours), release, hold]);
   const states = new Map<string, { state: string; physical_error?: string }>();
   if (rows.length) for (const source of (await writerOnboardingPreflight(engine)).sources) states.set(source.source_id, source);
   const parks = rows.length ? await readPurgeParks(engine) : new Map<string, PurgePark>();

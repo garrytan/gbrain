@@ -14,11 +14,12 @@ import { detectManifestScope, storedManifestScope, worktreeManifest, type Stored
 import { hostIdFor } from './identity.ts';
 import { repairWedgedReservation, resolveCoordinationLock } from './coordination-lock.ts';
 import type { RawSqlEngine, SqlEngine, WriteRequest } from './model.ts';
+import type { PublicationJournalStore, WorktreeOwnerRow } from '../engine-sql/publication-journal.ts';
 import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
 import { acquireShared, deferToLease, exclusiveAcquired, foreignWaiterAhead, joinLease, noteWaiting, yieldLease } from './worktree-lease.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { assertPhysicalRoot, claimPhysicalRoot, preparePhysicalRootTransfer, readPhysicalRootReservation, restampPhysicalRoot } from './physical-root.ts';
-import { assertPhysicalRootReservation, readPhysicalRootStamp, relocatedRootTransferFix } from './physical-root-record.ts';
+import { assertPhysicalRootReservation, readPhysicalRootStamp, readWedgedPhysicalRootReservation, relocatedRootTransferFix } from './physical-root-record.ts';
 import { nativeFilesystemPath } from './root-registry.ts';
 import { assertWriterAdminState } from './admin-intent.ts';
 import { readGraduationRow } from './graduation-schema.ts';
@@ -102,7 +103,8 @@ export async function claimWorktree(engine: BrainEngine, sourceId: string, path:
   try { root = realpathSync(discoverGitRoot(root)); } catch { /* ordinary directory source */ }
   // Probe the native capability before recording ownership. Stable lock lives
   // outside any source directory, so reclone cannot produce a second inode.
-  await repairWedgedReservation(engine, root, hostId);
+  // A wedged reservation is repaired in one claim-store transaction, so every engine reads its brain and worktree facts.
+  if (readWedgedPhysicalRootReservation(root)) await claimWorktreeBinding(engine, store => repairWedgedReservation(store, root, hostId));
   const existingPhysical = readPhysicalRootReservation(root);
   const candidateId = existingPhysical?.worktreeId ?? randomUUID();
   const lockPath = resolveCoordinationLock(root, candidateId, { reservation: existingPhysical?.coordinationPath }, hostId).path;
@@ -259,14 +261,20 @@ export async function probeWorktreeWriter(binding: WorktreeBinding, engine?: Bra
   await lock.release();
   return true;
 }
-export async function guardOwnership(tx: SqlEngine, row: WriteRequest, hostId: string): Promise<WorktreeBinding | null> {
+/**
+ * The live owner binding of a bound request, checked under the worktree row's share lock. `journal` is the
+ * transaction's publication journal store, opened by the caller before it starts sending: a caller that pipelines this
+ * with its source locks (group-publish.ts) relies on the worktree lock going out synchronously, first, so worktrees
+ * stay locked before sources (scripts/persistence/lock-order.ts `worktrees_before_sources`). Opening the store here
+ * would yield before the lock and let the caller's source locks go out ahead of it.
+ */
+export async function guardOwnership(tx: SqlEngine, journal: PublicationJournalStore, row: WriteRequest, hostId: string): Promise<WorktreeBinding | null> {
   if (!row.worktree_id) return null;
   // The worktree lock and the binding read are sent together; the server takes the lock first.
-  const [[owner], binding] = await pipelined(tx, [
-    () => tx.executeRaw<{ owner_host_id: string; owner_epoch: string | number; state: string }>(
-      'SELECT owner_host_id,owner_epoch,state FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [row.worktree_id]),
+  const [owner, binding] = await pipelined(tx, [
+    () => journal.shareWorktreeOwner(row.worktree_id!),
     () => getWorktreeBinding(tx, row.source_id, hostId),
-  ]) as [Array<{ owner_host_id: string; owner_epoch: string | number; state: string }>, WorktreeBinding | null];
+  ]) as [WorktreeOwnerRow | null, WorktreeBinding | null];
   if (!owner || !binding || binding.worktree_id !== row.worktree_id || binding.source_incarnation !== row.source_incarnation ||
     owner.owner_host_id !== hostId || owner.state !== 'active' || String(binding.topology_generation) !== String(row.topology_generation)) {
     throw opError('owner_unavailable', 'The accepted worktree ownership or source topology changed.',
@@ -422,36 +430,33 @@ export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string
     { fix: writerStatusFix(sourceId) });
   try {
     // #6099: verify in the scope the owner recorded (a manifest an older release prepared is in tree scope).
-    const [prepared] = await engine.executeRaw<{ manifest: StoredWorktreeManifest | null }>('SELECT manifest FROM persistence_worktrees WHERE id=$1::uuid', [binding.worktree_id]);
-    const candidate = worktreeManifest(root, { progress: humanManifestProgress(), scope: storedManifestScope(prepared?.manifest) });
-    if (candidate.digest !== expectedManifest) throw successorManifestMismatch(sourceId, root, expectedManifest, prepared?.manifest ?? null, candidate);
-    return await engine.transaction(async tx => {
-      await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
-      await assertWriterAdminState(tx, expectedAdminState);
-      await assertWriterAdminUnlocked(tx);
-      const [owner] = await tx.executeRaw<{ owner_epoch: string; state: string; manifest: { digest: string; self_transfer?: PhysicalRootRecovery } }>('SELECT owner_epoch,state,manifest FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE', [binding.worktree_id]);
+    const prepared = await engine.readWorktreeManifest(binding.worktree_id);
+    const candidate = worktreeManifest(root, { progress: humanManifestProgress(), scope: storedManifestScope(prepared) });
+    if (candidate.digest !== expectedManifest) throw successorManifestMismatch(sourceId, root, expectedManifest, prepared, candidate);
+    return await writerAdminTransaction(engine, async (store, tx) => {
+      await store.assertAdminState(expectedAdminState);
+      await store.assertAdminUnlocked();
+      const owner = await store.lockWorktree(binding.worktree_id);
       if (!owner || owner.state !== 'draining' || String(owner.owner_epoch) !== expectedEpoch || owner.manifest?.digest !== expectedManifest) throw opError('writer_transfer_conflict', 'Transfer preparation or epoch changed.',
         `Source ${sourceId} is no longer prepared at epoch ${expectedEpoch} with manifest ${expectedManifest}, so nothing was accepted. Read writer status and use the epoch and manifest of the current preparation, or have the owner prepare again.`,
         { fix: writerStatusFix(sourceId) });
-      if (!!owner.manifest.self_transfer !== !!opts.selfTransfer || JSON.stringify(await getWorktreeBinding(tx, sourceId, hostId)) !== JSON.stringify(binding)) throw opError('writer_transfer_conflict', 'The prepared transfer mode or binding changed.',
-        `Source ${sourceId} was prepared ${owner.manifest.self_transfer ? 'as' : 'without'} a self-transfer, or its binding changed since then, so nothing was accepted. Accept with the same --self-transfer choice used at prepare, after re-reading writer status.`,
+      const manifest = owner.manifest;
+      if (!!manifest.self_transfer !== !!opts.selfTransfer || JSON.stringify(await getWorktreeBinding(tx, sourceId, hostId)) !== JSON.stringify(binding)) throw opError('writer_transfer_conflict', 'The prepared transfer mode or binding changed.',
+        `Source ${sourceId} was prepared ${manifest.self_transfer ? 'as' : 'without'} a self-transfer, or its binding changed since then, so nothing was accepted. Accept with the same --self-transfer choice used at prepare, after re-reading writer status.`,
         { fix: writerStatusFix(sourceId) });
       // #5914: the relocation waiver is persisted on the prepared record and must be repeated at accept, in both directions.
-      if (opts.selfTransfer && (owner.manifest.self_transfer?.relocated === true) !== (opts.relocated === true)) throw opError('writer_transfer_conflict', 'The prepared self-transfer differs on --confirm-relocated-root.',
-        `Source ${sourceId} was prepared ${owner.manifest.self_transfer?.relocated ? 'with' : 'without'} --confirm-relocated-root, so nothing was accepted. Accept with the same flag, or have the owner prepare again.`,
+      if (opts.selfTransfer && (manifest.self_transfer?.relocated === true) !== (opts.relocated === true)) throw opError('writer_transfer_conflict', 'The prepared self-transfer differs on --confirm-relocated-root.',
+        `Source ${sourceId} was prepared ${manifest.self_transfer?.relocated ? 'with' : 'without'} --confirm-relocated-root, so nothing was accepted. Accept with the same flag, or have the owner prepare again.`,
         { fix: writerStatusFix(sourceId) });
-      const pending = await tx.executeRaw(`SELECT id FROM persistence_requests WHERE worktree_id=$1::uuid AND (state IN ('running','recovering') OR recovery IS NOT NULL) LIMIT 1`, [binding.worktree_id]);
-      const mirrors = await tx.executeRaw('SELECT id FROM persistence_effects WHERE worktree_id=$1::uuid AND recovery IS NOT NULL LIMIT 1', [binding.worktree_id]);
-      if (pending.length || mirrors.length) throw opError('recovery_required', 'Transfer state changed; prepare again.',
+      if (await store.publicationPending(binding.worktree_id)) throw opError('recovery_required', 'Transfer state changed; prepare again.',
         `A write or mirror effect started publishing in source ${sourceId}'s worktree after preparation, so nothing was accepted. Wait for writer status to show it settled, then have the owner prepare the transfer again.`,
         { fix: writerStatusFix(sourceId) });
-      if (opts.selfTransfer) repairPhysicalRoot(root, owner.manifest.self_transfer!, { hostId, worktreeId: binding.worktree_id, coordinationPath: coordination }, opts.dryRun);
-      else if (!opts.dryRun) await preparePhysicalRootTransfer(tx, root, { hostId, worktreeId: binding.worktree_id, coordinationPath: coordination, expectedEpoch });
+      if (opts.selfTransfer) repairPhysicalRoot(root, manifest.self_transfer!, { hostId, worktreeId: binding.worktree_id, coordinationPath: coordination }, opts.dryRun);
+      else if (!opts.dryRun) await preparePhysicalRootTransfer(store, root, { hostId, worktreeId: binding.worktree_id, coordinationPath: coordination, expectedEpoch });
       if (opts.dryRun) return { content_receipts: [] };
-      await tx.executeRaw(`INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path)
-        VALUES($1::uuid,$2::uuid,$3,$4) ON CONFLICT(worktree_id,host_id) DO UPDATE SET local_path=EXCLUDED.local_path,coordination_path=EXCLUDED.coordination_path`, [binding.worktree_id, hostId, root, coordination]);
-      const contentReceipts = await (await import('../shared-skills/receipt-root.ts')).rebindContentReceipts(tx, [binding.worktree_id], hostId);
-      await tx.executeRaw(`UPDATE persistence_worktrees SET owner_host_id=$2::uuid,owner_epoch=owner_epoch+1,state='active',heartbeat_at=now() WHERE id=$1::uuid`, [binding.worktree_id, hostId]);
+      await store.upsertHostBinding({ worktreeId: binding.worktree_id, hostId, localPath: root, coordinationPath: coordination });
+      const contentReceipts = await (await import('../shared-skills/receipt-root.ts')).rebindContentReceipts(store, [binding.worktree_id], hostId);
+      await store.acceptWorktreeOwner(binding.worktree_id, hostId);
       await refreshManagedFilesystemRoots(tx, managedFilesystemDatastorePath(engine));
       return { content_receipts: contentReceipts };
     });

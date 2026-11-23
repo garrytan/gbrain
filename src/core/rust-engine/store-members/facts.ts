@@ -12,6 +12,9 @@
  * than `english`, a visibility list widened for a caller the store does not model (fact-visibility.ts), and inputs whose PGLite outcome the store cannot reproduce (a non-finite
  * `claim_value`, `row_num` or `superseded_by_row`, a fractional offset, a keyset time in another text form).
  *
+ * A read eligibility policy goes to the store on the list reads and `listSupersessions`: it hides the facts of a
+ * quarantined provenance page and applies the trust floor and flag suppression (`projectionEligibleSql('facts')`).
+ *
  * A vector travels as the literal PGLite inlines (`'[a,b,...]'`); the store casts it to the column's `halfvec` and
  * returns stored vectors as number lists, which become `Float32Array`s here.
  */
@@ -25,6 +28,7 @@ import { storePrivacyPolicy } from './private-provenance.ts';
 import { storeVisibility } from './fact-visibility.ts';
 import { privateProvenanceFilterUnderPolicy } from '../../search/private-visibility.ts';
 import { withDates } from '../store-codec.ts';
+import { FACT_DATES, withVector } from './fact-codec.ts';
 import { checkFactIds, checkFactSourcePrefix, type FactPreimage } from '../../engine-sql/facts.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
@@ -32,10 +36,6 @@ type FactRow = Awaited<ReturnType<BrainEngine['listFactsByEntity']>>[number];
 type TrajectoryPoint = Awaited<ReturnType<BrainEngine['findTrajectory']>>[number];
 type Row = Record<string, unknown>;
 
-const FACT_DATES = ['valid_from', 'valid_until', 'expired_at', 'consolidated_at', 'embedded_at', 'created_at'] as const;
-/** A returned vector (a number list or null) as the `Float32Array` PGLite hands back. */
-const withVector = (row: Row): Row =>
-  Array.isArray(row.embedding) ? { ...row, embedding: new Float32Array(row.embedding as number[]) } : row;
 const facts = (rows: Row[]): FactRow[] => rows.map((row) => withDates(withVector(row), FACT_DATES) as unknown as FactRow);
 
 /** PGLite's inlined vector literal (engine-sql/facts.ts `toPgVectorLiteral`). */

@@ -143,7 +143,7 @@ export async function runPageToLinkCore(
       compiled_truth: string;
       frontmatter: Record<string, unknown> | string | null;
     }>(
-      `SELECT slug, compiled_truth, frontmatter FROM pages ${where} ORDER BY slug LIMIT ${limit}`,
+      `SELECT slug, compiled_truth, frontmatter FROM pages ${where} ORDER BY slug COLLATE "C", id LIMIT ${limit}`,
       params,
     );
     const would_convert = rows.length;

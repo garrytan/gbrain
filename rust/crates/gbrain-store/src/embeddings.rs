@@ -276,7 +276,10 @@ fn take_vector_rev(read: &dyn KvRead, take_id: u64) -> Result<Option<u64>> {
 }
 
 /// The take's vector when it was written for the take's current claim.
-fn current_take_vector(read: &dyn KvRead, take: &TakeRecord) -> Result<Option<StoredVector>> {
+pub(crate) fn current_take_vector(
+    read: &dyn KvRead,
+    take: &TakeRecord,
+) -> Result<Option<StoredVector>> {
     if take_vector_rev(read, take.id)? != Some(take.claim_rev) {
         return Ok(None);
     }

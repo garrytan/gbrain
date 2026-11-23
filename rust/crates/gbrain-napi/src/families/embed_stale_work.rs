@@ -73,15 +73,15 @@ impl Brain {
         })
     }
 
-    /// `isSegmentedPage(pageId)`: resolves a boolean.
+    /// `readPageIsSegmented(pageId)`: resolves a boolean.
     #[napi]
-    pub fn is_segmented_page<'env>(
+    pub fn read_page_is_segmented<'env>(
         &self,
         env: &'env Env,
         page_id: i64,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| match u64::try_from(page_id) {
-            Ok(id) => s.is_segmented_page(id),
+            Ok(id) => s.read_page_is_segmented(id),
             Err(_) => Ok(false),
         })
     }

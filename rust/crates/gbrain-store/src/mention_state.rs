@@ -125,6 +125,11 @@ pub(crate) fn read_status(read: &dyn KvRead, source: &str) -> Result<Option<Stat
     get_json(read, &status_key(source))
 }
 
+/// Saves one source's status row (the recount's compare-and-set write, `cli_reads/entities.rs`).
+pub(crate) fn put_status(tx: &mut dyn KvWrite, source: &str, record: &StatusRecord) -> Result<()> {
+    put_json(tx, &status_key(source), record)
+}
+
 /// Every status row, by source in byte order.
 pub(crate) fn all_statuses(read: &dyn KvRead) -> Result<Vec<(String, StatusRecord)>> {
     let p = prefix(&[STATUS]);

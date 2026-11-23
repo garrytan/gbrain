@@ -81,7 +81,7 @@ export async function prepareEmbeddingProjections(engine: BrainEngine, opts: { s
       await opts.assertOwned?.();
       try {
         if (await readProjectionSnapshot(engine, row.slug, row.source_id)) continue;
-        if (await engine.isSegmentedPage(Number(row.id))) {
+        if (await engine.readPageIsSegmented(Number(row.id))) {
           if ((await buildSegmentedProjection(engine, { sourceId: row.source_id, slug: row.slug })).sealed) rebuilt++;
           continue;
         }

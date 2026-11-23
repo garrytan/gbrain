@@ -12,7 +12,7 @@ import type {
 } from '../../engine-sql/write-attribution.ts';
 import { ownerOnlyTakeAllowedSql, ownerOnlyTimelineAllowedSql, privateFactFilterForReader } from '../../search/private-visibility.ts';
 import { withDates } from '../store-codec.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { storeCall, type StoreMember } from './common.ts';
 import { ownerOnlyFormIn, storePrivacyPolicy, type StoreOwnerOnlyForm } from './private-provenance.ts';
 
 /** Names requests, OAuth clients, legacy tokens (revoked ones included) and local writers; an unknown id has no name. */

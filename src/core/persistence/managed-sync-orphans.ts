@@ -218,3 +218,47 @@ export async function retireManagedSyncOrphan(engine: BrainEngine, orphan: Pick<
   if (removed.cursor || removed.failure) try { removed.mirror = clearManagedSyncFailure(orphan.cursor_key); } catch { /* the local ledger is a compatibility mirror */ }
   return removed;
 }
+
+/**
+ * #6834: the cursor `c` (of source `s`) stands at its checkpoint, which ended refused because `last_commit` moved, and the
+ * source now records a commit other than the cursor's start and other than where the checkpoint would put it: the
+ * target, or, for a path slice short of its target's end (#6349), the start again. A company-brain cursor records its
+ * approval and is never one. Shared by the classification and the retirement's re-check, so both read the same rule.
+ * `$msg` is the moved-checkpoint message parameter.
+ */
+export const checkpointMovedSql = (msg: string) => `(c.completed_keys->0->'pending'->'intent'->>'kind'='managed_sync_checkpoint' AND c.completed_keys->0->>'companyReceiptId' IS NULL
+  AND (c.completed_keys->0->>'index')::int>=(c.completed_keys->0->>'total')::int
+  AND s.last_commit IS DISTINCT FROM c.completed_keys->0->>'from'
+  AND (c.completed_keys->0->'pending'->'intent'->'slice'->>'done'='false' OR s.last_commit IS DISTINCT FROM c.completed_keys->0->>'target')
+  AND EXISTS(SELECT 1 FROM persistence_requests m WHERE m.source_id=s.id AND m.request_id=(c.completed_keys->0->'pending'->>'requestId')::uuid
+    AND m.state IN ('failed','conflict') AND m.recovery IS NULL AND m.error_code='revision_conflict' AND m.error_message=${msg})
+  AND NOT EXISTS(SELECT 1 FROM persistence_requests o WHERE o.source_id=s.id AND o.intent->>'cursorKey'=c.fingerprint
+    AND (o.state IN ('queued','running','recovering') OR o.recovery IS NOT NULL)))`;
+
+/**
+ * #6694 on the live pass: the pass row `p` (of source `s`) carries the slug-root mode its unstamped run admitted under, the
+ * source pins another, the pass's stamp `req` ended refused `slug_root_mode_mismatch`, and nothing that pass admitted is
+ * still open. Shared by the classification and the retirement's re-check.
+ */
+export const passSlugModeRefusedSql = (req: string) => `(p.completed_keys->0->'obligations'->>'slug_mode' IS NOT NULL
+  AND s.config->>'slug_root_mode' IS NOT NULL AND s.config->>'slug_root_mode' IS DISTINCT FROM p.completed_keys->0->'obligations'->>'slug_mode'
+  AND EXISTS(SELECT 1 FROM persistence_requests m WHERE m.source_id=s.id AND m.request_id=${req} AND m.intent->>'kind'='managed_sync_checkpoint'
+    AND m.intent->>'passId'=p.completed_keys->0->'telemetry'->>'pass_id' AND m.state IN ('failed','conflict') AND m.recovery IS NULL AND m.error_code='slug_root_mode_mismatch')
+  AND NOT EXISTS(SELECT 1 FROM persistence_requests o WHERE o.source_id=s.id AND o.intent->>'passId'=p.completed_keys->0->'telemetry'->>'pass_id'
+    AND (o.state IN ('queued','running','recovering') OR o.recovery IS NOT NULL)))`;
+
+/** The newest stamp request of the pass row `p`'s pass. */
+export const passStampSql = `(SELECT n.request_id FROM persistence_requests n WHERE n.source_id=s.id AND n.intent->>'kind'='managed_sync_checkpoint'
+  AND n.intent->>'passId'=p.completed_keys->0->'telemetry'->>'pass_id' ORDER BY n.sequence DESC LIMIT 1)`;
+
+/**
+ * #6712 PR 3: the cursor `c` (of source `s`) stands at its checkpoint, refused `slug_root_mode_mismatch`, and the source
+ * still pins a mode other than the run's. Shared by the classification and the retirement's re-check.
+ */
+export const slugModeRefusedSql = `(c.completed_keys->0->'pending'->'intent'->>'kind'='managed_sync_checkpoint' AND c.completed_keys->0->>'companyReceiptId' IS NULL
+  AND (c.completed_keys->0->>'index')::int>=(c.completed_keys->0->>'total')::int
+  AND s.config->>'slug_root_mode' IS NOT NULL AND s.config->>'slug_root_mode' IS DISTINCT FROM c.completed_keys->0->>'slugMode'
+  AND EXISTS(SELECT 1 FROM persistence_requests m WHERE m.source_id=s.id AND m.request_id=(c.completed_keys->0->'pending'->>'requestId')::uuid
+    AND m.state IN ('failed','conflict') AND m.recovery IS NULL AND m.error_code='slug_root_mode_mismatch')
+  AND NOT EXISTS(SELECT 1 FROM persistence_requests o WHERE o.source_id=s.id AND o.intent->>'cursorKey'=c.fingerprint
+    AND (o.state IN ('queued','running','recovering') OR o.recovery IS NOT NULL)))`;

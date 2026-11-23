@@ -12,7 +12,7 @@ import { agentBlock } from '../agent-markers.ts';
 import { CLAIM_USER_MESSAGE, readUnclaimedLegacySources } from './claim.ts';
 import { TRUST_CLAIM_COMMAND, TRUST_CLAIM_RESUME_COMMAND } from './claim-state.ts';
 
-export async function trustClaimUpgradeNotice(engine: Pick<BrainEngine, 'executeRaw'>): Promise<string[] | null> {
+export async function trustClaimUpgradeNotice(engine: Pick<BrainEngine, 'executeRaw' | 'readDoctorSources' | 'countLegacyUnknownBySource'>): Promise<string[] | null> {
   const { unclaimed, pending } = await readUnclaimedLegacySources(engine);
   const verify = 'gbrain doctor --only trust_sources_unclaimed --json';
   if (pending.length) {
@@ -33,7 +33,7 @@ export async function trustClaimUpgradeNotice(engine: Pick<BrainEngine, 'execute
   }, { showUser: CLAIM_USER_MESSAGE }).trimEnd().split('\n'), ''];
 }
 
-export async function printTrustClaimUpgradeNotice(engine: Pick<BrainEngine, 'executeRaw'>, log: (line: string) => void = console.log): Promise<boolean> {
+export async function printTrustClaimUpgradeNotice(engine: Pick<BrainEngine, 'executeRaw' | 'readDoctorSources' | 'countLegacyUnknownBySource'>, log: (line: string) => void = console.log): Promise<boolean> {
   try {
     const lines = await trustClaimUpgradeNotice(engine);
     if (!lines) return false;

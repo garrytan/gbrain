@@ -26,11 +26,13 @@ import * as takes from './takes.ts';
 import * as contradictions from './contradictions.ts';
 import * as dream from './dream.ts';
 import * as dreamJournal from './dream-journal.ts';
+import * as sessionState from './session-state.ts';
 import * as evalCapture from './eval-capture.ts';
 import * as codeEdges from './code-edges.ts';
 import * as salience from './salience.ts';
 import * as stats from './stats.ts';
 import * as rawFiles from './raw-files.ts';
+import * as filesOps from './files-ops.ts';
 import * as linkQueries from './link-queries.ts';
 import * as timelineQueries from './timeline-queries.ts';
 import * as timelineRepairReads from './timeline-repair-reads.ts';
@@ -52,6 +54,8 @@ import * as trustWriteGate from './trust-write-gate.ts';
 import * as cliSources from './cli-sources.ts';
 import * as filesSources from './files-sources.ts';
 import * as dreamConfig from './dream-config.ts';
+import * as factsHeld from './facts-held.ts';
+import * as factsRest from './facts-rest.ts';
 import * as factsHoldingPurges from './facts-holding-purges.ts';
 import * as cliReadsImport from './cli-reads-import.ts';
 import * as cliReadsOps from './cli-reads-ops.ts';
@@ -61,6 +65,8 @@ import * as persistence from './persistence.ts';
 import * as syncHoldStore from './sync-hold-store.ts';
 import * as syncStatusReads from './sync-status-reads.ts';
 import * as cliEntities from './cli-entities.ts';
+import * as reflexReads from './reflex-reads.ts';
+import * as briefReads from './brief-reads.ts';
 import * as factsDoctor from './facts-doctor.ts';
 import * as embeddingCatalog from './embedding-catalog.ts';
 import * as fenceHolds from './fence-holds.ts';
@@ -72,10 +78,19 @@ import * as purgeEffects from './purge-effects.ts';
 import * as beliefPurge from './belief-purge.ts';
 import * as projectionRebuild from './projection-rebuild.ts';
 import * as factsRepair from './facts-repair.ts';
+import * as ontologyRepair from './ontology-repair.ts';
 import * as factsTrust from './facts-trust.ts';
+import * as factsForget from './facts-forget.ts';
+import * as factsRecall from './facts-recall.ts';
+import * as factsQuoted from './facts-quoted.ts';
+import * as schemaDetect from './schema-detect.ts';
+import * as edgeProposals from './edge-proposals.ts';
+import * as factsWritePath from './facts-write-path.ts';
+import * as factsRemember from './facts-remember.ts';
 import * as derivationTrust from './derivation-trust.ts';
 import * as chronicleEvents from './chronicle-events.ts';
 import * as factsTrustReads from './facts-trust-reads.ts';
+import * as factsProvenance from './facts-provenance.ts';
 import * as factsTrustOwner from './facts-trust-owner.ts';
 import * as trustTierReads from './trust-tier-reads.ts';
 import * as memoryMutationReads from './memory-mutation-reads.ts';
@@ -96,15 +111,20 @@ import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
 import * as worktreeClaim from './worktree-claim.ts';
 import * as writerAdmin from './writer-admin.ts';
+import * as writerRelease from './writer-release.ts';
+import * as publicationJournal from './publication-journal.ts';
+import * as writerStatus from './writer-status.ts';
 import * as writeAttribution from './write-attribution.ts';
 import * as opCheckpoint from './op-checkpoint.ts';
 import * as syncRunReads from './sync-run-reads.ts';
 import * as accessPolicy from './access-policy.ts';
 import * as accessSetup from './access-setup.ts';
+import * as trustScan from './trust-scan.ts';
 import * as linkTemporal from './link-temporal.ts';
 import * as aliasFanoutReads from './alias-fanout-reads.ts';
 import * as entityIdentities from './entity-identities.ts';
 import * as writeGuards from './write-guards.ts';
+import * as ownerOnlyMarks from './owner-only-marks.ts';
 import * as pageVisibility from './page-visibility.ts';
 import * as largePage from './large-page.ts';
 import * as trustFence from './trust-fence.ts';
@@ -123,6 +143,23 @@ import * as engineMigration from './engine-migration.ts';
 import * as writeContext from './write-context.ts';
 // The store creates its tables when it opens; initSchema seeds the embedding config rows PGLite's schema text seeds.
 import { initSchema } from './init-schema.ts';
+import * as accessGrants from './access-grants.ts';
+import * as accessMembers from './access-members.ts';
+import * as sharedSkillMembers from './shared-skill-members.ts';
+import * as doctorDerived from './doctor-derived.ts';
+import * as doctorPersistence from './doctor-persistence.ts';
+import * as doctorPages from './doctor-pages.ts';
+import * as doctorSearch from './doctor-search.ts';
+import * as doctorAcc from './doctor-acc.ts';
+import * as doctorJoin from './doctor-join.ts';
+import * as doctorCheckpoints from './doctor-checkpoints.ts';
+import * as doctorTerminal from './doctor-terminal.ts';
+import * as doctorBrain from './doctor-brain.ts';
+import * as doctorSync from './doctor-sync.ts';
+import * as doctorFactsTrust from './doctor-facts-trust.ts';
+import * as fenceCensus from './fence-census.ts';
+import * as doctorSources from './doctor-sources.ts';
+import * as sweepReads from './sweep-reads.ts';
 import * as cliReadsExport from './cli-reads-export.ts';
 import * as beliefLedger from './belief-ledger.ts';
 import * as repairBookkeeping from './repair-bookkeeping.ts';
@@ -138,6 +175,8 @@ import * as sourceCrMode from './source-cr-mode.ts';
 import * as remoteLinks from './remote-links.ts';
 import * as factsBackstop from './facts-backstop.ts';
 
+const { readBrainMode: _brainModeHelper, ...writerReleaseMembers } = writerRelease;
+
 export const STORE_MEMBERS = {
   // The mention pass and the gazetteer, extract snapshot and explain reads (rust/docs/store/mention-state.md).
   ...mentionPass,
@@ -150,18 +189,24 @@ export const STORE_MEMBERS = {
   ...evalCapture, ...codeEdges, ...salience, ...stats, ...rawFiles, ...linkQueries, ...timelineQueries, ...timelineRepairReads, ...keyword,
   ...chunkQueries, ...vectors, ...embeddings, ...embedStaleWork, ...transactions, ...writeContext, ...relations, ...wantedLinks, ...trustWithdrawals, ...trustWriteGate, ...openLoops, ...loopMutes,
   ...sourceArchive,
+  ...filesOps,
   // The minion queue and its cycle locks (rust/crates/gbrain-store/src/jobs.rs).
   ...jobs,
   // Typed reads that replace raw SQL in CLI paths (rust/crates/gbrain-store/src/cli_reads/).
-  ...cliSources, ...filesSources, ...dreamConfig, ...factsHoldingPurges,
+  ...cliSources, ...filesSources, ...dreamConfig, ...factsHeld, ...factsRest, ...factsHoldingPurges,
   // Typed reads that CLI paths ran through executeRaw (docs/research/rust-cli-executeraw-map.md).
-  ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages,
+  ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages, ...sweepReads,
   // The reads gbrain export makes (rust/docs/store/cli-reads-export.md).
   ...cliReadsExport,
-  ...cliEntities,
+  ...cliEntities, ...reflexReads, ...briefReads,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
   ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...purgePlan, ...purgeEffects, ...beliefPurge, ...projectionRebuild, ...factsRepair, ...labelRepairReads, ...factTextRepair, ...lostFenceReads, ...factsTrust, ...derivationTrust, ...factsTrustReads, ...factsTrustOwner, ...factRelinkAttempts,
+  ...ontologyRepair, ...factsRecall, ...factsForget, ...factsRemember, ...factsWritePath, ...factsProvenance, ...factsQuoted,
   ...factRelinkWrites,
+  // The `gbrain schema detect` page-shape reads (rust/docs/store/schema_detect.md).
+  ...schemaDetect,
+  // The edge-contradictions dream phase and its proposal ledger (rust/docs/store/edge_proposals.md).
+  ...edgeProposals,
   // The Life Chronicle event statements (rust/crates/gbrain-store/src/generations/chronicle_events.rs).
   ...chronicleEvents,
   // Typed reads of stamped trust tiers (rust/docs/store/trust.md, "Tier reads").
@@ -201,6 +246,12 @@ export const STORE_MEMBERS = {
   ...worktreeClaim,
   // Writer administration: the reviewed state digest, the operator lock, transfer prepare and cancel (same section).
   ...writerAdmin,
+  // Writer activation, deactivation and the pre-activation release over the stored brain mode (same doc, "Writer release").
+  // `readBrainMode` is the module's shared brain-mode read for other members, not a BrainEngine member, so it is not served.
+  ...writerReleaseMembers,
+  // A bound publication's request-row reads and writes around its files (same doc, "Publication journal").
+  ...publicationJournal,
+  ...writerStatus,
   // get_write_attribution's receipt and name reads (rust/docs/store/write_attribution.md).
   ...writeAttribution,
   ...opCheckpoint,
@@ -218,10 +269,13 @@ export const STORE_MEMBERS = {
   ...accessPolicy,
   // The access setup and policy-store members outside access/policy.ts (rust/docs/store/access_rules.md).
   ...accessSetup,
+  ...trustScan,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
   ...writeGuards, ...trustFence, ...trustProposals,
   // The page visibility guards a remote page write runs (rust/docs/store/page-visibility.md).
   ...pageVisibility,
+  // The owner-only mark state; the store marks in code and has no SQL triggers (rust/docs/store/keyword.md).
+  ...ownerOnlyMarks,
   // The large-page write guard's stored body size read (rust/docs/store/large-page.md).
   ...largePage,
   // The connect gate's persistence reads, answered from the unmanaged brain the store keeps (rust/docs/store/journal.md).
@@ -234,6 +288,38 @@ export const STORE_MEMBERS = {
   ...decideProposals,
   // The field usage sample read of schema detect --fields (rust/docs/store/field-usage.md).
   ...fieldUsage,
+  // The access-grant reads and the request-id lookup of the receipt operations (rust/docs/store/persistence.md).
+  ...accessGrants,
+  // The session cursor and checkpoint manifest of context_pack and delta (rust/docs/store/session_state.md).
+  ...sessionState,
+  // The access member and group writes and the active-member read (rust/docs/store/access-members.md).
+  ...accessMembers,
+  // The shared-skill members and delivery batches join_brain, sync_brain_skills and leave_brain use (rust/docs/store/shared-skill-members.md).
+  ...sharedSkillMembers,
+  // The statements doctor checks ran through executeRaw (rust/docs/store/cli-reads-doctor.md).
+  // The second doctor set: served, answered empty where the store keeps no writer, or left out to refuse (rust/docs/store/cli-reads-doctor-derived.md).
+  ...doctorDerived,
+  // The persistence checks' request journal and counter reads (rust/docs/store/cli-reads-doctor-per.md).
+  ...doctorPersistence,
+  ...doctorPages,
+  // Search and knowledge doctor reads (rust/docs/store/cli-reads-doctor-search.md).
+  ...doctorSearch,
+  ...doctorAcc,
+  // Doctor reads of the checks from the main join (rust/docs/store/cli-reads-doctor-join.md).
+  ...doctorJoin,
+  // The op_checkpoints and ingest_log statements doctor ran through executeRaw (rust/docs/store/cli-reads-doctor-checkpoints.md).
+  ...doctorCheckpoints,
+  // Doctor terminal reads: the grouped terminal write failure aggregate, its drill-down batch and the open-pass blocker statements doctor ran through executeRaw (rust/docs/store/cli-reads-doctor-terminal.md).
+  ...doctorTerminal,
+  // Doctor brain reads: the page, tag, fact, source and checkpoint statements the storage, archive, backup, git-hold and connector checks ran through executeRaw (rust/docs/store/cli-reads-doctor-brain.md).
+  ...doctorBrain,
+  // Doctor sync reads: the managed-sync cursor, failure and orphan statements doctor ran through executeRaw (rust/docs/store/cli-reads-doctor-sync.md).
+  ...doctorSync,
+  // The doctor reads over sources (rust/docs/store/cli-reads-doctor-src.md).
+  ...doctorSources,
+  // The doctor facts, fence and trust reads (rust/docs/store/cli-reads-doctor-facts-trust.md).
+  ...doctorFactsTrust,
+  ...fenceCensus,
   // Group A: the decide store (rust/docs/store/decide-store.md).
   ...decideStore,
   // The source-side reads of `gbrain migrate --to <engine>` (rust/docs/store/engine-migration.md).

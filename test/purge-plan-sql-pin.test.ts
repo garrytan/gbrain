@@ -7,7 +7,8 @@
  * plan or a result on Postgres alone, which PGLite parity cannot see.
  *
  * Protects: each member's recorded text and params equal the old raw statement byte for byte (the texts below were
- * recorded from the raw callers before the move), and the whole plan plus dry run still sends the same 99 statements,
+ * recorded from the raw callers before the move, with the byte-order sorts and the nearest-fact tie-break the main join added
+ * to the page-body scan, the nearest-fact read and the probe item list), and the whole plan plus dry run still sends the same 99 statements,
  * in the same order and on the same lane (pool or transaction), as a sha256 of their texts, params and lanes.
  * Fails when a member reorders a clause, renumbers a placeholder, binds a value as text or moves a probe off the
  * transaction.
@@ -74,7 +75,7 @@ const OLD = {
     params: ["src-a", "acme \"raised\" a seed", "acme \\\"raised\\\" a seed"] },
   s94: { text: "SELECT DISTINCT source_path FROM (\n      SELECT source_path FROM pages WHERE id=ANY($1::int[]) UNION ALL SELECT source_path FROM page_versions WHERE page_id=ANY($1::int[])) s\n    WHERE source_path IS NOT NULL AND source_path<>'' AND source_path NOT LIKE '/%' AND source_path NOT LIKE '%..%' LIMIT 64",
     params: [[9]] },
-  s95: { text: "SELECT id,(1-(embedding <=> $1::halfvec))::float8 AS similarity,\n        strpos(gbrain_fact_normalize(fact),gbrain_fact_normalize($4))>0 AS contains_claim\n      FROM facts WHERE source_id=$2 AND embedding_model=$3 AND embedding IS NOT NULL\n      ORDER BY embedding <=> $1::halfvec LIMIT 5",
+  s95: { text: "SELECT id, similarity, contains_claim FROM (\n        SELECT id,(1-(embedding <=> $1::halfvec))::float8 AS similarity, embedding <=> $1::halfvec AS distance,\n          strpos(gbrain_fact_normalize(fact),gbrain_fact_normalize($4))>0 AS contains_claim\n        FROM facts WHERE source_id=$2 AND embedding_model=$3 AND embedding IS NOT NULL\n        ORDER BY embedding <=> $1::halfvec LIMIT 5) nearest\n      ORDER BY distance, id",
     params: ["[1,0]", "src-a", "m", "Acme \"raised\" a Seed"] },
 };
 
@@ -131,11 +132,11 @@ test('listPurgeProbeItems names the rows of a named probe, 20 at most, ordered b
   await engine.listPurgeProbeItems({ kind: 'named', table: 'links', sourceId: 'src-a', needles: [CLAIM] });
   const count = OLD.s49.text;
   const select = count.slice('SELECT count(*)::int AS n FROM ('.length, count.lastIndexOf(' LIMIT '));
-  expect(last()).toEqual({ text: `${select} ORDER BY 1 LIMIT 20`, params: OLD.s49.params });
+  expect(last()).toEqual({ text: `SELECT * FROM (${select}) q ORDER BY item COLLATE "C" LIMIT 20`, params: OLD.s49.params });
 });
 
 /** sha256 of the 99 statements (text, params, lane) the plan and dry run below sent before the move. */
-const SEQUENCE_SHA256 = "8908cee5d01c1e287bfcc6231e9af133d812f957675cd10357570780a9c4f57e";
+const SEQUENCE_SHA256 = "d1dfcd0ec350e0c269f870ec0716e95e794087c5fbc9a4b42d4185104c189276";
 
 test('the plan, dry run and request finders send the same 99 statements as before, in order, on the same lanes', async () => {
   const { engine, fake } = recordingEngine(stmt => {

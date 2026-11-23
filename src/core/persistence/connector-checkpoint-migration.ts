@@ -46,7 +46,7 @@ export async function loadableConnectorKeys(engine: Pick<BrainEngine, 'listConne
 function connectorKeysOf(rows: ConnectorSourceRow[]): Map<string, LoadableConnectorKey> {
   const keys = new Map<string, LoadableConnectorKey>();
   for (const row of rows) {
-    const config = typeof row.config === 'string' ? JSON.parse(row.config) as Record<string, unknown> : row.config ?? {};
+    const config = typeof row.config === 'string' ? JSON.parse(row.config) as Record<string, unknown> : (row.config ?? {}) as Record<string, unknown>;
     const [stable, ...aliases] = connectorCheckpointKeys(row.id, row.incarnation, connectorIdentity(config.kind as ConnectorKind, config, row.local_path));
     const source = { id: row.id, incarnation: row.incarnation, archived: row.archived === true };
     keys.set(stable!, { ...source, alias: false });
@@ -107,6 +107,7 @@ export async function migrateConnectorCheckpoints(engine: Sql, log: (line: strin
   // One statement, bounded by its own timeout; no long transaction around the scan.
   const receipts = await engine.transaction(async tx => {
     await tx.executeRaw("SELECT set_config('statement_timeout','120s',true)");
+    // The source order never reaches output: the newest receipt per source and incarnation goes into a map, and collation only reorders the groups, never the winner.
     return tx.executeRaw<{ source_id: string; source_incarnation: string; kind: string | null; checkpoint_key: string | null; compacted: boolean; committed_at: string }>(`
       SELECT DISTINCT ON (source_id, source_incarnation) source_id, source_incarnation::text, intent->>'kind' AS kind, intent->>'checkpointKey' AS checkpoint_key,
              COALESCE(compacted,false) AS compacted, COALESCE(completed_at,updated_at)::text AS committed_at
@@ -149,3 +150,24 @@ export async function migrateConnectorCheckpoints(engine: Sql, log: (line: strin
   }
   return report;
 }
+
+/** The orphan test for op_checkpoints row `c`; binds loadable keys, before, min age days and the state op from parameter `$first` on. */
+export const orphanPredicate = (first: number) => {
+  const [k, b, d, o] = [first, first + 1, first + 2, first + 3].map(n => `$${n}`);
+  return `(
+      ((c.op='managed-connector' AND NOT (c.fingerprint = ANY(${k}::text[])))
+        OR (c.op='managed-connector-retry' AND NOT (COALESCE(c.completed_keys->0->>'checkpointKey','') = ANY(${k}::text[]))))
+      AND NOT EXISTS (SELECT 1 FROM persistence_requests r
+        WHERE (r.state IN ('queued','deferred','running','recovering') OR r.recovery IS NOT NULL)
+          AND (r.intent->>'kind' LIKE 'connector\\_v2\\_%' OR r.intent->>'kind' LIKE 'managed\\_connector\\_%')
+          AND (r.intent->>'checkpointKey' = c.fingerprint OR r.intent->>'checkpointKey' = c.completed_keys->0->>'checkpointKey'
+            OR r.request_id::text = c.completed_keys->0->>'requestId'))
+      AND NOT EXISTS (SELECT 1 FROM op_checkpoints s
+        CROSS JOIN LATERAL jsonb_array_elements(COALESCE(s.completed_keys->0->'pending','[]'::jsonb)) p
+        JOIN persistence_requests r ON r.request_id::text = p->>'requestId'
+        WHERE s.op=${o} AND (r.intent->>'checkpointKey' = c.fingerprint OR r.intent->>'checkpointKey' = c.completed_keys->0->>'checkpointKey'
+          OR r.request_id::text = c.completed_keys->0->>'requestId'))
+      AND (${b}::text IS NULL OR c.updated_at <= ${b}::text::timestamptz)
+      AND (${d}::integer IS NULL OR c.updated_at < now() - make_interval(days => ${d}::integer)))`;
+
+};

@@ -13,11 +13,9 @@
 //!
 //! The two loop reads, `closedLoopWithActiveFact` and `loopFactDrift`, are served from
 //! `facts/loops.rs`. `countPurgedPageFacts` (doctor's gone-page check) also reads the store's
-//! `page_purges` ledger (`facts/page_purges.rs`), which no member writes on Rust, and
-//! `listUnwithdrawnFacts` is served from the derived generation ledger in `facts/generations.rs`.
-//! The last member of the file refuses with `engine_capability_missing`:
-//! `listExtractorFactsForClassification` joins the persistence journal. rust/docs/store/facts.md
-//! names each one.
+//! `page_purges` ledger (`facts/page_purges.rs`), `listUnwithdrawnFacts` is served from the derived
+//! generation ledger in `facts/generations.rs`, and `listExtractorFactsForClassification` is served
+//! from `facts/extractor_classify.rs`. rust/docs/store/facts.md names each one.
 //!
 //! Shared reading rules. A source's rows come back in id order ([`source_rows`]); the sources are
 //! visited in byte order of their id, which is `ORDER BY f.source_id, f.id` under the C collation
@@ -27,9 +25,12 @@
 
 use super::loops::loop_fact_ids;
 use super::page_purges::source_purges;
+use super::privacy::stamped_rules;
 use super::{FactRecord, fact_fingerprint, ids_under, refs_prefix, source_rows};
 use crate::Store;
+use crate::access_rules::pending_covers;
 use crate::error::Result;
+use crate::kv::KvRead;
 use crate::links::no_nul;
 use crate::pages::{PageRecord, read_page};
 use crate::timeline_queries::jsonb_field_text;
@@ -106,11 +107,11 @@ pub struct PurgedCandidatesArgs {
 }
 
 /// `PAGE_EXTRACTION_SOURCE_LIST` (facts/gone-page-facts.ts): the sources whose context names the page.
-const PAGE_EXTRACTION_SOURCES: [&str; 4] =
+pub(super) const PAGE_EXTRACTION_SOURCES: [&str; 4] =
     ["mcp:put_page", "sync:import", "file_upload", "code_import"];
 
 /// `contextHeadSql`: `split_part(context, ' — ', 1)`, the text before the first separator.
-fn context_head(context: &str) -> &str {
+pub(super) fn context_head(context: &str) -> &str {
     context.split(" \u{2014} ").next().unwrap_or("")
 }
 
@@ -120,7 +121,7 @@ const EXTRACTOR_PREFIX: &str = "cli:extract-conversation-facts";
 /// `[[:space:]]` as PGLite reads it: `iswspace` of its C library (musl) under `C.UTF-8`. Postgres
 /// on glibc also counts U+1680 (OGHAM SPACE MARK); the parity cases use none of the two
 /// characters on which the two disagree.
-fn posix_space(c: char) -> bool {
+pub(super) fn posix_space(c: char) -> bool {
     matches!(
         c,
         ' ' | '\t'
@@ -395,12 +396,16 @@ impl Store {
                         .filter(|page| page.deleted_at_us.is_none()),
                     None => None,
                 };
-                let held_private = held.as_ref().is_some_and(|page| {
-                    page.deleted_at_us.is_none() && derivation_private(page, args.honor_aliases)
-                });
-                let origin_private = origin
-                    .as_ref()
-                    .is_some_and(|page| derivation_private(page, args.honor_aliases));
+                let held_private = match held.as_ref() {
+                    Some(page) if page.deleted_at_us.is_none() => {
+                        derivation_private(&*read, page, args.honor_aliases)?
+                    }
+                    _ => false,
+                };
+                let origin_private = match origin.as_ref() {
+                    Some(page) => derivation_private(&*read, page, args.honor_aliases)?,
+                    None => false,
+                };
                 if !(held_private || origin_private) {
                     continue;
                 }
@@ -749,12 +754,26 @@ fn snapshot_allows(page: &PageRecord, honor_aliases: bool) -> bool {
 }
 
 /// `derivationPrivateSql('h')`: the snapshot filter fails, a privacy alias is set (whether or not
-/// aliases are honoured), the page names readers (`readable_by`), or a folder rule covers it (never
-/// here: the store holds no folder rules).
-pub(crate) fn derivation_private(page: &PageRecord, honor_aliases: bool) -> bool {
-    !snapshot_allows(page, honor_aliases)
+/// aliases are honoured), the page names readers (`readable_by`), or it sits under a folder
+/// ([`folder_restricted`]).
+pub(crate) fn derivation_private(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    honor_aliases: bool,
+) -> Result<bool> {
+    Ok(!snapshot_allows(page, honor_aliases)
         || alias_private(&page.frontmatter)
         || page.frontmatter.contains_key("readable_by")
+        || folder_restricted(read, page)?)
+}
+
+/// `folderRestrictedSql`: a folder rule is stamped on the page, or a pending or invalid prefix of
+/// its source covers its slug.
+pub(crate) fn folder_restricted(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
+    Ok(
+        !stamped_rules(read, page)?.is_empty()
+            || pending_covers(read, &page.source_id, &page.slug)?,
+    )
 }
 
 #[cfg(test)]

@@ -19,7 +19,7 @@ describe('embedding_plane_disagreement', () => {
     const warn = await embeddingPlaneDisagreementCheck(engine, file);
     expect(warn).toMatchObject({ status: 'warn', details: { model: stored.model, dimensions: stored.dimensions, vector_tables: ['content_chunks'] } });
     expect(warn.fix).toMatchObject({ consent: ['credentials', 'paid'], actor: 'user', requires_exclusive: true,
-      argv: ['gbrain', 'init', '--force', '--embedding-model', stored.model!, '--embedding-dimensions', String(stored.dimensions), '--path', file.database_path] });
+      argv: ['gbrain', 'embeddings', 'enable', '--embedding-model', stored.model!, '--embedding-dimensions', String(stored.dimensions)] });
     await engine.unsetConfig('embedding_model');
     const unrecorded = await embeddingPlaneDisagreementCheck(engine, file);
     expect(unrecorded).toMatchObject({ status: 'warn', details: { model: null, dimensions: stored.dimensions } });

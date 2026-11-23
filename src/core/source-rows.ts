@@ -35,7 +35,7 @@ export async function sourceRecordsRawConfig(
 }
 
 /**
- * `SELECT id, incarnation, local_path, config, archived FROM sources WHERE id = ANY($1) ORDER BY id` through the
+ * `SELECT id, incarnation, local_path, config, archived FROM sources WHERE id = ANY($1) ORDER BY id COLLATE "C"` through the
  * typed `readSourceState` member: one row per known id (archived ones included), in byte order of id.
  */
 export async function readSourceStates(engine: Pick<BrainEngine, 'readSourceState'>, sourceIds: readonly string[]) {

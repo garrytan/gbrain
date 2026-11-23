@@ -37,6 +37,7 @@ import { writeFileSync, unlinkSync, existsSync } from 'fs';
 import { join } from 'path';
 import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
+import { sqlQueryForEngine } from '../core/sql-query.ts';
 import {
   assessDestructiveImpact,
   checkDestructiveConfirmation,
@@ -73,7 +74,6 @@ import {
   sourceFederationState,
   type SourceRow as LoadedSourceRow,
 } from '../core/sources-load.ts';
-import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { preflightOauthClientColumns } from './auth.ts';
 import { hasCapability } from '../core/engine-capabilities.ts';
 import { deleteSourceRow } from '../core/source-delete.ts';
@@ -842,8 +842,8 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
   class SourceReferencedError extends Error {}
   try {
     await (await import('../core/owned-folder/remove.ts')).removeOwnedFolderThen(engine, id, { keep: keepStorage }, () => engine.transaction(async (tx) => {
-      // A Rust store always has oauth_clients.source_id and runs no raw SQL; the SQL engines preflight the column.
-      const hasSourceColumn = !hasCapability(tx, 'raw_sql') || (await preflightOauthClientColumns(sqlQueryForEngine(tx))).has('source_id');
+      // The oauth_clients.source_id column is read through the typed readOauthClientColumns member (a Rust store always has it).
+      const hasSourceColumn = (await preflightOauthClientColumns(tx)).has('source_id');
       if (hasSourceColumn) {
         // PHYSICAL count (no deleted_at filter): the FK ignores soft-deletion.
         if ((await tx.listOauthClients()).some(c => c.source_id === id)) throw new SourceReferencedError();

@@ -5,7 +5,9 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each member sends Postgres exactly the statement text, in the same order, with the same bound values,
  *    its caller ran through `executeRaw` before the move. Each expected text below is copied verbatim from the caller
- *    at 5e22f0c134 (a `${...}` in a text is the caller's own interpolation, kept as the caller wrote it).
+ *    at 5e22f0c134 (a `${...}` in a text is the caller's own interpolation, kept as the caller wrote it), except
+ *    the statements that carry this repo's byte-order rule (`COLLATE "C"` on text sort keys, an id tie-break, a
+ *    wrapped SELECT DISTINCT so its sort can name a collation), which are pinned as they now read.
  *  - Regression: an edited statement changes what Postgres and PGLite answer while the parity cases may still pass on
  *    a small fixture; a renumbered placeholder changes a plan on Postgres alone.
  *  - Why existing coverage misses it: the sql-text goldens cover the W1 domains only (test/engine-sql-sql-text.test.ts),
@@ -145,17 +147,17 @@ const PINS: Pin[] = [
     run: e => e.listHeldMoveRows('src-a'),
     texts: [`SELECT id, source_id, entity_slug, fact, kind, visibility, notability, context, valid_from, valid_until, source, confidence,
             claim_metric, claim_value, claim_unit, claim_period, attributed_to, true AS page_exists, source_markdown_slug AS from_slug
-       FROM facts f WHERE ${onHolding} AND f.expired_at IS NULL ORDER BY f.source_markdown_slug, f.entity_slug, f.id`],
+       FROM facts f WHERE ${onHolding} AND f.expired_at IS NULL ORDER BY f.source_markdown_slug COLLATE "C", f.entity_slug COLLATE "C", f.id`],
     params: [['src-a']],
   },
   {
     from: 'src/core/facts/held-fact-move.ts:174 planHeldMoves (struck rows)',
     member: 'listStruckHeldRows',
     run: e => e.listStruckHeldRows('src-a'),
-    texts: [`SELECT DISTINCT ON (f.source_markdown_slug, f.row_num) f.source_markdown_slug AS from_slug, f.entity_slug, f.row_num, f.fact FROM facts f
+    texts: [`SELECT DISTINCT ON (f.source_markdown_slug COLLATE "C", f.row_num) f.source_markdown_slug AS from_slug, f.entity_slug, f.row_num, f.fact FROM facts f
       WHERE ${onHolding} AND f.expired_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM facts a WHERE a.source_id = f.source_id
         AND a.source_markdown_slug = f.source_markdown_slug AND a.row_num = f.row_num AND a.expired_at IS NULL)
-      ORDER BY f.source_markdown_slug, f.row_num, f.id DESC`],
+      ORDER BY f.source_markdown_slug COLLATE "C", f.row_num, f.id DESC`],
     params: [['src-a']],
   },
   {
@@ -290,10 +292,12 @@ const PINS: Pin[] = [
     from: 'src/core/facts/purge-verify.ts:474 vectorProbe',
     member: 'listNearestFactsForPurge',
     run: e => e.listNearestFactsForPurge('[0.1,0.2]', 'src-a', 'model-a', 'the claim'),
-    texts: [`SELECT id,(1-(embedding <=> $1::halfvec))::float8 AS similarity,
-        strpos(gbrain_fact_normalize(fact),gbrain_fact_normalize($4))>0 AS contains_claim
-      FROM facts WHERE source_id=$2 AND embedding_model=$3 AND embedding IS NOT NULL
-      ORDER BY embedding <=> $1::halfvec LIMIT 5`],
+    texts: [`SELECT id, similarity, contains_claim FROM (
+        SELECT id,(1-(embedding <=> $1::halfvec))::float8 AS similarity, embedding <=> $1::halfvec AS distance,
+          strpos(gbrain_fact_normalize(fact),gbrain_fact_normalize($4))>0 AS contains_claim
+        FROM facts WHERE source_id=$2 AND embedding_model=$3 AND embedding IS NOT NULL
+        ORDER BY embedding <=> $1::halfvec LIMIT 5) nearest
+      ORDER BY distance, id`],
     params: [['[0.1,0.2]', 'src-a', 'model-a', 'the claim']],
   },
   {
@@ -323,32 +327,32 @@ const PINS: Pin[] = [
     from: 'src/core/facts/purge-verify.ts:682 and :694 purgePageReceipt (prose in pages)',
     member: 'listPageProseHits',
     run: e => e.listPageProseHits('pages', 'src-a', ['needle']),
-    texts: [`SELECT DISTINCT p.slug FROM pages p WHERE p.source_id=$1 AND p.deleted_at IS NULL
-        AND EXISTS (SELECT 1 FROM unnest($2::text[]) n WHERE strpos(lower(p.compiled_truth),n)>0 OR strpos(lower(COALESCE(p.timeline,'')),n)>0) ORDER BY 1 LIMIT 20`],
+    texts: [`SELECT * FROM (SELECT DISTINCT p.slug FROM pages p WHERE p.source_id=$1 AND p.deleted_at IS NULL
+        AND EXISTS (SELECT 1 FROM unnest($2::text[]) n WHERE strpos(lower(p.compiled_truth),n)>0 OR strpos(lower(COALESCE(p.timeline,'')),n)>0)) q ORDER BY slug COLLATE "C" LIMIT 20`],
     params: [['src-a', ['needle']]],
   },
   {
     from: 'src/core/facts/purge-verify.ts:684 and :694 purgePageReceipt (prose in content_chunks)',
     member: 'listPageProseHits',
     run: e => e.listPageProseHits('content_chunks', 'src-a', ['needle']),
-    texts: [`SELECT DISTINCT p.slug FROM content_chunks c JOIN pages p ON p.id=c.page_id WHERE p.source_id=$1
-        AND EXISTS (SELECT 1 FROM unnest($2::text[]) n WHERE strpos(lower(c.chunk_text),n)>0) ORDER BY 1 LIMIT 20`],
+    texts: [`SELECT * FROM (SELECT DISTINCT p.slug FROM content_chunks c JOIN pages p ON p.id=c.page_id WHERE p.source_id=$1
+        AND EXISTS (SELECT 1 FROM unnest($2::text[]) n WHERE strpos(lower(c.chunk_text),n)>0)) q ORDER BY slug COLLATE "C" LIMIT 20`],
     params: [['src-a', ['needle']]],
   },
   {
     from: 'src/core/facts/purge-verify.ts:686 and :694 purgePageReceipt (prose in page_versions)',
     member: 'listPageProseHits',
     run: e => e.listPageProseHits('page_versions', 'src-a', ['needle']),
-    texts: [`SELECT DISTINCT p.slug FROM page_versions v JOIN pages p ON p.id=v.page_id WHERE p.source_id=$1
-        AND EXISTS (SELECT 1 FROM unnest($2::text[]) n WHERE strpos(lower(v.compiled_truth),n)>0 OR strpos(lower(COALESCE(v.timeline,'')),n)>0) ORDER BY 1 LIMIT 20`],
+    texts: [`SELECT * FROM (SELECT DISTINCT p.slug FROM page_versions v JOIN pages p ON p.id=v.page_id WHERE p.source_id=$1
+        AND EXISTS (SELECT 1 FROM unnest($2::text[]) n WHERE strpos(lower(v.compiled_truth),n)>0 OR strpos(lower(COALESCE(v.timeline,'')),n)>0)) q ORDER BY slug COLLATE "C" LIMIT 20`],
     params: [['src-a', ['needle']]],
   },
   {
     from: 'src/core/facts/purge-verify.ts:688 and :694 purgePageReceipt (prose in timeline_entries)',
     member: 'listPageProseHits',
     run: e => e.listPageProseHits('timeline_entries', 'src-a', ['needle']),
-    texts: [`SELECT DISTINCT p.slug FROM timeline_entries t JOIN pages p ON p.id=t.page_id WHERE p.source_id=$1
-        AND EXISTS (SELECT 1 FROM unnest($2::text[]) n WHERE strpos(lower(t.summary),n)>0 OR strpos(lower(COALESCE(t.detail,'')),n)>0) ORDER BY 1 LIMIT 20`],
+    texts: [`SELECT * FROM (SELECT DISTINCT p.slug FROM timeline_entries t JOIN pages p ON p.id=t.page_id WHERE p.source_id=$1
+        AND EXISTS (SELECT 1 FROM unnest($2::text[]) n WHERE strpos(lower(t.summary),n)>0 OR strpos(lower(COALESCE(t.detail,'')),n)>0)) q ORDER BY slug COLLATE "C" LIMIT 20`],
     params: [['src-a', ['needle']]],
   },
   {
@@ -370,7 +374,7 @@ const PINS: Pin[] = [
     member: 'readDeletePageRequest',
     run: e => e.readDeletePageRequest('src-a', 'b0000000-0000-4000-8000-0000000000b1'),
     texts: [`SELECT id,request_id,state,source_id,outcome FROM persistence_requests
-    WHERE source_id=$1 AND request_id=$2::uuid AND operation='delete_page' ORDER BY created_at DESC LIMIT 1`],
+    WHERE source_id=$1 AND request_id=$2::uuid AND operation='delete_page' ORDER BY created_at DESC, id LIMIT 1`],
     params: [['src-a', 'b0000000-0000-4000-8000-0000000000b1']],
   },
   {
@@ -378,7 +382,7 @@ const PINS: Pin[] = [
     member: 'listPurgeEffects',
     run: e => e.listPurgeEffects('b0000000-0000-4000-8000-0000000000b1'),
     texts: [`SELECT kind,state,error_code,
-    jsonb_array_length(COALESCE(data->'parked','[]'::jsonb))>0 AS parked FROM persistence_effects WHERE request_id=$1::uuid ORDER BY kind`],
+    jsonb_array_length(COALESCE(data->'parked','[]'::jsonb))>0 AS parked FROM persistence_effects WHERE request_id=$1::uuid ORDER BY kind COLLATE "C"`],
     params: [['b0000000-0000-4000-8000-0000000000b1']],
   },
   {

@@ -266,7 +266,7 @@ async function effectPayloadReport(engine: BrainEngine, sourceId: string, needle
   const counted = await boundedCount(engine, sql, params, deadline);
   if ('unverified' in counted) return { store: 'persistence_effects', status: 'unverified', reason: counted.unverified, removed };
   if (!counted.count) return { store: 'persistence_effects', status: removed ? 'deleted' : 'not_present', removed };
-  const items = (await engine.executeRaw<{ item: string }>(`${sql} ORDER BY 1 LIMIT 20`, params)).map(r => r.item);
+  const items = (await engine.executeRaw<{ item: string }>(`SELECT * FROM (${sql}) q ORDER BY item COLLATE "C" LIMIT 20`, params)).map(r => r.item);
   return { store: 'persistence_effects', status: 'incomplete', remaining: counted.count, items, removed,
     detail: 'Queued or recorded effects still carry the purged text in their payload, so running them could write it back.' };
 }

@@ -387,15 +387,15 @@ async function countSourceRows(tx: BrainEngine, census: GitGapCensus): Promise<v
   const [missing] = await tx.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM facts f WHERE f.source_id=$1 AND f.row_num IS NOT NULL
     AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.source_markdown_slug AND p.deleted_at IS NULL)`, [sourceId]);
   rows.facts_fence_page_missing = Number(missing?.n ?? 0);
-  const links = await tx.executeRaw<{ link_source: string; n: number }>(`SELECT COALESCE(l.link_source, '(none)') AS link_source, count(*)::int AS n
+  const links = await tx.executeRaw<{ link_source: string; n: number }>(`SELECT COALESCE(l.link_source, '(none)') COLLATE "C" AS link_source, count(*)::int AS n
     FROM links l JOIN pages p ON p.id=l.from_page_id WHERE p.source_id=$1 AND p.deleted_at IS NULL AND (l.link_source IS NULL OR NOT (l.link_source = ANY($2::text[])))
     GROUP BY 1 ORDER BY 1`, [sourceId, DERIVED_LINK_SOURCES]);
   rows.links = { total: links.reduce((sum, row) => sum + Number(row.n), 0), by_link_source: Object.fromEntries(links.map(row => [row.link_source, Number(row.n)])) };
-  const holds = await tx.executeRaw<{ code: string; n: number }>(`SELECT h.completed_keys->0->>'code' AS code, count(*)::int AS n FROM op_checkpoints h
+  const holds = await tx.executeRaw<{ code: string; n: number }>(`SELECT h.completed_keys->0->>'code' COLLATE "C" AS code, count(*)::int AS n FROM op_checkpoints h
     JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
     WHERE h.op=$1 AND s.id=$2 GROUP BY 1 ORDER BY 1`, [GIT_HOLD_OP, sourceId]);
   census.holds = Object.fromEntries(holds.map(row => [row.code ?? 'unknown', Number(row.n)]));
-  const parked = await tx.executeRaw<{ kind: string; code: string | null; targets: number }>(`SELECT e.kind, p->>'error_code' AS code, count(*)::int AS targets
+  const parked = await tx.executeRaw<{ kind: string; code: string | null; targets: number }>(`SELECT e.kind COLLATE "C" AS kind, p->>'error_code' COLLATE "C" AS code, count(*)::int AS targets
     FROM persistence_effects e CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(e.data->'parked')='array' THEN e.data->'parked' ELSE '[]'::jsonb END) p
     WHERE e.source_id=$1 GROUP BY 1, 2 ORDER BY 1, 2`, [sourceId]);
   census.parked_effects = parked.map(row => ({ kind: row.kind, code: row.code ?? 'unknown', targets: Number(row.targets) }));

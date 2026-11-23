@@ -1,7 +1,8 @@
 //! Raw source data and files attached to pages: the `raw_data` and `files` tables of the PGLite
 //! engine.
 //!
-//! Members: putRawData, getRawData, upsertFile, getFile, listFilesForPage.
+//! Members: putRawData, getRawData, upsertFile, getFile, listFilesForPage; the files commands and file operations
+//! are in `ops.rs`.
 //!
 //! Keys (every record starts with `keys::RAW_FILES`, `r`):
 //! - `r 0x01 <page id u64 BE> 0x00 <source name>` -> `RawRecord` (JSON). One per (page, source),
@@ -36,6 +37,8 @@ use crate::sources::{all_sources, read_source};
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+mod ops;
 
 const RAW: u8 = 0x01;
 const FILE: u8 = 0x02;
@@ -207,6 +210,11 @@ fn jsonb(op: &str, column: &str, text: &str) -> Result<Value> {
     Ok(crate::jsonb::order(value))
 }
 
+/// A JSON value as Postgres's jsonb keeps it ([`crate::jsonb::order`]).
+pub(crate) fn jsonb_order(value: Value) -> Value {
+    crate::jsonb::order(value)
+}
+
 fn not_null(table: &str, column: &str) -> StoreError {
     StoreError::new(
         CONSTRAINT_VIOLATION,
@@ -288,6 +296,26 @@ fn collect_values<T: serde::de::DeserializeOwned>(
     raw.into_iter()
         .map(|(k, v)| Ok((k, serde_json::from_slice(&v)?)))
         .collect()
+}
+
+/// The `raw_data` rows of a page, in source order.
+pub(crate) fn raw_rows_of(read: &dyn KvRead, page_id: u64) -> Result<Vec<RawRecord>> {
+    Ok(
+        collect_values::<RawRecord>(read, &raw_page_prefix(page_id))?
+            .into_iter()
+            .map(|(_, row)| row)
+            .collect(),
+    )
+}
+
+/// Every `files` row, in file id order.
+pub(crate) fn all_file_records(read: &dyn KvRead) -> Result<Vec<FileRecord>> {
+    let mut files: Vec<FileRecord> = collect_values(read, &[keys::RAW_FILES, FILE])?
+        .into_iter()
+        .map(|(_, f)| f)
+        .collect();
+    files.sort_by_key(|f| f.id);
+    Ok(files)
 }
 
 /// The pages `putRawData` writes to: the page in `source_id` when one is named, else every page

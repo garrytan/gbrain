@@ -1960,3 +1960,104 @@ fn drift_conflicts_group_source_changed_receipts_by_slug_inside_the_window() {
         .unwrap();
     assert_eq!(no_paths["recorded"], json!([]));
 }
+
+#[test]
+fn requests_by_request_id_span_principals_and_stop_at_two() {
+    let dir = TempDir::new("persist-by-request-id");
+    let store = open(&dir);
+    assert!(
+        store
+            .list_write_requests_by_request_id(REQ_1)
+            .unwrap()
+            .is_empty()
+    );
+    let mine = store
+        .insert_write_request(&insert_input(&store, REQ_1, "notes/a", json!({})))
+        .unwrap();
+    let one = store
+        .list_write_requests_by_request_id(&REQ_1.to_uppercase())
+        .unwrap();
+    assert_eq!(one, vec![mine.clone()]);
+    // A second principal admits the same request id: the read is ambiguous and says so.
+    let mut theirs = insert_input(&store, REQ_1, "notes/b", json!({}));
+    theirs.principal_id = "other-writer".into();
+    store.insert_write_request(&theirs).unwrap();
+    let mut third = insert_input(&store, REQ_1, "notes/c", json!({}));
+    third.principal_id = "third-writer".into();
+    store.insert_write_request(&third).unwrap();
+    let rows = store.list_write_requests_by_request_id(REQ_1).unwrap();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|r| r["request_id"] == REQ_1));
+    assert!(
+        store
+            .list_write_requests_by_request_id(REQ_2)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        store
+            .list_write_requests_by_request_id("nope")
+            .unwrap_err()
+            .code,
+        INVALID_ARGUMENT
+    );
+}
+
+#[test]
+fn pending_write_health_counts_in_flight_writes_and_the_named_pending_writes_that_later_failed() {
+    use gbrain_store::telemetry::McpRequestLogInput;
+    let dir = TempDir::new("persist-health");
+    let store = open(&dir);
+    let empty = store.read_pending_write_health().unwrap();
+    assert_eq!(
+        empty,
+        json!({ "pending_writes": 0, "oldest_pending_write_age_seconds": 0, "pending_writes_later_failed": 0 })
+    );
+    store.lock_persistence_counters(&keys()).unwrap();
+    store
+        .insert_write_request(&insert_input(&store, REQ_1, "notes/a", json!({})))
+        .unwrap();
+    let failed = store
+        .insert_write_request(&insert_input(&store, REQ_2, "notes/b", json!({})))
+        .unwrap();
+    let id = failed["id"].as_str().unwrap();
+    store.stamp_write_claim(&stamp(id, 1000.0, None)).unwrap();
+    store
+        .complete_write_row(&completion(id, "failed", 0))
+        .unwrap()
+        .unwrap();
+    let log = |status: &str, params: Option<Value>| McpRequestLogInput {
+        operation: Some("put_page".into()),
+        status: Some(status.into()),
+        params,
+        ..McpRequestLogInput::default()
+    };
+    for (status, params) in [
+        (
+            "accepted_pending",
+            Some(json!({ "write_request_id": REQ_1 })),
+        ),
+        (
+            "accepted_pending",
+            Some(json!({ "write_request_id": REQ_2 })),
+        ),
+        (
+            "accepted_pending",
+            Some(json!({ "write_request_id": REQ_2 })),
+        ),
+        ("success", Some(json!({ "write_request_id": REQ_2 }))),
+        ("accepted_pending", None),
+    ] {
+        store.log_mcp_request(&log(status, params)).unwrap();
+    }
+    let health = store.read_pending_write_health().unwrap();
+    assert_eq!(
+        health["pending_writes"], 1,
+        "the queued request is in flight"
+    );
+    assert_eq!(
+        health["pending_writes_later_failed"], 1,
+        "the failed request counts once, however many rows name it"
+    );
+    assert!(health["oldest_pending_write_age_seconds"].as_i64().unwrap() >= 0);
+}

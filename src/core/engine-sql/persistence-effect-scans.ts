@@ -78,7 +78,10 @@ export async function selectClaimableEffect<R = Record<string, unknown>>(exec: L
   return row ?? null;
 }
 
-/** `readRequestEffects`, every kind: $1 request id. The text `publicEffectsForRequest` (persistence/effect-journal.ts) has always sent. */
+/**
+ * `readRequestEffects`, every kind: $1 request id. The text `publicEffectsForRequest` (persistence/effect-journal.ts) has always
+ * sent, with the kind order pinned to `COLLATE "C"` so it never follows the database's locale.
+ */
 export const REQUEST_EFFECTS_SQL = 'SELECT kind,state,error_code,outcome,recovery IS NOT NULL AS recovering FROM persistence_effects WHERE request_id=$1::uuid ORDER BY kind COLLATE "C"';
 
 /** `readRequestEffects`, the Git effect: $1 request id. The text `gitReceiptState` (persistence/effect-journal.ts) has always sent. */

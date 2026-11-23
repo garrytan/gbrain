@@ -294,6 +294,28 @@ pub(crate) fn source_purges(read: &dyn KvRead, source_id: &str) -> Result<Vec<So
     }
 }
 
+/// Adds to `out` the request id of every tombstone purged after `since_us`, the `fact_purges` arm of
+/// `listRecentPurgeRequests` (`request_id IS NOT NULL AND purged_at > now() - make_interval(...)`).
+pub(crate) fn recent_request_ids(
+    read: &dyn KvRead,
+    since_us: i64,
+    out: &mut std::collections::BTreeSet<String>,
+) -> Result<()> {
+    let mut failure = None;
+    scan_prefix(read, &[keys::FACT, PURGE], false, &mut |_, v| {
+        match serde_json::from_slice::<PurgeRecord>(v) {
+            Ok(r) => {
+                if let (Some(request), true) = (r.request_id, r.purged_at_us > since_us) {
+                    out.insert(request);
+                }
+            }
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    failure.map_or(Ok(()), Err)
+}
+
 /// Removes every tombstone of a source, for the source delete.
 pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
     let mut doomed = Vec::new();

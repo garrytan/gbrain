@@ -27,7 +27,7 @@ async function runStrictFactsOutsideGit(ctx: DoctorContext): Promise<Check[]> {
   ctx.progress.heartbeat('strict_facts_outside_git');
   const checks: Check[] = [];
   try {
-    const rows = await engine.executeRaw<{ id: string }>(`SELECT id FROM sources WHERE NOT archived AND COALESCE(config->>'canonical','')='git' ORDER BY id`);
+    const rows = await engine.readDoctorSources('strict_git');
     if (!rows.length) {
       checks.push({ name: 'strict_facts_outside_git', status: 'ok', details: { sources: [], docs: FACTS_HOME_DOCS },
         message: 'No source is strict (git-canonical), so no fact is required to have a Git home.' });

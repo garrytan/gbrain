@@ -66,6 +66,11 @@ function failingAt(engine: BrainEngine, pattern: RegExp): BrainEngine {
       // A statement that moved into a typed member fails there when the pattern matches its text.
       const typed = TYPED_STATEMENTS[prop as string];
       if (typed && pattern.test(typed)) return async () => { throw new Error('injected failure after the receipt page write'); };
+      // The seal's chunker stamp is the typed setProjectionChunkerVersion member (engine-sql/projection-rebuild.ts, the
+      // statement `UPDATE pages SET chunker_version=...`); fail it where the pattern names that statement.
+      if (prop === 'setProjectionChunkerVersion' && pattern.test('UPDATE pages SET chunker_version=')) return async () => {
+        throw new Error('injected failure after the receipt page write');
+      };
       if (prop === 'transaction') return (fn: (tx: BrainEngine) => Promise<unknown>, opts?: unknown) =>
         target.transaction(tx => fn(failingAt(tx, pattern)), opts as never);
       const value = Reflect.get(target, prop, target);

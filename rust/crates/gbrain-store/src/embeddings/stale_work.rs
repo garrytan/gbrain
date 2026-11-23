@@ -2,7 +2,7 @@
 //! `src/core/engine-sql/embed-stale-work.ts`): the archived-source work count, the pending-projection reads, the
 //! signature-drift probe and one content-drift batch (the provenance check is `read_page_provenance_complete` in the
 //! parent module). They read the page records, their chunks
-//! and signatures (the embeddings family's page context), the source records and the page's embedding holds.
+//! and signatures (the embeddings family's page context), the source records and the page's ledger row.
 //!
 //! SQL semantics kept: `md5(chunk_text)` is the store's text hash (sha256; `text_hash`), a NULL comparison is false, the
 //! archived-work and pending reads look at every chunk record of a page (no generation filter, as the SQL reads
@@ -56,17 +56,9 @@ fn large_page(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
 }
 
 /// `pageBudgetLimitedFilter`: the page has a held or capped budget row that still applies (large, or a reason that applies
-/// at any size). The store keeps that row in two families: the hold (`embedding_holds.rs`) and the paid-path ledger
-/// (`page_embedding_budget.rs`).
+/// at any size). The store keeps that row in the page's ledger record (`page_embedding_budget.rs`).
 pub(super) fn budget_limited(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
-    let mut rows = Vec::new();
-    if let Some(hold) = crate::embedding_holds::read_hold(read, page.id)? {
-        rows.push((hold.state, hold.reason));
-    }
-    if let Some(row) = crate::page_embedding_budget::ledger_state(read, page.id)? {
-        rows.push(row);
-    }
-    for (state, reason) in rows {
+    if let Some((state, reason)) = crate::page_embedding_budget::read_state_reason(read, page.id)? {
         if state != "open"
             && (reason
                 .as_deref()
@@ -322,8 +314,8 @@ impl Store {
             .collect())
     }
 
-    /// `isSegmentedPage(pageId)`: whether the page (live or soft-deleted) keeps its body in segments.
-    pub fn is_segmented_page(&self, page_id: u64) -> Result<bool> {
+    /// `readPageIsSegmented(pageId)`: whether the page (live or soft-deleted) keeps its body in segments.
+    pub fn read_page_is_segmented(&self, page_id: u64) -> Result<bool> {
         let read = self.read()?;
         Ok(crate::pages::read_page_by_id(&*read, page_id)?.is_some_and(|p| segmented(&p)))
     }

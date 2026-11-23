@@ -200,7 +200,7 @@ describe('embed --stale members', () => {
 
   parityTest(
     'the pending-projection reads list the unsealed pages of the scope, the repair read only rebuildable ones after a page id',
-    { methods: ['countEmbedPendingProjections', 'listEmbedPendingProjections', 'listEmbedProjectionRepairPages', 'isSegmentedPage'] },
+    { methods: ['countEmbedPendingProjections', 'listEmbedPendingProjections', 'listEmbedProjectionRepairPages', 'readPageIsSegmented'] },
     async (engine, backend) => {
       await createSource(engine, backend, 'old');
       await stalePage(engine, 'a/sealed');
@@ -221,8 +221,8 @@ describe('embed --stale members', () => {
         limited: (await engine.listEmbedPendingProjections(all, 0)).length,
         repair: repair.map((r) => `${r.source_id}:${r.slug}`),
         afterFirst: (await engine.listEmbedProjectionRepairPages(all, firstId, 10)).map((r) => r.slug),
-        segmented: await engine.isSegmentedPage(firstId),
-        unknownSegmented: await engine.isSegmentedPage(987654321),
+        segmented: await engine.readPageIsSegmented(firstId),
+        unknownSegmented: await engine.readPageIsSegmented(987654321),
       };
       expect(out).toEqual({
         count: 2, active: 1, withChunks: 0, stale: 0,

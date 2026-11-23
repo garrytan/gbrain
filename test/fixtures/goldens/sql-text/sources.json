@@ -39,6 +39,50 @@
           }
         ]
       },
+      "advanceSourcePurgeEpoch": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "UPDATE sources SET purge_epoch = purge_epoch + 1 WHERE id = $1 RETURNING purge_epoch",
+            "textSha256": "721766be7aeeba6e28865f96d60b8b7947dbc82744a81e607be9d5fb31ff10a6"
+          }
+        ]
+      },
+      "advanceSyncCheckpoint": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "boolean",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "null",
+              "boolean",
+              "string",
+              "boolean",
+              "string"
+            ],
+            "sql": "UPDATE sources SET last_commit = $1, last_sync_at = now(), config = jsonb_set(( WITH RECURSIVE root_layers(value, depth) AS ( SELECT COALESCE(config, '{}'::jsonb), 0 UNION ALL SELECT gbrain_try_jsonb(value #>> '{}'), depth + 1 FROM root_layers WHERE depth < 10 AND jsonb_typeof(value) = 'string' AND gbrain_try_jsonb(value #>> '{}') IS NOT NULL ), root(value) AS ( SELECT value FROM root_layers ORDER BY depth DESC LIMIT 1 ), fragment_seeds(ordinality, value) AS ( SELECT 0::bigint, value FROM root WHERE jsonb_typeof(value) = 'object' UNION ALL SELECT item.ordinality, item.value FROM root, LATERAL jsonb_array_elements( CASE WHEN jsonb_typeof(root.value) = 'array' THEN root.value ELSE '[]'::jsonb END ) WITH ORDINALITY AS item(value, ordinality) ), fragment_layers(ordinality, value, depth) AS ( SELECT ordinality, value, 0 FROM fragment_seeds UNION ALL SELECT ordinality, gbrain_try_jsonb(value #>> '{}'), depth + 1 FROM fragment_layers WHERE depth < 10 AND jsonb_typeof(value) = 'string' AND gbrain_try_jsonb(value #>> '{}') IS NOT NULL ), fragments AS ( SELECT DISTINCT ON (ordinality) ordinality, value FROM fragment_layers ORDER BY ordinality, depth DESC ) SELECT COALESCE( jsonb_object_agg(entry.key, entry.value ORDER BY fragments.ordinality), '{}'::jsonb ) FROM fragments CROSS JOIN LATERAL jsonb_each( CASE WHEN jsonb_typeof(fragments.value) = 'object' THEN fragments.value ELSE '{}'::jsonb END ) AS entry(key, value) ), '{slug_root_mode}', to_jsonb(CASE WHEN $2::boolean THEN COALESCE(config->>'slug_root_mode', $3::text) ELSE $4::text END)), newest_content_at = (SELECT MAX(updated_at) FROM pages WHERE source_id = $5 AND deleted_at IS NULL) WHERE id = $6 AND incarnation = $7::uuid AND (last_commit IS NOT DISTINCT FROM $8::text OR ($9::boolean AND last_commit = $10)) AND ($11::boolean OR config->>'slug_root_mode' IS NULL OR config->>'slug_root_mode' = $12) RETURNING id",
+            "textSha256": "bdb8f7b046edc4679ecd2cfe0a61cb635a40c90f856048fb75ab6603c456c39c"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT config->>'slug_root_mode' AS mode FROM sources WHERE id = $1 AND incarnation = $2::uuid",
+            "textSha256": "10ed52243782f97daef79a8c784a013afe71b7554e93102fbb36a4448150b9df"
+          }
+        ]
+      },
       "countDefaultSourceSplit": {
         "default": [
           {
@@ -185,8 +229,8 @@
               "boolean",
               "boolean"
             ],
-            "sql": "SELECT id, name, local_path, last_sync_at, config FROM sources WHERE ($1 OR archived IS NOT TRUE) AND ($2 OR (local_path IS NOT NULL AND config->>'role' IS DISTINCT FROM 'storage_manifest')) ORDER BY (id = 'default') DESC, id",
-            "textSha256": "7a9f40530ae88bb9c1d059fb6b47a75e864c4e3a9579d0145dfdff0bfdae61ce"
+            "sql": "SELECT id, name, local_path, last_sync_at, config FROM sources WHERE ($1 OR archived IS NOT TRUE) AND ($2 OR (local_path IS NOT NULL AND config->>'role' IS DISTINCT FROM 'storage_manifest')) ORDER BY (id = 'default') DESC, id COLLATE \"C\"",
+            "textSha256": "87281a18015b9e6ed5383f0ff34f52672f724b758d7959871901d48b77de749a"
           }
         ]
       },
@@ -209,6 +253,16 @@
             ],
             "sql": "SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND NOT NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine')",
             "textSha256": "bc5cb7265babab24fa474f7e22aa57f7752f437c58b3a031f1cf35dadb4f5051"
+          }
+        ]
+      },
+      "listSourceIds": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT id FROM sources ORDER BY id COLLATE \"C\"",
+            "textSha256": "976f7c52754fc64f2abfc1c711385170820222e8fec1e1eb02dfa28c2bd770da"
           }
         ]
       },
@@ -239,8 +293,8 @@
           {
             "lane": "pool",
             "params": [],
-            "sql": "SELECT id, local_path, archived, config, EXISTS (SELECT 1 FROM pages WHERE source_id = 'default' AND deleted_at IS NULL) AS default_has_pages FROM sources ORDER BY id",
-            "textSha256": "054aca20c098f544c08e897c04f7b4e40a1d032830a5ccfa14d9f93aa06bb3fc"
+            "sql": "SELECT id, local_path, archived, config, EXISTS (SELECT 1 FROM pages WHERE source_id = 'default' AND deleted_at IS NULL) AS default_has_pages FROM sources ORDER BY id COLLATE \"C\"",
+            "textSha256": "c2c644440a48b94de0b819d28567064c4a6053966b63589d64ff24d3f4cd95b2"
           }
         ]
       },
@@ -249,8 +303,26 @@
           {
             "lane": "pool",
             "params": [],
-            "sql": "SELECT id FROM sources WHERE last_sync_at IS NOT NULL AND last_sync_at < now() - interval '7 days' AND NOT archived ORDER BY id",
-            "textSha256": "cc41a39850838d726cd1cfbe062bd2c0ade08a63d214f1c9c4ab9068d21281c6"
+            "sql": "SELECT id FROM sources WHERE last_sync_at IS NOT NULL AND last_sync_at < now() - interval '7 days' AND NOT archived ORDER BY id COLLATE \"C\"",
+            "textSha256": "4edc2e898dac8dba21b8ea23ddb40cda602cc5630c7931dc26c9062b7388af7c"
+          }
+        ]
+      },
+      "lockAllSourceRows": {
+        "share": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT id FROM sources ORDER BY id FOR SHARE",
+            "textSha256": "4d893222d4d812a8104db694447bf33066eb056ed9e029914a9218a319e74d73"
+          }
+        ],
+        "update": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT id FROM sources ORDER BY id FOR UPDATE",
+            "textSha256": "eceb1ca1d2a91335dbd46dd2cefe7cbf0440f26f6bf89f4be186ccb24ec8431d"
           }
         ]
       },
@@ -278,6 +350,16 @@
           }
         ]
       },
+      "readFirstSourceId": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT id FROM sources ORDER BY (id = 'default') DESC, id COLLATE \"C\" LIMIT 1",
+            "textSha256": "cf9f94704b6cec792da2dbbe4c333540aa5bd4b9223fa785f0a9ef4c479d9ae8"
+          }
+        ]
+      },
       "readLiveIdentityHolders": {
         "default": [
           {
@@ -292,6 +374,18 @@
           }
         ]
       },
+      "readPageIdentity": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "number"
+            ],
+            "sql": "SELECT frontmatter->>'id' AS fm_id, title FROM pages WHERE id = $1 AND deleted_at IS NULL",
+            "textSha256": "a1f8f456f2ecc89509b160fe011762a794cb4ade0a7a4e03f19ac496229637be"
+          }
+        ]
+      },
       "readPageSizeRows": {
         "default": [
           {
@@ -300,8 +394,8 @@
               "string",
               "number"
             ],
-            "sql": "SELECT p.slug, (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id WHERE p.source_id = $1 AND p.deleted_at IS NULL AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $2 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug",
-            "textSha256": "056b71d4359215c2373ec81e174be8cbd46570ba1d6a4653fc6d198de9c35460"
+            "sql": "SELECT p.slug, (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id WHERE p.source_id = $1 AND p.deleted_at IS NULL AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $2 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug COLLATE \"C\"",
+            "textSha256": "a0fecf88f17a3217b226130091ae27f06442fecd20bbf205c1e6ed92a49ef342"
           }
         ],
         "slugs": [
@@ -312,8 +406,8 @@
               "array<string>",
               "number"
             ],
-            "sql": "SELECT p.slug, (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.slug = ANY($2::text[]) AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $3 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug",
-            "textSha256": "aa98a64693e09380f76b21ee932430d338292d6fdfd7318d63aa7b7213d0f2c5"
+            "sql": "SELECT p.slug, (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.slug = ANY($2::text[]) AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $3 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug COLLATE \"C\"",
+            "textSha256": "59155a20cf7bb95ed355ede6c37056106e6643019de7a2fb5bb86dac18647fb5"
           }
         ]
       },
@@ -355,6 +449,16 @@
           }
         ]
       },
+      "readSoleSourceId": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT id FROM sources ORDER BY id LIMIT 2",
+            "textSha256": "b29491610b4fc5e76f76c04a5963fce716cd6854c03d4e6587b7902c9d864e2c"
+          }
+        ]
+      },
       "readSourceChunkerVersion": {
         "default": [
           {
@@ -376,6 +480,18 @@
             ],
             "sql": "SELECT id, name FROM sources WHERE id = $1",
             "textSha256": "2eec0fcee3e42b28821c70143a73a1183cb532fd00d3c033d0debdb25e9c81f2"
+          }
+        ]
+      },
+      "readSourceLastCommit": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT last_commit FROM sources WHERE id=$1",
+            "textSha256": "46104614de5ece42e06e3353a0fe15d3a09e7ac512730edd3bc0033b99bdd237"
           }
         ]
       },
@@ -428,6 +544,33 @@
             ],
             "sql": "INSERT INTO reason_purge_tombstones(source_id, commit_sha, path) SELECT $1, t.c, t.p FROM unnest($2::text[], $3::text[]) AS t(c, p) ON CONFLICT DO NOTHING RETURNING 1",
             "textSha256": "2ab69214bd925579e0d8c99815705bef88e0801fcdf600f6f875563acc631ba4"
+          }
+        ]
+      },
+      "writeSourceSyncHeartbeat": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "UPDATE sources SET last_sync_at = now() WHERE id = $1",
+            "textSha256": "85b867a0c243b7fd9544f0ac401151155a5aa4c2dab1b36d98cafec96a6953ba"
+          }
+        ]
+      },
+      "writeSourceUpstreamObservation": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "number",
+              "string"
+            ],
+            "sql": "UPDATE sources SET upstream_checked_at=$1::timestamptz,upstream_commit=$2,upstream_behind=$3 WHERE id=$4",
+            "textSha256": "701c47b7784e866510f5478ccf327f8c3c7dc75a9f74cfd08ad51a96a0cea95b"
           }
         ]
       }

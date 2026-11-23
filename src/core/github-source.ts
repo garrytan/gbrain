@@ -1488,10 +1488,7 @@ async function runExtractAndEmbed(
 
 async function touchSourceRow(deps: GitHubSyncDeps, newestContentAt: string): Promise<void> {
   try {
-    await deps.engine.executeRaw(
-      `UPDATE sources SET last_sync_at = now(), newest_content_at = $1::timestamptz WHERE id = $2`,
-      [newestContentAt, deps.sourceId],
-    );
+    await deps.engine.markSourceSynced(deps.sourceId, { newestContentAt });
   } catch { /* best-effort */ }
 }
 

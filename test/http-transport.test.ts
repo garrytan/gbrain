@@ -35,6 +35,10 @@ interface FakeEngine {
   /** Raw `INSERT INTO mcp_request_log` statements that reached executeRaw (none expected). */
   rawLogInserts: string[];
   logMcpRequest: (row: { token_name: string | null; agent_name: string | null; operation: string; latency_ms: number | null; status: string }) => Promise<void>;
+  /** The typed bearer read (BrainEngine.readActiveAccessTokenByHash) validateToken calls. */
+  readActiveAccessTokenByHash: (hash: string, caller: string) => Promise<Record<string, unknown> | null>;
+  /** The typed last-use stamp (BrainEngine.touchAccessTokenLastUsed). */
+  touchAccessTokenLastUsed: (id: string, unified: boolean) => Promise<void>;
 }
 
 function makeSqlTag(handler: SqlHandler) {
@@ -143,7 +147,13 @@ function makeFakeEngine(cfg: FakeEngineConfig = {}): FakeEngine {
     audit.push({ token_name: row.token_name, agent_name: row.agent_name, operation: row.operation, latency_ms: row.latency_ms as number, status: row.status });
   };
 
-  return { kind: 'postgres', executeRaw, sql, audit, rawLogInserts, logMcpRequest };
+  // The typed bearer members validateToken calls. They land on the same handler
+  // as the raw statement they replace, so dbDown and revoked tokens behave the same.
+  const readActiveAccessTokenByHash = async (hash: string) =>
+    (handle('SELECT * FROM access_tokens WHERE token_hash = $1 AND revoked_at IS NULL', [hash])[0] as Record<string, unknown> | undefined) ?? null;
+  const touchAccessTokenLastUsed = async () => {};
+
+  return { kind: 'postgres', executeRaw, sql, audit, rawLogInserts, logMcpRequest, readActiveAccessTokenByHash, touchAccessTokenLastUsed };
 }
 
 interface TestServer {

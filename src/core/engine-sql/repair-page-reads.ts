@@ -161,7 +161,7 @@ export async function readOriginIndexState(exec: LegacyUnscopedRead): Promise<Or
 export async function listOriginTwinCounts(exec: LegacyUnscopedRead, limit: number): Promise<OriginTwinCount[]> {
   const { text, params } = renderFragment(sqlFragment`SELECT source_id, count(*)::int AS groups, (sum(n) - count(*))::int AS twins
     FROM (SELECT source_id, count(*) AS n FROM pages WHERE deleted_at IS NULL AND source_path IS NOT NULL GROUP BY source_id, source_path HAVING count(*) > 1) g
-    GROUP BY source_id ORDER BY source_id LIMIT ${Math.max(1, Math.floor(limit))}`);
+    GROUP BY source_id ORDER BY source_id COLLATE "C" LIMIT ${Math.max(1, Math.floor(limit))}`);
   const rows = await exec.executeRaw<OriginTwinCount>(text, params);
   return rows.map(row => ({ source_id: row.source_id, groups: Number(row.groups), twins: Number(row.twins) }));
 }

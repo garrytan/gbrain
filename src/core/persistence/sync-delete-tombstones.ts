@@ -49,7 +49,7 @@ export async function readUnreviewedSyncTombstones(engine: Pick<BrainEngine, 'ex
     `SELECT p.id, p.source_id, p.slug, p.deleted_at < now() - ($1 || ' hours')::interval AS expired FROM pages p
       WHERE p.deleted_at IS NOT NULL AND ${syncDeleteOrigin('p')}
         AND NOT EXISTS (SELECT 1 FROM pages tw WHERE tw.source_id = p.source_id AND tw.deleted_at IS NULL AND tw.content_hash = p.content_hash)
-      ORDER BY p.deleted_at ASC, p.source_id ASC, p.slug ASC`, [String(Math.max(0, Math.floor(olderThanHours)))]);
+      ORDER BY p.deleted_at ASC, p.source_id COLLATE "C" ASC, p.slug COLLATE "C" ASC`, [String(Math.max(0, Math.floor(olderThanHours)))]);
   return rows.map(row => ({ ...row, id: Number(row.id) }));
 }
 

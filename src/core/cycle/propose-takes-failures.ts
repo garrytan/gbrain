@@ -78,7 +78,7 @@ export async function saveFailureLedger(engine: BrainEngine, sourceId: string, l
 export async function listFailedProposals(engine: BrainEngine, sourceId: string): Promise<Array<{ slug: string; code: string; prompt_version: string; proposed_at: string }>> {
   const rows = await engine.executeRaw<{ slug: string; claim_text: string; prompt_version: string; proposed_at: string }>(
     `SELECT page_slug AS slug, claim_text, prompt_version, proposed_at::text AS proposed_at FROM take_proposals
-      WHERE source_id = $1 AND status = 'rejected' AND acted_at IS NULL AND starts_with(claim_text, $2) ORDER BY page_slug`, [sourceId, TOMBSTONE_PREFIX]);
+      WHERE source_id = $1 AND status = 'rejected' AND acted_at IS NULL AND starts_with(claim_text, $2) ORDER BY page_slug COLLATE "C"`, [sourceId, TOMBSTONE_PREFIX]);
   return rows.map(row => ({ slug: row.slug, code: row.claim_text.slice(TOMBSTONE_PREFIX.length, -1), prompt_version: row.prompt_version, proposed_at: row.proposed_at }));
 }
 
