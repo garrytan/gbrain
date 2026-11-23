@@ -13,6 +13,8 @@ import { canonicalLookup } from '../core/model-pricing.ts';
 import { embedQueryWithPrefix } from '../core/search/query-prefix.ts';
 import { keylessThinkNotice, modelOverrideIgnoredNotice } from '../core/interop-notices.ts';
 import { applyCliOpNotices, captureOpNotice } from '../cli/op-notices.ts';
+import { exitCliError } from '../cli/cli-error.ts';
+import { OperationError } from '../core/ops/contract.ts';
 
 function flagValue(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
@@ -251,6 +253,8 @@ prints what would have been the input (exit 0).
         }
       }
     } catch (e) {
+      // GST-3612: a managed save or take accepted but still publishing exits 10 with its receipt and poll command.
+      if (e instanceof OperationError && e.code === 'write_pending') exitCliError(e, 'think', { json });
       // #1698: an unresolvable explicit --model throws here. Clean non-zero exit
       // with the actionable message, not a stack trace.
       console.error((e as Error).message);
