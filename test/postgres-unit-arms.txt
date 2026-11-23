@@ -192,6 +192,7 @@ test/engine-parity/extract-takes-reads.test.ts
 test/engine-parity/extract-takes.test.ts
 test/engine-parity/extraction.test.ts
 test/engine-parity/fact-future-order.test.ts
+test/engine-parity/fact-page-delete.test.ts
 test/engine-parity/fact-pool-widening.test.ts
 test/engine-parity/fact-purge-commit.test.ts
 test/engine-parity/fact-purge-ledger.test.ts
@@ -320,6 +321,7 @@ test/engine-parity/search-privacy-retention.test.ts
 test/engine-parity/search-privacy.test.ts
 test/engine-parity/search-private-fence.test.ts
 test/engine-parity/search-reads.test.ts
+test/engine-parity/search-space-separators.test.ts
 test/engine-parity/search.test.ts
 test/engine-parity/segment-regions.test.ts
 test/engine-parity/segmented-body.test.ts
