@@ -379,7 +379,7 @@ describe('status --json', () => {
       state: 'not_run', checked_at: null, server_version: null, collation: null, mismatches: 0, ctype: null, locale_provider: null, locale: null,
       differing_code_points: [], differing_code_points_total: 0, corpus_mismatches: 0, corpus_mismatch_rows: [], facts_with_differing_code_points: 0,
     } });
-    expect(json.seed).toEqual({ seed_id: 'seed-1', finished_at: SEED.finished_at, unseeded_gap_rows_total: 0, storage: null });
+    expect((json as { seed: unknown }).seed).toEqual({ seed_id: 'seed-1', finished_at: SEED.finished_at, unseeded_gap_rows_total: 0, storage: null });
     expect(json.allocators).toEqual({ verified: false, checked_at: null });
     expect(json.primary_refreshes).toEqual({ nonterminal_rows: null, checked_at: null });
   });
