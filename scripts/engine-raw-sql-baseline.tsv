@@ -8,7 +8,7 @@ src/cli/enforced-member.ts	execute_raw	5
 src/commands/access-read-by-nobody.ts	execute_raw	1
 src/commands/access-read-log.ts	execute_raw	4	GST-2476 gap 1: the access read log readers (access log, who-read) over the new access_read_log table (v331); the access area is still raw SQL (access.ts, access-rules.ts) and converts with it
 src/commands/access-rules.ts	execute_raw	4
-src/commands/access.ts	execute_raw	5
+src/commands/access.ts	execute_raw	4
 src/commands/agent-logs.ts	execute_raw	1
 src/commands/agent-register.ts	execute_raw	2
 src/commands/agent-register.ts	sql_template	7
@@ -208,7 +208,7 @@ src/core/calibration/undo-wave.ts	execute_raw	7
 src/core/chronicle/backfill.ts	execute_raw	1
 src/core/chronicle/campaign.ts	execute_raw	3
 src/core/chronicle/execute.ts	execute_raw	9
-src/core/chronicle/ledger.ts	execute_raw	10	#9636: add_link carries a still-pending automatic decision to its revision, read from chronicle_page_state by page; no typed engine method for the ledger exists yet
+src/core/chronicle/ledger.ts	execute_raw	6	#9636: add_link carries a still-pending automatic decision to its revision, read from chronicle_page_state by page; no typed engine method for the ledger exists yet
 src/core/chronicle/publish.ts	execute_raw	2
 src/core/chunkers/symbol-resolver.ts	execute_raw	7
 src/core/claw-test/seed-pglite.ts	driver_call	1
@@ -231,8 +231,7 @@ src/core/connectors/item-holds-store.ts	execute_raw	9
 src/core/content-drift-sweep.ts	execute_raw	2
 src/core/context/compile-view.ts	execute_raw	1
 src/core/context/corpus-source.ts	execute_raw	1
-src/core/context/volunteer-events.ts	execute_raw	2
-src/core/context/volunteer.ts	execute_raw	1
+src/core/context/volunteer-events.ts	execute_raw	1
 src/core/contextual-retrieval-service.ts	execute_raw	3
 src/core/conversation-parser/llm-base.ts	execute_raw	2
 src/core/core-memory.ts	execute_raw	1
@@ -300,7 +299,7 @@ src/core/facts/purge-overlay.ts	execute_raw	1
 src/core/facts/purge-verify.ts	execute_raw	2
 src/core/facts/purge.ts	execute_raw	1	GBRA-574 F #9674 (opened before this ratchet): +1 the purge plan reads whether a fact sits on an unbacked name tag
 src/core/facts/writeback-audience.ts	execute_raw	1	reads access_tokens.member_id and oauth_clients.member_id to count people, not credentials, for the brain audience (GST-3180); no typed engine method exists yet
-src/core/feedback/store.ts	execute_raw	16
+src/core/feedback/store.ts	execute_raw	8
 src/core/fence-repair/attempts.ts	execute_raw	3
 src/core/fence-repair/census-store.ts	execute_raw	2
 src/core/fence-repair/hold-fix.ts	execute_raw	2
@@ -612,7 +611,7 @@ src/core/questions/pages.ts	execute_raw	1
 src/core/questions/receipt.ts	execute_raw	1
 src/core/questions/refresh.ts	execute_raw	14
 src/core/questions/service.ts	execute_raw	1
-src/core/questions/store.ts	execute_raw	7
+src/core/questions/store.ts	execute_raw	5
 src/core/reindex-consent.ts	execute_raw	1
 src/core/remediation/run.ts	execute_raw	1
 src/core/repair/attribution-backfill.ts	execute_raw	5

@@ -16,6 +16,8 @@
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
  * unexported.
  */
+import type { PageAccessRow } from '../../engine-sql/page-access-rows.ts';
+import type { OwnerOnlyForm } from '../../access/owner-only.ts';
 import { DELETE_BATCH_SIZE } from '../../engine-constants.ts';
 import { assertPurgeAge } from '../../engine-errors.ts';
 import type { FindPagesQuery, FoundPages } from '../../page-find.ts';
@@ -406,3 +408,9 @@ export const listStaleAtoms: StoreMember<[sourceIds: readonly string[], atomId: 
 /** The slugs of the source's markdown pages, soft-deleted pages included, by byte order. */
 export const listMarkdownPageSlugs: StoreMember<[sourceId: string], string[]> = async (brain, sourceId) =>
   await storeCall({ member: 'listMarkdownPageSlugs' }, () => brain.listMarkdownPageSlugs(sourceId)) as string[];
+
+/** who-can-read's page rows of `slug`, with the owner-only test of `form` judged on the store's page records. */
+export const readPageAccessRows: StoreMember<[slug: string, sourceId: string | undefined, form: OwnerOnlyForm], PageAccessRow[]> = async (brain, slug, sourceId, form) => {
+  const rows = await storeCall({ member: 'readPageAccessRows' }, () => brain.readPageAccessRows(slug, sourceId ?? null, form)) as PageAccessRow[];
+  return rows.map(r => ({ slug: r.slug, source_id: r.source_id, type: r.type ?? null, frontmatter: r.frontmatter, folder_rule_ids: r.folder_rule_ids ?? null, owner_only: r.owner_only === true }));
+};

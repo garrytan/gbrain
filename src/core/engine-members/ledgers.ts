@@ -17,6 +17,10 @@ import type * as OpenLoopsSql from '../engine-sql/open-loops.ts';
 import type * as BeliefPurgeSql from '../engine-sql/belief-purge.ts';
 import type * as BeliefStateSql from '../engine-sql/belief-state.ts';
 import type * as ReadSharedSourcesSql from '../engine-sql/read-shared-sources.ts';
+import type * as PinnedQuestionsSql from '../engine-sql/pinned-questions.ts';
+import type * as VolunteerEventsSql from '../engine-sql/volunteer-events.ts';
+import type * as ChronicleLedgerSql from '../engine-sql/chronicle-ledger.ts';
+import type * as RetrievalFeedbackSql from '../engine-sql/retrieval-feedback.ts';
 
 export interface LedgerMembers {
   // Belief ledger writes (engine-sql/belief-ledger.ts). Each runs the statement its caller in src/core/belief/ ran through executeRaw.
@@ -186,6 +190,26 @@ export interface LedgerMembers {
   readAccessCredentials(by: AccessCredentialLookup): Promise<AccessCredentialRow[]>;
   /** The live credentials bound to `memberId` with their grant rows, by byte order of kind, name and id (guests/owner-credentials.ts). */
   listOwnerCredentialRows(memberId: string): Promise<OwnerCredentialRow[]>;
+  /** Inserts one pinned question (`ON CONFLICT (source_id, slug) DO NOTHING`); its row, or null when the slug has one (questions/store.ts). */
+  insertPinnedQuestion(row: PinnedQuestionsSql.PinnedQuestionInsert): Promise<PinnedQuestionsSql.PinnedQuestionRow | null>;
+  /** The row of the pinned question `(sourceId, slug)`, or null. */
+  readPinnedQuestion(sourceId: string, slug: string): Promise<PinnedQuestionsSql.PinnedQuestionRow | null>;
+  /** The pinned questions that pass the filter, by source id in byte order, then creation time, then id. */
+  listPinnedQuestions(filter: PinnedQuestionsSql.PinnedQuestionFilter): Promise<PinnedQuestionsSql.PinnedQuestionRow[]>;
+  /** Logs the volunteered pages whose page still exists, in one statement (context/volunteer-events.ts). */
+  insertVolunteerEvents(rows: readonly VolunteerEventsSql.VolunteerEventInsert[]): Promise<void>;
+  /** The volunteered and later-retrieved counts per match arm and channel over the last `days` days, by byte of arm then channel. */
+  readVolunteerUsage(sourceIds: readonly string[], days: number): Promise<VolunteerEventsSql.VolunteerUsageRow[]>;
+  /** Records a chronicle decision for a page revision; false when the ledger guards keep the existing row (chronicle/ledger.ts). */
+  upsertChronicleRow(w: ChronicleLedgerSql.ChronicleRowUpsert): Promise<boolean>;
+  /** Takes one automatic chronicle judge slot when fewer than `limit` were taken in the last 24 hours; false otherwise. */
+  reserveChronicleJudgeSlot(limit: number, key: ChronicleLedgerSql.ChronicleJudgeKey): Promise<boolean>;
+  /** Records retrieval events with the pages and links each returned whose page rows exist; a repeat is ignored (feedback/store.ts). */
+  insertRetrievalEvents(events: RetrievalFeedbackSql.RetrievalEventInsert[]): Promise<void>;
+  /** One retrieval event with its pages by rank and its links by byte of source, edge key and target, or null. */
+  readRetrievalEvent(id: string): Promise<RetrievalFeedbackSql.RetrievalEventRead | null>;
+  /** Applies one batch of ratings (targets already distinct): each newly stored rating moves its element's weight. */
+  applyRetrievalRatings(args: RetrievalFeedbackSql.RetrievalRatingBatch): Promise<RetrievalFeedbackSql.AppliedRatingRow[]>;
 
   /** Revoke every active access token with this exact name; the revoked ids (none on a store that keeps no credentials). */
   revokeAccessTokensNamed(name: string): Promise<string[]>;

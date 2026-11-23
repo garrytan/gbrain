@@ -29,13 +29,15 @@ import { join } from 'node:path';
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { clientsReferencingSource } from '../../src/core/destructive-guard.ts';
-import { feedbackStatus, getRetrievalEvent, insertRetrievalEvents } from '../../src/core/feedback/store.ts';
+import { applyRatings, feedbackStatus, getRetrievalEvent, insertRetrievalEvents } from '../../src/core/feedback/store.ts';
 import { listPins, insertPin } from '../../src/core/questions/store.ts';
 import { insertCalibration, listCalibrations, receiptStats, slotUsage } from '../../src/core/ai/decide/store.ts';
 import { readCandidateRecords, upsertCandidatePart } from '../../src/core/fence-repair/census-store.ts';
 import { readUncommittedFenceRepairs, recordUncommittedFenceRepair, type UncommittedFenceRepair } from '../../src/core/fence-repair/uncommitted.ts';
 import { readChronicleLedgerStats } from '../../src/core/chronicle/ledger-stats.ts';
+import { reserveChronicleSlot, upsertChronicleRow } from '../../src/core/chronicle/ledger.ts';
 import { volunteerUsageStats } from '../../src/core/context/volunteer.ts';
+import { insertVolunteerEvents } from '../../src/core/context/volunteer-events.ts';
 import { derivationNeedles } from '../../src/core/page-body/segment-derive.ts';
 import { readMissingTables } from '../../src/core/schema-missing-tables.ts';
 import { readBudgetLimited } from '../../src/core/held-embedding.ts';
@@ -116,47 +118,112 @@ describe('store listings come out by byte', () => {
     expect((await clientsReferencingSource(engine, 'guest-src')).map(c => c.clientId)).toEqual([...BYTE_SLUGS]);
   });
 
-  parityTest('feedbackStatus lists the lowest weights by byte of source and key', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  /** One page per (source, key), each returned by one retrieval event and rated `rating` once, by the feedback writers. */
+  async function ratedPages(engine: BrainEngine, backend: ParityBackend, rating: number) {
     await seedSources(engine, backend);
-    for (const source of MIXED_SOURCES) {
-      for (const key of MIXED_SLUGS) {
-        await engine.executeRaw(`INSERT INTO retrieval_weights (source_id, element_kind, element_key, weight) VALUES ($1, 'page', $2, 0.2)`, [source, key]);
-      }
-    }
-    expect((await feedbackStatus(engine)).lowest.map(r => [r.source_id, r.slug])).toEqual(byteTuples(MIXED_SOURCES, MIXED_SLUGS));
+    const pages = MIXED_SOURCES.flatMap(source_id => MIXED_SLUGS.map(slug => ({ source_id, slug })));
+    for (const p of pages) await engine.putPage(p.slug, { type: 'note', title: p.slug, compiled_truth: p.slug, timeline: '' }, { sourceId: p.source_id });
+    await insertRetrievalEvents(engine, [{ id: 'evt-1', client_id: 'local', op: 'query', links: [],
+      pages: pages.map((p, i) => ({ ...p, content_hash: 'h', rank: i + 1, cited: false })) }]);
+    await applyRatings(engine, { eventId: 'evt-1', clientId: 'local', signal: 'explicit', alpha: 0.3,
+      targets: pages.map(p => ({ kind: 'page' as const, source_id: p.source_id, key: p.slug, rating, content_hash: 'h' })) });
+    // A second rating of each page after an edit (another content hash): its learned weight decays halfway to neutral
+    // first, and the stored weight moves by the upsert's own arithmetic.
+    await insertRetrievalEvents(engine, [{ id: 'evt-2', client_id: 'other', op: 'search', links: [],
+      pages: pages.map((p, i) => ({ ...p, content_hash: 'h2', rank: i + 1, cited: true })) }]);
+    return applyRatings(engine, { eventId: 'evt-2', clientId: 'other', signal: 'explicit', alpha: 0.37,
+      targets: pages.map(p => ({ kind: 'page' as const, source_id: p.source_id, key: p.slug, rating: rating === 1 ? 2 : 4, content_hash: 'h2' })) });
+  }
+
+  parityTest('feedbackStatus lists the lowest weights by byte of source and key', { methods: ['putPage', 'insertRetrievalEvents', 'applyRetrievalRatings', 'readFeedbackStatus'] }, async (engine, backend) => {
+    const applied = await ratedPages(engine, backend, 1);
+    const status = await feedbackStatus(engine);
+    expect(status.lowest.map(r => [r.source_id, r.slug])).toEqual(byteTuples(MIXED_SOURCES, MIXED_SLUGS));
+    // The weights each rating moved and the whole status (counts, weights, low ratings) are compared across engines.
+    const bytes = (x: string, y: string) => Buffer.compare(Buffer.from(x), Buffer.from(y));
+    return { applied: [...applied].sort((a, b) => bytes(a.source_id, b.source_id) || bytes(a.key, b.key)),
+      status: { ...status, last_rating_at: status.last_rating_at !== null } };
   });
 
-  parityTest('feedbackStatus lists the highest weights by byte of source and key', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
-    await seedSources(engine, backend);
-    for (const source of MIXED_SOURCES) {
-      for (const key of MIXED_SLUGS) {
-        await engine.executeRaw(`INSERT INTO retrieval_weights (source_id, element_kind, element_key, weight) VALUES ($1, 'page', $2, 0.8)`, [source, key]);
-      }
-    }
-    expect((await feedbackStatus(engine)).highest.map(r => [r.source_id, r.slug])).toEqual(byteTuples(MIXED_SOURCES, MIXED_SLUGS));
+  parityTest('feedbackStatus lists the highest weights by byte of source and key', { methods: ['putPage', 'insertRetrievalEvents', 'applyRetrievalRatings', 'readFeedbackStatus'] }, async (engine, backend) => {
+    await ratedPages(engine, backend, 5);
+    const status = await feedbackStatus(engine);
+    expect(status.highest.map(r => [r.source_id, r.slug])).toEqual(byteTuples(MIXED_SOURCES, MIXED_SLUGS));
+    return { ...status, last_rating_at: status.last_rating_at !== null };
   });
 
-  parityTest('getRetrievalEvent lists links by byte of source, edge key and target', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('getRetrievalEvent lists links by byte of source, edge key and target', { methods: ['putPage', 'insertRetrievalEvents', 'readRetrievalEvent'] }, async (engine, backend) => {
     await seedSources(engine, backend);
-    await insertRetrievalEvents(engine, [{ id: 'evt-1', client_id: 'local', op: 'query', pages: [], links: [] }]);
     const rows: string[][] = [];
     for (const source of MIXED_SOURCES) for (const key of MIXED_SLUGS) rows.push([source, key, 'to']);
     for (const target of MIXED_SLUGS) rows.push(['a-z', 'same-edge', target]);
-    for (const [source, edge, target] of rows) {
-      await engine.executeRaw(`INSERT INTO retrieval_event_links (event_id, source_id, edge_key, to_slug) VALUES ('evt-1', $1, $2, $3)`, [source, edge, target]);
+    // An event keeps a link only while the pages at both ends of its edge and its target exist.
+    for (const source of MIXED_SOURCES) for (const slug of [...MIXED_SLUGS, 'to', 'same-edge']) {
+      await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: slug, timeline: '' }, { sourceId: source });
     }
+    await insertRetrievalEvents(engine, [{ id: 'evt-1', client_id: 'local', op: 'query', pages: [],
+      links: rows.map(([source_id, edge_key, to_slug]) => ({ source_id: source_id!, edge_key: edge_key!, to_slug: to_slug! })) }]);
     const event = await getRetrievalEvent(engine, 'evt-1');
     expect(event?.links.map(l => [l.source_id, l.edge_key, l.to_slug])).toEqual(byteRows(rows));
+    return { ...event, created_at: event?.created_at instanceof Date };
   });
 
-  parityTest('listPins lists pinned questions by byte of source id', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  /** Source `work` with pages a, b and c; an event that returned a and b and used the link a|t|b; ratings of a, b and the link; one volunteer event per page. */
+  async function feedbackAndVolunteerRows(engine: BrainEngine, backend: ParityBackend) {
+    await createSource(engine, backend, 'work');
+    for (const slug of ['a', 'b', 'c']) await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: slug, timeline: '' }, { sourceId: 'work' });
+    // The engine members themselves (the product writers above call them).
+    await engine.insertRetrievalEvents([{ id: 'e1', client_id: 'local', op: 'query',
+      pages: ['a', 'b'].map((slug, i) => ({ source_id: 'work', slug, content_hash: null, rank: i + 1, cited: false })),
+      links: [{ source_id: 'work', edge_key: 'a|t|b', to_slug: 'c' }] }]);
+    expect((await engine.readRetrievalEvent('e1'))?.pages.map(p => p.slug)).toEqual(['a', 'b']);
+    await engine.applyRetrievalRatings({ eventId: 'e1', clientId: 'local', signal: 'explicit', alpha: 0.5, targets: [
+      { kind: 'page', source_id: 'work', key: 'a', rating: 1, content_hash: null }, { kind: 'page', source_id: 'work', key: 'b', rating: 5, content_hash: null },
+      { kind: 'link', source_id: 'work', key: 'a|t|b', rating: 5, content_hash: null }] });
+    await insertVolunteerEvents(engine, ['a', 'b', 'c'].map(slug => ({ source_id: 'work', slug, confidence: 0.5, match_arm: 'arm', rationale: '', channel: 'op' as never })));
+  }
+
+  const feedbackView = async (engine: BrainEngine) => {
+    const event = await getRetrievalEvent(engine, 'e1');
+    const status = await feedbackStatus(engine);
+    const channels = (await engine.listVolunteerChannels(null)).map(r => [r.channel, Number(r.n)]);
+    return { pages: event?.pages.map(p => p.slug), links: event?.links, events: status.events, ratings: status.ratings_explicit, weights: status.weights_total, channels };
+  };
+
+  parityTest('a hard delete scrubs its slug from the retrieval feedback and the volunteer log', {
+    methods: ['putPage', 'insertRetrievalEvents', 'applyRetrievalRatings', 'insertVolunteerEvents', 'deletePages', 'readRetrievalEvent', 'readFeedbackStatus', 'listVolunteerChannels'],
+  }, async (engine, backend) => {
+    await feedbackAndVolunteerRows(engine, backend);
+    expect(await engine.deletePages(['a'], { sourceId: 'work' })).toEqual(['a']);
+    const out = await feedbackView(engine);
+    // The page row of a, the link whose edge starts at a, and the rating and weight of a and of that edge go.
+    expect(out).toEqual({ pages: ['b'], links: [], events: 1, ratings: 1, weights: 1, channels: [['op', 2]] });
+    return out;
+  });
+
+  parityTest('removing a source drops its retrieval feedback and volunteer log and keeps the event', {
+    methods: ['putPage', 'insertRetrievalEvents', 'applyRetrievalRatings', 'insertVolunteerEvents', 'deletePages', 'deleteSourceRecord', 'readRetrievalEvent', 'readFeedbackStatus', 'listVolunteerChannels'],
+  }, async (engine, backend) => {
+    await feedbackAndVolunteerRows(engine, backend);
+    // A source with pages goes only when its pages cascade; delete them first, as `sources remove` does.
+    await engine.deletePages(['a', 'b', 'c'], { sourceId: 'work' });
+    expect((await engine.deleteSourceRecord('work')).deleted).toBe(true);
+    const out = await feedbackView(engine);
+    expect(out).toEqual({ pages: [], links: [], events: 1, ratings: 0, weights: 0, channels: [] });
+    return out;
+  });
+
+  parityTest('listPins lists pinned questions by byte of source id', { methods: ['insertPinnedQuestion', 'listPinnedQuestions'] }, async (engine, backend) => {
     await seedSources(engine, backend);
     for (const sourceId of MIXED_SOURCES) {
       await insertPin(engine, {
         sourceId, slug: 'pin', question: 'q?', scope: { source: sourceId }, state: 'active', inactiveReason: null, publishMode: 'publish', createdBy: 'test',
       });
     }
-    expect((await listPins(engine)).map(p => p.source_id)).toEqual(BYTE_SOURCES);
+    const pins = await listPins(engine);
+    expect(pins.map(p => p.source_id)).toEqual(BYTE_SOURCES);
+    // The rows (all but the engine-assigned id and creation time) are compared across engines.
+    return pins.map(({ id: _id, created_at: _at, ...rest }) => rest);
   });
 
   parityTest('ownerCredentials lists clients of one kind by byte of name and id', { methods: ['insertOauthClient', 'getConfig', 'setConfig', 'transaction', 'listOwnerCredentialRows'] }, async (engine) => {
@@ -202,35 +269,44 @@ describe('store listings come out by byte', () => {
     }
   });
 
-  parityTest('volunteerUsageStats lists arms and channels by byte', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
-    for (const arm of MIXED_SLUGS) {
-      await engine.executeRaw(`INSERT INTO context_volunteer_events (source_id, slug, confidence, match_arm, channel) VALUES ('default', 'p', 0.5, $1, 'op')`, [arm]);
-    }
-    for (const channel of MIXED_SLUGS) {
-      await engine.executeRaw(`INSERT INTO context_volunteer_events (source_id, slug, confidence, match_arm, channel) VALUES ('default', 'p', 0.5, 'z-arm', $1)`, [channel]);
-    }
+  parityTest('volunteerUsageStats lists arms and channels by byte', { methods: ['putPage', 'insertVolunteerEvents', 'readVolunteerUsage', 'listVolunteerChannels'] }, async (engine) => {
+    // The log keeps an event only while its page exists.
+    await engine.putPage('p', { type: 'note', title: 'p', compiled_truth: 'p', timeline: '' });
+    const event = (match_arm: string, channel: string) => ({ source_id: 'default', slug: 'p', confidence: 0.5, match_arm, rationale: '', channel: channel as never });
+    await insertVolunteerEvents(engine, [...MIXED_SLUGS.map(arm => event(arm, 'op')), ...MIXED_SLUGS.map(channel => event('z-arm', channel))]);
     const stats = await volunteerUsageStats(engine, ['default']);
     expect(stats.by_arm.map(r => [r.match_arm, r.channel])).toEqual(byteRows([...MIXED_SLUGS.map(arm => [arm, 'op']), ...MIXED_SLUGS.map(channel => ['z-arm', channel])]));
+    // The doctor's per-channel read of the same log: channels by byte, with their counts.
+    const channels = (await engine.listVolunteerChannels(['default'])).map(r => [r.channel, Number(r.n), r.last_fired !== null]);
+    expect(channels).toEqual(byteOrder([...MIXED_SLUGS, 'op']).map(c => [c, c === 'op' ? 3 : 1, true]));
+    return { stats, channels };
   });
 
-  /** One skipped automatic ledger row and one judge reservation per key: the key is both the reason and the principal id. */
+  /** One skipped automatic ledger row and one judge reservation per key, by the ledger writers: the key is both the reason and the principal id. */
   async function seedLedger(engine: BrainEngine) {
     for (const key of MIXED_SLUGS) {
-      await engine.putPage(`notes/${key}`, { type: 'note', title: key, compiled_truth: key, timeline: '' });
-      await engine.executeRaw(
-        `INSERT INTO chronicle_page_state (source_id, page_id, content_hash, extractor_version, slug, state, reason, trigger, principal_kind, principal_id)
-         SELECT 'default', id, 'h', 1, slug, 'skipped', $1, 'auto', 'client', $1 FROM pages WHERE slug = $2 AND source_id = 'default'`, [key, `notes/${key}`]);
-      await engine.executeRaw(`INSERT INTO chronicle_judge_reservations (source_id, page_id, content_hash) SELECT 'default', id, 'h' FROM pages WHERE slug = $1 AND source_id = 'default'`, [`notes/${key}`]);
+      const page = await engine.putPage(`notes/${key}`, { type: 'note', title: key, compiled_truth: key, timeline: '' });
+      const at = { sourceId: 'default', pageId: Number(page.id), contentHash: 'h' };
+      expect(await upsertChronicleRow(engine, { ...at, slug: page.slug, state: 'skipped', reason: key, trigger: 'auto', principalKind: 'client', principalId: key, nextAttemptAt: null })).toBe(true);
+      expect(await reserveChronicleSlot(engine, 1000, at)).toBe(true);
     }
   }
 
-  parityTest('readChronicleLedgerStats lists principals by byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('readChronicleLedgerStats lists principals by byte', { methods: ['putPage', 'upsertChronicleRow', 'reserveChronicleJudgeSlot', 'readChronicleLedgerStats'] }, async (engine) => {
     await seedLedger(engine);
-    expect((await readChronicleLedgerStats(engine)).principals24h.map(p => p.principal)).toEqual(BYTE_SLUGS.map(key => `client:${key}`));
+    const stats = await readChronicleLedgerStats(engine);
+    expect(stats.principals24h.map(p => p.principal)).toEqual(BYTE_SLUGS.map(key => `client:${key}`));
+    // The whole rollup (counts, reasons, calls, spend) is compared across engines.
+    return stats;
   });
 
-  parityTest('readChronicleLedgerStats lists reasons by byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('readChronicleLedgerStats lists reasons by byte', { methods: ['putPage', 'getPage', 'upsertChronicleRow', 'reserveChronicleJudgeSlot', 'readChronicleLedgerStats'] }, async (engine) => {
     await seedLedger(engine);
+    // The engine members themselves: a repeat of a skip decision rewrites it, and a slot past the limit is refused.
+    const page = (await engine.getPage(`notes/${MIXED_SLUGS[0]}`))!;
+    expect(await engine.upsertChronicleRow({ sourceId: 'default', pageId: Number(page.id), contentHash: 'h', extractorVersion: 2, slug: page.slug,
+      state: 'skipped', reason: MIXED_SLUGS[0], trigger: 'auto', principalKind: 'client', principalId: MIXED_SLUGS[0], requestId: null, noExtract: false, nextAttemptAt: null })).toBe(true);
+    expect(await engine.reserveChronicleJudgeSlot(MIXED_SLUGS.length, { sourceId: 'default', pageId: Number(page.id), contentHash: 'h' })).toBe(false);
     expect(Object.keys((await readChronicleLedgerStats(engine)).last7d.reasons)).toEqual([...BYTE_SLUGS]);
   });
 

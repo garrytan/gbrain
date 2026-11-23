@@ -40,6 +40,7 @@ pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Resul
     crate::page_ops::remove_page_rows(tx, page)?;
     crate::entity_identities::remove_page_rows(tx, page)?;
     crate::mention_state::remove_page_rows(tx, page)?;
+    crate::chronicle_ledger::remove_page_rows(tx, page)?;
     Ok(())
 }
 

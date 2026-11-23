@@ -59,6 +59,7 @@ import { exactIdentityStatement } from '../src/core/engine-sql/exact-identity.ts
 import { tokenGrantJsonSql } from '../src/core/guests/owner-credentials.ts';
 import { foldSql } from '../src/core/page-body/schema.ts';
 import { CLIENT_INSPECTION_COLUMNS } from '../src/core/harness/client-setup.ts';
+import { ownerOnlyPageSql } from '../src/core/access/owner-only.ts';
 
 const memberSql = (member: string) => `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
   FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
@@ -2655,6 +2656,133 @@ const PINS: Pin[] = [
     from: 'src/commands/serve-http-clients.ts:21 mountAdminClients (at b7b18e5ab3)',
     case: { method: 'listAdminClientRows', variant: 'default', run: e => e.listAdminClientRows() },
     texts: () => [`SELECT ${CLIENT_INSPECTION_COLUMNS} FROM oauth_clients ORDER BY created_at DESC, client_id COLLATE "C"`],
+  },
+  {
+    from: 'src/core/questions/store.ts:133 insertPin (at b7b18e5ab3)',
+    case: { method: 'insertPinnedQuestion', variant: 'default', run: e => e.insertPinnedQuestion({ sourceId: 'default', slug: 'q', question: 'q?', scopeSlugPrefix: null, scopeEntity: null, state: 'active', inactiveReason: null, publishMode: 'publish', createdBy: 't' }) },
+    texts: [`INSERT INTO pinned_questions (source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     ON CONFLICT (source_id, slug) DO NOTHING RETURNING id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
+  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
+  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
+  refresh_attempts, spend_usd, created_at, archived_at`],
+  },
+  {
+    from: 'src/core/questions/store.ts:104 getPin (at b7b18e5ab3; without forUpdate)',
+    case: { method: 'readPinnedQuestion', variant: 'default', run: e => e.readPinnedQuestion('default', 'q') },
+    texts: [`SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
+  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
+  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
+  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions WHERE source_id = $1 AND slug = $2`],
+  },
+  {
+    from: 'src/core/questions/store.ts:115 listPins (at b7b18e5ab3; the all composition)',
+    case: { method: 'listPinnedQuestions', variant: 'all', run: e => e.listPinnedQuestions({ includeArchived: true }) },
+    texts: [`SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
+  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
+  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
+  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions  ORDER BY source_id COLLATE "C", created_at, id`],
+  },
+  {
+    from: 'src/core/questions/store.ts:115 listPins (at b7b18e5ab3; the unarchived composition)',
+    case: { method: 'listPinnedQuestions', variant: 'unarchived', run: e => e.listPinnedQuestions({ includeArchived: false }) },
+    texts: [`SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
+  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
+  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
+  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions WHERE state <> 'archived' ORDER BY source_id COLLATE "C", created_at, id`],
+  },
+  {
+    from: 'src/core/questions/store.ts:115 listPins (at b7b18e5ab3; the states composition)',
+    case: { method: 'listPinnedQuestions', variant: 'states', run: e => e.listPinnedQuestions({ states: ['active'] }) },
+    texts: [`SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
+  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
+  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
+  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions WHERE state = ANY($1::text[]) ORDER BY source_id COLLATE "C", created_at, id`],
+  },
+  {
+    from: 'src/core/questions/store.ts:115 listPins (at b7b18e5ab3; the sources composition)',
+    case: { method: 'listPinnedQuestions', variant: 'sources', run: e => e.listPinnedQuestions({ sourceIds: ['default'], includeArchived: true }) },
+    texts: [`SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
+  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
+  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
+  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions WHERE source_id = ANY($1::text[]) ORDER BY source_id COLLATE "C", created_at, id`],
+  },
+  {
+    from: 'src/core/questions/store.ts:115 listPins (at b7b18e5ab3; the sources-unarchived composition)',
+    case: { method: 'listPinnedQuestions', variant: 'sources-unarchived', run: e => e.listPinnedQuestions({ sourceIds: ['default'] }) },
+    texts: [`SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
+  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
+  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
+  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions WHERE source_id = ANY($1::text[]) AND state <> 'archived' ORDER BY source_id COLLATE "C", created_at, id`],
+  },
+  {
+    from: 'src/core/questions/store.ts:115 listPins (at b7b18e5ab3; the sources-states composition)',
+    case: { method: 'listPinnedQuestions', variant: 'sources-states', run: e => e.listPinnedQuestions({ sourceIds: ['default'], states: ['active'] }) },
+    texts: [`SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
+  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
+  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
+  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions WHERE source_id = ANY($1::text[]) AND state = ANY($2::text[]) ORDER BY source_id COLLATE "C", created_at, id`],
+  },
+  {
+    from: 'src/core/context/volunteer-events.ts:178 insertVolunteerEvents (at b7b18e5ab3; two rows)',
+    case: { method: 'insertVolunteerEvents', variant: 'default', run: e => e.insertVolunteerEvents([
+      { source_id: 'default', slug: 'p', confidence: 0.5, match_arm: 'a', rationale: '', channel: 'op' },
+      { source_id: 'default', slug: 'q', confidence: 0.5, match_arm: 'b', rationale: '', channel: 'op', session_id: 's', turn: 1 }]) },
+    texts: [`INSERT INTO context_volunteer_events
+       (source_id, slug, confidence, match_arm, rationale, channel, session_id, turn)
+     SELECT v.* FROM (VALUES ($1::text, $2::text, $3::float8, $4::text, $5::text, $6::text, $7::text, $8::int), ($9::text, $10::text, $11::float8, $12::text, $13::text, $14::text, $15::text, $16::int)) AS v(source_id, slug, confidence, match_arm, rationale, channel, session_id, turn)
+     WHERE EXISTS (SELECT 1 FROM pages pg WHERE pg.source_id = v.source_id AND pg.slug = v.slug FOR KEY SHARE)`],
+  },
+  {
+    from: 'src/core/context/volunteer.ts:370 volunteerUsageStats (at b7b18e5ab3)',
+    case: { method: 'readVolunteerUsage', variant: 'default', run: e => e.readVolunteerUsage(['default'], 30) },
+    texts: [`SELECT e.match_arm, e.channel,
+              count(*)::text AS volunteered,
+              count(*) FILTER (WHERE GREATEST(p.last_retrieved_at, r.last_retrieved_at) > e.volunteered_at)::text AS used
+         FROM context_volunteer_events e
+         LEFT JOIN pages p
+           ON p.source_id = e.source_id AND p.slug = e.slug AND p.deleted_at IS NULL
+         LEFT JOIN page_retrievals r ON r.page_id = p.id
+        WHERE e.source_id = ANY($1::text[])
+          AND e.volunteered_at > now() - ($2 || ' days')::interval
+        GROUP BY e.match_arm, e.channel
+        ORDER BY e.match_arm COLLATE "C", e.channel COLLATE "C"`],
+  },
+  {
+    from: 'src/commands/access.ts:192 whoCanRead (at b7b18e5ab3; the closed owner-only form, every source)',
+    case: { method: 'readPageAccessRows', variant: 'closed-any', run: e => e.readPageAccessRows('notes/a', undefined, 'closed') },
+    texts: () => [`SELECT p.slug, p.source_id, p.type, p.frontmatter, p.folder_rule_ids, ${ownerOnlyPageSql('p', 'closed')} AS owner_only
+       FROM pages p WHERE p.slug = $1 ORDER BY p.source_id COLLATE "C"`],
+  },
+  {
+    from: 'src/commands/access.ts:192 whoCanRead (at b7b18e5ab3; the closed owner-only form, one source)',
+    case: { method: 'readPageAccessRows', variant: 'closed-one', run: e => e.readPageAccessRows('notes/a', 'work', 'closed') },
+    texts: () => [`SELECT p.slug, p.source_id, p.type, p.frontmatter, p.folder_rule_ids, ${ownerOnlyPageSql('p', 'closed')} AS owner_only
+       FROM pages p WHERE p.slug = $1 AND p.source_id = $2 ORDER BY p.source_id COLLATE "C"`],
+  },
+  {
+    from: 'src/commands/access.ts:192 whoCanRead (at b7b18e5ab3; the fn owner-only form, every source)',
+    case: { method: 'readPageAccessRows', variant: 'fn-any', run: e => e.readPageAccessRows('notes/a', undefined, 'fn') },
+    texts: () => [`SELECT p.slug, p.source_id, p.type, p.frontmatter, p.folder_rule_ids, ${ownerOnlyPageSql('p', 'fn')} AS owner_only
+       FROM pages p WHERE p.slug = $1 ORDER BY p.source_id COLLATE "C"`],
+  },
+  {
+    from: 'src/commands/access.ts:192 whoCanRead (at b7b18e5ab3; the fn owner-only form, one source)',
+    case: { method: 'readPageAccessRows', variant: 'fn-one', run: e => e.readPageAccessRows('notes/a', 'work', 'fn') },
+    texts: () => [`SELECT p.slug, p.source_id, p.type, p.frontmatter, p.folder_rule_ids, ${ownerOnlyPageSql('p', 'fn')} AS owner_only
+       FROM pages p WHERE p.slug = $1 AND p.source_id = $2 ORDER BY p.source_id COLLATE "C"`],
+  },
+  {
+    from: 'src/commands/access.ts:192 whoCanRead (at b7b18e5ab3; the mode owner-only form, every source)',
+    case: { method: 'readPageAccessRows', variant: 'mode-any', run: e => e.readPageAccessRows('notes/a', undefined, 'mode') },
+    texts: () => [`SELECT p.slug, p.source_id, p.type, p.frontmatter, p.folder_rule_ids, ${ownerOnlyPageSql('p', 'mode')} AS owner_only
+       FROM pages p WHERE p.slug = $1 ORDER BY p.source_id COLLATE "C"`],
+  },
+  {
+    from: 'src/commands/access.ts:192 whoCanRead (at b7b18e5ab3; the mode owner-only form, one source)',
+    case: { method: 'readPageAccessRows', variant: 'mode-one', run: e => e.readPageAccessRows('notes/a', 'work', 'mode') },
+    texts: () => [`SELECT p.slug, p.source_id, p.type, p.frontmatter, p.folder_rule_ids, ${ownerOnlyPageSql('p', 'mode')} AS owner_only
+       FROM pages p WHERE p.slug = $1 AND p.source_id = $2 ORDER BY p.source_id COLLATE "C"`],
   },
   {
     from: 'src/core/persistence/sync-admission.ts:34 readSyncAdmission',

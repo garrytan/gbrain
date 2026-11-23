@@ -32,7 +32,7 @@ test/engine-parity/cli-reads-ops.test.ts	22	0
 test/engine-parity/code-eval-salience.test.ts	13	0
 test/engine-parity/collate-aggregated-lists.test.ts	3	3
 test/engine-parity/collate-belief-cycle-walks.test.ts	0	6
-test/engine-parity/collate-command-listings.test.ts	5	3
+test/engine-parity/collate-command-listings.test.ts	6	2
 test/engine-parity/collate-core-page-lists.test.ts	4	12
 test/engine-parity/collate-doctor-access.test.ts	0	11
 test/engine-parity/collate-doctor-persistence.test.ts	0	13
@@ -47,7 +47,7 @@ test/engine-parity/collate-referrer-ties.test.ts	3	0
 test/engine-parity/collate-repair-scans.test.ts	0	4
 test/engine-parity/collate-schema-pack-samples.test.ts	0	4
 test/engine-parity/collate-slug-sources.test.ts	1	7
-test/engine-parity/collate-store-listings.test.ts	12	9
+test/engine-parity/collate-store-listings.test.ts	21	2
 test/engine-parity/collate-ties.test.ts	2	0
 test/engine-parity/config-ingest.test.ts	9	0
 test/engine-parity/connect-gate.test.ts	7	0

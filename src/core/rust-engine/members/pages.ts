@@ -72,6 +72,7 @@ export const PAGES_MEMBERS = {
   getAllSlugs: 'pages',
   listAllPageRefs: 'pages',
   listMarkdownPageSlugs: 'pages',
+  readPageAccessRows: 'pages',
   listEntityKeyRows: 'pages',
   listIdentityDecisions: 'pages',
   listRestrictedIdentityMembers: 'pages',

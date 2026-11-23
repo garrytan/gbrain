@@ -60,7 +60,7 @@ async function page(engine: BrainEngine, sourceId: string, slug: string, frontma
 }
 
 describe('command listings sort text keys by byte', () => {
-  parityTest('pagesReadByNobodyNaming lists pages by source id, then slug', { methods: ['putPage', 'listPagesNamingReader'] }, async (engine, backend) => {
+  parityTest('pagesReadByNobodyNaming lists pages by source id, then slug', { methods: ['putPage', 'listPagesNamingReader', 'readPageAccessRows'] }, async (engine, backend) => {
     await sources(engine, backend);
     for (const source of MIXED_SOURCES) for (const slug of MIXED_SLUGS) await page(engine, source, slug, { readable_by: ['member:gone-example'] });
     const { pages, truncated } = await pagesReadByNobodyNaming(engine, 'gone-example');

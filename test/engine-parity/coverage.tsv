@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2012/2028
+# covered: 2022/2039
 # lifecycle: 9/9
 # pages: 81/82
 # search: 7/7
@@ -74,7 +74,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 16/16
 # wanted_links: 2/2
-# write_misc: 98/101
+# write_misc: 108/112
 # repair_bookkeeping: 55/55
 # write_attribution: 5/5
 # telemetry: 14/14
@@ -124,15 +124,15 @@ transaction	lifecycle	yes	304	no	yes	yes	serves
 transactionDirect	lifecycle	yes	14	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	204	yes	yes	yes	serves
+getPage	pages	yes	205	yes	yes	yes	serves
 readPageSnapshot	pages	yes	60	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
 lockPageKeys	pages	yes	14	no	yes	yes	serves
-putPage	pages	yes	1090	yes	yes	yes	serves
+putPage	pages	yes	1096	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	37	yes	yes	yes	serves
-deletePages	pages	yes	2	yes	yes	yes	serves
+deletePages	pages	yes	4	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
 softDeletePage	pages	yes	289	yes	yes	yes	serves
 softDeletePages	pages	yes	3	yes	yes	yes	serves
@@ -178,7 +178,7 @@ markSourceSynced	pages	yes	4	no	yes	yes	serves
 advanceSyncCheckpoint	pages	yes	2	no	yes	yes	serves
 countSourcePages	pages	yes	6	no	yes	yes	serves
 insertSource	pages	yes	13	no	yes	yes	serves
-deleteSourceRecord	pages	yes	6	no	yes	yes	serves
+deleteSourceRecord	pages	yes	7	no	yes	yes	serves
 readSourceDeleteImpact	pages	yes	2	no	yes	yes	serves
 readPageSizeRows	pages	yes	4	no	yes	yes	serves
 holdPageEmbedding	pages	yes	4	no	yes	yes	serves
@@ -1522,7 +1522,7 @@ listSegmentedPages	withdrawal_pages	yes	2	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	2	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	154	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	147	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	4	yes	yes	yes	serves
@@ -1617,6 +1617,7 @@ filterPagesAtRevision	cli_reads_import	yes	1	no	yes	yes	serves
 lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	serves
 replaceWantedLinkRows	wanted_links	yes	9	no	yes	yes	serves
 listMarkdownPageSlugs	write_misc	yes	1	no	yes	yes	serves
+readPageAccessRows	write_misc	yes	1	no	yes	yes	serves
 isSourceClaimed	write_misc	yes	5	no	yes	yes	serves
 readSourceState	write_misc	yes	11	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	2	no	yes	yes	serves
@@ -1709,6 +1710,16 @@ countOpenPages	write_misc	yes	3	no	yes	yes	serves
 readAccessMembers	write_misc	yes	15	no	yes	yes	serves
 readAccessCredentials	write_misc	yes	5	no	yes	yes	serves
 listOwnerCredentialRows	write_misc	yes	2	no	yes	yes	serves
+insertPinnedQuestion	write_misc	yes	1	no	yes	yes	serves
+readPinnedQuestion	write_misc	no	0	no	-	-	-
+listPinnedQuestions	write_misc	yes	1	no	yes	yes	serves
+insertVolunteerEvents	write_misc	yes	3	no	yes	yes	serves
+readVolunteerUsage	write_misc	yes	1	no	yes	yes	serves
+upsertChronicleRow	write_misc	yes	2	no	yes	yes	serves
+reserveChronicleJudgeSlot	write_misc	yes	2	no	yes	yes	serves
+insertRetrievalEvents	write_misc	yes	5	no	yes	yes	serves
+readRetrievalEvent	write_misc	yes	3	no	yes	yes	serves
+applyRetrievalRatings	write_misc	yes	4	no	yes	yes	serves
 revokeAccessTokensNamed	write_misc	yes	4	no	yes	yes	serves
 revokeAccessToken	write_misc	yes	12	no	yes	yes	serves
 deleteOAuthClient	write_misc	yes	9	no	yes	yes	serves
@@ -2071,10 +2082,10 @@ readDriftSchema	doctor_reads_acc	yes	4	no	yes	yes	serves
 listDriftLiveRows	doctor_reads_acc	yes	4	no	yes	yes	serves
 listDriftVersionRows	doctor_reads_acc	yes	4	no	yes	yes	serves
 originIndexPresent	doctor_reads_acc	yes	1	no	yes	yes	serves
-readChronicleLedgerStats	doctor_reads_acc	yes	1	no	yes	yes	serves
+readChronicleLedgerStats	doctor_reads_acc	yes	3	no	yes	yes	serves
 readChronicleDuplicateEvents	doctor_reads_acc	yes	1	no	yes	yes	serves
-readFeedbackStatus	doctor_reads_acc	yes	1	no	yes	yes	serves
-listVolunteerChannels	doctor_reads_acc	yes	1	no	yes	yes	serves
+readFeedbackStatus	doctor_reads_acc	yes	5	no	yes	yes	serves
+listVolunteerChannels	doctor_reads_acc	yes	4	no	yes	yes	serves
 listFenceCandidateRecords	doctor_checkpoints	yes	4	no	yes	yes	serves
 listDerivedOriginParks	doctor_checkpoints	yes	1	no	yes	yes	serves
 listPurgeParks	doctor_checkpoints	yes	1	no	yes	yes	serves

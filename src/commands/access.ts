@@ -30,7 +30,7 @@ import { readClientGrant } from '../core/grants/service.ts';
 import { resolveTokenGrant } from '../core/grants/legacy-token.ts';
 import { credentialReadSources } from '../core/grants/shared-exposure.ts';
 import { accessAllowedSql, folderRulesAllowedSql, isPrivacyPrivatePage, schemaVersionNow, withCallerAccess } from '../core/search/private-visibility.ts';
-import { ownerOnlyForm, ownerOnlyPageSql } from '../core/access/owner-only.ts';
+import { ownerOnlyForm } from '../core/access/owner-only.ts';
 import { membersReadLineageOn, setMembersReadLineage } from '../core/access/lineage.ts';
 import { setMemberLabelledOnly } from '../core/access/labelled-only.ts';
 import { folderAccessFor } from '../core/access/caller.ts';
@@ -189,10 +189,8 @@ export async function whoCanRead(engine: BrainEngine, slug: string, sourceId?: s
   const schema = await schemaVersionNow(engine);
   const remotePolicy = { privacyRelaxed: false, restricted: true, ...schema };
   // owner_only: the page is in, or derived from, an owner-only source (imessage, apple-contacts, owner_only: true), so only the owner reads it.
-  const rows = await engine.executeRaw<{ slug: string; source_id: string; type: string | null; frontmatter: unknown; folder_rule_ids: string[] | null; owner_only: boolean }>(
-    `SELECT p.slug, p.source_id, p.type, p.frontmatter, p.folder_rule_ids, ${ownerOnlyPageSql('p', ownerOnlyForm(schema.schemaVersion))} AS owner_only
-       FROM pages p WHERE p.slug = $1${sourceId ? ' AND p.source_id = $2' : ''} ORDER BY p.source_id COLLATE "C"`,
-    sourceId ? [slug, sourceId] : [slug]);
+  // engine-sql/page-access-rows.ts: the page rows with the owner-only test of this form.
+  const rows = await engine.readPageAccessRows(slug, sourceId, ownerOnlyForm(schema.schemaVersion));
   if (!rows.length) {
     throw opError('not_found', `No page "${slug}"${sourceId ? ` in source ${sourceId}` : ''}.`, 'Check the slug with gbrain list or gbrain search.');
   }

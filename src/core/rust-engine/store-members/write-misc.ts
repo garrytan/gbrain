@@ -94,7 +94,7 @@ export const isSourceClaimed: StoreMember<[sourceId: string], boolean> = (brain,
  */
 export const readDrainHolderProgress: StoreMember<[sourceId: string, since: string], DrainHolderProgressRow | null> = async () => null;
 
-/** The store keeps no chronicle extraction state, so no page has events. */
+/** The store keeps no extracted chronicle row (only pending and skipped decisions, chronicle_ledger.rs), so no page has events. */
 export const hasExtractedEvents: StoreMember<[sourceId: string, pageId: number], boolean> = async () => false;
 
 

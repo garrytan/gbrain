@@ -173,6 +173,10 @@ import * as synopsisTier from './synopsis-tier.ts';
 import * as sourceCrMode from './source-cr-mode.ts';
 import * as remoteLinks from './remote-links.ts';
 import * as factsBackstop from './facts-backstop.ts';
+import * as pinnedQuestions from './pinned-questions.ts';
+import * as volunteerEvents from './volunteer-events.ts';
+import * as chronicleLedger from './chronicle-ledger.ts';
+import * as retrievalFeedback from './retrieval-feedback.ts';
 
 const { readBrainMode: _brainModeHelper, ...writerReleaseMembers } = writerRelease;
 
@@ -331,6 +335,14 @@ export const STORE_MEMBERS = {
   ...remoteLinks,
   // The facts backstop effect's two extraction reads (rust/docs/store/jobs.md, "Facts extraction reads").
   ...factsBackstop,
+  // The pinned-question insert, read and listing (rust/docs/store/pinned-questions.md).
+  ...pinnedQuestions,
+  // The volunteered-page log insert and usage read (rust/docs/store/volunteer-events.md).
+  ...volunteerEvents,
+  // The chronicle ledger's decision upsert and judge slot (rust/docs/store/chronicle-ledger.md).
+  ...chronicleLedger,
+  // The retrieval event log, its read and a rating batch (rust/docs/store/retrieval-feedback.md).
+  ...retrievalFeedback,
   // The dream cycle's persistence journal reads (rust/docs/store/dream.md, "Dream cycle statements").
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 

@@ -93,15 +93,8 @@ export async function chronicleDailyRemaining(engine: BrainEngine, limit: number
  */
 export async function reserveChronicleSlot(engine: BrainEngine, limit: number,
   key: { sourceId: string; pageId: number; contentHash: string }): Promise<boolean> {
-  return engine.transaction(async (tx) => {
-    await tx.executeRaw("SELECT pg_advisory_xact_lock(hashtext('gbrain:chronicle:daily_reservation'))");
-    const [row] = await tx.executeRaw<{ n: number | string }>(
-      "SELECT count(*) AS n FROM chronicle_judge_reservations WHERE reserved_at > now() - interval '24 hours'");
-    if (Number(row?.n ?? 0) >= limit) return false;
-    await tx.executeRaw('INSERT INTO chronicle_judge_reservations (source_id, page_id, content_hash) VALUES ($1, $2, $3)',
-      [key.sourceId, key.pageId, key.contentHash]);
-    return true;
-  });
+  // engine-sql/chronicle-ledger.ts reserveChronicleJudgeSlot: the advisory lock, the 24-hour count and the insert.
+  return engine.reserveChronicleJudgeSlot(limit, key);
 }
 
 /** Reservations older than the window serve nothing; keep two days for doctor. */
@@ -132,24 +125,12 @@ export interface ChronicleRowWrite {
  * (#6199): its stamp is cleared, and only campaign.ts writes one.
  */
 export async function upsertChronicleRow(engine: BrainEngine, w: ChronicleRowWrite): Promise<boolean> {
-  const written = await engine.executeRaw(
-    `INSERT INTO chronicle_page_state AS c (source_id, page_id, content_hash, extractor_version, slug, state, reason, trigger,
-       principal_kind, principal_id, request_id, no_extract, next_attempt_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::uuid, $12, $13::timestamptz)
-     ON CONFLICT (source_id, page_id, content_hash, extractor_version) DO UPDATE SET
-       slug=EXCLUDED.slug, state=EXCLUDED.state, reason=EXCLUDED.reason, trigger=EXCLUDED.trigger,
-       principal_kind=EXCLUDED.principal_kind, principal_id=EXCLUDED.principal_id, request_id=EXCLUDED.request_id,
-       no_extract=EXCLUDED.no_extract, next_attempt_at=EXCLUDED.next_attempt_at, decided_at=now(), updated_at=now(),
-       campaign_id=NULL, attempt_cap_usd=NULL, max_attempts=NULL, pricing_policy=NULL, campaign_max_usd=NULL
-     WHERE NOT (EXCLUDED.trigger='auto' AND c.trigger='backfill' AND c.state IN ('pending','failed'))
-       AND (c.state <> 'extracted' OR EXISTS (SELECT 1 FROM chronicle_page_state newer
-         WHERE newer.source_id=c.source_id AND newer.page_id=c.page_id AND newer.content_hash<>c.content_hash
-           AND newer.state='extracted' AND newer.updated_at > c.updated_at))
-     RETURNING page_id`,
-    [w.sourceId, w.pageId, w.contentHash, CHRONICLE_EXTRACTOR_VERSION, w.slug, w.state, w.reason, w.trigger,
-      w.principalKind ?? null, w.principalId ?? null, w.requestId ?? null, w.noExtract === true,
-      w.nextAttemptAt ? w.nextAttemptAt.toISOString() : null]);
-  return written.length > 0;
+  // engine-sql/chronicle-ledger.ts CHRONICLE_LEDGER_SQL.upsert.
+  return engine.upsertChronicleRow({
+    sourceId: w.sourceId, pageId: w.pageId, contentHash: w.contentHash, extractorVersion: CHRONICLE_EXTRACTOR_VERSION, slug: w.slug,
+    state: w.state, reason: w.reason, trigger: w.trigger, principalKind: w.principalKind ?? null, principalId: w.principalId ?? null,
+    requestId: w.requestId ?? null, noExtract: w.noExtract === true, nextAttemptAt: w.nextAttemptAt ? w.nextAttemptAt.toISOString() : null,
+  });
 }
 
 /** Does an extracted generation with events exist for this page (so an ineligible revision must retire it)? */

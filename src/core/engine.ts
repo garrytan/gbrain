@@ -11,6 +11,8 @@ import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } fro
 import type * as AccessMembersSql from './engine-sql/access-members.ts';
 import type * as DreamCycleSql from './engine-sql/dream-cycle.ts';
 import type * as FilesOpsSql from './engine-sql/files-ops.ts';
+import type { PageAccessRow } from './engine-sql/page-access-rows.ts';
+import type { OwnerOnlyForm } from './access/owner-only.ts';
 import type * as ContradictionsCycleSql from './engine-sql/contradictions-cycle.ts';
 import type * as OntologyRepairSql from './engine-sql/ontology-repair.ts';
 import type * as AdminReadsSql from './engine-sql/admin-reads.ts';
@@ -1376,6 +1378,8 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   listAllPageRefs(): Promise<Array<{ slug: string; source_id: string; updated_at: Date }>>;
   /** The slugs of the source's markdown pages, soft-deleted pages included, by byte order (commands/reconcile-links.ts). */
   listMarkdownPageSlugs(sourceId: string): Promise<string[]>;
+  /** who-can-read's page rows for `slug` (in `sourceId` when given), with the owner-only test of `form` (commands/access.ts). */
+  readPageAccessRows(slug: string, sourceId: string | undefined, form: OwnerOnlyForm): Promise<PageAccessRow[]>;
 
   /**
    * v0.38 — lean per-source enumeration for hot-loop callers (autopilot
