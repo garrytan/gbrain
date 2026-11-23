@@ -18,12 +18,12 @@ import type { BrainEngine } from '../src/core/engine.ts';
 
 interface CapturedInsert { sql: string; params: unknown[] }
 
+/** The typed insert (insertVolunteerEventRows) the sink calls; each call is captured with its rows' values flattened. */
 function stubEngine(captured: CapturedInsert[], fail = false): BrainEngine {
   return {
-    executeRaw: async (sql: string, params: unknown[]) => {
+    insertVolunteerEventRows: async (rows: Array<Record<string, unknown>>) => {
       if (fail) throw new Error('insert exploded');
-      captured.push({ sql, params });
-      return [];
+      captured.push({ sql: 'insertVolunteerEventRows', params: rows.flatMap((row) => Object.values(row)) });
     },
   } as unknown as BrainEngine;
 }
@@ -109,9 +109,8 @@ describe('logTurnContextDeliveryFireAndForget — the shipped serve wiring', () 
 describe('logDeliveredReflexPointers — ambient reflex channel', () => {
   test('registers its write before returning so an immediate CLI drain cannot miss it', async () => {
     const engine = {
-      executeRaw: async () => {
+      insertVolunteerEventRows: async () => {
         await Promise.resolve();
-        return [];
       },
     } as unknown as BrainEngine;
 
