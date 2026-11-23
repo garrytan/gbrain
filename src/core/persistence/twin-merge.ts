@@ -30,7 +30,6 @@ import { dropRekeyDuplicates } from '../facts/ontology-rekey.ts';
 import { refreshRelationships } from '../link-relationships.ts';
 import { SYNC_IMPORT_PROVENANCE_OP } from './sync-holds.ts';
 import { ORIGIN_TWIN_REASON } from './origin-twins.ts';
-import { requireRawSql } from '../rust-engine/errors.ts';
 
 /** Link provenances re-derived from page bodies and frontmatter: a survivor with the same body re-derives each one. */
 export const DERIVED_LINK_SOURCES = ['markdown', 'frontmatter', 'mentions', 'wikilink-resolved'];
@@ -59,20 +58,7 @@ export async function twinMergeConflicts(engine: Pick<BrainEngine, 'listTwinMerg
   return [...links, ...transitions, ...timeline, ...raw];
 }
 
-/** The named refusal of the twin merge on an engine without raw SQL: every merge step stops here before it reads or writes. */
-export const TWIN_MERGE_STEP = 'repair twin merge';
-
-/**
- * The named refusal of the twin merge on an engine without its store side (the Rust engine, until the twin-merge moves
- * and the rename alias are served there). `mergeTwinInto` asks first, and each caller asks before it opens its
- * transaction or submits its request, so nothing of the merge ran. PGLite, Postgres and transaction handles pass.
- */
-export function requireTwinMerge(engine: object): void {
-  requireRawSql(engine, TWIN_MERGE_STEP);
-}
-
 export async function mergeTwinInto(tx: BrainEngine, input: { sourceId: string; incarnation: string; survivor: TwinMergePage; twin: TwinMergePage }): Promise<TwinMergeResult> {
-  requireTwinMerge(tx);
   const { sourceId, survivor, twin } = input;
   const conflicts = await twinMergeConflicts(tx, survivor.page_id, twin.page_id);
   if (conflicts.length) {

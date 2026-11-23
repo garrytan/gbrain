@@ -9,13 +9,14 @@
  *    Rust engine: links and link transitions of every provenance move onto the survivor (the colliding derived rows
  *    dropped, rows between the pair kept), timeline rows and events, raw data, tags, files and page aliases move unless
  *    the survivor holds the same, facts other pages assert about the twin take the survivor slug, and a rename records
- *    its alias. `mergeTwinInto` merges the twin on the SQL engines; the Rust engine still stops it by name ("repair
- *    twin merge") before it reads or writes anything, until the fact rekey members are served there, so the twin keeps
- *    its page and the survivor gains no page version. origin-twins in merge mode stops by name on Rust the same way;
- *    detach mode stays served. On every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm through
- *    test/engine-parity/harness.ts).
+ *    its alias. `mergeTwinInto` merges the twin on every engine: links, timeline,
+ *    tags and facts move, an ontology fact the survivor already holds is dropped, the rename alias is recorded, the
+ *    twin is soft-deleted and the survivor gains the twin's page version. origin-twins in merge mode resolves a pair
+ *    on a brain this host owns the same way. On every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust
+ *    arm through test/engine-parity/harness.ts).
  *  - Regression: the merge wrote a page version and detached the twin's origin before its first raw statement, where the
- *    Rust engine refused it with an unnamed executeRaw error; and the moves themselves refused by name on Rust.
+ *    Rust engine refused it with an unnamed executeRaw error; then it stopped by name ("repair twin merge") until the fact
+ *    rekey members and the origin-twins verdict reads (listOriginClaimants, listRepairScanPages, getPage) were typed.
  *  - Why existing coverage misses it: test/origin-twins-6948.test.ts runs on PGLite and Postgres only.
  *    The fold moves every page version of the old page to the survivor on every engine (a missing survivor refuses).
  *    (`gbrain repair secret-spans` is served on every engine since batch 6c: test/engine-parity/repair-secret-spans.test.ts.)
@@ -26,21 +27,47 @@
  *    cargo test `record_rename_alias_*` and its alias half is compared here.
  */
 import { describe, expect } from 'bun:test';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { withEnv } from '../helpers/with-env.ts';
+import { registerLocalWriter } from '../../src/core/persistence/identity.ts';
+import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import { mergeTwinInto } from '../../src/core/persistence/twin-merge.ts';
 import { resolveOriginTwin, type OriginTwinPair } from '../../src/core/repair/origin-twins.ts';
 
 const { parityTest } = parityArms(testBackends());
-
-const refusalText = (err: unknown) => JSON.stringify({ message: (err as Error).message, detail: (err as { detail?: unknown }).detail });
 
 async function seedPair(engine: BrainEngine) {
   const note = (slug: string) => ({ type: 'note' as never, title: slug, compiled_truth: `${slug} body.`, timeline: '' });
   const survivor = await engine.putPage('notes/twin-survivor', { ...note('notes/twin-survivor'), source_path: 'notes/twin-survivor.md' }, { sourceId: 'default' });
   const twin = await engine.putPage('notes/twin-copy', note('notes/twin-copy'), { sourceId: 'default' });
   return { survivor: { page_id: Number(survivor.id), slug: survivor.slug }, twin: { page_id: Number(twin.id), slug: twin.slug } };
+}
+
+/** A brain this host owns: a registered writer, the default source attached to a Git checkout and claimed (the origin-twins plan reads the owner). */
+async function ownedBrain<T>(engine: BrainEngine, seed: (root: string) => Promise<void>, body: (root: string) => Promise<T>): Promise<T> {
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-twin-merge-owned-'));
+  const root = join(dir, 'brain');
+  mkdirSync(join(root, 'notes'), { recursive: true });
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  try {
+    return await withEnv({ GBRAIN_HOME: join(dir, 'home'), DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+      await engine.attachSourcePath('default', root);
+      await registerLocalWriter(engine, 'cli');
+      await claimWorktree(engine, 'default', root);
+      await seed(root);
+      execFileSync('git', ['add', '-A'], { cwd: root });
+      execFileSync('git', ['-c', 'user.name=test', '-c', 'user.email=test@example.com', 'commit', '-q', '-m', 'seed'], { cwd: root });
+      return await body(root);
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /** What the merge would change: whether the twin is live, and each page's version count. */
@@ -160,46 +187,70 @@ async function childrenState(engine: BrainEngine, rich: { twin: { page_id: numbe
 }
 
 describe('engine parity: the twin merge on every engine', () => {
-  parityTest('mergeTwinInto merges the twin on the SQL engines, and the Rust engine stops it by name before any write', {
-    methods: ['putPage', 'transaction', 'getPage', 'getVersions'], requires: 'raw_sql', timeout: 60_000,
-  }, async (engine, backend) => {
-    const pair = await seedPair(engine);
-    const before = await state(engine);
-    try {
-      const source = await engine.readSourceIncarnation('default');
-      const merged = await engine.transaction(tx => mergeTwinInto(tx, { sourceId: 'default', incarnation: source!.incarnation, ...pair }));
-      const after = await state(engine);
-      expect(after).toEqual({ ...before, twinLive: false, twinVersions: before.twinVersions + 1 });
-      return { merged: { ...merged, links_moved: merged.links_moved.length, facts_moved: merged.facts_moved.length }, before, after };
-    } catch (err) {
-      if (backend === 'rust') {
-        expect(refusalText(err)).toContain('repair twin merge');
-        expect(await state(engine)).toEqual(before);
-      }
-      throw err;
-    }
+  parityTest('mergeTwinInto merges the twin into its survivor: links, timeline, tags, facts and the rename alias move, the twin is soft-deleted', {
+    methods: ['putPage', 'transaction', 'getPage', 'getVersions', 'addLink', 'writeManualLinkTransitions', 'listManualLinkTransitions', 'getLinks', 'addTimelineEntry',
+      'upsertEventProjection', 'getTimeline', 'putRawData', 'getRawData', 'addTag', 'getTags', 'upsertFile', 'listFilesForPage', 'setPageAliases', 'replaceDerivedAliases',
+      'readPageAliasRows', 'insertFacts', 'mergeOntologyFact', 'listFactsByEntity', 'listSlugAliases', 'readSourceIncarnation'],
+    timeout: 60_000,
+  }, async engine => {
+    const rich = await seedRichTwin(engine);
+    // A twin observation the survivor already holds under the same ontology key: the merge's rekey drops the twin's copy.
+    const obs = (entitySlug: string) => ({ entitySlug, dimension: 'location', value: 'Lisbon', source: 'notes/other', validFrom: '2026-01-01T00:00:00Z', sourceId: 'default' });
+    await engine.mergeOntologyFact(obs(rich.twin.slug));
+    await engine.mergeOntologyFact(obs(rich.survivor.slug));
+    const facts = async (entity: string) => (await engine.listFactsByEntity('default', entity, { activeOnly: false, limit: 100 } as never))
+      .map(f => f.fact).sort();
+    const full = async () => ({
+      pair: await state(engine), relationships: await relationshipState(engine), children: await childrenState(engine, rich),
+      facts: { twin: await facts(rich.twin.slug), survivor: await facts(rich.survivor.slug) },
+      aliases: (await engine.listSlugAliases('default')).map(a => `${a.alias_slug} > ${a.canonical_slug}`).sort(),
+    });
+    const before = await full();
+    const source = await engine.readSourceIncarnation('default');
+    const merged = await engine.transaction(tx => mergeTwinInto(tx, { sourceId: 'default', incarnation: source!.incarnation, survivor: rich.survivor, twin: rich.twin }));
+    const after = await full();
+    expect(after.pair).toEqual({ ...before.pair, twinLive: false, twinVersions: before.pair.twinVersions + 1 });
+    expect(after.aliases).toContain('notes/twin-copy > notes/twin-survivor');
+    expect(after.facts.survivor).toContain('About the twin from another page');
+    // The twin's ontology observation the survivor already held is dropped, not moved.
+    expect(after.facts.survivor.filter(row => row === 'location: Lisbon')).toHaveLength(1);
+    const result = { links_moved: merged.links_moved.length, facts_moved: merged.facts_moved.length, transitions_moved: merged.transitions_moved,
+      tags_moved: [...merged.tags_moved].sort(), deduplicated: merged.deduplicated };
+    return { result, before, after };
   });
 
-  parityTest('origin-twins merge mode stops by name on the Rust engine before it reads the pair', {
-    methods: ['putPage'], requires: 'raw_sql', timeout: 60_000,
-  }, async (engine, backend) => {
-    const seeded = await seedPair(engine);
-    const pair: OriginTwinPair = { source_id: 'default', source_path: 'notes/twin-survivor.md', twin_path: 'notes/twin-survivor.md',
-      survivor: { ...seeded.survivor, revision: '0' } as never, twin: { ...seeded.twin, revision: '0' } as never, mode: 'merge' };
-    const ctx = { engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId: 'default', logger: { info() {}, warn() {}, error() {} } } as never;
+  parityTest('origin-twins merge mode resolves the pair on an owned brain: the twin is merged into the survivor and soft-deleted', {
+    methods: ['putPage', 'attachSourcePath', 'getWorktreeBinding', 'listRepairScanPages', 'listLiveOriginPages', 'addLink', 'getLinks', 'addTag', 'getTags', 'insertFacts',
+      'listFactsByEntity', 'listSlugAliases', 'getPage', 'getVersions', 'transaction', 'readSourceIncarnation'],
+    timeout: 60_000,
+  }, async engine => ownedBrain(engine, async root => {
+    writeFileSync(join(root, 'notes', 'twin-survivor.md'), '---\ntype: note\ntitle: twin\n---\n\ntwin body.\n');
+  }, async root => {
+    // The twin records the survivor's file under another spelling, which is how a pair the unique origin key admits looks.
+    const note = (slug: string) => ({ type: 'note' as never, title: slug, compiled_truth: 'twin body.', timeline: '' });
+    const survivor = await engine.putPage('notes/twin-survivor', { ...note('notes/twin-survivor'), source_path: 'notes/twin-survivor.md' }, { sourceId: 'default' });
+    const twin = await engine.putPage('notes/twin-copy', { ...note('notes/twin-copy'), source_path: 'notes/Twin-Survivor.md' }, { sourceId: 'default' });
+    await engine.addLink('notes/twin-copy', 'notes/twin-survivor', 'see also', 'see_also', 'manual');
+    await engine.addTag('notes/twin-copy', 'added-only', { sourceId: 'default' });
+    await engine.insertFacts([{ kind: 'fact', visibility: 'private', fact: 'About the twin', entity_slug: 'notes/twin-copy', row_num: 1, source_markdown_slug: 'notes/other', source: 'mcp:extract_facts' }] as never, { source_id: 'default' });
+    const scanned = await engine.listRepairScanPages('default', { ids: [Number(survivor.id), Number(twin.id)] });
+    const revision = (id: unknown) => String(scanned.find(row => row.id === Number(id))!.revision);
+    const pair: OriginTwinPair = { source_id: 'default', source_path: 'notes/twin-survivor.md', twin_path: 'notes/Twin-Survivor.md',
+      survivor: { page_id: Number(survivor.id), slug: survivor.slug, revision: revision(survivor.id) } as never, twin: { page_id: Number(twin.id), slug: twin.slug, revision: revision(twin.id) } as never, mode: 'merge' };
+    const ctx = { engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId: 'default', root, logger: { info() {}, warn() {}, error() {} } } as never;
+    const facts = async (entity: string) => (await engine.listFactsByEntity('default', entity, { activeOnly: false, limit: 100 } as never)).map(f => f.fact).sort();
     const before = await state(engine);
-    try {
-      const outcome = await resolveOriginTwin(ctx, pair, null, async () => 'c0000000-0000-4000-8000-0000000000e1');
-      expect(await state(engine)).toEqual(before);
-      return outcome;
-    } catch (err) {
-      if (backend === 'rust') {
-        expect(refusalText(err)).toContain('repair twin merge');
-        expect(await state(engine)).toEqual(before);
-      }
-      throw err;
-    }
-  });
+    const outcome = await resolveOriginTwin(ctx, pair, null, async () => 'c0000000-0000-4000-8000-0000000000e1');
+    const after = await state(engine);
+    expect(JSON.stringify(outcome)).toContain('origin_twin_resolved');
+    expect(after).toEqual({ ...before, twinLive: false, twinVersions: before.twinVersions + 1 });
+    const links = async (slug: string) => (await engine.getLinks(slug, { sourceId: 'default' })).map(l => `${l.from_slug} > ${l.to_slug} ${l.link_type} [${l.link_source}]`).sort();
+    return { outcome: JSON.parse(JSON.stringify(outcome, (key, value) => key === 'link_ids' ? undefined : value)), before, after,
+      links: { twin: await links('notes/twin-copy'), survivor: await links('notes/twin-survivor') },
+      survivorTags: (await engine.getTags('notes/twin-survivor', { sourceId: 'default' })).sort(),
+      facts: { twin: await facts('notes/twin-copy'), survivor: await facts('notes/twin-survivor') },
+      aliases: (await engine.listSlugAliases('default')).map(a => `${a.alias_slug} > ${a.canonical_slug}`).sort() };
+  }));
 
   parityTest('movePageVersions moves every version of the old page to the survivor, and refuses a missing survivor', {
     methods: ['putPage', 'createVersion', 'getVersions', 'movePageVersions'], timeout: 60_000,

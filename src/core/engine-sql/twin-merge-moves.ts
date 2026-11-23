@@ -5,8 +5,8 @@
  * tags, file attachments and free-text page aliases), `moveTwinFacts` (facts other pages assert about the twin) and
  * `movePageVersions` (the fold moves the twin's page versions). Both SQL engines delegate here; the statement texts are
  * the ones mergeTwinInto and the fold sent. The Rust store serves each as one write (rust/crates/gbrain-store/src/
- * repair_twin_merge.rs); the merge itself still stops by name on the Rust engine ("repair twin merge",
- * persistence/twin-merge.ts `requireTwinMerge`) until the fact rekey members `dropRekeyDuplicates` calls are served there.
+ * repair_twin_merge.rs); the merge itself (`mergeTwinInto`) runs on the Rust engine too, since the fact rekey members
+ * `dropRekeyDuplicates` calls are served there (store-members/ontology-repair.ts).
  */
 import type { BrainEngine } from '../engine.ts';
 import type { RelationshipKey } from '../link-relationships.ts';

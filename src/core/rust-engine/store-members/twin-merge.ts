@@ -3,8 +3,8 @@
  * `moveTwinPageChildren`, `moveTwinFacts` (repair_twin_merge.rs) and `movePageVersions` (the moved-pages fold's version
  * move, repair_versions.rs). Each is one store write that runs inside the engine's transaction. Ids come back as numbers;
  * the relationship keys, the moved link ids, the moved tags (the twin's tag order) and the moved fact ids come back in the
- * store's own deterministic order, where the SQL engines' order is unspecified. `mergeTwinInto` still stops before them
- * by name ("repair twin merge", persistence/twin-merge.ts `requireTwinMerge`) until the fact rekey members are served.
+ * store's own deterministic order, where the SQL engines' order is unspecified. `mergeTwinInto` runs them on a Rust brain
+ * together with the fact rekey members (ontology-repair.ts).
  * rust/docs/store/repair-bookkeeping.md.
  */
 import type { RelationshipKey } from '../../link-relationships.ts';
