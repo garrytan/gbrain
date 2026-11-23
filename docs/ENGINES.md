@@ -1962,48 +1962,49 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   displaced rows does not restore the watermark; the relation gets another pass and the full restore waits for the
   next full pass.
 - **Privacy, stable rerun and vector recall evidence.** Each sampled read carries the caller's access record (none, when there was
-  none), and the shadow runs Rust under it. Every Rust row the primary's own answer lacked is judged on the primary with its read
+  none), and the shadow runs Rust under it. On a mismatch of a read made under `excludePrivate` (plain, under `remote`, or a find's `untrusted`
+  policy), every Rust row the primary's own answer lacked is judged on the primary with its read
   policy for that caller (ids only; a row the caller may not read is `privacy_diverged` and pauses comparison, and counts against
   criteria 6 and 3). A mismatch nothing explains is `inconclusive` and gets one stable rerun behind a barrier on the follow stream
   (30 s, queue of 64); a rerun that still differs is a `diff`, one that matches closes unsuccessful, and one that could not run
   stays unexplained. Vector recall@10 is scored against the primary's own search with index scans off, at most once a minute, and
-  appears after 30 scored samples in the epoch. **Reading the lane owner accepted ("as I read it", ranked-search reading):** ten reads
+  appears after 30 scored samples in the epoch. **What counts as unexplained:** ten reads
   carry no source or private marker (`resolveSlugs`, `resolveSlugWithAlias`, `getTags`, `getTimeline`, `getChunks`,
   `findByTitleFuzzy`, `getStats`, `countKeywordPages`, `searchTakes`, `searchTakesVector`), so every unexplained `diff` on them counts into
   `reads.diverged_unexplained_7d`; on the two take searches only a different row set counts, not the same rows in another order. Facts,
   links, finds and search rows read under `excludePrivate` count a `diff` too. The one exception: a ranked `searchVector` diff
   under `excludePrivate` whose extra Rust rows ALL passed the per-row check (same captured record, the primary's policy text) is a
-  ranking difference, because vector and default-ranker membership differences are legitimate (D17). A row the check cannot
+  ranking difference, because vector and default-ranker membership differences are legitimate (the ranked-search rule: a vector search may return different rows of equal rank). A row the check cannot
   evaluate (no page identity, a page the primary lacks, a failed, skipped or moved check) is unchecked, and the diff counts. Accepted
   ranking differences are never dropped: the status and the report list them per member (`evidence.ranking_differences`) next to the
-  rule. The control channel carries no content: the serving process keeps a bounded registry of recent samples (arguments, the
+  rule. What the child sends back carries no content: the serving process keeps a bounded registry of recent samples (arguments, the
   caller's record and the primary's own answer) and the child asks about a sample by an opaque sample id. The child sends only
-  the identities of the Rust rows (page, chunk and digests), the serving process does the comparing, and an answer is a verdict
-  (a rerun's answer is the epoch, a stamp and a digest), never a row, a title, a slug or chunk text. A failure is an allowlisted code, and
+  the identities of the Rust rows (page, chunk and digests; a slug only for a row with no page id), the serving process does the comparing, and an answer is a verdict
+  (a rerun's answer is the epoch, a stamp, digests and an attempt id, plus the chunk ids and scores of a vector read's first ten rows), never a row, a title, a slug or chunk text. A failure is an allowlisted code, and
   an answer is bound to the asking child's session, so a restarted child never receives its predecessor's. An unresolved
   comparison is written to the ledger (`rerun: pending`) before its rerun starts and settled by a completion row with the same
   sample id; one never completed (a crash, a restart) counts as unexplained. A ranked diff is cleared only at row identity
   and only when nothing the policy reads changed since the read. A Rust row is held when it is byte-equal to a primary row in every
   field but the ranking ones; a row with a primary row's page and chunk but another payload (a substituted title or flag), or one
   that claims a chunk without a numeric chunk id, is never cleared and the diff counts. A new row is judged on the primary with the
-  read policy, the safe-chunk fence the read asked for and the chunk visibility the primary used. "Nothing changed" is proven by one thing: the primary's WAL position
+  read policy, the safe-chunk fence the read asked for and the chunk visibility the primary used. "Nothing changed" is proven by the primary's WAL position
   (`pg_current_wal_insert_lsn()`, the insert position: a commit made with `synchronous_commit=off` is visible before its WAL is written out, never before it is inserted), read BEFORE the primary read started (never a newer one) and read again at the end of the check, must be
   the same, no transaction that was in progress at the capture (its xid, from the snapshot and from `pg_stat_activity`, because a
   transaction can insert its COMMIT record and become visible later with no further WAL, as under `commit_delay` or a synchronous
-  standby wait) may have committed by then, and this process's write generation and the access tables' generation must be the
-  same. A role that is neither a superuser nor in `pg_read_all_stats` cannot see other sessions' transactions: its token is blind
+  standby wait) may have committed by then, and this process's write generation must be the
+  same (the privacy check also needs the access tables' generation to hold, and no page or access row to carry a time later than the read). A role that is neither a superuser nor in `pg_read_all_stats` cannot see other sessions' transactions: its token is blind
   and clears nothing. Any committed write to any table, to the
   catalog (a policy altered in place) or a change undone again (A, B, A) moves it, in this database or any other of the same
-  cluster. When it moved, both engines and the reference are run again from a new position, up to 3 times; a sample still moving
+  cluster. When it moved, both engines and the reference are run again from a new position, up to 3 times (a recall score gets 3 runs in all, the first included); a sample still moving
   after that stays unresolved (`skipped:moved`) and counts into `reads.diverged_unexplained_7d` (criterion 3). So busy brains clear
-  fewer samples; an idle one clears them all (on this VM an idle PGLite brain never moved, an idle Postgres moved in 2% of 1 s windows,
+  fewer samples; an idle one clears them all (on an 8-core test machine an idle PGLite brain never moved, an idle Postgres moved in 2 to 5% of 1 s windows,
   and under one write every 2 seconds a sample moved in about 10% of 250 ms windows and 50% of 1 s windows). Each rerun is its own attempt, with its own answer and position; the follow-up questions name the attempt, and an unknown or dropped one is never proven. A list of more than 2,000 row identities, or one holding anything invalid,
   is never complete. The vector reference is the engine's own exact statement with no candidate
   window and is used only when the same proof holds from the sample's capture to the end of the reference run; otherwise the sample is
   not scored. Tied rows at the cutoff count only for the top-ten places the strictly better rows leave, and a reference whose last row
   (of 50) still ties the cutoff is not scored. A stable rerun compares digests: the whole answer, and for a ranked read its rows without scores in a fixed order, so the same
   rows in another order or with other scores are an `order_diff` (closed as matched on the reads that ignore order). The comparator
-  version is 3: an epoch opened under version 2 does not carry its recall or clearance records into the new rules. Known limits, not fixed here: a position that does not move proves nothing was written but says nothing about a change that is not WAL-logged (an unlogged table), and a read replica has no write position (a sample there is never proven); a Rust row on a page the primary did not return is
+  version is 3 (it was 1): a running shadow opens a new evidence epoch, so records written under the earlier rules never count. Known limits, not fixed here: a position that does not move proves nothing was written but says nothing about a change that is not WAL-logged (an unlogged table), and a read replica has no write position (a sample there is never proven); a Rust row on a page the primary did not return is
   judged by page policy, chunk identity and chunk text, not by its other fields; and a read the caller was authorized to make that
   returns a private page still reads `private_row_returned` and pauses comparison (it fails closed).
 - **Status fields.** `status --json` adds: `follower.state` (`not_seeded`, `stopped`, `invalid`, `behind`,
