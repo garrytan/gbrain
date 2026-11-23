@@ -4,7 +4,8 @@
  * 1. Protects: while another process publishes a write (it holds the root's worktree lock and the row carries its
  *    intent and a before-image in `recovery`), every full consumer's recovery pass only names the row; neither the
  *    scan nor a by-id read returns `intent` or `recovery`. Once the lock is free, the same consumer recovers the row,
- *    and a terminal row whose root is busy still settles with its full receipt.
+ *    a terminal row whose root is busy still settles with its full receipt, and a row blocked on changed file or
+ *    staging bytes (an operator must look) waits 30 s between polls.
  * 2. Fails when: the scan selects `r.*`, or recovery reads the whole row before it holds the worktree lock (each
  *    read costs the row's size on every poll of every serve on the host).
  * 3. Runs on PGLite, and on Postgres when DATABASE_URL is set.
@@ -111,6 +112,17 @@ for (const kind of testBackends()) {
         await consumer.tick();
         expect((await getWriteRequestById(engine, row.id))!.recovery).toBeNull();
         expect(retries(consumer).has(row.worktree_id!)).toBe(false);
+      } finally { await consumer.stop(); await lock.release(); await finish(row); }
+    }), 120_000);
+
+    test('a row blocked on changed staging bytes waits the long cooldown, like changed file bytes', () => withEnv(env, async () => {
+      const { row, lock } = await publishing('blocked-staging');
+      await engine.executeRaw("UPDATE persistence_requests SET blocked_reason='unexpected_staging_bytes' WHERE id=$1::uuid", [row.id]);
+      const consumer = consumerOn(engine);
+      try {
+        const started = Date.now();
+        await consumer.tick();
+        expect(retries(consumer).get(row.worktree_id!)!).toBeGreaterThanOrEqual(started + 30_000);
       } finally { await consumer.stop(); await lock.release(); await finish(row); }
     }), 120_000);
 

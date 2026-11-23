@@ -706,13 +706,11 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
             if (!lock) return isTerminal(row) ? getWriteRequestById(this.engine, row.id) : null;
             try { return await recoverPublication(this.engine, row.id, this.hostId, true); } finally { await lock.release(); }
           });
-          if (!recovered) {
-            if (row.blocked_reason === 'unexpected_file_bytes') this.rootRetryAfter.set(root, Date.now() + Math.max(delay, 30_000));
-            continue;
+          if (recovered && isTerminal(recovered)) this.settled(recovered);
+          if (recovered && !recovered.recovery) this.rootRetryAfter.delete(root);
+          else if (['unexpected_file_bytes', 'unexpected_staging_bytes'].includes(String((recovered ?? row).blocked_reason))) {
+            this.rootRetryAfter.set(root, Date.now() + Math.max(delay, 30_000));
           }
-          if (isTerminal(recovered)) this.settled(recovered);
-          if (!recovered.recovery) this.rootRetryAfter.delete(root);
-          else if (recovered.blocked_reason === 'unexpected_file_bytes') this.rootRetryAfter.set(root, Date.now() + Math.max(delay, 30_000));
         } catch (error) {
           this.rootRetryAfter.set(root, Date.now() + Math.max(delay, 30_000));
           this.report(error);

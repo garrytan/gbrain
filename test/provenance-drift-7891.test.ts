@@ -490,6 +490,10 @@ describe('#7891 analyzePageDrift', () => {
     const verdict = analyzePageDrift({ chain: [snap({ source_kind: 'manual' }), snap({ source_kind: 'webhook' }, 'remote')], stored: 'unknown', columns })!;
     expect(verdict.restore!.frontmatter.trust_tier).toBe('external_untrusted');
   });
+  test('#10025: an ingested_at a remote write added to a page that had none is kept, not removed', () => {
+    expect(analyzePageDrift({ chain: [snap({ source_kind: 'webhook' }), snap({ source_kind: 'webhook', ingested_at: '2026-05-30T15:34:11.457Z' }, 'remote')],
+      stored: 'unknown', columns }, { includeAmbiguous: true })).toBeNull();
+  });
   test('an unchanged history reports nothing', () => {
     expect(analyzePageDrift({ chain: [snap({ ingested_via: 'webhook' }), snap({ ingested_via: 'webhook' }, 'remote')], stored: 'unknown', columns })).toBeNull();
   });
