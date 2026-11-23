@@ -127,8 +127,8 @@ describe('engine parity: repair fact applies, rename-identity and unwithdrawn-fa
     return byOrder(out, ids);
   });
 
-  parityTest('facts-rehome applies on the SQL arms, and the Rust engine refuses the fact write by name', {
-    methods: ['putPage', 'insertFacts', 'listPagelessEntityFacts'], requires: 'raw_sql', timeout: 60_000,
+  parityTest('facts-rehome applies the same way on every arm', {
+    methods: ['putPage', 'insertFacts', 'listPagelessEntityFacts'], timeout: 60_000,
   }, async (engine, backend) => {
     await engine.putPage('orgs/acme-example', note('Acme Example', 'company'), { sourceId: 'default' });
     const ids = await insert(engine, [{ fact: 'Acme closed a round', entity_slug: 'companies/acme-example', source: 'mcp:extract_facts' }]);
@@ -137,8 +137,8 @@ describe('engine parity: repair fact applies, rename-identity and unwithdrawn-fa
     return byOrder(out, ids);
   });
 
-  parityTest('ontology-facts applies on the SQL arms, and the Rust engine refuses the fact write by name', {
-    methods: ['insertFacts', 'listOntologyFactCandidates'], requires: 'raw_sql', timeout: 60_000,
+  parityTest('ontology-facts applies the same way on every arm', {
+    methods: ['insertFacts', 'listOntologyFactCandidates'], timeout: 60_000,
   }, async (engine, backend) => {
     const ids = await insert(engine, [{ fact: 'cto', entity_slug: 'people/ana-example', dimension: 'role', value: 'cto', value_hash: 'cto', source: 'mine',
       source_markdown_slug: 'people/ana-example', row_num: 1 }]);

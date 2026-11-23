@@ -206,8 +206,8 @@ describe('engine parity: repair kind previews of batch 4.2', () => {
     });
   }));
 
-  parityTest('captured-facts applies on the SQL arms, and the Rust engine refuses the page write by name', {
-    methods: ['insertFacts', 'listCapturedFactsForClassification', 'getConfig', 'readPersistenceBrainId', 'writeOpCheckpointRecord'], requires: 'raw_sql', timeout: 90_000,
+  parityTest('captured-facts applies the same way on every arm', {
+    methods: ['insertFacts', 'listCapturedFactsForClassification', 'getConfig', 'readPersistenceBrainId', 'writeOpCheckpointRecord'], timeout: 90_000,
   }, async (engine, backend) => withHome(async (home) => {
     const claude = join(home, 'claude');
     const ids = await seedCaptured(engine, claude);

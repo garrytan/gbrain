@@ -173,8 +173,8 @@ describe('engine parity: repair kind previews of batch 4.3a', () => {
     return byOrder({ rows: rows.map(row => ({ ...row, id: Number(row.id), valid_from: row.valid_from.toISOString() })), preview: shaped }, ids);
   }));
 
-  parityTest('facts-home applies on the SQL arms, and the Rust engine refuses the holding-page write by name', {
-    methods: ['insertFacts', 'getWorktreeBinding', 'updateSourceConfig', 'attachSourcePath', 'putPage', 'softDeletePage', 'listFactsHomeCandidates', 'listHeldHomeRows', 'listOrphanedFenceRows', 'readFactSnapshots'], requires: 'raw_sql', timeout: 90_000,
+  parityTest('facts-home applies the holding-page write the same way on every arm', {
+    methods: ['insertFacts', 'getWorktreeBinding', 'updateSourceConfig', 'attachSourcePath', 'putPage', 'softDeletePage', 'listFactsHomeCandidates', 'listHeldHomeRows', 'listOrphanedFenceRows', 'readFactSnapshots'], timeout: 90_000,
   }, async (engine, backend) => strictBrain(engine, async root => {
     const ids = await seedHome(engine);
     const out = await previewThenApply(engine, backend, 'facts-home', 'repair facts-home page write', {}, root);
