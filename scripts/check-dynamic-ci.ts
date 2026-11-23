@@ -27,9 +27,11 @@
  *   - every filter output is a job that needs that filter, and no merge or
  *     release aggregate (full-suite, e2e-full-suite, test-status, e2e-status,
  *     executed-receipts, reused-full-suite, cheap-tier) is gated;
+ *   - a filter job in a reusable workflow also carries job-level
+ *     continue-on-error: true, since a failed job there fails the caller's call;
  *   - a reusable workflow with a filter declares an optional TRUNK_API_TOKEN
  *     secret, and every job in this repository that calls it passes that
- *     secret (or `secrets: inherit`) and grants pull-requests: read. A caller
+ *     secret (or `secrets: inherit`) and explicitly grants pull-requests: read. A caller
  *     that forgets the token would never get a verdict: the filter fails open
  *     on every run, so nothing breaks and Trunk silently learns nothing.
  *
@@ -41,7 +43,7 @@ import { join } from 'node:path';
 import { load } from 'js-yaml';
 
 type Step = { id?: string; uses?: string; with?: Record<string, unknown>; 'continue-on-error'?: unknown; 'timeout-minutes'?: unknown };
-type Job = { 'timeout-minutes'?: unknown; if?: unknown; needs?: string | string[]; outputs?: Record<string, unknown>; steps?: Step[]; uses?: string; secrets?: unknown; permissions?: unknown };
+type Job = { 'continue-on-error'?: unknown; 'timeout-minutes'?: unknown; if?: unknown; needs?: string | string[]; outputs?: Record<string, unknown>; steps?: Step[]; uses?: string; secrets?: unknown; permissions?: unknown };
 type Workflow = { on?: unknown; permissions?: unknown; jobs?: Record<string, Job> };
 
 const ROOT = process.env.GBRAIN_GUARD_ROOT ?? join(import.meta.dir, '..');
@@ -78,6 +80,7 @@ export function checkWorkflow(file: string, doc: Workflow): string[] {
     const at = `${file} › ${key}`;
     if (expr(job.if) !== "github.event_name == 'pull_request'") problems.push(`${at}: the filter job must have if: github.event_name == 'pull_request' (got ${JSON.stringify(expr(job.if))}); on any other event it must be skipped so every gated job runs`);
     if (!hasTrigger(doc.on, 'pull_request') && !hasTrigger(doc.on, 'workflow_call')) problems.push(`${at}: the workflow has no pull_request trigger and is not a reusable workflow, so it carries merge or release evidence and must not filter jobs`);
+    if (hasTrigger(doc.on, 'workflow_call') && job['continue-on-error'] !== true) problems.push(`${at}: a filter job in a reusable workflow needs job-level continue-on-error: true; a failed job there (a lost runner, the job timeout) fails the caller's call even though its gated jobs ran`);
     if (!/^trunk-io\/dynamic-ci@[0-9a-f]{40}$/.test(step.uses!)) problems.push(`${at}: pin ${step.uses} to a full commit SHA`);
     if (String(step.with?.token ?? '').trim() !== '${{ secrets.TRUNK_API_TOKEN }}') problems.push(`${at}: the token must be \${{ secrets.TRUNK_API_TOKEN }}`);
     if (step['continue-on-error'] !== true) problems.push(`${at}: the dynamic-ci step needs continue-on-error: true, so a failed step leaves the outputs empty (run) instead of a red check on the head`);
@@ -139,8 +142,8 @@ export function checkCallers(docs: Record<string, Workflow>): string[] {
         const secrets = job.secrets as Record<string, unknown> | string | undefined;
         if (secrets !== 'inherit' && String((secrets as Record<string, unknown> | undefined)?.TRUNK_API_TOKEN ?? '').trim() !== '${{ secrets.TRUNK_API_TOKEN }}') problems.push(`${at}: calls ${file}, whose Dynamic CI filter needs the token; pass secrets: TRUNK_API_TOKEN: \${{ secrets.TRUNK_API_TOKEN }}, or it fails open on every run and Trunk never gets a verdict`);
         const permissions = (job.permissions ?? callerDoc.permissions) as Record<string, unknown> | string | undefined;
-        const grants = permissions === undefined || permissions === 'read-all' || permissions === 'write-all' || (typeof permissions === 'object' && ['read', 'write'].includes(String(permissions['pull-requests'])));
-        if (!grants) problems.push(`${at}: calls ${file}, whose Dynamic CI filter job asks for pull-requests: read; grant it on this job, since a called workflow cannot raise its caller's permissions`);
+        const grants = permissions === 'read-all' || permissions === 'write-all' || (typeof permissions === 'object' && permissions !== null && ['read', 'write'].includes(String(permissions['pull-requests'])));
+        if (!grants) problems.push(`${at}: calls ${file}, whose Dynamic CI filter job asks for pull-requests: read; grant it explicitly on this job, since a called workflow cannot raise its caller's permissions and the repository default may be none`);
       }
     }
   }

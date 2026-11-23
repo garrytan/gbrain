@@ -117,7 +117,8 @@ describe('full CI on pull requests', () => {
     const caller = unit.jobs['persistence-validation'] as Job & { secrets?: Record<string, string> };
     expect(caller.needs).not.toContain('dynamic-ci');
     expect(caller.secrets).toEqual({ TRUNK_API_TOKEN: '${{ secrets.TRUNK_API_TOKEN }}' });
-    expect(step(unit.jobs['cheap-tier']!, 'Aggregate the cheap tier').env!.DCI_PERSISTENCE).toBe('${{ needs.persistence-validation.outputs.crash-robot-verdict }}');
+    expect(step(unit.jobs['cheap-tier']!, 'Aggregate the cheap tier').env!).not.toHaveProperty('DCI_PERSISTENCE');
+    expect(workflow('persistence-validation.yml').jobs['dynamic-ci']).toMatchObject({ 'continue-on-error': true });
   });
 
   test('a pull-request run never reports test-status or full-suite under any name', () => {
@@ -355,8 +356,7 @@ describe('full CI on pull requests', () => {
       expect(aggregate({ ...green, PERSISTENCE: 'cancelled' }).status).toBe(1);
     });
 
-    test.each([['SECURITY', 'DCI_SECURITY', {}], ['STRESS', 'DCI_STRESS', {}], ['NATIVE', 'DCI_NATIVE', { NATIVE_SCOPE: 'primary' }],
-      ['PERSISTENCE', 'DCI_PERSISTENCE', { CONVERGENCE: 'run' }]] as const)('%s may skip only when Trunk Dynamic CI said false', (lane, verdict, selected) => {
+    test.each([['SECURITY', 'DCI_SECURITY', {}], ['STRESS', 'DCI_STRESS', {}], ['NATIVE', 'DCI_NATIVE', { NATIVE_SCOPE: 'primary' }]] as const)('%s may skip only when Trunk Dynamic CI said false', (lane, verdict, selected) => {
       expect(aggregate({ ...green, ...selected, [lane]: 'skipped', [verdict]: 'false' }).status).toBe(0);
       for (const other of ['', 'true']) expect(aggregate({ ...green, ...selected, [lane]: 'skipped', [verdict]: other }).status, other).toBe(1);
       expect(aggregate({ ...green, ...selected, [lane]: 'failure', [verdict]: 'false' }).status).toBe(1);
@@ -364,7 +364,7 @@ describe('full CI on pull requests', () => {
 
     test('a failed changes job fails the tier even when Trunk said false for every gated lane', () => {
       expect(aggregate({ ...green, CHANGES: 'failure', NATIVE: 'skipped', NATIVE_SCOPE: '', PERSISTENCE: 'skipped', CONVERGENCE: '',
-        DCI_NATIVE: 'false', DCI_PERSISTENCE: 'false', SECURITY: 'skipped', DCI_SECURITY: 'false', STRESS: 'skipped', DCI_STRESS: 'false' }).status).toBe(1);
+        DCI_NATIVE: 'false', SECURITY: 'skipped', DCI_SECURITY: 'false', STRESS: 'skipped', DCI_STRESS: 'false' }).status).toBe(1);
     });
   });
 });

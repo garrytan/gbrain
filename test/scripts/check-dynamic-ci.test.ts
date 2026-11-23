@@ -56,6 +56,7 @@ describe('check-dynamic-ci.ts', () => {
     ['the reusable workflow loses its workflow_call trigger', doc => { delete doc.on.workflow_call; }, /no pull_request trigger and is not a reusable workflow/],
     ['the called filter runs on every event', doc => { delete doc.jobs['dynamic-ci']!.if; }, /must have if: github.event_name == 'pull_request'/],
     ['a called gated job drops !cancelled()', doc => { doc.jobs.convergence!.if = doc.jobs.convergence!.if.replace('!cancelled() && ', ''); }, /convergence: a gated job's if must start with/],
+    ['the called filter job can fail the call', doc => { delete doc.jobs['dynamic-ci']!['continue-on-error']; }, /needs job-level continue-on-error: true/],
     ['a gate-only if tests == true', doc => { doc.jobs['crash-robot']!.if = doc.jobs['crash-robot']!.if.replace("!= 'false'", "== 'true'"); }, /crash-robot: a gated job's if must start with/],
   ])('persistence-validation.yml fails when %s', (_, mutate, message) => {
     expect(broken(mutate, 'persistence-validation.yml').join('\n')).toMatch(message);
@@ -70,6 +71,7 @@ describe('check-dynamic-ci.ts', () => {
     ['the caller drops the token', d => { delete d['test.yml']!.jobs['persistence-validation']!.secrets; }, /test\.yml › persistence-validation: calls persistence-validation\.yml, whose Dynamic CI filter needs the token/],
     ['the caller passes another secret', d => { d['test.yml']!.jobs['persistence-validation']!.secrets = { TRUNK_API_TOKEN: '${{ secrets.OTHER }}' }; }, /whose Dynamic CI filter needs the token/],
     ['the caller drops pull-requests: read', d => { delete d['test.yml']!.jobs['persistence-validation']!.permissions; }, /asks for pull-requests: read/],
+    ['no permissions are set at job or workflow level', d => { delete d['test.yml']!.jobs['persistence-validation']!.permissions; delete (d['test.yml'] as any).permissions; }, /asks for pull-requests: read; grant it explicitly/],
     ['the reusable workflow makes the token required', d => { (d['persistence-validation.yml']!.on.workflow_call as any).secrets.TRUNK_API_TOKEN.required = true; }, /must declare on\.workflow_call\.secrets\.TRUNK_API_TOKEN with required: false/],
   ])('the caller check fails when %s', (_, mutate, message) => {
     const d = structuredClone(docs());

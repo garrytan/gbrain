@@ -1660,7 +1660,6 @@ jobs:
           DCI_SECURITY: ${{ needs.dynamic-ci.outputs.security-regressions }}
           DCI_STRESS: ${{ needs.dynamic-ci.outputs.stress-changed-tests }}
           DCI_NATIVE: ${{ needs.dynamic-ci.outputs.native-locks }}
-          DCI_PERSISTENCE: ${{ needs.persistence-validation.outputs.crash-robot-verdict }}
         run: bash scripts/ci-cheap-tier.sh
 
   # Master-push reuse marker (scripts/ci-reuse.ts, scripts/release-gate.ts): exists
