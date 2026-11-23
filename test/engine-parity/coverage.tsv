@@ -915,15 +915,15 @@ takePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 renewPageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 releasePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 assertCycleLease	cycle_locks	yes	1	no	yes	yes	serves
-admitJob	minion_jobs	yes	124	no	yes	yes	serves
+admitJob	minion_jobs	yes	125	no	yes	yes	serves
 getJob	minion_jobs	yes	41	no	yes	yes	serves
 readJobDataByIdempotencyKey	minion_jobs	yes	2	no	yes	yes	serves
 coalesceOnIdempotencyKey	minion_jobs	yes	2	no	yes	yes	serves
 listJobs	minion_jobs	yes	1	no	yes	yes	serves
-claimNextJob	minion_jobs	yes	87	no	yes	yes	serves
+claimNextJob	minion_jobs	yes	88	no	yes	yes	serves
 renewJobLease	minion_jobs	yes	1	no	yes	yes	serves
 completeJob	minion_jobs	yes	52	no	yes	yes	serves
-failJob	minion_jobs	yes	40	no	yes	yes	serves
+failJob	minion_jobs	yes	41	no	yes	yes	serves
 reclaimStalledJobs	minion_jobs	yes	2	no	yes	yes	serves
 readActiveAccessTokenGrant	minion_queue	yes	3	no	yes	yes	serves
 accessTokenLive	minion_queue	yes	2	no	yes	yes	serves
@@ -1066,7 +1066,7 @@ listRecentLeasePressure	minion_queue	yes	2	no	yes	yes	serves
 readLastAutopilotCycles	minion_status	yes	1	no	yes	yes	serves
 countJobsByStatus	minion_status	yes	3	no	yes	yes	serves
 readWaitingQueueDepths	minion_status	yes	1	no	yes	yes	serves
-listRecentSourceCycleFailures	minion_status	yes	2	no	yes	yes	serves
+listRecentSourceCycleFailures	minion_status	yes	3	no	yes	yes	serves
 readLastCompletedJobAt	minion_status	yes	1	no	yes	yes	serves
 countTtlCancelledByName	minion_status	yes	1	no	yes	yes	serves
 readWaitingScopeState	minion_status	yes	1	no	yes	yes	serves
