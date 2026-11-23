@@ -372,7 +372,7 @@ fn relation_spec(relation: &str) -> Result<&'static Relation> {
 }
 
 /// Raises the id counter `name` past `id`.
-fn raise_counter(tx: &mut dyn KvWrite, name: &str, id: u64) -> Result<()> {
+pub(crate) fn raise_counter(tx: &mut dyn KvWrite, name: &str, id: u64) -> Result<()> {
     let key = keys::meta(name);
     let current = match tx.get(&key)? {
         Some(bytes) => keys::be8(&bytes)

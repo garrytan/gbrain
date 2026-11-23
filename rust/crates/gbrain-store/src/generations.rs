@@ -88,7 +88,7 @@ const LIVE_OPERATION: u8 = 0x06;
 const ATTEMPT_BY_KEY: u8 = 0x07;
 
 /// The id counter (`pages::next_id`).
-const ID_COUNTER: &str = "next_derived_generation_id";
+pub(crate) const ID_COUNTER: &str = "next_derived_generation_id";
 
 /// `derived_generations.held_reason` CHECK.
 const HELD_REASONS: &[&str] = &[
@@ -1409,7 +1409,7 @@ pub(crate) fn seed_generation(
     if pointed_state {
         tx.put(&pointer_key(&key, &seed.state), &id.to_be_bytes())?;
     }
-    tx.raise_counter(&crate::keys::meta(ID_COUNTER), id)?;
+    crate::seed::raise_counter(tx, ID_COUNTER, id)?;
     Ok(true)
 }
 
