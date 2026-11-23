@@ -989,7 +989,12 @@ that cell's 600,000-page brain the way a remote MCP caller sees it:
   when p50 (p95) is both 1.5 times and 250 ms (400 ms) above the last release
   whose soak passed this gate with the same settings, read from that run's
   artifact. A failing arm is measured once more on a fresh server and keeps
-  the better reading, so one noisy reading cannot fail a release. The p95 bar
+  the better reading whole, so one noisy reading cannot fail a release. When
+  an earlier release's result cannot be read (GitHub down or rate-limited, a
+  corrupt artifact) or the soak did not run the 600,000-page fixture, the arm
+  fails with the cause named instead of silently skipping the regression
+  check; the first release after this gate shipped, which has no earlier
+  result at all, is checked on the fixed bars alone. The p95 bar
   is 3 s, not 2 s, because on good builds the slowest searches (four-word
   queries, whose title arm takes about 1.3 s) already sit near 2 s.
 
@@ -999,6 +1004,10 @@ and the [daily stable check](#daily-stable-check) never promotes that release.
 The 65 ms cell records the same numbers without failing. `search-gate.md` in
 the cell's artifact and the run summary hold the table; `search-gate.json`
 holds every reading.
+
+**The regression check could not run** (the message says why): re-dispatch
+the soak on the same tag once GitHub recovers, or, to release on the fixed bars
+alone, re-dispatch it with `search_gate_override` set to the reason, as below.
 
 **A failure you believe is noise** (the second reading failed too, so rare):
 look at `search-gate-calls.jsonl` first. Then either re-dispatch the soak on

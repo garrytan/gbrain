@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { acceptBaseline, BAR_MS, checkArm, combine, failureMessage, summarize, type Baseline, type Call, type Config } from '../../scripts/bench/production-soak/search-gate.ts';
+import { acceptBaseline, BAR_MS, checkArm, combine, failureMessage, missingBaseline, RELEASE_PAGES, summarize, type Baseline, type Call, type Config } from '../../scripts/bench/production-soak/search-gate.ts';
+import { SOAK_SHAPE } from '../../scripts/stable-daily.ts';
 
 const calls = (ms: number[], meta = 0): Call[] => ms.map(m => ({ ms: m, timings: { stages_ms: { rerank: 300, response: meta + 30 }, parts_ms: { response: { meta, evidence: 30 } } } }));
 const base: Baseline = { version: '0.60.722.0', run_url: null, arms: [{ jit: 'off', p50_ms: 1007, p95_ms: 1300 }, { jit: 'on', p50_ms: 1100, p95_ms: 1400 }] };
@@ -40,14 +41,40 @@ describe('production soak search speed gate', () => {
     expect(checkArm({ jit: 'on', ...summarize([], 'on') }, null).filter(c => !c.pass).map(c => c.id)).toEqual(['errors', 'p50', 'p95']);
   });
 
-  test('a second reading keeps the better numbers, so one noisy reading cannot fail a release', () => {
-    const noisy = summarize(calls(Array.from({ length: 60 }, (_, i) => (i > 50 ? 2600 : 1200))), 'on');
+  test('a passing second reading is kept whole, so one noisy reading cannot fail a release', () => {
+    const noisy = summarize(calls(Array.from({ length: 60 }, (_, i) => (i > 50 ? 3600 : 1200))), 'on');
     const clean = summarize(calls(Array.from({ length: 60 }, () => 1250)), 'on');
-    const arm = combine('on', [noisy, clean]);
-    expect(arm.p95_ms).toBe(1250);
-    expect(arm.p50_ms).toBe(1200);
+    const arm = combine('on', [noisy, clean], null);
+    expect(arm).toMatchObject({ p50_ms: 1250, p95_ms: 1250, errors: 0 });
     expect(checkArm(arm, null).every(c => c.pass)).toBe(true);
     expect(arm.readings).toHaveLength(2);
+  });
+
+  test('two failing readings cannot pass by mixing one reading\'s error count with the other\'s latency', () => {
+    const fastWithErrors = summarize([...calls(Array(55).fill(900)), ...Array.from({ length: 5 }, () => ({ ms: 5, error: 'x' }))], 'on');
+    const slowClean = summarize(calls(Array(60).fill(2500)), 'on');
+    const arm = combine('on', [fastWithErrors, slowClean], null);
+    expect(checkArm(arm, null).every(c => c.pass)).toBe(false);
+    expect(arm.errors === 5 ? arm.p50_ms : arm.errors).toBe(900);
+  });
+
+  test('an unreadable earlier result or a non-release fixture holds the gate instead of silently dropping the regression check', () => {
+    const config: Config = { fixture_pages: RELEASE_PAGES, rtt_ms: 2, n: 60, warmup: 5, embed_ms: 200, rerank_ms: 300, parked: 9400 };
+    expect(RELEASE_PAGES).toBe(SOAK_SHAPE.pages);
+    expect(missingBaseline([], config)).toEqual({ baseline: null, lookup: 'none' });
+    const failed = missingBaseline(['v0.60.760.0 download failed (HTTP 403: API rate limit exceeded)'], config);
+    expect(failed.lookup).toBe('failed');
+    expect(failed.detail).toContain('API rate limit exceeded');
+    expect(missingBaseline([], { ...config, fixture_pages: 800_000 }).lookup).toBe('failed');
+    const arm = combine('off', [summarize(calls(Array(60).fill(1000)), 'off')], null);
+    const checks = checkArm(arm, null, failed.detail);
+    expect(checks.filter(c => !c.pass).map(c => c.id)).toEqual(['baseline']);
+    const msg = failureMessage(arm, checks, 2, 601_357, null);
+    expect(msg).toContain('could not be compared with the last release');
+    expect(msg).toContain('API rate limit exceeded');
+    expect(msg).toContain('held from stable until the check runs');
+    expect(msg).toContain('search_gate_override');
+    expect(msg).not.toContain('too slow');
   });
 
   test('only a passing, unoverridden result on the same fixture size and probe becomes the baseline', () => {
@@ -61,7 +88,7 @@ describe('production soak search speed gate', () => {
   });
 
   test('the failure message names the numbers, the slowest part, the hold and the override', () => {
-    const arm = combine('on', [summarize(calls(Array.from({ length: 60 }, () => 3800), 3027), 'on')]);
+    const arm = combine('on', [summarize(calls(Array.from({ length: 60 }, () => 3800), 3027), 'on')], null);
     const msg = failureMessage(arm, checkArm(arm, null), 2, 601_357, null);
     expect(msg).toContain('601k-page brain at 2 ms RTT with Postgres JIT on');
     expect(msg).toContain('p50 3,800 ms, bar under ' + BAR_MS.p50.toLocaleString('en-US') + ' ms');

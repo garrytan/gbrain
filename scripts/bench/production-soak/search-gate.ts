@@ -42,6 +42,8 @@ export const BAR_MS = { p50: 2000, p95: 3000 } as const;
 export const REGRESSION = { ratio: 1.5, p50_min_ms: 250, p95_min_ms: 400 } as const;
 export const GATE_IDS = { on: 'search_gate_jit_on', off: 'search_gate_jit_off' } as const;
 export const DOCS = 'docs/RELEASING.md#search-speed-gate';
+/** The fixture size a release soak runs (SOAK_SHAPE.pages in scripts/stable-daily.ts); the regression check compares only soaks of this size. */
+export const RELEASE_PAGES = 600_000;
 
 export type Jit = 'on' | 'off';
 export interface Call { ms: number; error?: string; timings?: { stages_ms?: Record<string, number>; parts_ms?: Record<string, Record<string, number>> } }
@@ -64,14 +66,15 @@ export function summarize(calls: Call[], serverJit: string): Reading {
   return { n: calls.length, errors: calls.length - ok.length, p50_ms: pct(ok, 50), p95_ms: pct(ok, 95), slowest, server_jit: serverJit };
 }
 
-/** The better of an arm's readings: the lowest p50, p95 and error count, each on its own. */
-export function combine(jit: Jit, readings: Reading[]): Arm {
-  const min = (xs: Array<number | null>) => { const v = xs.filter((x): x is number => x !== null); return v.length ? Math.min(...v) : null; };
-  const best = readings.reduce((a, b) => ((b.p50_ms ?? Infinity) < (a.p50_ms ?? Infinity) ? b : a));
-  return { jit, n: best.n, errors: Math.min(...readings.map(r => r.errors)), p50_ms: min(readings.map(r => r.p50_ms)), p95_ms: min(readings.map(r => r.p95_ms)), slowest: best.slowest, server_jit: best.server_jit, readings };
+/** The better of an arm's readings, kept whole: the first that passes every check, else the one with the fewest failing checks. */
+export function combine(jit: Jit, readings: Reading[], baseline: Baseline | null): Arm {
+  const failing = (r: Reading) => checkArm({ jit, ...r }, baseline).filter(c => !c.pass).length;
+  const best = readings.reduce((a, b) => (failing(b) < failing(a) ? b : a));
+  return { jit, ...best, readings };
 }
 
-export function checkArm(arm: Pick<Arm, 'jit' | 'n' | 'errors' | 'p50_ms' | 'p95_ms' | 'server_jit'>, baseline: Baseline | null): Check[] {
+/** The arm's checks; unreadable names why the last release's result could not be read, which fails the arm until the check runs or is overridden. */
+export function checkArm(arm: Pick<Arm, 'jit' | 'n' | 'errors' | 'p50_ms' | 'p95_ms' | 'server_jit'>, baseline: Baseline | null, unreadable?: string): Check[] {
   const checks: Check[] = [
     { arm: arm.jit, id: 'server_jit', value: null, limit: null, pass: arm.server_jit === arm.jit, why: 'Postgres reported jit = ' + arm.server_jit + ' for the JIT ' + arm.jit + ' arm' },
     { arm: arm.jit, id: 'errors', value: arm.errors, limit: 0, pass: arm.n > 0 && arm.errors === 0, why: arm.errors + ' of ' + arm.n + ' searches failed' },
@@ -84,6 +87,7 @@ export function checkArm(arm: Pick<Arm, 'jit' | 'n' | 'errors' | 'p50_ms' | 'p95
     const limit = Math.round(Math.max(prior * REGRESSION.ratio, prior + floor));
     checks.push({ arm: arm.jit, id, value, limit, pass: value <= limit, why: id.slice(0, 3) + ' ' + ms(value) + ' against ' + ms(prior) + ' on v' + baseline!.version + ' (limit ' + ms(limit) + ')' });
   }
+  if (unreadable) checks.push({ arm: arm.jit, id: 'baseline', value: null, limit: null, pass: false, why: 'no regression check: ' + unreadable });
   return checks;
 }
 
@@ -92,11 +96,17 @@ export function ms(x: number | null | undefined): string { return x === null || 
 /** One plain failure message per failing arm, naming the numbers, the slowest part and what to do. */
 export function failureMessage(arm: Arm, checks: Check[], rtt: number, pages: number | null, baseline: Baseline | null, held = true): string {
   const failed = checks.filter(c => c.arm === arm.jit && !c.pass);
+  const slow = failed.filter(c => c.id !== 'baseline');
+  const unread = failed.find(c => c.id === 'baseline');
+  const where = 'the ' + (pages ? Math.round(pages / 1000) + 'k-page' : 'soak') + ' brain at ' + rtt + ' ms RTT with Postgres JIT ' + arm.jit;
   const prior = baseline?.arms.find(a => a.jit === arm.jit);
-  return 'Warm search is too slow on the ' + (pages ? Math.round(pages / 1000) + 'k-page' : 'soak') + ' brain at ' + rtt + ' ms RTT with Postgres JIT ' + arm.jit + ': ' + failed.map(c => c.why).join('; ') + '.'
+  return (slow.length ? 'Warm search is too slow on ' + where + ': ' + slow.map(c => c.why).join('; ') + '.' : 'Warm search on ' + where + ' could not be compared with the last release.')
+    + (unread ? ' The regression check could not run: ' + unread.why.replace(/^no regression check: /, '') + '.' : '')
     + (prior && !failed.some(c => c.id.endsWith('_vs_last_release')) ? ' Last passing release v' + baseline!.version + ': p50 ' + ms(prior.p50_ms) + ', p95 ' + ms(prior.p95_ms) + '.' : '')
     + (arm.slowest ? ' Slowest timed part: ' + arm.slowest.part + ' at ' + ms(arm.slowest.p50_ms) + ' p50.' : '')
-    + (held ? ' This release is held from stable. Measured twice on fresh servers; details in search-gate.md. Known-noisy run: re-dispatch the soak on this tag with search_gate_override (' + DOCS + ').' : ' Not blocking this run (record-only cell or overridden); details in search-gate.md.');
+    + (!held ? ' Not blocking this run (record-only cell or overridden); details in search-gate.md.'
+      : unread && !slow.length ? ' This release is held from stable until the check runs. If GitHub was down or rate-limited, re-dispatch the soak on this tag once it recovers; to release on the fixed bars alone, re-dispatch it with search_gate_override set to the reason (' + DOCS + ').'
+      : ' This release is held from stable. Measured twice on fresh servers; details in search-gate.md. Known-noisy run: re-dispatch the soak on this tag with search_gate_override (' + DOCS + ').');
 }
 
 const cmpVersion = (a: string, b: string) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] ?? 0) - (y[i] ?? 0); if (d) return d; } return 0; };
@@ -113,19 +123,30 @@ export type BaselineLookup = { baseline: Baseline | null; lookup: 'given' | 'fou
 function findBaseline(repo: string, version: string, config: Config): BaselineLookup {
   const gh = (args: string[]) => spawnSync('gh', args, { encoding: 'utf8', maxBuffer: 1 << 26 });
   const list = gh(['api', 'repos/' + repo + '/actions/workflows/production-soak.yml/runs?status=success&per_page=100', '--jq', '.workflow_runs[] | [.id, .head_branch, .html_url] | @tsv']);
-  if (list.status !== 0) return { baseline: null, lookup: 'failed', detail: 'could not list soak runs: ' + list.stderr.trim().split('\n').at(-1) };
+  if (list.status !== 0) return { baseline: null, lookup: 'failed', detail: 'GitHub could not list earlier soak runs (' + list.stderr.trim().split('\n').at(-1) + ')' };
   const runs = list.stdout.trim().split('\n').map(l => l.split('\t')).filter(r => /^v\d+(\.\d+){3}$/.test(r[1] ?? '') && cmpVersion(r[1]!.slice(1), version) < 0)
     .sort((a, b) => cmpVersion(b[1]!.slice(1), a[1]!.slice(1)));
+  const unreadable: string[] = [];
   for (const [id, tag, url] of runs.slice(0, 6)) {
     const dir = mkdtempSync(join(tmpdir(), 'search-gate-'));
     try {
-      if (gh(['run', 'download', id!, '-R', repo, '-n', 'production-soak-rtt' + config.rtt_ms, '-D', dir]).status !== 0) continue;
+      const dl = gh(['run', 'download', id!, '-R', repo, '-n', 'production-soak-rtt' + config.rtt_ms, '-D', dir]);
+      if (dl.status !== 0) { if (!/no (valid )?artifacts? (found|match)/i.test(dl.stderr)) unreadable.push(tag + ' download failed (' + dl.stderr.trim().split('\n').at(-1) + ')'); continue; }
       const file = join(dir, 'search-gate.json');
       if (!existsSync(file)) continue;
-      const baseline = acceptBaseline(JSON.parse(readFileSync(file, 'utf8')), tag!, url ?? null, config);
+      let g: Parameters<typeof acceptBaseline>[0];
+      try { g = JSON.parse(readFileSync(file, 'utf8')); } catch { unreadable.push(tag + ' search-gate.json is not valid JSON'); continue; }
+      const baseline = acceptBaseline(g, tag!, url ?? null, config);
       if (baseline) return { baseline, lookup: 'found' };
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }
+  return missingBaseline(unreadable, config);
+}
+
+/** No baseline found: 'failed' when an earlier release's result could not be read or this soak is not release-size, so the check cannot be skipped silently; else 'none'. */
+export function missingBaseline(unreadable: string[], config: Config): BaselineLookup {
+  if (unreadable.length) return { baseline: null, lookup: 'failed', detail: 'the result of ' + unreadable.length + ' earlier release(s) could not be read: ' + unreadable.join('; ') };
+  if (config.fixture_pages !== RELEASE_PAGES) return { baseline: null, lookup: 'failed', detail: 'no earlier release passed this gate on a ' + config.fixture_pages.toLocaleString('en-US') + '-page fixture, and releases are compared on ' + RELEASE_PAGES.toLocaleString('en-US') + ' pages' };
   return { baseline: null, lookup: 'none' };
 }
 
@@ -200,16 +221,15 @@ async function main() {
   const lookup: BaselineLookup = flag('baseline') ? (() => { const g = JSON.parse(readFileSync(resolve(flag('baseline')), 'utf8')); return { baseline: { version: String(g.version), run_url: g.run_url ?? null, arms: g.arms }, lookup: 'given' as const }; })()
     : flag('baseline-repo') ? findBaseline(flag('baseline-repo'), version, config) : { baseline: null, lookup: 'none' };
   const baseline = lookup.baseline;
-  if (lookup.lookup === 'failed') console.log('::warning title=Search speed gate::The last release\'s result could not be read (' + lookup.detail + '), so this run has no regression check; the fixed bars still apply.');
   const arms: Arm[] = [];
   const checks: Check[] = [];
   try {
     for (const jit of ['on', 'off'] as const) {
       const first = await measure(jit, 1);
       const readings = checkArm({ jit, ...first }, baseline).every(c => c.pass) ? [first] : [first, await measure(jit, 2)];
-      const arm = combine(jit, readings);
+      const arm = combine(jit, readings, baseline);
       arms.push(arm);
-      checks.push(...checkArm(arm, baseline));
+      checks.push(...checkArm(arm, baseline, lookup.lookup === 'failed' ? lookup.detail : undefined));
       console.error('[search-gate] JIT ' + jit + ': p50 ' + ms(arm.p50_ms) + ', p95 ' + ms(arm.p95_ms) + ', errors ' + arm.errors + ' over ' + readings.length + ' reading(s)');
     }
   } finally {
