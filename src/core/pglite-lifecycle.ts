@@ -9,6 +9,11 @@ export function registerPgliteReopen(engine: object, listener: (sameDatastore: b
   return () => { listeners.delete(listener); };
 }
 
+/** The datastore path `engine` last opened (undefined: never opened, in-memory, or not a PGLite engine). */
+export function openedPgliteDatastore(engine: object): string | undefined {
+  return openedDatastores.get(engine);
+}
+
 export function notifyPgliteOpened(engine: object, databasePath: string | undefined): void {
   const sameDatastore = !!databasePath && openedDatastores.get(engine) === databasePath;
   openedDatastores.set(engine, databasePath);

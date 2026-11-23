@@ -112,7 +112,7 @@ test/engine-parity/facts-rest-sites.test.ts	18	3
 test/engine-parity/facts-trust-owner.test.ts	6	0
 test/engine-parity/facts-trust.test.ts	13	0
 test/engine-parity/facts-unique-violation.test.ts	3	0
-test/engine-parity/facts.test.ts	36	0
+test/engine-parity/facts.test.ts	37	0
 test/engine-parity/family-tail-sites.test.ts	6	6
 test/engine-parity/fence-overlay.test.ts	2	0
 test/engine-parity/fenced-import-purge.test.ts	1	0
@@ -205,7 +205,7 @@ test/engine-parity/purge-dry-run.test.ts	2	0
 test/engine-parity/purge-plan.test.ts	12	0
 test/engine-parity/purge-writes.test.ts	5	0
 test/engine-parity/put-source-fork.test.ts	2	1
-test/engine-parity/raw-sql.test.ts	0	4
+test/engine-parity/raw-sql.test.ts	1	4
 test/engine-parity/read-shared-revision.test.ts	3	0
 test/engine-parity/read-shared-sources.test.ts	3	0
 test/engine-parity/reads-privacy.test.ts	51	1
@@ -252,7 +252,7 @@ test/engine-parity/search-deep-query.test.ts	1	0
 test/engine-parity/search-privacy-retention.test.ts	5	0
 test/engine-parity/search-privacy.test.ts	25	0
 test/engine-parity/search-private-fence.test.ts	5	0
-test/engine-parity/search-reads.test.ts	18	0
+test/engine-parity/search-reads.test.ts	20	1
 test/engine-parity/search.test.ts	23	0
 test/engine-parity/segment-regions.test.ts	1	0
 test/engine-parity/segmented-body.test.ts	22	0
@@ -280,6 +280,7 @@ test/engine-parity/sync-checkpoint.test.ts	2	0
 test/engine-parity/sync-import-provenance.test.ts	4	0
 test/engine-parity/sync-pass-pages.test.ts	3	1
 test/engine-parity/sync-requests.test.ts	3	0
+test/engine-parity/sync-restored-file-holds.test.ts	0	1
 test/engine-parity/sync-route.test.ts	6	0
 test/engine-parity/sync-run-reads.test.ts	3	0
 test/engine-parity/sync-run.test.ts	1	0

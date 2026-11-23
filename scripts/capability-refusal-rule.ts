@@ -15,6 +15,9 @@
  * the guard can add the entry without an adapter. Engine implementation files
  * (the engines, their SQL modules, migrations) are out of scope: Rust never
  * runs them.
+ *
+ * Not counted: a `.then(ok, onError)` second argument, a named `.catch(handler)` and a promise held in a
+ * variable before `.catch` (the scanner builds only try/catch and inline `.catch(fn)` sites).
  */
 import ts from 'typescript';
 
@@ -31,7 +34,14 @@ export interface CapabilityRefusalSite {
 }
 
 /** Engine methods that send caller SQL; Rust refuses each statement it has not typed. */
-export const RAW_SQL_METHODS: ReadonlySet<string> = new Set(['executeRaw', 'executeRawJsonb']);
+export const RAW_SQL_METHODS: ReadonlySet<string> = new Set(['executeRaw', 'executeRawDirect', 'executeRawJsonb']);
+
+/** Bare helpers that send caller SQL on an engine passed as their first argument. */
+export const RAW_SQL_FUNCTIONS: ReadonlySet<string> = new Set(['executeRawJsonb']);
+
+const isRawSqlCall = (n: ts.CallExpression): boolean =>
+  (ts.isPropertyAccessExpression(n.expression) && RAW_SQL_METHODS.has(n.expression.name.text))
+  || (ts.isIdentifier(n.expression) && RAW_SQL_FUNCTIONS.has(n.expression.text));
 
 /** Calls that rethrow a capability refusal and let any other error through to the fallback. */
 const RETHROW_HELPERS: ReadonlySet<string> = new Set(['rethrowCapabilityRefusal', 'nullUnlessCapabilityRefusal']);
@@ -49,7 +59,7 @@ export const ENGINE_IMPLEMENTATION_PATH =
  * as a statement) runs elsewhere and does not count. `node` is a try block, or the receiver of
  * `.catch(fn)`, whose promise the handler catches.
  */
-export function guardsRawSqlCall(node: ts.Node): boolean {
+function guardsFlowingRawSqlCall(node: ts.Node): boolean {
   let found = false;
   // `flows`: the value of `n` reaches the catch (awaited, returned, or the `.catch` receiver).
   const visit = (n: ts.Node, flows: boolean, inCallback: boolean): void => {
@@ -61,7 +71,7 @@ export function guardsRawSqlCall(node: ts.Node): boolean {
       visit(body, !ts.isBlock(body), true);
       return;
     }
-    if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && RAW_SQL_METHODS.has(n.expression.name.text)
+    if (ts.isCallExpression(n) && isRawSqlCall(n)
       && (!inCallback || flows)) {
       found = true;
       return;
@@ -76,6 +86,41 @@ export function guardsRawSqlCall(node: ts.Node): boolean {
   return found;
 }
 
+/**
+ * Pass 2 of `guardsRawSqlCall`: whether `node` runs a raw-SQL engine call whose failure reaches the catch. A function declaration or a
+ * callback nothing awaits runs elsewhere and does not count. A callback inside an awaited call
+ * (`await tx(async t => t.executeRaw(..))`, `await Promise.all(xs.map(x => e.executeRaw(..)))`) does:
+ * its rejection rejects the awaited call. `awaited` starts true when `node` is the receiver of a
+ * `.catch(fn)`, since the whole chain rejects into the handler.
+ */
+function guardsAwaitedRawSqlCall(node: ts.Node, awaited: boolean): boolean {
+  let found = false;
+  const visit = (n: ts.Node, inAwait: boolean): void => {
+    if (found) return;
+    if (n !== node && ts.isFunctionLike(n) && !(inAwait && (ts.isArrowFunction(n) || ts.isFunctionExpression(n)))) return;
+    if (ts.isCallExpression(n) && isRawSqlCall(n)) {
+      found = true;
+      return;
+    }
+    // A callback body starts a fresh scope: what it awaits counts, what it merely starts does not.
+    const next = n !== node && ts.isFunctionLike(n) ? false : inAwait || ts.isAwaitExpression(n);
+    ts.forEachChild(n, c => visit(c, next));
+  };
+  visit(node, awaited);
+  return found;
+}
+
+/**
+ * Whether a failure of a raw-SQL engine call inside `node` reaches its catch: true when either pass finds a call.
+ * The flow pass follows a callback's returned promise (see `guardsFlowingRawSqlCall`); the awaited pass counts every
+ * call inside a callback of an awaited call, so a promise a callback keeps in a local before returning it still
+ * counts. `awaited` starts true when `node` is the receiver of a `.catch(fn)`.
+ */
+export function guardsRawSqlCall(node: ts.Node, awaited = false): boolean {
+  const found = guardsFlowingRawSqlCall(node) || guardsAwaitedRawSqlCall(node, awaited);
+  return found;
+}
+
 const isName = (e: ts.Expression, name: string | undefined): boolean => !!name && ts.isIdentifier(e) && e.text === name;
 
 /** `rethrowCapabilityRefusal(err)` / `nullUnlessCapabilityRefusal(err)` on the caught error. */
@@ -84,7 +129,7 @@ function isRethrowHelperCall(e: ts.Expression, errorName: string | undefined): b
     && e.arguments.length >= 1 && isName(e.arguments[0]!, errorName);
 }
 
-/** `isEngineCapabilityRefusal(err)`, optionally inside `||` / `&&` / parentheses. */
+/** `isEngineCapabilityRefusal(err)`, optionally inside `||` or parentheses (`&&` and `!` are not recognised). */
 function testsCapabilityRefusal(e: ts.Expression, errorName: string | undefined): boolean {
   if (ts.isParenthesizedExpression(e)) return testsCapabilityRefusal(e.expression, errorName);
   if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.BarBarToken) {
@@ -122,8 +167,9 @@ function returnsFallback(s: ts.Node, errorName: string | undefined): boolean {
 /**
  * Whether the handler lets a capability refusal through before any fallback: one of its leading
  * statements, before the first return, branch or assignment, rethrows it. A bare block is read as
- * its statements; any other statement that can return a fallback on some path (a loop, a switch, a
- * labelled block) ends the search, since that path skips the later check.
+ * its statements; a switch ends the search outright (a case can shadow or overwrite the caught error and answer
+ * first), and any other statement that can return a fallback on some path (a loop, a labelled block) ends it too,
+ * since that path skips the later check.
  */
 export function handlerRethrowsCapabilityRefusal(site: CapabilityRefusalSite): boolean {
   const { errorName } = site;
@@ -139,7 +185,7 @@ export function handlerRethrowsCapabilityRefusal(site: CapabilityRefusalSite): b
       if (ts.isReturnStatement(s) && s.expression && isRethrowHelperCall(s.expression, errorName)) return true;
       if (ts.isIfStatement(s) && testsCapabilityRefusal(s.expression, errorName) && thenRethrows(s.thenStatement)) return true;
       // Logging, locals and other side effects may come first; the first answer or branch ends the search.
-      if (ts.isReturnStatement(s) || ts.isIfStatement(s) || ts.isTryStatement(s)) return false;
+      if (ts.isReturnStatement(s) || ts.isIfStatement(s) || ts.isSwitchStatement(s) || ts.isTryStatement(s)) return false;
       if (ts.isExpressionStatement(s) && ts.isBinaryExpression(s.expression) && s.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken) return false;
       if (returnsFallback(s, errorName)) return false;
     }
@@ -151,7 +197,7 @@ export function handlerRethrowsCapabilityRefusal(site: CapabilityRefusalSite): b
 /** True for a violation: a catch around a raw-SQL engine call whose handler can swallow a capability refusal. */
 export function capabilityRefusalSwallowed(site: CapabilityRefusalSite): boolean {
   if (ENGINE_IMPLEMENTATION_PATH.test(site.sourceFile.fileName.replace(/\\/g, '/'))) return false;
-  return guardsRawSqlCall(site.guarded) && !handlerRethrowsCapabilityRefusal(site);
+  return guardsRawSqlCall(site.guarded, site.kind === 'promise-catch') && !handlerRethrowsCapabilityRefusal(site);
 }
 
 export const CAPABILITY_REFUSAL_RULE = {

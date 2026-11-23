@@ -154,7 +154,7 @@ impl Store {
     }
 
     /// `resolveCaseSensitiveAliases`: the case-sensitive rows of the listed aliases in the listed
-    /// sources, as `{ slug, alias_norm, alias_text }` by source, slug, alias. The SQL leaves the
+    /// sources, as `{ slug, alias_norm, alias_text }` by slug, alias, alias text. The SQL leaves the
     /// order of two origins of one row open; this read puts them in origin byte order.
     pub fn resolve_case_sensitive_aliases(
         &self,
@@ -165,9 +165,8 @@ impl Store {
         let sources = key_texts(MEMBER, source_ids)?;
         let aliases = key_texts(MEMBER, alias_norms)?;
         let read = self.read()?;
-        let mut out = Vec::new();
+        let mut rows = Vec::new();
         for &source in &sources {
-            let mut rows = Vec::new();
             for &alias in &aliases {
                 for key in alias_keys(&*read, &alias_prefix(PAGE_ALIAS, &[source, alias]))? {
                     if !key.value.is_empty() {
@@ -183,15 +182,17 @@ impl Store {
                     };
                     let value = row_value(MEMBER, &value)?;
                     if value.case_sensitive {
-                        rows.push((slug.clone(), alias, origin.clone(), value.alias_text));
+                        rows.push((slug.clone(), alias, value.alias_text, origin.clone()));
                     }
                 }
             }
-            rows.sort();
-            out.extend(rows.into_iter().map(|(slug, alias, _, text)| {
-                json!({"slug": slug, "alias_norm": alias, "alias_text": text})
-            }));
         }
+        // The rows carry no source, so they sort by slug, alias and text across every listed source.
+        rows.sort();
+        let out = rows
+            .into_iter()
+            .map(|(slug, alias, text, _)| json!({"slug": slug, "alias_norm": alias, "alias_text": text}))
+            .collect();
         Ok(out)
     }
 
