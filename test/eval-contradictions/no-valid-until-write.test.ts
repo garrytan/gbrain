@@ -67,9 +67,10 @@ import { join } from 'node:path';
 //     only when its loop is closed through `loops_close` or `gbrain repair
 //     loop-facts` (expired_at + valid_until with the struck fence row); the
 //     contradiction sweep and probes never call it.
-//   - repair/consolidate-ties.ts (#6023) — `gbrain repair consolidate-ties`
-//     reopens (valid_until back to NULL) only the preview-approved facts the
-//     pre-#6023 consolidate writeback closed at their own instant; local CLI,
+//   - engine-sql/repair-applies.ts (#6023) — `gbrain repair consolidate-ties`'
+//     restoreConsolidationTie (moved from repair/consolidate-ties.ts) reopens
+//     (valid_until back to NULL) only the preview-approved facts the pre-#6023
+//     consolidate writeback closed at their own instant; local CLI,
 //     explicit-only, and the contradiction probe never calls it.
 //   - generations/adapters/fact-rows.ts (GBRA-161 PR 2) — `restoreFactRow`
 //     writes back a fact's recorded before-state (valid_until included) only in
@@ -99,10 +100,10 @@ const VALID_UNTIL_WRITE_ALLOWLIST: ReadonlySet<string> = new Set([
   'src/core/persistence/connector-fact-retirement.ts', // GST-3256: a connector expires only rows whose source is exactly its own provenance; no withdrawal record
   'src/core/persistence/facts-prepare.ts', // #7214: a published supersession closes the retired interval (supersededValidUntil)
   'src/core/persistence/memory-prepare.ts', // #7214: remember (replaces or cosine) closes the retired interval (supersededValidUntil)
+  'src/core/engine-sql/repair-applies.ts', // restoreConsolidationTie, moved from repair/consolidate-ties.ts (#6023): reopens a preview-approved tie
   'src/core/persistence/prepared-maintenance.ts',
   'src/core/postgres-engine.ts',
   'src/core/pglite-engine.ts',
-  'src/core/repair/consolidate-ties.ts',
   'src/core/repair/unwithdrawn-facts.ts',
 ]);
 
