@@ -502,6 +502,10 @@
         "name": "database_encoding"
       },
       {
+        "category": "ops",
+        "name": "shadow_freshness_token"
+      },
+      {
         "category": "meta",
         "name": "schema_version"
       },

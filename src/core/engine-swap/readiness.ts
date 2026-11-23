@@ -54,6 +54,8 @@ export interface ShadowStatus {
     primary_recall_at_10?: number;
   };
   privacy_diverged?: number;
+  /** Present while the shadow's freshness token is blind (src/shadow/freshness-role.ts): no sample is proven unchanged, so criterion 3 fails. */
+  freshness_token?: { code?: string; message?: string; why?: string; fix?: { command?: string } };
   bench?: { pairs?: number; rust_no_worse?: boolean; filtered_vector_margin_met?: boolean; losses?: string[] };
   child?: { panics?: number; faults?: number };
   drills?: { backup_restore_passed?: boolean; eval_gates_e1_e3?: boolean };
@@ -327,6 +329,9 @@ export function evaluateReadiness(doc: ShadowStatus | null, now: Date = new Date
     drills(r),
     elig,
   ];
+  // A blind freshness token proves nothing: the unexplained-diverged count cannot be read as clean (criterion 3).
+  const blind = doc?.freshness_token;
+  if (blind && typeof blind.message === 'string') checks[2] = { state: 'fail', detail: `${blind.message}${blind.code ? ` (${blind.code})` : ''}${blind.fix?.command ? `; fix: ${blind.fix.command}` : ''}; ${checks[2]!.detail}` };
   // A seeded gap is unfinished evidence: never ready while rows are unseeded (S3 rule).
   const gap = r.n('seed.unseeded_gap_rows_total');
   if (checks[0]!.state === 'pass') {

@@ -44,6 +44,7 @@ import {
 } from './checks/db-connection.ts';
 import { ipcSocketPathEntry } from './checks/local-ipc.ts';
 import { rustEngineAddonEntry } from './checks/rust-engine-addon.ts';
+import { shadowFreshnessTokenEntry } from './checks/shadow-freshness-token.ts';
 import { functionSearchPathEntry } from './checks/function-search-path.ts';
 import { guardLedgerChecksEntry } from './checks/guard-ledger-checks.ts';
 import { ownerOnlyMarksTriggersEntry } from './checks/owner-only-marks-triggers.ts';
@@ -279,6 +280,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   guardLedgerChecksEntry,
   ownerOnlyMarksTriggersEntry,
   databaseEncodingEntry,
+  shadowFreshnessTokenEntry,
   schemaVersionEntry,
   schemaFunctionBodiesEntry,
   rlsEventTriggerEntry,

@@ -1993,7 +1993,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   transaction can insert its COMMIT record and become visible later with no further WAL, as under `commit_delay` or a synchronous
   standby wait) may have committed by then, and this process's write generation must be the
   same (the privacy check also needs the access tables' generation to hold, and no page or access row to carry a time later than the read). A role that is neither a superuser nor in `pg_read_all_stats` cannot see other sessions' transactions: its token is blind
-  and clears nothing. Any committed write to any table, to the
+  and clears nothing: as a superuser (or a role with ADMIN OPTION on pg_read_all_stats) run `GRANT pg_read_all_stats TO <role>;` (the role your `database_url` logs in as). `gbrain engine shadow status`, the report, `gbrain engine swap --plan` (criterion 3) and `gbrain doctor` (`shadow_freshness_token`) name it as "freshness token blind: role lacks pg_read_all_stats" with that statement for your actual role, until it is granted. Any committed write to any table, to the
   catalog (a policy altered in place) or a change undone again (A, B, A) moves it, in this database or any other of the same
   cluster. When it moved, both engines and the reference are run again from a new position, up to 3 times (a recall score gets 3 runs in all, the first included); a sample still moving
   after that stays unresolved (`skipped:moved`) and counts into `reads.diverged_unexplained_7d` (criterion 3). So busy brains clear
