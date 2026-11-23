@@ -68,7 +68,7 @@ fn page_id(op: &str, column: &str, value: f64) -> Result<i32> {
 }
 
 /// The projections indexed for `event_page_id`, by date.
-fn projections_of(
+pub(super) fn projections_of(
     read: &dyn KvRead,
     event_page_id: u64,
 ) -> Result<Vec<(Vec<u8>, Option<TimelineRecord>)>> {

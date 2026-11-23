@@ -1395,6 +1395,73 @@ fn tag_change(tx: &mut dyn KvWrite, env: &dyn Env, page: &mut PageRecord) -> Res
 const TAG_ADDED: &str = "added";
 const TAG_FRONTMATTER: &str = "frontmatter";
 
+/// The twin merge's first tag statement (`mergeTwinInto`): a survivor tag the import owns
+/// (`frontmatter`) becomes `added` when the twin's same tag was added by a person. A claim that
+/// changes alone moves no revision (the tag trigger ignores an update that keeps page and tag).
+pub(crate) fn claim_twin_added_tags(tx: &mut dyn KvWrite, twin: u64, survivor: u64) -> Result<()> {
+    let (Some(twin), Some(mut survivor)) = (
+        read_page_by_id(&*tx, twin)?,
+        read_page_by_id(&*tx, survivor)?,
+    ) else {
+        return Ok(());
+    };
+    let mut claimed = false;
+    for tag in survivor.tags.clone() {
+        if survivor.tag_sources.get(&tag).map(String::as_str) == Some(TAG_FRONTMATTER)
+            && twin.tags.contains(&tag)
+            && twin.tag_sources.get(&tag).map(String::as_str) == Some(TAG_ADDED)
+        {
+            survivor.tag_sources.insert(tag, TAG_ADDED.to_string());
+            claimed = true;
+        }
+    }
+    if claimed {
+        write_page(tx, &survivor)?;
+    }
+    Ok(())
+}
+
+/// The twin merge's tag move (`UPDATE tags s SET page_id=survivor WHERE s.page_id=twin AND
+/// s.tag_source IS DISTINCT FROM 'frontmatter' AND NOT EXISTS (..survivor has the tag) RETURNING
+/// tag`): each such tag of the twin moves to the survivor with its claim, and both pages advance
+/// their revision, as the tag trigger does for a row that changes page. Returns the moved tags in
+/// the twin's tag order.
+pub(crate) fn move_twin_tags(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    twin: u64,
+    survivor: u64,
+) -> Result<Vec<String>> {
+    let (Some(mut twin), Some(mut survivor)) = (
+        read_page_by_id(&*tx, twin)?,
+        read_page_by_id(&*tx, survivor)?,
+    ) else {
+        return Ok(Vec::new());
+    };
+    let moved: Vec<String> = twin
+        .tags
+        .iter()
+        .filter(|t| {
+            twin.tag_sources.get(*t).map(String::as_str) != Some(TAG_FRONTMATTER)
+                && !survivor.tags.contains(t)
+        })
+        .cloned()
+        .collect();
+    if moved.is_empty() {
+        return Ok(moved);
+    }
+    for tag in &moved {
+        twin.tags.retain(|t| t != tag);
+        survivor.tags.push(tag.clone());
+        if let Some(claim) = twin.tag_sources.remove(tag) {
+            survivor.tag_sources.insert(tag.clone(), claim);
+        }
+    }
+    tag_change(tx, env, &mut twin)?;
+    tag_change(tx, env, &mut survivor)?;
+    Ok(moved)
+}
+
 /// Adds `tags` to the page with PGLite's claim rules: an explicit add claims each tag `added`; a
 /// `frontmatter` claim marks a new tag and adopts only an unclaimed legacy one. A new tag
 /// advances the page revision, as PGLite's `tags_knowledge_revision` trigger does; a claim that

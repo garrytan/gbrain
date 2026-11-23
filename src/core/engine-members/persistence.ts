@@ -38,8 +38,21 @@ import type { ReceiptCompactionCandidate, ReceiptCompactionWindow } from '../eng
 import type { RefreshTiming, WorktreeAdmission, WorktreeAdmissionKey } from '../engine-sql/persistence-admission.ts';
 import type { SegmentedGateEvidenceRow } from '../engine-sql/writer-versions.ts';
 import type { TerminalIntentCompaction, WriteRequestGroupInsert } from '../engine-sql/persistence-journal.ts';
+import type { TwinPageRows, TwinRelationsMoved } from '../engine-sql/twin-merge.ts';
+import type { RelationshipKey } from '../link-relationships.ts';
 
 export interface PersistenceMembers {
+  // The row moves of the twin merge (engine-sql/twin-merge.ts), run inside mergeTwinInto's transaction.
+  /** The relationship keys of the links, then of the link transitions, touching the pages. Reads links and link_transitions. */
+  listPageRelationshipKeys(pageIds: number[]): Promise<RelationshipKey[]>;
+  /** Drops the twin's link and transition rows that would land on another row's key, then points the rest at the survivor. */
+  moveTwinRelations(twinId: number, survivorId: number): Promise<TwinRelationsMoved>;
+  /** Moves the twin's timeline, raw data, files, page aliases and person-added tags to the survivor; returns the moved tags. */
+  moveTwinPageRows(pair: TwinPageRows): Promise<string[]>;
+  /** Facts about the twin that the twin's page does not hold name the survivor; returns their ids. Writes facts. */
+  moveTwinFacts(sourceId: string, twinSlug: string, survivorSlug: string): Promise<number[]>;
+  /** Records a slug move in the rename history and slug_aliases (`recordRenameAlias`). */
+  recordSlugRename(sourceId: string, oldSlug: string, newSlug: string): Promise<void>;
   /** The atom generation a page's content keys on (engine-sql/atom-generation.ts): the kept content's, else the current one, 0 with none. Reads op_checkpoints. */
   readAtomGeneration(pageId: number, contentHash: string): Promise<number>;
   /** Bumps a page's atom generation and drops the extraction state and completed managed-atoms runs of its other content. Writes op_checkpoints and extract_atoms_page_state. */

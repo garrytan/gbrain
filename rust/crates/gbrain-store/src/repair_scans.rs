@@ -578,7 +578,11 @@ fn losers<T>(
     out
 }
 
-fn twin_merge_losers(read: &dyn KvRead, survivor: u64, twin: u64) -> Result<TwinMergeLosers> {
+pub(crate) fn twin_merge_losers(
+    read: &dyn KvRead,
+    survivor: u64,
+    twin: u64,
+) -> Result<TwinMergeLosers> {
     let mut links: BTreeMap<u64, LinkRecord> = BTreeMap::new();
     for page in [twin, survivor] {
         for link in out_links(read, page)?

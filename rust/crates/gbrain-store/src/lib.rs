@@ -107,6 +107,7 @@ pub mod telemetry;
 pub mod timeline_queries;
 pub mod transactions;
 pub mod trust;
+pub mod twin_merge;
 pub mod vectors;
 mod version_prune;
 pub mod wanted_links;

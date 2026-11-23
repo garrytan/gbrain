@@ -510,7 +510,12 @@ pub(crate) fn scrub_purged_rename_history(
 /// slug (a page owns that slug now), repoints every alias of the old slug at the new one, then
 /// upserts `old -> new` with notes `rename` (an existing row keeps its notes, as `ON CONFLICT DO
 /// UPDATE SET canonical_slug` does).
-fn record_rename_alias(tx: &mut dyn KvWrite, source: &str, old: &str, new: &str) -> Result<()> {
+pub(crate) fn record_rename_alias(
+    tx: &mut dyn KvWrite,
+    source: &str,
+    old: &str,
+    new: &str,
+) -> Result<()> {
     if old == new {
         return Ok(());
     }
@@ -554,6 +559,43 @@ fn move_page_aliases(tx: &mut dyn KvWrite, source: &str, old: &str, new: &str) -
         if !value.is_empty() {
             tx.put(
                 &key(PAGE_ALIAS_BY_SLUG, &[source, new, &alias, &origin]),
+                &value,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// The twin merge's `page_aliases` move (`mergeTwinInto`): each row of the twin's slug moves to the
+/// survivor's slug unless the survivor already has that alias with that origin; such a row stays on
+/// the twin. Unlike [`move_page_aliases`] (a rename), the survivor's own rows never yield.
+pub(crate) fn move_twin_page_aliases(
+    tx: &mut dyn KvWrite,
+    source: &str,
+    twin: &str,
+    survivor: &str,
+) -> Result<()> {
+    if twin == survivor || has_nul(&[source, twin, survivor]) {
+        return Ok(());
+    }
+    for (alias, origin) in page_alias_rows(&*tx, source, twin)? {
+        if tx
+            .get(&key(
+                PAGE_ALIAS_BY_SLUG,
+                &[source, survivor, &alias, &origin],
+            ))?
+            .is_some()
+        {
+            continue;
+        }
+        let value = tx
+            .get(&key(PAGE_ALIAS_BY_SLUG, &[source, twin, &alias, &origin]))?
+            .unwrap_or_default();
+        delete_page_alias(tx, source, &alias, twin, &origin)?;
+        put_page_alias(tx, source, &alias, survivor, &origin)?;
+        if !value.is_empty() {
+            tx.put(
+                &key(PAGE_ALIAS_BY_SLUG, &[source, survivor, &alias, &origin]),
                 &value,
             )?;
         }

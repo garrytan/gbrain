@@ -1285,6 +1285,44 @@ fn insert_transition(tx: &mut dyn KvWrite, record: TransitionRecord) -> Result<b
     Ok(true)
 }
 
+/// The stored key of a transition row: the relationship family of its source, its pair, its id.
+fn transition_row_key(record: &TransitionRecord) -> Vec<u8> {
+    let mut key = pair_prefix(&record.source_id, TRANSITION, &record.key());
+    key.extend_from_slice(&record.id.to_be_bytes());
+    key
+}
+
+/// Deletes stored transition rows (the twin merge's `DELETE FROM link_transitions WHERE id=ANY(..)`
+/// and the old keys of the rows it moves).
+pub(crate) fn delete_transition_rows(
+    tx: &mut dyn KvWrite,
+    rows: &[TransitionRecord],
+) -> Result<()> {
+    for row in rows {
+        tx.delete(&transition_row_key(row))?;
+    }
+    Ok(())
+}
+
+/// Saves transition rows at their pairs after their old keys are gone, keeping each id (the twin
+/// merge's `UPDATE link_transitions SET from_page_id=..`). A row that repeats another row's identity
+/// is refused with `constraint_violation`, as the unique index refuses the update (`23505`).
+pub(crate) fn put_moved_transitions(tx: &mut dyn KvWrite, rows: &[TransitionRecord]) -> Result<()> {
+    for row in rows {
+        if transitions_of(&*tx, &row.key())?
+            .iter()
+            .any(|(_, t)| t.id != row.id && t.same_identity(row))
+        {
+            return Err(StoreError::new(
+                CONSTRAINT_VIOLATION,
+                "duplicate key value violates unique constraint on link_transitions",
+            ));
+        }
+        put_json(tx, &transition_row_key(row), row)?;
+    }
+    Ok(())
+}
+
 fn check_transition(kind: &str, occurred_on: &str, precision: &str, producer: &str) -> Result<()> {
     check_one_of("kind", kind, &KINDS)?;
     check_date("occurred_on", occurred_on)?;

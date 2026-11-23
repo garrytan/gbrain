@@ -362,7 +362,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readWorktreeManifest', 'readWriteRequestsByRequestId', 'readWriterDiagnosticRows', 'readWriterStatusRows',
 
   // The repair applies' rechecks (engine-sql/repair-applies.ts).
-  'listLiveDuplicateRows', 'listCommittedRestorePages', 'listActivePositionedFactIds', 'readFactRestorePage', 'readSourceCloneRow', 'readPageVersionRow', 'hasDatabaseOnlyClaim', 'readAtomGeneration', 'listPageAccessKeys',
+  'listLiveDuplicateRows', 'listCommittedRestorePages', 'listActivePositionedFactIds', 'readFactRestorePage', 'readSourceCloneRow', 'readPageVersionRow', 'hasDatabaseOnlyClaim', 'readAtomGeneration', 'listPageRelationshipKeys', 'listPageAccessKeys',
   'listAtomLineageRows', 'listChronicleEventVisibilityRows', 'listAliasOnlyPrivatePages', 'listCheckoutFilePages', 'listOpenTwinRows', 'listTypePageBodies', 'listOpenFactsWindow', 'countOpenFactReasons',
   'listLabelledPages', 'listLiveLabelRows', 'listClearDependents', 'listContextualRetrievalModes', 'listUnembeddedChunkPages',
 ];
@@ -497,6 +497,11 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   restoreOntologyFact: 'listActiveFactsForEntity for that fact\'s entity',
   setConsolidatedFactValidUntil: 'listActiveFactsForEntity for that fact\'s entity',
   // The repair applies' writes (engine-sql/repair-applies.ts).
+  // The row moves of the twin merge (engine-sql/twin-merge.ts).
+  moveTwinRelations: 'listTwinMergeLosers for the pair (a moved row no longer names the twin)',
+  moveTwinPageRows: 'getTags of the survivor (the moved tags are on it)',
+  moveTwinFacts: 'listActiveFactsForEntity for the survivor\'s slug',
+  recordSlugRename: 'resolveSlugs for the old slug (it resolves to the new one)',
   restoreConsolidationTie: 'listClosedConsolidationTies for that source (a reopened fact is no longer a closed tie)',
   supersedeDuplicateFacts: 'listLiveDuplicateRows for those facts (a superseded copy no longer reads live)',
   linkStruckDuplicateFacts: 'listFactRowsByIds for those facts (their superseded_by names the kept fact)',

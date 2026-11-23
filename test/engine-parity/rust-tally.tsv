@@ -307,6 +307,7 @@ test/engine-parity/trust-reads.test.ts	13	0
 test/engine-parity/trust-tier-reads.test.ts	25	0
 test/engine-parity/trust-withdrawals.test.ts	7	0
 test/engine-parity/trust-write-gate.test.ts	5	1
+test/engine-parity/twin-merge-rows.test.ts	2	0
 test/engine-parity/typed-config-reads.test.ts	3	0
 test/engine-parity/unbound-claim.test.ts	0	3
 test/engine-parity/unrestricted-caller-reads.test.ts	2	0
