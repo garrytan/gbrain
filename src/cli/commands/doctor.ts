@@ -56,11 +56,16 @@ export async function run(args: string[], ctx: CliDispatchContext): Promise<void
     if (!isMissingBrainRefusal(e)) throw e;
     await (await import('../../commands/doctor/missing-brain.ts')).refuseMissingBrain(args, e as import('../../core/ops/contract.ts').OperationError); // refused under the held lock (the datastore went missing while doctor waited): the same refusal, never the filesystem-only fallback
   } finally {
-    releaseGuard();
+    // A connect abandoned at the budget still waits for the lock and can still create the folder: the guard outlives it.
+    const abandoned = abandonedConnects.splice(0);
+    if (abandoned.length) void Promise.allSettled(abandoned).then(releaseGuard); else releaseGuard();
   }
 }
 
-/** The refusal under the held lock (`missing-brain.ts` builds it); doctor's filesystem-only fallback must not swallow it. A structural test keeps that module off the load path. */
+/** Connects `runDoctorWithDeadline` stopped waiting for, until each settles. */
+const abandonedConnects: Promise<unknown>[] = [];
+
+/** The refusal under the held lock (`missing-brain.ts` builds it); doctor's filesystem-only fallback must not swallow it. Matched on the code so this file need not load that module until a refusal is rendered. */
 const isMissingBrainRefusal = (e: unknown): boolean => (e as { code?: unknown } | null)?.code === 'brain_missing';
 
 /** The local-engine doctor (everything after the thin-client route and the missing-brain refusal). */
@@ -183,7 +188,7 @@ async function runDoctorWithDeadline(
   try {
     const connected = await raceBudget(connecting, deadline.deadlineAt! - Date.now());
     if (budgetExpired(connected)) {
-      connecting.then((late) => finishCliTeardown({ engine: late }), () => undefined);
+      abandonedConnects.push(connecting.then((late) => finishCliTeardown({ engine: late }), () => undefined));
       await runDoctor(null, args, getDbUrlSource(), new DoctorBudgetError(Date.now() - deadline.startedAt), deadline);
       return;
     }

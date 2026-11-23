@@ -35,15 +35,15 @@ function localFolder(engine: string | undefined, databasePath: string | undefine
 
 interface MissingState extends Pick<StatusModeState, 'config_path' | 'brain_path'> { mount?: string }
 
-/** The selected brain's PGLite folder when a connect would create it; null for everything else. */
-function missingState(brainId: string): MissingState | null {
+/** The selected brain's PGLite folder, whether or not it is there; null when a connect opens no local folder or the probe leaves the case to doctor's own diagnostics. */
+function selectedDatastore(brainId: string): MissingState | null {
   if (brainId !== 'host') {
     // The mount doctor really opens: BrainRegistry.getBrain resolves an enabled mount by its exact id (an alias never counts).
     let mount;
     // silent-read-ok: a mounts.json that does not load is not a missing brain; the registry loads the same file and fails with its own error before any folder is opened, so nothing can be created
     try { mount = loadMounts().find((m) => m.id === brainId && m.enabled !== false); } catch { return null; }
     const dir = mount && localFolder(mount.engine, mount.database_path);
-    return mount && dir && connectWouldCreate(dir) ? { config_path: getMountsPath(), brain_path: dir, mount: mount.id } : null;
+    return mount && dir ? { config_path: getMountsPath(), brain_path: dir, mount: mount.id } : null;
   }
   const state = probeStatus();
   // Graduated, repair failed, no config: doctor's own diagnostics own those, and none of them connects. A lock reported held
@@ -52,7 +52,13 @@ function missingState(brainId: string): MissingState | null {
   if (state && state.reason !== 'missing_brain' && state.reason !== 'lock_held') return null;
   const cfg = loadConfig();
   const dir = cfg && localFolder(cfg.engine, cfg.database_path, gbrainPath('brain.pglite'));
-  return dir && connectWouldCreate(dir) ? { config_path: configPath(), brain_path: dir } : null;
+  return dir ? { config_path: configPath(), brain_path: dir } : null;
+}
+
+/** The selected brain's PGLite folder when a connect would create it; null for everything else. */
+function missingState(brainId: string): MissingState | null {
+  const found = selectedDatastore(brainId);
+  return found?.brain_path && connectWouldCreate(found.brain_path) ? found : null;
 }
 
 /** The refusal to render, or null when the selected brain is not configured-but-missing. */
@@ -69,14 +75,17 @@ export function isMissingBrainRefusal(e: unknown): e is OperationError {
 /**
  * Doctor's second look, for as long as the returned function has not been called. Connecting waits for the datastore's
  * kernel lock, and the folder can be moved or unmounted during that wait; `acquireLock` runs this once it holds the
- * lock and before it creates anything, so the datastore the selected brain would open is judged again and a missing one
- * is refused (the lock is released on the throw). Locks on any other folder are not this guard's to judge.
+ * lock and before it creates anything, so a missing datastore is refused (the lock is released on the throw). The
+ * datastore is the one this run is about to open, read once now: a `database_path` edited, or a symlink that stops
+ * resolving, while doctor waits does not change which lock is ours. Locks on any other folder are not this guard's to judge.
  */
 export function guardMissingBrainAtLock(brainId = 'host'): () => void {
+  const target = selectedDatastore(brainId);
+  if (!target?.brain_path) return () => {};
+  // pgliteLockDirFor names a datastore the way acquireLock does (canonical path + the lock folder), so the two spellings compare equal.
+  const ours = pgliteLockDirFor(target.brain_path);
   return installPgliteCreateGuard((lockedDir) => {
-    const found = missingState(brainId);
-    // pgliteLockDirFor names a datastore the way acquireLock does (canonical path + the lock folder), so the two spellings compare equal.
-    if (found?.brain_path && pgliteLockDirFor(found.brain_path) === join(lockedDir, '.gbrain-lock')) throw refusalFor(found);
+    if (join(lockedDir, '.gbrain-lock') === ours && connectWouldCreate(lockedDir)) throw refusalFor(target);
   });
 }
 
