@@ -35,7 +35,7 @@ mod link_read;
 use link_read::EdgeRules;
 pub use link_read::{During, EdgeTemporal, FromType, Keep, LinkPage, RelationshipKeep};
 
-const NEXT_LINK_ID: &str = "next_link_id";
+pub(crate) const NEXT_LINK_ID: &str = "next_link_id";
 /// `TRAVERSE_WALK_ROW_CAP`: a walk keeps at most this many visited pages.
 pub const TRAVERSE_WALK_ROW_CAP: usize = 20_000;
 /// `TRAVERSE_PATH_ROW_CAP`: `traverse_paths_detailed` returns at most this many edges.
@@ -221,7 +221,7 @@ pub(crate) fn unique_violation() -> StoreError {
 }
 
 /// The table's CHECK constraints.
-fn check_link(record: &LinkRecord) -> Result<()> {
+pub(crate) fn check_link(record: &LinkRecord) -> Result<()> {
     if record
         .link_source
         .as_deref()

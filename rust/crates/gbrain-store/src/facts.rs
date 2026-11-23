@@ -62,6 +62,7 @@ pub mod label_repair;
 pub mod loops;
 pub mod ontology_repair;
 pub mod page_purges;
+pub(crate) use page_purges::seed_purge;
 pub(crate) mod privacy;
 pub mod provenance;
 pub mod purge;

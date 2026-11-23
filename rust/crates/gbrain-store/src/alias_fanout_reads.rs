@@ -183,12 +183,12 @@ impl Store {
                     };
                     let value = row_value(MEMBER, &value)?;
                     if value.case_sensitive {
-                        rows.push((slug.clone(), alias, origin.clone(), value.alias_text));
+                        rows.push((slug.clone(), alias, value.alias_text, origin.clone()));
                     }
                 }
             }
             rows.sort();
-            out.extend(rows.into_iter().map(|(slug, alias, _, text)| {
+            out.extend(rows.into_iter().map(|(slug, alias, text, _)| {
                 json!({"slug": slug, "alias_norm": alias, "alias_text": text})
             }));
         }

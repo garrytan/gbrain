@@ -373,6 +373,43 @@ pub(super) fn all_clients(read: &dyn KvRead) -> Result<Vec<ClientRecord>> {
     bad.map_or(Ok(rows), Err)
 }
 
+/// The shadow seed (`seed.rs`): stores a client's spend columns copied from another engine (`budget_usd_per_day` in
+/// dollars, as the column holds it). `false` when the client id is already stored.
+pub(crate) fn seed_client(
+    tx: &mut dyn KvWrite,
+    client: (&str, &str, Option<&str>),
+    bound_tools: Option<Vec<String>>,
+    budget_usd_per_day: Option<f64>,
+    deleted_at: Option<i64>,
+) -> Result<bool> {
+    let (client_id, client_name, scope) = client;
+    if client_id.contains('\0')
+        || client_name.contains('\0')
+        || scope.is_some_and(|s| s.contains('\0'))
+    {
+        return Err(StoreError::new(
+            INVALID_ARGUMENT,
+            "seed oauth_clients: invalid byte sequence for encoding \"UTF8\": 0x00",
+        ));
+    }
+    if load_client(&*tx, client_id)?.is_some() {
+        return Ok(false);
+    }
+    // Every column the seed does not copy takes the record's serde default; `created_at` is the epoch.
+    let mut record: ClientRecord = serde_json::from_value(serde_json::json!({
+        "client_id": client_id,
+        "client_name": client_name,
+        "created_at": 0,
+    }))
+    .map_err(|e| StoreError::invalid(format!("seed oauth_clients: {e}")))?;
+    record.scope = scope.map(str::to_string);
+    record.bound_tools = bound_tools;
+    record.budget = budget_usd_per_day.map(budget_hundredths).transpose()?;
+    record.deleted_at = deleted_at;
+    put_json(tx, &client_key(client_id), &record)?;
+    Ok(true)
+}
+
 /// `insertOauthClient(row)`: a column left out takes the table's default; `null` is NULL where the column allows it
 /// (`grant_types` defaults to `{client_credentials}` only when left out).
 #[derive(Debug, Clone, Deserialize)]

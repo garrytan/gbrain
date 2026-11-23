@@ -39,7 +39,7 @@ const HOUR_US: i64 = 3_600_000_000;
 const DAY_US: i64 = 24 * HOUR_US;
 const MINUTE_US: i64 = 60_000_000;
 
-fn state_key() -> Vec<u8> {
+pub(crate) fn state_key() -> Vec<u8> {
     vec![keys::ACCESS_MEMBERS, STATE]
 }
 
