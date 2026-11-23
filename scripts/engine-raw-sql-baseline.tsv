@@ -79,7 +79,6 @@ src/commands/edge-proposals.ts	execute_raw	6
 src/commands/edges-backfill.ts	execute_raw	1
 src/commands/embed.ts	execute_raw	1
 src/commands/engine-status.ts	execute_raw	1
-src/commands/eval-whoknows.ts	execute_raw	1
 src/commands/extract-conversation-facts.ts	execute_raw	1
 src/commands/extract-explain.ts	execute_raw	1
 src/commands/extract-stale-options.ts	execute_raw	1

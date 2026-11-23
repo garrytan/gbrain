@@ -1534,7 +1534,7 @@ getCodeTraversalCache	code_edges	yes	7	no	yes	yes	serves
 putCodeTraversalCache	code_edges	yes	7	no	yes	yes	serves
 clearCodeTraversalCache	code_edges	yes	2	no	yes	yes	serves
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves
-logEvalCandidate	eval_capture	yes	5	no	yes	yes	serves
+logEvalCandidate	eval_capture	yes	6	no	yes	yes	serves
 listEvalCandidates	eval_capture	yes	3	no	yes	yes	serves
 deleteEvalCandidatesBefore	eval_capture	yes	1	no	yes	yes	serves
 logEvalCaptureFailure	eval_capture	yes	1	no	yes	yes	serves
