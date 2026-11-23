@@ -197,6 +197,31 @@ for (const kind of testBackends()) {
         expect(await tierOf(slug)).toBe('external_untrusted');
       }, 120_000);
 
+      test('#10025: a restore never removes an ingested_at that only a write with no recorded writer added', async () => {
+        const slug = 'diary/added-ingested-at';
+        const added = '2026-05-30T15:34:11.457Z';
+        const nullColumn = (tx: BrainEngine) => tx.executeRaw('UPDATE pages SET ingested_at = NULL WHERE source_id = $1 AND slug = $2', ['default', slug]);
+        await fixtureWrite(null, async tx => {
+          await tx.putPage(slug, { type: 'note', title: 'Seeded', compiled_truth: 'Captured body', timeline: '',
+            frontmatter: { source_kind: 'webhook', ingested_via: 'webhook' }, source_kind: 'webhook', ingested_via: 'webhook' } as never);
+          await nullColumn(tx);
+        });
+        await writeFile(slug);
+        await fixtureWrite(null, async tx => {
+          await tx.createVersion(slug, { sourceId: 'default' });
+          await tx.putPage(slug, { type: 'note', title: 'Seeded', compiled_truth: 'Captured body, edited', timeline: '', frontmatter: { ingested_at: added } } as never);
+          await nullColumn(tx);
+        });
+        await writeFile(slug);
+        const wide = await run(false, { includeAmbiguous: true });
+        expect(wide.affected).toBe(1);
+        expect(wide.listing[0].detail).not.toContain('ingested_at');
+        await run(true, { expect: wide.preview_hash, includeAmbiguous: true });
+        expect(stampsOf((await page(slug)).page.frontmatter)).toEqual({ source_kind: 'webhook', ingested_via: 'webhook', ingested_at: added });
+        if (repo) expect(parseMarkdown(fs.readFileSync(fileOf(slug), 'utf8'), slug).frontmatter.ingested_at).toBe(added);
+        expect((await run(false, { includeAmbiguous: true })).affected).toBe(0);
+      }, 120_000);
+
       test.skipIf(!repo)('a page file holding an edit the database lacks is listed needs_review and never overwritten', async () => {
         const slug = 'inbox/unsynced-edit';
         await seed(slug, STORED);
@@ -379,6 +404,26 @@ for (const kind of testBackends()) {
       expect(file.trust_tier).toBe('external_untrusted');
       expect((await engine.executeRaw<{ trust_tier: string }>('SELECT trust_tier FROM pages WHERE source_id = $1 AND slug = $2', ['default', slug]))[0]!.trust_tier).toBe('external_untrusted');
       expect((await repair(engine, false)).affected).toBe(0);
+    }, { databaseUrl }), 120_000);
+
+    test('#10025: a put keeps a stored ingested_at the trusted column lacks, in the row, the column and the file', () => managedBrain(async ({ engine, ctx, root }) => {
+      const slug = 'diary/kept-ingested-at';
+      const original = '2026-05-30T15:34:11.457Z';
+      await operationsByName.put_page.handler(ctx, { slug, content: '---\ntitle: Diary\ntype: note\n---\nBody\n' });
+      await settleManagedGitEffects(engine);
+      // A page whose stamp predates the server-written column: the frontmatter holds it, the column is empty.
+      await withManagedFixtureWrite(engine, ['default'], tx => tx.executeRaw(`UPDATE pages SET frontmatter = frontmatter || jsonb_build_object('ingested_at', $2::text),
+        ingested_at = NULL WHERE source_id = 'default' AND slug = $1`, [slug, original]));
+      const seeded = (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!;
+      fs.writeFileSync(path.join(root, `${slug}.md`), serializePageToMarkdown(seeded.page, seeded.tags));
+      await operationsByName.put_page.handler(ctx, { slug, content: '---\ntitle: Diary\ntype: note\n---\nBody, edited\n', expected_revision: seeded.revision });
+      await settleManagedGitEffects(engine);
+      const after = (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!;
+      expect(after.page.compiled_truth).toContain('Body, edited');
+      expect(after.page.frontmatter.ingested_at).toBe(original);
+      const [{ ingested_at }] = await engine.executeRaw<{ ingested_at: string | Date }>("SELECT ingested_at FROM pages WHERE source_id = 'default' AND slug = $1", [slug]);
+      expect(new Date(ingested_at).toISOString()).toBe(original);
+      expect(parseMarkdown(fs.readFileSync(path.join(root, `${slug}.md`), 'utf8'), slug).frontmatter.ingested_at).toBe(original);
     }, { databaseUrl }), 120_000);
 
     test('#8009: a page sync holds as file_drift is listed held with its code, never planned; the apply writes exactly the previewed count', () => managedBrain(async brain => {

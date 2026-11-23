@@ -192,11 +192,14 @@ function putProvenance(row: WriteRequest, snapshot: PageSnapshot | null, parsed:
   const first = snapshot?.page;
   const via = row.authority.remote ? 'mcp:put_page' : 'put_page';
   // Historical frontmatter was caller-controlled. Only trusted provenance
-  // columns may supply a prior channel or timestamp for the first-write record.
+  // columns may supply a prior channel for the first-write record; #10025: a
+  // stored ingested_at is kept when the column has none (it grants no trust).
+  const storedAt = first?.frontmatter?.ingested_at;
+  const keptAt = typeof storedAt === 'string' || storedAt instanceof Date ? new Date(storedAt) : null;
   const stamp: CanonicalProvenance = {
     source_kind: string(first?.source_kind) ?? string(row.intent?.source_kind) ?? via,
     ingested_via: string(first?.ingested_via) ?? string(row.intent?.ingested_via) ?? via,
-    ingested_at: new Date(first?.ingested_at ?? row.created_at).toISOString(),
+    ingested_at: new Date(first?.ingested_at ?? (keptAt && !Number.isNaN(keptAt.getTime()) ? keptAt : row.created_at)).toISOString(),
   };
   Object.assign(parsed.frontmatter, stamp);
   return stamp;
