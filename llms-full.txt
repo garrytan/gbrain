@@ -2836,7 +2836,7 @@ final document.
 | Kind | Meaning | What you do |
 |---|---|---|
 | `safety` | something puts the user's data at risk | tell the user; follow `fix.next` |
-| `degraded` | the result is incomplete (keyword-only recall, a stage skipped) | answer with the caveat; never say "you have no notes on X" from a degraded empty result |
+| `degraded` | the result is incomplete (keyword-only recall with no embedding provider configured, a stage skipped) | answer with the caveat; never say "you have no notes on X" from a degraded empty result |
 | `ask` | a decision belongs to the user | relay `user_message` and the `decisions`, wait for the answer |
 | `coaching` | the setup limits what the user is trying to do | mention it once, at a natural point; follow `fix.next` if the user wants it |
 | `info` | context for this result | use it; no action needed |
@@ -2850,7 +2850,7 @@ Notices that describe one call's result (`degraded_recall`, `empty_retrieval`,
 notices `room_above_level`, `room_hints_unavailable` and `room_conflict`)
 are never deduped on any transport, with one exception: a `degraded_recall`
 whose only stages come from the brain's configuration (`embed_unavailable` on
-a keyless brain, which degrades every search the same way) shows once per
+a brain with no embedding provider, which degrades every search the same way) shows once per
 stdio or CLI session. A transient degradation (`rerank_failed`,
 `embed_timeout`, a failed keyword or title arm, or any other stage) shows on
 every affected call, so a failure, a recovery and the same failure again show
@@ -2903,7 +2903,7 @@ instead.
 | `behavior_changes` (safety) | the first tool result per brain | the first tool result per authenticated client (names no chain entries or providers) | once, on stderr, on the first command; `gbrain doctor --only behavior_changes` reads it again |
 | `chat_fallback_hop` (safety) | the first fallback hop of the server process | never | the first hop of the command |
 | `backup_coverage` | once per process | never | the CLI startup rail |
-| `degraded_recall`, `empty_retrieval`, `source_binding_narrowed` and the other per-call notices | every affected call (a keyless brain's configuration-only `degraded_recall`: once per session) | every affected call (redacted) | the command's own notices |
+| `degraded_recall`, `empty_retrieval`, `source_binding_narrowed` and the other per-call notices | every affected call (a no-provider brain's configuration-only `degraded_recall`: once per session) | every affected call (redacted) | the command's own notices |
 
 HTTP gets no onboarding coaching because the counts are brain-wide (they cross
 source-scoped grants) and every remedy runs on the brain host, which a remote
@@ -2977,8 +2977,16 @@ and none of them ever refuses the work:
 
 Every successful read whose result is partial or degraded carries one stamp,
 whatever op answered and whatever transport carried it. A clean result carries
-none. Notices can be deduped (a keyless brain's `degraded_recall` shows once
-per session); the stamp never is, so it is on every affected call.
+none. Notices can be deduped (a `degraded_recall` on a brain with no embedding
+provider shows once per session); the stamp never is, so it is on every
+affected call.
+
+**Keyword-only on purpose is not degraded.** With embeddings turned off on
+purpose (`gbrain init --no-embedding`), search, query, find_experts and recall carry no stamp
+and no `degraded_recall`, nor for `keyword_zero`. `_meta.retrieval` still
+records the run, and an empty result's `empty_retrieval` info notice says the
+search was keyword-only: no page this caller can read holds those words.
+`no_provider`, timeouts and failed arms still stamp.
 
 | Output | Where the stamp is |
 |---|---|
@@ -4068,7 +4076,7 @@ Start with `gbrain doctor`. For database access failures, use `gbrain engine sta
 - [MCP task guide](docs/mcp/README.md) — deployment and per-client setup (Claude Desktop, Code, Cursor, ChatGPT, Perplexity, Cowork)
 - [MCP administration](docs/mcp/ADMIN.md) — owner dashboard access, client registration, OAuth, permissions, and token recovery
 - [Evals](docs/eval/) and [research](docs/research/) — methods and results
-- [Rust engine plan](docs/designs/RUST_ENGINE.md) — design for a third storage engine; the experimental Rust store already serves keyword search, title search, chunk reads, vector search, embeddings, links, takes, salience, facts, page operations, raw data and file records, ontology claims, chronicle projections, eval capture, dream verdicts, contradiction runs and the code call graph, and a second process on the same brain reaches it through the owner process, but nothing selects it yet; its [research maps](docs/designs/rust-engine/research/README.md) and [review record](docs/designs/rust-engine/review-record.md)
+- [Rust engine plan](docs/designs/RUST_ENGINE.md) — design for a third storage engine; the experimental Rust store already serves keyword search, title search, chunk reads, vector search, embeddings, links, takes, salience, facts, page operations, raw data and file records, ontology claims, chronicle projections, eval capture, dream verdicts, contradiction runs and the code call graph, and a second process on the same brain reaches it through the owner process; the CLI opens it only when `~/.gbrain/config.json` sets `"engine": "rust"` by hand (experimental: commands that need raw SQL, such as `import`, refuse with `engine_capability_missing`); its [research maps](docs/designs/rust-engine/research/README.md) and [review record](docs/designs/rust-engine/review-record.md)
 - [`docs/ethos/`](docs/ethos/) — philosophy (thin harness, fat skills, markdown as recipes, origin story)
 - [`AGENTS.md`](AGENTS.md) — entry point for non-Claude agents
 - [`CLAUDE.md`](CLAUDE.md) — entry point for Claude Code (deep operating context)
@@ -5266,6 +5274,14 @@ a digest of the serve's lock token, never the identity); a file another lock hol
 
 **Say to your agent:** *"Give me my brain's brain_ref from gbrain engine status, not its id."*
 
+On a Rust brain the report names `rust` as the engine and the probe is typed. It checks the addon first and reports
+`rust_engine_addon_missing`, `rust_engine_addon_mismatch` or `engine_capability_missing` as a `refusal` (code, reason,
+message), not as a database diagnosis. A `database_path` with no `records.redb` (a missing path or an empty directory)
+probes as `data_dir_missing`, and a `records.redb` that is empty or has no `FORMAT` file beside it (a first open
+that stopped early, or a lost `FORMAT`) as `store_incomplete`;
+the probe creates nothing in either case. Otherwise it opens the store and reads one config key, since the Rust
+engine serves no `SELECT 1`.
+
 ### `gbrain db-repair [--yes] [--apply-rewrites] [--json] [--force] [--undo-last-rewrite] [--dry-run]`
 
 Engine-free Postgres-access repair, the sibling of `gbrain pglite-repair`
@@ -5810,9 +5826,11 @@ and assert `jsonb_typeof` — the assertion PGLite cannot make.
 
 The opt-in Rust engine (`docs/designs/RUST_ENGINE.md`) is under construction. PGLite and Postgres behave exactly
 as before, and an install needs no Rust toolchain and no addon. `openRustEngine({ addon, databasePath })`
-(`src/core/rust-engine.ts`) is the one seam: the addon loader calls it after it has loaded and verified the native
-addon, and gets back the engine: every `BrainEngine` member, with `kind` `'rust'`. `BrainEngine.kind` admits `'rust'`
-when the `rust` config value lands; no config value selects the Rust engine yet. Finding, checking and loading the
+(`src/core/rust-engine.ts`) is the one seam: the `rust` case of `constructEngine` (`src/core/engine-construct.ts`)
+calls it after the addon loader has loaded and verified the native addon, and gets back the engine: every
+`BrainEngine` member, with `kind` `'rust'`. A `~/.gbrain/config.json` with `"engine": "rust"` and an absolute
+`database_path` (the store directory) selects it; that is a hand edit, because no command writes the value. A missing
+or relative `database_path` refuses `config_error` before the addon loads. Finding, checking and loading the
 addon, and refusing a missing or mismatched one, belong to the loader (below), not the shell.
 
 - **Capabilities.** The engine reports a capability only when it serves every `BrainEngine` member of that
@@ -5830,6 +5848,14 @@ addon, and refusing a missing or mismatched one, belong to the loader (below), n
 - **SQL-only paths.** Code that only works through SQL (migrations, cycle locks, engine migration and graduation,
   embed backfill, page-body staging) takes the kind as `EngineKind`, narrows it with `sqlEngineKind` or
   `isRustEngineKind` (`src/core/sql-engine-kind.ts`), and refuses a Rust brain with `engine_capability_missing` reason `raw_sql` instead of treating it as Postgres.
+- **On the CLI.** Commands that need raw SQL (`import`, `sources add` and others) refuse `engine_capability_missing`.
+  When the source lookup is refused on a Rust brain and a source was selected (`GBRAIN_SOURCE`, a `.gbrain-source`
+  file, `sources.default`) or the brain holds a source besides `default`, the command stops with that refusal instead
+  of reading every source (`refusedSourceTarget`, `src/core/source-resolver.ts`). `gbrain init` with no engine flag
+  keeps an existing `rust` config: it reports the brain, leaves `config.json` unchanged and never opens the store;
+  `--pglite`, `--supabase`, `--url` and `--prefer-postgres` still choose the engine
+  (`src/commands/init-existing-engine.ts`). The owner makes the store directory mode 0700 when it opens the brain.
+  Pinned by `test/rust-cli-parity.serial.test.ts` (`docs/TESTING.md`, "Rust parity arm").
 - **The addon loader.** `loadRustEngineAddon()` (`src/core/rust-engine/addon-loader.ts`) returns the loaded addon,
   or the refusal `rust_engine_addon_missing` or `rust_engine_addon_mismatch` with its `reason` (`gbrain errors
   <code>`), before the brain is touched. It uses `GBRAIN_RUST_ENGINE_ADDON` (an absolute path to a build from `bun run
@@ -5908,7 +5934,8 @@ that is not connected refuses `engine_closed`. These members run on the store (`
   `flipBodyGeneration`, `openBodyStaging`, `setBodyStagingState`, `readSegmentDerivations`, `upsertSegmentDerivations`,
   `retireSegmentDerivations`, `sealSegmentedPage` and `refreshPageBody`. `sweepSegments` still refuses, and so does
   a segmented page written inside `transaction` (the store has none), so the `page_body` capability stays unreported.
-  A whole-body `putPage` over a segmented page refuses, as on PGLite (`rust/docs/store/page_body.md`).
+  A whole-body `putPage` over a segmented page refuses, as on PGLite (`rust/docs/store/page_body.md`), and so does a
+  plain (unsealed) `upsertChunks`, `invalid_state` before it writes.
 
 A served member never drops what it cannot keep. An option or input the store has no home for, or cannot answer the
 way PGLite does, refuses `engine_capability_missing` and writes nothing. These are refused today:
@@ -9047,6 +9074,8 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 | [Database unreachable or `GBRAIN_DB_ACCESS <reason>`](#database-unreachable) | `gbrain engine status --probe`, then `gbrain db-repair` (diagnose); `gbrain db-repair --yes` applies safe fixes | agent; `--yes` after the user agrees | none to diagnose; `--apply-rewrites` rewrites the config URL (undoable) | `gbrain engine status --probe --json` |
 | [PGLite `RuntimeError: Aborted()` at startup](#pglite-aborted) | automatic repair on the next command; else `gbrain pglite-repair --dry-run`, then `gbrain pglite-repair --yes` | agent; `--yes` after the user agrees | `destructive` (a WAL backup is kept and the restore command printed) | `gbrain doctor --only connection --json` |
 | [`expected N dimensions, not M` on import](#embedding-dimensions) | `gbrain doctor` prints the exact `gbrain config set …` or `gbrain migrate embeddings --to <provider:model>` command | agent, after the user agrees | `migrate embeddings`: `paid`, needs the brain's writer lock | `gbrain doctor --only embeddings,embedding_width_consistency --json` |
+| [Doctor `access_*` reach warnings](#access-reach) | the read-only command in the check's `fix`, then the change the user picks | agent; any change after the user decides | none to read; a fix changes who reads | `gbrain doctor --json` |
+| [No degraded stamp on a brain keyless on purpose](#keyless-by-choice-search) | nothing to fix: keyword-only is that brain's design | agent | none | `gbrain doctor --only embeddings --json` reports embeddings disabled by choice |
 | [Keyword-only recall; the user wants semantic search](#embedding-dimensions) | the readiness fix: `gbrain init --force --embedding-model <provider:model> --path <brain path>` (keeps pages and facts) | agent, after the user agrees | `credentials`, `paid`; needs the brain's writer lock | `gbrain doctor --only embeddings --json` |
 | [Doctor residue (`timeline_history`, `derived_visibility`, `safe_index_pending`)](#doctor-residue) | preview `gbrain doctor --remediation-plan --json` or `gbrain repair`; then `gbrain repair <kind> --apply` | brain host, after the user agrees | `destructive` (rewrites derived rows) | `gbrain doctor --only timeline_history,derived_visibility,safe_index_pending --json` |
 | [Doctor `privacy_label_ignored`, or a write's `privacy_label_ignored` notice](#privacy-label-ignored) | `gbrain list --where <key>=<value> --json` (read-only), then add `visibility: private` to each page that should stay private | the agent, after the user agrees | none for the listing; the edit narrows who reads the page | `gbrain doctor --only privacy_label_ignored --json` |
@@ -9162,6 +9191,14 @@ Turning the `preparation_deadlines` switch off (`gbrain config set persistence.p
 <a id="pglite-aborted"></a>**PGLite crashes at startup with `RuntimeError: Aborted()` (often right after a macOS upgrade)?** Not a macOS incompatibility — the OS-upgrade reboot killed gbrain mid-write and tore the data dir's WAL. gbrain repairs this automatically on the next command (data preserved, backup kept); if auto-repair is disabled or skipped, run `gbrain pglite-repair --dry-run` to diagnose and `gbrain pglite-repair --yes` to repair in place. Full recovery ladder (repair → rebuild → engine switch) in [`docs/ENGINES.md` — Troubleshooting: startup abort](../ENGINES.md#troubleshooting-startup-abort-runtimeerror-aborted) and [`docs/INSTALL.md`](../INSTALL.md#pglite-crashes-at-startup-runtimeerror-aborted).
 
 <a id="embedding-dimensions"></a>**`gbrain import` fails with `expected N dimensions, not M`?** Run `gbrain doctor`. It will print the exact `gbrain config set ...` or `gbrain migrate embeddings` command to repair the mismatch (`migrate embeddings` re-embeds through the provider: effect `paid`, ask the user first). You should not need to delete `~/.gbrain`. Fresh `gbrain init --pglite` auto-detects your embedding provider from API keys: set `VOYAGE_API_KEY` (or `OPENAI_API_KEY` / another provider key) in the environment — or in `~/.gbrain/config.json`, which init also reads — before running init, or pass `--embedding-model <provider>:<model>` explicitly. With multiple keys set, init fires an interactive picker (non-TTY auto-picks the Voyage default when its key is present). With no keys at all, init continues keyless (keyword-only search) with a loud notice; add a key later and re-run `gbrain init --force --embedding-model voyage:voyage-4` to enable embeddings (effects: `credentials` and `paid`, since every page is embedded through the provider; it needs the brain's writer lock, so stop a running `gbrain serve` first; pages and facts are kept), or pass `--no-embedding` up front to make keyless explicit. `gbrain config get embedding_disabled` reports whether embedding is off and which plane says so (the config file and the database setting; `true` on either turns it off); `gbrain config set embedding_disabled true|false` and `gbrain config unset embedding_disabled` change both, and the `init --force --embedding-model` enable path clears both. See [`docs/integrations/embedding-providers.md`](../integrations/embedding-providers.md) for the full provider matrix and [`docs/operations/headless-install.md`](../operations/headless-install.md) for Docker/CI sequencing.
+
+<a id="access-reach"></a>**Doctor warns who can no longer reach what (`access_*`)?** By count and a few ids; doctor changes nothing. `access_shared_source_unread` and `access_disabled_member_credentials` run only on the brain host, so a remote `run_doctor` that names either is refused with the `gbrain doctor --only <check>` command to run there.
+
+- `access_shared_source_unread`: a source bound to no member holds pages no enabled member's live key reads. See `gbrain sources list --json`; then `gbrain sources federate <id>` (every key with no source grant), `gbrain auth rescope --token <name> --sources <ids>` (named keys), or `gbrain access member source add <member> <id>` when it is one person's.
+- `access_pages_read_by_nobody`: pages no enabled member reads, usually a leaver's pages. `gbrain access member handover <member>` previews giving them back ([member handover](member-handover.md)).
+- `access_disabled_member_credentials`: live tokens or OAuth clients of a disabled or removed member: refused on every read, yet active in `gbrain auth list`. `gbrain access check --token <name>` shows the binding; then `gbrain auth revoke <name>`, or `gbrain access member enable <member>` if they are back.
+
+<a id="keyless-by-choice-search"></a>**Search on a brain keyless on purpose carries no degraded stamp?** Intended: with embeddings turned off on purpose (`gbrain init --no-embedding`), search is keyword-only, so an empty result means no page this caller can read holds these words ([details](../protocol/AGENT_OPERATOR_v1.md#degraded-stamp)). `no_provider`, timeouts and failed arms still stamp. **Say to your agent:** *"Is my brain's search keyword-only on purpose?"*
 
 <a id="embed-backfill-skipped"></a>**A sync job or `embed-backfill` job reports `embed_backfill_skipped` (reason `embedding_disabled`)?** Nothing is wrong: the brain is keyless by choice (`embedding_disabled`), so sync queues no embed-backfill and a backfill already queued ends on its first attempt without reading a page. Search stays keyword-only. The notice appears once per brain state (the first skip after the brain became keyless); its fix is the optional step that turns embedding on and names the provider key it needs (effects `credentials` and `paid`: ask the user first).
 

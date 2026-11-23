@@ -104,6 +104,8 @@
       "  [INFO] access_members_read_lineage: Not applicable: access.members_read_lineage is off; derived pages and facts of a page that names readers or sits under a rule are hidden from every member but the owner.",
       "  [INFO] access_labelled_only_members: Not applicable: no member is labelled-only (gbrain access member labelled-only <id> on).",
       "  [INFO] access_pages_read_by_nobody: Not applicable: this brain has no members (gbrain access member add <id>).",
+      "  [INFO] access_shared_source_unread: Not applicable: this brain serves one person, so no source has to be shared with members.",
+      "  [OK] access_disabled_member_credentials: No live token or OAuth client is bound to a disabled or removed member.",
       "  [INFO] attest_read_shared_scope: Not applicable: no attest credential reads named sources as the person (--attest-read person).",
       "  [INFO] guest_source: Not applicable: this brain has no guest source (gbrain guests init).",
       "  [OK] rls: Skipped (PGLite — no PostgREST exposure, RLS not applicable)",
