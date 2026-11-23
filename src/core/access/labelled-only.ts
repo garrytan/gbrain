@@ -68,12 +68,13 @@ export async function anyLabelledOnlyMember(engine: Pick<BrainEngine, 'hasLabell
  * cannot be read counts as yes (fail closed: it only narrows). Identities without a member (unbound, a group, a guest)
  * are never labelled-only, and neither is the configured owner (access.owner_member), whichever door the call came in by.
  */
-export async function labelledOnlyFor(engine: Pick<BrainEngine, 'executeRaw'>, identities: readonly (readonly string[])[]): Promise<boolean> {
-  const members = [...new Set(identities.flat().filter(p => p.startsWith('member:')).map(p => p.slice('member:'.length)).filter(id => ACCESS_ID_RE.test(id)))];
-  if (!members.length) return false;
+export async function labelledOnlyFor(engine: Pick<BrainEngine, 'readAccessMembers' | 'getConfig'>, identities: readonly (readonly string[])[]): Promise<boolean> {
+  const members = new Set(identities.flat().filter(p => p.startsWith('member:')).map(p => p.slice('member:'.length)).filter(id => ACCESS_ID_RE.test(id)));
+  if (!members.size) return false;
   try {
-    return (await engine.executeRaw(`SELECT 1 FROM access_members WHERE labelled_only AND id = ANY($1::text[])
-      AND id IS DISTINCT FROM (SELECT btrim(value) FROM config WHERE key = $2) LIMIT 1`, [members, OWNER_MEMBER_KEY])).length > 0;
+    // Typed reads every engine serves (the Rust store included): every member row, removed ones too, and the owner.
+    const [rows, owner] = await Promise.all([engine.readAccessMembers({ includeRemoved: true }), engine.getConfig(OWNER_MEMBER_KEY)]);
+    return rows.some(r => r.labelled_only === true && members.has(r.id) && r.id !== owner?.trim());
   } catch {
     return true;
   }
