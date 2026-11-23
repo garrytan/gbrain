@@ -293,6 +293,7 @@ test/held-row-review-2891.test.ts
 test/held-row-writeback-2891.test.ts
 test/hermes-clarify-transcripts-7396.test.ts
 test/hold-action-chain-6712.test.ts
+test/hold-page-id-postgres.test.ts
 test/holding-page-saves-gst2497.test.ts
 test/holding-read-transient-gst2667.test.ts
 test/hosted-repo-g7b2.test.ts
