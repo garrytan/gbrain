@@ -95,4 +95,38 @@ export function defineEvidenceScenarios(ctx: EvidenceScenarioContext): void {
       });
     } finally { rmSync(home, { recursive: true, force: true }); }
   }, 120_000);
+
+  test('tags the primary sorts by its own collation come back as collation_order, and as a match where the host sorts in C order', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-shadow-collation-'));
+    try {
+      const primary = ctx.primary();
+      await fillSeedFixture(primary);
+      for (const tag of ['alpha', 'Beta', 'Zeta']) await primary.addTag('people/alice-example', tag);
+      const { record } = await seedInto(primary, ctx.addon(), home, ctx.kind);
+      writeSeedRecord(home, record);
+      const theirs = await primary.getTags('people/alice-example');
+      const cOrder = [...theirs].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+      if (ctx.kind === 'postgres') {
+        const [{ datcollate }] = await primary.executeRaw<{ datcollate: string }>('SELECT datcollate FROM pg_database WHERE datname = current_database()');
+        // Only a host whose collation is not C can show the class; say so when the arm cannot.
+        if (!['C', 'POSIX'].includes(datcollate)) expect(theirs).not.toEqual(cOrder);
+      }
+      const state = { version: 1, enabled: true, started_at: 'x', sample_rate: 1, queue_bound: 64, plan_hash: 'h', brain: 'b', primary_engine: ctx.kind };
+      await withEnv({ GBRAIN_RUST_ENGINE_ADDON: ctx.addonPath }, async () => {
+        const attached = attachShadowParts(primary, home, state as never, { gbrainArgv: [process.execPath, join(import.meta.dir, '..', '..', 'src', 'cli.ts')] });
+        await attached.engine.getTags('people/alice-example');
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        attached.supervisor.stop();
+        attached.reconciler!.stop();
+        const file = () => (existsSync(join(home, 'ledger')) ? readdirSync(join(home, 'ledger')).map((n) => readFileSync(join(home, 'ledger', n), 'utf8').trim()).join('\n') : '');
+        const deadline = Date.now() + 30_000;
+        while (Date.now() < deadline && !file()) await new Promise((resolve) => setTimeout(resolve, 100));
+        const rows = file().split('\n').filter(Boolean).map((l) => JSON.parse(l));
+        expect(rows.map((r) => r.outcome)).toEqual([JSON.stringify(theirs) === JSON.stringify(cOrder) ? 'match' : 'collation_order']);
+        const evidence = buildEvidenceStatus({ dir: home });
+        expect(evidence.evidence!.collation_order).toEqual(rows[0].outcome === 'match' ? {} : { getTags: 1 });
+        expect(evidence.reads!.ops).toEqual([{ op: 'getTags', successful: 1, minimum: 100 }]); // explained or matching, either way a success
+      });
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  }, 120_000);
 }

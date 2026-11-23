@@ -14,9 +14,10 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { evaluateReadiness } from '../src/core/engine-swap/readiness.ts';
-import { ensureEpoch, readinessPolicyHash } from '../src/shadow/evidence-epoch.ts';
+import { ensureEpoch } from '../src/shadow/evidence-epoch.ts';
 import { buildEvidenceStatus, renderEvidenceStatus } from '../src/shadow/evidence.ts';
 import { appendFault, appendLedgerRows, type ShadowLedgerRow } from '../src/shadow/ledger.ts';
+import { shadowStatusDocument } from '../src/shadow/status-document.ts';
 import { appendRecall, IntervalGate, recallEligible, scoreRecall, type RankedKey } from '../src/shadow/recall.ts';
 
 const dirs: string[] = [];
@@ -25,7 +26,7 @@ const NOW = new Date('2026-11-30T12:00:00.000Z');
 const ts = new Date(NOW.getTime() - 86_400_000).toISOString();
 const epochDir = () => {
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-shadow-recall-')); dirs.push(dir);
-  const epoch = ensureEpoch(dir, { seed_id: 's', rust_addon_sha256: 'a', comparator_version: 2, adapter_version: 'x', capability_set_hash: 'c', readiness_policy_hash: readinessPolicyHash() }, Date.parse('2026-11-24T00:00:00Z')).epoch_id;
+  const epoch = ensureEpoch(dir, { seed_id: 's', rust_addon_sha256: 'a', comparator_version: 2, adapter_version: 'x', capability_set_hash: 'c', readiness_policy_hash: 'p' }, Date.parse('2026-11-24T00:00:00Z')).epoch_id;
   return { dir, epoch };
 };
 const row = (epoch: string, op: string, outcome: ShadowLedgerRow['outcome'], extra: Partial<ShadowLedgerRow> = {}): ShadowLedgerRow =>
@@ -87,6 +88,18 @@ describe('recall fields', () => {
     expect(evaluateReadiness({ search }, NOW).criteria.find((c) => c.n === 4)).toMatchObject({ state: 'fail' });
     writeFileSync(join(dir, 'recall', `${ts.slice(0, 10)}.jsonl`), 'not json\n{"x":1}\n');
     expect(status(dir).search).toEqual({ trigram_exact_disagreements: 0 });
+  });
+});
+
+describe('the status document', () => {
+  test('carries privacy_diverged and both recall fields from shadowStatusDocument, and the evaluator reads them', () => {
+    const { dir, epoch } = epochDir();
+    appendLedgerRows(dir, [row(epoch, 'findByTitleFuzzy', 'match'), row(epoch, 'searchKeyword', 'match')]);
+    for (let i = 0; i < 30; i++) appendRecall(dir, { ts, epoch_id: epoch, vector: 1, primary: 1, overlap: 1, ref_size: 10 });
+    const doc = shadowStatusDocument({ key: 'k', dir }, NOW);
+    expect([doc.privacy_diverged, doc.search?.vector_recall_at_10, doc.search?.primary_recall_at_10]).toEqual([0, 1, 1]);
+    const verdict = evaluateReadiness(doc as never, NOW);
+    expect(verdict.criteria.filter((c) => [4, 6].includes(c.n)).map((c) => c.state)).toEqual(['pass', 'pass']);
   });
 });
 

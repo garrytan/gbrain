@@ -7,6 +7,7 @@
  * D23 (the maintainer's C1 ruling of 2026-11-19) makes the speed bar gate only turning Rust on by default, not the
  * opt-in swap.
  */
+import { DEFAULT_SHADOW_MIN_DAYS } from './policy.ts';
 import type { SwapRefusalReason } from './refusals.ts';
 
 /** The fields S5a reads; S3 owns the document. Counts are epoch-scoped totals unless the name says otherwise. */
@@ -86,7 +87,8 @@ export interface ReadinessVerdict {
   missing_fields: string[];
 }
 
-export const MIN_SHADOW_DAYS = 14;
+/** Criterion 1's minimum shadow duration: the readiness policy's default (policy.ts, frozen for the Dec 1 swap). */
+export const MIN_SHADOW_DAYS = DEFAULT_SHADOW_MIN_DAYS;
 export const MAX_LAG_P99_MS = 60_000;
 export const MIN_CLEAN_RECONCILES = 3;
 export const MIN_TOTAL_READS = 10_000;
@@ -307,7 +309,7 @@ export const CRITERIA: ReadonlyArray<{ n: number; name: string }> = [
 
 /**
  * Evaluates every criterion against the shadow status. `doc` null means no shadow runs for this brain: every gating
- * criterion is `missing` and the verdict is NOT READY (`not_ready`).
+ * criterion is `missing` and the verdict is NOT READY (`no_shadow`).
  */
 export function evaluateReadiness(doc: ShadowStatus | null, now: Date = new Date()): ReadinessVerdict {
   const r = new Reader(doc);
@@ -340,7 +342,8 @@ export function evaluateReadiness(doc: ShadowStatus | null, now: Date = new Date
   const ready = criteria.every(c => !c.gating || c.state === 'pass');
   let reason: SwapRefusalReason | null = null;
   if (!ready) {
-    if (elig.reason) reason = elig.reason;
+    if (doc === null) reason = 'no_shadow';
+    else if (elig.reason) reason = elig.reason;
     else if (doc?.fingerprints?.probe?.state === 'fail') reason = 'fingerprint_semantics_differ';
     else if (followerBehind(doc)) reason = 'follower_behind';
     else reason = 'not_ready';

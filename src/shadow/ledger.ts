@@ -23,7 +23,7 @@ export interface ShadowLedgerRow {
   reason?: string;
   /** The evidence epoch of the child that compared it (evidence-epoch.ts); a row without one counts for no epoch. */
   epoch_id?: string;
-  /** For stale and inconclusive rows: the mismatch that was found. */
+  /** For stale, inconclusive and collation_order rows: the mismatch that was found. */
   mismatch?: 'diff' | 'order_diff';
   /** How the stable rerun of an inconclusive sample ended (child.ts): `matched`, `differed`, or `skipped:<why>`. Absent when none was due. */
   rerun?: string;

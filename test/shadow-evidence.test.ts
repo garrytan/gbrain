@@ -10,20 +10,23 @@
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runEngineShadow } from '../src/commands/engine-shadow.ts';
 import { evaluateReadiness } from '../src/core/engine-swap/readiness.ts';
-import { capabilitySetHash, ensureEpoch, readEpoch, readinessPolicyHash, type EpochInputs } from '../src/shadow/evidence-epoch.ts';
+import { policyHash, READINESS_POLICY } from '../src/core/engine-swap/policy.ts';
+import { capabilitySetHash, currentBuild, ensureEpoch, readEpoch, type EpochBuild, type EpochInputs } from '../src/shadow/evidence-epoch.ts';
 import { buildEvidenceStatus, DEFAULT_READINESS_DAYS, MIN_SUCCESSFUL_PER_OP, renderEvidenceStatus } from '../src/shadow/evidence.ts';
-import { exactnessArm, qualifyMismatch } from '../src/shadow/exactness.ts';
+import { exactnessArm, isCollationOrder, qualifyMismatch } from '../src/shadow/exactness.ts';
 import { appendFault, appendLedgerRows, ledgerDir, type ShadowFault, type ShadowLedgerRow } from '../src/shadow/ledger.ts';
 import { SHADOW_READ_MEMBERS } from '../src/shadow/reads.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown } from '../src/shadow/report.ts';
 import { writeSeedRecord, type SeedRecord } from '../src/shadow/seed.ts';
 import { SHADOW_STATE_VERSION, shadowBrainKey, shadowDirFor, writeShadowState } from '../src/shadow/state.ts';
 import { appendUsage, readEpochUsage } from '../src/shadow/usage.ts';
+import { readConfiguredShadowStatus } from '../src/shadow/status-document.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const dirs: string[] = [];
@@ -35,7 +38,7 @@ const DAY = 86_400_000;
 const STARTED = Date.parse('2026-11-24T00:00:00.000Z');
 const INPUTS: EpochInputs = {
   seed_id: 'seed-1', rust_addon_sha256: 'a'.repeat(64), comparator_version: 1, adapter_version: 'abi1.catalog3',
-  capability_set_hash: capabilitySetHash(['pages', 'search']), readiness_policy_hash: readinessPolicyHash(),
+  capability_set_hash: capabilitySetHash(['pages', 'search']), readiness_policy_hash: policyHash(READINESS_POLICY),
 };
 
 /** A directory with an epoch opened at STARTED; returns the dir and the epoch id. */
@@ -94,25 +97,21 @@ describe('evidence epoch manifest', () => {
     expect(ensureEpoch(x, next, STARTED + DAY).epoch_id).toBe(ensureEpoch(y, next, STARTED + DAY + 5).epoch_id);
   });
 
-  test('the readiness policy hash is the engine-swap policyHash formula, and a filled-in brain_ref does not change it or the epoch', () => {
-    // engine-swap/policy.ts policyHash(READINESS_POLICY) at origin/vorflux/engine-swap-run 73961727d0.
-    expect(readinessPolicyHash()).toBe('69c02b309b037f6b');
-    const formula = createHash('sha256').update(JSON.stringify({
+  test('the epoch input is the approved policy\'s policyHash; a filled-in brain_ref does not change it or the epoch', () => {
+    // Cross-check of the value policyHash(READINESS_POLICY) gave when this was written (origin/vorflux/engine-swap-run 73961727d0),
+    // and of the formula it documents: version, shadow_min and the unwaivable list.
+    expect(policyHash(READINESS_POLICY)).toBe('69c02b309b037f6b');
+    expect(policyHash(READINESS_POLICY)).toBe(createHash('sha256').update(JSON.stringify({
       v: 1, shadow_min: { kind: 'days', days: 14 },
       unwaivable: ['privacy', 'fingerprints', 'topology', 'platform', 'capabilities', 'recovery_drills', 'caught_up_following', 'final_digests'],
-    })).digest('hex').slice(0, 16);
-    expect(readinessPolicyHash()).toBe(formula);
-    const override = { id: 'c1-dec1-swap', brain_ref: null as string | null, shadow_min: { kind: 'days', days: 5 }, expires: '2026-12-08T08:00:00.000Z' };
-    const policy = { version: 1 as const, shadow_min: { kind: 'days', days: 14 }, overrides: [override] };
-    const before = ensureEpoch(tmp(), { ...INPUTS, readiness_policy_hash: readinessPolicyHash(policy) }, STARTED);
-    override.brain_ref = '0123456789abcdef'; // the brain this override binds to is filled in
-    expect(readinessPolicyHash(policy)).toBe(readinessPolicyHash());
+    })).digest('hex').slice(0, 16));
+    const unbound = { ...READINESS_POLICY, overrides: READINESS_POLICY.overrides!.map((o) => ({ ...o, brain_ref: null })) };
+    const bound = { ...READINESS_POLICY, overrides: READINESS_POLICY.overrides!.map((o) => ({ ...o, brain_ref: '0123456789abcdef' })) };
     const dir = tmp();
-    const a = ensureEpoch(dir, { ...INPUTS, readiness_policy_hash: readinessPolicyHash({ ...policy, overrides: [] }) }, STARTED);
-    expect(ensureEpoch(dir, { ...INPUTS, readiness_policy_hash: readinessPolicyHash(policy) }, STARTED + DAY)).toEqual(a);
-    expect(before.inputs.readiness_policy_hash).toBe(a.inputs.readiness_policy_hash);
+    const a = ensureEpoch(dir, { ...INPUTS, readiness_policy_hash: policyHash(unbound) }, STARTED);
+    expect(ensureEpoch(dir, { ...INPUTS, readiness_policy_hash: policyHash(bound) }, STARTED + DAY)).toEqual(a);
     // The duration itself is policy: a different default duration is a different policy and a new epoch.
-    expect(readinessPolicyHash({ version: 1, shadow_min: { kind: 'days', days: 5 } })).not.toBe(readinessPolicyHash());
+    expect(policyHash({ ...READINESS_POLICY, shadow_min: { kind: 'days', days: 5 } })).not.toBe(policyHash(READINESS_POLICY));
   });
 
   test('an unreadable manifest reads as no epoch', () => {
@@ -121,6 +120,98 @@ describe('evidence epoch manifest', () => {
     writeFileSync(join(dir, 'evidence', 'epoch.json'), '{"version":1,"epoch_id":');
     expect(readEpoch(dir)).toBeNull();
     expect(status(dir)).toEqual({});
+  });
+});
+
+const BUILD: EpochBuild = { gbrain_commit: 'a'.repeat(40), gbrain_version: '1.2.3', addon_target: 'linux-x64-glibc' };
+
+describe('epoch build fields', () => {
+  test('recorded when the epoch starts, kept by an unrelated update, replaced only by a new epoch', () => {
+    const dir = tmp();
+    const first = ensureEpoch(dir, INPUTS, STARTED, BUILD);
+    expect(first.build).toEqual(BUILD);
+    const updated = { gbrain_commit: 'b'.repeat(40), gbrain_version: '1.2.4', addon_target: 'linux-x64-glibc' };
+    expect(ensureEpoch(dir, INPUTS, STARTED + DAY, updated)).toEqual(first); // the same epoch: its build is not rewritten
+    expect(readEpoch(dir)!.build).toEqual(BUILD);
+    const next = ensureEpoch(dir, { ...INPUTS, comparator_version: 2 }, STARTED + 2 * DAY, updated);
+    expect(next.epoch_id).not.toBe(first.epoch_id);
+    expect(next.build).toEqual(updated);
+  });
+
+  test('the build does not feed the epoch id, and an epoch from before the fields has no build and is never given one', () => {
+    const [a, b] = [tmp(), tmp()];
+    expect(ensureEpoch(a, INPUTS, STARTED, BUILD).epoch_id).toBe(ensureEpoch(b, INPUTS, STARTED).epoch_id);
+    expect(readEpoch(b)!.build).toBeUndefined();
+    ensureEpoch(b, INPUTS, STARTED + DAY, BUILD); // unknown history stays unknown
+    expect(readEpoch(b)!.build).toBeUndefined();
+    expect(status(b, { epoch: readEpoch(b) }).evidence!.build).toBeUndefined();
+    expect(renderEvidenceStatus(status(b)).join('\n')).toContain('build: not recorded');
+    expect(status(a).evidence!.build).toEqual(BUILD);
+    expect(renderEvidenceStatus(status(a)).join('\n')).toContain(`commit ${'a'.repeat(40)}, gbrain 1.2.3, addon target linux-x64-glibc`);
+  });
+
+  test('a malformed build in the manifest reads as no build', () => {
+    const dir = tmp();
+    ensureEpoch(dir, INPUTS, STARTED, BUILD);
+    const path = join(dir, 'evidence', 'epoch.json');
+    writeFileSync(path, readFileSync(path, 'utf8').replace('"gbrain_version": "1.2.3"', '"gbrain_version": 7'));
+    expect(readEpoch(dir)!.build).toBeUndefined();
+  });
+
+  test('the commit is the one a release build stamps with --define GBRAIN_BUILD_COMMIT; an unstamped run, or a malformed stamp, has none', () => {
+    const script = join(tmp(), 'build.ts');
+    writeFileSync(script, `import { currentBuild } from ${JSON.stringify(join(import.meta.dir, '..', 'src', 'shadow', 'evidence-epoch.ts'))};\nconsole.log(JSON.stringify(currentBuild()));\n`);
+    const run = (define: string[]) => spawnSync(process.execPath, ['run', ...define, script], { encoding: 'utf8' });
+    const stamped = run(['--define', `GBRAIN_BUILD_COMMIT="${'f'.repeat(40)}"`]);
+    expect(JSON.parse(stamped.stdout).gbrain_commit).toBe('f'.repeat(40));
+    expect(JSON.parse(run([]).stdout).gbrain_commit).toBeNull();
+    expect(JSON.parse(run(['--define', 'GBRAIN_BUILD_COMMIT="not-a-sha"']).stdout).gbrain_commit).toBeNull();
+    expect(currentBuild().gbrain_commit).toBeNull(); // this test process is unstamped
+  });
+});
+
+describe('collation order', () => {
+  const page = (slug: string, source_id = 'default') => ({ slug, source_id });
+  test('compares the primary\'s rows re-sorted by the text key in C byte order, not JavaScript string order', () => {
+    expect(isCollationOrder('getTags', [], ['alpha', 'Beta'], ['Beta', 'alpha'])).toBe(true);
+    expect(isCollationOrder('getTags', [], ['é', 'z'], ['z', 'é'])).toBe(true); // 0xC3 0xA9 sorts after 'z'
+    // UTF-8 byte order puts U+FF5E (EF BD 9E) before U+1F600 (F0 9F 98 80); UTF-16 string order does the opposite.
+    expect(isCollationOrder('getTags', [], ['\u{1F600}', '\uFF5E'], ['\uFF5E', '\u{1F600}'])).toBe(true);
+    expect(isCollationOrder('getTags', [], ['\uFF5E', '\u{1F600}'], ['\u{1F600}', '\uFF5E'])).toBe(false);
+    expect(isCollationOrder('getTags', [], ['a', 'b'], ['a', 'b'])).toBe(false); // already equal: a match, never this
+    expect(isCollationOrder('getTags', [], ['a', 'a', 'b'], ['b', 'a'])).toBe(false);
+    expect(isCollationOrder('getTags', [], 'not rows', ['a'])).toBe(false);
+    expect(isCollationOrder('getTags', [], [1, 2], [2, 1])).toBe(false); // a row with no text key
+  });
+
+  test('listPages is text-ordered only for sort: slug, by slug then source id', () => {
+    const rows = [page('ab', 's2'), page('a-c', 's1'), page('ab', 's1')];
+    const c = [page('a-c', 's1'), page('ab', 's1'), page('ab', 's2')];
+    expect(isCollationOrder('listPages', [{ sort: 'slug' }], rows, c)).toBe(true);
+    expect(isCollationOrder('listPages', [{ sort: 'slug' }], rows, [page('a-c', 's1'), page('ab', 's2'), page('ab', 's1')])).toBe(false);
+    expect(isCollationOrder('listPages', [{ sort: 'updated_desc' }], rows, c)).toBe(false);
+    expect(isCollationOrder('listPages', [], rows, c)).toBe(false);
+    expect(isCollationOrder('getBacklinks', ['x'], [{ from_slug: 'b' }, { from_slug: 'a' }], [{ from_slug: 'a' }, { from_slug: 'b' }])).toBe(false);
+  });
+
+  test('qualifyMismatch names it before lag is considered, and only for an order-only difference of text-ordered rows', () => {
+    const sample = { args: [], primary: ['alpha', 'Beta'], rust: ['Beta', 'alpha'] };
+    expect(qualifyMismatch('getTags', { outcome: 'diff' }, false, sample)).toEqual({ outcome: 'collation_order', mismatch: 'diff' });
+    expect(qualifyMismatch('getTags', { outcome: 'diff' }, true, sample)).toEqual({ outcome: 'collation_order', mismatch: 'diff' });
+    expect(qualifyMismatch('getTags', { outcome: 'diff' }, true, { ...sample, rust: ['Beta'] })).toEqual({ outcome: 'stale', mismatch: 'diff' });
+    expect(qualifyMismatch('getTags', { outcome: 'match' }, false, sample)).toEqual({ outcome: 'match' });
+  });
+
+  test('collation_order is explained and successful: counted per operation class and printed, never unexplained', () => {
+    const { dir, epoch } = epochDir();
+    put(dir, [...rowsOf(epoch, 'getTags', { match: 2, collation_order: 3, inconclusive: 1 }), ...rowsOf(epoch, 'listPages', { collation_order: 2 })]);
+    const s = status(dir);
+    expect(s.evidence!.collation_order).toEqual({ getTags: 3, listPages: 2 });
+    expect(s.reads).toMatchObject({ diverged_unexplained_7d: 1 });
+    expect(s.reads!.ops).toEqual([{ op: 'getTags', successful: 5, minimum: 100 }, { op: 'listPages', successful: 2, minimum: 100 }]);
+    const text = renderEvidenceStatus(s).join('\n');
+    expect(text).toContain('collation_order (explained and counted as successful: same rows, in the C byte order Rust follows; ICU and glibc hosts sort differently): getTags 3, listPages 2');
+    expect(status(epochDir().dir).evidence!.collation_order).toEqual({});
   });
 });
 
@@ -174,13 +265,24 @@ describe('reads', () => {
     expect(renderEvidenceStatus(s).join('\n')).toContain('lacking samples: getBacklinks 0/100 (offered 12, sampled out 12');
   });
 
-  test('a class at 99 is named while the total is over 10,000; successful means a match only', () => {
+  test('a class at 99 is named while the total is over 10,000; successful means a match or a collation_order', () => {
     const { dir, epoch } = epochDir();
     put(dir, rowsOf(epoch, 'getPage', { match: 10_500 }));
     put(dir, rowsOf(epoch, 'listPages', { match: 99, stale: 40, inconclusive: 3, order_diff: 5, error: 2, capability_missing: 1 }));
     const s = status(dir);
     expect(s.reads!.ops).toEqual([{ op: 'getPage', successful: 10_500, minimum: 100 }, { op: 'listPages', successful: 99, minimum: 100 }]);
     expect(s.evidence!.ops_lacking_samples).toEqual(['listPages 99/100']);
+  });
+
+  test('collation_order counts toward the class minimum and the total, with its own count kept', () => {
+    const { dir, epoch } = epochDir();
+    put(dir, [...rowsOf(epoch, 'getTags', { match: 98, collation_order: 2 }), ...rowsOf(epoch, 'listPages', { match: 99, collation_order: 0, stale: 1 })]);
+    const s = status(dir);
+    expect(s.reads!.ops).toEqual([{ op: 'getTags', successful: 100, minimum: 100 }, { op: 'listPages', successful: 99, minimum: 100 }]);
+    expect(s.evidence!.ops_lacking_samples).toEqual(['listPages 99/100']);
+    expect(s.evidence!.collation_order).toEqual({ getTags: 2 });
+    put(dir, rowsOf(epoch, 'getPage', { collation_order: 10_000 }));
+    expect(status(dir).reads!.ops.reduce((n, o) => n + o.successful, 0)).toBe(100 + 99 + 10_000); // the 10,000 total counts it too
   });
 
   test('counts are scoped to the current epoch: rows of another epoch or of none are kept in the ledger and counted for nothing', () => {
@@ -337,6 +439,9 @@ describe('through the status command, the report and the readiness evaluator', (
       expect(doc.epoch_started_at).toBe(epoch.started_at);
       expect(doc.reads.ops).toEqual([{ op: 'getPage', successful: 3, minimum: 100 }]);
       expect(doc.child).toEqual({ panics: 0, faults: 0 });
+      // The swap reads the same document through readConfiguredShadowStatus.
+      const viaSwap = await readConfiguredShadowStatus(() => config);
+      expect(viaSwap).toMatchObject({ epoch_id: epoch.epoch_id, reads: doc.reads, child: doc.child });
       expect(doc.search).toBeUndefined();
       expect(doc.privacy_diverged).toBe(0); // reads were compared and none showed a page the caller may not read
       expect(doc.search).toBeUndefined();

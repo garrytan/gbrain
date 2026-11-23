@@ -11,7 +11,8 @@
  * `RECALL_MIN_SAMPLES` scored samples in the epoch; recall.ts).
  *
  * Counting rules (the lane owner's rulings):
- *   - successful = a `match`; stale, inconclusive, order_diff, errors and dropped attempts are not coverage.
+ *   - successful = a `match` or a `collation_order` (explained: same rows in the C byte order Rust follows); stale,
+ *     inconclusive, order_diff, errors and dropped attempts are not coverage.
  *   - every operation class used in the epoch is listed, with 0 successes when none compared; each needs
  *     `MIN_SUCCESSFUL_PER_OP` (an engineering default, printed with the status); readiness keeps the 10,000 total.
  *   - every rust_error (error, timeout, addon_unavailable) in the epoch's last 7 days is unresolved; only a new epoch clears it.
@@ -21,7 +22,7 @@
  */
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { readEpoch, type EpochManifest } from './evidence-epoch.ts';
+import { readEpoch, type EpochBuild, type EpochManifest } from './evidence-epoch.ts';
 import { exactnessArm, SHADOW_KEYWORD_RANKER } from './exactness.ts';
 import { ledgerDir, readAllFaults, readJsonlStrict, type ShadowLedgerRow } from './ledger.ts';
 import { readEpochRecall, RECALL_MIN_SAMPLES } from './recall.ts';
@@ -61,6 +62,10 @@ export interface EvidenceStatus {
     min_successful_per_op: number;
     rust_error_rule: string;
     panics_label: string;
+    /** The build that opened the epoch (commit, version, addon target); absent when the epoch predates the field: unknown, never guessed. */
+    build?: EpochBuild;
+    /** Comparisons per operation class explained as `collation_order` (exactness.ts), in the epoch; they also count as successful. */
+    collation_order: Record<string, number>;
     /** `<op> <successful>/<minimum>` for each class under the minimum. */
     ops_lacking_samples: string[];
     /** Calls per operation class in the epoch, including those never compared. */
@@ -82,11 +87,12 @@ export interface EvidenceOptions {
   readinessDays?: number;
 }
 
-const COMPARED = new Set(['match', 'order_diff', 'diff', 'stale', 'inconclusive']);
+const COMPARED = new Set(['match', 'order_diff', 'diff', 'stale', 'inconclusive', 'collation_order']);
 const RUST_ERRORS = new Set(['error', 'timeout', 'addon_unavailable']);
 
 interface ReadFold {
   matches: Map<string, number>;
+  collation: Map<string, number>;
   ops: Set<string>;
   capability_missing_7d: number;
   rust_error_unresolved_7d: number;
@@ -100,7 +106,7 @@ interface ReadFold {
 /** Folds the epoch's ledger rows one file at a time; null when a ledger file cannot be read whole. */
 function foldLedger(dir: string, epoch: EpochManifest, now: number): ReadFold | null {
   const fold: ReadFold = {
-    matches: new Map(), ops: new Set(), capability_missing_7d: 0, rust_error_unresolved_7d: 0, diverged_unexplained_7d: 0,
+    matches: new Map(), collation: new Map(), ops: new Set(), capability_missing_7d: 0, rust_error_unresolved_7d: 0, diverged_unexplained_7d: 0,
     compared: 0, privacy_rows: 0, privacy_unsettled_7d: 0, arms: { trigram: { compared: 0, bad: 0 }, keyword_title: { compared: 0, bad: 0 } },
   };
   const root = ledgerDir(dir);
@@ -123,7 +129,8 @@ function foldLedger(dir: string, epoch: EpochManifest, now: number): ReadFold | 
       if (COMPARED.has(r.outcome)) fold.compared++;
       if (r.outcome === 'privacy_diverged') fold.privacy_rows++;
       if (recent && r.outcome === 'inconclusive' && !rerunDone && r.reason?.startsWith('privacy_check_')) fold.privacy_unsettled_7d++;
-      if (r.outcome === 'match') fold.matches.set(r.op, (fold.matches.get(r.op) ?? 0) + 1);
+      if (r.outcome === 'match' || r.outcome === 'collation_order') fold.matches.set(r.op, (fold.matches.get(r.op) ?? 0) + 1);
+      if (r.outcome === 'collation_order') fold.collation.set(r.op, (fold.collation.get(r.op) ?? 0) + 1);
       if (recent && r.outcome === 'capability_missing') fold.capability_missing_7d++;
       if (recent && RUST_ERRORS.has(r.outcome)) fold.rust_error_unresolved_7d++;
       if (recent && unexplained) fold.diverged_unexplained_7d++;
@@ -171,6 +178,7 @@ export function buildEvidenceStatus(o: EvidenceOptions): EvidenceStatus {
     }
   }
   let lacking: string[] = [];
+  const collation: Record<string, number> = fold ? Object.fromEntries([...fold.collation].sort(([a], [b]) => (a < b ? -1 : 1))) : {};
   if (fold) {
     const ops = [...new Set([...Object.keys(usage), ...fold.ops])].sort().map((op) => ({ op, successful: fold.matches.get(op) ?? 0, minimum: MIN_SUCCESSFUL_PER_OP }));
     lacking = ops.filter((r) => r.successful < r.minimum).map((r) => `${r.op} ${r.successful}/${r.minimum}`);
@@ -198,7 +206,8 @@ export function buildEvidenceStatus(o: EvidenceOptions): EvidenceStatus {
   out.evidence = {
     epoch_id: epoch.epoch_id, epoch_started_at: epoch.started_at, readiness_days: days,
     earliest_ready_at: new Date(started + days * DAY_MS).toISOString(), min_successful_per_op: MIN_SUCCESSFUL_PER_OP,
-    rust_error_rule: RUST_ERROR_RULE, panics_label: PANICS_LABEL, ops_lacking_samples: lacking, usage,
+    rust_error_rule: RUST_ERROR_RULE, panics_label: PANICS_LABEL, ops_lacking_samples: lacking, usage, collation_order: collation,
+    ...(epoch.build ? { build: epoch.build } : {}),
     recall_samples: recall?.length ?? 0, ...(recall?.length ? { vector_overlap_with_primary: mean((l) => l.overlap) } : {}),
     privacy_checks_unsettled_7d: fold?.privacy_unsettled_7d ?? 0,
   };
@@ -210,6 +219,8 @@ export function renderEvidenceStatus(s: EvidenceStatus): string[] {
   const e = s.evidence;
   if (!e) return ['  evidence epoch: none yet (the shadow child opens one when it starts on a seeded store); read, search and child evidence are missing'];
   const lines = [`  evidence epoch ${e.epoch_id}: started ${e.epoch_started_at}; earliest READY ${e.earliest_ready_at.slice(0, 10)} (${e.readiness_days} days after the start, if every other criterion passes)`];
+  const b = e.build;
+  lines.push(b ? `  build: commit ${b.gbrain_commit ?? 'unknown (unstamped build)'}, gbrain ${b.gbrain_version}, addon target ${b.addon_target ?? 'unknown'}` : '  build: not recorded (the epoch began before the build fields; consumers treat it as unknown)');
   if (!s.reads) lines.push('  reads: no evidence (no operation class used yet, or the ledger or usage files cannot be read)');
   else {
     lines.push(`  reads: ${s.reads.ops.reduce((n, r) => n + r.successful, 0)} successful over ${s.reads.ops.length} operation classes; each class needs ${e.min_successful_per_op} successful comparisons (an engineering default)`);
@@ -225,6 +236,8 @@ export function renderEvidenceStatus(s: EvidenceStatus): string[] {
     : `  privacy: ${s.privacy_diverged} divergence(s) (a Rust row the caller may not read, judged by the primary's read policy)`);
   const recall = (v: number | undefined): string => (v === undefined ? 'no evidence' : v.toFixed(3));
   lines.push(`  vector recall@10 (exact reference on the primary): Rust ${recall(s.search?.vector_recall_at_10)}, primary ${recall(s.search?.primary_recall_at_10)}; ${e.recall_samples} scored sample(s) (needs ${RECALL_MIN_SAMPLES})${e.vector_overlap_with_primary === undefined ? '' : `; Rust's overlap with the primary ${e.vector_overlap_with_primary.toFixed(3)}`}`);
+  const collation = Object.entries(e.collation_order).map(([op, n]) => `${op} ${n}`);
+  if (collation.length) lines.push(`  collation_order (explained and counted as successful: same rows, in the C byte order Rust follows; ICU and glibc hosts sort differently): ${collation.join(', ')}`);
   const arm = (name: string, v: number | undefined): string => `${name} ${v ?? 'no comparisons'}`;
   lines.push(`  search disagreements: ${arm('trigram', s.search?.trigram_exact_disagreements)}; ${arm(`keyword/title (${SHADOW_KEYWORD_RANKER})`, s.search?.keyword_title?.exact_disagreements)}`);
   lines.push(s.child ? `  child: ${e.panics_label} ${s.child.panics}; faults (exits, failed spawns) ${s.child.faults}` : '  child: no fault evidence (the fault history cannot be read)');

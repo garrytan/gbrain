@@ -19,6 +19,7 @@ import { gbrainPath } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { withCallerAccess, type CallerAccess } from '../core/search/private-visibility.ts';
 import { openRustEngine, type RustEngineAddonHandle } from '../core/rust-engine.ts';
+import { policyHash, READINESS_POLICY } from '../core/engine-swap/policy.ts';
 import { RUST_ENGINE_ABI } from '../core/rust-engine/addon-manifest.ts';
 import type { RustAddon } from '../core/rust-engine/addon-loader.ts';
 import { servedCapabilities } from '../core/rust-engine/store-capabilities.ts';
@@ -27,7 +28,7 @@ import { RERUN_DEADLINE_MS } from './checks.ts';
 import { createAsker, createSerialQueue, privacyVerdict, RERUN_QUEUE_BOUND } from './child-checks.ts';
 import { classifyError, classifyResult, type Classification } from './classify.ts';
 import { decodeValue, encodeValue } from './codec.ts';
-import { capabilitySetHash, ensureEpoch, internalErrorRecorder, readinessPolicyHash, type EpochManifest } from './evidence-epoch.ts';
+import { capabilitySetHash, currentBuild, ensureEpoch, internalErrorRecorder, type EpochBuild, type EpochManifest } from './evidence-epoch.ts';
 import { qualifyMismatch, SHADOW_COMPARATOR_VERSION } from './exactness.ts';
 import { FollowChild, type FollowEvent, type FollowStore } from './follow-child.ts';
 import { appendFault, appendLedgerRows, writeSummaryFile, type ShadowLedgerRow, type ShadowSummaryFile } from './ledger.ts';
@@ -53,10 +54,12 @@ export interface ShadowChildDeps {
   heartbeatMs?: number;
   childId?: string;
   now?: () => number;
-  /** The approved readiness policy's hash, an evidence epoch input (evidence-epoch.ts); default the local copy of the formula. */
+  /** The approved readiness policy's hash, an evidence epoch input (evidence-epoch.ts); default `policyHash(READINESS_POLICY)` (engine-swap/policy.ts): the approved policy's hash, not an in-force one. */
   readinessPolicyHash?: () => string;
   /** SHA-256 of the loaded addon file, or null when it cannot be read; default hashes the file the loader opened. */
   addonSha256?: (addon: RustAddon) => string | null;
+  /** The build recorded when a new epoch opens (not an epoch input); default `currentBuild()`. */
+  build?: () => EpochBuild;
   /** The capability names the Rust engine reports; default `servedCapabilities()`. */
   capabilities?: () => Iterable<string>;
   /** Seam for tests: called with each ledger row as it is recorded, before it is flushed. */
@@ -127,8 +130,8 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
         comparator_version: SHADOW_COMPARATOR_VERSION,
         adapter_version: `abi${RUST_ENGINE_ABI}.catalog${load.ok ? String(load.addon.catalogVersion) : 'none'}`,
         capability_set_hash: load.ok ? capabilitySetHash((deps.capabilities ?? servedCapabilities)()) : null,
-        readiness_policy_hash: (deps.readinessPolicyHash ?? readinessPolicyHash)(),
-      }, now());
+        readiness_policy_hash: (deps.readinessPolicyHash ?? (() => policyHash(READINESS_POLICY)))(),
+      }, now(), (deps.build ?? currentBuild)());
     } catch { epoch = null; }
   }
   const epochId = epoch?.epoch_id ?? null;
@@ -217,7 +220,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     const verdict = await privacyVerdict(ask, decodeValue(encodedArgs) as unknown[], primary, rust, access, at);
     if (verdict === 'violation') return { outcome: 'privacy_diverged', reason: 'row_not_readable_by_caller' };
     if (verdict !== 'clean') return { outcome: 'inconclusive', reason: verdict, mismatch: c.outcome as 'diff' | 'order_diff' };
-    return lagged === null ? c : qualifyMismatch(op, c, lagged);
+    return lagged === null ? c : qualifyMismatch(op, c, lagged, { args: encodedArgs, primary, rust });
   };
 
   /** One stable rerun (checks.ts `stableRerun`): both engines read again at a generation the barrier proved quiet. */
