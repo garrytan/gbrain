@@ -86,7 +86,8 @@ export function expectSameEngineObject(factory: ProbeResult, direct: ProbeResult
   expect(factory.protoNames).toEqual(direct.protoNames);
   expect(factory.ownKeys.filter((key) => !direct.ownKeys.includes(key))).toEqual(['disconnect']);
   expect(direct.ownKeys.filter((key) => !factory.ownKeys.includes(key))).toEqual([]);
-  for (const name of [...factory.ownKeys, ...factory.protoNames]) expect(name).not.toMatch(/shadow|follow/i);
+  // `listSharedSkillFollowSources` is the shared-skill catalog's list of followed sources, a member of the trunk's engine that has nothing to do with shadow follow.
+  for (const name of [...factory.ownKeys, ...factory.protoNames].filter((n) => n !== 'listSharedSkillFollowSources')) expect(name).not.toMatch(/shadow|follow/i);
 }
 
 /** 2. None of the hook modules was ever loaded in the process, not at open and not after the writes. */
