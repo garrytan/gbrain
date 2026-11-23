@@ -14,15 +14,18 @@ export type HoldPageInput = Pick<WriteGateHold, 'id' | 'source_id' | 'slug' | 'p
 
 const str = (v: unknown) => (typeof v === 'string' && v ? v : null);
 
+/** Refuses a hold an upgrade marked with candidate pages: it could belong to any of them, so no release may publish it. Drop stays possible. */
+export function refuseCandidateHold(hold: HoldPageInput): void {
+  if (hold.page_id == null && hold.page_candidates?.length) {
+    throw opError('unavailable', `h${hold.id} cannot be released: after an upgrade it could not be tied to one page (it may belong to any of ${hold.page_candidates.length}), so nothing was changed and the fact stays held.`,
+      `Drop it with gbrain trust drop h${hold.id}, then remember the fact on the right page yourself if it belongs there. gbrain doctor lists these holds (write_gate_hold_ambiguous).`);
+  }
+}
+
 /** The page a bound hold belongs to now (its current slug); null for an unbound hold. Throws when the bound page is gone or the hold is ambiguous. */
 export async function holdPage(engine: Pick<BrainEngine, 'executeRaw'>, hold: HoldPageInput): Promise<{ id: number; slug: string } | null> {
-  if (hold.page_id == null) {
-    if (hold.page_candidates?.length) {
-      throw opError('unavailable', `h${hold.id} cannot be released: after an upgrade it could not be tied to one page (it may belong to any of ${hold.page_candidates.length}), so nothing was changed and the fact stays held.`,
-        `Drop it with gbrain trust drop h${hold.id}, then remember the fact on the right page yourself if it belongs there. gbrain doctor lists these holds (write_gate_hold_ambiguous).`);
-    }
-    return null;
-  }
+  refuseCandidateHold(hold);
+  if (hold.page_id == null) return null;
   const [page] = await engine.executeRaw<{ id: number; slug: string }>('SELECT id, slug FROM pages WHERE id = $1 AND source_id = $2', [hold.page_id, hold.source_id]);
   if (!page) {
     throw opError('page_not_found', `The page h${hold.id} was held for no longer exists (it was purged); nothing was changed and the fact stays held.`,

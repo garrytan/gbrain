@@ -45,7 +45,7 @@ import { holdingHome, refuseUnheldFact } from '../facts/held-fact-move.ts';
 import { materializedPage, segmentedOverCeiling } from '../persistence/segmented-apply.ts';
 import { claimColumns } from '../facts/typed-claim.ts';
 import { getWriteGateHold, releaseWriteGateHold, type WriteGateHold } from '../write-gate-store.ts';
-import { holdPage, releaseEntitySlug, type HoldPageInput } from './hold-page.ts';
+import { holdPage, refuseCandidateHold, releaseEntitySlug, type HoldPageInput } from './hold-page.ts';
 
 export const TRUST_RELEASE_OPERATION = 'trust_release';
 export const DOOR_WAIT_MS = 60_000;
@@ -219,14 +219,21 @@ export async function prepareTrustReleaseMutation(engine: BrainEngine, row: Writ
     hold !== null && hold.kind === 'fact' && hold.status === 'held' && hold.last_seen_at === intent.last_seen_at && hold.source_id === row.source_id;
   const hold = await getWriteGateHold(engine, intent.hold_id);
   if (!current(hold)) throw decidedMeanwhile(intent.hold_id);
+  // A request admitted before the upgrade can name a hold the upgrade has since marked with candidate pages: refused here and again under the final lock.
+  refuseCandidateHold(hold);
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
   const firstHolding = !snapshot && isHoldingSlug(row.slug) && row.page_id === null && intent.mode === 'append';
   if (!firstHolding && (!snapshot || snapshot.page.deleted_at || snapshot.page.id !== row.page_id)) {
     throw pageIdentityError(Boolean(snapshot && !snapshot.page.deleted_at), `The page h${hold.id} is released into was deleted or recreated; the fact stays held.`);
   }
-  // A bound hold is released only onto its own page: the page the request was admitted for must be the page the hold is bound to.
-  if (hold.page_id !== null && snapshot?.page.id !== hold.page_id) throw pageIdentityError(Boolean(snapshot && !snapshot.page.deleted_at), `The page h${hold.id} is bound to is not the page this release was admitted for; the fact stays held.`);
+  // The hold's origin page (the page its writer gated against) is one thing and the page the fact is published on is another: a conversation
+  // extraction is gated against the conversation page and may be about an entity page. Only a release that publishes on the bound page itself
+  // (an index-existing row, or an entity subject that is the hold's own page) must find the bound page's id on its target.
   const p = hold.payload;
+  const publishesOnBound = indexed || (str(p.entity_slug) !== null && str(p.entity_slug) === hold.slug);
+  if (hold.page_id !== null && publishesOnBound && snapshot?.page.id !== hold.page_id) {
+    throw pageIdentityError(Boolean(snapshot && !snapshot.page.deleted_at), `The page h${hold.id} is bound to is not the page this release was admitted for; the fact stays held.`);
+  }
   const entity = hold.page_id !== null && str(p.entity_slug) === hold.slug ? row.slug : str(p.entity_slug);
   const fact: NewFact & { valid_from: Date } = {
     fact: String(p.fact ?? ''), kind: (str(p.kind) ?? 'fact') as NewFact['kind'], entity_slug: entity ?? (isHoldingSlug(row.slug) ? null : row.slug),
@@ -253,7 +260,10 @@ export async function prepareTrustReleaseMutation(engine: BrainEngine, row: Writ
   }
   const lockHold = async (tx: BrainEngine) => {
     await tx.executeRaw('SELECT id FROM write_gate_holds WHERE id = $1 FOR UPDATE', [intent.hold_id]);
-    if (!current(await getWriteGateHold(tx, intent.hold_id))) throw decidedMeanwhile(intent.hold_id);
+    const locked = await getWriteGateHold(tx, intent.hold_id);
+    if (!current(locked)) throw decidedMeanwhile(intent.hold_id);
+    refuseCandidateHold(locked);
+    if (locked.page_id !== hold.page_id) throw decidedMeanwhile(intent.hold_id);
   };
   const page = append.prepared;
   return {
