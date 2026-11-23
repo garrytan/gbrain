@@ -13,12 +13,14 @@
  *    gateway's test transport, so nothing leaves the machine.
  */
 import { afterAll, afterEach, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { __setPickerTransportForTests, PickerHttpError, type PickerRequest } from '../src/core/skills/resolver/router-http.ts';
 import { buildSkillIndex, resolveSkills } from '../src/core/skills/resolver/index.ts';
-import { parsePickerReply, PICKER_DESCRIPTION_CHARS, readRouterSpend, routerTimeoutMs } from '../src/core/skills/resolver/router.ts';
+import { parsePickerReply, PICKER_DESCRIPTION_CHARS, PICKER_MAX_OUTPUT_TOKENS, PICKER_PICKS, PICKER_PROMPT_VERSION, PICKER_REASONING_OUTPUT_TOKENS, pickerPrompt, readRouterSpend, routerTimeoutMs } from '../src/core/skills/resolver/router.ts';
+import { catalogFile } from '../src/core/skills/resolver/paths.ts';
 import { routerSettings } from '../src/core/skills/resolver/config.ts';
 import { canonicalLookup } from '../src/core/model-pricing.ts';
 
@@ -72,6 +74,31 @@ describe('parsePickerReply', () => {
     expect(parsePickerReply('{"needed": true, "skills": ["zz"]}', known)).toEqual({ code: 'no_known_ids' });
     expect(parsePickerReply('I think a', known)).toEqual({ code: 'parse_failed' });
     expect(parsePickerReply('{"needed": "yes", "skills": []}', known)).toEqual({ code: 'parse_failed' });
+  });
+});
+
+describe('the picker prompt version', () => {
+  test('the request shape a model can be trained on is pinned to PICKER_PROMPT_VERSION', () => {
+    const shape = JSON.stringify({ prompt: pickerPrompt([{ id: 'gbrain:people', description: 'Look up a person' }, { id: 'gbrain:bare', description: '' }]), PICKER_DESCRIPTION_CHARS, PICKER_MAX_OUTPUT_TOKENS, PICKER_REASONING_OUTPUT_TOKENS, PICKER_PICKS });
+    const pinned: Record<number, string> = { 1: '8e10264d1ba3604ae0e96028efba13474c9350982bd7b35d22ce16ac23ae9f11' };
+    expect({ version: PICKER_PROMPT_VERSION, sha256: createHash('sha256').update(shape).digest('hex') }).toEqual({ version: PICKER_PROMPT_VERSION, sha256: pinned[PICKER_PROMPT_VERSION]! });
+  });
+
+  test('picker.json records the prompt version', async () => {
+    const h = await home(null);
+    expect(JSON.parse(readFileSync(catalogFile(h, 'c', 'picker.json'), 'utf8')).prompt_version).toBe(PICKER_PROMPT_VERSION);
+  });
+
+  test('router_prompt_version other than the one gbrain sends turns the picker off: config_invalid, no call', async () => {
+    const stale = await home({ router: true, router_prompt_version: PICKER_PROMPT_VERSION + 1 });
+    reply('{"needed": true, "skills": ["gbrain:people"]}');
+    const out = (await turn(stale, 'write the weekly status reports')).output;
+    expect(out.router).toMatchObject({ answered_by: 'words', fallback: { code: 'config_invalid' }, est_usd: 0 });
+    expect(calls.length).toBe(0);
+    const current = await home({ router: true, router_prompt_version: PICKER_PROMPT_VERSION });
+    expect((await turn(current, 'who is alice')).output.router?.answered_by).toBe('picker');
+    expect(calls.length).toBe(1);
+    expect(routerSettings({ router: true, router_prompt_version: 0 }).invalid).toStartWith('skills.resolver.router_prompt_version must be');
   });
 });
 
@@ -298,6 +325,26 @@ describe('a compat: model on an OpenAI-compatible endpoint', () => {
     const r = await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: h, catalogs: ['c'], router: true, env });
     expect(r.output.router?.est_usd).toBe(0.00102);
     expect((await readRouterSpend(h)).charged_usd).toBe(0.00102);
+  });
+
+  test('router_extra_body adds fields to the compat request but never replaces the ones the picker owns', async () => {
+    seen.length = 0;
+    const h = await home(compat({ router_usd_per_mtok: [0, 0], router_extra_body: { reasoning_effort: 'none', temperature: 0.2, chat_template_kwargs: { enable_thinking: false } } }));
+    const r = await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: h, catalogs: ['c'], router: true, env });
+    expect(r.output.router?.answered_by).toBe('picker');
+    expect(seen[0]!.body).toMatchObject({ model: 'acme/picker-1', reasoning_effort: 'none', temperature: 0.2, chat_template_kwargs: { enable_thinking: false } });
+    expect(seen[0]!.body.messages.map((m: any) => m.role)).toEqual(['system', 'user']);
+  });
+
+  test('router_extra_body refuses owned fields, non-objects, oversized bodies and non-compat models', () => {
+    const c = { router: true, router_model: 'compat:acme/picker-1', router_base_url: 'https://models.example.com/v1' };
+    for (const k of ['model', 'messages', 'stream', 'n', 'max_tokens', 'max_completion_tokens']) {
+      expect(routerSettings({ ...c, router_extra_body: { [k]: 1 } }).invalid).toStartWith('skills.resolver.router_extra_body must be');
+    }
+    for (const v of [[], 'reasoning_effort=none', null, 3, { pad: 'x'.repeat(4096) }]) expect(routerSettings({ ...c, router_extra_body: v }).invalid).toStartWith('skills.resolver.router_extra_body must be');
+    expect(routerSettings({ ...c, router_extra_body: { reasoning_effort: 'none' } })).toMatchObject({ invalid: null, extraBody: { reasoning_effort: 'none' } });
+    expect(routerSettings({ router: true, router_model: 'anthropic:claude-haiku-5-5', router_extra_body: { top_p: 1 } }).invalid).toStartWith('skills.resolver.router_extra_body applies only');
+    expect(routerSettings({ router: true, router_extra_body: { top_p: 1 } }).invalid).toStartWith('skills.resolver.router_extra_body applies only');
   });
 
   test('router_usd_per_mtok takes two or three prices, never four', async () => {
