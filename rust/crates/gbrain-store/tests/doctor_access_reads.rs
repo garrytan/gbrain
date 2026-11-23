@@ -218,21 +218,79 @@ fn chat_census_counts_pages_and_channels_per_source_under_the_policy() {
     let dir = TempDir::new("doctor-chat-census");
     let store = open(&dir);
     source(&store, "other");
-    put(&store, "default", "chats/a", "slack", "x", json!({"channel": "alpha"}));
-    put(&store, "default", "chats/b", "slack", "x", json!({"channel": "alpha"}));
+    put(
+        &store,
+        "default",
+        "chats/a",
+        "slack",
+        "x",
+        json!({"channel": "alpha"}),
+    );
+    put(
+        &store,
+        "default",
+        "chats/b",
+        "slack",
+        "x",
+        json!({"channel": "alpha"}),
+    );
     put(&store, "default", "chats/c", "slack", "#General", json!({}));
-    put(&store, "default", "chats/d", "slack", "plain", json!({"chat": "", "conversation": "talk"}));
+    put(
+        &store,
+        "default",
+        "chats/d",
+        "slack",
+        "plain",
+        json!({"chat": "", "conversation": "talk"}),
+    );
     put(&store, "default", "chats/e", "slack", "plain", json!({}));
-    put(&store, "default", "chats/dm1", "dm", "dm", json!({"channel": "alpha"}));
-    put(&store, "default", "chats/dm2", "dm", "dm", json!({"channel": "alpha"}));
-    put(&store, "default", "chats/private", "slack", "x", json!({"channel": "secret", "visibility": "private"}));
-    put(&store, "default", "notes/note", "note", "x", json!({"channel": "n"}));
-    put(&store, "other", "chats/o", "slack", "x", json!({"channel": "alpha"}));
+    put(
+        &store,
+        "default",
+        "chats/dm1",
+        "dm",
+        "dm",
+        json!({"channel": "alpha"}),
+    );
+    put(
+        &store,
+        "default",
+        "chats/dm2",
+        "dm",
+        "dm",
+        json!({"channel": "alpha"}),
+    );
+    put(
+        &store,
+        "default",
+        "chats/private",
+        "slack",
+        "x",
+        json!({"channel": "secret", "visibility": "private"}),
+    );
+    put(
+        &store,
+        "default",
+        "notes/note",
+        "note",
+        "x",
+        json!({"channel": "n"}),
+    );
+    put(
+        &store,
+        "other",
+        "chats/o",
+        "slack",
+        "x",
+        json!({"channel": "alpha"}),
+    );
 
     let chat = strings(&["slack", "dm"]);
     let dm = strings(&["dm"]);
     let sources = strings(&["default", "other", "missing"]);
-    let all = store.list_chat_channel_census(&sources, &chat, &dm, None).unwrap();
+    let all = store
+        .list_chat_channel_census(&sources, &chat, &dm, None)
+        .unwrap();
     // default: alpha, general, talk, "" (no channel), two dm pages, secret = 7 channels over 8 pages.
     assert_eq!(
         all,
@@ -246,8 +304,13 @@ fn chat_census_counts_pages_and_channels_per_source_under_the_policy() {
         entity_privacy: true,
         ..Default::default()
     };
-    let hidden = store.list_chat_channel_census(&sources, &chat, &dm, Some(&policy)).unwrap();
-    assert_eq!(hidden[0], json!({"source_id": "default", "chat_pages": 7, "channels": 6}));
+    let hidden = store
+        .list_chat_channel_census(&sources, &chat, &dm, Some(&policy))
+        .unwrap();
+    assert_eq!(
+        hidden[0],
+        json!({"source_id": "default", "chat_pages": 7, "channels": 6})
+    );
 }
 
 #[test]

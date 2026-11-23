@@ -125,7 +125,7 @@ describe('core and company-brain lists', () => {
 });
 
 describe('census, size states and file lists', () => {
-  parityTest('chatChannelCensus names the chat sources by byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('chatChannelCensus names the chat sources by byte', { methods: ['putPage', 'listChatChannelCensus'] }, async (engine, backend) => {
     for (const id of MIXED_SOURCES) {
       await createSource(engine, backend, id);
       await engine.putPage('chat/day-one', note('Day one', { type: 'dm' }), { sourceId: id });
