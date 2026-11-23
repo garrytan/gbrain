@@ -9,8 +9,8 @@ use gbrain_store::journal::Principal;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::persistence::{
     ClaimRelease, ClaimStamp, ClaimableSpec, ExpireClaims, HousekeepingClaim, HousekeepingTurn,
-    ProjectionWindowCursor, SegmentedProjectionFilter, TopologyChangeInsert, WriteCompletion,
-    WriteRequestInsert,
+    IncarnationRequestFilter, ProjectionWindowCursor, SegmentedProjectionFilter,
+    TopologyChangeInsert, WriteCancellation, WriteCompletion, WriteRequestInsert,
 };
 use serde_json::{Value, json};
 
@@ -200,6 +200,54 @@ fn an_inserted_request_has_every_column_and_charges_only_existing_counters() {
 }
 
 #[test]
+fn a_group_insert_is_one_write_and_a_later_refusal_keeps_no_row_or_charge() {
+    let dir = TempDir::new("persist-insert-group");
+    let store = open(&dir);
+    store.lock_persistence_counters(&["brain".into()]).unwrap();
+    let rows = store
+        .insert_write_request_group(&[
+            insert_input(&store, REQ_1, "notes/a", json!({"kind": "put_page"})),
+            insert_input(&store, REQ_2, "notes/b", json!({"kind": "put_page"})),
+        ])
+        .unwrap();
+    let sequences: Vec<_> = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["sequence"].clone())
+        .collect();
+    assert_eq!(
+        sequences,
+        vec![json!(1), json!(2)],
+        "one row per item, in item order"
+    );
+    let charged = counter(&store, "brain");
+    assert_eq!(charged["outstanding_count"], 2);
+    // The second item repeats an admitted request id: the store refuses it, and the new first item is not kept.
+    const REQ_3: &str = "b0000000-0000-4000-8000-0000000000b3";
+    let refused = store
+        .insert_write_request_group(&[
+            insert_input(&store, REQ_3, "notes/c", json!({"kind": "put_page"})),
+            insert_input(&store, REQ_1, "notes/a", json!({"kind": "put_page"})),
+        ])
+        .unwrap_err();
+    assert_eq!(refused.code, CONSTRAINT_VIOLATION, "{refused:?}");
+    assert!(
+        store
+            .read_write_request(&principal(), REQ_3)
+            .unwrap()
+            .is_none(),
+        "the first item is dropped with the write"
+    );
+    assert_eq!(
+        counter(&store, "brain"),
+        charged,
+        "no counter charge is kept"
+    );
+    assert_eq!(store.insert_write_request_group(&[]).unwrap(), json!([]));
+}
+
+#[test]
 fn an_insert_refuses_what_the_table_constraints_refuse() {
     let dir = TempDir::new("persist-insert-refuse");
     let store = open(&dir);
@@ -337,6 +385,37 @@ fn completion_releases_counters_and_records_the_outcome() {
 }
 
 #[test]
+fn completion_stores_the_outcome_and_error_detail_in_jsonb_key_order() {
+    let dir = TempDir::new("persist-complete-order");
+    let store = open(&dir);
+    store.lock_persistence_counters(&keys()).unwrap();
+    let text = |v: &Value| serde_json::to_string(v).unwrap();
+    let mut ids = Vec::new();
+    for request in [REQ_1, "b0000000-0000-4000-8000-0000000000b9"] {
+        let row = store
+            .insert_write_request(&insert_input(&store, request, "notes/a", json!({})))
+            .unwrap();
+        ids.push(row["id"].as_str().unwrap().to_string());
+    }
+    let mut committed = completion(&ids[0], "committed", 512);
+    committed.outcome = json!({"status": "ok", "zz": 1, "fact": {"kind": "fact", "id": 7}});
+    let done = store.complete_write_row(&committed).unwrap().unwrap();
+    // Shorter keys first, then bytes: not the caller's order, and not plain byte order either.
+    let ordered = r#"{"zz":1,"fact":{"id":7,"kind":"fact"},"status":"ok"}"#;
+    assert_eq!(text(&done["outcome"]), ordered);
+    let read = store.read_write_request_by_id(&ids[0]).unwrap().unwrap();
+    assert_eq!(text(&read["outcome"]), ordered);
+    let mut failed = completion(&ids[1], "failed", 0);
+    failed.outcome = Value::Null;
+    failed.error_detail = json!({"retryable": false, "at": "publish"});
+    let done = store.complete_write_row(&failed).unwrap().unwrap();
+    assert_eq!(
+        text(&done["error_detail"]),
+        r#"{"at":"publish","retryable":false}"#
+    );
+}
+
+#[test]
 fn completion_that_overflows_the_reservation_changes_nothing() {
     let dir = TempDir::new("persist-complete-overflow");
     let store = open(&dir);
@@ -353,6 +432,91 @@ fn completion_that_overflows_the_reservation_changes_nothing() {
         "queued"
     );
     assert_eq!(counter(&store, "brain")["outstanding_count"], 1);
+}
+
+fn cancellation(id: &str, expect_state: &str, token: Option<&str>) -> WriteCancellation {
+    let mut completion = completion(id, "cancelled", 0);
+    completion.outcome = json!({});
+    completion.error_code = Some("cancelled".into());
+    completion.error_message = Some("Cancelled before publication.".into());
+    WriteCancellation {
+        completion,
+        expect_state: expect_state.into(),
+        expect_execution_token: token.map(str::to_string),
+    }
+}
+
+#[test]
+fn a_cancel_ends_a_queued_request_once_and_keeps_what_it_may_not_end() {
+    let dir = TempDir::new("persist-cancel");
+    let store = open(&dir);
+    store.lock_persistence_counters(&keys()).unwrap();
+    let row = store
+        .insert_write_request(&insert_input(&store, REQ_1, "notes/a", json!({})))
+        .unwrap();
+    let id = row["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        store
+            .cancel_write_row(&cancellation(REQ_2, "queued", None))
+            .unwrap(),
+        None
+    );
+    let stale = store
+        .cancel_write_row(&cancellation(&id, "running", None))
+        .unwrap()
+        .unwrap();
+    assert_eq!(stale["status"], "kept");
+    assert_eq!(stale["row"]["state"], "queued");
+    assert_eq!(counter(&store, "brain")["outstanding_count"], 1);
+    let done = store
+        .cancel_write_row(&cancellation(&id, "queued", None))
+        .unwrap()
+        .unwrap();
+    assert_eq!(done["status"], "cancelled");
+    assert_eq!(done["row"]["state"], "cancelled");
+    assert_eq!(done["row"]["error_code"], "cancelled");
+    assert_eq!(done["row"]["outcome"], json!({}));
+    for key in keys() {
+        assert_eq!(counter(&store, &key)["outstanding_count"], 0);
+    }
+    let again = store
+        .cancel_write_row(&cancellation(&id, "queued", None))
+        .unwrap()
+        .unwrap();
+    assert_eq!(again["status"], "kept");
+    assert_eq!(again["row"]["state"], "cancelled");
+    assert_eq!(counter(&store, "brain")["outstanding_count"], 0);
+}
+
+#[test]
+fn a_cancel_keeps_a_request_claimed_under_another_token_and_one_too_large_to_record() {
+    let dir = TempDir::new("persist-cancel-kept");
+    let store = open(&dir);
+    store.lock_persistence_counters(&keys()).unwrap();
+    let row = store
+        .insert_write_request(&insert_input(&store, REQ_1, "notes/a", json!({})))
+        .unwrap();
+    let id = row["id"].as_str().unwrap().to_string();
+    store.stamp_write_claim(&stamp(&id, 1000.0, None)).unwrap();
+    let other = store
+        .cancel_write_row(&cancellation(&id, "running", None))
+        .unwrap()
+        .unwrap();
+    assert_eq!(other["status"], "kept");
+    let mut big = cancellation(&id, "running", Some(TOKEN));
+    big.completion.result_bytes = 5000;
+    let too_large = store.cancel_write_row(&big).unwrap().unwrap();
+    assert_eq!(too_large["status"], "too_large");
+    assert_eq!(too_large["row"]["state"], "running");
+    assert_eq!(counter(&store, "brain")["outstanding_count"], 1);
+    let mut wrong = cancellation(&id, "running", Some(TOKEN));
+    wrong.completion.state = "failed".into();
+    assert!(store.cancel_write_row(&wrong).is_err());
+    let done = store
+        .cancel_write_row(&cancellation(&id, "running", Some(TOKEN)))
+        .unwrap()
+        .unwrap();
+    assert_eq!(done["status"], "cancelled");
 }
 
 #[test]
@@ -708,6 +872,99 @@ fn compactable_receipts_are_terminal_receipts_past_the_retention() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["id"], done["id"]);
     assert_eq!(rows[0]["state"], "committed");
+}
+
+/// Admits, claims and settles `request` with `intent` as `state`.
+fn settled(store: &Store, request: &str, slug: &str, intent: Value, state: &str) -> Value {
+    store.lock_persistence_counters(&keys()).unwrap();
+    let row = store
+        .insert_write_request(&insert_input(store, request, slug, intent))
+        .unwrap();
+    let id = row["id"].as_str().unwrap().to_string();
+    store.stamp_write_claim(&stamp(&id, 1000.0, None)).unwrap();
+    store
+        .complete_write_row(&completion(&id, state, 512))
+        .unwrap()
+        .unwrap()
+}
+
+#[test]
+fn a_receipt_compaction_lists_settled_receipts_before_its_cutoff_outside_an_open_sync_run() {
+    let dir = TempDir::new("persist-receipt-compaction");
+    let store = open(&dir);
+    let empty = store.read_receipt_compaction_window(0.0).unwrap();
+    assert_eq!(empty["max_sequence"], Value::Null);
+    let done = settled(
+        &store,
+        REQ_1,
+        "notes/a",
+        json!({ "runId": "run-1" }),
+        "committed",
+    );
+    let failed = settled(&store, REQ_2, "notes/b", json!({}), "failed");
+    // A cutoff an hour ahead takes both receipts; one an hour back takes neither.
+    let ahead = store.read_receipt_compaction_window(-1.0).unwrap();
+    let cutoff = ahead["cutoff"].as_str().unwrap().to_string();
+    assert_eq!(cutoff.len(), "2026-01-01T00:00:00.000000Z".len());
+    assert_eq!(ahead["max_sequence"], "2");
+    let behind = store.read_receipt_compaction_window(1.0).unwrap();
+    let behind = behind["cutoff"].as_str().unwrap();
+    let list = |states: &[&str], cutoff: &str, max: &str| -> Vec<String> {
+        let states: Vec<String> = states.iter().map(|s| s.to_string()).collect();
+        store
+            .list_receipt_compaction_candidates(&states, cutoff, max)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["id"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let both = vec![
+        done["id"].as_str().unwrap().to_string(),
+        failed["id"].as_str().unwrap().to_string(),
+    ];
+    assert_eq!(list(&["committed", "failed"], &cutoff, "2"), both);
+    assert_eq!(list(&["committed"], &cutoff, "2"), both[..1].to_vec());
+    assert!(list(&["committed", "failed"], behind, "2").is_empty());
+    // The sequence the preview saw bounds the set.
+    assert_eq!(
+        list(&["committed", "failed"], &cutoff, "1"),
+        both[..1].to_vec()
+    );
+    let row = &store
+        .list_receipt_compaction_candidates(&["committed".to_string()], &cutoff, "2")
+        .unwrap()[0];
+    assert_eq!(row["sequence"], "1");
+    assert_eq!(row["request_id"], REQ_1);
+    assert_eq!(row["source_id"], "default");
+    assert!(row["terminal_reservation"].is_string());
+    // A managed-sync cursor of the run that is not done keeps its receipt.
+    let open = json!([{ "runId": "run-1", "done": false }]);
+    store
+        .write_op_checkpoint_record("managed-sync", "fp-1", Some(&open))
+        .unwrap();
+    assert_eq!(
+        list(&["committed", "failed"], &cutoff, "2"),
+        both[1..].to_vec()
+    );
+    let closed = json!([{ "runId": "run-1", "done": true }]);
+    store
+        .write_op_checkpoint_record("managed-sync", "fp-1", Some(&closed))
+        .unwrap();
+    assert_eq!(list(&["committed", "failed"], &cutoff, "2"), both);
+    assert_eq!(store.count_kept_failed_receipts(&cutoff).unwrap(), json!(1));
+    assert_eq!(store.count_kept_failed_receipts(behind).unwrap(), json!(0));
+    assert!(
+        store
+            .list_receipt_compaction_candidates(&[], "yesterday", "2")
+            .is_err()
+    );
+    assert!(
+        store
+            .list_receipt_compaction_candidates(&[], &cutoff, "two")
+            .is_err()
+    );
 }
 
 #[test]
@@ -1208,4 +1465,599 @@ fn release_requeues_only_under_the_claim_token() {
     let charged = store.read_write_request_by_id(id).unwrap().unwrap();
     assert_eq!(charged["preparation_attempts"], 1);
     assert_eq!(charged["claim_phase"], json!({"phase": "preparing"}));
+}
+
+#[test]
+fn incarnation_requests_filter_by_slug_sequence_state_operation_and_request_id() {
+    let dir = TempDir::new("persist-incarnation");
+    let store = open(&dir);
+    store.lock_persistence_counters(&keys()).unwrap();
+    let first = store
+        .insert_write_request(&insert_input(&store, REQ_1, "notes/a", json!({})))
+        .unwrap();
+    let second = store
+        .insert_write_request(&insert_input(&store, REQ_2, "notes/a", json!({})))
+        .unwrap();
+    let id2 = second["id"].as_str().unwrap();
+    store.stamp_write_claim(&stamp(id2, 1000.0, None)).unwrap();
+    store
+        .complete_write_row(&completion(id2, "committed", 512))
+        .unwrap()
+        .unwrap();
+    let filter = |extra: Value| -> IncarnationRequestFilter {
+        let mut base = json!({"sourceId": "default", "incarnation": incarnation(&store)});
+        base.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        serde_json::from_value(base).unwrap()
+    };
+    let seqs = |rows: Vec<Value>| -> Vec<String> {
+        rows.iter()
+            .map(|r| r["request_id"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let after_first = first["sequence"].to_string();
+    // Later rows on the slug, oldest first; the first row is not after itself.
+    assert_eq!(
+        seqs(
+            store
+                .list_incarnation_requests(&filter(
+                    json!({"slug": "notes/a", "afterSequence": after_first})
+                ))
+                .unwrap()
+        ),
+        vec![REQ_2]
+    );
+    assert_eq!(
+        seqs(
+            store
+                .list_incarnation_requests(&filter(json!({"slug": "notes/b"})))
+                .unwrap()
+        ),
+        Vec::<String>::new()
+    );
+    // Committed put_page rows by request id, newest first; an upper-case id matches as a uuid does.
+    let committed = json!({"requestIds": [REQ_1, REQ_2.to_uppercase()], "states": ["committed"], "operation": "put_page", "newestFirst": true});
+    assert_eq!(
+        seqs(store.list_incarnation_requests(&filter(committed)).unwrap()),
+        vec![REQ_2]
+    );
+    let both = json!({"requestIds": [REQ_1, REQ_2], "newestFirst": true});
+    assert_eq!(
+        seqs(store.list_incarnation_requests(&filter(both)).unwrap()),
+        vec![REQ_2, REQ_1]
+    );
+    assert_eq!(
+        seqs(
+            store
+                .list_incarnation_requests(&filter(json!({"requestIds": []})))
+                .unwrap()
+        ),
+        Vec::<String>::new()
+    );
+    // Another incarnation gives no row.
+    let other: IncarnationRequestFilter =
+        serde_json::from_value(json!({"sourceId": "default", "incarnation": "other"})).unwrap();
+    assert!(store.list_incarnation_requests(&other).unwrap().is_empty());
+    // A request id that is not a uuid and a sequence that is not a u64 refuse, as the casts do.
+    let bad_id = filter(json!({"requestIds": ["not-a-uuid"]}));
+    assert_eq!(
+        store.list_incarnation_requests(&bad_id).unwrap_err().code,
+        INVALID_ARGUMENT
+    );
+    let bad_seq = filter(json!({"afterSequence": "x"}));
+    assert_eq!(
+        store.list_incarnation_requests(&bad_seq).unwrap_err().code,
+        INVALID_ARGUMENT
+    );
+}
+
+/// A committed request with `operation` and `outcome`, as the consumer leaves one.
+fn committed_with(store: &Store, request: &str, operation: &str, outcome: Value) {
+    store.lock_persistence_counters(&keys()).unwrap();
+    let mut input = insert_input(store, request, "notes/a", json!({}));
+    input.operation = operation.into();
+    let id = store.insert_write_request(&input).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    store.stamp_write_claim(&stamp(&id, 1000.0, None)).unwrap();
+    let mut done = completion(&id, "committed", 0);
+    done.outcome = outcome;
+    store.complete_write_row(&done).unwrap().unwrap();
+}
+
+#[test]
+fn attribution_backfill_targets_the_rows_exactly_one_committed_request_proves() {
+    let dir = TempDir::new("persist-attribution-backfill");
+    let store = open(&dir);
+    let input: PageInput = serde_json::from_value(
+        json!({ "type": "note", "title": "A", "compiled_truth": "a", "timeline": "" }),
+    )
+    .unwrap();
+    let options: PutPageOptions = serde_json::from_value(json!({})).unwrap();
+    store.put_page("notes/a", &input, &options).unwrap();
+    let scope = gbrain_store::pages::ReadScope {
+        source_id: Some("default".into()),
+        ..Default::default()
+    };
+    let snapshot = store
+        .read_page_snapshot("notes/a", &scope)
+        .unwrap()
+        .unwrap();
+    let revision = snapshot["page"]["knowledge_revision"].clone();
+    let page_id = snapshot["page"]["id"].as_u64().unwrap();
+    let facts: gbrain_store::facts::InsertFactsArgs = serde_json::from_value(json!({
+        "rows": [
+            { "fact": "fenced", "source": "parity", "source_markdown_slug": "notes/a", "row_num": 1 },
+            { "fact": "twice", "source": "parity" },
+        ],
+        "sourceId": "default",
+    }))
+    .unwrap();
+    let ids = store.insert_facts(&facts).unwrap()["ids"].clone();
+    let (fenced, twice) = (ids[0].as_u64().unwrap(), ids[1].as_u64().unwrap());
+    // A fenced remember proves the page revision it reports and the fact it inserted.
+    committed_with(
+        &store,
+        REQ_1,
+        "remember",
+        json!({ "status": "inserted", "id": fenced.to_string(), "revision": revision }),
+    );
+    // Two requests name the second fact, so neither proves it; a 19-digit id names no fact.
+    for request in [REQ_2, "b0000000-0000-4000-8000-0000000000b3"] {
+        committed_with(
+            &store,
+            request,
+            "remember",
+            json!({ "status": "superseded", "id": twice }),
+        );
+    }
+    committed_with(
+        &store,
+        "b0000000-0000-4000-8000-0000000000b4",
+        "remember",
+        json!({ "status": "inserted", "id": "1234567890123456789" }),
+    );
+    let scope = vec!["default".to_string()];
+    let list = |table: &str| {
+        store
+            .list_proven_attribution_targets(table, &scope)
+            .unwrap()
+    };
+    let count = |table: &str| store.count_unfilled_attribution(table, &scope).unwrap();
+    assert_eq!(list("pages"), json!([page_id]));
+    assert_eq!(list("facts"), json!([fenced]));
+    assert_eq!(list("page_versions"), json!([]));
+    assert_eq!(count("pages"), json!(1));
+    assert_eq!(count("facts"), json!(2));
+    assert_eq!(
+        store
+            .list_proven_attribution_targets("pages", &["other".to_string()])
+            .unwrap(),
+        json!([])
+    );
+    let err = store
+        .list_proven_attribution_targets("takes", &scope)
+        .unwrap_err();
+    assert_eq!(err.code, INVALID_ARGUMENT);
+}
+
+/// A request on `slug` settled `state` with `code` and `message`, as the consumer leaves one.
+#[allow(clippy::too_many_arguments)]
+fn settled_with(
+    store: &Store,
+    request: &str,
+    operation: &str,
+    slug: &str,
+    intent: Value,
+    state: &str,
+    code: Option<&str>,
+    message: Option<&str>,
+    detail: Value,
+) -> String {
+    store.lock_persistence_counters(&keys()).unwrap();
+    let mut input = insert_input(store, request, slug, intent);
+    input.operation = operation.into();
+    let id = store.insert_write_request(&input).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    store.stamp_write_claim(&stamp(&id, 1000.0, None)).unwrap();
+    let done: WriteCompletion = serde_json::from_value(json!({
+        "id": id, "state": state, "outcome": {}, "errorCode": code, "errorMessage": message,
+        "consumerVersion": "v-consumer", "consumerHostId": HOST, "errorDetail": detail, "resultBytes": 0,
+        "counterKeys": keys(), "intentBytes": 10, "retainedBytes": 0, "terminalReservation": 4096,
+        "probePurges": false,
+    }))
+    .unwrap();
+    store.complete_write_row(&done).unwrap().unwrap();
+    id
+}
+
+#[test]
+fn failed_writes_lists_guard_drift_and_moved_fact_refusals_less_the_recovered_ones() {
+    let dir = TempDir::new("persist-failed-writes");
+    let store = open(&dir);
+    let moved = "The fact entity changed after extraction admission.";
+    let req = |n: u8| format!("b0000000-0000-4000-8000-0000000000{n:02x}");
+    let guard = settled_with(
+        &store,
+        &req(0xb1),
+        "put_page",
+        "notes/a",
+        json!({ "slug": "notes/a" }),
+        "failed",
+        Some("writer_coordinator_required"),
+        None,
+        json!({ "origin": "pending_import" }),
+    );
+    let drift = settled_with(
+        &store,
+        &req(0xb2),
+        "put_page",
+        "notes/a",
+        json!({ "kind": "managed_sync_import" }),
+        "conflict",
+        Some("source_changed"),
+        None,
+        Value::Null,
+    );
+    let publication = settled_with(
+        &store,
+        &req(0xb3),
+        "remember",
+        "notes/a",
+        json!({}),
+        "failed",
+        Some("storage_error"),
+        Some("Publication failed (P0001): guard"),
+        Value::Null,
+    );
+    settled_with(
+        &store,
+        &req(0xb4),
+        "remember",
+        "notes/a",
+        json!({}),
+        "failed",
+        Some("storage_error"),
+        Some("disk full"),
+        Value::Null,
+    );
+    let open_fact = settled_with(
+        &store,
+        &req(0xb5),
+        "extract_facts",
+        "people/a",
+        json!({ "inputDigest": "d1", "batchKey": "k1" }),
+        "conflict",
+        Some("revision_conflict"),
+        Some(moved),
+        Value::Null,
+    );
+    let recovered = settled_with(
+        &store,
+        &req(0xb6),
+        "extract_facts",
+        "people/a",
+        json!({ "inputDigest": "d2", "batchKey": "k1" }),
+        "conflict",
+        Some("revision_conflict"),
+        Some(moved),
+        Value::Null,
+    );
+    settled_with(
+        &store,
+        &req(0xb7),
+        "extract_facts",
+        "people/a",
+        json!({ "inputDigest": "d2", "batchKey": "k2" }),
+        "committed",
+        None,
+        None,
+        Value::Null,
+    );
+    let scope = vec!["default".to_string()];
+    let replayable: Vec<String> = ["put_page", "add_timeline_entry", "remember"]
+        .map(String::from)
+        .to_vec();
+    let messages = vec![moved.to_string()];
+    let ids = |facts: Option<&[String]>, id: Option<&str>| -> Vec<String> {
+        store
+            .list_failed_write_requests(&scope, &replayable, facts, id)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["id"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(
+        ids(None, None),
+        vec![guard.clone(), drift.clone(), publication.clone()]
+    );
+    assert_eq!(
+        ids(Some(&messages), None),
+        vec![guard, drift, publication, open_fact]
+    );
+    // One request by id skips the recovery check, as the SQL's early return does.
+    assert_eq!(
+        ids(Some(&messages), Some(&recovered.to_uppercase())),
+        vec![recovered]
+    );
+    assert!(
+        store
+            .list_failed_write_requests(&["other".to_string()], &replayable, None, None)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let rows = store
+        .list_failed_write_requests(&scope, &replayable, None, None)
+        .unwrap();
+    assert_eq!(rows[0]["producer"], Value::Null);
+    assert_eq!(rows[0]["origin"], json!("pending_import"));
+    assert_eq!(rows[0]["page_id"], Value::Null);
+    assert!(
+        rows[0]["created_at"].as_str().unwrap().ends_with('Z')
+            && rows[0]["created_at"].as_str().unwrap().len() == 20
+    );
+    assert_eq!(rows[1]["producer"], json!("put_page:managed_sync_import"));
+    assert_eq!(rows[2]["producer"], Value::Null);
+    let refused = store
+        .list_failed_write_requests(&scope, &replayable, None, Some("not-a-uuid"))
+        .unwrap_err();
+    assert_eq!(refused.code, INVALID_ARGUMENT);
+}
+
+#[test]
+fn drift_conflicts_group_source_changed_receipts_by_slug_inside_the_window() {
+    use gbrain_store::drift_conflicts::DriftConflictQuery;
+    let dir = TempDir::new("persist-drift-conflicts");
+    let store = open(&dir);
+    let drift = "The canonical file contains an uncoordinated local edit.";
+    assert_eq!(
+        store.read_drift_conflict_bounds("missing").unwrap(),
+        Value::Null
+    );
+    let empty = store.read_drift_conflict_bounds("default").unwrap();
+    assert_eq!(
+        (empty["top"].clone(), empty["bottom"].clone()),
+        (Value::Null, Value::Null)
+    );
+    put_unsealed(&store, "notes/a", "a");
+    let req = |n: u8| format!("d0000000-0000-4000-8000-0000000000{n:02x}");
+    let settle = |n: u8,
+                  slug: &str,
+                  intent: Value,
+                  state: &str,
+                  code: Option<&str>,
+                  message: Option<&str>| {
+        settled_with(
+            &store,
+            &req(n),
+            "put_page",
+            slug,
+            intent,
+            state,
+            code,
+            message,
+            Value::Null,
+        )
+    };
+    settle(0xd1, "notes/a", json!({}), "committed", None, None);
+    settle(
+        0xd2,
+        "notes/a",
+        json!({ "kind": "managed_sync_import" }),
+        "conflict",
+        Some("source_changed"),
+        Some(drift),
+    );
+    settle(
+        0xd3,
+        "notes/a",
+        json!({}),
+        "conflict",
+        Some("source_changed"),
+        Some("other"),
+    );
+    settle(
+        0xd4,
+        "people/b",
+        json!({}),
+        "conflict",
+        Some("source_changed"),
+        Some(drift),
+    );
+    settle(
+        0xd5,
+        "notes/a",
+        json!({}),
+        "conflict",
+        Some("revision_conflict"),
+        Some(drift),
+    );
+    let bounds = store.read_drift_conflict_bounds("default").unwrap();
+    let top: i64 = bounds["top"].as_str().unwrap().parse().unwrap();
+    let query = |floor: i64, prefixes: Option<Vec<String>>, live: bool, after: &str, limit: u64| {
+        DriftConflictQuery {
+            incarnation: bounds["incarnation"].as_str().unwrap().into(),
+            floor: floor.to_string(),
+            through: top.to_string(),
+            slug_prefixes: prefixes,
+            require_live_page: live,
+            exclude_private: None,
+            after: after.into(),
+            limit,
+            drift_message: drift.into(),
+        }
+    };
+    let all = store
+        .list_drift_conflict_groups("default", &query(0, None, false, "", 10))
+        .unwrap();
+    assert_eq!(
+        (all["slugs"].clone(), all["receipts"].clone()),
+        (json!(2), json!(3))
+    );
+    let rows = all["rows"].as_array().unwrap();
+    assert_eq!(rows[0]["slug"], json!("notes/a"));
+    assert_eq!(rows[0]["receipts"], json!(2));
+    assert_eq!(rows[0]["drift_receipts"], json!(1));
+    assert_eq!(
+        rows[0]["producers"],
+        json!(["put_page", "put_page:managed_sync_import"])
+    );
+    assert_eq!(rows[0]["last_request_id"], json!(req(0xd3)));
+    assert_eq!(rows[0]["first_seen"].as_str().unwrap().len(), 20);
+    assert_eq!(rows[1]["slug"], json!("people/b"));
+    let paged = store
+        .list_drift_conflict_groups("default", &query(0, None, false, "notes/a", 1))
+        .unwrap();
+    assert_eq!(paged["rows"].as_array().unwrap().len(), 1);
+    assert_eq!(paged["rows"][0]["slug"], json!("people/b"));
+    let window = store
+        .list_drift_conflict_groups("default", &query(top - 2, None, false, "", 10))
+        .unwrap();
+    assert_eq!(window["receipts"], json!(1));
+    let fenced = store
+        .list_drift_conflict_groups(
+            "default",
+            &query(0, Some(vec!["people/b".into()]), false, "", 10),
+        )
+        .unwrap();
+    assert_eq!(fenced["slugs"], json!(1));
+    let live = store
+        .list_drift_conflict_groups("default", &query(0, None, true, "", 10))
+        .unwrap();
+    assert_eq!(
+        (live["slugs"].clone(), live["receipts"].clone()),
+        (json!(1), json!(2))
+    );
+    let refused = store
+        .list_drift_conflict_groups(
+            "default",
+            &DriftConflictQuery {
+                floor: "x".into(),
+                ..query(0, None, false, "", 1)
+            },
+        )
+        .unwrap_err();
+    assert_eq!(refused.code, INVALID_ARGUMENT);
+    let details = store
+        .read_drift_conflict_details("default", &["notes/a".into(), "people/b".into()], true)
+        .unwrap();
+    assert_eq!(details["committed"].as_array().unwrap().len(), 1);
+    assert_eq!(details["committed"][0]["request_id"], json!(req(0xd1)));
+    assert_eq!(
+        details["recorded"],
+        json!([{ "slug": "notes/a", "source_path": null, "source_uri": null }])
+    );
+    let no_paths = store
+        .read_drift_conflict_details("default", &["notes/a".into()], false)
+        .unwrap();
+    assert_eq!(no_paths["recorded"], json!([]));
+}
+
+#[test]
+fn requests_by_request_id_span_principals_and_stop_at_two() {
+    let dir = TempDir::new("persist-by-request-id");
+    let store = open(&dir);
+    assert!(
+        store
+            .list_write_requests_by_request_id(REQ_1)
+            .unwrap()
+            .is_empty()
+    );
+    let mine = store
+        .insert_write_request(&insert_input(&store, REQ_1, "notes/a", json!({})))
+        .unwrap();
+    let one = store
+        .list_write_requests_by_request_id(&REQ_1.to_uppercase())
+        .unwrap();
+    assert_eq!(one, vec![mine.clone()]);
+    // A second principal admits the same request id: the read is ambiguous and says so.
+    let mut theirs = insert_input(&store, REQ_1, "notes/b", json!({}));
+    theirs.principal_id = "other-writer".into();
+    store.insert_write_request(&theirs).unwrap();
+    let mut third = insert_input(&store, REQ_1, "notes/c", json!({}));
+    third.principal_id = "third-writer".into();
+    store.insert_write_request(&third).unwrap();
+    let rows = store.list_write_requests_by_request_id(REQ_1).unwrap();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|r| r["request_id"] == REQ_1));
+    assert!(
+        store
+            .list_write_requests_by_request_id(REQ_2)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        store
+            .list_write_requests_by_request_id("nope")
+            .unwrap_err()
+            .code,
+        INVALID_ARGUMENT
+    );
+}
+
+#[test]
+fn pending_write_health_counts_in_flight_writes_and_the_named_pending_writes_that_later_failed() {
+    use gbrain_store::telemetry::McpRequestLogInput;
+    let dir = TempDir::new("persist-health");
+    let store = open(&dir);
+    let empty = store.read_pending_write_health().unwrap();
+    assert_eq!(
+        empty,
+        json!({ "pending_writes": 0, "oldest_pending_write_age_seconds": 0, "pending_writes_later_failed": 0 })
+    );
+    store.lock_persistence_counters(&keys()).unwrap();
+    store
+        .insert_write_request(&insert_input(&store, REQ_1, "notes/a", json!({})))
+        .unwrap();
+    let failed = store
+        .insert_write_request(&insert_input(&store, REQ_2, "notes/b", json!({})))
+        .unwrap();
+    let id = failed["id"].as_str().unwrap();
+    store.stamp_write_claim(&stamp(id, 1000.0, None)).unwrap();
+    store
+        .complete_write_row(&completion(id, "failed", 0))
+        .unwrap()
+        .unwrap();
+    let log = |status: &str, params: Option<Value>| McpRequestLogInput {
+        operation: Some("put_page".into()),
+        status: Some(status.into()),
+        params,
+        ..McpRequestLogInput::default()
+    };
+    for (status, params) in [
+        (
+            "accepted_pending",
+            Some(json!({ "write_request_id": REQ_1 })),
+        ),
+        (
+            "accepted_pending",
+            Some(json!({ "write_request_id": REQ_2 })),
+        ),
+        (
+            "accepted_pending",
+            Some(json!({ "write_request_id": REQ_2 })),
+        ),
+        ("success", Some(json!({ "write_request_id": REQ_2 }))),
+        ("accepted_pending", None),
+    ] {
+        store.log_mcp_request(&log(status, params)).unwrap();
+    }
+    let health = store.read_pending_write_health().unwrap();
+    assert_eq!(
+        health["pending_writes"], 1,
+        "the queued request is in flight"
+    );
+    assert_eq!(
+        health["pending_writes_later_failed"], 1,
+        "the failed request counts once, however many rows name it"
+    );
+    assert!(health["oldest_pending_write_age_seconds"].as_i64().unwrap() >= 0);
 }

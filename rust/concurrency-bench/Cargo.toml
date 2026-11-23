@@ -1,0 +1,37 @@
+[package]
+name = "gbrain-concurrency-bench"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.100"
+description = "Many concurrent writers on one brain: throughput, latency and conflict rate for the gbrain record store, today's and the optimistic prototype, plus the raw key-value options behind them."
+license = "MIT"
+publish = false
+
+# Standalone workspace: rust/Cargo.toml excludes `concurrency-bench`.
+[workspace]
+
+[features]
+# The raw key-value tier needs the bake-off crate (redb, fjall, LMDB under one optimistic layer).
+raw = ["dep:gbrain-bakeoff"]
+# `--fjall`: the store's records in a fjall database (the storage bake-off).
+fjall = ["gbrain-store/fjall"]
+
+[[bin]]
+name = "store-bench"
+path = "src/main.rs"
+
+[[bin]]
+name = "rawkv-bench"
+path = "src/rawkv.rs"
+required-features = ["raw"]
+
+[dependencies]
+gbrain-store = { path = "../crates/gbrain-store" }
+gbrain-bakeoff = { path = "../bench", optional = true }
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[profile.release]
+debug = false
+opt-level = 3
+lto = "thin"
+codegen-units = 4

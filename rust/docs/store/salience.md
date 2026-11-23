@@ -43,16 +43,45 @@ Numbers: arithmetic widens the f32 weight to a double first, as Postgres does fo
 
 - Source scope: a non-empty `sourceIds` wins over a truthy `sourceId`; neither is no scope.
 - `takesHoldersAllowList`: honoured (see above).
-- `excludePrivate` on `getSalienceScores` and `getRecentSalience` is the page policy `pageReadFilter` adds, judged by
-  `page_hidden` in `facts/privacy.rs`: the input carries it as `exclude_private` (`{ honorAliases, entityPrivacy, ownerOnly }`)
-  and a page it hides, an owner-only page included, is not scored, or, on `getRecentSalience`, is dropped before the
-  ranking and the limit. The members send it through `storePagePolicy`, which refuses a caller whose policy is wider
-  than the store's.
-- `minTrust` and `suppressFlagged` refuse on `getSalienceScores` (its SQL applies `pageEligibleSql`); on
-  `getRecentSalience` they change nothing, as its SQL never reads them.
+- `excludePrivate` (any truthy value, as `pageReadFilter` tests it) applies the page policy on both reads; see
+  "Private pages" below. The input carries the policy as
+  `exclude_private` (`{ honorAliases, entityPrivacy, ownerOnly }`); a page it hides, an owner-only page included, is
+  not scored or ranked. A read finds the owner-only sources once, on the first page it judges (`OwnerOnlyCache`).
+- `minTrust` and `suppressFlagged` apply on `getSalienceScores` (its SQL applies `pageEligibleSql`) through
+  `trust::TrustPolicy`: the page's stamped tier at or above the floor, and no instruction-family write-gate receipt on
+  an agent-written-or-lower page. On `getRecentSalience` they change nothing, as its SQL never reads them.
 - `getSalienceScores` applies the live clauses whenever a read policy object is passed (`pageReadFilter(..., !!scope)`).
   Hybrid search passes its whole `SearchOpts` as the policy; the keys the SQL does not read are ignored.
 - `setEmotionalWeightBatch` refuses a NaN or infinite weight (JSON cannot carry it; PGLite stores it as a `real`).
+
+## Private pages (`excludePrivate`)
+
+PGLite adds `privatePagesFilterForCaller('p')` (`src/core/search/private-visibility.ts:631`) through
+`pageReadFilter` (`src/core/search/read-policy-sql.ts:27`) on both reads: `getRecentSalience` at
+`src/core/engine-sql/salience.ts:152`, and `getSalienceScores` (`src/core/pglite-engine.ts:2073`) through
+`readSalienceScores` at `src/core/search/read-enrichment.ts:322-325`. With no caller record
+(`currentCallerAccess`, `private-visibility.ts:392`: restricted, no identity) the filter is the member-access part
+(`callerAccessSql`, 584: `readersAllowedSql`, 171; `folderRulesAllowedSql`, 133, with `coverageSql`, 146;
+`originAllowedSql`, 197) and, unless privacy is relaxed (`callerPrivacySql`, 626), the privacy part
+(`privacyPartSql`, 89).
+
+The store copies it with `page_hidden` (`facts/privacy.rs`), lane 4's private-provenance rules applied to the read's
+own page: a page is hidden when it names readers, when a non-plain page's origin names readers, or, with
+`entityPrivacy`, when its snapshot, derived origin or declared lineage is private (the rules table in
+[facts.md](facts.md#private-provenance-policy-factsprivacyrs)). A page under a folder rule of its source
+(`folder_rule_ids IS NOT NULL`) passes only when the caller satisfies every rule on it, and a page under a pending
+prefix passes only when the caller's record names no coverage of it (the store's own pending rows count only for a
+caller with no record). The filter drops a page before `getRecentSalience` ranks and limits.
+
+The member (`store-members/private-provenance.ts` `storePagePolicy`) renders `privatePagesFilterForCaller('p')` in
+the current context and outside any caller record. Both reads opt in with `callerReaders`: when the two differ, the
+member renders the policy again for a record of only the caller's reader identity and private-readable grant, and when
+the caller's text equals that, it also sends `identity` and `privateReadableSources`, which `page_hidden` reads (a page
+whose readers name a principal of the identity, and a non-pinned page of a granted source, pass) with the folder
+rules it satisfies (`satisfiedRuleIds`) and the pending prefixes its record holds (`folderCoverage`). Any other caller
+(lineage, an owner read) refuses with `engine_capability_missing`. The member sends
+`honorAliases` (the text holds `privacyAliasSql('p')`, 791) and `entityPrivacy` (the text holds
+`privateSnapshotFilterFragment('p')`, 707, which is absent when privacy is relaxed).
 
 ## Cascades
 
@@ -66,3 +95,5 @@ Numbers: arithmetic widens the f32 weight to a double first, as Postgres does fo
   in key order and takes by row number.
 - The score uses the store clock once per read for `now` (Postgres `now()` is the transaction start); the recency term
   then matches within 1e-6.
+
+`countZeroWeightWithTakes()` (the doctor's `salience_health` counts) is documented in [takes-reads.md](takes-reads.md).

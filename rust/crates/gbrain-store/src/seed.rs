@@ -294,12 +294,30 @@ fn claim(tx: &mut dyn KvWrite, seed_id: &str) -> Result<SeedManifest> {
         keys::meta(crate::access_flag::SCAN_DONE),
         // The keyword index state: a new store starts with the index on.
         keys::keyword_index_state(),
-        keys::text(keys::CONFIG, &["version"]),
+        crate::shared_skill_members::state_key(),
         source_key(crate::sources::DEFAULT_SOURCE),
     ];
+    // The config rows a new store's open writes: the schema version, the trust and write-gate marks (migrations v226 and
+    // v227 on an empty brain) and the chunk strategy and embedding identity the caller names. The seed's config
+    // relation merges over them.
+    let opened_config: Vec<Vec<u8>> = [
+        "version",
+        "trust.backfill_completed_at",
+        crate::WRITE_GATE_SCAN_BASELINE_KEY,
+        "chunk_strategy",
+        "embedding_model",
+        "embedding_dimensions",
+    ]
+    .iter()
+    .map(|name| keys::text(keys::CONFIG, &[name]))
+    .collect();
     let mut foreign = None;
     scan_prefix(&*tx, &[], false, &mut |key, _| {
-        if fresh.iter().any(|k| k.as_slice() == key) {
+        if fresh
+            .iter()
+            .chain(&opened_config)
+            .any(|k| k.as_slice() == key)
+        {
             return true;
         }
         foreign = Some(String::from_utf8_lossy(key).into_owned());
@@ -354,7 +372,7 @@ fn relation_spec(relation: &str) -> Result<&'static Relation> {
 }
 
 /// Raises the id counter `name` past `id`.
-fn raise_counter(tx: &mut dyn KvWrite, name: &str, id: u64) -> Result<()> {
+pub(crate) fn raise_counter(tx: &mut dyn KvWrite, name: &str, id: u64) -> Result<()> {
     let key = keys::meta(name);
     let current = match tx.get(&key)? {
         Some(bytes) => keys::be8(&bytes)

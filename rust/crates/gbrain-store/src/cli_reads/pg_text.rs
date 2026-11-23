@@ -121,6 +121,12 @@ fn number_text(n: &serde_json::Number) -> String {
     }
 }
 
+/// A JSON value as jsonb stores it: object keys in jsonb order, at every depth
+/// ([`crate::jsonb::ordered`]).
+pub(crate) fn jsonb_value(value: &Value) -> Value {
+    crate::jsonb::ordered(value)
+}
+
 /// `frontmatter ->> key`: the string itself, the jsonb text of any other value, `None` for a
 /// missing key or JSON null.
 pub(crate) fn fm_text(frontmatter: &Map<String, Value>, key: &str) -> Option<String> {
