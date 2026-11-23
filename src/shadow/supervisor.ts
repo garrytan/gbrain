@@ -16,6 +16,7 @@ import type { ChildProcess } from 'node:child_process';
 import { closeSync, openSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn as defaultSpawn } from '../core/spawn.ts';
+import { readEpoch } from './evidence-epoch.ts';
 import { appendFault, type ShadowFault } from './ledger.ts';
 import type { MirrorTransport } from './mirror.ts';
 import { readShadowState } from './state.ts';
@@ -132,7 +133,10 @@ export class ShadowSupervisor implements MirrorTransport {
   }
 
   private fault(kind: ShadowFault['kind'], detail: string): void {
-    const fault = { ts: new Date(this.o.now()).toISOString(), kind, detail };
+    // The epoch current when the fault happened (evidence-epoch.ts), so the status counts child exits per epoch.
+    let epoch_id: string | undefined;
+    try { epoch_id = readEpoch(this.o.dir)?.epoch_id; } catch { /* no epoch tag */ }
+    const fault: ShadowFault = { ts: new Date(this.o.now()).toISOString(), kind, detail, ...(epoch_id ? { epoch_id } : {}) };
     try { (this.o.recordFault ?? ((f: ShadowFault) => appendFault(this.o.dir, f)))(fault); } catch { /* disk */ }
   }
 

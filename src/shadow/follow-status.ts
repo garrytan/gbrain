@@ -12,6 +12,7 @@
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { readEpoch } from './evidence-epoch.ts';
 import { readSeedRecord } from './seed.ts';
 import type { ShadowState } from './state.ts';
 
@@ -119,6 +120,8 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
   const seed = readSeedRecord(dir);
   const file = seed ? readFollowerFile(dir) : null;
   const live = file && file.seed_id === seed?.seed_id ? file : null;
+  // The status's epoch is the evidence epoch (evidence-epoch.ts), not the seed; null until a child has opened one.
+  const epoch = readEpoch(dir);
   const passes = readPasses(dir);
   const last = passes.at(-1) ?? null;
   const fulls = passes.filter((p) => p.kind === 'full');
@@ -138,8 +141,8 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
   const lastFull = fulls.at(-1);
   const { error, nonterminal_refresh_rows: _refreshes, ...lastPass } = last ?? ({} as PassRecord);
   return {
-    epoch_id: seed?.seed_id ?? null,
-    epoch_started_at: seed?.finished_at ?? null,
+    epoch_id: epoch?.epoch_id ?? null,
+    epoch_started_at: epoch?.started_at ?? null,
     follower: {
       state: followerState, lag_ms: live ? live.lag_ms : null, lag_ms_p99_24h: lagP99(last24), lag_ms_p99_epoch: lagP99(live?.lag.epoch ?? []),
       queue_depth: queue, applied_rows: live?.applied_rows ?? 0, coverage_watermark: watermark,

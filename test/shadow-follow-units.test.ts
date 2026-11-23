@@ -373,7 +373,9 @@ describe('status --json', () => {
       'schema_version', 'brain', 'enabled', 'state', 'directory', 'totals', 'by_op', 'serving', 'child_shed', 'children', 'recent_faults',
       'epoch_id', 'epoch_started_at', 'follower', 'reconcile', 'write_comparisons', 'fingerprints', 'seed', 'allocators', 'primary_refreshes',
     ]));
-    expect(json.epoch_id).toBe('seed-1');
+    expect(json.epoch_id).toBeNull(); // the epoch is the evidence epoch a child opens, not the seed
+    expect(json.epoch_started_at).toBeNull();
+    expect(json.seed).toMatchObject({ seed_id: 'seed-1' });
     expect(json.follower).toEqual({
       state: 'stopped', lag_ms: null, lag_ms_p99_24h: null, lag_ms_p99_epoch: null, queue_depth: 0, applied_rows: 0,
       coverage_watermark: { valid: false, through: null, invalidated_reason: 'not_started' },

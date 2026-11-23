@@ -49,6 +49,8 @@ export interface FollowChildOptions {
   owner: () => boolean;
   writeControl: (line: string) => void;
   now?: () => number;
+  /** Called with the boundary (`apply`, `fingerprint`, `reconcile`) and the error whenever a Rust call in the follower throws. */
+  onRustError?: (boundary: string, error: unknown) => void;
 }
 
 const errorCode = (error: unknown): string => (error as { code?: string })?.code ?? (error instanceof Error ? error.name : 'rpc_failed');
@@ -93,6 +95,9 @@ export class FollowChild {
     if (apply) { this.depth++; this.servingQueued = event.queued ?? 0; this.waiting.push(event.committed_at); }
     this.chain = this.chain.then(() => this.run(event)).catch(() => { /* run never throws */ }).finally(() => { if (apply) this.depth--; });
   }
+
+  /** True while the follower holds committed work, older than `ms`, that it has not applied (evidence for a `stale` comparison). */
+  pendingBefore(ms: number): boolean { return this.waiting.some((committed) => committed < ms); }
 
   /** Flushes follower.json (called on the heartbeat). */
   tick(): void { this.readForeign(); this.write(true); }
@@ -182,6 +187,7 @@ export class FollowChild {
     const store = this.o.owner() ? await this.o.store() : null;
     const done = (): void => { const i = this.waiting.indexOf(e.committed_at); if (i >= 0) this.waiting.splice(i, 1); };
     if (!file || !store) { done(); this.invalidate(`apply_failed:${this.o.owner() ? 'addon_unavailable' : 'not_owner'}`); return; }
+    let boundary = 'apply';
     try {
       const result = await store.replaceRelationRows(file.seed_id, e.relation, e.generation, e.keys, e.rows, e.digests);
       file.applied_rows += result.upserted + result.deleted;
@@ -196,12 +202,14 @@ export class FollowChild {
       for (const h of Object.keys(file.lag.hours)) if (Number(h) < Number(hour) - 24) delete file.lag.hours[h];
       if (file.watermark.valid) file.watermark.through = new Date(e.committed_at).toISOString();
       if (e.fp) {
+        boundary = 'fingerprint';
         const rust = await store.factFingerprints(e.rows.map((r) => r.fact ?? ''));
         const pairs = e.fp.filter((p): p is FingerprintPair => p !== null);
         file.fingerprints.checked_rows += pairs.length;
         file.fingerprints.mismatches += countFingerprintMismatches(pairs, rust);
       }
     } catch (error) {
+      this.o.onRustError?.(boundary, error);
       this.invalidate(`apply_failed:${errorCode(error)}`);
     } finally { done(); }
   }
@@ -209,6 +217,7 @@ export class FollowChild {
   private async rpc(e: Extract<FollowEvent, { t: 'rpc' }>): Promise<void> {
     let line: Record<string, unknown>;
     try { line = { t: 'resp', id: e.id, ok: true, value: await this.call(e.method, e.args) }; } catch (error) {
+      this.o.onRustError?.(e.method === 'probe' ? 'fingerprint' : 'reconcile', error);
       line = { t: 'resp', id: e.id, ok: false, error: { code: errorCode(error), message: error instanceof Error ? error.message.slice(0, 300) : 'failed' } };
     }
     try { this.o.writeControl(JSON.stringify(line) + '\n'); } catch { /* parent gone */ }

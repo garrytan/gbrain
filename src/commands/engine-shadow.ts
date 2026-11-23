@@ -16,6 +16,7 @@ import type { EngineConfig } from '../core/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
 import { readFaults, readShadowSummary } from '../shadow/ledger.ts';
+import { buildEvidenceStatus, renderEvidenceStatus } from '../shadow/evidence.ts';
 import { buildFollowStatus, renderFollowStatus } from '../shadow/follow-status.ts';
 import { readSeedRecord, runSeed, SeedBudgetError, writeSeedRecord, type SeedRecord, type SeedTarget } from '../shadow/seed.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown, writeProvisionalReport } from '../shadow/report.ts';
@@ -228,7 +229,7 @@ function status(brain: { key: string; dir: string }, json: boolean, out: (l: str
       schema_version: 1, brain: brain.key, enabled: state?.enabled === true, state, directory: brain.dir,
       totals, by_op: summary?.by_op ?? {}, serving: summary?.primary ?? null, child_shed: summary?.child_shed ?? 0,
       children: summary?.children ?? 0, recent_faults: faults,
-      ...buildFollowStatus(brain.dir, state),
+      ...buildFollowStatus(brain.dir, state), ...buildEvidenceStatus({ dir: brain.dir }),
     }, null, 2));
     return 0;
   }
@@ -242,7 +243,7 @@ function status(brain: { key: string; dir: string }, json: boolean, out: (l: str
   }
   const seeded = readSeedRecord(brain.dir);
   out(seeded ? `  seed ${seeded.seed_id} finished ${seeded.finished_at}; unseeded gap rows ${seeded.unseeded_gap_rows_total}` : '  seed: none (gbrain engine shadow seed)');
-  if (seeded) for (const line of renderFollowStatus(buildFollowStatus(brain.dir, state))) out(line);
+  if (seeded) for (const line of [...renderFollowStatus(buildFollowStatus(brain.dir, state)), ...renderEvidenceStatus(buildEvidenceStatus({ dir: brain.dir }))]) out(line);
   for (const f of faults) out(`  fault ${f.ts} ${f.kind}: ${f.detail}`);
   return 0;
 }
