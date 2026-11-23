@@ -931,6 +931,43 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       } finally { await reads?.close(); await asRoleEngine.disconnect().catch(() => undefined); await drop(); }
     }, 60_000);
 
+    test('a prepared (two-phase) transaction at the capture, or at the end of the check, is never proven: the token is blind and the reference is refused (the capture rows are stubbed: the test cluster has max_prepared_transactions = 0)', async () => {
+      const primary = ctx.primary();
+      await vectorFixture(primary);
+      const real = openReadSource(primary);
+      let prepared = 0; // what pg_prepared_xacts would count
+      const stubbed = { ...real, read: <T>(fn: Parameters<typeof real.read<T>>[0]) => real.read((tx, q) => fn(new Proxy(tx, { get: (t, p) => (p === 'executeRaw' ? async (text: string, ...a: never[]) => {
+        const out = await (t.executeRaw as Function).call(t, text, ...a) as Array<Record<string, unknown>>;
+        if (!text.includes('pg_prepared_xacts')) return out;
+        return out.map((r) => ('prepared' in r ? { ...r, prepared: typeof r.prepared === 'boolean' ? prepared > 0 : prepared } : r)); // the capture row counts them, the end-of-check row says whether any exist
+      } : Reflect.get(t, p, t)) }) as BrainEngine, q)) };
+      try {
+        const watch = createLsnWatch(stubbed);
+        const samples = new SampleRegistry();
+        const args = encodeValue([vec(3), { limit: 10 }]);
+        let clock = 0;
+        const handler = makeAskHandler({ engine: primary, reads: stubbed, dir: '/none', samples, rpc: (async () => ({})) as never, watch, now: () => (clock += 120_000) });
+        // a prepared transaction exists at the capture: the token is blind, and a blind token is never proven
+        prepared = 1;
+        const blind = await watch.live();
+        expect(blind.split('|')[1]).toBe('!');
+        const a = samples.add({ op: 'searchVector', args, at: Date.now(), lsn: blind }, 100);
+        await expect(handler({ id: 1, kind: 'vector', sid: a, phase: 'sample' })).rejects.toMatchObject({ code: 'moved' });
+        // none at the capture, one at the end of the check: refused as well
+        prepared = 0;
+        const clear = await watch.live();
+        expect(clear.split('|')[1]).not.toBe('!');
+        const b = samples.add({ op: 'searchVector', args, at: Date.now(), lsn: clear }, 100);
+        const during = handler({ id: 2, kind: 'vector', sid: b, phase: 'sample' });
+        prepared = 1; // a transaction is prepared while the reference runs
+        await expect(during).rejects.toMatchObject({ code: 'moved' });
+        // control: none at either end, the reference is used
+        prepared = 0;
+        const c = samples.add({ op: 'searchVector', args, at: Date.now(), lsn: await watch.live() }, 100);
+        expect(await handler({ id: 3, kind: 'vector', sid: c, phase: 'sample' })).toBeInstanceOf(Array);
+      } finally { await real.close(); }
+    });
+
     test('the reference has no candidate window: boosted true top results beyond the engine\'s window are found, and the windowed search misses them', async () => {
       const primary = ctx.primary();
       const unit = (v: Float32Array): Float32Array => { let n = 0; for (const x of v) n += x * x; return v.map((x) => x / Math.sqrt(n)); };

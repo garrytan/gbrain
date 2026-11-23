@@ -80,6 +80,8 @@ const LSN_SQL = `SELECT pg_current_wal_insert_lsn()::text AS lsn`;
  * holds the in-progress xids BELOW its xmax only; a transaction that began after the last completed one (an xid at or above xmax) is
  * invisible to the snapshot and unlisted, so the xids the sessions are running (pg_stat_activity.backend_xid, widened with the
  * snapshot's epoch) are listed as well. Each such transaction may have inserted its COMMIT record already and still not be visible.
+
+ * A prepared (two-phase) transaction is in neither list (its xid may be at or above xmax and no session runs it): while any exists the token is blind too.
  * A session this role may not see into (a role that is neither a superuser nor in pg_read_all_stats sees every other session with all columns NULL) makes the token blind (`!`), which is never proven: such a role clears nothing.
  */
 const XIP_SQL = `WITH s AS (SELECT pg_current_snapshot() AS snap, pg_snapshot_xmax(pg_current_snapshot())::text::bigint AS xm)
@@ -90,7 +92,8 @@ const XIP_SQL = `WITH s AS (SELECT pg_current_snapshot() AS snap, pg_snapshot_xm
       SELECT (CASE WHEN c > xm + 2147483648 THEN c - 4294967296 WHEN c < xm - 2147483648 THEN c + 4294967296 ELSE c END)::text
         FROM (SELECT (xm / 4294967296) * 4294967296 + a.backend_xid::text::bigint AS c, xm FROM pg_stat_activity a, s WHERE a.backend_xid IS NOT NULL AND a.pid <> pg_backend_pid()) t
     ) u) AS xids,
-    (SELECT count(*) FROM pg_stat_activity WHERE backend_type IS NULL AND pid <> pg_backend_pid())::int AS blind`; // a row this role may not see has every column NULL, its backend type too
+    (SELECT count(*) FROM pg_stat_activity WHERE backend_type IS NULL AND pid <> pg_backend_pid())::int AS blind,
+    (SELECT count(*) FROM pg_prepared_xacts)::int AS prepared`; // a row this role may not see has every column NULL, its backend type too
 const lsnOf = async (tx: BrainEngine): Promise<string> => String((await tx.executeRaw<{ lsn: string }>(LSN_SQL))[0]?.lsn);
 
 /**
@@ -101,9 +104,9 @@ const lsnOf = async (tx: BrainEngine): Promise<string> => String((await tx.execu
  */
 async function captureToken(reads: ReadSource): Promise<string> {
   const lsn = await reads.read(lsnOf);
-  const [row] = await reads.read((tx) => tx.executeRaw<{ xids: string | null; blind: number }>(XIP_SQL));
+  const [row] = await reads.read((tx) => tx.executeRaw<{ xids: string | null; blind: number; prepared: number }>(XIP_SQL));
   const xids = row?.xids ?? '';
-  return `${lsn}|${Number(row?.blind) > 0 ? '!' : xids}`;
+  return `${lsn}|${Number(row?.blind) > 0 || Number(row?.prepared) > 0 ? '!' : xids}`;
 }
 
 /**
@@ -120,10 +123,10 @@ async function unchangedSince(reads: ReadSource, token: string | undefined): Pro
   const rest = token.slice(cut + 1);
   if (rest.includes('!')) return false; // sessions of other roles that this one cannot see into: nothing can be proven
   const xips = rest.split(',').filter((x) => x !== '');
-  if (xips.length === 0) return true;
-  const [row] = await reads.read((tx) => tx.executeRaw<{ moved: boolean }>(
-    `SELECT COALESCE(bool_or(COALESCE(pg_xact_status(x::xid8), 'committed') NOT IN ('in progress', 'aborted')), false) AS moved FROM unnest($1::text[]) x`, [xips]));
-  return row?.moved === false;
+  const [row] = await reads.read((tx) => tx.executeRaw<{ moved: boolean; prepared: boolean }>(
+    `SELECT COALESCE((SELECT bool_or(COALESCE(pg_xact_status(x::xid8), 'committed') NOT IN ('in progress', 'aborted')) FROM unnest($1::text[]) x), false) AS moved,
+      EXISTS (SELECT 1 FROM pg_prepared_xacts) AS prepared`, [xips])); // a prepared transaction at the end of the check: never proven, whatever it was at the capture
+  return row?.moved === false && row?.prepared === false;
 }
 
 /**
