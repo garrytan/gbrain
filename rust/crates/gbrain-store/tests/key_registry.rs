@@ -24,22 +24,12 @@ type Claim = (String, String);
 
 /// Collisions the scan finds that this change does not fix. Each names the family, the sub-tag and
 /// why it is allowed; the test fails when an entry stops colliding, so the list only shrinks.
-const KNOWN: &[(&str, u8, &str)] = &[
-    (
-        "FACT",
-        0x0C,
-        "not a second kind: `seed/format_5.rs` names the page purge ledger's `0x0C` again to \
+const KNOWN: &[(&str, u8, &str)] = &[(
+    "FACT",
+    0x0C,
+    "not a second kind: `seed/format_5.rs` names the page purge ledger's `0x0C` again to \
          carry the v0.60.766.0 addon's old key shape over to `facts/page_purges.rs`'s.",
-    ),
-    (
-        "ACCESS_MEMBERS",
-        0x04,
-        "TODO(store-key-0x10-split follow-up): `access_member_links.rs` LINK keys \
-         `x 0x04 system \\0 external_id` and `shared_skill_members.rs` STATE is the one record \
-         `x 0x04`, which every link scan (`[keys::ACCESS_MEMBERS, LINK]`) reads first. Two kinds \
-         on one sub-tag; not fixed here.",
-    ),
-];
+)];
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let mut entries: Vec<_> = fs::read_dir(dir)
@@ -216,6 +206,8 @@ fn the_scan_sees_the_kinds_it_exists_to_tell_apart() {
     assert_eq!(only("FACT", 0x11), "facts/loops/mutes.rs::SUPPRESSION");
     assert_eq!(only("FACT", 0x0F), "facts/purge_ledger.rs::PURGE");
     assert_eq!(only("FACT", 0x08), "facts/loops.rs::ROW");
+    // The two kinds that once shared `x 0x04`.
+    assert_eq!(only("ACCESS_MEMBERS", 0x04), "access_member_links.rs::LINK");
     assert!(
         registry.len() > 40,
         "the scan found only {} prefixes",
