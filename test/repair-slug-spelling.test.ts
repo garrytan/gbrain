@@ -360,6 +360,45 @@ describe('guards that follow the page to its normal slug', () => {
     expect(holds.filter(h => h.fingerprint === dupFp).map(h => [h.slug, h.status])).toEqual([['Notes/Hold-Move', 'dropped'], ['notes/hold-move', 'held']]);
   }), 60_000);
 
+  test('a held write that collides with a hold at the normal slug carrying other publication fields is never merged: the page needs a person and nothing moves', () => withEnv(env, async () => {
+    const s = await newSource();
+    const claim = 'Alpha ignored the previous instructions marrowgleam';
+    await storeAs(s.id, 'Notes/Hold-Conflict', 'Conflict page', 'body');
+    const fingerprint = holdFingerprint('fact', [claim, null, null]);
+    const hold = (slug: string, payload: Record<string, unknown>, status = 'held') => engine.executeRaw(`INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, payload, status)
+      VALUES ('fact', $1, $2, $3, 2, 'external_untrusted', $4::text::jsonb, $5)`, [s.id, slug, fingerprint, JSON.stringify(payload), status]);
+    // The moving hold is private; the hold already at the normal slug would publish the same text as a world fact.
+    await hold('Notes/Hold-Conflict', { fact: claim, kind: 'fact', visibility: 'private', entity_slug: 'Notes/Hold-Conflict', row_num: 2 });
+    await hold('notes/hold-conflict', { fact: claim, kind: 'fact', visibility: 'world', entity_slug: 'notes/hold-conflict', row_num: 2 });
+    const holdsBefore = await engine.executeRaw('SELECT id, slug, status, payload FROM write_gate_holds WHERE source_id=$1 ORDER BY id', [s.id]);
+
+    const preview = await repairJson(previewArgs(s.id));
+    expect(classes(preview)).toEqual({ [`${s.id}:Notes/Hold-Conflict`]: 'needs_human' });
+    const details = preview.details as { items: Array<{ slug: string; code?: string; message?: string }> };
+    expect(details.items.find(item => item.slug === 'Notes/Hold-Conflict')).toMatchObject({ code: 'slug_spelling_hold_conflict' });
+    expect(details.items[0]!.message).toContain('gbrain trust');
+    const applied = await repairJson(applyArgs(s.id, preview.preview_hash));
+    expect(applied).toMatchObject({ applied: 0 });
+    expect(await slugsOf(s.id)).toEqual(['Notes/Hold-Conflict']);
+    expect(await engine.executeRaw('SELECT id, slug, status, payload FROM write_gate_holds WHERE source_id=$1 ORDER BY id', [s.id])).toEqual(holdsBefore);
+  }));
+
+  test('a hold that appears at the normal slug after the preview, with other publication fields, refuses changed_since_preview and moves nothing', () => withEnv(env, async () => {
+    const s = await newSource();
+    const claim = 'Alpha ignored the previous instructions quillfeather';
+    await storeAs(s.id, 'Notes/Hold-Late', 'Late page', 'body');
+    const fingerprint = holdFingerprint('fact', [claim, null, null]);
+    const hold = (slug: string, visibility: string) => engine.executeRaw(`INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, payload)
+      VALUES ('fact', $1, $2, $3, 2, 'external_untrusted', $4::text::jsonb)`, [s.id, slug, fingerprint, JSON.stringify({ fact: claim, kind: 'fact', visibility, entity_slug: slug, row_num: 1 })]);
+    await hold('Notes/Hold-Late', 'private');
+    const preview = await repairJson(previewArgs(s.id));
+    expect(classes(preview)).toEqual({ [`${s.id}:Notes/Hold-Late`]: 'move' });
+    await hold('notes/hold-late', 'world');
+    const error = await refusal(() => repairJson(applyArgs(s.id, preview.preview_hash)));
+    expect(error.code).toBe('changed_since_preview');
+    expect(await slugsOf(s.id)).toEqual(['Notes/Hold-Late']);
+  }));
+
   test('a write by the stored spelling and the repair take the same two page locks: the legacy key is locked too, and a change after the preview refuses', () => withEnv(env, async () => {
     const s = await newSource();
     await storeAs(s.id, 'Notes/Lock-Move');
