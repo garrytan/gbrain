@@ -115,6 +115,7 @@ test/derived-origin-carry-private.test.ts
 test/derived-origin-recheck-plan.test.ts
 test/direct-pool-profile.test.ts
 test/doctor-access-pages-read-by-nobody.test.ts
+test/doctor-access-reach.test.ts
 test/doctor-attest-read-shared-scope.test.ts
 test/doctor-database-encoding.test.ts
 test/doctor-frontmatter-holds.test.ts
