@@ -9262,7 +9262,8 @@
           "gbrain_version: string",
           "index: { file: \"index.bin\"; index_hash: string; size: number; n_terms: number; n_postings: number; truncated_skills: number; }",
           "ranker: { id: string; version: number; variant: Variant; params: (typeof VARIANT_PARAMS)[Variant]; calibration_split_sha256: string; tokenizer: string; k: number; hint_chars: number; trigger_share: number; }",
-          "schema_version: 1"
+          "schema_version: 1",
+          "vectors: VectorsReceipt | { skipped: EmbedSkipCode; }"
         ],
         "name": "BuildReceipt"
       },
@@ -9350,7 +9351,7 @@
         "kind": "type",
         "name": "MatchStrength",
         "signature": [
-          "\"body\" | \"name\" | \"description\" | \"named\" | \"picked\" | \"triggers\" | \"routing\""
+          "\"vector\" | \"body\" | \"name\" | \"description\" | \"named\" | \"picked\" | \"triggers\" | \"routing\""
         ]
       },
       {
@@ -9490,7 +9491,8 @@
           "schema_version: 1",
           "shadow: boolean",
           "suggestions: Suggestion[]",
-          "tokenizer: string"
+          "tokenizer: string",
+          "vectors?: VectorsReport | undefined"
         ],
         "name": "TurnOutput"
       },
@@ -9498,7 +9500,7 @@
         "kind": "function",
         "name": "buildSkillIndex",
         "signature": [
-          "(input: BuildInput, opts?: { home?: string; now?: () => number; }) => Promise<BuildReceipt>"
+          "(input: BuildInput, opts?: { home?: string; now?: () => number; env?: NodeJS.ProcessEnv; }) => Promise<BuildReceipt>"
         ]
       },
       {

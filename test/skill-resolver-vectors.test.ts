@@ -15,10 +15,10 @@
  *    transport, so nothing leaves the machine.
  */
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { __setEmbedTransportForTests, type EmbedRequest } from '../src/core/skills/resolver/embed-http.ts';
+import { __setEmbedTransportForTests, EMBED_SKIP_CODES, type EmbedRequest } from '../src/core/skills/resolver/embed-http.ts';
 import { __setPickerTransportForTests } from '../src/core/skills/resolver/router-http.ts';
 import { buildSkillIndex, resolveSkills } from '../src/core/skills/resolver/index.ts';
 import { __setVectorFloorForTests, RRF_K, skillVectorText, VECTOR_FLOOR, vectorFloor } from '../src/core/skills/resolver/vectors.ts';
@@ -199,6 +199,18 @@ describe('vectors in a turn', () => {
     for (const m of ['can we go live today', 'what is the weather like', 'summarize meeting notes']) {
       expect(validate(loadSchema('skill-resolver.v1.turn-output'), JSON.parse(JSON.stringify((await turn(h, m)).output)))).toEqual([]);
     }
+  });
+
+  test('both schemas list every vector skip code the code can write', () => {
+    const codes = (file: string): string[] => {
+      const found: string[][] = [];
+      const walk = (n: unknown): void => { if (n && typeof n === 'object') { const o = n as Record<string, unknown>; if (Array.isArray(o.enum) && o.enum.includes('no_embedder')) found.push(o.enum as string[]); Object.values(o).forEach(walk); } };
+      walk(JSON.parse(readFileSync(join(import.meta.dir, '..', file), 'utf8')));
+      expect(found).toHaveLength(1);
+      return found[0]!;
+    };
+    expect(codes('docs/schemas/skill-resolver.v1.build-receipt.json')).toEqual([...EMBED_SKIP_CODES]);
+    expect(codes('docs/schemas/skill-resolver.v1.turn-output.json')).toEqual([...EMBED_SKIP_CODES]);
   });
 
   test('the fusion constant is the brain search one, and every measured model has a floor', () => {
