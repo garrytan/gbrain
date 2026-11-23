@@ -821,6 +821,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listSourceCheckpointRecords': OOS.fenceRepairRecords,
   'insertOpCheckpointIfAbsent': OOS.fenceRepairRecords,
   'replaceOpCheckpointAtVersion': OOS.fenceRepairRecords,
+  'upsertFenceTrendRunRecord': OOS.fenceRepairRecords,
   'readOldestSyncHoldAt': OOS.fenceRepairRecords,
   'readLastFinishedJobAt': OOS.fenceRepairRecords,
   'findSecretEntryByMac': OOS.secretStore,

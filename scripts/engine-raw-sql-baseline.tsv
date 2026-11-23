@@ -300,7 +300,6 @@ src/core/facts/purge-verify.ts	execute_raw	2
 src/core/facts/purge.ts	execute_raw	1	GBRA-574 F #9674 (opened before this ratchet): +1 the purge plan reads whether a fact sits on an unbacked name tag
 src/core/facts/writeback-audience.ts	execute_raw	1	reads access_tokens.member_id and oauth_clients.member_id to count people, not credentials, for the brain audience (GST-3180); no typed engine method exists yet
 src/core/feedback/store.ts	execute_raw	16
-src/core/fence-repair/census-store.ts	execute_raw	2
 src/core/forecast-journal.ts	execute_raw	3
 src/core/function-search-path.ts	execute_raw	3
 src/core/ghost-pages.ts	execute_raw	1
@@ -500,7 +499,7 @@ src/core/persistence/memory-proposals.ts	execute_raw	9
 src/core/persistence/mirror-read-only.ts	execute_raw	2
 src/core/persistence/moved-pages.ts	execute_raw	1
 src/core/persistence/noop-kernel.ts	execute_raw	2
-src/core/persistence/origin-guard.ts	execute_raw	2
+src/core/persistence/origin-guard.ts	execute_raw	1
 src/core/persistence/origin-index.ts	execute_raw	2
 src/core/persistence/owner-activity.ts	execute_raw	1
 src/core/persistence/page-advisories.ts	execute_raw	1
@@ -550,7 +549,7 @@ src/core/persistence/sync-freshness.ts	execute_raw	3
 src/core/persistence/sync-ghosts.ts	execute_raw	3
 src/core/persistence/sync-group.ts	execute_raw	1
 src/core/persistence/sync-held-deletions.ts	execute_raw	1
-src/core/persistence/sync-holds.ts	execute_raw	10
+src/core/persistence/sync-holds.ts	execute_raw	9
 src/core/persistence/sync-idle-skips.ts	execute_raw	1
 src/core/persistence/sync-lanes.ts	execute_raw	1
 src/core/persistence/sync-markers.ts	execute_raw	9

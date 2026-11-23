@@ -10742,6 +10742,7 @@
         "upsertEventProjection": "none",
         "upsertFactRelinkAttempt": "none",
         "upsertFenceCandidatePart": "none",
+        "upsertFenceTrendRunRecord": "none",
         "upsertFile": "none",
         "upsertOpFileRow": "none",
         "upsertOpenLoop": "none",

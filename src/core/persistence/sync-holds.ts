@@ -378,9 +378,6 @@ function deleteRow(tx: HoldStore, input: { sourceId: string; incarnation: string
   return tx.deleteGitHoldRow ? tx.deleteGitHoldRow(input.sourceId, input.incarnation, input.path) : holdStore.deleteGitHoldRow(tx, input.sourceId, input.incarnation, input.path);
 }
 
-/** GBRA-542: the hold record as readers return it, marked when its source is a read-only mirror (`s`: the sources row). */
-const READ_HOLD_RECORD_SQL = `CASE WHEN COALESCE(s.config->>'mirror_read_only','false')='true' THEN jsonb_set(h.completed_keys->0,'{read_only_checkout}','true'::jsonb) ELSE h.completed_keys->0 END`;
-
 /**
  * Records or replaces a hold. Call it inside the transaction that advances the
  * run past the file. Idempotent on (path, upstream_version); returns `skipped`
@@ -556,10 +553,12 @@ export async function recordContentHoldRepair(engine: Exec, input: { sourceId: s
   return rows.length === 1;
 }
 
-export async function readGitHold(engine: Exec, sourceId: string, incarnation: string, path: string): Promise<GitHoldRecord | null> {
-  const [row] = await engine.executeRaw<{ record: GitHoldRecord }>(`SELECT ${READ_HOLD_RECORD_SQL} AS record FROM op_checkpoints h LEFT JOIN sources s ON s.id=$3
-    WHERE h.op=$1 AND h.fingerprint=$2`, [GIT_HOLD_OP, gitHoldFingerprint(sourceId, incarnation, path), sourceId]);
-  return row?.record ?? null;
+export async function readGitHold(engine: HoldStore & Partial<Pick<BrainEngine, 'readGitHoldReportInputs'>>, sourceId: string, incarnation: string, path: string): Promise<GitHoldRecord | null> {
+  const record = await readRow(engine, sourceId, incarnation, path);
+  if (!record) return null;
+  // The record marks a read-only mirror (GBRA-542); the source's mirror flag is the typed report input's, read only for a hold that exists.
+  const { mirror } = await readGitHoldReportInputsFor(engine, sourceId, summaryFingerprint(sourceId, incarnation));
+  return mirror === 'true' ? { ...record, read_only_checkout: true } : record;
 }
 
 /** #5493: unsupported-image holds per source's current incarnation (sources with none are absent); they never escalate. */

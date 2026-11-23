@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2064/2080
+# covered: 2065/2081
 # lifecycle: 9/9
 # pages: 81/82
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 7/7
 # import_guards: 13/13
-# persistence_journal: 258/262
+# persistence_journal: 259/263
 # mention_pass: 40/40
 # entity_reads: 28/28
 # cycle_locks: 10/10
@@ -124,11 +124,11 @@ transaction	lifecycle	yes	310	no	yes	yes	serves
 transactionDirect	lifecycle	yes	14	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	212	yes	yes	yes	serves
+getPage	pages	yes	214	yes	yes	yes	serves
 readPageSnapshot	pages	yes	75	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
 lockPageKeys	pages	yes	14	no	yes	yes	serves
-putPage	pages	yes	1110	yes	yes	yes	serves
+putPage	pages	yes	1111	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	37	yes	yes	yes	serves
@@ -782,8 +782,9 @@ insertWithdrawalEffects	persistence_journal	yes	7	no	yes	yes	serves
 insertRemirrorEffects	persistence_journal	yes	1	no	yes	yes	serves
 readRemirrorEffects	persistence_journal	yes	1	no	yes	yes	serves
 listSourceCheckpointRecords	persistence_journal	yes	3	no	yes	yes	serves
-insertOpCheckpointIfAbsent	persistence_journal	yes	2	no	yes	yes	serves
+insertOpCheckpointIfAbsent	persistence_journal	yes	3	no	yes	yes	serves
 replaceOpCheckpointAtVersion	persistence_journal	yes	1	no	yes	yes	serves
+upsertFenceTrendRunRecord	persistence_journal	yes	1	no	yes	yes	serves
 readOldestSyncHoldAt	persistence_journal	yes	1	no	yes	yes	serves
 reclaimBudgetReservations	persistence_journal	yes	1	no	yes	yes	serves
 reserveBudgetReservation	persistence_journal	yes	2	no	yes	yes	serves
@@ -2167,7 +2168,7 @@ readFenceScanRecord	doctor_fence_census	yes	1	no	yes	yes	serves
 writeFenceScanRecord	doctor_fence_census	yes	1	no	yes	yes	serves
 upsertFenceCandidatePart	doctor_fence_census	yes	2	no	yes	yes	serves
 clearFenceCandidateParts	doctor_fence_census	yes	1	no	yes	yes	serves
-readFenceTrendRecords	doctor_fence_census	yes	1	no	yes	yes	serves
+readFenceTrendRecords	doctor_fence_census	yes	2	no	yes	yes	serves
 countSegmentedFencePages	doctor_fence_census	yes	1	no	yes	yes	serves
 readBudgetLedgerDay	doctor_fence_census	yes	2	no	yes	yes	serves
 countConversationPipelinePages	doctor_facts_trust	yes	1	no	yes	yes	serves

@@ -577,7 +577,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // The batch 9 segmented-mirror statements (engine-sql/segmented-mirror-effects.ts; test/engine-parity/segmented-mirror-effects.test.ts)
   'insertRemirrorEffects', 'readRemirrorEffects', 'listGlobalPurgeWithdrawals',
   // The batch 9 fence repair bookkeeping (engine-sql/fence-repair-records.ts; test/engine-parity/repair-fence-records.test.ts)
-  'listSourceCheckpointRecords', 'insertOpCheckpointIfAbsent', 'replaceOpCheckpointAtVersion', 'readOldestSyncHoldAt',
+  'listSourceCheckpointRecords', 'insertOpCheckpointIfAbsent', 'replaceOpCheckpointAtVersion', 'upsertFenceTrendRunRecord', 'readOldestSyncHoldAt',
   // The batch 6b twin-merge moves (engine-sql/twin-merge-moves.ts) and the rename alias (engine-sql/rename-alias-rows.ts; test/engine-parity/repair-twin-merge.test.ts)
   'moveTwinRelationships', 'moveTwinPageChildren', 'moveTwinFacts', 'movePageVersions', 'recordRenameAlias',
   // The batch 9 daily budget ledger writes (engine-sql/budget-ledger-writes.ts; test/engine-parity/budget-ledger-writes.test.ts)

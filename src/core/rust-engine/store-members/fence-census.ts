@@ -4,9 +4,10 @@
  *
  * Every member but the trend and budget ledger reads is served from the store: the sources and pages the census scans, and the census's own
  * `op_checkpoints` rows (the scan record and the candidate parts), which the store writes in its housekeeping key space.
- * The trend rows (`fence-trend`) are written only by the sync and page-write paths through `executeRaw`, which a Rust
- * brain refuses, so none exists: the trend read answers `[]` without a call. The census reads sync holds through
- * `readGitHoldRecords` (store-members/sync-hold-store.ts).
+ * The trend rows (`fence-trend`) are written by the sync and page-write paths through typed members (`upsertFenceTrendRunRecord`,
+ * `insertOpCheckpointIfAbsent`; store-members/fence-repair-records.ts), and the trend read lists the op's parents and keeps the
+ * first record of each whose source is asked and whose day is not before `fromDay` (ISO days compare as text). The census reads
+ * sync holds through `readGitHoldRecords` (store-members/sync-hold-store.ts).
  */
 import type { BrainEngine } from '../../engine.ts';
 import { storeCall, type StoreMember } from './common.ts';
@@ -48,7 +49,14 @@ export const clearFenceCandidateParts: Member<'clearFenceCandidateParts'> = asyn
   await storeCall({ member: 'clearFenceCandidateParts' }, () => brain.clearFenceCandidateParts({ op, fingerprints: [...fingerprints], part }));
 };
 
-export const readFenceTrendRecords: Member<'readFenceTrendRecords'> = async () => [];
+export const readFenceTrendRecords: Member<'readFenceTrendRecords'> = async (brain, op, sourceIds, fromDay) => {
+  const wanted = new Set(sourceIds);
+  const rows = (await storeCall({ member: 'readFenceTrendRecords' }, () => brain.listOpCheckpointRecords(op))) as Array<{ completed_keys: unknown }>;
+  return rows.flatMap(row => {
+    const record = Array.isArray(row.completed_keys) ? row.completed_keys[0] as { source_id?: unknown; day?: unknown } | undefined : undefined;
+    return record && typeof record.source_id === 'string' && wanted.has(record.source_id) && typeof record.day === 'string' && record.day >= fromDay ? [record as never] : [];
+  });
+};
 
 export const countSegmentedFencePages: Member<'countSegmentedFencePages'> = (brain, sourceIds, walkedSourceIds) =>
   storeCall({ member: 'countSegmentedFencePages' }, async () =>

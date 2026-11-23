@@ -163,9 +163,10 @@ export function pickCanonicalOrigin<T extends { slug: string }>(pages: readonly 
   return canonical.length === 1 ? canonical[0]! : { ambiguous: pages.map(page => page.slug).sort() };
 }
 
-export async function canonicalOriginPage(engine: Exec, sourceId: string, sourcePath: string): Promise<{ id: number; slug: string } | { ambiguous: string[] } | null> {
-  // The slug order never reaches output: pickCanonicalOrigin sorts the ambiguous slugs itself and a single row has no order.
-  const rows = await engine.executeRaw<{ id: number; slug: string }>(
-    'SELECT id, slug FROM pages WHERE source_id=$1 AND source_path=$2 AND deleted_at IS NULL ORDER BY slug', [sourceId, sourcePath]);
-  return pickCanonicalOrigin(rows.map(row => ({ id: Number(row.id), slug: row.slug })), sourcePath);
+export async function canonicalOriginPage(engine: Pick<BrainEngine, 'listLiveOriginPages' | 'listOriginClaimants'>, sourceId: string, sourcePath: string): Promise<{ id: number; slug: string } | { ambiguous: string[] } | null> {
+  // Typed reads (the live pages recording the origin, then their slugs); the slug order never reaches output: pickCanonicalOrigin sorts the ambiguous slugs itself and a single row has no order.
+  const live = await engine.listLiveOriginPages(sourceId, [sourcePath]);
+  if (!live.length) return null;
+  const claimants = await engine.listOriginClaimants(sourceId, live.map(page => page.id));
+  return pickCanonicalOrigin(claimants.map(row => ({ id: Number(row.id), slug: row.slug })).sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0)), sourcePath);
 }

@@ -407,6 +407,7 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   insertRemirrorEffects: 'readRemirrorEffects for that request',
   insertOpCheckpointIfAbsent: 'readOpCheckpointRecord for that operation',
   replaceOpCheckpointAtVersion: 'readOpCheckpointRecord for that operation',
+  upsertFenceTrendRunRecord: 'readOpCheckpointRecord for that operation',
   reclaimBudgetReservations: 'readBudgetLedgerDay for that ledger day',
   reserveBudgetReservation: 'readBudgetLedgerDay for that ledger day',
   dispatchBudgetReservation: 'readBudgetLedgerDay for that ledger day',

@@ -2333,6 +2333,7 @@ export class PGLiteEngine implements BrainEngine {
   listSourceCheckpointRecords<R>(op: string, sourceIds: readonly string[] | null) { return fenceRepairRecords.listSourceCheckpointRecords<R>(this, op, sourceIds); }
   insertOpCheckpointIfAbsent(op: string, fingerprint: string, completedKeys: readonly unknown[]) { return fenceRepairRecords.insertOpCheckpointIfAbsent(this, op, fingerprint, completedKeys); }
   replaceOpCheckpointAtVersion(op: string, fingerprint: string, completedKeys: readonly unknown[], expected: number) { return fenceRepairRecords.replaceOpCheckpointAtVersion(this, op, fingerprint, completedKeys, expected); }
+  upsertFenceTrendRunRecord(op: string, fingerprint: string, record: unknown) { return fenceRepairRecords.upsertFenceTrendRunRecord(this, op, fingerprint, record); }
   readOldestSyncHoldAt(code: string, sourceIds: readonly string[]) { return fenceRepairRecords.readOldestSyncHoldAt(this, code, sourceIds); }
   readLastFinishedJobAt(name: string) { return fenceRepairRecords.readLastFinishedJobAt(this, name); }
   reclaimBudgetReservations(key: budgetLedgerWrites.BudgetLedgerKey, nowIso: string) { return budgetLedgerWrites.reclaimBudgetReservations(this, key, nowIso); }

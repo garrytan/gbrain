@@ -599,7 +599,7 @@ export async function publishPassStamp(tx: BrainEngine, row: WriteRequest, p: Sy
  * the sync imports committed since the previous stamp's watermark. A pass that stopped before its stamp is counted by the
  * next stamp, once, so a completed pass always has its trend row and a normalization is never counted twice.
  */
-export async function recordPassFenceTrend(tx: Pick<BrainEngine, 'executeRaw'>, scope: { worktreeId: string; sourceId: string; passId: string; since: string | null; prefix?: FenceTrendPrefix }): Promise<void> {
+export async function recordPassFenceTrend(tx: Pick<BrainEngine, 'executeRaw' | 'upsertFenceTrendRunRecord'>, scope: { worktreeId: string; sourceId: string; passId: string; since: string | null; prefix?: FenceTrendPrefix }): Promise<void> {
   // #9646: the requests up to the prefix were tallied before the publication; a prefix read from another watermark is not used.
   const prefix = scope.prefix && scope.prefix.since === scope.since ? scope.prefix : undefined;
   const rows = await fenceTrendRows(tx, scope, prefix?.through ?? scope.since ?? '0', null, prefix?.open);

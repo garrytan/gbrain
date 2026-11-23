@@ -38,7 +38,6 @@
  * result adds `repaired`, `remaining` by reason, `scan` and `verification`;
  * a run whose every model proposal is rejected reports 0 repaired.
  */
-import { requireRawSql } from '../rust-engine/errors.ts';
 import type { BrainEngine } from '../engine.ts';
 import { nullUnlessCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { OperationContext } from '../ops/contract.ts';
@@ -240,10 +239,6 @@ export const fencesRepair: RepairHandler = {
   async plan(engine, scope, _after, opts): Promise<RepairPlan> {
     const selection: Selection = { source_ids: scope.source_ids, only: [...(opts?.only ?? [])].sort(), skip: [...(opts?.skip ?? [])].sort(),
       slugs: [...(opts?.slugs ?? [])].sort(), no_llm: opts?.noLlm === true };
-    // The fence census and the daily budget ledger read through lane 14's typed members (engine-sql/fence-census.ts), not on
-    // this branch yet: an engine without raw SQL (the Rust engine) stops here, before any read.
-    requireRawSql(engine, 'repair fences census');
-
     const preview = previewArgv(scope, selection);
     if (opts?.apply && opts.expect) {
       // #6377: a preview that found nothing saved no set; its hash still binds "nothing to apply" (the content lane passes one hash per kind).

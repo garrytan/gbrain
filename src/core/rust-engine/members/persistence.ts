@@ -170,6 +170,7 @@ export const PERSISTENCE_MEMBERS = {
   listSourceCheckpointRecords: 'persistence_journal',
   insertOpCheckpointIfAbsent: 'persistence_journal',
   replaceOpCheckpointAtVersion: 'persistence_journal',
+  upsertFenceTrendRunRecord: 'persistence_journal',
   readOldestSyncHoldAt: 'persistence_journal',
   reclaimBudgetReservations: 'persistence_journal',
   reserveBudgetReservation: 'persistence_journal',

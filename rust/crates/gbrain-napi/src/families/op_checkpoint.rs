@@ -173,6 +173,21 @@ impl Brain {
         })
     }
 
+    /// `upsertFenceTrendRunRecord(op, fingerprint, record)`: stores a sync run's fence trend row,
+    /// or rewrites it keeping the `day` of its first write.
+    #[napi]
+    pub fn upsert_fence_trend_run_record<'env>(
+        &self,
+        env: &'env Env,
+        op: String,
+        fingerprint: String,
+        record: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.upsert_fence_trend_run_record(&op, &fingerprint, &record)
+        })
+    }
+
     /// `replaceOpCheckpointAtVersion(op, fingerprint, completedKeys, expected)`: true when this
     /// call replaced the records at version `expected`.
     #[napi]

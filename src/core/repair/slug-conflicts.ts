@@ -50,7 +50,6 @@
 import { execFileSync } from '../spawn.ts';
 import { existsSync, lstatSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { requireRawSql } from '../rust-engine/errors.ts';
 import type { BrainEngine } from '../engine.ts';
 import { nullUnlessCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { OperationError, type OperationContext } from '../ops/contract.ts';
@@ -412,9 +411,6 @@ export const slugConflictsRepair: RepairHandler = {
   outcomeItemsLimit: 1000,
   async plan(engine, scope, _after, opts): Promise<RepairPlan> {
     const selection: Selection = { source_ids: scope.source_ids, only: [...(opts?.only ?? [])].sort(), skip: [...(opts?.skip ?? [])].sort(), no_llm: opts?.noLlm === true };
-    // The daily budget ledger read is one of lane 14's fence census members (engine-sql/fence-census.ts), not on this branch
-    // yet: an engine without raw SQL (the Rust engine) stops here, before any read.
-    requireRawSql(engine, 'repair fences census');
     const preview = previewArgv(scope, selection);
     if (opts?.apply && opts.expect) {
       // #6377: a preview that found nothing saved no set; its hash still binds "nothing to apply" (the content lane passes one hash per kind).

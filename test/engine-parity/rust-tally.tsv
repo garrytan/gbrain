@@ -228,8 +228,8 @@ test/engine-parity/repair-facts-previews-2.test.ts	4	4
 test/engine-parity/repair-facts-previews-3.test.ts	4	6
 test/engine-parity/repair-facts-previews-4.test.ts	1	8
 test/engine-parity/repair-facts-previews.test.ts	5	0
-test/engine-parity/repair-fence-kinds.test.ts	0	2
-test/engine-parity/repair-fence-records.test.ts	3	0
+test/engine-parity/repair-fence-kinds.test.ts	5	1	the apply of a page of a database-only source: the page publication refuses at the fence guard (trust/fence-guard.ts raw statements) and the write stays queued
+test/engine-parity/repair-fence-records.test.ts	4	0
 test/engine-parity/repair-fence-scans.test.ts	2	1
 test/engine-parity/repair-frontmatter-holds.test.ts	0	1
 test/engine-parity/repair-generation-kinds.test.ts	3	2
