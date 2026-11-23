@@ -2096,6 +2096,16 @@ More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/
 
 More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
 
+### engine_shadow_refused
+
+<a id="engine_shadow_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| `gbrain engine shadow start` or `seed` was refused before it wrote anything: this brain uses managed storage, which the Rust engine never holds. | A brain with managed storage can never swap to Rust, so a shadow on it measures nothing it could use. A brain whose mode cannot be read or opened is refused the same way rather than passed. | Ask the user; nothing was written. Run: gbrain sources writer status --probe --json | agent | `repeat the read that failed` | 3 | no |
+
+Reasons: `managed_storage`.
+
 ### engine_swap_refused
 
 <a id="engine_swap_refused"></a>

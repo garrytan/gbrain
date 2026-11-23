@@ -15,16 +15,33 @@ const TYPED_ARRAYS = {
 } as const;
 type TypedArrayName = keyof typeof TYPED_ARRAYS;
 
+/** The most an encoded read may weigh while it is built on the caller's path (the pipe's line cap). */
+export const CAPTURE_BUDGET_BYTES = 1024 * 1024;
+
+/** A value too big to mirror; thrown while encoding so the copy is never built. */
+export class CaptureTooLargeError extends Error {}
+
+/** The running weight of one encode: strings by length, numbers by a typical text size. */
+export interface CaptureBudget { left: number }
+
+function spend(budget: CaptureBudget | undefined, bytes: number): void {
+  if (!budget) return;
+  budget.left -= bytes;
+  if (budget.left < 0) throw new CaptureTooLargeError('capture over budget');
+}
+
 function isAbortSignal(value: object): boolean {
   return typeof AbortSignal !== 'undefined' && value instanceof AbortSignal;
 }
 
 /** Plain-JSON form of a value; never throws on cycles (a repeated object becomes `{ "$cycle": true }`). */
-export function encodeValue(value: unknown, seen: WeakSet<object> = new WeakSet()): unknown {
+export function encodeValue(value: unknown, seen: WeakSet<object> = new WeakSet(), budget?: CaptureBudget): unknown {
+  spend(budget, 4); // every node costs at least its `null`: a million nulls or empty objects is not free
   if (value === null || value === undefined) return value ?? null;
   switch (typeof value) {
-    case 'string': case 'boolean': return value;
-    case 'number': return Number.isFinite(value) ? value : { $number: String(value) };
+    case 'string': spend(budget, value.length); return value;
+    case 'boolean': return value;
+    case 'number': spend(budget, 6); return Number.isFinite(value) ? value : { $number: String(value) };
     case 'bigint': return { $bigint: value.toString() };
     case 'function': case 'symbol': return undefined;
   }
@@ -32,26 +49,39 @@ export function encodeValue(value: unknown, seen: WeakSet<object> = new WeakSet(
   if (obj instanceof Date) return { $date: Number.isNaN(obj.getTime()) ? 'invalid' : obj.toISOString() };
   if (ArrayBuffer.isView(obj) && !(obj instanceof DataView)) {
     const name = obj.constructor.name as TypedArrayName;
-    if (name in TYPED_ARRAYS) return { $typed: name, v: Array.from(obj as unknown as ArrayLike<number>) };
+    if (name in TYPED_ARRAYS) {
+      spend(budget, (obj as unknown as ArrayLike<number>).length * 10);
+      return { $typed: name, v: Array.from(obj as unknown as ArrayLike<number>) };
+    }
     return undefined;
   }
   if (isAbortSignal(obj)) return undefined;
   if (seen.has(obj)) return { $cycle: true };
   seen.add(obj);
   try {
-    if (Array.isArray(obj)) return obj.map((item) => { const e = encodeValue(item, seen); return e === undefined ? null : e; });
-    if (obj instanceof Map) return { $map: [...obj.entries()].map(([k, v]) => [encodeValue(k, seen), encodeValue(v, seen)]) };
-    if (obj instanceof Set) return { $set: [...obj].map((v) => encodeValue(v, seen)) };
+    if (Array.isArray(obj)) return obj.map((item) => { const e = encodeValue(item, seen, budget); return e === undefined ? null : e; });
+    if (obj instanceof Map) return { $map: [...obj.entries()].map(([k, v]) => [encodeValue(k, seen, budget), encodeValue(v, seen, budget)]) };
+    if (obj instanceof Set) return { $set: [...obj].map((v) => encodeValue(v, seen, budget)) };
     const out: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(obj)) {
       if (key === 'signal') continue;
-      const e = encodeValue(item, seen);
+      spend(budget, key.length + 4);
+      if (item === undefined) continue; // an option left undefined stays absent, as JSON would have it; a null would be a different option
+      const e = encodeValue(item, seen, budget);
       if (e !== undefined) out[key] = e;
     }
     return out;
   } finally {
     seen.delete(obj);
   }
+}
+
+/**
+ * The wire form of a call's argument list. A trailing or skipped `undefined` stays distinct from `null` (engine
+ * methods treat them differently), so the child replays the call the caller made.
+ */
+export function encodeArgs(args: readonly unknown[], budget?: CaptureBudget): unknown[] {
+  return args.map((arg) => (arg === undefined ? { $undefined: true } : encodeValue(arg, undefined, budget)));
 }
 
 /** Reverses `encodeValue`. */
@@ -62,6 +92,7 @@ export function decodeValue(value: unknown): unknown {
   if (typeof rec.$typed === 'string' && Array.isArray(rec.v) && rec.$typed in TYPED_ARRAYS) {
     return new TYPED_ARRAYS[rec.$typed as TypedArrayName](rec.v as number[]);
   }
+  if (rec.$undefined === true) return undefined;
   if (typeof rec.$date === 'string') return new Date(rec.$date);
   if (typeof rec.$bigint === 'string') return BigInt(rec.$bigint);
   if (typeof rec.$number === 'string') return Number(rec.$number);

@@ -285,7 +285,7 @@ src/commands/doctor/checks/routing-federation.ts#checkOauthClientScopeHealth	cap
 src/commands/doctor/checks/routing-federation.ts#checkOauthConfidentialHealth	capability_refusal_swallowed	1
 src/commands/doctor/checks/routing-federation.ts#checkSourceRoutingHealth	capability_refusal_swallowed	1
 src/commands/doctor/checks/rows-behind.ts#runRowsBehind	capability_refusal_swallowed	1
-src/commands/doctor/checks/rust-engine-addon.ts#runRustEngineAddon	catch_empty	1	added on the shadow follow branch (rust-engine/shadow-follow) before it merged this guard; known debt, fix by a typed degraded marker
+src/commands/doctor/checks/rust-engine-addon.ts#runRustEngineAddon	catch_empty	1	shadow mode code written before master added this guard; known debt, fix by a typed degraded marker
 src/commands/doctor/checks/safe-index.ts#safeIndexPendingCheck	capability_refusal_swallowed	1
 src/commands/doctor/checks/schema-health.ts#readBacklogAge	capability_refusal_swallowed	1
 src/commands/doctor/checks/schema-health.ts#readBacklogAge	catch_empty	1
@@ -360,7 +360,7 @@ src/commands/embed.ts#embedAllStale	catch_empty	2
 src/commands/embed.ts#embedAllStale>embedOneKey	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/commands/embed.ts#preflightDimMismatch	catch_empty	2
 src/commands/embed.ts#runEmbedCore	catch_empty	1
-src/commands/engine-shadow.ts#seed	promise_catch_empty	1	added on the shadow follow branch (rust-engine/shadow-follow) before it merged this guard; known debt, fix by a typed degraded marker
+src/commands/engine-shadow.ts#seedFrom	promise_catch_empty	1	added on the shadow seed branch (rust-engine/shadow-s3) before it merged this guard; known debt, fix by a typed degraded marker
 src/commands/engine-status.ts#mountFor	catch_empty	1
 src/commands/enrich.ts#retrieveEvidence	capability_refusal_swallowed	1
 src/commands/enrich.ts#retrieveEvidence	catch_empty	3
@@ -2199,5 +2199,5 @@ src/shadow/fingerprints.ts#probeOnPrimary	capability_refusal_swallowed	1	added o
 src/shadow/fingerprints.ts#probeOnPrimary	promise_catch_empty	1	added on the shadow follow branch (rust-engine/shadow-follow) before it merged this guard; known debt, fix by a typed degraded marker
 src/shadow/follow-status.ts#readFollowerFile	catch_empty	1	added on the shadow follow branch (rust-engine/shadow-follow) before it merged this guard; known debt, fix by a typed degraded marker
 src/shadow/reconcile.ts#Reconciler.tick	catch_empty	1	added on the shadow follow branch (rust-engine/shadow-follow) before it merged this guard; known debt, fix by a typed degraded marker
-src/shadow/seed.ts#readSeedRecord	catch_empty	1	added on the shadow follow branch (rust-engine/shadow-follow) before it merged this guard; known debt, fix by a typed degraded marker
-src/shadow/state.ts#readShadowState	catch_empty	1	added on the shadow follow branch (rust-engine/shadow-follow) before it merged this guard; known debt, fix by a typed degraded marker
+src/shadow/seed.ts#readSeedRecord	catch_empty	1	added on the shadow seed branch (rust-engine/shadow-s3) before it merged this guard; known debt, fix by a typed degraded marker
+src/shadow/state.ts#readShadowState	catch_empty	1	shadow mode code written before master added this guard; known debt, fix by a typed degraded marker
