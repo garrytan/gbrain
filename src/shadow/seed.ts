@@ -7,7 +7,8 @@
  * Each relation of `seedPlan()` is read in keyset batches by its key columns and sent to `importRelation`; the
  * pages read carries its `page_projection_jobs` row. In the same snapshot the seed counts the gaps (rows the store
  * does not copy and does not name as a loss), the rows of each not-copied table, the unfinished jobs and the
- * segmented pages, and writes them to `seed.json`. The seed never writes to the primary.
+ * segmented pages, and writes them to `seed.json`. The seed writes no row to the primary (opening a PGLite primary still takes its process lock
+ * and lets PGLite rewrite its own control and log files).
  */
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';

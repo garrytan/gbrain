@@ -6042,8 +6042,15 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   seed, or for a seed written before the field existed), where `note` is `this brain cannot swap while it uses managed
   storage` for a managed brain, `could not read whether this brain uses managed storage; the swap will check it` when
   `managed` is null, and null for an unmanaged brain. `status` and the report print the note; the report's `seed.storage`
-  has the same shape. `seed` never writes the primary database, its worktrees, write effects or locks, so every
-  `persistence_*` row and the content root are byte-identical across it.
+  has the same shape. `seed` writes no table row, source file, managed-root ownership marker or registry entry, and it
+  never writes the primary's worktrees, write effects or writer coordination locks, so every `persistence_*` row and the
+  content root are byte-identical across it. Opening a PGLite brain still touches its own files: the open takes the
+  datastore's process lock (the `.gbrain-lock` folder and the `<datastore>.gbrain-owner.json` and `.gbrain-owner.lock`
+  files beside it) until `seed` closes the brain, and PGLite rewrites its control and log files (`global/pg_control`,
+  `pg_wal/`), as any open of that brain does. `seed` opens a PGLite brain without recording its managed roots and without
+  repairing a damaged log, so it moves no datastore file aside. A brain with an open repair episode is not opened
+  (`seed` exits 1 with `could not open the brain (repair_episode_open)`), because a healthy open would close the episode
+  and prune its repair backups.
 - **Provisional report.** The verdict is always `NOT READY`: this phase compares reads only, the seeded store does
   not follow later writes yet, and writes and the readiness decision come in later phases of the plan
   (`docs/designs/RUST_ENGINE.md`, Phase S). Until the Rust engine serves reads, comparisons record

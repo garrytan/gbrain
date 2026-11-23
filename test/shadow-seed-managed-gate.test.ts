@@ -14,7 +14,7 @@
  * Needs the addon `bun run rust:build` writes and skips without it (GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes a missing addon an error).
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runEngineShadow } from '../src/commands/engine-shadow.ts';
@@ -244,5 +244,35 @@ describe('engine shadow seed opens the configured brain without writing to it', 
     expect(after.registry).toEqual(before.registry);
     expect(after.files).toEqual(before.files);
     expect(after.tables).toEqual(before.tables);
+  }, 120_000);
+
+  withAddon('a brain with an open repair episode is not opened: the seed refuses, and the repair file and every backup stay as they were', async () => {
+    // A healthy open closes an open repair episode and prunes older repair backups; a seed must not do either.
+    const dir = config.database_path;
+    const sidecar = `${dir}.wal-repair-attempt.json`;
+    const backups = [1, 2, 3, 4].map(n => `${dir}.wal-repair-backup-${1_700_000_000_000 + n}`);
+    for (const b of backups) { mkdirSync(join(b, 'pg_wal'), { recursive: true }); writeFileSync(join(b, 'pg_wal', 'x'), b); }
+    writeFileSync(sidecar, JSON.stringify({ episodeStartedAt: 1_700_000_000_000, episodeBackupPath: backups[0], attempts: [] }));
+    const watched = (): string[] => [readFileSync(sidecar, 'utf8'), ...backups.map(b => String(existsSync(join(b, 'pg_wal', 'x'))))];
+    const before = watched();
+    const out: string[] = [];
+    const err: string[] = [];
+    try {
+      let storeDir = '';
+      const code = await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, () => {
+        storeDir = shadowDirFor(shadowBrainKey(config)!);
+        rmSync(storeDir, { recursive: true, force: true }); // the test above already seeded this brain
+        return runEngineShadow(['seed'], { out: l => out.push(l), err: l => err.push(l), now: () => NOW, loadAddon: async () => ({ ok: true as const, addon }) });
+      });
+      expect(code, [...out, ...err].join('\n')).toBe(1);
+      expect(err.join('\n')).toContain('could not open the brain (repair_episode_open)');
+      expect(err.join('\n')).toContain('Nothing was written.');
+      expect(watched()).toEqual(before);
+      expect(before.slice(1)).toEqual(['true', 'true', 'true', 'true']);
+      expect(existsSync(storeDir)).toBe(false);
+    } finally {
+      rmSync(sidecar, { force: true });
+      for (const b of backups) rmSync(b, { recursive: true, force: true });
+    }
   }, 120_000);
 });
