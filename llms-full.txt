@@ -6011,7 +6011,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   not a gbrain process on the shadow machine (another machine, `psql`, an older gbrain) still leaves a row. A trigger
   never fails the write and never waits on the evidence tables: it takes each table's lock with `NOWAIT`, so a lock someone else
   holds is an error it catches at once, and its own `lock_timeout` of 50 ms (set on the function, so the writer's settings are
-  untouched afterwards) bounds any other wait. The sessions table has no unique key, so the trigger's insert has no uniqueness check that could wait on another transaction's uncommitted row (a repeated row counts as one session, and a refresh updates every matching row). It does not catch a cancelled query, so a user's own cancel still cancels, it skips a row
+  untouched afterwards) bounds any other wait. The sessions table has no unique key, so the trigger's insert has no uniqueness check that could wait on another transaction's uncommitted row (repeated rows do not raise the session count, and a refresh updates every matching row that no other transaction holds locked). It does not catch a cancelled query, so a user's own cancel still cancels, it skips a row
   another transaction holds (that skip is recorded as a gap, since the write went unrecorded), and any error becomes a row in `engine_writer_coverage_gaps` (that table has no
   sequence, so an INSERT alone records a gap). It stamps the time it ran, not the start of the writer's transaction.
   If both evidence tables are unusable at once, the trigger can only warn; a table that is missing or locked then
@@ -6049,10 +6049,14 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   A fault or pass record that is
   torn, has no time, lacks a count or carries a count of the wrong type is incomplete evidence and counts too. Criterion 11 reads
   NOT READY on any evidence it cannot prove, so a gap nobody thought of fails closed. In particular, shadow mode
-  being off, a `stop`, and a `start` that continues an existing epoch each count as one unknown writer path (recorded in
-  `state.json` as `writer_coverage_stopped_at` and `writer_coverage_restarted_at`, so a failed gap insert cannot hide
-  them) while they are inside the 7-day window, and for as long as shadow mode stays off; the swap is refused with
-  `writer_coverage_unknown` until the window has passed. The open engine decides whether the hooks must exist: a state file that names no primary engine, any value that is not exactly the open engine's kind, or a missing or not-enabled state, counts as one more unknown path (the swap's status document also counts a missing or unreadable state file). Known limit: criterion 11 reads role privileges as they are now, so a privilege repair inside the window can hide an earlier unrecorded write (follow-up: a durable coverage-break record across role and ACL changes). A write that only takes a lock,
+  being off or not provably enabled adds one unknown writer path for as long as it stays that way. A `stop`, or a `start`
+  that continues an existing epoch, first writes a marker to `state.json` (`writer_coverage_stopped_at`,
+  `writer_coverage_restarted_at`) before any hook changes, so a failed gap insert cannot hide it; either or both markers
+  add one more unknown path while they fall inside the eligibility window (7 days plus the 10-minute refresh slack), and
+  the swap is refused with `writer_coverage_unknown` until then. The open engine's capabilities decide whether the hooks
+  must exist. A state file whose primary engine is missing, not a known kind, or not exactly the open engine's kind adds
+  one unknown path. An unreadable state file adds one when the swap builds its status document; if `state.json` is
+  absent, the swap reader reports no shadow instead. Known limit: criterion 11 reads role privileges as they are now, so a privilege repair inside the window can hide an earlier unrecorded write (follow-up: a durable coverage-break record across role and ACL changes). A write that only takes a lock,
   a log or a cache row counts as a write for the note, though the follower does not copy it. The plan's idea of
   counting how often an enabled process held no attached engine is not built: it cannot be measured from the shadow
   machine, and the database hooks replace it. Any
