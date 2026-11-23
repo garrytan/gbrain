@@ -177,6 +177,7 @@ async function backedUp(extra?: (brain: any) => Promise<void>) {
       const { into, error } = await refusal(archive);
       expect(error).toMatchObject({ code: 'restore_step_unsupported', reason: 'pending_requests' });
       expect(error.message).toContain('Nothing was published');
+      expect(error.detail).toMatch(/gbrain=\S+ addon_build=\S+ diagnostic=\S+/);
       expect(reserved(into)).toMatchObject({ state: 'failed', reason: 'restore_step_unsupported', refusal_reason: 'pending_requests' });
       expect(existsSync(join(into, '.gbrain'))).toBe(false);
       expect(readdirSync(into).filter(name => name.startsWith('.restore-'))).toHaveLength(1);
@@ -203,6 +204,21 @@ async function backedUp(extra?: (brain: any) => Promise<void>) {
         expect(error.code).toBe('invalid_backup');
         expect(reserved(into).state).toBe('failed');
       }
+    });
+
+    test('restored bytes that are not the snapshot are refused before the restore changes anything', async () => {
+      const root = fresh('home'); makeHome(root); await seedBrain(addon, root);
+      const archive = `${root}.gbrain-backup`;
+      await forgeArchive(addon, root, archive, undefined, dir => {
+        const file = join(dir, 'records.redb');
+        const bytes = readFileSync(file);
+        for (let at = 8192; at < bytes.length - 100; at += 97) bytes[at] = bytes[at]! ^ 0xff;
+        writeFileSync(file, bytes);
+      });
+      const { into, error } = await refusal(archive);
+      expect(error.code).toBe('restore_verify_failed');
+      expect(reserved(into).state).toBe('failed');
+      expect(existsSync(join(into, '.gbrain'))).toBe(false);
     });
 
     describe('purges, by request id', () => {

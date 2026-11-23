@@ -143,12 +143,15 @@ const RUST_RUNBOOK_STEPS = 'Take a quiesced physical copy instead: stop every gb
   'copy FORMAT and records.redb of the brain directory (never .gbrain-owner.sock or the .lock file) and config.json into a new, isolated GBRAIN_HOME as ' +
   `<new-home>/.gbrain/brain.rust, point that config's database_path at the copy, then run gbrain backup verify-store <new-home>/.gbrain/brain.rust --json before relying on it (runbook: ${PHYSICAL_COPY_RUNBOOK}).`;
 
+const VERIFY_STORE_ARGV = ['gbrain', 'backup', 'verify-store', '<COPY_DIR>', '--json'];
+
 /** The Rust runbook's mandatory check: `verify-store` reads the copy without opening it, so it changes nothing. */
 export function rustPhysicalCopyFix(): Action {
   return {
-    ask_user: true, argv: ['gbrain', 'backup', 'verify-store', '<COPY_DIR>', '--json'], consent: [], actor: 'agent', requires_exclusive: false, docs: PHYSICAL_COPY_RUNBOOK,
+    ask_user: true, argv: VERIFY_STORE_ARGV, consent: [], actor: 'agent', requires_exclusive: false, docs: PHYSICAL_COPY_RUNBOOK,
     why: 'Read-only, after the user agrees to the physical copy: verify-store reads the copied records without opening them the normal way, so a copy that was not closed cleanly or is damaged shows here, and nothing in it changes.',
-    user_message: RUST_RUNBOOK_STEPS, verify: { argv: ['gbrain', 'backup', 'verify-store', '<COPY_DIR>', '--json'] },
+    user_message: RUST_RUNBOOK_STEPS, verify: { argv: VERIFY_STORE_ARGV },
+    inputs: [{ name: 'COPY_DIR', how: 'The absolute path of the copied brain directory, <new-home>/.gbrain/brain.rust.' }],
   };
 }
 

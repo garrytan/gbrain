@@ -35,6 +35,7 @@ test/autopilot-tick-health-7236.test.ts	#7236 autopilot tick health read (${kind
 test/backup-cli.serial.test.ts	runBackupCli — PGLite lock fallback	3	readFileSync,source-surface-helper
 test/backup-invalidation.serial.test.ts	bootstrap repo — recordRepoInReceipt contract (source-text pin)	2	readFileSync
 test/backup-private-path-text-5312.test.ts	(file-level)	3	readFileSync
+test/backup-restore-sql-steps.test.ts	every SQL write of the PGLite restore has a Rust disposition	3	readFileSync
 test/behavior-change-notice-6712-block.test.ts	#6712 PR 4b BEHAVIOR_CHANGES block	4	readFileSync
 test/book-mirror.test.ts	gbrain book-mirror — source file invariants	3	readFileSync
 test/bootstrap-codex-door.test.ts	Codex door — rendered AGENTS.md pull protocol (Gate 3)	2	readFileSync

@@ -67,6 +67,12 @@ export interface RustBackupOptions {
 }
 export interface RustBackupResult { archive: string; manifest: ArchiveManifest; restore_blockers: string[] }
 
+/** Adds the versions and the restore id to a refusal's `detail`, so a report of it can be matched to a build and a staging folder. */
+function withRuntime<E extends { detail?: string }>(error: E, addon: RustAddon, restoreId?: string): E {
+  error.detail = `${error.detail ?? ''} gbrain=${VERSION} addon_build=${addon.engineBuild}${restoreId ? ` diagnostic=${restoreId}` : ''}`.trim();
+  return error;
+}
+
 const sleep = (ms: number): Promise<void> => new Promise(done => setTimeout(done, ms));
 const sha256Of = (bytes: Buffer | string): string => createHash('sha256').update(bytes).digest('hex');
 const isRustConfig = (config: unknown): boolean => (config as { engine?: unknown } | null)?.engine === 'rust';
@@ -259,8 +265,8 @@ export async function restoreRustBackup(options: { archive: string; into: string
   // Both refusals come before a folder is reserved, so a retry needs no new --into.
   const addon = options.addon ?? await loadRustAddon();
   const hasVerify = typeof (addon as { Pool?: { prototype?: Record<string, unknown> } }).Pool?.prototype?.verifyStoreDir === 'function';
-  if (!restoreAddonSupportsSafety(addon) || !hasVerify) throw restoreRefusal('restore_addon_too_old');
-  if (mode === 'recovery') throw restoreRefusal('recovery_mode');
+  if (!restoreAddonSupportsSafety(addon) || !hasVerify) throw withRuntime(restoreRefusal('restore_addon_too_old'), addon);
+  if (mode === 'recovery') throw withRuntime(restoreRefusal('recovery_mode'), addon);
   try { mkdirSync(root, { mode: 0o700 }); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new AgentInstallError('restore_target_exists', 'Restore only into a new, absent root. Existing state is never overwritten.');
@@ -311,7 +317,7 @@ export async function restoreRustBackup(options: { archive: string; into: string
       census = await store.restoreCensus(toCheck.committed.map(i => i.request));
       checkStoreIdentity(metadata, { ...census.store, generation: phase1.generation ?? census.store.generation });
       const refusal = restoreRefusalFor({ census, mode, mirror: mirror.state === 'corrupt' ? 'corrupt' : mirror.state === 'unavailable' ? 'unavailable' : 'ok' });
-      if (refusal) throw refusal;
+      if (refusal) throw withRuntime(refusal, addon, restoreId);
       if (toCheck.intentOnly.length) {
         const missing = new Set((await store.restoreCensus(toCheck.intentOnly.map(i => i.request))).purges_missing.map(id => id.toLowerCase()));
         unverified = toCheck.intentOnly.filter(i => missing.has(i.request.toLowerCase()));
@@ -393,7 +399,9 @@ export async function createBackup(options: { output: string; root?: string } & 
 /** `gbrain backup restore`: the archive's own `kind` chooses; an archive that cannot be read goes to the PGLite path, which reports it as before. */
 export async function restoreBackup(options: Parameters<typeof restorePgliteBackup>[0] & { addon?: RustAddon }): Promise<Awaited<ReturnType<typeof restorePgliteBackup>> | RustRestoreResult> {
   let kind: unknown;
-  try { kind = readBackupManifest(resolve(options.archive)).kind; } catch { kind = undefined; }
+  try { kind = readBackupManifest(resolve(options.archive)).kind; }
+  // silent-read-ok: an archive that cannot be read goes to the PGLite path, which reports it exactly as before; capability-refusal-ok: a file read has no engine capability to refuse
+  catch { kind = undefined; }
   return kind === 'gbrain-rust' ? restoreRustBackup(options) : restorePgliteBackup(options);
 }
 

@@ -107,6 +107,7 @@ src/core/backup/repository.ts	process_env	2	W6: settings plane out of the core
 src/core/backup/repository.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/backup/runtime-artefacts.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/backup/snapshot.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/backup/rust-snapshot.ts	fs_import	1	W7: filesystem boundary moves to the local app (the Rust half of backup create and restore, as snapshot.ts)
 src/core/backup/status-file.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/backup/status-file.ts	process_env	5	W6: settings plane out of the core
 src/core/behavior-change-notice.ts	fs_import	1	W7: filesystem boundary moves to the local app

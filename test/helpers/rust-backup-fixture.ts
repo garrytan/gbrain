@@ -53,9 +53,10 @@ export const queueWrite = (b: any): Promise<unknown> =>
 
 /**
  * An archive built straight from the store (`snapshotTo`, no census), so a test can hold what `backup create` refuses to
- * write: unfinished requests, a changed store identity. `change` edits the metadata before it is written.
+ * write: unfinished requests, a changed store identity. `change` edits the metadata and `damage` the copied files before
+ * they are written, so the archive's own checksums are consistent with bytes that are not the snapshot.
  */
-export async function forgeArchive(addon: RustAddon, root: string, output: string, change?: (metadata: Record<string, any>) => void): Promise<StoreSnapshotManifest> {
+export async function forgeArchive(addon: RustAddon, root: string, output: string, change?: (metadata: Record<string, any>) => void, damage?: (snapshotDir: string) => void): Promise<StoreSnapshotManifest> {
   const store = await openRustStore(addon, brainDir(root));
   const snapshot = join(root, `.forged-${randomUUID()}`);
   try {
@@ -68,6 +69,7 @@ export async function forgeArchive(addon: RustAddon, root: string, output: strin
         snapshot_manifest_sha256: createHash('sha256').update(readFileSync(join(snapshot, 'SNAPSHOT.json'))).digest('hex') },
       sources, managed_paths: ['memory'], installation: null, credential_references: [], omitted: [] };
     change?.(metadata);
+    damage?.(snapshot);
     const config = join(snapshot, 'config.json');
     writeFileSync(config, readFileSync(join(root, '.gbrain', 'config.json')));
     await writeBackupArchive(output, metadata, [
