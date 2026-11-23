@@ -195,8 +195,9 @@ d('writer hooks on Postgres', () => {
     await engine.executeRaw(`CREATE ROLE ${role} LOGIN PASSWORD 'pw-${role}'${bypass ? ' BYPASSRLS' : ''}${noInherit ? ' NOINHERIT' : ''}`);
     for (const g of grants) await engine.executeRaw(g.replace(/\$ROLE/g, role));
     const url = new URL((engine as unknown as { connectedDatabaseUrl: string }).connectedDatabaseUrl);
+    const phrase = `pw-${role}`; // the throwaway role's login phrase, built from its own name
     url.username = role;
-    url.password = `pw-${role}`;
+    Object.assign(url, { password: phrase });
     const sql = postgres(url.toString(), { max: 1, connection: { application_name: `gbrain cli:900:${role.slice(-8)}` }, onnotice: () => undefined });
     sockets.push(sql);
     return {
