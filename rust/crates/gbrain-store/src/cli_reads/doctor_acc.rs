@@ -5,13 +5,15 @@
 //! Each read takes one snapshot and has no keys of its own.
 
 use crate::Store;
-use crate::cli_reads::pg_text::timestamptz_text;
+use crate::cli_reads::pg_text::{fm_text, pg_lower, timestamptz_text};
 use crate::error::Result;
-use crate::facts::privacy::access_readers;
+use crate::facts::privacy::{access_readers, fast_page_hidden};
+use crate::facts::{OwnerOnlySources, PrivacyPolicy};
 use crate::kv::scan_prefix;
 use crate::pages::{all_pages, versions_of};
 use crate::telemetry::{LogRecord, days_before, log_prefix};
 use serde_json::{Value, json};
+use std::collections::{BTreeMap, BTreeSet};
 
 const OP_PAST_WINDOW: &str = "hasMcpLogRowsPastWindow";
 
@@ -128,4 +130,67 @@ impl Store {
         }
         Ok(rows)
     }
+
+    /// `listChatChannelCensus(sourceIds, chatTypes, dmTypes, policy)`: per source (byte order) with a live page of
+    /// one of `chat_types` that `policy` does not hide (`None` hides nothing; a policy is read as
+    /// `privatePagesFilterFragmentFast` reads it): the pages (`chat_pages`) and the distinct channels
+    /// (`channels`) they come from. A page of a `dm_types` type is its own channel (`dm:<slug>`); any
+    /// other takes its frontmatter `channel`, `chat` or `conversation` (the first that is not empty),
+    /// else the lower-cased `#name` its title opens with, else the empty channel.
+    pub fn list_chat_channel_census(
+        &self,
+        source_ids: &[String],
+        chat_types: &[String],
+        dm_types: &[String],
+        policy: Option<&PrivacyPolicy>,
+    ) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let owner_only = match policy {
+            Some(_) => Some(OwnerOnlySources::read(&*read)?),
+            None => None,
+        };
+        let mut census: BTreeMap<String, (u64, BTreeSet<String>)> = BTreeMap::new();
+        for page in all_pages(&*read)? {
+            if page.deleted_at_us.is_some()
+                || !source_ids.contains(&page.source_id)
+                || !chat_types.contains(&page.page_type)
+            {
+                continue;
+            }
+            if let (Some(policy), Some(owner_only)) = (policy, owner_only.as_ref())
+                && fast_page_hidden(&*read, &page, policy, owner_only)?
+            {
+                continue;
+            }
+            let channel = if dm_types.contains(&page.page_type) {
+                format!("dm:{}", page.slug)
+            } else {
+                ["channel", "chat", "conversation"]
+                    .iter()
+                    .filter_map(|key| fm_text(&page.frontmatter, key).filter(|v| !v.is_empty()))
+                    .next()
+                    .or_else(|| title_channel(&page.title))
+                    .unwrap_or_default()
+            };
+            let entry = census.entry(page.source_id).or_default();
+            entry.0 += 1;
+            entry.1.insert(channel);
+        }
+        Ok(census
+            .into_iter()
+            .map(|(source_id, (chat_pages, channels))| {
+                json!({ "source_id": source_id, "chat_pages": chat_pages, "channels": channels.len() })
+            })
+            .collect())
+    }
+}
+
+/// `lower(substring(title from '^#([A-Za-z0-9._-]+)'))`: the `#name` a title opens with, lower-cased.
+fn title_channel(title: &str) -> Option<String> {
+    let name: String = title
+        .strip_prefix('#')?
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        .collect();
+    (!name.is_empty()).then(|| pg_lower(&name))
 }

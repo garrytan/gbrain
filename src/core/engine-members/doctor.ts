@@ -258,6 +258,8 @@ export interface DoctorMembers {
   listUnknownReaders(limit: number): Promise<DoctorAccSql.UnknownReaderRow[]>;
   /** Live pages written in the last `days` days that gained `readable_by` since their newest earlier version, newest first. */
   listRecentReaderNarrowings(days: number, limit: number): Promise<DoctorAccSql.ReaderNarrowingRow[]>;
+  /** The chat pages and distinct channels each of `sourceIds` holds; with `hidePrivate`, the pages the caller's fast page policy admits (the shared-exposure census). */
+  listChatChannelCensus(sourceIds: readonly string[], chatTypes: readonly string[], dmTypes: readonly string[], hidePrivate: boolean): Promise<DoctorAccSql.ChatCensusRow[]>;
   /** What the MCP request log occupies, in bytes (the engine's own measure). */
   readMcpRequestLogBytes(): Promise<number>;
   /** The MCP request log's row count: an estimate on Postgres, a count bounded to `limit` rows elsewhere. */

@@ -87,6 +87,7 @@ export const DOCTOR_MEMBERS = {
   listMalformedReaderPages: 'access_control',
   listUnknownReaders: 'access_control',
   listRecentReaderNarrowings: 'access_control',
+  listChatChannelCensus: 'access_control',
   readMcpRequestLogBytes: 'telemetry',
   countMcpRequestLogRows: 'telemetry',
   hasMcpLogRowsPastWindow: 'telemetry',

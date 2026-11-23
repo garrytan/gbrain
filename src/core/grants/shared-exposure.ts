@@ -29,7 +29,7 @@ import { renderCliNotices } from '../agent-markers.ts';
 import { isInteractive } from '../interaction.ts';
 import { hasScope } from '../scope.ts';
 import { localFederatedSourceIds, resolveSourceWithTier } from '../source-resolver.ts';
-import { privatePagesFilterFragmentFast, resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { pageTypesForAllowed } from '../facts/conversation-types.ts';
 import type { PrincipalGrant } from './model.ts';
 import { expandReadShared } from './read-shared.ts';
@@ -132,17 +132,7 @@ export async function chatChannelCensus(engine: BrainEngine, sourceIds: readonly
   const empty: ChatCensus = { sources: [...sourceIds], chat_pages: 0, channels: 0, chat_sources: [] };
   if (sourceIds.length === 0) return empty;
   const hidePrivate = await resolveExcludePrivatePages(engine, true);
-  const rows = await engine.executeRaw<{ source_id: string; chat_pages: number | string; channels: number | string }>(
-    `SELECT p.source_id, count(*) AS chat_pages,
-            count(DISTINCT CASE WHEN p.type = ANY($3::text[]) THEN 'dm:' || p.slug
-              ELSE COALESCE(NULLIF(p.frontmatter->>'channel', ''), NULLIF(p.frontmatter->>'chat', ''), NULLIF(p.frontmatter->>'conversation', ''),
-                lower(substring(p.title from '^#([A-Za-z0-9._-]+)')), '') END) AS channels
-       FROM pages p
-      WHERE p.deleted_at IS NULL AND p.type = ANY($1::text[]) AND p.source_id = ANY($2::text[])
-        ${hidePrivate ? `AND ${privatePagesFilterFragmentFast('p')}` : ''}
-      GROUP BY p.source_id ORDER BY p.source_id COLLATE "C"`,
-    [[...CHAT_PAGE_TYPES], [...sourceIds], [...DM_PAGE_TYPES]],
-  );
+  const rows = await engine.listChatChannelCensus(sourceIds, CHAT_PAGE_TYPES, DM_PAGE_TYPES, hidePrivate);
   return rows.reduce((c, r) => ({ ...c, chat_pages: c.chat_pages + Number(r.chat_pages), channels: c.channels + Number(r.channels), chat_sources: [...c.chat_sources, r.source_id] }), empty);
 }
 

@@ -279,6 +279,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'listMalformedReaderPages',
   'listUnknownReaders',
   'listRecentReaderNarrowings',
+  'listChatChannelCensus',
   'readMcpRequestLogBytes',
   'countMcpRequestLogRows',
   'hasMcpLogRowsPastWindow',

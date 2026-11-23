@@ -10,6 +10,6 @@ export const DOCTOR_ACC_MEMBERS: readonly string[] = [
   'listOrphanWorkspaceSources', 'listPrivilegedDcrClients', 'readMcpRequestLogBytes', 'countMcpRequestLogRows', 'hasMcpLogRowsPastWindow',
   'readKnowledgeRevisionNotNull', 'readDriftSchema', 'listDriftLiveRows', 'listDriftVersionRows', 'originIndexPresent',
   'readChronicleLedgerStats', 'readChronicleDuplicateEvents', 'readFeedbackStatus', 'listCoveredSources',
-  'listVolunteerChannels', 'listMalformedReaderPages', 'listUnknownReaders', 'listRecentReaderNarrowings',
+  'listVolunteerChannels', 'listMalformedReaderPages', 'listUnknownReaders', 'listRecentReaderNarrowings', 'listChatChannelCensus',
   'countAccessFolderDrift',
 ];

@@ -1768,6 +1768,7 @@ export class PGLiteEngine implements BrainEngine {
   listPrivilegedDcrClients(scopeRegex: string) { return doctorAccImpl.listPrivilegedDcrClients(this.rawRead, scopeRegex); }
   listMalformedReaderPages(limit: number) { return doctorAccImpl.listMalformedReaderPages(this.rawRead, limit); }
   listUnknownReaders(limit: number) { return doctorAccImpl.listUnknownReaders(this.rawRead, limit); }
+  listChatChannelCensus(sourceIds: readonly string[], chatTypes: readonly string[], dmTypes: readonly string[], hidePrivate: boolean) { return doctorAccImpl.listChatChannelCensus(this.rawRead, sourceIds, chatTypes, dmTypes, hidePrivate); }
   listRecentReaderNarrowings(days: number, limit: number) { return doctorAccImpl.listRecentReaderNarrowings(this.rawRead, days, limit); }
   readMcpRequestLogBytes() { return doctorAccImpl.readMcpRequestLogBytes(this.rawRead); }
   countMcpRequestLogRows(limit: number) { return doctorAccImpl.countMcpRequestLogRows(this.rawRead, 'pglite', limit); }

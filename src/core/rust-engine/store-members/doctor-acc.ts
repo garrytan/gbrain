@@ -12,6 +12,7 @@ import { listOauthClients } from './jobs-oauth-clients.ts';
 import { listOauthGrantAudit, readLiveAccessTokenRows } from './jobs-client-grants.ts';
 import { listAllSources } from './sources.ts';
 import { readAccessGroups, readAccessMembers } from './access-members.ts';
+import { storeFastPageTextPolicy } from './private-provenance.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -183,4 +184,14 @@ export const listRecentReaderNarrowings: Member<'listRecentReaderNarrowings'> = 
   const narrowed = (await readerPages(brain, 'listRecentReaderNarrowings', days)).filter(p => p.prior_names_readers === false)
     .sort((a, b) => b.updated_us - a.updated_us || a.id - b.id);
   return narrowed.slice(0, limit).map(p => ({ source_id: p.source_id, slug: p.slug, readers: p.readers, writer: p.writer, updated_at: p.updated_at, total: narrowed.length }));
+};
+
+/**
+ * The chat census, from the store's page records. With `hidePrivate` the store reads the caller's fast page policy, and
+ * only for the text it knows (storeFastPageTextPolicy); any other caller refuses.
+ */
+export const listChatChannelCensus: Member<'listChatChannelCensus'> = async (brain, sourceIds, chatTypes, dmTypes, hidePrivate) => {
+  const policy = hidePrivate ? storeFastPageTextPolicy('listChatChannelCensus') : null;
+  return await storeCall({ member: 'listChatChannelCensus' }, () =>
+    brain.listChatChannelCensus([...sourceIds], [...chatTypes], [...dmTypes], policy)) as Array<{ source_id: string; chat_pages: number; channels: number }>;
 };

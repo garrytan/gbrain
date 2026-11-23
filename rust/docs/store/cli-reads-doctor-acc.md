@@ -24,11 +24,14 @@ is engine-specific.
 `hasMcpLogRowsPastWindow` follows `pruneMcpRequestLogBatch`: the cutoff is `now - days` (the day count read as an `int4`),
 and rows are visited in `created_at` order, so the scan stops at the first row inside the window.
 
-One read of the access checks is served from the page records as well (`crates/gbrain-store/src/cli_reads/doctor_acc.rs`):
+Two reads of the access checks are served from the page records as well (`crates/gbrain-store/src/cli_reads/doctor_acc.rs`):
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.listReaderPages(updatedWithinDays)` | `[{ id, source_id, slug, readers, updated_at, updated_us, writer, prior_names_readers }]` for every live page whose frontmatter has a `readable_by` key (a JSON null counts), by source then slug in byte order; `updatedWithinDays` (null keeps all) keeps the pages written after `now - days`. `readers` is `gbrain_access_readers(frontmatter)` (`["!nobody"]` when no valid reader), `updated_at` is `timestamptz::text`, `writer` is `principal_kind:principal_id` of the revision receipt (null without one), `prior_names_readers` whether the newest stored version (snapshot time, then id) has a `readable_by` key (null with no version) | the page columns the three statements of `listMalformedReaderPages`, `listUnknownReaders` and `listRecentReaderNarrowings` read |
+| `brain.listChatChannelCensus(sourceIds, chatTypes, dmTypes, policy)` | `[{ source_id, chat_pages, channels }]` per source in byte order for the live pages of `chatTypes` the policy does not hide (a null policy hides nothing); a `dmTypes` page is its own channel, any other takes its frontmatter `channel`, `chat` or `conversation`, else the lower-cased `#name` its title opens with | `listChatChannelCensus` (`chatChannelCensus` of `grants/shared-exposure.ts`) |
+
+`policy` is the page policy of `privatePagesFilterFragmentFast`: the folder-rule test with no satisfied rule, then a cheap test on constant frontmatter keys and page types, else the whole no-caller page policy (`fast_page_hidden` in `facts/privacy.rs`). A page in an owner-only source that passes the cheap test is counted, as the statement counts it. The TypeScript member (`storeFastPageTextPolicy`, `private-provenance.ts`) sends a policy only when the rendered text equals the canonical form rebuilt from the policy it serves, and refuses any other caller.
 
 The members built from it answer in TypeScript: `listMalformedReaderPages` (the pages whose readers are `["!nobody"]`, with the total), `listUnknownReaders` (each named reader that is no member, a removed member, no group or a group with no member, classified as the SQL does, with its page count and first page; members and groups from `readAccessMembers` and `readAccessGroups`) and `listRecentReaderNarrowings` (pages written in the window whose newest earlier version named no readers, newest first).
 

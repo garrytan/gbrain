@@ -320,7 +320,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listPageRefsForSlugs', 'listPageTypePairs', 'listPagesNamingReader', 'listPagesReadByNobody', 'listParkedEffects',
   'listParkedGroupRows', 'listPassAdmittedReceipts', 'listPendingRoster', 'listPersistentWriterContention',
   'listPrivilegedDcrClients', 'listProjectionDrainPreview', 'listPurgeParks', 'listRawOnlyRules',
-  'listMalformedReaderPages', 'listUnknownReaders', 'listRecentReaderNarrowings', 'countAccessFolderDrift',
+  'listMalformedReaderPages', 'listUnknownReaders', 'listRecentReaderNarrowings', 'listChatChannelCensus', 'countAccessFolderDrift',
   'listReadablePageSlugs', 'listRecentDriftReceiptSlugs', 'listRecentPageBodies', 'listRecentPurgeRequests',
   'listRecentWriterVersions', 'listRecordedHaltReasons7d', 'listRecordedTombstones', 'listReferrerTargetSources',
   'listRefusalBreakerRows', 'listRestorableAtomRetirements', 'listRulePagesReadByNobody', 'listRunningClaimOwners',

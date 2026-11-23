@@ -9377,6 +9377,7 @@
         "listCapacityCounters": "none",
         "listCaptureDuplicateCandidates": "none",
         "listCapturedFactsForClassification": "none",
+        "listChatChannelCensus": "none",
         "listCheckoutRoots": "none",
         "listCheckpointBlockedSources": "none",
         "listChronicleEventSlotRows": "none",

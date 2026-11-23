@@ -379,6 +379,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listMalformedReaderPages': OOS.doctorAcc,
   'listUnknownReaders': OOS.doctorAcc,
   'listRecentReaderNarrowings': OOS.doctorAcc,
+  'listChatChannelCensus': OOS.doctorAcc,
   'readMcpRequestLogBytes': OOS.doctorAcc,
   'countMcpRequestLogRows': OOS.doctorAcc,
   'hasMcpLogRowsPastWindow': OOS.doctorAcc,

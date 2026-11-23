@@ -51,6 +51,9 @@ import {
   remoteProvenanceFloorSql,
   remoteReadFloorSql,
   readPolicyFragment,
+  folderRulesAllowedSql,
+  privatePagesFilterFragment,
+  privatePagesFilterFragmentFast,
 } from '../../search/private-visibility.ts';
 import type { ReflexPrivacy } from '../../engine-sql/reflex-reads.ts';
 import type { RetirementPrivacy } from '../../engine-sql/entity-reads.ts';
@@ -287,6 +290,34 @@ export function storePageTextPolicy(
   });
   if (policy) return { ...policy, ...openFlag };
   refuseMember(member, 'excludePrivate for a caller whose member pages, grants or lineage widen the policy');
+}
+
+/**
+ * The store page policy for `privatePagesFilterFragmentFast('p')` (the chat census of shared-exposure.ts): the folder-rule
+ * test with no satisfied rule, then a cheap test on constant frontmatter keys and page types, else the page policy
+ * `privatePagesFilterFragment('p')`. The store applies the same three steps in that order (privacy.rs `census_hidden`), so an
+ * owner-only page that passes the cheap test is counted, as the statement counts it.
+ *
+ * Served only when the whole text equals a canonical form: the page policy is served as the policy of a caller with no
+ * readers (storePageTextPolicy), and the fast text equals the form rebuilt from that policy's honor-aliases flag and the
+ * folder-rule test of the record it was served under (the live caller, or the fresh record of no readers). A caller whose
+ * record adds folder coverage, or any other change of the text, refuses.
+ */
+export function storeFastPageTextPolicy(member: string): StorePrivacyPolicy {
+  const policy = storePageTextPolicy(member, () => privatePagesFilterFragment('p'), { noReaders: true });
+  const open = currentCallerAccess().restricted === false;
+  const full = privatePagesFilterFragment('p');
+  const fast = privatePagesFilterFragmentFast('p');
+  const cheap = (honor: boolean): string => `((p.frontmatter->'visibility' IS NULL AND p.frontmatter->'derived_from' IS NULL${honor
+    ? `\n      AND p.frontmatter->'access' IS NULL AND p.frontmatter->'confidentiality' IS NULL` : ''}
+      AND p.frontmatter->'readable_by' IS NULL AND p.frontmatter->'pinned_question' IS NULL
+      AND p.type NOT IN ('atom', 'concept', 'event', 'question'))
+    OR ${full})`;
+  const records: Array<Partial<CallerAccess>> = [open ? { restricted: false } : {}, { identity: [], privateReadableSources: [], hidePrivate: true, restricted: !open }];
+  const canonical = records.some(record =>
+    fast === `(${renderForStoreCaller(record, () => folderRulesAllowedSql('p', []))} AND ${cheap(policy.honorAliases)})`);
+  if (!canonical) refuseMember(member, 'a fast page filter that is not the folder-rule test, the cheap key test and the page policy');
+  return policy;
 }
 
 /** The reader record a store policy carries for a widening caller (`identity` and `privateReadableSources` in privacy.rs). */

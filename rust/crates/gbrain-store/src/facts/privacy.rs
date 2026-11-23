@@ -685,6 +685,67 @@ fn readers_allowed(
     Ok(plain || !origin_restricted(read, page)?)
 }
 
+/// The folder-rule conjunct of `privatePagesFilterFragmentFast` (`folderRulesAllowedSql(alias, [])`): the page is
+/// under no folder rule, under no coverage the policy's record carries and, outside a caller record, under no pending
+/// prefix. It judges the page by an empty satisfied set, whatever the member-access form.
+fn folder_rules_allow(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    policy: &PrivacyPolicy,
+) -> Result<bool> {
+    let folders = FolderAccess {
+        satisfied: &[],
+        coverage: &policy.folder_coverage,
+        record: policy.caller_record,
+    };
+    let pending = pending_covers(read, &page.source_id, &page.slug)?;
+    let rules = if folders.record && pending {
+        kept_rules(read, &page.source_id, page.id)?
+    } else {
+        stamped_rules(read, page)?
+    };
+    Ok(
+        folders.satisfies_all(rules.iter())
+            && !folders.covers(page)
+            && (folders.record || !pending),
+    )
+}
+
+/// The cheap test of `privatePagesFilterFragmentFast`: none of the keys `visibility`, `derived_from`, `readable_by`,
+/// `pinned_question` (nor, with `honor_aliases`, `access` or `confidentiality`) is present and the type is not atom,
+/// concept, event or question. A SQL `->` read is NULL only for an absent key, so a key holding JSON null is present.
+fn cheap_page_visible(page: &PageRecord, honor_aliases: bool) -> bool {
+    let fm = &page.frontmatter;
+    let aliases =
+        honor_aliases && (fm.contains_key("access") || fm.contains_key("confidentiality"));
+    !(fm.contains_key("visibility")
+        || fm.contains_key("derived_from")
+        || aliases
+        || fm.contains_key("readable_by")
+        || fm.contains_key("pinned_question")
+        || matches!(
+            page.page_type.as_str(),
+            "atom" | "concept" | "event" | "question"
+        ))
+}
+
+/// Whether `privatePagesFilterFragmentFast` hides `page`: the folder rules first, then the page policy only for a page
+/// that fails the cheap test. A page in an owner-only source that passes the cheap test is therefore shown.
+pub(crate) fn fast_page_hidden(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    policy: &PrivacyPolicy,
+    owner_only: &OwnerOnlySources,
+) -> Result<bool> {
+    if !folder_rules_allow(read, page, policy)? {
+        return Ok(true);
+    }
+    if cheap_page_visible(page, policy.honor_aliases) {
+        return Ok(false);
+    }
+    page_hidden_with(read, page, policy, owner_only)
+}
+
 /// Whether the store's member-access flag (`access.restrictions_present`) is `'1'`.
 fn restrictions_present(read: &dyn KvRead) -> Result<bool> {
     let key = keys::text(keys::CONFIG, &[RESTRICTIONS_PRESENT_KEY]);

@@ -1496,6 +1496,7 @@ export class PostgresEngine implements BrainEngine {
   listPrivilegedDcrClients(scopeRegex: string) { return doctorAccImpl.listPrivilegedDcrClients(this.executeRaw.bind(this), scopeRegex); }
   listMalformedReaderPages(limit: number) { return doctorAccImpl.listMalformedReaderPages(this.executeRaw.bind(this), limit); }
   listUnknownReaders(limit: number) { return doctorAccImpl.listUnknownReaders(this.executeRaw.bind(this), limit); }
+  listChatChannelCensus(sourceIds: readonly string[], chatTypes: readonly string[], dmTypes: readonly string[], hidePrivate: boolean) { return doctorAccImpl.listChatChannelCensus(this.executeRaw.bind(this), sourceIds, chatTypes, dmTypes, hidePrivate); }
   listRecentReaderNarrowings(days: number, limit: number) { return doctorAccImpl.listRecentReaderNarrowings(this.executeRaw.bind(this), days, limit); }
   readMcpRequestLogBytes() { return doctorAccImpl.readMcpRequestLogBytes(this.executeRaw.bind(this)); }
   countMcpRequestLogRows(limit: number) { return doctorAccImpl.countMcpRequestLogRows(this.executeRaw.bind(this), 'postgres', limit); }

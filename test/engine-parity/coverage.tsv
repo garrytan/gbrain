@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2025/2041
+# covered: 2026/2042
 # lifecycle: 9/9
 # pages: 81/82
 # search: 7/7
@@ -105,7 +105,7 @@
 # doctor_pages: 18/18
 # doctor_search: 10/10
 # volunteer_events: 5/5
-# doctor_reads_acc: 29/29
+# doctor_reads_acc: 30/30
 # doctor_checkpoints: 18/18
 # doctor_sync: 3/3
 # doctor_brain: 6/6
@@ -2077,6 +2077,7 @@ listPrivilegedDcrClients	doctor_reads_acc	yes	2	no	yes	yes	serves
 listMalformedReaderPages	doctor_reads_acc	yes	1	no	yes	yes	serves
 listUnknownReaders	doctor_reads_acc	yes	1	no	yes	yes	serves
 listRecentReaderNarrowings	doctor_reads_acc	yes	1	no	yes	yes	serves
+listChatChannelCensus	doctor_reads_acc	yes	1	no	yes	yes	serves
 readMcpRequestLogBytes	doctor_reads_acc	yes	1	no	yes	yes	serves
 countMcpRequestLogRows	doctor_reads_acc	yes	1	no	yes	yes	serves
 hasMcpLogRowsPastWindow	doctor_reads_acc	yes	1	no	yes	yes	serves

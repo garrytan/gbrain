@@ -323,7 +323,7 @@ src/core/grants/model.ts	execute_raw	1
 src/core/grants/read-shared.ts	sql_template	2	reads sources (the federated, non-guest set a switched key reads) (GST-2898 read-shared switch, #9590, open before this ratchet landed): only the engine-less fallback of sharedRows now, as every engine caller reads the typed readSharedSourceRows; interfaces 32d-2 removes it; +1: reads the archived source ids a token's grant drops (GST-3163)
 src/core/grants/rescope.ts	sql_template	7
 src/core/grants/service.ts	sql_template	11	+1: stampReadShared writes oauth_clients.read_shared_revision beside a client grant write (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
-src/core/grants/shared-exposure.ts	execute_raw	3	+2: reads every live access_tokens and oauth_clients row to list the credentials that read a source through the switch (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
+src/core/grants/shared-exposure.ts	execute_raw	2	+2: reads every live access_tokens and oauth_clients row to list the credentials that read a source through the switch (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
 src/core/guard-ledger-checks.ts	execute_raw	3
 src/core/guests/admission.ts	execute_raw	3
 src/core/guests/marker.ts	execute_raw	1
