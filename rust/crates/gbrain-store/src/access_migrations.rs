@@ -207,6 +207,35 @@ mod tests {
             .unwrap();
     }
 
+    /// The store clock stamps the creation time, which a phase update keeps: newest is by creation time, not by id.
+    #[test]
+    fn newest_is_by_the_creation_time_the_store_clock_stamps() {
+        struct At(std::sync::atomic::AtomicI64);
+        impl crate::env::Env for At {
+            fn now_micros(&self) -> i64 {
+                self.0
+                    .fetch_add(1_000_000, std::sync::atomic::Ordering::SeqCst)
+            }
+            fn new_uuid(&self) -> String {
+                crate::SystemEnv.new_uuid()
+            }
+        }
+        let env = std::sync::Arc::new(At(std::sync::atomic::AtomicI64::new(1)));
+        let s = Store::open_kv(
+            crate::test_support::mem_kv(),
+            env,
+            crate::OpenOptions::default(),
+        )
+        .unwrap();
+        s.ensure_access_policy_state("default").unwrap();
+        started(&s, "default", "mig_z");
+        started(&s, "default", "mig_y");
+        s.record_access_migration_phase("mig_z", "exported", &json!({}))
+            .unwrap();
+        let row = s.read_unfinished_access_migration("default").unwrap();
+        assert_eq!(row.map(|r| r.id), Some("mig_y".to_string()));
+    }
+
     #[test]
     fn the_table_checks_refuse_and_leave_nothing_behind() {
         let s = store();
@@ -217,9 +246,10 @@ mod tests {
             code(s.insert_access_migration("mig_x", "default", "sideways")),
             invalid
         );
-        assert!(
-            s.insert_access_migration("mig_x", "work", "to_git")
-                .is_err()
+        assert_eq!(
+            code(s.insert_access_migration("mig_x", "work", "to_git")),
+            invalid,
+            "a source with no access state"
         );
         started(&s, "default", "mig_a");
         assert_eq!(
