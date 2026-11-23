@@ -455,7 +455,6 @@ src/core/page-state/projections.ts	sealImportedPage	field	STREAM
 src/core/page-state/schema.ts	PAGE_STATE_SCHEMA_STATEMENTS	sql	STREAM	revision trigger tuple (lane 1a adds body_generation)
 src/core/page-state/snapshot.ts	overlayCanonicalBodies	field	STREAM	overlays a caller-supplied body string (file bytes), not a stored segmented body
 src/core/page-state/snapshot.ts	overlayCanonicalBodies	sql	STREAM	normalizes the caller-supplied body
-src/core/page-state/snapshot.ts	overlayInlineSnapshots	field	INLINE	inline pages only: a segmented snapshot is skipped before its body fields are read (the Rust store's snapshot overlay)
 src/core/page-state/snapshot.ts	readSnapshotStatement	field	STREAM	withdrawal overlay runs on inline pages only; segmented page skips it (per-window overlay in PR 2)
 src/core/page-state/snapshot.ts	readSnapshotStatement	sql	STREAM	p.* feeds rowToPage (projects body_storage/body_bytes); the fingerprint over a NULL body is empty
 src/core/page-state/text-seal.ts	sealPageTextProjection	field	STREAM	moved from projections.ts unchanged; BrainEngine.sealChunks reuses it after refusing a segmented page
@@ -647,7 +646,6 @@ src/core/repair/visibility.ts	visibilityWrite	call:serializePageToMarkdown	SEGW
 src/core/rust-engine/snapshot-overlay.ts	overlayStoreSnapshot	field	STREAM	the Rust arm of readSnapshotStatement's withdrawal overlay (page-state/snapshot.ts): the Rust store keeps every body inline; the body strike skips a segmented page as readSnapshotStatement does (per-window overlay in PR 2)
 src/core/rust-engine/store-members/chunks.ts	sealChunks	field	STREAM	mirrors sealPageTextProjection (text-seal.ts): sends sanitizeRemoteBody(timeline) with the seal for the page keyword vector; a segmented page (null timeline from the Rust store) sends none
 src/core/rust-engine/store-members/field-usage.ts	readFieldUsageSamples	field	LEAD	the Rust arm of engine-sql/field-usage.ts readFieldUsageSamples: passes the store's sampled compiled_truth through; a segmented page samples a null body (TODOS.md)
-src/core/rust-engine/store-members/page-body.ts	overlaidSealLead	field	NONE	not the page body: the timeline of overlayCanonicalBodies over the stored timeline lead (bounded) the seal indexes
 src/core/rust-engine/store-members/page-body.ts	refreshPageBody	call:refreshPageBody	SEGW	forwards to the Rust store, which refuses a segmented page as the body-storage CHECK does; callers assert first
 src/core/rust-engine/store-members/page-ops.ts	toDomainBankRow	field	INLINE	copies the domain-bank body the Rust store returned; the store keeps every body inline
 src/core/rust-engine/store-members/pages.ts	putPage	call:putPage	INLINE	forwards the caller's page to the Rust store, which keeps every body inline; it reads no stored body

@@ -135,8 +135,8 @@ test('listPurgeProbeItems names the rows of a named probe, 20 at most, ordered b
   expect(last()).toEqual({ text: `SELECT * FROM (${select}) q ORDER BY item COLLATE "C" LIMIT 20`, params: OLD.s49.params });
 });
 
-/** sha256 of the 99 statements (text, params, lane) the plan and dry run below sent before the move. */
-const SEQUENCE_SHA256 = "d1dfcd0ec350e0c269f870ec0716e95e794087c5fbc9a4b42d4185104c189276";
+/** sha256 of the 99 statements (text, params, lane) the plan and dry run below sent before the move; the withdrawal-discovery key read also matches gbrain_fact_fingerprint_v2 (migration v336). */
+const SEQUENCE_SHA256 = "4dd58ad514828019e3e41f7367bc9b054ea90176fd61e67829402cabbc1bb3fe";
 
 test('the plan, dry run and request finders send the same 99 statements as before, in order, on the same lanes', async () => {
   const { engine, fake } = recordingEngine(stmt => {

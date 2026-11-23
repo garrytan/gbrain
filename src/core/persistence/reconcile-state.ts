@@ -372,7 +372,7 @@ export function validateReconcileArtifact(value: unknown): ReconcileArtifact {
   // A page stored in segments (`body_storage`) is reconciled from its materialized body; its snapshot pins the body generation.
   strictReconcileKeys(value.preimages.database, ['page', 'tags', 'revision', 'sourceIncarnation', 'withdrawals', 'globalPurges', 'bodyGeneration'],
     ['page', 'tags', 'revision', 'sourceIncarnation', 'withdrawals']);
-  if (value.preimages.database.globalPurges !== undefined) strictReconcileKeys(value.preimages.database.globalPurges, ['count', 'latest', 'world_only']);
+  if (value.preimages.database.globalPurges !== undefined) strictReconcileKeys(value.preimages.database.globalPurges, ['count', 'latest', 'world_only', 'rows'], ['count', 'latest', 'world_only']);
   strictReconcileKeys(value.preimages.database.page, ['id', 'slug', 'source_id', 'type', 'title', 'compiled_truth', 'timeline', 'frontmatter',
     'content_hash', 'source_path', 'knowledge_revision', 'text_projection_revision', 'emotional_weight', 'created_at', 'updated_at', 'updated_at_iso',
     'deleted_at', 'effective_date', 'effective_date_source', 'import_filename', 'salience_touched_at', 'source_kind', 'source_uri', 'ingested_via',
@@ -403,7 +403,9 @@ export function validateReconcileArtifact(value: unknown): ReconcileArtifact {
     }
   }
   for (const conflict of value.conflicts as unknown[]) strictReconcileKeys(conflict, ['path', 'file', 'database']);
-  for (const withdrawal of value.preimages.database.withdrawals as unknown[]) strictReconcileKeys(withdrawal, ['visibility', 'fact_hash', 'withdrawn_at', 'purged'], ['visibility', 'fact_hash', 'withdrawn_at']);
+  for (const withdrawal of [...value.preimages.database.withdrawals as unknown[], ...(value.preimages.database.globalPurges?.rows ?? []) as unknown[]]) {
+    strictReconcileKeys(withdrawal, ['visibility', 'fact_hash', 'withdrawn_at', 'purged'], ['visibility', 'fact_hash', 'withdrawn_at']);
+  }
   return JSON.parse(stableJson(value)) as ReconcileArtifact;
 }
 

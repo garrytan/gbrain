@@ -209,18 +209,6 @@ export interface SegmentedGenerationLock {
   slug: string; source_id: string; body_flags: JsonObject | null; body_storage: string; body_generation: number | string;
 }
 
-/** What a fence rewrite drops of page_segment_derivations (page-body/segment-derive.ts `deleteRewrittenDerivations`). */
-export interface RewrittenDerivationScope {
-  /** Occurrences of the runs holding a rewritten row: every kind's rows go. */
-  touched: readonly number[];
-  /** Occurrences of the neighbouring runs whose link excerpts can reach the rewrite: their links rows go. */
-  reach: readonly number[];
-  /** Pipelines whose rows of occurrences outside `live` go (they retire only when they next run). */
-  unpaidKinds: readonly string[];
-  /** The occurrences of the rewritten generation. */
-  live: readonly number[];
-}
-
 /** Page `pageId` as a live fence rewrite reads it, deleted or not, or null. Tags sort bytewise (COLLATE "C") on every engine. */
 export async function readSegmentedRewritePage(tx: Raw, pageId: number): Promise<SegmentedRewritePageRow | null> {
   const [row] = await tx.executeRaw<SegmentedRewritePageRow>(`SELECT p.id,p.slug,p.source_id,p.title,

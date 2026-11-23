@@ -124,11 +124,11 @@ transaction	lifecycle	yes	312	no	yes	yes	serves
 transactionDirect	lifecycle	yes	14	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	217	yes	yes	yes	serves
-readPageSnapshot	pages	yes	63	no	yes	yes	serves
-readPageSnapshotsBatch	pages	yes	4	no	yes	yes	serves
+getPage	pages	yes	218	yes	yes	yes	serves
+readPageSnapshot	pages	yes	65	no	yes	yes	serves
+readPageSnapshotsBatch	pages	yes	6	no	yes	yes	serves
 lockPageKeys	pages	yes	16	no	yes	yes	serves
-putPage	pages	yes	1092	yes	yes	yes	serves
+putPage	pages	yes	1093	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	37	yes	yes	yes	serves
@@ -552,7 +552,7 @@ stageManifestRows	segmented_body	yes	29	no	yes	yes	serves
 readManifest	segmented_body	yes	16	no	yes	yes	serves
 readSegmentedEmbedPage	segmented_body	yes	3	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	15	no	yes	yes	serves
-createSegmentedPageShell	segmented_body	yes	56	no	yes	yes	serves
+createSegmentedPageShell	segmented_body	yes	57	no	yes	yes	serves
 flipBodyGeneration	segmented_body	yes	45	no	yes	yes	serves
 sealSegmentedPage	segmented_body	yes	11	no	yes	yes	serves
 openBodyStaging	segmented_body	yes	33	no	yes	yes	serves
@@ -1120,7 +1120,7 @@ listExportPageKeys	cli_reads_export	yes	2	no	yes	yes	serves
 readExportWithdrawalLedgerBytes	cli_reads_export	yes	3	no	yes	yes	serves
 listExportWithdrawals	cli_reads_export	yes	4	no	yes	yes	serves
 readExportPageRows	cli_reads_export	yes	4	no	yes	yes	serves
-normalizeFenceLines	cli_reads_export	yes	3	no	yes	yes	serves
+normalizeFenceLines	cli_reads_export	yes	4	no	yes	yes	serves
 readSegmentedPageHead	cli_reads_export	yes	9	no	yes	yes	serves
 readBodyManifestRows	cli_reads_export	yes	4	no	yes	yes	serves
 readBodyManifestMeta	cli_reads_export	yes	1	no	yes	yes	serves
@@ -1235,7 +1235,7 @@ listUnfencedFactRows	facts_purge	yes	2	no	yes	yes	serves
 listHeldFenceFactRows	facts_purge	yes	1	no	yes	yes	serves
 listWithdrawalSlugs	facts_purge	yes	5	no	yes	yes	serves
 expireFactsByWithdrawal	facts_purge	yes	6	no	yes	yes	serves
-insertFactPurge	facts_purge	yes	20	no	yes	yes	serves
+insertFactPurge	facts_purge	yes	21	no	yes	yes	serves
 insertTakePurge	facts_purge	yes	13	no	yes	yes	serves
 upsertPagePurges	facts_purge	yes	2	no	yes	yes	serves
 expireFactsOfGonePages	facts_purge	yes	1	no	yes	yes	serves
@@ -1573,7 +1573,7 @@ listEnrichCandidates	salience_enrich	yes	5	yes	yes	yes	serves
 findAnomalies	salience_enrich	yes	9	yes	yes	yes	serves
 countZeroWeightWithTakes	salience_enrich	yes	1	no	yes	yes	serves
 hasCoveringFactWithdrawal	trust	yes	6	no	yes	yes	serves
-insertFactWithdrawal	trust	yes	57	no	yes	yes	serves
+insertFactWithdrawal	trust	yes	59	no	yes	yes	serves
 isFactWithdrawn	trust	yes	3	no	yes	yes	serves
 isFactPurged	trust	yes	5	no	yes	yes	serves
 listFactWithdrawalDates	trust	yes	3	no	yes	yes	serves

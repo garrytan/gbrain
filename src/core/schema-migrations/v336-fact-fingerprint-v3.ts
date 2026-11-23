@@ -21,6 +21,9 @@ import { REFUSE_PURGED_FACT_FUNCTION_SQL, REFUSE_PURGED_TAKE_FUNCTION_SQL } from
 // facts rows and the fence cells (pages and segment texts) that hold the claim; the export overlay hashes the new
 // fingerprint only. The fingerprint index is rebuilt when a fact holds a differing character, and an active fact the
 // new fingerprint now matches to a withdrawal is stamped by the preserve trigger itself (a no-op UPDATE of expired_at).
+// A body decoded from bytea (segment texts) is read under the database's default collation, not the C collation
+// convert_from carries, so U+1680 and a non-ASCII capital fold as the old fingerprint folded them. A database whose
+// server_encoding is not UTF8 is skipped: it has no such characters to repair and chr() above 255 raises there.
 // Only the guard functions are replaced: their triggers already call them. PGLite folds the same list, so there the
 // block finds no differing character and reads no row.
 export const FACT_FINGERPRINT_V3_SQL = `${FACT_FINGERPRINT_FUNCTION_STATEMENTS.join(';\n')};
@@ -31,6 +34,9 @@ ${REFUSE_PURGED_TAKE_FUNCTION_SQL};
 DO $fp_v3$
 DECLARE differing text[];
 BEGIN
+  -- Only a UTF8 database holds U+0085 and the other characters the two folds disagree on; chr() above 255 raises on a
+  -- SQL_ASCII or single-byte one, which keeps running with a database_encoding warning, so its upgrade must not stop here.
+  IF current_setting('server_encoding') <> 'UTF8' THEN RETURN; END IF;
   SELECT array_agg(chr(g)) INTO differing FROM generate_series(1, 65535) g
     WHERE g NOT BETWEEN 55296 AND 57343 AND (chr(g) ~ '[[:space:]]') IS DISTINCT FROM (chr(g) ~ '${FACT_SPACE_CLASS}');
   IF differing IS NULL THEN RETURN; END IF;
@@ -60,7 +66,7 @@ BEGIN
         SELECT w.source_id, w.visibility, w.subject, c.fp, min(w.withdrawn_at)
         FROM (SELECT DISTINCT t.source_id, gbrain_fact_fingerprint(btrim(cell)) AS fp,
             ${factFingerprintV2Sql('btrim(cell)')} AS v2, gbrain_fact_fingerprint_v1(btrim(cell)) AS v1
-          FROM (SELECT s.source_id, convert_from(s.body, 'UTF8') AS body FROM page_segment_texts s) t,
+          FROM (SELECT s.source_id, convert_from(s.body, 'UTF8') COLLATE "default" AS body FROM page_segment_texts s) t,
             LATERAL unnest(string_to_array(t.body, chr(10))) line, LATERAL unnest(string_to_array(line, '|')) cell
           WHERE starts_with(ltrim(line), '|') AND EXISTS (SELECT 1 FROM unnest(differing) d(ch) WHERE strpos(cell, d.ch) > 0)) c
         JOIN fact_withdrawals w ON w.source_id = c.source_id AND w.fact_hash IN (c.v2, c.v1) AND w.fact_hash <> c.fp

@@ -65,6 +65,13 @@ export interface GlobalPurgeMarker {
   latest: string | null;
   /** The read kept world rows only (excludePrivate); the lookup applies the same filter. */
   world_only: boolean;
+  /**
+   * Every '*' tombstone the marker counts, as plain data, set only by a store with no SQL (the Rust store's
+   * `globalPurgeRows`, rust-engine/snapshot-overlay.ts). A SQL engine leaves it unset and looks the tombstones up by the
+   * fence hashes of the text it overlays; the typed form of overlayCanonicalBodies reads them here. Plain data so it
+   * survives the owner socket, a copy and a reconcile artifact.
+   */
+  rows?: PageWithdrawal[];
 }
 export interface PageSnapshot {
   page: Page;

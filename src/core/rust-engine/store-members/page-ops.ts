@@ -21,7 +21,6 @@ import { assertPurgeAge } from '../../engine-errors.ts';
 import type { FindPagesQuery, FoundPages } from '../../page-find.ts';
 import type { PageCountQuery, PageCounts, TypeGrouper } from '../../page-counts.ts';
 import { pageSnapshotKey, type PageSnapshotBatch } from '../../page-snapshot-batch.ts';
-import { overlayInlineSnapshots } from '../../page-state/snapshot.ts';
 import type { PageSnapshot } from '../../page-state/types.ts';
 import { pickCanonicalOrigin } from '../../persistence/origin-guard.ts';
 import { segmentedRevertRefusal } from '../../page-state/versions.ts';
@@ -33,7 +32,6 @@ import type { PageRefRow, RelationalPageRow } from '../../engine-sql/relational-
 import { toGetPage } from '../store-codec.ts';
 import { overlayStoreSnapshot, type StoreSnapshot } from '../snapshot-overlay.ts';
 import { storeErrorCode } from '../store-errors.ts';
-import { normalizeFenceLines } from './cli-reads-export.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { HYBRID_BAG_KEYS, WHOKNOWS_KEYS, storePagePolicy } from './private-provenance.ts';
 
@@ -93,8 +91,6 @@ export const readPageSnapshotsBatch: StoreMember<
       brain.readPageSnapshot(ref.slug, { sourceId: ref.sourceId, ...(options.includeDeleted ? { includeDeleted: true } : {}) }));
     if (again) snapshots.set(key, overlayStoreSnapshot({ ...again, page: toGetPage(again.page) }));
   }
-  // The batch statement overlays each inline page's fence rows with its withdrawals (page-snapshot-batch.ts).
-  await overlayInlineSnapshots((bodies, timelines) => normalizeFenceLines(brain, bodies, timelines), [...snapshots.values()]);
   return { snapshots, covered: batch.covered };
 };
 

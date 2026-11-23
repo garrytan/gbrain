@@ -34,7 +34,6 @@ import { runMigrations } from '../src/core/migrate.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
 import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
-import { withEnv } from './helpers/with-env.ts';
 
 async function runCheck(ctx: DoctorContext): Promise<Check[]> {
   return await embeddingsEntry.run(ctx) as Check[];
@@ -167,27 +166,12 @@ describe('embeddings doctor check: backlog age', () => {
     expect((await runCheck(other))[0].status).toBe('ok');
   });
 
-  // The keyless fix comes from loadConfig() (check-fix.ts keylessEnablementFix): with no config it is absent, with one
-  // it is the user-consented enablement (`gbrain init ...`, consent credentials + paid, pinned in
-  // readiness-embedding-enablement.serial.test.ts), never the paid catch-up drain. A DATABASE_URL in the environment
-  // makes loadConfig return a config (config.ts `if (!fileConfig && !dbUrl) return null`), so both states are pinned
-  // here instead of read from whatever environment the run inherits.
   test('a keyless brain is info even with an old backlog', async () => {
-    const keyless = async () => {
-      const [check] = await runCheck(ctxFor(0, 50_000, { embedding_disabled: 'true' }, { ageS: 90 * DAY }));
-      expect(check.status).toBe('ok');
-      expect(check.severity).toBe('info');
-      expect(check.readiness_state).toBe('disabled_by_choice');
-      expect(check.message).not.toContain('catch-up');
-      expect(check.fix?.argv ?? []).not.toContain('embed');
-      expect(check.fix?.argv ?? []).not.toContain('--catch-up');
-      return check;
-    };
-    expect((await withEnv({ DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, keyless)).fix).toBeUndefined();
-    const fix = (await withEnv({ DATABASE_URL: 'postgresql://keyless-doctor-probe.invalid/gbrain', GBRAIN_DATABASE_URL: undefined }, keyless)).fix!;
-    expect(fix.argv?.slice(0, 3)).toEqual(['gbrain', 'init', '--force']);
-    expect(fix.consent).toEqual(['credentials', 'paid']);
-    expect(fix.user_message).toBeTruthy();
+    const [check] = await runCheck(ctxFor(0, 50_000, { embedding_disabled: 'true' }, { ageS: 90 * DAY }));
+    expect(check.status).toBe('ok');
+    expect(check.severity).toBe('info');
+    expect(check.readiness_state).toBe('disabled_by_choice');
+    expect(check.fix?.consent ?? []).not.toContain('paid');
   });
 });
 

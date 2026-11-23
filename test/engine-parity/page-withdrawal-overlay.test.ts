@@ -17,7 +17,10 @@
 import { describe, expect } from 'bun:test';
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { normalizeLoweredClaim } from '../../src/core/facts/withdrawal-schema.ts';
 import { readPageBodyPolicy } from '../../src/core/page-body/limits.ts';
+import { overlaySegmentText, readBodyLedger } from '../../src/core/page-body/segment-ledger.ts';
+import { overlaidBoundedRows } from '../../src/core/page-window/bounded-lead.ts';
 import { openSegmentedBody, readBodyRange } from '../../src/core/page-body/read-range.ts';
 import { sealSegmentedPage, stageSegmentedImport } from '../../src/core/persistence/segmented-apply.ts';
 import { conversationBody } from '../helpers/conversation-page.ts';
@@ -113,5 +116,48 @@ describe('engine parity: page withdrawal overlay', () => {
         stored: { lines: fenceLines(stored), bytes: Buffer.byteLength(stored), sha: sha(stored) },
         chunks: { count: chunks.length, texts: sha(chunks.map(c => `${c.chunk_source}\0${c.chunk_text}`).join('\n')) },
       };
+    });
+
+  parityTest('the fence fold is the fact whitespace list on every read: a claim with U+0085 is struck, one that differs from a withdrawn claim only by U+1680 or U+00A0 is not',
+    { methods: ['insertFactWithdrawal', 'putPage', 'readPageSnapshot', 'getPage', 'readPageSnapshotsBatch'] },
+    async (engine) => {
+      // FACT_SPACE_CLASS takes U+0085 (JavaScript's \s does not) and leaves U+1680 and U+00A0 (JavaScript's \s takes both).
+      const truth = `# Habits\n\n${fence([row(1, 'Walks\u0085to work'), row(2, 'Drinks\u1680green tea'), row(3, 'Drinks\u00a0green tea'), row(4, 'Prefers the aisle seat')])}\n`;
+      await engine.putPage('notes/fold', { type: 'note', title: 'Fold', compiled_truth: truth, timeline: '' });
+      await engine.insertFactWithdrawal('default', 'private', 'Walks to work', 'notes/fold', T1);
+      await engine.insertFactWithdrawal('default', 'private', 'Drinks green tea', 'notes/fold', T1);
+      const snap = (await engine.readPageSnapshot('notes/fold', { sourceId: 'default' }))!;
+      const page = (await engine.getPage('notes/fold'))!;
+      const batched = (await engine.readPageSnapshotsBatch([{ slug: 'notes/fold', sourceId: 'default' }])).snapshots.get('default\u0000notes/fold')!;
+      const forgotten = (text: string) => fenceLines(text).map(line => line.includes('forgotten:'));
+      // Row 1 folds to the withdrawn claim and is struck; rows 2 and 3 are different claims and stay live.
+      expect(forgotten(snap.page.compiled_truth)).toEqual([true, false, false, false]);
+      expect(forgotten(page.compiled_truth)).toEqual([true, false, false, false]);
+      expect(forgotten(batched.page.compiled_truth)).toEqual([true, false, false, false]);
+      return { withdrawals: snap.withdrawals, truth: fenceLines(snap.page.compiled_truth), getPage: page.compiled_truth === snap.page.compiled_truth,
+        batch: batched.page.compiled_truth === snap.page.compiled_truth };
+    });
+
+  const PURGE_LEAD = `Intro prose.\n\n${fence([row(1, 'Drinks green tea'), row(2, 'Prefers the aisle seat'), row(3, 'Walks\u0085to work')])}\n\nClosing prose.`;
+  const purgeHash = (claim: string) => sha(normalizeLoweredClaim(claim.toLowerCase()));
+
+  parityTest('a source with a subject-* purge tombstone: a segmented page lead drops the purged claim and keeps the other, in the bounded lead and the segment overlay',
+    { methods: ['insertFactPurge', 'insertFactWithdrawal', 'createSegmentedPageShell', 'readPageSnapshot', 'readPageSnapshotsBatch', 'normalizeFenceLines'] },
+    async (engine) => {
+      await engine.createSegmentedPageShell('notes/purged-lead', { type: 'note', title: 'Purged lead', frontmatter: {} }, { sourceId: 'default' });
+      // The source purges one claim for every page (subject '*'); a second claim is withdrawn through the ledger, so both ledger forms are read.
+      await engine.insertFactPurge({ sourceId: 'default', visibility: 'private', subject: '*', factHash: purgeHash('Drinks green tea'), requestId: null, actor: null, reason: null });
+      await engine.insertFactWithdrawal('default', 'private', 'Walks to work', 'notes/purged-lead', T1);
+      const snap = (await engine.readPageSnapshot('notes/purged-lead', { sourceId: 'default' }))!;
+      expect(snap.globalPurges?.count).toBe(1);
+      const [bounded] = await overlaidBoundedRows(engine, [{ slug: 'notes/purged-lead', source_id: 'default', compiled_truth: PURGE_LEAD }]);
+      const ledger = await readBodyLedger(engine, 'default', 'notes/purged-lead');
+      const segment = await overlaySegmentText(engine, ledger, { sourceId: 'default', byteStart: 0, entryState: null }, PURGE_LEAD, 'trusted');
+      const lines = (text: string) => fenceLines(text).map(line => [line.includes('Drinks green tea'), line.includes('Prefers the aisle seat'), line.includes('forgotten:')]);
+      // The purged row is gone; the unrelated row stays live; the withdrawn U+0085 row stays but struck.
+      expect(lines(bounded!.compiled_truth)).toEqual([[false, true, false], [false, false, true]]);
+      expect(segment).toBe(bounded!.compiled_truth);
+      // The marker's `latest` is the purge's wall-clock time; the count and filter are what the read reports.
+      return { withdrawals: snap.withdrawals, globalPurges: { count: snap.globalPurges!.count, world_only: snap.globalPurges!.world_only }, bounded: fenceLines(bounded!.compiled_truth), segment: sha(segment) };
     });
 });

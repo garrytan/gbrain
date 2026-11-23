@@ -56,6 +56,11 @@ const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promi
   ['readOauthClient', 'FROM oauth_clients WHERE client_id', e => e.readOauthClient('a-client')],
   ['hasLabelledOnlyMember', 'FROM access_members WHERE labelled_only', e => e.hasLabelledOnlyMember()],
   ['readSegmentedPageHead', 'segmenter_version, knowledge_revision::text AS revision FROM pages WHERE id=$1', e => e.readSegmentedPageHead(1)],
+  // The segmented write path's reads a page preparation makes (stageSegmentedImport, the seal probe, chunk-vector reuse): raw statements on the bounded view before the Rust store served them.
+  ['readSegmentedLivePage', 'FROM pages WHERE id=$1', e => e.readSegmentedLivePage(1)],
+  ['listChunkedOccurrences', 'FROM unnest($2::bigint[]) AS o', e => e.listChunkedOccurrences(1, [1], 1)],
+  ['readRetiredChunkVectors', 'FROM content_chunks c JOIN pages p ON p.id = c.page_id', e => e.readRetiredChunkVectors(1, [1], 'embedding')],
+  ['hasStaleSegmentChunks', 'WITH RECURSIVE occ(o) AS', e => e.hasStaleSegmentChunks(1, 1, [1])],
   ['readSourceIncarnation', 'SELECT config,incarnation FROM sources WHERE id=$1', e => e.readSourceIncarnation('default')],
   ['readStoredPageTier', 'SELECT trust_tier FROM pages WHERE source_id = $1 AND slug = $2', e => e.readStoredPageTier('default', 'a')],
   // The segmented-storage writer gate a page or sync preparation reads through readPageBodyPolicy (page-body/limits.ts).

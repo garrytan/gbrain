@@ -5508,8 +5508,8 @@
         "idempotent": true,
         "name": "fact_fingerprint_v3",
         "sql": {
-          "length": 26690,
-          "sha256": "1eadb5729cb515eac9094d1e1169203affb1a4b72499b113e52f0cde9141e5e1"
+          "length": 27022,
+          "sha256": "4d20230777c8f7988b6188e499827111be97b1b9622486a8615a73e83d1bae61"
         },
         "sqlFor": "absent",
         "transaction": "absent",

@@ -50,9 +50,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 mod segment_rewrite;
 mod segmented_embedding;
 mod segmented_writes;
-pub use segment_rewrite::{
-    RewrittenDerivationScope, SegmentedGenerationLock, SegmentedRewritePage,
-};
+pub use segment_rewrite::{SegmentedGenerationLock, SegmentedRewritePage};
 pub use segmented_embedding::{
     LiveEmbedSegment, RetiredChunkVector, SegmentChunkInputHash, SegmentChunkRow,
     SegmentedEmbedCounts, SegmentedStaleRow, SegmentedStaleRowsOpts, SegmentedVectorInput,

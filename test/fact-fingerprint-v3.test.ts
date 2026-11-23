@@ -133,6 +133,27 @@ for (const backend of testBackends()) describe(`fact fingerprint v3 (${backend})
     expect(await shownRows(slug, sourceId)).toEqual([[[claim, true], ['A live claim', false]], [[claim, true], ['A live claim', false]]]);
   });
 
+  test('a claim held only in a segment text keeps its twin withdrawal row, whatever the database collation', async () => {
+    // The segment body is bytea; decoding it must fold by the database's collation, not C, or U+1680 stays unfolded
+    // and a non-ASCII capital stays uppercased, so the twin row would be missed or hashed wrong.
+    const sourceId = `fpv3-${backend}-${crypto.randomUUID().slice(0, 8)}`;
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1) ON CONFLICT DO NOTHING', [sourceId]);
+    const claims = ['Ogham\u1680segment claim', '\u00c9lan\u0085segment claim'];
+    const body = Buffer.from(fence(...claims, 'A live segment claim'), 'utf8');
+    await engine.executeRaw('INSERT INTO page_segment_texts(source_id, sha256, byte_len, line_count, body) VALUES ($1, $2, $3, $4, $5)',
+      [sourceId, createHash('sha256').update(body).digest(), body.length, 1, body]);
+    await engine.executeRaw(`INSERT INTO fact_withdrawals(source_id,visibility,fact_hash,withdrawn_at)
+      SELECT $1,'world',${legacyFingerprintSql('c')},'2026-01-02T00:00:00Z' FROM unnest($2::text[]) c ON CONFLICT DO NOTHING`, [sourceId, claims]);
+    const migration = MIGRATIONS.find(m => m.name === 'fact_fingerprint_v3')!;
+    await engine.runMigration(migration.version, migration.sql);
+    const stored = (await engine.executeRaw<{ fact_hash: string }>('SELECT fact_hash FROM fact_withdrawals WHERE source_id=$1', [sourceId])).map(r => r.fact_hash);
+    for (const claim of claims) {
+      expect(stored).toContain(explicitFingerprint(claim));
+      expect(await isFactWithdrawn(engine, sourceId, 'world', claim, null)).toBe(true);
+    }
+    expect(await isFactWithdrawn(engine, sourceId, 'world', 'A live segment claim', null)).toBe(false);
+  });
+
   test('a purge tombstone stored before the migration drops its claim from a fence the purge did not rewrite', async () => {
     const slug = 'notes/fpv3-stale', claim = 'Iota\u0085purged claim', global = 'Kappa\u0085global claim';
     const sourceId = await legacyPage(slug, [claim, global, 'A live claim'], id => engine.executeRaw(`INSERT INTO fact_purges(source_id,visibility,subject,fact_hash,purged_at)

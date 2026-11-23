@@ -36,21 +36,11 @@ export async function resolveGlobalPurges(query: ReadQuery, sourceId: string, ma
 /** An engine the withdrawal overlay reads through: its typed fence normalization, and raw SQL only when it has it. */
 export type OverlayEngine = Pick<BrainEngine, 'normalizeFenceLines' | 'executeRaw' | 'capabilities'>;
 
-/**
- * A typed store's snapshots with their inline fence rows overlaid, as readSnapshotStatement overlays them: each inline
- * page whose snapshot lists withdrawals, normalized in one call. The Rust store keeps no fact purge ledger and never held
- * a pre-v336 fingerprint, so the snapshot's own withdrawals are the whole ledger (export-snapshot.ts does the same).
- */
-export async function overlayInlineSnapshots(normalize: OverlayEngine['normalizeFenceLines'], snapshots: readonly PageSnapshot[]): Promise<void> {
-  const fenced = snapshots.filter(({ page, withdrawals }) => withdrawals.length > 0 && !isSegmentedPage(page)
-    && (page.compiled_truth.includes('gbrain:facts:begin') || page.timeline.includes('gbrain:facts:begin')));
-  if (!fenced.length) return;
-  const normalized = await normalize(fenced.map(({ page }) => page.compiled_truth), fenced.map(({ page }) => page.timeline));
-  for (const row of normalized) {
-    const { page, withdrawals } = fenced[Number(row.i) - 1]!;
-    page.compiled_truth = overlayWithdrawalBody(page.compiled_truth, row.body ?? '', withdrawals);
-    page.timeline = overlayWithdrawalBody(page.timeline, row.timeline ?? '', withdrawals);
-  }
+/** The '*' tombstones of `rows` whose hash a fence claim of the DB-normalized `normalizedTexts` has, as resolveGlobalPurges names them. */
+export function namedGlobalPurges(rows: readonly PageWithdrawal[] | undefined, normalizedTexts: readonly string[]): PageWithdrawal[] {
+  if (!rows?.length) return [];
+  const hashes = new Set(fenceClaimHashes(normalizedTexts));
+  return rows.filter((row) => hashes.has(row.fact_hash));
 }
 
 /**
@@ -64,12 +54,15 @@ export async function overlayCanonicalBodies(source: ReadQuery | OverlayEngine, 
   if (!withdrawals.length && !pending) return { compiled_truth: body, timeline };
   if (!body.includes('gbrain:facts:begin') && !timeline.includes('gbrain:facts:begin')) return { compiled_truth: body, timeline };
   if (typeof source !== 'function') {
-    // The typed form: the normalization through the engine; the purge marker and the pre-v336 fingerprint aliases are
-    // ledger rows only a SQL engine holds (the Rust store keeps no fact purge ledger and never held a v2 fingerprint).
+    // The typed form: the normalization through the engine. The '*' tombstones come from SQL, or, on a store with no SQL,
+    // from the rows its snapshot's marker carries (GlobalPurgeMarker.rows); the pre-v336 fingerprint aliases are ledger
+    // rows only a SQL engine holds (the Rust store never held a v2 fingerprint).
     const query: ReadQuery | undefined = hasCapability(source, 'raw_sql') ? (sql, params) => source.executeRaw(sql, params) : undefined;
-    if (pending && !query) throw new Error(`overlayCanonicalBodies: source ${pending.sourceId} has a purge marker, which only a SQL engine records.`);
+    const carried = pending && !query ? pending.marker!.rows : undefined;
+    if (pending && !query && !carried) throw new Error(`overlayCanonicalBodies: source ${pending.sourceId} has a purge marker the engine did not return its tombstones for.`);
     const [normalized] = await source.normalizeFenceLines([body], [timeline]);
-    const resolved = pending ? await resolveGlobalPurges(query!, pending.sourceId, pending.marker, [normalized?.body ?? '', normalized?.timeline ?? '']) : [];
+    const texts = [normalized?.body ?? '', normalized?.timeline ?? ''];
+    const resolved = !pending ? [] : query ? await resolveGlobalPurges(query, pending.sourceId, pending.marker, texts) : namedGlobalPurges(carried, texts);
     const ledger = resolved.length ? [...withdrawals, ...resolved] : withdrawals;
     const all = query ? await withLegacyLedgerRows(query, [body, timeline], ledger, pending) : ledger;
     return { compiled_truth: overlayWithdrawalBody(body, normalized?.body ?? '', all), timeline: overlayWithdrawalBody(timeline, normalized?.timeline ?? '', all) };

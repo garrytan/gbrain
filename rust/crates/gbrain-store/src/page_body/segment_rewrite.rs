@@ -7,14 +7,14 @@
 //! writes, so the lock is a plain read.
 
 use super::{
-    ManifestRow, NIL_STAGING, derivation_prefix, live_published, manifest_key, manifest_rows,
-    page_u64, read_body_state, staging_id_arg, uuid_bytes, violation,
+    ManifestRow, NIL_STAGING, live_published, manifest_key, manifest_rows, page_u64,
+    read_body_state, staging_id_arg, uuid_bytes, violation,
 };
 use crate::env::{iso, parse_iso};
-use crate::kv::{KvRead, scan_prefix};
+use crate::kv::KvRead;
 use crate::pages::{PageRecord, read_page_by_id, versions_of, write_page};
 use crate::{Result, Store, StoreError, keys, put_json};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashSet;
 
@@ -48,19 +48,6 @@ pub struct SegmentedGenerationLock {
     pub body_flags: Option<Value>,
     pub body_storage: String,
     pub body_generation: i64,
-}
-
-/// The scope of `deleteRewrittenDerivationRows(pageId, scope)`.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct RewrittenDerivationScope {
-    /// Every kind's rows of these occurrences go.
-    pub touched: Vec<i64>,
-    /// The `links` rows of these occurrences go.
-    pub reach: Vec<i64>,
-    /// These kinds' rows of occurrences outside `live` go.
-    pub unpaid_kinds: Vec<String>,
-    pub live: Vec<i64>,
 }
 
 fn page_by_id(read: &dyn KvRead, id: i64) -> Result<Option<PageRecord>> {
@@ -286,55 +273,13 @@ impl Store {
             Ok(())
         })
     }
-
-    /// `deleteRewrittenDerivationRows(pageId, scope)`: deletes the page's derivation rows of a
-    /// `touched` occurrence, its `links` rows of a `reach` occurrence, and its rows of an
-    /// `unpaidKinds` kind whose occurrence is not `live`; returns how many.
-    pub fn delete_rewritten_derivation_rows(
-        &self,
-        page_id: i64,
-        scope: &RewrittenDerivationScope,
-    ) -> Result<u64> {
-        let Some(page) = page_u64(page_id) else {
-            return Ok(0);
-        };
-        let touched: HashSet<i64> = scope.touched.iter().copied().collect();
-        let reach: HashSet<i64> = scope.reach.iter().copied().collect();
-        let live: HashSet<i64> = scope.live.iter().copied().collect();
-        let unpaid: HashSet<&[u8]> = scope.unpaid_kinds.iter().map(|k| k.as_bytes()).collect();
-        self.write(|tx| {
-            let prefix = derivation_prefix(page);
-            let mut doomed = Vec::new();
-            scan_prefix(&*tx, &prefix, false, &mut |k, _| {
-                let rest = &k[prefix.len()..];
-                if let Some(split) = rest.iter().position(|b| *b == 0) {
-                    let kind = &rest[..split];
-                    let occurrence =
-                        keys::be8(&rest[split + 1..]).map(|v| (v ^ (1u64 << 63)) as i64);
-                    if let Some(o) = occurrence
-                        && (touched.contains(&o)
-                            || (kind == b"links" && reach.contains(&o))
-                            || (unpaid.contains(kind) && !live.contains(&o)))
-                    {
-                        doomed.push(k.to_vec());
-                    }
-                }
-                true
-            })?;
-            for key in &doomed {
-                tx.delete(key)?;
-            }
-            Ok(doomed.len() as u64)
-        })
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::segment_chunk_tests::{STAGING_2, published, row, staging, text};
-    use super::super::{ReadManifestOptions, SegmentDerivationInput, StageTextsOptions};
+    use super::super::{ReadManifestOptions, StageTextsOptions};
     use super::*;
-    use serde_json::json;
 
     #[test]
     fn a_rewrite_page_reads_body_columns_tags_in_order_and_none_for_a_missing_page() {
@@ -465,40 +410,5 @@ mod tests {
         assert_eq!(versions.len(), 1);
         assert_eq!(versions[0].content_hash.as_deref(), Some("rebuilt"));
         assert_eq!(versions[0].body_bytes, Some(7));
-    }
-
-    #[test]
-    fn a_rewrite_drops_touched_reach_links_and_unpaid_rows_outside_the_live_body() {
-        let store = crate::test_support::store();
-        let id = published(&store);
-        let rows: Vec<SegmentDerivationInput> = [("links", 1), ("mentions", 1), ("links", 2), ("mentions", 2), ("mentions", 9), ("timeline", 2)]
-            .iter()
-            .map(|(kind, occ)| {
-                serde_json::from_value(json!({
-                    "pageId": id, "kind": kind, "occurrenceId": occ, "version": 1,
-                    "segmentSha256": "00".repeat(32), "contextHash": "00".repeat(32), "state": "done", "output": {}, "receipt": {},
-                }))
-                .unwrap()
-            })
-            .collect();
-        store.upsert_segment_derivations(&rows).unwrap();
-        let scope = RewrittenDerivationScope {
-            touched: vec![1],
-            reach: vec![2],
-            unpaid_kinds: vec!["mentions".into()],
-            live: vec![1, 2],
-        };
-        assert_eq!(
-            store.delete_rewritten_derivation_rows(id, &scope).unwrap(),
-            4
-        );
-        assert_eq!(
-            store.delete_rewritten_derivation_rows(id, &scope).unwrap(),
-            0
-        );
-        assert_eq!(
-            store.delete_rewritten_derivation_rows(-1, &scope).unwrap(),
-            0
-        );
     }
 }

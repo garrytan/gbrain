@@ -411,7 +411,7 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   splitManifestGeneration: 'readManifest for that page and staging',
   publishRebuiltGeneration: 'readManifest for that page at that generation',
   setSegmentedVersionHash: 'getVersions for that page (the segmented version rows of that generation carry the hash)',
-  installSegmentedVectors: 'countSegmentedEmbedRows for that page and column (stale drops by the rows that took a vector)',
+  installSegmentedVectors: 'readSegmentChunkInputHashes for that page at the chunk indexes sent (a row took its vector when its embedding_input_hash equals the hash installed; a count of rows without a vector cannot show a re-install of already-embedded rows, which is what --all sends)',
   deletePurgeDecideProposals: 'probePurgeDerivations for that purge',
   deletePurgeOpenLoops: 'probePurgeDerivations for that purge',
   deletePurgeReviewProposals: 'probePurgeDerivations for that purge',

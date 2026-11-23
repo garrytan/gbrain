@@ -170,7 +170,6 @@ segmented-embed members (`page-body/segmented-embedding.ts`) are in
 | `lockBodyStagingState(stagingId)` | the staging's state, or `null`. Writes are serialized, so no row lock |
 | `deleteUnstagedSegmentChunks(pageId, generation, keepIndexes)` | deletes the page's segment chunks of `generation` whose index is not kept |
 | `readSegmentedLivePage(pageId)` | the page a write diffs against, deleted or not: id, generation, storage, title, type, body flags |
-| `readSegmentedSealed(sourceId, slug)` | whether the live page's text projection is sealed at its revision |
 | `listChunkedOccurrences(pageId, occurrenceIds, generation)` | the members of `occurrenceIds`, in order, with a chunk row at or below `generation` |
 | `readRetiredChunkVectors(pageId, occurrences, column)` | each chunk of those occurrences with a stored vector and recorded input, newest generation first: its text, vector, recorded input and model, so a re-chunk reuses the vector of an unchanged text |
 | `hasStaleSegmentChunks(pageId, generation, live)` | whether a chunk row exists that `generation` does not hold |
@@ -181,16 +180,12 @@ segmented-embed members (`page-body/segmented-embedding.ts`) are in
 | `listOccurrenceChunks(pageId, occurrences)` | the visible chunk rows of those occurrences, by occurrence, then ordinal |
 | `readMaterializingRevision()`, `setMaterializingRevision(revision)` | the `gbrain.materializing_revision` setting, kept in the transaction's settings map; `null` and a no-op outside a transaction |
 | `restorePageUpdatedAt(pageId, updatedUs)` | sets `updated_at` back (a re-chunk is not an edit); a missing page is a no-op |
-| `readPageTrustStamp(ref)` | `trust_tier` (`unknown` when none) and `write_origin`; `{ sourceId, slug }` names a live page, `{ id }` any page |
-| `restorePageTrustStamp(pageId, trustTier, writeOrigin)` | puts back the tier and origin a fence append read before its page write (`withPageTierKept`), through the trust stamp: a lowering holds, a raise needs a covering promotion; nothing else of the page changes; a missing page is a no-op |
-| `storeSegmentDerivationRuns(pageId, generation, rows)` | the derivation driver's store (`storeRuns`): inserts or replaces each row on `pageId` as `upsertSegmentDerivations` does, only while the page is segmented at `generation`, in one store write; `false` and nothing written otherwise, or for a missing page. Postgres reads the page row `FOR SHARE`; writes are serialized here, so no row lock |
 | `readSegmentedRewritePage(pageId)` | the page row a live fence rewrite reads, deleted or not, with its tags in byte order (Postgres sorts them `COLLATE "C"`); an inline page reads at generation 0; `null` when missing |
 | `restorePageDeletedAt(pageId, deletedAt)` | sets `deleted_at` back after the rewrite's flip; a change gives the page a new knowledge revision and clears its text projection revision, as the pages trigger does. The pages trigger also notes the page for each open derivation purge request of its source; the store keeps no purge requests (`recordDerivationPurge` refuses), so there is nothing to note. A missing page is a no-op |
 | `lockSegmentedGenerationPage(pageId)` | the page's slug, source, body flags, storage and generation. Writes are serialized, so no row lock |
 | `splitManifestGeneration(pageId, generation, stagingId)` | copies the manifest rows that span `generation + 1` into the staging, ends the published rows at `generation`, and deletes the rows that start at it |
 | `publishRebuiltGeneration(pageId, generation, stagingId)` | publishes the staging's rows; the rows that start at `generation` end at `generation + 1` |
 | `setSegmentedVersionHash(pageId, generation, contentHash, bodyBytes)` | sets the content hash and byte count of the segmented version of `generation` |
-| `deleteRewrittenDerivationRows(pageId, scope)` | deletes the derivations of the touched occurrences, the `links` rows of the reach, and the unpaid kinds' rows of occurrences not live; returns the count |
 | `readSegmentedEmbedPage(ref)` | the segmented page an embed reads, by `{ id }` or `{ sourceId, slug }`: live, sealed and in a live source; `null` otherwise |
 | `hasLiveSegmentedPage(sourceId, slug)` | whether that page is segmented, live and in a live source, sealed or not |
 | `countSegmentedEmbedRows(pageId, column)` | a sealed page's visible chunk rows and those without a vector |
@@ -201,9 +196,13 @@ segmented-embed members (`page-body/segmented-embedding.ts`) are in
 | `listSegmentChunkRows(pageId, occurrenceId)` | a sealed page's visible rows of one occurrence in index order, with their recorded inputs |
 
 The embed members serve the column `embedding` only (the store's one vector column); another column
-refuses `engine_capability_missing`. The embed lease and budget (`page-embedding-lease.ts`,
-`page-embedding-budget.ts`) still run raw SQL, so `embedSegmentedRows` and `embedSegmentedPage`
-refuse on a Rust brain end to end.
+refuses `engine_capability_missing`. The embed lease (`takePageEmbeddingLease`, `renewPageEmbeddingLease`,
+`releasePageEmbeddingLease`) and the per-page embedding budget (`reservePageEmbedding`,
+`settlePageEmbeddingReservation`, in `page_embedding_budget.rs`) are served by the store. Two reads
+beside them still run raw SQL: the vectorless chunk read of `embedSegmentedRows`
+(`vectorlessChunkIndexes`, `page-embedding-lease.ts`), which a call with `includeEmbedded` skips, and the
+derivation spend ledger (`page_derivation_spend`, `page-spend.ts`). So `embedSegmentedRows` refuses on a
+Rust brain unless it is called with `includeEmbedded`; the budget and lease are not what stops it.
 
 A chunk row is stale for generation `g` with live occurrences `live` as in Postgres's
 `STALE_CHUNKS_SQL`: a segment chunk of a live occurrence when its generation is below the newest
