@@ -10,6 +10,9 @@
  *     as needing a person. It settles itself on a later run once the owner confirms the candidates are one person
  *     (gbrain dedupe confirm: they then share one identity group) or records them as different people (gbrain dedupe
  *     reject: the review stays, marked decided, and the contact stays unlinked).
+ *   - one person the owner recorded as a different person from the contact (gbrain dedupe reject): no link.
+ *
+ * The Google Contacts linker (google/contact-identity.ts) uses the same rule under its own link origin.
  *
  * Candidates are live pages of type person in every unarchived source that is not a connector (a Google or another
  * Apple contacts copy is not a person page); pages already in one identity group count as one person. A contact page another writer linked (a manual or dedupe link) is left as it is.
@@ -38,7 +41,8 @@ export interface IdentityReview {
   decided?: 'different';
 }
 
-export type MatchOutcome = { kind: 'one'; entityId: string; person: IdentityMemberRef } | { kind: 'none' } | { kind: 'many'; candidates: IdentityMemberRef[] };
+export type MatchOutcome = { kind: 'one'; entityId: string; person: IdentityMemberRef } | { kind: 'none' } | { kind: 'many'; candidates: IdentityMemberRef[] }
+  | { kind: 'different'; candidates: IdentityMemberRef[] };
 
 const decoded = (value: unknown): unknown => {
   if (typeof value !== 'string' || !/^[[{"]/.test(value)) return value;
@@ -83,34 +87,53 @@ async function outcomeOf(engine: BrainEngine, pages: IdentityMemberRef[], trunca
     : `person-${createHash('sha256').update(refKey(person!)).digest('hex').slice(0, 16)}` };
 }
 
-export interface LinkResult { outcome: MatchOutcome['kind']; linked: boolean; unlinked: boolean; candidates?: IdentityMemberRef[] }
+/** otherWriter: the contact page is in an identity group another writer made, which is left as it is. */
+export interface LinkResult { outcome: MatchOutcome['kind']; linked: boolean; unlinked: boolean; candidates?: IdentityMemberRef[]; otherWriter?: boolean }
+
+export interface LinkOptions {
+  /** established_by of the rows this linker writes; only its own rows are moved or removed. */
+  origin?: string;
+  /** The sets the owner recorded as different people (decidedSets().apart); read here when not given. */
+  apart?: IdentityMemberRef[][];
+  /** Decide and report the outcome without writing. */
+  dryRun?: boolean;
+}
 
 /** Match one contact page and bring its identity link in line with the outcome. */
-export async function linkContactPage(engine: BrainEngine, sourceId: string, slug: string, emails: string[], phones: string[], countryCode: string): Promise<LinkResult> {
+export async function linkContactPage(engine: BrainEngine, sourceId: string, slug: string, emails: string[], phones: string[], countryCode: string,
+  opts: LinkOptions = {}): Promise<LinkResult> {
+  const origin = opts.origin ?? APPLE_CONTACTS_LINK_ORIGIN;
   const { pages, truncated } = await exactPersonMatches(engine, sourceId, emails, phones, countryCode);
-  const outcome = await outcomeOf(engine, pages, truncated);
+  let outcome = await outcomeOf(engine, pages, truncated);
+  if (outcome.kind === 'one') {
+    const apart = opts.apart ?? decidedSets(await engine.listIdentityDecisions()).apart;
+    const contact = refKey({ source_id: sourceId, slug });
+    const people = new Set(pages.map(refKey));
+    if (apart.some(set => { const keys = set.map(refKey); return keys.includes(contact) && keys.some(k => people.has(k)); })) outcome = { kind: 'different', candidates: pages };
+  }
   const current = (await listEntityIdentities(engine, { slug, slugSourceId: sourceId })).find(m => m.slug === slug && m.source_id === sourceId) ?? null;
   // Another writer's link (the owner's manual link or a dedupe confirm) is a person's decision: never moved or removed here.
-  if (current && current.established_by !== APPLE_CONTACTS_LINK_ORIGIN) return { outcome: outcome.kind, linked: false, unlinked: false };
+  if (current && current.established_by !== origin) return { outcome: outcome.kind, linked: false, unlinked: false, otherWriter: true };
   if (outcome.kind === 'one') {
     if (current?.entity_id === outcome.entityId) return { outcome: 'one', linked: false, unlinked: false };
+    if (opts.dryRun) return { outcome: 'one', linked: true, unlinked: !!current };
     const group = await listEntityIdentities(engine, { entityId: outcome.entityId });
     if (!group.some(m => m.slug === outcome.person.slug && m.source_id === outcome.person.source_id)) {
-      await linkEntityIdentity(engine, { entityId: outcome.entityId, slug: outcome.person.slug, sourceId: outcome.person.source_id, establishedBy: APPLE_CONTACTS_LINK_ORIGIN, canonical: true });
+      await linkEntityIdentity(engine, { entityId: outcome.entityId, slug: outcome.person.slug, sourceId: outcome.person.source_id, establishedBy: origin, canonical: true });
     }
-    if (current) await unlinkContact(engine, current.entity_id, slug, sourceId);
-    await linkEntityIdentity(engine, { entityId: outcome.entityId, slug, sourceId, establishedBy: APPLE_CONTACTS_LINK_ORIGIN, canonical: false });
+    if (current) await unlinkContact(engine, current.entity_id, slug, sourceId, origin);
+    await linkEntityIdentity(engine, { entityId: outcome.entityId, slug, sourceId, establishedBy: origin, canonical: false });
     return { outcome: 'one', linked: true, unlinked: !!current };
   }
-  if (current) await unlinkContact(engine, current.entity_id, slug, sourceId);
+  if (current && !opts.dryRun) await unlinkContact(engine, current.entity_id, slug, sourceId, origin);
   return { outcome: outcome.kind, linked: false, unlinked: !!current, ...(outcome.kind === 'many' ? { candidates: outcome.candidates } : {}) };
 }
 
 /** Remove this source's link of a contact page, and the person page's row this source made when it is left alone in the group. */
-export async function unlinkContact(engine: BrainEngine, entityId: string, slug: string, sourceId: string): Promise<void> {
+export async function unlinkContact(engine: BrainEngine, entityId: string, slug: string, sourceId: string, origin = APPLE_CONTACTS_LINK_ORIGIN): Promise<void> {
   await unlinkEntityIdentity(engine, { entityId, slug, sourceId });
   const rest = await listEntityIdentities(engine, { entityId });
-  if (rest.length === 1 && rest[0]!.established_by === APPLE_CONTACTS_LINK_ORIGIN) {
+  if (rest.length === 1 && rest[0]!.established_by === origin) {
     await unlinkEntityIdentity(engine, { entityId, slug: rest[0]!.slug, sourceId: rest[0]!.source_id });
   }
 }

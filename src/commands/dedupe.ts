@@ -22,9 +22,13 @@ import { DUPLICATE_KINDS, entityPagesOf, findTypedDuplicateGroups, type Duplicat
 import { autoLinkCompanies } from '../core/entities/company-auto-link.ts';
 import { canonicalOf, decidedSets, decisionId, identityHome, reconcileDecisions, recordDecisions, unpublishableMembers, type DecisionInput, type RecordResult } from '../core/entities/identity-decisions.ts';
 import type { IdentityDecisionsRead, IdentityMemberRef } from '../core/engine-sql/identity-decisions.ts';
-import { identityIdsForPages, listEntityIdentities, validateEntityId } from '../core/entity-identity.ts';
+import { identityIdsForPages, isEntityId, listEntityIdentities, validateEntityId } from '../core/entity-identity.ts';
 import { opError, OperationError } from '../core/ops/contract.ts';
 import { parseSourceConfig } from '../core/sources-load.ts';
+import { APPLE_CONTACTS_LINK_ORIGIN, unlinkContact } from '../core/apple-contacts/identity-match.ts';
+import { GOOGLE_CONTACTS_LINK_ORIGIN, IDENTITY_LINKS_CONFIG_KEY, linkGoogleContacts, unlinkGoogleContacts } from '../core/google/contact-identity.ts';
+
+const CONTACT_LINK_ORIGINS: string[] = [APPLE_CONTACTS_LINK_ORIGIN, GOOGLE_CONTACTS_LINK_ORIGIN];
 
 const HELP = `Usage: gbrain dedupe --preview [--json] [--kind cross-source|in-source|conflict|thin] [--source <id>]
        gbrain dedupe confirm [--json]
@@ -32,6 +36,7 @@ const HELP = `Usage: gbrain dedupe --preview [--json] [--kind cross-source|in-so
        gbrain dedupe confirm <group-id>... [--join <entity_id>] [--json]
        gbrain dedupe reject <group-id>... [--json]
        gbrain dedupe reconcile [--json]
+       gbrain dedupe link-contacts --source <id> [--apply | --unlink] [--json]
 
 List groups of person and company pages that are likely the same person or company, with the evidence
 (shared keys by type, never their values) and a class: clean, likely, weak, thin or conflict.
@@ -59,11 +64,20 @@ reject <id>...      record that the pages are different people or companies: the
 reconcile           write decisions the database holds alone into git, re-read the committed decisions, link
                     pages that arrived since and link every company group that qualifies; run it after doctor
                     reports a drift
+link-contacts       count how the contact pages of a Google Contacts source would link; changes nothing
+  --source <id>     the Google Contacts source (required)
+  --apply           link each contact page to the one person page with exactly the same email or phone, and keep
+                    the contacts each sync changes linked (sets google_contacts.identity_links on)
+  --unlink          remove every link the source made and stop linking (sets google_contacts.identity_links off)
+                    a contact whose email or phone matches two or more people stays unlinked and waits for you in
+                    gbrain sync status; nothing matches by name; gbrain dedupe reject on a contact and person pair
+                    removes its link for good
 
 Companies link automatically: each sync links the cross-source company groups its changed pages belong to when
 they are clean, share a LinkedIn company page or their own site's domain, and name no different countries
 (identity rows established_by dedupe:auto, in the database only). gbrain dedupe reject undoes one.
-People are never linked automatically.
+People are never linked automatically, except contact pages by exactly the same email or phone (Apple Contacts,
+and Google Contacts after link-contacts --apply).
 
 Decisions are kept in .gbrain/identity/ in the brain's repository (committed through gbrain git commit-push),
 or in the database on a brain with no repository. Nothing merges, renames or deletes a page.
@@ -106,6 +120,7 @@ export async function runDedupe(engine: BrainEngine, args: string[]): Promise<vo
   if (sub === 'confirm') return runConfirm(engine, args.slice(1));
   if (sub === 'reject') return runReject(engine, args.slice(1));
   if (sub === 'reconcile') return runReconcile(engine, args.slice(1));
+  if (sub === 'link-contacts') return runLinkContacts(engine, args.slice(1));
   let json = false;
   let kind: DuplicateKind | undefined;
   let sourceId: string | undefined;
@@ -353,8 +368,9 @@ async function runReject(engine: BrainEngine, args: string[]): Promise<void> {
   const decisions: DecisionInput[] = [];
   for (const id of [...new Set(f.ids)]) {
     const confirmed = same.filter(d => d.entity_id === id);
-    const auto = confirmed.length || !id.startsWith('dedupe-auto/') ? [] : (await listEntityIdentities(engine, { entityId: id }))
-      .filter(m => m.established_by === 'dedupe:auto').map(m => ({ source_id: m.source_id, slug: m.slug }));
+    const linked = confirmed.length || !isEntityId(id) ? [] : await listEntityIdentities(engine, { entityId: id });
+    const auto = linked.some(m => m.established_by === 'dedupe:auto' || CONTACT_LINK_ORIGINS.includes(m.established_by))
+      ? linked.map(m => ({ source_id: m.source_id, slug: m.slug })) : [];
     const members = confirmed.length ? confirmed.map(d => ({ members: d.members, group_id: d.group_id ?? id }))
       : [result.groups.find(g => g.id === id)?.members ?? read.decisions.find(d => d.group_id === id)?.members ?? (auto.length > 1 ? auto : undefined)]
         .filter((m): m is IdentityMemberRef[] => !!m).map(m => ({ members: m, group_id: id }));
@@ -379,6 +395,7 @@ async function runReject(engine: BrainEngine, args: string[]): Promise<void> {
         verify: { argv: ['gbrain', 'doctor', '--only', 'entity_duplicates', '--json'] } } });
   }
   const r = await recordDecisions(engine, decisions, `dedupe: record ${decisions.length} group(s) as different people or companies`);
+  await unlinkRejectedContacts(engine, decisions);
   const sameSource = await markDistinct(engine, decisions);
   if (f.json) {
     console.log(JSON.stringify({ rejected: decisions.map(d => ({ group_id: d.group_id, members: d.members })), store: r.store,
@@ -394,6 +411,67 @@ async function runReject(engine: BrainEngine, args: string[]): Promise<void> {
       `Run the same command again (gbrain dedupe reject ${f.ids.join(' ')}); only the page edit is retried.`,
       { fix: { argv: ['gbrain', 'dedupe', '--preview'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Lists the current groups; changes nothing.' } });
   }
+}
+
+/** A contact page a contacts source linked to a person this decision separates leaves that group now; its next sync leaves it out too. */
+async function unlinkRejectedContacts(engine: BrainEngine, decisions: DecisionInput[]): Promise<void> {
+  for (const d of decisions) {
+    for (const m of d.members) {
+      const row = (await listEntityIdentities(engine, { slug: m.slug, slugSourceId: m.source_id })).find(x => x.slug === m.slug && x.source_id === m.source_id);
+      if (!row || row.canonical || !CONTACT_LINK_ORIGINS.includes(row.established_by)) continue;
+      const together = (await listEntityIdentities(engine, { entityId: row.entity_id })).map(memberText);
+      if (!d.members.some(o => o !== m && together.includes(memberText(o)))) continue;
+      await unlinkContact(engine, row.entity_id, m.slug, m.source_id, row.established_by);
+    }
+  }
+}
+
+async function runLinkContacts(engine: BrainEngine, args: string[]): Promise<void> {
+  let json = false, apply = false, unlink = false, sourceId: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === '--json') json = true;
+    else if (a === '--apply') apply = true;
+    else if (a === '--unlink') unlink = true;
+    else if (a === '--source' && args[i + 1]) sourceId = args[++i];
+    else { console.error(`gbrain dedupe link-contacts: unknown argument ${a}.\n\n${HELP}`); setCliExitVerdict(2); return; }
+  }
+  if (!sourceId || (apply && unlink)) { console.error(`gbrain dedupe link-contacts: pass --source <id>, with at most one of --apply and --unlink.\n\n${HELP}`); setCliExitVerdict(2); return; }
+  const source = (await engine.listAllSources()).find(s => s.id === sourceId);
+  if (!source) {
+    const archived = (await engine.listAllSources({ includeArchived: true })).some(s => s.id === sourceId);
+    throw opError('unknown_source', `gbrain dedupe link-contacts: source ${sourceId} is ${archived ? 'archived' : 'not registered'}; nothing was written.`,
+      'Pass the id of an active Google Contacts source.',
+      { fix: { argv: ['gbrain', 'sources', 'list', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Lists the source ids, read-only.' } });
+  }
+  if (parseSourceConfig(source.config).kind !== 'google') {
+    throw opError('invalid_source', `gbrain dedupe link-contacts: source ${sourceId} is not a Google source, so it has no Google Contacts pages; nothing was written.`,
+      'Pass the id of a Google source that syncs contacts. Apple Contacts sources link their contact pages on every sync already.',
+      { fix: { argv: ['gbrain', 'sources', 'list', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Lists the sources and their kinds, read-only.' } });
+  }
+  if (unlink) {
+    const unlinked = await unlinkGoogleContacts(engine, sourceId);
+    await engine.setConfig(IDENTITY_LINKS_CONFIG_KEY, 'off');
+    if (json) console.log(JSON.stringify({ source_id: sourceId, mode: 'unlink', unlinked, identity_links: 'off' }, null, 2));
+    else console.log(`Removed the links of ${unlinked} contact page(s) of ${sourceId} and set ${IDENTITY_LINKS_CONFIG_KEY} off; syncs no longer link contacts.`);
+    return;
+  }
+  const counts = await linkGoogleContacts(engine, sourceId, { apply });
+  if (apply) await engine.setConfig(IDENTITY_LINKS_CONFIG_KEY, 'on');
+  if (json) { console.log(JSON.stringify({ source_id: sourceId, mode: apply ? 'apply' : 'dry_run', ...counts, ...(apply ? { identity_links: 'on' } : {}) }, null, 2)); return; }
+  const would = apply ? '' : 'would be ';
+  console.log([
+    `${counts.contacts} contact page(s) in ${sourceId}${apply ? '' : ' (dry run: nothing was written)'}:`,
+    `  ${counts.linked} ${would}linked to the one person page with exactly the same email or phone`,
+    `  ${counts.already_linked} already linked`,
+    `  ${counts.waiting} match two or more people and wait for you (gbrain sync status --source ${sourceId})`,
+    `  ${counts.no_match} match no person page`,
+    `  ${counts.rejected} match one person you recorded as a different person`,
+    `  ${counts.other_writer} sit in an identity group another writer made and are left as they are`,
+    `  ${counts.unlinked} earlier link(s) ${would}removed`,
+    apply ? `Set ${IDENTITY_LINKS_CONFIG_KEY} on: each sync links the contacts it changes. Undo one link with gbrain dedupe reject, all of them with --unlink.`
+      : `Link them with gbrain dedupe link-contacts --source ${sourceId} --apply.`,
+  ].join('\n'));
 }
 
 /** Two or more members in one writable source also get `distinct_from` (through the page door, as extraction-review distinct does). */
