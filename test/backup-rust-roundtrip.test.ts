@@ -129,6 +129,7 @@ async function backedUp(extra?: (brain: any) => Promise<void>) {
         const writer = (async () => { while (writing) { await o.say(`put during/${writes++}`); } })();
         const created = await createBackup({ output: archive, root, addon });
         writing = false; await writer;
+        expect(writes).toBeGreaterThan(1); // the owner took writes while the backup ran, so the archive below is not of an idle brain
         await o.say('put after/1');
         const into = fresh('restored');
         await restoreBackup({ archive, into, addon });

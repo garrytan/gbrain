@@ -75,6 +75,8 @@ const plenty: FsStats = { bavail: 1_000_000_000, bsize: 4096, blocks: 2_000_000_
     await until('the copy to start', () => existsSync(join(target, 'records.redb')));
     await sleep(100);
     await owner.putPage('notes/late', { type: 'note', title: 'Late', compiled_truth: 'written during the copy', timeline: '' });
+    // The write was acknowledged while the copy was still running: the owner is not held back until the copy ends.
+    expect(snapshotStatus(opId).state).toBe('running');
     const done = await copying;
     expect(done.state).toBe('done');
     expect(done.free_bytes.initial).toBeGreaterThan(0);

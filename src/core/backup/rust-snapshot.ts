@@ -360,7 +360,8 @@ export async function restoreRustBackup(options: { archive: string; into: string
       privateWrite(join(home, 'agent-install', 'receipt.json'), JSON.stringify(next, null, 2) + '\n');
     }
     syncRestoredTree(restored);
-    for (const name of readdirSync(restored)) {
+    // `.gbrain` (the config and the store) moves last, in one rename: an interruption before it leaves no brain at the target.
+    for (const name of readdirSync(restored).sort((a, b) => Number(a === '.gbrain') - Number(b === '.gbrain'))) {
       if (existsSync(join(root, name))) throw new AgentInstallError('restore_collision', 'New content appeared in the reserved restore root.');
       renameSync(join(restored, name), join(root, name));
     }
