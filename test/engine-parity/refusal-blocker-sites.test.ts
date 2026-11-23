@@ -10,17 +10,22 @@
  *    by a remote caller; a Rust brain gives the same answer. A committed managed `sources add` (addOutcome) reads the
  *    stored federated setting back when its result carries none, and reports what the add means for default search.
  *    `gbrain sources add --kind google` (findDuplicateGoogleSource) warns about an active source that already syncs the
- *    same account for an overlapping slice of services and calendar.
+ *    same account for an overlapping slice of services and calendar. `gbrain sources add --url` (addSource, unmanaged
+ *    brain) removes the source row it inserted when the clone cannot be moved into place, so a failed add leaves no row.
  *  - Regression: a caller that swallows the Rust refusal returns its quiet default (no rows, no notice), so the
  *    regression gate reports "skipped: 0 replay-eligible rows" for a brain that has them, a sync never mentions that
  *    a source's pages are out of default search, an add never says its source stays out of default search and the
- *    duplicate-Google-account warning is never given.
+ *    duplicate-Google-account warning is never given and a failed clone move leaves a half-added source row.
  *  - Why existing coverage misses it: the caller's catch turns the refusal into the default, which no engine-level case
  *    reads.
  *  - Seam: none. Rows come from logEvalCandidate, sources from createSource and pages from putPage; ids and timestamps
- *    are never returned.
+ *    are never returned. The clone case puts a `git` stand-in first on PATH that only makes the destination directory
+ *    for `git clone` (no network); every other git call goes to the real git.
  */
 import { describe, expect } from 'bun:test';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { EvalCandidateInput } from '../../src/core/types.ts';
 import { loadReplayRows } from '../../src/commands/eval-whoknows.ts';
 import { syncOutOfSearchNotice } from '../../src/commands/sources-add-next.ts';
@@ -28,7 +33,9 @@ import { addOutcome } from '../../src/commands/sources-lifecycle.ts';
 import type { ParsedSourceLifecycle } from '../../src/commands/sources-lifecycle-args.ts';
 import { findDuplicateGoogleSource } from '../../src/commands/sources.ts';
 import { DEFAULT_CALENDAR_ID } from '../../src/core/google/types.ts';
+import { addSource, SourceOpError } from '../../src/core/sources-ops.ts';
 import { archiveSource, createSource, parityArms } from './harness.ts';
+import { withEnv } from '../helpers/with-env.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -143,6 +150,33 @@ describe('engine parity: refusal-swallow sites', () => {
       };
       expect(found.gmail).toEqual({ id: 'g-mail', overlap: 'gmail' });
       return found;
+    },
+  );
+
+  parityTest(
+    'a source add whose clone cannot be moved into place rolls back its source row',
+    { methods: ['insertSource', 'getSource'] },
+    async (engine) => {
+      const root = mkdtempSync(join(tmpdir(), 'gbrain-add-rollback-'));
+      const realGit = Bun.which('git') ?? 'git';
+      const bin = join(root, 'bin');
+      writeFileSync(join(root, 'not-a-directory'), 'a file where the clone parent should be\n');
+      Bun.spawnSync(['mkdir', '-p', bin]);
+      writeFileSync(join(bin, 'git'), `#!/bin/sh\ncase " $* " in *" clone "*) for last; do :; done; mkdir -p "$last"; exit 0;; esac\nexec ${JSON.stringify(realGit)} "$@"\n`);
+      chmodSync(join(bin, 'git'), 0o755);
+      try {
+        return await withEnv({ PATH: `${bin}:${process.env.PATH ?? ''}` }, async () => {
+          const failure = await addSource(engine, {
+            id: 'cloned-src', remoteUrl: 'https://example.test/notes.git', cloneDir: join(root, 'not-a-directory', 'clone'),
+          } as never).then(() => null, (e: unknown) => e);
+          expect(failure).toBeInstanceOf(SourceOpError);
+          const rowAfter = await engine.getSource('cloned-src');
+          expect({ code: (failure as SourceOpError).code, rowLeft: rowAfter !== null }).toEqual({ code: 'rename_failed', rowLeft: false });
+          return { code: (failure as SourceOpError).code, rowLeft: rowAfter !== null };
+        });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
     },
   );
 });

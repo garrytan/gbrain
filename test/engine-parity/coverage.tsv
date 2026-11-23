@@ -153,7 +153,7 @@ applyIdentityDecisions	pages	yes	4	no	yes	yes	serves
 listAllPageRefs	pages	yes	4	yes	yes	yes	serves
 listAllSources	pages	yes	19	no	yes	yes	serves
 updateSourceConfig	pages	yes	18	no	yes	yes	serves
-getSource	pages	yes	29	no	yes	yes	serves
+getSource	pages	yes	30	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
 countRepoBoundSources	pages	yes	2	no	yes	yes	serves
 listNotifierHostSourceRows	pages	yes	3	no	yes	yes	serves
@@ -177,7 +177,7 @@ readPageIdentity	pages	yes	2	no	yes	yes	serves
 markSourceSynced	pages	yes	4	no	yes	yes	serves
 advanceSyncCheckpoint	pages	yes	2	no	yes	yes	serves
 countSourcePages	pages	yes	6	no	yes	yes	serves
-insertSource	pages	yes	13	no	yes	yes	serves
+insertSource	pages	yes	14	no	yes	yes	serves
 deleteSourceRecord	pages	yes	6	no	yes	yes	serves
 readSourceDeleteImpact	pages	yes	2	no	yes	yes	serves
 readPageSizeRows	pages	yes	4	no	yes	yes	serves
