@@ -310,6 +310,15 @@ Differences from the SQL engines:
   each adjustment is a compare-and-replace.
 - `read_at` of a pass row is the process clock at the read; the SQL engines use the database clock.
 
+Two connector rows have their own store writes (`persistence/connector_attempts.rs`), each one store transaction:
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.recordConnectorSyncAttempt(sourceId, at, seed)` | `false` for an unknown source; otherwise `true` after it stamps the source's first connector sync attempt: a missing `managed-connector-state` row (keyed `connectorStateKey`, the SHA-256 of the sorted compact `{ incarnation, sourceId }`) is created with `seed`, a row whose first record has no `first_attempt_at` gets `at` there, and a stamped row is left as it is | `recordConnectorSyncAttempt` (`engine-sql/connector-attempts.ts`) |
+| `brain.writeConnectorDbCursor(key, record)` | the `connector-db-cursor` row `key`: created as `record`, or rewritten as `[{ version: 1, state, last_run }]` with `last_run` kept only when `record` has no `last_run` key (a JSON null is a value, as jsonb `->` reads it) | `writeConnectorDbCursor` (`engine-sql/connector-db-cursor.ts`) |
+
+Both write in jsonb key order, so the rows read back as the same JSON text as on the SQL engines.
+
 ## Commit notifier
 
 The resident commit notifier's host lease, host source list, per-source rows and freshness reads

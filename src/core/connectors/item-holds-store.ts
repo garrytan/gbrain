@@ -192,10 +192,11 @@ export async function carryHoldsToClassicState(engine: SourceExec, hostId: strin
   return carried;
 }
 
-export async function readHoldRetryKeys(engine: Exec, sourceId: string, incarnation: string): Promise<string[]> {
-  const [row] = await engine.executeRaw<{ completed_keys: Array<{ keys?: unknown }> }>(
-    'SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [HOLD_RETRY_OP, connectorStateKey(sourceId, incarnation)]);
-  const keys = row?.completed_keys?.[0]?.keys;
+export async function readHoldRetryKeys(engine: Exec & Partial<Pick<BrainEngine, 'readOpCheckpointRecord'>>, sourceId: string, incarnation: string): Promise<string[]> {
+  const stored = engine.readOpCheckpointRecord ? (await engine.readOpCheckpointRecord(HOLD_RETRY_OP, connectorStateKey(sourceId, incarnation)))?.completed_keys
+    : (await engine.executeRaw<{ completed_keys: unknown[] }>(
+      'SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [HOLD_RETRY_OP, connectorStateKey(sourceId, incarnation)]))[0]?.completed_keys;
+  const keys = (stored as Array<{ keys?: unknown }> | undefined)?.[0]?.keys;
   return Array.isArray(keys) ? keys.filter((k): k is string => typeof k === 'string') : [];
 }
 

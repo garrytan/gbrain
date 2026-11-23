@@ -1917,6 +1917,10 @@ export interface BrainEngine {
   readMeetingPage(sourceId: string, meetingId: string): Promise<import('./engine-sql/meeting-pages.ts').MeetingPageRow | null>;
   /** At most two live person pages of a source an attendee name can mean: by slug, lower(title) or a lower(alias) (SQL in engine-sql/attendance-pages.ts). */
   listAttendanceMatches(sourceId: string, slugs: readonly string[], name: string): Promise<string[]>;
+  /** Stamps a source's first connector sync attempt once (`seed` for a new state row); false for an unknown source (SQL in engine-sql/connector-attempts.ts). */
+  recordConnectorSyncAttempt(sourceId: string, at: string, seed: readonly unknown[]): Promise<boolean>;
+  /** Writes an unmanaged connector's cursor row, keeping its last run when `record` has no `last_run` key (SQL in engine-sql/connector-db-cursor.ts). */
+  writeConnectorDbCursor(key: string, record: readonly unknown[]): Promise<void>;
   /** The named live pages of a source with their revision and recorded path. */
   readLivePagesByIds(sourceId: string, ids: readonly number[]): Promise<import('./engine-sql/moved-page-reads.ts').MovedPageRow[]>;
   /** repair lost-fence-rows: the retired fence items of unproven, unheld page fence generations (engine-sql/lost-fence-reads.ts). */

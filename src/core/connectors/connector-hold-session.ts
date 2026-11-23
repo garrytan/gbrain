@@ -47,8 +47,8 @@ export class ConnectorHoldSession {
 
   static async open(engine: BrainEngine, sourceId: string, managed: ManagedConnectorSync | null, empty: Record<string, unknown>,
     stored: unknown, opts: { full?: boolean; now?: () => number } = {}): Promise<ConnectorHoldSession> {
-    const [row] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]).catch(() => []);
-    const incarnation = row?.incarnation ?? null;
+    const row = await engine.readSourceState(sourceId).catch(() => null);
+    const incarnation = row ? String(row.incarnation) : null;
     const keys = incarnation ? await readHoldRetryKeys(engine, sourceId, incarnation).catch(() => []) : [];
     const session = new ConnectorHoldSession(engine, sourceId, incarnation, managed, empty, stored, new Set(keys), opts);
     // A managed held item re-admitted by a due transient reconsideration gets the same durable retry

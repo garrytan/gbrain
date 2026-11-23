@@ -257,6 +257,8 @@ import * as atomRestoreReads from './engine-sql/atom-restore-reads.ts';
 import * as movedPageReads from './engine-sql/moved-page-reads.ts';
 import * as meetingPages from './engine-sql/meeting-pages.ts';
 import * as attendancePages from './engine-sql/attendance-pages.ts';
+import * as connectorAttempts from './engine-sql/connector-attempts.ts';
+import * as connectorDbCursor from './engine-sql/connector-db-cursor.ts';
 import * as lostFenceReads from './engine-sql/lost-fence-reads.ts';
 import * as staleAtomReads from './engine-sql/stale-atom-reads.ts';
 import * as filesOpsImpl from './engine-sql/files-ops.ts';
@@ -2253,6 +2255,8 @@ export class PostgresEngine implements BrainEngine {
   listLivePagesSharingFrontmatterId(sourceId: string, pageId: number) { return movedPageReads.listLivePagesSharingFrontmatterId(this, sourceId, pageId); }
   readMeetingPage(sourceId: string, meetingId: string) { return meetingPages.readMeetingPage(this, sourceId, meetingId); }
   listAttendanceMatches(sourceId: string, slugs: readonly string[], name: string) { return attendancePages.listAttendanceMatches(this, sourceId, slugs, name); }
+  recordConnectorSyncAttempt(sourceId: string, at: string, seed: readonly unknown[]) { return connectorAttempts.recordConnectorSyncAttempt(this, sourceId, at, seed); }
+  writeConnectorDbCursor(key: string, record: readonly unknown[]) { return connectorDbCursor.writeConnectorDbCursor(this, key, record); }
   hasSegmentedHistory(pageId: number) { return movedPageReads.hasSegmentedHistory(this, pageId); }
   readLivePagesByIds(sourceId: string, ids: readonly number[]) { return movedPageReads.readLivePagesByIds(this, sourceId, ids); }
   listRetiredFenceItems(sourceIds: readonly string[], only: { source_id: string; slug: string } | null) { return lostFenceReads.listRetiredFenceItems(this, sourceIds, only); }

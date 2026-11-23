@@ -6,9 +6,9 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1585/1595
+# covered: 1587/1597
 # lifecycle: 9/9
-# pages: 72/72
+# pages: 74/74
 # search: 7/7
 # search_reads: 9/9
 # link_reads: 13/13
@@ -166,8 +166,10 @@ listLivePagesBySourcePaths	pages	yes	2	no	yes	yes	serves
 listLivePagesByFileName	pages	yes	2	no	yes	yes	serves
 listLivePagesSharingFrontmatterId	pages	yes	1	no	yes	yes	serves
 hasSegmentedHistory	pages	yes	2	no	yes	yes	serves
-readMeetingPage	pages	yes	1	no	yes	yes	serves
+readMeetingPage	pages	yes	2	no	yes	yes	serves
 listAttendanceMatches	pages	yes	1	no	yes	yes	serves
+recordConnectorSyncAttempt	pages	yes	2	no	yes	yes	serves
+writeConnectorDbCursor	pages	yes	2	no	yes	yes	serves
 readLivePagesByIds	pages	yes	1	no	yes	yes	serves
 listStaleAtoms	pages	yes	2	no	yes	yes	serves
 getPageSealState	pages	yes	5	no	yes	yes	serves
@@ -1423,7 +1425,7 @@ filterPagesAtRevision	cli_reads_import	yes	1	no	yes	yes	serves
 lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	serves
 replaceWantedLinkRows	wanted_links	yes	8	no	yes	yes	serves
 isSourceClaimed	write_misc	yes	3	no	yes	yes	serves
-readSourceState	write_misc	yes	7	no	yes	yes	serves
+readSourceState	write_misc	yes	9	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	1	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
@@ -1450,8 +1452,8 @@ readPageRevisionWriter	write_misc	yes	1	no	yes	yes	serves
 readRevisionWriterRequest	write_misc	yes	2	no	yes	yes	serves
 writeSyncAdmissionStamp	write_misc	yes	5	no	yes	yes	serves
 readSyncAdmissionEffects	write_misc	yes	6	no	yes	yes	serves
-readOpCheckpointRecord	write_misc	yes	15	no	yes	yes	serves
-writeOpCheckpointRecord	write_misc	yes	32	no	yes	yes	serves
+readOpCheckpointRecord	write_misc	yes	18	no	yes	yes	serves
+writeOpCheckpointRecord	write_misc	yes	33	no	yes	yes	serves
 purgeStaleCheckpoints	write_misc	yes	1	no	yes	yes	serves
 readHealthMemoClock	write_misc	yes	1	no	yes	yes	serves
 listSynopsisSourceIds	write_misc	yes	3	no	yes	yes	serves

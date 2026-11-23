@@ -65,6 +65,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 mod checkpoint_rows;
+mod connector_attempts;
 mod connector_orphans;
 mod dream_reads;
 mod effect_scans;
