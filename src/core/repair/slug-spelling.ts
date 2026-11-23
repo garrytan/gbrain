@@ -38,13 +38,14 @@ import { shellQuote } from '../agent-output.ts';
 import { OperationError } from '../ops/contract.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import { resolveRecordedSourceFilePath } from '../markdown.ts';
-import { normalizeSlug, validateSlug } from '../utils.ts';
+import { normalizeSlug, validateSlug, withStoredSlug } from '../utils.ts';
 import { lockedBeliefBatch } from '../belief/writers.ts';
 import { markBeliefCommits } from '../belief/append.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { slugSpellingPreviewArgv } from '../persistence/legacy-slug-put.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
+import { carryGuards } from './slug-spelling-guards.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
 
 const DOCS = 'docs/guides/repair.md#slug-spelling';
@@ -64,6 +65,8 @@ const REASON_PREFIX = 'A folder prefix, not the slug of one page.';
 export const SLUG_COLUMNS_MOVED: readonly string[] = [
   'pages.slug', 'facts.entity_slug', 'facts.source_markdown_slug', 'fact_withdrawals.subject', 'page_aliases.slug', 'secret_store_occurrence.slug',
   'slug_aliases.alias_slug', 'slug_aliases.canonical_slug', 'slug_rename_history.old_slug', 'slug_rename_history.new_slug', 'files.page_slug',
+  // Active guards the repair carries to the normal slug itself (`carryGuards`): purge tombstones are copied (the old rows stay), held writes are re-keyed.
+  'fact_purges.subject', 'take_purges.subject', 'write_gate_holds.slug',
 ];
 
 /** Every other slug-holding column, with why the repair leaves it. test/repair-slug-spelling.test.ts scans the schema so a new one cannot be missed. */
@@ -77,7 +80,6 @@ export const SLUG_COLUMNS_EXEMPT: Readonly<Record<string, string>> = {
   'decide_review_proposals.subject': REASON_RECORD,
   'entity_identity_reviews.canonical_slug': REASON_RECORD,
   'eval_candidates.retrieved_slugs': REASON_HISTORY,
-  'fact_purges.subject': REASON_HISTORY,
   'fact_relink_attempts.target_slug': REASON_DERIVED,
   'guest_marks.group_slug': REASON_RECORD,
   'guest_marks.slug_at_write': REASON_HISTORY,
@@ -102,9 +104,7 @@ export const SLUG_COLUMNS_EXEMPT: Readonly<Record<string, string>> = {
   'retrieval_event_pages.slug': REASON_HISTORY,
   'session_context_state.surfaced_slugs': REASON_DERIVED,
   'take_proposals.page_slug': REASON_RECORD,
-  'take_purges.subject': REASON_HISTORY,
   'wake_subscriptions.target': REASON_RECORD,
-  'write_gate_holds.slug': REASON_RECORD,
 };
 
 export type SlugSpellingClass = 'move' | 'needs_human' | 'rename_file_first';
@@ -174,14 +174,17 @@ function sameFile(a: string, b: string): boolean {
   try { const x = statSync(a), y = statSync(b); return x.ino === y.ino && x.dev === y.dev; } catch { return false; }
 }
 
+const isFile = (path: string): boolean => { try { return statSync(path).isFile(); } catch { return false; } };
+
 /** The file evidence of one page: what the source's checkout holds at the page's recorded path or at the old spelling's path. */
 export function fileEvidence(root: string | null, page: { slug: string; normal: string; source_path: string | null }): FileEvidence {
   if (!root) return { checkout: 'none' };
   if (!existsSync(root)) return { checkout: 'unavailable' };
   const recorded = page.source_path?.trim();
   if (recorded) {
+    // The resolver returns the direct path even when no file is there, so the file itself is checked.
     const resolved = resolveRecordedSourceFilePath(root, recorded, page.slug);
-    if (!resolved) return { checkout: 'present', origin_file: 'missing' };
+    if (!resolved || !isFile(resolved)) return { checkout: 'present', origin_file: 'missing' };
     const rel = relative(resolve(root), resolved).split(sep).join('/');
     return { checkout: 'present', origin_file: rel === `${page.normal}${extname(recorded)}` ? 'at_normal_path' : 'elsewhere' };
   }
@@ -382,7 +385,13 @@ function changedFact(page: SpellingPage, current: SpellingEntry): string | null 
 }
 
 /** One page's move in its own maintenance transaction: re-checked under both page locks, rolled back whole on any failure. */
-async function movePage(engine: BrainEngine, sourceId: string, page: SpellingPage, incarnation: string): Promise<RepairItemOutcome> {
+function movePage(engine: BrainEngine, sourceId: string, page: SpellingPage, incarnation: string): Promise<RepairItemOutcome> {
+  // The stored spelling is kept as it is (validateSlug would normalize it): writers of an existing page lock that spelling, so
+  // the repair must lock the same key, read the page and capture its versions under it, and run the rename addressing it.
+  return withStoredSlug(page.slug, () => movePageUnderStoredSlug(engine, sourceId, page, incarnation));
+}
+
+async function movePageUnderStoredSlug(engine: BrainEngine, sourceId: string, page: SpellingPage, incarnation: string): Promise<RepairItemOutcome> {
   if (await managedPersistenceEnabled(engine)) throw managedRemedyRefusal(sourceId);
   const publicationId = randomUUID();
   const report = { appended: 0 };
@@ -400,14 +409,15 @@ async function movePage(engine: BrainEngine, sourceId: string, page: SpellingPag
     }
     const [taken] = await tx.executeRaw('SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, page.normal]);
     if (taken) throw changedSincePreview(sourceId, page.slug, `another page now holds ${page.normal} (slug_spelling_collision)`);
-    let attachments = 0;
+    let attachments = 0, guards: Awaited<ReturnType<typeof carryGuards>> = { fact_purges: 0, take_purges: 0, holds: 0 };
     await lockedBeliefBatch(tx, { sourceId, slugs: [page.slug, page.normal], publicationId, op: 'slug_spelling', remote: false, report }, async () => {
       if (await tx.updateSlug(page.slug, page.normal, { sourceId }) !== 1) throw changedSincePreview(sourceId, page.slug, `page ${page.slug} could not move to ${page.normal}`);
       // Attachments carry the page's slug beside its id: this source's rows of the page, and rows with no page id that name the old slug.
       const files = await tx.executeRaw('UPDATE files SET page_slug = $3 WHERE source_id = $1 AND page_slug = $2 AND (page_id = $4 OR page_id IS NULL) RETURNING id', [sourceId, page.slug, page.normal, page.page_id]);
       attachments = files.length;
+      guards = await carryGuards(tx, sourceId, page.slug, page.normal);
     });
-    return { applied: true, outcome: 'moved', detail: { page_id: page.page_id, from: page.slug, to: page.normal, attachments_moved: attachments, kept_source_path: page.source_path } } satisfies RepairItemOutcome;
+    return { applied: true, outcome: 'moved', detail: { page_id: page.page_id, from: page.slug, to: page.normal, attachments_moved: attachments, kept_source_path: page.source_path, guards_carried: guards } } satisfies RepairItemOutcome;
   });
   if (report.appended) await markBeliefCommits(engine, [publicationId]).catch(() => undefined);
   return outcome;

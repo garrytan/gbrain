@@ -356,8 +356,8 @@ describe('guards that follow the page to its normal slug', () => {
     expect(holds.map(h => [h.slug, h.status, h.fingerprint === fingerprint])).toContainEqual(['notes/hold-move', 'held', true]);
     expect(holds.filter(h => h.slug === 'Notes/Hold-Move' && h.status === 'held')).toEqual([]);
     expect(payloadOf(holds.find(h => h.fingerprint === fingerprint)!).entity_slug).toBe('notes/hold-move');
-    // The collision keeps one row for the claim, and it is held again.
-    expect(holds.filter(h => h.fingerprint === dupFp).map(h => [h.slug, h.status])).toEqual([['notes/hold-move', 'held']]);
+    // The collision leaves one active hold for the claim (held again, at the normal slug); the old one is a decided record.
+    expect(holds.filter(h => h.fingerprint === dupFp).map(h => [h.slug, h.status])).toEqual([['Notes/Hold-Move', 'dropped'], ['notes/hold-move', 'held']]);
   }), 60_000);
 
   test('a write by the stored spelling and the repair take the same two page locks: the legacy key is locked too, and a change after the preview refuses', () => withEnv(env, async () => {
