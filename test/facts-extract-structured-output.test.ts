@@ -208,6 +208,28 @@ describe('facts extraction — json_schema rejected at call time falls back sche
     expect(warns.filter(w => /json_schema/.test(w))).toHaveLength(1); // remembered: no second rejection, no second warn
   });
 
+  test('the retry warning names the rejection, never the provider error text (which can echo a URL or key)', async () => {
+    configureGateway({ chat_model: OLLAMA, env: {} });
+    const CANARY = 'VALUECANARY';
+    const calls: any[] = [];
+    __setGenerateTextTransportForTests(async (args: any) => {
+      calls.push(args);
+      if (args.output) throw apiError(400, `response_format json_schema is not supported; request to http://ollama.example/v1/chat?app=${CANARY} refused`);
+      return sdkResult(GOOD_JSON);
+    });
+
+    const first = await extract(OLLAMA);
+
+    expect(first.ok).toBe(true);
+    expect(calls).toHaveLength(2);
+    const line = warns.find(w => /json_schema/.test(w));
+    expect(line).toBeDefined();
+    expect(line).toContain('retrying without a schema');
+    expect(warns.join('\n')).not.toContain(CANARY);
+    expect(warns.join('\n')).not.toContain('://');
+    expect(warns.join('\n')).not.toContain('is not supported');
+  });
+
   test('an unrelated 500 is NOT a schema rejection: no retry, provider_error, schema still sent next time', async () => {
     configureGateway({ chat_model: OLLAMA, env: {} });
     const calls: any[] = [];
