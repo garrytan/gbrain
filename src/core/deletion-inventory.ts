@@ -349,6 +349,8 @@ const RUST_ROWS: readonly RustRow[] = [
   ['u', null, 'timeline_queries', 'timeline_entries', 'index'],
   ['v', null, 'relations', '', undefined, ['no_memory_text', 'the relation catalog: no record is built under v yet']],
   ['w', null, 'transactions', '', undefined, ['no_memory_text', 'the lock queue: held in memory, no record is written under w']],
+  ['x', null, 'access_members', 'access_members access_groups access_group_members access_member_links'],
+  ['y', null, 'session_state', 'session_context_state'],
   ['z', null, 'access_rules', 'access_policy_state access_rules access_pending_coverage access_policy_revisions pages access_policy_migrations'],
 ];
 

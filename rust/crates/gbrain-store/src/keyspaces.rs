@@ -197,6 +197,16 @@ pub const KEYSPACES: &[Keyspace] = &[
     ),
     ks(keys::RELATION_CATALOG, "relations", "relation catalog"),
     ks(keys::LOCK_QUEUE, "transactions", "lock queue"),
+    ks(
+        keys::ACCESS_MEMBERS,
+        "access_members",
+        "access members, groups, group members and member links",
+    ),
+    ks(
+        keys::SESSION_STATE,
+        "session_state",
+        "session context state",
+    ),
     ks(keys::ACCESS_RULES, "access_rules", "folder access rules"),
 ];
 
