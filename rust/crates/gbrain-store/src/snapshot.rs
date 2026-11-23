@@ -451,7 +451,7 @@ impl Store {
     /// transaction; `snapshot_cancelled`; `store_io` (a full disk among them) and `store_corrupt`.
     /// On any error the call has removed what it made and released its read before it returns.
     pub fn snapshot_to(&self, target: &Path, op: &SnapshotOp) -> Result<SnapshotManifest> {
-        self.snapshot_with(target, op, true, |path| RedbSink::create_path(path))
+        self.snapshot_with(target, op, true, RedbSink::create_path)
     }
 
     /// `snapshot_to` over a sink the caller makes: the seam fault-injection tests use. `reopen`
