@@ -1,9 +1,0 @@
-**Shadow mode now keeps the Rust engine's copy of your brain in step as the brain changes, and checks that the two still agree.**
-
-### Added
-- Follow: every committed write on the brain is applied to the Rust engine's own store in the background, with a generation rule so an older read never overwrites a newer one. A delete leaves a tombstone, and a row that takes another row's unique key moves the stale row aside. Shadow mode off costs nothing on the write path.
-- `gbrain engine shadow reconcile [--full]` and a nightly full pass compare the brain and the Rust store in 500-row intervals by digest and repair any interval that differs. Each pass is recorded in `reconcile/passes.jsonl`. Every full pass rewrites rows that were already correct, which costs time on a large brain.
-- A coverage watermark says whether the follower can vouch for every write up to a time. A restart, a write from another process, an unmapped write or a gap in the sequence marks it invalid until a full pass runs.
-- A fingerprint probe compares the brain's `lower()` and whitespace answers for every Unicode code point with PGLite's tables, and runs a corpus sample through `gbrain_fact_fingerprint` and its v1. It records the database's ctype, locale provider and locale, and counts the stored facts that hold a differing code point without reading any of them out. It fails only when code points differ and a stored fact holds one.
-- `gbrain engine shadow status --json` gains `epoch_id`, `epoch_started_at`, `follower`, `reconcile`, `write_comparisons`, `fingerprints`, `seed`, `allocators` and `primary_refreshes`, including an allocator check and the open primary refresh count.
-- A brain seeded before follow existed is not followed. `status` says so (`follower.state` is `needs_reseed`, and `follower.action` names the commands), and `reconcile` refuses it. To reseed, run `gbrain engine shadow stop --delete`, then `gbrain engine shadow seed`, then `gbrain engine shadow start`.
