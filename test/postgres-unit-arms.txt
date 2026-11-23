@@ -461,6 +461,7 @@ test/engine-parity/trust-withdrawals.test.ts
 test/engine-parity/trust-write-gate.test.ts
 test/engine-parity/typed-config-reads.test.ts
 test/engine-parity/unbound-claim.test.ts
+test/engine-parity/unowned-refusal-sites.test.ts
 test/engine-parity/unrestricted-caller-reads.test.ts
 test/engine-parity/unrestricted-fact-list-reads.test.ts
 test/engine-parity/unrestricted-member-page-reads.test.ts

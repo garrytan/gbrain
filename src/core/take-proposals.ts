@@ -33,6 +33,7 @@ import type { OperationContext } from './ops/contract.ts';
 import { submitPageMutation } from './persistence/page-mutations.ts';
 import { waitForWrite } from './persistence/service.ts';
 import type { WriteRequest } from './persistence/model.ts';
+import { rethrowCapabilityRefusal } from './engine-capability-refusal.ts';
 
 export interface TakeProposalRow {
   id: number;
@@ -321,7 +322,10 @@ export async function acceptProposal(
                 AND date_trunc('milliseconds', acted_at) IS NOT DISTINCT FROM $2::timestamptz`,
             [id, claimedAt],
           );
-        } catch { /* compensation is best-effort */ }
+        } catch (c) {
+          // Compensation is best-effort, but an engine that cannot run it refuses: the claim stays stuck and must not look settled.
+          rethrowCapabilityRefusal(c);
+        }
       }
       throw e;
     }

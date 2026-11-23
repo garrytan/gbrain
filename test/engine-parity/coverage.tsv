@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2006/2022
+# covered: 2009/2025
 # lifecycle: 9/9
 # pages: 81/82
 # search: 7/7
@@ -57,7 +57,7 @@
 # facts_conversation: 30/30
 # belief_ledger: 17/17
 # belief_purge: 6/6
-# trust_tier_reads: 20/20
+# trust_tier_reads: 21/21
 # derivation_trust: 3/3
 # memory_mutation_reads: 12/12
 # withdrawal_discovery: 1/1
@@ -68,13 +68,13 @@
 # eval_capture: 5/5
 # salience_enrich: 6/6
 # trust: 30/30
-# open_loops: 4/4
+# open_loops: 5/5
 # loop_mutes: 8/8
 # source_archive: 6/6
 # entity_identities: 5/5
 # cli_reads_import: 16/16
 # wanted_links: 2/2
-# write_misc: 92/95
+# write_misc: 93/96
 # repair_bookkeeping: 55/55
 # write_attribution: 5/5
 # telemetry: 14/14
@@ -120,15 +120,15 @@ disconnect	lifecycle	yes	2	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	3	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	303	no	yes	yes	serves
+transaction	lifecycle	yes	304	no	yes	yes	serves
 transactionDirect	lifecycle	yes	14	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 getPage	pages	yes	204	yes	yes	yes	serves
 readPageSnapshot	pages	yes	60	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
-lockPageKeys	pages	yes	14	no	yes	yes	serves
-putPage	pages	yes	1087	yes	yes	yes	serves
+lockPageKeys	pages	yes	15	no	yes	yes	serves
+putPage	pages	yes	1088	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	37	yes	yes	yes	serves
@@ -603,12 +603,12 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	2	no	yes	yes	serves
 getConfig	config	yes	49	no	yes	yes	serves
-setConfig	config	yes	73	no	yes	yes	serves
-unsetConfig	config	yes	3	no	yes	yes	serves
+setConfig	config	yes	74	no	yes	yes	serves
+unsetConfig	config	yes	4	no	yes	yes	serves
 listConfigKeys	config	yes	5	no	yes	yes	serves
 getAllConfig	config	yes	3	no	yes	yes	serves
 getConfigValues	config	yes	9	no	yes	yes	serves
-readStoredConfigValue	config	yes	4	no	yes	yes	serves
+readStoredConfigValue	config	yes	5	no	yes	yes	serves
 readManagedModeRows	import_guards	yes	2	no	yes	yes	serves
 getSourceStrictness	import_guards	yes	2	no	yes	yes	serves
 readPersistenceBrainId	import_guards	yes	29	no	yes	yes	serves
@@ -1053,7 +1053,7 @@ insertOauthClient	minion_queue	yes	72	no	yes	yes	serves
 updateOauthClientBudget	minion_queue	yes	2	no	yes	yes	serves
 readAgentClientSpend	minion_queue	yes	2	no	yes	yes	serves
 readOauthClient	minion_queue	yes	28	no	yes	yes	serves
-listOauthClients	minion_queue	yes	5	no	yes	yes	serves
+listOauthClients	minion_queue	yes	6	no	yes	yes	serves
 patchOauthClient	minion_queue	yes	4	no	yes	yes	serves
 insertAccessToken	minion_queue	yes	49	no	yes	yes	serves
 findActiveAccessTokens	minion_queue	yes	3	no	yes	yes	serves
@@ -1483,6 +1483,7 @@ releasePurgeRedactionsForField	belief_purge	yes	1	no	yes	yes	serves
 replayPagePurges	belief_purge	yes	1	no	yes	yes	serves
 readPurgeReplaySchema	belief_purge	yes	1	no	yes	yes	serves
 listCorePageRows	trust_tier_reads	yes	3	no	yes	yes	serves
+listPendingCoreEditNotices	trust_tier_reads	yes	1	no	yes	yes	serves
 listTrustScanRows	trust_tier_reads	yes	4	no	yes	yes	serves
 countUnscannedTrustRows	trust_tier_reads	yes	4	no	yes	yes	serves
 readTrustScanCursor	trust_tier_reads	yes	3	no	yes	yes	serves
@@ -1575,10 +1576,11 @@ listWriteGateHoldRows	trust	yes	4	no	yes	yes	serves
 listTrustAllowRuleRows	trust	yes	2	no	yes	yes	serves
 getWriteGateHoldRow	trust	yes	1	no	yes	yes	serves
 decideWriteGateHold	trust	yes	5	no	yes	yes	serves
-upsertOpenLoop	open_loops	yes	22	no	yes	yes	serves
-closeOpenLoop	open_loops	yes	9	no	yes	yes	serves
+upsertOpenLoop	open_loops	yes	23	no	yes	yes	serves
+closeOpenLoop	open_loops	yes	10	no	yes	yes	serves
 listOpenLoops	open_loops	yes	10	no	yes	yes	serves
 readEntityOpenLoops	open_loops	yes	2	no	yes	yes	serves
+countOpenLoopsByCounterpartyEmail	open_loops	yes	1	no	yes	yes	serves
 addLoopSuppression	loop_mutes	yes	5	no	yes	yes	serves
 removeLoopSuppression	loop_mutes	yes	4	no	yes	yes	serves
 listLoopSuppressions	loop_mutes	yes	3	no	yes	yes	serves
@@ -1647,8 +1649,8 @@ readPageRevisionWriter	write_misc	yes	1	no	yes	yes	serves
 readRevisionWriterRequest	write_misc	yes	2	no	yes	yes	serves
 writeSyncAdmissionStamp	write_misc	yes	5	no	yes	yes	serves
 readSyncAdmissionEffects	write_misc	yes	6	no	yes	yes	serves
-readOpCheckpointRecord	write_misc	yes	15	no	yes	yes	serves
-writeOpCheckpointRecord	write_misc	yes	32	no	yes	yes	serves
+readOpCheckpointRecord	write_misc	yes	16	no	yes	yes	serves
+writeOpCheckpointRecord	write_misc	yes	33	no	yes	yes	serves
 purgeStaleCheckpoints	write_misc	yes	1	no	yes	yes	serves
 readHealthMemoClock	write_misc	yes	1	no	yes	yes	serves
 listSynopsisSourceIds	write_misc	yes	4	no	yes	yes	serves
@@ -1711,6 +1713,7 @@ deleteOAuthClient	write_misc	yes	9	no	yes	yes	serves
 listAudienceAccessMembers	write_misc	yes	5	no	yes	yes	serves
 readAccessGroups	write_misc	yes	4	no	yes	yes	serves
 listPagesNamingReader	write_misc	yes	5	no	yes	yes	serves
+purgeStaleAppliedCaptures	write_misc	yes	1	no	yes	yes	serves
 listSourceIncarnations	repair_bookkeeping	yes	14	no	yes	yes	serves
 listOrphanBindings	repair_bookkeeping	yes	4	no	yes	yes	serves
 deleteOrphanBinding	repair_bookkeeping	yes	3	no	yes	yes	serves

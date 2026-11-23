@@ -52,6 +52,12 @@ function requireInteger(member: string, name: string, value: number): void {
   if (!Number.isSafeInteger(value)) refuseMember(member, `a ${name} that is not an integer`);
 }
 
+/**
+ * `listPendingCoreEditNotices`: the store keeps no core edit notices (their only writer, the core guard in
+ * persistence/core-guard.ts, goes through `executeRaw`, which this engine refuses), so none is pending.
+ */
+export const listPendingCoreEditNotices: Member<'listPendingCoreEditNotices'> = async () => [];
+
 export const listCorePageRows: Member<'listCorePageRows'> = (brain, spec) => {
   const member = 'listCorePageRows';
   requireCount(member, 'limit', spec.limit);

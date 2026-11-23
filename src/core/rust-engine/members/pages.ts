@@ -276,6 +276,7 @@ export const PAGES_MEMBERS = {
   requestGitHoldRetry: 'persistence_journal',
   readRepairBusyRows: 'persistence_journal',
   purgeStaleCheckpoints: 'persistence_journal',
+  purgeStaleAppliedCaptures: 'ingest_log',
   readHealthMemoClock: 'health',
   // get_write_attribution's reads: the request and writer rows are persistence_journal's; the receipts live on pages.
   readWriteAttributionNames: 'persistence_journal',

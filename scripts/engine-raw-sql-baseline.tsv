@@ -89,7 +89,6 @@ src/commands/frontmatter-install-hook.ts	execute_raw	3
 src/commands/git.ts	execute_raw	1	GST-2988 PR 2 gbrain git redact-unpushed: reads sources.local_path for --source; branched before the #9641 ratchet; no typed engine method for a source's local path exists yet
 src/commands/google-attachments.ts	execute_raw	3
 src/commands/google-setup-tail.ts	execute_raw	1
-src/commands/google.ts	execute_raw	1
 src/commands/guests.ts	execute_raw	1
 src/commands/import-calls.ts	execute_raw	3	GST-2904 (open before #9641): reads the committed call page's id, frontmatter readers and whether a page_label_guards row exists, locked FOR UPDATE inside the maintenance transaction that raises the guard; no typed engine method exists yet
 src/commands/import.ts	execute_raw	3
@@ -170,7 +169,6 @@ src/core/access/read-log.ts	execute_raw	3	GST-2476 gap 1: the access read log wr
 src/core/access/requester-scope.ts	execute_raw	2
 src/core/access/room.ts	execute_raw	2
 src/core/advisor/collect-chronicle.ts	execute_raw	1
-src/core/advisor/collect-mcp-client-fit.ts	execute_raw	1
 src/core/agent-install/setup.ts	execute_raw	2
 src/core/agent-install/shared-skills.ts	execute_raw	1
 src/core/ai/decide/egress.ts	execute_raw	1
@@ -183,7 +181,7 @@ src/core/apple-contacts/identity-match.ts	execute_raw	5	GST-3256, pre-ratchet li
 src/core/apple-contacts/person-facts.ts	execute_raw	7	GST-3256, pre-ratchet like imessage-source.ts (#9634): fingerprints the wanted claims and reads the active facts on one person page (this source's rows and the claims already there, matched by fact fingerprint as remember does), and reads/writes/clears the person-facts ownership op_checkpoints row; no typed engine method exists yet; +3 follow-up: before a source removal, reads the source kind, counts its active person-page rows (and those no page write can retire) and groups them by page to retire them
 src/core/apple-contacts/review-status.ts	execute_raw	3	GST-3256, pre-ratchet like imessage-source.ts (#9634): reads, writes and clears the pending-deletions op_checkpoints row the incremental delete floor holds; no typed engine method exists yet
 src/core/attendance-repair.ts	execute_raw	17
-src/core/backfill-base.ts	execute_raw	12
+src/core/backfill-base.ts	execute_raw	10
 src/core/backfill-effective-date.ts	execute_raw	3
 src/core/backfill-skips.ts	execute_raw	2
 src/core/backup/quarantine.ts	execute_raw	9
@@ -226,10 +224,9 @@ src/core/company-brain/runtime.ts	execute_raw	14
 src/core/company-brain/verification.ts	execute_raw	3
 src/core/config-values.ts	execute_raw	1	the keyed config read for a narrow executeRaw-only handle (a test fake or wrapper without getConfigValues); real engines take the typed getConfigValues read, and 23 config sites moved here from their own executeRaw
 src/core/connection-manager.ts	sql_template	3
-src/core/connectors/api-source.ts	execute_raw	2
-src/core/connectors/connector-hold-session.ts	execute_raw	1
+src/core/connectors/api-source.ts	execute_raw	1
 src/core/connectors/db-cursor.ts	execute_raw	2
-src/core/connectors/item-holds-store.ts	execute_raw	9
+src/core/connectors/item-holds-store.ts	execute_raw	8
 src/core/content-drift-sweep.ts	execute_raw	2
 src/core/context/compile-view.ts	execute_raw	1
 src/core/context/corpus-source.ts	execute_raw	1
@@ -237,7 +234,6 @@ src/core/context/volunteer-events.ts	execute_raw	2
 src/core/context/volunteer.ts	execute_raw	1
 src/core/contextual-retrieval-service.ts	execute_raw	3
 src/core/conversation-parser/llm-base.ts	execute_raw	2
-src/core/core-memory.ts	execute_raw	1
 src/core/cycle/chronicle.ts	execute_raw	3
 src/core/cycle/concept-publication.ts	execute_raw	3
 src/core/cycle/concept-redirects.ts	execute_raw	2
@@ -249,7 +245,6 @@ src/core/cycle/extract-atoms-page-state.ts	execute_raw	4
 src/core/cycle/extract-atoms-stamp.ts	execute_raw	1
 src/core/cycle/extract-atoms.ts	execute_raw	5
 src/core/cycle/extract-takes.ts	execute_raw	3
-src/core/cycle/filing-rules.ts	execute_raw	1
 src/core/cycle/grade-takes.ts	execute_raw	4
 src/core/cycle/inline-drain.ts	execute_raw	3
 src/core/cycle/pattern-claim-sources.ts	execute_raw	1
@@ -310,7 +305,7 @@ src/core/fence-repair/uncommitted.ts	execute_raw	3
 src/core/forecast-journal.ts	execute_raw	3
 src/core/function-search-path.ts	execute_raw	3
 src/core/ghost-pages.ts	execute_raw	1
-src/core/git/redact-finish.ts	execute_raw	8	GST-2988 PR 2 publish redaction finish: reads sources.local_path and persistence_host_bindings to find the checkout that owns a pushed root, reads and compare-and-sets sources.last_commit to the rebuilt sha, and lists persistence_effects worktree ids to remap parked effects; branched before the #9641 ratchet; no typed engine method for these source and effect reads exists yet
+src/core/git/redact-finish.ts	execute_raw	7	GST-2988 PR 2 publish redaction finish: reads sources.local_path and persistence_host_bindings to find the checkout that owns a pushed root, reads and compare-and-sets sources.last_commit to the rebuilt sha, and lists persistence_effects worktree ids to remap parked effects; branched before the #9641 ratchet; no typed engine method for these source and effect reads exists yet
 src/core/git/untrack-admission.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/github-source.ts	execute_raw	2
 src/core/google/attachment-backfill.ts	execute_raw	2
@@ -345,7 +340,7 @@ src/core/imessage/imessage-source.ts	execute_raw	2	#9634, pre-ratchet: reads the
 src/core/import-chunk-reuse.ts	execute_raw	1
 src/core/import-file.ts	execute_raw	1
 src/core/import-identity.ts	execute_raw	1
-src/core/ingestion/applied-captures.ts	execute_raw	5
+src/core/ingestion/applied-captures.ts	execute_raw	4
 src/core/line-grammar-config.ts	execute_raw	2
 src/core/link-extraction.ts	execute_raw	1
 src/core/link-reconciliation.ts	execute_raw	1
@@ -390,16 +385,13 @@ src/core/ops/context.ts	execute_raw	1
 src/core/ops/get-page-body.ts	execute_raw	2
 src/core/ops/jobs.ts	execute_raw	4
 src/core/ops/known-as-of.ts	execute_raw	3
-src/core/ops/loops.ts	execute_raw	3
 src/core/ops/page-upload.ts	execute_raw	3
-src/core/ops/put-page-revision-source.ts	execute_raw	1
 src/core/ops/qm-memory.ts	execute_raw	2
 src/core/ops/search.ts	execute_raw	1
 src/core/ops/storage-manifest.ts	execute_raw	1
 src/core/ops/tags.ts	execute_raw	1
 src/core/ops/trust.ts	execute_raw	1
 src/core/ops/whois.ts	execute_raw	1
-src/core/output/writer.ts	execute_raw	1
 src/core/oversized-backfill.ts	execute_raw	6
 src/core/owned-folder/destination.ts	execute_raw	1	GST-3022 owned folders, no typed engine method yet: reads the default source's local_path and config
 src/core/owned-folder/status.ts	execute_raw	1	GST-3022 owned folders, no typed engine method yet: reads the owned-folder sources' rows for pages_in
