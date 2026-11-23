@@ -44,7 +44,7 @@ three pages, then 24 seeded operations). Per seed:
 | `synced:<n>` | after the n-th fsync returned: the commit is durable and its caller has no answer |
 | `publication:before_commit`, `publication:after_commit`, `consumer:prepared` | the persistence fault points an unmanaged write reaches (`src/core/persistence/fault-points.ts`) |
 | after an acknowledgement | between two operations |
-| timer | at a seeded time, 50 to 1550 ms after the brain opens |
+| timer | at a seeded time, 10 to 80 percent of the way through the counting pass's run time (from the brain's open to the worker's exit) |
 
 The first three are the store's crash points
 (`rust/crates/gbrain-store/src/crash_points.rs`). They are compiled only with the

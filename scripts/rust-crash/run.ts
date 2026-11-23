@@ -130,7 +130,9 @@ function newRun(seed: number): Run {
 
 interface Kill { at?: string; seam?: string; afterAck?: number; afterMs?: number }
 /** Starts a worker, kills it as `kill` says (no kill: it runs to the end), and returns what its log says. */
-async function runWorker(run: Run, seed: number, kill: Kill = {}): Promise<{ log: LogState; exit: number | null; stderr: string; pid: number; killed: boolean }> {
+async function runWorker(run: Run, seed: number, kill: Kill = {}): Promise<{ log: LogState; exit: number | null; stderr: string; pid: number; killed: boolean;
+  /** Milliseconds from the brain's open to the worker's exit, as this driver saw them (null when it never opened). */
+  openToExitMs: number | null }> {
   const extra = [
     ...(ENGINE === 'pglite' ? ['engine', 'pglite'] : []),
     ...(kill.seam !== undefined ? ['seam', kill.seam] : []),
@@ -158,7 +160,8 @@ async function runWorker(run: Run, seed: number, kill: Kill = {}): Promise<{ log
   if (running) child.kill('SIGKILL');
   await child.exited;
   const killed = running && child.signalCode === 'SIGKILL';
-  return { log: readLog(run.log), exit: child.exitCode, stderr: await stderr, pid: child.pid, killed };
+  const openToExitMs = openedAt === null ? null : Date.now() - openedAt;
+  return { log: readLog(run.log), exit: child.exitCode, stderr: await stderr, pid: child.pid, killed, openToExitMs };
 }
 
 function firstDifference(a: string, b: string): string {
@@ -261,7 +264,11 @@ for (const seed of SEEDS) {
   }
   const afterAck = Math.floor(rand() * (ops.length - 1));
   jobs.push({ seed, label: `after ack ${afterAck}`, kind: 'ack', kill: { afterAck }, ops, states });
-  const afterMs = 50 + Math.floor(rand() * 1500);
+  // The timed kill falls inside the counting pass's own run time (from 10 to 80 percent of the time from the brain's
+  // open to the worker's exit), so it lands while the sequence still runs on a fast machine as on a slow one. The kill
+  // runs start several workers at once, so each runs no faster than the counting pass did alone.
+  const span = Math.max(100, pass.openToExitMs ?? 1000);
+  const afterMs = Math.round(span * (0.1 + rand() * 0.7));
   jobs.push({ seed, label: `timer ${afterMs} ms`, kind: 'timer', kill: { afterMs }, ops, states });
 }
 
