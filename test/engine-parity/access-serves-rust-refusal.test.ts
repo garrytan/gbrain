@@ -90,6 +90,11 @@ describe('gbrain access serves several --yes on a Rust brain', () => {
     await arm.engine.setConfig('version', String(LATEST_SCHEMA_VERSION));
     for (const slug of ['people/alice-example/notes', 'people/bob-example/notes']) await arm.engine.putPage(slug, core(slug), { sourceId: 'default' });
     await refusedUnchanged(home());
+    // A blocked run (the owner listed as a labelled-only member) reports its blockers before the refusal: never refused.
+    const blockedRun = await withEnv({ GBRAIN_HOME: home(), GBRAIN_SETUP_ABORT_AFTER: undefined }, () =>
+      labelSeveral(asRust(arm.engine), ['alice-example', 'bob-example'], 'default', true, true, { labelledOnly: true, owner: 'alice-example' }));
+    expect({ applied: blockedRun.applied, blocked: blockedRun.members.some(m => m.action === 'blocked'), rulesAdd: blockedRun.rules.some(r => r.action === 'add') })
+      .toEqual({ applied: false, blocked: true, rulesAdd: true });
     // Keys already read the company source: a re-run adds nothing and runs; --labelled-only adds only the company/ rule.
     let dir = await fresh(true);
     // A preview (no --yes) of a run that would need raw SQL is never refused: the guard sits after the preview return.
