@@ -75,8 +75,8 @@ mod spend_log;
 mod status;
 mod subagent;
 mod sweeps;
-mod synthesis_completions;
-mod wake;
+pub(crate) mod synthesis_completions;
+pub(crate) mod wake;
 
 pub use attachments::AttachmentInput;
 pub use checks::{
@@ -87,10 +87,13 @@ pub use insight::InsightSpec;
 use mutations::add_token;
 pub use mutations::{DelayOpts, TokenDelta};
 pub use oauth_clients::ClientInsert;
+pub(crate) use oauth_clients::{remove_client, seed_client};
 pub use private_queues::PrivateQueueState;
 pub use reads::{JobPageCursor, JobPageSpec, OverdueSpec};
 pub use spend::{ExpireScope, LeaseFilter, LeaseInsert, SpendInsert, SpendTreeSpec};
+pub(crate) use spend::{SeedReservation, remove_reservation, seed_reservation};
 pub use spend_log::{ClientReserve, GroupReserve, LogInsert};
+pub(crate) use spend_log::{SeedLog, remove_log, seed_log};
 pub use status::StatusFilter;
 pub use subagent::{FailureFallback, MessageInsert, ToolInsert, ToolStart, ToolTarget};
 pub use sweeps::{CancelOpts, PruneOutcome, PruneSpec};
@@ -256,6 +259,24 @@ fn next_seq(tx: &mut dyn KvWrite, name: &str) -> Result<i64> {
     let next = get_json::<i64>(tx, &k)?.unwrap_or(0) + 1;
     put_json(tx, &k, &next)?;
     Ok(next)
+}
+
+/// Raises the sequence `name` so the next [`next_seq`] returns a value above `id` (the shadow
+/// seed, which copies rows with their ids).
+pub(crate) fn raise_seq(tx: &mut dyn KvWrite, name: &str, id: i64) -> Result<()> {
+    let mut k = prefix(SEQ);
+    k.extend_from_slice(name.as_bytes());
+    if get_json::<i64>(tx, &k)?.unwrap_or(0) < id {
+        put_json(tx, &k, &id)?;
+    }
+    Ok(())
+}
+
+/// The last value of the sequence `name` (0 when it has not been used), read only.
+pub(crate) fn read_seq(read: &dyn KvRead, name: &str) -> Result<i64> {
+    let mut k = prefix(SEQ);
+    k.extend_from_slice(name.as_bytes());
+    Ok(get_json::<i64>(read, &k)?.unwrap_or(0))
 }
 
 /// One `minion_jobs` row. Timestamps are µs; JSON columns are kept as given.

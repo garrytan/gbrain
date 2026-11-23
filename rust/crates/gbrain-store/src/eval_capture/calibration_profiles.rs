@@ -30,7 +30,7 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-const NEXT_ID: &str = "calibration_profile_next_id";
+pub(crate) const NEXT_ID: &str = "calibration_profile_next_id";
 const RECORD: u8 = 0x20;
 const BY_TIME: u8 = 0x21;
 const TABLE: &str = "calibration_profiles";
@@ -113,6 +113,21 @@ impl ProfileRecord {
             "model_id": self.model_id,
         })
     }
+}
+
+/// The shadow seed (`seed.rs`): stores a profile copied from another engine with its own id and
+/// `generated_at`, and its time-index entry as [`Store::insert_calibration_profile`] writes it. The
+/// caller checked the source. `false` when the id already holds a row.
+pub(crate) fn seed_profile(tx: &mut dyn KvWrite, record: &ProfileRecord) -> Result<bool> {
+    if tx.get(&record_key(record.id))?.is_some() {
+        return Ok(false);
+    }
+    put_json(tx, &record_key(record.id), record)?;
+    tx.put(
+        &time_key(record.generated_at_us, record.id),
+        &record.id.to_be_bytes(),
+    )?;
+    Ok(true)
 }
 
 /// `getLatestCalibrationProfile` filter. `source_ids`, when present (even empty), wins over
@@ -509,6 +524,16 @@ impl Store {
             Ok(doomed.len() as u64)
         })
     }
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the profile `id` with its time-index entry.
+/// `false` when there is none.
+pub(crate) fn remove_profile(tx: &mut dyn KvWrite, id: u64) -> Result<bool> {
+    let Some(record) = read_record(&*tx, id)? else {
+        return Ok(false);
+    };
+    delete_record(tx, &record)?;
+    Ok(true)
 }
 
 #[cfg(test)]

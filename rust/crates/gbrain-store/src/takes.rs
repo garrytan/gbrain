@@ -1,7 +1,8 @@
 //! Takes and synthesis evidence: the `takes` and `synthesis_evidence` tables of the PGLite engine.
 //!
 //! Members: addTakesBatch, listTakes, searchTakes, updateTake, supersedeTake, resolveTake,
-//! getScorecard, getCalibrationCurve, addSynthesisEvidence, listActiveTakesForPages.
+//! getScorecard, getCalibrationCurve, addSynthesisEvidence, listActiveTakesForPages, the reads of
+//! `takes/reads.rs`, and the reads and the delete of `takes/extract.rs`.
 //!
 //! Keys (every record starts with `keys::TAKE`, `A`; ids and page ids are u64 BE, a `row_num` is
 //! its i32 with the sign bit flipped, BE, so keys sort by row number):
@@ -23,16 +24,25 @@
 
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
+use crate::facts::PrivacyPolicy;
 use crate::keyword::{TRGM_WORD_SIMILARITY_THRESHOLD, trgm_word_similarity};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{PageRecord, next_id, read_page_by_id};
+use crate::trust::{RowTrust, TrustTable, stamp_row};
+use crate::write_receipt::WriteReceipt;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-const NEXT_TAKE_ID: &str = "next_take_id";
+mod extract;
+mod reads;
+
+pub use extract::{FenceRowClaim, IncomingTake, TakesLeavingFence};
+pub use reads::{McpResolvedInput, PurgeTakesInput};
+
+pub(crate) const NEXT_TAKE_ID: &str = "next_take_id";
 const TAKE: u8 = 0x01;
 const BY_ROW: u8 = 0x02;
 const EVIDENCE: u8 = 0x03;
@@ -138,6 +148,65 @@ pub(crate) struct TakeRecord {
     /// Goes up by one each time the claim changes.
     #[serde(default)]
     pub claim_rev: u64,
+    /// `trust_tier` and `write_origin`, stamped by [`store_take`]. Absent in a record stored before
+    /// them, and omitted while the tier is `unknown` with no origin.
+    #[serde(default, skip_serializing_if = "RowTrust::is_empty")]
+    pub trust: RowTrust,
+    /// The write receipt (`write_*`, `last_*`). Absent in a record stored before it, and omitted
+    /// while every column is null. [`write_take`] stamps it.
+    #[serde(default, skip_serializing_if = "WriteReceipt::is_empty")]
+    pub receipt: WriteReceipt,
+}
+
+impl TakeRecord {
+    /// The content tuple the attribution trigger compares
+    /// (`WRITE_ATTRIBUTION_CONTENT_COLUMNS.takes`); `updated_at` and the embedding are projection.
+    fn attribution_content_changed(&self, new: &TakeRecord) -> bool {
+        use crate::write_receipt::float_distinct;
+        let (a, b) = (self, new);
+        (
+            a.id,
+            a.page_id,
+            a.row_num,
+            &a.claim,
+            &a.kind,
+            &a.holder,
+            &a.since_date,
+            &a.until_date,
+            &a.source,
+            a.superseded_by,
+            a.active,
+        ) != (
+            b.id,
+            b.page_id,
+            b.row_num,
+            &b.claim,
+            &b.kind,
+            &b.holder,
+            &b.since_date,
+            &b.until_date,
+            &b.source,
+            b.superseded_by,
+            b.active,
+        ) || (
+            a.resolved_at_us,
+            a.resolved_outcome,
+            &a.resolved_unit,
+            &a.resolved_source,
+            &a.resolved_by,
+            a.created_at_us,
+            &a.resolved_quality,
+        ) != (
+            b.resolved_at_us,
+            b.resolved_outcome,
+            &b.resolved_unit,
+            &b.resolved_source,
+            &b.resolved_by,
+            b.created_at_us,
+            &b.resolved_quality,
+        ) || float_distinct(Some(a.weight), Some(b.weight))
+            || float_distinct(a.resolved_value, b.resolved_value)
+    }
 }
 
 /// One `synthesis_evidence` row (the key holds the three key columns).
@@ -226,6 +295,8 @@ pub struct ListTakesOptions {
     pub source_ids: Option<Vec<Option<String>>>,
     /// A read-eligibility policy was given: hide the takes `projectionEligibleSql` always hides.
     pub eligible_only: bool,
+    /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`); null reads every page.
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 /// `listActiveTakesForPages(pageIds, { takesHoldersAllowList })`.
@@ -246,6 +317,8 @@ pub struct SearchTakesOptions {
     pub source_ids: Option<Vec<Option<String>>>,
     /// A read-eligibility policy was given: hide the takes `projectionEligibleSql` always hides.
     pub eligible_only: bool,
+    /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`); null reads every page.
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 /// `updateTake(pageId, rowNum, fields)`; `weight` is already normalized.
@@ -307,6 +380,8 @@ pub struct ScorecardOptions {
     pub until: Option<String>,
     pub allow_list: Option<Vec<Option<String>>>,
     pub source_ids: Option<Vec<Option<String>>>,
+    /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`); null reads every page.
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 /// The filters of `getCalibrationCurve`; `bucket_size` is already resolved (0.1 by default).
@@ -317,6 +392,19 @@ pub struct CalibrationOptions {
     pub bucket_size: Option<f64>,
     pub allow_list: Option<Vec<Option<String>>>,
     pub source_ids: Option<Vec<Option<String>>>,
+    /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`); null reads every page.
+    pub exclude_private: Option<PrivacyPolicy>,
+}
+
+/// One fence row of `matchTakeRows`: the identity fields a stored take is compared with. A null
+/// field is distinct from any stored text.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct FenceRowInput {
+    pub row_num: Value,
+    pub claim: Option<String>,
+    pub kind: Option<String>,
+    pub holder: Option<String>,
 }
 
 /// One `SynthesisEvidenceInput`.
@@ -418,7 +506,6 @@ fn list_texts<'a>(name: &'a str, list: &'a Option<Vec<Option<String>>>) -> Vec<(
 // Record access.
 
 /// The take at `id`.
-#[allow(dead_code)]
 pub(crate) fn read_take(read: &dyn KvRead, id: u64) -> Result<Option<TakeRecord>> {
     get_json(read, &take_key(id))
 }
@@ -463,18 +550,104 @@ pub(crate) fn all_takes(read: &dyn KvRead) -> Result<Vec<TakeRecord>> {
         .collect()
 }
 
-/// Writes a take's record (its row index never changes: `page_id` and `row_num` are fixed).
+/// Writes a take's record (its row index never changes: `page_id` and `row_num` are fixed),
+/// stamped with the open write's receipt as the PGLite attribution trigger stamps it
+/// (`write_receipt.rs`): an insert when no record is stored under its id, else an update. The
+/// trust columns are written as given: a write that changes no trust column (the embedding) uses
+/// it; a takes writer uses [`store_take`].
 pub(crate) fn write_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
-    put_json(tx, &take_key(take.id), take)
+    let old = read_take(&*tx, take.id)?;
+    let mut stamped = take.clone();
+    stamped.receipt = WriteReceipt::stamp(
+        old.as_ref().map(|o| &o.receipt),
+        &take.receipt,
+        old.as_ref()
+            .is_some_and(|o| o.attribution_content_changed(take)),
+    )?;
+    put_json(tx, &take_key(take.id), &stamped)
+}
+
+/// Writes `take` with the trust tier and write origin PGLite's `trust_tier_stamp` trigger gives it
+/// (`trust::stamp_row`): an insert when no row with its id is stored, else an update of the stored
+/// row, restamped only when `claim`, `kind` or `holder` changed. A refused raise is the trigger's
+/// error; the caller's write then rolls back.
+fn store_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
+    let old: Option<TakeRecord> = get_json(&*tx, &take_key(take.id))?;
+    let content_changed = old
+        .as_ref()
+        .is_some_and(|o| (&o.claim, &o.kind, &o.holder) != (&take.claim, &take.kind, &take.holder));
+    let mut stamped = take.clone();
+    stamped.trust = stamp_row(
+        TrustTable::Takes,
+        old.as_ref().map(|o| &o.trust),
+        &take.trust,
+        content_changed,
+    )?;
+    write_take(tx, &stamped)
 }
 
 fn insert_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
-    write_take(tx, take)?;
+    store_take(tx, take)?;
     tx.put(&row_key(take.page_id, take.row_num), &take.id.to_be_bytes())
+}
+
+/// The shadow seed (`seed.rs`): stores a take copied from another engine with its own id and row.
+/// `false` when the id already holds a take; a row held by another take is the unique
+/// `(page_id, row_num)` violation. The caller checked the page.
+pub(crate) fn seed_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<bool> {
+    if read_take(&*tx, take.id)?.is_some() {
+        return Ok(false);
+    }
+    if tx.get(&row_key(take.page_id, take.row_num))?.is_some() {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            "duplicate key value violates unique constraint on takes (page_id, row_num)",
+        ));
+    }
+    insert_take(tx, take)?;
+    Ok(true)
+}
+
+/// The shadow seed (`seed.rs`): stores the evidence row of `synthesis` citing the take
+/// `(take_page_id, take_row_num)`, copied from another engine with its own `created_at`, with its
+/// reverse index. `false` when the row is already stored; a take that is not stored is the foreign
+/// key violation. The caller checked the synthesis page.
+pub(crate) fn seed_evidence(
+    tx: &mut dyn KvWrite,
+    synthesis: &PageRecord,
+    take_page_id: u64,
+    take_row_num: i32,
+    citation_index: i32,
+    created_at_us: i64,
+) -> Result<bool> {
+    if tx.get(&row_key(take_page_id, take_row_num))?.is_none() {
+        return Err(fk_failed(
+            EVIDENCE_TABLE,
+            "synthesis_evidence_take_page_id_take_row_num_fkey",
+        ));
+    }
+    let key = evidence_key(synthesis.id, take_page_id, take_row_num);
+    if tx.get(&key)?.is_some() {
+        return Ok(false);
+    }
+    let record = EvidenceRecord {
+        citation_index,
+        created_at_us,
+        synthesis_source_id: synthesis.source_id.clone(),
+    };
+    put_json(tx, &key, &record)?;
+    tx.put(&cited_key(take_page_id, take_row_num, synthesis.id), &[])?;
+    Ok(true)
 }
 
 /// Deletes a take with its evidence rows.
 fn delete_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
+    delete_take_evidence(tx, take)?;
+    delete_take_record(tx, take)
+}
+
+/// The evidence rows that cite `take`, with their reverse index rows.
+fn delete_take_evidence(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
     let mut synths = Vec::new();
     scan_prefix(
         &*tx,
@@ -491,9 +664,44 @@ fn delete_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
         tx.delete(&evidence_key(synth, take.page_id, take.row_num))?;
         tx.delete(&key)?;
     }
+    Ok(())
+}
+
+/// The take's own records: its row, its vector and its id key. Evidence that cites it stays.
+fn delete_take_record(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
     tx.delete(&row_key(take.page_id, take.row_num))?;
     crate::embeddings::remove_take_vector(tx, take.id)?;
     tx.delete(&take_key(take.id))
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the take `id`. `keep_evidence` leaves the
+/// evidence rows that cite it, for a take that is replaced by a row of the same `(page_id,
+/// row_num)`. `false` when no such take is stored.
+pub(crate) fn remove_take(tx: &mut dyn KvWrite, id: u64, keep_evidence: bool) -> Result<bool> {
+    let Some(take) = read_take(&*tx, id)? else {
+        return Ok(false);
+    };
+    if !keep_evidence {
+        delete_take_evidence(tx, &take)?;
+    }
+    delete_take_record(tx, &take)?;
+    Ok(true)
+}
+
+/// The shadow follow: removes the evidence row of `synthesis` citing the take `(take_page_id,
+/// take_row_num)`. `false` when there is none.
+pub(crate) fn remove_evidence(
+    tx: &mut dyn KvWrite,
+    synthesis: u64,
+    take_page_id: u64,
+    take_row_num: i32,
+) -> Result<bool> {
+    let key = evidence_key(synthesis, take_page_id, take_row_num);
+    if tx.get(&key)?.is_none() {
+        return Ok(false);
+    }
+    delete_evidence(tx, &[key])?;
+    Ok(true)
 }
 
 /// Deletes evidence rows by their `A 0x03` keys, with their reverse index rows.
@@ -597,6 +805,19 @@ impl<'a> PageCache<'a> {
             self.pages.insert(id, page);
         }
         Ok(self.pages.get(&id).and_then(|p| p.as_ref()))
+    }
+}
+
+/// Whether `excludePrivate`'s page policy hides `page` (`privatePagesFilterForCaller` on the
+/// take's page); no policy hides nothing.
+fn private_page(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    policy: &Option<PrivacyPolicy>,
+) -> Result<bool> {
+    match policy {
+        Some(policy) => crate::facts::page_hidden(read, page, policy),
+        None => Ok(false),
     }
 }
 
@@ -836,7 +1057,7 @@ impl Store {
                     existing.superseded_by = *superseded_by;
                     existing.active = active;
                     existing.updated_at_us = now;
-                    write_take(tx, &existing)?;
+                    store_take(tx, &existing)?;
                 } else {
                     let source_id = match read_page_by_id(&*tx, page)? {
                         Some(p) => p.source_id,
@@ -871,6 +1092,8 @@ impl Store {
                             created_at_us: now,
                             updated_at_us: now,
                             claim_rev: 0,
+                            receipt: WriteReceipt::default(),
+                            trust: RowTrust::default(),
                         },
                     )?;
                 }
@@ -930,6 +1153,7 @@ impl Store {
             if options.page_slug.as_ref().is_some_and(|s| *s != page.slug)
                 || !in_scope(&options.source_ids, &page.source_id)
                 || (options.eligible_only && !eligible_page(page))
+                || private_page(&*read, page, &options.exclude_private)?
                 || options.holder.as_ref().is_some_and(|h| *h != take.holder)
                 || options.kind.as_ref().is_some_and(|k| *k != take.kind)
                 || options.active.is_some_and(|a| a != take.active)
@@ -1050,6 +1274,7 @@ impl Store {
             };
             if !in_scope(&options.source_ids, &page.source_id)
                 || (options.eligible_only && !eligible_page(page))
+                || private_page(&*read, page, &options.exclude_private)?
             {
                 continue;
             }
@@ -1117,7 +1342,7 @@ impl Store {
                 take.source = Some(s.clone());
             }
             take.updated_at_us = self.env.now_micros();
-            write_take(tx, &take)?;
+            store_take(tx, &take)?;
             Ok(true)
         })
     }
@@ -1206,12 +1431,14 @@ impl Store {
                     created_at_us: now,
                     updated_at_us: now,
                     claim_rev: 0,
+                    receipt: WriteReceipt::default(),
+                    trust: RowTrust::default(),
                 },
             )?;
             old.active = false;
             old.superseded_by = Some(new_row);
             old.updated_at_us = now;
-            write_take(tx, &old)?;
+            store_take(tx, &old)?;
             Ok(json!({ "status": "ok", "old_row": old_row, "new_row": new_row }))
         })
     }
@@ -1276,7 +1503,7 @@ impl Store {
             take.resolved_source = resolution.source.clone();
             take.resolved_by = resolution.resolved_by.clone();
             take.updated_at_us = now;
-            write_take(tx, &take)?;
+            store_take(tx, &take)?;
             Ok("ok".into())
         })
     }
@@ -1326,7 +1553,10 @@ impl Store {
             {
                 continue;
             }
-            if pattern.is_some() || options.source_ids.is_some() {
+            if pattern.is_some()
+                || options.source_ids.is_some()
+                || options.exclude_private.is_some()
+            {
                 let Some(page) = pages.get(take.page_id)? else {
                     continue;
                 };
@@ -1335,7 +1565,9 @@ impl Store {
                 {
                     continue;
                 }
-                if !in_scope(&options.source_ids, &page.source_id) {
+                if !in_scope(&options.source_ids, &page.source_id)
+                    || private_page(&*read, page, &options.exclude_private)?
+                {
                     continue;
                 }
             }
@@ -1411,11 +1643,13 @@ impl Store {
             {
                 continue;
             }
-            if options.source_ids.is_some() {
+            if options.source_ids.is_some() || options.exclude_private.is_some() {
                 let Some(page) = pages.get(take.page_id)? else {
                     continue;
                 };
-                if !in_scope(&options.source_ids, &page.source_id) {
+                if !in_scope(&options.source_ids, &page.source_id)
+                    || private_page(&*read, page, &options.exclude_private)?
+                {
                     continue;
                 }
             }
@@ -1448,6 +1682,79 @@ impl Store {
                 })
             })
             .collect())
+    }
+
+    /// `matchTakeRows(pageId, rows, limit)`: the row numbers of the page's stored takes that
+    /// differ in claim, kind or holder (a null fence field differs) from a fence row of the same
+    /// number, ascending, at most `limit` (a null limit is no limit, a negative one is
+    /// `invalid_argument`). A stored take that several fence rows of its number differ from is
+    /// listed once for each, as the join lists it.
+    pub fn match_take_rows(
+        &self,
+        page_id: i64,
+        rows: &[FenceRowInput],
+        limit: &Value,
+    ) -> Result<Vec<i32>> {
+        const OP: &str = "matchTakeRows";
+        let mut fence = Vec::with_capacity(rows.len());
+        for row in rows {
+            fence.push((int4(&row.row_num, OP, "row_num")?, row));
+        }
+        let limit = match int4(limit, OP, "limit")? {
+            None => usize::MAX,
+            Some(n) => usize::try_from(n)
+                .map_err(|_| StoreError::invalid(format!("{OP}: LIMIT must not be negative")))?,
+        };
+        let Ok(page_id) = u64::try_from(page_id) else {
+            return Ok(Vec::new());
+        };
+        let read = self.read()?;
+        let stored: BTreeMap<i32, TakeRecord> = page_takes(&*read, page_id)?
+            .into_iter()
+            .map(|t| (t.row_num, t))
+            .collect();
+        let mut out = Vec::new();
+        for (row_num, row) in fence {
+            let Some(take) = row_num.and_then(|n| stored.get(&n)) else {
+                continue;
+            };
+            let same = row.claim.as_deref() == Some(take.claim.as_str())
+                && row.kind.as_deref() == Some(take.kind.as_str())
+                && row.holder.as_deref() == Some(take.holder.as_str());
+            if !same {
+                out.push(take.row_num);
+            }
+        }
+        out.sort_unstable();
+        out.truncate(limit);
+        Ok(out)
+    }
+
+    /// `deleteTakeRows(pageId, rowNums)`: deletes the page's takes at the listed row numbers with
+    /// the evidence rows that cite them (`ON DELETE CASCADE`) and their embeddings. A null entry
+    /// or a number with no take deletes nothing; an empty list is no write.
+    pub fn delete_take_rows(&self, page_id: i64, row_nums: &[Value]) -> Result<()> {
+        const OP: &str = "deleteTakeRows";
+        let mut wanted = BTreeSet::new();
+        for value in row_nums {
+            if let Some(n) = int4(value, OP, "row_nums")? {
+                wanted.insert(n);
+            }
+        }
+        let Ok(page_id) = u64::try_from(page_id) else {
+            return Ok(());
+        };
+        if wanted.is_empty() {
+            return Ok(());
+        }
+        self.write(|tx| {
+            for row_num in wanted.iter().copied() {
+                if let Some(take) = take_at(&*tx, page_id, row_num)? {
+                    delete_take(tx, &take)?;
+                }
+            }
+            Ok(())
+        })
     }
 
     /// `addSynthesisEvidence(rows)`: inserts each row unless its

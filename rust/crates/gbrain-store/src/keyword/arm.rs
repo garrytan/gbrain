@@ -28,15 +28,12 @@ use std::collections::BTreeSet;
 
 use serde_json::{Value, json};
 
-use super::filters::{
-    KeywordOptions, PageFilter, readable_chunk_vector, result_row, row_count, served, source_factor,
-};
+use super::filters::{KeywordOptions, PageFilter, result_row, row_count, source_factor};
 use super::rank::ts_rank;
-use super::tsearch::{phraseto_tsquery, ts_matches, websearch_to_tsquery};
+use super::tsearch::{TsQuery, phraseto_tsquery, ts_matches, websearch_to_tsquery};
+use super::walk::{Admit, ChunkSource, PageOrder, walk_chunks};
 use crate::Store;
-use crate::chunks::{read_chunks, read_segment_view};
 use crate::error::Result;
-use crate::pages::all_pages;
 use crate::timeline::latest_entry_micros;
 
 /// `KEYWORD_PHRASE_FACTOR` (search/sql-ranking.ts).
@@ -75,52 +72,55 @@ impl Store {
         };
         let read = self.read()?;
         let mut filter = PageFilter::new(options)?;
+        let mut extra = vec![&ranker];
+        extra.extend(phrase.as_ref());
+        let source = ChunkSource::plan(&*read, &[&matcher], &extra, |_| Ok(Some(BTreeSet::new())))?;
+        let mut admit = Admit {
+            filter: Some(&mut filter),
+            text_only: true,
+            basenames: None,
+        };
         let mut hits: Vec<Hit> = Vec::new();
-        for page in all_pages(&*read)? {
-            if !filter.keeps(&*read, &page)? {
-                continue;
-            }
-            let generation = read_segment_view(&*read, page.id)?.generation;
-            let mut factor: Option<f64> = None;
-            let mut best: Option<(f64, crate::chunks::ChunkRecord)> = None;
-            for chunk in read_chunks(&*read, page.id)? {
-                if !chunk.visible_at(generation)
-                    || chunk.modality != "text"
-                    || !filter.keeps_chunk(&chunk)
-                {
-                    continue;
+        walk_chunks(
+            &*read,
+            &source,
+            PageOrder::Any,
+            &mut admit,
+            &mut |page, chunks| {
+                let mut factor: Option<f64> = None;
+                let mut best: Option<(f64, crate::chunks::ChunkRecord)> = None;
+                for (chunk, vector) in chunks {
+                    if !ts_matches(&vector, &matcher) {
+                        continue;
+                    }
+                    let factor =
+                        *factor.get_or_insert_with(|| source_factor(&page, &options.boosts));
+                    let phrase = match &phrase {
+                        Some(p) if ts_matches(&vector, p) => KEYWORD_PHRASE_FACTOR,
+                        _ => 1.0,
+                    };
+                    let score = f64::from(ts_rank(&vector, &ranker)) * phrase * factor;
+                    let better = best
+                        .as_ref()
+                        .is_none_or(|(s, b)| score > *s || (score == *s && chunk.id < b.id));
+                    if better {
+                        best = Some((score, chunk));
+                    }
                 }
-                let Some(vector) = readable_chunk_vector(&chunk) else {
-                    continue;
+                let Some((score, chunk)) = best else {
+                    return Ok(true);
                 };
-                if !ts_matches(&vector, &matcher) {
-                    continue;
-                }
-                let factor = *factor.get_or_insert_with(|| source_factor(&page, &options.boosts));
-                let phrase = match &phrase {
-                    Some(p) if ts_matches(&vector, p) => KEYWORD_PHRASE_FACTOR,
-                    _ => 1.0,
-                };
-                let score = f64::from(ts_rank(&vector, &ranker)) * phrase * factor;
-                let better = best
-                    .as_ref()
-                    .is_none_or(|(s, b)| score > *s || (score == *s && chunk.id < b.id));
-                if better {
-                    best = Some((score, chunk));
-                }
-            }
-            let Some((score, chunk)) = best else {
-                continue;
-            };
-            let stale = latest_entry_micros(&*read, page.id)?
-                .is_some_and(|latest| page.updated_at_us < latest);
-            hits.push(Hit {
-                score,
-                page_id: page.id,
-                chunk_id: chunk.id,
-                row: result_row(&page, &chunk, score, stale),
-            });
-        }
+                let stale = latest_entry_micros(&*read, page.id)?
+                    .is_some_and(|latest| page.updated_at_us < latest);
+                hits.push(Hit {
+                    score,
+                    page_id: page.id,
+                    chunk_id: chunk.id,
+                    row: result_row(&page, &chunk, score, stale),
+                });
+                Ok(true)
+            },
+        )?;
         hits.sort_by(|a, b| {
             b.score
                 .total_cmp(&a.score)
@@ -149,27 +149,31 @@ impl Store {
         let mut counts = vec![0usize; terms.len()];
         let mut pages: Vec<BTreeSet<u64>> = vec![BTreeSet::new(); terms.len()];
         let read = self.read()?;
-        for page in all_pages(&*read)? {
-            if !served(&page) {
-                continue;
-            }
-            let generation = read_segment_view(&*read, page.id)?.generation;
-            for chunk in read_chunks(&*read, page.id)? {
-                if !chunk.visible_at(generation) || chunk.modality != "text" {
-                    continue;
-                }
-                let Some(vector) = readable_chunk_vector(&chunk) else {
-                    continue;
-                };
-                for (i, q) in queries.iter().enumerate() {
-                    if q.items.is_empty() || counts[i] > cap || !ts_matches(&vector, q) {
-                        continue;
+        let matches: Vec<&TsQuery> = queries.iter().collect();
+        let source = ChunkSource::plan(&*read, &matches, &[], |_| Ok(Some(BTreeSet::new())))?;
+        let mut admit = Admit {
+            filter: None,
+            text_only: true,
+            basenames: None,
+        };
+        walk_chunks(
+            &*read,
+            &source,
+            PageOrder::Key,
+            &mut admit,
+            &mut |page, chunks| {
+                for (_, vector) in chunks {
+                    for (i, q) in queries.iter().enumerate() {
+                        if q.items.is_empty() || counts[i] > cap || !ts_matches(&vector, q) {
+                            continue;
+                        }
+                        counts[i] += 1;
+                        pages[i].insert(page.id);
                     }
-                    counts[i] += 1;
-                    pages[i].insert(page.id);
                 }
-            }
-        }
+                Ok(true)
+            },
+        )?;
         Ok(terms
             .iter()
             .zip(counts)
@@ -313,7 +317,7 @@ mod tests {
         let mut every = all.map(String::from).to_vec();
         every.sort();
         assert_eq!(sorted(top(json!({ "limit": 5.0 }))), every);
-        let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage" });
+        let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" });
         assert_eq!(
             sorted(top(json!({ "limit": 5.0, "excludePrivate": policy }))),
             ["notes/a-open", "notes/o-public"]
@@ -329,14 +333,13 @@ mod tests {
         );
         // Without the alias keys only `visibility` (and a derived page's default) hides a page.
         let visibility_only =
-            json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "lineage" });
+            json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn" });
         assert_eq!(
             sorted(top(json!({ "excludePrivate": visibility_only }))),
             ["notes/a-open", "notes/n-access", "notes/o-public"]
         );
         // With the privacy part relaxed only the member-access part applies: nothing here is hidden.
-        let relaxed =
-            json!({ "honorAliases": true, "entityPrivacy": false, "ownerOnly": "lineage" });
+        let relaxed = json!({ "honorAliases": true, "entityPrivacy": false, "ownerOnly": "fn" });
         assert_eq!(sorted(top(json!({ "excludePrivate": relaxed }))), every);
         // `null` (excludePrivate off) hides nothing, and the policy composes with the other filters.
         assert_eq!(sorted(top(json!({ "excludePrivate": null }))), every);
@@ -347,7 +350,7 @@ mod tests {
         );
     }
 
-    /// The owner-only part of the page policy: a page of an owner-only source is hidden, and under the lineage form so is a
+    /// The owner-only part of the page policy: a page of an owner-only source is hidden, and under the `fn` form so is a
     /// concept synthesized from one; under the closed form every page is hidden while the brain holds an owner-only source.
     /// It is part of the member-access test, so a relaxed privacy part does not drop it.
     #[test]
@@ -406,13 +409,12 @@ mod tests {
             found
         };
         assert_eq!(
-            top("lineage"),
+            top("fn"),
             ["concepts/from-open", "notes/flagged-off", "notes/open"]
         );
         assert!(top("closed").is_empty());
         // The part belongs to the member-access test: a relaxed privacy part keeps it.
-        let relaxed =
-            json!({ "honorAliases": true, "entityPrivacy": false, "ownerOnly": "lineage" });
+        let relaxed = json!({ "honorAliases": true, "entityPrivacy": false, "ownerOnly": "fn" });
         let mut found = slugs(
             &store
                 .search_keyword_arm(
@@ -427,12 +429,12 @@ mod tests {
             found,
             ["concepts/from-open", "notes/flagged-off", "notes/open"]
         );
-        // A policy that names no owner-only form is refused: the store does not guess one.
-        assert!(
-            serde_json::from_value::<KeywordOptions>(
-                json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": true } })
-            )
-            .is_err()
+        // A policy that names no owner-only form takes `closed`, the form that hides the most (owner_only.rs).
+        let named =
+            opts(json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": true } }));
+        assert_eq!(
+            named.exclude_private.as_ref().map(|p| p.owner_only),
+            Some(crate::owner_only::OwnerOnlyForm::Closed)
         );
     }
 

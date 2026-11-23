@@ -226,6 +226,15 @@ function inspectHolderMetadata(dataDir: string | undefined): { holder: LockHolde
   return { holder: { held: true, pid, serve: isServeCommand(metadata),
     subcommand: typeof metadata.subcommand === 'string' ? metadata.subcommand : undefined }, metadata };
 }
+/**
+ * The owner token the live holder of `dataDir`'s lock recorded, or null (no holder, a dead holder, unreadable
+ * metadata). Read-only; a token proves nothing about ownership, it only lets two readers agree on which holder wrote
+ * a sidecar (`gbrain serve`'s brain reference, src/commands/serve-brain-ref.ts).
+ */
+export function liveHolderToken(dataDir: string | undefined): string | null {
+  const { holder, metadata } = inspectHolderMetadata(dataDir);
+  return holder.held && metadata && holder.pid !== undefined ? tokenOf(metadata) : null;
+}
 export interface LockPeekResult {
   held: boolean; isServe?: boolean; pid?: number;
   /** The holder is `gbrain serve --http` (read from its recorded argv). */

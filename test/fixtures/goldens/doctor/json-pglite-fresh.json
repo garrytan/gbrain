@@ -485,6 +485,15 @@
         {
           "category": "ops",
           "elapsed_ms": "<volatile>",
+          "message": "Not applicable: Rust engine shadow mode is off for this brain.",
+          "name": "rust_engine_addon",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "elapsed_ms": "<volatile>",
           "message": "Connected, 0 pages",
           "name": "connection",
           "status": "ok"
@@ -1214,6 +1223,25 @@
           "name": "access_pages_read_by_nobody",
           "readiness_state": "not_applicable",
           "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: this brain serves one person, so no source has to be shared with members.",
+          "name": "access_shared_source_unread",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "count": 0
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No live token or OAuth client is bound to a disabled or removed member.",
+          "name": "access_disabled_member_credentials",
           "status": "ok"
         },
         {

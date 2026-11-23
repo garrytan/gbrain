@@ -23,7 +23,6 @@ writes_pages: true
 writes_to:
   - sources/
   - projects/
-upstream: blog-ingest@fc834ee
 ---
 
 # blog-ingest — Feed & Whole-Publication Ingestion
@@ -52,8 +51,8 @@ backlinks, concept linking) is handed to the `brain-ingest-gate` skill, which
 is the conventional entry point for every article this skill writes. A raw
 dump of article text — even with clean frontmatter — is not "ingested."
 
-A native feed-ingestion adapter (feed state, scheduled re-walks) is the filed
-follow-up in TODOS; until it ships, this skill is the procedure.
+A native feed-ingestion adapter (feed state, scheduled re-walks) is planned;
+until it ships, this skill is the procedure.
 
 ## Dedup
 

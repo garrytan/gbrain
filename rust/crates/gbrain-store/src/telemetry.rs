@@ -25,7 +25,7 @@
 
 use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
-use crate::kv::{KvRead, scan_prefix};
+use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
@@ -233,6 +233,17 @@ pub(crate) struct RollupRecord {
     pub requests: i64,
     pub last_used_us: Option<i64>,
     pub pruned_through_us: Option<i64>,
+}
+
+/// The shadow seed (`seed.rs`): stores a `mcp_request_log_rollup` row copied from another engine,
+/// under the key the prune gives it (`''` for no token). `false` when the token already has a row.
+pub(crate) fn seed_rollup(tx: &mut dyn KvWrite, record: &RollupRecord) -> Result<bool> {
+    let key = rollup_key(&record.token_name);
+    if tx.get(&key)?.is_some() {
+        return Ok(false);
+    }
+    put_json(tx, &key, record)?;
+    Ok(true)
 }
 
 /// One row of `logMcpRequest`. Every field is optional here so a missing one fails as Postgres
@@ -707,6 +718,17 @@ impl Store {
             .max();
         Ok(json!({ "pruned_before": newest.map(iso), "now": iso(now) }))
     }
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the rollup row of `token_name`. `false` when there
+/// is none.
+pub(crate) fn remove_rollup(tx: &mut dyn KvWrite, token_name: &str) -> Result<bool> {
+    let key = rollup_key(token_name);
+    if tx.get(&key)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&key)?;
+    Ok(true)
 }
 
 #[cfg(test)]

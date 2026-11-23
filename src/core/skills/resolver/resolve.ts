@@ -27,6 +27,16 @@
  * catalog's maxIdf, the block is empty (block_reason weak_top_match), unless
  * the turn names a skill. A message that matches no catalog word falls back to
  * previous_user_message.
+ *
+ * The model picker (router.ts) runs only when the caller passes
+ * opts.router and skills.resolver.router is on: after the acknowledgement
+ * check, it reads the catalog (every skill up to PICKER_FULL_CATALOG_MAX,
+ * else the top PICKER_SHORTLIST ranked) and its picks fill the block in its
+ * order, match_strength picked, under the same exclude, floor, dedupe,
+ * pacing and budget rules (top_gate does not apply to them). Its "no skill"
+ * answer empties the block (no_match). When it cannot answer, the turn is
+ * the word matcher's. Only then is the output not byte-identical across
+ * runs; `router` reports which answered and why.
  */
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -44,6 +54,8 @@ import { IndexReader, RANKER_ID, RANKER_VERSION } from './index-format.ts';
 import { assertCatalogName, catalogFile, logsDir, resolverHome } from './paths.ts';
 import { isAcknowledgement, maxIdf, mentionsSkill, rankIndex, reasonText, type RankResult } from './rank.ts';
 import { commitSession, freshState, loadSession, sessionKey, type SessionState, type TurnDelta } from './session.ts';
+import { PICKER_FULL_CATALOG_MAX, PICKER_SHORTLIST, pickSkills, routerTimeoutMs, type PickerSkill, type PickOutcome, type RouterFallbackCode } from './router.ts';
+import { readBounded } from './fsutil.ts';
 
 export const SCHEMA_VERSION = 1;
 export const MESSAGE_CAP_BYTES = 8192;
@@ -71,6 +83,8 @@ export interface Suggestion { id: string; name: string; score: number; summary: 
 export interface TurnError { code: string; message: string; fix: { suggestion: string; command?: string } }
 /** Why a block is empty; null when it has a suggestion. */
 export type BlockReason = 'ack' | 'no_match' | 'filtered' | 'weak_top_match' | 'deduped' | 'paced' | 'budget_exhausted' | 'shadow' | 'error';
+/** Set when the model picker was on for the turn: who answered, with which model, how long it waited, its estimated cost, and why it did not answer. */
+export interface RouterReport { mode: 'picker'; answered_by: 'picker' | 'words'; model: string | null; ms: number; est_usd: number; fallback: { code: RouterFallbackCode } | null }
 export interface TurnOutput {
   schema_version: 1;
   gbrain_version: string;
@@ -89,6 +103,7 @@ export interface TurnOutput {
   deduped: string[];
   shadow: boolean;
   error?: TurnError;
+  router?: RouterReport;
   meta: { timing_ms: number; index_age_s: number | null; index_stale: boolean };
 }
 
@@ -101,6 +116,8 @@ export interface ResolveOptions {
   loadHint?: string;
   namesOnly?: boolean;
   explainTarget?: string;
+  /** Let the turn call the model picker when skills.resolver.router is on. Only the command line and the Claude Code and Codex hook lanes pass it. */
+  router?: boolean;
   env?: NodeJS.ProcessEnv;
   now?: () => number;
 }
@@ -266,6 +283,20 @@ export function errorTurnOutput(err: ResolverError, opts: { shadow?: boolean; ca
   return emptyOutput({ shadow: opts.shadow }, { error: err.toJSON(), catalog: opts.catalog ?? null, catalog_hash: hash });
 }
 
+/** Time the picker leaves the turn for its own steps after the call (window, render). */
+const PICKER_RENDER_RESERVE_MS = 20;
+const PICKER_FILE_CAP_BYTES = 16 * 1024 * 1024;
+
+/** A catalog's picker.json descriptions by id, or null when it is missing or from another build (the index's summaries are used then). */
+function readPickerDescriptions(home: string, c: OpenedCatalog): Map<string, string> | null {
+  try {
+    const b = readBounded(catalogFile(home, c.name, 'picker.json'), PICKER_FILE_CAP_BYTES);
+    if (b === 'too_large') return null;
+    const j = JSON.parse(b.toString('utf8')) as { v?: unknown; catalog_hash?: unknown; skills?: unknown };
+    return j?.v === 1 && j.catalog_hash === c.receipt.catalog.catalog_hash && Array.isArray(j.skills) ? new Map(j.skills as [string, string][]) : null;
+  } catch { return null; } // silent-read-ok: a catalog built before picker.json existed has none; the picker uses each skill's index summary
+}
+
 function logUnexpected(home: string, e: unknown): void {
   try {
     const dir = logsDir(home);
@@ -344,12 +375,30 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
     const rankText = (text: string): RankResult[] => loaded.map(l => { const r = rankIndex(l.ix, text, check); check(); return r; });
     let ranks = rankText(input.message);
     if (ranks.every(r => r.idfSum === 0) && input.previous_user_message?.trim()) ranks = rankText(input.previous_user_message);
-    if (ranks.every(r => r.idfSum === 0)) return finish({ ...base, no_skill: true, no_skill_reason: 'no_match', block_reason: 'no_match' }, { tokens: 0, suggested: [], resuggested: [] });
-
-    interface Cand { c: number; doc: number; score: number; id: string; explicit: boolean }
     const metaOf = (c: number, doc: number) => loaded[c]!.ix.meta(doc);
+
+    const offered = new Map<string, { c: number; doc: number }>();
+    let pick: Extract<PickOutcome, { ok: true }> | null = null;
+    if (opts.router && settings.router.on) {
+      const descriptions = loaded.map(l => readPickerDescriptions(home, l));
+      const offer = (c: number, doc: number) => { const id = metaOf(c, doc).id; if (!offered.has(id)) offered.set(id, { c, doc }); };
+      if (loaded.reduce((n, l) => n + l.ix.n, 0) <= PICKER_FULL_CATALOG_MAX) loaded.forEach((l, c) => { for (let d = 0; d < l.ix.n; d++) offer(c, d); });
+      else for (let i = 0; i < Math.max(...ranks.map(r => r.ranked.length)) && offered.size < PICKER_SHORTLIST; i++) loaded.forEach((_, c) => { const r = ranks[c]!.ranked[i]; if (r && offered.size < PICKER_SHORTLIST) offer(c, r.doc); });
+      const skills: PickerSkill[] = [...offered].map(([id, { c, doc }]) => ({ id, description: loaded[c]!.receipt.catalog.hints === 'names_only' ? '' : descriptions[c]?.get(id) ?? metaOf(c, doc).summary }));
+      const r0 = performance.now();
+      const left = opts.deadlineMs === undefined ? Infinity : opts.deadlineMs - (r0 - t0) - PICKER_RENDER_RESERVE_MS;
+      const outcome: PickOutcome | null = offered.size === 0 && !settings.router.invalid ? null : left < 1 ? { ok: false, code: 'timeout', model: settings.router.model, usd: 0 } : await pickSkills(home, input.message, skills, settings.router, Math.min(routerTimeoutMs(input.harness, settings.router), left), opts.env ?? process.env, opts.now);
+      base.router = !outcome ? { mode: 'picker', answered_by: 'words', model: settings.router.model, ms: 0, est_usd: 0, fallback: null }
+        : { mode: 'picker', answered_by: outcome.ok ? 'picker' : 'words', model: outcome.model, ms: Math.round(performance.now() - r0), est_usd: outcome.usd, fallback: outcome.ok ? null : { code: outcome.code } };
+      check();
+      if (outcome?.ok) pick = outcome;
+    }
+    if (!pick && ranks.every(r => r.idfSum === 0)) return finish({ ...base, no_skill: true, no_skill_reason: 'no_match', block_reason: 'no_match' }, { tokens: 0, suggested: [], resuggested: [] });
+
+    interface Cand { c: number; doc: number; score: number; id: string; explicit: boolean; picked?: boolean }
     const strengthOf = (x: Cand): MatchStrength => {
       if (x.explicit) return 'named';
+      if (x.picked) return 'picked';
       const fields = ranks[x.c]!.matchedFields(x.doc).fields;
       return STRENGTH_FIELDS.find(f => fields[f]?.length) ?? 'body';
     };
@@ -368,7 +417,12 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
         if (!seen.has(m.id) && mentionsSkill(input.message, m.id, m.name)) admit({ c, doc: r.doc, score: r.score, id: m.id, explicit: true });
       }
     });
-    const longest = Math.max(...ranks.map(r => r.ranked.length));
+    for (const id of pick?.ids ?? []) {
+      const at = offered.get(id)!;
+      if (!seen.has(id)) admit({ ...at, score: ranks[at.c]!.ranked.find(r => r.doc === at.doc)?.score ?? 0, id, explicit: false, picked: true });
+    }
+    if (pick && window.length === 0 && pick.ids.length === 0) return finish({ ...base, no_skill: true, no_skill_reason: 'no_match', block_reason: 'no_match' }, { tokens: 0, suggested: [], resuggested: [] });
+    const longest = pick ? 0 : Math.max(...ranks.map(r => r.ranked.length));
     for (let i = 0; i < longest && window.length < kEff; i++) {
       loaded.forEach((_, c) => {
         const r = ranks[c]!.ranked[i];
@@ -378,7 +432,7 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
       });
       check();
     }
-    const strong = (x: Cand) => x.explicit || ranks[x.c]!.matchedFields(x.doc).strong;
+    const strong = (x: Cand) => x.explicit || x.picked === true || ranks[x.c]!.matchedFields(x.doc).strong;
     const picked: Cand[] = [];
     const resuggested: string[] = [];
     const deduped: string[] = [];
@@ -395,7 +449,7 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
         picked.push(x);
       });
     }
-    const gated = input.top_gate !== undefined && picked.length > 0 && !picked.some(x => x.explicit)
+    const gated = !pick && input.top_gate !== undefined && picked.length > 0 && !picked.some(x => x.explicit)
       && Math.max(...picked.map(x => x.score / maxIdf(loaded[x.c]!.ix.n))) < input.top_gate;
     if (gated) picked.length = 0;
     const remaining = Math.max(0, budget - state.spent);
@@ -413,7 +467,7 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
       const namesOnly = lines.find(l => l.id === m.id)!.namesOnly;
       const fields = ranks[x.c]!.matchedFields(x.doc).fields;
       const match_strength = strengthOf(x);
-      return { id: m.id, name: m.name, score: round4(x.score), summary: namesOnly ? '' : m.summary, reason: x.explicit ? `named in the turn; ${reasonText(fields)}` : reasonText(fields), match_strength, ...(m.path ? { path: m.path } : {}), catalog: loaded[x.c]!.name };
+      return { id: m.id, name: m.name, score: round4(x.score), summary: namesOnly ? '' : m.summary, reason: x.explicit ? `named in the turn; ${reasonText(fields)}` : x.picked ? 'picked by the model picker' : reasonText(fields), match_strength, ...(m.path ? { path: m.path } : {}), catalog: loaded[x.c]!.name };
     });
     const blockReason: BlockReason | null = suggestions.length ? null : exhausted ? 'budget_exhausted' : gated ? 'weak_top_match' : paced ? 'paced' : window.length ? 'deduped' : 'filtered';
     const out: TurnOutput = { ...base, budget_exhausted: exhausted, block_reason: blockReason, suggestions, block: r.block, block_tokens: r.tokens, deduped };

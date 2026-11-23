@@ -43,6 +43,7 @@ import {
   connectionGateEntry,
 } from './checks/db-connection.ts';
 import { ipcSocketPathEntry } from './checks/local-ipc.ts';
+import { rustEngineAddonEntry } from './checks/rust-engine-addon.ts';
 import { functionSearchPathEntry } from './checks/function-search-path.ts';
 import { guardLedgerChecksEntry } from './checks/guard-ledger-checks.ts';
 import { ownerOnlyMarksTriggersEntry } from './checks/owner-only-marks-triggers.ts';
@@ -166,6 +167,7 @@ import { ownerReadsRestrictedEntry } from './checks/owner-reads-restricted.ts';
 import { accessLineageEntry } from './checks/access-lineage.ts';
 import { accessLabelledOnlyEntry } from './checks/access-labelled-only.ts';
 import { accessPagesReadByNobodyEntry } from './checks/access-pages-read-by-nobody.ts';
+import { accessReachEntry } from './checks/access-reach.ts';
 import { attestReadAccessEntry } from './checks/attest-read-access.ts';
 import { guestSourceEntry } from './checks/guest-source.ts';
 import { originTwinsEntry } from './checks/origin-twins.ts';
@@ -228,6 +230,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   harnessWiringDoctorEntry,
   agentContractEntry,
   pgliteDataDirEntry,
+  rustEngineAddonEntry,
   ipcSocketPathEntry,
   projectionResidentEntry,
   offlineConnectionEntry,
@@ -269,6 +272,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   accessLineageEntry,
   accessLabelledOnlyEntry,
   accessPagesReadByNobodyEntry,
+  accessReachEntry,
   attestReadAccessEntry,
   guestSourceEntry,
   rlsEntry,

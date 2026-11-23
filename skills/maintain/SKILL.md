@@ -1,7 +1,6 @@
 ---
 name: maintain
 version: 1.1.0
-upstream: maintain@fc834ee
 description: |
   Brain health checks: back-link enforcement, citation audit, filing validation,
   stale info detection, orphan pages, and benchmarks. Use when asked to check

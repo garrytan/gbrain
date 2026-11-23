@@ -208,7 +208,8 @@ A new site fails with the file, function and fix. The three fixes:
    unknown), not `status: 'ok'`.
 3. Where an empty answer is truly right (a pre-migration "relation does not
    exist"), catch only that error and write `// silent-read-ok: <reason>` on
-   the catch line or the line above. An empty reason fails.
+   the catch line or the line above (`/* silent-read-ok: <reason> */` works too; the reason is only the text inside the
+   comment, never the code after it). An empty reason fails.
 
 Baseline `scripts/silent-read-catches-baseline.tsv`: rows
 `path#function<TAB>metric<TAB>count[<TAB>note]`, generated from the tree

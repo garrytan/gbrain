@@ -61,6 +61,7 @@ check-pglite-embedded.sh	buildfresh	exempt	binary embed check
 check-skills-embedded.sh	buildfresh	exempt	binary embed check
 check-skills-manifest-fresh.sh	buildfresh	exempt	regenerates + diffs
 check-skills-lock-history.ts	repostate	exempt	GBRA-225: skills/skills.lock.history.json lists every hash the lock lists and keeps every entry of HEAD and the merge-base copy (append-only); compares committed file state, no scanned fixtures
+check-moved-skills.ts	repostate	exempt	G3: once skills/moved-skills.json names a destination, every skill folder under skills/ is on its kept or moved list (new content skills go to the destination); skipped while the destination is null; unit: test/moved-skills.test.ts
 check-tool-catalog-fresh.sh	buildfresh	exempt	regenerates + diffs
 check-wasm-embedded.sh	buildfresh	exempt	binary embed check
 check-bootstrap-tag.sh	repostate	exempt	VERSION stamp drift check

@@ -316,6 +316,16 @@ impl Store {
     }
 }
 
+/// The shadow follow (`seed/follow.rs`): removes the watermark of `page_id`. `false` when there is
+/// none.
+pub(crate) fn remove_row(tx: &mut dyn KvWrite, page_id: u64) -> Result<bool> {
+    if tx.get(&key(page_id))?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&key(page_id))?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -450,6 +460,21 @@ mod tests {
                 })
                 .is_err()
         );
+
+        // Inside a transaction the lock reads the transaction's own writes.
+        let tx = store.begin_transaction(false).unwrap();
+        assert!(locked(&tx, "default", "notes/live", Some(rev)));
+        let edited = put(&tx, "notes/live", "y");
+        assert_ne!(edited.knowledge_revision, page.knowledge_revision);
+        assert!(!locked(&tx, "default", "notes/live", Some(rev)));
+        assert!(locked(
+            &tx,
+            "default",
+            "notes/live",
+            Some(edited.knowledge_revision.as_str())
+        ));
+        tx.rollback_transaction().unwrap();
+        assert!(locked(&store, "default", "notes/live", Some(rev)));
     }
 
     #[test]
