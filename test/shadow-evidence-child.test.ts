@@ -17,6 +17,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { attachShadowParts } from '../src/shadow/attach.ts';
 import { encodeValue } from '../src/shadow/codec.ts';
 import { runShadowChild, type ShadowChildDeps } from '../src/shadow/child.ts';
+import { SHADOW_COMPARATOR_VERSION } from '../src/shadow/exactness.ts';
 import { MirrorQueue, newMirrorCounters } from '../src/shadow/mirror.ts';
 import { writeSeedRecord, type SeedRecord } from '../src/shadow/seed.ts';
 import { wrapShadowEngine, type ShadowSink } from '../src/shadow/wrapper.ts';
@@ -233,7 +234,7 @@ describe('evidence epoch in the child', () => {
     await runChild(dir, [read('getPage', ['a'], { slug: 'a' })], { openEngine: () => engine() as never, addonSha256: () => 'b'.repeat(64) });
     const second = manifest(dir);
     expect(second.epoch_id).not.toBe(first.epoch_id);
-    expect(second.inputs).toMatchObject({ seed_id: 'seed-1', rust_addon_sha256: 'b'.repeat(64), comparator_version: 1, readiness_policy_hash: 'p1' });
+    expect(second.inputs).toMatchObject({ seed_id: 'seed-1', rust_addon_sha256: 'b'.repeat(64), comparator_version: SHADOW_COMPARATOR_VERSION, readiness_policy_hash: 'p1' });
     expect(ledgerRows(dir).map((r) => r.epoch_id)).toEqual([first.epoch_id, first.epoch_id, second.epoch_id]);
     expect(JSON.parse(readFileSync(join(dir, 'evidence', 'epochs.jsonl'), 'utf8').trim()).epoch_id).toBe(first.epoch_id);
   });

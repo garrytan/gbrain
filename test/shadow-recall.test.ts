@@ -1,0 +1,123 @@
+/**
+ * Vector recall scoring and the a2 evidence fields (plan a2, decisions 6 to 8), without a database: the pure scorer, and
+ * `buildEvidenceStatus` over rows and score lines written with the real writers. The reference run and the child's
+ * scoring on real primaries are in test/helpers/shadow-checks-scenarios.ts.
+ *
+ * Protects: a Rust answer missing a true neighbour, drawn from the wrong filter or under-filled scores below 1 against the
+ * reference's own size; an empty reference, an offset and a limit under ten are skipped; every row tied at the cutoff is a
+ * true neighbour; recall fields need 30 scored samples of the epoch and keep overlap apart; an inconclusive sample whose
+ * rerun matched is closed while one that never got a rerun still counts as unexplained; privacy_diverged is absent until
+ * something was compared and while a privacy check is unsettled, and counts pauses.
+ */
+import { afterEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { evaluateReadiness } from '../src/core/engine-swap/readiness.ts';
+import { ensureEpoch, readinessPolicyHash } from '../src/shadow/evidence-epoch.ts';
+import { buildEvidenceStatus, renderEvidenceStatus } from '../src/shadow/evidence.ts';
+import { appendFault, appendLedgerRows, type ShadowLedgerRow } from '../src/shadow/ledger.ts';
+import { appendRecall, IntervalGate, recallEligible, scoreRecall, type RankedKey } from '../src/shadow/recall.ts';
+
+const dirs: string[] = [];
+afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+const NOW = new Date('2026-11-30T12:00:00.000Z');
+const ts = new Date(NOW.getTime() - 86_400_000).toISOString();
+const epochDir = () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-shadow-recall-')); dirs.push(dir);
+  const epoch = ensureEpoch(dir, { seed_id: 's', rust_addon_sha256: 'a', comparator_version: 2, adapter_version: 'x', capability_set_hash: 'c', readiness_policy_hash: readinessPolicyHash() }, Date.parse('2026-11-24T00:00:00Z')).epoch_id;
+  return { dir, epoch };
+};
+const row = (epoch: string, op: string, outcome: ShadowLedgerRow['outcome'], extra: Partial<ShadowLedgerRow> = {}): ShadowLedgerRow =>
+  ({ ts, op, outcome, epoch_id: epoch, primary_ms: 1, rust_ms: 1, primary_rows: 1, rust_rows: 1, ...extra });
+const status = (dir: string) => buildEvidenceStatus({ dir, now: NOW });
+
+const ref = (n: number, score = (i: number) => 1 - i / 100): RankedKey[] => Array.from({ length: n }, (_, i) => ({ k: `c${i}`, s: score(i) }));
+const rows = (keys: string[]) => keys.map((k) => ({ chunk_id: k, score: 0.5 }));
+const ids = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => `c${from + i}`);
+
+describe('scoring', () => {
+  test('Rust missing a true neighbour scores below 1 while the primary scores 1', () => {
+    expect(scoreRecall(ref(12), rows(ids(0, 10)), rows([...ids(0, 9), 'c11']))).toMatchObject({ vector: 0.9, primary: 1, ref_size: 10 });
+  });
+  test('the wrong filter, an under-filled answer and an under-filled reference', () => {
+    expect(scoreRecall(ref(12), rows(ids(0, 10)), rows(ids(20, 30)))).toMatchObject({ vector: 0, primary: 1 }); // all outside the reference
+    expect(scoreRecall(ref(12), rows(ids(0, 10)), rows(ids(0, 4)))).toMatchObject({ vector: 0.4 }); // under-filled
+    expect(scoreRecall(ref(4), rows(ids(0, 4)), rows(ids(0, 2)))).toMatchObject({ vector: 0.5, primary: 1, ref_size: 4 }); // only four eligible rows exist: the denominator is the reference's
+  });
+  test('an empty corpus is skipped, and so are an offset and a limit under ten', () => {
+    expect(scoreRecall([], [], [])).toBeNull();
+    expect([recallEligible([0, { limit: 10 }]), recallEligible([0, {}]), recallEligible([0, { limit: 9 }]), recallEligible([0, { limit: 10, offset: 5 }])]).toEqual([true, true, false, false]);
+  });
+  test('every reference row tied with the tenth is a true neighbour, whichever the engine returned', () => {
+    const tied = ref(13, (i) => (i < 9 ? 1 - i / 100 : 0.5)); // c9, c10, c11 and c12 tie at the cutoff
+    expect(scoreRecall(tied, rows(ids(0, 10)), rows([...ids(0, 9), 'c12']))).toMatchObject({ vector: 1 });
+    expect(scoreRecall(tied, rows(ids(0, 10)), rows([...ids(0, 9), 'c13']))).toMatchObject({ vector: 0.9 });
+  });
+  test('overlap with the primary is its own number', () => {
+    expect(scoreRecall(ref(12), rows(ids(0, 10)), rows([...ids(0, 9), 'c11']))!.overlap).toBe(0.9);
+  });
+  test('the gate allows one reference run a minute', () => {
+    let at = 0;
+    const gate = new IntervalGate(60_000, () => at);
+    expect([gate.take(), gate.take(), (at = 59_999, gate.take()), (at = 60_000, gate.take())]).toEqual([true, false, false, true]);
+  });
+});
+
+describe('recall fields', () => {
+  const line = (dir: string, epoch: string, n: number, vector: number, primary = 1) => { for (let i = 0; i < n; i++) appendRecall(dir, { ts, epoch_id: epoch, vector, primary, overlap: 0.8, ref_size: 10 }); };
+  test('absent under 30 samples of the epoch, then the epoch average, with the overlap apart', () => {
+    const { dir, epoch } = epochDir();
+    appendLedgerRows(dir, [row(epoch, 'getPage', 'match')]);
+    line(dir, 'another-epoch', 40, 0);
+    line(dir, epoch, 29, 1);
+    expect(status(dir).search).toBeUndefined();
+    expect(status(dir).evidence).toMatchObject({ recall_samples: 29 });
+    line(dir, epoch, 1, 0.5);
+    expect(status(dir).search).toEqual({ vector_recall_at_10: (29 + 0.5) / 30, primary_recall_at_10: 1 });
+    expect(status(dir).evidence).toMatchObject({ recall_samples: 30 });
+    expect(status(dir).evidence!.vector_overlap_with_primary).toBeCloseTo(0.8, 9);
+    expect(renderEvidenceStatus(status(dir)).join('\n')).toContain('vector recall@10');
+  });
+  test('an unreadable score file leaves the fields absent, and a degraded Rust answer fails criterion 4', () => {
+    const { dir, epoch } = epochDir();
+    appendLedgerRows(dir, [row(epoch, 'findByTitleFuzzy', 'match')]);
+    line(dir, epoch, 30, 0.9, 1);
+    const search = { ...status(dir).search, trigram_exact_disagreements: 0, keyword_title: { ranker: 'ts_rank' as const, exact_disagreements: 0 } };
+    expect(evaluateReadiness({ search }, NOW).criteria.find((c) => c.n === 4)).toMatchObject({ state: 'fail' });
+    writeFileSync(join(dir, 'recall', `${ts.slice(0, 10)}.jsonl`), 'not json\n{"x":1}\n');
+    expect(status(dir).search).toEqual({ trigram_exact_disagreements: 0 });
+  });
+});
+
+describe('unexplained and privacy fields', () => {
+  test('a rerun that matched closes the sample; one that never ran, or still differs, is unexplained; neither is a success', () => {
+    const { dir, epoch } = epochDir();
+    appendLedgerRows(dir, [
+      row(epoch, 'getPage', 'inconclusive', { mismatch: 'diff', rerun: 'matched' }),
+      row(epoch, 'getPage', 'inconclusive', { mismatch: 'diff', rerun: 'skipped:busy' }),
+      row(epoch, 'getPage', 'inconclusive', { mismatch: 'diff' }),
+      row(epoch, 'getPage', 'diff', { mismatch: 'diff', rerun: 'differed', reason: 'rerun_differs' }),
+      row(epoch, 'searchVector', 'inconclusive', { mismatch: 'diff', reason: 'privacy_check_moved', rerun: 'skipped:busy' }), // not an exactness comparison
+    ]);
+    expect(status(dir).reads).toMatchObject({ diverged_unexplained_7d: 3 });
+    expect(status(dir).reads!.ops.find((o) => o.op === 'getPage')!.successful).toBe(0);
+  });
+  test('privacy_diverged is absent until something was compared, counts rows and pauses, and is absent while a check is unsettled', () => {
+    const { dir, epoch } = epochDir();
+    expect(status(dir).privacy_diverged).toBeUndefined();
+    appendLedgerRows(dir, [row(epoch, 'getPage', 'match')]);
+    expect(status(dir).privacy_diverged).toBe(0);
+    appendLedgerRows(dir, [row(epoch, 'listPages', 'privacy_diverged')]);
+    expect(status(dir).privacy_diverged).toBe(1);
+    appendFault(dir, { ts, kind: 'privacy_pause', detail: 'x', epoch_id: epoch });
+    appendFault(dir, { ts, kind: 'privacy_pause', detail: 'y', epoch_id: epoch });
+    expect(status(dir).privacy_diverged).toBe(2); // a pause whose row was lost still counts
+    expect(evaluateReadiness({ privacy_diverged: 2 }, NOW).criteria.find((c) => c.n === 6)).toMatchObject({ state: 'fail' });
+    const open = epochDir();
+    appendLedgerRows(open.dir, [row(open.epoch, 'getPage', 'match'), row(open.epoch, 'listPages', 'inconclusive', { reason: 'privacy_check_unavailable', mismatch: 'diff', rerun: 'skipped:busy' })]);
+    expect(status(open.dir).privacy_diverged).toBeUndefined();
+    appendLedgerRows(open.dir, [row(open.epoch, 'listPages', 'inconclusive', { reason: 'privacy_check_unavailable', mismatch: 'diff', rerun: 'matched' })]);
+    expect(status(open.dir).evidence).toMatchObject({ privacy_checks_unsettled_7d: 1 }); // the matched one is settled; the earlier one is not
+  });
+});

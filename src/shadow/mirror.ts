@@ -9,8 +9,12 @@
  * it to the transport (the supervisor's child pipe); a line over the size cap is shed as `too_large`. Every shed, sample miss and in-transaction skip is counted, and the counts travel to the child as a
  * `stats` event so the ledger and the report show what was not observed.
  */
+import type { CallerAccess } from '../core/search/private-visibility.ts';
+
 /** One captured primary read, frozen at capture time: `args` and `result` are already `encodeValue` output. */
 export interface CapturedRead {
+  /** The caller-access record the primary read ran under (private-visibility.ts, frozen); the child runs Rust under it and the policy check judges rows by it. Never written to the ledger. */
+  access?: CallerAccess;
   op: string;
   /** Encoded call arguments (plain JSON). */
   args: unknown;
@@ -172,7 +176,7 @@ export class MirrorQueue {
       try {
         line = JSON.stringify({
           t: 'read', id: nextId++, at: read.at, op: read.op, primary_ms: read.primary_ms,
-          args: read.args, result: read.result,
+          args: read.args, result: read.result, access: read.access,
         }) + '\n';
       } catch {
         this.counters.encode_error++;

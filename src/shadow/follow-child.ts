@@ -64,6 +64,8 @@ export class FollowChild {
   private lastWrite = 0;
   private fullAt: number | null = null;
   private readonly dirty = new Map<string, number>();
+  /** Counts everything that can change what the store holds or whether it is covered; a stable read needs it unmoved (`barrier`, `exclusive`). */
+  private changes = 0;
   private foreignOffset = 0;
   private lastForeign = 0;
   private foreignTimer: ReturnType<typeof setTimeout> | null = null;
@@ -99,6 +101,32 @@ export class FollowChild {
   /** True while the follower holds committed work, older than `ms`, that it has not applied (evidence for a `stale` comparison). */
   pendingBefore(ms: number): boolean { return this.waiting.some((committed) => committed < ms); }
 
+  /**
+   * The barrier's answer, handed out by the `barrier` call: the child has applied every apply line before it and the
+   * coverage watermark is valid. Returns the change count to hold the read to, or throws (`watermark_invalid`).
+   */
+  private barrier(): number {
+    this.readForeign();
+    if (!this.file?.watermark.valid) throw Object.assign(new Error('the coverage watermark is not valid'), { code: 'watermark_invalid' });
+    return this.changes;
+  }
+
+  /**
+   * Runs `read` after everything queued before it and before anything queued after it: no apply, reconcile call or
+   * invalidation runs in between. Resolves with its value when nothing changed since the barrier's `stamp` and the
+   * watermark is still valid before and after the read, else null (the sample stays inconclusive).
+   */
+  exclusive<T>(stamp: number, read: () => Promise<T>): Promise<T | null> {
+    const run = this.chain.then(async () => {
+      const stable = (): boolean => { this.readForeign(); return this.changes === stamp && this.file?.watermark.valid === true; };
+      if (!stable()) return null;
+      const value = await read();
+      return stable() ? value : null;
+    });
+    this.chain = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
   /** Flushes follower.json (called on the heartbeat). */
   tick(): void { this.readForeign(); this.write(true); }
 
@@ -119,6 +147,7 @@ export class FollowChild {
   private invalidate(reason: string, relation?: string, until = this.now()): void {
     const w = this.file?.watermark;
     if (!w) return;
+    this.changes++;
     if (!this.o.owner()) { this.noteForeign(reason); return; }
     if (relation) this.dirty.set(relation, Math.max(this.dirty.get(relation) ?? 0, until));
     else this.fullAt = Math.max(this.fullAt ?? 0, until);
@@ -174,6 +203,7 @@ export class FollowChild {
   /** A pass that started at `since` settled these `relations` (or everything, for a full pass). */
   private restore(since: number, relations: string[] | undefined): void {
     const file = this.file!;
+    this.changes++;
     if (!relations && this.fullAt !== null && this.fullAt < since) this.fullAt = null;
     for (const [relation, at] of this.dirty) if (at < since && (!relations || relations.includes(relation))) this.dirty.delete(relation);
     if (this.fullAt === null && this.dirty.size === 0 && !file.watermark.valid) {
@@ -183,6 +213,7 @@ export class FollowChild {
 
   private async apply(e: ApplyEvent): Promise<void> {
     const file = this.file;
+    this.changes++;
     this.readForeign();
     const store = this.o.owner() ? await this.o.store() : null;
     const done = (): void => { const i = this.waiting.indexOf(e.committed_at); if (i >= 0) this.waiting.splice(i, 1); };
@@ -234,10 +265,12 @@ export class FollowChild {
     const hi = (a.hi ?? null) as string | null;
     switch (method) {
       case 'state': this.readForeign(); return { ...file.watermark };
+      case 'barrier': return { stamp: this.barrier() };
       case 'seedPlan': return store.seedPlan();
       case 'relationDigest': return store.relationDigest(id, a.relation as string, lo, hi);
       case 'relationEntries': return store.relationEntries(id, a.relation as string, lo, hi, a.limit as number);
       case 'replaceInterval': {
+        this.changes++;
         const result = await store.replaceInterval(id, a.relation as string, a.generation as number, lo, hi, a.rows as ApplyEvent['rows'], a.digests as ApplyEvent['digests']);
         file.applied_rows += result.upserted + result.deleted;
         if (result.displaced > 0) this.relationDisplaced(a.relation as string);

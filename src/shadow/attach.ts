@@ -11,8 +11,9 @@ import type { BrainEngine } from '../core/engine.ts';
 import { resolveServeGbrainCommand } from '../core/serve-service.ts';
 import type { FollowOptions } from './follow.ts';
 import { ShadowFollower } from './follower.ts';
-import { openReadSource } from './read-pool.ts';
+import { openReadSource, type ReadSource } from './read-pool.ts';
 import { Reconciler } from './reconcile.ts';
+import { makeAskHandler } from './checks.ts';
 import { readEpoch } from './evidence-epoch.ts';
 import { readSeedRecord } from './seed.ts';
 import { MirrorQueue } from './mirror.ts';
@@ -53,7 +54,10 @@ export function shadowChildArgv(dir: string, gbrainArgv?: string[]): string[] {
 }
 
 export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string, state: ShadowState, deps: AttachShadowDeps = {}): AttachedShadow<E> {
-  const supervisor = new ShadowSupervisor({ dir, argv: shadowChildArgv(dir, deps.gbrainArgv), onDirty: (relation) => reconciler?.markDirty(relation), ...deps.supervisor });
+  const supervisor = new ShadowSupervisor({
+    dir, argv: shadowChildArgv(dir, deps.gbrainArgv), onDirty: (relation) => reconciler?.markDirty(relation),
+    onAsk: (ask) => asks(ask), ...deps.supervisor,
+  });
   const queue = new MirrorQueue({ bound: state.queue_bound, transport: supervisor });
   const sink = {
     counters: queue.counters,
@@ -71,6 +75,10 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   const seeded = deps.follow === undefined && readSeedRecord(dir) !== null;
   const rpc = <T>(method: string, args?: Record<string, unknown>, timeoutMs?: number): Promise<T> => supervisor.request<T>(method, args, timeoutMs);
   const reads = seeded ? openReadSource(engine) : undefined;
+  // The child's questions (checks.ts) read the primary through a source of their own, opened on first use, on a brain that was never seeded.
+  let own: ReadSource | undefined;
+  const askReads: ReadSource = reads ?? { pauseMs: 0, read: (fn) => (own ??= openReadSource(engine)).read(fn), close: async () => { await own?.close(); } };
+  const asks = makeAskHandler({ engine, reads: askReads, dir, rpc, get follower() { return follower; } });
   const follower = reads ? new ShadowFollower({
     reads, send: (line) => supervisor.send(line), rpc,
     onDirty: (relation) => reconciler?.markDirty(relation),
@@ -90,6 +98,7 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
       queue.stop();
       supervisor.stop();
       await reads?.close().catch(() => undefined);
+      if (askReads !== reads) await askReads.close().catch(() => undefined);
     }
   });
   const follow = follower ? { sink: follower } : deps.follow;

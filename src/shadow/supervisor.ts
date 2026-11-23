@@ -41,6 +41,8 @@ export interface ShadowSupervisorOptions {
   stillEnabled?: () => boolean;
   /** The child's store displaced rows while applying a relation: it is dirty and wants a reconcile pass. */
   onDirty?: (relation: string) => void;
+  /** The child asks the serving process a question (privacy check, stable rerun, vector reference; checks.ts); the value goes back as an `answer` line. */
+  onAsk?: (ask: { id: number; kind: string; [key: string]: unknown }) => Promise<unknown>;
 }
 
 export class ShadowSupervisor implements MirrorTransport {
@@ -55,7 +57,7 @@ export class ShadowSupervisor implements MirrorTransport {
   private controlBuffer = '';
   private nextRequestId = 0;
   private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
-  private readonly o: Required<Omit<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled' | 'onDirty'>> & Pick<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled' | 'onDirty'>;
+  private readonly o: Required<Omit<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled' | 'onDirty' | 'onAsk'>> & Pick<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled' | 'onDirty' | 'onAsk'>;
 
   constructor(opts: ShadowSupervisorOptions) {
     this.o = {
@@ -183,17 +185,30 @@ export class ShadowSupervisor implements MirrorTransport {
     while ((nl = this.controlBuffer.indexOf('\n')) >= 0) {
       const line = this.controlBuffer.slice(0, nl);
       this.controlBuffer = this.controlBuffer.slice(nl + 1);
-      let msg: { t?: string; reason?: string; relation?: string; id?: number; ok?: boolean; value?: unknown; error?: { code?: string; message?: string } };
+      let msg: { t?: string; reason?: string; relation?: string; id?: number; kind?: string; ok?: boolean; value?: unknown; error?: { code?: string; message?: string } };
       try { msg = JSON.parse(line); } catch { continue; }
       if (msg.t === 'hb') this.lastHeartbeat = this.o.now();
       else if (msg.t === 'resp' && typeof msg.id === 'number') {
         this.settleRequest(msg.id, msg.value, msg.ok ? undefined : Object.assign(new Error(msg.error?.message ?? 'rpc failed'), { code: msg.error?.code ?? 'rpc_failed' }));
       }
+      else if (msg.t === 'ask' && typeof msg.id === 'number') void this.answerAsk(msg as { id: number; kind: string });
       else if (msg.t === 'dirty' && msg.relation) { try { this.o.onDirty?.(msg.relation); } catch { /* best effort */ } }
       else if (msg.t === 'pause') this.disable('privacy_diverged', msg.reason ?? 'child requested a pause');
     }
     // A `resp` line can carry thousands of digest entries; only a runaway partial line is dropped.
     if (this.controlBuffer.length > 16 * 1024 * 1024) this.controlBuffer = '';
+  }
+
+  /** Answers one `ask` line: the handler's value, or its error code. A refused write is the child's timeout. */
+  private async answerAsk(ask: { id: number; kind: string }): Promise<void> {
+    let line: Record<string, unknown>;
+    try {
+      if (!this.o.onAsk) throw Object.assign(new Error('no handler'), { code: 'unsupported' });
+      line = { t: 'answer', id: ask.id, ok: true, value: await this.o.onAsk(ask) };
+    } catch (error) {
+      line = { t: 'answer', id: ask.id, ok: false, error: { code: (error as { code?: string })?.code ?? (error instanceof Error ? error.message : 'failed').slice(0, 80) } };
+    }
+    try { this.send(JSON.stringify(line) + '\n'); } catch { /* the child times out */ }
   }
 
   private onExit(child: ChildProcess | null, code: number | null, signal: string | null): void {

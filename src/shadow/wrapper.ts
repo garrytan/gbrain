@@ -19,6 +19,7 @@
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { registerEngineView } from '../core/persistence/switches.ts';
+import { currentCallerAccess } from '../core/search/private-visibility.ts';
 import { encodeValue } from './codec.ts';
 import { followRaw, followScope, followWrite, type FollowContext, type FollowOptions, type Frame } from './follow.ts';
 import type { CapturedRead, MirrorCounters, UsageField } from './mirror.ts';
@@ -105,13 +106,14 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
       use(op, 'unmirrorable');
       return fn.apply(engine, args);
     }
+    const access = currentCallerAccess(); // frozen: the child runs Rust under it and the policy check judges rows by it
     const started = now();
     const out = fn.apply(engine, args);
     if (!isThenable(out)) return out;
     return out.then((result: unknown) => {
       const primaryMs = now() - started;
       try {
-        sink.offer(() => ({ op, args: encodedArgs, result: encodeValue(result), primary_ms: primaryMs, at: Date.now() }), op);
+        sink.offer(() => ({ op, args: encodedArgs, result: encodeValue(result), primary_ms: primaryMs, at: Date.now(), access }), op);
       } catch { /* the shadow never fails a call */ }
       return result;
     }, (error: unknown) => {

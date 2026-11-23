@@ -245,7 +245,7 @@ describe('search arms', () => {
     expect(status(dir).search).toEqual({ trigram_exact_disagreements: 0 });
     put(dir, [...rowsOf(epoch, 'findByTitleFuzzy', { inconclusive: 2, diff: 1 }), ...rowsOf(epoch, 'searchKeywordChunks', { match: 1 }), ...rowsOf(epoch, 'searchTitles', { inconclusive: 1, stale: 5 })]);
     expect(status(dir).search).toEqual({ trigram_exact_disagreements: 3, keyword_title: { ranker: 'ts_rank', exact_disagreements: 1 } });
-    expect(JSON.stringify(status(dir))).not.toMatch(/vector_recall|primary_recall|privacy_diverged/);
+    expect(JSON.stringify(status(dir))).not.toMatch(/vector_recall|primary_recall/); // no scored recall samples yet (test/shadow-recall.test.ts)
   });
 
   test('an arm whose rows are all errors has no comparisons', () => {
@@ -318,7 +318,7 @@ describe('epoch, earliest READY date and printed rules', () => {
 describe('through the status command, the report and the readiness evaluator', () => {
   const SEED = { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {} } as unknown as SeedRecord;
 
-  test('status --json carries the manifest epoch and the evidence fields, never the a2 fields; the text status prints the dates', async () => {
+  test('status --json carries the manifest epoch and the evidence fields, no recall before it is scored; the text status prints the dates', async () => {
     const home = tmp();
     const config = { engine: 'pglite' as const, database_path: join(home, 'brain.pglite') };
     await withEnv({ GBRAIN_HOME: home }, async () => {
@@ -338,7 +338,8 @@ describe('through the status command, the report and the readiness evaluator', (
       expect(doc.reads.ops).toEqual([{ op: 'getPage', successful: 3, minimum: 100 }]);
       expect(doc.child).toEqual({ panics: 0, faults: 0 });
       expect(doc.search).toBeUndefined();
-      expect(Object.keys(doc)).not.toContain('privacy_diverged');
+      expect(doc.privacy_diverged).toBe(0); // reads were compared and none showed a page the caller may not read
+      expect(doc.search).toBeUndefined();
       // The real document goes through the real evaluator: criterion 2 names the class lacking samples, 9 passes, 4 and 6 are missing.
       const verdict = evaluateReadiness(doc, new Date());
       const row = (n: number) => verdict.criteria.find((c) => c.n === n)!;
@@ -347,7 +348,7 @@ describe('through the status command, the report and the readiness evaluator', (
       expect(row(3).state).toBe('pass');
       expect(row(9).state).toBe('pass');
       expect(row(4).state).toBe('missing');
-      expect(row(6).state).toBe('missing');
+      expect(row(6).state).toBe('pass');
       expect(verdict.verdict).toBe('NOT READY');
       const text: string[] = [];
       await runEngineShadow(['status'], { config: () => config, out: (l) => text.push(l) });
@@ -378,7 +379,7 @@ describe('through the status command, the report and the readiness evaluator', (
     }
     const full = { search: { vector_recall_at_10: 1, primary_recall_at_10: 1 } };
 
-    test('a healthy epoch passes criteria 2, 3 and 9, and 4 once the a2 recall fields exist; without them 4 and 6 stay missing and the verdict NOT READY', async () => {
+    test('a healthy epoch passes criteria 2, 3, 6 and 9, and 4 once the recall fields exist; without them 4 stays missing and the verdict NOT READY', async () => {
       const { dir, epoch } = epochDir();
       put(dir, [...rowsOf(epoch, 'getPage', { match: 10_000, stale: 2 }), ...rowsOf(epoch, 'findByTitleFuzzy', { match: 100 }), ...rowsOf(epoch, 'searchKeyword', { match: 100 })]);
       const bare = await evaluate(dir);
@@ -387,7 +388,7 @@ describe('through the status command, the report and the readiness evaluator', (
       expect(bare.row(9).state).toBe('pass');
       expect(bare.row(4).state).toBe('missing');
       expect(bare.row(4).detail).toContain('search.vector_recall_at_10');
-      expect(bare.row(6).state).toBe('missing');
+      expect(bare.row(6).state).toBe('pass');
       expect(bare.v.verdict).toBe('NOT READY');
       const { search } = status(dir);
       const with2 = await evaluate(dir, { search: { ...search, ...full.search } });

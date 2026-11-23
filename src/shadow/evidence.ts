@@ -6,8 +6,9 @@
  *
  * Missing evidence is absent, never zero: no epoch manifest, an unreadable or corrupt ledger or usage file (a torn LAST
  * line is skipped), no operation class used, or a search arm with no comparisons leaves that field out, and readiness
- * reads an absent field as NOT READY. `privacy_diverged`, `search.vector_recall_at_10` and `search.primary_recall_at_10`
- * are never produced here (plan a2).
+ * reads an absent field as NOT READY. The same holds for `privacy_diverged` (no comparison yet, or a privacy check in the
+ * last 7 days that could not be settled) and for `search.vector_recall_at_10` / `search.primary_recall_at_10` (fewer than
+ * `RECALL_MIN_SAMPLES` scored samples in the epoch; recall.ts).
  *
  * Counting rules (the lane owner's rulings):
  *   - successful = a `match`; stale, inconclusive, order_diff, errors and dropped attempts are not coverage.
@@ -23,6 +24,7 @@ import { join } from 'node:path';
 import { readEpoch, type EpochManifest } from './evidence-epoch.ts';
 import { exactnessArm, SHADOW_KEYWORD_RANKER } from './exactness.ts';
 import { ledgerDir, readAllFaults, readJsonlStrict, type ShadowLedgerRow } from './ledger.ts';
+import { readEpochRecall, RECALL_MIN_SAMPLES } from './recall.ts';
 import { zeroUsage, type OpUsage } from './mirror.ts';
 import { readEpochUsage } from './usage.ts';
 
@@ -45,7 +47,10 @@ export interface EvidenceStatus {
   search?: {
     trigram_exact_disagreements?: number;
     keyword_title?: { ranker: typeof SHADOW_KEYWORD_RANKER; exact_disagreements: number };
+    vector_recall_at_10?: number;
+    primary_recall_at_10?: number;
   };
+  privacy_diverged?: number;
   child?: { panics: number; faults: number };
   /** The epoch and the rules the counts follow; printed by the status and the report. Absent without an epoch. */
   evidence?: {
@@ -60,6 +65,11 @@ export interface EvidenceStatus {
     ops_lacking_samples: string[];
     /** Calls per operation class in the epoch, including those never compared. */
     usage: Record<string, OpUsage>;
+    /** Vector recall samples scored in the epoch (the fields need `RECALL_MIN_SAMPLES`), and Rust's mean overlap with the primary's top ten (agreement, not recall). */
+    recall_samples: number;
+    vector_overlap_with_primary?: number;
+    /** Samples whose privacy check could not be settled in the last 7 days; any of them leaves `privacy_diverged` absent. */
+    privacy_checks_unsettled_7d: number;
   };
 }
 
@@ -81,6 +91,9 @@ interface ReadFold {
   capability_missing_7d: number;
   rust_error_unresolved_7d: number;
   diverged_unexplained_7d: number;
+  compared: number;
+  privacy_rows: number;
+  privacy_unsettled_7d: number;
   arms: { trigram: { compared: number; bad: number }; keyword_title: { compared: number; bad: number } };
 }
 
@@ -88,7 +101,7 @@ interface ReadFold {
 function foldLedger(dir: string, epoch: EpochManifest, now: number): ReadFold | null {
   const fold: ReadFold = {
     matches: new Map(), ops: new Set(), capability_missing_7d: 0, rust_error_unresolved_7d: 0, diverged_unexplained_7d: 0,
-    arms: { trigram: { compared: 0, bad: 0 }, keyword_title: { compared: 0, bad: 0 } },
+    compared: 0, privacy_rows: 0, privacy_unsettled_7d: 0, arms: { trigram: { compared: 0, bad: 0 }, keyword_title: { compared: 0, bad: 0 } },
   };
   const root = ledgerDir(dir);
   if (!existsSync(root)) return fold;
@@ -105,7 +118,11 @@ function foldLedger(dir: string, epoch: EpochManifest, now: number): ReadFold | 
       const t = Date.parse(r.ts);
       const recent = !(t < now - 7 * DAY_MS); // an unreadable time counts as recent: fail closed
       const arm = exactnessArm(r.op);
-      const unexplained = (r.outcome === 'inconclusive' || r.outcome === 'diff') && arm !== null;
+      const rerunDone = r.rerun === 'matched' || r.rerun === 'differed';
+      const unexplained = arm !== null && (r.outcome === 'diff' || (r.outcome === 'inconclusive' && r.rerun !== 'matched'));
+      if (COMPARED.has(r.outcome)) fold.compared++;
+      if (r.outcome === 'privacy_diverged') fold.privacy_rows++;
+      if (recent && r.outcome === 'inconclusive' && !rerunDone && r.reason?.startsWith('privacy_check_')) fold.privacy_unsettled_7d++;
       if (r.outcome === 'match') fold.matches.set(r.op, (fold.matches.get(r.op) ?? 0) + 1);
       if (recent && r.outcome === 'capability_missing') fold.capability_missing_7d++;
       if (recent && RUST_ERRORS.has(r.outcome)) fold.rust_error_unresolved_7d++;
@@ -120,19 +137,21 @@ function foldLedger(dir: string, epoch: EpochManifest, now: number): ReadFold | 
 }
 
 /** Child health from the whole fault history, in the epoch. A fault with no epoch tag counts when it is not older than the epoch. */
-function foldChild(dir: string, epoch: EpochManifest): { panics: number; faults: number } | null {
+function foldChild(dir: string, epoch: EpochManifest): { panics: number; faults: number; privacy_pauses: number } | null {
   const faults = readAllFaults(dir);
   if (faults === null) return null;
   const started = Date.parse(epoch.started_at);
   let panics = 0;
   let count = 0;
+  let pauses = 0;
   for (const f of faults) {
     if (!(f?.epoch_id !== undefined ? f.epoch_id === epoch.epoch_id : Date.parse(f?.ts) >= started)) continue;
     if (f.kind === 'rust_internal_error') panics++;
     else if (f.kind === 'child_exit') { count++; if (/signal=SIGABRT|code=134\b/.test(f.detail ?? '')) panics++; }
     else if (f.kind === 'spawn_failed') count++;
+    else if (f.kind === 'privacy_pause') pauses++;
   }
-  return { panics, faults: count };
+  return { panics, faults: count, privacy_pauses: pauses };
 }
 
 /** The `reads`, `search` and `child` fields of the status document, plus the `evidence` block the status prints. */
@@ -161,18 +180,27 @@ export function buildEvidenceStatus(o: EvidenceOptions): EvidenceStatus {
         diverged_unexplained_7d: fold.diverged_unexplained_7d,
       };
     }
+    if (fold.compared + fold.privacy_rows > 0 && fold.privacy_unsettled_7d === 0) out.privacy_diverged = fold.privacy_rows;
     const search: NonNullable<EvidenceStatus['search']> = {};
     if (fold.arms.trigram.compared > 0) search.trigram_exact_disagreements = fold.arms.trigram.bad;
     if (fold.arms.keyword_title.compared > 0) search.keyword_title = { ranker: SHADOW_KEYWORD_RANKER, exact_disagreements: fold.arms.keyword_title.bad };
     if (Object.keys(search).length > 0) out.search = search;
   }
   const child = foldChild(o.dir, epoch);
-  if (child) out.child = child;
+  if (child) {
+    out.child = { panics: child.panics, faults: child.faults };
+    if (out.privacy_diverged !== undefined) out.privacy_diverged = Math.max(out.privacy_diverged, child.privacy_pauses);
+  }
+  const recall = readEpochRecall(o.dir, epoch.epoch_id);
+  const mean = (pick: (l: { vector: number; primary: number; overlap: number }) => number): number => recall!.reduce((n, l) => n + pick(l), 0) / recall!.length;
+  if (recall && recall.length >= RECALL_MIN_SAMPLES) out.search = { ...out.search, vector_recall_at_10: mean((l) => l.vector), primary_recall_at_10: mean((l) => l.primary) };
   const started = Date.parse(epoch.started_at);
   out.evidence = {
     epoch_id: epoch.epoch_id, epoch_started_at: epoch.started_at, readiness_days: days,
     earliest_ready_at: new Date(started + days * DAY_MS).toISOString(), min_successful_per_op: MIN_SUCCESSFUL_PER_OP,
     rust_error_rule: RUST_ERROR_RULE, panics_label: PANICS_LABEL, ops_lacking_samples: lacking, usage,
+    recall_samples: recall?.length ?? 0, ...(recall?.length ? { vector_overlap_with_primary: mean((l) => l.overlap) } : {}),
+    privacy_checks_unsettled_7d: fold?.privacy_unsettled_7d ?? 0,
   };
   return out;
 }
@@ -192,6 +220,11 @@ export function renderEvidenceStatus(s: EvidenceStatus): string[] {
     lines.push(`  unresolved rust_error in the last 7 days: ${s.reads.rust_error_unresolved_7d} (${e.rust_error_rule})`);
     lines.push(`  unexplained diverged in the last 7 days: ${s.reads.diverged_unexplained_7d}; capability_missing in the last 7 days: ${s.reads.capability_missing_7d}`);
   }
+  lines.push(s.privacy_diverged === undefined
+    ? `  privacy: no evidence (nothing compared yet, or ${e.privacy_checks_unsettled_7d} privacy check(s) in the last 7 days could not be settled)`
+    : `  privacy: ${s.privacy_diverged} divergence(s) (a Rust row the caller may not read, judged by the primary's read policy)`);
+  const recall = (v: number | undefined): string => (v === undefined ? 'no evidence' : v.toFixed(3));
+  lines.push(`  vector recall@10 (exact reference on the primary): Rust ${recall(s.search?.vector_recall_at_10)}, primary ${recall(s.search?.primary_recall_at_10)}; ${e.recall_samples} scored sample(s) (needs ${RECALL_MIN_SAMPLES})${e.vector_overlap_with_primary === undefined ? '' : `; Rust's overlap with the primary ${e.vector_overlap_with_primary.toFixed(3)}`}`);
   const arm = (name: string, v: number | undefined): string => `${name} ${v ?? 'no comparisons'}`;
   lines.push(`  search disagreements: ${arm('trigram', s.search?.trigram_exact_disagreements)}; ${arm(`keyword/title (${SHADOW_KEYWORD_RANKER})`, s.search?.keyword_title?.exact_disagreements)}`);
   lines.push(s.child ? `  child: ${e.panics_label} ${s.child.panics}; faults (exits, failed spawns) ${s.child.faults}` : '  child: no fault evidence (the fault history cannot be read)');
