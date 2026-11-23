@@ -148,6 +148,33 @@ fn a_failed_batch_stores_nothing() {
 }
 
 #[test]
+fn a_batch_that_fails_after_good_rows_stores_none_of_them() {
+    // Value: protects=a failed batch leaves no accepted prefix; fails_when=rows commit one by one before a later row fails;
+    // why_new=a_failed_batch_stores_nothing fails on its first row, before any data was written; seam=none;
+    // no_claim=power-loss durability.
+    let s = seeded_pages();
+    let good = row(&[("page_id", "7"), ("tag", "founder")]);
+    let bad = row(&[("page_id", "99"), ("tag", "x")]);
+    let err = s
+        .import_relation(SEED, "tags", vec![good, bad])
+        .unwrap_err();
+    assert_eq!(err.code, PAGE_NOT_FOUND);
+    assert!(err.message.starts_with("tags row 1:"), "{}", err.message);
+    assert!(
+        s.get_tags("people/alice-example", &ReadScope::default())
+            .unwrap()
+            .is_empty()
+    );
+    // The same seed may send the batch again: the refused batch recorded nothing.
+    let r = import(
+        &s,
+        "tags",
+        vec![row(&[("page_id", "7"), ("tag", "founder")])],
+    );
+    assert_eq!((r.imported, r.skipped), (1, 0));
+}
+
+#[test]
 fn sources_are_copied_verbatim_and_retries_skip() {
     let s = store();
     let wiki = row(&[
