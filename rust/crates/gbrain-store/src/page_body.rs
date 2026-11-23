@@ -28,8 +28,6 @@
 //!   client key; the value is the staging id.
 //! - `b 0x07 <staging id text> <sha256>`: a text a staging recorded; the value is the source id.
 //! - `b 0x08 <page id> <staging id text>`: stagings of a page, for the page-delete cascade.
-//! - `b 0x09 <page id> 0x00` and `b 0x09 <page id> 0x01 <family>`: the page's embedding budget row
-//!   and its derivation spend rows (`page_spend`, rust/docs/store/page_spend.md).
 //! - `M next_body_occurrence_id`: the occurrence id counter (big-endian u64 of the next id).
 //!
 //! Refusals Postgres raises from a CHECK, foreign key or unique index are `constraint_violation`
@@ -49,15 +47,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-mod page_spend;
-pub(crate) use page_spend::page_budget_limited;
 mod segment_rewrite;
 mod segmented_embedding;
 mod segmented_writes;
-pub use page_spend::{
-    BudgetLimitedPagesOpts, PageBudgetReport, PageEmbeddingHolds, PageSizeStateRow,
-    PageSpendLedger, PageSpendLedgerRow, PageSpendPlan, PageSpendReservationWrite, PageSpendSettle,
-};
 pub use segment_rewrite::{
     RewrittenDerivationScope, SegmentedGenerationLock, SegmentedRewritePage,
 };
@@ -79,7 +71,6 @@ const BODY: u8 = 0x05;
 const STAGING_CLIENT: u8 = 0x06;
 const STAGING_TEXT: u8 = 0x07;
 const STAGING_BY_PAGE: u8 = 0x08;
-const PAGE_SPEND: u8 = 0x09;
 
 /// The page id counter of `pages.rs` (its `NEXT_PAGE_ID`, private there): a shell takes its id
 /// from the same sequence `putPage` does.
@@ -818,7 +809,6 @@ pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Resul
     delete_prefix(tx, &manifest_prefix(page.id))?;
     delete_prefix(tx, &derivation_prefix(page.id))?;
     tx.delete(&body_key(page.id))?;
-    page_spend::delete_page_spend(tx, page.id)?;
     crate::chunks::forget_segment_view(tx, page.id)?;
     let by_page = staging_by_page_prefix(page.id);
     let mut stagings = Vec::new();

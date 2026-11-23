@@ -56,6 +56,8 @@ function days(bytes: number): { body: string; count: number } {
 
 interface ChunkRow { chunk_index: number; chunk_text: string; chunk_source: string; occurrence_id: number | null; embedding_input_hash: string | null; vector: string | null }
 
+/** The service's segment chunk read (listSegmentChunkRows); counted to prove a settled segment is never read. */
+const SEGMENT_CHUNK_READ = 'cc.occurrence_id = $2';
 
 export function defineSynopsisSegmentHashCases(opts: { getBrain: () => AppendBrain }): void {
   const calls: GeneratePerChunkSynopsisArgs[] = [];
@@ -71,9 +73,7 @@ export function defineSynopsisSegmentHashCases(opts: { getBrain: () => AppendBra
   const counting = (engine: BrainEngine): BrainEngine => new Proxy(engine, {
     get(target, prop) {
       const value = Reflect.get(target, prop, target);
-      // The service's segment chunk read is the typed listSegmentChunkRows member; counted to prove a settled segment
-      // is never read.
-      if (prop === 'listSegmentChunkRows') return (pageId: number, occurrenceId: number) => { segmentReads++; return target.listSegmentChunkRows(pageId, occurrenceId); };
+      if (prop === 'executeRaw') return (sql: string, params?: unknown[]) => { if (sql.includes(SEGMENT_CHUNK_READ)) segmentReads++; return target.executeRaw(sql, params); };
       return typeof value === 'function' ? value.bind(target) : value;
     },
   });

@@ -257,8 +257,6 @@ const INTERFACE_METHODS: readonly string[] = [
   'setLocalStatementTimeout',
   'readSegmentedRewritePage', 'restorePageDeletedAt', 'lockSegmentedGenerationPage', 'splitManifestGeneration', 'publishRebuiltGeneration', 'setSegmentedVersionHash', 'deleteRewrittenDerivationRows',
   'readSegmentedEmbedPage', 'hasLiveSegmentedPage', 'countSegmentedEmbedRows', 'listSegmentedStaleRows', 'readSegmentChunkInputHashes', 'installSegmentedVectors', 'listLiveEmbedSegments', 'listSegmentChunkRows',
-  // The page embedding lease and the per-page spend ledgers (engine-sql/page-spend.ts; pinned by test/engine-sql-page-spend.test.ts)
-  'takePageEmbeddingLease', 'renewPageEmbeddingLease', 'releasePageEmbeddingLease', 'listVectorlessChunkIndexes', 'readPageEmbeddingHolds', 'writePageEmbeddingHold', 'openPageEmbeddingHold', 'lockPageSpendLedger', 'writePageSpendReservation', 'settlePageSpendReservation', 'listBudgetLimitedPageRows', 'readPageSizeStateRows',
   // Trust: the fact withdrawal ledger (engine-sql/trust-withdrawals.ts)
   'hasCoveringFactWithdrawal', 'insertFactWithdrawal', 'listFactWithdrawalDates', 'moveFactWithdrawalSubject',
   'hasFactWithdrawalForSubject', 'listFactWithdrawalKeys',

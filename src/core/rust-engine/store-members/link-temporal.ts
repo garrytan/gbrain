@@ -22,6 +22,7 @@ import type { RelationshipEvidence, RelationshipKey, RelationshipStateWrite } fr
 import { temporalLinkTypes } from '../../link-validity.ts';
 import { privatePagesFilterFragment } from '../../search/private-visibility.ts';
 import type { VectorBackfillOpts } from '../../search-vector-backfill.ts';
+import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { pagePolicyFlags, storePagePolicy } from './private-provenance.ts';
 
@@ -163,22 +164,18 @@ function patternWord(member: string, pattern: string): string {
   return word;
 }
 
-/** The `{ scope, relevance }` input of a scoped coverage count, its POSIX patterns given back as query words. */
-function coverageInput(member: string, scope: ProjectionReadinessScope, relevance: CoverageRelevance) {
-  return {
-    scope: coverageScope(member, scope),
-    relevance: {
-      all: relevance.all === true, types: [...relevance.types], terms: relevance.patterns.map(p => patternWord(member, p)),
-      pageIds: ids(relevance.pageIds), exactTopPageId: relevance.exactTopPageId == null ? null : Number(relevance.exactTopPageId),
-      imageArm: relevance.imageArm === true,
-    },
-  };
-}
-
 export const countPendingProjectionPages: StoreMember<[scope: ProjectionReadinessScope, relevance: CoverageRelevance], ScopedCount | null> =
   async (brain, scope, relevance) => {
     const member = 'countPendingProjectionPages';
-    const count = await storeCall({ member }, () => brain.countPendingProjectionPages(coverageInput(member, scope, relevance))) as ScopedCount | null;
+    const input = {
+      scope: coverageScope(member, scope),
+      relevance: {
+        all: relevance.all === true, types: [...relevance.types], terms: relevance.patterns.map(p => patternWord(member, p)),
+        pageIds: ids(relevance.pageIds), exactTopPageId: relevance.exactTopPageId == null ? null : Number(relevance.exactTopPageId),
+        imageArm: relevance.imageArm === true,
+      },
+    };
+    const count = await storeCall({ member }, () => brain.countPendingProjectionPages(input)) as ScopedCount | null;
     // A count that reaches the cap reads an unordered subset on the SQL engines (their scan order, which PGLite and
     // Postgres do not share), so no store walk order gives the same could-affect: the capped form refuses.
     if (count?.capped === true) refuseMember(member, `a count that reaches the ${COVERAGE_COUNT_CAP}-page cap (its could-affect depends on the SQL scan order)`);
@@ -200,10 +197,6 @@ export const readProjectionReadiness: StoreMember<[scope: ProjectionReadinessSco
 };
 
 export const countEmbeddingHeldPages: StoreMember<[scope: ProjectionReadinessScope, relevance: CoverageRelevance], ScopedCount | null> =
-  async (brain, scope, relevance) => {
-    const member = 'countEmbeddingHeldPages';
-    const count = await storeCall({ member }, () => brain.countEmbeddingHeldPages(coverageInput(member, scope, relevance))) as ScopedCount | null;
-    // As countPendingProjectionPages: a capped count's could-affect depends on the SQL scan order.
-    if (count?.capped === true) refuseMember(member, `a count that reaches the ${COVERAGE_COUNT_CAP}-page cap (its could-affect depends on the SQL scan order)`);
-    return count;
-  };
+  async (_brain: StoreBrain, _scope, relevance) => ({
+    total: 0, could_affect: 0, capped: false, ...(relevance.exactTopPageId != null ? { top_counted: false } : {}),
+  });

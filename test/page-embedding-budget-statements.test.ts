@@ -12,18 +12,18 @@ import { holdPageEmbedding, planPageEmbedding } from '../src/core/page-embedding
 let engine: PGLiteEngine;
 beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }, 120_000);
 afterAll(async () => { await engine.disconnect(); });
-beforeEach(async () => { delete (engine as { executeRaw?: unknown }).executeRaw; await resetPgliteState(engine); });
+beforeEach(async () => { await resetPgliteState(engine); });
 
 const stale = [{ chunk_index: 0, chunk_text: 'a short stale chunk' }];
 
-// Counts every executeRaw on the engine itself: planPageEmbedding reaches the database through the typed page-spend
-// members (engine-sql/page-spend.ts), and each member runs its one statement through the engine's executeRaw.
 function counting(): { proxy: BrainEngine; count: () => number } {
   let n = 0;
-  const raw = engine.executeRaw.bind(engine);
-  const counted = ((sql: string, params?: unknown[]) => { n++; return raw(sql, params); }) as typeof engine.executeRaw;
-  Object.defineProperty(engine, 'executeRaw', { value: counted, configurable: true, writable: true });
-  return { proxy: engine, count: () => { delete (engine as { executeRaw?: unknown }).executeRaw; return n; } };
+  const proxy = new Proxy(engine, { get(target, prop) {
+    const value = Reflect.get(target, prop, target);
+    if (prop === 'executeRaw') return (sql: string, params?: unknown[]) => { n++; return target.executeRaw(sql, params); };
+    return typeof value === 'function' ? value.bind(target) : value;
+  } }) as unknown as BrainEngine;
+  return { proxy, count: () => n };
 }
 
 async function page(slug: string, frontmatter: Record<string, unknown> = {}) {

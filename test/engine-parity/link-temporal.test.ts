@@ -357,34 +357,6 @@ describe('engine parity: link temporal state', () => {
   );
 
   parityTest(
-    'search/retrieval-coverage: a held page counts in scope while its hold applies, and an embed_skip page never does',
-    { methods: ['putPage', 'getPage', 'writePageEmbeddingHold', 'openPageEmbeddingHold', 'countEmbeddingHeldPages'] },
-    async (engine) => {
-      await engine.putPage(ALICE, page('Alice', { type: 'person' }));
-      await engine.putPage(ACME, page('Acme', { type: 'company' }));
-      await engine.putPage('notes/skipped', { ...page('Skipped'), frontmatter: { embed_skip: { reason: 'test' } } });
-      const [alice, acme, skipped] = await Promise.all([ALICE, ACME, 'notes/skipped'].map(slug => engine.getPage(slug)));
-      await engine.writePageEmbeddingHold(alice!.id, 'archive_backfill', 'replace');
-      await engine.writePageEmbeddingHold(acme!.id, 'call_import', 'replace');
-      await engine.writePageEmbeddingHold(skipped!.id, 'archive_backfill', 'replace');
-      const all = await countEmbeddingHeld(engine, {}, RELEVANCE);
-      const people = await countEmbeddingHeld(engine, {}, { ...RELEVANCE, all: false, types: ['person'] });
-      const top = await countEmbeddingHeld(engine, {}, { ...RELEVANCE, exactTopPageId: acme!.id });
-      const skippedTop = await countEmbeddingHeld(engine, {}, { ...RELEVANCE, exactTopPageId: skipped!.id });
-      // A size hold on a small page does not apply.
-      await engine.writePageEmbeddingHold(acme!.id, 'large_page', 'replace');
-      await engine.openPageEmbeddingHold(alice!.id);
-      const after = await countEmbeddingHeld(engine, {}, { ...RELEVANCE, exactTopPageId: acme!.id });
-      expect(all).toEqual({ total: 2, could_affect: 2, capped: false });
-      expect(people).toEqual({ total: 2, could_affect: 1, capped: false });
-      expect(top).toEqual({ total: 2, could_affect: 2, capped: false, top_counted: true });
-      expect(skippedTop).toEqual({ total: 2, could_affect: 2, capped: false, top_counted: false });
-      expect(after).toEqual({ total: 0, could_affect: 0, capped: false, top_counted: false });
-      return { all, people, top, skippedTop, after };
-    },
-  );
-
-  parityTest(
     'reindex-search-vector: a dry run and a consented run under english report the same counts',
     { methods: ['putPage', 'softDeletePage', 'countSearchVectorRows', 'replaceSearchVectorTriggerFunction', 'backfillSearchVectors',
       'ensureFactsKeywordIndex', 'getConfig', 'setConfig', 'unsetConfig'] },

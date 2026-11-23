@@ -81,13 +81,9 @@ and otherwise kept. `sealChunks` (replace) writes what it is given.
 A take vector counts only while its `B 'k'` row equals the take's `claim_rev`, so a claim edit makes it
 stale at once (PGLite compares `embedded_text_hash` with `md5(claim)`).
 
-A page with a held or capped budget row that still applies (`pageBudgetLimitedFilter`: the row is not
-`open`, and the body is over the inline threshold or the reason holds a page of any size) leaves the
-stale counts, `listStaleChunks` and the content-drift sweep, as in PGLite. The rule is
-`page_budget_limited` in [page_spend.md](page_spend.md).
-
 ## Known edges
 
+- The page-embedding budget (`budgetLimited`) is not kept: no page leaves the stale queue for it.
 - PGLite's generation filter (`chunkGenerationFilter`) is read as the chunk view the page shows now
   (`visible_at`).
 - A segmented page counts as having no chunkless content.

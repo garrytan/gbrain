@@ -147,7 +147,7 @@ fn live_segmented(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
 }
 
 /// The page's chunks `chunkGenerationFilter` keeps, in stored (chunk_index) order.
-pub(super) fn visible_chunks(read: &dyn KvRead, page_id: u64) -> Result<Vec<ChunkRecord>> {
+fn visible_chunks(read: &dyn KvRead, page_id: u64) -> Result<Vec<ChunkRecord>> {
     let state = read_body_state(read, page_id)?;
     let segmented = state
         .as_ref()

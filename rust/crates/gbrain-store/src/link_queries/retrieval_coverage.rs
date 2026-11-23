@@ -26,7 +26,6 @@ use crate::error::Result;
 use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::keyword::parser::is_alnum_char;
 use crate::kv::KvRead;
-use crate::page_body::page_budget_limited;
 use crate::pages::{PageRecord, all_pages, read_page_by_id};
 use crate::persistence::activation_started_us;
 use crate::sources::read_source;
@@ -99,16 +98,6 @@ pub struct PendingCount {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_counted: Option<bool>,
     pub could_affect_images: u64,
-}
-
-/// `ScopedCount` of the embedding-held count: no image column.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct HeldCount {
-    pub total: u64,
-    pub could_affect: u64,
-    pub capped: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub top_counted: Option<bool>,
 }
 
 /// `ProjectionRebuildProgress`.
@@ -255,25 +244,6 @@ fn token_match(haystack: &str, term: &str) -> bool {
     })
 }
 
-impl CoverageRelevance {
-    /// The could-affect test of `countInScope`: the page matches the query (all, a type, a word or
-    /// a returned id) and the image arm or a returned id lets an image count.
-    fn could_affect(&self, page: &PageRecord) -> bool {
-        let returned = self.page_ids.contains(&page.id);
-        let haystack = pg_lower(&format!("{} {}", page.title, page.slug));
-        let matches = self.all
-            || self.types.contains(&page.page_type)
-            || self.terms.iter().any(|t| token_match(&haystack, t))
-            || returned;
-        matches && (self.image_arm || page.page_kind != "image" || returned)
-    }
-}
-
-/// A held or capped budget row that still applies, on a page with no `embed_skip` marker.
-fn embedding_held(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
-    Ok(!page.frontmatter.contains_key("embed_skip") && page_budget_limited(read, page)?)
-}
-
 /// Calls `visit` with each live page in scope and its class until `visit` returns false.
 fn walk_scope(
     read: &dyn KvRead,
@@ -309,7 +279,14 @@ impl Store {
                 return true;
             }
             total += 1;
-            if relevance.could_affect(page) {
+            let returned = relevance.page_ids.contains(&page.id);
+            let haystack = pg_lower(&format!("{} {}", page.title, page.slug));
+            let matches = relevance.all
+                || relevance.types.contains(&page.page_type)
+                || relevance.terms.iter().any(|t| token_match(&haystack, t))
+                || returned;
+            let shown = relevance.image_arm || page.page_kind != "image" || returned;
+            if matches && shown {
                 could += 1;
                 if cls == ProjectionClass::Image {
                     images += 1;
@@ -327,52 +304,6 @@ impl Store {
             capped: total >= COVERAGE_COUNT_CAP,
             top_counted,
             could_affect_images: images,
-        })
-    }
-
-    /// `countEmbeddingHeldPages`: pages in scope held from embedding (a held or capped budget row
-    /// that still applies, `budgetRowAppliesFilter`) that no `embed_skip` marker keeps out for
-    /// good, up to the cap, and how many could affect the query.
-    pub fn count_embedding_held_pages(&self, input: &PendingCountInput) -> Result<HeldCount> {
-        let read = self.read()?;
-        let read = &*read;
-        let relevance = &input.relevance;
-        let (mut total, mut could) = (0u64, 0u64);
-        let mut failure = None;
-        walk_scope(read, &input.scope, |page, _| {
-            match embedding_held(read, page) {
-                Ok(true) => {}
-                Ok(false) => return true,
-                Err(e) => {
-                    failure = Some(e);
-                    return false;
-                }
-            }
-            total += 1;
-            if relevance.could_affect(page) {
-                could += 1;
-            }
-            total < COVERAGE_COUNT_CAP
-        })?;
-        if let Some(e) = failure {
-            return Err(e);
-        }
-        let top_counted = match relevance.exact_top_page_id {
-            None => None,
-            Some(id) => Some(match read_page_by_id(read, id)? {
-                Some(page) => {
-                    page.deleted_at_us.is_none()
-                        && read_source(read, &page.source_id)?.is_some()
-                        && embedding_held(read, &page)?
-                }
-                None => false,
-            }),
-        };
-        Ok(HeldCount {
-            total,
-            could_affect: could,
-            capped: total >= COVERAGE_COUNT_CAP,
-            top_counted,
         })
     }
 

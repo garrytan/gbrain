@@ -6,7 +6,7 @@ test/engine-parity/chunk-page-segmented.test.ts	5	0
 test/engine-parity/chunk-reads.test.ts	9	0
 test/engine-parity/chunk-safe-fence.test.ts	3	0
 test/engine-parity/chunk-vector-overflow.test.ts	1	0
-test/engine-parity/chunks.test.ts	14	1
+test/engine-parity/chunks.test.ts	13	1
 test/engine-parity/cli-capabilities.test.ts	2	0
 test/engine-parity/cli-reads-export.test.ts	16	1
 test/engine-parity/cli-reads-import.test.ts	13	1
@@ -45,7 +45,7 @@ test/engine-parity/jobs.test.ts	14	1
 test/engine-parity/keyword-visibility.test.ts	5	0
 test/engine-parity/lifecycle.test.ts	10	1
 test/engine-parity/link-reads.test.ts	10	0
-test/engine-parity/link-temporal.test.ts	14	0
+test/engine-parity/link-temporal.test.ts	13	0
 test/engine-parity/links.test.ts	30	0
 test/engine-parity/memory-mutation-reads.test.ts	5	0
 test/engine-parity/open-loops.test.ts	4	0
@@ -69,7 +69,7 @@ test/engine-parity/search.test.ts	22	0
 test/engine-parity/segment-pending-stamp.test.ts	1	1
 test/engine-parity/segmented-body.test.ts	17	0
 test/engine-parity/segmented-callers.test.ts	3	0
-test/engine-parity/segmented-embedding.test.ts	3	0
+test/engine-parity/segmented-embedding.test.ts	2	0
 test/engine-parity/segmented-rewrite.test.ts	4	0
 test/engine-parity/source-resolver-reads.test.ts	11	0
 test/engine-parity/spend-log.test.ts	10	0

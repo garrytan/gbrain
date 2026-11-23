@@ -215,21 +215,6 @@ impl Brain {
         })
     }
 
-    /// `countEmbeddingHeldPages`: `{ scope, relevance }`: `{ total, could_affect, capped,
-    /// top_counted? }`.
-    #[napi]
-    pub fn count_embedding_held_pages<'env>(
-        &self,
-        env: &'env Env,
-        input: Option<Value>,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let input: gbrain_store::link_queries::PendingCountInput =
-                arg(input, "countEmbeddingHeldPages input")?;
-            s.count_embedding_held_pages(&input)
-        })
-    }
-
     /// `projectionRebuildProgress`: a coverage scope: `{ done, total, pages_per_second }` or null.
     #[napi]
     pub fn projection_rebuild_progress<'env>(

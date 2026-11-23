@@ -157,7 +157,6 @@ test/engine-parity/decide-store.test.ts
 test/engine-parity/effect-scans.test.ts
 test/engine-parity/entity-reads.test.ts
 test/engine-parity/extraction.test.ts
-test/engine-parity/fact-fingerprint-ambiguous.test.ts
 test/engine-parity/fact-relink-attempts.test.ts
 test/engine-parity/fact-relink-writes.test.ts
 test/engine-parity/facts-cycle.test.ts

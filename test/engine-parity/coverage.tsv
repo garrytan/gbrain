@@ -26,7 +26,7 @@
 # dream: 3/3
 # contradictions: 5/5
 # facts: 15/15
-# segmented_body: 60/60
+# segmented_body: 48/48
 # versions: 5/5
 # stats_ingest: 5/5
 # sync_aliases: 10/10
@@ -164,7 +164,7 @@ replaceSearchVectorTriggerFunction	search_vector	yes	1	no	yes	yes	serves
 backfillSearchVectors	search_vector	yes	1	no	yes	yes	serves
 ensureFactsKeywordIndex	search_vector	yes	1	no	yes	yes	serves
 countPendingProjectionPages	retrieval_coverage	yes	9	no	yes	yes	serves
-countEmbeddingHeldPages	retrieval_coverage	yes	2	no	yes	yes	serves
+countEmbeddingHeldPages	retrieval_coverage	yes	1	no	yes	yes	serves
 projectionRebuildProgress	retrieval_coverage	yes	4	no	yes	yes	serves
 readProjectionReadinessGeneration	retrieval_coverage	yes	2	no	yes	yes	serves
 readProjectionReadiness	retrieval_coverage	yes	5	no	yes	yes	serves
@@ -188,12 +188,12 @@ sealChunks	chunks	yes	47	no	yes	yes	serves
 getChunks	chunks	yes	33	yes	yes	yes	serves
 getChunkPage	chunks	yes	11	no	yes	yes	serves
 getChunkWindows	chunks	yes	11	no	yes	yes	serves
-countStaleChunks	chunks	yes	6	no	yes	yes	serves
-sumStaleChunkChars	chunks	yes	3	no	yes	yes	serves
+countStaleChunks	chunks	yes	5	no	yes	yes	serves
+sumStaleChunkChars	chunks	yes	2	no	yes	yes	serves
 setPageEmbeddingSignature	chunks	yes	1	no	yes	yes	serves
 invalidateStaleSignatureEmbeddings	chunks	yes	1	no	yes	yes	serves
 invalidateContentDriftEmbeddings	chunks	yes	1	no	yes	yes	serves
-listStaleChunks	chunks	yes	3	no	yes	yes	serves
+listStaleChunks	chunks	yes	2	no	yes	yes	serves
 countChunklessPagesWithContent	chunks	yes	5	yes	yes	yes	serves
 listChunklessPagesWithContent	chunks	yes	3	yes	yes	yes	serves
 readEmbeddingStateCounts	chunks	yes	2	no	yes	yes	serves
@@ -354,26 +354,14 @@ splitManifestGeneration	segmented_body	yes	1	no	yes	yes	serves
 publishRebuiltGeneration	segmented_body	yes	1	no	yes	yes	serves
 setSegmentedVersionHash	segmented_body	yes	1	no	yes	yes	serves
 deleteRewrittenDerivationRows	segmented_body	yes	1	no	yes	yes	serves
-readSegmentedEmbedPage	segmented_body	yes	3	no	yes	yes	serves
+readSegmentedEmbedPage	segmented_body	yes	2	no	yes	yes	serves
 hasLiveSegmentedPage	segmented_body	yes	1	no	yes	yes	serves
-countSegmentedEmbedRows	segmented_body	yes	2	no	yes	yes	serves
-listSegmentedStaleRows	segmented_body	yes	3	no	yes	yes	serves
-readSegmentChunkInputHashes	segmented_body	yes	2	no	yes	yes	serves
-installSegmentedVectors	segmented_body	yes	3	no	yes	yes	serves
+countSegmentedEmbedRows	segmented_body	yes	1	no	yes	yes	serves
+listSegmentedStaleRows	segmented_body	yes	2	no	yes	yes	serves
+readSegmentChunkInputHashes	segmented_body	yes	1	no	yes	yes	serves
+installSegmentedVectors	segmented_body	yes	2	no	yes	yes	serves
 listLiveEmbedSegments	segmented_body	yes	1	no	yes	yes	serves
 listSegmentChunkRows	segmented_body	yes	1	no	yes	yes	serves
-takePageEmbeddingLease	segmented_body	yes	1	no	yes	yes	serves
-renewPageEmbeddingLease	segmented_body	yes	1	no	yes	yes	serves
-releasePageEmbeddingLease	segmented_body	yes	1	no	yes	yes	serves
-listVectorlessChunkIndexes	segmented_body	yes	1	no	yes	yes	serves
-readPageEmbeddingHolds	segmented_body	yes	1	no	yes	yes	serves
-writePageEmbeddingHold	segmented_body	yes	3	no	yes	yes	serves
-openPageEmbeddingHold	segmented_body	yes	2	no	yes	yes	serves
-lockPageSpendLedger	segmented_body	yes	1	no	yes	yes	serves
-writePageSpendReservation	segmented_body	yes	1	no	yes	yes	serves
-settlePageSpendReservation	segmented_body	yes	1	no	yes	yes	serves
-listBudgetLimitedPageRows	segmented_body	yes	1	no	yes	yes	serves
-readPageSizeStateRows	segmented_body	yes	1	no	yes	yes	serves
 createVersion	versions	yes	20	no	yes	yes	serves
 getVersions	versions	yes	9	no	yes	yes	serves
 readLatestVersionId	versions	yes	1	no	yes	yes	serves

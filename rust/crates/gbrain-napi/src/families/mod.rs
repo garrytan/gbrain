@@ -58,7 +58,6 @@ mod memory_mutation_reads;
 mod ontology;
 mod page_body;
 mod page_ops;
-mod page_spend;
 mod raw_files;
 mod relations;
 mod salience;

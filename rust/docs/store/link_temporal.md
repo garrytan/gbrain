@@ -54,7 +54,7 @@ writes the rows the builder returns.
 | `link-relationship-notes.ts` | listRelationshipNoteRows | equal |
 | `doctor/checks/edge-validity.ts` | edgeValidityCounts | equal |
 | `mentions/referrers.ts` | listPageStatusByRef, listRecordMetadataRows | equal |
-| `search/retrieval-coverage.ts` | countEmbeddingHeldPages | equal: a held or capped budget row that still applies ([page_spend.md](page_spend.md)); a capped count refuses, as below |
+| `search/retrieval-coverage.ts` | countEmbeddingHeldPages | equal (always 0: the store keeps no embedding budget rows) |
 | `search/retrieval-coverage.ts` | countPendingProjectionPages, projectionRebuildProgress | equal (a capped count refuses: see Known differences) |
 | `search/projection-readiness.ts` | readProjectionReadinessGeneration, readProjectionReadiness | equal statuses, cached until the next write |
 | `commands/reindex-search-vector.ts` | countSearchVectorRows, replaceSearchVectorTriggerFunction, backfillSearchVectors, ensureFactsKeywordIndex | equal JSON (a no-op under `english`) |

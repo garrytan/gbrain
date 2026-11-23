@@ -193,9 +193,9 @@ segmented-embed members (`page-body/segmented-embedding.ts`) are in
 | `listSegmentChunkRows(pageId, occurrenceId)` | a sealed page's visible rows of one occurrence in index order, with their recorded inputs |
 
 The embed members serve the column `embedding` only (the store's one vector column); another column
-refuses `engine_capability_missing`. The embed lease, the per-page budget and the vectorless chunk
-read are the page-spend members ([page_spend.md](page_spend.md)), so `embedSegmentedRows` and
-`embedSegmentedPage` serve on a Rust brain end to end.
+refuses `engine_capability_missing`. The embed lease and budget (`page-embedding-lease.ts`,
+`page-embedding-budget.ts`) still run raw SQL, so `embedSegmentedRows` and `embedSegmentedPage`
+refuse on a Rust brain end to end.
 
 A chunk row is stale for generation `g` with live occurrences `live` as in Postgres's
 `STALE_CHUNKS_SQL`: a segment chunk of a live occurrence when its generation is below the newest

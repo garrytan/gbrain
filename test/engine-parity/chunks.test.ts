@@ -308,36 +308,6 @@ describe('engine parity: chunks', () => {
   );
 
   parityTest(
-    'a page held from embedding leaves the stale queue while its hold still applies, and comes back when the hold opens',
-    { methods: ['getPage', 'countStaleChunks', 'sumStaleChunkChars', 'listStaleChunks', 'writePageEmbeddingHold', 'openPageEmbeddingHold'] },
-    async (engine) => {
-      await seedPage(engine, { slug: 'notes/held', input: PAGE('Held', 'x'), chunks: [chunk(0, 'held one'), chunk(1, 'held two')] });
-      await seedPage(engine, { slug: 'notes/free', input: PAGE('Free', 'x'), chunks: [chunk(0, 'free one')] });
-      const held = (await engine.getPage('notes/held'))!;
-      const queue = async () => ({
-        count: await engine.countStaleChunks(),
-        chars: await engine.sumStaleChunkChars(),
-        rows: (await engine.listStaleChunks()).map(r => `${r.slug}/${r.chunk_index}`),
-      });
-      const before = await queue();
-      // A reason that holds a page of any size applies to this small page.
-      await engine.writePageEmbeddingHold(held.id, 'archive_backfill', 'replace');
-      const whileHeld = await queue();
-      // A size hold on a small page no longer applies, so the page is back in the queue.
-      await engine.writePageEmbeddingHold(held.id, 'large_page', 'replace');
-      const smallSizeHold = await queue();
-      await engine.writePageEmbeddingHold(held.id, 'archive_backfill', 'replace');
-      await engine.openPageEmbeddingHold(held.id);
-      const opened = await queue();
-      expect(before).toEqual({ count: 3, chars: 24, rows: ['notes/held/0', 'notes/held/1', 'notes/free/0'] });
-      expect(whileHeld).toEqual({ count: 1, chars: 8, rows: ['notes/free/0'] });
-      expect(smallSizeHold).toEqual(before);
-      expect(opened).toEqual(before);
-      return { before, whileHeld, smallSizeHold, opened };
-    },
-  );
-
-  parityTest(
     'setPageEmbeddingSignature drives signature-aware stale counts and invalidateStaleSignatureEmbeddings',
     { methods: ['setPageEmbeddingSignature', 'countStaleChunks', 'sumStaleChunkChars', 'invalidateStaleSignatureEmbeddings', 'getChunks'] },
     async (engine) => {

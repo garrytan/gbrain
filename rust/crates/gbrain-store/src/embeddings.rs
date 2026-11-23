@@ -27,7 +27,6 @@
 use crate::chunks::{ChunkRecord, EmbedState, chunk_rows, read_chunks, read_segment_view};
 use crate::error::{STORE_CORRUPT, StoreError};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
-use crate::page_body::page_budget_limited;
 use crate::pages::{PageRecord, all_pages, read_page};
 use crate::sources::{DEFAULT_SOURCE, read_source};
 use crate::takes::{TakeRecord, all_takes, read_take, write_take};
@@ -386,8 +385,6 @@ struct PageCtx {
     chunks: Vec<ChunkRecord>,
     /// The body generation chunks are visible at (PGLite's `chunkGenerationFilter`).
     generation: u64,
-    /// A held or capped budget row still applies (`pageBudgetLimitedFilter`).
-    budget_limited: bool,
 }
 
 impl PageCtx {
@@ -486,13 +483,11 @@ fn page_contexts(read: &dyn KvRead) -> Result<Vec<PageCtx>> {
         let chunks = read_chunks(read, page.id)?;
         let generation = read_segment_view(read, page.id)?.generation;
         let signature = read_signature(read, page.id)?;
-        let budget_limited = page_budget_limited(read, &page)?;
         out.push(PageCtx {
             page,
             signature,
             chunks,
             generation,
-            budget_limited,
         });
     }
     Ok(out)
@@ -658,7 +653,7 @@ pub struct StaleTakeOptions {
 impl StaleChunkOptions {
     /// `staleChunkWhere` for one chunk of `ctx` (the generation filter is the caller's).
     fn stale(&self, ctx: &PageCtx, chunk: &ChunkRecord) -> bool {
-        if !ctx.live() || ctx.embed_skip() || ctx.budget_limited {
+        if !ctx.live() || ctx.embed_skip() {
             return false;
         }
         if self
@@ -734,7 +729,6 @@ impl Store {
         for ctx in &contexts {
             if !ctx.live()
                 || ctx.embed_skip()
-                || ctx.budget_limited
                 || options
                     .source_id
                     .as_deref()
@@ -865,7 +859,6 @@ impl Store {
             for ctx in page_contexts(&*tx)? {
                 if !ctx.live()
                     || ctx.embed_skip()
-                    || ctx.budget_limited
                     || options
                         .source_id
                         .as_deref()

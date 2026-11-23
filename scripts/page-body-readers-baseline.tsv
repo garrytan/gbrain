@@ -201,7 +201,6 @@ src/core/engine-sql/jobs-status.ts	readQueuedPageChars	sql	META	the facts drain'
 src/core/engine-sql/page-body.ts	createSegmentedPageShell	sql	NONE	not a reader: the segmented storage writer sets the body columns NULL on the shell row
 src/core/engine-sql/page-body.ts	flipBodyGeneration	sql	NONE	not a reader: the generation flip sets the body columns NULL and the segmented body columns
 src/core/engine-sql/page-body.ts	sealSegmentedPage	field	LEAD	the withdrawal overlay of the stored timeline_lead (a bounded prefix), indexed sanitized
-src/core/engine-sql/page-spend.ts	readPageSizeStateRows	sql	META	moved from page-embedding-budget.ts readPageSizeStates: octet_length of the inline body columns, body_bytes for segmented pages
 src/core/engine-sql/pages.ts	PAGE_VERSION_COLUMNS	sql	SEGW	lane 1e: versions of segmented pages carry no body
 src/core/engine-sql/pages.ts	listCorpusSample	sql	LEAD	segmented pages excluded from the sample in SQL (skip)
 src/core/engine-sql/pages.ts	listPrefixSampledPages	sql	LEAD	segmented pages excluded from the sample in SQL (skip)
@@ -407,6 +406,7 @@ src/core/page-body/tail-digest.ts	inlineRegions	field	INLINE	callers branch on s
 src/core/page-body/tail-digest.ts	inlineRegions	sql	INLINE	callers branch on storage: inline pages only, within the segmented threshold
 src/core/page-body/tail-digest.ts	inlineTailDigest	field	INLINE	get_page body:'none' of an inline page; a segmented page uses page-window/segmented.ts tailDigest
 src/core/page-embedding-budget.ts	planPageEmbedding	field	META	lane 1e file: body_bytes for segmented pages
+src/core/page-embedding-budget.ts	readPageSizeStates	sql	META	lane 1e file: body_bytes for segmented pages
 src/core/page-size-policy.ts	largePageBodyFilter	sql	META	fix lane J2: octet_length of the inline body columns, body_bytes for segmented pages (the size twin of pageBodyBytes)
 src/core/page-snapshot-batch.ts	readPageSnapshotsBatch	field	STREAM	same as readPageSnapshot: overlay skipped for a segmented page
 src/core/page-snapshot-batch.ts	readPageSnapshotsBatch	sql	STREAM	p.* feeds rowToPage; the byte budget counts a segmented row as 0 (no body shipped); fingerprint over a NULL body is empty

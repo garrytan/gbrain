@@ -1,5 +1,4 @@
 import type { LiveEmbedSegmentRow, OccurrenceChunkRow, PageTrustRef, PageTrustStamp, RechunkCandidateScope, RetiredChunkVectorRow, RewrittenDerivationScope, SegmentChunkRowRow, SegmentedEmbedPageRow, SegmentedEmbedRef, SegmentedGenerationLock, SegmentedLivePageRow, SegmentedProjectionPage, SegmentedRechunkPageRow, SegmentedRewritePageRow, SegmentedStaleRowRow, SegmentedStaleRowsOpts, SegmentedVectorInstall } from './engine-sql/segmented-writes.ts';
-import type * as PageSpendSql from './engine-sql/page-spend.ts';
 import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead, BodyManifestRow, BodyManifestMeta, BodyManifestOutline, UntiledPage, UntiledPagesQuery } from './engine-sql/export-reads.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as DecideStoreSql from './engine-sql/decide-store.ts';
@@ -3307,30 +3306,6 @@ export interface BrainEngine {
   listLiveEmbedSegments(pageId: number): Promise<LiveEmbedSegmentRow[]>;
   /** A segmented embed: a sealed page's live rows of one occurrence with their recorded inputs, in chunk_index order (engine-sql/segmented-writes.ts). */
   listSegmentChunkRows(pageId: number, occurrenceId: number): Promise<SegmentChunkRowRow[]>;
-  /** The page embedding lease: write `embed-page:<page id>` when free or expired; true when this holder has it (engine-sql/page-spend.ts). */
-  takePageEmbeddingLease(id: string, holder: { pid: number; host: string }, ttlMinutes: number, token: string): Promise<boolean>;
-  /** The page embedding lease: move the TTL while the row carries `token`; false when it is gone (engine-sql/page-spend.ts). */
-  renewPageEmbeddingLease(id: string, token: string, ttlMinutes: number): Promise<boolean>;
-  /** The page embedding lease: delete the holder's row and every expired `embed-page:` row (engine-sql/page-spend.ts). */
-  releasePageEmbeddingLease(id: string, token: string): Promise<void>;
-  /** The chunk indexes of a page's live rows with no vector in `column` (engine-sql/page-spend.ts). */
-  listVectorlessChunkIndexes(pageId: number, column: string): Promise<number[]>;
-  /** The page's frontmatter embedding hold marker and its budget row's state and reason, or null (engine-sql/page-spend.ts). */
-  readPageEmbeddingHolds(pageId: number): Promise<{ marker: string | null; state: string | null; reason: string | null } | null>;
-  /** Hold a page's embedding for `reason`, over any row (`replace`) or as a new row only (`if_absent`) (engine-sql/page-spend.ts). */
-  writePageEmbeddingHold(pageId: number, reason: string, mode: 'replace' | 'if_absent'): Promise<void>;
-  /** Lift an approved hold: the page's budget row goes open (engine-sql/page-spend.ts). */
-  openPageEmbeddingHold(pageId: number): Promise<void>;
-  /** Insert a spend ledger row when absent and read it under a row lock (engine-sql/page-spend.ts). */
-  lockPageSpendLedger(ledger: PageSpendSql.PageSpendLedger): Promise<PageSpendSql.PageSpendLedgerRow | null>;
-  /** Write one folded reservation on a locked ledger row; returns its reservation window (engine-sql/page-spend.ts). */
-  writePageSpendReservation(ledger: PageSpendSql.PageSpendLedger, write: PageSpendSql.PageSpendReservationWrite): Promise<string | null>;
-  /** Settle one grant inside the window it reserved in (engine-sql/page-spend.ts). */
-  settlePageSpendReservation(ledger: PageSpendSql.PageSpendLedger, window: string, reservedUsd: number, bookedUsd: number, unpriced: number): Promise<void>;
-  /** Held and capped pages whose row still applies, with their waiting chunks (engine-sql/page-spend.ts). */
-  listBudgetLimitedPageRows(column: string, opts: PageSpendSql.BudgetLimitedPagesOpts): Promise<PageSpendSql.PageBudgetReport[]>;
-  /** Stored pages of a source a size state may apply to: the given slugs, or every one (engine-sql/page-spend.ts). */
-  readPageSizeStateRows(sourceId: string, slugs: readonly string[] | null): Promise<PageSpendSql.PageSizeStateRow[]>;
   /** gbrain export: the sources with an access policy, in id order, whose folder rulebooks an export carries (engine-sql/export-reads.ts). */
   listAccessPolicySourceIds(): Promise<string[]>;
   /** whois candidates by title, slug basename, alias and email (engine-sql/exact-identity.ts), at most `opts.limit`. */

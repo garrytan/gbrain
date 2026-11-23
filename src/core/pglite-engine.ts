@@ -186,7 +186,6 @@ import * as trustProposalsImpl from './engine-sql/trust-proposals.ts';
 import * as cliReadsOpsImpl from './engine-sql/cli-reads-ops.ts';
 import * as exportReadsImpl from './engine-sql/export-reads.ts';
 import * as segmentedWritesImpl from './engine-sql/segmented-writes.ts';
-import * as pageSpendImpl from './engine-sql/page-spend.ts';
 import * as factsDoctorImpl from './engine-sql/facts-doctor.ts';
 import * as factRelinkImpl from './engine-sql/fact-relink-attempts.ts';
 import * as factRelinkWritesImpl from './engine-sql/fact-relink-writes.ts';
@@ -1563,18 +1562,6 @@ export class PGLiteEngine implements BrainEngine {
   installSegmentedVectors(pageId: number, column: ResolvedColumn, model: string | null, vectors: readonly segmentedWritesImpl.SegmentedVectorInstall[]) { return segmentedWritesImpl.installSegmentedVectors(this, pageId, column, model, vectors); }
   listLiveEmbedSegments(pageId: number) { return segmentedWritesImpl.listLiveEmbedSegments(this, pageId); }
   listSegmentChunkRows(pageId: number, occurrenceId: number) { return segmentedWritesImpl.listSegmentChunkRows(this, pageId, occurrenceId); }
-  takePageEmbeddingLease(id: string, holder: { pid: number; host: string }, ttlMinutes: number, token: string) { return pageSpendImpl.takePageEmbeddingLease(this, id, holder, ttlMinutes, token); }
-  renewPageEmbeddingLease(id: string, token: string, ttlMinutes: number) { return pageSpendImpl.renewPageEmbeddingLease(this, id, token, ttlMinutes); }
-  releasePageEmbeddingLease(id: string, token: string) { return pageSpendImpl.releasePageEmbeddingLease(this, id, token); }
-  listVectorlessChunkIndexes(pageId: number, column: string) { return pageSpendImpl.listVectorlessChunkIndexes(this, pageId, column); }
-  readPageEmbeddingHolds(pageId: number) { return pageSpendImpl.readPageEmbeddingHolds(this, pageId); }
-  writePageEmbeddingHold(pageId: number, reason: string, mode: 'replace' | 'if_absent') { return pageSpendImpl.writePageEmbeddingHold(this, pageId, reason, mode); }
-  openPageEmbeddingHold(pageId: number) { return pageSpendImpl.openPageEmbeddingHold(this, pageId); }
-  lockPageSpendLedger(ledger: pageSpendImpl.PageSpendLedger) { return pageSpendImpl.lockPageSpendLedger(this, ledger); }
-  writePageSpendReservation(ledger: pageSpendImpl.PageSpendLedger, write: pageSpendImpl.PageSpendReservationWrite) { return pageSpendImpl.writePageSpendReservation(this, ledger, write); }
-  settlePageSpendReservation(ledger: pageSpendImpl.PageSpendLedger, window: string, reservedUsd: number, bookedUsd: number, unpriced: number) { return pageSpendImpl.settlePageSpendReservation(this, ledger, window, reservedUsd, bookedUsd, unpriced); }
-  listBudgetLimitedPageRows(column: string, opts: pageSpendImpl.BudgetLimitedPagesOpts) { return pageSpendImpl.listBudgetLimitedPageRows(this, column, opts); }
-  readPageSizeStateRows(sourceId: string, slugs: readonly string[] | null) { return pageSpendImpl.readPageSizeStateRows(this, sourceId, slugs); }
   readBodyManifestRows(pageId: number, generation: number | null) { return exportReadsImpl.readBodyManifestRows(this, pageId, generation); }
   readBodyManifestMeta(pageId: number, occurrenceIds: readonly number[], generation: number) { return exportReadsImpl.readBodyManifestMeta(this, pageId, occurrenceIds, generation); }
   readBodyManifestOutline(pageId: number, occurrenceIds: readonly number[], generation: number) { return exportReadsImpl.readBodyManifestOutline(this, pageId, occurrenceIds, generation); }

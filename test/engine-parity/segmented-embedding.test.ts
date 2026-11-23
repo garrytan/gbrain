@@ -25,10 +25,8 @@ import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { embeddingInputHash, plainEmbeddingTier } from '../../src/core/embedding-input-hash.ts';
 import { readPageBodyPolicy } from '../../src/core/page-body/limits.ts';
-import { countSegmentedEmbedRows, embedSegmentedPage, installSegmentedVectors, listLiveEmbedSegments, listSegmentChunkRows, listSegmentedStaleRows,
-  readSealedSegmentedEmbedPage, readSegmentedEmbedPage, type SegmentedEmbedFn, type SegmentedEmbedPage, type SegmentedStaleRow } from '../../src/core/page-body/segmented-embedding.ts';
-import { holdPageEmbedding, listBudgetLimitedPages, readPageSizeStates, reservePageSpend, type PageSpendDecision } from '../../src/core/page-embedding-budget.ts';
-import { acquirePageEmbeddingLease, pageEmbeddingLeaseProbe } from '../../src/core/page-embedding-lease.ts';
+import { countSegmentedEmbedRows, installSegmentedVectors, listLiveEmbedSegments, listSegmentChunkRows, listSegmentedStaleRows,
+  readSealedSegmentedEmbedPage, readSegmentedEmbedPage, type SegmentedEmbedPage, type SegmentedStaleRow } from '../../src/core/page-body/segmented-embedding.ts';
 import { embeddingInputContext, embeddingWriteTarget } from '../../src/core/page-state/projections.ts';
 import { sealSegmentedPage, stageSegmentedImport } from '../../src/core/persistence/segmented-apply.ts';
 import { parseEmbedding } from '../../src/core/utils.ts';
@@ -42,11 +40,11 @@ const sha = (text: string) => createHash('sha256').update(text).digest('hex');
 const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString('hex');
 
 /** Write `truth` as the segmented body of `slug` through the string import's staging (see segmented-rewrite.test.ts). */
-async function stagedPage(engine: BrainEngine, slug: string, truth: string, frontmatter: Record<string, unknown> = {}) {
+async function stagedPage(engine: BrainEngine, slug: string, truth: string) {
   const existing = await engine.getPage(slug);
-  const meta = { title: slug, type: 'note' as const, frontmatter, page_kind: 'markdown' as const };
+  const meta = { title: slug, type: 'note' as const, frontmatter: {}, page_kind: 'markdown' as const };
   const staged = await stageSegmentedImport(engine, { slug, sourceId: 'default', existing, policy: await readPageBodyPolicy(engine), baseRevision: null,
-    page: { title: slug, type: 'note', compiled_truth: truth, timeline: '', frontmatter, tags: [] }, chunking: { quarantined: false, corpusGeneration: null, tier: 'none' } });
+    page: { title: slug, type: 'note', compiled_truth: truth, timeline: '', frontmatter: {}, tags: [] }, chunking: { quarantined: false, corpusGeneration: null, tier: 'none' } });
   await engine.transaction(async tx => {
     if (existing) await tx.createVersion(slug, { sourceId: 'default' });
     const applied = await staged.apply(tx, meta, { mode: 'none', corpusGeneration: null });
@@ -78,9 +76,6 @@ async function install(engine: BrainEngine, page: SegmentedEmbedPage, rows: read
       expected: opts.replacing ? hash : null };
   }));
 }
-
-/** A spend decision without its settle function. */
-const decisionView = (d: PageSpendDecision) => d.kind === 'grant' ? { kind: d.kind, reservedUsd: d.grant.reservedUsd, capUsd: d.grant.capUsd } : d;
 
 /** Every live row of the page, newest first, through the keyset listing. */
 async function allRows(engine: BrainEngine, pageId: number, includeEmbedded: boolean) {
@@ -174,74 +169,6 @@ describe('engine parity: segmented embedding', () => {
             return got.length === want.length && got.every((x, i) => x === want[i]); }),
           inputs: carried.every(v => v.embedding_input_hash !== null), models: [...new Set(vectors.map(v => v.model))],
           page: vectors[0] && { mode: vectors[0].contextual_retrieval_mode, slug: vectors[0].slug, source_id: vectors[0].source_id, corpus: vectors[0].corpus_generation } },
-      };
-    });
-
-  parityTest('a whole segmented embed takes the page lease, meters the page budget, stops at the cap and honours holds and approvals',
-    { methods: ['setConfig', 'getPage', 'transaction', 'readSegmentedEmbedPage', 'countSegmentedEmbedRows', 'listSegmentedStaleRows',
-      'readSegmentChunkInputHashes', 'installSegmentedVectors', 'readManifest', 'readSegmentTexts',
-      'takePageEmbeddingLease', 'renewPageEmbeddingLease', 'releasePageEmbeddingLease', 'listVectorlessChunkIndexes', 'readPageEmbeddingHolds', 'writePageEmbeddingHold', 'lockPageSpendLedger', 'writePageSpendReservation', 'settlePageSpendReservation', 'listBudgetLimitedPageRows', 'readPageSizeStateRows'], timeout: 900_000 },
-    async (engine) => {
-      await engine.setConfig('pages.segmented_storage', 'on');
-      await engine.setConfig('embed.max_usd_per_page', '0.02');
-      await engine.setConfig('derive.max_usd_per_page', '0.05');
-      const target = await embeddingWriteTarget(engine);
-      let providerCalls = 0;
-      const embedFn: SegmentedEmbedFn = async (texts) => { providerCalls++; return texts.map((_, i) => unit(target.column.dimensions, i)); };
-      const signature = 'openai:text-embedding-3-large:1536';
-      const sealed = async (slug: string) => (await readSealedSegmentedEmbedPage(engine, { slug, source_id: 'default', body_storage: 'segmented' }, true))!;
-      const state = async (page: SegmentedEmbedPage) => ({ counts: await countSegmentedEmbedRows(engine, page.id), limited: await listBudgetLimitedPages(engine),
-        sizes: await readPageSizeStates(engine, 'default', [page.slug]) });
-
-      // A page over the cap: the first run spends up to it and stops, the page is capped and stays in the held list.
-      await stagedPage(engine, 'notes/capped', conversationBody(1300 * 1024, { seed: 61 }));
-      const capped = await sealed('notes/capped');
-      const first = await embedSegmentedPage(engine, capped, { embedFn, signature });
-      const afterCap = await state(capped);
-      const again = await embedSegmentedPage(engine, capped, { embedFn, signature });
-      const approved = await embedSegmentedPage(engine, capped, { embedFn, signature, approvedCapUsd: 1 });
-      const afterApproval = await state(capped);
-
-      // A hold the upgrade backfill records, and a hold an imported call names in its frontmatter: neither page embeds.
-      await stagedPage(engine, 'notes/held', conversationBody(1100 * 1024, { seed: 62 }));
-      const held = await sealed('notes/held');
-      await holdPageEmbedding(engine, held.id, 'oversized_backfill');
-      const heldRun = await embedSegmentedPage(engine, held, { embedFn, signature });
-      await stagedPage(engine, 'notes/call', conversationBody(1100 * 1024, { seed: 63 }), { call_import: { embedding_hold: 'call_import' } });
-      const call = await sealed('notes/call');
-      const callRun = await embedSegmentedPage(engine, call, { embedFn, signature });
-      const holds = { held: await listBudgetLimitedPages(engine, { state: 'held' }), capped: await listBudgetLimitedPages(engine, { state: 'capped', sourceId: 'default' }),
-        sizes: await readPageSizeStates(engine, 'default', null), first: await listBudgetLimitedPages(engine, { limit: 1 }) };
-
-      // Another path holds the page's lease through the whole wait: the run sends nothing. Released, the approval embeds the page.
-      const lease = await acquirePageEmbeddingLease(engine, call.id);
-      expect(lease.busy).toBe(false);
-      pageEmbeddingLeaseProbe.waitBoundMs = 0;
-      let busy: Awaited<ReturnType<typeof embedSegmentedPage>>;
-      try {
-        busy = await embedSegmentedPage(engine, call, { embedFn, signature, approvedCapUsd: 1 });
-      } finally {
-        delete pageEmbeddingLeaseProbe.waitBoundMs;
-        await lease[Symbol.asyncDispose]();
-      }
-      const callApproved = await embedSegmentedPage(engine, call, { embedFn, signature, approvedCapUsd: 1 });
-      const afterCall = await state(call);
-
-      // Direct reservations: an embedding on the held page is refused; the facts and synopsis ledgers have their own cap.
-      const ref = (page: SegmentedEmbedPage) => ({ id: page.id, body_storage: page.body_storage, body_bytes: page.body_bytes });
-      const embedHeld = decisionView(await reservePageSpend(engine, ref(held), `embedding:${signature}`, 0.001));
-      const embedOpen = await reservePageSpend(engine, ref(capped), `embedding:${signature}`, 0.001);
-      if (embedOpen.kind === 'grant') await embedOpen.grant.settle({ ok: true, usd: 0.0005 });
-      const embedOver = decisionView(await reservePageSpend(engine, ref(capped), `embedding:${signature}`, 5));
-      const facts = await reservePageSpend(engine, ref(held), 'facts:openai:gpt-4o-mini', 0.03);
-      if (facts.kind === 'grant') await facts.grant.settle({ ok: true, usd: 0.01 });
-      const factsOver = decisionView(await reservePageSpend(engine, ref(held), 'facts:openai:gpt-4o-mini', 0.045));
-      const synopsis = await reservePageSpend(engine, ref(held), 'synopsis:openai:gpt-4o-mini', 0.02);
-      if (synopsis.kind === 'grant') await synopsis.grant.settle({ ok: false });
-      const synopsisFull = decisionView(await reservePageSpend(engine, ref(held), 'synopsis:openai:gpt-4o-mini', 0.05));
-      return {
-        providerCalls, first, afterCap, again, approved, afterApproval, heldRun, callRun, holds, busy, callApproved, afterCall,
-        spend: { embedHeld, embedOpen: decisionView(embedOpen), embedOver, facts: decisionView(facts), factsOver, synopsis: decisionView(synopsis), synopsisFull },
       };
     });
 });

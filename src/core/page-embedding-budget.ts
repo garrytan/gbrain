@@ -42,12 +42,13 @@ import { reservationCostUsd, usageCostUsd } from './budget/reservation-cost.ts';
 import { BudgetTracker, type PricingOverrides } from './budget/budget-tracker.ts';
 import { getCurrentBudgetTracker, withBudgetTracker } from './ai/gateway.ts';
 import { recordOnTracker } from './ai/budget-record.ts';
-import { reserveDerivationSpend, settleLedgerReservation, type PageSpendDecision, type PageSpendGrant,
+import { RESERVATION_WINDOW_SQL, RESERVED_AT_SQL, reserveDerivationSpend, settleLedgerReservation, type PageSpendDecision, type PageSpendGrant,
   type PageSpendKind, type PageSpendSignature } from './page-spend.ts';
-import type { PageBudgetReport, PageBudgetState, PageSpendLedger } from './engine-sql/page-spend.ts';
-import { isLargePageBytes } from './page-size-policy.ts';
+import { PAGE_INLINE_MAX_BYTES, budgetRowAppliesFilter, isLargePageBytes } from './page-size-policy.ts';
 import { isEmbedSkipped } from './embed-skip.ts';
 import { parseUsdLimit, resolveSpendPosture } from './spend-posture.ts';
+import { chunkGenerationFilter } from './search/safe-chunks.ts';
+import { quoteIdentifier } from './search/embedding-column.ts';
 import { embeddingWriteTarget } from './page-state/projections.ts';
 import { approvalAmount, approvalBasis, heldApproveAction, heldPreviewCommand, ledgerPricePerMTok, renderedCommand } from './held-embedding-action.ts';
 
@@ -57,7 +58,7 @@ export { PAGE_DERIVATION_CAP_KEY } from './page-spend.ts';
 export const PAGE_EMBED_CAP_KEY = 'embed.max_usd_per_page';
 export const DEFAULT_PAGE_EMBED_CAP_USD = 2;
 
-export type { PageBudgetReport, PageBudgetState } from './engine-sql/page-spend.ts';
+export type PageBudgetState = 'open' | 'held' | 'capped';
 
 /** The configured cap: `embed.max_usd_per_page`, else unlimited under `spend.posture tokenmax`, else $2. `off` is Infinity. */
 export async function resolvePageEmbedCapUsd(engine: Pick<BrainEngine, 'getConfig' | 'executeRaw'>): Promise<number> {
@@ -83,6 +84,8 @@ export type PageEmbedDecision =
   | { kind: 'unmetered' }
   | { kind: 'held'; reason: string }
   | { kind: 'grant'; grant: PageEmbedGrant };
+
+interface BudgetRow { state: PageBudgetState; reason: string | null; embedding_signature: string | null; spent_usd: number; reserved_usd: number; stale_reservation: boolean; cap_usd: number | null }
 
 /** A segmented page (Wave B) carries `body_bytes` and no body strings; an inline page carries its body. */
 type BudgetPage = { id: number; body_storage?: BodyStorage | null; body_bytes?: number | null; compiled_truth?: string; timeline?: string | null };
@@ -128,12 +131,16 @@ export const ANY_SIZE_HOLD_REASONS: readonly string[] = ['archive_backfill', 'ar
  * owner's approval. An approved page keeps its row (open), so the marker holds once.
  */
 async function readHolds(engine: BrainEngine, pageId: number): Promise<{ marker: string | null; state: string | null; reason: string | null }> {
-  return await engine.readPageEmbeddingHolds(pageId) ?? { marker: null, state: null, reason: null };
+  const [row] = await engine.executeRaw<{ marker: string | null; state: string | null; reason: string | null }>(
+    `SELECT COALESCE(p.frontmatter->'transcript_archive'->>'embedding_hold', p.frontmatter->'call_import'->>'embedding_hold') AS marker, b.state, b.reason
+     FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id WHERE p.id = $1`, [pageId]);
+  return row ?? { marker: null, state: null, reason: null };
 }
 
 /** Hold a large page's embedding until the user approves it (`reason` names why). Idempotent; never touches open spend. */
-export async function holdPageEmbedding(engine: Pick<BrainEngine, 'writePageEmbeddingHold'>, pageId: number, reason: string): Promise<void> {
-  await engine.writePageEmbeddingHold(pageId, reason, 'replace');
+export async function holdPageEmbedding(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number, reason: string): Promise<void> {
+  await engine.executeRaw(`INSERT INTO page_embedding_budget (page_id, state, reason) VALUES ($1, 'held', $2)
+    ON CONFLICT (page_id) DO UPDATE SET state = 'held', reason = EXCLUDED.reason, updated_at = now()`, [pageId, reason]);
 }
 
 /**
@@ -149,20 +156,22 @@ export async function planPageEmbedding(engine: BrainEngine, page: BudgetPage,
   const approved = opts.approvedCapUsd !== undefined;
   const holds = await readHolds(engine, page.id);
   if (!approved && holds.state === null && holds.marker && ANY_SIZE_HOLD_REASONS.includes(holds.marker)) {
-    await engine.writePageEmbeddingHold(page.id, holds.marker, 'if_absent');
+    await engine.executeRaw("INSERT INTO page_embedding_budget (page_id, state, reason) VALUES ($1, 'held', $2) ON CONFLICT (page_id) DO NOTHING", [page.id, holds.marker]);
     return { kind: 'held', reason: holds.marker };
   }
   if (!isLargePageBytes(pageBodyBytes(page))) {
     if (holds.state !== 'held' || !holds.reason || !ANY_SIZE_HOLD_REASONS.includes(holds.reason)) return { kind: 'unmetered' };
     if (!approved) return { kind: 'held', reason: holds.reason };
-    await engine.openPageEmbeddingHold(page.id);
+    await engine.executeRaw("UPDATE page_embedding_budget SET state = 'open', reason = NULL, updated_at = now() WHERE page_id = $1", [page.id]);
     return { kind: 'unmetered' };
   }
   const configured = await resolvePageEmbedCapUsd(engine);
   const { rate, priced } = ledgerPricePerMTok(opts.signature);
-  const ledger: PageSpendLedger = { table: 'page_embedding_budget', pageId: page.id };
   return engine.transaction(async tx => {
-    const row = await tx.lockPageSpendLedger(ledger);
+    await tx.executeRaw('INSERT INTO page_embedding_budget (page_id) VALUES ($1) ON CONFLICT (page_id) DO NOTHING', [page.id]);
+    const [row] = await tx.executeRaw<BudgetRow>(`SELECT state, reason, embedding_signature, spent_usd, reserved_usd, cap_usd,
+        (reserved_usd > 0 AND updated_at < now() - interval '1 hour') AS stale_reservation
+      FROM page_embedding_budget WHERE page_id = $1 FOR UPDATE`, [page.id]);
     if (!row) return { kind: 'unmetered' } as const;
     if (row.state === 'held' && !approved) return { kind: 'held', reason: row.reason ?? 'awaiting_approval' } as const;
     if (!approved && row.state === 'open') {
@@ -171,14 +180,14 @@ export async function planPageEmbedding(engine: BrainEngine, page: BudgetPage,
         : assessSampledJunk(`${page.compiled_truth}\n${page.timeline ?? ''}`, { max_markup_ratio: opts.maxMarkupRatio });
       if (junk.junk) {
         const reason = junk.reasons.join(',');
-        await tx.writePageEmbeddingHold(page.id, reason, 'replace');
+        await tx.executeRaw(`UPDATE page_embedding_budget SET state = 'held', reason = $2, updated_at = now() WHERE page_id = $1`, [page.id, reason]);
         return { kind: 'held', reason } as const;
       }
     }
     const sameLedger = !row.embedding_signature || !opts.signature || row.embedding_signature === opts.signature;
-    const spent = sameLedger ? row.spent_usd + (row.stale_reservation ? row.reserved_usd : 0) : 0;
-    let reserved = sameLedger && !row.stale_reservation ? row.reserved_usd : 0;
-    const stored = row.cap_usd === null ? configured : row.cap_usd;
+    const spent = sameLedger ? Number(row.spent_usd) + (row.stale_reservation ? Number(row.reserved_usd) : 0) : 0;
+    let reserved = sameLedger && !row.stale_reservation ? Number(row.reserved_usd) : 0;
+    const stored = row.cap_usd === null ? configured : Number(row.cap_usd);
     const capUsd = approved ? Math.max(stored, spent + reserved + opts.approvedCapUsd!) : stored;
     const remaining = Math.max(0, capUsd - spent - reserved);
     const chunkIndexes = new Set<number>();
@@ -193,11 +202,15 @@ export async function planPageEmbedding(engine: BrainEngine, page: BudgetPage,
     const openWindow = reserved > 0;
     reserved += reservedUsd;
     const state: PageBudgetState = deferred > 0 ? 'capped' : 'open';
-    const window = await tx.writePageSpendReservation(ledger, { spent, reserved, keepWindow: openWindow, signature: opts.signature ?? null,
-      plan: { state, reason: deferred > 0 ? 'cap_reached' : null, capUsd: approved && Number.isFinite(capUsd) ? capUsd : row.cap_usd } });
+    const [written] = await tx.executeRaw<{ reservation_window: string | null }>(`UPDATE page_embedding_budget SET state = $2, reason = $3, embedding_signature = COALESCE($4, embedding_signature),
+        spent_usd = $5::float8, reserved_usd = $6::float8, ${RESERVED_AT_SQL('$6::float8', '$8::boolean')},
+        cap_usd = $7::float8, updated_at = now() WHERE page_id = $1 RETURNING ${RESERVATION_WINDOW_SQL} AS reservation_window`,
+    [page.id, state, deferred > 0 ? 'cap_reached' : null, opts.signature ?? null, spent, reserved,
+      approved && Number.isFinite(capUsd) ? capUsd : row.cap_usd, openWindow]);
     const grant: PageEmbedGrant = {
       chunkIndexes, reservedUsd, deferred, capUsd,
-      settle: ({ ok }) => settleLedgerReservation(engine, ledger, window, reservedUsd, ok ? reservedUsd : 0, ok && !priced ? 1 : 0),
+      settle: ({ ok }) => settleLedgerReservation(engine, { table: 'page_embedding_budget', pageId: page.id }, written?.reservation_window ?? null,
+        reservedUsd, ok ? reservedUsd : 0, ok && !priced ? 1 : 0),
     };
     return { kind: 'grant', grant } as const;
   });
@@ -218,21 +231,27 @@ export async function reservePageSpend(engine: BrainEngine, page: BudgetPage, si
   const embeddingSignature = signature.slice(split + 1);
   const configured = await resolvePageEmbedCapUsd(engine);
   const estimate = Math.max(0, estimateUsd);
-  const ledger: PageSpendLedger = { table: 'page_embedding_budget', pageId: page.id };
   return engine.transaction(async tx => {
-    const row = await tx.lockPageSpendLedger(ledger);
+    await tx.executeRaw('INSERT INTO page_embedding_budget (page_id) VALUES ($1) ON CONFLICT (page_id) DO NOTHING', [page.id]);
+    const [row] = await tx.executeRaw<BudgetRow>(`SELECT state, reason, embedding_signature, spent_usd, reserved_usd, cap_usd,
+        (reserved_usd > 0 AND updated_at < now() - interval '1 hour') AS stale_reservation
+      FROM page_embedding_budget WHERE page_id = $1 FOR UPDATE`, [page.id]);
     if (!row) return { kind: 'unmetered' } as const;
     const sameLedger = !row.embedding_signature || row.embedding_signature === embeddingSignature;
-    const spent = sameLedger ? row.spent_usd + (row.stale_reservation ? row.reserved_usd : 0) : 0;
-    const reserved = sameLedger && !row.stale_reservation ? row.reserved_usd : 0;
-    const capUsd = row.cap_usd === null ? configured : row.cap_usd;
+    const spent = sameLedger ? Number(row.spent_usd) + (row.stale_reservation ? Number(row.reserved_usd) : 0) : 0;
+    const reserved = sameLedger && !row.stale_reservation ? Number(row.reserved_usd) : 0;
+    const capUsd = row.cap_usd === null ? configured : Number(row.cap_usd);
     const refused = (reason: 'cap_reached' | 'held') => ({ kind: 'refused', reason, capUsd, spentUsd: spent, reservedUsd: reserved, estimateUsd: estimate } as const);
     if (row.state === 'held') return refused('held');
     if (spent + reserved + estimate > capUsd) return refused('cap_reached');
-    const window = await tx.writePageSpendReservation(ledger, { spent, reserved: reserved + estimate, keepWindow: reserved > 0, signature: embeddingSignature });
+    const [written] = await tx.executeRaw<{ reservation_window: string | null }>(`UPDATE page_embedding_budget SET embedding_signature = COALESCE($2, embedding_signature),
+        spent_usd = $3::float8, reserved_usd = $4::float8, ${RESERVED_AT_SQL('$4::float8', '$5::boolean')}, updated_at = now()
+      WHERE page_id = $1 RETURNING ${RESERVATION_WINDOW_SQL} AS reservation_window`,
+    [page.id, embeddingSignature, spent, reserved + estimate, reserved > 0]);
     const grant: PageSpendGrant = {
       reservedUsd: estimate, capUsd,
-      settle: ({ ok, usd }) => settleLedgerReservation(engine, ledger, window, estimate, ok ? usd ?? estimate : 0),
+      settle: ({ ok, usd }) => settleLedgerReservation(engine, { table: 'page_embedding_budget', pageId: page.id }, written?.reservation_window ?? null,
+        estimate, ok ? usd ?? estimate : 0),
     };
     return { kind: 'grant', grant } as const;
   });
@@ -333,15 +352,28 @@ export async function meterPaidCall<T>(engine: BrainEngine, page: BudgetPage, si
   }
 }
 
+export interface PageBudgetReport { slug: string; source_id: string; state: Exclude<PageBudgetState, 'open'>; reason: string | null;
+  spent_usd: number; cap_usd: number | null; pending_chunks: number; pending_chars: number }
+
 /** Estimated provider cost of embedding `chars` of chunk text with the model in `signature` (unknown models use the conservative rate, free recipes $0). */
 export function estimatePageEmbedUsd(chars: number, signature: string | null | undefined): number {
   return estimateCostFromChars(chars, ledgerPricePerMTok(signature).rate);
 }
 
 /** Held and capped pages with their stale chunk counts (`gbrain embed --held`); `limit: null` lists every one. */
-export async function listBudgetLimitedPages(engine: Pick<BrainEngine, 'listBudgetLimitedPageRows' | 'getConfigValues'>, opts: { state?: 'held' | 'capped'; sourceId?: string; limit?: number | null } = {}): Promise<PageBudgetReport[]> {
-  const column = (await embeddingWriteTarget(engine)).column.name;
-  return engine.listBudgetLimitedPageRows(column, { ...opts, limit: opts.limit === undefined ? 1000 : opts.limit });
+export async function listBudgetLimitedPages(engine: Pick<BrainEngine, 'executeRaw' | 'getConfigValues'>, opts: { state?: 'held' | 'capped'; sourceId?: string; limit?: number | null } = {}): Promise<PageBudgetReport[]> {
+  const params: unknown[] = [opts.limit === undefined ? 1000 : opts.limit];
+  // #7185: an embed_skip page is never embedded, so a hold on one (a backfill rewrite that did not land) is not approvable work.
+  const filters = [budgetRowAppliesFilter('b', 'p'), 'p.deleted_at IS NULL', `NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')`];
+  if (opts.state) filters.push(`b.state = $${params.push(opts.state)}`);
+  if (opts.sourceId) filters.push(`p.source_id = $${params.push(opts.sourceId)}`);
+  const pending = `(CASE WHEN p.body_storage = 'segmented' THEN cc.${quoteIdentifier((await embeddingWriteTarget(engine)).column.name)} IS NULL ELSE cc.embedded_at IS NULL END)`;
+  const rows = await engine.executeRaw<PageBudgetReport>(`SELECT p.slug, p.source_id, b.state, b.reason, b.spent_usd, b.cap_usd,
+      (SELECT count(*)::int FROM content_chunks cc WHERE cc.page_id = p.id AND ${pending} AND ${chunkGenerationFilter('p', 'cc')}) AS pending_chunks,
+      (SELECT COALESCE(sum(length(cc.chunk_text)), 0)::bigint FROM content_chunks cc WHERE cc.page_id = p.id AND ${pending} AND ${chunkGenerationFilter('p', 'cc')}) AS pending_chars
+    FROM page_embedding_budget b JOIN pages p ON p.id = b.page_id
+    WHERE ${filters.join(' AND ')} ORDER BY b.updated_at DESC, p.id LIMIT $1::int`, params);
+  return rows.map(row => ({ ...row, spent_usd: Number(row.spent_usd), cap_usd: row.cap_usd === null ? null : Number(row.cap_usd), pending_chunks: Number(row.pending_chunks), pending_chars: Number(row.pending_chars) }));
 }
 
 /** Run the provider call under a grant: booked as spent once it returns, released if it throws. */
@@ -415,17 +447,23 @@ export function pageSizeState(bytes: number, frontmatter: Record<string, unknown
  * pageSizeState for stored pages of one source with a non-null state: the given slugs, or (null) every
  * such page in the source, as a full sync walked them all.
  */
-export async function readPageSizeStates(engine: Pick<BrainEngine, 'readPageSizeStateRows'>, sourceId: string, slugs: readonly string[] | null): Promise<Array<{ slug: string; source_id?: string } & PageSizeState>> {
+export async function readPageSizeStates(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slugs: readonly string[] | null): Promise<Array<{ slug: string; source_id?: string } & PageSizeState>> {
   if (slugs?.length === 0) return [];
-  const rows = await engine.readPageSizeStateRows(sourceId, slugs);
+  const bytes = `(CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)`;
+  const rows = await engine.executeRaw<{ slug: string; bytes: number; segmented: boolean; frontmatter: Record<string, unknown> | null; state: PageBudgetState | null; reason: string | null }>(
+    `SELECT p.slug, ${bytes}::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason
+       FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id
+      WHERE p.source_id = $1 AND p.deleted_at IS NULL${slugs ? ' AND p.slug = ANY($3::text[])' : ''}
+        AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR ${bytes} > $2 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug`,
+    slugs ? [sourceId, PAGE_INLINE_MAX_BYTES, [...slugs]] : [sourceId, PAGE_INLINE_MAX_BYTES]);
   return rows.flatMap(row => {
-    const state = pageSizeState(row.bytes, row.frontmatter, row.state ? { state: row.state, reason: row.reason } : null, row.segmented);
+    const state = pageSizeState(Number(row.bytes), row.frontmatter, row.state ? { state: row.state, reason: row.reason } : null, row.segmented === true);
     return state ? [{ slug: row.slug, ...(state.embedding === 'held' ? { source_id: sourceId } : {}), ...state }] : [];
   });
 }
 
 /** The receipt field for one written page: `{ size_state }` for a large or embed_skip page, else nothing (no query). */
-export async function sizeStateField(engine: Pick<BrainEngine, 'readPageSizeStateRows'>, sourceId: string, slug: string,
+export async function sizeStateField(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string,
   page: { body_storage?: BodyStorage | null; body_bytes?: number | null; compiled_truth?: string | null; timeline?: string | null; frontmatter?: Record<string, unknown> | null } | null | undefined): Promise<{ size_state?: PageSizeState }> {
   if (!page) return {};
   const bytes = pageBodyBytes(page);

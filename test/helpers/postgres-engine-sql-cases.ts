@@ -59,7 +59,6 @@ const OOS = {
   connectGate: 'out-of-scope:connect-gate (born in engine-sql/connect-gate.ts; pinned by test/engine-parity/connect-gate.test.ts and test/cold-read-folded-statements.test.ts)',
   pageBody: 'out-of-scope:page-body (Wave B segmented storage, born in engine-sql/page-body.ts; pinned by test/engine-sql-page-body.test.ts)',
   segmentedWrites: 'out-of-scope:segmented-writes (moved from the segmented import, re-chunk, fence-rewrite and segmented-embed callers into engine-sql/segmented-writes.ts; pinned by test/engine-sql-segmented-writes.test.ts)',
-  pageSpend: 'out-of-scope:page-spend (moved from page-embedding-lease.ts, page-embedding-budget.ts and page-spend.ts into engine-sql/page-spend.ts; pinned by test/engine-sql-page-spend.test.ts)',
   cycleLocks: 'out-of-scope:cycle-locks (gbrain_cycle_locks leases, born in engine-sql/cycle-locks.ts; pinned by test/engine-parity/cycle-locks.test.ts)',
   linkReads: 'out-of-scope:link-reads (born in engine-sql/link-reads.ts; pinned by test/engine-parity/link-reads.test.ts)',
   linkTemporal: 'out-of-scope:link-temporal (born in engine-sql/link-temporal.ts, search-vector.ts, retrieval-coverage.ts; pinned by test/engine-parity/link-temporal.test.ts)',
@@ -562,7 +561,6 @@ export const DOMAIN_OF: Record<string, string> = {
   'listOccurrenceChunks': OOS.segmentedWrites, 'readMaterializingRevision': OOS.segmentedWrites, 'setMaterializingRevision': OOS.segmentedWrites, 'restorePageUpdatedAt': OOS.segmentedWrites, 'readPageTrustStamp': OOS.segmentedWrites, 'restorePageTrustStamp': OOS.segmentedWrites, 'storeSegmentDerivationRuns': OOS.segmentedWrites,
   'readSegmentedRewritePage': OOS.segmentedWrites, 'restorePageDeletedAt': OOS.segmentedWrites, 'lockSegmentedGenerationPage': OOS.segmentedWrites, 'splitManifestGeneration': OOS.segmentedWrites, 'publishRebuiltGeneration': OOS.segmentedWrites, 'setSegmentedVersionHash': OOS.segmentedWrites, 'deleteRewrittenDerivationRows': OOS.segmentedWrites,
   'readSegmentedEmbedPage': OOS.segmentedWrites, 'hasLiveSegmentedPage': OOS.segmentedWrites, 'countSegmentedEmbedRows': OOS.segmentedWrites, 'listSegmentedStaleRows': OOS.segmentedWrites, 'readSegmentChunkInputHashes': OOS.segmentedWrites, 'installSegmentedVectors': OOS.segmentedWrites, 'listLiveEmbedSegments': OOS.segmentedWrites, 'listSegmentChunkRows': OOS.segmentedWrites,
-  'takePageEmbeddingLease': OOS.pageSpend, 'renewPageEmbeddingLease': OOS.pageSpend, 'releasePageEmbeddingLease': OOS.pageSpend, 'listVectorlessChunkIndexes': OOS.pageSpend, 'readPageEmbeddingHolds': OOS.pageSpend, 'writePageEmbeddingHold': OOS.pageSpend, 'openPageEmbeddingHold': OOS.pageSpend, 'lockPageSpendLedger': OOS.pageSpend, 'writePageSpendReservation': OOS.pageSpend, 'settlePageSpendReservation': OOS.pageSpend, 'listBudgetLimitedPageRows': OOS.pageSpend, 'readPageSizeStateRows': OOS.pageSpend,
   'getEmbeddingsByChunkIds': 'chunks', 'getChunksWithEmbeddings': 'chunks',
   // facts (incl. the ontology rows of the facts table)
   'insertFact': 'facts', 'expireFact': 'facts', 'insertFacts': 'facts', 'deleteFactsForPage': 'facts',
