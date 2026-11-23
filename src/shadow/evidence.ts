@@ -95,7 +95,7 @@ function foldLedger(dir: string, epoch: EpochManifest, now: number): ReadFold | 
   // A row is written under the day of its capture, which can precede the epoch's start by the queue's delay.
   const firstDay = new Date(Date.parse(epoch.started_at) - DAY_MS).toISOString().slice(0, 10);
   let names: string[];
-  try { names = readdirSync(root).filter((n) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(n) && n.slice(0, 10) >= firstDay).sort(); } catch { return null; }
+  try { names = readdirSync(root).filter((n) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(n) && n.slice(0, 10) >= firstDay).sort(); } catch { return null; } // silent-read-ok: null is the unreadable marker; reads stay absent, never zero
   for (const name of names) {
     const rows = readJsonlStrict<ShadowLedgerRow>(join(root, name));
     if (rows === null) return null;

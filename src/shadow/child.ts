@@ -60,7 +60,7 @@ export interface ShadowChildDeps {
 /** SHA-256 of the addon file the loader opened: the development override, else the cached build (addon-loader.ts). */
 function addonFileSha256(addon: RustAddon): string | null {
   const path = process.env.GBRAIN_RUST_ENGINE_ADDON?.trim() || join(gbrainPath('engines', 'rust'), String(addon.engineBuild), `${String(addon.target)}.node`);
-  try { return createHash('sha256').update(readFileSync(path)).digest('hex'); } catch { return null; }
+  try { return createHash('sha256').update(readFileSync(path)).digest('hex'); } catch { return null; } // silent-read-ok: null is the typed marker; the epoch records `unreadable`, never a digest
 }
 
 interface ReadEvent {

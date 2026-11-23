@@ -66,7 +66,7 @@ export function readEpoch(dir: string): EpochManifest | null {
     const m = JSON.parse(readFileSync(epochPath(dir), 'utf8')) as EpochManifest;
     const i = m?.inputs;
     return m?.version === 1 && typeof m.epoch_id === 'string' && Number.isFinite(Date.parse(m.started_at)) && i && typeof i.seed_id === 'string' ? m : null;
-  } catch { return null; }
+  } catch { return null; } // silent-read-ok: no readable manifest is no epoch; the status leaves every count absent
 }
 
 /** Returns the current epoch for `inputs`, opening a new one (and keeping the old manifest) when any input changed. */

@@ -110,7 +110,7 @@ export function appendFault(shadowDir: string, fault: ShadowFault): void {
  */
 export function readJsonlStrict<T>(path: string): T[] | null {
   let text: string;
-  try { text = readFileSync(path, 'utf8'); } catch { return null; }
+  try { text = readFileSync(path, 'utf8'); } catch { return null; } // silent-read-ok: null is the unreadable marker; callers leave their field absent, never zero
   const lines = text.split('\n');
   const out: T[] = [];
   for (let i = 0; i < lines.length; i++) {
@@ -125,7 +125,7 @@ export function readAllFaults(shadowDir: string): ShadowFault[] | null {
   const path = faultsPath(shadowDir);
   if (!existsSync(path)) return [];
   let text: string;
-  try { text = readFileSync(path, 'utf8'); } catch { return null; }
+  try { text = readFileSync(path, 'utf8'); } catch { return null; } // silent-read-ok: null is the unreadable marker; child health stays absent, never zero
   return text.split('\n').flatMap((line) => { try { return line ? [JSON.parse(line) as ShadowFault] : []; } catch { return []; } });
 }
 

@@ -10,10 +10,11 @@
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runEngineShadow } from '../src/commands/engine-shadow.ts';
+import { evaluateReadiness } from '../src/core/engine-swap/readiness.ts';
 import { capabilitySetHash, ensureEpoch, readEpoch, readinessPolicyHash, type EpochInputs } from '../src/shadow/evidence-epoch.ts';
 import { buildEvidenceStatus, DEFAULT_READINESS_DAYS, MIN_SUCCESSFUL_PER_OP, renderEvidenceStatus } from '../src/shadow/evidence.ts';
 import { exactnessArm, qualifyMismatch } from '../src/shadow/exactness.ts';
@@ -338,6 +339,16 @@ describe('through the status command, the report and the readiness evaluator', (
       expect(doc.child).toEqual({ panics: 0, faults: 0 });
       expect(doc.search).toBeUndefined();
       expect(Object.keys(doc)).not.toContain('privacy_diverged');
+      // The real document goes through the real evaluator: criterion 2 names the class lacking samples, 9 passes, 4 and 6 are missing.
+      const verdict = evaluateReadiness(doc, new Date());
+      const row = (n: number) => verdict.criteria.find((c) => c.n === n)!;
+      expect(row(2)).toMatchObject({ state: 'fail' });
+      expect(row(2).detail).toContain('getPage 3/100');
+      expect(row(3).state).toBe('pass');
+      expect(row(9).state).toBe('pass');
+      expect(row(4).state).toBe('missing');
+      expect(row(6).state).toBe('missing');
+      expect(verdict.verdict).toBe('NOT READY');
       const text: string[] = [];
       await runEngineShadow(['status'], { config: () => config, out: (l) => text.push(l) });
       expect(text.join('\n')).toContain('earliest READY');
@@ -358,11 +369,8 @@ describe('through the status command, the report and the readiness evaluator', (
     expect(md).toContain('| inconclusive |');
   });
 
-  const READINESS = join(import.meta.dir, '..', 'src', 'core', 'engine-swap', 'readiness.ts');
-  // readiness.ts reaches this branch with the merge of master; until then this arm has nothing to evaluate.
-  (existsSync(READINESS) ? describe : describe.skip)('evaluateReadiness', () => {
+  describe('evaluateReadiness', () => {
     async function evaluate(dir: string, extra: Record<string, unknown> = {}) {
-      const { evaluateReadiness } = await import(READINESS) as { evaluateReadiness: (doc: unknown, now: Date) => { criteria: Array<{ n: number; state: string; detail: string }>; missing_fields: string[]; verdict: string } };
       const { evidence, ...ev } = status(dir);
       const doc = { epoch_id: evidence?.epoch_id, epoch_started_at: evidence?.epoch_started_at, ...ev, ...extra };
       const v = evaluateReadiness(doc, NOW);
