@@ -213,6 +213,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listOpenLoops': OOS.openLoops,
   'upsertOpenLoop': OOS.openLoops,
   'readBeliefTombstones': OOS.beliefLedger, 'readBeliefRedactions': OOS.beliefLedger, 'readLatestBeliefCoverage': OOS.beliefLedger, 'hasBeliefBaseline': OOS.beliefLedger, 'listBeliefBaselinePending': OOS.beliefLedger, 'countBeliefBaselineSlugs': OOS.beliefLedger,
+  'listBeliefDriftCandidates': OOS.beliefLedger, 'readNewestBeliefEvent': OOS.beliefLedger,
   'insertBeliefRedaction': OOS.beliefLedger, 'releaseBeliefRedactions': OOS.beliefLedger, 'insertBeliefEvents': OOS.beliefLedger, 'markBeliefCommits': OOS.beliefLedger, 'readOpenBeliefLifetimes': OOS.beliefLedger, 'endBeliefLifetime': OOS.beliefLedger,
   'mintBeliefLifetime': OOS.beliefLedger, 'renameBeliefLifetime': OOS.beliefLedger, 'readMovedBeliefLifetimes': OOS.beliefLedger, 'readBeliefStateRows': OOS.beliefLedger, 'readBeliefFactsById': OOS.beliefLedger, 'bumpSourcePurgeEpoch': OOS.beliefPurge,
   'hasBeliefEvents': OOS.beliefPurge, 'registerPurgeRedaction': OOS.beliefPurge, 'releasePurgeRedactionsForField': OOS.beliefPurge, 'replayPagePurges': OOS.beliefPurge, 'readPurgeReplaySchema': OOS.beliefPurge, 'addLoopSuppression': OOS.loopMutes,

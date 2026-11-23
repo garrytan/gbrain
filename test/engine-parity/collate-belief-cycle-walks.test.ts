@@ -13,9 +13,10 @@
  *  - Why existing coverage misses it: the tests of these readers use slugs that sort the same in every locale, and CI's
  *    Postgres runs in C.UTF-8. Every case here uses slugs that differ by byte and by en_US; run it against an en_US
  *    Postgres to see it fail.
- *  - Seam: pages are written through the engine. Harness-only SQL sets one shared updated_at (so slug breaks the
- *    tie), changes a title behind the ledger (drift), deletes a page row (an orphan lifetime), inserts failure
- *    tombstones and stamps the window cursor. Every reader here runs raw SQL, so the Rust arm stops on raw_sql.
+ *  - Seam: pages are written through the engine. The baseline walk reads its events back through the ledger's history
+ *    reader, and the drift case rewrites the titles in one transaction (one shared updated_at, so slug breaks the tie), both
+ *    typed, so those two cases run on the Rust arm. Harness-only SQL deletes a page row (an orphan lifetime), inserts failure
+ *    tombstones and stamps the window cursor; those four cases still stop on the Rust arm on raw_sql.
  */
 import { describe, expect } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -24,6 +25,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { enableBeliefLedger } from '../../src/core/belief/coverage.ts';
 import { orphanLifetimes, scanBeliefDrift } from '../../src/core/belief/coverage-report.ts';
+import { readBeliefHistory } from '../../src/core/belief/history.ts';
 import { failureTombstoneText, listFailedProposals } from '../../src/core/cycle/propose-takes-failures.ts';
 import { listSourceChangedPages, sourceWindow } from '../../src/core/cycle/source-window.ts';
 import { PHANTOM_REDIRECT_CURSOR_OP, runPhantomRedirectPass } from '../../src/core/cycle/phantom-redirect.ts';
@@ -49,18 +51,22 @@ async function tie(engine: BrainEngine): Promise<void> {
 }
 
 describe('belief walks and cycle listings take pages by byte', () => {
-  parityTest('enableBeliefLedger baselines pages by byte', { methods: ['putPage', 'executeRaw', 'transaction'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('enableBeliefLedger baselines pages by byte', { methods: ['putPage', 'transaction', 'readBeliefHistoryRows'] }, async (engine) => {
     await put(engine, MIXED_SLUGS);
     await enableBeliefLedger(engine, 'default');
-    const rows = await engine.executeRaw<{ slug: string }>(`SELECT slug FROM belief_events
-      WHERE source_id = 'default' AND event_type = 'baseline' AND subject_kind = 'page' ORDER BY id`);
+    // The source's events in id order, through the ledger's one history reader (an owner read, so nothing is filtered).
+    const rows = (await readBeliefHistory(engine, { sourceId: 'default', remote: false, limit: 10_000 })).filter(e => e.event_type === 'baseline' && e.subject_kind === 'page');
     expect(rows.map(r => r.slug)).toEqual([...BYTE_SLUGS]);
   });
 
-  parityTest('scanBeliefDrift samples a timestamp tie by byte', { methods: ['putPage', 'executeRaw', 'transaction'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('scanBeliefDrift samples a timestamp tie by byte', { methods: ['putPage', 'transaction', 'listBeliefDriftCandidates', 'readNewestBeliefEvent'] }, async (engine) => {
     await put(engine, MIXED_SLUGS);
     await enableBeliefLedger(engine, 'default');
-    await engine.executeRaw(`UPDATE pages SET title = title || ' changed', updated_at = $1::timestamptz WHERE source_id = 'default'`, ['2099-01-01T00:00:00Z']);
+    // Rewrites every page's title in one transaction, behind the ledger: the pages share the transaction's updated_at, so
+    // only the slug orders the sample, and each page's state no longer hashes to its baseline.
+    await engine.transaction(async tx => {
+      for (const slug of MIXED_SLUGS) await tx.putPage(slug, { type: 'note', title: `${slug} changed`, compiled_truth: `${slug} body`, timeline: '' });
+    });
     const scan = await scanBeliefDrift(engine, 'default', { limit: 2 });
     expect(scan.drifted.map(d => d.slug)).toEqual(BYTE_SLUGS.slice(0, 2));
   });

@@ -24,8 +24,10 @@
 //!
 //! Order: the candidate rows are ordered in byte order. PGLite compares text the same way; a
 //! Postgres database with an `en_US` collation can order mixed-case or punctuated slugs another
-//! way. Groups that tie on their newest `refreshed_at` are cut by `maxSubjects` in
-//! `(source_id, from_page_id, link_type)` order; Postgres names no order for such ties.
+//! way. Groups that tie on their newest `refreshed_at` are cut by `maxSubjects` at the lowest
+//! `from_page_id`, then `link_type` in byte order, as the SQL's `ORDER BY max(refreshed_at) DESC,
+//! from_page_id, link_type COLLATE "C"` cuts them (a page id belongs to one source, so the source
+//! never orders two groups).
 
 use crate::dream::int4;
 use crate::env::{iso, parse_iso};
@@ -455,7 +457,10 @@ impl Store {
             .filter(|(_, (targets, _))| targets.len() >= 2)
             .map(|(g, (_, newest))| (g, newest))
             .collect();
-        multi.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        multi.sort_by(|a, b| {
+            b.1.cmp(&a.1)
+                .then_with(|| (a.0.1, &a.0.2).cmp(&(b.0.1, &b.0.2)))
+        });
         let limit = usize::try_from(q.max_subjects as u64).unwrap_or(usize::MAX);
         let chosen: BTreeSet<Group> = multi.into_iter().take(limit).map(|(g, _)| g).collect();
         let mut rows = Vec::new();

@@ -28,6 +28,10 @@ export interface LedgerMembers {
   hasBeliefBaseline(sourceId: string, slug: string, runId: string): Promise<boolean>;
   /** The source's slugs (pages, then page-less database-only fact subjects) lacking a baseline of run `runId`, after `after` and not in `skip`; the first `limit` in byte order. */
   listBeliefBaselinePending(sourceId: string, runId: string, after: string, skip: readonly string[], limit: number): Promise<string[]>;
+  /** The slugs the drift scan may check in the source's incarnation (pages, page-less fact subjects, open lifetimes), most recently touched first and in byte order within a tie. */
+  listBeliefDriftCandidates(sourceId: string, incarnation: string): Promise<string[]>;
+  /** The newest event of `slug` in the source's incarnation other than a coverage event or a backfill, or null. */
+  readNewestBeliefEvent(sourceId: string, incarnation: string, slug: string): Promise<BeliefLedgerSql.BeliefNewestEventRow | null>;
   /** How many distinct slugs of the source have a baseline event of run `runId`. */
   countBeliefBaselineSlugs(sourceId: string, runId: string): Promise<number>;
   /** The source's suppressions on any of `subjectKeys` or on a field whose text hashes to one of `fieldHashes`. No set order. */

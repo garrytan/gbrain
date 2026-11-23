@@ -99,6 +99,8 @@ export const LEDGER_MEMBERS = {
   hasBeliefBaseline: 'belief_ledger',
   listBeliefBaselinePending: 'belief_ledger',
   countBeliefBaselineSlugs: 'belief_ledger',
+  listBeliefDriftCandidates: 'belief_ledger',
+  readNewestBeliefEvent: 'belief_ledger',
   readBeliefRedactions: 'belief_ledger',
   insertBeliefRedaction: 'belief_ledger',
   releaseBeliefRedactions: 'belief_ledger',
