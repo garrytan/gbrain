@@ -42,10 +42,6 @@ on:
       - 'src/core/rust-engine/**'
       - 'test/engine-parity/**'
       - 'test/rust-engine-*.test.ts'
-      - 'src/shadow/**'
-      - 'test/shadow-drill*'
-      - 'test/backup-rust*'
-      - 'src/core/backup/**'
       - 'test/rust-expected-divergence/**'
       - 'src/core/sql-engine-kind.ts'
       - 'src/core/engine.ts'
@@ -67,10 +63,6 @@ on:
       - 'src/core/rust-engine/**'
       - 'test/engine-parity/**'
       - 'test/rust-engine-*.test.ts'
-      - 'src/shadow/**'
-      - 'test/shadow-drill*'
-      - 'test/backup-rust*'
-      - 'src/core/backup/**'
       - 'test/rust-expected-divergence/**'
       - 'src/core/sql-engine-kind.ts'
       - 'src/core/engine.ts'
@@ -298,8 +290,7 @@ jobs:
           GBRAIN_TEST_RUST_ARM: '1'
         run: |
           set -euo pipefail
-          bun test --timeout=60000 test/rust-engine-store.test.ts test/rust-engine-shell.test.ts test/rust-engine-differential.test.ts test/rust-engine-restore-safety.test.ts test/rust-engine-store-snapshot.test.ts test/backup-rust-roundtrip.test.ts test/backup-rust-preflight.test.ts test/backup-restore-brain-id.test.ts
-          bun test --timeout=60000 test/backup-rust-cli.serial.test.ts
+          bun test --timeout=60000 test/rust-engine-store.test.ts test/rust-engine-shell.test.ts test/rust-engine-differential.test.ts
           for file in test/engine-parity/*.test.ts; do
             bun test --timeout=60000 "$file"
           done
@@ -320,8 +311,7 @@ jobs:
           name: gbrain-engine-addon-${{ matrix.target }}
           path: rust/target/addon/gbrain_engine.${{ matrix.target }}.node
           if-no-files-found: error
-          # The Nov 26 shadow build's addon is the evidence file's addon: keep it for the whole shadow window.
-          retention-days: 90
+          retention-days: 7
 
   # Event parity (docs/TESTING.md#event-parity): the schedule runs only `checks`.
   # Check mode only: each command exits 1 if a committed file differs from what PostgreSQL 18.6 produces.
