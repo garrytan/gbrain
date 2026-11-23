@@ -398,7 +398,7 @@ const PINS: Pin[] = [
     // Moved after 7470c703ed: the statement is copied verbatim from the caller at 51df179097.
     from: 'src/core/page-body/segment-derive.ts:355 derivationNeedles',
     case: { method: 'listDerivationClaimForms', variant: 'default', run: e => e.listDerivationClaimForms(['Alice likes tea']) },
-    texts: [`SELECT DISTINCT f FROM (SELECT replace(translate(gbrain_fact_normalize(c), 'ς', 'σ'), 'i\u0307', 'i') AS f
+    texts: [`SELECT DISTINCT f COLLATE "C" AS f FROM (SELECT replace(translate(gbrain_fact_normalize(c), 'ς', 'σ'), 'i\u0307', 'i') AS f
     FROM unnest($1::text[]) c) x WHERE f <> '' ORDER BY f`],
   },
   {

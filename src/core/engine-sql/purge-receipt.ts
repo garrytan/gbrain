@@ -58,13 +58,13 @@ export async function recordDerivationPurgeRow(tx: Raw, row: DerivationPurgeReco
 
 /**
  * The claims in the form the derivation predicates take: normalized by the database (gbrain_fact_normalize, then foldSql), so a
- * needle and the stored rows it is matched with go through the same SQL. Distinct, in the database's order, and without a claim
+ * needle and the stored rows it is matched with go through the same SQL. Distinct, in byte order (`COLLATE "C"`, as PGLite and the Rust store sort), and without a claim
  * that normalizes to nothing; no claim, no statement.
  */
 export async function listDerivationClaimForms(tx: Raw, claims: readonly string[]): Promise<string[]> {
   const list = [...new Set(claims.filter(Boolean))];
   if (!list.length) return [];
-  const { text, params } = renderFragment(sqlFragment`SELECT DISTINCT f FROM (SELECT ${trustedSql(foldSql('gbrain_fact_normalize(c)'))} AS f
+  const { text, params } = renderFragment(sqlFragment`SELECT DISTINCT f COLLATE "C" AS f FROM (SELECT ${trustedSql(foldSql('gbrain_fact_normalize(c)'))} AS f
     FROM unnest(${list}::text[]) c) x WHERE f <> '' ORDER BY f`);
   const rows = await tx.executeRaw<{ f: string }>(text, params);
   return rows.map(row => row.f);
