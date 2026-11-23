@@ -186,7 +186,7 @@ of the profile page:
 
 File at `people/<slug>-voice` (person-subject page per
 `_brain-filing-rules.md`), via `gbrain put people/<slug>-voice` with the page
-content on stdin. Required top-of-page metadata block:
+content on stdin. If the put is refused with `slug_in_other_source`, the voice page already lives in another source: run the retry the error names (`--source-id <holder>`). Required top-of-page metadata block:
 
 ````markdown
 # Alice Example — Voice Profile

@@ -30,7 +30,8 @@ import { evaluateQuietHours } from '../core/minions/quiet-hours.ts';
 import { logSelfUpgrade } from '../core/audit/self-upgrade-audit.ts';
 import {
   classifyGbrainCommand, collectHostProcesses, copyFix, gbrainEntry, launcherName, mismatchedBuilds, PENDING_BUILD, planRestart, runRestartSteps, verifyRestart,
-  type AutopilotLauncher, type HostProcess, type ProcessSources, type ProcessTableRow, type RestartExecutor, type RestartPlan, type ServiceHandle, type WarmSocketState,
+  homeFromPsEnvironment, unitFromCgroup,
+  type AutopilotLauncher, type HostProcess, type ServiceUnit, type ProcessSources, type ProcessTableRow, type RestartExecutor, type RestartPlan, type ServiceHandle, type WarmSocketState,
 } from '../core/upgrade-restart.ts';
 
 const DOCS = 'docs/guides/upgrades-auto-update.md#restart';
@@ -51,6 +52,34 @@ function processHome(pid: number): string | null | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** #9483: the systemd unit a process runs in, from its cgroup; null when none does or it cannot be read (only Linux exposes it). */
+function processUnit(pid: number): ServiceUnit | null {
+  try { return unitFromCgroup(readFileSync(`/proc/${pid}/cgroup`, 'utf8')); } catch { return null; }
+}
+
+/** #9483: a serve's unit counts only when the unit's main process is the serve or its parent, not a unit it merely started under (a terminal, a CI runner). */
+function unitRunsServe(unit: ServiceUnit, pid: number, ppid: number): boolean {
+  const r = spawnSync('systemctl', [...(unit.scope === 'user' ? ['--user'] : []), 'show', '-p', 'MainPID', '--value', '--', unit.name], { encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'ignore'] });
+  const main = r.status === 0 && typeof r.stdout === 'string' ? Number(r.stdout.trim()) : NaN;
+  return main > 1 && (main === pid || main === ppid);
+}
+
+/**
+ * #9725: macOS has no /proc, so a process's GBRAIN_HOME (else HOME) comes from `ps -E`, which appends the environment
+ * of each process this user may read to its command; pid to home, empty when ps cannot run.
+ */
+function darwinProcessHomes(select: string[], commands: Map<number, string>): Map<number, string | null | undefined> {
+  const homes = new Map<number, string | null | undefined>();
+  const run = spawnSync('ps', [...select, '-E', '-ww', '-o', 'pid=,command='], { encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'ignore'] });
+  if (typeof run.stdout !== 'string') return homes;
+  for (const line of run.stdout.split('\n')) {
+    const m = /^\s*(\d+)\s(.*)$/.exec(line);
+    const command = m ? commands.get(Number(m[1])) : undefined;
+    if (m && command !== undefined) homes.set(Number(m[1]), homeFromPsEnvironment(command, m[2]!.replace(/^\s+/, '')));
+  }
+  return homes;
 }
 
 /** A process's working directory, which a relative entry point resolves against; null when it cannot be read (only Linux exposes it). */
@@ -74,13 +103,19 @@ function readProcessTable(uid: number | undefined, pids?: number[]): ProcessTabl
   const run = spawnSync('ps', [...select, '-ww', '-o', 'pid=,ppid=,etime=,command='], { encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'ignore'] });
   if (typeof run.stdout !== 'string' || (run.status !== 0 && !(pids && run.status === 1))) return null;
   const now = Date.now();
-  return run.stdout.split('\n').flatMap(line => {
+  const rows = run.stdout.split('\n').flatMap(line => {
     const m = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(line);
     if (!m) return [];
     const elapsed = parseEtimeToMs(m[3]!);
     const pid = Number(m[1]);
-    return [{ pid, ppid: Number(m[2]), command: m[4]!, started_ms: elapsed === null ? null : now - elapsed, gbrain_home: processHome(pid), cwd: processCwd(pid) }];
+    const ppid = Number(m[2]);
+    const cwd = processCwd(pid);
+    const unit = classifyGbrainCommand(m[4]!, { cwd, packageName: packageNameAt }) === 'serve' ? processUnit(pid) : null;
+    return [{ pid, ppid, command: m[4]!, started_ms: elapsed === null ? null : now - elapsed, gbrain_home: processHome(pid), cwd, unit: unit && unitRunsServe(unit, pid, ppid) ? unit : null }];
   });
+  if (process.platform !== 'darwin') return rows;
+  const homes = darwinProcessHomes(select, new Map(rows.map(row => [row.pid, row.command])));
+  return rows.map(row => ({ ...row, gbrain_home: homes.get(row.pid) }));
 }
 
 /** The gbrain install a command line starts from: the package directory above its entry point and the version it holds now (null for a compiled binary). */
@@ -138,6 +173,11 @@ export function autopilotLauncher(crontab: () => string | null = readCrontab, de
   const relaunches = (line: string) => /^\*(?:\/[1-5])?\s+\*\s+\*\s+\*\s+\*\s/.test(line.trim()) && scriptWrapperPath(line) !== null && cronLineBelongsToBrain(line, job);
   if (crontab()?.split('\n').some(relaunches)) return { kind: 'cron', wait_ms: HANDOFF_WAIT_MS, pid: lockPid };
   return declared === 'external' ? { kind: 'declared', wait_ms: HANDOFF_WAIT_MS, pid: lockPid } : null;
+}
+
+/** #9483: `self_upgrade.serve_launcher external`: a launcher outside gbrain's serve service starts serve again when it exits; null when undeclared. */
+export function serveLauncher(declared: string | undefined = loadConfig()?.self_upgrade?.serve_launcher): AutopilotLauncher | null {
+  return declared === 'external' ? { kind: 'declared', wait_ms: HANDOFF_WAIT_MS, pid: null } : null;
 }
 
 /** The launcher matters only for a running autopilot, so a host without one never reads the crontab. */
@@ -218,7 +258,7 @@ export function hostExecutor(pidFile: string, timeoutMs = 600_000): RestartExecu
 }
 
 /** SIGTERM pid only while it is still the MCP server or autopilot the plan saw: same role, same start time (ps reports it to the second). */
-function terminateIfUnchanged(pid: number, startedMs: number | null, role: 'mcp' | 'autopilot'): 'stopped' | 'gone' | 'changed' {
+function terminateIfUnchanged(pid: number, startedMs: number | null, role: 'mcp' | 'autopilot' | 'serve'): 'stopped' | 'gone' | 'changed' {
   const row = readProcessTable(undefined, [pid])?.find(r => r.pid === pid);
   if (!row) return 'gone';
   if (classifyGbrainCommand(row.command, { cwd: row.cwd, packageName: packageNameAt }) !== role || startedMs === null || row.started_ms === null || Math.abs(row.started_ms - startedMs) > 2_000) return 'changed';
@@ -233,7 +273,7 @@ function describeSteps(plan: RestartPlan): string[] {
   return plan.steps.map(step => step.kind === 'service' ? `${step.pids.map(name).join(', ')}: \`${step.argv.join(' ')}\``
     : step.kind === 'supervisor' ? `${[step.pid, ...step.workers].map(name).join(', ')}: \`${step.stop.join(' ')}\`, then \`${step.start.join(' ')}\``
     : step.kind === 'replace_copy' ? `${step.pids.map(name).join(', ')} run from the Bun global copy at ${step.root} (${step.from ? `v${step.from}` : 'version unknown'}): replace it with v${step.to} (BUN_INSTALL=${step.bun_install}: bun remove -g gbrain, then bun add -g the tag) before the restarts`
-    : step.kind === 'handoff' ? `${name(step.pid)}: stop it (SIGTERM drains it); ${launcherName(step.launcher)} starts the installed build again (verified for up to ${Math.round(step.launcher.wait_ms / 60_000)} minutes)`
+    : step.kind === 'handoff' ? `${name(step.pid)}: stop it (SIGTERM drains it); ${launcherName(step.launcher, step.role)} starts the installed build again (verified for up to ${Math.round(step.launcher.wait_ms / 60_000)} minutes)`
     : `${name(step.pid)}: stop it (reconnect gbrain in its harness afterwards)`);
 }
 
@@ -303,7 +343,7 @@ export async function preflightHostRestart(opts: HostRestartOptions): Promise<bo
   try {
     const services = hostServices();
     const processes = await collectHostProcesses(sources);
-    const plan = planRestart(processes, { expected: PENDING_BUILD, serveService: services.serve, autopilotService: services.autopilot, stopMcp: opts.stopMcp, ownInstallRoot: ownInstallRoot(), autopilotLauncher: launcherFor(processes) });
+    const plan = planRestart(processes, { expected: PENDING_BUILD, serveService: services.serve, autopilotService: services.autopilot, stopMcp: opts.stopMcp, ownInstallRoot: ownInstallRoot(), autopilotLauncher: launcherFor(processes), serveLauncher: serveLauncher() });
     const refusal = restartRefusal(plan, opts.rerunArgv, false);
     if (!refusal) return true;
     setCliExitVerdict(writeCliError(refusal, 'upgrade', { json: opts.json }));
@@ -322,7 +362,7 @@ export async function upgradeRestartReadiness(): Promise<RestartPlan | null> {
   const processes = sources.processTable() === null ? null : await collectHostProcesses(sources);
   if (!processes) return null;
   const services = hostServices();
-  return planRestart(processes, { expected: PENDING_BUILD, serveService: services.serve, autopilotService: services.autopilot, stopMcp: false, ownInstallRoot: ownInstallRoot(), autopilotLauncher: launcherFor(processes) });
+  return planRestart(processes, { expected: PENDING_BUILD, serveService: services.serve, autopilotService: services.autopilot, stopMcp: false, ownInstallRoot: ownInstallRoot(), autopilotLauncher: launcherFor(processes), serveLauncher: serveLauncher() });
 }
 
 /** `gbrain upgrade --restart-only [--stop-mcp] [--dry-run] [--json]`: restart every process onto the installed build and verify. */
@@ -331,7 +371,7 @@ export async function runHostRestart(opts: HostRestartOptions & { dryRun: boolea
   try {
     const services = hostServices();
     const before = await collectHostProcesses(sources);
-    const plan = planRestart(before, { expected: VERSION, serveService: services.serve, autopilotService: services.autopilot, stopMcp: opts.stopMcp, ownInstallRoot: ownInstallRoot(), autopilotLauncher: launcherFor(before) });
+    const plan = planRestart(before, { expected: VERSION, serveService: services.serve, autopilotService: services.autopilot, stopMcp: opts.stopMcp, ownInstallRoot: ownInstallRoot(), autopilotLauncher: launcherFor(before), serveLauncher: serveLauncher() });
     const { probeCliSocket } = await import('../core/cli-socket/probe.ts');
     const warmBefore = await probeCliSocket();
     const planDoc = { expected: VERSION, processes: before, steps: plan.steps, manual: plan.manual, warm_socket: warmBefore, notes };
@@ -379,13 +419,14 @@ export type ServeRestartOutcome = { outcome: 'no_service' | 'current' } | { outc
  * otherwise the outcome. A serve counts as older only on evidence: a recorded build below `expected`, or no recorded
  * build and a start before the install on disk was written (`installedMs`). A newer or unknown serve is left alone.
  */
-export function planServeRestart(processes: readonly HostProcess[], serveService: ServiceHandle, expected: string, ownRoot: string | null, installedMs: number | null = null): RestartPlan | ServeRestartOutcome {
+export function planServeRestart(processes: readonly HostProcess[], serveService: ServiceHandle | null, expected: string, ownRoot: string | null, installedMs: number | null = null,
+  launcher: AutopilotLauncher | null = null): RestartPlan | ServeRestartOutcome {
   const older = processes.filter(p => p.role === 'serve' && (p.version !== null
     ? (compareWriterVersions(p.version, expected) ?? 0) < 0
     : installedMs !== null && p.started_ms !== null && p.started_ms < installedMs));
-  const plan = planRestart(older, { expected, serveService, autopilotService: null, stopMcp: false, ownInstallRoot: ownRoot });
+  const plan = planRestart(older, { expected, serveService, autopilotService: null, stopMcp: false, ownInstallRoot: ownRoot, serveLauncher: launcher });
   if (!plan.stale.length) return { outcome: 'current' };
-  if (plan.manual.length || plan.steps.some(step => step.kind !== 'service')) {
+  if (plan.manual.length || plan.steps.some(step => step.kind !== 'service' && !(step.kind === 'handoff' && step.role === 'serve'))) {
     return { outcome: 'manual', detail: `run \`gbrain upgrade --restart-only\`: ${[...describeSteps(plan), ...plan.manual.map(m => m.instruction)].join(' ')}` };
   }
   return plan;
@@ -399,8 +440,10 @@ export function planServeRestart(processes: readonly HostProcess[], serveService
  */
 export async function restartStaleServeService(): Promise<ServeRestartOutcome> {
   const services = hostServices();
-  if (!services.serve) return { outcome: 'no_service' };
-  if (!serveServiceRunsWrapper(process.platform, homedir())) return { outcome: 'manual', detail: 'the serve service on this host starts another brain\'s serve wrapper (another GBRAIN_HOME), so this autopilot leaves it alone; run `gbrain upgrade --restart-only` with that brain\'s GBRAIN_HOME' };
+  const launcher = serveLauncher();
+  const serveService = services.serve && serveServiceRunsWrapper(process.platform, homedir()) ? services.serve : null;
+  if (!services.serve && !launcher) return { outcome: 'no_service' };
+  if (!serveService && !launcher) return { outcome: 'manual', detail: 'the serve service on this host starts another brain\'s serve wrapper (another GBRAIN_HOME), so this autopilot leaves it alone; run `gbrain upgrade --restart-only` with that brain\'s GBRAIN_HOME' };
   const { sources, close, pidFile } = await hostSources();
   try {
     const collectServe = async () => (await collectHostProcesses(sources)).filter(p => p.role === 'serve');
@@ -409,7 +452,7 @@ export async function restartStaleServeService(): Promise<ServeRestartOutcome> {
     if (onDisk !== VERSION) return { outcome: 'manual', detail: `the install on disk holds ${onDisk ? `v${onDisk}` : 'an unknown build'}, not this autopilot's v${VERSION}; run \`gbrain upgrade --restart-only\`` };
     let installedMs: number | null = null;
     try { installedMs = statSync(join(root!, 'package.json')).mtimeMs; } catch { /* no install time: a serve with no recorded build stays as it is */ }
-    const plan = planServeRestart(await collectServe(), services.serve, VERSION, root, installedMs);
+    const plan = planServeRestart(await collectServe(), serveService, VERSION, root, installedMs, launcher);
     if (!('steps' in plan)) return plan;
     const { probeCliSocket } = await import('../core/cli-socket/probe.ts');
     const warmBefore = await probeCliSocket();
@@ -418,7 +461,7 @@ export async function restartStaleServeService(): Promise<ServeRestartOutcome> {
     const verified = await verifyRestart(plan, startedMs, warmBefore, {
       collect: collectServe, probeWarmSocket: () => probeCliSocket(),
       sleep: ms => new Promise(r => setTimeout(r, ms)), now: () => Date.now(),
-    }, { timeoutMs: VERIFY_TIMEOUT_MS, pollMs: VERIFY_POLL_MS });
+    }, { timeoutMs: launcher ? Math.max(VERIFY_TIMEOUT_MS, launcher.wait_ms) : VERIFY_TIMEOUT_MS, pollMs: VERIFY_POLL_MS });
     const problems = [...results.filter(r => !r.ok).map(r => r.detail), ...verified.problems];
     return { outcome: verified.ok ? 'restarted' : 'unverified', detail: `${describeSteps(plan).join(' ')}${problems.length ? `; ${problems.join(' ')}` : ''}` };
   } finally {

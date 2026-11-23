@@ -247,8 +247,8 @@ const scenarios: Scenario[] = [
 
   // 7. federated chunk reads
   {
-    name: 'getChunks over two sources',
-    expect: 'refused',
+    name: 'getChunks over two sources returns the chunks of both, in PGLite\'s order',
+    expect: 'equal',
     run: async ({ engine }) => {
       await engine.putPage('fed/a', NOTE);
       await engine.putPage('fed/a', { ...NOTE, compiled_truth: 'work text' }, { sourceId: 'work' });

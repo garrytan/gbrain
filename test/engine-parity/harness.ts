@@ -275,7 +275,7 @@ export async function archiveSource(engine: BrainEngine, backend: ParityBackend,
  */
 export async function enableBeliefCoverage(engine: BrainEngine, backend: ParityBackend, sourceId: string): Promise<void> {
   switch (backend) {
-    // The Rust arm runs the same production path; it stops on the engine's typed refusal until the ledger is served.
+    // The Rust arm runs the same production path, a page's baseline included.
     case 'rust':
     case 'pglite':
     case 'postgres':
@@ -349,48 +349,11 @@ export async function seedAccessPolicy(
 }
 
 /**
- * Fixture: a `page_purges` tombstone, as the page purge sweep (`persistence/page-purge.ts`) and the restore replay
- * (`belief/purge-mirror.ts`) write it inside the write journal's transaction. Neither has a typed writer, so this is
- * harness-only SQL behind the backend switch; `purgedAt` (ISO) replaces the default `now()`.
+ * Fixture: a `page_purges` tombstone of one content hash, written through the typed `upsertPagePurges` the page purge
+ * sweep (`persistence/page-purge.ts`) uses, so every arm stores it at its own clock.
  */
-export async function recordPagePurge(engine: BrainEngine, backend: ParityBackend, sourceId: string, slug: string, contentHash: string, purgedAt?: string): Promise<void> {
-  switch (backend) {
-    // The Rust store reads the ledger but has no writer for it: the same SQL stops on the engine's typed raw_sql refusal.
-    case 'rust':
-    case 'pglite':
-    case 'postgres':
-      await engine.executeRaw('INSERT INTO page_purges (source_id, content_hash, slug, purged_at) VALUES ($1, $2, $3, COALESCE($4::timestamptz, now()))',
-        [sourceId, contentHash, slug, purgedAt ?? null]);
-      return;
-    default:
-      return assertNever(backend);
-  }
-}
-
-/**
- * Fixture: a `page_facts_reconcile` watermark row in any state, including ones the typed `settleFactsReconcile` cannot
- * reach (a reconciled revision older than the page, an attempt older than the reconcile). Harness-only SQL behind the
- * backend switch. `reconciled` and `attempted` name the revision each column holds: the page's `current`
- * `knowledge_revision`, an `older` one, or null.
- */
-export async function recordFactsReconcile(
-  engine: BrainEngine, backend: ParityBackend, sourceId: string, slug: string,
-  outcome: 'complete' | 'deferred' | 'invalid' | 'cancelled', reconciled: 'current' | 'older' | null, attempted: 'current' | 'older' | null,
-): Promise<void> {
-  switch (backend) {
-    // The Rust store writes the watermark only through settle and drain: the same SQL stops on the engine's typed raw_sql refusal.
-    case 'rust':
-    case 'pglite':
-    case 'postgres':
-      await engine.executeRaw(`INSERT INTO page_facts_reconcile (page_id, reconciled_revision, reconciled_at, outcome, attempted_revision, attempted_at)
-        SELECT p.id, CASE $3 WHEN 'current' THEN p.knowledge_revision WHEN 'older' THEN $6::uuid END, now(), $5,
-               CASE $4 WHEN 'current' THEN p.knowledge_revision WHEN 'older' THEN $6::uuid END, now()
-          FROM pages p WHERE p.source_id = $1 AND p.slug = $2`,
-        [sourceId, slug, reconciled, attempted, outcome, '00000000-0000-4000-8000-000000000000']);
-      return;
-    default:
-      return assertNever(backend);
-  }
+export async function recordPagePurge(engine: BrainEngine, _backend: ParityBackend, sourceId: string, slug: string, contentHash: string): Promise<void> {
+  await engine.upsertPagePurges({ sourceId, contentHashes: [contentHash], slug, requestId: null });
 }
 
 /**
@@ -444,6 +407,22 @@ function recordingEngine(engine: BrainEngine, calls: Set<string>, refusals: unkn
       };
     },
   });
+}
+
+/**
+ * Stop the persistence write queue a case started, before the next reset or the arm's close. A write operation starts a
+ * consumer keyed on the engine object the case receives (the recording wrapper `given`, which no arm lifecycle or reset
+ * knows), and the reset does not stop it: its projection and effect work ran into the next case's reset, a Postgres
+ * deadlock on `DELETE FROM sources` in 1 of 10 stress runs of the slug parity file before it stopped the queue by hand.
+ * So every case, on every arm, stops the consumer of the wrapper and of the arm's own engine here, in a finally block.
+ * Disposing an engine with no consumer does nothing.
+ */
+async function stopWriteQueue(...engines: BrainEngine[]): Promise<void> {
+  let failure: unknown;
+  for (const engine of engines) {
+    try { await disposePersistenceConsumer(engine); } catch (error) { failure ??= error; }
+  }
+  if (failure !== undefined) throw failure;
 }
 
 export interface ParitySuite {
@@ -513,36 +492,48 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
           if (arm.backend === 'rust') skipped++;
           continue;
         }
-        if (arm.backend === 'rust') {
-          const divergence = readDivergences().find((row) => row.file === testFile && row.name === name);
-          try {
-            await checkRustArm({ name, opts, run: () => scenario(recordingEngine(arm.engine, calls, refusals), arm.backend, ctx), calls, refusals,
-              reference: results[0], divergence }, tally);
-          } finally {
-            for (const engine of extra) await engine.disconnect().catch(() => undefined);
-          }
-          continue;
-        }
-        let value: T;
+        // The engine object the scenario receives. Write operations key their persistence consumer on it, so it is the
+        // one the harness stops when the case ends (stopWriteQueue).
+        const given = recordingEngine(arm.engine, calls, refusals);
+        let scenarioFailed = false;
         try {
-          if (!runs) {
-            // The arm lacks a `refuses` capability: the scenario must stop on the typed refusal.
-            const refusal = await scenario(recordingEngine(arm.engine, calls), arm.backend, ctx).then(() => null, (e: unknown) => e);
-            expect({ backend: arm.backend, refused: isCapabilityRefusal(refusal, opts.requires!) })
-              .toEqual({ backend: arm.backend, refused: true });
+          if (arm.backend === 'rust') {
+            const divergence = readDivergences().find((row) => row.file === testFile && row.name === name);
+            try {
+              await checkRustArm({ name, opts, run: () => scenario(given, arm.backend, ctx), calls, refusals,
+                reference: results[0], divergence }, tally);
+            } finally {
+              for (const engine of extra) await engine.disconnect().catch(() => undefined);
+            }
             continue;
           }
-          value = await scenario(recordingEngine(arm.engine, calls), arm.backend, ctx);
+          let value: T;
+          try {
+            if (!runs) {
+              // The arm lacks a `refuses` capability: the scenario must stop on the typed refusal.
+              const refusal = await scenario(given, arm.backend, ctx).then(() => null, (e: unknown) => e);
+              expect({ backend: arm.backend, refused: isCapabilityRefusal(refusal, opts.requires!) })
+                .toEqual({ backend: arm.backend, refused: true });
+              continue;
+            }
+            value = await scenario(given, arm.backend, ctx);
+          } catch (error) {
+            if (error instanceof Error) error.message = `[${arm.backend}] ${error.message}`;
+            throw error;
+          } finally {
+            // A case may already have disconnected it; a second disconnect is harmless or refused.
+            for (const engine of extra) await engine.disconnect().catch(() => undefined);
+          }
+          const missing = opts.methods.filter((m) => !calls.has(m));
+          expect({ backend: arm.backend, declaredButNotCalled: missing }).toEqual({ backend: arm.backend, declaredButNotCalled: [] });
+          results.push({ backend: arm.backend, value });
         } catch (error) {
-          if (error instanceof Error) error.message = `[${arm.backend}] ${error.message}`;
+          scenarioFailed = true;
           throw error;
         } finally {
-          // A case may already have disconnected it; a second disconnect is harmless or refused.
-          for (const engine of extra) await engine.disconnect().catch(() => undefined);
+          // A failed stop must not hide the case's own failure; on its own it fails the case.
+          await stopWriteQueue(given, arm.engine).catch((error: unknown) => { if (!scenarioFailed) throw error; });
         }
-        const missing = opts.methods.filter((m) => !calls.has(m));
-        expect({ backend: arm.backend, declaredButNotCalled: missing }).toEqual({ backend: arm.backend, declaredButNotCalled: [] });
-        results.push({ backend: arm.backend, value });
       }
       const [first, ...rest] = results;
       for (const other of rest) {

@@ -52,8 +52,13 @@ becomes visible to the brain in one commit, or not at all.
       settings and the three attribution settings (`gbrain.write_request`,
       `gbrain.write_principal_kind`, `gbrain.write_principal_id`) go to the write context on the
       transaction's handle ([`write_trust.md`](write_trust.md)). `gbrain.write_sources`,
-      `gbrain.git_protocol` and `gbrain.persistence_protocol` stay on the transaction in
-      TypeScript (`RustTransactionScope.settings`).
+      `gbrain.git_protocol`, `gbrain.persistence_protocol` and `gbrain.writer_quiesced` stay on
+      the transaction in TypeScript (`RustTransactionScope.settings`).
+    - `plan_cache_mode` stays on the transaction too, for the belief batch probe
+      (`readLedgerSource` with `batch`). It reads `auto` when unset, inside a transaction or not,
+      and an apply takes `auto`, `force_generic_plan` or `force_custom_plan` (any case, kept in
+      lower case) or throws `invalid value for parameter "plan_cache_mode": "<value>"`. The store
+      has no planner, so the setting changes nothing else.
     - They end with the transaction. A savepoint rollback restores them; a release keeps them.
     - Outside a transaction an apply keeps nothing, as a lone `set_config(..., true)` on PGLite.
     - A name never set reads `null`. A name set before on the engine reads `''`, as Postgres

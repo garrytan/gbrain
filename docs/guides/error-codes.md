@@ -334,6 +334,146 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | append_page text held a links fence marker, so nothing was appended. | A page has one links section, and the rows it lists are the page's authored links: an appended links table would replace that section and delete every link it does not list. | Write each link with add_link (from, to, link_type); it adds the row to the page's links section and keeps the rows already there. | agent | `repeat the read that failed` | 1 | no |
 
+### apple_contacts_backup_failed
+
+<a id="apple_contacts_backup_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| GBrain Helper could not save its daily copy of the contacts before a change, so it changed nothing. | Every day the helper copies all contacts before its first change, so a bad batch can be undone; without that copy no change runs. | Check disk space on the Mac and the contacts-backups folder beside the helper config, then send the same command again. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_backup_failed](../../docs/guides/apple-contacts.md#apple_contacts_backup_failed)
+
+### apple_contacts_bad_request
+
+<a id="apple_contacts_bad_request"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An apple-contacts write command or batch was malformed (a missing flag, bad JSON or a field the helper does not know), so nothing was changed. | A change to Contacts is sent only when every field it needs is present and well formed; the message names what is missing. | Run gbrain apple-contacts --help for the verb's flags, then send the command again. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_bad_request](../../docs/guides/apple-contacts.md#apple_contacts_bad_request)
+
+### apple_contacts_config
+
+<a id="apple_contacts_config"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An apple-contacts source has no helper host, or a proxy that is not socks5h://host:port, so nothing was imported. | The source reaches GBrain Helper only at the host and port its config names, directly or through a socks5h proxy that resolves the host name; a proxy URL may not carry credentials, and a bad one is refused rather than skipped. | Re-add the source: gbrain sources add <id> --kind apple-contacts --helper-host <host> [--proxy socks5h://<host>:<port>] --token-file <path>. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_config](../../docs/guides/apple-contacts.md#apple_contacts_config)
+
+### apple_contacts_delete_floor
+
+<a id="apple_contacts_delete_floor"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An Apple Contacts run would have deleted more than 20% of the contacts the source owns, or all of them, so no contact was deleted: a full read wrote nothing and kept its cursor, an incremental run kept the deletions pending. | A revoked Contacts grant or a half-synced Contacts store looks like mass deletion; the run refuses the deletions whole instead of retiring pages. Pending deletions cancel when the contacts come back. GBRAIN_ALLOW_MASS_RECONCILE=1 lets a real large deletion through; deleting every contact never passes. | Check Contacts on the Mac and that GBrain Helper can read it, then run gbrain sync --source <id> again; if the deletions are real, run it once with GBRAIN_ALLOW_MASS_RECONCILE=1. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_delete_floor](../../docs/guides/apple-contacts.md#apple_contacts_delete_floor)
+
+### apple_contacts_destructive_off
+
+<a id="apple_contacts_destructive_off"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A verb that changes or removes what is on an Apple Contacts card was refused because apple_contacts.destructive_writes is not on, so nothing was changed. | Changing or removing contact data ships off; the brain operator turns it on only after the host checks who asked for the change. | Ask the brain operator; when the host is ready they run gbrain config set apple_contacts.destructive_writes on. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_destructive_off](../../docs/guides/apple-contacts.md#apple_contacts_destructive_off)
+
+### apple_contacts_disabled
+
+<a id="apple_contacts_disabled"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| GBrain Helper has its Contacts source turned off, so nothing was imported. | The helper serves a source only while its config enables it; only the Mac owner changes that config. | On the Mac, set sources.contacts.enabled to true in GBrain Helper's config.json, then run gbrain sync --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_disabled](../../docs/guides/apple-contacts.md#apple_contacts_disabled)
+
+### apple_contacts_helper_error
+
+<a id="apple_contacts_helper_error"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| GBrain Helper answered the Contacts route with a status gbrain does not expect (or kept returning snapshot pages), so the run stopped with its cursor unchanged. | Only 200, 401, 403, 410 and 503 have a defined meaning on the route; anything else may be a helper bug or a version gap, so nothing more is written. | Check that GBrain Helper and the GBrain CLI are both up to date, then run gbrain sync --source <id>; report it with gbrain doctor --json if it repeats. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_helper_error](../../docs/guides/apple-contacts.md#apple_contacts_helper_error)
+
+### apple_contacts_not_allowed
+
+<a id="apple_contacts_not_allowed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| GBrain Helper cannot read Contacts because the owner has not allowed it on the Mac, so nothing was imported. | macOS lets an app read Contacts only after the user clicks OK on its prompt or switches it on in System Settings; only the user can do that. | Ask the user to click OK on the "GBrain Helper would like to access your contacts" prompt, or switch GBrain Helper on in System Settings > Privacy & Security > Contacts, then run gbrain sync --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_not_allowed](../../docs/guides/apple-contacts.md#apple_contacts_not_allowed)
+
+### apple_contacts_owner_key_file
+
+<a id="apple_contacts_owner_key_file"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The owner key file apple_contacts.owner_key_file names is unset, missing, not a regular file, readable by group or others, or does not hold a key name and a 32-byte seed, so nothing was changed. | Owner changes to Contacts are signed with that key, read only from a 0600 file; the Mac holds only its public half. | Write {"key_name":"<name>","seed":"<32-byte Ed25519 seed, base64url>"} to a chmod 600 file, run gbrain config set apple_contacts.owner_key_file <path>, and register the public key on the Mac. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_owner_key_file](../../docs/guides/apple-contacts.md#apple_contacts_owner_key_file)
+
+### apple_contacts_token_file
+
+<a id="apple_contacts_token_file"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The token file an apple-contacts source names is missing, unreadable, not a regular file, readable by group or others, or does not hold an accessToken, so nothing was imported. | The read:contacts token is read only from that 0600 file, never from the environment, a flag or a URL, so a symlink or a loose mode is refused before the file is read. | Write {"accessToken":"<token>"} to the file the source names, owned by the user that runs gbrain, chmod 600, then run gbrain sync --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_token_file](../../docs/guides/apple-contacts.md#apple_contacts_token_file)
+
+### apple_contacts_unauthorized
+
+<a id="apple_contacts_unauthorized"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| GBrain Helper refused the Apple Contacts token (401, or 403 insufficient_scope), so nothing was imported. | The Contacts route answers only a token the helper issued with the read:contacts scope. | Put a token the helper issued with the read:contacts scope in the source's token file (chmod 600), then run gbrain sync --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_unauthorized](../../docs/guides/apple-contacts.md#apple_contacts_unauthorized)
+
+### apple_contacts_unreachable
+
+<a id="apple_contacts_unreachable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| GBrain Helper did not answer the Contacts route (503, a timeout or no connection) after retries at 1, 4 and 15 seconds, so the run stopped with its cursor unchanged. | The helper runs on the owner's Mac, which may be asleep or off the network; the next scheduled pull picks up where this one stopped. | Check that the Mac is awake, GBrain Helper is running and any proxy is up, then run gbrain sync --source <id>. | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_unreachable](../../docs/guides/apple-contacts.md#apple_contacts_unreachable)
+
+### apple_contacts_write_off
+
+<a id="apple_contacts_write_off"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Apple Contacts writes are off, on this brain (apple_contacts.write is not on) or on the Mac (contacts-write off), so nothing was changed. | Writes to Contacts ship off at both ends; the owner turns them on. | Turn on the switch the message names: gbrain config set apple_contacts.write on, or gbrain-apple-helper contacts-write on at the Mac. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_write_off](../../docs/guides/apple-contacts.md#apple_contacts_write_off)
+
+### apple_contacts_write_token_file
+
+<a id="apple_contacts_write_token_file"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The enrichment token file for Apple Contacts writes is missing, not a regular file, readable by group or others, or does not hold an accessToken, so nothing was changed. | The write:contacts:enrich token is read only from that 0600 file, never from the environment, a flag or a URL. | Write {"accessToken":"<token>"} to a chmod 600 file and run gbrain config set apple_contacts.write_token_file <path>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-contacts.md#apple_contacts_write_token_file](../../docs/guides/apple-contacts.md#apple_contacts_write_token_file)
+
 ### apple_full_disk_access_pending
 
 <a id="apple_full_disk_access_pending"></a>
@@ -3004,7 +3144,7 @@ More: [docs/designs/GIT_CANONICAL_MEMORY.md#remote-and-hosted-writes](../../docs
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| entity_identity_link or entity_identity_unlink refused to move or remove a page that gbrain dedupe confirm linked, so nothing changed. | That link is the projection of a recorded duplicate decision (kept in git on a brain with a repository): removing the row alone would come back at the next reconcile while the decision still says the pages are one person or company. | Run gbrain dedupe reject <entity_id> on the brain host: it records that the pages are different people or companies and removes the link. Run: gbrain entity-identity-list --json | agent | `repeat the read that failed` | 1 | no |
+| entity_identity_link or entity_identity_unlink refused to move or remove a page that gbrain dedupe confirm linked, or entity_identity_unlink refused to remove a company page the sync linked automatically, so nothing changed. | A confirmed link is the projection of a recorded duplicate decision (kept in git on a brain with a repository), and an automatic company link comes from the pages' shared ids: removing the row alone would come back at the next reconcile or sync while the decision or the ids still say the pages are one person or company. | Run gbrain dedupe reject <entity_id> on the brain host: it records that the pages are different people or companies and removes the link. Run: gbrain entity-identity-list --json | agent | `repeat the read that failed` | 1 | no |
 
 ### identity_member_in_other_group
 
@@ -3856,6 +3996,56 @@ More: [docs/guides/repair.md#origin-twins](../../docs/guides/repair.md#origin-tw
 |---|---|---|---|---|---|---|
 | Sources cannot claim overlapping canonical directories. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### owned_day_secret_held
+
+<a id="owned_day_secret_held"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A chat day looks like it holds a secret and secrets.on_push is refuse, so its file was not committed; the day is in the database, and the file committed earlier (which passed the scan) stays. | The scan, and push-time redaction under the default secrets.on_push redact, catch known key and token shapes only. A one-time code or password written in plain message text is not caught or redacted, which is why the folder is written only when the checkout pushes to a repository proven private. With refuse, a commit holding a matched key or token would stop every later push from the brain, so that day is kept out of Git. | Nothing to do for the day to be searchable. To commit it, set secrets.on_push back to redact (gbrain config set secrets.on_push redact); the next sync commits it and the push redacts the matched key or token. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-setup.md#what-a-push-carries](../../docs/guides/apple-setup.md#what-a-push-carries)
+
+### owned_folder_conflict
+
+<a id="owned_folder_conflict"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A file or folder under .gbrain-owned/ is not what the source that owns it wrote (edited or added by hand, reached through a symlink, or another source's), or a command other than that source tried to read or write it; nothing there was changed. | An owned folder holds the pages one source writes from outside the brain (an iMessage source's chat days). Only that source's writer changes it, and only files whose bytes it recorded, so a hand edit is never overwritten and the default source's sync, import, repairs and commits never pick the folder up. | Move the hand-made file out of .gbrain-owned/ (or restore the committed file with git checkout -- <path>), then run gbrain sync --source <id>. To change a page there, change it in Messages; to stop the source, gbrain sources remove <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/apple-setup.md#owned_folder_conflict](../../docs/guides/apple-setup.md#owned_folder_conflict)
+
+### owner_busy
+
+<a id="owner_busy"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A Rust brain's owner refused a call or a connection because a bound on its memory was reached; `reason` says which bound, and nothing ran. | Every process on a Rust brain sends its calls to the one process that owns it, over `<database_path>/.gbrain-owner.sock`. The owner bounds what it holds for all of them so one busy or misbehaving process cannot grow its memory without limit. `queue_full`: the calls waiting for a free permit reached the queue cap. `inflight_bytes`: the call frames the owner holds (waiting and running) reached the byte cap. `connections`: the owner already has the most client connections it keeps. A refused call never started, so a retry is safe. | Retry after the calls in flight finish. If it repeats, run fewer processes on the brain at once or send smaller calls (a smaller batch or limit). Run: gbrain doctor --json | agent | `repeat the read that failed` | 1 | yes |
+
+Reasons: `queue_full`, `inflight_bytes`, `connections`.
+
+### owner_ipc_peer_refused
+
+<a id="owner_ipc_peer_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A Rust brain's owner socket connected two processes of different OS users, or the socket itself was not private to this user, so the connection was refused and nothing ran. | The owner socket runs brain calls with the owner's full access, so only the same OS user may use it. The owner reads each connecting process's uid from the kernel (SO_PEERCRED or getpeereid) and refuses any other uid, or a uid it cannot read (`peer_uid`). A client checks the socket before it connects: it must be a socket owned by this user (`socket_owner`) with no group or other permission bits (`socket_mode`); after it connects it checks the owner's uid the same way (`peer_uid`). Where the platform cannot read peer uids, the private 0700 directory and 0600 socket are the only guard. | Run every gbrain process on the brain as the same OS user. For socket_owner or socket_mode, stop the process that made the socket, check that the brain directory belongs to you, and run the command again. Run: gbrain doctor --json | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `peer_uid`, `socket_owner`, `socket_mode`.
+
+### owner_ipc_protocol
+
+<a id="owner_ipc_protocol"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A frame on a Rust brain's owner socket broke the owner protocol, so the call or the connection it came on was refused; `reason` says which rule. | Processes on one Rust brain reach its owner over `<database_path>/.gbrain-owner.sock` and must speak one protocol version. `version_mismatch`: the two processes run gbrain builds with different owner protocol versions, so neither reads the other's frames. `hello_missing`: a call came before the connection's hello, so its version was never checked; it did not run. `duplicate_id`: a call reused the id of a call still running on that connection; the new call did not run and the first one keeps running. `args_not_array`: a call's arguments were not a list; it did not run. `result_undecodable`: this process could not read the owner's answer to one call; that call fails, the owner may have run it, and other calls on the connection go on. | version_mismatch: run the same gbrain version in every process on the brain (upgrade, then restart the older process or gbrain serve). Any other reason is a gbrain bug: report it with the code, reason and detail; for result_undecodable read the data again before you retry a write. Run: gbrain doctor --json | agent | `gbrain doctor --json` | 1 | no |
+
+Reasons: `version_mismatch`, `hello_missing`, `duplicate_id`, `args_not_array`, `result_undecodable`.
+
 ### owner_marker_missing
 
 <a id="owner_marker_missing"></a>
@@ -3872,9 +4062,9 @@ More: [docs/guides/write-refusals.md#owner_marker_missing](../../docs/guides/wri
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The source's canonical owner cannot run this write or maintenance step right now; `reason` says which condition. | A managed source publishes only through the host that owns its checkout. `host_mismatch`: another host id owns it (two GBRAIN_HOME identity files on one machine look the same; both ids are printed, and a retry on this host cannot help). `transfer_in_progress`: the worktree is draining for a writer transfer, which ends when the successor accepts it or the owner host runs `gbrain sources writer transfer cancel`; a drain prepared over 30 minutes ago asks the user which (`ask_user`) instead of waiting. `clone_in_progress`: a topology clone is recovering it and clears by itself. `binding_missing`, `incarnation_changed`, `local_path_missing` and `coordination_path_missing` name an incomplete or outdated registration. `not_sent` / `outcome_unknown`: the local owner's IPC lane did not take the write, or lost its acknowledgment. `detail: unbound_source`: on Postgres the source has a checkout but no canonical owner, a configuration state rather than a transient one (not retryable); in classic mode the write path is the file, a commit and `gbrain sync`. | Read gbrain sources writer status --source <id> --json on the brain host. A transfer or clone in progress: wait and retry. host_mismatch: run the step on the owner host, or give the worker and the shell one GBRAIN_HOME; never copy or regenerate host.json. Nothing claims or transfers ownership to run maintenance. | agent | `repeat the read that failed` | 1 | yes |
+| The source's canonical owner cannot run this write or maintenance step right now; `reason` says which condition. | A managed source publishes only through the host that owns its checkout. `host_mismatch`: another host id owns it (two GBRAIN_HOME identity files on one machine look the same; both ids are printed, and a retry on this host cannot help). `transfer_in_progress`: the worktree is draining for a writer transfer, which ends when the successor accepts it or the owner host runs `gbrain sources writer transfer cancel`; a drain prepared over 30 minutes ago asks the user which (`ask_user`) instead of waiting. `clone_in_progress`: a topology clone is recovering it and clears by itself. `binding_missing`, `incarnation_changed`, `local_path_missing` and `coordination_path_missing` name an incomplete or outdated registration. `not_sent` / `outcome_unknown`: the local owner's IPC lane did not take the write, or lost its acknowledgment. On a Rust brain the same two reasons come from the owner socket (`<database_path>/.gbrain-owner.sock`): `not_sent` means the call never reached the owner (no owner or client role within 5 seconds, or the owner had already exited), so a retry is safe; `outcome_unknown` means the call was sent and its answer never came back (the owner exited, the caller cancelled it, or its deadline passed), so a write may or may not have committed: the owner does not stop a call it started. The owner then holds back the read that confirms that write, and the write's own member on the same key, until the started call ends, so the confirming read answers only once the outcome is final; `earlier_call_running` means a call waited there past its own deadline and never ran, so it tells nothing yet and is not retryable as not_sent. The suggestion names the read that confirms that member's write (for insertFact, listFactsByEntity for that entity), and the error is retryable only for a member that only reads. A long-lived client runs the election again on its next call and becomes the owner or a client of the new one, so a retry works without a restart. `detail: unbound_source`: on Postgres the source has a checkout but no canonical owner, a configuration state rather than a transient one (not retryable); in classic mode the write path is the file, a commit and `gbrain sync`. | Read gbrain sources writer status --source <id> --json on the brain host. A transfer or clone in progress: wait and retry. host_mismatch: run the step on the owner host, or give the worker and the shell one GBRAIN_HOME; never copy or regenerate host.json. Nothing claims or transfers ownership to run maintenance. | agent | `repeat the read that failed` | 1 | yes |
 
-Reasons: `host_mismatch`, `transfer_in_progress`, `clone_in_progress`, `binding_missing`, `incarnation_changed`, `coordination_path_missing`, `local_path_missing`, `not_sent`, `outcome_unknown`.
+Reasons: `host_mismatch`, `transfer_in_progress`, `clone_in_progress`, `binding_missing`, `incarnation_changed`, `coordination_path_missing`, `local_path_missing`, `not_sent`, `outcome_unknown`, `earlier_call_running`.
 
 More: [docs/guides/troubleshooting.md#owner-unavailable](../../docs/guides/troubleshooting.md#owner-unavailable)
 
@@ -4502,6 +4692,16 @@ More: [docs/guides/dream-patterns.md#child-read-budget](../../docs/guides/dream-
 
 More: [docs/guides/write-refusals.md#readable_by_invalid](../../docs/guides/write-refusals.md#readable_by_invalid)
 
+### readers_noncanonical
+
+<a id="readers_noncanonical"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A page's frontmatter names its readers with a key page access does not read (Readable_By, readable-by, readableBy), so the write was refused, or sync or import held the file, instead of storing a page every member can read. | Page access reads only the exact lowercase key readable_by. A page that spells it another way (another case, a hyphen or space for the underscore) is stored as an ordinary frontmatter key, so its restriction would be lost silently and every member could read it. put_page, edit_page, capture, ingest_capture, brainstorm --save and sources reconcile refuse the write with this code, and sync and import hold the file; a page that also carries the exact key is refused too, because its intent is ambiguous. | Write the key as readable_by (lowercase, with an underscore) on its own frontmatter line and remove any other spelling, then submit, sync or import again. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#readers_noncanonical](../../docs/guides/write-refusals.md#readers_noncanonical)
+
 ### reason_purge_scan_capped
 
 <a id="reason_purge_scan_capped"></a>
@@ -5050,7 +5250,7 @@ Reasons: `unsupported_target`, `not_installed`, `override_not_found`.
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The Rust engine could not open this brain because another gbrain process, or another engine in this process, has its store open, so nothing was opened or written. | A Rust brain has one owner at a time: the process that opened it holds the store until it disconnects. A second open does not wait. | Stop the other gbrain process that is using this brain, or disconnect the other engine, then try again. | user | `gbrain doctor --json` | 1 | yes |
+| The Rust store could not be opened directly because another opener already has it open, so nothing was opened or written. | A Rust brain store has one opener at a time. A Rust engine does not hit this: its `connect()` makes a second process or engine a client of the owner over `<database_path>/.gbrain-owner.sock`. It comes from a direct store open (a tool or test that opens the store without the engine) while the owner holds it. | Open the brain through the Rust engine so the call goes through the owner, or stop the process that holds the store, then try again. | user | `gbrain doctor --json` | 1 | yes |
 
 ### rust_store_unreadable
 
@@ -6264,7 +6464,7 @@ More: [docs/guides/write-refusals.md#timeline_rows_would_be_removed](../../docs/
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The operation did not finish within its time bound. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 124 | yes |
+| The operation did not finish within its time bound. | On a Rust brain client, a call through the owner socket carries its deadline and `reason` says how far it got: `not_sent` (never reached the owner) and `not_started` (waited in the owner queue and never ran) are safe to retry. A call whose deadline passed after the owner started it ends `owner_unavailable` with reason `outcome_unknown` instead. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 124 | yes |
 
 ### topology_change_required
 

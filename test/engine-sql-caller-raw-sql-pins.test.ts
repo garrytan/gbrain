@@ -3,8 +3,8 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each member sends Postgres exactly the statement text its caller ran through `executeRaw` before the
- *    move. Each expected text below is copied verbatim from the caller at 7470c703ed, except where a pin's comment
- *    names an equivalent statement.
+ *    move. Each expected text below is copied verbatim from the caller at the commit its `from` names (7470c703ed
+ *    unless it says otherwise), except where a pin's comment names an equivalent statement.
  *  - Regression: an edited statement changes what Postgres and PGLite answer while the parity cases may still pass on
  *    a small fixture.
  *  - Why existing coverage misses it: the sql-text goldens cover the W1 domains only (test/engine-sql-sql-text.test.ts),
@@ -13,6 +13,9 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { runCase, withPinnedSqlEnvironment, type SqlCase } from './helpers/postgres-engine-sql-cases.ts';
+import { FACT_PREIMAGE_SQL } from '../src/core/engine-sql/facts.ts';
+import { TAKE_PREIMAGE_SQL } from '../src/core/engine-sql/takes-reads.ts';
+import { trustRankSql } from '../src/core/trust/tier.ts';
 import { edgeTrimSql } from '../src/core/edge-whitespace.ts';
 import { budgetRowAppliesFilter } from '../src/core/page-size-policy.ts';
 import { chunkGenerationFilter } from '../src/core/search/safe-chunks.ts';
@@ -20,11 +23,15 @@ import { quoteIdentifier } from '../src/core/search/embedding-column.ts';
 import { retiredPageSql } from '../src/core/entities/resolve.ts';
 import { rankingLinkSql } from '../src/core/link-ranking-policy.ts';
 import { boundedBodyPrefixSql } from '../src/core/page-window/bounded-lead.ts';
+import { MARKDOWN_CHUNKER_VERSION } from '../src/core/chunkers/recursive.ts';
+import { syncDeleteOrigin } from '../src/core/persistence/sync-delete-tombstones.ts';
 import { MANAGED_MODE_SQL } from '../src/core/persistence/managed-mode.ts';
 import { syncAdmissionEffectSql, syncAdmissionSettingSql } from '../src/core/persistence/sync-admission.ts';
 import { GIT_PUSH_CODES } from '../src/core/persistence/git-push-holds.ts';
 import { ACTIVE_REFRESH_STATES_SQL } from '../src/core/persistence/worktree-refresh-schema.ts';
+import { APPLE_CONTACTS_PENDING_DELETES_OP, APPLE_CONTACTS_REVIEW_OP } from '../src/core/apple-contacts/review-status.ts';
 import { identityDowngradeOpen } from '../src/core/sync-identity-downgrades.ts';
+import { EFFECT_BYTES_SQL } from '../src/core/persistence/receipt-bytes.ts';
 import { callerAccessAllowedSql, privateLinkOriginFilterForCaller, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
 
 /** caller.ts MEMBER_SQL at 7470c703ed: MEMBERS_WHERE_SQL(`m.id = (${member})`), copied verbatim. */
@@ -42,11 +49,514 @@ interface Pin {
 }
 
 const PINS: Pin[] = [
+  // The segmented page projection check and the derive pass's conditional store, then the mention pass, the gazetteer, the extract walk's snapshot, the by-mention rebuild and explain, copied verbatim
+  {
+    from: 'src/core/persistence/searchable.ts:33 (at 0af1a6ecf0)',
+    case: { method: 'readSegmentedPageSealed', variant: 'default', run: e => e.readSegmentedPageSealed('default', 'notes/x') },
+    texts: () => [`SELECT text_projection_revision=knowledge_revision AS sealed FROM pages
+    WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL`],
+  },
+  {
+    from: 'src/core/page-body/segment-derive.ts:220 storeRuns (at 0af1a6ecf0)',
+    case: { method: 'storeSegmentDerivationsIfLive', variant: 'default', run: e => e.storeSegmentDerivationsIfLive(1, 2, []) },
+    texts: () => [`WITH live AS (SELECT id FROM pages WHERE id=$1 AND body_storage='segmented' AND body_generation=$2 FOR SHARE)
+      INSERT INTO page_segment_derivations (page_id, pipeline, occurrence_id, pipeline_version, segment_sha256, context_hash, state, output, receipt)
+      SELECT live.id, d.pipeline, d.occurrence_id, d.pipeline_version, decode(d.segment_sha256, 'hex'), decode(d.context_hash, 'hex'), 'done', d.output, NULL
+      FROM live, jsonb_to_recordset($3::text::jsonb) AS d(pipeline text, occurrence_id bigint, pipeline_version int, segment_sha256 text, context_hash text, output jsonb)
+      ON CONFLICT (page_id, pipeline, occurrence_id) DO UPDATE SET pipeline_version = EXCLUDED.pipeline_version, segment_sha256 = EXCLUDED.segment_sha256,
+        context_hash = EXCLUDED.context_hash, state = EXCLUDED.state, output = EXCLUDED.output, receipt = EXCLUDED.receipt, updated_at = now()
+      RETURNING 1`],
+  },
+  // from the callers at 0af1a6ecf0 (a literal's own variables are set as the caller set them).
+  {
+    from: 'src/core/mentions/pass.ts:148 (at 0af1a6ecf0)',
+    case: { method: 'listMentionSourceIds', variant: 'default', run: e => e.listMentionSourceIds() },
+    texts: () => { return ['SELECT id FROM sources ORDER BY id']; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:162 (at 0af1a6ecf0)',
+    case: { method: 'writeMentionIndexStatus', variant: 'default', run: e => e.writeMentionIndexStatus('default', { state: 'pending', pending: null, lastPassAt: null, error: null, bumpGeneration: true, fingerprint: null, setFingerprint: false }) },
+    texts: () => { return [`INSERT INTO mention_index_status (source_id, generation, state, pending, counted_at, last_pass_at, policy_fingerprint, error, updated_at)
+     VALUES ($1, CASE WHEN $6::boolean THEN 1 ELSE 0 END, $2, COALESCE($3::int, 0), now(), $4::timestamptz, $7, $5, now())
+     ON CONFLICT (source_id) DO UPDATE SET
+       state = EXCLUDED.state,
+       pending = COALESCE($3::int, mention_index_status.pending),
+       counted_at = CASE WHEN $3::int IS NULL THEN mention_index_status.counted_at ELSE now() END,
+       last_pass_at = COALESCE($4::timestamptz, mention_index_status.last_pass_at),
+       error = $5,
+       generation = mention_index_status.generation + CASE WHEN $6::boolean THEN 1 ELSE 0 END,
+       policy_fingerprint = CASE WHEN $8::boolean THEN $7 ELSE mention_index_status.policy_fingerprint END,
+       updated_at = now()`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:183 (at 0af1a6ecf0)',
+    case: { method: 'lockMentionSources', variant: 'shared', run: e => e.lockMentionSources(['default'], true) },
+    texts: () => { const shared = true; return [`SELECT count(${shared ? 'pg_advisory_xact_lock_shared' : 'pg_advisory_xact_lock'}(hashtext('gbrain:mention-publish:' || s)::bigint))
+    FROM (SELECT DISTINCT s FROM unnest($1::text[]) AS x(s) ORDER BY s) k`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:183 (at 0af1a6ecf0)',
+    case: { method: 'lockMentionSources', variant: 'exclusive', run: e => e.lockMentionSources(['default'], false) },
+    texts: () => { const shared = false; return [`SELECT count(${shared ? 'pg_advisory_xact_lock_shared' : 'pg_advisory_xact_lock'}(hashtext('gbrain:mention-publish:' || s)::bigint))
+    FROM (SELECT DISTINCT s FROM unnest($1::text[]) AS x(s) ORDER BY s) k`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:236 (at 0af1a6ecf0)',
+    case: { method: 'listMentionLinkOrigins', variant: 'default', run: e => e.listMentionLinkOrigins('default') },
+    texts: () => { return [`SELECT DISTINCT f.slug FROM links l JOIN pages f ON f.id = l.from_page_id
+        WHERE f.source_id = $1 AND l.link_source = 'mentions' AND (l.link_kind IS NULL OR l.link_kind = 'plain')`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:239 (at 0af1a6ecf0)',
+    case: { method: 'deleteSourceMentionLinks', variant: 'default', run: e => e.deleteSourceMentionLinks('default', null) },
+    texts: () => { return [`DELETE FROM links l USING pages f
+        WHERE f.id = l.from_page_id AND f.source_id = $1 AND l.link_source = 'mentions'
+          AND (l.link_kind IS NULL OR l.link_kind = 'plain') AND ($2::text[] IS NULL OR f.slug = ANY($2::text[])) RETURNING l.id`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:245; src/core/mentions/pass.ts:246; src/core/mentions/pass.ts:247 (at 0af1a6ecf0)',
+    case: { method: 'clearMentionSourceIndex', variant: 'default', run: e => e.clearMentionSourceIndex('default') },
+    texts: () => { return [`DELETE FROM page_aliases WHERE source_id = $1 AND origin IN ('declared','subject')`, 'DELETE FROM mention_gazetteer_entries WHERE source_id = $1', 'DELETE FROM page_mention_state WHERE source_id = $1']; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:342 (at 0af1a6ecf0)',
+    case: { method: 'listStaleDerivedAliasSlugs', variant: 'default', run: e => e.listStaleDerivedAliasSlugs('default', ['person']) },
+    texts: () => { return [`SELECT DISTINCT pa.slug FROM page_aliases pa
+       LEFT JOIN pages p ON p.slug = pa.slug AND p.source_id = pa.source_id
+      WHERE pa.source_id = $1 AND pa.origin IN ('declared','subject')
+        AND (p.id IS NULL OR p.deleted_at IS NOT NULL OR NOT (p.type = ANY($2::text[])))`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:348 (at 0af1a6ecf0)',
+    case: { method: 'deleteDerivedAliasesForSlugs', variant: 'default', run: e => e.deleteDerivedAliasesForSlugs('default', ['people/alice-example']) },
+    texts: () => { return [`DELETE FROM page_aliases WHERE source_id = $1 AND slug = ANY($2::text[]) AND origin IN ('declared','subject')`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:356 (at 0af1a6ecf0)',
+    case: { method: 'listAliasDuePages', variant: 'default', run: e => e.listAliasDuePages('default', ['person'], 0, 4, 200) },
+    texts: () => { return [`SELECT p.id, p.slug, p.source_id, p.knowledge_revision::text AS revision, p.title, p.type, p.compiled_truth, p.timeline, NULL AS mention_ignore, p.frontmatter
+         FROM pages p LEFT JOIN page_mention_state s ON s.page_id = p.id
+        WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.body_storage = 'inline' AND p.type = ANY($2::text[]) AND p.id > $3
+          AND (s.page_id IS NULL OR s.alias_revision IS DISTINCT FROM p.knowledge_revision OR s.alias_version IS DISTINCT FROM $4)
+        ORDER BY p.id LIMIT $5`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:365 (at 0af1a6ecf0)',
+    case: { method: 'listDerivedAliasRows', variant: 'default', run: e => e.listDerivedAliasRows('default', ['people/alice-example']) },
+    texts: () => { return [`SELECT slug, alias_norm, origin, case_sensitive, alias_text FROM page_aliases
+        WHERE source_id = $1 AND slug = ANY($2::text[]) AND origin IN ('declared','subject')`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:382 (at 0af1a6ecf0)',
+    case: { method: 'readMentionPageRevisions', variant: 'plain', run: e => e.readMentionPageRevisions([1], { forShare: false }) },
+    texts: () => { return [`SELECT id, knowledge_revision::text AS revision FROM pages WHERE id = ANY($1::int[]) AND deleted_at IS NULL`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:564 (at 0af1a6ecf0)',
+    case: { method: 'readMentionPageRevisions', variant: 'for_share', run: e => e.readMentionPageRevisions([1], { forShare: true }) },
+    texts: () => { return [`SELECT id, knowledge_revision::text AS revision FROM pages WHERE id = ANY($1::int[]) AND deleted_at IS NULL FOR SHARE`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:392 (at 0af1a6ecf0)',
+    case: { method: 'insertDerivedAliasRows', variant: 'default', run: e => e.insertDerivedAliasRows('default', [{ slug: 'people/alice-example', alias_norm: 'alice', origin: 'declared', case_sensitive: false, alias_text: 'Alice' }]) },
+    texts: () => { return [`INSERT INTO page_aliases (source_id, alias_norm, slug, origin, case_sensitive, alias_text)
+             SELECT $1, a, s, o, c::boolean, t FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::text[]) AS x(a, s, o, c, t)
+             ON CONFLICT DO NOTHING`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:400 (at 0af1a6ecf0)',
+    case: { method: 'upsertPageAliasState', variant: 'default', run: e => e.upsertPageAliasState('default', [{ id: 1, revision: '00000000-0000-4000-8000-000000000001' }], 4) },
+    texts: () => { return [`INSERT INTO page_mention_state (page_id, source_id, alias_revision, alias_version, aliases_refreshed_at)
+           SELECT id, $1, rev::uuid, $4, now() FROM unnest($2::int[], $3::text[]) AS x(id, rev)
+           ON CONFLICT (page_id) DO UPDATE SET alias_revision = EXCLUDED.alias_revision, alias_version = EXCLUDED.alias_version,
+             aliases_refreshed_at = EXCLUDED.aliases_refreshed_at`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:423 (at 0af1a6ecf0)',
+    case: { method: 'listMentionCandidatePages', variant: 'ascii', run: e => e.listMentionCandidatePages(['default'], 0, 500, ['%alice%']) },
+    texts: () => { const ascii = true; return [`SELECT id, slug, source_id, body_storage, COALESCE(title, '') || E'\\n\\n' || COALESCE(compiled_truth, '') || E'\\n\\n' || COALESCE(timeline, '') AS body,
+              frontmatter->'mention_ignore' AS mention_ignore
+         FROM pages WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) AND id > $2
+          ${ascii ? `AND (body_storage = 'segmented' OR lower(COALESCE(title, '') || ' ' || COALESCE(compiled_truth, '') || ' ' || COALESCE(timeline, '')) LIKE ANY($4::text[]))` : ''}
+        ORDER BY id LIMIT $3`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:423 (at 0af1a6ecf0)',
+    case: { method: 'listMentionCandidatePages', variant: 'all', run: e => e.listMentionCandidatePages(['default'], 0, 500, null) },
+    texts: () => { const ascii = false; return [`SELECT id, slug, source_id, body_storage, COALESCE(title, '') || E'\\n\\n' || COALESCE(compiled_truth, '') || E'\\n\\n' || COALESCE(timeline, '') AS body,
+              frontmatter->'mention_ignore' AS mention_ignore
+         FROM pages WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) AND id > $2
+          ${ascii ? `AND (body_storage = 'segmented' OR lower(COALESCE(title, '') || ' ' || COALESCE(compiled_truth, '') || ' ' || COALESCE(timeline, '')) LIKE ANY($4::text[]))` : ''}
+        ORDER BY id LIMIT $3`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:462 (at 0af1a6ecf0)',
+    case: { method: 'listGazetteerEntryKeys', variant: 'default', run: e => e.listGazetteerEntryKeys('default') },
+    texts: () => { return ['SELECT source_id, name_norm, target_slug, case_sensitive FROM mention_gazetteer_entries WHERE source_id = $1']; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:474 (at 0af1a6ecf0)',
+    case: { method: 'listMentionLinkersOfTargets', variant: 'default', run: e => e.listMentionLinkersOfTargets('default', ['people/alice-example']) },
+    texts: () => { return [`SELECT DISTINCT l.from_page_id AS id FROM links l JOIN pages t ON t.id = l.to_page_id
+        WHERE t.source_id = $1 AND t.slug = ANY($2::text[]) AND l.link_source = 'mentions'`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:483 (at 0af1a6ecf0)',
+    case: { method: 'lockMentionEntries', variant: 'default', run: e => e.lockMentionEntries('default') },
+    texts: () => { return ['SELECT pg_advisory_xact_lock(hashtext($1)::bigint)']; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:488; src/core/mentions/pass.ts:494 (at 0af1a6ecf0)',
+    case: { method: 'applyGazetteerEntryChanges', variant: 'both', run: e => e.applyGazetteerEntryChanges('default', [{ source_id: 'default', name_norm: 'bob', target_slug: 'people/bob-example', case_sensitive: false }], [{ source_id: 'default', name_norm: 'alice', target_slug: 'people/alice-example', case_sensitive: false }]) },
+    texts: () => { return [`DELETE FROM mention_gazetteer_entries e USING unnest($2::text[], $3::text[], $4::text[]) AS x(n, t, c)
+          WHERE e.source_id = $1 AND e.name_norm = x.n AND e.target_slug = x.t AND e.case_sensitive = x.c::boolean`, `INSERT INTO mention_gazetteer_entries (source_id, name_norm, target_slug, case_sensitive)
+         SELECT $1, n, t, c::boolean FROM unnest($2::text[], $3::text[], $4::text[]) AS x(n, t, c) ON CONFLICT DO NOTHING`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:500 (at 0af1a6ecf0)',
+    case: { method: 'resetMentionRevisions', variant: 'sources', run: e => e.resetMentionRevisions({ sourceIds: ['default'] }) },
+    texts: () => { return ['UPDATE page_mention_state SET mention_revision = NULL WHERE source_id = ANY($1::text[])']; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:502 (at 0af1a6ecf0)',
+    case: { method: 'resetMentionRevisions', variant: 'pages', run: e => e.resetMentionRevisions({ pageIds: [1] }) },
+    texts: () => { return ['UPDATE page_mention_state SET mention_revision = NULL WHERE page_id = ANY($1::int[])']; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:510 (at 0af1a6ecf0)',
+    case: { method: 'readMentionGenerations', variant: 'plain', run: e => e.readMentionGenerations(['default'], false) },
+    texts: () => { const lock = false; return [`SELECT source_id, generation::text AS generation FROM mention_index_status WHERE source_id = ANY($1::text[])${lock ? ' FOR SHARE' : ''}`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:510 (at 0af1a6ecf0)',
+    case: { method: 'readMentionGenerations', variant: 'for_share', run: e => e.readMentionGenerations(['default'], true) },
+    texts: () => { const lock = true; return [`SELECT source_id, generation::text AS generation FROM mention_index_status WHERE source_id = ANY($1::text[])${lock ? ' FOR SHARE' : ''}`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:530 (at 0af1a6ecf0)',
+    case: { method: 'listMentionDuePages', variant: 'default', run: e => e.listMentionDuePages('default', 7, 0, 200) },
+    texts: () => { const DUE_PREDICATE = `(s.page_id IS NULL OR s.mention_revision IS DISTINCT FROM p.knowledge_revision OR s.mention_version IS DISTINCT FROM $2)`; return [`SELECT p.id, p.slug, p.source_id, p.knowledge_revision::text AS revision, p.title, p.type, p.compiled_truth, p.timeline,
+              p.frontmatter->'mention_ignore' AS mention_ignore, p.body_storage
+         FROM pages p LEFT JOIN page_mention_state s ON s.page_id = p.id
+        WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.id > $3 AND ${DUE_PREDICATE}
+        ORDER BY p.id LIMIT $4`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:569 (at 0af1a6ecf0)',
+    case: { method: 'listPageOutLinks', variant: 'default', run: e => e.listPageOutLinks([1]) },
+    texts: () => { return [`SELECT l.id, l.from_page_id, t.slug AS to_slug, t.source_id AS to_source_id,
+                (l.link_source = 'mentions' AND (l.link_kind IS NULL OR l.link_kind = 'plain')) AS plain
+           FROM links l JOIN pages t ON t.id = l.to_page_id WHERE l.from_page_id = ANY($1::int[])`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:589 (at 0af1a6ecf0)',
+    case: { method: 'deleteLinksById', variant: 'default', run: e => e.deleteLinksById([1]) },
+    texts: () => { return ['DELETE FROM links WHERE id = ANY($1::int[])']; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:596 (at 0af1a6ecf0)',
+    case: { method: 'upsertPageMentionState', variant: 'default', run: e => e.upsertPageMentionState('default', [{ id: 1, revision: '00000000-0000-4000-8000-000000000001' }], 7, '0') },
+    texts: () => { return [`INSERT INTO page_mention_state (page_id, source_id, mention_revision, mention_version, mention_generation, mentions_scanned_at)
+         SELECT id, $1, rev::uuid, $4, $5::bigint, now() FROM unnest($2::int[], $3::text[]) AS x(id, rev)
+         ON CONFLICT (page_id) DO UPDATE SET mention_revision = EXCLUDED.mention_revision, mention_version = EXCLUDED.mention_version,
+           mention_generation = EXCLUDED.mention_generation, mentions_scanned_at = EXCLUDED.mentions_scanned_at`]; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:626 (at 0af1a6ecf0)',
+    case: { method: 'readMentionStatusStates', variant: 'default', run: e => e.readMentionStatusStates(['default']) },
+    texts: () => { return ['SELECT source_id, state FROM mention_index_status WHERE source_id = ANY($1::text[])']; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:648 (at 0af1a6ecf0)',
+    case: { method: 'readMentionPolicyFingerprints', variant: 'default', run: e => e.readMentionPolicyFingerprints(['default']) },
+    texts: () => { return ['SELECT source_id, policy_fingerprint FROM mention_index_status WHERE source_id = ANY($1::text[])']; },
+  },
+  {
+    from: 'src/core/mentions/pass.ts:657 (at 0af1a6ecf0)',
+    case: { method: 'resetSourceMentionIndexRevisions', variant: 'default', run: e => e.resetSourceMentionIndexRevisions('default') },
+    texts: () => { return ['UPDATE page_mention_state SET mention_revision = NULL, alias_revision = NULL WHERE source_id = $1']; },
+  },
+  {
+    from: 'src/core/by-mention.ts:517 (at 0af1a6ecf0)',
+    case: { method: 'listLivePageSourceIds', variant: 'default', run: e => e.listLivePageSourceIds() },
+    texts: () => { return ['SELECT DISTINCT source_id AS id FROM pages WHERE deleted_at IS NULL']; },
+  },
+  {
+    from: 'src/core/by-mention.ts:527 (at 0af1a6ecf0)',
+    case: { method: 'listGazetteerPages', variant: 'default', run: e => e.listGazetteerPages(['person'], ['x_handle', 'twitter', 'twitter_handle', 'x']) },
+    texts: () => { return [`SELECT slug, source_id, title, type, (frontmatter ->> 'google_contact_id') IS NOT NULL AS connector_stub,
+            frontmatter ->> $2 AS h1, frontmatter ->> $3 AS h2, frontmatter ->> $4 AS h3, frontmatter ->> $5 AS h4
+     FROM pages
+     WHERE type = ANY($1::text[])
+       AND deleted_at IS NULL`]; },
+  },
+  {
+    from: 'src/core/by-mention.ts:550 (at 0af1a6ecf0)',
+    case: { method: 'listGazetteerAliases', variant: 'default', run: e => e.listGazetteerAliases(['person']) },
+    texts: () => { return [`SELECT pa.alias_norm, pa.slug, pa.source_id, p.title, p.type, pa.origin, pa.case_sensitive, pa.alias_text, p.frontmatter->>'identity' AS identity
+       FROM page_aliases pa
+       JOIN pages p ON p.slug = pa.slug AND p.source_id = pa.source_id
+       WHERE p.type = ANY($1::text[])
+         AND p.deleted_at IS NULL`]; },
+  },
+  {
+    from: 'src/commands/extract.ts:207 (at 0af1a6ecf0)',
+    case: { method: 'readPageStampTimes', variant: 'default', run: e => e.readPageStampTimes(['people/alice-example'], ['default']) },
+    texts: () => { return [`SELECT p.slug, p.source_id,
+              to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at_iso
+         FROM pages p
+         JOIN unnest($1::text[], $2::text[]) AS v(slug, source_id)
+           ON p.slug = v.slug AND p.source_id = v.source_id
+        WHERE p.deleted_at IS NULL`]; },
+  },
+  {
+    from: 'src/commands/extract.ts:2599 (at 0af1a6ecf0)',
+    case: { method: 'readPageRevisionForShare', variant: 'default', run: e => e.readPageRevisionForShare('default', 'people/alice-example') },
+    texts: () => { return ['SELECT knowledge_revision::text AS revision FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL FOR SHARE']; },
+  },
+  {
+    from: 'src/commands/extract-mentions-explain.ts:80 (at 0af1a6ecf0)',
+    case: { method: 'readExplainPage', variant: 'default', run: e => e.readExplainPage('default', 'people/alice-example') },
+    texts: () => { return ['SELECT slug, type, title FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL']; },
+  },
+  {
+    from: 'src/commands/extract-mentions-explain.ts:102 (at 0af1a6ecf0)',
+    case: { method: 'readExplainScanPage', variant: 'default', run: e => e.readExplainScanPage('default', 'notes/x', 7) },
+    texts: () => { return [`SELECT p.id, p.slug, p.title, p.compiled_truth, p.timeline, p.frontmatter->'mention_ignore' AS mention_ignore,
+            (s.page_id IS NULL OR s.mention_revision IS DISTINCT FROM p.knowledge_revision OR s.mention_version IS DISTINCT FROM $3) AS due
+       FROM pages p LEFT JOIN page_mention_state s ON s.page_id = p.id
+      WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL`]; },
+  },
+  {
+    from: 'src/commands/extract-mentions-explain.ts:117 (at 0af1a6ecf0)',
+    case: { method: 'countMentionLinksTo', variant: 'default', run: e => e.countMentionLinksTo(1, 'default', ['people/alice-example']) },
+    texts: () => { return [`SELECT count(*)::int AS n FROM links l JOIN pages t ON t.id = l.to_page_id
+      WHERE l.from_page_id = $1 AND l.link_source = 'mentions' AND t.source_id = $2 AND t.slug = ANY($3::text[])`]; },
+  },
+  {
+    from: 'src/commands/extract-mentions-explain.ts:134 (at 0af1a6ecf0)',
+    case: { method: 'readPageNameText', variant: 'default', run: e => e.readPageNameText('default', 'people/alice-example') },
+    texts: () => { return ['SELECT title, compiled_truth, timeline, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL']; },
+  },
+  {
+    from: 'src/commands/extract-mentions-explain.ts:138 (at 0af1a6ecf0)',
+    case: { method: 'listFrontmatterAliasNorms', variant: 'default', run: e => e.listFrontmatterAliasNorms('default', 'people/alice-example') },
+    texts: () => { return [`SELECT alias_norm FROM page_aliases WHERE source_id = $1 AND slug = $2 AND origin = 'frontmatter' ORDER BY alias_norm`]; },
+  },
+  {
+    from: 'src/commands/extract-mentions-explain.ts:152 (at 0af1a6ecf0)',
+    case: { method: 'listRejectedDeclarationPages', variant: 'default', run: e => e.listRejectedDeclarationPages('default', ['person'], '%alice%') },
+    texts: () => { return [`SELECT title, compiled_truth, timeline, frontmatter FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND type = ANY($2::text[])
+        AND (compiled_truth ILIKE $3 OR title ILIKE $3) LIMIT 50`]; },
+  },
   {
     from: 'src/core/access/caller.ts:376 appliedAccessSummary',
     case: { method: 'listAppliedPolicyRevisions', variant: 'default', run: e => e.listAppliedPolicyRevisions() },
     texts: [`SELECT s.source_id, (SELECT r.revision FROM access_policy_revisions r WHERE r.source_id = s.source_id AND r.applied_at IS NOT NULL
           ORDER BY r.revision DESC LIMIT 1) AS rev FROM access_policy_state s ORDER BY s.source_id`],
+  },
+  {
+    from: 'src/core/reason-trailers.ts:262 cachedSyncReasonScan',
+    case: { method: 'readSourcePurgeEpoch', variant: 'default', run: e => e.readSourcePurgeEpoch('default') },
+    texts: ['SELECT purge_epoch FROM sources WHERE id = $1'],
+  },
+  {
+    from: 'src/core/minions/submission-authority.ts:144 assertCurrentRemoteJobPrincipal (OAuth client)',
+    case: { method: 'readJobPrincipal', variant: 'oauth-client', run: e => e.readJobPrincipal({ kind: 'oauth_client', id: 'client-1' }) },
+    texts: ['SELECT client_id, deleted_at, scope, source_id, bound_slug_prefixes, surface, allowed_operations FROM oauth_clients WHERE client_id = $1'],
+  },
+  {
+    from: 'src/core/minions/submission-authority.ts:160 assertCurrentRemoteJobPrincipal (legacy token)',
+    case: { method: 'readJobPrincipal', variant: 'legacy-token', run: e => e.readJobPrincipal({ kind: 'legacy_token', id: 'tok-1' }) },
+    texts: ['SELECT * FROM access_tokens WHERE id = $1'],
+  },
+  {
+    // The before-state column list is the shared FACT_PREIMAGE_SQL, which the caller interpolated as well.
+    from: 'src/core/generations/adapters/fact-rows.ts:50 factPreimages (at ede09fdf45)',
+    case: { method: 'readFactPreimages', variant: 'default', run: e => e.readFactPreimages('default', [3, 1]) },
+    texts: [`SELECT ${FACT_PREIMAGE_SQL} AS preimage FROM facts f WHERE f.source_id=$1 AND f.id = ANY($2::bigint[]) ORDER BY f.id`],
+  },
+  {
+    from: 'src/core/generations/adapters/page.ts:53 readPageRows (at a2d331ad57) with COLLATE "C" on both sorts, where text of single-page.ts:39',
+    case: { method: 'readGenerationPageRows', variant: 'slug', run: e => e.readGenerationPageRows({ sourceId: 'default', match: 'slug', slug: 'dream/summary' }) },
+    texts: [`SELECT p.id AS page_id, p.slug, p.type, p.title, p.compiled_truth, p.timeline, p.frontmatter, p.deleted_at IS NOT NULL AS deleted,\n            p.body_storage = 'segmented' AS segmented, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id = p.id), '[]'::jsonb) AS tags\n       FROM pages p WHERE p.source_id = $1 AND (p.slug = $2) ORDER BY p.slug COLLATE "C"`],
+  },
+  {
+    from: 'src/core/generations/adapters/page.ts:53 readPageRows (at a2d331ad57) with COLLATE "C" on both sorts, where text of synthesis.ts:53',
+    case: { method: 'readGenerationPageRows', variant: 'synthesis', run: e => e.readGenerationPageRows({ sourceId: 'default', match: 'synthesis', slugs: ['synth/a'], locator: 'loc.md' }) },
+    texts: [`SELECT p.id AS page_id, p.slug, p.type, p.title, p.compiled_truth, p.timeline, p.frontmatter, p.deleted_at IS NOT NULL AS deleted,\n            p.body_storage = 'segmented' AS segmented, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id = p.id), '[]'::jsonb) AS tags\n       FROM pages p WHERE p.source_id = $1 AND (p.slug = ANY($2::text[]) OR (p.deleted_at IS NULL AND $3::text IS NOT NULL\n      AND p.frontmatter->>'raw_source' = $3 AND p.frontmatter->>'dream_generated' = 'true')) ORDER BY p.slug COLLATE "C"`],
+  },
+  {
+    from: 'src/core/generations/adapters/page.ts:53 readPageRows (at a2d331ad57) with COLLATE "C" on both sorts, where text of atoms.ts:90',
+    case: { method: 'readGenerationPageRows', variant: 'atoms-source-slug', run: e => e.readGenerationPageRows({ sourceId: 'default', match: 'atoms', slugs: ['atoms/a'], field: 'source_slug', value: 'notes/a' }) },
+    texts: [`SELECT p.id AS page_id, p.slug, p.type, p.title, p.compiled_truth, p.timeline, p.frontmatter, p.deleted_at IS NOT NULL AS deleted,\n            p.body_storage = 'segmented' AS segmented, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id = p.id), '[]'::jsonb) AS tags\n       FROM pages p WHERE p.source_id = $1 AND (p.type='atom' AND (p.slug = ANY($2::text[]) OR (p.deleted_at IS NULL AND $3::text IS NOT NULL AND p.frontmatter->>'source_slug' = $3))) ORDER BY p.slug COLLATE "C"`],
+  },
+  {
+    from: 'src/core/generations/adapters/page.ts:53 readPageRows (at a2d331ad57) with COLLATE "C" on both sorts, where text of atoms.ts:90',
+    case: { method: 'readGenerationPageRows', variant: 'atoms-source-path', run: e => e.readGenerationPageRows({ sourceId: 'default', match: 'atoms', slugs: ['atoms/a'], field: 'source_path', value: 'notes/a.md' }) },
+    texts: [`SELECT p.id AS page_id, p.slug, p.type, p.title, p.compiled_truth, p.timeline, p.frontmatter, p.deleted_at IS NOT NULL AS deleted,\n            p.body_storage = 'segmented' AS segmented, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id = p.id), '[]'::jsonb) AS tags\n       FROM pages p WHERE p.source_id = $1 AND (p.type='atom' AND (p.slug = ANY($2::text[]) OR (p.deleted_at IS NULL AND $3::text IS NOT NULL AND p.frontmatter->>'source_path' = $3))) ORDER BY p.slug COLLATE "C"`],
+  },
+  {
+    from: 'src/core/generations/adapters/page.ts:53 readPageRows (at a2d331ad57) with COLLATE "C" on both sorts, where text of chronicle-events.ts:162',
+    case: { method: 'readGenerationPageRows', variant: 'chronicle', run: e => e.readGenerationPageRows({ sourceId: 'default', match: 'chronicle', slugs: ['events/a'], depth: 'year' }) },
+    texts: [`SELECT p.id AS page_id, p.slug, p.type, p.title, p.compiled_truth, p.timeline, p.frontmatter, p.deleted_at IS NOT NULL AS deleted,\n            p.body_storage = 'segmented' AS segmented, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id = p.id), '[]'::jsonb) AS tags\n       FROM pages p WHERE p.source_id = $1 AND (p.slug = ANY($2::text[]) OR (p.deleted_at IS NULL AND p.type='event' AND p.frontmatter->'event'->>'depth' = $3\n      AND p.frontmatter->>'captured_via' LIKE 'life-chronicle:%')) ORDER BY p.slug COLLATE "C"`],
+  },
+  {
+    from: 'src/core/generations/adapters/chronicle-events.ts:112 depthRow (at 358967a48a)',
+    case: { method: 'readChronicleDepthRow', variant: 'default', run: e => e.readChronicleDepthRow('default', 'people/a') },
+    texts: ["SELECT id, deleted_at IS NULL AS live FROM pages WHERE source_id=$1 AND slug=$2 ORDER BY deleted_at NULLS FIRST, id DESC LIMIT 1"],
+  },
+  {
+    from: 'src/core/generations/adapters/chronicle-events.ts:119 ownedEventHashes (at 358967a48a)',
+    case: { method: 'listChronicleOwnedHashes', variant: 'default', run: e => e.listChronicleOwnedHashes('default', 7) },
+    texts: ["SELECT DISTINCT unnest(event_hashes) AS hash FROM chronicle_page_state WHERE source_id=$1 AND page_id=$2"],
+  },
+  {
+    from: 'src/core/generations/adapters/chronicle-events.ts:126 ledgerRetired (at 358967a48a)',
+    case: { method: 'listRetiredGenerationItemKeys', variant: 'default', run: e => e.listRetiredGenerationItemKeys('default', 'chronicle_event', ['events/a']) },
+    texts: ["SELECT DISTINCT i.item_key FROM derived_generation_items i JOIN derived_generations g ON g.id=i.generation_id\n      WHERE g.source_id=$1 AND g.kind=$2 AND i.action='retired' AND i.item_key=ANY($3::text[])"],
+  },
+  {
+    from: 'src/core/generations/adapters/chronicle-events.ts:150 projectionRows (at 358967a48a)',
+    case: { method: 'listEventProjectionRows', variant: 'default', run: e => e.listEventProjectionRows([3, 1]) },
+    texts: ["SELECT event_page_id, date::text AS date, summary, detail FROM timeline_entries WHERE event_page_id = ANY($1::bigint[]) ORDER BY date"],
+  },
+  {
+    from: 'src/core/generations/adapters/chronicle-events.ts:164 readEventItems (at 358967a48a)',
+    case: { method: 'listPageContentHashes', variant: 'ids', run: e => e.listPageContentHashes({ sourceId: 'default', match: 'ids', ids: [3, 1] }) },
+    texts: ["SELECT slug, content_hash FROM pages WHERE source_id=$1 AND id = ANY($2::bigint[])"],
+  },
+  {
+    from: 'src/core/chronicle/publish.ts:186 writtenEvents (at 358967a48a)',
+    case: { method: 'listPageContentHashes', variant: 'live-slugs', run: e => e.listPageContentHashes({ sourceId: 'default', match: 'live_slugs', slugs: ['events/a'] }) },
+    texts: ["SELECT slug, content_hash FROM pages WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL"],
+  },
+  {
+    from: 'src/core/generations/adapters/chronicle-events.ts:170 readEventItems (at 358967a48a)',
+    case: { method: 'listLiveGenerationItems', variant: 'default', run: e => e.listLiveGenerationItems({ sourceId: 'default', kind: 'chronicle_event', ownerKey: 'depth:people/a' }) },
+    texts: ["SELECT i.item_key, i.identity_hash FROM derived_generation_items i JOIN derived_generations g ON g.id=i.generation_id\n      WHERE g.source_id=$1 AND g.kind=$2 AND g.owner_key=$3 AND g.state='live' AND i.action <> 'retired'"],
+  },
+  {
+    from: 'src/core/generations/adapters/chronicle-events.ts:197 recordProjectionFlag, where text of publish.ts:306 (at 358967a48a)',
+    case: { method: 'readEventProjectionId', variant: 'default', run: e => e.readEventProjectionId(3, '2026-03-02') },
+    texts: ["SELECT id FROM timeline_entries WHERE event_page_id=$1 AND date=$2::date"],
+  },
+  {
+    from: 'src/core/generations/adapters/chronicle-events.ts:239 publishItems (at 358967a48a)',
+    case: { method: 'pageSlugExists', variant: 'default', run: e => e.pageSlugExists('default', 'events/a') },
+    texts: ["SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2"],
+  },
+  {
+    from: 'src/core/generations/adapters/chronicle-events.ts:257 retireItems (at 358967a48a)',
+    case: { method: 'deleteEventProjections', variant: 'default', run: e => e.deleteEventProjections('default', ['events/a']) },
+    texts: ["DELETE FROM timeline_entries t USING pages p WHERE p.id=t.event_page_id AND p.source_id=$1 AND p.slug=ANY($2::text[])"],
+  },
+  {
+    from: 'src/core/generations/adapters/chronicle-events.ts:269 restoreItem (at 358967a48a)',
+    case: { method: 'restoreEventProjection', variant: 'default', run: e => e.restoreEventProjection({ depthPageId: 1, date: '2026-03-02', source: 'life-chronicle:event:events/a', summary: 's', detail: 'd', eventPageId: 3 }) },
+    texts: ["INSERT INTO timeline_entries (page_id, date, source, summary, detail, event_page_id) VALUES ($1, $2::date, $3, $4, $5, $6)\n        ON CONFLICT (event_page_id, date) WHERE event_page_id IS NOT NULL DO UPDATE SET summary=EXCLUDED.summary, detail=EXCLUDED.detail, page_id=EXCLUDED.page_id, source=EXCLUDED.source"],
+  },
+  {
+    from: 'src/core/generations/adapters/chronicle-events.ts:280 proofHolds (at 358967a48a)',
+    case: { method: 'hasChronicleSkipDecision', variant: 'default', run: e => e.hasChronicleSkipDecision({ sourceId: 'default', pageId: 1, contentHash: 'h', extractorVersion: 2, reason: 'no_events' }) },
+    texts: ["SELECT 1 FROM chronicle_page_state WHERE source_id=$1 AND page_id=$2 AND content_hash=$3 AND extractor_version=$4 AND state=$5 AND reason=$6"],
+  },
+  {
+    from: 'src/core/generations/adapters/chronicle-events.ts:288 orphanedDepthKeys (at 358967a48a)',
+    case: { method: 'listOrphanedChronicleOwners', variant: 'default', run: e => e.listOrphanedChronicleOwners('default', 'chronicle_event', 50) },
+    texts: ["SELECT g.owner_key FROM derived_generations g\n      WHERE g.source_id=$1 AND g.kind=$2 AND g.state='live'\n        AND EXISTS (SELECT 1 FROM derived_generation_items i JOIN pages e ON e.source_id=g.source_id AND e.slug=i.item_key AND e.deleted_at IS NULL\n          WHERE i.generation_id=g.id AND i.action <> 'retired')\n        AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=g.source_id AND p.slug=substr(g.owner_key, 7) AND p.deleted_at IS NULL)\n      ORDER BY g.updated_at, g.id LIMIT $3"],
+  },
+  {
+    from: 'src/core/chronicle/event-identity.ts:90 resolveChronicleEventSlugs (at 358967a48a)',
+    case: { method: 'listChronicleEventSlotRows', variant: 'default', run: e => e.listChronicleEventSlotRows('default', ['events/a']) },
+    texts: ["SELECT slug, frontmatter->'event'->>'when' AS \"when\", frontmatter->'event'->>'where' AS \"where\", frontmatter->'event'->>'kind' AS kind\n       FROM pages WHERE source_id=$1 AND slug = ANY($2::text[])"],
+  },
+  {
+    from: 'src/core/generations/adapters/atoms.ts:82 readInput (at ec2fbe7ba3)',
+    case: { method: 'readAtomOriginInput', variant: 'default', run: e => e.readAtomOriginInput('default', 'notes/origin') },
+    texts: [`SELECT id, content_hash, knowledge_revision::text AS revision,\n        CASE WHEN body_storage = 'segmented' THEN body_bytes ELSE octet_length(COALESCE(compiled_truth, '')) + octet_length(COALESCE(timeline, '')) END AS body_bytes\n       FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL`],
+  },
+  {
+    from: 'src/core/trust/taint.ts:127 lowerToDerivedTier (at d7fb3a97b7; the values bind through sqlFragment, so the placeholders follow text order and the compared tier binds as its rank)',
+    case: { method: 'lowerTrustTier', variant: 'pages', run: e => e.lowerTrustTier('pages', [3, 1], 'external_untrusted', { channel: 'derive:test' }) },
+    texts: [`UPDATE pages SET trust_tier=$1,write_origin=$2::text::jsonb
+      WHERE id=ANY($3::bigint[]) AND ${trustRankSql('trust_tier')}>$4::int RETURNING id`],
+  },
+  {
+    from: 'src/core/trust/taint.ts:235 readDerivedTaintShare (at d7fb3a97b7)',
+    case: { method: 'countDerivedRowTaint', variant: 'takes', run: e => e.countDerivedRowTaint('takes') },
+    texts: [`SELECT count(*) FILTER (WHERE write_origin ? 'taint_inputs') AS derived,
+                count(*) FILTER (WHERE write_origin ? 'taint_inputs' AND trust_tier = 'external_untrusted') AS external FROM takes`],
+  },
+  {
+    from: 'src/core/persistence/derived-retirement-hold.ts:51 stampDerivedRetirement (at d7fb3a97b7)',
+    case: { method: 'stampPageFrontmatter', variant: 'retired', run: e => e.stampPageFrontmatter({ match: 'retired', sourceId: 'default', slugs: ['synth/a'], retiredBy: 'synthesis-cleanup', retiredAt: '2026-01-01T00:00:00.000Z' }) },
+    texts: [`UPDATE pages SET frontmatter=frontmatter||jsonb_build_object('retired_by',$1::text,'retired_at',$2::text)
+    WHERE source_id=$3 AND slug=ANY($4::text[]) AND deleted_at IS NOT NULL`],
+  },
+  {
+    from: 'src/core/generations/adapters/atoms.ts:110 completeItems (at d7fb3a97b7)',
+    case: { method: 'stampPageFrontmatter', variant: 'atom-source-hash', run: e => e.stampPageFrontmatter({ match: 'atom_source_hash', sourceId: 'default', slugs: ['atoms/a'], sourceHash: '0123456789abcdef' }) },
+    texts: [`UPDATE pages SET frontmatter = frontmatter || jsonb_build_object('source_hash', $1::text)
+      WHERE source_id = $2 AND type = 'atom' AND slug = ANY($3::text[]) AND deleted_at IS NULL`],
+  },
+  {
+    from: 'src/core/generations/adapters/page.ts:95 pageVersionEvidence (at ec2fbe7ba3), producer text of atoms.ts:95',
+    case: { method: 'listProducerVersionRows', variant: 'extract-atoms', run: e => e.listProducerVersionRows('default', ['atoms/a'], 'extract_atoms') },
+    texts: [`SELECT p.slug, v.type, v.title, v.compiled_truth, v.timeline, v.frontmatter, v.tags, p.frontmatter->'visibility' AS live_visibility\n       FROM page_versions v JOIN pages p ON p.id = v.page_id\n      WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND v.compiled_truth IS NOT NULL AND v.title IS NOT NULL AND (v.frontmatter->>'extracted_by' LIKE 'extract\\_atoms%')`],
+  },
+  {
+    from: 'src/core/generations/adapters/atoms.ts:127 receiptEvidence (at ec2fbe7ba3)',
+    case: { method: 'listAtomWriteReceipts', variant: 'default', run: e => e.listAtomWriteReceipts('default', ['atoms/a']) },
+    texts: [`SELECT r.slug, r.intent->>'content' AS content FROM persistence_requests r\n      WHERE r.source_id=$1 AND r.slug=ANY($2::text[]) AND r.state='committed' AND r.intent->>'kind'='managed_atom_page' AND r.intent ? 'content'\n        AND (r.intent->>'activationId' IS NULL OR EXISTS (SELECT 1 FROM derived_generation_activations a WHERE a.id=r.intent->>'activationId' AND a.state='activated'))`],
+  },
+  {
+    from: 'src/core/generations/adapters/extracted-facts.ts:71 storedRows (at 0d76adc0e6)',
+    case: { method: 'listFactIdsBySourcePrefix', variant: 'default', run: e => e.listFactIdsBySourcePrefix('default', 'conversations/c', 'cli:extract-conversation-facts') },
+    texts: [`SELECT id FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND COALESCE(source,'') LIKE $3 ORDER BY id`],
+  },
+  {
+    from: 'src/core/generations/adapters/extracted-facts.ts:113 retireItems (at 0d76adc0e6)',
+    case: { method: 'expireFactRows', variant: 'default', run: e => e.expireFactRows('default', [3, 4]) },
+    texts: ['UPDATE facts SET expired_at = now() WHERE source_id=$1 AND id = ANY($2::bigint[]) AND expired_at IS NULL'],
+  },
+  {
+    from: 'src/core/generations/adapters/fact-rows.ts:82 restoreFactRow (at c0a2bbe921)',
+    case: { method: 'restoreFactPreimage', variant: 'default', run: e => e.restoreFactPreimage('default', { id: 3, fact: 'f', visibility: 'private', expired_at: null, valid_until: null, superseded_by: null, consolidated_at: null, consolidated_into: null, row_num: 1 }) },
+    texts: [`UPDATE facts f SET expired_at=$4::timestamptz, valid_until=$5::timestamptz, superseded_by=$6::bigint,
+      consolidated_at=$7::timestamptz, consolidated_into=$8::bigint,
+      row_num=CASE WHEN $9::integer IS NULL OR f.row_num IS NOT DISTINCT FROM $9::integer THEN f.row_num
+        WHEN NOT EXISTS (SELECT 1 FROM facts o WHERE o.source_id=f.source_id AND o.source_markdown_slug=f.source_markdown_slug AND o.row_num=$9::integer AND o.id<>f.id)
+        THEN $9::integer ELSE f.row_num END
+    WHERE f.source_id=$1 AND f.id=$2::bigint AND f.fact=$3 AND f.visibility=$10 RETURNING f.id`],
+  },
+  {
+    from: 'src/core/generations/adapters/fact-rows.ts:142 consolidationRestored (at c0a2bbe921)',
+    case: { method: 'readGenerationRestored', variant: 'default', run: e => e.readGenerationRestored({ sourceId: 'default', kind: 'consolidation', ownerKey: 'entity:a:cluster:1' }) },
+    texts: [`SELECT restore_of IS NOT NULL AS restored FROM derived_generations
+    WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='live'`],
+  },
+  {
+    from: 'src/core/generations/adapters/fact-rows.ts:150 clearConsolidationTies (at c0a2bbe921)',
+    case: { method: 'clearTieHeldGenerationRows', variant: 'default', run: e => e.clearTieHeldGenerationRows('default', 'consolidation', 'entity:a:cluster:') },
+    texts: [`DELETE FROM derived_generations WHERE source_id=$1 AND kind=$2 AND state='held' AND held_reason='tie' AND left(owner_key, $3)=$4`],
+  },
+  {
+    // The before-state column list is the shared TAKE_PREIMAGE_SQL, which the caller interpolated as well.
+    from: 'src/core/generations/adapters/take-rows.ts:36 takePreimages (at 46b54a156e)',
+    case: { method: 'readTakePreimages', variant: 'by-id', run: e => e.readTakePreimages({ pageId: 1, by: 'id', gone: [3], incoming: [{ row_num: 2, claim: 'c', kind: 'take', holder: 'h' }] }) },
+    texts: [`SELECT ${TAKE_PREIMAGE_SQL} AS preimage, k.id = ANY($2::bigint[]) AS gone FROM takes k
+      LEFT JOIN jsonb_to_recordset($3::text::jsonb) AS n(row_num integer, claim text, kind text, holder text) ON n.row_num = k.row_num
+     WHERE k.page_id = $1 AND (k.id = ANY($2::bigint[]) OR (n.row_num IS NOT NULL AND (k.claim, k.kind, k.holder) IS DISTINCT FROM (n.claim, n.kind, n.holder)))
+     ORDER BY k.row_num`],
+  },
+  {
+    from: 'src/core/generations/adapters/take-rows.ts:51 projectTakeFenceGeneration (at 46b54a156e)',
+    case: { method: 'readTakePreimages', variant: 'by-row', run: e => e.readTakePreimages({ pageId: 1, by: 'row_num', gone: [3], incoming: [] }) },
+    texts: [`SELECT ${TAKE_PREIMAGE_SQL} AS preimage, k.row_num = ANY($2::integer[]) AS gone FROM takes k
+      LEFT JOIN jsonb_to_recordset($3::text::jsonb) AS n(row_num integer, claim text, kind text, holder text) ON n.row_num = k.row_num
+     WHERE k.page_id = $1 AND (k.row_num = ANY($2::integer[]) OR (n.row_num IS NOT NULL AND (k.claim, k.kind, k.holder) IS DISTINCT FROM (n.claim, n.kind, n.holder)))
+     ORDER BY k.row_num`],
   },
   {
     from: 'src/core/access/caller.ts:196 mayActForOf (legacy token)',
@@ -139,34 +649,6 @@ const PINS: Pin[] = [
     from: 'src/core/access/caller.ts:94 liveIdentity (OAuth client: :123)',
     case: { method: 'readLiveMember', variant: 'oauth-client', run: e => e.readLiveMember('oauth_client', 'client-1') },
     texts: [memberSql('SELECT member_id FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL')],
-  },
-  {
-    from: 'src/core/access/caller.ts:196 mayActForOf (legacy token)',
-    case: { method: 'readMayActFor', variant: 'legacy-token', run: e => e.readMayActFor('legacy_token', 'tok-1') },
-    texts: ['SELECT may_act_for FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL'],
-  },
-  {
-    from: 'src/core/access/caller.ts:200 mayActForOf (OAuth client)',
-    case: { method: 'readMayActFor', variant: 'oauth-client', run: e => e.readMayActFor('oauth_client', 'client-1') },
-    texts: ['SELECT may_act_for FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL'],
-  },
-  {
-    from: 'src/core/access/caller.ts:204 mayActForOf (stdio config)',
-    case: { method: 'readMayActFor', variant: 'stdio-config', run: e => e.readMayActFor('stdio_config', 'mcp.stdio_may_act_for') },
-    texts: ['SELECT value FROM config WHERE key = $1'],
-  },
-  {
-    from: 'src/core/access/caller.ts:253 resolveAudienceIdentities (members, then groups)',
-    case: { method: 'readAudiencePrincipals', variant: 'members-and-groups', run: e => e.readAudiencePrincipals(['alice-example'], ['team-a']) },
-    texts: [`SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
-  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
-  WHERE m.id = ANY($1::text[]) AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
-  GROUP BY m.id`, 'SELECT id FROM access_groups WHERE id = ANY($1::text[])'],
-  },
-  {
-    from: 'src/core/access/caller.ts:253 resolveAudienceIdentities (an empty list reads nothing)',
-    case: { method: 'readAudiencePrincipals', variant: 'groups-only', run: e => e.readAudiencePrincipals([], ['team-a']) },
-    texts: ['SELECT id FROM access_groups WHERE id = ANY($1::text[])'],
   },
   {
     from: 'src/core/access/caller.ts:170 folderAccessForAll (no readers: the rules read is skipped)',
@@ -313,27 +795,6 @@ const PINS: Pin[] = [
     from: 'src/core/access/policy.ts:459 clearPolicyInvalid (at 6e123afe98)',
     case: { method: 'replaceAccessInvalidCoverage', variant: 'clear', run: e => e.replaceAccessInvalidCoverage('src-a', [], null) },
     texts: [`DELETE FROM access_pending_coverage WHERE source_id = $1 AND reason = 'invalid'`],
-  },
-  {
-    from: 'src/core/access/members.ts:124 getMember (one member by id)',
-    case: { method: 'readAccessMembers', variant: 'by-id', run: e => e.readAccessMembers({ id: 'alice-example' }) },
-    texts: [`SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
-  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
-  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id WHERE m.id = $1 GROUP BY m.id`],
-  },
-  {
-    from: 'src/core/access/members.ts:129 listMembers (removed members filtered out)',
-    case: { method: 'readAccessMembers', variant: 'live', run: e => e.readAccessMembers({ includeRemoved: false }) },
-    texts: [`SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
-  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
-  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id WHERE m.tombstoned_at IS NULL GROUP BY m.id ORDER BY m.id`],
-  },
-  {
-    from: 'src/core/access/members.ts:129 listMembers (--all)',
-    case: { method: 'readAccessMembers', variant: 'all', run: e => e.readAccessMembers({ includeRemoved: true }) },
-    texts: [`SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
-  COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
-  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id GROUP BY m.id ORDER BY m.id`],
   },
   {
     from: 'src/core/notifier/store.ts:190 claimLease (the claim, then the holder a lost claim reads; at 6e123afe98)',
@@ -696,6 +1157,92 @@ const PINS: Pin[] = [
     from: 'src/core/access/owner-only.ts:66 sourceIsOwnerOnly',
     case: { method: 'readOwnerOnlySourceConfig', variant: 'default', run: e => e.readOwnerOnlySourceConfig('default') },
     texts: ['SELECT config FROM sources WHERE id = $1'],
+  },
+  {
+    // readSyncImportProvenance (the one-page form, `fingerprint=$2`) now sends this statement with a one-element list.
+    from: 'src/core/persistence/sync-holds.ts:1360 readSyncImportProvenances',
+    case: { method: 'readOpCheckpointRecords', variant: 'default', run: e => e.readOpCheckpointRecords('sync-import-provenance', ['default:inc-1:1']) },
+    texts: ['SELECT completed_keys->0 AS record FROM op_checkpoints WHERE op=$1 AND fingerprint = ANY($2::text[])'],
+  },
+  {
+    // recordSyncImportProvenance (the one-page `VALUES($1,$2,$3::text::jsonb)` form) now sends this statement with one row.
+    from: 'src/core/persistence/sync-holds.ts:1349 recordSyncImportProvenances',
+    case: { method: 'writeOpCheckpointRecords', variant: 'default', run: e => e.writeOpCheckpointRecords('sync-import-provenance', [{ fingerprint: 'default:inc-1:1', record: { page_id: 1 } }]) },
+    texts: [`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
+    SELECT $1, entry->>'fingerprint', jsonb_build_array(entry->'record') FROM jsonb_array_elements($2::text::jsonb) AS entry
+    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`],
+  },
+  {
+    from: 'src/core/persistence/sync-admission.ts:34 readSyncAdmission',
+    case: { method: 'readStoredConfigValue', variant: 'default', run: e => e.readStoredConfigValue('sync.admission') },
+    texts: ['SELECT value FROM config WHERE key=$1'],
+  },
+  {
+    from: 'src/core/persistence/sync-pass.ts:460 readPages (a confirm round: the named page ids)',
+    case: { method: 'readSyncImportPageRows', variant: 'ids', run: e => e.readSyncImportPageRows(SYNC_PASS_Q, { ids: ['1', '2'] }) },
+    texts: () => [`${syncPassSelect(false)} AND p.id = ANY($5::bigint[]) ORDER BY p.id`],
+  },
+  {
+    from: 'src/core/persistence/sync-pass.ts:488 readPages (PGLite\'s keyset page)',
+    case: { method: 'readSyncImportPageRows', variant: 'keyset', run: e => e.readSyncImportPageRows(SYNC_PASS_Q, { after: 0, limit: 2_000 }) },
+    texts: () => [`${syncPassSelect(false)} AND p.id>$5 ORDER BY p.id LIMIT 2000`],
+  },
+  {
+    from: 'src/core/persistence/sync-pass.ts:468 readPages (Postgres\'s whole-source cursor, the record subquery kept by OFFSET 0)',
+    case: { method: 'declareSyncImportPageCursor', variant: 'default', run: e => e.declareSyncImportPageCursor(SYNC_PASS_Q) },
+    texts: () => ['SET LOCAL cursor_tuple_fraction = 1', `DECLARE sync_pass_pages NO SCROLL CURSOR FOR ${syncPassSelect(true)}`],
+  },
+  {
+    from: 'src/core/persistence/sync-pass.ts:472 readPages (a cursor fetch)',
+    case: { method: 'fetchSyncImportPageCursor', variant: 'default', run: e => e.fetchSyncImportPageCursor(4_000) },
+    texts: ['FETCH 4000 FROM sync_pass_pages'],
+  },
+  // The managed sync run's journal reads and the sync.admission statements, copied verbatim from the callers at bdb0fb17a4.
+  {
+    from: 'src/core/persistence/sync-admitted.ts:38 readAdmitted (every admitted request)',
+    case: { method: 'readAdmittedWriteRequests', variant: 'all', run: e => e.readAdmittedWriteRequests('local_cli', 'writer-1', [ADMITTED_REQUEST], false) },
+    texts: ['SELECT * FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=ANY($3::uuid[])'],
+  },
+  {
+    from: 'src/core/persistence/sync-admitted.ts:38 readAdmitted (committed only)',
+    case: { method: 'readAdmittedWriteRequests', variant: 'committed', run: e => e.readAdmittedWriteRequests('local_cli', 'writer-1', [ADMITTED_REQUEST], true) },
+    texts: ["SELECT * FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=ANY($3::uuid[]) AND state='committed'"],
+  },
+  {
+    from: 'src/core/persistence/sync-concurrent-write.ts:30 concurrentWriteProof (the page; the same text as sync-page-fault.ts:76 pageChangeProof)',
+    case: { method: 'readPageRevisionWriter', variant: 'default', run: e => e.readPageRevisionWriter(7, 'default') },
+    texts: ['SELECT knowledge_revision::text AS revision, revision_write_request_id::text AS writer FROM pages WHERE id=$1 AND source_id=$2'],
+  },
+  {
+    from: 'src/core/persistence/sync-concurrent-write.ts:33 concurrentWriteProof (the writer; the same text as sync-page-fault.ts:79 and :99)',
+    case: { method: 'readRevisionWriterRequest', variant: 'default', run: e => e.readRevisionWriterRequest(ADMITTED_REQUEST) },
+    texts: [`SELECT request_id::text, operation, intent->>'kind' AS kind, state, source_incarnation::text AS incarnation, page_id FROM persistence_requests WHERE id=$1::uuid`],
+  },
+  {
+    from: 'src/core/persistence/sync-admission.ts:98 writeSyncAdmission (the dating row)',
+    case: { method: 'writeSyncAdmissionStamp', variant: 'default', run: e => e.writeSyncAdmissionStamp('sync-admission', 'brain', 'imports_only'),
+      rows: [[/^INSERT INTO op_checkpoints\(op,fingerprint,completed_keys,updated_at\)/, [{ set_at: '2026-01-01T00:00:00+00:00' }]]] },
+    texts: [`INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at)
+      VALUES($1,$2,jsonb_build_array(jsonb_build_object('value',$3::text,'set_at',clock_timestamp())),now())
+      ON CONFLICT (op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys, updated_at=now()
+      RETURNING completed_keys->0->>'set_at' AS set_at`],
+  },
+  {
+    from: 'src/core/persistence/sync-admission.ts:150 syncAdmissionStatus (the effective probes, effectProbes over $1..$7)',
+    case: { method: 'readSyncAdmissionEffects', variant: 'default', run: e => e.readSyncAdmissionEffects({ lockId: 'sync-lock-example', passOp: 'sync-pass-example',
+      passKey: 'default:inc-1', setAt: null, sourceId: 'default', incarnation: 'inc-1', kinds: ['managed_sync_delete'] }),
+      rows: [[/^SELECT EXISTS \(SELECT 1 FROM op_checkpoints p JOIN gbrain_cycle_locks/, [{ pinned: false, destructive: false }]]] },
+    texts: () => [`SELECT EXISTS (SELECT 1 FROM op_checkpoints p JOIN gbrain_cycle_locks l ON l.id=$1 AND l.ttl_expires_at > now()
+          AND l.acquisition_token::text = p.completed_keys->0->>'lease_token'
+        WHERE p.op=$2 AND p.fingerprint=$3 AND p.completed_keys->0->'telemetry'->>'outcome'='open'
+          AND ($4::timestamptz IS NULL OR (p.completed_keys->0->'telemetry'->>'started_at')::timestamptz < $4::timestamptz)) AS pinned, EXISTS (SELECT 1 FROM persistence_requests r WHERE r.source_id=$5 AND r.source_incarnation=$6::uuid
+          AND r.state IN ('queued','running','recovering') AND r.intent->>'kind' = ANY($7::text[])
+          AND ($4::timestamptz IS NULL OR r.created_at < $4::timestamptz)) AS destructive`],
+  },
+  {
+    from: 'src/core/persistence/sync-administration.ts:19 runAuthenticatedSyncSlice (now the existing readSourceMembership, the same text)',
+    case: { method: 'readSourceMembership', variant: 'default', run: e => e.readSourceMembership('default') },
+    texts: ['SELECT incarnation,archived FROM sources WHERE id=$1'],
   },
   {
     from: 'src/core/entities/resolve.ts:162 tryOrgDirVariant',
@@ -1117,13 +1664,6 @@ const PINS: Pin[] = [
       AND l.link_type='attended' AND l.to_page_id=l.origin_page_id`],
   },
   {
-    from: 'src/core/link-reconciliation.ts:229 fileLinkOwnership scoped attendance origins (at 90ede8f55a)',
-    case: { method: 'listAttendedOriginSlugs', variant: 'default', run: e => e.listAttendedOriginSlugs('default', ['a']) },
-    texts: [`SELECT DISTINCT o.slug FROM links l
-    JOIN pages o ON o.id=l.origin_page_id WHERE o.source_id=$1 AND l.link_source IN ('markdown','wikilink-resolved','frontmatter')
-      AND l.link_type='attended' AND l.to_page_id=l.origin_page_id AND o.slug = ANY($2::text[])`],
-  },
-  {
     from: 'src/core/sync-pending.ts:106 readFirstDue (at 4e39797ed0)',
     case: { method: 'readFirstDue', variant: 'default', run: e => e.readFirstDue(['default']) },
     texts: [`SELECT s.id AS source_id, n.observed_head,
@@ -1147,7 +1687,7 @@ const PINS: Pin[] = [
     WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1 AND completed_keys->0->>'incarnation'<>$2 AND COALESCE(completed_keys->0->>'done','false')<>'true' ORDER BY updated_at LIMIT 1`],
   },
   {
-    from: 'src/core/persistence/sync-status.ts:364 readSyncStatus (source row) (at 21cd64e151)',
+    from: 'src/core/persistence/sync-status.ts:364 readSyncStatus (source row) (at 21cd64e151, with the Apple Contacts review columns main adds at c9e289dbed)',
     case: { method: 'readSyncStatusSourceRow', variant: 'default', run: e => e.readSyncStatusSourceRow('default') },
     texts: () => {
       const admissionSql = syncAdmissionSettingSql(4);
@@ -1157,7 +1697,9 @@ const PINS: Pin[] = [
         AND e.request_id IN (SELECT id::uuid FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(p.completed_keys->0->'obligations'->'converged'->'writeback')='array'
           THEN p.completed_keys->0->'obligations'->'converged'->'writeback' ELSE '[]'::jsonb END) AS w(id)) ORDER BY e.id LIMIT 1) AS writeback_failed,
       (SELECT row_to_json(f) FROM (SELECT r.id,r.worktree_id,r.state,r.source_ids,r.outcome,r.old_head,r.target_head,r.barrier_sequence,r.updated_at,w.owner_host_id FROM persistence_worktree_refreshes r
-        LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id WHERE s.id=ANY(r.source_ids) AND r.state IN ${ACTIVE_REFRESH_STATES_SQL} LIMIT 1) f) AS refresh FROM sources s
+        LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id WHERE s.id=ANY(r.source_ids) AND r.state IN ${ACTIVE_REFRESH_STATES_SQL} LIMIT 1) f) AS refresh,
+      (SELECT ir.completed_keys FROM op_checkpoints ir WHERE ir.op='${APPLE_CONTACTS_REVIEW_OP}' AND ir.fingerprint=s.id) AS identity_reviews,
+      (SELECT hd.completed_keys FROM op_checkpoints hd WHERE hd.op='${APPLE_CONTACTS_PENDING_DELETES_OP}' AND hd.fingerprint=s.id) AS held_deletes, s.config FROM sources s
       LEFT JOIN op_checkpoints p ON p.op=$2 AND p.fingerprint=s.id||':'||s.incarnation::text
       LEFT JOIN op_checkpoints w ON w.op=$3 AND w.fingerprint=s.id||':'||s.incarnation::text
       ${admissionSql.joins}
@@ -1288,7 +1830,50 @@ const PINS: Pin[] = [
     case: { method: 'readVersionSourcePath', variant: 'default', run: e => e.readVersionSourcePath(1, 1) },
     texts: ['SELECT source_path FROM page_versions WHERE id=$1 AND page_id=$2'],
   },
+  {
+    from: 'src/core/persistence/intent-redaction.ts:248 cancelRequestsHoldingStagings (at b220b0df91)',
+    case: { method: 'lockWriteRequestsById', variant: 'default', run: e => e.lockWriteRequestsById(['b0000000-0000-4000-8000-0000000000d1']) },
+    texts: ['SELECT * FROM persistence_requests WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE'],
+  },
+  {
+    from: 'src/core/persistence/journal.ts:1068 finishTerminal (at b220b0df91)',
+    case: { method: 'compactTerminalIntent', variant: 'default', run: e => e.compactTerminalIntent({ id: 'b0000000-0000-4000-8000-0000000000d1', left: 512, reservation: 4096, counterKeys: ['brain'] }) },
+    texts: [`WITH effects AS (SELECT COALESCE(SUM(${EFFECT_BYTES_SQL}),0) AS bytes,
+        COALESCE(bool_or(state<>'committed'),false) AS unfinished FROM persistence_effects WHERE request_id=$1::uuid),
+      r AS (UPDATE persistence_requests SET intent=NULL,compacted=true,terminal_reservation=CASE WHEN (SELECT unfinished FROM effects) THEN terminal_reservation
+        ELSE LEAST(terminal_reservation,$2::bigint+(SELECT bytes FROM effects)) END WHERE id=$1::uuid RETURNING *),
+      released AS (UPDATE persistence_counters c SET terminal_bytes=c.terminal_bytes-LEAST($3::bigint-r.terminal_reservation,c.terminal_bytes)
+        FROM r WHERE c.key=ANY($4::text[]))
+      SELECT * FROM r`],
+  },
 ];
+
+const ADMITTED_REQUEST = 'b0000000-0000-4000-8000-0000000000b1';
+
+const SYNC_PASS_Q = { sourceId: 'default', incarnation: 'inc-1', expected: { parser_version: 'p', markdown_chunker: 4, schema_pack: null } };
+
+/** sync-pass.ts readPages `select` at 2e7e4b6554, verbatim; `offsetZero` is `kind === 'postgres' && !only`. */
+function syncPassSelect(offsetZero: boolean): string {
+  return `SELECT p.id, p.slug, p.source_path, p.knowledge_revision::text AS revision, p.deleted_at IS NOT NULL AS deleted,
+      p.revision_write_request_id::text AS request_id, c.fingerprint IS NOT NULL AS has_record,
+      c.origin IS NOT DISTINCT FROM p.source_path AS rec_origin_same,
+      CASE WHEN c.origin IS DISTINCT FROM p.source_path THEN c.origin END AS rec_origin,
+      c.blob_oid AS rec_blob_oid,
+      c.disk_blob_oid IS NOT DISTINCT FROM c.blob_oid AS rec_disk_same,
+      CASE WHEN c.disk_blob_oid IS DISTINCT FROM c.blob_oid THEN c.disk_blob_oid END AS rec_disk_blob_oid,
+      c.revision IS NULL AS rec_revision_null,
+      NULLIF(c.revision, p.knowledge_revision::text) AS rec_revision,
+      CASE WHEN c.parser IS DISTINCT FROM $4::jsonb THEN c.parser::text END AS rec_parser, c.parser = $4::jsonb AS rec_parser_expected,
+      c.full_episode AS rec_full_episode, c.working AS rec_working,
+      (p.page_kind = 'markdown' AND p.chunker_version = ${MARKDOWN_CHUNKER_VERSION} AND p.body_storage IS DISTINCT FROM 'segmented'
+        AND p.text_projection_revision IS NOT DISTINCT FROM p.knowledge_revision AND p.contextual_retrieval_mode IS NOT NULL) AS derived_current,
+      CASE WHEN p.deleted_at IS NOT NULL THEN ${syncDeleteOrigin('p')} ELSE false END AS sync_deleted
+    FROM pages p LEFT JOIN (SELECT fingerprint, completed_keys->0->>'origin' AS origin, completed_keys->0->>'blob_oid' AS blob_oid,
+        completed_keys->0->>'disk_blob_oid' AS disk_blob_oid, completed_keys->0->>'revision' AS revision,
+        completed_keys->0->'parser' AS parser, completed_keys->0->>'full_episode' AS full_episode, (completed_keys->0->'working')::text AS working
+      FROM op_checkpoints WHERE op=$2${offsetZero ? ' OFFSET 0' : ''}) c ON c.fingerprint=$3||p.id::text
+    WHERE p.source_id=$1 AND p.source_path IS NOT NULL`;
+}
 
 /** sync-holds.ts READ_HOLD_RECORD_SQL at 8bfcd19ad8, verbatim. */
 const READ_HOLD_RECORD_SQL = `CASE WHEN COALESCE(s.config->>'mirror_read_only','false')='true' THEN jsonb_set(h.completed_keys->0,'{read_only_checkout}','true'::jsonb) ELSE h.completed_keys->0 END`;

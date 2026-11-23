@@ -40,15 +40,73 @@ use std::collections::{BTreeSet, HashSet};
 const ROW: u8 = 0x01;
 const GROUP: u8 = 0x02;
 
+/// `confidence DOUBLE PRECISION` as Postgres keeps it: every f64, NaN and ±Infinity included. A finite value is a
+/// JSON number (serde_json round-trips it exactly); NaN, Infinity and -Infinity, which JSON has no number for, are
+/// the text Postgres prints for them. A record an older store wrote for a non-finite value holds JSON null (the value
+/// is gone); it reads as NaN, so no stored row can break a listing.
+mod float8 {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use serde_json::Value;
+
+    pub(super) fn text(v: f64) -> &'static str {
+        if v.is_nan() {
+            "NaN"
+        } else if v > 0.0 {
+            "Infinity"
+        } else {
+            "-Infinity"
+        }
+    }
+
+    pub(super) fn to_json(v: f64) -> Value {
+        if v.is_finite() {
+            Value::from(v)
+        } else {
+            Value::from(text(v))
+        }
+    }
+
+    pub(super) fn serialize<S: Serializer>(v: &f64, s: S) -> Result<S::Ok, S::Error> {
+        if v.is_finite() {
+            s.serialize_f64(*v)
+        } else {
+            s.serialize_str(text(*v))
+        }
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Stored {
+            Number(f64),
+            Text(String),
+            Null(()),
+        }
+        match Stored::deserialize(d)? {
+            Stored::Number(v) => Ok(v),
+            Stored::Text(t) => match t.as_str() {
+                "NaN" => Ok(f64::NAN),
+                "Infinity" => Ok(f64::INFINITY),
+                "-Infinity" => Ok(f64::NEG_INFINITY),
+                _ => Err(serde::de::Error::custom(format!(
+                    "invalid input syntax for type double precision: \"{t}\""
+                ))),
+            },
+            Stored::Null(()) => Ok(f64::NAN),
+        }
+    }
+}
+
 /// One page's membership: the table's columns less `id` and `page_id` (the key).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct IdentityRecord {
-    entity_id: String,
-    source_id: String,
-    confidence: f64,
-    established_by: String,
-    established_at_us: i64,
-    canonical: bool,
+pub(crate) struct IdentityRecord {
+    pub(crate) entity_id: String,
+    pub(crate) source_id: String,
+    #[serde(with = "float8")]
+    pub(crate) confidence: f64,
+    pub(crate) established_by: String,
+    pub(crate) established_at_us: i64,
+    pub(crate) canonical: bool,
 }
 
 /// `linkEntityIdentityRow(input)`. `canonical`: true makes the page the group's canonical member,
@@ -59,6 +117,8 @@ pub struct IdentityLink {
     pub entity_id: String,
     pub slug: String,
     pub source_id: String,
+    /// A JSON number, or `NaN`, `Infinity` or `-Infinity` as text (the shell sends a non-finite value that way).
+    #[serde(with = "float8")]
     pub confidence: f64,
     pub established_by: String,
     pub canonical: Option<bool>,
@@ -78,7 +138,7 @@ pub struct IdentityFilter {
     pub exclude_private: Option<PrivacyPolicy>,
 }
 
-fn row_key(page_id: u64) -> Vec<u8> {
+pub(crate) fn row_key(page_id: u64) -> Vec<u8> {
     let mut key = vec![keys::ENTITY_IDENTITY, ROW];
     key.extend_from_slice(&page_id.to_be_bytes());
     key
@@ -92,18 +152,18 @@ fn group_prefix(entity_id: &str) -> Vec<u8> {
     key
 }
 
-fn group_key(entity_id: &str, page_id: u64) -> Vec<u8> {
+pub(crate) fn group_key(entity_id: &str, page_id: u64) -> Vec<u8> {
     let mut key = group_prefix(entity_id);
     key.extend_from_slice(&page_id.to_be_bytes());
     key
 }
 
-fn record(read: &dyn KvRead, page_id: u64) -> Result<Option<IdentityRecord>> {
+pub(crate) fn record(read: &dyn KvRead, page_id: u64) -> Result<Option<IdentityRecord>> {
     get_json(read, &row_key(page_id))
 }
 
 /// The page ids of one group, in page id order.
-fn group_pages(read: &dyn KvRead, entity_id: &str) -> Result<Vec<u64>> {
+pub(crate) fn group_pages(read: &dyn KvRead, entity_id: &str) -> Result<Vec<u64>> {
     let prefix = group_prefix(entity_id);
     let mut out = Vec::new();
     scan_prefix(read, &prefix, false, &mut |k, _| {
@@ -116,7 +176,7 @@ fn group_pages(read: &dyn KvRead, entity_id: &str) -> Result<Vec<u64>> {
 }
 
 /// Every membership, in page id order.
-fn all_records(read: &dyn KvRead) -> Result<Vec<(u64, IdentityRecord)>> {
+pub(crate) fn all_records(read: &dyn KvRead) -> Result<Vec<(u64, IdentityRecord)>> {
     let prefix = [keys::ENTITY_IDENTITY, ROW];
     let mut raw = Vec::new();
     scan_prefix(read, &prefix, false, &mut |k, v| {
@@ -319,7 +379,7 @@ impl Store {
                     "source_id": rec.source_id,
                     "slug": page.slug,
                     "title": page.title,
-                    "confidence": rec.confidence,
+                    "confidence": float8::to_json(rec.confidence),
                     "established_by": rec.established_by,
                     "established_at": iso(rec.established_at_us),
                     "canonical": rec.canonical,
@@ -400,6 +460,35 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
+    use super::IdentityRecord;
+    use serde_json::json;
+
+    /// A record an older store wrote for a non-finite confidence (JSON null) still decodes, as NaN.
+    #[test]
+    fn a_record_with_a_null_confidence_decodes_as_nan() {
+        let rec: IdentityRecord = serde_json::from_value(json!({ "entity_id": "g", "source_id": "default",
+            "confidence": null, "established_by": "manual", "established_at_us": 0, "canonical": false }))
+        .unwrap();
+        assert!(rec.confidence.is_nan());
+        for (stored, want) in [
+            (json!("Infinity"), f64::INFINITY),
+            (json!("-Infinity"), f64::NEG_INFINITY),
+            (json!(0.5), 0.5),
+        ] {
+            let rec: IdentityRecord = serde_json::from_value(json!({ "entity_id": "g", "source_id": "default",
+                "confidence": stored, "established_by": "manual", "established_at_us": 0, "canonical": false }))
+            .unwrap();
+            assert_eq!(rec.confidence, want);
+            let back = serde_json::to_value(&rec).unwrap();
+            assert_eq!(
+                serde_json::from_value::<IdentityRecord>(back)
+                    .unwrap()
+                    .confidence,
+                want
+            );
+        }
+    }
+
     /// Every write runs in `Store::write` (one transaction, the bound one inside `transaction`).
     #[test]
     fn writes_never_open_their_own_transaction() {

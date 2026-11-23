@@ -1,7 +1,7 @@
 //! Entity and mention reads the CLI made through `executeRaw` (`src/core/engine-sql/entity-reads.ts`).
 //!
-//! The store keeps no mention-pass state (`mention_index_status`, `page_mention_state`): no source
-//! has a pass time, and every live page is due, as on a PGLite brain where the pass never ran.
+//! The mention-pass reads use the pass's state (`mention_state.rs`): the status rows' pass times and
+//! each page's mention and alias state.
 //! Frontmatter values are read as PostgreSQL's `->>` reads them (see [`arrow_text`]).
 
 use crate::Store;
@@ -19,12 +19,25 @@ const PRIVACY_LABEL_KEYS: &[&str] = &["access", "confidentiality"];
 /// The frontmatter key that marks a quarantined page (`QUARANTINE_KEY`).
 const QUARANTINE_KEY: &str = "quarantine";
 
-/// `countPagesDueForMentions(q)`: only the scope matters, since every page is due.
+/// `countPagesDueForMentions(q)`.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MentionDueQuery {
     #[serde(default)]
     pub source_id: Option<String>,
+    /// The extractor version a page's mention state must carry to be current.
+    #[serde(default)]
+    pub mention_version: i64,
+    /// Also count pages of these types whose derived aliases are behind their content or `version`.
+    #[serde(default)]
+    pub aliases: Option<MentionDueAliases>,
+}
+
+/// `MentionDueQuery.aliases`.
+#[derive(Debug, Default, Deserialize)]
+pub struct MentionDueAliases {
+    pub types: Vec<String>,
+    pub version: i64,
 }
 
 /// `readIdentitySiblingCandidates(sourceId, q)`.
@@ -80,8 +93,9 @@ pub enum EntityCardMatch {
 }
 
 /// One entity-card candidate row (`readEntityCardRows`). `compiled_truth` is the bounded body
-/// prefix, `left(coalesce(compiled_truth, truth_lead), 65536)`. `last_retrieved_at` is always
-/// NULL: the store records no retrievals.
+/// prefix, `left(coalesce(compiled_truth, truth_lead), 65536)`. `last_retrieved_at` is the page's
+/// retrieval record (`page_ops/retrievals.rs`, written by bumpPageRetrievals), the `page_retrievals`
+/// half of the SQL `GREATEST(...)`; the store keeps no legacy `pages.last_retrieved_at` column.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct EntityCardRow {
     pub slug: String,
@@ -115,22 +129,44 @@ pub struct LabelPageRow {
 }
 
 impl Store {
-    /// `readMentionLastPass(sourceId?)`: the last mention pass time. The store records no pass, so
-    /// it is always `None`.
-    pub fn read_mention_last_pass(&self, _source_id: Option<&str>) -> Result<Option<String>> {
-        Ok(None)
+    /// `readMentionLastPass(sourceId?)`: the newest pass time over every source or one source, ISO
+    /// UTC in whole seconds (`to_char(..., 'YYYY-MM-DD"T"HH24:MI:SS"Z"')` truncates); `None` when no
+    /// pass ran.
+    pub fn read_mention_last_pass(&self, source_id: Option<&str>) -> Result<Option<String>> {
+        let read = self.read()?;
+        let last = crate::mention_state::all_statuses(&*read)?
+            .into_iter()
+            .filter(|(s, _)| source_id.is_none_or(|want| s == want))
+            .filter_map(|(_, r)| r.last_pass_at_us)
+            .max();
+        Ok(last.map(|us| {
+            let text = iso(us);
+            format!("{}Z", text.split('.').next().unwrap_or(&text))
+        }))
     }
 
     /// `countPagesDueForMentions(q)`: the live pages in the scope (every page when `source_id` is
-    /// `None`), all of them due because no page has mention state.
+    /// `None`) with no mention state or state behind the page's content or `mention_version`; with
+    /// `aliases`, also the pages of its types whose derived aliases are behind.
     pub fn count_pages_due_for_mentions(&self, q: &MentionDueQuery) -> Result<u64> {
         let read = self.read()?;
-        let n = all_pages(&*read)?
-            .iter()
-            .filter(|p| p.deleted_at_us.is_none())
-            .filter(|p| q.source_id.as_deref().is_none_or(|s| p.source_id == s))
-            .count();
-        Ok(n as u64)
+        let mut n = 0u64;
+        for p in all_pages(&*read)? {
+            if p.deleted_at_us.is_some() || q.source_id.as_deref().is_some_and(|s| p.source_id != s)
+            {
+                continue;
+            }
+            let state = crate::mention_state::read_page_state(&*read, p.id)?;
+            let due = crate::mention_state::mention_due(state.as_ref(), &p, q.mention_version)
+                || q.aliases.as_ref().is_some_and(|a| {
+                    a.types.contains(&p.page_type)
+                        && crate::mention_state::alias_due(state.as_ref(), &p, a.version)
+                });
+            if due {
+                n += 1;
+            }
+        }
+        Ok(n)
     }
 
     /// `readIdentitySiblingCandidates(sourceId, q)`: live pages of the source whose type is one of
@@ -297,7 +333,8 @@ impl Store {
                         .map_or(b.clone(), |(at, _)| b[..at].to_string())
                 }),
                 updated_at: iso(p.updated_at_us),
-                last_retrieved_at: None,
+                last_retrieved_at: crate::page_ops::retrievals::last_retrieved_us(&*read, p.id)?
+                    .map(iso),
                 frontmatter: Value::Object(p.frontmatter.clone()),
                 slug: p.slug,
                 source_id: p.source_id,

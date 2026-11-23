@@ -24,6 +24,7 @@ import { bodyBlocks, type BodyBlock } from './segment-blocks.ts';
 import { ledgerApplies, readBodyLedger } from './segment-ledger.ts';
 import { SEGMENTER_VERSION } from './segmenter.ts';
 import type { BodyRegion, ManifestRow } from './types.ts';
+import type { SegmentDerivationStoreRow } from '../engine-sql/segment-derive-store.ts';
 
 /** Bump a kind's version to re-derive every page's rows of that kind once. fences 2: rows keep fence digests, not fence text. */
 export const SEGMENT_PIPELINE_VERSIONS = { links: 1, mentions: 1, timeline: 1, fences: 2 } as const satisfies Partial<Record<SegmentDerivationKind, number>>;
@@ -217,14 +218,8 @@ async function storeRuns(engine: BrainEngine, kind: UnpaidDerivationKind, scope:
   if (!rows.length) return true;
   await beforeWrite?.(scope);
   for (let at = 0; at < rows.length; at += STORE_BATCH_ROWS) {
-    const written = await engine.executeRaw(`WITH live AS (SELECT id FROM pages WHERE id=$1 AND body_storage='segmented' AND body_generation=$2 FOR SHARE)
-      INSERT INTO page_segment_derivations (page_id, pipeline, occurrence_id, pipeline_version, segment_sha256, context_hash, state, output, receipt)
-      SELECT live.id, d.pipeline, d.occurrence_id, d.pipeline_version, decode(d.segment_sha256, 'hex'), decode(d.context_hash, 'hex'), 'done', d.output, NULL
-      FROM live, jsonb_to_recordset($3::text::jsonb) AS d(pipeline text, occurrence_id bigint, pipeline_version int, segment_sha256 text, context_hash text, output jsonb)
-      ON CONFLICT (page_id, pipeline, occurrence_id) DO UPDATE SET pipeline_version = EXCLUDED.pipeline_version, segment_sha256 = EXCLUDED.segment_sha256,
-        context_hash = EXCLUDED.context_hash, state = EXCLUDED.state, output = EXCLUDED.output, receipt = EXCLUDED.receipt, updated_at = now()
-      RETURNING 1`, [scope.pageId, scope.generation, JSON.stringify(rows.slice(at, at + STORE_BATCH_ROWS))]);
-    if (!written.length) {
+    const written = await engine.storeSegmentDerivationsIfLive(scope.pageId, scope.generation, rows.slice(at, at + STORE_BATCH_ROWS) as unknown as SegmentDerivationStoreRow[]);
+    if (!written) {
       segmentDeriveWork[kind].skipped++;
       return false;
     }
@@ -336,10 +331,8 @@ export async function deleteRewrittenDerivations(engine: BrainEngine, pageId: nu
     }
   }
   if (!touched.size) return 0;
-  return (await engine.executeRaw(`DELETE FROM page_segment_derivations WHERE page_id=$1
-    AND (occurrence_id = ANY($2::bigint[]) OR (pipeline = 'links' AND occurrence_id = ANY($3::bigint[]))
-      OR (pipeline = ANY($4::text[]) AND NOT (occurrence_id = ANY($5::bigint[])))) RETURNING 1`,
-  [pageId, [...touched], [...reach], Object.keys(SEGMENT_PIPELINE_VERSIONS), rows.map(row => row.occurrenceId)])).length;
+  return engine.deleteRewrittenSegmentDerivations({ pageId, touchedOccurrenceIds: [...touched], linkReachOccurrenceIds: [...reach],
+    pipelines: Object.keys(SEGMENT_PIPELINE_VERSIONS), liveOccurrenceIds: rows.map(row => row.occurrenceId) });
 }
 
 /**

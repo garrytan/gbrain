@@ -28,15 +28,39 @@ export function requestRow<R extends object>(row: unknown): R | null {
   return row === null || row === undefined ? null : withDates(row as R, REQUEST_DATES);
 }
 
+/**
+ * A store ISO time (`2026-08-10T12:00:00.000120Z`) as `row_to_json` prints a timestamptz in a UTC session:
+ * `2026-08-10T12:00:00.00012+00:00`, trailing zero digits of the fraction dropped, no fraction when it is zero.
+ */
+function jsonTimestamp(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const m = /^(.*T\d\d:\d\d:\d\d)(?:\.(\d+))?Z$/.exec(value);
+  if (!m) return value;
+  const frac = (m[2] ?? '').replace(/0+$/, '');
+  return `${m[1]}${frac ? `.${frac}` : ''}+00:00`;
+}
+
+/** A stored write-journal request row as `row_to_json(p)` returns it: the timestamps as UTC text, every other column as stored. */
+export function requestJsonRow<R extends object>(row: unknown): R {
+  const out: Row = { ...(row as Row) };
+  for (const field of REQUEST_DATES) if (field in out) out[field] = jsonTimestamp(out[field]);
+  return out as R;
+}
+
 /** A stored topology change row as PGLite returns it: created_at and updated_at as Dates. */
 export function topologyRow<R extends object>(row: unknown): R | null {
   return row === null || row === undefined ? null : withDates(row as R, ['created_at', 'updated_at']);
 }
 
-/** A `PageInput` or any write body with its `Date` values as ISO strings, which is what the store reads. */
+/**
+ * A `PageInput` or any write body with its `Date` values as ISO strings, which is what the store reads. `frontmatter`
+ * goes as the JSON text Postgres and PGLite store for it (`jsonbParam`), so a YAML date nested in it is its ISO string
+ * there too; the addon would send it as an empty object.
+ */
 export function withIsoDates<T extends object>(row: T): T {
   const out: Row = { ...(row as Row) };
   for (const [key, value] of Object.entries(out)) if (value instanceof Date) out[key] = value.toISOString();
+  if (out.frontmatter !== null && typeof out.frontmatter === 'object') out.frontmatter = JSON.parse(JSON.stringify(out.frontmatter));
   return out as T;
 }
 

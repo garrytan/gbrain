@@ -10,18 +10,21 @@ and keeps one table of its own: PGLite's `ingest_log`. The key tag is the reserv
 
 | Key | Value | Mirrors |
 | --- | --- | --- |
-| `n created_at id` | `{ id, source_id, source_type, source_ref, pages_updated, summary, created_at_us }` (JSON) | one `ingest_log` row |
+| `n created_at id` | `{ id, source_id, source_type, source_ref, pages_updated, summary, created_at_us, writer_version, writer_host_id, writer_segment_reader }` (JSON) | one `ingest_log` row |
 
 `created_at` is the row's microsecond timestamp as 8 bytes big-endian with the sign bit flipped,
 so the byte order is the numeric order. `id` is 8 bytes big-endian from the `M next_ingest_log_id`
 counter. One reverse scan of `n` reads `ORDER BY created_at DESC`; rows with the same microsecond
 come back newer id first (PGLite leaves that tie unordered). The table has no foreign key in
 PGLite, so deleting a page or a source leaves the log alone here too. `pages_updated` is stored as
-PGLite's `jsonb` holds it: object keys sorted by length, then by bytes.
+PGLite's `jsonb` holds it: object keys sorted by length, then by bytes. The writer stamp (`writer_version`,
+`writer_host_id`, `writer_segment_reader`, migration v254) is what the segmented-storage gate reads
+(persistence.md, "Writer versions"); a row stored before the store kept it reads as unstamped and
+without the mark, as an older binary's row reads on Postgres. `getIngestLog` does not return it.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
-| `brain.logIngest({ source_id, source_type, source_ref, pages_updated_json, summary })` | nothing. The member sends `source_id ?? 'default'` and the text node-postgres binds for each value. A `null` column fails with `constraint_violation` and Postgres's not-null message, checked in column order; a NUL byte or a `pages_updated_json` that is not JSON fails with `invalid_argument`. Nothing is kept on a failure | `logIngest` |
+| `brain.logIngest({ source_id, source_type, source_ref, pages_updated_json, summary, writer_version, writer_host_id, writer_segment_reader })` | nothing. The member sends `source_id ?? 'default'`, the text node-postgres binds for each value and the logging binary's stamp (`writerStamp({ mint: false })`); a record written before the stamp reads it as null, and a `writer_host_id` that is not a uuid refuses with the uuid syntax message. A `null` column fails with `constraint_violation` and Postgres's not-null message, checked in column order; a NUL byte or a `pages_updated_json` that is not JSON fails with `invalid_argument`. Nothing is kept on a failure | `logIngest` |
 | `brain.getIngestLog({ limit, sourceIds })` | the rows newest first, at most `limit` (the member sends `opts.limit \|\| 50`; rounded as Postgres casts it; a negative limit fails with `invalid_argument`), only the `sourceIds` when the list is not empty. The member turns `created_at` into a `Date` | `getIngestLog` |
 | `brain.getStats({ scope })` | the `BrainStats` counters. `page_count` counts live pages; chunks, links, tags and timeline entries count the rows of pages in the scope, soft-deleted pages included, as the PGLite joins do. A scoped link needs both ends in the scope. `pages_by_type` is ordered by count, then type bytes | `getStats` |
 | `brain.getHealth({ scope, entityTypes })` | raw counters: `page_count`, `eligible_chunks`, `embedded_chunks`, `missing_embeddings`, `dead_links`, `link_count`, the entity counters, `linkable` (every live, not quarantined page in the scope with `islanded` and `has_timeline`, before the orphan policy) and `most_connected` (top 5 by degree, then slug bytes) | the counting queries of `engine-sql/health.ts` |
@@ -82,3 +85,18 @@ two engines share that code instead of copying it:
   each page in the scope through the timeline family, one prefix scan per page. This is fine at
   the parity sizes; a brain with many thousand pages will want a per-page count record.
 
+
+## Page visibility and version history reads (`src/core/engine-sql/admin-reads.ts`)
+
+Two members for statements `src/core/ops/admin.ts` ran as raw SQL: `listVisiblePageSlugs` (the slugs `visibleMostConnected`
+may show, under the read or access policy and an optional source scope) and `readPagesForVersionHistory` (the page rows
+by id that `get_versions` resolves). Neither is served on Rust today: each is absent from `store-members/*`, so it refuses with
+`engine_capability_missing` naming the member (the capability in `members.ts` is `pages`). The caller sees the refusal;
+no member changes behaviour. What the store would need to serve them:
+
+| Members | Reads | The store would need |
+| --- | --- | --- |
+| `listVisiblePageSlugs` | the slugs of live pages the caller's policy admits, within the sources given | the page scan with the caller's page policy (read or access form) applied per page |
+| `readPagesForVersionHistory` | `id`, `slug`, `source_id` and `frontmatter` for each page id; the statement does not filter soft-deleted pages | the page record by id |
+
+The policy text is Postgres text only; the store reads the typed arguments, never the statement.

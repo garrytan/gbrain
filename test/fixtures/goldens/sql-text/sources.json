@@ -81,6 +81,50 @@
           }
         ]
       },
+      "deleteSourceRecord": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "WITH stranded AS (SELECT count(*)::int AS n FROM pages WHERE source_id = $1 AND NOT EXISTS ( SELECT 1 FROM pg_constraint c JOIN pg_trigger t ON t.tgconstraint = c.oid AND t.tgrelid = c.confrelid WHERE c.contype = 'f' AND c.conrelid = 'pages'::regclass AND c.confrelid = 'sources'::regclass AND c.confdeltype = 'c' AND c.conkey = ARRAY[(SELECT a.attnum FROM pg_attribute a WHERE a.attrelid = 'pages'::regclass AND a.attname = 'source_id')] AND t.tgfoid = 'pg_catalog.\"RI_FKey_cascade_del\"'::regproc AND (t.tgenabled = 'A' OR (t.tgenabled = 'O' AND current_setting('session_replication_role') <> 'replica')))), gone AS (DELETE FROM sources WHERE id = $2 AND (SELECT n FROM stranded) = 0 RETURNING id, incarnation), unbound AS (DELETE FROM persistence_source_bindings b USING gone WHERE b.source_id = gone.id AND b.source_incarnation = gone.incarnation), cursors AS (DELETE FROM op_checkpoints c USING gone WHERE c.op = 'managed-sync' AND c.completed_keys->0->>'sourceId' = gone.id), scrub_retrieval_event_pages AS (DELETE FROM retrieval_event_pages WHERE source_id = $3 AND EXISTS (SELECT 1 FROM gone)), scrub_retrieval_event_links AS (DELETE FROM retrieval_event_links WHERE source_id = $4 AND EXISTS (SELECT 1 FROM gone)), scrub_retrieval_feedback AS (DELETE FROM retrieval_feedback WHERE source_id = $5 AND EXISTS (SELECT 1 FROM gone)), scrub_context_volunteer_events AS (DELETE FROM context_volunteer_events WHERE source_id = $6 AND EXISTS (SELECT 1 FROM gone)), scrub_core_edit_notices AS (DELETE FROM core_edit_notices WHERE source_id = $7 AND EXISTS (SELECT 1 FROM gone)), scrub_write_gate_holds AS (DELETE FROM write_gate_holds WHERE source_id = $8 AND EXISTS (SELECT 1 FROM gone) RETURNING id::text AS id), scrub_write_gate_receipts AS (DELETE FROM write_gate_receipts r USING scrub_write_gate_holds h WHERE r.target_table = 'write_gate_holds' AND r.target_id = h.id), scrub_eval_candidates AS (UPDATE eval_candidates c SET retrieved_slugs = ARRAY(SELECT u.s FROM unnest(c.retrieved_slugs) WITH ORDINALITY AS u(s, n) WHERE EXISTS (SELECT 1 FROM pages pg WHERE pg.slug = u.s AND pg.source_id = ANY(c.source_ids) AND pg.source_id <> $9) ORDER BY u.n) WHERE $10 = ANY(c.source_ids) AND EXISTS (SELECT 1 FROM unnest(c.retrieved_slugs) AS r(s) WHERE NOT EXISTS (SELECT 1 FROM pages pg WHERE pg.slug = r.s AND pg.source_id = ANY(c.source_ids) AND pg.source_id <> $11)) AND EXISTS (SELECT 1 FROM gone)) SELECT id, 0 AS stranded FROM gone UNION ALL SELECT NULL, n FROM stranded WHERE n > 0 AND EXISTS (SELECT 1 FROM sources WHERE id = $12 )",
+            "textSha256": "63425311434a3e930de06eef87730ddb64ae5ea109c1d32d724e9b3032a6a992"
+          }
+        ],
+        "expiredArchiveOnly": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "WITH stranded AS (SELECT count(*)::int AS n FROM pages WHERE source_id = $1 AND NOT EXISTS ( SELECT 1 FROM pg_constraint c JOIN pg_trigger t ON t.tgconstraint = c.oid AND t.tgrelid = c.confrelid WHERE c.contype = 'f' AND c.conrelid = 'pages'::regclass AND c.confrelid = 'sources'::regclass AND c.confdeltype = 'c' AND c.conkey = ARRAY[(SELECT a.attnum FROM pg_attribute a WHERE a.attrelid = 'pages'::regclass AND a.attname = 'source_id')] AND t.tgfoid = 'pg_catalog.\"RI_FKey_cascade_del\"'::regproc AND (t.tgenabled = 'A' OR (t.tgenabled = 'O' AND current_setting('session_replication_role') <> 'replica')))), gone AS (DELETE FROM sources WHERE id = $2 AND archived = true AND archived_at > '1970-01-02'::timestamptz AND archive_expires_at > '1970-01-02'::timestamptz AND archive_expires_at <= now() AND (SELECT n FROM stranded) = 0 RETURNING id, incarnation), unbound AS (DELETE FROM persistence_source_bindings b USING gone WHERE b.source_id = gone.id AND b.source_incarnation = gone.incarnation), cursors AS (DELETE FROM op_checkpoints c USING gone WHERE c.op = 'managed-sync' AND c.completed_keys->0->>'sourceId' = gone.id), scrub_retrieval_event_pages AS (DELETE FROM retrieval_event_pages WHERE source_id = $3 AND EXISTS (SELECT 1 FROM gone)), scrub_retrieval_event_links AS (DELETE FROM retrieval_event_links WHERE source_id = $4 AND EXISTS (SELECT 1 FROM gone)), scrub_retrieval_feedback AS (DELETE FROM retrieval_feedback WHERE source_id = $5 AND EXISTS (SELECT 1 FROM gone)), scrub_context_volunteer_events AS (DELETE FROM context_volunteer_events WHERE source_id = $6 AND EXISTS (SELECT 1 FROM gone)), scrub_core_edit_notices AS (DELETE FROM core_edit_notices WHERE source_id = $7 AND EXISTS (SELECT 1 FROM gone)), scrub_write_gate_holds AS (DELETE FROM write_gate_holds WHERE source_id = $8 AND EXISTS (SELECT 1 FROM gone) RETURNING id::text AS id), scrub_write_gate_receipts AS (DELETE FROM write_gate_receipts r USING scrub_write_gate_holds h WHERE r.target_table = 'write_gate_holds' AND r.target_id = h.id), scrub_eval_candidates AS (UPDATE eval_candidates c SET retrieved_slugs = ARRAY(SELECT u.s FROM unnest(c.retrieved_slugs) WITH ORDINALITY AS u(s, n) WHERE EXISTS (SELECT 1 FROM pages pg WHERE pg.slug = u.s AND pg.source_id = ANY(c.source_ids) AND pg.source_id <> $9) ORDER BY u.n) WHERE $10 = ANY(c.source_ids) AND EXISTS (SELECT 1 FROM unnest(c.retrieved_slugs) AS r(s) WHERE NOT EXISTS (SELECT 1 FROM pages pg WHERE pg.slug = r.s AND pg.source_id = ANY(c.source_ids) AND pg.source_id <> $11)) AND EXISTS (SELECT 1 FROM gone)) SELECT id, 0 AS stranded FROM gone UNION ALL SELECT NULL, n FROM stranded WHERE n > 0 AND EXISTS (SELECT 1 FROM sources WHERE id = $12 AND archived = true AND archived_at > '1970-01-02'::timestamptz AND archive_expires_at > '1970-01-02'::timestamptz AND archive_expires_at <= now())",
+            "textSha256": "bd05f8edd9f6952ad30d7d3c788260cd27a38ca3acbbcb4cdaf243bb63384837"
+          }
+        ]
+      },
       "getSource": {
         "default": [
           {
@@ -222,6 +266,18 @@
           }
         ]
       },
+      "markSourceSynced": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "UPDATE sources SET last_sync_at = now() WHERE id = $1 RETURNING id",
+            "textSha256": "72bc1a1d299ab56d8d771bcac792ea729527abe61c469a9e0a340d7acbba5827"
+          }
+        ]
+      },
       "readLiveIdentityHolders": {
         "default": [
           {
@@ -308,6 +364,18 @@
             ],
             "sql": "SELECT chunker_version FROM sources WHERE id = $1",
             "textSha256": "89548ea315a927cbdaffec58bb971086a7f2e7d29ad81af3e05f73fa62dc9e77"
+          }
+        ]
+      },
+      "readSourceDeleteImpact": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT id, name FROM sources WHERE id = $1",
+            "textSha256": "2eec0fcee3e42b28821c70143a73a1183cb532fd00d3c033d0debdb25e9c81f2"
           }
         ]
       },

@@ -25,7 +25,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::chunks::read_chunks;
 use crate::env::iso;
-use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
+use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, STORE_CORRUPT, StoreError};
 use crate::facts::{OwnerOnlyCache, PrivacyPolicy};
 use crate::kv::{KvRead, scan_prefix};
 use crate::links::{in_links, no_nul, out_links};
@@ -53,6 +53,51 @@ struct IngestRecord {
     pages_updated: Value,
     summary: String,
     created_at_us: i64,
+    /// `writer_version`, `writer_host_id`, `writer_segment_reader` (migration v254): the logging
+    /// binary's stamp. A record written before the stamp reads them as NULL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    writer_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    writer_host_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    writer_segment_reader: Option<bool>,
+}
+
+/// One ingest log row as the segmented-storage gate reads it (`writer-versions.rs`).
+pub(crate) struct IngestWriter {
+    pub source_type: String,
+    pub writer_host_id: Option<String>,
+    pub writer_version: Option<String>,
+    /// `writer_segment_reader IS TRUE`.
+    pub segment_reader: bool,
+    pub created_at_us: i64,
+}
+
+/// The writer stamp of every ingest log row created at or after `since_us`.
+pub(crate) fn ingest_writers_since(read: &dyn KvRead, since_us: i64) -> Result<Vec<IngestWriter>> {
+    let mut out = Vec::new();
+    let mut bad = None;
+    scan_prefix(read, &[keys::INGEST_LOG], false, &mut |_, v| {
+        match serde_json::from_slice::<IngestRecord>(v) {
+            Ok(r) if r.created_at_us >= since_us => out.push(IngestWriter {
+                source_type: r.source_type,
+                writer_host_id: r.writer_host_id,
+                writer_version: r.writer_version,
+                segment_reader: r.writer_segment_reader == Some(true),
+                created_at_us: r.created_at_us,
+            }),
+            Ok(_) => {}
+            Err(e) => bad = Some(e),
+        }
+        bad.is_none()
+    })?;
+    match bad {
+        Some(e) => Err(StoreError::new(
+            STORE_CORRUPT,
+            format!("an ingest log record: {e}"),
+        )),
+        None => Ok(out),
+    }
 }
 
 impl IngestRecord {
@@ -86,6 +131,11 @@ pub struct IngestInput {
     pub source_ref: Option<String>,
     pub pages_updated_json: Option<String>,
     pub summary: Option<String>,
+    /// The logging binary's stamp (`writerStamp({ mint: false })`); `writer_host_id` is a uuid
+    /// (`$7::uuid`) or null.
+    pub writer_version: Option<String>,
+    pub writer_host_id: Option<String>,
+    pub writer_segment_reader: Option<bool>,
 }
 
 /// Options of `getIngestLog`; the member resolves `limit` (`opts.limit || 50`).
@@ -524,6 +574,16 @@ impl Store {
             .as_deref()
             .ok_or_else(|| not_null("pages_updated"))?;
         let summary = input.summary.clone().ok_or_else(|| not_null("summary"))?;
+        let writer_host_id = match &input.writer_host_id {
+            None => None,
+            Some(h) if crate::env::is_uuid(h) => Some(h.to_lowercase()),
+            Some(h) => {
+                return Err(StoreError::new(
+                    INVALID_ARGUMENT,
+                    format!("invalid input syntax for type uuid: \"{h}\""),
+                ));
+            }
+        };
         no_nul(
             "logIngest",
             &[
@@ -533,6 +593,9 @@ impl Store {
                 ("summary", &summary),
             ],
         )?;
+        if let Some(version) = &input.writer_version {
+            no_nul("logIngest", &[("writer_version", version)])?;
+        }
         let pages_updated: Value = serde_json::from_str(pages_json).map_err(|e| {
             StoreError::new(INVALID_ARGUMENT, format!("logIngest: pages_updated: {e}"))
         })?;
@@ -555,6 +618,9 @@ impl Store {
                 pages_updated: pages_updated.clone(),
                 summary: summary.clone(),
                 created_at_us,
+                writer_version: input.writer_version.clone(),
+                writer_host_id: writer_host_id.clone(),
+                writer_segment_reader: input.writer_segment_reader,
             };
             put_json(tx, &ingest_key(created_at_us, id), &record)
         })
@@ -764,6 +830,30 @@ impl Store {
         }
         Ok(json!({ "baseline": baseline_rows, "today": today_rows }))
     }
+}
+
+/// The `ingest_log` rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow, json_rows};
+    Ok(json_rows::<IngestRecord>(read, &[keys::INGEST_LOG])?
+        .into_iter()
+        .map(|r| ProbeRow {
+            cells: vec![
+                ("summary", ProbeCell::text(&r.summary)),
+                (
+                    "pages_updated",
+                    if r.pages_updated.is_null() {
+                        ProbeCell::Null
+                    } else {
+                        ProbeCell::jsonb(&r.pages_updated)
+                    },
+                ),
+            ],
+            source_id: Some(r.source_id),
+        })
+        .collect())
 }
 
 #[cfg(test)]

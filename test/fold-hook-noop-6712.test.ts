@@ -33,6 +33,8 @@
  * The write journal's typed reads (persistence/authority.ts) rewrite the publication authorization's two locking reads
  * one-for-one: the source membership read is readSourceMembership's statement (incarnation and archived only) and the
  * local writer read is readLocalWriterRow's; same statements, same order.
+ * The chunk read of the embedding reuse (engine-sql/chunks.ts) ends its order with `p.source_id COLLATE "C"`, so pages of
+ * one slug in several sources read in one order on every engine; same statements, same order.
  * CAPTURE_FOLD_NOOP=1 rewrites the fixture for the engine under test (only ever from the pre-hook commit).
  */
 import { describe, expect, test } from 'bun:test';

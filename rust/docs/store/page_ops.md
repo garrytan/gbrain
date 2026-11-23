@@ -28,7 +28,7 @@ hybrid search hands them that whole bag as their policy; any other key still ref
 | `brain.findDuplicatePages(sourceId, queries)` | one `findDuplicatePage` answer per query | `findDuplicatePages` |
 | `brain.softDeletePages(slugs, { sourceId? }?)` | slugs that turned deleted now, once each, in page id order. `updated_at` stays; the knowledge revision changes | `softDeletePages` |
 | `brain.deletePages(slugs, { sourceId? }?)` | slugs removed (live or deleted), in page id order. In the same transaction it drops those slugs from captured eval candidates of the source (`eval_capture::remove_retrieved_slugs`), then their page aliases, the slug aliases that resolve to them and the rename history rows that end at them (`aliases::scrub_purged_slug_stores`, the `scrubPurgedSlugStores` order of `src/core/persistence/purge-slug-stores.ts:6`) | `deletePages` |
-| `brain.purgeDeletedPages(olderThanHours, { dryRun?, excludeIds? }?)` | `{ slugs, count }` of pages deleted more than `olderThanHours` (negative counts as 0) ago, plus `pages: [{ slug, source_id, deleted_at }]` on a dry run and a real run | `purgeDeletedPages` (minus the pages a hold keeps, see below) |
+| `brain.purgeDeletedPages(olderThanHours, { dryRun?, excludeIds? }?)` | `{ slugs, count }` of pages deleted more than `floor(olderThanHours)` hours ago, plus `pages: [{ slug, source_id, deleted_at }]` (dry run and real run alike). An age that is NaN, negative or not finite refuses `invalid_argument` before anything is read or written; the TypeScript member throws `PurgeAgeError` first, as the SQL engines do (`src/core/engine-errors.ts`) | `purgeDeletedPages` (minus the pages a hold keeps, see below) |
 | `brain.resolveSlugsByPaths(paths, { sourceId })` | `[{ slug, source_path, live }]` for every page of the source whose `source_path` is one of `paths`, sorted by path then slug; the TypeScript member keeps one slug per path (`pickCanonicalOrigin`) | `resolveSlugsByPaths` |
 | `brain.findPages({ pattern: { kind, like }, types?, limit, sourceId?, sourceIds?, excludeSlugPrefixes? })` | `{ rows, total }`. `like` is a Postgres `LIKE` pattern (`%`, `_`, `\` escape), case-folded. A `name` pattern matches the title, or the slug when its last segment matches too; `prefix` and `glob` match the slug or `source_path`. Live pages of unarchived sources only. Rows sort by slug, then source; `total` is every match, or 0 when no row is returned | `findPages` |
 | `brain.countPagesBy({ sourceId?, sourceIds?, since?, typeGroups? }?)` | `{ bySourceType, byTypeGroup, total }` over visible pages (live, source present and not archived) whose effective date (else `updated_at`) is at or after `since`, an ISO date or instant. `typeGroups` maps a type to its group; with it, only mapped types count in `byTypeGroup` and `total` | `countPagesBy` |
@@ -47,7 +47,9 @@ hybrid search hands them that whole bag as their policy; any other key still ref
 | `brain.revertToVersion(slug, versionId, { sourceId? }?)` | `null`. Copies the version's `compiled_truth` and `frontmatter` onto the page and sets `updated_at`; a missing page or version does nothing. When a page it would revert, or the version, is segmented, it refuses `page_body_segmented` and writes nothing; the TypeScript member throws PGLite's `segmentedRevertRefusal` | `revertToVersion` |
 
 A domain-bank row is `{ slug, prefix, connection_count, representative_chunk_id,
-last_retrieved_at }`. `last_retrieved_at` is the page's retrieval record, else `null`.
+last_retrieved_at }`. `last_retrieved_at` is the page's retrieval record, else `null`. `representative_chunk_id` is the
+page's embedded chunk with the lowest `chunk_index`, or `null` when no chunk of the page has an embedding, as
+`src/core/engine-sql/pages.ts` picks it.
 
 ## Retrieval records
 
@@ -61,9 +63,9 @@ last_retrieved_at }`. `last_retrieved_at` is the page's retrieval record, else `
 
 ## Differences from Postgres
 
-- `representative_chunk_id` is always `null`.
 - The store keeps no legacy `pages.last_retrieved_at` column, so the retrieval record is the only
   source of `last_retrieved_at` (Postgres takes the later of the two).
+- The entity card read (`readEntityCardRows`, `cli_reads/entities.rs`) reads the same record for its `last_retrieved_at`.
 - `listCorpusSample` uses a SplitMix64 shuffle seeded from `seed`. A seed gives a fixed pick, but not
   the pick Postgres `setseed()` + `random()` gives. The parity cases compare the set, not the order.
 - `countPagesBy` refuses a `since` that is not an ISO date or instant (Postgres also takes other
@@ -113,10 +115,14 @@ Other differences:
 - A real run returns its slugs ordered by `deleted_at`, then slug. PGLite returns them in the
   `DELETE ... RETURNING` order, which is the table's row order, so the parity cases compare a real
   run's slugs sorted. A dry run orders by `deleted_at`, then slug, on both.
-- PGLite also expires the facts of the purged pages (`expireGonePageFacts`). The Rust facts family
-  refuses every member, so the store holds no facts; that family must add the expiry when it lands.
-  PGLite also deletes the pages' body stagings and orphaned segment texts; the store keeps neither
-  yet, and the `page_body` family's `remove_page_rows` hook must remove them when it lands.
+- The purge expires the facts of the purged pages in the same write, as PGLite's
+  `expireGonePageFacts` (`src/core/facts/gone-page-facts.ts`) does: filed facts, the slot facts of a
+  filed conversation (dimension, value and status cleared), facts extracted from the page and facts
+  about the page whose entity no longer has a page. `deletePages` does not expire facts, on either
+  engine.
+- The purge also deletes the body stagings at each purged source and slug, and then each segment text
+  the purged pages named that no manifest row or live staging still needs, in the same write, as
+  PGLite does (see [page_body.md](page_body.md)).
 - The parity cases cannot stand a tombstone days in the past (the Rust arm reads the system clock),
   so every stamped page there is inside its window. The store unit tests in
   `crates/gbrain-store/src/page_ops.rs` set `deleted_at` directly and cover the windows closing,

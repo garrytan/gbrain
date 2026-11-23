@@ -15,6 +15,10 @@ Code: `rust/crates/gbrain-store/src/timeline_queries.rs`, the napi methods in
 | `getOnThisDay({ date?, limit?, sourceId?, sourceIds? })` | served |
 | `getLastSeen(entitySlug, { asof?, sourceId?, sourceIds? })` | served; the TypeScript member adds `days_ago` with the shared `finalizeLastSeen` |
 | `upsertEventProjection({ depthSlug, eventSlug, date, summary, detail?, sourceId? })` | served, through the core helpers `next_entry_id`, `read_entry` and `put_entry` |
+| `listEventProjectionRows(eventPageIds)` | served (`timeline_queries/event_rows.rs`): the index rows of each event page, by date then event page id |
+| `readEventProjectionId(eventPageId, date)` | served: the entry id of the index row, or null |
+| `deleteEventProjections(sourceId, slugs)` | served: the entries and index rows of each listed event page (deleted pages included), through `remove_entry` and `recompute_latest` |
+| `restoreEventProjection({ depthPageId, date, source, summary, detail, eventPageId })` | served, through `put_event_projection` (the upsert of `upsertEventProjection`); a missing depth or event page refuses `CONSTRAINT_VIOLATION` |
 | `removeTimelineRows(pageId, rows)` | served, through `remove_entry` and `recompute_latest` |
 | `updateTimelineDetails(pageId, rows)` | served, through `put_entry` |
 | `insertCanonicalTimelineRows(pageId, rows)` | served, through `insert_entry` |
@@ -133,6 +137,22 @@ A live page is one that is not soft-deleted. A segmented page has NULL `compiled
 - `listTimelineOrphanPages`: live pages with an id after `afterId`, in `sourceId` when it is not empty, that hold own
   rows, by id, at most `limit`. `body_storage` is `segmented` for a segmented page, else `inline`; `revision` is the
   knowledge revision.
+
+## The repair reads
+
+`timeline_queries/repair_reads.rs` serves the scans of `gbrain repair timeline`, `timeline-comments`,
+`timeline-order` and `connector-fences` and the retraction check's version reads
+(`src/core/engine-sql/timeline-repair-reads.ts`). Pinned by `rust/crates/gbrain-store/tests/timeline_repair_reads.rs`
+and `test/engine-parity/repair-takes-timeline.test.ts`.
+
+- `listTimelineHistoryPages`: live inline pages of the sources, by id, either past `afterId` holding own rows (at most
+  `limit`) or among `ids`.
+- `listTimelineVersionWitnesses` / `readTimelineVersionBody`: the stored versions of a page, newest first, and one
+  version's body with the md5 of its truth and timeline.
+- `listTimelineMarkupRows` / `rewriteTimelineRow`: own rows whose summary, source or detail holds `<!--` or `-->`, by
+  page then id, and the rewrite of one row's source, summary and detail.
+- `listMaterializedMarkerPages`, `listDateBulletPages` and `listConnectorFencePages`: the page scans of the
+  `timeline-comments`, `timeline-order` and `connector-fences` previews, by id.
 
 The members refuse with `engine_capability_missing` a value the SQL engines would fail to bind: a page or row id
 that is not a 32-bit integer, a page id or `afterId` that is not an integer, and a limit that is negative or not an

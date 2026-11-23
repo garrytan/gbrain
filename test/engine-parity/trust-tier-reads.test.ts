@@ -9,12 +9,12 @@
  *    listVersionTrustTiers and listVersionReasonWriters read the snapshot tier of a version and the writer that replaced
  *    it; listValidTimeIdentities lists the live pages with a slug in the source scope by source; pickValidTimeEdition
  *    picks the edition in force on a date with its competing ordinals and counts; readBeliefHistoryRows and
- *    listVisibleBeliefLifetimes answer the same on PGLite and Postgres; pageAwaitsRederive says whether a purge hid the
+ *    listVisibleBeliefLifetimes answer the same on every arm (belief-ledger.test.ts writes their events); pageAwaitsRederive says whether a purge hid the
  *    page for re-derivation, and `get_page` with `as_of` answers the same edition end to end; listPageRefsByIds names
  *    each listed page's source, slug and type by id, deleted pages included, for the GST-687 quoting reads;
  *    listPageTrustTiersByKey reads each named page's stored tier (deleted pages included) and lockLivePagesByKey names
  *    the live ones, so a page's own timeline lands through addProjectedPageTimeline and a missing page refuses. The Rust arm (GBRAIN_TEST_RUST_ARM=1) answers
- *    the page, fact, version and valid-time reads, refuses the belief reads, and stops typed where the pick would need a
+ *    the page, fact, version, valid-time and belief reads, and stops typed where the pick would need a
  *    change reason or a history gap the store does not keep.
  *  - Regression: core memory, `gbrain doctor`'s trust scan, `get_versions` reasons and `get_page` with `as_of` call these
  *    members; an engine that drops an option shows a page the reader may not see or a row the scan should skip.
@@ -25,6 +25,7 @@
 import { describe, expect } from 'bun:test';
 import type { BrainEngine, LinkBatchInput } from '../../src/core/engine.ts';
 import { createSource, parityArms } from './harness.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { VALID_TIME_CURRENT_ORD } from '../../src/core/engine-sql/trust-tier-reads.ts';
 import { applyTemporalEvidence, relationshipKeysForOrigin } from '../../src/core/link-temporal-apply.ts';
@@ -290,19 +291,10 @@ describe('engine parity: typed trust tier reads', () => {
   );
 
   parityTest(
-    'readBeliefHistoryRows and listVisibleBeliefLifetimes answer an empty ledger and an unknown lifetime, and Rust refuses both for its missing ledger',
+    'readBeliefHistoryRows and listVisibleBeliefLifetimes answer an empty ledger and an unknown lifetime',
     { methods: ['readBeliefHistoryRows', 'listVisibleBeliefLifetimes'] },
-    async (engine, backend) => {
+    async (engine) => {
       const base = { sourceId: 'default', slug: null, subjectKey: null, afterId: 0, limit: 10, recordedAfter: null, recordedUntil: null, subjectKeys: null, beforeId: null };
-      if (backend === 'rust') {
-        // The store keeps no belief ledger, so no input, an empty lifetime list included, may answer an empty list.
-        const refusals = [await engine.readBeliefHistoryRows({ ...base, descending: false }).then(() => null, (e: unknown) => e),
-          await engine.listVisibleBeliefLifetimes([]).then(() => null, (e: unknown) => e),
-          await engine.listVisibleBeliefLifetimes(['00000000-0000-4000-8000-000000000001']).then(() => null, (e: unknown) => e)];
-        expect(refusals.map(e => (e instanceof Error ? /the belief ledger, which the store does not keep/.test(e.message) : e)))
-          .toEqual([true, true, true]);
-        throw refusals[0];
-      }
       const asc = await engine.readBeliefHistoryRows({ ...base, descending: false });
       const desc = await engine.readBeliefHistoryRows({ ...base, slug: 'x', subjectKeys: ['k'], beforeId: 5, recordedAfter: '2026-01-01T00:00:00Z', descending: true });
       const lifetimes = await engine.listVisibleBeliefLifetimes(['00000000-0000-4000-8000-000000000001']);
@@ -562,6 +554,35 @@ describe('engine parity: typed trust tier reads', () => {
       expect(july).toMatchObject({ ord: 'current', introduced: null, gap: true });
       expect(pinned).toMatchObject({ ord: 'large2', successor_pruned: false, introduced: null });
       return { kept, trusted, remote, july, pinned };
+    },
+  );
+
+  parityTest(
+    'the pick withholds the reason a private successor gave, even from a caller whose grant opens that successor',
+    { methods: ['putPage', 'createVersion', 'getPage', 'pickValidTimeEdition'] },
+    async (engine) => {
+      const write = (body: string, frontmatter: Record<string, unknown>) =>
+        engine.putPage('vt/grant', { type: 'note', title: 'VT', compiled_truth: body, timeline: '', frontmatter });
+      await write('One.', { valid_from: '2026-01-01' });
+      await engine.createVersion('vt/grant', { sourceId: 'default', reason: 'r1' });
+      await write('Two.', { valid_from: '2026-02-01', visibility: 'private' });
+      await engine.createVersion('vt/grant', { sourceId: 'default', reason: 'r2' });
+      await write('Three.', { valid_from: '2026-03-01' });
+      const pageId = (await engine.getPage('vt/grant', { sourceId: 'default' }))!.id;
+      const reason = (access: Parameters<typeof withCallerAccess>[0] | null) => {
+        const run = async () => {
+          const r = await engine.pickValidTimeEdition({ pageId, asOf: '2026-01-15', excludePrivate: access !== null, pinOrd: null, inlineMaxBytes: 1_000_000 });
+          return (r as Record<string, unknown> | null)?.reason ?? null;
+        };
+        return access ? withCallerAccess(access, run) : run();
+      };
+      const result = {
+        trusted: await reason(null),
+        member: await reason({ identity: ['member:alice-example'], hidePrivate: true }),
+        granted: await reason({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true }),
+      };
+      expect(result).toEqual({ trusted: 'r1', member: null, granted: null });
+      return result;
     },
   );
 

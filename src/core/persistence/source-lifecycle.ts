@@ -8,7 +8,7 @@ import { readFix } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import { isValidSourceId } from '../source-id.ts';
-import { EXPIRED_ARCHIVE_SQL, removedSourceScrubCtes } from '../source-delete.ts';
+import { EXPIRED_ARCHIVE_SQL, removedSourceRescrubStatement, sourceIncarnationDeleteStatement } from '../source-delete.ts';
 import { parseSourceConfig } from '../sources-load.ts';
 import { redactSourceConfig } from '../source-config-redact.ts';
 import { discoverGitRoot } from '../sync-git.ts';
@@ -182,6 +182,9 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
   if(input.expectedIncarnation&&input.expectedIncarnation!==before?.incarnation) throw opError('source_changed','The source was replaced.',
     `Source '${input.sourceId}' was removed and re-added after expected_incarnation was read, so nothing was changed. Read its current incarnation with the command in fix and confirm the ${input.operation} still applies before running it again.`,
     {fix:ownerStatusFix(input.sourceId)});
+  if(!input.dryRun&&input.confirmDestructive&&(input.operation==='remove'||input.operation==='purge'&&(input.expiredOnly||before?.archived))
+    &&parseSourceConfig(before?.config).kind==='apple-contacts')
+    await (await import('../apple-contacts/person-facts.ts')).retireAllPersonFacts(engine,input.sourceId);
   // #5200 (W14 P1.4): only an operation that compares or records checkout bytes hashes the manifest (add at an existing
   // root, claim, rebind, restore; reclone hashes in topology-clone.ts). Retiring a source (archive, remove, purge) compares
   // nothing, so when every binding already carries a verified digest it skips the walk and refreshes the stored manifest's
@@ -361,8 +364,10 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
           {fix:readFix('Lists OAuth clients with the source each is bound to.',{argv:['gbrain','auth','clients','--json']})});
         const [impact]=await tx.executeRaw<{count:string}>('SELECT count(*)::text AS count FROM pages WHERE source_id=$1',[input.sourceId]);
         pagesDeleted+=Number(impact.count);
-        await tx.executeRaw(`WITH gone AS (DELETE FROM sources WHERE id=$1 AND incarnation=$2::uuid RETURNING id),${removedSourceScrubCtes('EXISTS (SELECT 1 FROM gone)')} SELECT 1`,[input.sourceId,incarnation]);
-        await tx.executeRaw(`WITH ${removedSourceScrubCtes('true')} SELECT 1`,[input.sourceId]);
+        const gone=sourceIncarnationDeleteStatement(input.sourceId,incarnation);
+        await tx.executeRaw(gone.text,gone.params);
+        const rescrub=removedSourceRescrubStatement(input.sourceId);
+        await tx.executeRaw(rescrub.text,rescrub.params);
         await tx.executeRaw('DELETE FROM persistence_source_bindings WHERE source_id=$1 AND source_incarnation=$2::uuid',[input.sourceId,incarnation]);
         await supersedeTopologyRetires(tx,input.sourceId,incarnation,principal,requestId);
         await tx.executeRaw("DELETE FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1",[input.sourceId]);

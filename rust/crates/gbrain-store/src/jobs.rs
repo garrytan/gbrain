@@ -23,7 +23,8 @@
 //! See docs/designs/RUST_ENGINE_INTERFACES.md ("jobs (core)") and rust/docs/store/jobs.md.
 //!
 //! Keys: every record of this family starts with `keys::JOBS` (`m`). The bytes after the tag:
-//! - `m 0x00 name -> i64`: the `minion_jobs` and `minion_inbox` id sequences (`job`, `inbox`).
+//! - `m 0x00 name -> i64`: the last id of each id sequence (`job`, `inbox`, ...) a kept write took.
+//!   The ids come from the allocator `M next_jobs_seq_<name>`, which never rolls back (`next_seq`).
 //! - `m 0x01 id -> JobRecord`: one job row.
 //! - `m 0x02 queue \0 priority created id`: the claim index, `waiting` rows only, in claim order
 //!   (priority ascending, then age, then id).
@@ -65,6 +66,7 @@
 mod access_tokens;
 mod attachments;
 mod checks;
+mod facts_extraction;
 mod health;
 mod inbox;
 mod insight;
@@ -82,13 +84,16 @@ mod wake;
 
 pub use access_tokens::TokenInsert;
 pub use attachments::AttachmentInput;
+pub(crate) use attachments::purge_probe_attachment_rows;
 pub use checks::{
     BuildSkewSpec, DeadDreamSpec, DeathsSpec, KeyPrefixSpec, QueuedSpendSpec, StillDeadSpec,
 };
 pub use health::{DivergenceSpec, HealthSpec};
+pub(crate) use inbox::purge_probe_inbox_rows;
 pub use insight::InsightSpec;
 use mutations::add_token;
 pub use mutations::{DelayOpts, TokenDelta};
+pub(crate) use oauth_clients::remove_source_rows as remove_oauth_source_rows;
 pub use oauth_clients::{ClientInsert, ClientPatch, ClientPatchGuard};
 pub use private_queues::PrivateQueueState;
 pub use reads::{JobPageCursor, JobPageSpec, OverdueSpec};
@@ -96,6 +101,7 @@ pub use spend::{ExpireScope, LeaseFilter, LeaseInsert, SpendInsert, SpendTreeSpe
 pub use spend_log::{ClientReserve, GroupReserve, LogInsert};
 pub use status::StatusFilter;
 pub use subagent::{FailureFallback, MessageInsert, ToolInsert, ToolStart, ToolTarget};
+pub(crate) use subagent::{purge_probe_message_rows, purge_probe_tool_rows};
 pub use sweeps::{CancelOpts, PruneOutcome, PruneSpec};
 pub use wake::{
     CronRunInput, EndSpec, ForgetClaimSpec, ForgetSettle, WatchFilter, WatchInsert, WatchSettle,
@@ -251,15 +257,37 @@ fn lock_key(id: &str) -> Vec<u8> {
     k
 }
 
+/// The acquisition token of cycle lock `id` while its lease is live (`ttl_expires_at > now`), as
+/// `gbrain_cycle_locks.acquisition_token::text`: what `sync status`'s pinned-pass probe joins
+/// (persistence/sync-admission-sql.ts `effectProbes`).
+pub(crate) fn live_lock_token(read: &dyn KvRead, id: &str, now: i64) -> Result<Option<String>> {
+    Ok(get_json::<LockRecord>(read, &lock_key(id))?
+        .filter(|l| l.ttl_expires_at > now)
+        .map(|l| l.acquisition_token))
+}
+
 fn last_id(key: &[u8]) -> Option<i64> {
     let tail: [u8; 8] = key.get(key.len().checked_sub(8)?..)?.try_into().ok()?;
     Some((u64::from_be_bytes(tail) ^ (1 << 63)) as i64)
 }
 
+/// The next id of sequence `name`. The id comes from the store's allocator (`M next_jobs_seq_<name>`,
+/// `KvWrite::allocate`), which never rolls back: an id handed out inside a transaction or savepoint
+/// that rolls back is not handed out again, as with Postgres `nextval`. The allocator starts at the
+/// last id the JSON record (`m 0x00 name`) holds, so a brain written before it continues from there;
+/// the JSON record keeps the last id handed out in a kept write.
 fn next_seq(tx: &mut dyn KvWrite, name: &str) -> Result<i64> {
     let mut k = prefix(SEQ);
     k.extend_from_slice(name.as_bytes());
-    let next = get_json::<i64>(tx, &k)?.unwrap_or(0) + 1;
+    let floor = u64::try_from(get_json::<i64>(tx, &k)?.unwrap_or(0) + 1)
+        .map_err(|_| StoreError::new(crate::error::STORE_CORRUPT, "bad job id sequence"))?;
+    let counter = keys::meta(&format!("next_jobs_seq_{name}"));
+    let first = tx.allocate(&counter, 0)?;
+    if first < floor {
+        tx.allocate(&counter, floor - first)?;
+    }
+    let next = i64::try_from(tx.allocate(&counter, 1)?)
+        .map_err(|_| StoreError::new(crate::error::STORE_CORRUPT, "bad job id sequence"))?;
     put_json(tx, &k, &next)?;
     Ok(next)
 }
@@ -678,6 +706,24 @@ fn rows_with_status(read: &dyn KvRead, status: &str) -> Result<Vec<JobRecord>> {
     Ok(rows)
 }
 
+/// The `minion_jobs` rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_job_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow};
+    Ok(all_rows(read)?
+        .into_iter()
+        .map(|r| ProbeRow {
+            source_id: None,
+            cells: vec![
+                ("data", ProbeCell::jsonb(&r.data)),
+                ("result", ProbeCell::opt_jsonb(r.result.as_ref())),
+                ("error_text", ProbeCell::opt_text(r.error_text.as_deref())),
+            ],
+        })
+        .collect())
+}
+
 fn all_rows(read: &dyn KvRead) -> Result<Vec<JobRecord>> {
     let mut rows = Vec::new();
     let mut bad = None;
@@ -969,6 +1015,37 @@ impl Store {
             "admitJob private_queue_lease_until",
             &v.private_queue_lease_until,
         )?;
+        if self.bound.is_some() {
+            // A store bound to a transaction holds its exclusive writer, so the admission is one
+            // statement of it: opening a second writer here would wait for that transaction forever.
+            // A conflict keeps nothing the statement wrote (the statement rolls back on `Err`).
+            let mut conflict = None;
+            let done = self.write(|w| {
+                let now = self.env.now_micros();
+                match admit_in(
+                    w,
+                    spec,
+                    authority.as_ref(),
+                    spend.clone(),
+                    (delay_until, lease_until),
+                    now,
+                )? {
+                    Step::Done(outcome) => Ok(outcome),
+                    Step::Conflict(row) => {
+                        conflict = Some(row);
+                        Err(StoreError::invalid("admitJob conflict"))
+                    }
+                }
+            });
+            return match conflict {
+                Some(row) => Ok(AdmitOutcome {
+                    outcome: "conflict",
+                    row,
+                    audit: None,
+                }),
+                None => done,
+            };
+        }
         let mut tx = self.kv.begin_write()?;
         let now = self.env.now_micros();
         match admit_in(
@@ -1661,6 +1738,23 @@ fn held_by(read: &dyn KvRead, key: &[u8], opts: &LockHolder) -> Result<Option<Lo
         l.holder_pid == opts.holder_pid
             && l.acquisition_token == opts.acquisition_token.to_lowercase()
     }))
+}
+
+/// `CLAIM_HEAD_LEASE_HELD`'s lock test: lock `id` is live (`ttl_expires_at>now()`) and held by a
+/// process other than `pid` on `host` (`holder_host IS NOT DISTINCT FROM host`).
+pub(crate) fn lock_held_by_other(
+    read: &dyn KvRead,
+    id: &str,
+    pid: i64,
+    host: &str,
+    now: i64,
+) -> Result<bool> {
+    Ok(
+        get_json::<LockRecord>(read, &lock_key(id))?.is_some_and(|l| {
+            l.ttl_expires_at > now
+                && !(l.holder_pid == pid && l.holder_host.as_deref() == Some(host))
+        }),
+    )
 }
 
 fn all_locks(read: &dyn KvRead) -> Result<Vec<(String, LockRecord)>> {

@@ -1,14 +1,14 @@
 /**
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
  * purgeMemoryProposals, attachSourcePath, getWorktreeBinding and listAccessTokens; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts), and the folder access read beside the
- * access members (isFolderRestricted, listAppliedPolicyRevisions, readFolderAccess, readMayActFor, readAudiencePrincipals, readAccessMembers, readAccessCredentials, listAudienceAccessMembers and readLiveMember; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
+ * access members (isFolderRestricted, listAppliedPolicyRevisions, readFolderAccess, readMayActFor, readAudiencePrincipals, readJobPrincipal, readAccessMembers, readAccessCredentials, listAudienceAccessMembers and readLiveMember; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
  * gbrain-store `write_misc`, the binding reads by gbrain-store `persistence::worktrees`, the folder reads by gbrain-store `access_rules`; the rest answer for state the store does not keep. What each member answers and why:
  * rust/docs/store/write_misc.md.
  */
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from '../../engine-sql/write-misc.ts';
-import type { AccessCredentialLookup, AccessCredentialRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AppliedPolicyRevision, FolderAccessRows, AudiencePrincipalRows, MayActForVia } from '../../engine-sql/access-control.ts';
+import type { AccessCredentialLookup, AccessCredentialRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AppliedPolicyRevision, FolderAccessRows, AudiencePrincipalRows, MayActForVia, JobPrincipalKind } from '../../engine-sql/access-control.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /**
@@ -81,17 +81,20 @@ export const listActiveAccessMembers: StoreMember<[], string[]> = async () => []
 export const hasLabelledOnlyMember: StoreMember<[], boolean> = async () => false;
 
 /**
- * The store's brain id and commit sequence (`readProjectionReadinessGeneration`). Every commit advances it, a page write
- * among them, so a memoized health answer is reused only while nothing was written since it was read.
+ * The store's brain id and commit sequence. Every commit advances it, a page write among them, so a memoized health
+ * answer is reused only while nothing was written since it was read.
  */
 export const readHealthMemoClock: StoreMember<[], string> = async (brain) =>
-  storeCall({ member: 'readHealthMemoClock' }, () => brain.readProjectionReadinessGeneration());
+  storeCall({ member: 'readHealthMemoClock' }, () => brain.readHealthMemoClock());
 
 /**
- * The store keeps no source contextual-retrieval mode (only `sources` admin raw SQL writes it, refused on this engine),
- * so no source selects the synopsis tier.
+ * The sources that are not archived and whose own contextual-retrieval mode (`sources set-cr-mode`, source_cr_mode.rs)
+ * is per_chunk_synopsis, by id in byte order: the source half of the synopsis tier read, with its page check skipped.
  */
-export const listSynopsisSourceIds: StoreMember<[], string[]> = async () => [];
+export const listSynopsisSourceIds: StoreMember<[], string[]> = async (brain) => {
+  const tier = await storeCall({ member: 'listSynopsisSourceIds' }, () => brain.readSynopsisTierSources({ skipFrontmatter: true }));
+  return (tier as { sourceIds: string[] }).sourceIds;
+};
 
 /**
  * Folder rules and pending prefixes are gbrain-store `access_rules` records (rust/docs/store/access_rules.md). A slug
@@ -160,3 +163,6 @@ export const listMemoryProposalRows: StoreMember<[query: ProposalListQuery], Arr
 
 /** No memory proposals exist on this engine, so no request id names one: show, approve and deny answer not_found. */
 export const listOwnerProposalRows: StoreMember<[requestId: string], Array<Record<string, unknown>>> = async () => [];
+
+/** The store keeps no access tokens and no OAuth clients, so a remote job's principal has no row: the job is denied as revoked. */
+export const readJobPrincipal: StoreMember<[principal: { kind: JobPrincipalKind; id: string }], Record<string, unknown> | null> = async () => null;

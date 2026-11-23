@@ -65,9 +65,14 @@ export const CHRONICLE_STATE_SQL = {
   pendingAuto: `SELECT 1 FROM chronicle_page_state WHERE source_id=$1 AND page_id=$2 AND state='pending'
       AND trigger='auto' AND no_extract=false AND extractor_version=$3 LIMIT 1`,
   dailyCount: "SELECT count(*) AS n FROM chronicle_judge_reservations WHERE reserved_at > now() - interval '24 hours'",
-  insertConfigIfAbsent: 'INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING',
   truthLead: 'SELECT truth_lead FROM pages WHERE id=$1',
 } as const;
+
+/**
+ * The chronicle activation stamp's insert, kept apart from CHRONICLE_STATE_SQL's reads so the owner-socket read scan
+ * (test/rust-owner-ipc-read-classes.test.ts) sees that those reads reach no write.
+ */
+export const CHRONICLE_ACTIVATION_SQL = 'INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING';
 
 /** The ledger row at `key`, every column, or null. */
 export async function readChronicleRow(tx: Raw, key: ChronicleRowKey): Promise<ChronicleLedgerRow | null> {
@@ -90,7 +95,7 @@ export async function countRecentChronicleReservations(tx: Raw): Promise<number>
 
 /** Sets a config key only when it has none; an existing value stays. */
 export async function insertConfigIfAbsent(tx: Raw, key: string, value: string): Promise<void> {
-  await tx.executeRaw(CHRONICLE_STATE_SQL.insertConfigIfAbsent, [key, value]);
+  await tx.executeRaw(CHRONICLE_ACTIVATION_SQL, [key, value]);
 }
 
 /** The stored `truth_lead` of page `pageId` (a segmented page's body prefix), or null. */

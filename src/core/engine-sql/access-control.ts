@@ -63,6 +63,24 @@ export async function readMayActFor(exec: MemberLookupRead, via: MayActForVia, k
   return Array.isArray(row?.may_act_for) ? row!.may_act_for as string[] : null;
 }
 
+/** Which credential a queued remote job's principal names: an OAuth client or a legacy access token. */
+export type JobPrincipalKind = 'oauth_client' | 'legacy_token';
+
+/**
+ * The statements minions/submission-authority.ts assertCurrentRemoteJobPrincipal ran through executeRaw, by principal
+ * kind. Neither filters on revocation: the caller reads deleted_at or revoked_at itself and names which one denied the job.
+ */
+export const JOB_PRINCIPAL_SQL: Record<JobPrincipalKind, string> = {
+  oauth_client: 'SELECT client_id, deleted_at, scope, source_id, bound_slug_prefixes, surface, allowed_operations FROM oauth_clients WHERE client_id = $1',
+  legacy_token: 'SELECT * FROM access_tokens WHERE id = $1',
+};
+
+/** The stored row of a remote job's principal (revoked and deleted rows included), or null when there is none. */
+export async function readJobPrincipal(exec: MemberLookupRead, principal: { kind: JobPrincipalKind; id: string }): Promise<Record<string, unknown> | null> {
+  const [row] = await exec.executeRaw<Record<string, unknown>>(JOB_PRINCIPAL_SQL[principal.kind], [principal.id]);
+  return row ?? null;
+}
+
 /** A live (enabled, not tombstoned) access member and its groups, by group id. */
 export interface LiveMemberRow {
   id: string;

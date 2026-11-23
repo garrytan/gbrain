@@ -17,7 +17,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { recordDerivationInputs, type DerivationRef } from '../facts/derivation-inputs.ts';
 import {
-  OWNER_TIER_FLOOR, compareTrust, effectiveWriteTrust, isTrustTier, minTrust, storedTrustTier, trustRankSql,
+  OWNER_TIER_FLOOR, compareTrust, effectiveWriteTrust, isTrustTier, minTrust, storedTrustTier,
   type TaintInput, type TaintTable, type TrustTier, type WriteOrigin, type WriteTrust,
 } from './tier.ts';
 import { frontmatterTrustCaps } from './channel.ts';
@@ -28,14 +28,19 @@ import { propagateTierLowering } from './propagation.ts';
 /** `hidden`: the page exists but the caller may not read it, so it reads exactly as a missing page (GBRA-431). */
 export type TaintRef = { table: TaintTable; id: number } | { table: 'pages'; sourceId: string; slug: string; hidden?: boolean };
 
-type Sql = Pick<BrainEngine, 'executeRaw'>;
+export type TrustReads = Pick<BrainEngine, 'readPageTrustRows' | 'readRowTrustRows'>;
+
+/** The largest page id: `readPageTrustRows` reads ids as `int`, and no page has a larger one. */
+const PAGE_ID_MAX = 2_147_483_647;
 
 /**
  * The stored tier of every referenced row, deduplicated. A row that no longer
  * exists reads as `unknown` (a page by slug keeps `source:slug` as its id), so
- * a vanished input can never raise the derived tier.
+ * a vanished input can never raise the derived tier. A soft-deleted row keeps
+ * its stored tier. Rows by id come first, table by table in the order the refs
+ * name them (found rows by id, then the missing ones), then pages by slug.
  */
-export async function readTaintInputs(engine: Sql, refs: readonly TaintRef[]): Promise<TaintInput[]> {
+export async function readTaintInputs(engine: TrustReads, refs: readonly TaintRef[]): Promise<TaintInput[]> {
   const ids = new Map<TaintTable, Set<number>>();
   const slugs = new Map<string, { source_id: string; slug: string; hidden?: boolean }>();
   for (const ref of refs) {
@@ -44,16 +49,18 @@ export async function readTaintInputs(engine: Sql, refs: readonly TaintRef[]): P
   }
   const found = new Map<string, TaintInput>();
   for (const [table, set] of ids) {
-    const rows = await engine.executeRaw<{ id: number | string; trust_tier: string | null }>(
-      `SELECT id,trust_tier FROM ${table} WHERE id=ANY($1::bigint[])`, [[...set]]);
-    for (const row of rows) found.set(`${table}:${row.id}`, { table, id: Number(row.id), tier: storedTrustTier(row.trust_tier) });
+    const wanted = [...set];
+    const rows = table === 'pages'
+      ? await engine.readPageTrustRows({ ids: wanted.filter(id => Math.abs(id) <= PAGE_ID_MAX) })
+      : await engine.readRowTrustRows({ table, ids: wanted });
+    for (const row of [...rows].sort((a, b) => Number(a.id) - Number(b.id))) {
+      found.set(`${table}:${row.id}`, { table, id: Number(row.id), tier: storedTrustTier(row.trust_tier) });
+    }
     for (const id of set) if (!found.has(`${table}:${id}`)) found.set(`${table}:${id}`, { table, id, tier: 'unknown' });
   }
   if (slugs.size) {
-    const rows = await engine.executeRaw<{ id: number | string; source_id: string; slug: string; trust_tier: string | null }>(
-      `SELECT p.id,p.source_id,p.slug,p.trust_tier FROM pages p
-        JOIN jsonb_to_recordset($1::text::jsonb) AS r(source_id text,slug text) ON p.source_id=r.source_id AND p.slug=r.slug`,
-      [JSON.stringify([...slugs.values()].filter(s => !s.hidden).map(({ source_id, slug }) => ({ source_id, slug })))]);
+    const keys = [...slugs.values()].filter(s => !s.hidden).map(({ source_id, slug }) => ({ source_id, slug }));
+    const rows = keys.length ? await engine.readPageTrustRows({ keys, includeDeleted: true }) : [];
     const bySlug = new Map(rows.map(row => [`${row.source_id}:${row.slug}`, row]));
     for (const [key] of slugs) {
       const row = bySlug.get(key);
@@ -98,7 +105,7 @@ export function derivedWriteTrust(input: DerivedTrustInput): WriteTrust {
 }
 
 /** Reads the inputs' tiers and builds the derivation's WriteTrust in one call. */
-export async function deriveTrust(engine: Sql, refs: readonly TaintRef[], input: Omit<DerivedTrustInput, 'inputs'>):
+export async function deriveTrust(engine: TrustReads, refs: readonly TaintRef[], input: Omit<DerivedTrustInput, 'inputs'>):
   Promise<{ trust: WriteTrust; inputs: TaintInput[] }> {
   const inputs = await readTaintInputs(engine, refs);
   return { trust: derivedWriteTrust({ ...input, inputs }), inputs };
@@ -122,15 +129,11 @@ export async function recordTaintEdges(tx: BrainEngine, derived: { table: TaintT
  * the trigger rule, so the deriver lowers explicitly; the trigger allows any
  * lowering. Returns the ids lowered.
  */
-export async function lowerToDerivedTier(tx: Sql, table: TaintTable, ids: readonly number[], trust: WriteTrust): Promise<number[]> {
+export async function lowerToDerivedTier(tx: BrainEngine, table: TaintTable, ids: readonly number[], trust: WriteTrust): Promise<number[]> {
   if (!ids.length) return [];
-  const rows = await tx.executeRaw<{ id: number | string }>(
-    `UPDATE ${table} SET trust_tier=$2,write_origin=$3::text::jsonb
-      WHERE id=ANY($1::bigint[]) AND ${trustRankSql('trust_tier')}>${trustRankSql('$2::text')} RETURNING id`,
-    [[...ids], trust.tier, trust.origin ? JSON.stringify(trust.origin) : null]);
-  const lowered = rows.map(row => Number(row.id));
+  const lowered = await tx.lowerTrustTier(table, ids, trust.tier, trust.origin ?? null);
   // W1 #6783 §12 (b): what was derived from a lowered row follows it down.
-  if (lowered.length) await propagateTierLowering(tx as BrainEngine, lowered.map(id => ({ table, id })));
+  if (lowered.length) await propagateTierLowering(tx, lowered.map(id => ({ table, id })));
   return lowered;
 }
 
@@ -174,10 +177,10 @@ export async function lowerDerivedPage(engine: BrainEngine, derivation: { trust:
 /** lowerDerivedPage inside a caller's transaction (a managed brain's coordinated write). */
 export async function lowerDerivedPageIn(tx: BrainEngine, derivation: { trust: WriteTrust; inputs: readonly TaintInput[] },
   sourceId: string, slug: string): Promise<void> {
-  for (const row of await tx.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, slug])) {
-    await lowerToDerivedTier(tx, 'pages', [Number(row.id)], derivation.trust);
-    await recordTaintEdges(tx, { table: 'pages', id: Number(row.id), sourceId }, derivation.inputs);
-  }
+  const page = await tx.getPage(slug, { sourceId });
+  if (!page) return;
+  await lowerToDerivedTier(tx, 'pages', [Number(page.id)], derivation.trust);
+  await recordTaintEdges(tx, { table: 'pages', id: Number(page.id), sourceId }, derivation.inputs);
 }
 
 // ---------------------------------------------------------------------------
@@ -228,13 +231,10 @@ export function isExternalTier(tier: TrustTier): boolean {
  * facts, takes, timeline entries and pages. One scan per table, like the tier
  * counts beside it in doctor.
  */
-export async function readDerivedTaintShare(engine: Sql & Pick<BrainEngine, 'countDerivedFactTaint'>): Promise<{ rows: number; external_untrusted: number; external_pct: number }> {
+export async function readDerivedTaintShare(engine: Pick<BrainEngine, 'countDerivedFactTaint' | 'countDerivedRowTaint'>): Promise<{ rows: number; external_untrusted: number; external_pct: number }> {
   let rows = 0, external = 0;
   for (const table of ['facts', 'takes', 'timeline_entries', 'pages'] as const) {
-    const row = table === 'facts' ? await engine.countDerivedFactTaint()
-      : (await engine.executeRaw<{ derived: number | string; external: number | string }>(
-        `SELECT count(*) FILTER (WHERE write_origin ? 'taint_inputs') AS derived,
-                count(*) FILTER (WHERE write_origin ? 'taint_inputs' AND trust_tier = 'external_untrusted') AS external FROM ${table}`))[0];
+    const row = table === 'facts' ? await engine.countDerivedFactTaint() : await engine.countDerivedRowTaint(table);
     rows += Number(row?.derived ?? 0);
     external += Number(row?.external ?? 0);
   }

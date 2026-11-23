@@ -51,7 +51,7 @@ function expand(t: string): string {
 /** The committed files are Python-style compact JSON, UTF-8, no trailing newline. */
 const dump = (v: unknown) => JSON.stringify(v);
 
-const { PGlite } = (await import(installPglite())) as { PGlite: new () => any };
+const { PGlite } = (await import(await installPglite())) as { PGlite: new () => any };
 const db = new PGlite();
 await db.exec(await ftsInputSql());
 const version = (await db.query('select version() as v')).rows[0].v as string;

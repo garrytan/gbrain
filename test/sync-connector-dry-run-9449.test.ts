@@ -24,6 +24,7 @@ const configs: Record<string, Record<string, unknown>> = {
   meetings: { kind: 'meetings', m_provider: 'fireflies', m_record: 'database', federated: false },
   slack: { kind: 'slack', s_channels: 'CGENERAL01' },
   imessage: { kind: 'imessage', federated: false },
+  'apple-contacts': { kind: 'apple-contacts', ac_helper_host: '127.0.0.1', ac_token_file: '/nonexistent/contacts-token.json', owner_only: true, federated: false },
 };
 const googleContacts = withGoogleAccount(async () => json({ connections: [contact('first', 'First Example')], nextSyncToken: 'contacts-1' }));
 const providers: Record<string, (url: string, init?: RequestInit) => Promise<Response>> = {
@@ -32,6 +33,7 @@ const providers: Record<string, (url: string, init?: RequestInit) => Promise<Res
   meetings: async () => json({ data: {} }),
   slack: async () => json({ ok: true, messages: [] }),
   imessage: async () => json({ threads: [] }),
+  'apple-contacts': async () => json({ items: [], meta: { next_cursor: 'seq:1', more: false, full: true } }),
 };
 
 function files(dir: string): string[] {

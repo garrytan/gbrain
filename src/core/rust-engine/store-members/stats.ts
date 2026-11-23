@@ -26,6 +26,8 @@ import { loadOrphanPolicyOverrides, shouldExcludeFromOrphanReporting } from '../
 import { resolveEntityTypes, type EntityTypeFilter, type TypeFilterEngine } from '../../schema-pack/entity-types.ts';
 import { loadTimelineGradedPredicate } from '../../timeline-grading.ts';
 import { withDates } from '../store-codec.ts';
+import { writerStamp } from '../../persistence/writer-versions.ts';
+import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, requireTextColumn, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
@@ -198,14 +200,19 @@ function boundText(value: unknown): string | null {
   return String(value);
 }
 
-export const logIngest: StoreMember<[entry: IngestLogInput], void> = async (brain, entry) => {
+/** One ingest-log row, stamped as PGLite stamps it: the binary's version, the engine's host id and the segment-reader mark. */
+export const logIngest = async function logIngest(this: RustEngine, brain: StoreBrain, entry: IngestLogInput): Promise<void> {
   const sourceId = entry.source_id ?? 'default';
+  const stamp = writerStamp({ mint: false, engine: this });
   await storeCall({ member: 'logIngest', sourceId: boundText(sourceId) ?? undefined }, () => brain.logIngest({
     source_id: boundText(sourceId),
     source_type: boundText(entry.source_type),
     source_ref: boundText(entry.source_ref),
     pages_updated_json: JSON.stringify(entry.pages_updated) ?? null,
     summary: boundText(entry.summary),
+    writer_version: stamp.version,
+    writer_host_id: stamp.hostId,
+    writer_segment_reader: true,
   }));
 };
 

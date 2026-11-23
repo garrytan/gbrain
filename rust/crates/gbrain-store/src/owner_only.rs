@@ -46,6 +46,10 @@ pub enum OwnerOnlyForm {
     /// No owner-only test.
     Off,
     /// `gbrain_owner_only_lineage(table, id)` behind its guard (the strict read of the marks).
+    /// Master's member names this form `lineage` (`StoreOwnerOnly` in master's
+    /// store-members/private-provenance.ts: the v320 form and its v328 read-mode form), so the
+    /// store reads that name as this form too.
+    #[serde(alias = "lineage")]
     Fn,
     /// The closed test: any owner-only source, or the held flag (a mark, here), hides every row.
     #[default]
@@ -160,5 +164,26 @@ impl OwnerOnlySources {
             OwnerOnlyForm::Closed => self.guarded(),
             OwnerOnlyForm::Fn => self.holds(source_id),
         }
+    }
+}
+
+#[cfg(test)]
+mod wire_tests {
+    use super::OwnerOnlyForm;
+    use serde_json::json;
+
+    fn form(name: &str) -> Result<OwnerOnlyForm, serde_json::Error> {
+        serde_json::from_value(json!(name))
+    }
+
+    #[test]
+    fn master_s_lineage_name_reads_as_the_function_form() {
+        assert_eq!(form("lineage").unwrap(), OwnerOnlyForm::Fn);
+        assert_eq!(form("fn").unwrap(), OwnerOnlyForm::Fn);
+        assert_eq!(form("closed").unwrap(), OwnerOnlyForm::Closed);
+        assert_eq!(form("off").unwrap(), OwnerOnlyForm::Off);
+        // A name neither side sends still refuses, so a new form is not read as an old one.
+        assert!(form("mode").is_err());
+        assert!(form("Lineage").is_err());
     }
 }

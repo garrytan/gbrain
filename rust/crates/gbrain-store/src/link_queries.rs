@@ -455,7 +455,7 @@ fn all_links(read: &dyn KvRead) -> Result<Vec<LinkRecord>> {
 }
 
 /// The links a page authored (`origin_page_id = id`), in id order.
-fn origin_links(read: &dyn KvRead, origin_id: u64) -> Result<Vec<LinkRecord>> {
+pub(crate) fn origin_links(read: &dyn KvRead, origin_id: u64) -> Result<Vec<LinkRecord>> {
     let mut refs = Vec::new();
     scan_prefix(
         read,

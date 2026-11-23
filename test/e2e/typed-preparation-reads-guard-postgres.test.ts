@@ -25,6 +25,7 @@ const UNBOUNDED_ALLOWED: ReadonlyMap<string, string> = new Map<string, string>([
   ['setBodyStagingState', STAGING_WRITE],
   ['allocateBodyOccurrenceIds', STAGING_WRITE],
   ['stageSegmentChunks', STAGING_WRITE],
+  ['publicationJournalStore', 'a store whose statements run on the bounded view itself (bounded-reads.ts binds it to the view), so each ends at the deadline'],
 ]);
 
 const seen = new Map<string, { typed: boolean; views: Set<'engineReads' | 'plain'> }>();

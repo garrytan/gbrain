@@ -7,6 +7,8 @@
  */
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../../engine.ts';
+import type { GenerationPageRowsQuery } from '../../engine-sql/generation-page-rows.ts';
+import type { GenerationVersionProducer, ProducerVersionRow } from '../../engine-sql/generation-atom-reads.ts';
 import { importFromContent } from '../../import-file.ts';
 import { parseMarkdown, serializeMarkdown } from '../../markdown.ts';
 import { PAGE_INLINE_MAX_BYTES } from '../../page-size-policy.ts';
@@ -49,13 +51,9 @@ export function markdownItem(slug: string, content: string): ProposedItem {
     timeline: parsed.timeline, frontmatter: parsed.frontmatter, tags: parsed.tags }) };
 }
 
-/** Rows of `sourceId` matching `where` (a constant predicate over alias `p`; parameters start at $2), deleted rows included. */
-export async function readPageRows(engine: BrainEngine, sourceId: string, where: string, params: readonly unknown[]): Promise<PageRowData[]> {
-  const rows = await engine.executeRaw<PageRowData & { tags: string[] | null }>(
-    `SELECT p.id AS page_id, p.slug, p.type, p.title, p.compiled_truth, p.timeline, p.frontmatter, p.deleted_at IS NOT NULL AS deleted,
-            p.body_storage = 'segmented' AS segmented, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id = p.id), '[]'::jsonb) AS tags
-       FROM pages p WHERE p.source_id = $1 AND (${where}) ORDER BY p.slug`, [sourceId, ...params]);
-  return rows.map(row => ({ ...row, page_id: Number(row.page_id), tags: row.tags ?? [] }));
+/** The rows of `query` (engine-sql/generation-page-rows.ts), deleted rows included, by slug. */
+export async function readPageRows(engine: BrainEngine, query: GenerationPageRowsQuery): Promise<PageRowData[]> {
+  return engine.readGenerationPageRows(query);
 }
 
 export function pagePreimage(row: PageRowData): Preimage {
@@ -89,17 +87,18 @@ export async function importPageItem(tx: BrainEngine, sourceId: string, slug: st
 }
 
 /**
- * Rows whose retained page version was written by the producer (`producer`: a predicate over version alias `v`) at the row's identity.
+ * Rows whose retained page version was written by the producer (engine-sql/generation-atom-reads.ts `listProducerVersionRows`) at the row's identity.
  * The version is compared under the row's own visibility, which `repair visibility` stamps after the fact (#9386); adoption keeps
  * the row, so its visibility never widens.
  */
-export async function pageVersionEvidence(engine: BrainEngine, sourceId: string, rows: readonly ItemRow[], producer: string): Promise<Set<string>> {
+export async function pageVersionEvidence(engine: BrainEngine, sourceId: string, rows: readonly ItemRow[],
+  producer: GenerationVersionProducer): Promise<Set<string>> {
   if (!rows.length) return new Set();
-  const versions = await engine.executeRaw<PageIdentityInput & { slug: string; tags: string[] | null; live_visibility: unknown }>(
-    `SELECT p.slug, v.type, v.title, v.compiled_truth, v.timeline, v.frontmatter, v.tags, p.frontmatter->'visibility' AS live_visibility
-       FROM page_versions v JOIN pages p ON p.id = v.page_id
-      WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND v.compiled_truth IS NOT NULL AND v.title IS NOT NULL AND (${producer})`,
-    [sourceId, rows.map(row => row.key)]);
+  return versionEvidence(rows, await engine.listProducerVersionRows(sourceId, rows.map(row => row.key), producer));
+}
+
+/** The keys of `rows` that one of `versions` (a producer's retained versions) matches at the row's identity, under its visibility. */
+export function versionEvidence(rows: readonly ItemRow[], versions: readonly ProducerVersionRow[]): Set<string> {
   const wanted = new Map(rows.map(row => [row.key, row.identityHash]));
   return new Set(versions.filter(({ live_visibility, ...v }) => {
     const { visibility: _ignored, ...frontmatter } = v.frontmatter ?? {};

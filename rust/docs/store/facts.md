@@ -22,6 +22,7 @@ typed claims. Each member gives the answer PGLite gives today, odd behavior incl
 | `listUnattributedFacts` | The review-list read of `src/core/review-lists.ts`: active rows with no `entity_slug` in any of `sourceIds` (duplicates read once), less rows whose page or entity page is soft-deleted, `worldOnly` keeping `visibility = 'world'`, newest id first, then `offset` and `limit`. Each row is `id, fact, kind, visibility, source_id, created_at, source`, `created_at` in the `timestamptz::text` form (`2026-06-18 09:00:00.5+00`). `excludePrivate` applies the private-provenance policy below, as `src/core/review-lists.ts:30` does. The `BrainEngine` member `listUnattributedFacts` (`src/core/rust-engine/store-members/facts.ts`) calls it in place of the SQL of `src/core/engine-sql/cli-reads-ops.ts`; its `excludePrivateProvenance` becomes this policy. |
 | `pageCollapseFacts` | The collapse-stage read of hybrid search (`facts/collapse.rs`, SQL in `src/core/engine-sql/search-reads.ts`): one `{ id, target, body_chars, body, lead }` row per page row whose id is in `ids`, soft-deleted pages and every source included, by id (the SQL has no `ORDER BY`); a missing id has no row. `target` is the first of `redirect_to`, `redirect` and `merged_into` that is a non-empty string after trimming spaces, then `superseded_by` when the lower-cased `status` holds the word `alias`, `redirect` or `redirected`. `BODY` is the first 65,536 code points of `compiled_truth`, or of the stored `truth_lead` for a segmented page (`coalesce(compiled_truth, truth_lead)`), spaces trimmed; `body_chars` is its length in code points, `body` its md5 hex for an id in `bodyIds` with at least 200 code points, `lead` its first 4,000 code points for an id in `bodyIds`. The TypeScript member refuses an id that is not a 32-bit integer, as the SQL casts both lists to `int[]`. It reads pages, not facts; it sits here because its `BrainEngine` capability class is `facts`. |
 | `listFenceRetireCandidates`, `listFenceFactRows` | The fence guard's two reads of a page's fence rows (`facts/fence.rs`): the rows a publication would retire, and the live rows the writer may not supersede. See "The fence guard's reads". |
+| `readFactPreimages` | The fact rows adapter's before-state of named facts of one source (`facts/fence.rs`). See "The fence guard's reads". |
 | `listHeldFenceCells` | The fence row lines a caller with world-only fact reads may not see (`facts/held_cells.rs`), member callers and callers with a private-facts grant included. See "Held fence cells". |
 | `readFenceOverlayRows` | The fence overlay's read of one page body's world fence rows (`facts/fence_overlay.rs`): page tier, newest row fact tier and flag, held hold, narrower fact. See "The fence overlay". |
 | `migrateFactsToCanonical` | Moves a phantom page's active rows onto the canonical slug, `row_num` offset past the canonical page's largest. The ontology duplicates the move would make are dropped first, in its own write, as PGLite runs the two statements outside one transaction. |
@@ -50,6 +51,7 @@ their own page (`page_hidden`; see [salience.md](salience.md#private-pages-exclu
 |---|---|
 | A row is hidden when its provenance page (`source_markdown_slug`, same source) fails the reader check or the privacy check. A row with no page is kept. | `privateFactFilterForCaller`, 1012; `privatePagesFilterForCaller`, 631 |
 | The entity page and, for a row with an entity, the holding page (`memory/unattributed` or `…/memory/unattributed`) must pass the reader check; with `entityPrivacy` they must pass the privacy check too. | `privateEntityFilterForCaller`, 984 |
+| A bare name key (an `entity_slug` with no `/`) is also hidden when the page at `<dir>/<key>` fails the reader or privacy check, for each directory of `NAME_KEY_PAGE_DIRS` (people, companies, hosts, projects, concepts, funds, orgs, organizations). | `NAME_KEY_PAGE_DIRS`, `src/core/entities/basename-dirs.ts` |
 | The shared-held ruling is always passed with no caller record. | `sharedHeldRuledSql`, 996; `callerRelaxesPrivacy`, 1026; `processPrivacyRelaxed`, 1137 |
 | Reader check: a page whose frontmatter has a `readable_by` key is hidden. A page of a plain type passes; any other type passes only when `gbrain_access_origin_restricted` is false. | `privatePagesFilterForCaller`, 631; `gbrain_access_origin_restricted`, `src/core/schema-migrations/v305-access-lineage-designs.ts:42` |
 | `gbrain_access_origin_restricted`: an atom whose `source_slug` page names readers; a question or synthesized concept with a `concept-provenance` / `synthesized_from` input that names readers or whose `source_slug` page does; a `life-chronicle` event whose `event.depth` page names readers; then any `derived_from` page that names readers. | `v305-access-lineage-designs.ts:42-77` |
@@ -101,7 +103,7 @@ a private row the same `widen` record admits (`world_admits`):
 | Rule | Store test | PGLite text |
 |---|---|---|
 | Own member page | a private row on `memory/members/<member>`, whose live page names `member:<member>` among its readers (`access_readers`) and passes `memberPagePolicy` (`page_hidden`) | `memberFactAdmitSql` |
-| Private-facts grant | a private row of a source in `privateFactSources` that has a page to check (not `unpagedFactSql`: no holding page, or a conversation, hook, sweep, transcript or connector lane) and whose pages keep it private for no reason: no holding, entity or provenance slug under `memory/members/`; the holding and provenance pages (`provenance_slug`) not derivation-private in any row, missing, soft-deleted or quarantined; the entity page not derivation-private | `grantedPrivateFactSql`, `factPagesOpenSql`, `factPageReasons` (`src/core/facts/private-fact-pages.ts`) |
+| Private-facts grant | a private row of a source in `privateFactSources` that has a page to check (not `unpagedFactSql`: no holding page, or a conversation, hook, sweep, transcript or connector lane) and whose pages keep it private for no reason: no holding, entity or provenance slug under `memory/members/`; the holding and provenance pages (`provenance_slug`) not derivation-private in any row, missing, soft-deleted or quarantined; the entity page not derivation-private; and not a held row the grant refuses (GST-2979: a visibility proposal names a copy the caller's reads admit by neither rule, along the hold chain; `widen.rs` `hold_refused`) | `grantedPrivateFactSql`, `factPagesOpenSql`, `factPageReasons` (`src/core/facts/private-fact-pages.ts`) |
 
 The member (`src/core/rust-engine/store-members/fact-visibility.ts`) sends the list alone when PGLite renders the
 bare list. Otherwise it sends `widen` only when the caller's text equals the rendering for a record of just its reader
@@ -169,7 +171,10 @@ counter is `M next_facts_id`.
 | `F 0x09 source dedup_key` | id | `open_loops_dedup` (unique). |
 | `F 0x0A source fact_id` | `AttemptRecord` (JSON) | One `fact_relink_attempts` row (primary key `(source_id, fact_id)`). `fact_id` is sign-flipped big-endian, so key order is numeric order. |
 | `F 0x0B source tier target_slug fact_id` | empty | Attempts that carry both a tier and a target page, for `deleteFactRelinkMemos` and the paid memo read. |
+| `F 0x0C source content_hash` | JSON: `slug`, `request_id`, `purged_at_us` | One `page_purges` row (primary key `(source_id, content_hash)`); `facts/page_purges.rs`. |
+| `F 0x10 source kind value` | `SuppressionRecord` (JSON: `id`, `created_at_us`) | One `loop_suppressions` row (unique `(source_id, kind, value)`); `facts/loops/mutes.rs`. Its counter is `M next_loop_suppressions_id`. |
 | `F 0x0F source visibility subject fact_hash` | `PurgeRecord` (JSON: `request_id`, `actor`, `reason`, `purged_at_us`) | One `fact_purges` row (primary key `(source_id, visibility, subject, fact_hash)`); `facts/purge_ledger.rs`. |
+| `F 0x10 source subject claim_hash` | `TakePurgeRecord` (JSON: `request_id`, `purged_at_us`) | One `take_purges` row (primary key `(source_id, subject, claim_hash)`); `facts/take_purges.rs`. |
 
 ### Relink attempts (`facts/relink.rs`)
 
@@ -225,6 +230,13 @@ then by slug in byte order (COLLATE "C"), and the list stops at `limit`.
   duplicates of the entity move are dropped, `entity_slug` moves, the rows at the new page
   whose `row_num` the old page holds are deleted, the ontology duplicates of the page move are
   dropped, and `source_markdown_slug` moves.
+- `expire_gone_page_facts`: `purgeDeletedPages` calls it in its write, after the page rows are
+  removed, as PGLite's `expireGonePageFacts` (`src/core/facts/gone-page-facts.ts`) runs its four
+  updates, in their order: facts filed on a purged page, the slot facts of a filed conversation
+  (dimension, value and status cleared too), facts extracted from the page by a page-extraction
+  source (`mcp:put_page`, `sync:import`, `file_upload`, `code_import`) and filed on no page, and
+  facts about the page that no remaining page row holds. A row is expired (`expired_at` now,
+  `row_num` cleared), never deleted.
 
 ## Group 5: doctor checks (`facts/doctor.rs`)
 
@@ -326,11 +338,11 @@ that are not `invalid` at their current revision, never-attempted first, then ol
 page delete removes the page's row (`cascade::remove_page_rows` calls `facts::reconcile::remove_page_rows`, the
 `ON DELETE CASCADE`); a soft delete keeps it. `lockReconcileRevision` answers whether the live page `(sourceId, slug)`
 is at `revision` (`facts/reconcile.rs`); a soft-deleted or missing page, or a null revision, answers false. Postgres
-locks the row `FOR SHARE` for the rest of the transaction. Once a store transaction is served on Rust (a later landing; `engine.transaction` is a typed refusal in this landing), the
-read runs inside the caller's store transaction and sees its writes; that transaction holds the store's single writer from
-begin to commit, so no other writer changes the page before the settle commits. Outside a transaction it reads the last
-commit.
-`listSingleFactMetadata` is served by `facts/trust_reads.rs` (below), except under the remote provenance floor.
+locks the row `FOR SHARE` for the rest of the transaction. On Rust the read runs inside the caller's store transaction
+and sees its writes; that transaction holds the store's single writer from begin to commit, so no other writer changes
+the page before the settle commits. Outside a transaction it reads the last commit. The extract_facts commit step
+(lock, then the `complete` settle, in one transaction) runs whole on Rust.
+`listSingleFactMetadata` is served by `facts/trust_reads.rs` (below).
 
 ## Group 5: repair classifiers and loop retirement (`facts/repair.rs`)
 
@@ -348,11 +360,17 @@ journal), so both stop on the typed `raw_sql` refusal and `listUnwithdrawnFacts`
 binds the ledger must also delete a source's generations with the source. The store also keeps no
 `version_history_gap_at` (`page-state/versions.ts` sets it with raw SQL), so `history_gap` is always false.
 
-No member writes `page_purges` on Rust. Its two writers, the page purge sweep (`persistence/page-purge.ts`) and the
-restore replay (`belief/purge-mirror.ts`), write it with raw SQL inside the write journal's transaction, so they stop on
-the typed `raw_sql` refusal and the Rust ledger stays empty: every fact `countPurgedPageFacts` counts on Rust is
-ambiguous. A writer that binds the ledger must also add `F 0x0C` to the source cascade and give `putPage` the
-`purged_content` guard of the Postgres pages trigger.
+`upsertPagePurges({ sourceId, contentHashes, slug, requestId })` writes `page_purges` (`facts/page_purges.rs`): one
+tombstone per hash under the slug; a hash already tombstoned in the source takes the new slug, request id and time
+(`ON CONFLICT ... DO UPDATE`). The time is the open transaction's clock. An empty list writes nothing and reads no
+source; a repeated hash, a `requestId` that is not a UUID or a NUL character refuses with `invalid_argument`; a missing
+source refuses as the foreign key does. The page purge sweep (`persistence/page-purge.ts` `tombstonePage`) writes its
+tombstones through it. The restore replay (`belief/purge-mirror.ts`) writes them through `replayPagePurges`
+(`engine-sql/belief-purge.ts`), which differs in one way: a hash already tombstoned keeps its `purged_at_us`.
+`countPagePurgeTombstones(sourceId, slug)` counts the source's tombstones under the slug. Deleting a source deletes its tombstones. A page write that stores a hash tombstoned in its
+source refuses with `purged_content`, as the Postgres `pages_refuse_purged` trigger does: `putPage` always (it is an
+upsert, so the `BEFORE INSERT` trigger fires even when the page already holds the hash), every other page write
+(`pages::write_page`) on insert or when the hash or source changes.
 
 | Member | What it answers | Rust |
 | --- | --- | --- |
@@ -363,7 +381,19 @@ ambiguous. A writer that binds the ledger must also add `F 0x0C` to the source c
 | `loopFactDrift` | Closed loops whose commitment fact is still active. | Served from `facts/loops.rs`: a `done` or `dropped` loop of the named sources whose fact is in its own source with no `expired_at` and no `open` loop references it, by id |
 | `closedLoopWithActiveFact` | One closed loop whose commitment fact is still active. | Served from `facts/loops.rs`: a `done` or `dropped` loop whose fact exists with no `expired_at` |
 | `countLabelFacts` | The bounded count of evidenced label facts. | Served: the active facts of `segmentSource` whose context holds the `%text%` of `contextLike`, on a live page whose body or timeline has a line that opens with `**`, a label, any `[[:space:]]` and `:**` (ASCII case folding; `[[:space:]]` is the musl `iswspace` set PGLite reads, where Postgres on glibc also counts U+1680), on a page no active `extractor_version=N`-stamped audit fact decided, unsuperseded and no row's successor, named by no loop and covered by no withdrawal. The store counts up to `cap + 1` and the member caps it. `store-members/label-line.ts` reads the label line into its literal labels; any other pattern, a context pattern other than `%text%` and a cap that is not an integer refuse |
+| `listLabelFactCandidates` / `listSegmentedLabelPages` / `hasActiveAuditMarker` | The `repair conversation-labels` preview reads: each candidate with its evidence, the segmented census and the decided-page check. | Served from `facts/label_repair.rs`: the label line is read as in `countLabelFacts`; candidates by (source, page bytes, id), sources in byte order. Pinned by `tests/label_repair_reads.rs` |
 | `listExtractorFactsForClassification` | Expired fenceless extractor facts with page, withdrawal, duplicate, fence and receipt evidence. | Served from `facts/extractor_classify.rs`: the facts of the sources whose `source` starts with `cli:extract-conversation-facts`, expired, with no `row_num`, a `source_markdown_slug` (of `slug` when set) and no `retired: conversation-labels` in `context`. `page_id` / `page_deleted` name the provenance page, live or soft-deleted; `withdrawn` is a withdrawal of the source at the fact's visibility with either fingerprint under `*` or the fact's entity; `active_duplicate` is an active row of the page with the same visibility, fingerprint and entity; `fence_history` is any row of the page from another source. `receipt` / `receipt_consumer` are the `request_id` and `consumer_version` of the write journal's lowest-sequence `committed` request of the page whose `completed_at` is the fact's `expired_at`; the read writes nothing there. `expired_at` is UTC microsecond text. By source id, page slug, id |
+| `listClosedConsolidationTies` | Active typed facts consolidation closed at their own instant, with the facts of their take that state the same claim then. | Served from `facts/repair_previews.rs`: no `expired_at`, a claim metric, an entity, `consolidated_into` set and `valid_until` equal to `valid_from`; `partners` are the other facts of the source in the same take with the same metric, unit and period (`IS NOT DISTINCT FROM`) and `valid_from`, or null for none. `valid_from` is `timestamptz::text` in UTC. By (source, id) |
+| `listPagelessEntityFacts` | Every entity slug with no live page: its database-only fact ids and its fenced fact count. | Served: facts with an entity grouped by (source, slug); `ids` are the rows with no `row_num` (null for none), `fenced` counts the rest; a slug whose page row is live is dropped, a soft-deleted page does not count. By (source, slug) in byte order (Postgres orders in the database collation: the same for lowercase slugs) |
+| `listOntologyFactCandidates` | Ontology rows with the fence step's signature and their withdrawn, consolidated and duplicate flags. | Served: facts with a dimension, an entity and a `source`, that are not a conversation-extractor slot, with a `row_num` or a `source_markdown_slug` other than `source`. `withdrawn` is the extractor read's rule (either fingerprint, subject `*` or the entity); `duplicate` is another row with the same entity, dimension, value hash, `source_markdown_slug = source` and `valid_from`. `expired_at` is the UTC microsecond text. By id across the sources |
+| `listDuplicateFactRows` | Active facts that share a source, visibility, speaker and fingerprint with another such fact. | Served: no `expired_at`, no `superseded_by`, `valid_until` unset or after the store clock's now, `source` not in `excludedSources`; the fenced flag is a `row_num`, a page slug and a `source` that does not start with `cli:`. Groups order by (source, visibility, fingerprint, speaker) in byte order, rows by fenced first, `created_at`, id. The statement's extra `created_at` and `n` columns are not part of the row |
+| `listFactsOnValidDay` | The unexpired facts of a source whose `valid_from` falls on a UTC day. | Served from `facts/repair_previews.rs`: no `expired_at` and the UTC date of `valid_from` equal to `day` (a `YYYY-MM-DD` real date: any other spelling refuses, where the SQL's `$2::date` reads more). `valid_from` is `timestamptz::text` in UTC and `valid_until_day` the UTC day of `valid_until`. By id |
+| `readLivePageByPath` | The live page of a source recorded at a `source_path` (the lowest id), or null. | Served from `write_guards.rs` through the live-origin index: the live pages of the source whose origin is `path`; an empty path is never an origin, so reads null (the SQL would match an empty `source_path`) |
+| `listPurgedPageFactCandidates` | The gone-page facts of the sources (or of `ids`) with the exclusion flags and the purge evidence the `purged-page-facts` classification reads. | Served from `facts/repair.rs`: the filter of `countPurgedPageFacts` with no exclusion applied; `withdrawn`, `superseded`, `referenced` (another fact's `superseded_by` names it), `open_loop` and `purged` (a `page_purges` record of the head at or after `created_at`) are flags. The ledger has no writer on Rust, so `purged` is false. By (source, page head, id) in byte order |
+| `listFactsHomeCandidates` | The unexpired facts of a source with no fence position (ontology rows too), with whether the entity has a live and a soft-deleted page. | Served from `facts/repair_home.rs`: by entity (a fact with no entity first), then id; `valid_from` and `valid_until` are ISO text the member turns into dates |
+| `listHeldHomeRows` | The unexpired fence rows held on a holding page of the source that name an entity which is not a holding slug, with whether the entity has a live page, the `created_at` second and whether the row is over `days` days old. | Served from `facts/repair_home.rs`: the holding page must have a page row (live or deleted), as the SQL's subquery reads `pages` unfiltered; `days` counts 24-hour days from the store's clock and must be a whole number. By entity, then id |
+| `listOrphanedFenceRows` | The unexpired fence rows of a source whose page is not live, with that page's slug. | Served from `facts/repair_home.rs`: by id |
+| `readFactSnapshots` | The named facts of a source as the 27-column `jsonb_build_object` snapshot. | Served from `facts/repair_home.rs`: times are the text `jsonb` gives a `timestamptz` (`2026-02-03T10:11:12.345+00:00`); `lock` (FOR UPDATE, a SQL transaction only) refuses on Rust. By id |
 | `countPurgedPageFacts` | The bounded count of facts of a purged page, by class. | Served: the active facts of a page-extraction source (`mcp:put_page`, `sync:import`, `file_upload`, `code_import`) filed on no page, whose context head (the text before the first ` — `) is not empty, holds no `[[:space:]]` (the musl set PGLite reads, where Postgres on glibc also counts U+1680) and names no page row, live or soft-deleted, of the fact's source. A fact counts when its head holds a `/` (ambiguous) or a `page_purges` row of its source names the head at or after its `created_at` (evidenced), and no withdrawal, successor, referring row or loop holds it. The store lists up to `cap + 1` and the member caps and counts them; a cap that is not an integer refuses |
 | `listUnwithdrawnFacts` | Facts a facts-fence generation retired that no withdrawal covers. | Served: per fact id the newest `fenceKind` generation of the sources (not `held`, owner `page:<slug>`, `slug` when set) whose retired item has an object preimage with an `id`, a `row_num` and no `expired_at`; listed when the fact, in the same source, is expired, has no `row_num`, has the preimage's `fact` and `visibility` and is not a conversation extractor's. `withdrawn` applies `withdrawalCoversFactSql` to the source's withdrawals at the current fingerprint (the store's only withdrawal writer keys by it, so it holds no v1 key); `active_duplicate` is an active row on the page with the same fingerprint and entity and a compatible attribution. By (source, slug) byte order (the SQL pins `COLLATE "C"`), then id |
 
@@ -389,6 +419,53 @@ Rules of the four served members:
 - The privacy helpers (`provenance_slug`, `snapshot_allows`, `alias_private`, `derivation_private`) are
   re-implemented in `repair.rs` rather than shared with `privacy.rs`.
 
+## Group 5: repair, doctor and write-path sites (`facts/repair_sites.rs`)
+
+Twenty-eight members that were raw `executeRaw` statements in nine callers (`src/core/repair/agent-session-facts.ts`,
+`captured-facts.ts`, `facts-rehome.ts`, `src/commands/doctor/checks/fence-integrity.ts`, `facts-pages.ts`,
+`unlinked-facts.ts`, `src/core/facts/write-single.ts`, `capture-dedup.ts` and `claim-conflicts.ts`). Each runs the
+statement its caller ran, with the same text and parameters, in `src/core/engine-sql/facts-repair.ts` (15),
+`facts-doctor.ts` (3) and `facts-trust.ts` (10). None is implemented on Rust yet: each is named `facts` in
+`rust-engine/members.ts` and refuses by name with `engine_capability_missing` until the store serves it, so the repair,
+doctor and write-path callers stop on that refusal instead of the `raw_sql` refusal they stopped on before.
+
+| Member | Reads or writes | What the store would need |
+| --- | --- | --- |
+| `listActiveSourceIds`, `listUnarchivedSourceRows` | `sources` | The source ids in byte order; `archived` is false or unset. |
+| `readRepairBrainId` | `persistence_brain` | The brain id row, or null (callers fall back to `host`). |
+| `listAgentSessionTakeCandidates`, `retireSessionTakes`, `listInactiveTakeIds` | `takes`, `facts` | The `consolidated_into` and `consolidated_at` columns of facts and the take columns `kind`, `holder`, `active`, `resolved_at`, `created_at`. |
+| `listSettledSessionFacts`, `reattributeSessionFacts`, `listOtherAttributedFactIds` | `facts` | `attributed_to`, `context`, `superseded_by`, `row_num`; the re-attribution appends its note once and runs in a transaction. |
+| `listFenceRewriteRows`, `expireCapturedFacts`, `listExpiredFactIds` | `facts` | `row_num`, `expired_at`, `context`; the expiry puts its context before the fact's own. |
+| `listPagelessEntityFacts`, `readEntityRehomeState`, `rehomeEntityFacts`, `listSourceIncarnations` | `facts`, `pages`, `sources` | Live-page lookups by (source, slug), database-only facts keyed by entity, and the source `incarnation` as text. |
+| `countSegmentedCensusPages`, `listFactsPageBodies`, `readFactTableCatalog` | `pages`, catalog | `body_storage`, `source_path`, the bounded body prefix, and `to_regclass` of `facts` and `fact_relink_attempts`. |
+| `readFactEntitySlugById`, `readSupersessionReplacement`, `linkSupersededFact` | `facts` | Two-fact join for the fence row, same-page test and validity bounds; `superseded_by` link. |
+| `listLivePageTitles`, `listPageAliasNames` | `pages`, `page_aliases` | Live titles and normalized aliases; the alias read throws on a brain with no aliases table. |
+| `listCaptureDuplicateCandidates`, `computeFactFingerprints` | `facts` | `gbrain_fact_fingerprint`, the member-owned-page exclusion and a numeric scan limit. |
+| `listClaimConflictPairs`, `countClaimConflictPairs` | `facts`, `decide_proposals`, `trust_proposals` | Typed claim columns, the as-of bucket, and the proposal tables that exclude a pair already proposed. |
+
+## Group 5: the rest of the facts write and recall sites (not yet in Rust)
+
+Thirty-six members that were raw `executeRaw` statements in seventeen callers (`src/core/facts/absorb-log.ts`, `backstop.ts`,
+`embedding-identity.ts`, `slot-tagging.ts`, `subject-infer.ts`, `writeback-settings.ts`, `retire.ts`, `contested-claims.ts`,
+`derivation-inputs.ts`, `single-prepare.ts`, `proposal-supersede.ts`, `forget.ts`, `proposal-review.ts`, `fts-index.ts`,
+`question-recall.ts`, `src/core/ops/facts.ts` and `src/core/search/fact-relevance.ts`). Seven are in
+`src/core/engine-sql/facts-recall.ts` (`readFactsEmbeddingColumn`, `listNearestFacts`, `listSlotRows`, `listPoolUnbackedKeys`,
+`listCallOffCueFacts`, `listPoolEntityPairs`, `listFactRowsByIds`) and twenty-nine are in `facts-trust.ts`. Each runs the
+statement its caller ran, except `listNearestFacts`, which binds the embedding model, dimensions and vector literal twice
+(dimensions once when the column type is declared), so its `$n` numbers differ from the old text. Three are served on Rust,
+forget's: `readFactForForget` (`brain.readFactForForget`), and `expireFactSuperseded` and `expireFactAtDate`, which both
+call `brain.expireFactUntil` (`expire_fact_until` with `day_or_time` in `crates/gbrain-store/src/facts.rs`). Each other
+member is named `facts` in `rust-engine/members.ts` and refuses by name with `engine_capability_missing` until the store
+serves it. Two `factWithdrawnRefusal` reads in `single-prepare.ts` are still raw (the withdrawal lane owns them).
+
+| Group | Members | What the store would need |
+| --- | --- | --- |
+| Write gate | `readPendingWriteReceipt`, `lockSourceShared`, `lockAgentWritebackSetting`, `readMemberPageWithdrawal`, `readFactVisibility`, `readReplacementTarget`, `readPairFactRow`, `readFactActivity`, `readReviewAcceptedMark` | The write-gate receipt, the shared source lock and advisory lock for the writeback setting, member-page withdrawal, fact visibility and the replacement and pair rows. |
+| Expiry and supersession | `expireSupersededFact`, `restoreSupersededFact`, `expireFactSuperseded`, `expireFactAtDate`, `expireDerivedFacts`, `deactivateDerivedTakes`, `softDeleteDerivedPages`, `markNeedsRederive` | `expired_at`, `superseded_by` and the derived-row columns; each update runs in the caller's transaction. |
+| Provenance and listing | `listOversizedStaleFacts`, `listLivePersonTitles`, `readLiveFactEntityPage`, `listFactsToRetireFromPage`, `listContestedProposalPairs`, `listFactProvenance`, `recordDerivationEdges`, `listDerivedRows`, `readFactForForget`, `readWithdrawalAnchor` | Live-page lookups, the oversized-fact scan cap, derivation edges and the proposal tables. |
+| FTS index | `readFactsFtsIndexState`, `swapFactsFtsIndex` | The `facts` full-text index language and its swap. |
+| Recall pool | the seven `facts-recall.ts` members | The embedding column, nearest-vector scan, slot rows, unbacked keys, call-off cues, entity pairs and rows by id. |
+
 ## Group 5: stamped trust reads (`facts/trust_reads.rs`)
 
 Two reads of the `trust_tier` and `write_origin` the store stamps on every fact row. Neither needs a
@@ -396,7 +473,7 @@ key range of its own: they read the fact rows and the write-gate holds (`trust/w
 
 | Member | Site | Served | Notes |
 |---|---|---|---|
-| `listSingleFactMetadata` | `facts/purge.ts` | yes, without the remote floor | `id = ANY(ids)` within `sourceId`: a repeated id answers once and an id no row has answers nothing. The SQL has no `ORDER BY`; the store answers in id order. The member refuses `remoteFloor: true` and an id that is not an `int4`. |
+| `listSingleFactMetadata` | `facts/purge.ts` | yes | `id = ANY(ids)` within `sourceId`: a repeated id answers once and an id no row has answers nothing. The SQL has no `ORDER BY`; the store answers in id order. With `remoteFloor: true` the member passes the floor policy (`storeFloorPolicy`) and the store drops a row whose provenance page fails it, as `remoteProvenanceFloorSql('facts')` does. The member refuses an id that is not an `int4`. |
 | `listUnpreviewedTrustFacts` | doctor `trust-release-unpreviewed` | yes | Unexpired `user_confirmed` facts whose `write_origin` names the `trust_release` channel and has no `fields_previewed`, each joined to the newest released fact hold with the same source, slug, fence row (`payload->>'row_num'` as text, so `"3"` matches row 3) and request id (`IS NOT DISTINCT FROM`). A fact with no such hold drops out. In id order, at most `limit`; every row carries `total`, the count before the limit. The member refuses a limit that is not a non-negative integer. |
 
 ## Withdrawal discovery reads (`facts/withdrawal_discovery.rs`)
@@ -499,9 +576,11 @@ provenance page hides the row; then the entity, session, `since` (on `valid_from
 ## Open loops (`facts/loops.rs`)
 
 The `open_loops` table, for the three members loops-store.ts calls through the engine and the
-`loops_close` retry read `closedLoopWithActiveFact` and the retirement scan `loopFactDrift` (doctor
-`loop_facts_drift`, `gbrain repair loop-facts`). The other loop statements (thread auto-close, the
-staleness pass and mutes) still run through `executeRaw`, so they refuse on this engine.
+`loops_close` retry read `closedLoopWithActiveFact`, the retirement scan `loopFactDrift` (doctor
+`loop_facts_drift`, `gbrain repair loop-facts`) and the retirement's own read and expiry
+(`readLoopFactState`, `expireSourceFactNow`, `rust/docs/store/repair-bookkeeping.md`). Mutes and the
+thread verdict are in `facts/loops/mutes.rs` (below). The staleness pass and the sender list still run
+through `executeRaw`, so they refuse on this engine.
 
 | Member | What it does |
 |---|---|
@@ -511,6 +590,8 @@ staleness pass and mutes) still run through `executeRaw`, so they refuse on this
 | `closeOpenLoop` | Closes an open row (in the named source when one is given) with a status, `closed_by` and now. NULL when no open row matches. |
 | `closedLoopWithActiveFact` | `{ id, status, fact_id }` of a `done` or `dropped` row (in the named source when one is given) whose fact exists with no `expired_at`; NULL otherwise, also for a row with no fact. |
 | `loopFactDrift` | `{ loop_id, source_id, fact_id, status, slug }` of each `done` or `dropped` row of the named sources (only `loopId` when given) whose fact is in the row's own source, has no `expired_at`, and no `open` row references; `slug` is the fact's `source_markdown_slug`. By id. |
+| `readLoopFactState` | `{ loop, fact, shared }` for `retireLoopFact` and `gbrain repair loop-facts`: the row (`{ id, source_id, status, fact_id }`, NULL when no row has the id), its fact (`{ id, source_id, expired_at, row_num, source_markdown_slug, fact }`, NULL when the row has none or the fact is gone; `expired_at` as ISO text) and whether another `open` row references the fact. The SQL engines take the rows `FOR UPDATE` when asked; the store serializes its writes, so the member ignores the lock. |
+| `expireSourceFactNow` | Expires one fact of the named source that has no `expired_at`: `expired_at` now and `valid_until` the earlier of its value and now (now when NULL), through the fact write path. True when that row changed; false for a missing fact, another source or an expired fact. |
 
 - Every upsert takes an id from the counter, also one that lands on an existing row, as `nextval`
   does before `ON CONFLICT`. A refused upsert (a CHECK value, an unknown source) rolls back and takes
@@ -525,6 +606,31 @@ staleness pass and mutes) still run through `executeRaw`, so they refuse on this
   bare date, a time with no zone) as written, and the store refuses it with `invalid_argument`, where
   Postgres would read it in the session time zone.
 - Deleting a source removes its loops (`ON DELETE CASCADE`).
+
+### Mutes and the thread verdict (`facts/loops/mutes.rs`)
+
+The `loop_suppressions` table and the open-loop statements `gbrain loops mute`, `gbrain loops unmute`
+and the Gmail thread verdict run (`engine-sql/loop-mutes.ts`). loops-store.ts lower-cases each mute
+value before it reaches a member.
+
+| Member | What it does |
+|---|---|
+| `addLoopSuppression` | Writes the `(source, kind, value)` row; a row that exists stays as it is. `kind` other than `sender` or `thread` refuses `constraint_violation`; an unknown source refuses `source_not_found`. |
+| `removeLoopSuppression` | Deletes that row; the number deleted (0 or 1). |
+| `listLoopSuppressions` | `{ kind, value }` of each mute of the source, by kind, then value. The SQL read has no order; loops-store.ts puts them in sets. |
+| `listMuteRecheckThreads` | `{ thread_id, page_slug }` for each thread with a row whose `closed_by` is `mute_recheck`, with the greatest page slug of its rows (byte order). By thread id. |
+| `closeMutedLoops` | The ids of the `unanswered_inbound` rows the mute covers that are open or `mute_recheck`; with `apply`, closes them as `dropped` by `muted`. Ascending. |
+| `requeueMutedLoops` | `{ id, thread_id }` of the `muted` rows the mute covers that no other mute of the source covers; with `apply`, sets `closed_by` to `mute_recheck`, or to `unmuted` for a row with no thread. By id. |
+| `closeThreadLoops` | Closes the `deterministic_thread` rows of the thread that are open or `mute_recheck` (only the `only` loop types when given) as `done` by `closedBy`, now; the number closed. |
+| `settleMuteRecheck` | Sets `closed_by` to `unmuted` on the thread's `mute_recheck` rows; the number settled. |
+
+- A sender mute matches `counterparty_email` byte for byte. A thread mute matches the row's
+  `thread_id` lowered one code point at a time, as Postgres `lower()` does (`pg_lower_char`), then
+  compared byte for byte. Thread ids match the thread byte for byte.
+- Every add takes an id from the counter, also one that lands on an existing row, as `nextval` does
+  before `ON CONFLICT`. A refused add takes none.
+- `apply: false` reads only. `apply: true` reads and writes in one transaction.
+- Deleting a source removes its mutes (`ON DELETE CASCADE`).
 
 ## The fence guard's reads (`facts/fence.rs`)
 
@@ -544,6 +650,25 @@ raises).
 - `list_fence_fact_rows`: the live (`expired_at` null) rows under the same filters that are more
   trusted than the writer (`above`), held narrower by a widening proposal, or opened (`opened`):
   `{ id, row_num, fact, visibility, trust_tier, above, opened }`, by row number.
+
+`read_fact_preimages` (`engine-sql/facts.ts` `readFactPreimages`, for `generations/adapters/fact-rows.ts`
+`factPreimages`) is the same before-state for named fact ids of one source, each id once, in id order,
+expired rows included. An id of another source, or no row, is left out. The member refuses an id that
+is not a whole number before it reads, on every engine.
+
+`restore_fact_preimage` (`engine-sql/facts.ts` `restoreFactPreimage`, for `restoreFactRow`) writes such a
+before-state back: `expired_at`, `valid_until`, `superseded_by`, `consolidated_at` and `consolidated_into`, and
+`row_num` only when no other row of the page holds that number. It changes only the row of that id and source
+whose claim and visibility still match, and returns whether it did. Every argument is checked first, as Postgres
+casts the parameters before it reads a row, and a `superseded_by` that names no fact is the
+`facts_superseded_by_fkey` refusal.
+
+`list_fact_ids_by_source_prefix` (`engine-sql/facts.ts` `listFactIdsBySourcePrefix`, for
+`generations/adapters/extracted-facts.ts` `storedRows`) lists the ids of one page's fact rows whose `source`
+starts with a prefix, in id order, expired rows included (`COALESCE(source,'') LIKE prefix || '%'`). The
+member refuses a prefix that holds `%`, `_` or `\` on every engine, so the match is a plain prefix.
+`expire_fact_rows` (`expireFactRows`, for `retireItems`) sets `expired_at` to now on each still-live row of
+the named ids in that source; another source's row, a struck row and a missing id are left as they are.
 
 What PGLite reads from the transaction, the store takes as a `FenceContext`: the writer's tier
 (`gbrain.write_trust_tier`, undeclared reads as `unknown`, a name that is no tier ranks 0) and the
@@ -586,7 +711,8 @@ it is not a transcript-lane row (a `source` of the conversation prefix, `hook:wr
 private derivation (`derivation_private`), or, for a page other than the entity page, there is no live row or the
 live row carries the quarantine key. A row that a `confirm` or `supersede_fact` proposal with a `visibility` key in
 its before state names as the related fact is admitted only when every target copy of those proposals is itself
-admitted by the member or grant admission (`trust::proposals::visibility_proposal_targets`). With no grant, a grant
+admitted by the member or grant admission, a copy only the grant admits counting only when its own proposals pass the
+same test (the hold chain, `widen.rs` `hold_refused` over `trust::proposals::visibility_proposal_targets`). With no grant, a grant
 on another source, or a soft-deleted page, the rows stay held.
 
 The answer is `[{ source_id, slug, row_num, claim }]`, one row per distinct
@@ -619,9 +745,16 @@ subject `*` or the page ("The fact purge ledger"). A NUL character or a row numb
 factHash, requestId, actor, reason })` stores a tombstone and answers true, or false when the key exists
 (`ON CONFLICT DO NOTHING`; the stored row keeps its columns). A visibility other than `private` or `world`, a
 `requestId` that is not a UUID or a NUL character refuses with `invalid_argument`; a missing source refuses as the
-foreign key does. `purge_fact` (facts/purge.ts) writes its main tombstone through this member; the holding-slug
-tombstones, the take and page purges, the purge epoch and the rest of the purge still run through `executeRaw`, which
-this engine refuses, so a full `purge_fact` does not run on Rust yet.
+foreign key does. `insertHoldingPagePurges({ sourceId, visibility, factHash, requestId, actor, reason, factIds })`
+(`facts/holding_purges.rs`) stores that tombstone under each holding page (`memory/unattributed` or a slug ending in
+`/memory/unattributed`) that holds one of the listed facts of the source, when the fact names an entity, one per page,
+through `insertFactPurge`, so the first row keeps its columns; it answers null. A NUL character, a `requestId` that is
+not a UUID or an id that is not a whole number refuses with `invalid_argument` even when no row would be added. `purge_fact`
+(facts/purge.ts) writes its main tombstone through `insertFactPurge`; the holding-slug tombstones, its take tombstone
+(`insertTakePurge`, served: see "The take purge ledger") and the rest of the purge are typed members too; the writes
+are served (see "The purge's writes"), but other members the purge reaches are still refused, so a full `purge_fact`
+does not run on Rust yet. The plan, dry run and `--match`
+reads are typed members: [purge-plan.md](purge-plan.md).
 
 Readers: the fence overlay's `purged`; `isFactPurged` (`is_fact_purged`: point reads for subject `*` and the entity)
 and the purge half of `isFactWithdrawn` ([trust.md](trust.md)), which every fact writer runs before it saves;
@@ -637,6 +770,297 @@ name key. On insert it skips an extraction outcome marker (`gbrain_guard_inserte
 trigger when the statement sets one of those columns, even to the same value; the store fires it only on a change,
 which refuses nothing a no-op update would not already have kept. The refusal rolls back the whole write, as the
 trigger's exception does. Deleting a source removes its tombstones.
+
+## The purge's writes (`facts/purge_writes.rs`)
+
+The writes `submitPurgeFactMutation` and `rewritePageBodies` (facts/purge.ts) run in the purge's transaction, each one
+store write that answers what the SQL member answers:
+
+- `deletePurgedTakes(takeIds)`: the takes with those ids, with their evidence and embeddings; how many.
+- `deletePurgeReviewQueue(sourceId, refs)` and `deletePurgeReviewProposals(sourceId, refs)`: the source's review-queue
+  rows and review proposals whose `a_ref` or `b_ref` is a ref, with the proposals' unique-key entries; how many.
+- `deletePurgeDecideProposals(sourceId, factIds)`: the source's supersede proposals whose new or old fact is an id,
+  with their sweep-slot and claim-pair entries; how many.
+- `deletePurgeTrustProposals(sourceId, factIds, takeIds)`: the source's trust proposals whose target or related row is
+  one of the facts (`facts`) or takes (`takes`), with their pending and row-index entries; how many.
+- `deletePurgeOpenLoops(sourceId, factIds)`: the source's open loops on one of the facts, with their dedup entries.
+- `deletePurgeWriteGateHolds(sourceId, factHash)`: the source's holds whose `COALESCE(payload->>'fact',
+  payload->>'claim', '')` has the fingerprint, with their dedupe entries; the ids as text, in id order.
+- `deletePurgeWriteGateReceipts(factIds, takeIds, holdIds)`: the receipts on one of the facts, takes or holds (ids as
+  text); how many.
+- `deletePurgedFacts(factIds, sourceId)`: the source's facts with those ids, clearing `superseded_by` on the rows that
+  named them; how many.
+- `deletePurgedChunks(pageIds)`: the chunks of those pages, clearing the text seal of each page that had any; how many
+  chunk rows.
+- `listPagesForPurgeRewrite(sourceId, pageIds)`: the source's pages with those ids, deleted or not, each as `getPage`
+  gives it with `body_storage` and its tags in byte order as `purge_tags`, in slug order (byte order).
+- `updatePageBodyForPurge(sourceId, pageId, compiled, timeline, hash)`: an inline page's body and content hash, the text
+  seal and embedding signature cleared; a changed body takes a new knowledge revision, as the revision trigger does.
+
+`blankPurgeCoreEditNotices` answers 0 in TypeScript: the store keeps no core edit notices (the core guard writes them
+through `executeRaw`, which this engine refuses). `rewritePageBodies` versions an inline page through `createVersion`
+with the preimage it read, which the Rust `createVersion` serves (the store versions the read revision and metadata,
+[pages.md](pages.md)); its saved-version read is `listPurgeVersionBodies`.
+`deletePurgeTakeProposals` and the segmented-storage writes (`abortPurgedStagings`, `deletePurgedStagingParts`,
+`deletePageViewDigests`, `deleteUnreferencedPurgedTexts`) stay refused.
+
+## The take purge ledger
+
+`facts/take_purges.rs` keeps `take_purges` (key `F 0x10 source subject claim_hash`, the row after `F 0x0F`).
+`insertTakePurge` is the one writer of the ledger, in two forms. `insertTakePurge({ sourceId, subject, claimHash,
+requestId })` stores a tombstone and answers true, or false when the key exists (`ON CONFLICT DO NOTHING`; the stored
+row keeps its columns). `insertTakePurge({ sourceId, subject, pageId, requestId })` stores one tombstone under `subject`
+for the fingerprint of each distinct take claim of the page (`INSERT ... SELECT DISTINCT gbrain_fact_fingerprint(claim)
+FROM takes WHERE page_id = $3`) and answers true when any was new; a page with no takes, an unknown page or a negative
+id stores nothing and answers false. A `requestId` that is not a UUID or a NUL character refuses with
+`invalid_argument`; a missing source refuses as the foreign key does. `purge_fact` (claim form), the page purge's
+`tombstonePage` (`persistence/page-purge.ts`, page form) and the belief purge mirror's restore replay
+(`belief/purge-mirror.ts`, claim form, one call per replayed hash) all write through this member. The store keeps the
+two forms apart by their field sets (`TakePurgeRow`); a row naming both a claim hash and a page id, or neither, refuses
+with an argument error.
+
+Readers: `readSourcePurgeFlags`'s `takes` (any tombstone of the source, read in the same snapshot as `facts`), the
+import overlay's take match (`listPurgedTakeRows`, [trust.md](trust.md): the incoming takes-fence rows a tombstone names
+for subject `*` or the page, any subject when none is given) and the belief ledger's tombstone read (`tombstoned_hashes`: the hashes among the asked ones that a tombstone of the source
+names, under any subject).
+
+The guard (`refuse_purged_take`, the `takes_refuse_purged` trigger's `gbrain_refuse_purged_take`): the page the row's
+`page_id` names gives the source and the subject; a tombstone of that source under subject `*` or the page's slug
+that names the claim's fingerprint refuses with `purged_content` (`purged_content: this take claim was purged from this
+source and cannot be saved again`). A missing page, or a null page id or claim, refuses nothing. The trigger runs
+`BEFORE INSERT`, so `addTakesBatch` checks every proposed row, an unchanged upsert row too, before its NOT NULL, CHECK
+and conflict checks; `supersedeTake` checks the new row. `updateTake` sets no claim and page id and is not checked.
+The refusal rolls back the whole write. Deleting a source removes its take tombstones.
+
+## Conversation fact publication and relink (`src/core/engine-sql/facts-conversation.ts`)
+
+Thirty members, the statements `facts/conversation-publication.ts`, `relink-publish.ts`, `conversation-memo.ts`,
+`conversation-relink.ts`, `conversation-entity-hints.ts`, `conversation-incremental.ts`,
+`conversation-relink-carry.ts` and `relink.ts` ran as raw SQL. None is served on Rust yet: each is named in
+`rust-engine/members.ts` with capability `facts` and stops on the typed `engine_capability_missing` refusal. The data
+the store would need:
+
+| Members | What they read or write | What the store needs |
+| --- | --- | --- |
+| `readNewestConversationFactId`, `countActiveConversationFacts`, `readConversationSlotValueHash`, `maxConversationRowNum`, `listHeldFactSlots`, `countPageConversationFacts`, `countConversationWindowFacts`, `countConversationFactsOutsideWindows` | Counts and keys of a page's conversation facts (`source LIKE 'cli:extract-conversation-facts%'`, `source_markdown_slug`, `row_num`, `source_window`, slot `dimension` and `value_hash`). | The facts rows by (source, page slug), with `source_window` as stored JSON and the `valid_from` of slotted rows. |
+| `deleteConversationOutcomeRows`, `clearConversationPageFacts`, `moveConversationSourceWindows`, `stampConversationSourceWindows` | Writes: deletes outcome-marker rows; the five-step clear (delete spent relinked rows, unslot expired rows, expire relinked rows, expire referenced rows, delete the rest); moves and stamps `source_window`. | The write transaction of the page, `open_loops.fact_id` and `facts.superseded_by` references, and the relinked-row test (`RELINKED_DERIVED_ROW`). |
+| `listPurgeTombstoneMatches` | The ordinals of a batch whose fingerprint a purge tombstone names, with the unbacked-entity rule. | The fact purge ledger and the pages table (see the fact purge ledger section). |
+| `findSpentConversationRequest`, `listConversationBatchRequests`, `readStoredConversationEntry`, `readPrincipalCounters` | Reads of the write journal (`persistence_requests`, `persistence_counters`). | The write journal tables, which the store does not hold; on Rust they would answer empty. |
+| `countConversationPagesToExtract`, `listMergedEntityAliases`, `listEntityHintPages`, `lockPageById` | Page reads for the extraction run: pages with no facts yet, slug aliases whose alias page is gone, hint pages (retired and folder-restricted tests), one `FOR UPDATE` page lock. | Pages with `deleted_at`, frontmatter and type, plus the slug alias table. |
+| `findSameClaimFenceRow`, `findOntologyTwin`, `readRelinkSource` | Relink publication: a live fence row with the same claim, an ontology twin of a fact (same source, dimension and `value_hash`), and a source's incarnation, archived flag, local path and kind. | Fence rows (`row_num`) and the source row. |
+| `factRelinkAttemptsTableExists`, `readReextractOutcomeRow` | The memo: whether the relink attempts table exists, and the outcome row of a page with its content hash. | The relink attempts table, which the store does not hold. |
+| `listUnbackedConversationRows`, `listUnlinkedConversationRows`, `listClearedRelinkedFacts`, `countEmbeddedFactsAmong` | Relink reads: active facts naming no page, active facts with no link, expired relinked facts whose entity page is live, and how many named facts hold an embedding. | Facts with visibility, attribution and embedding presence, and live pages by slug. |
+
+## Facts cycle, phantom redirect and fence-guard statements (`engine-sql/facts-cycle.ts`, item 4.2)
+
+Thirty-four members replace the 37 `executeRaw` sites of eight files. Each runs the statement its caller ran at base
+`5e22f0c134`, with the same text and parameters (`test/facts-cycle-sites-sql-pin.test.ts` pins both). The Rust engine refuses
+each of them with `engine_capability_missing` naming the member until the store serves it, except
+`readLiveStoredBody`, which the store serves from `brain.readLivePageBody` (rust/docs/store/write-guards.md)
+(`test/engine-parity/facts-cycle-sites.test.ts` is the parity arm). Three members serve two callers each, so 37 sites are
+34 members. Data the store needs, by caller:
+
+`cycle/phantom-redirect.ts`
+- `listPhantomFactRows(sourceId, slug)` (`movePhantomFacts`): `id` and `row_num` of every fact on the coordinate, no set order.
+- `listCanonicalFenceRowNums(sourceId, slug)` (`movePhantomFacts`): the `row_num` values the coordinate's facts hold, nulls left out.
+- `moveFactToPage(sourceId, id, slug, rowNum)` (`movePhantomFacts`): sets `entity_slug`, `source_markdown_slug` and `row_num`; a null
+  `rowNum` sets `expired_at` to now unless the fact already expired. The facts by-page index and the purge guard apply.
+- `repointInboundLinks(phantomId, canonicalId)` and `repointOutboundLinks(phantomId, canonicalId)` (`mergePhantomLinks`): move
+  `links.to_page_id` or `links.from_page_id`, skipping a row the canonical page already has with the same `link_type`,
+  `link_source` and `origin_page_id` (nulls equal) and a self link. Needs the links table and its identity key.
+- `pageHasTimelineEntries(pageId)` (`phantomHasResidue`, and `preparePhantomDelete` in `phantom-redirect-managed.ts`): whether the
+  page has one timeline entry; a null page id has none.
+- `maxFenceRowNumOfPage(sourceId, slug)` (`tryRedirectPhantom`, and `redirectManagedPhantom` in `phantom-redirect-managed.ts`):
+  the largest `row_num` of the coordinate's facts, 0 for none.
+- `listRootPageSlugsAfter(sourceId, take, held, after)` (`runPhantomRedirectPass`): live pages of the source with no `/` in the slug,
+  not in `held`, past `after`, in byte order of slug, at most `take`. Needs the pages slug index.
+
+`cycle/phantom-redirect-managed.ts` (`preparePhantomMerge`)
+- `listOwnLinkIds(pageId)`: ids of links the page starts and owns (`origin_page_id` null).
+- `listActiveFactIdsOfPage(sourceId, slug)`: ids of the coordinate's unexpired facts.
+- `listFactIdsStillOnPage(ids, slug)`: which of the ids are unexpired and sit on the slug.
+- `listLinkIdsOnPage(ids, pageId)`: which of the link ids start at the page.
+
+`facts/unfenced-facts.ts`
+- `readPageFileOrigin(sourceId, slug)` (`databaseOnlyPlacement`, and `heldUnmovable` in `facts-home.ts`): `source_path` and
+  `source_uri` of the live page, or none. Needs the page's file origin columns.
+- `listFenceRowClaims(sourceId, slug)` (`planFence`): `row_num`, `fact` and `source` of the coordinate's fenced facts, no set order.
+- `adoptFactIntoFence(sourceId, id, rowNum, slug, fact)` (`fenceFilePage`): sets `row_num`, `source_markdown_slug` and `fact` of one
+  fact that still has no `row_num`; any other fact is left alone. The id arrives as text.
+
+`cycle/extract-facts.ts`
+- `listFenceRowSupersession(sourceId, slug)` (`syncSupersession`): `id`, `row_num`, `expired_at` and `superseded_by` of the
+  coordinate's fenced facts, no set order.
+- `setFactSupersededBy(sourceId, id, supersededBy)` (`syncSupersession`): sets or clears `superseded_by`.
+- `listHeldWideningFactIds(sourceId, ids)` (`planFenceReconcile`): ids with a `pending`, `rejected` or `undone` `supersede_fact` or
+  `confirm` proposal on the facts table whose before state has a `visibility` key (the same rule as `held_narrower` above).
+- `expireFactInPlace`, `expireAndDetachFact`, `updateFenceFactCells` (`writeFenceReconcile`): expiry that keeps an existing
+  `expired_at`; the same and `row_num` cleared; and one row's cells written (`valid_from` kept when null, `valid_until` kept unless
+  `setValidUntil`, `expired_at` cleared when null, else kept if set).
+- `listExpirableFactIdsOfDeletedPage(sourceId, slug, pageId)`, `readDeletedPageBody(sourceId, slug)`,
+  `expireFactsByIds(sourceId, ids)` (`expireDeletedPageFacts`): unexpired fenced fact ids whose page is soft-deleted (and is the
+  given id when one is given); the newest soft-deleted page's `compiled_truth`, `timeline` and `body_storage`; and the ids it
+  expired among those still unexpired, at one `now()`.
+- `listOntologyObservationSlugs(sourceId)` (`runExtractFacts`): distinct slugs (no `/`) of unexpired facts with a `dimension`.
+- `listDeletedPageSlugsWithActiveFacts(sourceId)` (`deletedPagesWithActiveFacts`): distinct slugs of unexpired fenced facts whose
+  page is soft-deleted, in byte order.
+
+`facts/facts-home.ts` (`scanFactsHome`)
+- `scanUnfencedFactRows(sourceId)`: the unexpired facts with no `row_num`, in entity slug (null first) then id order, with the
+  columns the repair adopts, `dimension`, `page_exists` and `page_deleted`.
+- `listHeldFactRows(sourceId, days)`: unexpired fenced facts on a holding page (`memory/unattributed` at any depth) that name
+  another entity, with `from_slug`, `held_since` (`created_at` as UTC `YYYY-MM-DDTHH:MM:SSZ`) and `old` (older than `days`).
+- `listFencedFactsOfMissingPages(sourceId)`: unexpired fenced facts whose live page is missing, by id.
+
+`facts/fence-write.ts`
+- `readFenceRowNumHint(sourceId, slug)` (`writeFactsToFence`): the largest `row_num` of the coordinate, 0 for none. The caller keeps
+  its `try`/`catch` around it.
+- `readSourceCheckoutPath(sourceId)` (`lookupSourceLocalPath`): `sources.local_path`, none for an unknown source.
+
+`facts/file-body-guard.ts`
+- `readLiveStoredBody(sourceId, slug, lock)` (`readStoredBody`): the live page's `compiled_truth` and `timeline`; `lock` is the row
+  lock the engine's transaction holds. A segmented page reads null columns.
+- `listPageStates(sourceId, slug)` (`replaceableFile`): the page row's body, frontmatter, title, type and tags, then the 20 newest
+  `page_versions` rows that hold a body, newest first.
+
+`facts/fence-fact-append.ts`
+- `countSegmentedVersionsOfPage(sourceId, slug)` (`heldRowsInVersions`): how many of the page's versions are `segmented`.
+## Purge, held-move and purge receipt statements (`engine-sql/facts-purge.ts`, Rust engine lane 4 item 4.2)
+
+The statements `facts/gone-page-facts.ts`, `facts/purge-reasons.ts`, `facts/held-fact-move.ts` and
+`facts/purge-verify.ts` ran through `executeRaw` are 33 typed members (the reason tombstone write is
+`writeReasonPurgeTombstones`, see [sources.md](sources.md)), so the Rust arm answers each with
+the typed `raw_sql` refusal until the store holds what it reads. Only `readPurgeSourceLocalPath` has a Rust
+implementation (the source record's checkout); the parity file `test/engine-parity/facts-purge-sites.test.ts` stops on
+that refusal for every case, and the
+Postgres text of each statement is pinned byte for byte by `test/facts-purge-sites-sql-pin.test.ts`.
+
+| Member | What it does |
+|---|---|
+| `expireFactsOfGonePages` | Expires the facts a retention purge takes with its deleted pages (filed on them, their conversation slots, extracted from them, about them and held by no page): four updates in order over the paired source ids and slugs. Writes facts; run it in the purge transaction. |
+| `readPurgeSourceLocalPath` | The source's checkout path, null for none or no such source. Reads sources. |
+| `listGitEffectsCarryingReason` | The source's Git effects whose data carries the claim in one of its three forms, in id order, locked for the redaction. Reads persistence_effects. |
+| `listPageGitEffectsForStrip` | The slug's Git effects that carry a commit line or trailers, in id order, locked for the strip. Reads persistence_effects. |
+| `setPurgeEffectData` | Replaces one effect's data (`effectId` is the bigint id as text). Writes persistence_effects. |
+| `listPageChangeReasons` | The change reasons the page's versions and its requests (intent and outcome) recorded, each once, null included. Reads page_versions and persistence_requests. |
+| `listRequestsRecordingReasons` | The slug's requests whose intent or outcome records a reason, oldest first (10000 at most). Reads persistence_requests. |
+| `heldEntityPageDeleted` | Whether a soft-deleted page holds the slug. Reads pages. |
+| `readHeldAccessState` | Whether the access state is readable, an exact page rule covers the entity and a folder rule restricts it. Reads access_rules, access_pending_coverage and the access functions; the caller decides what a failed read means. |
+| `heldTargetPageLive` | Whether a live page holds the slug. Reads pages. |
+| `listHeldMoveRows` | Every live held row on every holding page of the source, by holding page, entity and id. Reads facts and pages. |
+| `listStruckHeldRows` | The struck held rows, one per holding page and row number, none an active fact reuses. Reads facts and pages. |
+| `readHeldRowVisibility` | Whether every reader of the source can read the live page; null for no live page. Reads pages and the access rules. |
+| `heldMoveDue` | Whether a rule now narrows a held row's entity below its holding page's readers. Reads facts, pages and the access functions. |
+| `readHeldConfigValue` | One config row's value, null when unset. Reads config. |
+| `readHeldPageLocation` | A live page's file path and URI, null for none; `timeoutMs` ends the read on the server. Reads pages. |
+| `readHeldVersionsEdited` | The segmented saved versions a held-fact request recorded as not edited; 0 for none. Reads persistence_requests. |
+| `listSegmentedPageBodies` | The source's live pages stored in segments, in id order, `limit` of them. Reads pages. |
+| `listSegmentedVersionBodies` | The source's retained versions stored in segments, in id order, `limit` of them. Reads page_versions and pages. |
+| `setPurgeProbeTimeout` | Bounds the statements of the transaction it runs in to `ms` milliseconds (set_config, local). |
+| `probePurgeDerivations` | One batch of stored derivation results after the cursor (page, pipeline, occurrence): the rows scanned, the claim candidates, those a sweep covers and holds the claim, and those it does not, and the last key. Reads page_segment_derivations and pages. |
+| `listBeliefEventsForPurgeProbe` | The next 1000 belief events of the source after id `after` with a recorded value, in id order. Reads belief_events. |
+| `listFactContextsForPurgeProbe` | The next 1000 live facts of the source after id `after` that have a context, in id order. Reads facts. |
+| `listPageSourcePathsForPurge` | The distinct relative file paths (64 at most) of the pages and their versions, none absolute or climbing out. Reads pages and page_versions. |
+| `listNearestFactsForPurge` | The five same-model facts of the source nearest to the embedding, each with whether it contains the claim. Reads facts. |
+| `countLegacyDerivedPages` | The source's live atom and dream pages that no derivation edge explains. Reads pages and derivation_inputs. |
+| `vacuumPurgedTables` | Compacts the tables a purge touches (query_cache too when asked); rejects when the VACUUM fails. PGLite only: Postgres leaves it to the operator. |
+| `listPageProseHits` | The first 20 slugs, in order, of the source's live pages whose text in the store states one of the lowered needles. Reads the store and pages. |
+| `readPurgeReceiptSourcePath` | The source's checkout path as the page purge receipt reads it, null for none. Reads sources. |
+| `countPagePurgeTombstones` | How many tombstones the page purge left for the slug. Reads page_purges. |
+| `readDeletePageRequest` | The newest delete_page request of the source with this request id, null for none. Reads persistence_requests. |
+| `listPurgeEffects` | The request's effects in kind order, each with whether any target is parked. Reads persistence_effects. |
+| `countPurgeFingerprintResidue` | The facts and takes that still carry the purged claim's fingerprint under the subject (`*` for any), outcome markers apart. Reads facts and takes. |
+
+What the store would need to hold to answer them, by family:
+
+- Gone pages (`expireFactsOfGonePages`): the facts store alone, plus the conversation slot columns and the
+  extracted-from-page predicate (`extractedFromPageSql`), run in the purge transaction.
+- Purge reasons (`readPurgeSourceLocalPath` to `listRequestsRecordingReasons`): `sources.local_path`, `page_purges` tombstones, the write
+  journal's `persistence_effects` (kind, state, request id, `data`) and `persistence_requests` (intent reason),
+  and `page_versions.change_reason`.
+- Held move (`heldEntityPageDeleted` to `readHeldVersionsEdited`): live and soft-deleted pages, the access policy
+  state, rules and pending coverage, the holding-page slug rule, the `config` table and the page file location
+  (`source_path`, `source_uri`). These reads end at the sync preparation deadline when called on the planning view.
+- Purge receipt (`listSegmentedPageBodies` to `countPurgeFingerprintResidue`): segmented page and version bodies,
+  `page_segment_derivations`, `belief_events`, fact contexts and embeddings, `takes`, chunk text, timeline entries,
+  the `query_cache` table, and `gbrain_fact_fingerprint` for the residue probe. `vacuumPurgedTables` has no data
+  to read: a store with nothing to vacuum answers it as a no-op.
+
+The parity cases seed facts, pages, versions, chunks, timeline entries, write requests and effects through the
+typed writers. `belief_events`, `page_segment_derivations` and `takes` have no typed fixture, so their members
+are compared on empty data only.
+
+## Fact purge plan, transaction and segment-storage statements (`engine-sql/facts-purge.ts`, Rust engine lane 4 item 4.2)
+
+The statements `facts/purge.ts` ran through `executeRaw` are 35 typed members, so the Rust arm answers each with the
+typed `raw_sql` refusal until the store holds what it reads. `lockPurgeSource` (the source record's incarnation and
+archived flag; the purge transaction is the store's single writer, so FOR UPDATE changes nothing) and the tombstone
+writes `insertFactPurge` and `insertTakePurge` have Rust implementations, as do the Git effect statements
+(`listGitEffectsCarryingReason`, `listPageGitEffectsForStrip`, `setPurgeEffectData`; persistence.md, "Purge effect
+statements") and `countPagePurgeTombstones` (`facts/page_purges.rs`). A whole `purge_fact` on the Rust arm admits its
+write request, then stops on the refusal of `deletePurgeReviewQueue`, and its transaction keeps nothing
+(`test/engine-parity/fact-purge-commit.test.ts`). The parity file
+`test/engine-parity/fact-purge-sites.test.ts` stops on that refusal for every case, and the Postgres text of each
+statement is pinned byte for byte by `test/fact-purge-sites-sql-pin.test.ts`. One statement of `purge.ts` stays a raw
+read: the version-body SELECT of `rewriteVersionBodies` builds its WHERE, column list and lock clause from its two callers
+(the purge and the held-fact move), so it has no constant text to type.
+
+| Member | What it does |
+|---|---|
+| `listStagingPartEdges` | The next 1000 upload parts of the source's live stagings after the (staging, part) cursor, in order, each with its first and last `keep` bytes. Reads page_body_staging_parts and page_body_stagings. |
+| `listStagingsHoldingClaim` | The ids of the source's live stagings whose staged segment texts or upload parts hold the claim, plain or as a fence cell stores it, in id order. Reads page_body_stagings, page_body_manifest, page_segment_texts, page_body_staging_parts, page_body_staging_texts and persistence_requests. |
+| `purgeSubjectPageLive` | Whether a live page of the source holds the slug (the one-row read that tells a purge the subject is an unbacked name key). Reads pages. |
+| `listPurgePagesById` | The slug, id and knowledge revision of the source's pages with these ids. Reads pages. |
+| `countPurgeVersionsCarryingClaim` | How many saved versions of the source's pages carry the claim in their text, title, metadata or segments, or quote it in their change reason (`needle` lowered, `escaped` its JSON form, `reason` the folded reason form). Reads page_versions, pages, page_body_manifest and page_segment_texts. |
+| `countPurgeReviewRows` | How many review queue, review proposal and decide proposal rows of the source name the facts (`refs` are the ids as text). Reads decide_review_queue, decide_review_proposals and decide_proposals. |
+| `listPurgeStreamSlugs` | The distinct belief stream slugs (holding page, else entity) of the facts. Reads facts; run it in the purge transaction. |
+| `findPurgeBlockedPublication` | One unfinished write or withdrawal mirror (not the request `ownRequest`) on one of the pages, null for none. Reads persistence_requests and persistence_effects. |
+| `listPagesForPurgeRewrite` | The source's pages with these ids, whole rows, each with its tags as `purge_tags`, in slug order. Reads pages and tags. |
+| `updatePageBodyForPurge` | Stores a page's body with the purged fence rows dropped, its content hash, and voids its text projection and embedding signature. Writes pages; run it in the purge transaction. |
+| `setPurgeVersionBody` | Stores a saved version's two body parts after the purge edit (a null timeline stays null). Writes page_versions; run it in the purge transaction. |
+| `listPurgeVersionBodies` | The next 5000 inline saved versions of the source after id `after` that belong to one of the pages or carry the lowered claim in their body, timeline or title (or the escaped claim in their frontmatter text), in id order, each with `metadata` when the title or frontmatter carries it (`purge_version_bodies.rs`). Reads page_versions and pages. |
+| `redactVersionChangeReasons` | Overwrites the change reason of every saved version of the source's pages that quotes the claim (lowered plain form or folded reason form) with `[purged]`; the ids redacted. Writes page_versions. |
+| `listSegmentedVersionsForPurge` | The next 5000 segmented saved versions of the source after id `after` that belong to one of the pages or whose generation holds the lowered claim, in id order. Reads page_versions, pages, page_body_manifest and page_segment_texts. |
+| `abortPurgedStagings` | Aborts the uncommitted stagings with these ids; the page ids they belonged to (none for a staging with no page). Writes page_body_stagings; run it in the purge transaction. |
+| `deletePurgedStagingParts` | Deletes the upload parts of these stagings; how many. Writes page_body_staging_parts; run it in the purge transaction. |
+| `deletePageViewDigests` | Deletes the cached read-view digests of these pages. Writes page_view_digests; run it in the purge transaction. |
+| `deleteUnreferencedPurgedTexts` | Deletes the source's segment texts that no manifest row references and that were replaced by the purge (`replaced` are their sha256 digests) or hold the claim, plain or as a fence cell stores it; how many. Writes page_segment_texts; run it in the purge transaction. |
+| `listPurgeMatchCandidates` | The first 25 facts of the source whose text contains `text` (case folded), in id order, each cut to 160 characters. Reads facts. |
+| `lockPurgeSource` | Locks the source row for the purge transaction and returns its incarnation and archived flag, null for no such source. Reads sources; run it in the purge transaction. |
+| `insertHoldingPagePurges` | Stores a purge tombstone for each holding page that holds one of the facts about an entity with no page of its own, none twice. Writes fact_purges; run it in the purge transaction. |
+| `insertTakePurge` | The one writer of text-free take purge tombstones, none twice: a `TakePurgeInsert` row names one claim fingerprint (`claimHash`) or a page (`pageId`, one tombstone per distinct take claim of the page) under the subject, and the answer is true when any tombstone was new. Writes take_purges; run it in the purge transaction. Served on Rust (see the take purge ledger section). |
+| `deletePurgedTakes` | Deletes the takes with these ids; how many. Writes takes; run it in the purge transaction. |
+| `deletePurgeReviewQueue` | Deletes the source's review queue rows naming one of the facts (`refs` are the ids as text); how many. Writes decide_review_queue; run it in the purge transaction. |
+| `deletePurgeReviewProposals` | Deletes the source's review proposals naming one of the facts (`refs` are the ids as text); how many. Writes decide_review_proposals; run it in the purge transaction. |
+| `deletePurgeDecideProposals` | Deletes the source's decide proposals that supersede or are superseded by one of the facts; how many. Writes decide_proposals; run it in the purge transaction. |
+| `deletePurgeTrustProposals` | Deletes the source's trust proposals whose target or related row is one of the facts or takes; how many. Writes trust_proposals; run it in the purge transaction. |
+| `deletePurgeOpenLoops` | Deletes the source's open loops on one of the facts; how many. Writes open_loops; run it in the purge transaction. |
+| `deletePurgeWriteGateHolds` | Deletes the source's held writes whose fact or claim text has the fingerprint; the ids deleted. Writes write_gate_holds; run it in the purge transaction. |
+| `deletePurgeWriteGateReceipts` | Deletes the gate receipts that name one of the facts, takes or held writes (ids as text); how many. Writes write_gate_receipts; run it in the purge transaction. |
+| `deletePurgeTakeProposals` | Deletes the source's take proposals whose claim text has the fingerprint; how many. Writes take_proposals; run it in the purge transaction. |
+| `blankPurgeCoreEditNotices` | Blanks the base text of the source's core edit notices that quote the lowered fact; how many. Writes core_edit_notices; run it in the purge transaction. |
+| `deletePurgedFacts` | Deletes the facts with these ids from the source; how many. Writes facts; run it in the purge transaction. |
+| `deletePurgedChunks` | Deletes the chunks of these pages and voids the text projection that certified them; how many pages had chunks deleted. Writes content_chunks and pages; run it in the purge transaction. |
+| `listPurgedPageRevisions` | The id, slug and knowledge revision of the source's pages with these ids, in slug order. Reads pages. |
+| `insertPurgeEffects` | Queues the withdrawal-mirror, git and embedding effects of the purge request under the source's current incarnation and worktree binding, none twice; `data` is the effect payload. Writes persistence_effects; run it in the purge transaction. |
+
+What the store would need to hold to answer them, by family:
+
+- Plan (`listStagingPartEdges` to `countPurgeReviewRows`, `listPurgeMatchCandidates`): pages and their knowledge
+  revisions, saved versions with change reasons and segment manifests, page body stagings with their upload parts and
+  staged texts, segment texts, the decide review queue, review proposals and decide proposals, and facts for the text match.
+- Purge transaction (`listPurgeStreamSlugs` to `deletePurgeTakeProposals`, `blankPurgeCoreEditNotices`,
+  `deletePurgedFacts` to `insertPurgeEffects`): the write journal's requests and effects, the source row lock, page and
+  version body writes, fact, take, chunk and tombstone writes (`fact_purges`, `take_purges`), trust and take proposals,
+  open loops, write gate holds and receipts, core edit notices, and `gbrain_fact_fingerprint` for the fingerprint matches.
+- Segment storage (`abortPurgedStagings` to `deleteUnreferencedPurgedTexts`): stagings and their parts, view digests,
+  segment texts and the manifest that references them.
+
+The parity cases seed pages, tags, versions, facts, chunks and write requests through the typed writers. Stagings, takes,
+review and proposal rows, gate holds and receipts, open loops, core edit notices and view digests have no typed fixture, so
+those members are compared on empty tables only; `insertTakePurge` is compared by its
+boolean (true, then false for the same key) and by the refusals its tombstones cause (take-purge-ledger.test.ts). `insertHoldingPagePurges` is compared by the claim checks that read its tombstones back
+(holding-page-purges.test.ts).
 
 ## Not modeled
 

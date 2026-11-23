@@ -1,6 +1,6 @@
 /**
  * Open loops: the upsert, list and close members (BrainEngine upsertOpenLoop, listOpenLoops, closeOpenLoop), the entity
- * card's open-loop read (readEntityOpenLoops, over the list read), and the
+ * card's open-loop read (readEntityOpenLoops, over the list read), the
  * `loops_close` retry read closedLoopWithActiveFact and the loop-fact retirement scan loopFactDrift (engine-sql/facts-repair.ts), over
  * `rust/crates/gbrain-store/src/facts/loops.rs`. The store returns times as ISO text; these members turn them into
  * Dates, as the SQL engines return them, and loops-store.ts normalizes the rows the same way on every engine.

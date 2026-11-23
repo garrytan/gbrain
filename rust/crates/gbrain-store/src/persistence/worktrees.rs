@@ -420,6 +420,23 @@ pub(crate) fn insert_source_binding_in(
     put_json(tx, &key, &record)
 }
 
+/// The `unbound` step of the source delete (engine-sql/sources.ts `deleteSourceRecord`): the
+/// source's binding goes when it binds `incarnation`, the deleted row's; a binding of another
+/// incarnation stays for `gbrain repair orphan-bindings`. The worktree and host rows stay.
+pub(crate) fn remove_source_binding_in(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    incarnation: &str,
+) -> Result<()> {
+    let key = source_binding_key(source_id);
+    if let Some(binding) = get_json::<SourceBindingRecord>(&*tx, &key)?
+        && binding.source_incarnation.eq_ignore_ascii_case(incarnation)
+    {
+        tx.delete(&key)?;
+    }
+    Ok(())
+}
+
 /// `stampWorktreeHeartbeats(hostId)`: `heartbeat_at = now()` on every worktree `host_id` owns.
 pub(crate) fn stamp_worktree_heartbeats_in(
     tx: &mut dyn KvWrite,

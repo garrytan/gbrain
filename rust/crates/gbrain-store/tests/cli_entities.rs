@@ -119,7 +119,7 @@ fn seeded(dir: &TempDir) -> Store {
 }
 
 #[test]
-fn mention_state_is_absent_so_every_live_page_is_due() {
+fn with_no_pass_run_every_live_page_is_due() {
     let dir = TempDir::new("cli-mentions");
     let store = seeded(&dir);
     assert_eq!(store.read_mention_last_pass(None).unwrap(), None);
@@ -128,6 +128,8 @@ fn mention_state_is_absent_so_every_live_page_is_due() {
         store
             .count_pages_due_for_mentions(&MentionDueQuery {
                 source_id: source.map(String::from),
+                mention_version: 7,
+                aliases: None,
             })
             .unwrap()
     };

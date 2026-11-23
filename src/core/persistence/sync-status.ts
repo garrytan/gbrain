@@ -25,6 +25,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
+import { isSyncDisabledConfig } from '../sync-policy.ts';
 import { managedSyncResumeArgs } from '../sync-reconcile.ts';
 import { readManagedSyncFailures, type ManagedSyncFailure } from './sync-failures.ts';
 import { carriedHolds, type CarriedHolds, outOfAttemptsHold, fenceAutoRepairFor, fileDriftSide, gitHoldFix, mirrorDatabaseOnlyHold, mirrorKeepDeletedHold, holdEscalation, noteHoldEdit, readGitSourceHolds, recordHoldAttempt, requestGitHoldRetry, type GitHoldRecord } from './sync-holds.ts';
@@ -52,6 +53,7 @@ import type { DeletesWithheld } from './sync-markers.ts';
 import { listIdentityDowngrades, withIdentityRemedies } from '../sync-identity-downgrades.ts';
 import { readGitPushHolds, type GitPushHold } from './git-push-holds.ts';
 import { holderStalled, readDrainLease, type DrainHolder } from './sync-lease.ts';
+import { heldDeletesStatus, identityReviewStatus, type HeldDeletesStatus, type IdentityReviewStatus } from '../apple-contacts/review-status.ts';
 
 export interface SyncStatusHold extends SyncFaultVerdict {
   code: string;
@@ -126,6 +128,10 @@ export type SyncStatusLive = DrainHolder & { job_id: number | null; stalled: boo
 
 export interface SyncStatus {
   source_id: string;
+  /** GST-3256: apple-contacts contacts whose email or phone matches two or more people (absent when there are none). */
+  identity_reviews?: IdentityReviewStatus[];
+  /** GST-3256: apple-contacts deletions the delete floor holds pending (absent when none are held). */
+  held_deletes?: HeldDeletesStatus;
   /** #7243: the commit the source's sync applied through (`sources.last_commit`, stamped when a sync converges), or null before the first. */
   last_commit: string | null;
   /**
@@ -135,6 +141,12 @@ export interface SyncStatus {
    */
   last_sync_at: string | null;
   last_committed_at: string | null;
+  /**
+   * GST-3329: whether autopilot's per-source cycle, the freshness loop and `gbrain sync --all` sync this source. Off when
+   * `config.syncEnabled` is false (`gbrain sources set-sync <id> off`): they skip it without a log line, and only an explicit
+   * `gbrain sync --source <id>` runs it. When off, `why` says so and `fix` is the read-only preview that turns it back on.
+   */
+  automatic_sync: { enabled: boolean; why?: string; fix?: Action };
   /**
    * #7243: the job doing the work now: the holder of the source's drain lease (a serve pass, a sync job, a CLI sync, the
    * cycle), its heartbeat and progress, `job_id` when it is a Minions sync job, and `stalled` once it has made no commit
@@ -427,6 +439,10 @@ export async function readSyncStatus(engine: BrainEngine, sourceId: string, opts
   const moving = passState?.[1] === 'pass_abandoned' ? holds.find((hold, i) => hold.needs_human && hold.attempts >= HOLD_ATTEMPTS_NEEDS_HUMAN
     && records[i]!.meta.basis_moved && records[i]!.run_id === passRow!.value.telemetry.pass_id) : undefined;
   const human = moving ?? holds.find(hold => hold.needs_human) ?? (liveError?.needs_human ? liveError : undefined);
+  // GST-3256: an apple-contacts contact that matches two or more people waits for the owner; the source keeps syncing.
+  const identityReviews = identityReviewStatus(sourceId, source.identity_reviews);
+  const heldDeletes = heldDeletesStatus(sourceId, source.held_deletes);
+  const reviewWaiting = heldDeletes ?? identityReviews.find(review => review.needs_human);
   const refreshRow = typeof source.refresh === 'string' ? JSON.parse(source.refresh) as RefreshProbeRow : source.refresh;
   const worktreeRefresh = refreshRow ? { refresh_id: refreshRow.id, state: refreshRow.state, updated_at: new Date(refreshRow.updated_at).toISOString(),
     ...await (await import('./worktree-refresh.ts')).refreshHolderReport(engine, refreshRow) } : null;
@@ -480,10 +496,16 @@ export async function readSyncStatus(engine: BrainEngine, sourceId: string, opts
   const passNext = passRow && passState && passState[1] === stateReason ? passStatusNext(sourceId, passState[1], passRow, resume, source.writeback_failed, interrupted, banked) : null;
   // GST-2843: while the pass is what keeps the source from converging, its step leads; a held page's decision stays in holds and human_reason.
   const passLeads = passNext !== null && liveJob === null && !moving && (!!human || (!refreshFix && actionable.length > 0));
-  return { source_id: sourceId, last_commit: source.last_commit, last_sync_at: iso(source.last_sync_at), last_committed_at: iso(committed?.last_committed_at), live: holder ? { ...holder, job_id: holderJob, stalled: holderStalled(holder, lease?.db_now) } : null,
+  return { source_id: sourceId, last_commit: source.last_commit, last_sync_at: iso(source.last_sync_at), last_committed_at: iso(committed?.last_committed_at),
+    automatic_sync: isSyncDisabledConfig(source.config) ? { enabled: false,
+      why: `config.syncEnabled is false for ${sourceId}, so autopilot's per-source cycle, the freshness loop and gbrain sync --all skip it; only an explicit gbrain sync --source ${sourceId} syncs it, and commits wait until one runs.`,
+      fix: { argv: ['gbrain', 'sources', 'set-sync', sourceId, 'on', '--dry-run'], consent: [], actor: 'user', requires_exclusive: false, verify,
+        why: `Whether gbrain syncs a source automatically is the owner's setting; this preview writes nothing, and the same command without --dry-run turns it on.` } } : { enabled: true },
+    live: holder ? { ...holder, job_id: holderJob, stalled: holderStalled(holder, lease?.db_now) } : null,
     interrupted: interrupted && passRow ? { pass_id: passRow.value.telemetry.pass_id, since: passRow.updated_at, holder: lease?.holder ?? null } : null, run_id: header?.runId ?? null,
     cursor: header ? { index: Number(header.index), total: Number(header.total), pinned_target: header.target ?? null, last_advance_at: p ? new Date(p.lastAt).toISOString() : null, done: !!header.done } : null,
-    committed_last_10m: Number(committed?.n ?? 0), ...estimate, live_job_id: liveJob ?? holderJob, holds, ...(carriedHolds(records).length ? { carried: carriedHolds(records) } : {}), identity_downgrades: await withIdentityRemedies(engine, await listIdentityDowngrades(engine, [sourceId])), last_error: lastError, needs_human: passLeads && passNext ? passNext.ask_user === true : !!human, ...(human ? { human_reason: human.human_reason } : {}),
+    committed_last_10m: Number(committed?.n ?? 0), ...estimate, live_job_id: liveJob ?? holderJob, holds, ...(carriedHolds(records).length ? { carried: carriedHolds(records) } : {}), identity_downgrades: await withIdentityRemedies(engine, await listIdentityDowngrades(engine, [sourceId])), last_error: lastError, needs_human: (passLeads && passNext ? passNext.ask_user === true : !!human) || !!reviewWaiting,
+    ...(human ? { human_reason: human.human_reason } : reviewWaiting ? { human_reason: reviewWaiting.human_reason } : {}), ...(identityReviews.length ? { identity_reviews: identityReviews } : {}), ...(heldDeletes ? { held_deletes: heldDeletes } : {}),
     needs_human_from: !human ? null : 'path' in human && 'held_since' in human ? { kind: 'hold', path: human.path, slug: human.slug, code: human.code } : { kind: 'last_error', code: human.code },
     resume_argv: resume, ...blockers, cursors: detail ? await liveCursors(engine, sourceId, source.incarnation, selected?.key ?? null, failures) : [],
     terminal_failures: terminal, connector_last_error: connectorLastError, git_push_holds: gitPushHolds, fence_holds: fenceHolds, worktree_refresh: worktreeRefresh, next: (passLeads && passNext ? passNext : next) ?? recovery_next ?? passNext ?? (stateReason === 'request_pending' && oldest.status === 'ok' && oldest.request ? { argv: ['gbrain', 'sync', ...resume], consent: [], actor: 'agent', requires_exclusive: false, verify,

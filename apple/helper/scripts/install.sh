@@ -189,7 +189,9 @@ fi
 rm -rf "$app.previous"
 say "Installed $app, signed by certificate $leaf."
 
-"$app/Contents/MacOS/$program" register
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app"
+registration="$("$app/Contents/MacOS/$program" register)"
+say "$registration"
 label="gui/$(id -u)/$bundle_id"
 if launchctl print "$label" >/dev/null 2>&1; then
   launchctl kickstart -k "$label"
@@ -197,4 +199,31 @@ if launchctl print "$label" >/dev/null 2>&1; then
 fi
 if ! "$app/Contents/MacOS/$program" validate-config >/dev/null 2>&1; then
   say "There is no valid helper config yet, so the helper restarts every 10 seconds until one exists. Write one with: \"$app/Contents/MacOS/$program\" init --port <port>"
+elif [ "$registration" != "background agent registered and on" ]; then
+  say "GBrain Helper starts once you turn it on in System Settings, so this install didn't wait for it to answer."
+else
+  port="$(/usr/bin/plutil -extract port raw "$support/config.json")"
+  answered=0
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if /usr/bin/curl -fsS -m 2 "http://127.0.0.1:$port/health" >/dev/null 2>&1; then
+      answered=1
+      break
+    fi
+    sleep 1
+  done
+  [ "$answered" = 1 ] || die "GBrain Helper is installed but isn't answering on 127.0.0.1:$port. Read ~/Library/Logs/$program.log and run: launchctl print $label" 1
+  say "GBrain Helper is answering on 127.0.0.1:$port."
 fi
+
+cat <<EOF
+
+What stays on this Mac: GBrain Helper runs in the background and shows in System Settings under
+General > Login Items & Extensions, and in the Privacy lists you allow it in. To remove it:
+  1. "$app/Contents/MacOS/$program" send-setup --off
+  2. "$app/Contents/MacOS/$program" unregister
+  3. rm -rf "$app"
+  4. security delete-generic-password -s $bundle_id -a send-keys
+     security delete-keychain "$keychain"
+  5. rm -rf "$support" ~/Library/Logs/$program.log
+  6. tccutil reset All $bundle_id   (clears its Full Disk Access, Automation and Contacts grants)
+EOF

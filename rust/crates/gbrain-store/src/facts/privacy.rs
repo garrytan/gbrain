@@ -349,7 +349,7 @@ pub(crate) fn page_hidden_with(
 }
 
 /// `holdingSlugSql`: `memory/unattributed`, or a slug ending in `/memory/unattributed`.
-fn holding_slug(slug: &str) -> bool {
+pub(super) fn holding_slug(slug: &str) -> bool {
     slug == "memory/unattributed" || slug.ends_with("/memory/unattributed")
 }
 
@@ -424,6 +424,22 @@ pub(crate) fn caller_version_hidden(
             && (fm.contains_key("pinned_question")
                 || !(private_source_open(page, policy)
                     || snapshot_fields_allow(page_type, fm, policy.honor_aliases))))
+}
+
+/// Whether a version's successor (the next version of the page) withholds the version's change
+/// reason from a policy reader (`replacedBecauseSql`): the successor names readers none of which is
+/// in the policy's identity, or its own fields are private (`privateSnapshotFilterFragment`). The
+/// successor is judged by its fields alone, whatever the policy's entity privacy part or
+/// private-readable grant, as the SQL does.
+pub(crate) fn successor_withholds_reason(
+    page_type: &str,
+    fm: &Map<String, Value>,
+    policy: &PrivacyPolicy,
+) -> bool {
+    let readers_allowed = !fm.contains_key("readable_by")
+        || access_readers(fm)
+            .is_some_and(|readers| readers.iter().any(|r| policy.identity.contains(r)));
+    !readers_allowed || !snapshot_fields_allow(page_type, fm, policy.honor_aliases)
 }
 
 /// `frontmatter ->> key`.
@@ -713,7 +729,11 @@ fn chronicle_depth(page: &PageRecord) -> Option<String> {
 }
 
 /// `privacyPartSql`: the page's own fields, its derived origin and its declared lineage.
-fn privacy_allows(read: &dyn KvRead, page: &PageRecord, honor_aliases: bool) -> Result<bool> {
+pub(crate) fn privacy_allows(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    honor_aliases: bool,
+) -> Result<bool> {
     Ok(snapshot_allows(page, honor_aliases)
         && !derived_origin_private(read, page, honor_aliases)?
         && !declared_lineage_private(read, page)?)
@@ -1116,5 +1136,44 @@ mod tests {
         source("vault", json!({}));
         assert!(hidden(OwnerOnlyForm::Closed, &open) && hidden(OwnerOnlyForm::Closed, &bare));
         assert!(!hidden(OwnerOnlyForm::Fn, &open) && !hidden(OwnerOnlyForm::Fn, &in_vault));
+    }
+
+    /// `privateEntityFilterForCaller`'s keyed arm (GBRA-574): a bare name key is covered by the privacy
+    /// of the page at `<dir>/<key>` in each name-key directory, as a slugged entity is by its own page.
+    #[test]
+    fn a_bare_entity_key_is_hidden_by_its_private_directory_page() {
+        let store = crate::test_support::store();
+        let put = |slug: &str, frontmatter: Value| {
+            let input: crate::pages::PageInput = serde_json::from_value(json!({
+                "type": "person", "title": slug, "compiled_truth": "body", "timeline": "", "frontmatter": frontmatter,
+            }))
+            .unwrap();
+            store.put_page(slug, &input, &Default::default()).unwrap();
+        };
+        put("people/alice-example", json!({ "visibility": "private" }));
+        put("companies/acme-example", json!({}));
+        put("notes/alice-example", json!({ "visibility": "private" }));
+        let fact = |entity: &str| FactRecord {
+            source_id: "default".into(),
+            entity_slug: Some(entity.into()),
+            visibility: "world".into(),
+            ..Default::default()
+        };
+        let hidden = |row: &FactRecord| {
+            let read = store.read().unwrap();
+            let policy = PrivacyPolicy {
+                honor_aliases: true,
+                entity_privacy: true,
+                owner_only: OwnerOnlyForm::Fn,
+                ..Default::default()
+            };
+            hidden_by_private_provenance(&*read, row, &policy).unwrap()
+        };
+        assert!(hidden(&fact("alice-example")));
+        assert!(hidden(&fact("people/alice-example")));
+        assert!(!hidden(&fact("acme-example")));
+        // Only the name-key directories cover a bare key; a slugged key is judged by its own page only.
+        assert!(!hidden(&fact("bob-example")));
+        assert!(!hidden(&fact("notes/bob-example")));
     }
 }

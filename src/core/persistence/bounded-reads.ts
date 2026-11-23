@@ -104,9 +104,9 @@ export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource'
   'readSourceMembership', 'getWorktreeBinding', 'readLiveMember', 'readFolderAccess',
   'listGuestSourceIds', 'readDatabaseClock', 'listStoredTimelineRowsOrdered', 'matchTakeRows',
   'listFactWithdrawalDates', 'listCorePageRows', 'lockRegisteredSourceIds',
-  'getConfig', 'getAllConfig', 'listConfigKeys', 'readPageSnapshot', 'getPage',
+  'getConfig', 'getAllConfig', 'listConfigKeys', 'readStoredConfigValue', 'readPageSnapshot', 'getPage',
   'findDuplicatePage', 'findByTitleFuzzy', 'searchKeyword',
-  'readSegmentTexts', 'readManifest']);
+  'readSegmentTexts', 'readManifest', 'readSegmentedGateEvidence', 'hasLabelledOnlyMember', 'readSegmentedPageHead', 'readSourceIncarnation', 'readStoredPageTier', 'readFactSnapshots']);
 
 /** Test seam (test/e2e/typed-preparation-reads-guard-postgres.test.ts): told of every engine method a bounded view hands out. */
 type PreparationMemberObserver = (member: string, typed: boolean, engineReads: boolean) => void;
@@ -117,7 +117,7 @@ export function observePreparationMembers(observer: PreparationMemberObserver | 
 export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undefined, opts: { engineReads?: boolean } = {}): BrainEngine {
   const deadlineAt = clock?.deadlineAt;
   if (deadlineAt === undefined || engine.kind !== 'postgres') return engine;
-  return registerEngineView(new Proxy(engine, { get(target, key) {
+  return registerEngineView(new Proxy(engine, { get(target, key, receiver) {
     if (key === 'executeRaw') return async (sql: string, params?: unknown[], opts?: { signal?: AbortSignal; timeoutMs?: number }) => {
       recordClaimSql(clock, sql);
       if (opts?.signal) return target.executeRaw(sql, params, opts);
@@ -141,6 +141,9 @@ export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undef
     if (typeof value !== 'function') return value;
     const typedRead = typeof key === 'string' && TYPED_PREPARATION_READS.has(key);
     if (memberObserver && typeof key === 'string') memberObserver(key, typedRead, opts.engineReads === true);
+    // The publication journal store runs its SQL on the engine it is asked on: asked on this view, each of its statements
+    // (page-prepare.ts's held-behind-import read) goes through the bounded executeRaw above and ends at the deadline.
+    if (key === 'publicationJournalStore') return value.bind(receiver);
     if (!opts.engineReads && !typedRead) return value.bind(target);
     return (...args: unknown[]) => {
       if (typedRead) recordClaimSql(clock, `SELECT FROM ${String(key)}`);

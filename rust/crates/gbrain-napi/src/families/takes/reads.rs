@@ -2,7 +2,10 @@
 //! repair sites, and the reads and the delete of `gbrain extract takes` (rust/docs/store/takes-reads.md).
 //! Same shape as `../takes.rs`.
 
-use gbrain_store::takes::{IncomingTake, McpResolvedInput, PurgeTakesInput, TakesLeavingFence};
+use gbrain_store::takes::{
+    HeldFenceTakeSpec, IncomingTake, McpResolvedInput, PurgeTakesInput, TakePreimageInput,
+    TakesLeavingFence,
+};
 use napi::Env;
 use napi::bindgen_prelude::Object;
 use napi_derive::napi;
@@ -47,6 +50,32 @@ impl Brain {
         self.run(env, move |s| s.list_take_rows_for_page(page_id as i64))
     }
 
+    /// `listHeldFenceTakeRows({ sourceId, kind, ownerKey, pageId })`: the page's takes while its fence generation is held.
+    #[napi]
+    pub fn list_held_fence_take_rows<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let spec: HeldFenceTakeSpec = required(spec, "listHeldFenceTakeRows spec")?;
+            s.list_held_fence_take_rows(&spec)
+        })
+    }
+
+    /// `readTakePreimages({ pageId, by, gone, incoming })`: `[{ preimage, gone }]` by row number.
+    #[napi]
+    pub fn read_take_preimages<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: TakePreimageInput = required(input, "readTakePreimages input")?;
+            s.read_take_preimages(&input)
+        })
+    }
+
     /// `countMcpResolvedTakes({ sourceIds, holders, excludePrivate })`: resolves the count.
     #[napi]
     pub fn count_mcp_resolved_takes<'env>(
@@ -69,6 +98,105 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.list_take_supersession_candidates(&source_ids)
+        })
+    }
+
+    /// `listTakePointers(pageId)`: `[{ row_num, superseded_by }]`.
+    #[napi]
+    pub fn list_take_pointers<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| match u64::try_from(page_id) {
+            Ok(page) => s.list_take_pointers(page),
+            Err(_) => Ok(Vec::new()),
+        })
+    }
+
+    /// `listTakeSupersedeReceipts(sourceId, pageId, slug)`: `[{ old_row, new_row }]`.
+    #[napi]
+    pub fn list_take_supersede_receipts<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        page_id: i64,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| match u64::try_from(page_id) {
+            Ok(page) => s.list_take_supersede_receipts(&source_id, page, &slug),
+            Err(_) => Ok(Vec::new()),
+        })
+    }
+
+    /// `readTakeRowTier(pageId, rowNum)`: resolves `{ id, trust_tier }` of the take in that row, or null.
+    #[napi]
+    pub fn read_take_row_tier<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        row_num: i32,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| match u64::try_from(page_id) {
+            Ok(page) => s.read_take_row_tier(page, row_num),
+            Err(_) => Ok(None),
+        })
+    }
+
+    /// `hasTakeClaim(pageId, claim)`: resolves whether the page holds a take with that claim.
+    #[napi]
+    pub fn has_take_claim<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        claim: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| match u64::try_from(page_id) {
+            Ok(page) => s.has_take_claim(page, &claim),
+            Err(_) => Ok(false),
+        })
+    }
+
+    /// `listTakeRowNums(pageId)`: resolves the row numbers of the page's takes, ascending.
+    #[napi]
+    pub fn list_take_row_nums<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| match u64::try_from(page_id) {
+            Ok(page) => s.list_take_row_nums(page),
+            Err(_) => Ok(Vec::new()),
+        })
+    }
+
+    /// `readTakeRowTierByClaim(pageId, rowNum, claim)`: resolves `{ id, trust_tier }`, or null.
+    #[napi]
+    pub fn read_take_row_tier_by_claim<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        row_num: i32,
+        claim: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| match u64::try_from(page_id) {
+            Ok(page) => s.read_take_row_tier_by_claim(page, row_num, &claim),
+            Err(_) => Ok(None),
+        })
+    }
+
+    /// `setTakeSupersededBy(pageId, rowNum, supersededBy)`: resolves when the row is written.
+    #[napi]
+    pub fn set_take_superseded_by<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        row_num: i32,
+        superseded_by: Option<i32>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| match u64::try_from(page_id) {
+            Ok(page) => s.set_take_superseded_by(page, row_num, superseded_by),
+            Err(_) => Ok(()),
         })
     }
 

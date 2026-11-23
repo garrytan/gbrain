@@ -15,7 +15,9 @@ adding or changing a format.
 3. Re-score the full body when the head score is inconclusive, or when a broad
    pattern explicitly requires full-body scoring.
 4. Reject the winner when its acceptance score is below the false-positive
-   floor.
+   floor or its structure gate reads the page as a list of labels. A rejected
+   winner hands over to the next pattern, by full-body score, that clears both;
+   the page is `no_match` only when none does.
 5. Apply the winning pattern to every line and attach supported continuation
    lines to the preceding message. Speaker-object transcripts instead reject
    unsupported candidate regions rather than attributing their text to a speaker.
@@ -77,8 +79,10 @@ grammar is distinctive. Candidate-only scoring activates only after two anchors
 match, or when the first non-blank line is an anchor. This evidence threshold
 lets a single long message keep its continuation body without turning one stray
 anchor in a prose page into a conversation. Candidate anchor lines that fail the
-full regex still lower the score. Other patterns continue to use all non-blank
-lines in their density score.
+full regex still lower the score, so keep `quick_reject` to the anchor's own
+opening: `imessage-slack` takes only lines that start `**Name** (`, which lets a
+long answer full of bold headings or `**Label:**` lines read as continuation.
+Other patterns continue to use all non-blank lines in their density score.
 
 If the anchor grammar is a plausible label in ordinary prose about the same
 subject (rather than distinctive like a bold name plus a valid timestamp),

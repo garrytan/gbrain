@@ -21,6 +21,7 @@ methods in `rust/crates/gbrain-napi/src/families/chunk_queries.rs` and the membe
 | `listWithdrawalChunks`, `deleteChunksForPages` | served |
 | `listContextualModeCandidates(sourceIds)` | served |
 | `resolveFrozenHits(hits, scope)` | served; a safe-chunk, trust or flag scope refuses |
+| `readSegmentRegions(hits)` | served; Rust-only optional member (search dedup's `segmentRegions`) |
 | `hasUnsealedPages({ sourceId?, sourceIds?, excludePrivate?, types?, excludeSlugPrefixes? })` | served; true when a live page in scope is below the safe-chunk fence (`chunker_version < 4`, or none recorded) |
 
 On `getChunkPage` and `getChunkWindows`, `excludePrivate: true` applies the store page policy (`storePagePolicy`, the
@@ -43,15 +44,16 @@ A segmented page is one whose body columns are NULL, the shell `createSegmentedP
 through the page's live generation, as the SQL engines' `chunkVisibleFilter` and `chunkGenerationFilter` do: a chunk
 staged for a later generation, and one of a retired occurrence, are not read, so staged draft text shows nowhere and
 moves no total or max index before the flip. An inline chunk left on a segmented page is not part of its live body.
-A page's chunks are served when its `text_projection_revision` equals its `knowledge_revision`, the test the SQL
-engines' served-projection filter makes.
+A page's chunks are served (`getChunkPage`, `getChunkWindows`) when its `text_projection_revision` equals its
+`knowledge_revision` or is the v153 activation marker, the test the SQL engines' `servedTextProjectionFilter` makes.
+The chunkless reads count a page as sealed only when the two revisions are equal, as `chunklessPagesWhere` does.
 `sealChunks` sets that revision, and a body write moves the knowledge revision, so the old chunks stop reading.
 
 ## getChunkPage
 
 The page is found as `getChunks` finds it: the slug as written (no case fold), in the one source the member resolves
 (`sourceIds` when not empty, else `sourceId`, default `default`), and a soft-deleted page is read like a live one. An
-unsealed or absent page answers `{ chunks: [], total_chunks: 0, max_chunk_index: null }`. Otherwise `total_chunks`
+page that is not served, or is absent, answers `{ chunks: [], total_chunks: 0, max_chunk_index: null }`. Otherwise `total_chunks`
 counts every visible chunk of the page, and `chunks` holds the visible chunks, decoded with the shared `toChunk`.
 An inline page is paged by `chunk_index`: `max_chunk_index` is the highest index and `chunks` holds those with
 `fromIndex <= chunk_index < fromIndex + limit` in index order. A page with a segmented chunk is paged by position in
@@ -59,13 +61,16 @@ document order (manifest `byte_start`, then `local_ordinal`, then `chunk_index`;
 does not follow the document): `chunks` holds the positions `fromIndex <= position < fromIndex + limit` and
 `max_chunk_index` is the visible count less one.
 
-A scope that names no source answers no chunks without a store call. A scope of several sources refuses: the SQL
-engines sum the counts of every matching page and order the chunks by a key that ties across sources.
+A scope that names no source answers no chunks without a store call. A scope of several sources reads the page of
+the slug in each, as the SQL engines do: `total_chunks` is the sum of their counts, the range applies to each page
+(by position in each page's order when any of them has a segmented chunk, and `max_chunk_index` is then the largest
+page's count less one), and the chunks merge in document order with the source id, in byte order, breaking a tie
+(`ORDER BY chunkDocumentOrder, p.source_id COLLATE "C"`). `getChunks` over several sources merges the same way.
 
 ## getChunkWindows
 
 An empty request list answers `[]` before any option is read. Otherwise a requested page is authorized when it
-exists, is in scope (a non-empty `sourceIds`, else a non-empty `sourceId`, else every source), is live, is sealed,
+exists, is in scope (a non-empty `sourceIds`, else a non-empty `sourceId`, else every source), is live, is served,
 its source is not archived and its frontmatter has no `quarantine` key. Unauthorized pages are absent.
 
 Each authorized page yields one page row: `prio` is the lowest priority any request gave it, `max_chunk_index` is the
@@ -130,7 +135,14 @@ the page projection, repair contextual-mode and evidence delivery. Each answers 
   of their chunks.
 - `resolveFrozenHits` answers one row per hit in scope and per joined chunk, in hit order. A positive chunk id joins
   that chunk, any other id joins chunk index 0, and a page that holds no such chunk gives a row with NULL chunk
-  columns.
+  columns. Only a chunk of the live body joins (`chunkGenerationFilter`): a chunk whose occurrence a deferred retire
+  closed has no live manifest row, so a hit on it reads no chunk.
+- `readSegmentRegions` takes `{ pageId, chunkId }` hits and answers `{ chunk_id, byte_start }` per hit whose chunk is
+  visible at its page's live body generation on a segmented page that is sealed or carries the activation projection
+  revision, with `byte_start` the stored start of the chunk's live occurrence, in chunk-id order. Each hit names its
+  page because the store has no chunk-id index, so the read opens only those pages. The SQL engines do not define the
+  member: `segmentRegions` (`src/core/search/dedup.ts`) reads the same rows there through `keywordBoundedRead`, which
+  refuses on Rust as raw SQL. Pinned by `test/engine-parity/segment-regions.test.ts`.
 
 ## Known differences
 

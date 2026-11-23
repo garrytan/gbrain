@@ -12,7 +12,9 @@ serves the same members, and the spend ledger reads the same record ([spend-log.
 | --- | --- |
 | `brain.insertOauthClient(row)` | null. `row` is any of the table's columns; `client_id` and `client_name` are required. A column left out takes the table's default |
 | `brain.readOauthClient(clientId)` | the row as `SELECT * FROM oauth_clients WHERE client_id = $1` returns it, or null |
+| `brain.readOauthClientNames(ids)` | `[{ id, name }]` (`client_id`, `client_name`) of the clients with those ids, by id; an unknown id is left out. The names `readWriteAttributionNames` shows ([write_attribution.md](write_attribution.md)) |
 | `brain.listOauthClients()` | every client's whole row, as `SELECT * FROM oauth_clients ORDER BY client_name COLLATE "C", client_id COLLATE "C"` returns them (byte order on every engine; the store sorts the bytes of the name, then of the id) |
+| `brain.listSourceOAuthClients(sourceId)` | `{ client_id, client_name, deleted }[]`, the clients whose `source_id` is the source, revoked ones included (`deleted` when `deleted_at` is set), by client id in byte order on every engine (`client_id COLLATE "C"`) |
 | `brain.patchOauthClient(clientId, patch, guard)` | `{ row, before }` or null. `patch.set` names the columns to set (`client_secret_hash`, `token_ttl`, `min_trust`, `surface`, `surface_set_by`) and the field of that name is the value, absent meaning NULL; `row` is the whole row after (checked again), `before` the five columns before. Null when the client is missing or the guard excludes it: `live` skips a deleted client, `unless_surface_set_by` skips a client with that pin (a NULL pin is not equal to it), `client_secret_hash_is` skips a client whose secret hash is not that value (compare-and-set, so of two callers that read the same hash exactly one writes). The write is one store write, so on this store it is the lock |
 | `brain.updateOauthClientBudget(clientId, usd)` | whether the client exists; `usd` null clears the cap. The rewritten row is checked again |
 
@@ -62,6 +64,7 @@ Keys: `m 0x2A client_id -> record` (the whole row as JSON; times in microseconds
 Differences from PGLite and PostgreSQL:
 
 - The error's `detail` (`Failing row contains ...`) is not produced; the message, code and constraint name are.
-- Not kept: the `trust_generation_update` trigger, the two secondary indexes (`idx_oauth_clients_source_id`,
-  `idx_oauth_clients_federated_read`) and the `ON DELETE RESTRICT` of `sources` (the foreign key is checked on a client write
-  only, so removing a source a client names is not refused here).
+- Not kept: the `trust_generation_update` trigger and the two secondary indexes (`idx_oauth_clients_source_id`,
+  `idx_oauth_clients_federated_read`). The `ON DELETE RESTRICT` of `source_id` and the `ON DELETE SET NULL` of
+  `bound_source_id` are kept by the store's source delete ([sources.md](sources.md)); the TypeScript member maps the
+  refusal to SQLSTATE 23503 with `oauth_clients_source_id_fkey`.

@@ -216,6 +216,7 @@ export const claudeCodeAdapter: TranscriptAdapter = {
           cwd: r.cwd,
           startedAt: utcTimestamp(r.startedAt) || undefined,
           raw: { sessionId, cwd: r.cwd ?? null, source_path: path },
+          ...(r.interactive ? { ownerBasis: 'session_user' as const } : {}),
         },
         messages: r.turns.map((t) => ({
           role: t.role,

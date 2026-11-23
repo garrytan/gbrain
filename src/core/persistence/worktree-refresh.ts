@@ -54,6 +54,7 @@ import { refreshProgress, refreshRetryHint, seconds } from './refresh-retry-hint
 import { ledgerLocation, readLedger } from '../git/commit-ledger.ts';
 import { upstreamBeforeFetch, upstreamRewriteReason } from '../git/upstream-history.ts';
 import { gitDurabilityPolicy } from './git-durability-policy.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 export interface WorktreeRefreshRow {
   id: string; worktree_id: string; source_ids: string[]; principal_id: string; owner_epoch: string | number;
@@ -564,7 +565,7 @@ async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTi
       'Git durability is not on for this worktree, so nothing leaves it through Git on its own.',
       ` To let every refresh publish it on its own, the user can turn Git durability on (gbrain sources writer git-durability ${sourceId} --enable) or run gbrain config set ${REFRESH_PUBLISH_DIVERGED_KEY} true.`);
     const localCommits = Number((await read(['rev-list', '--count', `${targetHead}..${oldHead}`])).stdout.trim()) || 0;
-    const pushed = await publishInChild(root, sourceId, targetHead);
+    const pushed = await publishInChild(root, sourceId, targetHead).catch(error => { throw error instanceof OperationError && error.reason === 'publish_lock_busy' ? unpublishedRefusal(sourceId, upstreamRef, localCommits, error) : error; });
     const published = { sha: pushed.sha ?? targetHead, local_commits: localCommits, integrated: pushed.integrated,
       ...(pushed.quarantined ? { quarantined: pushed.quarantined } : {}), ...(pushed.superseded_remote_paths ? { superseded_remote_paths: pushed.superseded_remote_paths } : {}) };
     const plan = await precheck(engine, git, sourceId, fetchTimeoutMs, false, run).catch(async error => { notePublished(error, published); throw error instanceof OperationError && error.code === 'refresh_diverged' && await revParse(git, root, 'HEAD') !== oldHead ? retryInTick(error) : error; });
@@ -597,7 +598,7 @@ async function publishInChild(root: string, sourceId: string, checkedUpstream: s
   if (!child.error && doc?.outcome === 'pushed') return doc as { sha: string | null; integrated: number; quarantined?: QuarantineEntry; superseded_remote_paths?: string[] };
   if (doc && typeof doc.code === 'string' && typeof doc.message === 'string') {
     throw opError(doc.code as Parameters<typeof opError>[0], doc.message, typeof doc.suggestion === 'string' ? doc.suggestion : '',
-      { ...(typeof doc.detail === 'string' ? { detail: doc.detail } : {}), ...(doc.fix ? { fix: doc.fix as Action } : {}), retryable: doc.retryable === true });
+      { ...(typeof doc.detail === 'string' ? { detail: doc.detail } : {}), ...(doc.fix ? { fix: doc.fix as Action } : {}), ...(typeof doc.reason === 'string' ? { reason: doc.reason } : {}), retryable: doc.retryable === true });
   }
   throw opError('push_unconfirmed', `The publish of the diverged checkout ${root} did not report a push (${child.error ? `exit ${String(child.error.code ?? child.error.signal ?? 'unknown')}` : `outcome ${String(doc?.outcome ?? 'unreadable')}`}: ${child.stderr.trim().slice(0, 300) || 'no detail'}); the refresh stopped before fencing anything, and the remote may already hold the merge.`,
     `Check gbrain sources writer status --source ${sourceId} --json, then retry gbrain sources refresh ${sourceId}.`, { retryable: true });
@@ -618,6 +619,22 @@ async function divergedRefusal(git: Git, root: string, sourceId: string, upstrea
     why: `HEAD has ${local} that ${upstreamRef} lacks while ${upstreamRef} moved on; pushing HEAD merged with it makes HEAD an ancestor of the upstream, so the refresh can fast-forward.`,
     user_message: rewrite ? `The checkout of source ${sourceId} cannot be published on its own: ${rewrite} Push this checkout's history merged with the remote anyway, or replace the checkout with gbrain sources reclone ${sourceId}?`
       : `The checkout of source ${sourceId} has ${local} that were never pushed while its remote moved on. Push them, merged with the remote, so gbrain can bring the checkout up to date? Conflicting files stop the push and change nothing.`,
+    docs: 'docs/guides/write-refusals.md#refresh_diverged' };
+  return error;
+}
+/**
+ * GST-3497: the refresh's own publish of a diverged checkout found another publish holding the push lock, so it pushed
+ * nothing and the checkout is still diverged: refuse refresh_diverged, as doctor git_convergence says, naming the holder.
+ * It is retryable: the next refresh publishes again on its own.
+ */
+function unpublishedRefusal(sourceId: string, upstreamRef: string, localCommits: number, cause: OperationError): OperationError {
+  const error = refusal('refresh_diverged',
+    `The checkout has ${localCommits} local commit(s) that ${upstreamRef} lacks and cannot fast-forward, and this refresh's publish of them merged with the upstream did not run: ${cause.message} Nothing changed.`,
+    `Retry gbrain sources refresh ${sourceId} once that publish ends; the next scheduled refresh does it on its own. The retry checks the upstream for a rewrite and the publishing setting again before it publishes.`);
+  error.retryable = true;
+  error.reason = 'publish_lock_busy';
+  error.fix = { argv: ['gbrain', 'sources', 'refresh', sourceId], consent: [], actor: 'agent', requires_exclusive: false,
+    why: 'Another publish held the push lock; a fresh refresh rechecks the upstream and the publishing setting, then publishes or fast-forwards.',
     docs: 'docs/guides/write-refusals.md#refresh_diverged' };
   return error;
 }
@@ -809,6 +826,8 @@ function finished(row: WorktreeRefreshRow, sync: { synced: RefreshMemberSync[]; 
  * host only; refusals throw catalogue errors (`code`, cause, literal fix, docs). Callers omit `run`, the record of one run (GST-3107).
  */
 export async function refreshWorktree(engine: BrainEngine, sourceId: string, opts: RefreshOptions = {}, run?: RefreshRun): Promise<WorktreeRefreshResult> {
+  // The refresh writer runs its rows through executeRaw; an engine without raw SQL (Rust) refuses it by name, before any step.
+  requireRawSql(engine, 'the refresh writer (persistence/worktree-refresh.ts): gbrain sources refresh writes no refresh row here');
   if (!run) return withRefreshRun(engine, { beforeDrain: opts.hooks?.backlog, redact }, next => refreshWorktree(engine, sourceId, opts, next));
   let result: WorktreeRefreshResult;
   try { result = await runRefresh(engine, sourceId, opts, run); }
