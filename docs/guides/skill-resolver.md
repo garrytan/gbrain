@@ -472,12 +472,15 @@ endpoint can be the picker, a self-hosted or fine-tuned one included: set
 | `skills.resolver.router_base_url` | the endpoint's base URL up to `/v1`, like `https://models.example.com/v1` (https, or http to localhost only); required |
 | `skills.resolver.router_api_key_env` | the name of the environment variable holding its key, like `MY_MODEL_API_KEY`; unset sends no key |
 | `skills.resolver.router_usd_per_mtok` | `[input, output]` or `[input, output, cached input]` in USD per million tokens, so the daily cap holds; required (`0,0` for a free one). Without the third value, cached input is charged at the input rate |
+| `skills.resolver.router_extra_body` | optional: a JSON object of at most 4,096 bytes added to each request body, like `{"reasoning_effort": "none"}` for a model that should answer without reasoning. It cannot set `model`, `messages`, `stream`, `n`, `max_tokens` or `max_completion_tokens`, and applies to `compat:` models only |
+| `skills.resolver.router_prompt_version` | optional: for a model trained on the picker's request, the picker prompt version it was trained on (`prompt_version` in a catalog's `picker.json`). When gbrain moves to a new version the picker turns itself off with `config_invalid` instead of sending the model a request it was not trained on |
 
 ```bash
 gbrain config set skills.resolver.router_model compat:acme/skill-picker-1
 gbrain config set skills.resolver.router_base_url https://models.example.com/v1
 gbrain config set skills.resolver.router_api_key_env MY_MODEL_API_KEY
 gbrain config set skills.resolver.router_usd_per_mtok 0.1,0.5
+gbrain config set skills.resolver.router_extra_body '{"reasoning_effort": "none"}'
 ```
 
 **Cost and wait.** A turn sends the skill list and the message, about 9,000
@@ -541,8 +544,9 @@ current ids.
 
 ### router_fallback: config_invalid
 
-A `skills.resolver.router_*` value is out of range. The turn is not refused:
-the picker stays off until the value is fixed or unset
+A `skills.resolver.router_*` value is out of range, or
+`router_prompt_version` names a version other than the one this gbrain sends.
+The turn is not refused: the picker stays off until the value is fixed or unset
 (`gbrain config unset skills.resolver.router_timeout_ms`).
 
 ### router_fallback: no_pricing
