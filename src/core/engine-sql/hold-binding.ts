@@ -14,7 +14,7 @@ export async function bindHoldsToNewPage(exec: SqlExecutor, pageId: number): Pro
       AND h.created_at <= p.created_at`);
 }
 
-/** True when a page row came back from the upsert as a new row: an insert stamps created_at and updated_at with the same now(). */
+/** True when a page row came back from the upsert as a new row: an insert sets created_at and updated_at to the same now(). */
 export function pageRowIsNew(row: Record<string, unknown> | undefined): boolean {
   if (!row?.created_at || !row.updated_at) return false;
   return new Date(row.created_at as string).getTime() === new Date(row.updated_at as string).getTime();
