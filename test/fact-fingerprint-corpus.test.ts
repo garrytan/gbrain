@@ -111,8 +111,9 @@ for (const kind of testBackends()) {
       const pgliteSpace = new Set(fixture.space);
       const hostLower = new Map(host.lower);
       const hostSpace = new Set(host.space);
-      const different = new Set(chars.filter((cp) =>
-        (hostLower.get(cp) ?? cp) !== (pgliteLower.get(cp) ?? cp) || hostSpace.has(cp) !== pgliteSpace.has(cp)));
+      const unmodelled = new Set(host.unmodelled);
+      const different = new Set(chars.filter((cp) => unmodelled.has(cp)
+        || (hostLower.get(cp) ?? cp) !== (pgliteLower.get(cp) ?? cp) || hostSpace.has(cp) !== pgliteSpace.has(cp)));
       const model = modelWith(hostLower, hostSpace);
 
       const unexplained: string[] = [];
@@ -123,8 +124,10 @@ for (const kind of testBackends()) {
         const want = fixture.rows[i]!;
         expect(want.name).toBe(row.name);
         // Every answer follows from the host's own tables...
-        if (got.normalize !== model.normalize(text) || got.fingerprint !== sha256(model.normalize(text))
-          || got.fingerprint_v1 !== sha256(model.v1Input(text))) unexplained.push(row.name);
+        // A claim with a character the host's lower() cannot be tabled for (ICU) is only compared with PGLite below.
+        const modelled = ![...text].some((c) => unmodelled.has(c.codePointAt(0)!));
+        if (modelled && (got.normalize !== model.normalize(text) || got.fingerprint !== sha256(model.normalize(text))
+          || got.fingerprint_v1 !== sha256(model.v1Input(text)))) unexplained.push(row.name);
         // ...and a claim with no host-different character fingerprints exactly as on PGLite (and Rust).
         const same = got.fingerprint === want.fingerprint && got.fingerprint_v1 === want.fingerprint_v1;
         if (!same) differing.push(row.name);

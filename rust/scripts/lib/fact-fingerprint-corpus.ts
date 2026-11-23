@@ -319,10 +319,16 @@ export async function sqlFingerprints(arm: SqlArm, texts: readonly string[]): Pr
 
 /** The database's per-character tables over every scalar value but U+0000. */
 export interface CharTables {
-  /** `[cp, lower(chr(cp))]` for every code point `lower()` changes (always to exactly one code point). */
+  /** `[cp, lower(chr(cp))]` for every code point `lower()` changes to exactly one code point. */
   lower: Array<[number, number]>;
   /** Every code point `chr(cp) ~ '[[:space:]]'` matches. */
   space: number[];
+  /**
+   * Only for a scan limited to some code points (`only`, the Postgres host): the ones this host's `lower()` cannot be
+   * written down per character, because it returns several code points (an ICU database lowers U+0130 to two) or reads
+   * the neighbours (ICU lowers a Greek capital sigma at the end of a word differently). They are left out of `lower`.
+   */
+  unmodelled: number[];
 }
 
 /**
@@ -339,10 +345,20 @@ export async function sqlCharTables(arm: SqlArm, only?: readonly number[]): Prom
     `SELECT cp, ascii(lower(chr(cp))) AS l, length(lower(chr(cp))) AS n FROM ${source}
       WHERE (cp < 55296 OR cp > 57343) AND lower(chr(cp)) <> chr(cp) ORDER BY cp`, params);
   const multi = lower.filter((r) => Number(r.n) !== 1);
-  if (multi.length > 0) throw new Error(`lower() returned more than one code point for ${multi.map((r) => r.cp).join(', ')}`);
+  // Greek capital alpha then capital sigma: a per-character `lower()` gives alpha, small sigma; a contextual one ends in the final sigma.
+  const [{ ok: perCharacter }] = (await arm.executeRaw<{ ok: boolean }>(
+    `SELECT lower(chr(913) || chr(931)) = chr(945) || chr(963) AS ok`)) as [{ ok: boolean }];
+  const unmodelled = new Set<number>(multi.map((r) => Number(r.cp)));
+  if (!perCharacter && (!only || only.includes(931))) unmodelled.add(931);
+  // PGLite (the whole scan) is the reference: a per-character `lower()` is what its fixture is built on.
+  if (!only && unmodelled.size > 0) throw new Error(`lower() is not a per-character mapping for ${[...unmodelled].join(', ')}`);
   const space = await arm.executeRaw<{ cp: number | string }>(
     `SELECT cp FROM ${source} WHERE (cp < 55296 OR cp > 57343) AND chr(cp) ~ '[[:space:]]' ORDER BY cp`, params);
-  return { lower: lower.map((r) => [Number(r.cp), Number(r.l)]), space: space.map((r) => Number(r.cp)) };
+  return {
+    lower: lower.filter((r) => !unmodelled.has(Number(r.cp))).map((r) => [Number(r.cp), Number(r.l)]),
+    space: space.map((r) => Number(r.cp)),
+    unmodelled: [...unmodelled].sort((a, b) => a - b),
+  };
 }
 
 /** One fixture row: the corpus row and what PGLite answered. */
@@ -363,12 +379,13 @@ export async function buildFingerprintFixture(arm: SqlArm): Promise<FingerprintF
   const corpus = fingerprintCorpus();
   const answers = await sqlFingerprints(arm, corpus.map(rowText));
   const [{ v }] = (await arm.executeRaw<{ v: string }>('SELECT version() AS v')) as [{ v: string }];
-  const tables = await sqlCharTables(arm);
+  const { lower, space } = await sqlCharTables(arm);
   return {
     pglite: v,
     seed: SEEDED_ROWS.seed,
     seeded_count: SEEDED_ROWS.count,
-    ...tables,
+    lower,
+    space,
     rows: corpus.map((row, i) => ({ ...row, ...answers[i]! })),
   };
 }

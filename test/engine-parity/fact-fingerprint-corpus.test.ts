@@ -51,7 +51,9 @@ beforeAll(async () => {
   const host = await sqlCharTables(pg.engine as unknown as SqlArm, chars);
   const hostLower = new Map(host.lower);
   const hostSpace = new Set(host.space);
-  hostDifferences = new Set(chars.filter((cp) => (hostLower.get(cp) ?? cp) !== (lower.get(cp) ?? cp) || hostSpace.has(cp) !== space.has(cp)));
+  const unmodelled = new Set(host.unmodelled);
+  hostDifferences = new Set(chars.filter((cp) => unmodelled.has(cp)
+    || (hostLower.get(cp) ?? cp) !== (lower.get(cp) ?? cp) || hostSpace.has(cp) !== space.has(cp)));
 }, 120_000);
 
 /** The claims every arm compares: no host-different character, and long rows cut to `LONG` characters. */
