@@ -17,7 +17,8 @@
  *    outright and turned its oldest-blocker and recovery probes `unknown`), or answers a pinned admission wrongly.
  *  - Why existing coverage misses it: the sync-status tests run on PGLite and Postgres only, and the pins test checks
  *    statement text, not answers.
- *  - Seam: none. Real engines; the seeded-cursor case writes its rows with `executeRaw`, so a Rust brain stops there.
+ *  - Seam: none. Real engines; the seeded-cursor case writes its rows with writeCheckpointAt (harness SQL on the SQL arms, a
+ *    store write on Rust), and the other checkpoint case writes through writeOpCheckpointRecord.
  */
 import { describe, expect } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -27,7 +28,7 @@ import { writePassRow } from '../../src/core/persistence/sync-pass-row.ts';
 import { readManagedSyncFailures } from '../../src/core/persistence/sync-failures.ts';
 import { listIdentityDowngrades } from '../../src/core/sync-identity-downgrades.ts';
 import { APPLE_CONTACTS_PENDING_DELETES_OP, APPLE_CONTACTS_REVIEW_OP } from '../../src/core/apple-contacts/review-status.ts';
-import { createSource, parityArms } from './harness.ts';
+import { createSource, parityArms, writeCheckpointAt } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -143,35 +144,38 @@ describe('engine parity: sync status reads', () => {
       return result;
     });
 
-  parityTest('managed-sync cursors read with their failure and manifest path, the failed one first (a finished one still heads); an old incarnation\'s cursor is retired (a managed sync writes them, so a Rust brain stops at the write)',
-    { methods: ['readManagedSyncCursorHeader', 'readRetiredManagedSyncCursor', 'readManagedSyncFailureRows', 'readOrphanedManagedSyncFailureRows'] },
+  parityTest('managed-sync cursors read with their failure and manifest path, the failed one first (a finished one still heads); an old incarnation\'s cursor is retired',
+    { methods: ['readManagedSyncCursorHeader', 'readRetiredManagedSyncCursor', 'readManagedSyncFailureRows', 'readOrphanedManagedSyncFailureRows', 'readOpCheckpointRecord'] },
     async (engine, backend) => {
       await createSource(engine, backend, 'repo', {}, '/srv/brain/repo');
       const inc = await incarnationOf(engine, 'repo');
-      const put = (op: string, fingerprint: string, keys: unknown[], at: string) => engine.executeRaw(
-        'INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at) VALUES ($1, $2, $3::text::jsonb, $4::timestamptz)', [op, fingerprint, JSON.stringify(keys), at]);
       const cursor = (runId: string, over: Record<string, unknown> = {}) =>
         ({ sourceId: 'repo', incarnation: inc, runId, index: 1, target: 'abc', syncOptions: null, processingOptions: null, ...over });
-      await put('managed-sync', 'k-new', [cursor('run-new')], '2026-01-02T00:00:00.000Z');
-      await put('managed-sync', 'k-failed', [cursor('run-failed', { index: -1 })], '2026-01-01T00:00:00.000Z');
-      await put('managed-sync', 'k-done', [cursor('run-done', { done: true })], '2026-01-03T00:00:00.000Z');
-      await put('managed-sync', 'k-old', [cursor('run-old', { incarnation: 'retired-incarnation' })], '2025-12-01T00:00:00.000Z');
-      await put('managed-sync-manifest', 'run-new', [{ path: 'a.md' }, { path: 'b.md' }], '2026-01-02T00:00:00.000Z');
-      await put('managed-sync-manifest', 'run-failed', [{ path: 'x.md' }, { path: 'y.md' }], '2026-01-01T00:00:00.000Z');
       const failure = (fingerprint: string) => ({ source_id: 'repo', source_incarnation: inc, path: 'y.md', code: 'import_failed', cursor_key: fingerprint });
-      await put('managed-sync-failure', 'k-failed', [failure('k-failed')], '2026-01-01T00:00:01.000Z');
-      await put('managed-sync-failure', 'k-orphan', [failure('k-orphan')], '2026-01-01T00:00:02.000Z');
+      // Written in stamp order: the Rust store stamps each write with its own clock (writeCheckpointAt).
+      const seeds: Array<[string, string, unknown[], string]> = [
+        ['managed-sync', 'k-old', [cursor('run-old', { incarnation: 'retired-incarnation' })], '2025-12-01T00:00:00.000Z'],
+        ['managed-sync', 'k-failed', [cursor('run-failed', { index: -1 })], '2026-01-01T00:00:00.000Z'],
+        ['managed-sync-manifest', 'run-failed', [{ path: 'x.md' }, { path: 'y.md' }], '2026-01-01T00:00:00.000Z'],
+        ['managed-sync-failure', 'k-failed', [failure('k-failed')], '2026-01-01T00:00:01.000Z'],
+        ['managed-sync-failure', 'k-orphan', [failure('k-orphan')], '2026-01-01T00:00:02.000Z'],
+        ['managed-sync', 'k-new', [cursor('run-new')], '2026-01-02T00:00:00.000Z'],
+        ['managed-sync-manifest', 'run-new', [{ path: 'a.md' }, { path: 'b.md' }], '2026-01-02T00:00:00.000Z'],
+        ['managed-sync', 'k-done', [cursor('run-done', { done: true })], '2026-01-03T00:00:00.000Z'],
+      ];
+      for (const [op, fingerprint, keys, at] of seeds) await writeCheckpointAt(engine, backend, op, fingerprint, keys, at);
+      const oldStamp = (await engine.readOpCheckpointRecord('managed-sync', 'k-old'))?.updated_at ?? null;
       const rows = await engine.readManagedSyncFailureRows<Record<string, unknown>, unknown, { cursor_key: string }>(['repo']);
       const result = {
         newest: (await engine.readManagedSyncCursorHeader<{ runId: string }>('repo', inc, ''))?.key,
         failedFirst: (await engine.readManagedSyncCursorHeader<{ runId: string }>('repo', inc, 'k-failed'))?.key,
-        retired: await engine.readRetiredManagedSyncCursor('repo', inc),
+        retired: await engine.readRetiredManagedSyncCursor('repo', inc).then(r => r && { firstSeenIsTheOldCursorStamp: r.first_seen === oldStamp }),
         rows: rows.map(r => ({ key: r.cursor_key, runId: r.value.runId, index: r.value.index, path: r.path, failure: r.failure?.cursor_key ?? null, receipt: r.receipt }))
           .sort((a, b) => a.key.localeCompare(b.key)),
         orphaned: (await engine.readOrphanedManagedSyncFailureRows<{ cursor_key: string }>(null)).map(r => r.failure.cursor_key),
       };
       expect(result).toEqual({
-        newest: 'k-done', failedFirst: 'k-failed', retired: { first_seen: '2025-12-01T00:00:00.000Z' },
+        newest: 'k-done', failedFirst: 'k-failed', retired: { firstSeenIsTheOldCursorStamp: true },
         rows: [
           { key: 'k-failed', runId: 'run-failed', index: -1, path: 'y.md', failure: 'k-failed', receipt: null },
           { key: 'k-new', runId: 'run-new', index: 1, path: 'b.md', failure: null, receipt: null },
@@ -181,13 +185,12 @@ describe('engine parity: sync status reads', () => {
       return result;
     });
 
-  parityTest('the source row carries the source\'s identity-review and held-deletion checkpoints, and not another source\'s (written with executeRaw, so a Rust brain stops at the write)',
-    { methods: ['readSyncStatusSourceRow'] },
+  parityTest('the source row carries the source\'s identity-review and held-deletion checkpoints, and not another source\'s',
+    { methods: ['readSyncStatusSourceRow', 'writeOpCheckpointRecord'] },
     async (engine, backend) => {
       await createSource(engine, backend, 'repo', {}, '/srv/brain/repo');
       await createSource(engine, backend, 'other', {}, '/srv/brain/other');
-      const put = (op: string, fingerprint: string, keys: unknown[]) => engine.executeRaw(
-        'INSERT INTO op_checkpoints (op, fingerprint, completed_keys) VALUES ($1, $2, $3::text::jsonb)', [op, fingerprint, JSON.stringify(keys)]);
+      const put = (op: string, fingerprint: string, keys: unknown[]) => engine.writeOpCheckpointRecord(op, fingerprint, keys);
       const review = [{ slug: 'people/alice-example', candidates: [{ source_id: 'repo', slug: 'people/alice-example' }], decided: null }];
       const held = [{ ids: ['c1'], held: { code: 'apple_contacts_delete_floor', contacts: 3, owned: 4, since: '2026-01-01T00:00:00.000Z' } }];
       await put(APPLE_CONTACTS_REVIEW_OP, 'repo', review);
