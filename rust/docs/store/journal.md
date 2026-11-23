@@ -105,7 +105,7 @@ open item of the capability flip, not served yet:
 | `readManagedSyncCursorHeader`, `readRetiredManagedSyncCursor` | the `managed-sync` checkpoint rows, read as the SQL reads them | The store keeps op checkpoint rows. |
 | `readManagedSyncFailureRows`, `readOrphanedManagedSyncFailureRows` | the unfinished cursors (or cursorless failures) of live source incarnations, with failure row and manifest path; `receipt` is `null` | No managed-sync request is admitted to give a receipt: a managed sync stops on `raw_sql` before it admits one. |
 | `readSyncHeadRequestRow`, `readSyncRecoveryProbeRow` | `null`; `{ n: 0, request_id: null, slug: null, blocked: null }` | No request-recovery writer has landed. A worktree-bound page write now writes a request row, which this read does not see yet: an open item of the capability flip. |
-| `readIdentityDowngradeRows(sourceIds)` | `[]`, or a refusal when a downgrade record exists | A record joins the pages it names, which this member does not serve. Records are written only through `executeRaw`, which this engine refuses, so none exists. |
+| `readIdentityDowngradeRows(sourceIds)` | the open `sync-identity-downgrade` records, oldest first, each with the live slugs at its new path | Served with its page join by the store (persistence.md, "Identity-downgrade read"). |
 
 The request members (`readWriteRequest`, `readWriteRequestById`, `listWriteRequestsByRequestIds`, `readWriteRequestProgress`, `countOutstandingBySource`, `readWorktreeAdmission`, `completeSyncedRefresh`, `hasDeferralRoom`, `readRefreshTiming`, `countHeldBehindImport`, `readCounterRows`, `readAdmissionRate`, `lockPersistenceCounters`,
 `insertWriteRequest`, `stampWriteClaim`, `lockWriteRequest`, `completeWriteRow`, the grouped admission

@@ -40,8 +40,9 @@ import type { TestBackend } from '../helpers/test-backends.ts';
 import { armHas, isCapabilityRefusal, missingCapability, type EngineCapability } from './arm-capabilities.ts';
 import { checkRustTally } from './rust-tally.ts';
 import { itemSetHash } from '../../src/core/generations/publish.ts';
+import { IDENTITY_DOWNGRADE_OP } from '../../src/core/persistence/sync-status-sql.ts';
 import {
-  archiveRustSource, createRustSource, newRustBrain, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
+  archiveRustSource, createRustSource, newRustBrain, putRustOpCheckpointRow, rustPageDeletedAt, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
 } from './rust-arm.ts';
 
 /** The backends a parity arm can run on: the SQL ones every suite selects, and the opt-in Rust engine. */
@@ -514,6 +515,39 @@ export async function recordFenceRetirement(
     [{ item_key: `fact:${factId}`, identity_hash: `fact-identity-${factId}`, action: 'retired', preimage,
       preimage_bytes: Buffer.byteLength(JSON.stringify(preimage), 'utf8'), pending: false }]);
   });
+}
+
+/**
+ * Fixture: an identity-downgrade record (sync-identity-downgrades.ts) for the soft-deleted page `slug` of `sourceId`, keyed
+ * by that page's id, as `recordIdentityDowngrades` writes it through executeRaw. `old_deleted_at` is the page's
+ * `deleted_at` as the engine keeps it (Postgres text, or the Rust store's ISO form with microseconds) unless `record` replaces it.
+ * Harness-only SQL behind the backend switch; the Rust store takes the row through its checkpoint-row primitive.
+ * Returns the old page's id.
+ */
+export async function recordIdentityDowngrade(
+  engine: BrainEngine, backend: ParityBackend, sourceId: string, slug: string, record: Record<string, unknown>,
+): Promise<number> {
+  const origin = await engine.readPageOrigin({ sourceId, slug });
+  if (!origin) throw new Error(`recordIdentityDowngrade: no page ${sourceId}/${slug}`);
+  const id = Number(origin.id);
+  switch (backend) {
+    case 'rust': {
+      const full = { source_id: sourceId, old_slug: slug, old_page_id: id, old_deleted_at: await rustPageDeletedAt(engine, sourceId, slug), ...record };
+      await putRustOpCheckpointRow(engine, IDENTITY_DOWNGRADE_OP, String(id), [full]);
+      return id;
+    }
+    case 'pglite':
+    case 'postgres': {
+      const [row] = await engine.executeRaw<{ deleted_at: string | null }>('SELECT deleted_at::text AS deleted_at FROM pages WHERE id = $1', [id]);
+      const full = { source_id: sourceId, old_slug: slug, old_page_id: id, old_deleted_at: row?.deleted_at ?? null, ...record };
+      await engine.executeRaw(`INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at) VALUES ($1, $2, $3::text::jsonb, now())
+        ON CONFLICT (op, fingerprint) DO UPDATE SET completed_keys = EXCLUDED.completed_keys, updated_at = now()`,
+        [IDENTITY_DOWNGRADE_OP, String(id), JSON.stringify([full])]);
+      return id;
+    }
+    default:
+      return assertNever(backend);
+  }
 }
 
 /** Wrap an engine so every direct method call on the handle is recorded. */

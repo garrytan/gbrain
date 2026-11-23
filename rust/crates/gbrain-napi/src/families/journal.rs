@@ -809,6 +809,19 @@ impl Brain {
         })
     }
 
+    /// `readIdentityDowngradeRows({ op, sourceIds })`: the open identity-downgrade records, oldest
+    /// first, each with the live slugs at its new path (`src/core/engine-sql/sync-status-reads.ts`).
+    #[napi]
+    pub fn read_identity_downgrade_rows<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_identity_downgrade_rows(&required(spec, "readIdentityDowngradeRows spec")?)
+        })
+    }
+
     /// `probeIdleWork(spec)`: whether any worker of this host has work, and where the resident
     /// projection window stands (`{ work, projection_work, projection_last, high_water }`).
     #[napi]

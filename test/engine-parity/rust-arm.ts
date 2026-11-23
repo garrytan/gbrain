@@ -89,6 +89,17 @@ export async function archiveRustSource(engine: unknown, id: string): Promise<vo
   await (engine as RustEngine).openStore('archiveSource').brain.setSourceArchived(id, true);
 }
 
+/** Fixture: put a whole op checkpoint row on the Rust brain (the identity-downgrade recorder writes it through executeRaw). */
+export async function putRustOpCheckpointRow(engine: unknown, op: string, fingerprint: string, completedKeys: unknown[]): Promise<void> {
+  await (engine as RustEngine).openStore('putOpCheckpointRow').brain.putOpCheckpointRow(op, fingerprint, completedKeys);
+}
+
+/** Fixture: a page's `deleted_at` as the Rust store keeps it (ISO with microseconds; the engine member hands back a Date). */
+export async function rustPageDeletedAt(engine: unknown, sourceId: string, slug: string): Promise<string | null> {
+  const row = await (engine as RustEngine).openStore('readPageOrigin').brain.readPageOrigin({ sourceId, slug }) as { deleted_at: string | null } | null;
+  return row?.deleted_at ?? null;
+}
+
 /** Fixture: the Rust brain's access-rule store (the policy writes have no typed BrainEngine member). */
 export function rustAccessBrain(engine: unknown) {
   return (engine as RustEngine).openStore('accessRules').brain;
