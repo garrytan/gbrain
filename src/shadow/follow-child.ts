@@ -72,9 +72,9 @@ export class FollowChild {
     const seed = readSeedRecord(o.dir);
     if (!seed) { this.file = null; return; }
     const old = readFollowerFile(o.dir);
-    const keep = old && old.epoch_id === seed.seed_id ? old : null;
+    const keep = old && old.seed_id === seed.seed_id ? old : null;
     this.file = keep ?? {
-      version: 1, epoch_id: seed.seed_id, epoch_started_at: seed.finished_at, updated_at: new Date(this.now()).toISOString(), applied_rows: 0,
+      version: 1, epoch_id: seed.seed_id, seed_id: seed.seed_id, epoch_started_at: seed.finished_at, updated_at: new Date(this.now()).toISOString(), applied_rows: 0,
       queue_depth: 0, lag_ms: 0, last_seq: null, watermark: { valid: false, through: null, invalidated_reason: 'not_reconciled' },
       lag: { epoch: [], hours: {} }, fingerprints: { checked_rows: 0, mismatches: 0 }, probe: NOT_RUN_PROBE,
       allocators: { verified: false, checked_at: null },
@@ -183,7 +183,7 @@ export class FollowChild {
     const done = (): void => { const i = this.waiting.indexOf(e.committed_at); if (i >= 0) this.waiting.splice(i, 1); };
     if (!file || !store) { done(); this.invalidate(`apply_failed:${this.o.owner() ? 'addon_unavailable' : 'not_owner'}`); return; }
     try {
-      const result = await store.replaceRelationRows(file.epoch_id, e.relation, e.generation, e.keys, e.rows, e.digests);
+      const result = await store.replaceRelationRows(file.seed_id, e.relation, e.generation, e.keys, e.rows, e.digests);
       file.applied_rows += result.upserted + result.deleted;
       file.last_seq = e.seq;
       if (result.displaced > 0) this.relationDisplaced(e.relation);
@@ -220,7 +220,7 @@ export class FollowChild {
     if (!this.o.owner()) throw Object.assign(new Error('another process owns the Rust store'), { code: 'not_owner' });
     const store = await this.o.store();
     if (!store) throw Object.assign(new Error('the Rust addon is unavailable'), { code: 'addon_unavailable' });
-    const id = file.epoch_id;
+    const id = file.seed_id;
     const lo = (a.lo ?? null) as string | null;
     const hi = (a.hi ?? null) as string | null;
     switch (method) {

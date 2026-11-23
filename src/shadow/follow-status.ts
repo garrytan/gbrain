@@ -19,7 +19,10 @@ export interface ProbeRecord { state: 'pass' | 'fail' | 'not_run'; checked_at: s
 export interface Watermark { valid: boolean; through: string | null; invalidated_reason: string | null }
 export interface FollowerFile {
   version: 1;
+  /** Written as the seed id; the evidence epoch lives in evidence/epoch.json (evidence-epoch.ts), not here. */
   epoch_id: string;
+  /** The seed this follower state belongs to; the Rust store's calls and the status match on it. */
+  seed_id: string;
   epoch_started_at: string;
   updated_at: string;
   applied_rows: number;
@@ -70,7 +73,8 @@ export const followerPath = (dir: string): string => join(dir, 'follower.json');
 export const passesPath = (dir: string): string => join(dir, 'reconcile', 'passes.jsonl');
 
 export function readFollowerFile(dir: string): FollowerFile | null {
-  try { const parsed = JSON.parse(readFileSync(followerPath(dir), 'utf8')) as FollowerFile; return parsed?.version === 1 ? parsed : null; } catch { return null; }
+  // A file written before `seed_id` existed named the seed in `epoch_id`.
+  try { const parsed = JSON.parse(readFileSync(followerPath(dir), 'utf8')) as FollowerFile; return parsed?.version === 1 ? { ...parsed, seed_id: parsed.seed_id ?? parsed.epoch_id } : null; } catch { return null; }
 }
 
 export function writeFollowerFile(dir: string, file: FollowerFile): void {
@@ -114,7 +118,7 @@ export interface FollowStatus {
 export function buildFollowStatus(dir: string, state: ShadowState | null, now: Date = new Date()): FollowStatus {
   const seed = readSeedRecord(dir);
   const file = seed ? readFollowerFile(dir) : null;
-  const live = file && file.epoch_id === seed?.seed_id ? file : null;
+  const live = file && file.seed_id === seed?.seed_id ? file : null;
   const passes = readPasses(dir);
   const last = passes.at(-1) ?? null;
   const fulls = passes.filter((p) => p.kind === 'full');
