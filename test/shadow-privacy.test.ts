@@ -18,7 +18,7 @@ import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { withCallerAccess } from '../src/core/search/private-visibility.ts';
-import { createAsker, extraRows, missingPages, policyApplies, safeCode } from '../src/shadow/child-checks.ts';
+import { createAsker, extraRows, missingPages, policyApplies, privacyVerdict, safeCode } from '../src/shadow/child-checks.ts';
 import { ALICE, defineCheckScenarios, privacyFixture } from './helpers/shadow-checks-scenarios.ts';
 import { sleep, startRig } from './helpers/shadow-stable-harness.ts';
 
@@ -89,6 +89,17 @@ describe('page candidates', () => {
     expect(extraRows([own], [{ page_id: 2, source_id: 's', slug: 'b', title: 'T', score: 0.5 }]).unidentified).toBe(1); // a ranked row on another page with no chunk at all
     expect(extraRows([own], [{ page_id: 2, source_id: 's', slug: 'b', title: 'T', chunk_id: 12, chunk_text: 'other', score: 0.5 }])).toMatchObject({ rows: [{ id: 2, chunk: { id: 12 } }], unidentified: 0 }); // a new chunk on a new page is for the primary to judge
     expect(extraRows([{ page_id: 1, source_id: 's', slug: 'a' }], [{ page_id: 3, source_id: 's', slug: 'c' }]).rows).toMatchObject([{ id: 3 }]); // page rows carry no chunk: page-only
+  });
+
+  test('a malformed element of the Rust answer makes the verdict incomplete on the sample and the rerun path alike, whatever the serving process says', async () => {
+    const saysClean = Object.assign(async () => ({ verdict: 'clean', complete: true }), { answer() {}, closeAll() {} }) as never;
+    const args = [{ excludePrivate: true }];
+    const row = { page_id: 1, source_id: 's', slug: 'a', chunk_id: 10, chunk_text: 't', score: 0.5 };
+    for (const phase of ['sample', 'rerun'] as const) {
+      expect([phase, await privacyVerdict(saysClean, args, [], [null, 'private canary'], 'sid', phase, 0)]).toEqual([phase, { verdict: 'clean', complete: false }]);
+      expect([phase, await privacyVerdict(saysClean, args, [row], [row, 7], 'sid', phase, 0)]).toEqual([phase, { verdict: 'clean', complete: false }]);
+    }
+    expect(await privacyVerdict(saysClean, args, [], [], 'sid', 'rerun', 0)).toEqual({ verdict: 'clean', complete: true }); // control: all rows well formed
   });
 
   test('an answer is accepted only with the asking child\'s session nonce, and a failure code is a plain bounded token', async () => {

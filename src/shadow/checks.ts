@@ -11,9 +11,9 @@
  *            primary's safe-chunk fence when its read asked for it, and the chunk visibility the primary used. The answer is a
  *            verdict (`clean` with `complete`, `violation`, `moved`), never content. It is `moved` unless this process can PROVE
  *            nothing the policy reads changed since the read: its own write generation (follower.published, read live before
- *            and after the check) must equal the one captured with the sample, the policy fingerprint (pages, concept-provenance
- *            links, sources, config, chunks: deletions included; `createPolicyWatch`) must equal the one captured with the
- *            sample, no page or access row may carry a time later than the read, and the access tables' generation must hold
+ *            and after the check) must equal the one captured with the sample, the policy fingerprint (a hash of every row of every
+ *            table the predicates read, `FINGERPRINT_TABLES`; `createPolicyWatch`) must equal the one captured, before the
+ *            primary read started, with the sample, no page or access row may carry a time later than the read, and the access tables' generation must hold
  *            across the check. Without proof the child calls the sample inconclusive, never clean.
  *   rerun    The stable-generation barrier for a mismatch that nothing explains (plan decision 7). When everything published
  *            has been read and sent, a `barrier` call goes down the follow stream behind the last batch; the child acks
@@ -73,35 +73,42 @@ const CHANGED_AFTER_SQL = `SELECT (EXISTS (SELECT 1 FROM pages WHERE updated_at 
   OR EXISTS (SELECT 1 FROM access_pending_coverage WHERE created_at > to_timestamp($1::double precision / 1000.0))
   OR EXISTS (SELECT 1 FROM access_policy_revisions WHERE created_at > to_timestamp($1::double precision / 1000.0) OR applied_at > to_timestamp($1::double precision / 1000.0))) AS changed`;
 
-/** The access tables as one hash: any added, removed or changed row moves it, small tables as they are. */
-const ACCESS_STATE_SQL = `md5(concat_ws('|',
-  (SELECT COALESCE(string_agg(t::text, ',' ORDER BY t::text), '') FROM access_policy_revisions t),
-  (SELECT COALESCE(string_agg(t::text, ',' ORDER BY t::text), '') FROM access_rules t),
-  (SELECT COALESCE(string_agg(t::text, ',' ORDER BY t::text), '') FROM access_pending_coverage t),
-  (SELECT COALESCE(string_agg(t::text, ',' ORDER BY t::text), '') FROM access_members t),
-  (SELECT COALESCE(string_agg(t::text, ',' ORDER BY t::text), '') FROM access_group_members t),
-  (SELECT COALESCE(string_agg(t::text, ',' ORDER BY t::text), '') FROM access_policy_state t)))`;
+/**
+ * The tables whose rows the read policy, the safe-chunk fence, the chunk visibility and the vector corpus filters read, the
+ * lineage functions they call (privatePagesFilterForCaller, gbrain_owner_only_lineage_strict and every function those read) included,
+ * and the access, source and config tables. The fingerprint hashes every row of every one of them whole: a change to a column no
+ * predicate reads today moves it too, and so does a column a predicate starts to read. A guard test
+ * (test/helpers/shadow-checks-scenarios.ts, "the freshness proof covers every table the predicates read") extracts the tables
+ * those SQL builders and function bodies reference and fails when one is missing from this list.
+ */
+export const FINGERPRINT_TABLES: readonly string[] = [
+  'access_group_members', 'access_members', 'access_pending_coverage', 'access_policy_revisions', 'access_policy_state', 'access_rules',
+  'config', 'content_chunks', 'derivation_inputs', 'facts', 'links', 'owner_only_marks', 'pages', 'slug_aliases', 'slug_rename_history',
+  'sources', 'takes', 'timeline_entries', 'write_gate_receipts',
+];
+const VECTOR_TYPES = ['vector', 'halfvec', 'sparsevec'];
 
 /**
- * A fingerprint of everything the read policy, the safe fence, the chunk visibility and the vector corpus read: the access tables
- * (their rows), pages (count, newest write, and a hash of the columns a write can change without touching `updated_at`: deleted_at,
- * the chunker seal, the text-projection seal and knowledge revision, the body storage and generation, the page readers and folder
- * rules), the concept-provenance links `privatePagesFilterForCaller` reads (their rows, so a removed or re-pointed edge shows), the
- * sources (config and archive state: owner-only sources), the config rows, and the chunks (count, newest embedding, and a hash of
- * each chunk's generation and whether it has an embedding). Another process's write moves it; it does not tell which. Not covered,
- * and so a known limit: the text of a page body or chunk, and frontmatter, change `updated_at` when written through the engine but
- * not when edited in place.
+ * The fingerprint statement for the columns the tables have now: per table, the row count and the sum of a 64-bit hash of each
+ * whole row as jsonb text, with only a vector column's bytes replaced by whether it is set (a row's `embedded_text_hash` stays in
+ * the row). Built from the catalog, so a column added later is covered without a change here. Another process's write to any
+ * of these tables moves it; it does not tell which. Not covered, and so a known limit: a table no predicate reads today.
  */
-export const POLICY_FINGERPRINT_SQL = `SELECT concat_ws('|',
-  ${ACCESS_STATE_SQL},
-  (SELECT count(*) || ':' || COALESCE(max(updated_at)::text, '') || ':' || COALESCE(sum(hashtextextended(concat_ws('|', id, deleted_at, chunker_version, text_projection_revision, knowledge_revision, body_storage, body_generation, page_readers::text, folder_rule_ids::text), 0)::numeric), 0) FROM pages),
-  (SELECT count(*) || ':' || md5(COALESCE(string_agg(id || '/' || from_page_id || '/' || to_page_id, ',' ORDER BY id), '')) FROM links WHERE link_source = 'concept-provenance' AND link_type = 'synthesized_from'),
-  (SELECT md5(COALESCE(string_agg(id || '=' || config::text || archived::text, ',' ORDER BY id), '')) FROM sources),
-  (SELECT md5(COALESCE(string_agg(key || '=' || value, ',' ORDER BY key), '')) FROM config),
-  (SELECT count(*) || ':' || COALESCE(max(embedded_at)::text, '') || ':' || COALESCE(sum(hashtextextended(concat_ws('|', id, body_generation, (embedding IS NOT NULL)::text, embedded_at), 0)::numeric), 0) FROM content_chunks -- chunk-visibility-ok: the fingerprint covers every stored chunk row, staged and retired included: a change to any of them moves it
-  )) AS fp`;
+export function policyFingerprintSql(columns: Array<{ table_name: string; column_name: string; udt_name: string }>): string {
+  const parts = FINGERPRINT_TABLES.filter((t) => columns.some((c) => c.table_name === t)).map((t) => {
+    const vectors = columns.filter((c) => c.table_name === t && VECTOR_TYPES.includes(c.udt_name)).map((c) => c.column_name);
+    const row = vectors.length === 0 ? `to_jsonb(r)::text`
+      : `(to_jsonb(r) - ARRAY[${vectors.map((v) => `'${v}'`).join(',')}]::text[] || jsonb_build_object(${vectors.map((v) => `'${v}_set', r."${v}" IS NOT NULL`).join(', ')}))::text`;
+    return `(SELECT count(*) || ':' || COALESCE(sum(hashtextextended(${row}, 0)::numeric), 0) FROM "${t}" r)`;
+  });
+  return `SELECT concat_ws('|', ${parts.join(',\n  ')}) AS fp`;
+}
 
-const fingerprintOf = async (tx: BrainEngine): Promise<string> => String((await tx.executeRaw<{ fp: string }>(POLICY_FINGERPRINT_SQL))[0]?.fp);
+const fingerprintOf = async (tx: BrainEngine): Promise<string> => {
+  const columns = await tx.executeRaw<{ table_name: string; column_name: string; udt_name: string }>(
+    `SELECT table_name, column_name, udt_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ANY($1::text[])`, [[...FINGERPRINT_TABLES]]);
+  return String((await tx.executeRaw<{ fp: string }>(policyFingerprintSql(columns)))[0]?.fp);
+};
 
 /**
  * The policy fingerprint, kept fresh off the request path. `current()` is synchronous (a read is captured on the request path):

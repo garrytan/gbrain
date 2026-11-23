@@ -52,6 +52,15 @@ function chunkOf(row: Row): ChunkIdentity | undefined {
 }
 
 /** One result row reduced to identity: its page, its chunk and a digest of every field but the ranking ones. No content. */
+/**
+ * True when `encoded` holds anything that is not a row where rows are expected: a list element that is not an object (a null,
+ * a string, a number, a nested list). Such an element has no identity to judge, so a verdict over the answer is never complete.
+ */
+export function hasMalformedElement(encoded: unknown): boolean {
+  if (Array.isArray(encoded)) return encoded.some((r) => !r || typeof r !== 'object' || Array.isArray(r));
+  return encoded !== null && encoded !== undefined && typeof encoded !== 'object';
+}
+
 export interface RowIdentity { id?: number; key?: string; chunk?: ChunkIdentity; payload: string }
 export interface ExtraRow { id?: number; key?: string; chunk?: { id: number; sum: string | null } }
 
@@ -123,9 +132,10 @@ export interface PrivacyResult { verdict: PrivacyVerdict; complete: boolean }
 export async function privacyVerdict(ask: Asker, args: unknown[], primary: unknown, rust: unknown, sid: string | undefined, phase: 'sample' | 'rerun', at: number): Promise<PrivacyResult> {
   if (!policyApplies(args)) return { verdict: 'clean', complete: false };
   const rows = rowIdentities(rust);
+  const whole = !hasMalformedElement(rust); // an element that is not a row has no identity to judge: the verdict is never complete
   if (phase === 'sample') {
     const extra = extraIds(rowIdentities(primary), rows);
-    if (extra.rows.length === 0) return { verdict: 'clean', complete: extra.unidentified === 0 };
+    if (extra.rows.length === 0) return { verdict: 'clean', complete: whole && extra.unidentified === 0 };
   }
   if (!sid) return { verdict: 'privacy_check_unavailable', complete: false };
   try {
@@ -133,7 +143,7 @@ export async function privacyVerdict(ask: Asker, args: unknown[], primary: unkno
     const wire = rows.map(({ key, ...r }) => (r.id === undefined && key !== undefined ? { ...r, key } : r));
     const answer = await ask({ kind: 'privacy', sid, phase, at, rows: wire }, PRIVACY_ASK_TIMEOUT_MS) as Partial<PrivacyResult> | null;
     const v = answer?.verdict;
-    if (v === 'clean') return { verdict: 'clean', complete: answer?.complete === true };
+    if (v === 'clean') return { verdict: 'clean', complete: whole && answer?.complete === true };
     if (v === 'violation' || v === 'privacy_check_moved') return { verdict: v, complete: false };
     return { verdict: 'privacy_check_unavailable', complete: false };
   } catch { return { verdict: 'privacy_check_unavailable', complete: false }; }

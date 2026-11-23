@@ -1987,9 +1987,12 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   field but the ranking ones; a row with a primary row's page and chunk but another payload (a substituted title or flag), or one
   that claims a chunk without a numeric chunk id, is never cleared and the diff counts. A new row is judged on the primary with the
   read policy, the safe-chunk fence the read asked for and the chunk visibility the primary used. "Nothing changed" is proven by this
-  process's write generation and a fingerprint of the access tables, pages (deletions, the chunker and text-projection seals, the
-  knowledge revision and the body generation included), concept-provenance links, sources, config and chunks, both taken BEFORE the
-  primary read started (never a newer one) and compared again at the check, and by the page timestamps; without that proof
+  process's write generation and a fingerprint, both taken BEFORE the primary read started (never a newer one) and compared again
+  at the check, and by the page timestamps and the access tables' generation. The fingerprint hashes every row, whole, of every
+  table the visibility, safe-fence and vector-corpus predicates read (`FINGERPRINT_TABLES` in `src/shadow/checks.ts`: pages, chunks,
+  links, sources, config, the access tables, the lineage tables `derivation_inputs` and `owner_only_marks`, and the facts, takes and
+  timeline rows the lineage functions read), with a vector column's bytes replaced by whether it is set; a test extracts the tables
+  those SQL builders and the `gbrain_*` functions they call reference and fails when one is missing from the list. Without that proof
   the sample is `inconclusive` (`privacy_check_moved`). A list of more than 2,000 row identities, or one holding anything invalid,
   is never complete. The vector reference is the engine's own exact statement with no candidate
   window and is used only when the same proof holds from the sample's capture to the end of the reference run; otherwise the sample is
@@ -1997,8 +2000,9 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   (of 50) still ties the cutoff is not scored. A stable rerun compares digests: the whole answer, and for a ranked read its rows without scores in a fixed order, so the same
   rows in another order or with other scores are an `order_diff` (closed as matched on the reads that ignore order). The comparator
   version is 3: an epoch opened under version 2 does not carry its recall or clearance records into the new rules. Known limits, not fixed here:
-  the fingerprint does not cover the text of a page body or chunk or frontmatter edited in place (a write through the engine moves
-  `updated_at`), and it is refreshed at most every 5 seconds with a hash over the pages and chunks tables; a Rust row on a page the primary did not return is
+  the fingerprint covers only the tables the predicates read today, and it costs a hash over every row of them, refreshed at
+  most every 5 seconds while samples flow (about 1.1 s on PGLite and 0.8 s on Postgres for 10,000 pages with 10,000 chunks and links,
+  linear in rows, so about 10 s at 100,000 pages: the serving connection is held that long on PGLite); a Rust row on a page the primary did not return is
   judged by page policy, chunk identity and chunk text, not by its other fields; and a read the caller was authorized to make that
   returns a private page still reads `private_row_returned` and pauses comparison (it fails closed).
 - **Status fields.** `status --json` adds: `follower.state` (`not_seeded`, `stopped`, `invalid`, `behind`,

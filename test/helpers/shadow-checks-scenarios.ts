@@ -6,9 +6,12 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import { callerAccessRecord, withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { callerAccessRecord, privatePagesFilterForCaller, withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { ownerOnlyPageSql } from '../../src/core/access/owner-only.ts';
+import { buildVisibilityClause } from '../../src/core/search/sql-ranking.ts';
+import { chunkVisibleFilter, safeChunksFilter } from '../../src/core/search/safe-chunks.ts';
 import { buildVectorSearchStatement } from '../../src/core/search/vector-statement.ts';
-import { createPolicyWatch, makeAskHandler } from '../../src/shadow/checks.ts';
+import { createPolicyWatch, FINGERPRINT_TABLES, makeAskHandler } from '../../src/shadow/checks.ts';
 import { openReadSource } from '../../src/shadow/read-pool.ts';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -146,6 +149,76 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       rig.rust.listPages = async () => [{ id: ids['priv/a'], slug: 'priv/a', source_id: 'default', title: 'x', type: 'note' }];
       await withCallerAccess(ALICE, () => rig.engine.listPages({ limit: 100, excludePrivate: true }));
       expect((await rig.finish())[0]).toMatchObject({ outcome: 'inconclusive', reason: 'privacy_check_unavailable' });
+    });
+  });
+
+  describe('the freshness proof covers every table the predicates read', () => {
+    /** Every table the SQL the checks and the vector reference run references, through the builders and every `gbrain_*` function they reach (bodies read from the schema). */
+    async function predicateTables(engine: BrainEngine): Promise<string[]> {
+      const real = new Set((await engine.executeRaw<{ table_name: string }>(`SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()`)).map((r) => r.table_name));
+      const found = new Set<string>();
+      const funcs = new Set<string>();
+      const scan = (text: string): void => {
+        for (const m of text.matchAll(/\b(?:FROM|JOIN)\s+(?:ONLY\s+)?(?:"?[a-z_][a-z0-9_]*"?\.)?"?([a-z_][a-z0-9_]*)"?/gi)) if (real.has(m[1]!.toLowerCase())) found.add(m[1]!.toLowerCase());
+        for (const m of text.matchAll(/\b(gbrain_[a-z0-9_]+)\b/gi)) funcs.add(m[1]!.toLowerCase());
+      };
+      const caller = { identity: ['member:alice-example'], hidePrivate: true, restricted: true, applyRemoteReadPolicy: true, satisfiedRuleIds: ['default:r1'] };
+      for (const who of [null, caller, { ...caller, owner: true }, { ...caller, restricted: false }, { ...caller, privateReadableSources: ['default'], privateFactSources: ['default'] }]) {
+        const run = <T>(fn: () => T): T => (who ? withCallerAccess(who as never, fn) : fn());
+        scan(run(() => privatePagesFilterForCaller('p')));
+        for (const o of [{ excludePrivate: true, requireSafeChunks: true, chunkAlias: 'cc', suppressFlagged: true, minTrust: 'unverified' }, { excludePrivate: true }, {}]) scan(run(() => buildVisibilityClause('p', 's', o as never)));
+      }
+      for (const form of ['fn', 'mode', 'closed'] as const) scan(ownerOnlyPageSql('p', form));
+      scan(safeChunksFilter('p')); scan(chunkVisibleFilter('p', 'c'));
+      for (const dialect of ['pglite', 'postgres'] as const) for (const opts of [{ limit: 10 }, { limit: 10, excludePrivate: true }, { limit: 10, excludePrivate: true, types: ['note'], exclude_slugs: ['a'], afterDate: '2020-01-01', sourceIds: ['default'], source_boosts: { 'x/': 2 } }]) {
+        const stmt = buildVectorSearchStatement({ dialect, embedding: new Float32Array(DIMS), limit: 10, offset: 0, opts: opts as never });
+        scan(stmt.sql); scan(stmt.exactSql); if (stmt.indexWalkSql) scan(stmt.indexWalkSql);
+      }
+      // the functions the predicate modules name, whether or not a variant above reached them, and everything those read
+      for (const file of ['search/private-visibility.ts', 'access/owner-only.ts', 'search/safe-chunks.ts', 'search/sql-ranking.ts', 'search/vector-statement.ts']) scan(readFileSync(join(import.meta.dir, '..', '..', 'src', 'core', file), 'utf8').split('\n').filter((l) => !/^\s*(\*|\/\/|\/\*)/.test(l)).join('\n').replace(/\b(?:FROM|JOIN)\b/g, ' ')); // function names only: the source also holds SQL for other reads
+      const seen = new Set<string>();
+      for (let todo = [...funcs]; todo.length; todo = [...funcs].filter((f) => !seen.has(f))) {
+        for (const f of todo) {
+          seen.add(f);
+          for (const d of await engine.executeRaw<{ def: string }>(`SELECT pg_get_functiondef(p.oid) AS def FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE p.proname = $1 AND n.nspname = current_schema()`, [f])) scan(d.def);
+        }
+      }
+      return [...found].sort();
+    }
+
+    test('every table the visibility, fence and corpus predicates and their lineage functions read is in the fingerprint', async () => {
+      const read = await predicateTables(ctx.primary());
+      for (const t of ['pages', 'content_chunks', 'sources', 'config', 'derivation_inputs', 'owner_only_marks', 'access_rules', 'access_pending_coverage']) expect([t, read.includes(t)]).toEqual([t, true]); // the extractor finds the ones the reviews named
+      expect(read.filter((t) => !FINGERPRINT_TABLES.includes(t))).toEqual([]);
+      // the control: a list without one of them is caught
+      expect(read.filter((t) => !FINGERPRINT_TABLES.filter((x) => x !== 'owner_only_marks').includes(t))).toEqual(['owner_only_marks']);
+      // and every table on the list exists, so none is a typo that hashes nothing
+      const real = new Set((await ctx.primary().executeRaw<{ table_name: string }>(`SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()`)).map((r) => r.table_name));
+      expect(FINGERPRINT_TABLES.filter((t) => !real.has(t))).toEqual([]);
+    });
+
+    test('the fingerprint moves for a change to any column of a chunk (modality, model, embedded_text_hash, embedding presence), a lineage input or an owner-only mark', async () => {
+      const primary = ctx.primary();
+      await primary.putPage('fp2/page', { type: 'note', title: 'fp2/page', compiled_truth: 'fingerprint two text', timeline: '' });
+      await installFixtureChunks(primary, 'fp2/page', [{ chunk_index: 0, chunk_text: 'fingerprint two text', chunk_source: 'compiled_truth', embedding: vec(504), model: MODEL, token_count: 3 }]);
+      const reads = openReadSource(primary);
+      const watch = createPolicyWatch(reads);
+      const chunk = `page_id = (SELECT id FROM pages WHERE slug = 'fp2/page')`;
+      try {
+        const changes: Array<[string, string, string]> = [
+          ['modality', `UPDATE content_chunks SET modality = 'image' WHERE ${chunk}`, `UPDATE content_chunks SET modality = 'text' WHERE ${chunk}`],
+          ['model', `UPDATE content_chunks SET model = model || '-x' WHERE ${chunk}`, `UPDATE content_chunks SET model = left(model, length(model) - 2) WHERE ${chunk}`],
+          ['embedded_text_hash', `UPDATE content_chunks SET embedded_text_hash = 'stale' WHERE ${chunk}`, `UPDATE content_chunks SET embedded_text_hash = NULL WHERE ${chunk}`],
+          ['a lineage input', `INSERT INTO derivation_inputs (derived_table, derived_id, input_table, input_id) VALUES ('pages', '987654', 'pages', '987655')`, `DELETE FROM derivation_inputs WHERE derived_id = '987654'`],
+          ['an owner-only mark', `INSERT INTO owner_only_marks (row_table, row_id) VALUES ('pages', '987656')`, `SELECT 1`],
+        ];
+        for (const [name, change, undo] of changes) {
+          const before = await watch.live();
+          await primary.executeRaw(change);
+          expect([name, (await watch.live()) !== before]).toEqual([name, true]);
+          await primary.executeRaw(undo).catch(() => undefined);
+        }
+      } finally { await reads.close(); await primary.executeRaw(`DELETE FROM pages WHERE slug = 'fp2/page'`); await primary.executeRaw(`DELETE FROM owner_only_marks WHERE row_id = '987656'`).catch(() => undefined); }
     });
   });
 
@@ -331,6 +404,11 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
     test('a row that names no valid chunk is unexplained: a missing, null or non-numeric chunk id with arbitrary text never clears', async () => {
       counts(await ranked((theirs) => [...theirs.slice(0, 9), { ...theirs[9], chunk_id: undefined, chunk_text: 'ARBITRARY TEXT' }]));
       counts(await ranked((theirs) => [...theirs.slice(0, 9), { ...theirs[9], chunk_id: String(theirs[9]!.chunk_id), chunk_text: 'ARBITRARY TEXT' }]));
+    });
+
+    test('an element of the Rust answer that is not a row (a null, a string) makes the verdict incomplete: it is not dropped before the check', async () => {
+      counts(await ranked((theirs) => [...theirs, null as never, 'private canary' as never]));
+      counts(await ranked((theirs) => [...theirs.slice(0, 9), 7 as never, theirs[9]!]));
     });
 
     test('the primary\'s own page and chunk with a substituted title or flag are unexplained, not a ranking difference', async () => {
@@ -702,6 +780,25 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         const still = samples.add({ op: 'searchVector', args, at: Date.now(), fp: await watch.live() }, 100);
         expect(await handler(120_000)({ id: 2, kind: 'vector', sid: still })).toBeInstanceOf(Array); // control: unchanged since the capture
       } finally { await reads.close(); await primary.executeRaw(`UPDATE access_rules SET readable_by = ARRAY['member:bob-example'] WHERE rule_id = 'r1'`); }
+    });
+
+    test('a reference is refused (moved) after a modality-only or embedding-hash-only change to a chunk, which no page timestamp shows', async () => {
+      const primary = ctx.primary();
+      const chunkOf = await vectorFixture(primary);
+      const top = chunkOf.get(3)!;
+      const reads = openReadSource(primary);
+      try {
+        const watch = createPolicyWatch(reads);
+        const samples = new SampleRegistry();
+        const args = encodeValue([vec(3), { limit: 10 }]);
+        const handler = (now: number) => makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never, watch, now: () => now });
+        for (const [i, [change, undo]] of ([[`modality = 'image'`, `modality = 'text'`], [`embedded_text_hash = 'stale-hash'`, `embedded_text_hash = NULL`]] as const).entries()) {
+          const captured = samples.add({ op: 'searchVector', args, at: Date.now(), fp: await watch.live() }, 100);
+          await primary.executeRaw(`UPDATE content_chunks SET ${change} WHERE id = $1`, [top]);
+          await expect(handler(i * 120_000)({ id: i + 1, kind: 'vector', sid: captured })).rejects.toMatchObject({ code: 'moved' });
+          await primary.executeRaw(`UPDATE content_chunks SET ${undo} WHERE id = $1`, [top]);
+        }
+      } finally { await reads.close(); await primary.executeRaw(`UPDATE content_chunks SET modality = 'text' WHERE modality <> 'text'`); }
     });
 
     test('the reference has no candidate window: boosted true top results beyond the engine\'s window are found, and the windowed search misses them', async () => {
