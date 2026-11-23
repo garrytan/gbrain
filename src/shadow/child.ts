@@ -25,7 +25,7 @@ import type { RustAddon } from '../core/rust-engine/addon-loader.ts';
 import { servedCapabilities } from '../core/rust-engine/store-capabilities.ts';
 import { loadRustEngineAddonOffline, type RustEngineAddonLoaderFn } from './addon.ts';
 import { RERUN_DEADLINE_MS } from './checks.ts';
-import { createAsker, createSerialQueue, membersDigest, policyApplies, privacyVerdict, RERUN_QUEUE_BOUND, resultDigest, safeCode } from './child-checks.ts';
+import { createAsker, createSerialQueue, createWaiter, membersDigest, policyApplies, privacyVerdict, RERUN_QUEUE_BOUND, resultDigest, safeCode } from './child-checks.ts';
 import { classifyError, classifyResult, type Classification } from './classify.ts';
 import { decodeValue, encodeValue } from './codec.ts';
 import { adapterIdentity, capabilitySetHash, currentBuild, ensureEpoch, internalErrorRecorder, type EpochBuild, type EpochManifest } from './evidence-epoch.ts';
@@ -45,6 +45,13 @@ export const SHADOW_HEARTBEAT_MS = 5_000;
 export const SHADOW_CHILD_STALL_LIMIT = 4;
 /** Runs of one sample (the first check, then reruns from a new WAL position) before one that keeps moving stays unresolved. */
 export const RERUN_ATTEMPTS = 3;
+/** Waits before a run that follows a check whose WAL position moved: the 1st, 2nd and 3rd such move. Each is scaled by 1 +/- RERUN_BACKOFF_JITTER; the worst total (13.1 s) stays inside RERUN_BACKOFF_TOTAL_MS. */
+export const RERUN_BACKOFF_MS: readonly number[] = [500, 2_000, 8_000];
+export const RERUN_BACKOFF_JITTER = 0.25;
+export const RERUN_BACKOFF_TOTAL_MS = 15_000;
+/** How long to wait after the `moves`th check moved, before running the sample again. `random` is in [0, 1). */
+export const rerunBackoffMs = (moves: number, random: () => number = Math.random): number =>
+  Math.round((RERUN_BACKOFF_MS[Math.min(moves, RERUN_BACKOFF_MS.length) - 1] ?? 0) * (1 - RERUN_BACKOFF_JITTER + 2 * RERUN_BACKOFF_JITTER * random()));
 const MOVED_CODES: ReadonlySet<string> = new Set(['moved', 'write_after_barrier']); // a write landed after the barrier: the same thing for a rerun
 
 type ShadowEngine = Pick<BrainEngine, 'connect' | 'disconnect'> & Record<string, unknown>;
@@ -74,6 +81,9 @@ export interface ShadowChildDeps {
   session?: string;
   /** Seam for tests: called with each ledger row as it is recorded, before it is flushed. */
   onRow?: (row: ShadowLedgerRow) => void;
+  /** Seams for tests: the wait before a rerun after a moved check (default: a timer that the end of input cuts short) and its jitter source. */
+  sleep?: (ms: number) => Promise<void>;
+  random?: () => number;
 }
 
 /** SHA-256 of the addon file the loader opened: the development override, else the cached build (addon-loader.ts). */
@@ -134,6 +144,9 @@ interface RecallEnv {
   curEpoch: () => string | null;
   now: () => number;
   timeoutMs: number;
+  /** The wait before a rerun after a moved check (a timer, never a busy loop); default: none, as before. */
+  pause?: (ms: number) => Promise<void>;
+  random?: () => number;
   write: (score: NonNullable<ReturnType<typeof scoreRecall>>, epoch: string) => void;
 }
 
@@ -158,6 +171,8 @@ export async function scoreWithReruns(env: RecallEnv, event: ReadEvent, args: un
         return;
       } catch (error) {
         if (safeCode((error as { code?: unknown })?.code) !== 'moved' || attempt >= RERUN_ATTEMPTS || env.now() > deadline) return;
+        await env.pause?.(rerunBackoffMs(attempt, env.random)); // a quiet window may follow: the fresh run starts after it, off the serving process
+        if (env.now() > deadline) return;
         const answer = await env.ask({ kind: 'rerun', sid: event.sid, epoch_id: env.curEpoch() }, RERUN_DEADLINE_MS) as { stamp: number; epoch_id: string; keys?: Array<RankedKey | null>; attempt?: string };
         if (env.curEpoch() === null || answer.epoch_id !== env.curEpoch() || !answer.keys || !answer.attempt) return;
         const out = await env.exclusive(answer.stamp, () => env.callRust(event.op, args, event.access, env.timeoutMs));
@@ -360,15 +375,15 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   /**
    * One stable rerun (checks.ts `stableRerun`): both engines read again at a generation the barrier proved quiet. A rerun whose
    * proof that nothing was written moved (the primary's WAL position changed before its check ended, or a write landed after
-   * the barrier) is run again, from a new position, up to RERUN_ATTEMPTS times; a sample still moving then stays unresolved
+   * the barrier) is run again, from a new position, up to RERUN_ATTEMPTS times, each after a growing wait (RERUN_BACKOFF_MS); a sample still moving then stays unresolved
    * (`skipped:moved`), which counts as unexplained.
    */
   const rerunOne = async ({ event, args, c, rustMs, rows }: RerunTask): Promise<void> => {
-    const skip = (why: string): void => record(event, c, rustMs, rows, `skipped:${why}`);
+    const skip = (why: string): void => record(event, c, rustMs, rows, `skipped:${why}`); let moves = c.reason === 'privacy_check_moved' ? 1 : 0; // checks of this sample whose position moved so far: each wait is longer than the last
     try {
       for (let attempt = 1; attempt <= RERUN_ATTEMPTS; attempt++) {
-        const retry = (): boolean => { const more = attempt < RERUN_ATTEMPTS; if (!more) skip('moved'); return more; };
-        const deadline = now() + RERUN_DEADLINE_MS; let answer: { digest: string; members?: string; stamp: number; epoch_id: string; attempt?: string };
+        const retry = (): boolean => { const more = attempt < RERUN_ATTEMPTS; moves++; if (!more) skip('moved'); return more; };
+        if (moves > 0) { await waiter.pause(rerunBackoffMs(moves, deps.random)); if (waiter.closed()) return skip('child_closing'); } const deadline = now() + RERUN_DEADLINE_MS; let answer: { digest: string; members?: string; stamp: number; epoch_id: string; attempt?: string };
         try { answer = await ask({ kind: 'rerun', sid: event.sid, epoch_id: curEpoch() }, RERUN_DEADLINE_MS) as typeof answer; } catch (error) {
           if (!MOVED_CODES.has(safeCode((error as { code?: unknown })?.code))) throw error;
           if (retry()) continue; return;
@@ -388,12 +403,12 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
       skip(safeCode((error as { code?: unknown })?.code));
     } finally { flush(true); } // a rerun is rare and slow: its row is written the moment it ends
   };
-  const reruns = createSerialQueue<RerunTask>(RERUN_QUEUE_BOUND, rerunOne);
+  const reruns = createSerialQueue<RerunTask>(RERUN_QUEUE_BOUND, rerunOne); const waiter = createWaiter(deps.sleep); // the wait before a rerun: a timer nothing else waits on; the end of input cuts it short
 
   // Vector recall (recall.ts): at most one reference run a minute, asked of the serving process off the request path.
   const recallGate = new IntervalGate(RECALL_INTERVAL_MS, now);
   let recalling: Promise<void> | null = null;
-  const recallEnv: RecallEnv = { ask, now, timeoutMs, curEpoch, exclusive: (stamp, fn) => follow.exclusive(stamp, fn) as never, callRust: (op, a, access, ms) => callRust(op, a, access, ms) as never,
+  const recallEnv: RecallEnv = { ask, now, timeoutMs, curEpoch, pause: waiter.pause, random: deps.random, exclusive: (stamp, fn) => follow.exclusive(stamp, fn) as never, callRust: (op, a, access, ms) => callRust(op, a, access, ms) as never,
     write: (score, epoch) => appendRecall(shadowDir, { ts: new Date(now()).toISOString(), epoch_id: epoch, ...score }) };
   const scoreRecallLater = (event: ReadEvent, args: unknown[], rust: unknown): void => {
     if (event.op !== 'searchVector' || !curEpoch() || recalling || !recallEligible(args) || !recallGate.take()) return;
@@ -461,7 +476,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     void drain();
   }
   // The serving process ended our stdin: nothing it was asked can still be answered. A queued rerun ends as skipped.
-  ask.closeAll();
+  ask.closeAll(); waiter.close(); // a rerun waiting for a quiet window ends now, as skipped
   for (const task of reruns.drop()) record(task.event, task.c, task.rustMs, task.rows, 'skipped:child_closing');
   await drain();
   await reruns.idle();

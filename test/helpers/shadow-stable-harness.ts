@@ -59,7 +59,8 @@ export interface RigOptions {
   unseeded?: boolean;
 }
 
-export async function startRig(o: RigOptions): Promise<Rig> {
+export async function startRig(opts: RigOptions): Promise<Rig> {
+  const o: RigOptions = { ...opts, child: { sleep: async () => {}, ...opts.child } }; // no wait before a rerun unless a test asks for one
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-shadow-rig-'));
   if (!o.unseeded) writeSeedRecord(dir, SEED);
   const rust: Rig['rust'] = {};
