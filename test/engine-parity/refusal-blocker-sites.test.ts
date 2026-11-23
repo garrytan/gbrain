@@ -12,10 +12,12 @@
  *    `gbrain sources add --kind google` (findDuplicateGoogleSource) warns about an active source that already syncs the
  *    same account for an overlapping slice of services and calendar. `gbrain sources add --url` (addSource, unmanaged
  *    brain) removes the source row it inserted when the clone cannot be moved into place, so a failed add leaves no row.
+ *    A segmented page's read-view digests (markdownDigest, readViewLines: page-window/segmented.ts) are the same on every
+ *    arm, computed once and read from the cache after on an engine that keeps one.
  *  - Regression: a caller that swallows the Rust refusal returns its quiet default (no rows, no notice), so the
  *    regression gate reports "skipped: 0 replay-eligible rows" for a brain that has them, a sync never mentions that
  *    a source's pages are out of default search, an add never says its source stays out of default search and the
- *    duplicate-Google-account warning is never given and a failed clone move leaves a half-added source row.
+ *    duplicate-Google-account warning is never given a failed clone move leaves a half-added source row and a segmented page's digest read stops on a typed refusal.
  *  - Why existing coverage misses it: the caller's catch turns the refusal into the default, which no engine-level case
  *    reads.
  *  - Seam: none. Rows come from logEvalCandidate, sources from createSource and pages from putPage; ids and timestamps
@@ -34,6 +36,10 @@ import type { ParsedSourceLifecycle } from '../../src/commands/sources-lifecycle
 import { findDuplicateGoogleSource } from '../../src/commands/sources.ts';
 import { DEFAULT_CALENDAR_ID } from '../../src/core/google/types.ts';
 import { addSource, SourceOpError } from '../../src/core/sources-ops.ts';
+import type { BrainEngine } from '../../src/core/engine.ts';
+import { openSegmentedBody } from '../../src/core/page-body/read-range.ts';
+import { markdownDigest, readViewLines, segmentedMarkdownDocument, segmentedReadDocument } from '../../src/core/page-window/segmented.ts';
+import { flipInput, manifestRow, pageMeta, segmentText, stagingInput } from '../helpers/page-body-fixtures.ts';
 import { archiveSource, createSource, parityArms } from './harness.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { testBackends } from '../helpers/test-backends.ts';
@@ -179,4 +185,56 @@ describe('engine parity: refusal-swallow sites', () => {
       }
     },
   );
+
+  parityTest(
+    'a segmented page answers the same read-view digests the first time and from the cache after',
+    { methods: ['createSegmentedPageShell', 'flipBodyGeneration', 'readPageViewDigest', 'writePageViewDigest'] },
+    async (engine, backend) => {
+      const texts = [segmentText('# Intro\nfirst segment about quillwort\n'), segmentText('## Middle\nsecond segment about heron\n')];
+      const pageId = await publishSegmented(engine, texts);
+      const body = await openSegmentedBody(engine, { pageId });
+      const head = '---\ntitle: Big page\n---\n';
+      const digestOf = async () => {
+        const doc = await segmentedMarkdownDocument(engine, body, head, 'trusted');
+        return markdownDigest(doc, 'rev-1', 'trusted');
+      };
+      const linesOf = async () => readViewLines(await segmentedReadDocument(engine, body), 'rev-1');
+      const first = { digest: await digestOf(), lines: await linesOf() };
+      const again = { digest: await digestOf(), lines: await linesOf() };
+      expect(again).toEqual(first);
+      expect(first.lines).toBeGreaterThan(0);
+      // A SQL brain kept the markdown view the first read computed and drops other revisions on a write; the Rust store
+      // keeps no cache, so it answers a miss and stores nothing. None of this reaches the answer returned below.
+      const markdownKey = { pageId, revision: 'rev-1', view: 'markdown', audience: 'trusted' } as const;
+      const cached = await engine.readPageViewDigest(markdownKey);
+      await engine.writePageViewDigest({ pageId, revision: 'rev-2', view: 'read', audience: 'remote' }, { total_bytes: 1, total_lines: 1, sha256: null });
+      const afterNewRevision = await engine.readPageViewDigest(markdownKey);
+      if (backend === 'rust') {
+        expect({ cached, afterNewRevision }).toEqual({ cached: null, afterNewRevision: null });
+      } else {
+        expect({ cached: cached && { ...cached, sha256: cached.sha256 === first.digest.sha256 }, afterNewRevision })
+          .toEqual({ cached: { total_bytes: first.digest.total_bytes, total_lines: first.digest.total_lines, sha256: true }, afterNewRevision: null });
+      }
+      return first;
+    },
+  );
 });
+
+/** Publishes `texts` as generation 1 of notes/big, one manifest row each, and returns the page id. */
+async function publishSegmented(engine: BrainEngine, texts: ReturnType<typeof segmentText>[]): Promise<number> {
+  const { id: pageId } = await engine.createSegmentedPageShell('notes/big', pageMeta('Big page'), { sourceId: 'default' });
+  const occ = await engine.allocateBodyOccurrenceIds(texts.length);
+  const staging = stagingInput({ slug: 'notes/big', pageId, mode: 'create' });
+  await engine.openBodyStaging(staging);
+  await engine.stageSegmentTexts('default', texts, { stagingId: staging.id });
+  let byteStart = 0;
+  await engine.stageManifestRows(texts.map((text, seq) => {
+    const row = manifestRow({ pageId, occurrenceId: occ[seq]!, genFrom: 1, seq, text, byteStart, stagingId: staging.id });
+    byteStart += text.body.byteLength;
+    return row;
+  }));
+  await engine.flipBodyGeneration(flipInput(pageId, 0, staging.id, texts));
+  await engine.setBodyStagingState(staging.id, 'committed');
+  await engine.sealSegmentedPage(pageId);
+  return pageId;
+}

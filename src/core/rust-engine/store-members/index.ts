@@ -20,6 +20,7 @@ import * as pageOps from './page-ops.ts';
 import * as extraction from './extraction.ts';
 import * as aliases from './aliases.ts';
 import * as pageBody from './page-body.ts';
+import * as pageViewDigests from './page-view-digests.ts';
 import * as facts from './facts.ts';
 import * as ontology from './ontology.ts';
 import * as takes from './takes.ts';
@@ -184,7 +185,7 @@ export const STORE_MEMBERS = {
   getPage: pages.getPage, readPageSnapshot: pages.readPageSnapshot, putPage: pages.putPage, deletePage: pages.deletePage,
   softDeletePage: pages.softDeletePage, restorePage: pages.restorePage, listPages: pages.listPages, resolveSlugs: pages.resolveSlugs,
   // Planned families: a member is served once its family file exports it.
-  ...pageOps, ...extraction, ...aliases, ...pageBody, ...facts, ...ontology, ...takes, ...contradictions, ...dream, ...dreamJournal,
+  ...pageOps, ...extraction, ...aliases, ...pageBody, ...pageViewDigests, ...facts, ...ontology, ...takes, ...contradictions, ...dream, ...dreamJournal,
   ...evalCapture, ...codeEdges, ...salience, ...stats, ...rawFiles, ...linkQueries, ...timelineQueries, ...timelineRepairReads, ...keyword,
   ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...writeContext, ...relations, ...wantedLinks, ...trustWithdrawals, ...trustWriteGate, ...openLoops, ...loopMutes,
   ...sourceArchive,
