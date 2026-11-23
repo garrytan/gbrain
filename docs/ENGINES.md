@@ -1872,8 +1872,9 @@ Shadow mode checks the Rust engine against your real reads before you switch to 
 nothing about how your brain answers: the primary engine (PGLite or Postgres) always answers first, and a sample of
 reads and searches is then replayed against the Rust engine in a separate, supervised child process. The child
 compares the two answers and records only content-free rows (operation, outcome, sizes, timings, hashes) in a local
-ledger. Its only write to the brain database is one row per writing process in `engine_writer_observations` (below);
-nothing is written to brain content, the config table or the brain repo, and all other shadow state lives in
+ledger. Its only writes to the brain database are the swap-eligibility writer evidence below (one row per writing
+process, and on Postgres one trigger per table while shadow mode is on); nothing is written to brain content, the
+config table or the brain repo, and all other shadow state lives in
 `~/.gbrain/shadow/<brain>/` (`$GBRAIN_HOME/.gbrain/shadow/<brain>/` when `GBRAIN_HOME` is set).
 
 **Say to your agent:** *"Turn on Rust engine shadow mode for my brain and show me the report."*
@@ -1902,12 +1903,27 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   gbrain notes itself in `engine_writer_observations`: its host id, the name its database connections carry, its
   command kind and gbrain version, and when it first and last wrote. The note runs after the write committed, in its
   own short transaction, at most every 10 minutes per process; a rolled-back transaction leaves none. A brain without
-  a shadow keeps the table empty. The swap check reads it with one read-only query: `eligibility.writer_hosts_7d`
-  counts the machines that wrote in the last 7 days (from the shadow start at the earliest, with 10 minutes of slack),
-  and `eligibility.unknown_writer_paths` counts evidence of a write no process noted (reconcile follower misses,
-  repairs made while coverage was invalid, a lost note). `gbrain engine shadow status` never opens the database, so it
-  shows only `team_brain` and `preview_target`; the swap passes in the brain it already has open. Known limit: a write
-  from outside gbrain that a later gbrain write overwrites before any reconcile pass leaves no evidence.
+  a shadow keeps the table empty.
+- **Writer hooks (Postgres brains).** `start --yes` adds one statement-level trigger, `gbrain_writer_note`, to every
+  brain table, and `stop` removes them. Each trigger records the writing connection (its `application_name`, client
+  address and backend pid) in `engine_writer_sessions`, at most every 10 minutes per connection, so a writer that is
+  not a gbrain process on the shadow machine (another machine, `psql`, an older gbrain) still leaves a row. A trigger
+  never fails or blocks the write: it skips a row another transaction holds, and any error becomes a row in
+  `engine_writer_coverage_gaps`. Adding or removing the triggers takes a short lock on each table (start refuses after
+  5 seconds rather than queue writers). `<shadow dir>/writer-hooks.json` is written before the first trigger, the
+  install is one transaction (a killed start leaves nothing), and the next `start` or `stop` removes triggers a crash
+  left. PGLite brains are not hooked: one process on one machine opens them. Measured cost on a local Postgres 16,
+  one client, 1,500 writes each, two rounds: a one-statement write went from about 1.08 to 1.34 ms at p50 (p99 1.46
+  to 1.95 ms, about 21% fewer writes per second), and `put_page` from about 2.33 to 2.58 ms at p50 (p99 3.80 to
+  4.00 ms, about 10% fewer per second). The cost applies only while shadow mode is on.
+- **Eligibility.** The swap reads the evidence with one read-only query: `eligibility.writer_hosts_7d` counts the
+  machines that claimed writes in the last 7 days (from the shadow start at the earliest, with 10 minutes of slack),
+  and `eligibility.unknown_writer_paths` counts what no claim accounts for: a writing connection no gbrain process on
+  the shadow machine claimed, a gap row, a brain table without the hook, a login role that can write brain tables but
+  cannot record evidence, reconcile follower misses, repairs made while coverage was invalid, and a lost note. Any
+  one of them refuses the swap (`writer_coverage_unknown`). A connection pooler in transaction mode hides the client's
+  connection name, so its writes read as unclaimed. `gbrain engine shadow status` never opens the database, so it
+  shows only `team_brain` and `preview_target`; the swap passes in the brain it already has open.
 - **Seed.** `seed` copies the brain into the Rust store once, from one read-only snapshot, and writes
   `seed.json`: what it copied, the values the store could not keep, the unfinished jobs and segmented pages it left
   behind, and the unseeded gap rows (tables the Rust store cannot serve yet; a swap is refused while any remain).
