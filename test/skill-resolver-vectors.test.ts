@@ -23,7 +23,7 @@ import { releaseLease, tryAcquireLease } from '../src/core/skills/resolver/lock.
 import { catalogFile } from '../src/core/skills/resolver/paths.ts';
 import { __setPickerTransportForTests } from '../src/core/skills/resolver/router-http.ts';
 import { buildSkillIndex, resolveSkills } from '../src/core/skills/resolver/index.ts';
-import { __setVectorFloorForTests, RRF_K, skillVectorText, VECTOR_FLOOR, vectorFloor, VECTOR_RETRY_MAX, VECTOR_RETRY_MS } from '../src/core/skills/resolver/vectors.ts';
+import { __setVectorFloorForTests, BUILD_BATCH_CHARS, RRF_K, skillVectorText, VECTOR_FLOOR, vectorFloor, VECTOR_RETRY_MAX, VECTOR_RETRY_MS } from '../src/core/skills/resolver/vectors.ts';
 import { RRF_K as SEARCH_RRF_K } from '../src/core/search/hybrid.ts';
 import { loadSchema, validate } from './helpers/json-schema-lite.ts';
 
@@ -317,6 +317,44 @@ describe('vectors: the provider request shapes', () => {
     expect(seen[0]!.headers.get('x-goog-api-key')).toBe('k-test');
     expect(seen[0]!.body.requests[1]).toEqual({ model: 'models/gemini-embedding-001', content: { parts: [{ text: 'b' }] }, taskType: 'RETRIEVAL_QUERY', outputDimensionality: 768 });
     expect(vectors).toEqual([[1, 0], [0, 1]]);
+  });
+});
+
+
+describe('vectors: build batches', () => {
+  const big = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `s${i}`, name: `s${i}`, description: 'Ship the service', body: 'x '.repeat(4000) }));
+  async function build(skills: unknown[]) {
+    const h = tmp();
+    writeFileSync(join(h, 'config.json'), JSON.stringify(CONFIG));
+    const f = join(tmp('skvec-src-'), 'catalog.json');
+    writeFileSync(f, JSON.stringify(skills));
+    return { h, r: await buildSkillIndex({ catalog: 'c', fromJson: f }, { home: h }) };
+  }
+
+  test('each request stays under the character budget', async () => {
+    embedder();
+    const { r } = await build(big(40));
+    expect(r.vectors).toEqual({ model: 'voyage:voyage-4', dims: 4, count: 40 });
+    expect(calls.length).toBeGreaterThan(1);
+    for (const c of calls) expect(c.texts.join('').length).toBeLessThanOrEqual(BUILD_BATCH_CHARS);
+  });
+
+  test('one failed request stops the rest: no request starts after the build gave up', async () => {
+    embedder(async req => { if (calls.length === 1) throw new Error('HTTP 429'); await Bun.sleep(5); return req.texts.map(vectorOf); });
+    const { r } = await build(big(200));
+    expect(r.vectors).toEqual({ skipped: 'provider_error', attempts: 1 });
+    const sent = calls.length;
+    await Bun.sleep(100);
+    expect(calls.length).toBe(sent);
+    expect(sent).toBeLessThan(10);
+  });
+
+  test('an empty catalog has nothing to embed and never asks for a rebuild', async () => {
+    embedder();
+    const { h, r } = await build([]);
+    expect(r.vectors).toEqual({ skipped: 'not_needed' });
+    expect(calls).toHaveLength(0);
+    expect((await turn(h, 'summarize meeting notes')).output.meta.index_stale).toBe(false);
   });
 });
 

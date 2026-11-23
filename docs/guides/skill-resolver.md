@@ -463,7 +463,8 @@ turn embeds the message with the same model and compares the two.
   `{model, dims, count}` or `{skipped: <code>}`, where the codes add
   `no_embedder`, `embedding_disabled`, `unsupported_provider`,
   `not_this_harness`, `project_scope`, `too_many_skills` (over 64 MB of
-  vectors) and `unmeasured_model`.
+  vectors) and `unmeasured_model`; `not_needed` there means the catalog has no
+  skills. A build sends at most 60,000 characters per request.
 - **Keeping them current.** A turn marks the catalog stale (`meta.index_stale`)
   when its vectors no longer match the brain: the embedding model or width
   changed, an embedding model or key was added since the build, or the build's

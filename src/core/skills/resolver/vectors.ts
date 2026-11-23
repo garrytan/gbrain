@@ -30,6 +30,8 @@ export const VECTOR_TEXT_ID = 'v1';
 export const VECTOR_TEXT_CHARS = 6000;
 export const VECTOR_FILE_CAP_BYTES = 64 * 1024 * 1024;
 const BUILD_BATCH = 64;
+/** Characters per build request, under every provider's per-request cap (the brain's Voyage recipe uses the same budget). */
+export const BUILD_BATCH_CHARS = 60_000;
 const BUILD_CONCURRENCY = 4;
 /** The most a build waits for its embeddings before it publishes without vectors. */
 export const BUILD_EMBED_TIMEOUT_MS = 60_000;
@@ -130,20 +132,28 @@ export async function embedCatalog(records: readonly SkillRecord[], catalogHash:
   if ('skip' in t) return { skipped: t.skip };
   const { embedder: e, key } = t;
   if (vectorFloor(e.model) === null) return { skipped: 'unmeasured_model' };
-  if (records.length === 0) return { skipped: 'no_embedder' };
+  if (records.length === 0) return { skipped: 'not_needed' };
   const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(), BUILD_EMBED_TIMEOUT_MS);
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; abort.abort(); }, BUILD_EMBED_TIMEOUT_MS);
   try {
     const texts = records.map(skillVectorText);
-    const batches: number[] = [];
-    for (let i = 0; i < texts.length; i += BUILD_BATCH) batches.push(i);
+    const batches: [number, number][] = [];
+    for (let i = 0; i < texts.length;) {
+      let end = i + 1, chars = texts[i]!.length;
+      while (end < texts.length && end - i < BUILD_BATCH && chars + texts[end]!.length <= BUILD_BATCH_CHARS) chars += texts[end++]!.length;
+      batches.push([i, end]);
+      i = end;
+    }
     const out: Float32Array[] = new Array(texts.length);
     let next = 0;
     await Promise.all(Array.from({ length: Math.min(BUILD_CONCURRENCY, batches.length) }, async () => {
-      while (next < batches.length) {
-        const at = batches[next++]!;
-        const got = await embedTexts({ provider: e.provider, id: e.id, dims: e.dims, texts: texts.slice(at, at + BUILD_BATCH), inputType: 'document', signal: abort.signal, baseUrl: e.baseUrl }, key);
-        got.forEach((v, j) => { out[at + j] = unit(v); });
+      while (next < batches.length && !abort.signal.aborted) {
+        const [at, end] = batches[next++]!;
+        try {
+          const got = await embedTexts({ provider: e.provider, id: e.id, dims: e.dims, texts: texts.slice(at, end), inputType: 'document', signal: abort.signal, baseUrl: e.baseUrl }, key);
+          got.forEach((v, j) => { out[at + j] = unit(v); });
+        } catch (err) { abort.abort(); throw err; }
       }
     }));
     const dims = out[0]!.length;
@@ -151,7 +161,7 @@ export async function embedCatalog(records: readonly SkillRecord[], catalogHash:
     if (8 + records.length * dims * 4 > VECTOR_FILE_CAP_BYTES) return { skipped: 'too_many_skills' };
     return { bytes: encodeVectors(catalogHash, e.model, dims, records.map(r => r.id), out), receipt: { model: e.model, dims, count: records.length } };
   } catch (err) {
-    return { skipped: abort.signal.aborted ? 'timeout' : (err as Error)?.message === 'bad_reply' ? 'bad_reply' : 'provider_error' };
+    return { skipped: timedOut ? 'timeout' : (err as Error)?.message === 'bad_reply' ? 'bad_reply' : 'provider_error' };
   } finally { clearTimeout(timer); }
 }
 
@@ -197,7 +207,7 @@ export function turnEmbedder(home: string, env: NodeJS.ProcessEnv): { embedder: 
 export function vectorsOutdated(receipt: { vectors?: VectorsReceipt | VectorsSkip; catalog: { harness: string | null; scope: 'user' | 'project' }; build: { built_at: string } }, now: number, want: () => string | null): boolean {
   const v = receipt.vectors;
   if (!v || vectorsIneligible(receipt.catalog.harness ?? undefined, receipt.catalog.scope) !== null) return false;
-  if ('skipped' in v && v.skipped === 'too_many_skills') return false;
+  if ('skipped' in v && (v.skipped === 'too_many_skills' || v.skipped === 'not_needed')) return false;
   if ('skipped' in v && VECTOR_RETRY_CODES.includes(v.skipped) && ((v.attempts ?? 1) >= VECTOR_RETRY_MAX || now - Date.parse(receipt.build.built_at) < VECTOR_RETRY_MS)) return false;
   const w = want();
   if (!w) return false;
