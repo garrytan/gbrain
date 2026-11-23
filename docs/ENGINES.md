@@ -1871,7 +1871,7 @@ runs on PGLite alone without the flag.
 Shadow mode checks the Rust engine against your real reads before you switch to it. It is off by default and changes
 nothing about how your brain answers: the primary engine (PGLite or Postgres) always answers first, and a sample of
 reads and searches is then replayed against the Rust engine in a separate, supervised child process. The child
-compares the two answers and records only content-free rows (operation, outcome, sizes, timings, hashes) in a local
+compares the two answers and records only content-free rows (time, operation, outcome, reason code, row counts, timings) in a local
 ledger. Nothing is written to the brain database, the config table or the brain repo; all shadow state lives in
 `~/.gbrain/shadow/<brain>/` (`$GBRAIN_HOME/.gbrain/shadow/<brain>/` when `GBRAIN_HOME` is set).
 
@@ -1889,19 +1889,45 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
 
 - **Fail-open.** Mirroring never slows or fails a primary call. The queue is bounded (`--queue-bound`, default 256)
   and sheds when full; reads inside a transaction are skipped; `--sample-rate` (default 0.1) picks which reads are
-  mirrored. Only sampled reads are copied, at the moment the primary answers, so a caller that changes a result
-  afterwards cannot cause a false difference. The child restarts with backoff, and mirroring turns itself off after 5 child exits in 10 minutes, a
+  mirrored. Only sampled reads are copied, the arguments before the call and the result the moment the primary answers, so a caller that changes a result
+  afterwards cannot cause a false difference. The copy stops as soon as a call's arguments or result pass about
+  1 MiB (every value counts, even a null), so a huge result is counted as too large and never built. A
+  call that stays stuck in the Rust engine holds one of four slots; past that new reads are recorded as `timeout` (stalled) without being replayed and the child goes
+  quiet so it is restarted. Reads still queued when a process closes are delivered, not dropped. The child restarts with backoff, and mirroring turns itself off after 5 child exits in 10 minutes, a
   child silent for 60 seconds is killed, and a privacy divergence (Rust returns something the primary hid) pauses
   comparison.
+- **Brains and deleting.** Each brain gets its own directory, keyed by its engine and where it lives: the database path for PGLite, or the host, port, database and user name for Postgres
+  (two Supabase projects behind one pooler differ by user name; the password is never part of it). `stop --delete`
+  removes the directory, and a child that is still running cannot write it back. The commands cover the host brain only:
+  with `--brain <id>` or `GBRAIN_BRAIN_ID` naming another brain they refuse and change nothing.
 - **No network in the background.** gbrain downloads no addon. `start --yes`, the child
-  and `gbrain doctor` only use an addon that is already installed; without one they record `addon_unavailable`
-  (`rust_engine_addon_missing`, reason `not_installed`).
+  and `gbrain doctor` only use an addon that is already installed; without one, `start --yes` refuses and stays off, `gbrain doctor` fails
+  the `rust_engine_addon` check, and the child records `addon_unavailable` (`rust_engine_addon_missing`, reason `not_installed`).
 - **Doctor.** `rust_engine_addon` checks the installed addon when shadow mode is on and is not applicable otherwise.
+- **Evals.** `gbrain eval longmemeval` and `gbrain eval brainbench` take `--engine pglite|rust`. With `rust`, a missing
+  or mismatched addon stops the run with its code and reason, and so does a Rust store that cannot yet run the table
+  reset between fixtures (`rust_benchmark_unsupported`), so until the benchmark can reset a Rust store without raw SQL (the Rust engine never reports `raw_sql`) the flag
+  stops before any work. A longmemeval run records the engine in its resume hash, and the memory-trust brainbench
+  suites refuse `--engine rust` because they always build PGLite brains.
 - **Seed.** `seed` copies the brain into the Rust store once, from one read-only snapshot, and writes
   `seed.json`: what it copied, the values the store could not keep, the unfinished jobs and segmented pages it left
   behind, and the unseeded gap rows (tables the Rust store cannot serve yet; a swap is refused while any remain).
   It refuses while shadow mode is on. To seed again, `stop --delete` and seed into the new directory.
   Rust store layout: [rust/docs/store/seed.md](../rust/docs/store/seed.md).
+- **Managed storage is refused.** The Rust engine never holds managed storage, so a brain that uses it can never swap
+  to Rust and a seed of it copies data nothing can use. Brains made by a default `gbrain init` use managed storage and
+  cannot be shadowed or swapped yet. `seed` opens the brain database, reads its storage mode, and refuses a
+  managed-storage brain with `engine_shadow_refused` (`managed_storage`, exit 3; with `--json` the error envelope is
+  also printed on stdout), telling the agent to ask the user. The next step names the ways out that exist today. For a
+  new brain, `gbrain init --db-only` creates one without managed storage. For an existing managed brain, `gbrain
+  sources writer deactivate --dry-run` previews converting it back to classic mode; the real deactivate needs your
+  consent. It refuses before the Rust addon loads, so a refused seed creates no shadow directory, no store and no
+  `seed.json`. A brain whose mode cannot be read, or that cannot be opened (for example the database is down), is
+  refused the same way (exit 3, `managed_storage`) but says so honestly: "gbrain could not confirm that this brain
+  does not use managed storage", with the read or open error in the why. Only a mode read as managed says "this brain
+  uses managed storage". When another gbrain holds a PGLite brain (`pglite_busy`, usually `gbrain serve`), the next
+  step is to stop `gbrain serve` and anything else holding it, run the command again, then restart serve. It is never
+  a silent pass.
 - **Follow.** A seeded brain is followed while shadow mode is on. Each committed write through the wrapped engine is
   read back from the brain, in its own short read-only `REPEATABLE READ` transaction (on Postgres, a dedicated
   one-connection pool, so the serving pool is never used), and applied to the Rust store, so stored ids and fact
