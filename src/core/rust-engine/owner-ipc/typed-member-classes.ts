@@ -792,7 +792,6 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   refreshDrainLeaseHolder: 'readDrainLeaseBeacon',
   releaseDrainLeaseHolder: 'readDrainLeaseBeacon',
   removeAccessGroupMembers: 'listAccessGroupMemberships',
-  replaceSourceConfig: 'getSource for that source id',
   revokeAccessToken: 'listAccessTokens',
   revokeAccessTokensNamed: 'listAccessTokens',
   revokeLocalWriterRow: 'readLocalWriterRow for that writer',

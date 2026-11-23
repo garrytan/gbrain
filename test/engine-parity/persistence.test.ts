@@ -21,7 +21,6 @@ import { describe, expect } from 'bun:test';
 import { basisEmbedding, createSource, parityArms } from './harness.ts';
 import { isCapabilityRefusal } from './arm-capabilities.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
-import { isCapabilityRefusal } from './arm-capabilities.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { fenceHoldEntries, fenceReadOf } from '../../src/core/generations/fence.ts';
 import { projectFactFenceGeneration } from '../../src/core/generations/adapters/fact-rows.ts';

@@ -689,7 +689,6 @@ export const DOMAIN_OF: Record<string, string> = {
   'readFenceOverlayRows': OOS.cliReadsOps,
   'listSourceRecords': OOS.cliReadsImport,
   'readSourceIncarnation': OOS.cliReadsImport,
-  'readSourcePurgeEpoch': OOS.callerRawSql,
   'readGitHoldRecords': OOS.callerRawSql,
   'probePageTypes': OOS.callerRawSql,
   'readLongPageSizes': OOS.callerRawSql,
@@ -1291,7 +1290,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readDrainLeaseBeacon': OOS.cycleLocks, 'writeDrainLeaseHolder': OOS.cycleLocks, 'refreshDrainLeaseHolder': OOS.cycleLocks,
   'releaseDrainLeaseHolder': OOS.cycleLocks,
   // sources
-  'listAllSources': 'sources', 'listSourceLocalPaths': 'sources', 'countRepoBoundSources': 'sources', 'updateSourceConfig': 'sources', 'markSourceSynced': 'sources', 'replaceSourceConfig': 'sources', 'renameSource': 'sources', 'readFederationExposedPages': OOS.callerRawSql, 'advanceSyncCheckpoint': 'sources',
+  'listAllSources': 'sources', 'listSourceLocalPaths': 'sources', 'countRepoBoundSources': 'sources', 'updateSourceConfig': 'sources', 'markSourceSynced': 'sources', 'renameSource': 'sources', 'readFederationExposedPages': OOS.callerRawSql, 'advanceSyncCheckpoint': 'sources',
   'listLocalPathSources': 'sources', 'readPlainSyncSource': OOS.callerRawSql, 'readOwnerOnlySourcesPresent': OOS.callerRawSql, 'readOwnerOnlySourceConfig': OOS.callerRawSql, 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'getSource': 'sources',
   'listStaleSyncSourceIds': 'sources', 'readSourceRow': 'sources', 'lockSourceRow': 'sources', 'lockSourceForUpdate': 'sources', 'readSourceChunkerVersion': 'sources',
   'setSourceChunkerVersion': 'sources', 'isSourceClaimed': 'sources',

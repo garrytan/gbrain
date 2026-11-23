@@ -27,7 +27,6 @@ import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import type { Page, PageInput } from '../../src/core/types.ts';
 import { archiveSource, createSource, parityArms, pick, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
-import { syncIdentityDecisions } from '../../src/core/entities/identity-decisions.ts';
 
 const { parityTest } = parityArms(testBackends());
 

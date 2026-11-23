@@ -40,7 +40,6 @@ import { PAGE_PURGE_TOMBSTONES_SQL } from '../engine-sql/page-purge.ts';
 import { SOURCE_PURGE_EPOCH_SQL } from '../engine-sql/sync-reason-reads.ts';
 import { OperationError } from '../ops/contract.ts';
 import { withoutReadDeadline } from '../read-deadline.ts';
-import { SOURCE_PURGE_EPOCH_SQL } from '../engine-sql/sync-reason-reads.ts';
 import { authorizeStoredRequest, sharedWriterRow, storedAuthorizationReads } from './authority.ts';
 import { hostIdFor } from './identity.ts';
 import { acquireWorktree, acquireWorktreeShared, getWorktreeBinding, guardOwnership, joinWorktreeLease, MANAGED_MODE_SQL, sharedWorktreeBinding } from './ownership.ts';

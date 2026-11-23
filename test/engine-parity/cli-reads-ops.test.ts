@@ -23,7 +23,6 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import type { ExactScanOpts } from '../../src/core/search/exact-scan.ts';
 import type { RankEntitiesStatementOpts } from '../../src/core/engine-sql/graph-rank.ts';
-import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { operationsByName, type OperationContext } from '../../src/core/operations.ts';
 import { EXTRACTION_PROVENANCE_KEY, EXTRACTION_STATUS_KEY, PROVENANCE_AUTO_EXTRACTED, STATUS_UNVERIFIED } from '../../src/core/extraction-review.ts';
 

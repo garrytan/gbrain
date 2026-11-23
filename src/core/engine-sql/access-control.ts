@@ -326,22 +326,3 @@ export async function listPagesNamingReader(exec: MemberLookupRead, principal: s
   return rows.map(r => ({ slug: r.slug, source_id: r.source_id }));
 }
 
-/** A page by slug and source. */
-export interface PageNamingReaderRow { slug: string; source_id: string }
-
-/** The most pages listPagesNamingReader returns: access/members.ts pagesNaming shows 50 and reads one more to see a cut. */
-export const PAGES_NAMING_READER_LIMIT = 51;
-
-/** The statement access/members.ts pagesNaming ran through executeRaw, spelled out as one literal (LIMIT is PAGES_NAMING_READER_LIMIT). */
-export const PAGES_NAMING_READER_SQL = `SELECT slug, source_id FROM pages WHERE frontmatter ? 'readable_by' AND gbrain_access_readers(frontmatter) @> ARRAY[$1]::text[]
-     ORDER BY source_id, slug LIMIT 51`;
-
-/**
- * The pages, in every source and by (source, slug), whose normalized readers (`gbrain_access_readers`) name exactly
- * `principal` (`member:<id>` or `group:<id>`), at most PAGES_NAMING_READER_LIMIT of them. Soft-deleted pages count, as
- * before.
- */
-export async function listPagesNamingReader(exec: MemberLookupRead, principal: string): Promise<PageNamingReaderRow[]> {
-  const rows = await exec.executeRaw<PageNamingReaderRow>(PAGES_NAMING_READER_SQL, [principal]);
-  return rows.map(r => ({ slug: r.slug, source_id: r.source_id }));
-}

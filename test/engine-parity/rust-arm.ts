@@ -108,6 +108,8 @@ export function rustAccessBrain(engine: unknown) {
 /** Fixture: record a page purge on the Rust brain (the store's `page_purges` ledger has no typed BrainEngine writer). */
 export async function recordRustPagePurge(engine: unknown, sourceId: string, hashes: string[], slug: string, requestId: string | null): Promise<void> {
   await (engine as RustEngine).openStore('recordPagePurge').brain.recordPagePurge(sourceId, hashes, slug, requestId);
+}
+
 /** A member the fixture seeds: an id, an optional email, a kind and groups, enabled unless `state` says otherwise. */
 export interface MemberSeed { id: string; email?: string; kind?: 'person' | 'audience'; groups?: readonly string[]; state?: 'disabled' | 'removed' }
 
