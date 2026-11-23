@@ -43,6 +43,7 @@ mod extract;
 mod fence_projection;
 mod held;
 mod reads;
+mod resolved_at;
 
 pub use extract::{FenceRowClaim, IncomingTake, TakesLeavingFence};
 pub use held::HeldTakeSpec;

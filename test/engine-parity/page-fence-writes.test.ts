@@ -6,7 +6,11 @@
  *  - Contract: a put_page that creates a page with a facts fence and a takes fence, then a put_page that edits one fact
  *    row's cells, drops another, adds a third, changes one take's claim and resolves another, leaves the same fact and
  *    take rows on PGLite, Postgres (DATABASE_URL) and the Rust engine (GBRAIN_TEST_RUST_ARM=1). Each typed member the
- *    projection runs answers and writes the same rows on every arm when called directly.
+ *    projection runs answers and writes the same rows on every arm when called directly. A Takes fence row resolved on a
+ *    date written the ways Postgres reads `text::timestamptz` stores the same instant on every arm, and the dates
+ *    Postgres refuses fail the save on every arm.
+ *  - Named stop: a resolved date with a zone abbreviation (`PST`) or zone name stores Postgres's instant on the SQL arms;
+ *    the Rust engine refuses it by name ("a resolved date the store does not read") before it writes.
  *  - Regression: the projection read and wrote the page's fact and take rows through executeRaw, so on the Rust engine
  *    any put_page that updated a page with a facts or takes fence stopped on the raw SQL refusal.
  *  - Why existing coverage misses it: the parity files seed fenced pages through engine.putPage, which runs no fence
@@ -22,6 +26,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OperationContext } from '../../src/core/operations.ts';
 import { submitPageMutation } from '../../src/core/persistence/page-mutations.ts';
 import { fenceOwnerKey, TAKE_FENCE_KIND } from '../../src/core/generations/fence.ts';
+import { capabilityMissing } from '../../src/core/rust-engine/errors.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -78,6 +83,56 @@ describe('engine parity: put_page with a facts and a takes fence', () => {
     expect(edited.cells.map(c => c.row_num)).toEqual([1, 3]);
     expect(edited.takes.map(t => [t.row_num, t.claim, t.resolved, t.quality])).toEqual([[1, 'Acme example ships in Q4', false, null], [2, 'Widget co hires a CFO', true, 'correct']]);
     return { created, edited };
+  });
+
+  /** A Takes fence row resolved on `resolved`; the stored resolved_at as ISO text, or the save's error code and message. */
+  async function resolvedAtOf(engine: BrainEngine, resolved: string) {
+    await put(engine, page(factsFence([[1, 'Alice founded acme-example', 'medium', '']]),
+      takesFence(['| 1 | Widget co hires a CFO | bet | world | 0.5 | 2026-01 | memo |  |  |  |  |  |  |'])));
+    try {
+      await put(engine, page(factsFence([[1, 'Alice founded acme-example', 'medium', '']]),
+        takesFence([`| 1 | Widget co hires a CFO | bet | world | 0.5 | 2026-01 | memo | ${resolved} | correct |  |  |  |  |`])));
+    } catch (error) {
+      const request = (error as { writeRequest?: { blocked_reason?: unknown; write_error?: unknown } }).writeRequest;
+      // A refused publication step parks the request as blocked, or ends it failed with the refusal as its write error.
+      const blocked = request?.blocked_reason ?? request?.write_error;
+      return { error: (error as { code?: string }).code ?? 'thrown', message: (error as Error).message, ...(blocked ? { blocked } : {}) };
+    }
+    const pageId = Number((await engine.getPage(SLUG, { sourceId: 'default' }))!.id);
+    const take = (await engine.listTakes({ page_id: pageId } as never))[0] as unknown as Record<string, unknown>;
+    return { resolved_at: take.resolved_at == null ? null : new Date(take.resolved_at as string).toISOString() };
+  }
+
+  parityTest('a Takes fence resolved on a date written the ways Postgres reads it stores the same instant on every arm', {
+    methods: ['listTakes', 'writeFenceTakeResolutions'],
+    timeout: 120_000,
+  }, async (engine) => {
+    const out: Record<string, unknown> = {};
+    for (const resolved of ['March 1, 2026', '2026/03/01', '03/01/2026', '3/1/26', '1 March 2026', 'Sunday, March 1, 2026', '01-Mar-2026',
+      '2026-Mar-01', '2026.03.01', '20260301', 'Mar 1 2026 10:30', '2026-03-01 10:00:00+02', '2026-03-01T10:00Z', '2026-03-01 10:00 UTC',
+      '2026-03-01 10:00:00.25 pm', '2026-03-01 24:00', '2026-02-30', '2026/13/01', '2026-03-01 25:00', '2026-03-01 10:00 +16:00', '2026-03', 'soon']) {
+      out[resolved] = await resolvedAtOf(engine, resolved);
+    }
+    return out;
+  });
+
+  parityTest('a Takes fence resolved on a date with a zone abbreviation stores it on the SQL arms; the Rust engine refuses the date by name', {
+    methods: ['writeFenceTakeResolutions'],
+    timeout: 60_000,
+  }, async (engine, backend) => {
+    const out = await resolvedAtOf(engine, '2026-03-01 10:00 PST');
+    if (backend !== 'rust') {
+      expect(out).toEqual({ resolved_at: '2026-03-01T18:00:00.000Z' });
+      return out;
+    }
+    // The store reads no zone abbreviations: the publication stops on the typed refusal (the request waits, blocked on
+    // it), and the case stops on it.
+    expect(out).toMatchObject({ blocked: 'engine_capability_missing' });
+    const pageId = Number((await engine.getPage(SLUG, { sourceId: 'default' }))!.id);
+    const direct = await engine.writeFenceTakeResolutions(pageId, JSON.stringify([{ row_num: 1, resolved_at: '2026-03-01 10:00 PST', resolved_quality: 'correct',
+      resolved_outcome: true, resolved_source: null, resolved_value: null, resolved_unit: null, resolved_by: null }])).then(() => 'no stop', (e: Error) => e.message);
+    expect(direct).toContain('writeFenceTakeResolutions (a resolved date the store does not read: "2026-03-01 10:00 PST")');
+    throw capabilityMissing('takes', 'writeFenceTakeResolutions (a resolved date the store does not read: "2026-03-01 10:00 PST")');
   });
 
   parityTest('the fence projection fact members answer and write the same rows on every arm', {

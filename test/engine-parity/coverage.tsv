@@ -427,7 +427,7 @@ listTakeRowNums	takes	yes	1	no	yes	yes	serves
 readTakeRowTierByClaim	takes	yes	1	no	yes	yes	serves
 addTakesBatch	takes	yes	96	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	8	no	yes	yes	serves
-listTakes	takes	yes	51	no	yes	yes	serves
+listTakes	takes	yes	52	no	yes	yes	serves
 searchTakes	takes	yes	6	no	yes	yes	serves
 searchTakesVector	takes	yes	6	no	yes	yes	serves
 getTakeEmbeddings	takes	yes	1	no	yes	yes	serves
@@ -554,7 +554,7 @@ listPageTakeRowNums	facts	yes	1	no	yes	yes	serves
 expireFenceFacts	facts	yes	2	no	yes	yes	serves
 refreshFenceFactFields	facts	yes	2	no	yes	yes	serves
 clearChangedTakeResolutions	facts	yes	2	no	yes	yes	serves
-writeFenceTakeResolutions	facts	yes	2	no	yes	yes	serves
+writeFenceTakeResolutions	facts	yes	4	no	yes	yes	serves
 detachFenceFactRows	facts	yes	1	no	yes	yes	serves
 listOccupiedFenceRowNums	facts	yes	2	no	yes	yes	serves
 moveGuardedFenceRows	facts	yes	1	no	yes	yes	serves

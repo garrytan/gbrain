@@ -8,11 +8,11 @@
 //! writeFenceTakeResolutions. They add no keys. See rust/docs/store/takes.md, "The fence projection's
 //! statements".
 
+use super::resolved_at::{self, ResolvedAtError};
 use super::{QUALITIES, TAKES, check_failed, page_takes, real, store_take};
 use crate::Store;
-use crate::error::{Result, StoreError};
+use crate::error::{Result, StoreError, UNMODELED_INPUT};
 use crate::links::no_nul;
-use crate::persistence::parse_timestamptz;
 use crate::write_receipt::float_distinct;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -78,21 +78,12 @@ fn row_num(op: &str, value: Option<f64>) -> Result<Option<i32>> {
         .transpose()
 }
 
-/// `text::timestamptz` under TimeZone UTC: a bare `YYYY-MM-DD` day is its midnight; any other text
-/// is a full timestamp.
-fn timestamptz(op: &str, text: &str) -> Result<i64> {
-    let b = text.as_bytes();
-    if b.len() == 10
-        && b[4] == b'-'
-        && b[7] == b'-'
-        && let Some(us) = crate::env::parse_iso(&format!("{text}T00:00:00Z"))
-    {
-        return Ok(us);
-    }
-    parse_timestamptz(text, &format!("{op}: resolved_at")).map_err(|_| {
-        invalid(format!(
-            "{op}: invalid input syntax for type timestamp with time zone: \"{text}\""
-        ))
+/// `resolved_at.rs`: Postgres's error as `invalid_argument`, and a form the store does not read
+/// as `unmodeled_input`, which the engine refuses by name.
+fn resolved(text: &str, now: i64) -> Result<i64> {
+    resolved_at::parse(text, now).map_err(|e| match e {
+        ResolvedAtError::Unmodeled => StoreError::new(UNMODELED_INPUT, e.message(text)),
+        _ => invalid(e.message(text)),
     })
 }
 
@@ -205,6 +196,7 @@ impl Store {
             by: Option<String>,
         }
         let page = row_num(OP, Some(page_id))?;
+        let now = self.env.now_micros();
         let mut by_row: BTreeMap<i32, Cells> = BTreeMap::new();
         for r in records::<ResolutionRow>(OP, resolutions)? {
             let n = row_num(OP, r.row_num)?;
@@ -224,7 +216,7 @@ impl Store {
                 at: r
                     .resolved_at
                     .as_deref()
-                    .map(|t| timestamptz(OP, t))
+                    .map(|t| resolved(t, now))
                     .transpose()?,
                 quality: r.resolved_quality,
                 outcome: r.resolved_outcome,

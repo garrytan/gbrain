@@ -113,8 +113,14 @@ statement the projection sent through `executeRaw`. The writes join the engine's
 - `clearChangedTakeResolutions(pageId, claims)`: a resolved take at a record's row number whose claim differs from the
   record's loses its seven `resolved_*` columns.
 - `writeFenceTakeResolutions(pageId, resolutions)`: a take at a record's row number takes the record's resolution
-  cells when one differs. `resolved_at` is `text::timestamptz` under TimeZone UTC (a bare day is its midnight);
-  `takes_resolution_consistency` and then `takes_resolved_quality_values` refuse a bad pair or quality.
+  cells when one differs. `resolved_at` is read as Postgres reads `text::timestamptz` (DateStyle `ISO, MDY`,
+  TimeZone UTC; `takes/resolved_at.rs`): numeric and month-name dates in Postgres's orders, `YYYYMMDD`, times with
+  `am`/`pm`, an ISO `T` and `24:00`, `Z`/`UTC`/`GMT` and numeric offsets, and `epoch`/`now`/`today`/`tomorrow`/
+  `yesterday`. An input Postgres refuses gets its error (`date/time field value out of range`, `invalid input syntax`,
+  `time zone displacement out of range`). Any other form (a zone abbreviation such as `PST` or a zone name, BC dates,
+  infinities, Julian or week dates) is `unmodeled_input`, which the engine refuses as `engine_capability_missing`
+  naming the member and the text, before anything is written. `takes_resolution_consistency` and then
+  `takes_resolved_quality_values` refuse a bad pair or quality.
 
 `hasFenceAbsentHold(sourceId, kind, ownerKey)` (`generations.rs`) reads whether the key's held generation is held with
 `held_reason = 'fence_absent'`. The page write's link preparation reads its live aliases through `readLiveSlugAliases`

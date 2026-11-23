@@ -57,6 +57,9 @@ pub const INVALID_STATE: &str = "invalid_state";
 pub const WRITE_CONFLICT: &str = "write_conflict";
 /// A write inside a read-only transaction (Postgres SQLSTATE 25006, `read_only_sql_transaction`).
 pub const READ_ONLY_TRANSACTION: &str = "read_only_transaction";
+/// An input written in a form the store does not read the way Postgres does (a resolved date with
+/// a zone it does not know). Nothing was written; the engine refuses the call by name.
+pub const UNMODELED_INPUT: &str = "unmodeled_input";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoreError {
