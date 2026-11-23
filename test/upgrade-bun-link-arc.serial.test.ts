@@ -400,7 +400,12 @@ describe('runUpgrade — bun-link arc (real git vs local bare origin; bun/gbrain
     const fx = buildFixture('cgroup-probe');
     const run = await withHostServe(() => spawnWithShims(fx, [fx.driver], { GBRAIN_TEST_UPGRADE_CGROUP: '0::/system.slice/runner-script.service\n' }));
     assertExit0('upgrade driver (runner cgroup)', run);
-    expect(argvLines(fx)).toEqual(['systemctl show -p MainPID --value -- runner-script.service', ...ARC_CALLS(fx.originHead)]);
+    // One lookup per serve on the host: other serves of this uid (a pooled test's, a developer's) add identical lines.
+    const lines = argvLines(fx);
+    const lookups = lines.filter(l => l.startsWith('systemctl'));
+    expect(lookups.length).toBeGreaterThan(0);
+    expect(lookups.every(l => l === 'systemctl show -p MainPID --value -- runner-script.service')).toBe(true);
+    expect(lines).toEqual([...lookups, ...ARC_CALLS(fx.originHead)]);
   }, 120_000);
 
   test('--swap-only: swap + verify + breadcrumb, but NO post-upgrade and NO features child', async () => {
