@@ -22,6 +22,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runMigrations } from '../src/core/migrate.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { bareBody, expectHeldHidden, HELD, holdFenceRow, ROWS } from './helpers/hold-page-id-fixture.ts';
 
 const OLD_INDEX = 'CREATE UNIQUE INDEX write_gate_holds_dedupe_idx ON write_gate_holds (source_id, slug, fingerprint, detector_version)';
 
@@ -146,6 +147,39 @@ for (const backend of backends) {
       await engine.setConfig('version', '336');
       expect((await runMigrations(engine)).applied).toBeGreaterThanOrEqual(1);
       expect(await holdStates(engine, sourceId)).toEqual(before);
+    }, 240_000);
+    // Pins review finding 6: renames made before the rename history existed (v285) live only in slug_aliases. The backfill reads both, so a hold
+    // whose page was renamed then still binds to that page (its moved fence row stays hidden), and a name taken by another page afterwards
+    // stays uncertain: the hold is held for both pages and listed.
+    test('alias-only rename lineage: the hold binds to the renamed page, and a reused name stays uncertain', async () => {
+      const engine = brain();
+      const sourceId = `s${randomUUID().replace(/-/g, '').slice(0, 14)}`;
+      await engine.executeRaw("INSERT INTO sources(id,name,config) VALUES($1,$1,'{}')", [sourceId]);
+      const page = async (slug: string) => {
+        await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: bareBody(ROWS), timeline: '' }, { sourceId });
+        return Number((await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, slug]))[0]!.id);
+      };
+      const idOf = async (slug: string) => Number((await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, slug]))[0]!.id);
+      await page('notes/old-a');
+      const clean = await holdFenceRow(engine, { sourceId, slug: 'notes/old-a', claim: HELD, rowNum: 1 });
+      expect(await engine.updateSlug('notes/old-a', 'notes/new-a', { sourceId })).toBe(1);
+      await page('notes/old-b');
+      const reusedHold = await holdFenceRow(engine, { sourceId, slug: 'notes/old-b', claim: HELD, rowNum: 1 });
+      expect(await engine.updateSlug('notes/old-b', 'notes/new-b', { sourceId })).toBe(1);
+      const reusedPage = await page('notes/old-b');
+      const newA = await idOf('notes/new-a'), newB = await idOf('notes/new-b');
+      // A brain from before v285: the rename record is only the alias.
+      await engine.executeRaw('DELETE FROM slug_rename_history WHERE source_id=$1', [sourceId]);
+      expect((await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM slug_aliases WHERE source_id=$1 AND notes='rename'", [sourceId]))[0]!.n).toBeGreaterThanOrEqual(2);
+
+      await toV336(engine);
+      await runMigrations(engine);
+
+      const by = new Map((await holdStates(engine, sourceId)).map(s => [s.id, s]));
+      expect([by.get(clean)!.page_id, by.get(clean)!.page_candidates]).toEqual([newA, null]);
+      expect([by.get(reusedHold)!.page_id, by.get(reusedHold)!.page_candidates]).toEqual([null, [reusedPage, newB].sort((a, b) => a - b)]);
+      await expectHeldHidden(engine, sourceId, 'notes/new-a');
+      await expectHeldHidden(engine, sourceId, 'notes/new-b');
     }, 240_000);
   });
 
