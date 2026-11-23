@@ -298,6 +298,8 @@ test/physical-root-birth-tolerance-6501.test.ts	samePhysicalBirth (#6501)	5	read
 test/postgres-driver-vendor.test.ts	vendored Postgres driver packaging	5	readFileSync
 test/postgres-engine.test.ts	postgres-engine / search date filtering	2	source-surface-helper
 test/postgres-engine.test.ts	postgres-engine / search path timeout isolation	7	source-surface-helper
+test/postgres-write-read-only-retry.test.ts	a typed write runs through an executor that retries a read-only refusal	2	readFileSync
+test/postgres-write-read-only-retry.test.ts	the typed writes the audit covers	2	readFileSync
 test/postgres15-sql-compat-7112.test.ts	#7112: shipped SQL parses on every supported Postgres (15+)	2	readFileSync
 test/pregate-allowlist-cache-keys.test.ts	(file-level)	9	readFileSync
 test/private-visibility.test.ts	shared private predicate lives once (#4352 remediation)	1	readFileSync
