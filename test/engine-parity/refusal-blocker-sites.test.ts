@@ -7,10 +7,11 @@
  *  - Contract: `gbrain eval whoknows` loads its replay rows (loadReplayRows) as the newest 200 captured `query` calls,
  *    newest first, and a Rust brain returns the same rows. `gbrain sync --source <id>` (syncOutOfSearchNotice) says the
  *    source is out of default search only when it holds live pages, its federated setting is unset and it was not added
- *    by a remote caller; a Rust brain gives the same answer.
+ *    by a remote caller; a Rust brain gives the same answer. A committed managed `sources add` (addOutcome) reads the
+ *    stored federated setting back when its result carries none, and reports what the add means for default search.
  *  - Regression: a caller that swallows the Rust refusal returns its quiet default (no rows, no notice), so the
- *    regression gate reports "skipped: 0 replay-eligible rows" for a brain that has them and a sync never mentions that
- *    a source's pages are out of default search.
+ *    regression gate reports "skipped: 0 replay-eligible rows" for a brain that has them, a sync never mentions that
+ *    a source's pages are out of default search and an add never says its source stays out of default search.
  *  - Why existing coverage misses it: the caller's catch turns the refusal into the default, which no engine-level case
  *    reads.
  *  - Seam: none. Rows come from logEvalCandidate, sources from createSource and pages from putPage; ids and timestamps
@@ -20,6 +21,8 @@ import { describe, expect } from 'bun:test';
 import type { EvalCandidateInput } from '../../src/core/types.ts';
 import { loadReplayRows } from '../../src/commands/eval-whoknows.ts';
 import { syncOutOfSearchNotice } from '../../src/commands/sources-add-next.ts';
+import { addOutcome } from '../../src/commands/sources-lifecycle.ts';
+import type { ParsedSourceLifecycle } from '../../src/commands/sources-lifecycle-args.ts';
 import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -78,6 +81,36 @@ describe('engine parity: refusal-swallow sites', () => {
       }
       expect(codes.notes).toBe('source_not_in_default_search');
       return codes;
+    },
+  );
+
+  parityTest(
+    'a committed source add reads the stored federated setting back: an unfederated source gets the out-of-default-search notice, a federated one none',
+    { methods: ['putPage'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'unset-src');
+      await createSource(engine, backend, 'fed-src', { federated: true });
+      await createSource(engine, backend, 'unfed-src', { federated: false });
+      await engine.putPage('notes/a-page', { type: 'note' as never, title: 'A page', compiled_truth: 'Body.', timeline: '', frontmatter: {} }, { sourceId: 'unset-src' });
+      const said: string[] = [];
+      const quiet = console.error;
+      const quietWrite = process.stderr.write;
+      console.error = (...line: unknown[]) => { said.push(line.join(' ')); };
+      // The notice itself is written on stderr; keep it out of the test log.
+      process.stderr.write = (() => true) as typeof process.stderr.write;
+      const outcome: Record<string, unknown> = {};
+      try {
+        for (const id of ['unset-src', 'fed-src', 'unfed-src', 'no-such-src']) {
+          const parsed = { operation: 'source_add', params: { options: { id } }, legacyOnly: false, json: true } as ParsedSourceLifecycle;
+          const result = await addOutcome({ state: 'committed' }, parsed, engine);
+          outcome[id] = ((result.notices as Array<{ code: string }> | undefined) ?? []).map((n) => n.code);
+        }
+      } finally {
+        console.error = quiet;
+        process.stderr.write = quietWrite;
+      }
+      expect(outcome['unfed-src']).toEqual(['source_not_in_default_search']);
+      return { outcome, said };
     },
   );
 });

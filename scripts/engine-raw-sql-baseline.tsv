@@ -130,7 +130,6 @@ src/commands/sources-canonical.ts	execute_raw	1
 src/commands/sources-git-gap.ts	execute_raw	15
 src/commands/sources-git-reconcile.ts	execute_raw	1
 src/commands/sources-harden.ts	execute_raw	5
-src/commands/sources-lifecycle.ts	execute_raw	1
 src/commands/sources-mirror.ts	execute_raw	2
 src/commands/sources-pull-strategy.ts	execute_raw	1
 src/commands/sources-rebind.ts	execute_raw	1	GST-3022 owned folders, no typed engine method yet: reads the source row (incarnation, local_path, config, archived) to find its connector cursor
