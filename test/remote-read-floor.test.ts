@@ -27,6 +27,8 @@ const PLAIN: Record<string, string> = {
   'src/core/engine-sql/trust-tier-reads.ts listValidTimeIdentities privatePagesFilterFragment': 'the world flag of the page; the read itself is gated by privatePagesFilterForCaller',
   'src/core/engine-sql/facts-purge.ts readHeldRowVisibility privatePagesFilterFragment': 'write-side: whether the target page is world (the held-fact move plan read)',
   'src/core/rust-engine/store-members/facts-held.ts (module) privatePagesFilterFragment': 'write-side: the Rust member of the held-fact move plan read names the no-caller page policy it serves',
+  'src/core/rust-engine/store-members/private-provenance.ts storeFastPageTextPolicy privatePagesFilterFragment': 'classification: the Rust chat census (grants/shared-exposure.ts) checks that the fast filter the SQL engines render wraps the no-caller page policy; it counts world chat pages and returns no page to a caller',
+  'src/core/rust-engine/store-members/private-provenance.ts storePageTextPolicy privatePagesFilterFragment': 'classification: the same chat census check, rendering the no-caller page policy it serves (storeFastPageTextPolicy); never a remote read gate',
   'src/core/rust-engine/store-members/facts-held.ts readHeldRowVisibility privatePagesFilterFragment': 'write-side: whether the target page is world (the held-fact move plan read, on the Rust engine)',
   'src/core/persistence/change-reason.ts pageWorldVisible privatePagesFilterFragment': 'write-side: whether a change reason may be published',
   'src/core/persistence/concept-rebuild.ts ACCESS_SQL privatePagesFilterFragment': 'maintenance: compares a hidden concept\'s access with its rebuild\'s, to refuse a wider one',
