@@ -24,7 +24,7 @@ import { existsSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
 import { setCliExitVerdict } from '../cli-force-exit.ts';
-import { laneTurnSettings, validateMinMatch, validateOwnerSenders, validatePinned, validateRouterBaseUrl, validateRouterExtraBody, validateRouterKeyEnv, validateRouterMaxUsd, validateRouterModel, validateRouterPromptVersion, validateRouterTimeout, validateRouterUsdPerMtok, validateSessionStart, validateSessionTokenBudget, validateSkillDirs, validateTopGate, validateTopK } from '../skills/resolver/config.ts';
+import { laneTurnSettings, routerSettings, validateMinMatch, validateOwnerSenders, validatePinned, validateRouterBaseUrl, validateRouterExtraBody, validateRouterKeyEnv, validateRouterMaxUsd, validateRouterModel, validateRouterPromptVersion, validateRouterTimeout, validateRouterUsdPerMtok, validateSessionStart, validateSessionTokenBudget, validateSkillDirs, validateTopGate, validateTopK } from '../skills/resolver/config.ts';
 
 const CONFIG_CAP_BYTES = 1024 * 1024;
 const isPlainObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -176,5 +176,7 @@ export function runSkillResolverConfigKey(args: string[], home: string): boolean
   if (Object.keys(doc).length === 0) unlinkSync(read.path);
   else atomicWriteTextFile(read.path, `${JSON.stringify(doc, null, 2)}\n`, { freshMode: 0o600 });
   console.log(action === 'set' ? `Set ${key} = ${JSON.stringify(holder[field])} (file plane: ${read.path})` : `Unset ${key} (file plane)`);
+  const invalid = !nested && leaf.startsWith('router') ? routerSettings(section).invalid : null;
+  if (invalid) console.error(`[config] warning: ${invalid} The picker stays off and reports config_invalid until this is fixed.`);
   return true;
 }

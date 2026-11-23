@@ -201,7 +201,9 @@ describe('setup --skill-loading resolve: refusals and other keys', () => {
     expect(JSON.parse(read(configPath(b))!).skills.resolver.router_usd_per_mtok).toEqual([1, 2, 0.1]);
     expect((await run('set', 'skills.resolver.router_usd_per_mtok', '1,2,0.1,3')).exitCode).not.toBe(0);
     expect((await run('unset', 'skills.resolver.router_usd_per_mtok')).exitCode).toBe(0);
-    expect((await run('set', 'skills.resolver.router_extra_body', '{"reasoning_effort": "none"}')).exitCode).toBe(0);
+    const extra = await run('set', 'skills.resolver.router_extra_body', '{"reasoning_effort": "none"}');
+    expect(extra.exitCode).toBe(0);
+    expect(extra.stderr).toContain('router_extra_body applies only to a compat: router_model');
     expect(JSON.parse(read(configPath(b))!).skills.resolver.router_extra_body).toEqual({ reasoning_effort: 'none' });
     expect((await run('set', 'skills.resolver.router_extra_body', 'reasoning_effort=none')).exitCode).not.toBe(0);
     expect((await run('set', 'skills.resolver.router_extra_body', '{"max_tokens": 9}')).exitCode).not.toBe(0);

@@ -28,9 +28,9 @@ import { firstParty, PickerHttpError, pickerChat, pickerKey, pickerReasons, prov
 
 export const ROUTER_FALLBACK_CODES = ['timeout', 'provider_error', 'missing_key', 'daily_cap', 'parse_failed', 'no_known_ids', 'config_invalid', 'no_pricing', 'ledger_unavailable'] as const;
 export type RouterFallbackCode = (typeof ROUTER_FALLBACK_CODES)[number];
-/** The picker reads every skill up to this many, else the top PICKER_SHORTLIST of the ranked list. */
 /** Bump whenever pickerPrompt's text or list format, PICKER_DESCRIPTION_CHARS or the output budgets change: a model trained on one version is turned off by router_prompt_version when gbrain sends another. */
 export const PICKER_PROMPT_VERSION = 1;
+/** The picker reads every skill up to this many, else the top PICKER_SHORTLIST of the ranked list. */
 export const PICKER_FULL_CATALOG_MAX = 150;
 export const PICKER_SHORTLIST = 40;
 export const PICKER_PICKS = 3;
