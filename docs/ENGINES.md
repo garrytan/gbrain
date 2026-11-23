@@ -1950,7 +1950,8 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   `pg_wal/`), as any open of that brain does. `seed` opens a PGLite brain without recording its managed roots and without
   repairing a damaged log, so it moves no datastore file aside. A brain with an open repair episode is not opened
   (`seed` exits 1 with `could not open the brain (repair_episode_open)`), because a healthy open would close the episode
-  and prune its repair backups.
+  and prune its repair backups. A repair episode recorded while `seed` waits for the datastore lock is left open too, and
+  its backups stay.
 - **Follow.** A seeded brain is followed while shadow mode is on. Each committed write through the wrapped engine is
   read back from the brain, in its own short read-only `REPEATABLE READ` transaction (on Postgres, a dedicated
   one-connection pool, so the serving pool is never used), and applied to the Rust store, so stored ids and fact

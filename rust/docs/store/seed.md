@@ -70,7 +70,7 @@ keyset batches in key order. The relations come in groups, each in its own file 
 | `slug_aliases`, `page_aliases` | the alias; a derived page alias (`declared`, `subject`) keeps `case_sensitive` and `alias_text` | a held alias is skipped |
 | `facts` | the fact, its tier, its write receipt and its embedding | an id already held is skipped |
 | `takes` | the take, its tier and origin, its write receipt and its row key | `claim_rev` starts at 0. The vector is kept only when it is current (hash equals the md5 of the claim, model and `embedded_at` set) |
-| `owner_only_marks` | the mark of a page | a mark on another table is dropped (`owner_only_mark_not_a_page`); the page need not exist (a hard delete leaves the mark) |
+| `owner_only_marks` | the mark of a page | a mark on another table is dropped (`owner_only_mark_not_a_page`); the page need not exist (a hard delete leaves the mark), and the page id counter is raised past the marked id so no new page takes it |
 | `slug_rename_history` | the old-to-new pair | alias rows are not touched |
 | `fact_withdrawals` | the withdrawal, with the primary's `fact_hash` and `withdrawn_at` | the hash is not computed again |
 | `page_purges` | the purge tombstone (slug, request id, time) | |

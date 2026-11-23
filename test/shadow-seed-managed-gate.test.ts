@@ -214,6 +214,12 @@ describe('engine shadow seed opens the configured brain without writing to it', 
     try { return await fn(e); } finally { await e.disconnect(); }
   };
 
+  const onBrainOpen = async (): Promise<PGLiteEngine> => {
+    const e = new PGLiteEngine();
+    await e.connectForRestore(config);
+    return e;
+  };
+
   withAddon('a registered source checkout gets no ownership marker and no registry entry, and persistence_* and the content root stay identical', async () => {
     // Registering a source is allowed only while the brain is unmanaged.
     await onBrain(e => e.executeRaw(`INSERT INTO sources(id,name,local_path,config) VALUES('checkout','checkout',$1,'{}') ON CONFLICT (id) DO UPDATE SET local_path=EXCLUDED.local_path`, [contentRoot]));
@@ -271,6 +277,39 @@ describe('engine shadow seed opens the configured brain without writing to it', 
       expect(before.slice(1)).toEqual(['true', 'true', 'true', 'true']);
       expect(existsSync(storeDir)).toBe(false);
     } finally {
+      rmSync(sidecar, { force: true });
+      for (const b of backups) rmSync(b, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  withAddon('a repair episode recorded while the seed waits for the datastore lock is still left open, with every backup', async () => {
+    // The refusal above checks before the open takes the lock; a repair that finishes while the seed waits records its episode later.
+    const dir = config.database_path;
+    const sidecar = `${dir}.wal-repair-attempt.json`;
+    const backups = [1, 2, 3, 4].map(n => `${dir}.wal-repair-backup-${1_700_000_000_000 + n}`);
+    const watched = (): string[] => [readFileSync(sidecar, 'utf8'), ...backups.map(b => String(existsSync(join(b, 'pg_wal', 'x'))))];
+    const holder = await onBrainOpen();
+    const out: string[] = [];
+    const err: string[] = [];
+    let held = true;
+    try {
+      const seeding = withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, () => {
+        rmSync(shadowDirFor(shadowBrainKey(config)!), { recursive: true, force: true }); // the tests above already seeded this brain
+        return runEngineShadow(['seed'], { out: l => out.push(l), err: l => err.push(l), now: () => NOW, loadAddon: async () => ({ ok: true as const, addon }) });
+      });
+      await new Promise(r => setTimeout(r, 800)); // the seed has passed its check and is waiting for the lock
+      for (const b of backups) { mkdirSync(join(b, 'pg_wal'), { recursive: true }); writeFileSync(join(b, 'pg_wal', 'x'), b); }
+      writeFileSync(sidecar, JSON.stringify({ episodeStartedAt: 1_700_000_000_000, episodeBackupPath: backups[0], attempts: [] }));
+      const before = watched();
+      await holder.disconnect();
+      held = false;
+      const code = await seeding;
+      // On a machine too slow to reach the lock within the pause, the seed's own check sees the episode and refuses; either way nothing changes.
+      expect(code === 0 || (code === 1 && err.join('\n').includes('repair_episode_open')), [...out, ...err].join('\n')).toBe(true);
+      expect(watched()).toEqual(before);
+      expect(before.slice(1)).toEqual(['true', 'true', 'true', 'true']);
+    } finally {
+      if (held) await holder.disconnect();
       rmSync(sidecar, { force: true });
       for (const b of backups) rmSync(b, { recursive: true, force: true });
     }

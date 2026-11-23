@@ -58,6 +58,27 @@ fn owner_only_marks_keep_page_marks_and_drop_the_other_tables() {
 }
 
 #[test]
+fn a_mark_whose_page_is_gone_reserves_its_page_id() {
+    // A mark outlives a hard-deleted page, so it can name an id above every surviving page; the next page written must not take it
+    // (it would inherit the deleted page's owner-only mark and be hidden from non-owner reads).
+    let s = crate::test_support::store();
+    import(
+        &s,
+        "owner_only_marks",
+        vec![
+            row(&[("row_table", "pages"), ("row_id", "7")]),
+            row(&[("row_table", "facts"), ("row_id", "40")]),
+        ],
+    );
+    let next = s
+        .write(|tx| crate::pages::next_id(tx, crate::pages::NEXT_PAGE_ID))
+        .unwrap();
+    assert_eq!(next, 8);
+    let read = s.read().unwrap();
+    assert!(!crate::owner_only_marks::is_marked(&*read, next).unwrap());
+}
+
+#[test]
 fn an_owner_only_mark_needs_a_page_id() {
     let s = crate::test_support::store();
     let err = s
