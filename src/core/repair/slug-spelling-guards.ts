@@ -32,9 +32,9 @@ const PAYLOAD_SLUG_KEYS = ['entity_slug', 'source_markdown_slug', 'page_slug', '
 
 interface HoldRow { id: number | string; fingerprint: string; detector_version: number; payload: unknown; seen_count: number }
 interface HoldDetail extends HoldRow {
-  slug: string; tier: string; reason_families: unknown; reasons: unknown; detector_error: boolean; write_origin: unknown; request_id: string | null;
+  slug: string; status?: string; tier: string; reason_families: unknown; reasons: unknown; detector_error: boolean; write_origin: unknown; request_id: string | null;
 }
-const HOLD_DETAIL = 'id, slug, fingerprint, detector_version, tier, reason_families, reasons, detector_error, payload, write_origin, request_id, seen_count';
+const HOLD_DETAIL = 'id, slug, status, fingerprint, detector_version, tier, reason_families, reasons, detector_error, payload, write_origin, request_id, seen_count';
 
 /** What each guard table needs of the running role: the carry reads it, and writes the rows it copies or re-keys. */
 const GUARD_TABLE_NEEDS: ReadonlyArray<readonly [string, readonly PolicyCommand[]]> = [
@@ -69,24 +69,40 @@ const publication = (hold: HoldDetail, rekey?: { from: string; to: string }): st
 /** A held write whose twin at the normal slug would publish differently. */
 export interface HoldConflict { slug: string; hold_id: number; other_id: number }
 
+/** Raised by `carryGuards` when, on the locked rows, a held write and its twin differ in what a release publishes. Nothing was moved: the transaction rolls back. */
+export class HoldConflictError extends Error {
+  constructor(readonly conflict: HoldConflict) { super(`held write h${conflict.hold_id} and held write h${conflict.other_id} would publish different fields`); this.name = 'HoldConflictError'; }
+}
+
+/** The first active hold of `from` whose twin at `to` (same fingerprint and detector version, any status) publishes differently, among `rows`. */
+function conflictAmong(rows: readonly HoldDetail[], from: string, to: string): HoldConflict | null {
+  for (const hold of rows) {
+    if (hold.slug !== from || hold.status !== 'held') continue;
+    const twin = rows.find(other => other.slug === to && other.fingerprint === hold.fingerprint && other.detector_version === hold.detector_version);
+    if (twin && publication(hold, { from, to }) !== publication(twin)) return { slug: from, hold_id: Number(hold.id), other_id: Number(twin.id) };
+  }
+  return null;
+}
+
 /**
- * For each page (`from` to `to`), the first active hold of `from` whose twin at `to` (same fingerprint and detector
- * version, in any status) differs in what a release publishes. Keyed by `from`; a page without a conflict has no entry.
+ * For each page (`from` to `to`), the first active hold of `from` whose twin at `to` differs in what a release publishes.
+ * Keyed by `from`; a page without a conflict has no entry. Unlocked: the preview's reading; the apply re-checks under `lockHolds`.
  */
 export async function holdConflicts(db: Pick<BrainEngine, 'executeRaw'>, sourceId: string, pages: ReadonlyArray<{ from: string; to: string }>): Promise<Map<string, HoldConflict>> {
   const found = new Map<string, HoldConflict>();
   if (!pages.length) return found;
-  const held = await db.executeRaw<HoldDetail>(`SELECT ${HOLD_DETAIL} FROM write_gate_holds WHERE source_id = $1 AND slug = ANY($2::text[]) AND status = 'held' ORDER BY id`, [sourceId, pages.map(p => p.from)]);
-  if (!held.length) return found;
-  const twins = await db.executeRaw<HoldDetail>(`SELECT ${HOLD_DETAIL} FROM write_gate_holds WHERE source_id = $1 AND slug = ANY($2::text[]) ORDER BY id`, [sourceId, pages.map(p => p.to)]);
-  const to = new Map(pages.map(p => [p.from, p.to]));
-  for (const hold of held) {
-    if (found.has(hold.slug)) continue;
-    const target = to.get(hold.slug)!;
-    const twin = twins.find(other => other.slug === target && other.fingerprint === hold.fingerprint && other.detector_version === hold.detector_version);
-    if (twin && publication(hold, { from: hold.slug, to: target }) !== publication(twin)) found.set(hold.slug, { slug: hold.slug, hold_id: Number(hold.id), other_id: Number(twin.id) });
-  }
+  const rows = await db.executeRaw<HoldDetail>(`SELECT ${HOLD_DETAIL} FROM write_gate_holds WHERE source_id = $1 AND slug = ANY($2::text[]) ORDER BY id`, [sourceId, pages.flatMap(p => [p.from, p.to])]);
+  for (const { from, to } of pages) { const conflict = conflictAmong(rows, from, to); if (conflict) found.set(from, conflict); }
   return found;
+}
+
+/**
+ * Locks every hold row of both slugs (any status, by id, so two movers cannot deadlock) and returns them. A writer that
+ * re-sights a hold takes no page lock but upserts the same row, so it waits here until this transaction ends, and a
+ * comparison made on these rows is the one the merge acts on.
+ */
+export async function lockHolds(tx: Pick<BrainEngine, 'executeRaw'>, sourceId: string, from: string, to: string): Promise<HoldDetail[]> {
+  return tx.executeRaw<HoldDetail>(`SELECT ${HOLD_DETAIL} FROM write_gate_holds WHERE source_id = $1 AND slug = ANY($2::text[]) ORDER BY id FOR UPDATE`, [sourceId, [from, to]]);
 }
 
 /** The payload with every page-naming key that holds `from` rewritten to `to`; the same object when none does. */
@@ -96,18 +112,24 @@ export function rekeyedPayload(payload: unknown, from: string, to: string): Reco
   return Object.fromEntries(Object.entries(object).map(([key, value]) => [key, (PAYLOAD_SLUG_KEYS as readonly string[]).includes(key) && value === from ? to : value]));
 }
 
-/** Copies the purge tombstones and re-keys the active holds of page `from` of `sourceId` to `to`; returns how many of each. */
+/**
+ * Copies the purge tombstones and re-keys the active holds of page `from` of `sourceId` to `to`; returns how many of each.
+ * Both slugs' holds are locked first and compared again on the locked rows (`HoldConflictError` when they differ), the
+ * merge and re-key act on those rows, and a last read refuses when any held write still names `from`.
+ */
 export async function carryGuards(tx: Pick<BrainEngine, 'executeRaw'>, sourceId: string, from: string, to: string): Promise<{ fact_purges: number; take_purges: number; holds: number }> {
+  const locked = await lockHolds(tx, sourceId, from, to);
+  const conflict = conflictAmong(locked, from, to);
+  if (conflict) throw new HoldConflictError(conflict);
   const facts = await tx.executeRaw(`INSERT INTO fact_purges (source_id, visibility, subject, fact_hash, request_id, actor, reason, purged_at)
     SELECT source_id, visibility, $3, fact_hash, request_id, actor, reason, purged_at FROM fact_purges WHERE source_id = $1 AND subject = $2
     ON CONFLICT DO NOTHING RETURNING fact_hash`, [sourceId, from, to]);
   const takes = await tx.executeRaw(`INSERT INTO take_purges (source_id, subject, claim_hash, request_id, purged_at)
     SELECT source_id, $3, claim_hash, request_id, purged_at FROM take_purges WHERE source_id = $1 AND subject = $2
     ON CONFLICT DO NOTHING RETURNING claim_hash`, [sourceId, from, to]);
-  const held = await tx.executeRaw<HoldRow>(`SELECT id, fingerprint, detector_version, payload, seen_count FROM write_gate_holds
-    WHERE source_id = $1 AND slug = $2 AND status = 'held' ORDER BY id`, [sourceId, from]);
+  const held = locked.filter(hold => hold.slug === from && hold.status === 'held');
   for (const hold of held) {
-    const [other] = await tx.executeRaw<{ id: number | string }>('SELECT id FROM write_gate_holds WHERE source_id = $1 AND slug = $2 AND fingerprint = $3 AND detector_version = $4', [sourceId, to, hold.fingerprint, hold.detector_version]);
+    const other = locked.find(twin => twin.slug === to && twin.fingerprint === hold.fingerprint && twin.detector_version === hold.detector_version);
     if (other) {
       await tx.executeRaw(`UPDATE write_gate_holds SET status = 'held', decided_at = NULL, decided_by = NULL, last_seen_at = now(), seen_count = seen_count + $2 WHERE id = $1`, [other.id, hold.seen_count]);
       await tx.executeRaw(`UPDATE write_gate_holds SET status = 'dropped', decided_at = now(), decided_by = 'repair:slug-spelling' WHERE id = $1`, [hold.id]);
@@ -115,5 +137,8 @@ export async function carryGuards(tx: Pick<BrainEngine, 'executeRaw'>, sourceId:
       await tx.executeRaw('UPDATE write_gate_holds SET slug = $2, payload = $3::text::jsonb WHERE id = $1', [hold.id, to, JSON.stringify(rekeyedPayload(hold.payload, from, to))]);
     }
   }
+  // A hold row added for the old spelling after the lock (an insert has no row to wait on) is never left behind unseen.
+  const left = await tx.executeRaw<{ id: number | string }>("SELECT id FROM write_gate_holds WHERE source_id = $1 AND slug = $2 AND status = 'held' AND NOT (id = ANY($3::bigint[]))", [sourceId, from, held.map(h => Number(h.id))]);
+  if (left.length) throw new HoldConflictError({ slug: from, hold_id: Number(left[0]!.id), other_id: Number(left[0]!.id) });
   return { fact_purges: facts.length, take_purges: takes.length, holds: held.length };
 }

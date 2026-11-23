@@ -48,7 +48,7 @@ import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { slugSpellingPreviewArgv } from '../persistence/legacy-slug-put.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
-import { assertGuardTablesReadable, carryGuards, holdConflicts } from './slug-spelling-guards.ts';
+import { assertGuardTablesReadable, carryGuards, HoldConflictError, holdConflicts, lockHolds } from './slug-spelling-guards.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
 
 const DOCS = 'docs/guides/repair.md#slug-spelling';
@@ -429,8 +429,7 @@ async function movePageUnderStoredSlug(engine: BrainEngine, sourceId: string, pa
       throw changedSincePreview(sourceId, page.slug, 'the file evidence in the checkout changed');
     }
     await assertGuardTablesReadable(tx, sourceId);
-    const conflict = (await holdConflicts(tx, sourceId, [{ from: page.slug, to: page.normal }])).get(page.slug);
-    if (conflict) throw changedSincePreview(sourceId, page.slug, `held write h${conflict.hold_id} and held write h${conflict.other_id} at ${page.normal} would publish different fields (slug_spelling_hold_conflict)`);
+    await lockHolds(tx, sourceId, page.slug, page.normal);
     const [taken] = await tx.executeRaw('SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, page.normal]);
     if (taken) throw changedSincePreview(sourceId, page.slug, `another page now holds ${page.normal} (slug_spelling_collision)`);
     let attachments = 0, guards: Awaited<ReturnType<typeof carryGuards>> = { fact_purges: 0, take_purges: 0, holds: 0 };
@@ -439,7 +438,10 @@ async function movePageUnderStoredSlug(engine: BrainEngine, sourceId: string, pa
       // Attachments carry the page's slug beside its id: this source's rows of the page, and rows with no page id that name the old slug.
       const files = await tx.executeRaw('UPDATE files SET page_slug = $3 WHERE source_id = $1 AND page_slug = $2 AND (page_id = $4 OR page_id IS NULL) RETURNING id', [sourceId, page.slug, page.normal, page.page_id]);
       attachments = files.length;
-      guards = await carryGuards(tx, sourceId, page.slug, page.normal);
+      guards = await carryGuards(tx, sourceId, page.slug, page.normal).catch(error => {
+        if (!(error instanceof HoldConflictError)) throw error;
+        throw changedSincePreview(sourceId, page.slug, `${error.message} (slug_spelling_hold_conflict)`);
+      });
     });
     return { applied: true, outcome: 'moved', detail: { page_id: page.page_id, from: page.slug, to: page.normal, attachments_moved: attachments, kept_source_path: page.source_path, guards_carried: guards } } satisfies RepairItemOutcome;
   });
