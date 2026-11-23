@@ -8,11 +8,13 @@
 use crate::Store;
 use crate::chunks::{keyed_chunks, segmented};
 use crate::cli_reads::pg_text::{fm_text, jsonb_value, timestamptz_text};
+use crate::aliases::all_alias_rows;
 use crate::error::Result;
 use crate::keyword::sql_like;
 use crate::link_queries::all_links;
 use crate::page_ops::{PageReadScope, pages_in_read_scope};
 use crate::pages::{PageRecord, all_pages};
+use crate::sources::all_sources;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -297,6 +299,32 @@ pub struct MentionScanLink {
 pub struct StaleMentionScan {
     pub pages: Vec<MentionScanPage>,
     pub links: Vec<MentionScanLink>,
+}
+
+/// A source id and its incarnation (`listLiveSourceIncarnations`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SourceIncarnation {
+    pub id: String,
+    pub incarnation: String,
+}
+
+/// One page of the attendance-repair scan window (`PAGE_PIN_SQL` of attendance-repair.ts).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AttendanceWindowRow {
+    pub id: String,
+    pub slug: String,
+    pub source_id: String,
+    #[serde(rename = "type")]
+    pub page_type: String,
+    pub revision: String,
+    pub deleted: bool,
+}
+
+/// A page by slug and source (`listEmailAliasPages`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SlugSourceRow {
+    pub slug: String,
+    pub source_id: String,
 }
 
 /// The pages at `slug` that the read policy admits with its live filter on, by source id.
@@ -680,6 +708,87 @@ impl Store {
             pages,
             links: found.into_iter().map(|(_, _, _, l)| l).collect(),
         })
+    }
+
+    /// `readClockMillisText()`: `floor(extract(epoch FROM clock_timestamp())*1000)::text`, the
+    /// store clock in whole milliseconds since the epoch.
+    pub fn read_clock_millis_text(&self) -> Result<String> {
+        self.read()?;
+        Ok(self.env.clock_micros().div_euclid(1000).to_string())
+    }
+
+    /// `listLiveSourceIncarnations(ids)`: `{ id, incarnation }` of each listed source that is not
+    /// archived and has no archive time. The SQL sets no order; this gives them by id.
+    pub fn list_live_source_incarnations(&self, ids: &[String]) -> Result<Vec<SourceIncarnation>> {
+        let read = self.read()?;
+        let mut rows: Vec<SourceIncarnation> = all_sources(&*read)?
+            .into_iter()
+            .filter(|s| ids.contains(&s.id) && !s.archived && s.archived_at_us.is_none())
+            .map(|s| SourceIncarnation {
+                id: s.id,
+                incarnation: s.incarnation,
+            })
+            .collect();
+        rows.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(rows)
+    }
+
+    /// `readAttendanceWindow(sourceId, afterSlug, limit)`: the source's pages (soft-deleted ones
+    /// included, marked) whose slug is after `after_slug` in byte order, by slug, at most `limit`.
+    pub fn read_attendance_window(
+        &self,
+        source_id: &str,
+        after_slug: &str,
+        limit: u32,
+    ) -> Result<Vec<AttendanceWindowRow>> {
+        let read = self.read()?;
+        let mut pages: Vec<PageRecord> = all_pages(&*read)?
+            .into_iter()
+            .filter(|p| p.source_id == source_id && p.slug.as_str() > after_slug)
+            .collect();
+        pages.sort_by(|a, b| a.slug.cmp(&b.slug));
+        Ok(pages
+            .into_iter()
+            .take(limit as usize)
+            .map(|p| AttendanceWindowRow {
+                id: p.id.to_string(),
+                deleted: p.deleted_at_us.is_some(),
+                slug: p.slug,
+                source_id: p.source_id,
+                page_type: p.page_type,
+                revision: p.knowledge_revision,
+            })
+            .collect())
+    }
+
+    /// `listEmailAliasPages(aliasNorm, sourceId)`: up to two distinct `{ slug, source_id }` of live
+    /// pages in another source that carry `alias_norm` as a page alias (open-loop counterparty
+    /// resolution). The SQL sets no order; this gives them by (source, slug).
+    pub fn list_email_alias_pages(
+        &self,
+        alias_norm: &str,
+        source_id: &str,
+    ) -> Result<Vec<SlugSourceRow>> {
+        let read = self.read()?;
+        let live: std::collections::HashSet<(String, String)> = all_pages(&*read)?
+            .into_iter()
+            .filter(|p| p.deleted_at_us.is_none())
+            .map(|p| (p.source_id, p.slug))
+            .collect();
+        let found: std::collections::BTreeSet<(String, String)> = all_alias_rows(&*read)?
+            .into_iter()
+            .filter(|(source, slug, alias, _, _)| {
+                alias == alias_norm
+                    && source != source_id
+                    && live.contains(&(source.clone(), slug.clone()))
+            })
+            .map(|(source, slug, _, _, _)| (source, slug))
+            .collect();
+        Ok(found
+            .into_iter()
+            .take(2)
+            .map(|(source_id, slug)| SlugSourceRow { slug, source_id })
+            .collect())
     }
 
     /// `resolveChainAnchorRows(slug, policy)`: every live copy of `slug` the read policy admits, as

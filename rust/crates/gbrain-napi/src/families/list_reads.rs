@@ -182,4 +182,43 @@ impl Brain {
     pub fn read_stale_mention_scan<'env>(&self, env: &'env Env, limit: u32) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_stale_mention_scan(limit))
     }
+
+    /// `readClockMillisText()`: the store clock in whole milliseconds, as text.
+    #[napi]
+    pub fn read_clock_millis_text<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_clock_millis_text())
+    }
+
+    /// `listLiveSourceIncarnations(ids)`: `[{ id, incarnation }]`.
+    #[napi]
+    pub fn list_live_source_incarnations<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_live_source_incarnations(&ids))
+    }
+
+    /// `readAttendanceWindow(sourceId, afterSlug, limit)`: `[{ id, slug, source_id, type, revision, deleted }]`.
+    #[napi]
+    pub fn read_attendance_window<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        after_slug: String,
+        limit: u32,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_attendance_window(&source_id, &after_slug, limit))
+    }
+
+    /// `listEmailAliasPages(aliasNorm, sourceId)`: `[{ slug, source_id }]`, at most two.
+    #[napi]
+    pub fn list_email_alias_pages<'env>(
+        &self,
+        env: &'env Env,
+        alias_norm: String,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_email_alias_pages(&alias_norm, &source_id))
+    }
 }

@@ -1871,6 +1871,7 @@ export class PostgresEngine implements BrainEngine {
   readReplacementTarget(q: factsTrustImpl.ReplacementTargetQuery) { return factsTrustImpl.readReplacementTarget(this.executeRaw.bind(this), q); }
   readPairFactRow(id: number, lock?: boolean) { return factsTrustImpl.readPairFactRow(this.executeRaw.bind(this), id, lock); }
   expireSupersededFact(q: { oldId: number; sourceId: string; newId: number; until: string | null }) { return factsTrustImpl.expireSupersededFact(this.executeRaw.bind(this), q); }
+  retireSupersededFact(q: { oldId: number | string; sourceId: string; newId: number; until: Date | null }) { return factsTrustImpl.retireSupersededFact(this.executeRaw.bind(this), q); }
   restoreSupersededFact(q: { oldId: number; sourceId: string; expiredAt: string | null; validUntil: string | null; supersededBy: number | null; expectedSupersededBy: number | null }) { return factsTrustImpl.restoreSupersededFact(this.executeRaw.bind(this), q); }
   readFactForForget(id: number) { return factsTrustImpl.readFactForForget(this.executeRaw.bind(this), id); }
   expireFactSuperseded(factId: number, validUntil: string | null) { return factsTrustImpl.expireFactSuperseded(this.executeRaw.bind(this), factId, validUntil); }
@@ -2509,6 +2510,12 @@ export class PostgresEngine implements BrainEngine {
   countLivePagesByType(scope: listReadsImpl.SourceIdScope) { return listReadsImpl.countLivePagesByType(this.executeRaw.bind(this), scope); }
   listTypeOrphanRows(scope: listReadsImpl.SourceIdScope, undeclared: readonly string[], limit: number) { return listReadsImpl.listTypeOrphanRows(this.executeRaw.bind(this), scope, undeclared, limit); }
   readStaleMentionScan(limit: number) { return listReadsImpl.readStaleMentionScan(this.executeRaw.bind(this), limit); }
+  readClockMillisText() { return listReadsImpl.readClockMillisText(this.executeRaw.bind(this)); }
+  listLiveSourceIncarnations(ids: readonly string[]) { return listReadsImpl.listLiveSourceIncarnations(this.executeRaw.bind(this), ids); }
+  readAttendanceWindow(sourceId: string, afterSlug: string, limit: number) { return listReadsImpl.readAttendanceWindow(this.executeRaw.bind(this), sourceId, afterSlug, limit); }
+  listEmailAliasPages(aliasNorm: string, sourceId: string) { return listReadsImpl.listEmailAliasPages(this.executeRaw.bind(this), aliasNorm, sourceId); }
+  readUploadSessionByRequest(principalKind: string, principalId: string, clientRequestId: string) { return listReadsImpl.readUploadSessionByRequest(this.executeRaw.bind(this), principalKind, principalId, clientRequestId); }
+  readSourceIncarnationArchived(sourceId: string) { return listReadsImpl.readSourceIncarnationArchived(this.executeRaw.bind(this), sourceId); }
   hasCompanyBrainReceipt(sourceId: string) { return cliReadsImpl.hasCompanyBrainReceipt(this.cliReads, sourceId); }
   readGuestSourceRow(sourceId: string) { return cliReadsImpl.readGuestSourceRow(this.cliReads, sourceId); }
   listGuestSourceIds(sourceIds: readonly string[]) { return this.preparationRead(exec => cliReadsImpl.listGuestSourceIds(unscopedExecutor(exec, 'cli reads: the import and extract paths ran these unscoped through executeRaw'), sourceIds)); }

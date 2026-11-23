@@ -184,7 +184,7 @@ const begin_page_upload: Operation = {
     };
     const prior = await readUploadByRequest(ctx.engine, principal, clientRequestId);
     if (prior) return resumed(prior);
-    const [source] = await ctx.engine.executeRaw<{ incarnation: string; archived: boolean }>('SELECT incarnation::text AS incarnation, archived FROM sources WHERE id=$1', [sourceId]);
+    const source = await ctx.engine.readSourceIncarnationArchived(sourceId);
     if (!source || source.archived) {
       throw opError('source_changed', 'The write source is not active.', `Source ${sourceId} is archived or not registered, so nothing was staged. Write to an active source (sources_list shows them).`);
     }

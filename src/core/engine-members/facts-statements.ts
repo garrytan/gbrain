@@ -667,6 +667,8 @@ export interface FactsStatementMembers {
   readPairFactRow(id: number, lock?: boolean): Promise<Record<string, unknown> | null>;
   /** Expires the old fact of an accepted supersede pair and links it to the new one; returns how many rows it touched. */
   expireSupersededFact(q: { oldId: number; sourceId: string; newId: number; until: string | null }): Promise<number>;
+  /** The remember consumer's supersede: expires the old fact now, links it to the new one, ends it at `until` when given; the row count. */
+  retireSupersededFact(q: { oldId: number | string; sourceId: string; newId: number; until: Date | null }): Promise<number>;
   /** Puts the old fact of an undone supersede pair back as it was; returns how many rows it touched. */
   restoreSupersededFact(q: { oldId: number; sourceId: string; expiredAt: string | null; validUntil: string | null; supersededBy: number | null; expectedSupersededBy: number | null }): Promise<number>;
   /** The columns a forget decides on, for one fact by id, or null. */

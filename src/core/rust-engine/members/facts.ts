@@ -328,6 +328,7 @@ export const FACTS_MEMBERS = {
   readReplacementTarget: 'facts',
   readPairFactRow: 'facts',
   expireSupersededFact: 'facts',
+  retireSupersededFact: 'facts',
   restoreSupersededFact: 'facts',
   readFactForForget: 'facts',
   expireFactSuperseded: 'facts',

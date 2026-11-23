@@ -4,7 +4,7 @@
  * readRetainedSources is the connector status's "retained" flag (persistence/connector-status.ts).
  */
 import type { PageReadPolicy } from '../../types.ts';
-import type { CardListQuery, CardRow, CompanyBrainEvidenceRows, MentionScanLinkRow, MentionScanPageRow, PageBodyRow, PageSourceIdRow, RetypeProbeQuery, ShelfPageRow, SourceIdScope, TargetProbeSqlRow } from '../../engine-sql/list-reads.ts';
+import type { AttendanceWindowRow, CardListQuery, CardRow, CompanyBrainEvidenceRows, MentionScanLinkRow, MentionScanPageRow, PageBodyRow, PageSourceIdRow, RetypeProbeQuery, ShelfPageRow, SourceIdScope, TargetProbeSqlRow } from '../../engine-sql/list-reads.ts';
 import { storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
 
@@ -85,3 +85,26 @@ export const listTypeOrphanRows: StoreMember<[scope: SourceIdScope, undeclared: 
 
 export const readStaleMentionScan: StoreMember<[limit: number], { pages: MentionScanPageRow[]; links: MentionScanLinkRow[] }> = async (brain, limit) =>
   (await storeCall({ member: 'readStaleMentionScan' }, () => brain.readStaleMentionScan(limit))) as { pages: MentionScanPageRow[]; links: MentionScanLinkRow[] };
+
+export const readClockMillisText: StoreMember<[], string> = async (brain) =>
+  (await storeCall({ member: 'readClockMillisText' }, () => brain.readClockMillisText())) as string;
+
+export const listLiveSourceIncarnations: StoreMember<[ids: readonly string[]], Array<{ id: string; incarnation: string }>> = async (brain, ids) =>
+  (await storeCall({ member: 'listLiveSourceIncarnations' }, () => brain.listLiveSourceIncarnations([...ids]))) as Array<{ id: string; incarnation: string }>;
+
+export const readAttendanceWindow: StoreMember<[sourceId: string, afterSlug: string, limit: number], AttendanceWindowRow[]> = async (brain, sourceId, afterSlug, limit) =>
+  (await storeCall({ member: 'readAttendanceWindow' }, () => brain.readAttendanceWindow(sourceId, afterSlug, limit))) as AttendanceWindowRow[];
+
+export const listEmailAliasPages: StoreMember<[aliasNorm: string, sourceId: string], Array<{ slug: string; source_id: string }>> = async (brain, aliasNorm, sourceId) =>
+  (await storeCall({ member: 'listEmailAliasPages' }, () => brain.listEmailAliasPages(aliasNorm, sourceId))) as Array<{ slug: string; source_id: string }>;
+
+/**
+ * No upload session: the store keeps no `page_body_stagings` row of kind `upload` (the session insert of
+ * persistence/page-upload.ts runs raw SQL, which a Rust brain refuses), so no session exists to find.
+ */
+export const readUploadSessionByRequest: StoreMember<[principalKind: string, principalId: string, clientRequestId: string], Record<string, unknown> | null> = async () => null;
+
+export const readSourceIncarnationArchived: StoreMember<[sourceId: string], { incarnation: string; archived: boolean } | null> = async (brain, sourceId) => {
+  const row = (await storeCall({ member: 'readSourceIncarnationArchived' }, () => brain.readSourceState(sourceId))) as { incarnation: string; archived: boolean } | null;
+  return row ? { incarnation: row.incarnation, archived: row.archived } : null;
+};

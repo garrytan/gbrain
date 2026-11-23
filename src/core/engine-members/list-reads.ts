@@ -3,7 +3,7 @@
  * `BrainEngine` extends this interface.
  */
 import type { PageReadPolicy } from '../types.ts';
-import type { CardListQuery, CardRow, CompanyBrainEvidenceRows, MentionScanLinkRow, MentionScanPageRow, PageBodyRow, PageSourceIdRow, RetypeProbeQuery, ShelfPageRow, SourceIdScope, TargetProbeSqlRow } from '../engine-sql/list-reads.ts';
+import type { AttendanceWindowRow, CardListQuery, CardRow, CompanyBrainEvidenceRows, MentionScanLinkRow, MentionScanPageRow, PageBodyRow, PageSourceIdRow, RetypeProbeQuery, ShelfPageRow, SourceIdScope, TargetProbeSqlRow } from '../engine-sql/list-reads.ts';
 
 export interface ListReadMembers {
   /** The sources holding a live page at `slug`, by id in byte order (page-ref ambiguity, quarantine clear, --grammar). */
@@ -34,4 +34,16 @@ export interface ListReadMembers {
   listTypeOrphanRows(scope: SourceIdScope, undeclared: readonly string[], limit: number): Promise<Array<{ slug: string; source_id: string; type: string | null }>>;
   /** The stale-mention scan: the first `limit` live pages holding a mention link (by slug, id) with their text, and their mention links. */
   readStaleMentionScan(limit: number): Promise<{ pages: MentionScanPageRow[]; links: MentionScanLinkRow[] }>;
+  /** The attendance-repair preview reads: the database clock in whole milliseconds as text; */
+  readClockMillisText(): Promise<string>;
+  /** the listed live, never-archived sources with their incarnations; */
+  listLiveSourceIncarnations(ids: readonly string[]): Promise<Array<{ id: string; incarnation: string }>>;
+  /** and the scan window: the source's pages after a slug in byte order, soft-deleted ones marked, at most `limit`. */
+  readAttendanceWindow(sourceId: string, afterSlug: string, limit: number): Promise<AttendanceWindowRow[]>;
+  /** Up to two distinct live pages in another source that carry an exact email as a page alias (open-loop counterparty). */
+  listEmailAliasPages(aliasNorm: string, sourceId: string): Promise<Array<{ slug: string; source_id: string }>>;
+  /** The page-upload reads: the upload session a principal began under a client request id (raw columns), or null; */
+  readUploadSessionByRequest(principalKind: string, principalId: string, clientRequestId: string): Promise<Record<string, unknown> | null>;
+  /** and a source's incarnation as text with its archive flag, or null. */
+  readSourceIncarnationArchived(sourceId: string): Promise<{ incarnation: string; archived: boolean } | null>;
 }

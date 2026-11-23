@@ -22,3 +22,12 @@ compare as bytes, as PGLite and the `COLLATE "C"` the SQL names compare them.
 | `brain.countLivePagesByType(scope)` | `[{ type, n }]`: each stored type of the live pages in the source scope with its count as text, by type | `countLivePagesByType` (schema-pack/review.ts findTypeOrphans) |
 | `brain.listTypeOrphanRows(scope, undeclared, limit)` | `[{ slug, source_id, type }]` of the live pages in scope whose type is empty or listed, by (source, slug), at most `limit` | `listTypeOrphanRows` (same) |
 | `brain.readStaleMentionScan(limit)` | `{ pages, links }`: the first `limit` live pages, by (slug, id), that hold a `mentions` link, each as `{ id, slug, source_id, title, body_storage, body }` (`body` is title, compiled truth and timeline joined by two newlines, a NULL part empty; `body_storage` is `segmented` or `inline`), and every `mentions` link from those pages as `{ from_id, from_slug, to_slug, to_source_id, link_kind, link_type }` by (from slug, to slug), ties by link id | `readStaleMentionScan` (by-mention.ts scanStaleMentions) |
+| `brain.readClockMillisText()` | the store clock (`clock_timestamp()`) in whole milliseconds since the epoch, as text | `readClockMillisText` (attendance-repair.ts issuedAt) |
+| `brain.listLiveSourceIncarnations(ids)` | `[{ id, incarnation }]` of each listed source that is not archived and has no archive time, by id | `listLiveSourceIncarnations` (attendance-repair.ts) |
+| `brain.readAttendanceWindow(sourceId, afterSlug, limit)` | `[{ id, slug, source_id, type, revision, deleted }]` of the source's pages, soft-deleted ones included (`deleted` true), whose slug sorts after `afterSlug` in byte order, by slug, at most `limit`; `id` and `revision` (the knowledge revision) as text | `readAttendanceWindow` (attendance-repair.ts previewAttendanceRepair) |
+| `brain.listEmailAliasPages(aliasNorm, sourceId)` | up to two distinct `{ slug, source_id }` of live pages in a source other than `sourceId` that carry `aliasNorm` as a page alias, by (source, slug) | `listEmailAliasPages` (google/counterparty.ts emailAliasElsewhere) |
+
+Answered in the TypeScript member with no store call:
+
+- `readUploadSessionByRequest`: `null`. The store keeps no `page_body_stagings` row of kind `upload`; the session insert in persistence/page-upload.ts runs raw SQL, which this engine refuses, so no session exists to find.
+- `readSourceIncarnationArchived`: the `incarnation` and `archived` of `brain.readSourceState(sourceId)`, or `null`.

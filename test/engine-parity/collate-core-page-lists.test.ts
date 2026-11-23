@@ -65,14 +65,14 @@ describe('attendance repair scan window', () => {
   const preview = (engine: BrainEngine, limit: number, afterSlug?: string) =>
     previewAttendanceRepair(engine, { remote: false, sourceId: 'att-example', limit, ...(afterSlug === undefined ? {} : { afterSlug }) } as never);
 
-  parityTest('previewAttendanceRepair lists its scan window by slug byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('previewAttendanceRepair lists its scan window by slug byte', { methods: ['putPage', 'readClockMillisText', 'listLiveSourceIncarnations', 'readAttendanceWindow'] }, async (engine, backend) => {
     await seed(engine, backend);
     const slugs = (await preview(engine, 10)).window.map(p => p.slug);
     expect(slugs).toEqual([...BYTE_SLUGS]);
     return slugs;
   });
 
-  parityTest('the attendance-repair after-slug keyset pages through the pages without a skip or a repeat', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('the attendance-repair after-slug keyset pages through the pages without a skip or a repeat', { methods: ['putPage', 'readClockMillisText', 'listLiveSourceIncarnations', 'readAttendanceWindow'] }, async (engine, backend) => {
     await seed(engine, backend);
     const walked: string[] = [];
     let after: string | undefined;
@@ -152,14 +152,13 @@ describe('census, size states and file lists', () => {
     return slugs;
   });
 
-  parityTest('file_list lists files by page slug, then by filename, in byte order', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('file_list lists files by page slug, then by filename, in byte order', { methods: ['upsertCliFileRow', 'listReadableFileRows'] }, async (engine) => {
     const op = operations.find(o => o.name === 'file_list')!;
-    for (const slug of MIXED_SLUGS) {
-      await engine.executeRaw(`INSERT INTO files (page_slug, filename, storage_path, content_hash) VALUES ($1, 'one', $2, 'h')`, [slug, `p/${slug}/one`]);
-    }
-    for (const filename of MIXED_SLUGS) {
-      await engine.executeRaw(`INSERT INTO files (page_slug, filename, storage_path, content_hash) VALUES ('shared', $1, $2, 'h')`, [filename, `shared/${filename}`]);
-    }
+    // The rows `gbrain files upload` writes (its typed upsert), for pages the brain does not hold.
+    const file = (page_slug: string, filename: string, storage_path: string) =>
+      engine.upsertCliFileRow({ page_slug, filename, storage_path, mime_type: null, size_bytes: 1, content_hash: 'h' }, {});
+    for (const slug of MIXED_SLUGS) await file(slug, 'one', `p/${slug}/one`);
+    for (const filename of MIXED_SLUGS) await file('shared', filename, `shared/${filename}`);
     const all = await op.handler(ctxFor(engine), {}) as Array<{ page_slug: string; filename: string }>;
     const bySlug = all.filter(r => r.page_slug !== 'shared').map(r => r.page_slug);
     expect(bySlug).toEqual([...BYTE_SLUGS]);

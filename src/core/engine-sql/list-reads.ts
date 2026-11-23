@@ -8,6 +8,7 @@ import type { PageReadPolicy, PageReadScope } from '../types.ts';
 import { pageReadFilter } from '../search/read-policy-sql.ts';
 import { chunkGenerationFilter } from '../search/safe-chunks.ts';
 import type { EngineRawRead } from './cli-reads-ops.ts';
+import { LIVE_STAGING_STATES } from './page-body.ts';
 
 /** Filters on a storage-shelf card's frontmatter (storage-manifest/find.ts). */
 export interface CardFilters { store?: string; status?: string; onSourceMachine?: boolean }
@@ -50,6 +51,9 @@ export interface SourceIdScope { sourceId?: string; sourceIds?: string[] }
 export interface MentionScanPageRow { id: number; slug: string; source_id: string | null; body: string; title: string | null; body_storage: string | null }
 /** A mention link from a scanned page. */
 export interface MentionScanLinkRow { from_id: number; from_slug: string; to_slug: string; to_source_id: string | null; link_kind: string | null; link_type: string }
+
+/** One page of the attendance-repair scan window (`PAGE_PIN_SQL` of attendance-repair.ts, plus `deleted`). */
+export interface AttendanceWindowRow { id: string; slug: string; source_id: string; type: string; revision: string; deleted: boolean }
 
 /** A page id and its source (`resolveChainAnchorRows`). */
 export interface PageSourceIdRow { id: number; source_id: string }
@@ -300,4 +304,69 @@ export async function readStaleMentionScan(raw: EngineRawRead, limit: number): P
     [limit],
   );
   return { pages, links };
+}
+
+/** The database clock (`clock_timestamp()`) in whole milliseconds since the epoch, as text (attendance-repair.ts issuedAt). */
+export async function readClockMillisText(raw: EngineRawRead): Promise<string> {
+  const [{ issued_at }] = await raw<{ issued_at: string }>(
+    'SELECT floor(extract(epoch FROM clock_timestamp())*1000)::text AS issued_at') as [{ issued_at: string }];
+  return issued_at;
+}
+
+/** The listed sources that are not archived and carry no archive time, with their incarnations, in no set order (attendance-repair.ts). */
+export async function listLiveSourceIncarnations(raw: EngineRawRead, ids: readonly string[]): Promise<Array<{ id: string; incarnation: string }>> {
+  return raw<{ id: string; incarnation: string }>(
+    'SELECT id, incarnation FROM sources WHERE id=ANY($1::text[]) AND archived IS NOT TRUE AND archived_at IS NULL', [[...ids]]);
+}
+
+/** The attendance-repair page pin columns (attendance-repair.ts PAGE_PIN_SQL). */
+export const PAGE_PIN_SQL = 'id::text, slug, source_id, type, knowledge_revision::text AS revision';
+
+/** The source's pages after `afterSlug` in byte order, soft-deleted ones marked, at most `limit` (attendance-repair.ts scan window). */
+export async function readAttendanceWindow(raw: EngineRawRead, sourceId: string, afterSlug: string, limit: number): Promise<AttendanceWindowRow[]> {
+  return raw<AttendanceWindowRow>(`SELECT ${PAGE_PIN_SQL}, deleted_at IS NOT NULL AS deleted
+    FROM pages WHERE source_id=$1 AND slug COLLATE "C">$2 ORDER BY slug COLLATE "C" LIMIT $3`, [sourceId, afterSlug, limit]);
+}
+
+/** Up to two distinct live pages in another source that carry `aliasNorm` as a page alias (google/counterparty.ts emailAliasElsewhere). */
+export async function listEmailAliasPages(raw: EngineRawRead, aliasNorm: string, sourceId: string): Promise<Array<{ slug: string; source_id: string }>> {
+  return raw<{ slug: string; source_id: string }>(
+    `SELECT DISTINCT pa.slug, pa.source_id
+         FROM page_aliases pa
+         JOIN pages p ON p.slug = pa.slug AND p.source_id = pa.source_id AND p.deleted_at IS NULL
+        WHERE pa.alias_norm = $1 AND pa.source_id <> $2
+        LIMIT 2`,
+    [aliasNorm, sourceId],
+  );
+}
+
+// The upload session reads of persistence/page-upload.ts (begin_page_upload and the upload ops).
+export const UPLOAD_LIVE_SQL = `'{${LIVE_STAGING_STATES.join(',')}}'::text[]`;
+/** The session `s` is named by an unfinished write (its staged body is a GC root until that write ends). */
+export const UPLOAD_REQUEST_HELD_SQL = `EXISTS (SELECT 1 FROM persistence_requests r WHERE r.state IN ('queued','deferred','running','recovering')
+      AND r.intent->'body_ref'->>'staging_id' = s.id::text)`;
+/**
+ * The session `s` expires: an open session past either deadline, a sealed (committing) one only past its hard deadline,
+ * which sealing extends by one idle period; never one an unfinished write names. A commit in progress is never expired.
+ */
+export const UPLOAD_LAPSED_SQL = `(s.state = ANY(${UPLOAD_LIVE_SQL}) AND (s.hard_expires_at <= now() OR s.state = 'open' AND s.idle_expires_at <= now()) AND NOT ${UPLOAD_REQUEST_HELD_SQL})`;
+/** The upload session columns persistence/page-upload.ts reads, with the source's current incarnation and the page now at the slug. */
+export const UPLOAD_SELECT = `SELECT s.id::text AS id, s.principal_kind, s.principal_id, s.client_request_id::text AS client_request_id, s.source_id,
+    s.source_incarnation::text AS source_incarnation, s.slug, s.page_id, s.mode, s.base_revision::text AS base_revision, s.base_generation,
+    s.declared_bytes, encode(s.declared_sha256, 'hex') AS declared_sha256, s.received_bytes, s.next_part, s.reserved_bytes, s.state,
+    s.commit_request_id::text AS commit_request_id, s.idle_expires_at, s.hard_expires_at, ${UPLOAD_LAPSED_SQL} AS lapsed,
+    src.incarnation::text AS current_incarnation, src.archived AS source_archived, p.id AS current_page_id
+  FROM page_body_stagings s LEFT JOIN sources src ON src.id = s.source_id LEFT JOIN pages p ON p.source_id = s.source_id AND p.slug = s.slug`;
+
+/** The upload session a principal began under a client request id, as raw columns, or null (persistence/page-upload.ts). */
+export async function readUploadSessionByRequest(raw: EngineRawRead, principalKind: string, principalId: string, clientRequestId: string): Promise<Record<string, unknown> | null> {
+  const [row] = await raw<Record<string, unknown>>(`${UPLOAD_SELECT}
+    WHERE s.principal_kind = $1 AND s.principal_id = $2 AND s.client_request_id = $3::uuid AND s.kind = 'upload'`, [principalKind, principalId, clientRequestId]);
+  return row ?? null;
+}
+
+/** A source's incarnation as text and its archive flag, or null (ops/page-upload.ts begin_page_upload). */
+export async function readSourceIncarnationArchived(raw: EngineRawRead, sourceId: string): Promise<{ incarnation: string; archived: boolean } | null> {
+  const [source] = await raw<{ incarnation: string; archived: boolean }>('SELECT incarnation::text AS incarnation, archived FROM sources WHERE id=$1', [sourceId]);
+  return source ?? null;
 }
