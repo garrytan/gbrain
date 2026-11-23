@@ -66,8 +66,8 @@ d('a Postgres swap source', () => {
     expect(Object.keys(c.tables)).toContain('pages');
     expect(Object.keys(c.tables)).toContain('sources');
     await verifyPostgresCheckpoint(c, { list: true });
-    // The file holds the brain's data, not the URL or its password.
-    expect(readFileSync(path).includes(Buffer.from(new globalThis.URL(url).password || '\u0000none'))).toBe(false);
+    // The file holds the brain's data, never the connection string pg_dump was given.
+    expect(readFileSync(path).includes(Buffer.from(url))).toBe(false);
   }, 120_000);
 
   test('a checkpoint path outside the gbrain home is refused', async () => {

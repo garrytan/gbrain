@@ -12,6 +12,7 @@
  * leaves the run at its last state with a sanitized diagnostic, and authority on the old engine: the switch is undone
  * at once when the probe fails, and success is reported only after the probe passes.
  */
+import { verifyPostgresCheckpoint, writePostgresCheckpoint, type PgTools } from './pg-checkpoint.ts';
 import { randomUUID } from 'node:crypto';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -32,8 +33,10 @@ import type { ReadSource } from '../../shadow/read-pool.ts';
 export interface RustSide { rpc: Rpc; reads: ReadSource; close(): Promise<void> }
 
 export interface SwapRunDeps {
-  /** The connected PGLite primary; this process holds its writer lock for the whole run. */
+  /** The connected primary: PGLite (this process holds its writer lock for the whole run) or Postgres. */
   primary: BrainEngine;
+  /** A Postgres primary's checkpoint inputs: the database URL pg_dump reads (never stored) and the client tools. */
+  postgres?: { url: string; tools?: PgTools };
   config: GBrainConfig;
   brainKey: string;
   shadowDir: string;
@@ -94,11 +97,13 @@ export async function runSwapStates(record: SwapRecord, deps: SwapRunDeps): Prom
     if (state === 'succeeded') return record;
     deps.beforeState?.(state);
     if (state === 'planned') {
-      const path = join(swapRunDir(deps.brainKey), `checkpoint-${record.run_id}.tar`);
+      const path = join(swapRunDir(deps.brainKey), `checkpoint-${record.run_id}.${deps.postgres ? 'dump' : 'tar'}`);
       // A file here was never recorded (the run stopped before `checkpointed`), so nothing trusts it: replace it.
       rmSync(path, { force: true });
       try {
-        record.checkpoint = await writeCheckpoint(deps.primary, path, fs);
+        record.checkpoint = deps.postgres
+          ? await writePostgresCheckpoint(deps.primary, path, { url: deps.postgres.url, tools: deps.postgres.tools })
+          : await writeCheckpoint(deps.primary, path, fs);
       } catch (error) {
         fail(record, deps, state, 'checkpoint_failed', 'verification_incomplete');
         throw swapRefusal('verification_incomplete', `the recovery checkpoint could not be written and verified (${(error as Error).message}).`,
@@ -108,7 +113,8 @@ export async function runSwapStates(record: SwapRecord, deps: SwapRunDeps): Prom
       continue;
     }
     if (!record.checkpoint) throw new Error('the run record has no checkpoint');
-    try { await verifyCheckpoint(record.checkpoint); } catch (error) {
+    const cp = record.checkpoint;
+    try { await (cp.format === 'pg_dump_custom' ? verifyPostgresCheckpoint({ ...cp, format: 'pg_dump_custom' }) : verifyCheckpoint(cp)); } catch (error) {
       fail(record, deps, state, 'checkpoint_changed', 'verification_incomplete');
       throw swapRefusal('verification_incomplete', `the recovery checkpoint no longer verifies (${(error as Error).message}).`,
         'A checkpoint that changed after it was written is never trusted. The primary keeps authority.');
@@ -147,7 +153,7 @@ export async function runSwapStates(record: SwapRecord, deps: SwapRunDeps): Prom
     if (state === 'verified') {
       const override = deps.routeCheck();
       if (override) { fail(record, deps, state, 'route_override', 'route_override'); throw override; }
-      const previous = switchAuthority(deps.rustStore);
+      const previous = switchAuthority(deps.rustStore, { runDir: swapRunDir(deps.brainKey), runId: record.run_id });
       record.switch = { previous, at: (deps.now?.() ?? new Date()).toISOString() };
       advance(record, deps, 'switched');
       continue;
@@ -156,7 +162,7 @@ export async function runSwapStates(record: SwapRecord, deps: SwapRunDeps): Prom
       const probe = await deps.prober();
       record.probe = { ...probe, at: (deps.now?.() ?? new Date()).toISOString() };
       if (!probePassed(probe, deps.rustStore)) {
-        if (record.switch) restoreAuthority(record.switch.previous);
+        if (record.switch) restoreAuthority(record.switch.previous, { runDir: swapRunDir(deps.brainKey), runId: record.run_id });
         record.state = 'verified';
         fail(record, deps, 'switched', 'route_probe_failed', 'verification_incomplete');
         throw swapRefusal('verification_incomplete', `a fresh process did not open the Rust engine at the store (it saw ${probe.effective_engine ?? 'no engine'}${probe.ok ? '' : ', probe failed'}).`,

@@ -7,6 +7,7 @@
  * Writes go through `SwapFs`, whose default is the real filesystem. Tests replace it to inject a full disk; nothing
  * in production can.
  */
+import type { PreviousAuthority } from './route.ts';
 import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { configDir } from '../config.ts';
@@ -29,7 +30,8 @@ export interface SwapRecord {
   state: SwapState;
   started_at: string;
   updated_at: string;
-  checkpoint?: { path: string; sha256: string; bytes: number; tables: Record<string, number> };
+  /** PGLite: a data-directory dump (no `format`). Postgres: `format: 'pg_dump_custom'`. Path, size and hash only. */
+  checkpoint?: { format?: 'pg_dump_custom'; path: string; sha256: string; bytes: number; tables: Record<string, number> };
   fence?: { tables: number; drained: number; at: string };
   verify?: {
     passes: Array<{ id: string; repaired_rows: number; error: string | null }>;
@@ -38,7 +40,7 @@ export interface SwapRecord {
     probe: string;
     at: string;
   };
-  switch?: { previous: { engine: string; database_path: string }; at: string };
+  switch?: { previous: PreviousAuthority; at: string };
   probe?: { effective_engine: string | null; database_path: string | null; ok: boolean; at: string };
   /** The last failure: the state it stopped at, its code and a diagnostic id (never a value). */
   error?: { state: SwapState; code: string; reason: string | null; diagnostic_id: string; at: string } | null;

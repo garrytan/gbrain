@@ -9,7 +9,8 @@
  * unverified engine.
  */
 import { spawnSync } from '../spawn.ts';
-import { resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { loadConfigFileOnly, saveConfig, type GBrainConfig } from '../config.ts';
 import { resolveServeGbrainCommand } from '../serve-service.ts';
 import type { ServiceDefinition } from './plan.ts';
@@ -44,20 +45,45 @@ export function routeOverrideRefusal(envNames: readonly string[], services: read
     'A process that starts with that route would keep writing to the old engine after the switch. Remove each named override (or stop that service), then run the swap again.');
 }
 
-/** Switches the config file to the Rust store; returns the previous engine and path. */
-export function switchAuthority(store: string): { engine: string; database_path: string } {
+/** The previous engine the switch replaced. A `database_url` the config file held is never in it: it is kept beside
+ * the run record (`previous-route-<run>.json`, 0600, under the gbrain home) and `database_url_saved` says so. */
+export interface PreviousAuthority { engine: string; database_path: string; database_url_saved?: boolean }
+
+/** Where the switch keeps the config file's database_url for one run (never printed, never in the run record). */
+export interface SavedRoute { runDir: string; runId: string }
+
+function savedRoutePath(r: SavedRoute): string {
+  return join(r.runDir, `previous-route-${r.runId}.json`);
+}
+
+/** Switches the config file to the Rust store; returns the previous engine and path (never the database URL). */
+export function switchAuthority(store: string, saved?: SavedRoute): PreviousAuthority {
   const file = loadConfigFileOnly();
   if (!file) throw new Error('no config file to switch');
-  const previous = { engine: String(file.engine ?? 'pglite'), database_path: String(file.database_path ?? '') };
-  saveConfig({ ...file, engine: 'rust', database_path: resolve(store) } as GBrainConfig);
+  const previous: PreviousAuthority = { engine: String(file.engine ?? 'pglite'), database_path: String(file.database_path ?? '') };
+  const next: Record<string, unknown> = { ...file, engine: 'rust', database_path: resolve(store) };
+  if (file.database_url) {
+    if (!saved) throw new Error('the config file holds a database_url and the switch has nowhere to keep it');
+    mkdirSync(saved.runDir, { recursive: true, mode: 0o700 });
+    writeFileSync(savedRoutePath(saved), JSON.stringify({ database_url: file.database_url }), { mode: 0o600 });
+    delete next.database_url;
+    previous.database_url_saved = true;
+  }
+  saveConfig(next as unknown as GBrainConfig);
   return previous;
 }
 
 /** Puts the previous engine back (the probe failed or the run is rolled back before success). */
-export function restoreAuthority(previous: { engine: string; database_path: string }): void {
+export function restoreAuthority(previous: PreviousAuthority, saved?: SavedRoute): void {
   const file = loadConfigFileOnly();
   if (!file) return;
-  saveConfig({ ...file, engine: previous.engine, database_path: previous.database_path } as GBrainConfig);
+  const next: Record<string, unknown> = { ...file, engine: previous.engine, database_path: previous.database_path };
+  if (!previous.database_path) delete next.database_path;
+  if (previous.database_url_saved) {
+    if (!saved || !existsSync(savedRoutePath(saved))) throw new Error('the saved database_url for this run is missing');
+    next.database_url = (JSON.parse(readFileSync(savedRoutePath(saved), 'utf8')) as { database_url: string }).database_url;
+  }
+  saveConfig(next as unknown as GBrainConfig);
 }
 
 /** True when the probe shows the Rust engine at `store`, opened and answering. */

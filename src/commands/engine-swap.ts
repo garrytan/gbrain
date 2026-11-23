@@ -15,6 +15,8 @@
  * Exit codes: 0 done (plan shown, run succeeded, status shown); 1 refused or failed; 2 usage; 3 confirmation, a
  * topology decision, a mounted brain (`team_brain`), managed storage (`managed_storage`) or no shadow (`no_shadow`). `--json` prints one document on stdout; progress goes to stderr.
  */
+import { swapSourceKind } from '../core/engine-swap/source.ts';
+import { postgresCheckpointUnavailable, postgresSessionsInUse, type PgTools } from '../core/engine-swap/pg-checkpoint.ts';
 import { existsSync, readdirSync, readFileSync, statfsSync } from 'node:fs';
 import { join } from 'node:path';
 import { writeCliError } from '../cli/cli-error.ts';
@@ -27,7 +29,7 @@ import { opError, type OperationError } from '../core/ops/contract.ts';
 import { inspectLockHolder } from '../core/pglite-lock.ts';
 import { localHostId } from '../core/persistence/identity.ts';
 import { blockerRefusal } from '../core/engine-swap/gates.ts';
-import { readSwapRecord, swapRecordPath, type SwapRecord } from '../core/engine-swap/record.ts';
+import { readSwapRecord, swapRecordPath, swapRunDir, type SwapRecord } from '../core/engine-swap/record.ts';
 import { routeOverrideRefusal, subprocessProber } from '../core/engine-swap/route.ts';
 import { runSwapStates, startRecord, type RustSide, type SwapRunDeps } from '../core/engine-swap/run.ts';
 import { readConfiguredShadowStatus } from '../shadow/status-document.ts';
@@ -149,6 +151,11 @@ export interface EngineSwapCliDeps extends Pick<SwapPlanInputs, 'readShadowStatu
   run?: Partial<Pick<SwapRunDeps, 'openRust' | 'prober' | 'fs' | 'beforeState' | 'intervalRows'>> & {
     addonCheck?: () => Promise<OperationError | null>;
     brainInUse?: (databasePath: string) => boolean;
+    /** A Postgres brain: other gbrain sessions on its database (default: pg_stat_activity by application_name). */
+    postgresSessions?: (engine: BrainEngine) => Promise<number>;
+    /** A Postgres brain: the checkpoint precheck and pg_dump/pg_restore (default: the system tools). */
+    pgTools?: PgTools;
+    checkpointFreeBytes?: (dir: string) => number | null;
   };
 }
 
@@ -245,12 +252,12 @@ export async function runEngineSwap(args: readonly string[], deps: EngineSwapCli
     const config = running ? loadedConfig() : null;
     if (running && config) {
       const path = toEngineConfig(config).database_path;
-      const kind = config.database_url ? 'postgres' : (toEngineConfig(config).engine ?? 'pglite');
+      const kind = swapSourceKind(config);
       switch (kind) {
         case 'pglite': break;
-        case 'postgres':
+        case 'postgres': break;
         case 'rust':
-          throw usage('This build swaps a PGLite brain only; a Postgres brain swaps in a later release.');
+          throw usage('This brain already runs on the Rust engine.');
         default: {
           const unreachable: never = kind;
           throw usage(`Unknown engine ${String(unreachable)}.`);
@@ -262,6 +269,11 @@ export async function runEngineSwap(args: readonly string[], deps: EngineSwapCli
       }
     }
     engine = await (deps.openEngine ?? openConfiguredEngine)();
+    const postgresSource = running && config && swapSourceKind(config) === 'postgres';
+    if (postgresSource && (await (deps.run?.postgresSessions ?? postgresSessionsInUse)(engine)) > 0) {
+      throw swapRefusal('brain_in_use', 'another gbrain process is connected to this brain\'s database (a gbrain serve, a worker, a shadow-serving process or a running command).',
+        'The write fence refuses their writes for the whole run, so stop them first (gbrain serve, gbrain jobs work, autopilot), then run the swap again.');
+    }
     const env = deps.env ?? process.env;
     const home = deps.home ?? env.HOME ?? '';
     const dataDir = deps.dataDir ?? home;
@@ -293,6 +305,7 @@ export async function runEngineSwap(args: readonly string[], deps: EngineSwapCli
     const recordPath = swapRecordPath(brainKey);
     const runDeps: SwapRunDeps = {
       primary: engine, config, brainKey, shadowDir, rustStore: join(shadowDir, 'store'), hostId: localHostId(),
+      ...(postgresSource && config?.database_url ? { postgres: { url: config.database_url, tools: deps.run?.pgTools } } : {}),
       openRust: deps.run?.openRust ?? defaultOpenRust(engine, shadowDir),
       prober: deps.run?.prober ?? subprocessProber(),
       routeCheck: () => routeOverrideRefusal(envNames, services),
@@ -322,6 +335,10 @@ export async function runEngineSwap(args: readonly string[], deps: EngineSwapCli
       if (override) throw override;
       const addon = await (deps.run?.addonCheck ?? defaultAddonCheck)();
       if (addon) throw addon;
+      if (postgresSource) {
+        const short = await postgresCheckpointUnavailable(engine, swapRunDir(brainKey), { tools: deps.run?.pgTools, freeBytes: deps.run?.checkpointFreeBytes });
+        if (short) throw short;
+      }
       record = startRecord(runDeps, plan.plan_hash, plan.policy.hash);
     }
     const done = await runSwapStates(record, runDeps);

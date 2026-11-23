@@ -28,6 +28,7 @@ export const SWAP_REFUSAL_REASONS = [
   'remote_access_unserved',
   'brain_in_use',
   'verification_incomplete',
+  'checkpoint_unavailable',
 ] as const;
 export type SwapRefusalReason = typeof SWAP_REFUSAL_REASONS[number];
 
@@ -68,6 +69,7 @@ export const SWAP_RECOVERY: Readonly<Record<SwapRefusalReason, SwapRecoveryRow>>
   remote_access_unserved: { class: 'unavailable', exit: 1, blocker: 'The brain has an access token, an OAuth client or remote MCP. The Rust engine does not yet check a bearer token without SQL (row 32g), so remote callers would lose access.', authority: KEPT, side_effects: NONE, next: 'report', retry: 'Never until a release serves bearer checks on Rust (row 32g).', anchor: `${SWAP_GUIDE}#remote_access_unserved` },
   brain_in_use: { class: 'retryable', exit: 1, blocker: 'Another process (a gbrain serve, a shadow-serving process or a running command) holds the brain or its Rust store.', authority: KEPT, side_effects: NONE, next: 'tell_user_to_run', retry: 'Once, after the user stops that process.', anchor: `${SWAP_GUIDE}#brain_in_use` },
   verification_incomplete: { class: 'unavailable', exit: 1, blocker: 'The final verification could not prove the engines equal: a reconcile pass failed or repaired rows, the allocators or the fingerprint probe did not pass, or the checkpoint no longer matches its digest.', authority: 'The old engine keeps authority; the write fence stays and diagnostics are kept.', side_effects: 'The run stopped at its last persisted state; --status shows it and --resume retries the step.', next: 'run', retry: 'Up to 3 times with --resume; then report the diagnostics.', anchor: `${SWAP_GUIDE}#verification_incomplete` },
+  checkpoint_unavailable: { class: 'unavailable', exit: 1, blocker: 'The recovery checkpoint of a Postgres brain cannot be taken: pg_dump is missing or older than the server, or the disk under the gbrain home has less free space than the database.', authority: KEPT, side_effects: 'None: the check runs before the checkpoint, the fence or any write.', next: 'tell_user_to_run', retry: 'Once, after the user installs pg_dump at the server\'s version or newer, or frees the space named.', anchor: `${SWAP_GUIDE}#checkpoint_unavailable` },
 };
 
 export function planArgv(): string[] { return ['gbrain', 'engine', 'swap', '--to', 'rust', '--plan', '--json']; }

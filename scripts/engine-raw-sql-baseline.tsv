@@ -1262,3 +1262,4 @@ src/core/engine-swap/capability.ts	execute_raw	1	the write-pause estimate reads 
 src/core/engine-swap/checkpoint.ts	execute_raw	1	the checkpoint check counts rows per table in a throwaway in-memory PGLite loaded from the dump; it is not the brain engine
 src/core/engine-swap/fence.ts	execute_raw	1	the swap fence lists the tables to fence on the primary before installing gbrain_graduation_fence through the graduation helpers (same SQL family as graduation-schema.ts)
 src/core/engine-swap/gates.ts	execute_raw	2	the swap blockers count access_rules, access_tokens and oauth_clients rows on the primary; counts only, read before any write
+src/core/engine-swap/pg-checkpoint.ts	execute_raw	4	the Postgres swap checkpoint reads server_version_num, pg_database_size, the table list and other gbrain sessions in pg_stat_activity on the Postgres primary; counts and names only, read before any write

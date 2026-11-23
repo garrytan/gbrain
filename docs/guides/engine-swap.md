@@ -66,8 +66,10 @@ A run checks, before it writes anything: that the plan for the brain as it is no
 brain (`brain_in_use`), and that the Rust engine addon loads. Then it goes through these states, each recorded (0600,
 under `.gbrain/engine-swap/`) before the next starts:
 
-1. **Checkpoint.** A copy of the PGLite data directory, written and verified: it loads into a fresh PGLite with the
-   same row count in every table. A later step checks its hash again and never uses a checkpoint that changed.
+1. **Checkpoint.** A PGLite brain: a copy of the data directory, written and verified: it loads into a fresh PGLite
+   with the same row count in every table. A Postgres brain: a `pg_dump --format custom` of its database, verified
+   when `pg_restore --list` lists data for every table. A later step checks its hash again and never uses a checkpoint
+   that changed. See [the checkpoint](#checkpoint).
 2. **Fence.** Pending requests are drained, then every table of the old brain gets a database-enforced write fence:
    a write that is not part of this run is refused. The fence stays after the swap; it is the way back.
 3. **Verify.** A final reconcile copies anything the shadow missed, the Rust id counters are raised to at least the old
@@ -79,6 +81,26 @@ under `.gbrain/engine-swap/`) before the next starts:
 
 A run that stops (a kill, a full disk, a failed digest, a failed probe) keeps its last state and a diagnostic id;
 `--status` shows them and `--resume` continues. Until the switch, the old engine keeps authority.
+
+<a id="checkpoint"></a>
+### The checkpoint
+
+The checkpoint is written under the gbrain home (`.gbrain/engine-swap/<brain>/checkpoint-<run>.tar` for PGLite,
+`.dump` for Postgres), never in a brain repo. The directory is 0700 and the file 0600. It holds every page, fact and
+token of the brain, so gbrain never prints or uploads it; the run record keeps only its path, size and SHA-256.
+
+On a Postgres brain the run needs `pg_dump` and `pg_restore` at the server's major version or newer, and free space
+under the gbrain home at least the size of the database (`pg_database_size`, an upper bound for the compressed dump).
+Both are checked before anything is written (`checkpoint_unavailable`). The dump is taken before the write fence, so
+a write that lands between the dump and the fence is in the fenced database but not in the dump: the fenced database
+is the exact way back, and the dump protects against losing that database.
+
+The run never deletes a checkpoint. Keep it until you have accepted the swap and no longer need the way back to the
+old engine; then delete the file yourself.
+
+When the config file holds the Postgres `database_url`, the switch moves it into a 0600 file beside the run record
+(`previous-route-<run>.json`) and a failed probe or a rollback puts it back. The URL is never in the run record or in
+`--status` output.
 
 <a id="resume"></a>
 ### Resume
@@ -236,7 +258,17 @@ refusal gives counts only, never a token name or hash.
 ### `brain_in_use`
 
 Another process holds the brain: a `gbrain serve`, a shadow-serving process or a running command. The swap holds the
-brain for the whole run. Stop that process, then run the swap again.
+brain for the whole run. Stop that process, then run the swap again. On a Postgres brain, any other gbrain session
+connected to the database counts (by its `application_name`), on any machine: stop `gbrain serve`, workers and
+autopilot first, because the write fence would refuse their writes.
+
+<a id="checkpoint_unavailable"></a>
+### `checkpoint_unavailable`
+
+A Postgres brain's recovery checkpoint cannot be taken: `pg_dump` is not installed, it is older than the server, or the
+disk under the gbrain home has less free space than the database. The message names the version or the space needed.
+Nothing was written. Install the PostgreSQL client tools at the server's version or newer, or free the space, then run
+the swap again.
 
 <a id="verification_incomplete"></a>
 ### `verification_incomplete`
