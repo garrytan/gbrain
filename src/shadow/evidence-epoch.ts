@@ -13,6 +13,8 @@
 import { createHash } from 'node:crypto';
 import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { detectAddonTarget } from '../core/rust-engine/addon-target.ts';
+import { VERSION } from '../version.ts';
 import { appendFault, type ShadowFault } from './ledger.ts';
 
 export interface EpochInputs {
@@ -25,11 +27,30 @@ export interface EpochInputs {
   readiness_policy_hash: string;
 }
 
+/** The build that opened the epoch. Recorded once and never an epoch input: an update that changes no input keeps it. */
+export interface EpochBuild {
+  /** The 40-hex commit a release build stamps (`--define GBRAIN_BUILD_COMMIT`); null for an unstamped run. */
+  gbrain_commit: string | null;
+  gbrain_version: string;
+  addon_target: string | null;
+}
+
 export interface EpochManifest {
   version: 1;
   epoch_id: string;
   started_at: string;
   inputs: EpochInputs;
+  /** Absent on an epoch from before these fields: that history is unknown, never backfilled, and consumers fail closed. */
+  build?: EpochBuild;
+}
+
+/** Set by `bun build --define` in the release and `bun run build` compiles (the same stamp as skills/resolver/build.ts). */
+declare const GBRAIN_BUILD_COMMIT: string | undefined;
+
+/** This process's build: the stamped commit (a malformed stamp is none), the package version and the addon target. */
+export function currentBuild(): EpochBuild {
+  const stamp = typeof GBRAIN_BUILD_COMMIT === 'string' && /^[0-9a-f]{40}$/.test(GBRAIN_BUILD_COMMIT) ? GBRAIN_BUILD_COMMIT : null;
+  return { gbrain_commit: stamp, gbrain_version: VERSION, addon_target: detectAddonTarget() };
 }
 
 export const epochPath = (dir: string): string => join(dir, 'evidence', 'epoch.json');
@@ -65,16 +86,22 @@ export function readEpoch(dir: string): EpochManifest | null {
   try {
     const m = JSON.parse(readFileSync(epochPath(dir), 'utf8')) as EpochManifest;
     const i = m?.inputs;
-    return m?.version === 1 && typeof m.epoch_id === 'string' && Number.isFinite(Date.parse(m.started_at)) && i && typeof i.seed_id === 'string' ? m : null;
+    if (!(m?.version === 1 && typeof m.epoch_id === 'string' && Number.isFinite(Date.parse(m.started_at)) && i && typeof i.seed_id === 'string')) return null;
+    const b = m.build;
+    const ok = b && typeof b === 'object' && (b.gbrain_commit === null || typeof b.gbrain_commit === 'string') && typeof b.gbrain_version === 'string' && (b.addon_target === null || typeof b.addon_target === 'string');
+    return ok ? m : { ...m, build: undefined };
   } catch { return null; } // silent-read-ok: no readable manifest is no epoch; the status leaves every count absent
 }
 
-/** Returns the current epoch for `inputs`, opening a new one (and keeping the old manifest) when any input changed. */
-export function ensureEpoch(dir: string, inputs: EpochInputs, now: number = Date.now()): EpochManifest {
+/**
+ * Returns the current epoch for `inputs`, opening a new one (and keeping the old manifest) when any input changed.
+ * `build` is written only when a new epoch opens; an unchanged epoch keeps the build it started with.
+ */
+export function ensureEpoch(dir: string, inputs: EpochInputs, now: number = Date.now(), build?: EpochBuild): EpochManifest {
   const current = readEpoch(dir);
   if (current && canonical(current.inputs) === canonical(inputs)) return current;
   const next: EpochManifest = {
-    version: 1, started_at: new Date(now).toISOString(), inputs,
+    version: 1, started_at: new Date(now).toISOString(), inputs, ...(build ? { build } : {}),
     epoch_id: sha(`${canonical(inputs)}\0${current?.epoch_id ?? new Date(now).toISOString()}`).slice(0, 16),
   };
   mkdirSync(join(dir, 'evidence'), { recursive: true, mode: 0o700 });

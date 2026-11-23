@@ -51,7 +51,7 @@ const ledgerRows = (dir: string): Array<Record<string, unknown>> => {
 const faults = (dir: string): Array<Record<string, unknown>> => {
   try { return readFileSync(join(dir, 'faults.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; }
 };
-const manifest = (dir: string): { epoch_id: string; started_at: string; inputs: Record<string, unknown> } => JSON.parse(readFileSync(join(dir, 'evidence', 'epoch.json'), 'utf8'));
+const manifest = (dir: string): { epoch_id: string; started_at: string; inputs: Record<string, unknown>; build?: unknown } => JSON.parse(readFileSync(join(dir, 'evidence', 'epoch.json'), 'utf8'));
 const seeded = (): string => { const d = tmp(); writeSeedRecord(d, SEED); return d; };
 
 function fakePrimary(): BrainEngine {
@@ -168,6 +168,42 @@ describe('stale and inconclusive mismatches', () => {
   });
 });
 
+describe('collation_order', () => {
+  const engineOf = (over: Record<string, unknown>) => ({ async connect() {}, async disconnect() {}, ...over });
+  const page = (slug: string) => ({ slug, source_id: 'default' });
+  const outcomes = async (calls: Array<{ op: string; args: unknown[]; primary: unknown; rust: unknown }>) => {
+    const dir = seeded();
+    await runChild(dir, calls.map((c) => read(c.op, c.args, c.primary)), {
+      openEngine: () => engineOf(Object.fromEntries(calls.map((c) => [c.op, async () => c.rust]))) as never,
+    });
+    return ledgerRows(dir).map((r) => [r.op, r.outcome, r.mismatch]);
+  };
+
+  test('same rows in the order the primary\'s rows have in C byte order are collation_order, not a divergence', async () => {
+    // A Postgres host with an ICU or glibc collation answers alpha, Beta, Zeta; Rust follows PGLite's C order.
+    expect(await outcomes([{ op: 'getTags', args: ['p'], primary: ['alpha', 'Beta', 'Zeta'], rust: ['Beta', 'Zeta', 'alpha'] }]))
+      .toEqual([['getTags', 'collation_order', 'diff']]);
+    expect(await outcomes([{ op: 'listPages', args: [{ sort: 'slug' }], primary: [page('ab'), page('a-c')], rust: [page('a-c'), page('ab')] }]))
+      .toEqual([['listPages', 'collation_order', 'diff']]);
+  });
+
+  test('anything else stays inconclusive: Rust in neither order, different rows, no text sort, or an operation not ordered by text', async () => {
+    expect(await outcomes([
+      { op: 'getTags', args: ['p'], primary: ['alpha', 'Beta', 'Zeta'], rust: ['Zeta', 'Beta', 'alpha'] }, // not C order
+      { op: 'getTags', args: ['p'], primary: ['alpha', 'Beta'], rust: ['Beta', 'Zeta'] }, // different rows
+      { op: 'listPages', args: [{ sort: 'updated_desc' }], primary: [page('ab'), page('a-c')], rust: [page('a-c'), page('ab')] },
+      { op: 'listPages', args: [], primary: [page('ab'), page('a-c')], rust: [page('a-c'), page('ab')] },
+      { op: 'getLinks', args: ['p'], primary: [{ to_slug: 'b' }, { to_slug: 'a' }], rust: [{ to_slug: 'a' }, { to_slug: 'b' }] },
+    ])).toEqual([
+      ['getTags', 'inconclusive', 'diff'], ['getTags', 'inconclusive', 'diff'], ['listPages', 'inconclusive', 'diff'], ['listPages', 'inconclusive', 'diff'], ['getLinks', 'inconclusive', 'diff'],
+    ]);
+  });
+
+  test('an order that already matches is a match', async () => {
+    expect(await outcomes([{ op: 'getTags', args: ['p'], primary: ['Beta', 'alpha'], rust: ['Beta', 'alpha'] }])).toEqual([['getTags', 'match', undefined]]);
+  });
+});
+
 describe('internal errors at every Rust boundary', () => {
   const engineOf = (over: Record<string, unknown>) => ({ async connect() {}, async disconnect() {}, ...over });
   const rpc = (id: number, method: string) => JSON.stringify({ t: 'rpc', id, method, args: { relation: 'pages' } }) + '\n';
@@ -236,6 +272,27 @@ describe('evidence epoch in the child', () => {
     expect(second.inputs).toMatchObject({ seed_id: 'seed-1', rust_addon_sha256: 'b'.repeat(64), comparator_version: 1, readiness_policy_hash: 'p1' });
     expect(ledgerRows(dir).map((r) => r.epoch_id)).toEqual([first.epoch_id, first.epoch_id, second.epoch_id]);
     expect(JSON.parse(readFileSync(join(dir, 'evidence', 'epochs.jsonl'), 'utf8').trim()).epoch_id).toBe(first.epoch_id);
+  });
+
+  test('the build (commit, version, addon target) is recorded when the epoch starts and survives a TS update that changes nothing relevant', async () => {
+    const dir = seeded();
+    const engine = () => ({ async connect() {}, async disconnect() {}, getPage: async () => ({ slug: 'a' }) }) as never;
+    const build = (commit: string | null) => () => ({ gbrain_commit: commit, gbrain_version: '9.9.9', addon_target: 'linux-x64-glibc' });
+    await runChild(dir, [], { openEngine: engine, build: build('c'.repeat(40)) });
+    const first = manifest(dir);
+    expect(first.build).toEqual({ gbrain_commit: 'c'.repeat(40), gbrain_version: '9.9.9', addon_target: 'linux-x64-glibc' });
+    await runChild(dir, [], { openEngine: engine, build: build('d'.repeat(40)) }); // a new gbrain commit, same relevant inputs
+    expect(manifest(dir)).toEqual(first);
+    await runChild(dir, [], { openEngine: engine, build: build('e'.repeat(40)), addonSha256: () => 'b'.repeat(64) }); // a new epoch records the build it started with
+    expect(manifest(dir).build).toMatchObject({ gbrain_commit: 'e'.repeat(40) });
+  });
+
+  test('without an injected build the child records this gbrain\'s version and this machine\'s addon target; an unstamped source run has no commit', async () => {
+    const dir = seeded();
+    await runChild(dir, [], { openEngine: () => ({ async connect() {}, async disconnect() {} }) as never });
+    const { VERSION } = await import('../src/version.ts');
+    const { detectAddonTarget } = await import('../src/core/rust-engine/addon-target.ts');
+    expect(manifest(dir).build).toEqual({ gbrain_commit: null, gbrain_version: VERSION, addon_target: detectAddonTarget() });
   });
 
   test('an unseeded store has no epoch: its rows carry none', async () => {

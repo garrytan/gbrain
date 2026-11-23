@@ -24,7 +24,7 @@ import { servedCapabilities } from '../core/rust-engine/store-capabilities.ts';
 import { loadRustEngineAddonOffline, type RustEngineAddonLoaderFn } from './addon.ts';
 import { classifyError, classifyResult, type Classification } from './classify.ts';
 import { decodeValue, encodeValue } from './codec.ts';
-import { capabilitySetHash, ensureEpoch, internalErrorRecorder, readinessPolicyHash, type EpochManifest } from './evidence-epoch.ts';
+import { capabilitySetHash, currentBuild, ensureEpoch, internalErrorRecorder, readinessPolicyHash, type EpochBuild, type EpochManifest } from './evidence-epoch.ts';
 import { qualifyMismatch, SHADOW_COMPARATOR_VERSION } from './exactness.ts';
 import { FollowChild, type FollowEvent, type FollowStore } from './follow-child.ts';
 import { appendFault, appendLedgerRows, writeSummaryFile, type ShadowLedgerRow, type ShadowSummaryFile } from './ledger.ts';
@@ -53,6 +53,8 @@ export interface ShadowChildDeps {
   readinessPolicyHash?: () => string;
   /** SHA-256 of the loaded addon file, or null when it cannot be read; default hashes the file the loader opened. */
   addonSha256?: (addon: RustAddon) => string | null;
+  /** The build recorded when a new epoch opens (not an epoch input); default `currentBuild()`. */
+  build?: () => EpochBuild;
   /** The capability names the Rust engine reports; default `servedCapabilities()`. */
   capabilities?: () => Iterable<string>;
 }
@@ -117,7 +119,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
         adapter_version: `abi${RUST_ENGINE_ABI}.catalog${load.ok ? String(load.addon.catalogVersion) : 'none'}`,
         capability_set_hash: load.ok ? capabilitySetHash((deps.capabilities ?? servedCapabilities)()) : null,
         readiness_policy_hash: (deps.readinessPolicyHash ?? readinessPolicyHash)(),
-      }, now());
+      }, now(), (deps.build ?? currentBuild)());
     } catch { epoch = null; }
   }
   const epochId = epoch?.epoch_id ?? null;
@@ -204,7 +206,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
       if (out.timedOut) { record(event, { outcome: 'timeout' }, rustMs, null); return; }
       const encoded = encodeValue(out.value);
       lagged ||= follow.pendingBefore(capturedAt);
-      record(event, qualifyMismatch(event.op, classifyResult(SHADOW_READ_MEMBERS[event.op], event.args, event.result, encoded), lagged), rustMs, rowCount(encoded));
+      record(event, qualifyMismatch(event.op, classifyResult(SHADOW_READ_MEMBERS[event.op], event.args, event.result, encoded), lagged, { args: event.args, primary: event.result, rust: encoded }), rustMs, rowCount(encoded));
     } catch (error) {
       recordRustError('read', error);
       record(event, classifyError(error), performance.now() - started, null);

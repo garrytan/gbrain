@@ -23,7 +23,7 @@ export interface ShadowLedgerRow {
   reason?: string;
   /** The evidence epoch of the child that compared it (evidence-epoch.ts); a row without one counts for no epoch. */
   epoch_id?: string;
-  /** For stale and inconclusive rows: the mismatch that was found. */
+  /** For stale, inconclusive and collation_order rows: the mismatch that was found. */
   mismatch?: 'diff' | 'order_diff';
   primary_ms: number;
   rust_ms: number | null;
