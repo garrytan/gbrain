@@ -95,7 +95,8 @@ id, so it stays held whatever the page is called: renaming the page (a Git
 rename caught by sync, `gbrain repair rename-identity`) never lifts it, and a
 different page that later takes the old name does not inherit it. A held
 write recorded before any page had that name matches by name until a page is
-first created there, which then claims it. Releasing a held fact publishes it
+first created there, which then claims it; one that lands at the very moment
+the page is created is still matched through the page's rename record. Releasing a held fact publishes it
 on that page under its current name; if the page no longer exists, the release
 is refused with the fact still held, never aimed at whichever page has the old
 name. Purging a page removes the holds that belong to it and no other page's.

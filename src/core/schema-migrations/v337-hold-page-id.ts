@@ -9,7 +9,8 @@ import type { Migration } from './types.ts';
 // classifying every hold, never guessing, then moves the dedupe key to two disjoint partial indexes:
 //   - exact: one page holds the hold's slug, it was created no later than the hold, its name never moved, and the
 //     payload (a take hold names `page_id`) agrees: bound to that page;
-//   - lineage: no page holds the slug and the rename history names exactly one surviving page: bound to it;
+//   - lineage: no page holds the slug and the rename record (slug_rename_history, which only exists from v285, and slug_aliases, which
+//     also holds the older renames; chains followed) leads to exactly one surviving page: bound to it;
 //   - payload-id: no page holds the slug, no history, and the payload names a page of the same source: bound to it;
 //   - reused-name / two candidates: a page created after the hold now holds the slug, the name moved, or more than one
 //     page qualifies: the hold stays unbound, `page_candidates` lists every candidate page, and the readers hold it
@@ -30,7 +31,10 @@ ALTER TABLE write_gate_holds ADD COLUMN IF NOT EXISTS page_id BIGINT;
 ALTER TABLE write_gate_holds ADD COLUMN IF NOT EXISTS page_candidates BIGINT[];
 DROP INDEX IF EXISTS write_gate_holds_bound_dedupe_idx;
 DROP INDEX IF EXISTS write_gate_holds_dedupe_idx;
-WITH h AS (
+WITH RECURSIVE rn AS (
+  SELECT source_id, alias_slug AS old_slug, canonical_slug AS new_slug FROM slug_aliases
+  UNION SELECT source_id, old_slug, new_slug FROM slug_rename_history
+), h AS (
   SELECT id, source_id, slug, created_at,
     CASE WHEN (payload->>'page_id') ~ '^[0-9]{1,9}$' THEN (payload->>'page_id')::integer END AS payload_page
     FROM write_gate_holds WHERE page_id IS NULL AND page_candidates IS NULL
@@ -38,9 +42,11 @@ WITH h AS (
   SELECT h.id,
     (SELECT p.id FROM pages p WHERE p.source_id = h.source_id AND p.slug = h.slug) AS cur_id,
     COALESCE((SELECT p.created_at <= h.created_at FROM pages p WHERE p.source_id = h.source_id AND p.slug = h.slug), false) AS cur_older,
-    EXISTS (SELECT 1 FROM slug_rename_history r WHERE r.source_id = h.source_id AND r.old_slug = h.slug) AS moved,
-    ARRAY(SELECT DISTINCT p.id FROM slug_rename_history r JOIN pages p ON p.source_id = r.source_id AND p.slug = r.new_slug AND p.deleted_at IS NULL
-      WHERE r.source_id = h.source_id AND r.old_slug = h.slug) AS lineage,
+    EXISTS (SELECT 1 FROM rn WHERE rn.source_id = h.source_id AND rn.old_slug = h.slug) AS moved,
+    ARRAY(WITH RECURSIVE reach(s) AS (
+        SELECT r.new_slug FROM rn r WHERE r.source_id = h.source_id AND r.old_slug = h.slug
+        UNION SELECT r.new_slug FROM reach x JOIN rn r ON r.source_id = h.source_id AND r.old_slug = x.s)
+      SELECT DISTINCT p.id FROM reach JOIN pages p ON p.source_id = h.source_id AND p.slug = reach.s AND p.deleted_at IS NULL) AS lineage,
     (SELECT p.id FROM pages p WHERE p.id = h.payload_page AND p.source_id = h.source_id) AS payload_id
     FROM h
 ), decided AS (

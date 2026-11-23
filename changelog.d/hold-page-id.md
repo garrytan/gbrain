@@ -4,8 +4,8 @@ When the write gate holds a fact or take for your review, it now remembers which
 
 - A held write recorded before any page had its name is claimed by the first page created there.
 - Releasing a held fact publishes it on the page it was held for, under that page's current name. If that page is gone, the release is refused and the fact stays held.
-- Purging a page removes only the holds that belong to that page.
-- On upgrade, existing holds are matched to their page from the page that holds the name and the rename history. A hold that cannot be matched to one page stays held for every page it could belong to and is listed by the new `gbrain doctor` check `write_gate_hold_ambiguous`; drop it in `gbrain trust review`. Identical duplicates are merged; a duplicate that differs is kept.
+- Purging a page removes only the holds that belong to that page; a hold that could belong to several pages stays until the last of them is purged.
+- On upgrade, existing holds are matched to their page from the page that holds the name and its rename record (the rename history and the older aliases). A hold that cannot be matched to one page stays held for every page it could belong to and is listed by the new `gbrain doctor` check `write_gate_hold_ambiguous`; drop it in `gbrain trust review`. Identical duplicates are merged; a duplicate that differs is kept.
 
 <!-- behavior-change: held_writes_follow_page_rename -->
 
