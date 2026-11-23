@@ -75,6 +75,23 @@ describe('engine parity: stats without vectors', () => {
     },
   );
 
+  // Tied counts in stats pages_by_type sort by type in byte order on every engine: the Rust store always did
+  // (stats.rs), and PGLite and Postgres now break `ORDER BY count DESC` ties with `type COLLATE "C"`, so `gbrain stats`
+  // prints the same bytes on each. Two types per count, inserted in reverse byte order, and one count of three.
+  parityTest(
+    'getStats orders pages_by_type by count, then tied types in byte order',
+    { methods: ['putPage', 'getStats'] },
+    async (engine) => {
+      const put = (slug: string, type: string) => engine.putPage(slug, { type: type as never, title: slug, compiled_truth: `${slug}.`, timeline: '' });
+      for (const [i, type] of ['source', 'project', 'person', 'note', 'meeting', 'media', 'concept', 'company'].entries()) await put(`tie/p-${i}`, type);
+      for (const [i, type] of ['project', 'note'].entries()) await put(`tie/q-${i}`, type);
+      for (let i = 0; i < 3; i++) await put(`tie/r-${i}`, 'person');
+      const order = Object.entries((await engine.getStats()).pages_by_type);
+      expect(order).toEqual([['person', 4], ['note', 2], ['project', 2], ['company', 1], ['concept', 1], ['media', 1], ['meeting', 1], ['source', 1]]);
+      return order;
+    },
+  );
+
   parityTest(
     'getHealth counts dead links, entity coverage over the threshold, orphans and the most connected pages',
     { methods: ['putPage', 'addLink', 'addTimelineEntry', 'deletePage', 'getHealth'] },

@@ -4272,7 +4272,7 @@ export class PGLiteEngine implements BrainEngine {
     const { rows: types } = await this.db.query(
       `SELECT type, count(*)::int as count FROM pages p WHERE p.deleted_at IS NULL
          AND ($1::text[] IS NULL OR p.source_id = ANY($1))
-       GROUP BY type ORDER BY count DESC`,
+       GROUP BY type ORDER BY count DESC, type COLLATE "C"`,
       [scope]
     );
     const pages_by_type: Record<string, number> = {};
