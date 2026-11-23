@@ -54,12 +54,8 @@ import { ACTIVE_REFRESH_STATES_SQL } from '../src/core/persistence/worktree-refr
 import { APPLE_CONTACTS_PENDING_DELETES_OP, APPLE_CONTACTS_REVIEW_OP } from '../src/core/apple-contacts/review-status.ts';
 import { identityDowngradeOpen } from '../src/core/sync-identity-downgrades.ts';
 import { EFFECT_BYTES_SQL } from '../src/core/persistence/receipt-bytes.ts';
-<<<<<<< HEAD
 import { ruleCoversSql } from '../src/core/access/folder-rules.ts';
 import { exactIdentityStatement } from '../src/core/engine-sql/exact-identity.ts';
-=======
-import { callerAccessAllowedSql, privacyPartSql, privateLinkOriginFilterForCaller, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
->>>>>>> 67355278245446e09957eadb2b4d4c26e8d0e229
 
 const memberSql = (member: string) => `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
   FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id

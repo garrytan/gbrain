@@ -108,6 +108,15 @@ export function rustAccessBrain(engine: unknown) {
 /** Fixture: record a page purge on the Rust brain (the store's `page_purges` ledger has no typed BrainEngine writer). */
 export async function recordRustPagePurge(engine: unknown, sourceId: string, hashes: string[], slug: string, requestId: string | null): Promise<void> {
   await (engine as RustEngine).openStore('recordPagePurge').brain.recordPagePurge(sourceId, hashes, slug, requestId);
+/** A member the fixture seeds: an id, an optional email, a kind and groups, enabled unless `state` says otherwise. */
+export interface MemberSeed { id: string; email?: string; kind?: 'person' | 'audience'; groups?: readonly string[]; state?: 'disabled' | 'removed' }
+
+/** Fixture: seed an access member on the Rust brain through the store's typed member writes (BrainEngine has no typed member write here). */
+export async function createRustMember(engine: unknown, seed: MemberSeed): Promise<void> {
+  const brain = (engine as RustEngine).openStore('createMember').brain;
+  await brain.insertAccessMember({ id: seed.id, displayName: null, email: seed.email ?? null, kind: seed.kind ?? 'person', groups: [...(seed.groups ?? [])] });
+  if (seed.state === 'disabled') await brain.setAccessMemberDisabled(seed.id, true);
+  if (seed.state === 'removed') await brain.tombstoneAccessMember(seed.id);
 }
 
 export interface DivergenceRow { file: string; name: string; normalizer: string; reason: string }

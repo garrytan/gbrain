@@ -122,6 +122,7 @@ import * as writerAdmin from './writer-admin.ts';
 import * as writerRelease from './writer-release.ts';
 import * as publicationJournal from './publication-journal.ts';
 import * as writerStatus from './writer-status.ts';
+import * as collateStoreReads from './collate-store-reads.ts';
 import * as writeAttribution from './write-attribution.ts';
 import * as opCheckpoint from './op-checkpoint.ts';
 import * as syncRunReads from './sync-run-reads.ts';
@@ -275,6 +276,8 @@ export const STORE_MEMBERS = {
   // A bound publication's request-row reads and writes around its files (same doc, "Publication journal").
   ...publicationJournal,
   ...writerStatus,
+  // Reads callers once ran through executeRaw: feedback, pins, credentials (rust/docs/store).
+  ...collateStoreReads,
   // get_write_attribution's receipt and name reads (rust/docs/store/write_attribution.md).
   ...writeAttribution,
   ...opCheckpoint,

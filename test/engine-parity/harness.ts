@@ -42,7 +42,7 @@ import { checkRustTally } from './rust-tally.ts';
 import { itemSetHash } from '../../src/core/generations/publish.ts';
 import { IDENTITY_DOWNGRADE_OP } from '../../src/core/persistence/sync-status-sql.ts';
 import {
-  archiveRustSource, createRustSource, newRustBrain, putRustOpCheckpointRow, rustPageDeletedAt, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
+  archiveRustSource, createRustSource, newRustBrain, putRustOpCheckpointRow, rustPageDeletedAt, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow, createRustMember, type MemberSeed,
 } from './rust-arm.ts';
 
 /** The backends a parity arm can run on: the SQL ones every suite selects, and the opt-in Rust engine. */
@@ -274,6 +274,34 @@ export async function createSource(engine: BrainEngine, backend: ParityBackend, 
         [id, JSON.stringify(config), localPath ?? null],
       );
       return;
+    default:
+      return assertNever(backend);
+  }
+}
+
+/**
+ * Fixture: seed an access member (enabled, disabled or removed) with the groups it joins. BrainEngine has no member
+ * write in this stack, so the SQL arms insert the rows with harness-only SQL and the Rust arm writes the store's
+ * member records. A removed member is disabled too and declares no email and joins no group, as a tombstone leaves it.
+ */
+export async function createMember(engine: BrainEngine, backend: ParityBackend, seed: MemberSeed): Promise<void> {
+  switch (backend) {
+    case 'rust':
+      await createRustMember(engine, seed);
+      return;
+    case 'pglite':
+    case 'postgres': {
+      const removed = seed.state === 'removed';
+      await engine.executeRaw(
+        `INSERT INTO access_members (id, email, kind, disabled_at, tombstoned_at) VALUES ($1, $2, $3, CASE WHEN $4::boolean THEN now() END, CASE WHEN $5::boolean THEN now() END)`,
+        [seed.id, removed ? null : seed.email ?? null, seed.kind ?? 'person', seed.state !== undefined, removed],
+      );
+      for (const group of removed ? [] : seed.groups ?? []) {
+        await engine.executeRaw('INSERT INTO access_groups (id) VALUES ($1) ON CONFLICT (id) DO NOTHING', [group]);
+        await engine.executeRaw('INSERT INTO access_group_members (group_id, member_id) VALUES ($1, $2)', [group, seed.id]);
+      }
+      return;
+    }
     default:
       return assertNever(backend);
   }

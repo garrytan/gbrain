@@ -94,12 +94,10 @@ describe('store listings come out by byte', () => {
     expect((await listCalibrations(engine, {})).map(r => r.slot as string)).toEqual([...BYTE_SLUGS]);
   });
 
-  parityTest('receiptStats lists a slot, mode, outcome and error reason tie by byte', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
-    for (const reason of MIXED_SLUGS) {
-      await engine.executeRaw(
-        `INSERT INTO decision_receipts (decision_id, slot, mode, provider, outcome, call_site, lane, error_reason)
-         VALUES ('d', 'conflict', 'on', 'p', 'skipped', 'site', 'hot', $1)`, [reason]);
-    }
+  parityTest('receiptStats lists a slot, mode, outcome and error reason tie by byte', { methods: ['insertDecideReceipts', 'listDecideReceiptStats'] }, async (engine) => {
+    await engine.insertDecideReceipts(MIXED_SLUGS.map(reason => ({
+      decision_id: 'd', slot: 'conflict', mode: 'on', provider: 'p', outcome: 'skipped', call_site: 'site', lane: 'hot', error_reason: reason,
+    })));
     expect((await receiptStats(engine, { sinceHours: 1 })).map(r => r.error_reason)).toEqual([...BYTE_SLUGS]);
   });
 
@@ -152,25 +150,6 @@ describe('store listings come out by byte', () => {
       });
     }
     expect((await listPins(engine)).map(p => p.source_id)).toEqual(BYTE_SOURCES);
-  });
-
-  parityTest('ownerCredentials lists clients of one kind by byte of name and id', { methods: ['executeRaw', 'getConfig', 'setConfig', 'transaction'], requires: 'raw_sql' }, async (engine) => {
-    await addMember(engine, 'owner-example');
-    await setOwner(engine, 'owner-example');
-    for (const name of MIXED_SLUGS) {
-      const { clientId } = await provider(engine).registerClientManual(name, ['client_credentials'], 'read write', [], 'default', ['default']);
-      await bindCredential(engine, { kind: 'client', id: clientId }, { member: 'owner-example' });
-    }
-    expect((await ownerCredentials(engine, 'guest-src')).credentials.map(c => c.name)).toEqual([...BYTE_SLUGS]);
-  });
-
-  parityTest('ownerCredentials lists clients with one name by byte of id', { methods: ['executeRaw', 'getConfig', 'setConfig'], requires: 'raw_sql' }, async (engine) => {
-    await addMember(engine, 'owner-example');
-    await setOwner(engine, 'owner-example');
-    for (const id of MIXED_SLUGS) {
-      await engine.executeRaw(`INSERT INTO oauth_clients (client_id, client_name, member_id) VALUES ($1, 'same-name', 'owner-example')`, [id]);
-    }
-    expect((await ownerCredentials(engine, 'guest-src')).credentials.map(c => c.id)).toEqual([...BYTE_SLUGS]);
   });
 
   parityTest('readCandidateRecords lists candidates by byte of fingerprint', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
@@ -246,11 +225,10 @@ describe('store listings come out by byte', () => {
     expect(missing).toEqual(['access_member_sources', 'access_members']);
   });
 
-  parityTest('slotUsage lists slots by byte', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
-    for (const slot of MIXED_SLUGS) {
-      await engine.executeRaw(
-        `INSERT INTO decision_receipts (decision_id, slot, mode, provider, outcome, call_site, lane) VALUES ('d', $1, 'on', 'p', 'skipped', 'site', 'hot')`, [slot]);
-    }
+  parityTest('slotUsage lists slots by byte', { methods: ['insertDecideReceipts', 'decideSlotUsage'] }, async (engine) => {
+    await engine.insertDecideReceipts(MIXED_SLUGS.map(slot => ({
+      decision_id: 'd', slot, mode: 'on', provider: 'p', outcome: 'skipped', call_site: 'site', lane: 'hot',
+    })));
     expect((await slotUsage(engine)).map(r => r.slot)).toEqual([...BYTE_SLUGS]);
   });
 

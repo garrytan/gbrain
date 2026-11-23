@@ -614,7 +614,7 @@ describe('MCP dispatch caller access on a Rust brain', () => {
 // `gbrain access member add|list` and `access owner set` read members first (access/members.ts getMember, listMembers).
 // On a Rust brain that read is a typed member, so it answers "no members" instead of stopping on raw SQL.
 describe('access member reads on a Rust brain', () => {
-  withAddon('getMember, memberByEmail and listMembers read no raw SQL and find no member: the store keeps none', async () => {
+  withAddon('getMember, memberByEmail and listMembers read no raw SQL and find no member on a brain with none', async () => {
     const { engine } = await open();
     const raw: string[] = [];
     const executeRaw = engine.executeRaw.bind(engine);
@@ -642,7 +642,7 @@ describe('access member reads on a Rust brain', () => {
     expect(raw).toEqual([]);
   });
 
-  withAddon('audienceMemberIds reads no raw SQL and finds no audience member: the store keeps none', async () => {
+  withAddon('audienceMemberIds reads no raw SQL and finds no audience member on a brain with no members', async () => {
     const { engine } = await open();
     const raw: string[] = [];
     const executeRaw = engine.executeRaw.bind(engine);
@@ -657,7 +657,7 @@ describe('access member reads on a Rust brain', () => {
     expect({ raw, listed }).toEqual({ raw: [], listed: [[]] });
   });
 
-  withAddon('memberIdentityFor and stdioMemberIdentity read no raw SQL and find an empty identity: the store keeps no members', async () => {
+  withAddon('memberIdentityFor and stdioMemberIdentity read no raw SQL and find an empty identity on a brain with no members', async () => {
     const { engine } = await open();
     const raw: string[] = [];
     const executeRaw = engine.executeRaw.bind(engine);

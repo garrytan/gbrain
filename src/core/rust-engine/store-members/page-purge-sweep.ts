@@ -1,6 +1,5 @@
 /**
- * The deletes and reads of a page purge's sweep, its segment storage and its slug stores (BrainEngine deletePurgeReviewQueue,
- * deletePurgeReviewProposals, deletePurgeDecideProposals, deletePurgedPageTrustProposals, deletePurgedPageHolds,
+ * The deletes and reads of a page purge's sweep, its segment storage and its slug stores (BrainEngine deletePurgedPageTrustProposals, deletePurgedPageHolds,
  * deletePurgedPageGateReceipts, deletePurgedPageFacts, deletePurgedPageFiles, listPageTimelineReceipts, listPageSegmentShas,
  * countPageManifestRows, deletePageStagings, deletePageSegmentTexts, sweepPageTextsForClaims, listPageChangeReasons,
  * listRequestsRecordingReasons, deletePurgedSlugStoreRows and listPageSecretOccurrences; SQL in engine-sql/page-purge-sweep.ts,
@@ -25,15 +24,6 @@ import { byText } from '../../engine-sql/page-purge.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
-
-export const deletePurgeReviewQueue: Member<'deletePurgeReviewQueue'> = (brain, sourceId, refs) =>
-  storeCall({ member: 'deletePurgeReviewQueue', sourceId }, () => brain.deletePurgeReviewQueue(sourceId, [...refs]));
-
-export const deletePurgeReviewProposals: Member<'deletePurgeReviewProposals'> = (brain, sourceId, refs) =>
-  storeCall({ member: 'deletePurgeReviewProposals', sourceId }, () => brain.deletePurgeReviewProposals(sourceId, [...refs]));
-
-export const deletePurgeDecideProposals: Member<'deletePurgeDecideProposals'> = (brain, sourceId, factIds) =>
-  storeCall({ member: 'deletePurgeDecideProposals', sourceId }, () => brain.deletePurgeDecideProposals(sourceId, [...factIds]));
 
 export const deletePurgedPageTrustProposals: Member<'deletePurgedPageTrustProposals'> = (brain, sourceId, pageId, factIds, takeIds) =>
   storeCall({ member: 'deletePurgedPageTrustProposals', sourceId }, () => brain.deletePurgedPageTrustProposals(sourceId, pageId, [...factIds], [...takeIds]));

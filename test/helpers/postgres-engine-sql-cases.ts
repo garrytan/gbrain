@@ -180,6 +180,8 @@ const OOS = {
 } as const;
 
 export const DOMAIN_OF: Record<string, string> = {
+  'readReasonPurgeTombstones': OOS.callerRawSql,
+  'readSourcePurgeEpoch': OOS.callerRawSql,
   'listCorePageRows': OOS.trustTierReads,
   'listTrustScanRows': OOS.trustTierReads,
   'countUnscannedTrustRows': OOS.trustTierReads,
