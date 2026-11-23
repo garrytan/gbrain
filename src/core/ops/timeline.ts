@@ -91,6 +91,18 @@ const get_timeline: Operation = {
     source_ids: SOURCE_IDS_PARAM,
   },
   handler: async (ctx, p) => {
+    // #9920: a malformed window date or limit is the caller's input, never a database internal_error.
+    for (const field of ['after', 'before', 'since', 'until'] as const) {
+      const value = p[field];
+      if (typeof value !== 'string' || value === '') continue;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value) {
+        throw opError('invalid_params', `get_timeline: ${field} "${value}" is not a YYYY-MM-DD calendar date.`,
+          `Pass ${opTransport(ctx) === 'cli' ? `--${field}` : `\`${field}\``} as a date such as 2026-04-03.`);
+      }
+    }
+    if (typeof p.limit === 'number' && (!Number.isInteger(p.limit) || p.limit < 0)) {
+      throw opError('invalid_params', `get_timeline: limit ${p.limit} is not a positive whole number.`, 'Pass limit as a whole number of 1 or more, or omit it for the default of 100.');
+    }
     // #2200: route through sourceScopeOpts so a federated grant reaches the
     // engine via TimelineOpts.sourceIds; scalar/unset unchanged.
     // GST-1158 E1: source_id / source_ids narrow inside the grant, as search does.

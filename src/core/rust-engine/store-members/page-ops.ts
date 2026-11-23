@@ -13,6 +13,7 @@
  * unexported.
  */
 import { DELETE_BATCH_SIZE } from '../../engine-constants.ts';
+import { assertPurgeAge } from '../../engine-errors.ts';
 import type { FindPagesQuery, FoundPages } from '../../page-find.ts';
 import type { PageCountQuery, PageCounts, TypeGrouper } from '../../page-counts.ts';
 import { pageSnapshotKey, type PageSnapshotBatch } from '../../page-snapshot-batch.ts';
@@ -114,6 +115,8 @@ export const purgeDeletedPages: StoreMember<[olderThanHours: number, opts?: { dr
   olderThanHours,
   opts,
 ) => {
+  // The same typed refusal as the SQL engines (the store refuses the same inputs with code invalid_argument too).
+  assertPurgeAge(olderThanHours);
   const { excludeIds, ...options } = takeOptions('purgeDeletedPages', opts, ['dryRun', 'excludeIds']);
   // PGLite filters on excludeIds only when the list is not empty.
   if (Array.isArray(excludeIds) && excludeIds.length) options.excludeIds = excludeIds;

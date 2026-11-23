@@ -69,6 +69,7 @@
       "refusedNotInCliOnly": [],
       "refusedWithoutHint": [
         "access",
+        "apple-contacts",
         "beliefs",
         "dedupe",
         "diag",
@@ -101,6 +102,7 @@
         "agent",
         "anomalies",
         "append",
+        "apple-contacts",
         "apply-migrations",
         "auth",
         "autopilot",
@@ -238,6 +240,7 @@
         "agent",
         "anomalies",
         "append",
+        "apple-contacts",
         "auth",
         "backfill",
         "backup",
@@ -347,6 +350,7 @@
         "advisor",
         "agent",
         "anomalies",
+        "apple-contacts",
         "backfill",
         "beliefs",
         "book-mirror",
@@ -387,7 +391,6 @@
         "think",
         "transcripts",
         "trust",
-        "waiting",
         "wakeshift",
         "watch",
         "whoknows"
@@ -406,6 +409,7 @@
       "THIN_CLIENT_REFUSED_COMMANDS": [
         "access",
         "advisor",
+        "apple-contacts",
         "apply-migrations",
         "beliefs",
         "call",

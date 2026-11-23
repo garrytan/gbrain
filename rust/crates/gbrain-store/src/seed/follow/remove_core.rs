@@ -259,7 +259,7 @@ fn remove_link(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {
 }
 
 fn remove_timeline(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {
-    crate::timeline::remove_entry(
+    crate::timeline::remove_entry_by_id(
         tx,
         need!(id, "page_id", u64),
         need!(id, "date"),

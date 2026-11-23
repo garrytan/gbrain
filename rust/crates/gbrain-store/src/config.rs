@@ -57,7 +57,12 @@ fn scan_config(read: &dyn KvRead, prefix: &str) -> Result<Vec<(String, String)>>
 impl Store {
     /// The value of `key`, or `None`. Mirrors `getConfig`.
     pub fn get_config(&self, key: &str) -> Result<Option<String>> {
-        read_config(&*self.read()?, key)
+        let stored = read_config(&*self.read()?, key)?;
+        Ok(crate::access_flag::assumed_config(
+            self.flag_assumed,
+            key,
+            stored,
+        ))
     }
 
     /// Sets `key`, replacing any value. Mirrors `setConfig`.
@@ -82,7 +87,8 @@ impl Store {
     /// Mirrors `listConfigKeys`.
     pub fn list_config_keys(&self, prefix: &str) -> Result<Vec<String>> {
         config_key(prefix)?;
-        Ok(scan_config(&*self.read()?, prefix)?
+        Ok(self
+            .scan_config(&*self.read()?, prefix)?
             .into_iter()
             .map(|(key, _)| key)
             .collect())
@@ -90,7 +96,7 @@ impl Store {
 
     /// Every config entry. Mirrors `getAllConfig`.
     pub fn get_all_config(&self) -> Result<BTreeMap<String, String>> {
-        Ok(scan_config(&*self.read()?, "")?.into_iter().collect())
+        Ok(self.scan_config(&*self.read()?, "")?.into_iter().collect())
     }
 
     /// `getConfigValues(keys)`: the stored `{key, value}` rows of the named keys, ordered by key,
@@ -105,7 +111,9 @@ impl Store {
             .collect();
         let mut out = Vec::new();
         for key in wanted {
-            if let Some(value) = read_config(&*read, key)? {
+            let stored = read_config(&*read, key)?;
+            if let Some(value) = crate::access_flag::assumed_config(self.flag_assumed, key, stored)
+            {
                 out.push(ConfigValueRow {
                     key: key.to_string(),
                     value,
@@ -113,5 +121,18 @@ impl Store {
             }
         }
         Ok(out)
+    }
+
+    /// `scan_config` with the member-access flag read as `'1'` when the open-time scan could not
+    /// store it (`Store::flag_assumed`).
+    fn scan_config(&self, read: &dyn KvRead, prefix: &str) -> Result<Vec<(String, String)>> {
+        let mut rows = scan_config(read, prefix)?;
+        let flag = crate::access_flag::RESTRICTIONS_PRESENT_KEY;
+        if self.flag_assumed && flag.starts_with(prefix) {
+            rows.retain(|(key, _)| key != flag);
+            rows.push((flag.to_string(), "1".to_string()));
+            rows.sort();
+        }
+        Ok(rows)
     }
 }

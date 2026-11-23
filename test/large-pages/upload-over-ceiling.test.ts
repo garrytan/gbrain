@@ -149,6 +149,17 @@ for (const kind of testBackends()) {
       }, 600_000);
     }
 
+    for (const [label, opening] of [['Readable_By', '---'], ['Readable_By after a leading space before the opening fence', ' ---']] as const) {
+      test(`a 25 MiB upload that names its readers with ${label} is refused readers_noncanonical and nothing is stored`, async () => {
+        await setConfig('write_gate.agent_mode', 'off');
+        const slug = `notes/huge-readers-${label.replace(/\W+/g, '-').toLowerCase()}`;
+        const text = `${opening}\ntitle: Huge readers request\ntype: note\nReadable_By: [alice-example]\n---\n${conversation(25 * MiB, 'readers')}`;
+        const refused = await commitRefusal({ upload_id: await staged(text, slug) });
+        expect(refused.code).toBe('readers_noncanonical');
+        expect(await engine.readPageSnapshot(slug, { sourceId: 'default' })).toBeNull();
+      }, 600_000);
+    }
+
     test('a replace above 24 MiB commits at its expected_revision and refuses with revision_changed after the page moved', async () => {
       const slug = 'notes/huge-conversation';
       const v2 = conversation(25.5 * MiB, 'replace');
