@@ -7,8 +7,10 @@
 //! `settleMuteRecheck`.
 //!
 //! Keys (after `keys::FACT`; a text part ends with a NUL byte, and no text column may hold one):
-//! - `F 0x10 source_id kind value -> SuppressionRecord`: one row; the key is the table's
-//!   `loop_suppressions_uniq` key `(source_id, kind, value)`.
+//! - `F 0x11 source_id kind value -> SuppressionRecord`: one row; the key is the table's
+//!   `loop_suppressions_uniq` key `(source_id, kind, value)`. Stores of format 6 and older kept
+//!   these rows at `F 0x10`, the take purge ledger's prefix; the open-time upgrade to format 7
+//!   moves them (`facts/key_split.rs`).
 //! - meta `next_loop_suppressions_id`: the `BIGSERIAL` sequence. Every add takes an id, also one
 //!   that meets an existing row, as `nextval` runs before `ON CONFLICT` looks.
 //!
@@ -28,8 +30,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-/// The byte after `keys::FACT` that marks a suppression row.
-const SUPPRESSION: u8 = 0x10;
+/// The byte after `keys::FACT` that marks a suppression row. `0x10` is the take purge ledger's
+/// (`facts/take_purges.rs`); formats 6 and older kept both kinds there.
+pub(crate) const SUPPRESSION: u8 = 0x11;
 const COUNTER: &str = "next_loop_suppressions_id";
 /// `UNMUTED` in loops-store.ts.
 const UNMUTED: &str = "unmuted";
@@ -44,15 +47,21 @@ struct SuppressionRecord {
 }
 
 fn suppression_key(source_id: &str, kind: &str, value: &str) -> Vec<u8> {
-    let mut key = keys::text(keys::FACT, &[source_id, kind, value]);
-    key.insert(1, SUPPRESSION);
+    let mut key = vec![keys::FACT, SUPPRESSION];
+    for (i, part) in [source_id, kind, value].iter().enumerate() {
+        if i > 0 {
+            key.push(0);
+        }
+        key.extend_from_slice(part.as_bytes());
+    }
     key
 }
 
-/// `F 0x10 source \0`: every suppression of a source.
+/// `F 0x11 source \0`: every suppression of a source.
 fn source_prefix(source_id: &str) -> Vec<u8> {
-    let mut prefix = keys::text(keys::FACT, &[source_id, ""]);
-    prefix.insert(1, SUPPRESSION);
+    let mut prefix = vec![keys::FACT, SUPPRESSION];
+    prefix.extend_from_slice(source_id.as_bytes());
+    prefix.push(0);
     prefix
 }
 

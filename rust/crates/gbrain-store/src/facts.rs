@@ -29,6 +29,12 @@
 //! - `F 0x0F source visibility subject fact_hash`: the `fact_purges` ledger
 //!   (`facts/purge_ledger.rs`).
 //! - `F 0x10 source subject claim_hash`: the `take_purges` ledger (`facts/take_purges.rs`).
+//! - `F 0x11 source kind value`: the `loop_suppressions` table, the loop mutes
+//!   (`facts/loops/mutes.rs`). Store formats 6 and older kept them at `F 0x10` beside the take
+//!   purges; `facts/key_split.rs` moves them when such a brain opens. `0x0E` is retired (the
+//!   v0.60.766.0 addon's inline generation ledger, `seed/format_5.rs`); never reuse it.
+//!
+//! No two record kinds may share an `F` sub-tag: `tests/key_registry.rs` fails when they do.
 //! - meta `next_facts_id`: the id sequence. An insert that `ON CONFLICT DO NOTHING` skips still
 //!   takes an id, as `nextval` does.
 //!
@@ -58,6 +64,7 @@ mod held_cells;
 pub mod held_moves;
 pub mod holding_purges;
 mod kept_rows;
+pub(crate) mod key_split;
 pub mod label_repair;
 pub mod loops;
 pub mod ontology_repair;
