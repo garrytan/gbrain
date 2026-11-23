@@ -7,7 +7,8 @@ import { existsSync } from 'node:fs';
 import type { BrainEngine } from '../core/engine.ts';
 import type { EngineConfig } from '../core/types.ts';
 import { buildEligibilityStatus } from './eligibility.ts';
-import { buildEvidenceStatus } from './evidence.ts';
+import { buildEvidenceStatus, type EvidenceStatus } from './evidence.ts';
+import { readEpoch } from './evidence-epoch.ts';
 import { buildFollowStatus } from './follow-status.ts';
 import { readFaults, readShadowSummary } from './ledger.ts';
 import { storageReport, type StorageReport } from './managed-gate.ts';
@@ -29,15 +30,35 @@ export async function shadowStatusDocument(brain: { key: string; dir: string }, 
   for (const counts of Object.values(summary?.by_op ?? {})) {
     for (const [outcome, n] of Object.entries(counts)) totals[outcome] = (totals[outcome] ?? 0) + (n ?? 0);
   }
+  // The only awaited read comes first. The follower and evidence fields are then read back to back from one epoch: a
+  // rotation between them (a new Rust candidate) retries, and an epoch that keeps moving leaves both out (NOT READY),
+  // so criteria 1 and 7 can never pass on the previous candidate's checks.
+  const eligibility = await buildEligibilityStatus({ dir: brain.dir, state, engine, now, stateRequired: true });
+  const epochBound = (): { follow: ReturnType<typeof buildFollowStatus>; evidence: ReturnType<typeof buildEvidenceStatus> } | null => {
+    for (let attempt = 0; attempt < EPOCH_READ_ATTEMPTS; attempt++) {
+      const before = readEpoch(brain.dir)?.epoch_id ?? null;
+      const follow = buildFollowStatus(brain.dir, state, now);
+      const evidence = buildEvidenceStatus({ dir: brain.dir, now });
+      const after = readEpoch(brain.dir)?.epoch_id ?? null;
+      if (before === after && follow.epoch_id === after && (evidence.evidence?.epoch_id ?? null) === after) return { follow, evidence };
+    }
+    return null;
+  };
+  const bound = epochBound();
   return {
     schema_version: 1 as const, brain: brain.key, enabled: state?.enabled === true, state, directory: brain.dir,
     totals, by_op: summary?.by_op ?? {}, serving: summary?.primary ?? null, child_shed: summary?.child_shed ?? 0,
     children: summary?.children ?? 0, recent_faults: faults, storage: storageReport(state?.storage),
-    ...buildFollowStatus(brain.dir, state, now), seed: seedStatus(readSeedRecord(brain.dir)), // the seed block carries the recorded storage mode
-    ...(await buildEligibilityStatus({ dir: brain.dir, state, engine, now, stateRequired: true })),
-    ...buildEvidenceStatus({ dir: brain.dir, now }),
+    ...(bound ? bound.follow : { ...buildFollowStatus(brain.dir, state, now), epoch_id: null, epoch_started_at: null }),
+    ...(bound ? {} : { evidence_epoch_unstable: true as const }),
+    seed: seedStatus(readSeedRecord(brain.dir)), // the seed block carries the recorded storage mode
+    ...eligibility,
+    ...(bound ? bound.evidence : ({} as EvidenceStatus)),
   };
 }
+
+/** How often the document re-reads the epoch-bound fields when the epoch rotates under it before it gives up. */
+const EPOCH_READ_ATTEMPTS = 3;
 
 /** The `seed` block of the status document: null fields until a seed finished. */
 export function seedStatus(record: SeedRecord | null): {

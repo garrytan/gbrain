@@ -378,6 +378,7 @@ async function status(brain: { key: string; dir: string }, json: boolean, out: (
   const seedStorage = storageLine(seeded?.storage);
   if (seedStorage) out(`  storage: ${seedStorage}`);
   if (seeded) for (const line of [...renderFollowStatus(doc), ...renderEvidenceStatus(doc)]) out(line);
+  if (doc.evidence_epoch_unstable) out('  evidence epoch: it changed while this status was read, so the epoch-bound evidence is left out; run the status again');
   for (const f of faults) out(`  fault ${f.ts} ${f.kind}: ${f.detail}`);
   return 0;
 }
