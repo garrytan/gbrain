@@ -11,8 +11,15 @@
  *  - Seam: an engine stub whose `executeRaw` throws the real refusal object; the Rust engine itself is not driven here
  *    because the daemon never dispatches through the queue on a Rust brain (the gate test below proves it).
  */
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { MinionQueue } from '../src/core/minions/queue.ts';
+import { submitAutoDrains } from '../src/commands/autopilot-dispatch.ts';
+import { withEnv } from './helpers/with-env.ts';
 import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
 import { autopilotUsesMinionsDispatch, probeNoWorkerPeer, type AutopilotDaemonState } from '../src/commands/autopilot-daemon.ts';
 
@@ -25,6 +32,35 @@ function stubEngine(executeRaw: () => Promise<unknown>, extra: Record<string, un
 function daemonState(): AutopilotDaemonState {
   return { noWorkerConsecutiveIdle: 0 } as AutopilotDaemonState;
 }
+
+/** A real engine whose `executeRaw` throws `error` for a statement containing `needle` (what a Rust brain does for every statement). */
+function refusingOn(engine: BrainEngine, needle: string, error: () => Error): BrainEngine {
+  return new Proxy(engine, {
+    get(target, property) {
+      if (property === 'executeRaw') {
+        return async (sql: string, ...rest: unknown[]) => {
+          if (sql.includes(needle)) throw error();
+          return (target.executeRaw as (...a: unknown[]) => Promise<unknown>).call(target, sql, ...rest);
+        };
+      }
+      const value = Reflect.get(target, property);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
+let pg: PGLiteEngine;
+let home: string;
+beforeAll(async () => {
+  pg = new PGLiteEngine();
+  await pg.connect({});
+  await pg.initSchema();
+  home = mkdtempSync(join(tmpdir(), 'gbrain-refusal-swallow-'));
+}, 120_000);
+afterAll(async () => {
+  await pg.disconnect();
+  rmSync(home, { recursive: true, force: true });
+});
 
 describe('autopilot refusal-swallow sites', () => {
   test('S1 probeNoWorkerPeer: a capability refusal surfaces; a transient error is logged and the loop carries on', async () => {
@@ -43,5 +79,18 @@ describe('autopilot refusal-swallow sites', () => {
     expect(autopilotUsesMinionsDispatch('pain_triggered', 'postgres', false)).toBe(true);
     expect(autopilotUsesMinionsDispatch('off', 'postgres', false)).toBe(false);
     expect(autopilotUsesMinionsDispatch('pain_triggered', 'postgres', true)).toBe(false);
+  });
+
+  test('S2 submitAutoDrains: a capability refusal on the already-queued check surfaces; another error skips the source and carries on', async () => {
+    const root = join(home, 'git-a');
+    mkdirSync(root, { recursive: true });
+    await pg.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', ['git-a', root]);
+    await pg.putPage('notes/git-a-0', { type: 'note', title: 'a', compiled_truth: 'A durable decision, recorded in prose with context. '.repeat(12) } as never, { sourceId: 'git-a' });
+    await pg.setConfig('autopilot.auto_drain.threshold', '1');
+    const queue = new MinionQueue(pg);
+    const drain = (engine: BrainEngine) => withEnv({ GBRAIN_HOME: home }, () => submitAutoDrains(engine, queue, { timeoutMs: 60_000, jsonMode: true }));
+    await expect(drain(refusingOn(pg, 'idempotency_key = $1', REFUSAL))).rejects.toMatchObject({ code: 'engine_capability_missing' });
+    await drain(refusingOn(pg, 'idempotency_key = $1', () => new Error('connection reset')));
+    expect(await pg.executeRaw(`SELECT id FROM minion_jobs WHERE name = 'extract-atoms-drain'`)).toHaveLength(0);
   });
 });
