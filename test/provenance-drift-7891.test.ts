@@ -406,7 +406,7 @@ for (const kind of testBackends()) {
       expect((await repair(engine, false)).affected).toBe(0);
     }, { databaseUrl }), 120_000);
 
-    test('#10025: a put keeps a stored ingested_at the trusted column lacks, in the row, the column and the file', () => managedBrain(async ({ engine, ctx, root }) => {
+    test('#10025: a put keeps a stored ingested_at the trusted column lacks in the row and the file, and leaves the column empty', () => managedBrain(async ({ engine, ctx, root }) => {
       const slug = 'diary/kept-ingested-at';
       const original = '2026-05-30T15:34:11.457Z';
       await operationsByName.put_page.handler(ctx, { slug, content: '---\ntitle: Diary\ntype: note\n---\nBody\n' });
@@ -422,7 +422,7 @@ for (const kind of testBackends()) {
       expect(after.page.compiled_truth).toContain('Body, edited');
       expect(after.page.frontmatter.ingested_at).toBe(original);
       const [{ ingested_at }] = await engine.executeRaw<{ ingested_at: string | Date }>("SELECT ingested_at FROM pages WHERE source_id = 'default' AND slug = $1", [slug]);
-      expect(new Date(ingested_at).toISOString()).toBe(original);
+      expect(ingested_at).toBeNull();
       expect(parseMarkdown(fs.readFileSync(path.join(root, `${slug}.md`), 'utf8'), slug).frontmatter.ingested_at).toBe(original);
     }, { databaseUrl }), 120_000);
 
