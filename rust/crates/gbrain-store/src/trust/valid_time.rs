@@ -21,7 +21,7 @@ use super::TrustTier;
 use crate::Store;
 use crate::env::iso;
 use crate::error::Result;
-use crate::facts::{PrivacyPolicy, page_hidden, version_hidden};
+use crate::facts::{PrivacyPolicy, page_hidden, successor_withholds_reason, version_hidden};
 use crate::keys;
 use crate::kv::{KvRead, scan_prefix};
 use crate::links::no_nul;
@@ -351,11 +351,13 @@ impl Store {
             .map(|(i, v)| {
                 let segmented = version_segmented(v);
                 // A reader held to world-visible pages sees the reason only when the next version
-                // (over every version, never only the visible ones) is visible too; the last
-                // version's successor is the page, which the caller's own page check covers.
-                let successor_visible = versions
-                    .get(i + 1)
-                    .is_none_or(|n| !version_hidden(&n.page_type, &n.frontmatter, &q.policy));
+                // (over every version, never only the visible ones) does not withhold it: judged
+                // by its own fields and readers, never the caller's private-readable grant
+                // (`replacedBecauseSql`). The last version's successor is the page, which the
+                // caller's own page check covers.
+                let successor_visible = versions.get(i + 1).is_none_or(|n| {
+                    !successor_withholds_reason(&n.page_type, &n.frontmatter, &q.policy)
+                });
                 // A pruned successor's visibility can no longer be checked: that reason is withheld.
                 let reason = v
                     .change_reason
@@ -373,7 +375,7 @@ impl Store {
                         &v.compiled_truth,
                         &v.timeline,
                     ),
-                    visible: !version_hidden(&v.page_type, &v.frontmatter, &q.policy),
+                    visible: !version_hidden(&page, &v.page_type, &v.frontmatter, &q.policy),
                     reason,
                     successor_pruned: v.successor_pruned,
                     tier: TrustTier::stored(v.trust_tier.as_deref()).as_str(),

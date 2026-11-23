@@ -597,7 +597,7 @@ const PAGE_SOURCES: [&str; 6] = [
 /// `factProvenanceSlugSql('f')`: the page a fact was extracted from. A `put_page:` or `sync:`
 /// session names it (an empty remainder is still a name, not a fall-through); otherwise a page
 /// source names it as the first space-separated word of `context`. One trailing `.md` goes.
-fn provenance_slug(row: &FactRecord) -> Option<String> {
+pub(crate) fn provenance_slug(row: &FactRecord) -> Option<String> {
     let named = row
         .source_session
         .as_deref()
@@ -673,7 +673,7 @@ fn snapshot_allows(page: &PageRecord, honor_aliases: bool) -> bool {
 /// `derivationPrivateSql('h')`: the snapshot filter fails, a privacy alias is set (whether or not
 /// aliases are honoured), the page names readers (`readable_by`), or a folder rule covers it (never
 /// here: the store holds no folder rules).
-fn derivation_private(page: &PageRecord, honor_aliases: bool) -> bool {
+pub(crate) fn derivation_private(page: &PageRecord, honor_aliases: bool) -> bool {
     !snapshot_allows(page, honor_aliases)
         || alias_private(&page.frontmatter)
         || page.frontmatter.contains_key("readable_by")

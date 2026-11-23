@@ -43,6 +43,7 @@ import {
   connectionGateEntry,
 } from './checks/db-connection.ts';
 import { ipcSocketPathEntry } from './checks/local-ipc.ts';
+import { rustEngineAddonEntry } from './checks/rust-engine-addon.ts';
 import { functionSearchPathEntry } from './checks/function-search-path.ts';
 import { guardLedgerChecksEntry } from './checks/guard-ledger-checks.ts';
 import { ownerOnlyMarksTriggersEntry } from './checks/owner-only-marks-triggers.ts';
@@ -229,6 +230,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   harnessWiringDoctorEntry,
   agentContractEntry,
   pgliteDataDirEntry,
+  rustEngineAddonEntry,
   ipcSocketPathEntry,
   projectionResidentEntry,
   offlineConnectionEntry,

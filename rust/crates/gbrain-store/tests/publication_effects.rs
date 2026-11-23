@@ -10,7 +10,9 @@ mod common;
 use common::{TempDir, open};
 use gbrain_store::Store;
 use gbrain_store::error::*;
-use gbrain_store::persistence::{PublicationEffectsSpec, WriteCompletion, WriteRequestInsert};
+use gbrain_store::persistence::{
+    EffectClaim, EffectSettle, PublicationEffectsSpec, Settle, WriteCompletion, WriteRequestInsert,
+};
 use serde_json::{Value, json};
 
 const REQ: &str = "b0000000-0000-4000-8000-0000000000b1";
@@ -126,19 +128,128 @@ fn every_kind_is_stored_queued_in_queue_order() {
     );
 }
 
+fn claim(store: &Store, dead: &[String], token: &str) -> Option<Value> {
+    let candidate = store.select_claimable_effect(HOST, dead).unwrap();
+    if candidate.is_null() {
+        return None;
+    }
+    let owner = json!({ "token": token, "owner": { "pid": 7, "nonce": "n", "start": "s" } });
+    store
+        .stamp_effect_claim(&EffectClaim {
+            id: candidate["id"].as_str().unwrap().into(),
+            token: token.into(),
+            owner_json: owner.to_string(),
+        })
+        .unwrap()
+}
+
+fn settle(id: &Value, token: &str) -> EffectSettle {
+    EffectSettle {
+        id: id.as_str().unwrap().into(),
+        token: Some(token.into()),
+        slug: None,
+        outcome_json: None,
+        data_json: None,
+        reason: None,
+        delay_ms: None,
+    }
+}
+
+const T1: &str = "f0000000-0000-4000-8000-000000000001";
+const T2: &str = "f0000000-0000-4000-8000-000000000002";
+const T3: &str = "f0000000-0000-4000-8000-000000000003";
+
 #[test]
-fn no_stored_kind_is_claimable_so_every_effect_waits() {
-    let dir = TempDir::new("effects-wait");
+fn a_pending_withdrawal_mirror_is_claimed_first_and_holds_back_its_requests_other_effects() {
+    let dir = TempDir::new("effects-claim");
     let store = open(&dir);
     let id = admit(&store, REQ);
     store
         .insert_publication_effects(&spec(&store, &id, every_kind()))
         .unwrap();
-    assert_eq!(store.select_claimable_effect(HOST).unwrap(), Value::Null);
-    let rows = store.read_request_effects(&id).unwrap();
+    let mirror = claim(&store, &[], T1).unwrap();
+    assert_eq!(mirror["kind"], "withdrawal-mirror");
+    assert_eq!(mirror["state"], "running");
+    assert_eq!(mirror["attempts"], 1);
+    // The mirror is running, so nothing else of the request is claimable.
+    assert!(claim(&store, &[], T2).is_none());
+    // A claim of a dead owner is claimable before its lease lapses.
+    let dead = store
+        .select_claimable_effect(HOST, &["7:n:s".to_string()])
+        .unwrap();
+    assert_eq!(dead["kind"], "withdrawal-mirror");
+    let mut done = settle(&mirror["id"], T1);
+    done.outcome_json = Some("{}".into());
+    assert!(store.settle_effect(Settle::Complete, &done).unwrap());
+    // A stale token settles nothing.
+    assert!(!store.settle_effect(Settle::Complete, &done).unwrap());
+    let next = claim(&store, &[], T2).unwrap();
+    assert_eq!(next["kind"], "embedding");
     assert!(
-        rows.iter()
-            .all(|r| r["state"] == "queued" && r["attempts"] == 0)
+        store
+            .select_claimable_effect("not-a-uuid", &[])
+            .unwrap_err()
+            .message
+            .contains("uuid")
+    );
+}
+
+#[test]
+fn each_settle_statement_moves_only_the_claim_it_names() {
+    let dir = TempDir::new("effects-settle");
+    let store = open(&dir);
+    let id = admit(&store, REQ);
+    let page = json!({ "slug": "notes/a", "page_id": 1, "target_failures": 1 });
+    store
+        .insert_publication_effects(&spec(
+            &store,
+            &id,
+            json!([{ "kind": "embedding", "data": page }, { "kind": "git", "data": { "relative_path": "notes/a.md", "target_failures": 2 } }]),
+        ))
+        .unwrap();
+    let embedding = claim(&store, &[], T1).unwrap();
+    let git = claim(&store, &[], T2).unwrap();
+    assert!(
+        store
+            .settle_effect(Settle::Renew, &settle(&embedding["id"], T1))
+            .unwrap()
+    );
+    assert!(
+        !store
+            .settle_effect(Settle::Renew, &settle(&embedding["id"], T2))
+            .unwrap()
+    );
+    let mut advance = settle(&embedding["id"], T1);
+    advance.slug = Some("notes/a".into());
+    assert!(store.settle_effect(Settle::Advance, &advance).unwrap());
+    let again = claim(&store, &[], T3).unwrap();
+    assert_eq!(again["kind"], "embedding");
+    assert_eq!(
+        again["data"],
+        json!({ "slug": "notes/a", "page_id": 1, "target_failures": 1, "embedding_attempt_base": 1, "after_slug": "notes/a" })
+    );
+    let mut park = settle(&git["id"], T2);
+    park.data_json = Some(json!({ "parked": [{ "slug": "notes/a" }] }).to_string());
+    assert!(store.settle_effect(Settle::Park, &park).unwrap());
+    let mut busy = settle(&again["id"], T3);
+    busy.data_json = Some(json!({ "busy_retries": 1 }).to_string());
+    busy.delay_ms = Some(60_000.0);
+    assert!(store.settle_effect(Settle::RetryBusy, &busy).unwrap());
+    // The busy retry waits a minute, so nothing is due now.
+    assert!(claim(&store, &[], T1).is_none());
+    let rows = store.read_request_effects(&id).unwrap();
+    assert_eq!(rows[0]["state"], "queued");
+    assert_eq!(rows[0]["error_code"], "writer_busy");
+    assert_eq!(rows[1]["state"], "failed");
+    assert_eq!(rows[1]["error_code"], "targets_parked");
+    let mut bad = settle(&json!("x"), T1);
+    bad.reason = Some("r".into());
+    assert!(
+        store
+            .settle_effect(Settle::Fail, &bad)
+            .unwrap_err()
+            .message
+            .contains("bigint")
     );
 }
 

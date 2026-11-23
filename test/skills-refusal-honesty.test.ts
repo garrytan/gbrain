@@ -46,5 +46,14 @@ describe('agent-loaded text reports refusals and asks for narrow access', () => 
   it('cross-modal refusal routing defaults to reporting the refusal', () => {
     const yaml = readFileSync(join(ROOT, 'skills/conventions/cross-modal.yaml'), 'utf8');
     expect(yaml).toMatch(/^\s*behavior: "report"/m);
+    expect(yaml).not.toMatch(/^\s*chain:/m);
+    expect(yaml).not.toMatch(/behavior:.*\bor next_in_chain\b/);
+  });
+
+  it('another model reviews a refused request only when the user picks one', () => {
+    for (const rel of ['skills/cross-modal-review/SKILL.md', 'skills/conventions/model-routing.md', 'skills/conventions/cross-modal.yaml']) {
+      const text = readFileSync(join(ROOT, rel), 'utf8');
+      expect(text).not.toMatch(/or when\s+\`?refusal_routing\.behavior|is \`next_in_chain\`;|Fallback chain, when one runs/);
+    }
   });
 });

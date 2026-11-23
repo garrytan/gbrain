@@ -326,7 +326,7 @@ may read (see below).
 | claude-code | `~/.claude/CLAUDE.md` (`--scope project`: `./CLAUDE.local.md`) |
 | codex | `$CODEX_HOME/AGENTS.md`, or a non-empty `AGENTS.override.md` (the file Codex loads) |
 | opencode | `~/.config/opencode/AGENTS.md` |
-| openclaw | `<workspace>/AGENTS.md` (`agents.defaults.workspace`, else `~/.openclaw/workspace`; several agents need `--workspace`) |
+| openclaw | `<workspace>/AGENTS.md` (`agents.defaults.workspace`, else `~/.openclaw/workspace`, under `$OPENCLAW_HOME` when set; several agents need `--workspace`) |
 | hermes | `$HERMES_HOME/SOUL.md`, after the identity text; never created, since a SOUL.md replaces Hermes's default identity |
 | cursor | `./.cursor/rules/gbrain-brain-first.mdc` (an always-applied project rule) |
 
@@ -372,6 +372,11 @@ brain and needs no MCP server or skill publication, so it works on a thin
 client and from a compiled binary. The index names the absolute launcher the
 install recorded, so the index and the skills it loads come from the same
 gbrain. MCP `get_skill` is unchanged.
+
+A tool that reads gbrain's skill files from disk (for example `skills/conventions/`)
+can ask `gbrain bundled-skill --json` for `skills_root`, the skills folder of
+the gbrain that is running, instead of walking up from the binary. It is
+`null` for a single-file binary, whose skills are read with `--asset`.
 
 | | |
 |---|---|

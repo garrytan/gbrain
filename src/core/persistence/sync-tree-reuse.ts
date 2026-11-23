@@ -86,7 +86,7 @@ export function reportLevelReuseCheck(read: string, how: string, differs: string
 }
 
 /**
- * `I⋈P` across passes (sync-pass.ts `readRoundSnapshot`): the pages table and mark (S1) of a pass that ended synced, for the next
+ * `I⋈P` across passes (sync-pass.ts `readRoundSnapshot`): the pages table and mark (S1) of a pass that ended synced or resumable, for the next
  * pass's first round to prove and patch (sync-pass-confirm.ts, `across`). Same rules as a listing: taken while used, dropped
  * when unused for TREE_REUSE_MAX_AGE_MS, keyed by source and incarnation.
  */
