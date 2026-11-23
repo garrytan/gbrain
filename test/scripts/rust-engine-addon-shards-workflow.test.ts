@@ -4,10 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { load } from 'js-yaml';
 
-// The macOS cell of the Rust engine addon job is split in two halves so each finishes under 30
-// minutes (one cell took 43 minutes in run 45126845000, 33 of them in the parity loop). These checks
-// keep the split honest: every parity file runs in exactly one half, the Linux cell is unchanged in
-// what it runs, and one check still carries the old macOS name and passes only when both halves do.
+// Each target of the Rust engine addon job (macOS and Linux) is split in two halves so each finishes
+// under 30 minutes (the macOS cell took 43 minutes in run 45126845000, 33 of them in the parity loop;
+// the Linux cell reached 29). These checks keep the split honest: every parity file runs in exactly one
+// half of each target, and one check per target still carries the old name and passes only when both
+// halves do.
 type Step = { name?: string; if?: string; uses?: string; run?: string; env?: Record<string, string>; shell?: string };
 type Job = {
   name?: string;
@@ -25,7 +26,7 @@ type Cell = { target: string; runner: string; shard: string; shards: string; lab
 const root = join(import.meta.dir, '../..');
 const workflow = load(readFileSync(join(root, '.github/workflows/rust-engine.yml'), 'utf8')) as Workflow;
 const addon = workflow.jobs.addon!;
-const gate = workflow.jobs['addon-darwin-gate']!;
+const gates = { 'linux-x64-glibc': workflow.jobs['addon-linux-gate']!, 'darwin-arm64': workflow.jobs['addon-darwin-gate']! };
 const steps = addon.steps ?? [];
 const step = (prefix: string) => {
   const found = steps.find(s => (s.name ?? '').startsWith(prefix) || (prefix === 'upload' && (s.uses ?? '').startsWith('actions/upload-artifact@')));
@@ -74,21 +75,22 @@ function parityRun(shard: string, shards: string): { parity: string[]; storeRuns
 }
 
 describe('Rust engine addon job shards', () => {
-  test('keeps the workflow name and the Linux job name, and splits the macOS cell in two', () => {
+  test('keeps the workflow name and splits each target in two named halves', () => {
     expect(workflow.name).toBe('Rust engine');
     const names = scopeTargets().map(c => `Addon and Bun smoke / ${c.label}`);
     expect(addon.name).toBe('Addon and Bun smoke / ${{ matrix.label }}');
     expect(names).toEqual([
-      'Addon and Bun smoke / linux-x64-glibc',
+      'Addon and Bun smoke / linux-x64-glibc (1 of 2)',
+      'Addon and Bun smoke / linux-x64-glibc (2 of 2)',
       'Addon and Bun smoke / darwin-arm64 (1 of 2)',
       'Addon and Bun smoke / darwin-arm64 (2 of 2)',
     ]);
   });
 
-  test('Linux is one shard of one; macOS is shards 1 and 2 of 2 on the same runner', () => {
-    const [linux, ...darwin] = scopeTargets();
-    expect(linux).toEqual({ target: 'linux-x64-glibc', runner: 'ubicloud-standard-4-ubuntu-2404', shard: '1', shards: '1', label: 'linux-x64-glibc' });
-    expect(darwin.map(c => [c.target, c.runner, c.shard, c.shards])).toEqual([
+  test('each target is shards 1 and 2 of 2 on its own runner', () => {
+    expect(scopeTargets().map(c => [c.target, c.runner, c.shard, c.shards])).toEqual([
+      ['linux-x64-glibc', 'ubicloud-standard-4-ubuntu-2404', '1', '2'],
+      ['linux-x64-glibc', 'ubicloud-standard-4-ubuntu-2404', '2', '2'],
       ['darwin-arm64', 'macos-26', '1', '2'],
       ['darwin-arm64', 'macos-26', '2', '2'],
     ]);
@@ -100,7 +102,7 @@ describe('Rust engine addon job shards', () => {
     expect(addon.strategy?.matrix?.include).toBe('${{ fromJSON(needs.scope.outputs.targets) }}');
   });
 
-  test('the halves cover every parity file once, and a single shard runs all of them', () => {
+  test('the halves cover every parity file once, and a single shard would run all of them', () => {
     const all = readdirSync(join(root, 'test/engine-parity')).filter(f => f.endsWith('.test.ts')).map(f => `test/engine-parity/${f}`).sort();
     const one = parityRun('1', '1');
     const first = parityRun('1', '2');
@@ -112,7 +114,7 @@ describe('Rust engine addon job shards', () => {
     expect([one.storeRuns, first.storeRuns, second.storeRuns]).toEqual([1, 1, 0]);
   });
 
-  test('the other steps run on the shard that owns them, so Linux still runs all of them', () => {
+  test('the other steps run on the shard that owns them, so each target runs all of them once', () => {
     const first = (s: Step) => s.if;
     expect(first(step('CLI parity'))).toBe("matrix.shard == '1'");
     expect(first(step('Withdrawn claims'))).toBe("matrix.shard == '1'");
@@ -126,18 +128,63 @@ describe('Rust engine addon job shards', () => {
     expect(first(step('Smoke test under Bun'))).toBeUndefined();
   });
 
-  test('one check named like the old macOS cell passes only when every macOS half passed', () => {
-    expect(gate.name).toBe('Addon and Bun smoke / darwin-arm64');
-    expect(gate.needs).toEqual(['scope', 'addon']);
-    expect(gate.if).toContain('!cancelled()');
-    expect(gate.if).toContain("github.event_name != 'schedule'");
-    expect(gate.if).toContain('darwin-arm64');
-    expect(gate.permissions).toEqual({ contents: 'read', actions: 'read' });
-    const script = gate.steps![0]!.run!;
-    expect(script).toContain('startswith("Addon and Bun smoke / darwin-arm64 (")');
-    expect(script).toContain('"$have" -eq "$want"');
-    expect(script).toContain('"$ok" -eq "$want"');
-    // The gate's own name must not match the pattern it reads, or it would wait on itself.
-    expect(gate.name!.startsWith('Addon and Bun smoke / darwin-arm64 (')).toBe(false);
+  for (const target of ['linux-x64-glibc', 'darwin-arm64'] as const) {
+    test(`one check named "Addon and Bun smoke / ${target}" passes only when every ${target} half passed`, () => {
+      const gate = gates[target];
+      expect(gate.name).toBe(`Addon and Bun smoke / ${target}`);
+      expect(gate.needs).toEqual(['scope', 'addon']);
+      expect(gate.if).toContain('!cancelled()');
+      expect(gate.if).toContain("github.event_name != 'schedule'");
+      expect(gate.if).toContain(`'"${target}"'`);
+      expect(gate.permissions).toEqual({ contents: 'read', actions: 'read' });
+      expect(gate.steps![0]!.env!.TARGET).toBe(target);
+      const script = gate.steps![0]!.run!;
+      expect(script).toContain('startswith(');
+      expect(script).toContain('Addon and Bun smoke / $TARGET (');
+      expect(script).toContain('"$have" -eq "$want"');
+      expect(script).toContain('"$ok" -eq "$want"');
+      // The gate's own name must not match the pattern it reads, or it would wait on itself.
+      expect(gate.name!.startsWith(`Addon and Bun smoke / ${target} (`)).toBe(false);
+    });
+  }
+
+  // Run the gate's script against canned job lists with a stand-in for gh.
+  function gateRun(target: keyof typeof gates, second: string, haveSecond = true): number {
+    const dir = mkdtempSync(join(tmpdir(), 'gate-'));
+    try {
+      writeFileSync(join(dir, 'gh'), `#!/bin/bash
+prog=""; while [ $# -gt 0 ]; do [ "$1" = --jq ] && prog=$2; shift; done
+echo "$JOBS" | jq -r "$prog"
+`);
+      chmodSync(join(dir, 'gh'), 0o755);
+      const row = (name: string, conclusion: string | null) => ({ name, conclusion });
+      const jobs = [
+        row(`Addon and Bun smoke / ${target} (1 of 2)`, 'success'),
+        ...(haveSecond ? [row(`Addon and Bun smoke / ${target} (2 of 2)`, second)] : []),
+        row(`Addon and Bun smoke / ${target}`, null),
+        row('Addon and Bun smoke / other-target (1 of 2)', 'failure'),
+      ];
+      const run = Bun.spawnSync(['bash', '-c', gates[target].steps![0]!.run!], {
+        env: {
+          PATH: `${dir}:${process.env.PATH ?? ''}`,
+          JOBS: JSON.stringify({ jobs }),
+          REPO: 'o/r', RUN_ID: '1', TARGET: target,
+          TARGETS: JSON.stringify([{ target }, { target }, { target: 'other-target' }]),
+        },
+      });
+      return run.exitCode;
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  test('the gate script passes on two green halves and fails on a red, running or missing half, whatever the other target did', () => {
+    for (const target of ['linux-x64-glibc', 'darwin-arm64'] as const) {
+      expect(gateRun(target, 'success')).toBe(0);
+      expect(gateRun(target, 'failure')).toBe(1);
+      expect(gateRun(target, 'cancelled')).toBe(1);
+      expect(gateRun(target, 'running')).toBe(1);
+      expect(gateRun(target, 'success', false)).toBe(1);
+    }
   });
 });

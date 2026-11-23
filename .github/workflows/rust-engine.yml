@@ -12,11 +12,12 @@ name: Rust engine
 #              the Rust arm of the engine parity suite), then the CLI parity test
 #              (test/rust-cli-parity.serial.test.ts: each read command on a Rust brain is equal to
 #              PGLite, refused with a typed refusal, or has no Rust engine; only a diverged command
-#              fails), then uploads the .node file. The macOS cell is two matrix halves, each under
-#              30 minutes: both build the addon and run the smoke test, each runs half of the
-#              parity files, and the CLI parity steps are divided between them (see the addon job).
-#   addon-darwin-gate  one check named like the old single macOS cell: green only when every
-#              macOS half of the addon job passed.
+#              fails), then uploads the .node file. Each target (Linux and macOS) is two matrix
+#              halves, each under 30 minutes: both build the addon and run the smoke test, each
+#              runs half of the parity files, and the CLI parity steps are divided between them
+#              (see the addon job).
+#   addon-linux-gate, addon-darwin-gate  one check per target named like the old single cell
+#              ("Addon and Bun smoke / <target>"): green only when every half of that target passed.
 #   without-rust  no Rust on PATH: bun install, bun run build, ./bin/gbrain --version.
 #   keyword-goldens  proves the generated and golden keyword-search files are what PostgreSQL 18.6
 #              says: parser/actions.rs and parser/charclass.rs are regenerated and compared, and the
@@ -140,14 +141,17 @@ jobs:
             fi
           fi
           # shard/shards: this cell runs the parity files whose position (sorted, counted from 1) is
-          # congruent to shard modulo shards. label is the job name suffix; the Linux label stays the bare target.
-          linux='{"target":"linux-x64-glibc","runner":"ubicloud-standard-4-ubuntu-2404","shard":"1","shards":"1","label":"linux-x64-glibc"}'
+          # congruent to shard modulo shards. label is the job name suffix. The check named with the bare
+          # target is a gate job that needs every half of that target (addon-linux-gate, addon-darwin-gate).
+          # One Linux cell reached 29 min of its 30 (the parity step went from 17 to 24 min), so Linux is split in two as well.
+          linux1='{"target":"linux-x64-glibc","runner":"ubicloud-standard-4-ubuntu-2404","shard":"1","shards":"2","label":"linux-x64-glibc (1 of 2)"}'
+          linux2='{"target":"linux-x64-glibc","runner":"ubicloud-standard-4-ubuntu-2404","shard":"2","shards":"2","label":"linux-x64-glibc (2 of 2)"}'
           # Unverified before the first CI run: the dylib name (libgbrain_napi.dylib) and Bun
           # loading an unsigned .node with process.dlopen.
           # One macOS cell took 43 min in run 45126845000 (cap 45); two halves keep each under 30.
           darwin1='{"target":"darwin-arm64","runner":"macos-26","shard":"1","shards":"2","label":"darwin-arm64 (1 of 2)"}'
           darwin2='{"target":"darwin-arm64","runner":"macos-26","shard":"2","shards":"2","label":"darwin-arm64 (2 of 2)"}'
-          if [ "$macos" = true ]; then targets="[$linux,$darwin1,$darwin2]"; else targets="[$linux]"; fi
+          if [ "$macos" = true ]; then targets="[$linux1,$linux2,$darwin1,$darwin2]"; else targets="[$linux1,$linux2]"; fi
           echo "scope: event=$EVENT rust=$rust macos=$macos"
           echo "rust=$rust" >> "$GITHUB_OUTPUT"
           echo "targets=$targets" >> "$GITHUB_OUTPUT"
@@ -237,7 +241,7 @@ jobs:
     if: github.event_name != 'schedule'
     runs-on: ${{ matrix.runner }}
     # darwin-arm64 runners run about 1.3x slower; one cell took 43 min in run 45126845000 (the parity loop took 33 min of it).
-    # The macOS cell is therefore two halves (shard 1 and 2 of 2), and every cell has the same 30 minute cap.
+    # Each target is therefore two halves (shard 1 and 2 of 2), and every cell has the same 30 minute cap.
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -306,7 +310,7 @@ jobs:
       # instead of skipping. Each file runs in its own Bun process, as the parity suite does elsewhere.
       # A cell with shards > 1 runs only its share: the store tests on shard 1, and every parity file whose
       # position in the sorted list, counted from 1, leaves shard - 1 when divided by shards (no bash 4 features:
-      # the macOS runner shell may be bash 3.2). Every file lands in exactly one shard; the Linux cell is one shard.
+      # the macOS runner shell may be bash 3.2). Every file lands in exactly one shard of its target.
       - name: Rust engine store tests and the parity suite's Rust arm
         shell: bash
         env:
@@ -336,7 +340,7 @@ jobs:
       # an error instead of a skip.
       # The four steps from here to the artifact upload are divided between the halves of a split cell
       # (CLI parity and the withdrawn-lead lane on shard 1, the token and MCP steps on the last shard) so the
-      # halves finish together; a single-shard cell (Linux) runs all of them.
+      # halves finish together; a cell with a single shard would run all of them.
       - name: CLI parity on a Rust brain against PGLite (no diverged command)
         if: matrix.shard == '1'
         timeout-minutes: 15
@@ -380,11 +384,41 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # One check named like the single macOS cell used to be. It passes only when every macOS half of the
-  # addon job succeeded: it reads the conclusion of each job named "Addon and Bun smoke / darwin-arm64 (n of m)"
-  # in this run, and fails when one is not a success or fewer than the scope job's macOS cells are there.
-  # `needs.addon.result` alone would also fail on a Linux-only failure, so the cells are read one by one.
-  # Skipped (like the macOS cells) when the scope job picked no macOS cell and on the schedule.
+  # One check per target named like the single cell used to be ("Addon and Bun smoke / <target>"). It passes
+  # only when every half of that target's addon cells succeeded: it reads the conclusion of each job named
+  # "Addon and Bun smoke / <target> (n of m)" in this run, and fails when one is not a success or fewer than the
+  # scope job's cells for that target are there. `needs.addon.result` alone would also fail on the other target's
+  # failure, so the cells are read one by one. Skipped on the schedule, and the macOS gate when the scope job
+  # picked no macOS cell (like the macOS cells).
+  addon-linux-gate:
+    name: Addon and Bun smoke / linux-x64-glibc
+    needs: [scope, addon]
+    if: ${{ !cancelled() && github.event_name != 'schedule' && contains(needs.scope.outputs.targets, '"linux-x64-glibc"') }}
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Every Linux half of the addon job passed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          TARGETS: ${{ needs.scope.outputs.targets }}
+          TARGET: linux-x64-glibc
+        run: |
+          set -euo pipefail
+          want=$(jq --arg t "$TARGET" '[.[] | select(.target == $t)] | length' <<< "$TARGETS")
+          rows=$(gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100" \
+            --jq ".jobs[] | select(.name | startswith(\"Addon and Bun smoke / $TARGET (\")) | [.name, (.conclusion // \"running\")] | @tsv")
+          printf '%s\n' "$rows"
+          have=$(printf '%s\n' "$rows" | grep -c . || true)
+          ok=$(printf '%s\n' "$rows" | awk -F'\t' '$2 == "success"' | grep -c . || true)
+          echo "$TARGET halves expected $want, found $have, passed $ok"
+          [ "$want" -gt 0 ] && [ "$have" -eq "$want" ] && [ "$ok" -eq "$want" ] || { echo "::error::not every $TARGET half of the addon job passed"; exit 1; }
+
   addon-darwin-gate:
     name: Addon and Bun smoke / darwin-arm64
     needs: [scope, addon]
@@ -402,16 +436,17 @@ jobs:
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
           TARGETS: ${{ needs.scope.outputs.targets }}
+          TARGET: darwin-arm64
         run: |
           set -euo pipefail
-          want=$(jq '[.[] | select(.target == "darwin-arm64")] | length' <<< "$TARGETS")
+          want=$(jq --arg t "$TARGET" '[.[] | select(.target == $t)] | length' <<< "$TARGETS")
           rows=$(gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100" \
-            --jq '.jobs[] | select(.name | startswith("Addon and Bun smoke / darwin-arm64 (")) | [.name, (.conclusion // "running")] | @tsv')
+            --jq ".jobs[] | select(.name | startswith(\"Addon and Bun smoke / $TARGET (\")) | [.name, (.conclusion // \"running\")] | @tsv")
           printf '%s\n' "$rows"
           have=$(printf '%s\n' "$rows" | grep -c . || true)
           ok=$(printf '%s\n' "$rows" | awk -F'\t' '$2 == "success"' | grep -c . || true)
-          echo "macOS halves expected $want, found $have, passed $ok"
-          [ "$want" -gt 0 ] && [ "$have" -eq "$want" ] && [ "$ok" -eq "$want" ] || { echo "::error::not every macOS half of the addon job passed"; exit 1; }
+          echo "$TARGET halves expected $want, found $have, passed $ok"
+          [ "$want" -gt 0 ] && [ "$have" -eq "$want" ] && [ "$ok" -eq "$want" ] || { echo "::error::not every $TARGET half of the addon job passed"; exit 1; }
 
   # Event parity (docs/TESTING.md#event-parity): the schedule runs only `checks`.
   # Check mode only: each command exits 1 if a committed file differs from what PostgreSQL 18.6 produces.
