@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { evaluateReadiness, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
 import { buildDrillStatus } from '../src/shadow/drill-status.ts';
-import { cachePaths, fetchEvalGates, readEvalGatesVerdict } from '../src/shadow/eval-gates.ts';
+import { cachePaths, evalGatesPath, evalGatesUrl, fetchEvalGates, readEvalGatesVerdict } from '../src/shadow/eval-gates.ts';
 import { shadowStatusDocument } from '../src/shadow/status-document.ts';
 import {
   ADDON_SHA, BUILD, COMMIT, EVALS_COMMIT, EVALS_REF, evalUrl, gatesObject, OTHER_ADDON_SHA, OTHER_COMMIT, passGate, pinFor, sha256, TAG, TARGET, writeCache, writeEpoch,
@@ -153,6 +153,37 @@ describe('eval gates verdict', () => {
     expect(verdict).toEqual({ passed: false, reason: 'eval_gates_pin_invalid: evals_ref' });
     expect(row.state).toBe('fail');
     expect(row.detail).toContain('eval_gates_pin_invalid: evals_ref');
+  });
+
+  test('the raw URL is exactly the gbrain-evals contract: evals_ref in the ref, the filename stem is evals_commit', () => {
+    expect(evalGatesPath(EVALS_COMMIT, TAG)).toBe(`eval/results/engine-bench/eval-gates/${TAG}/${EVALS_COMMIT}.json`);
+    expect(evalGatesUrl(EVALS_REF, evalGatesPath(EVALS_COMMIT, TAG)))
+      .toBe(`https://raw.githubusercontent.com/garrytan/gbrain-evals/${EVALS_REF}/eval/results/engine-bench/eval-gates/${TAG}/${EVALS_COMMIT}.json`);
+    expect(evalGatesUrl('1'.repeat(40), 'eval/results/engine-bench/eval-gates/v0.60.764.0/2222222222222222222222222222222222222222.json'))
+      .toBe('https://raw.githubusercontent.com/garrytan/gbrain-evals/1111111111111111111111111111111111111111/eval/results/engine-bench/eval-gates/v0.60.764.0/2222222222222222222222222222222222222222.json');
+  });
+
+  test.each([
+    ['missing', (p: Record<string, unknown>) => { delete p.sha256; }],
+    ['not hex', (p: Record<string, unknown>) => { p.sha256 = 'z'.repeat(64); }],
+    ['too short', (p: Record<string, unknown>) => { p.sha256 = 'a'.repeat(63); }],
+  ])('a pin whose sha256 is %s is invalid and NOT READY, naming the field', (_name, patch) => {
+    expect(judge(() => undefined, { pin: patch }).verdict).toEqual({ passed: false, reason: 'eval_gates_pin_invalid: sha256' });
+  });
+
+  test('a pin sha256 that is not the file\'s is NOT READY with eval_gates_digest_mismatch, from the cache and from a fetch', async () => {
+    const wrong = 'a'.repeat(64);
+    const judged = judge(() => undefined, { pin: p => { p.sha256 = wrong; } });
+    expect(judged.verdict).toEqual({ passed: false, reason: 'eval_gates_digest_mismatch' });
+    expect(judged.row.detail).toContain('eval_gates_digest_mismatch');
+    const { dir, epoch } = shadow();
+    const text = JSON.stringify(gatesObject());
+    const routes: Record<string, () => Response> = {
+      [`https://github.com/garrytan/gbrain/releases/download/${TAG}/gbrain-eval-gates.pin.json`]: () => new Response(JSON.stringify(pinFor(text, p => { p.sha256 = wrong; }))),
+      [evalUrl()]: () => new Response(text),
+    };
+    expect(await fetchEvalGates(dir, epoch, { fetch: ((async (u: string) => routes[u]!()) as unknown) as typeof fetch, hostTarget: TARGET }))
+      .toEqual({ cached: false, reason: 'eval_gates_digest_mismatch', passed: false });
   });
 
   test('the readiness row prints the reason, and the Nov 28 timing only while the file is missing', () => {

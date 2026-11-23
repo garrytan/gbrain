@@ -4,9 +4,10 @@
  *
  *   GH_TOKEN=<token> bun run scripts/eval-gates-pin.ts --out <dir> [--github-output]
  *
- * For each of the last 10 releases of gbrain it reads `eval/results/engine-bench/eval-gates/<tag>/` on gbrain-evals main
- * (one commit read once, so every file and URL below names the same immutable tree), takes the first FINAL file that is
- * for THAT release (its own `gbrain_tag`, never today's VERSION) and whose tag resolves to the file's `gbrain_commit`,
+ * For each of the last 10 releases of gbrain it lists `eval/results/engine-bench/eval-gates/<tag>/` on gbrain-evals main
+ * and reads each file at `evals_ref`, the squash commit on main that landed it (the file is never rewritten, so that
+ * commit never changes and the pin of an old release comes out byte for byte the same on every run). It takes the
+ * first FINAL file that is for THAT release (its own `gbrain_tag`, never today's VERSION) and whose tag resolves to the file's `gbrain_commit`,
  * and writes `<out>/<tag>/gbrain-eval-gates.pin.json` for the workflow to attach to that release. A release that has
  * the pin already is checked, not rewritten: an identical pin is a no-op, a different one fails the run and names the
  * tag, because replacing a pin must be an explicit repair.
@@ -26,10 +27,11 @@ export interface ReleaseInfo { tag: string; assets: Array<{ name: string; url: s
 
 /** What the publisher reads from GitHub; tests replace it. A missing thing is `null`, a failure throws. */
 export interface PinSource {
-  evalsMainCommit(): Promise<string>;
   releases(): Promise<ReleaseInfo[]>;
-  /** File names under the tag's eval-gates directory at `ref`; [] when the directory does not exist. */
-  evalFiles(tag: string, ref: string): Promise<string[]>;
+  /** File names under the tag's eval-gates directory on gbrain-evals main; [] when the directory does not exist. */
+  evalFiles(tag: string): Promise<string[]>;
+  /** The commit on main that added the file at `path` (the oldest commit that touched it), or null when none did. */
+  landingCommit(path: string): Promise<string | null>;
   evalFileText(path: string, ref: string): Promise<string>;
   /** The commit the tag points at, or null when the tag does not exist. */
   tagCommit(tag: string): Promise<string | null>;
@@ -59,10 +61,9 @@ const canonical = (pin: unknown): string => JSON.stringify(pin, Object.keys(pin 
 /** Decides, per release, whether to publish a pin, leave an existing one, or fail on a conflicting one. */
 export async function planPins(source: PinSource): Promise<PinPlan> {
   const plan: PinPlan = { publish: [], unchanged: [], waiting: [], conflicts: [] };
-  const ref = await source.evalsMainCommit();
   const releases = (await source.releases()).filter(r => FINAL_TAG.test(r.tag)).slice(0, RELEASES_LOOKED_AT);
   for (const release of releases) {
-    const found = await findPin(source, release.tag, ref);
+    const found = await findPin(source, release.tag);
     const existing = release.assets.find(a => a.name === PIN_ASSET);
     if (!existing) { if (found) plan.publish.push({ tag: release.tag, pin: found }); else plan.waiting.push(release.tag); continue; }
     if (!found) { plan.unchanged.push(release.tag); continue; }
@@ -74,18 +75,21 @@ export async function planPins(source: PinSource): Promise<PinPlan> {
   return plan;
 }
 
-async function findPin(source: PinSource, tag: string, ref: string): Promise<EvalGatesPin | null> {
-  const names = (await source.evalFiles(tag, ref)).filter(n => /^[A-Za-z0-9._-]+\.json$/.test(n));
-  const candidates: Array<{ name: string; text: string; at: number }> = [];
+async function findPin(source: PinSource, tag: string): Promise<EvalGatesPin | null> {
+  const names = (await source.evalFiles(tag)).filter(n => /^[A-Za-z0-9._-]+\.json$/.test(n));
+  const candidates: Array<{ name: string; text: string; at: number; ref: string }> = [];
   for (const name of names) {
-    const text = await source.evalFileText(`eval/results/engine-bench/eval-gates/${tag}/${name}`, ref);
+    const path = `eval/results/engine-bench/eval-gates/${tag}/${name}`;
+    const ref = await source.landingCommit(path);
+    if (!ref || !/^[0-9a-f]{40}$/.test(ref)) continue;
+    const text = await source.evalFileText(path, ref);
     const file = parseEvalGatesFile(text);
-    candidates.push({ name, text, at: file ? Date.parse(file.generated_at) || 0 : 0 });
+    candidates.push({ name, text, at: file ? Date.parse(file.generated_at) || 0 : 0, ref });
   }
   candidates.sort((a, b) => a.at - b.at || a.name.localeCompare(b.name));
   const commit = candidates.length ? await source.tagCommit(tag) : null;
   for (const c of candidates) {
-    const pin = buildPin(tag, c.text, c.name, ref, commit);
+    const pin = buildPin(tag, c.text, c.name, c.ref, commit);
     if (pin) return pin;
   }
   return null;
@@ -109,18 +113,17 @@ export function githubSource(token: string, doFetch: typeof fetch = fetch): PinS
     return body;
   };
   return {
-    evalsMainCommit: async () => {
-      const c = await json<{ sha: string }>(`${API}/repos/garrytan/gbrain-evals/commits/main`);
-      if (!c || !/^[0-9a-f]{40}$/.test(c.sha)) throw new Error('gbrain-evals main has no commit');
-      return c.sha;
-    },
     releases: async () => {
       const list = await json<Array<{ tag_name: string; draft: boolean; assets: Array<{ name: string; url: string }> }>>(`${API}/repos/garrytan/gbrain/releases?per_page=${RELEASES_LOOKED_AT}`);
       return (list ?? []).filter(r => !r.draft).map(r => ({ tag: r.tag_name, assets: r.assets.map(a => ({ name: a.name, url: a.url })) }));
     },
-    evalFiles: async (tag, ref) => {
-      const list = await json<Array<{ name: string; type: string }>>(`${API}/repos/garrytan/gbrain-evals/contents/eval/results/engine-bench/eval-gates/${tag}?ref=${ref}`);
+    evalFiles: async tag => {
+      const list = await json<Array<{ name: string; type: string }>>(`${API}/repos/garrytan/gbrain-evals/contents/eval/results/engine-bench/eval-gates/${tag}?ref=main`);
       return (list ?? []).filter(f => f.type === 'file').map(f => f.name);
+    },
+    landingCommit: async path => {
+      const list = await json<Array<{ sha: string }>>(`${API}/repos/garrytan/gbrain-evals/commits?sha=main&path=${encodeURIComponent(path)}&per_page=100`);
+      return list?.length ? list[list.length - 1]!.sha : null;
     },
     evalFileText: (path, ref) => text(`${API}/repos/garrytan/gbrain-evals/contents/${path}?ref=${ref}`, 'application/vnd.github.raw+json'),
     tagCommit: async tag => {
