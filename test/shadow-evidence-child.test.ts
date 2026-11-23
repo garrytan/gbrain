@@ -473,3 +473,23 @@ describe('owner identity, timeouts, adapter and follower evidence', () => {
     expect(follower()).toMatchObject({ probe: { state: 'not_run' }, fingerprints: { checked_rows: 0 } });
   });
 });
+
+describe('a rerun waiting for a quiet window', () => {
+  test('the end of input cuts the wait short: the sample ends as skipped (child_closing), not after the full wait', async () => {
+    const dir = seeded();
+    const input = new PassThrough();
+    let asked = 0;
+    const done = runShadowChild(dir, { input, writeControl: (l) => {
+      const m = JSON.parse(l) as { t?: string; id?: number; session?: string; kind?: string };
+      if (m.t === 'ask' && m.kind === 'rerun' && ++asked === 1) input.write(JSON.stringify({ t: 'answer', id: m.id, session: m.session ?? '', ok: false, error: { code: 'moved' } }) + '\n'); // the position moved: the next run waits 0.5 s
+    }, ...BASE, random: () => 0.5, openEngine: () => ({ async connect() {}, async disconnect() {}, async getPage() { return { slug: 'other' }; } }) as never });
+    const started = Date.now();
+    input.write(read('getPage', ['a'], { slug: 'a' }));
+    while (asked < 1) await tick();
+    await new Promise((r) => setTimeout(r, 100)); // now inside the wait
+    input.end();
+    await done;
+    expect(Date.now() - started).toBeLessThan(450); // the full wait is 500 ms
+    expect(ledgerRows(dir).at(-1)).toMatchObject({ op: 'getPage', rerun: 'skipped:child_closing' });
+  });
+});

@@ -204,3 +204,18 @@ export function createSerialQueue<T>(bound: number, run: (task: T) => Promise<vo
     idle: (): Promise<void> => busy ?? Promise.resolve(),
   };
 }
+
+/** The wait before a rerun: a timer (never a busy loop) that `close()` ends at once. `sleep` is a seam for tests. */
+export function createWaiter(sleep?: (ms: number) => Promise<void>) {
+  let closed = false;
+  const wakers = new Set<() => void>();
+  return {
+    pause: sleep ?? ((ms: number): Promise<void> => new Promise((resolve) => {
+      const done = (): void => { clearTimeout(timer); wakers.delete(done); resolve(); };
+      const timer = setTimeout(done, ms);
+      wakers.add(done);
+    })),
+    close(): void { closed = true; for (const wake of [...wakers]) wake(); },
+    closed: (): boolean => closed,
+  };
+}

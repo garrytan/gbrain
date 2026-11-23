@@ -1995,10 +1995,14 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   same (the privacy check also needs the access tables' generation to hold, and no page or access row to carry a time later than the read). A role that is neither a superuser nor in `pg_read_all_stats` cannot see other sessions' transactions: its token is blind
   and clears nothing. Any committed write to any table, to the
   catalog (a policy altered in place) or a change undone again (A, B, A) moves it, in this database or any other of the same
-  cluster. When it moved, both engines and the reference are run again from a new position, up to 3 times (a recall score gets 3 runs in all, the first included); a sample still moving
+  cluster. When it moved, both engines and the reference are run again from a new position, up to 3 times (a recall score gets 3 runs in all, the first included). Each run after a move
+  starts only after a wait that grows (about 0.5 s, then 2 s, then 8 s, each varied by up to a quarter either way, about 13 s at most for one sample), so a short burst of writes
+  (a checkpoint, a vacuum, a batch job) can pass. The wait is a timer in the shadow child: it blocks neither the serving process nor the child's other work, and it ends at once when the child is told to stop.
+  It does not touch the 30 s limit of each run, and a rerun that is waiting holds its place in the queue of 64. A sample still moving
   after that stays unresolved (`skipped:moved`) and counts into `reads.diverged_unexplained_7d` (criterion 3). So busy brains clear
   fewer samples; an idle one clears them all (on an 8-core test machine an idle PGLite brain never moved, an idle Postgres moved in 2 to 5% of 1 s windows,
-  and under one write every 2 seconds a sample moved in about 10% of 250 ms windows and 50% of 1 s windows). Each rerun is its own attempt, with its own answer and position; the follow-up questions name the attempt, and an unknown or dropped one is never proven. A list of more than 2,000 row identities, or one holding anything invalid,
+  and under one write every 2 seconds a sample moved in about 10% of 250 ms windows and 50% of 1 s windows). Waiting helps against bursts and not against a steady stream: in a model with bursts of writes it cleared
+  every sample where about 1 in 10 stayed unresolved without it, while against writes at an exact steady rate it cleared no more samples and a few fewer (the waits land at random points of the rhythm). Each rerun is its own attempt, with its own answer and position; the follow-up questions name the attempt, and an unknown or dropped one is never proven. A list of more than 2,000 row identities, or one holding anything invalid,
   is never complete. The vector reference is the engine's own exact statement with no candidate
   window and is used only when the same proof holds from the sample's capture to the end of the reference run; otherwise the sample is
   not scored. Tied rows at the cutoff count only for the top-ten places the strictly better rows leave, and a reference whose last row

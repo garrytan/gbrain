@@ -8,9 +8,10 @@ import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { callerAccessRecord, withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { buildVectorSearchStatement } from '../../src/core/search/vector-statement.ts';
+import { RERUN_BACKOFF_TOTAL_MS, type ShadowChildDeps } from '../../src/shadow/child.ts';
 import { createLsnWatch, makeAskHandler } from '../../src/shadow/checks.ts';
 import { openReadSource } from '../../src/shadow/read-pool.ts';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFile, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { SampleRegistry } from '../../src/shadow/samples.ts';
 import { encodeValue } from '../../src/shadow/codec.ts';
@@ -267,14 +268,19 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
   describe('ranked vector search under excludePrivate', () => {
     type Rows = Array<Record<string, unknown>>;
     /** One ranked searchVector read as ALICE under excludePrivate; Rust answers `answer(primary's rows, a real spare row, page ids)`. Returns criterion 3, the counts and the ledger rows. */
-    async function ranked(answer: (theirs: Rows, spare: Record<string, unknown>, ids: Record<string, number>) => Rows, o: { settle?: boolean; onPrivacyAsk?: (n: number) => Promise<void> } = {}) {
+    async function ranked(answer: (theirs: Rows, spare: Record<string, unknown>, ids: Record<string, number>) => Rows, o: { settle?: boolean; onPrivacyAsk?: (n: number) => Promise<void>; child?: Partial<ShadowChildDeps>; noRecall?: boolean } = {}) {
       const primary = ctx.primary();
       const ids = await privacyFixture(primary);
       await vectorFixture(primary);
       const opts = { limit: 10, excludePrivate: true };
       const theirs = await withCallerAccess(ALICE, () => primary.searchVector(vec(3), opts)) as unknown as Rows;
       const spare = (await withCallerAccess(ALICE, () => primary.searchVector(vec(3), { ...opts, limit: 12 })) as unknown as Rows)[10]!; // a real chunk the caller may read, outside the top ten
-      const rig = await start();
+      const rig = await start(o.child ? { child: o.child } : {});
+      if (o.noRecall) { // the recall score has its own waits: leave it out, so the waits counted are the rerun's
+        const sup = (rig.attached.supervisor as unknown as { o: { onAsk: (a: Record<string, unknown>) => Promise<unknown> } }).o;
+        const real = sup.onAsk;
+        sup.onAsk = async (ask) => { if (ask.kind === 'vector') throw Object.assign(new Error('off'), { code: 'busy' }); return real(ask); };
+      }
       if (o.onPrivacyAsk) { // the primary changes (or not) while the check runs: called with the number of this privacy ask
         const sup = (rig.attached.supervisor as unknown as { o: { onAsk: (a: Record<string, unknown>) => Promise<unknown> } }).o;
         const real = sup.onAsk;
@@ -431,6 +437,55 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
           expect(r.rows[0]).toMatchObject({ outcome: 'diff', reason: 'extra_rows_cleared' }); // asks 1 and 2 moved, ask 3 held
           const never = await ranked(clearing, { settle: true, onPrivacyAsk: async (n) => { if (n <= 4) await ctx.primary().executeRaw(`INSERT INTO ${probe} VALUES (${n})`); } });
           expect(never.rows[0]).toMatchObject({ outcome: 'inconclusive', rerun: 'skipped:moved' }); // the first check and the three reruns moved: no clearance
+        } finally { await ctx.primary().executeRaw(`DROP TABLE IF EXISTS ${probe}`); }
+      });
+
+      /** A noisy neighbour on a virtual clock: every wait the child makes moves the clock, and the position moves on each check made before `quietAt`. */
+      const noisy = (quietAt: number) => {
+        const t = { clock: 0, waits: [] as number[] };
+        const child: Partial<ShadowChildDeps> = { random: () => 0.5, sleep: async (ms) => { t.waits.push(ms); t.clock += ms; } };
+        const onPrivacyAsk = async (): Promise<void> => { if (t.clock < quietAt) await ctx.primary().executeRaw(`INSERT INTO ${probe} VALUES (1)`); };
+        return { t, run: () => ranked(clearing, { settle: true, child, onPrivacyAsk, noRecall: true }) };
+      };
+      for (const [name, quietAt, cleared] of [['a burst that ends within the waits clears the sample', 1_000, true], ['noise that never ends leaves it unresolved and unexplained', Infinity, false]] as const) {
+        test(`a growing wait before each rerun: ${name}`, async () => {
+          await ctx.primary().executeRaw(`DROP TABLE IF EXISTS ${probe}`);
+          await ctx.primary().executeRaw(`CREATE TABLE ${probe} (x int)`);
+          try {
+            const n = noisy(quietAt);
+            const r = await n.run();
+            if (cleared) {
+              expect(r.rows[0]).toMatchObject({ outcome: 'diff', reason: 'extra_rows_cleared', rerun: 'differed' });
+              expect(r.reads.diverged_unexplained_7d).toBe(0);
+              expect(n.t.waits).toEqual([500, 2_000]); // the check at 0 s and the rerun at 0.5 s moved; the rerun at 2.5 s held
+            } else {
+              counts(r);
+              expect(r.rows[0]).toMatchObject({ rerun: 'skipped:moved' });
+              expect(n.t.waits).toEqual([500, 2_000, 8_000]); // one wait before each of the three reruns
+              expect(n.t.waits.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(RERUN_BACKOFF_TOTAL_MS);
+            }
+          } finally { await ctx.primary().executeRaw(`DROP TABLE IF EXISTS ${probe}`); }
+        });
+      }
+
+      test('the wait is a timer, not a block: a timer and an I/O callback run while a moved sample waits, and the sample then clears', async () => {
+        await ctx.primary().executeRaw(`DROP TABLE IF EXISTS ${probe}`);
+        await ctx.primary().executeRaw(`CREATE TABLE ${probe} (x int)`);
+        try {
+          let ticks = 0; let io = 0; let running = true;
+          const timer = setInterval(() => { ticks++; }, 10);
+          const spin = (): void => { if (running) readFile(import.meta.path, () => { io++; setImmediate(spin); }); };
+          spin();
+          let first: { at: number; ticks: number; io: number } | undefined; let second: { at: number; ticks: number; io: number } | undefined;
+          const r = await ranked(clearing, { settle: true, child: { random: () => 0.5, sleep: undefined }, noRecall: true, onPrivacyAsk: async (n) => { // the real timer: the first check moves, the rerun asks after the wait
+            const mark = { at: Date.now(), ticks, io };
+            if (n === 1) { first = mark; await ctx.primary().executeRaw(`INSERT INTO ${probe} VALUES (1)`); } else if (n === 2) second = mark;
+          } });
+          running = false; clearInterval(timer);
+          expect(r.rows[0]).toMatchObject({ outcome: 'diff', reason: 'extra_rows_cleared' });
+          expect(second!.at - first!.at).toBeGreaterThanOrEqual(450); // it waited 0.5 s
+          expect(second!.ticks - first!.ticks).toBeGreaterThan(20); // a timer ran about every 10 ms through the wait: a blocked loop gives none
+          expect(second!.io - first!.io).toBeGreaterThan(0); // and file reads completed
         } finally { await ctx.primary().executeRaw(`DROP TABLE IF EXISTS ${probe}`); }
       });
     });

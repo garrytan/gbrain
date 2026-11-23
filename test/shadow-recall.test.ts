@@ -18,7 +18,7 @@ import { ensureEpoch } from '../src/shadow/evidence-epoch.ts';
 import { buildEvidenceStatus, renderEvidenceStatus } from '../src/shadow/evidence.ts';
 import { appendFault, appendLedgerRows, type ShadowLedgerRow } from '../src/shadow/ledger.ts';
 import { shadowStatusDocument } from '../src/shadow/status-document.ts';
-import { scoreWithReruns } from '../src/shadow/child.ts';
+import { RERUN_ATTEMPTS, RERUN_BACKOFF_JITTER, RERUN_BACKOFF_MS, RERUN_BACKOFF_TOTAL_MS, rerunBackoffMs, scoreWithReruns } from '../src/shadow/child.ts';
 import { appendRecall, firstTenKeys, IntervalGate, readEpochRecall, recallEligible, RECALL_REFERENCE_LIMIT, scoreRecall, type RankedKey } from '../src/shadow/recall.ts';
 
 const dirs: string[] = [];
@@ -250,5 +250,41 @@ describe('unexplained and privacy fields', () => {
     expect(status(open.dir).privacy_diverged).toBeUndefined();
     appendLedgerRows(open.dir, [row(open.epoch, 'listPages', 'inconclusive', { reason: 'privacy_check_unavailable', mismatch: 'diff', rerun: 'matched' })]);
     expect(status(open.dir).evidence).toMatchObject({ privacy_checks_unsettled_7d: 1 }); // the matched one is settled; the earlier one is not
+  });
+});
+
+describe('the wait before a rerun after a moved check', () => {
+  const moved = (): never => { throw Object.assign(new Error('moved'), { code: 'moved' }); };
+  /** A recall sample whose reference is refused (moved) on every run made before `quietAt` on a virtual clock that only the waits advance. */
+  async function sample(quietAt: number) {
+    const t = { clock: 0, waits: [] as number[], written: [] as unknown[] };
+    const env = {
+      timeoutMs: 1000, now: () => t.clock, curEpoch: () => 'e', random: () => 0.5,
+      pause: async (ms: number) => { t.waits.push(ms); t.clock += ms; },
+      ask: async (p: Record<string, unknown>) => (p.kind === 'rerun' ? { stamp: 1, epoch_id: 'e', keys: firstTenKeys(rows(ids(0, 10))), attempt: `a${t.waits.length}` } : t.clock < quietAt ? moved() : ref(12)),
+      exclusive: async (_s: number, fn: () => Promise<unknown>) => fn(),
+      callRust: async () => ({ value: rows(ids(0, 10)) }),
+      write: (score: unknown) => { t.written.push(score); },
+    };
+    await scoreWithReruns(env as never, { op: 'searchVector', sid: 's', result: [], args: [] } as never, [], rows(ids(0, 10)));
+    return t;
+  }
+  test('a burst that ends within the waits lets a later run score the sample; one that never ends leaves it unscored', async () => {
+    const quiet = await sample(1_000);
+    expect(quiet.written).toHaveLength(1);
+    expect(quiet.waits).toEqual([500, 2_000]); // the run at 0 s and the rerun at 0.5 s were refused; the rerun at 2.5 s was not
+    const never = await sample(Infinity);
+    expect(never.written).toHaveLength(0);
+    expect(never.waits).toEqual([500, 2_000]); // three runs in all, two waits between them
+    expect(never.waits.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(RERUN_BACKOFF_TOTAL_MS);
+  });
+  test('the waits grow, are jittered by a quarter at most, and the worst total of one sample is inside the bound', () => {
+    expect([1, 2, 3, 9].map((n) => rerunBackoffMs(n, () => 0.5))).toEqual([500, 2_000, 8_000, 8_000]);
+    expect(rerunBackoffMs(1, () => 0)).toBe(375);
+    expect(rerunBackoffMs(3, () => 0.999999)).toBe(10_000);
+    const worst = RERUN_BACKOFF_MS.slice(0, RERUN_ATTEMPTS).reduce((a, _, i) => a + rerunBackoffMs(i + 1, () => 0.999999), 0);
+    expect(worst).toBe(13_125);
+    expect(worst).toBeLessThanOrEqual(RERUN_BACKOFF_TOTAL_MS);
+    expect(RERUN_BACKOFF_JITTER).toBeLessThan(1);
   });
 });
