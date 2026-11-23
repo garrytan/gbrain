@@ -159,6 +159,10 @@ describe('the empty line on a brain keyless on purpose', () => {
     expect(KEYWORD_ONLY_BY_CHOICE_EMPTY).not.toContain('and no page holds these words');
   });
 
+  test('it scopes the negative to the search\'s own filters, since a source, type or where filter can leave out a readable page that has the words', () => {
+    expect(KEYWORD_ONLY_BY_CHOICE_EMPTY).toContain('within this search\'s filters');
+  });
+
   test('it is used only when the keyword arm itself found nothing, never for a page past the end or hits a later step dropped', () => {
     const byChoice = { stage: 'embed_unavailable', reason: 'embedding_disabled' };
     expect(emptyRetrievalStages([byChoice, { stage: 'keyword_zero' }])).toEqual({ stages: [], byChoice: true });

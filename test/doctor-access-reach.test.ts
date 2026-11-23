@@ -22,6 +22,8 @@ import { bindMemberSource } from '../src/core/access/member-sources.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { accessReachEntry } from '../src/commands/doctor/checks/access-reach.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
+import { runRemoteDoctorTier } from '../src/commands/doctor/remote-tier.ts';
+import type { OperationContext } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
@@ -111,6 +113,26 @@ for (const kind of testBackends()) {
       const c = await check('access_shared_source_unread');
       expect(c.details!.sources ?? []).not.toContain('guests-a');
       expect(c.details!.sources ?? []).not.toContain('guests-b');
+    }, 60_000);
+
+    test('a key whose write source is archived reads nothing, as login refuses it, so it is no reader of a shared source', async () => {
+      await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ('old-src', 'old-src', '{"federated": false}'::jsonb)`);
+      await token('erin-old', 'alice-example', ['old-src', 'company']);
+      expect((await check('access_shared_source_unread')).details!.sources ?? []).not.toContain('company');
+      await engine.executeRaw("UPDATE sources SET archived = true WHERE id = 'old-src'");
+      expect((await check('access_shared_source_unread')).details!.sources).toContain('company');
+      await engine.executeRaw("UPDATE access_tokens SET revoked_at = now() WHERE name = 'erin-old'");
+    }, 60_000);
+
+    test('remote run_doctor refuses both checks as host-only instead of returning an empty report', async () => {
+      const ctx = { engine, remote: true, transport: 'http', sourceId: 'default', config: {} as never,
+        logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext;
+      for (const name of accessReachEntry.emits!) {
+        let err: unknown;
+        try { await runRemoteDoctorTier(ctx, { only: [name] }); } catch (e) { err = e; }
+        expect((err as { code?: string } | undefined)?.code).toBe('invalid_params');
+        expect(String((err as Error).message)).toContain(`gbrain doctor --only ${name}`);
+      }
     }, 60_000);
 
     test('a key of a disabled member does not count as a reader of a shared source', async () => {

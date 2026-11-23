@@ -16,7 +16,7 @@ import { agentFix, checkError, infoCheck } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { brainServes } from '../../../core/access/serves.ts';
 import { credentialReadSources, stdioReadSources } from '../../../core/grants/shared-exposure.ts';
-import { grantFromClient, grantFromRow, grantFromTokenRow, type PrincipalGrant } from '../../../core/grants/model.ts';
+import { authSourcesFromGrant, grantFromClient, grantFromRow, grantFromTokenRow, type PrincipalGrant } from '../../../core/grants/model.ts';
 import { stdioMemberId } from '../../../core/access/caller.ts';
 import { guestSourceSql } from '../../../core/guests/marker.ts';
 
@@ -45,8 +45,12 @@ async function sharedSourceUnread(engine: BrainEngine, remote: boolean): Promise
       `SELECT c.* FROM oauth_clients c JOIN access_members m ON m.id = c.member_id WHERE c.deleted_at IS NULL AND ${ENABLED}`))
       .map(row => grantFromClient(grantFromRow(row))),
   ];
+  const archived = new Set((await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS TRUE')).map(r => r.id));
   const read = new Set<string>();
-  for (const grant of grants) for (const s of await credentialReadSources(engine, grant)) read.add(s);
+  for (const grant of grants) {
+    if (archived.has(authSourcesFromGrant(grant).sourceId)) continue;
+    for (const s of await credentialReadSources(engine, grant)) read.add(s);
+  }
   const stdio = await stdioMemberId(engine);
   if (stdio && (await engine.executeRaw(`SELECT 1 FROM access_members m WHERE m.id = $1 AND ${ENABLED}`, [stdio])).length) {
     for (const s of await stdioReadSources(engine)) read.add(s);

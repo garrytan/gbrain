@@ -51,7 +51,7 @@ function expectedWhenKeywordOnlyByChoice(d: Stage): boolean {
 }
 
 /** The one-line verdict on an empty result of such a run (MCP's `empty_retrieval` info notice and the CLI line). */
-export const KEYWORD_ONLY_BY_CHOICE_EMPTY = 'Search was keyword-only because embeddings are off on this brain on purpose, and no page this caller can read holds these words: a true negative for these words, not a degraded search (a synonym or the display name may still match).';
+export const KEYWORD_ONLY_BY_CHOICE_EMPTY = 'Search was keyword-only because embeddings are off on this brain on purpose, and no page this caller can read holds these words within this search\'s filters (source, type, where): a true negative for these words in that scope only, not a degraded search (a synonym or the display name may still match).';
 
 /**
  * The recall-impairing stages an empty result names (ranking-only stages never cause a miss), minus those a keyword-only-by-choice run expects.
