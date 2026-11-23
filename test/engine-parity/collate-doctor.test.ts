@@ -69,9 +69,8 @@ describe('doctor lists text keys by byte', () => {
   });
 
   parityTest('the raw-provenance sample names synthesized pages by byte slug', {
-    methods: ['putPage', 'executeRaw'], requires: 'raw_sql',
+    methods: ['putPage'],
   }, async (engine) => {
-    await rawProbe(engine);
     for (const slug of MIXED_SLUGS) {
       await engine.putPage(`synth/${slug}`, { type: 'synthesis', title: slug, compiled_truth: `Synthesis ${slug}.`, timeline: '' });
     }
@@ -83,16 +82,14 @@ describe('doctor lists text keys by byte', () => {
   });
 
   parityTest('unpriced models of equal page count list by byte model id', {
-    methods: ['putPage', 'executeRaw'], requires: 'raw_sql',
+    methods: ['putPage', 'upsertSegmentDerivations'],
   }, async (engine) => {
     const models = MIXED_IDS.map(id => `acme:unpriced-${id}`);
     for (const [i, model] of models.entries()) {
-      await engine.putPage(`notes/priced-${i}`, { type: 'note', title: `Page ${i}`, compiled_truth: `Body ${i}.`, timeline: '' });
-      await engine.executeRaw(
-        `INSERT INTO page_segment_derivations (page_id, pipeline, occurrence_id, pipeline_version, segment_sha256, context_hash, state, receipt)
-         SELECT p.id, 'synopsis', 1, 1, decode(repeat('aa', 32), 'hex'), decode(repeat('bb', 32), 'hex'), 'skipped', $2::text::jsonb
-           FROM pages p WHERE p.slug = $1`,
-        [`notes/priced-${i}`, JSON.stringify({ kind: 'unpriced_model', model })]);
+      const page = await engine.putPage(`notes/priced-${i}`, { type: 'note', title: `Page ${i}`, compiled_truth: `Body ${i}.`, timeline: '' });
+      await engine.upsertSegmentDerivations([{ pageId: Number(page.id), kind: 'synopsis', occurrenceId: 1, version: 1,
+        segmentSha256: new Uint8Array(32).fill(0xaa), contextHash: new Uint8Array(32).fill(0xbb), state: 'skipped', output: null,
+        receipt: { kind: 'unpriced_model', model } }]);
     }
     const [check] = await derivationUnpricedModelEntry.run({ engine } as unknown as DoctorContext) as Array<{ status: string; details: any }>;
     const listed = check!.details.models.map((m: { model: string }) => m.model);
@@ -118,15 +115,14 @@ describe('doctor lists text keys by byte', () => {
   });
 
   parityTest('restorable atom retirements list by byte source id', {
-    methods: ['putPage', 'executeRaw'], requires: 'raw_sql',
+    methods: ['putPage', 'softDeletePage'],
   }, async (engine, backend) => {
     for (const source of SOURCES) {
       await createSource(engine, backend, source);
       await engine.putPage('notes/origin', { type: 'note', title: 'Origin', compiled_truth: 'Origin body.', timeline: '' }, { sourceId: source });
-      await engine.executeRaw(
-        `INSERT INTO pages (source_id, slug, type, title, compiled_truth, deleted_at, frontmatter)
-         VALUES ($1, 'atoms/retired', 'atom', 'Retired', 'Retired atom.', now(), $2::text::jsonb)`,
-        [source, JSON.stringify({ retired_by: ATOM_REEXTRACT_RETIRED_BY, retired_at: '2026-01-01T00:00:00Z', source_slug: 'notes/origin', source_hash: 'abc123' })]);
+      await engine.putPage('atoms/retired', { type: 'atom' as never, title: 'Retired', compiled_truth: 'Retired atom.', timeline: '',
+        frontmatter: { retired_by: ATOM_REEXTRACT_RETIRED_BY, retired_at: '2026-01-01T00:00:00Z', source_slug: 'notes/origin', source_hash: 'abc123' } }, { sourceId: source });
+      await engine.softDeletePage('atoms/retired', { sourceId: source });
     }
     const check = await atomRetirementsRestorableCheck(engine, SOURCES);
     const out = (check.details as any).source_ids;
@@ -136,9 +132,8 @@ describe('doctor lists text keys by byte', () => {
   });
 
   parityTest('title-duplicate pairs list by byte stub slug', {
-    methods: ['putPage', 'executeRaw', 'listAllSources'], requires: 'raw_sql',
+    methods: ['putPage', 'listAllSources'],
   }, async (engine) => {
-    await rawProbe(engine);
     const person = (slug: string, title: string) => engine.putPage(slug, { title, type: 'person', compiled_truth: `${title}.` } as never);
     await person('people/ann-zed', 'Ann Zed');
     await person('people/anne-able', 'Anne Able');
@@ -151,9 +146,8 @@ describe('doctor lists text keys by byte', () => {
   });
 
   parityTest('undated facts pages list by byte source id then slug', {
-    methods: ['putPage', 'executeRaw'], requires: 'raw_sql',
+    methods: ['putPage'],
   }, async (engine, backend) => {
-    await rawProbe(engine);
     for (const source of SOURCES) {
       await createSource(engine, backend, source);
       for (const slug of MIXED_SLUGS) {
@@ -167,9 +161,8 @@ describe('doctor lists text keys by byte', () => {
   });
 
   parityTest('schema-pack consistency grades sources in byte id order', {
-    methods: ['putPage', 'executeRaw'], requires: 'raw_sql',
+    methods: ['putPage'],
   }, async (engine, backend) => {
-    await rawProbe(engine);
     for (const source of SOURCES) {
       await createSource(engine, backend, source);
       await engine.putPage('notes/odd', { type: 'zz-undeclared-example' as never, title: 'Odd', compiled_truth: 'Odd page.', timeline: '' }, { sourceId: source });
