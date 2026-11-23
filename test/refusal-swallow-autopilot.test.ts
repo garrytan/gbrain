@@ -19,6 +19,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import { submitAutoDrains } from '../src/commands/autopilot-dispatch.ts';
+import { computeAutopilotIdle } from '../src/commands/autopilot.ts';
 import { isSourceInCooldown, readRecentSourceFailures } from '../src/commands/autopilot-fanout.ts';
 import { existsSync } from 'node:fs';
 import { openRustBrain, removeBrainDir, rustArmAddonPath } from './engine-parity/rust-arm.ts';
@@ -122,5 +123,20 @@ describe('autopilot refusal-swallow sites', () => {
     expect(await isSourceInCooldown(pg, 's4')).toBe(false);
     // A brain whose raw SQL refuses the sources read must give the same answer, not "no success, so in cooldown".
     expect(await isSourceInCooldown(refusingOn(pg, 'FROM sources', REFUSAL), 's4')).toBe(false);
+  });
+
+  test('S5 computeAutopilotIdle: the queue is counted through the typed countJobsByStatus; a capability refusal surfaces, any other error still reads "not idle"', async () => {
+    const idleEngine = (counts: Array<{ status: string; count: number }>) => ({
+      kind: 'postgres',
+      readCycleLocks: async () => [],
+      countJobsByStatus: async () => counts,
+    }) as unknown as BrainEngine;
+    expect(await computeAutopilotIdle(idleEngine([]), 'postgres')).toBe(true);
+    expect(await computeAutopilotIdle(idleEngine([{ status: 'active', count: 1 }]), 'postgres')).toBe(false);
+    expect(await computeAutopilotIdle(idleEngine([{ status: 'waiting', count: 2 }]), 'postgres')).toBe(false);
+    const refusing = { readCycleLocks: async () => { throw REFUSAL(); } } as unknown as BrainEngine;
+    await expect(computeAutopilotIdle(refusing, 'rust')).rejects.toMatchObject({ code: 'engine_capability_missing' });
+    const blip = { readCycleLocks: async () => { throw new Error('connection reset'); } } as unknown as BrainEngine;
+    expect(await computeAutopilotIdle(blip, 'postgres')).toBe(false);
   });
 });
