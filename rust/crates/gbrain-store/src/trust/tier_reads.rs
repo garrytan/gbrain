@@ -7,6 +7,8 @@
 //!   rows at a listed stored tier above a cursor.
 //! - [`Store::list_version_trust_tiers`] / [`Store::list_version_reason_writers`]: the snapshot
 //!   tier of a version, and the type and tier of the write that replaced it.
+//! - [`Store::list_page_refs_by_ids`]: the source, slug and type of each listed page, for the
+//!   reads that quote a third-party page's rows.
 //!
 //! They read the tier and write origin fields of the page, fact and version records
 //! (`trust::stamp`); no read needs a key range of its own, so the family adds no key prefix.
@@ -80,6 +82,13 @@ pub struct TrustScanQuery {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct VersionIdsQuery {
+    pub ids: Vec<i64>,
+}
+
+/// `listPageRefsByIds(ids)`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PageIdsQuery {
     pub ids: Vec<i64>,
 }
 
@@ -364,6 +373,29 @@ impl Store {
                 None => (page.page_type.clone(), page_tier(&page)),
             };
             out.push(json!({ "id": v.id, "type": kind, "tier": tier.as_str() }));
+        }
+        Ok(out)
+    }
+
+    /// `listPageRefsByIds`: the source, slug and stored type of each listed page record, deleted
+    /// or not, by id, once each. An id no page has (a purged page, a negative id) answers nothing.
+    pub fn list_page_refs_by_ids(&self, q: &PageIdsQuery) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let wanted: BTreeSet<u64> = q
+            .ids
+            .iter()
+            .filter_map(|id| u64::try_from(*id).ok())
+            .collect();
+        let mut out = Vec::new();
+        for id in wanted {
+            if let Some(page) = read_page_by_id(&*read, id)? {
+                out.push(json!({
+                    "id": page.id,
+                    "source_id": page.source_id,
+                    "slug": page.slug,
+                    "type": page.page_type,
+                }));
+            }
         }
         Ok(out)
     }

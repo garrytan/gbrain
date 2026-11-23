@@ -99,6 +99,7 @@ export function isSharedReadFailure(error: unknown): boolean {
  */
 export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource', 'getConfigValues', 'readManagedModeRows', 'getSourceStrictness',
   'readPersistenceBrainId', 'readLocalWriterRow', 'readLedgerSource', 'isFolderRestricted', 'listSourceLocalPaths', 'getChunkReuseRows', 'getPageSealState',
+  'listForcedCutSeqs', 'readSegmentedVersionBodyBytes',
   'readDatabaseClock', 'readMentionLastPass', 'findExactBasenameCandidates']);
 
 /** The engine a preparer reads through: raw statements bounded by the clock's remaining budget, everything else untouched. */

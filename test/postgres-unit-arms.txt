@@ -38,11 +38,14 @@ test/access-page-indexes-online.test.ts
 test/access-page-rule-fileless.test.ts
 test/access-qm-actor.test.ts
 test/access-raw-only-rules.test.ts
+test/access-read-log.test.ts
 test/access-room.test.ts
 test/access-rule-hints-owner-gst2128.test.ts
 test/access-rule-owner-gst2698.test.ts
 test/access-token-grant-columns.test.ts
+test/access-unborn-head-gbra706.test.ts
 test/access-ungranted-member-writes.test.ts
+test/access-who-can-read-owner-only.test.ts
 test/access-writes.test.ts
 test/activation-unbound-rooted-6449.test.ts
 test/adopt-local-edit.test.ts
@@ -136,10 +139,12 @@ test/embedding-disabled-rechecks-9715.test.ts
 test/enforced-member-writes-setting.serial.test.ts
 test/enforced-member-writes.serial.test.ts
 test/enforced-member.serial.test.ts
+test/engine-parity/alias-fanout-reads.test.ts
 test/engine-parity/chunk-page-segmented.test.ts
 test/engine-parity/chunk-safe-fence.test.ts
 test/engine-parity/chunk-vector-overflow.test.ts
 test/engine-parity/chunks.test.ts
+test/engine-parity/cli-reads-export.test.ts
 test/engine-parity/code-eval-salience.test.ts
 test/engine-parity/config-ingest.test.ts
 test/engine-parity/cycle-locks.test.ts
@@ -150,6 +155,7 @@ test/engine-parity/facts.test.ts
 test/engine-parity/field-usage.test.ts
 test/engine-parity/import-path.test.ts
 test/engine-parity/import-writes.test.ts
+test/engine-parity/jobs-health.test.ts
 test/engine-parity/jobs-insight.test.ts
 test/engine-parity/large-page.test.ts
 test/engine-parity/lifecycle.test.ts
@@ -158,10 +164,13 @@ test/engine-parity/open-loops.test.ts
 test/engine-parity/owner-only-marks.test.ts
 test/engine-parity/page-vector-flip.test.ts
 test/engine-parity/page-vector-overflow.test.ts
+test/engine-parity/page-write-readers.test.ts
 test/engine-parity/pages.test.ts
 test/engine-parity/private-page-reads.test.ts
+test/engine-parity/put-source-fork.test.ts
 test/engine-parity/raw-sql.test.ts
 test/engine-parity/reads-privacy.test.ts
+test/engine-parity/repair-frontmatter-holds.test.ts
 test/engine-parity/search-deep-query.test.ts
 test/engine-parity/search-privacy-retention.test.ts
 test/engine-parity/search-privacy.test.ts
@@ -172,15 +181,20 @@ test/engine-parity/segmented-body.test.ts
 test/engine-parity/stats-vectors.test.ts
 test/engine-parity/stats.test.ts
 test/engine-parity/sync-aliases.test.ts
+test/engine-parity/sync-restored-file-holds.test.ts
 test/engine-parity/takes.test.ts
 test/engine-parity/timeline-reads.test.ts
 test/engine-parity/timeline.test.ts
 test/engine-parity/title-fuzzy-like-bound.test.ts
 test/engine-parity/title-fuzzy-unicode.test.ts
 test/engine-parity/traversal-cache.test.ts
+test/engine-parity/trust-tier-reads.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-parity/wanted-links.test.ts
+test/engine-parity/withdrawal-discovery-reads.test.ts
 test/engine-sql-facts-keyset.test.ts
+test/engine-swap-managed-storage.test.ts
+test/engine-swap-refresh-drain.test.ts
 test/entity-company-auto-link.test.ts
 test/entity-dedupe-decisions.test.ts
 test/entity-dedupe-person-confirm.test.ts
@@ -413,6 +427,7 @@ test/links-attendance-blocked.test.ts
 test/links-extraction-yield.test.ts
 test/list-jobs-row-bound.test.ts
 test/list-pages-empty-type-notice-gbra449.test.ts
+test/loop-members-request-abort.test.ts
 test/lower-tier-label-hold.test.ts
 test/maintenance-idle-gbra438.test.ts
 test/maintenance-lowering-7917-7918.test.ts
@@ -460,6 +475,7 @@ test/migration-persistence-request-slug-index.test.ts
 test/mirror-keep-deleted.test.ts
 test/mirror-readonly-write-through-7098.test.ts
 test/moved-pages-gst2584.test.ts
+test/n3-sql-move-parity.test.ts
 test/n4-sql-move-parity.test.ts
 test/notifier-passed-freshness-marker-7941.test.ts
 test/notifier-retry-unwatched-gst2515.test.ts
@@ -643,6 +659,7 @@ test/projection-rebuild-progress-9192.test.ts
 test/provenance-drift-7891.test.ts
 test/provenance-stamps-7873.test.ts
 test/publish-redact-unpushed-gst2988.test.ts
+test/purge-age-coordinated.test.ts
 test/purge-context-facts-8859.test.ts
 test/purge-expires-page-facts.test.ts
 test/purge-fact.test.ts
@@ -668,6 +685,8 @@ test/qm-scope-read.test.ts
 test/qm-scope-writes.test.ts
 test/read-meta-diag.test.ts
 test/readers-label-setter.test.ts
+test/readers-noncanonical-owner-reads.test.ts
+test/readers-noncanonical.test.ts
 test/reason-trailers-gbra217.test.ts
 test/recall-page-fill.test.ts
 test/receipt-compaction-newest-sync-gbra130.test.ts
@@ -741,6 +760,7 @@ test/search-transcript-quote-tiers.test.ts
 test/search-transcript-quote.test.ts
 test/search-vector-scope-parity.test.ts
 test/search/page-rank-cut.test.ts
+test/search/rebuild-progress-steady-state.test.ts
 test/search/rerank-gate-hybrid.test.ts
 test/search/rerank-gate-telemetry.test.ts
 test/secret-store-backup.test.ts
@@ -770,6 +790,7 @@ test/sources-resolve-path.test.ts
 test/speaker-owner-connectors.test.ts
 test/speaker-owner-transcripts.test.ts
 test/speaker-owner-trust.test.ts
+test/st-write-move-parity.test.ts
 test/stale-plan-heal.test.ts
 test/stats-health-source-scope.test.ts
 test/status-snapshot-source-scope.test.ts
@@ -792,6 +813,7 @@ test/sync-drain-effect-recovery-blocked.test.ts
 test/sync-drain-head-blocked-6543.test.ts
 test/sync-drain-inpass-stall.test.ts
 test/sync-drain-write-capacity.test.ts
+test/sync-drift-history-gst3328.test.ts
 test/sync-drift-rescreen-progress-gst2515.test.ts
 test/sync-dry-run-drain-7167.test.ts
 test/sync-exits-l4-6712.test.ts
@@ -809,6 +831,7 @@ test/sync-full-cursor-slices-6349.test.ts
 test/sync-full-untracked-import-5459.test.ts
 test/sync-group-member-order.test.ts
 test/sync-handler-drain-6706.test.ts
+test/sync-history-read-budget.test.ts
 test/sync-holds-followups-7974.test.ts
 test/sync-holds-only-converge-7327.test.ts
 test/sync-holds-wave-gbra133.test.ts
@@ -824,6 +847,7 @@ test/sync-level-reuse-across-gbra133.test.ts
 test/sync-metafile-foreign-slug-7341.test.ts
 test/sync-mirror-catchup-gst2515.test.ts
 test/sync-mirror-parked-gst2843.test.ts
+test/sync-off-unattended-gst3337.test.ts
 test/sync-origin-live-wins-6517.test.ts
 test/sync-page-identity-hold-gbra130.test.ts
 test/sync-page-write-failed-gbra130.test.ts
@@ -838,10 +862,12 @@ test/sync-pass-stop-in-level-gbra133.test.ts
 test/sync-plain-directory-7973.test.ts
 test/sync-prescreen-both-delta-6712.test.ts
 test/sync-prescreen-drift-6712.test.ts
+test/sync-restored-deleted-file-lc1.test.ts
 test/sync-restored-file-purge.test.ts
 test/sync-sigterm-gst2869.test.ts
 test/sync-slug-root-mode-6694.test.ts
 test/sync-staged-catchup.test.ts
+test/sync-status-automatic-sync-gst3329.test.ts
 test/sync-status-commits-waiting-gst2515.test.ts
 test/sync-status-failure-detail-6513.test.ts
 test/sync-status-truthful-7243.test.ts

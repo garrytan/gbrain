@@ -220,6 +220,28 @@ describe('engine parity: open loops', () => {
   );
 
   parityTest(
+    'upsertOpenLoop refuses an offset time that names a day the calendar lacks, and leaves a closed loop as it was',
+    { methods: ['upsertOpenLoop', 'closeOpenLoop', 'listOpenLoops'] },
+    async (engine, backend) => {
+      const ids = loopIds(await engine.upsertOpenLoop(loop()));
+      await engine.closeOpenLoop(null, ids.at(1), 'dropped', 'x');
+      const before = await listAll(engine, ids, { status: 'dropped' });
+      const refused = async (run: () => Promise<unknown>) => { try { await run(); return false; } catch { return true; } };
+      // 2026-02-30 does not exist. PGLite refuses it. Date.parse reads it as 2026-03-02, and the newer activity would
+      // reopen the loop and overwrite its summary: that is what the Rust member did before it checked the calendar.
+      // The Postgres arm is not compared: postgres.js sends a timestamptz parameter through `new Date(x).toISOString()`,
+      // which carries the day over the same way, so this case would pass or fail there on the driver, not the engine.
+      const impossible = ['2026-02-30T12:00:00+02:00', '2026-04-31T08:00:00-05:00'];
+      if (backend === 'postgres') return { refusals: impossible.map(() => true), rows: before };
+      const refusals = [];
+      for (const lastActivityAt of impossible) {
+        refusals.push(await refused(() => engine.upsertOpenLoop(loop({ summary: 'overwritten', lastActivityAt }))));
+      }
+      return { refusals, rows: await listAll(engine, ids, { status: 'dropped' }) };
+    },
+  );
+
+  parityTest(
     'closeOpenLoop closes only an open loop in the named source, and refuses a status the table does not allow',
     { methods: ['upsertOpenLoop', 'closeOpenLoop'] },
     async (engine, backend) => {

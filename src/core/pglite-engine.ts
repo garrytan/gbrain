@@ -174,12 +174,18 @@ import * as sourcesImpl from './engine-sql/sources.ts';
 import * as writeMiscImpl from './engine-sql/write-misc.ts';
 import * as persistenceStateImpl from './engine-sql/persistence-state.ts';
 import * as largePageImpl from './engine-sql/large-page.ts';
+import * as exportReadsImpl from './engine-sql/export-reads.ts';
 import * as transactionSettingsImpl from './engine-sql/transaction-settings.ts';
 import * as beliefImpl from './engine-sql/belief.ts';
+import * as searchVectorImpl from './engine-sql/search-vector.ts';
 import * as configImpl from './engine-sql/config.ts';
 import * as accessControlImpl from './engine-sql/access-control.ts';
 import * as cycleLocksImpl from './engine-sql/cycle-locks.ts';
+import * as jobsHealth from './engine-sql/jobs-health.ts';
+import type { QueueDivergenceSpec, QueueHealthSpec } from './engine-sql/jobs-health.ts';
 import * as decideProposals from './engine-sql/decide-proposals.ts';
+import * as trustTierReads from './engine-sql/trust-tier-reads.ts';
+import * as withdrawalDiscoveryReads from './engine-sql/withdrawal-discovery.ts';
 import * as withdrawalPages from './engine-sql/withdrawal-pages.ts';
 import * as withdrawalFence from './engine-sql/withdrawal-fence.ts';
 import * as filesImpl from './engine-sql/files.ts';
@@ -193,6 +199,7 @@ import * as timelineReadsImpl from './engine-sql/timeline-reads.ts';
 import type { TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
 import * as decideStoreImpl from './engine-sql/decide-store.ts';
 import * as fieldUsageImpl from './engine-sql/field-usage.ts';
+import * as aliasFanoutReadsImpl from './engine-sql/alias-fanout-reads.ts';
 import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import * as ownerOnlyMarksImpl from './engine-sql/owner-only-marks.ts';
@@ -836,12 +843,12 @@ export class PGLiteEngine implements BrainEngine {
     return this._connectWithRootRegistration(config, true);
   }
 
-  async connectForRestore(config: EngineConfig): Promise<void> {
+  async connectForRestore(config: EngineConfig, opts?: { keepRepairEpisode?: boolean }): Promise<void> { // keepRepairEpisode: the open leaves an open repair episode and its backups alone
     if (!config.database_path || this._db || this._connectPromise) throw new Error('Restore staging requires a fresh engine and an explicit datastore path');
-    return this._connectWithRootRegistration(config, false);
+    return this._connectWithRootRegistration(config, false, opts?.keepRepairEpisode === true);
   }
 
-  private async _connectWithRootRegistration(config: EngineConfig, registerRoots: boolean): Promise<void> {
+  private async _connectWithRootRegistration(config: EngineConfig, registerRoots: boolean, keepRepairEpisode = false): Promise<void> {
     if (this._disconnectRequested || this._closingWork || this._closePoison) throw this._closePoison ?? new PgliteClosingError();
     if (this._db || this._connectPromise) {
       if ((this._savedConfig?.database_path || undefined) !== (config.database_path || undefined)) {
@@ -850,7 +857,7 @@ export class PGLiteEngine implements BrainEngine {
       return this._connectPromise ?? undefined;
     }
     this.vectorIterativeScan = undefined;
-    const opening = this._connectInternal(config).then(async () => {
+    const opening = this._connectInternal(config, keepRepairEpisode).then(async () => {
       try {
         await configurePgliteCodecs(this.db);
         if (registerRoots) await registerManagedFilesystemEngine(this, config.database_path);
@@ -920,7 +927,7 @@ export class PGLiteEngine implements BrainEngine {
     return lock;
   }
 
-  private async _connectInternal(config: EngineConfig): Promise<void> {
+  private async _connectInternal(config: EngineConfig, keepRepairEpisode = false): Promise<void> {
     this._snapshotLoaded = false;
     this._savedConfig = config; // #2034: remember for reconnect()
     this.walRepairReceipt = null; // per-connect: stale receipts must not survive reconnect()
@@ -991,7 +998,7 @@ export class PGLiteEngine implements BrainEngine {
       // attempt (red-team: episodes otherwise stayed open forever — doctor
       // kept reporting corruption-likely and a weeks-stale episode backup
       // could be reused over much newer data). Cheap no-op without a sidecar.
-      if (dataDir) closeRepairEpisodeIfOpen(dataDir);
+      if (dataDir && !keepRepairEpisode) closeRepairEpisodeIfOpen(dataDir);
     } catch (err) {
       // v0.13.1: any PGLite.create() failure becomes actionable. v0.41.8.0
       // (#1340): the previous error hint hardcoded the macOS 26.3 link, but
@@ -1455,6 +1462,18 @@ export class PGLiteEngine implements BrainEngine {
   getSource(sourceId: string) { return sourcesImpl.getSource(unscopedExecutor(this.engineSql, 'sources: single-row read ran unscoped through executeRaw'), sourceId); }
   getConfigValues(keys: readonly string[]) { return configImpl.getConfigValues(unscopedExecutor(this.engineSql, 'config: keyed read ran unscoped through executeRaw'), keys); }
   readManagedModeRows() { return persistenceStateImpl.readManagedModeRows(unscopedExecutor(this.engineSql, 'persistence: managed-mode read ran unscoped through executeRaw')); }
+  listExportPageKeys(q: exportReadsImpl.ExportPageKeyQuery) { return exportReadsImpl.listExportPageKeys(this, q); }
+  readExportWithdrawalLedgerBytes(sourceId: string) { return exportReadsImpl.readExportWithdrawalLedgerBytes(this, sourceId); }
+  listExportWithdrawals(sourceId: string) { return exportReadsImpl.listExportWithdrawals(this, sourceId); }
+  readExportPageRows(ids: readonly string[]) { return exportReadsImpl.readExportPageRows(this, ids); }
+  normalizeFenceLines(bodies: readonly string[], timelines: readonly string[]) { return exportReadsImpl.normalizeFenceLines(this, bodies, timelines); }
+  readSegmentedPageHead(pageId: number) { return exportReadsImpl.readSegmentedPageHead(this, pageId); }
+  readBodyManifestRows(pageId: number, generation: number | null) { return exportReadsImpl.readBodyManifestRows(this, pageId, generation); }
+  readBodyManifestMeta(pageId: number, occurrenceIds: readonly number[], generation: number) { return exportReadsImpl.readBodyManifestMeta(this, pageId, occurrenceIds, generation); }
+  readBodyManifestOutline(pageId: number, occurrenceIds: readonly number[], generation: number) { return exportReadsImpl.readBodyManifestOutline(this, pageId, occurrenceIds, generation); }
+  listForcedCutSeqs(pageId: number, generation: number) { return exportReadsImpl.listForcedCutSeqs(this, pageId, generation); }
+  readSegmentedVersionBodyBytes(pageId: number, generation: number) { return exportReadsImpl.readSegmentedVersionBodyBytes(this, pageId, generation); }
+  listAccessPolicySourceIds() { return exportReadsImpl.listAccessPolicySourceIds(this); }
 
   // The import, extract and company-brain reads that ran unscoped through executeRaw (engine-sql/cli-reads-import.ts), on the current connection.
   private get cliReads() { return unscopedExecutor(this.engineSql, 'cli reads: the import and extract paths ran these unscoped through executeRaw'); }
@@ -1501,6 +1520,8 @@ export class PGLiteEngine implements BrainEngine {
   getDecideCalibration(id: number) { return decideStoreImpl.getDecideCalibration(this, id); }
   setDecideCalibrationRetired(id: number, retired: boolean) { return decideStoreImpl.setDecideCalibrationRetired(this, id, retired); }
   readLedgerSource(sourceId: string, opts?: { batch?: boolean }) { return beliefImpl.readLedgerSource(unscopedExecutor(this.engineSql, 'belief: ledger source probe ran unscoped through executeRaw'), sourceId, opts); }
+  countSearchVectorRows() { return searchVectorImpl.countSearchVectorRows(this); }
+  async listCoveredSources(subjectKey: string) { return beliefImpl.listCoveredSources(this, subjectKey); }
   isFolderRestricted(sourceId: string, slug: string) { return accessControlImpl.isFolderRestricted(unscopedExecutor(this.engineSql, 'access: folder rule read ran unscoped through executeRaw'), sourceId, slug); }
   async listSourceLocalPaths(): Promise<string[]> {
     return sourcesImpl.listSourceLocalPaths(unscopedExecutor(this.engineSql, 'sources: unscoped on master (the filesystem lock read it through executeRaw)'));
@@ -1915,6 +1936,11 @@ export class PGLiteEngine implements BrainEngine {
   countTimelineCommentMarkupRows(sourceIds: readonly string[]) { return timelineReadsImpl.countTimelineCommentMarkupRows(this.timelineRead, sourceIds); }
   listTimelineOrphanPages(opts: { afterId: number; limit: number; sourceId?: string }) { return timelineReadsImpl.listTimelineOrphanPages(this.timelineRead, opts); }
   readFieldUsageSamples(query: fieldUsageImpl.FieldUsageQuery) { return fieldUsageImpl.readFieldUsageSamples(unscopedExecutor(this.engineSql, 'field usage samples: master engine.executeRaw, unscoped'), query); }
+  private get aliasFanoutRead() { return unscopedExecutor(this.engineSql, 'alias fan-out reads: master engine.executeRaw, unscoped'); }
+  resolveCaseSensitiveAliases(aliasNorms: readonly string[], sourceIds: readonly string[]) { return aliasFanoutReadsImpl.resolveCaseSensitiveAliases(this.aliasFanoutRead, aliasNorms, sourceIds); }
+  readPageTitle(sourceId: string, slug: string) { return aliasFanoutReadsImpl.readPageTitle(this.aliasFanoutRead, sourceId, slug); }
+  readPageAliasRows(sourceIds: readonly string[], slugs: readonly string[]) { return aliasFanoutReadsImpl.readPageAliasRows(this.aliasFanoutRead, sourceIds, slugs); }
+  readEntityAliasRows(sourceId: string, slugs: readonly string[]) { return aliasFanoutReadsImpl.readEntityAliasRows(this.aliasFanoutRead, sourceId, slugs); }
 
   // v0.41.18.0 — lazy-cached resolveBulkRetryOpts result + batch-retry helper.
   // PGLite has no Postgres pooler so retries don't fire in production; the
@@ -3198,6 +3224,20 @@ export class PGLiteEngine implements BrainEngine {
   async readCycleLocks(filter: CycleLockFilter) { return cycleLocksImpl.readCycleLocks(unscopedExecutor(this.cycleLockSql, 'cycle locks: unscoped on master (db-lock selectLockRows)'), filter); }
   async deleteCycleLock(lockId: string, opts: Parameters<BrainEngine['deleteCycleLock']>[1]) { return cycleLocksImpl.deleteCycleLock(this.cycleLockSql, lockId, opts); }
   async deleteCycleLockIfStale(lockId: string, opts: Parameters<BrainEngine['deleteCycleLockIfStale']>[1]) { return cycleLocksImpl.deleteCycleLockIfStale(this.cycleLockSql, lockId, opts); }
+  // Queue health reads (lane 5 group A; engine-sql/jobs-health.ts).
+  async readQueueHealthSignals(spec: QueueHealthSpec) { return jobsHealth.readQueueHealthSignals(this, spec); }
+  async listWaitingByQueue() { return jobsHealth.listWaitingByQueue(this); }
+  async readQueueDivergence(spec: QueueDivergenceSpec) { return jobsHealth.readQueueDivergence(this, spec); }
+  async listQueueWedgeCounts() { return jobsHealth.listQueueWedgeCounts(this); }
+  async listPrivateQueueHealth() { return jobsHealth.listPrivateQueueHealth(this); }
+  async readWedgeSignals(queue: string, handlerNames: readonly string[], opts?: { signal?: AbortSignal }) { return jobsHealth.readWedgeSignals(this, queue, handlerNames, opts); }
+  async readOldestWaitingAge(queue: string, opts?: { signal?: AbortSignal }) { return jobsHealth.readOldestWaitingAge(this, queue, opts); }
+  async listStuckActiveJobsByName() { return jobsHealth.listStuckActiveJobsByName(this); }
+
+  async listVersionTrustTiers(ids: readonly number[]) { return trustTierReads.listVersionTrustTiers(this, ids); }
+  async listVersionReasonWriters(ids: readonly number[]) { return trustTierReads.listVersionReasonWriters(this, ids); }
+  async listPageTypesByIds(ids: readonly number[]) { return trustTierReads.listPageTypesByIds(this, ids); }
+  async readWithdrawalDiscovery<K extends withdrawalDiscoveryReads.WithdrawalDiscoveryKind>(read: Extract<withdrawalDiscoveryReads.WithdrawalDiscoveryRead, { kind: K }>) { return withdrawalDiscoveryReads.readWithdrawalDiscovery<K>(this, read); }
   async listSegmentedPages(sourceId: string, slugs: readonly string[]) { return withdrawalPages.listSegmentedPages(this, sourceId, slugs); }
   async invalidateWithdrawnPages(sourceId: string, slugs: readonly string[]) { return withdrawalPages.invalidateWithdrawnPages(this, sourceId, slugs); }
   async hasWithdrawnFenceClaim(sourceId: string, claims: readonly withdrawalFence.FenceClaimRow[], subject: string | null) { return withdrawalFence.hasWithdrawnFenceClaim(this, sourceId, claims, subject); }

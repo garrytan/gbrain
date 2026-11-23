@@ -65,7 +65,7 @@ async function keylessRowStages(
   }
   if (noEmbedResults.length > 0) {
     const generatedRead = readGeneratedPages(engine, noEmbedResults);
-    await runPostFusionStages(engine, noEmbedResults, postFusionOpts);
+    await runPostFusionStages(engine, noEmbedResults, postFusionOpts, req.degraded);
     await applyIdentityBoosts(req, noEmbedResults, generatedRead);
     noEmbedResults.sort((a, b) => b.score - a.score);
     noEmbedResults = await applyFeedbackStage(engine, noEmbedResults, { reranked: false });
@@ -275,7 +275,7 @@ export async function searchVectorFallback(
   }
   if (fallbackResults.length > 0) {
     const generatedRead = readGeneratedPages(engine, fallbackResults);
-    await runPostFusionStages(engine, fallbackResults, postFusionOpts);
+    await runPostFusionStages(engine, fallbackResults, postFusionOpts, req.degraded);
     await applyIdentityBoosts(req, fallbackResults, generatedRead);
     fallbackResults.sort((a, b) => b.score - a.score);
     fallbackResults = await applyFeedbackStage(engine, fallbackResults, { reranked: false });

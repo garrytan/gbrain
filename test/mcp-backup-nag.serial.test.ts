@@ -65,6 +65,7 @@ const BACKUP_SOURCES_QUERY = /\bfrom\s+sources\b(?!\s+read_source)/i;
 const engineStub = {
   kind: 'pglite',
   getConfig: async () => null,
+  resolveCaseSensitiveAliases: async () => [],
   ...N4_SOURCE_MEMBERS,
   executeRaw: async (sql: string) => {
     rawCalls.push(String(sql));

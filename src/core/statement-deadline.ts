@@ -90,11 +90,15 @@ function refuse(scope: StatementDeadline): never {
   throw new StatementDeadlineError(Date.now() - scope.startedAt);
 }
 
-/** The typed reads (engine-sql/decide-store.ts, timeline-reads.ts, write-misc.ts) that replaced statements this wrapper bounded through executeRaw: decide_health, timeline_history and commit_notifier, and the source-list read (engine-sql/cli-reads-import.ts) that commit_notifier and federation_health make through `loadAllSources`. */
-const DOCTOR_TYPED_READS: ReadonlySet<string> = new Set(['readDecideState', 'decideSlotUsage', 'dailyDecideSpend', 'listDecideResolvedModels', 'listDecideMixedModelDecisions', 'listDecideReceiptStats', 'listDecideCalibrations',
-  'readMaxTimelineEntryId', 'storedTimelineRowsByPageIds', 'countSegmentedTimelinePages', 'notifierCoverageRecorded', 'listSourceRecords']);
-/** Those reads and the writer-binding read (engine-sql/write-misc.ts `getWorktreeBinding`, slug_path_mismatch), which also replaced a bounded statement. */
-export const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set([...DOCTOR_TYPED_READS, 'getWorktreeBinding']);
+/**
+ * The typed reads that replaced statements this wrapper bounded through executeRaw: decide_health (engine-sql/decide-store.ts),
+ * the queue-health reads (engine-sql/jobs-health.ts), the belief-coverage source read (engine-sql/belief.ts), the export withdrawal-ledger reads
+ * (engine-sql/export-reads.ts), the timeline_history and commit_notifier reads (engine-sql/timeline-reads.ts, write-misc.ts) and the writer-binding read
+ * (engine-sql/write-misc.ts `getWorktreeBinding`, slug_path_mismatch).
+ */
+export const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set(['readDecideState', 'decideSlotUsage', 'dailyDecideSpend', 'listDecideResolvedModels', 'listDecideMixedModelDecisions', 'listDecideReceiptStats', 'listDecideCalibrations',
+  'readQueueHealthSignals', 'listWaitingByQueue', 'readQueueDivergence', 'listQueueWedgeCounts', 'listPrivateQueueHealth', 'readWedgeSignals', 'readOldestWaitingAge', 'listStuckActiveJobsByName', 'listCoveredSources', 'listExportWithdrawals', 'readExportWithdrawalLedgerBytes',
+  'readMaxTimelineEntryId', 'storedTimelineRowsByPageIds', 'countSegmentedTimelinePages', 'notifierCoverageRecorded', 'getWorktreeBinding', 'listSourceRecords']);
 
 type RawCall = (sql: string, params?: unknown[], opts?: Record<string, unknown> & { signal?: AbortSignal; timeoutMs?: number }) => Promise<unknown[]>;
 

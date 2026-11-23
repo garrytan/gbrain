@@ -226,5 +226,4 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 - **setup** (host-side brain provisioning) — this skill assumes a brain already
   exists.
 
-This section exists for the conformance test; the behavior contract is the
-sections above.
+The behavior contract is the sections above.

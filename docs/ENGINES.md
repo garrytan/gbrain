@@ -911,9 +911,15 @@ means the unclean-shutdown genesis is still active — see the ladder's rung 4).
 
 One gbrain process opens a PGLite brain at a time. While `gbrain serve` (stdio
 or `--http`) holds it, page and fact writes from the CLI (`gbrain put`,
-`gbrain remember`) go through the running server and work. Commands that need
-the database to themselves, which includes the admin commands
-(`gbrain access …`, `gbrain sources …`, `gbrain auth …`) and most reads,
+`gbrain remember`) and everyday reads (`gbrain find`, `list`, `search`, `query`,
+`get`, `tags`, `links`, `backlinks`, `timeline`, `history`, `graph`, `whois`,
+`entity`, `search-exact` and `gbrain waiting`) go through the
+running server and print what they print with no server running. A read run
+with a read-affecting `GBRAIN_*` variable or provider key the server does not
+share stays with the refusal below. Edits to `config.json` reach the server's
+answers only after the server restarts. Commands
+that need the database to themselves, which includes the admin commands
+(`gbrain access …`, `gbrain sources …`, `gbrain auth …`) and the remaining reads,
 refuse with `pglite_busy` reason `live_serve`. The refusal names the server's
 PID, and its fix is two steps: stop that server, then run the command again.
 Never remove the lock of a server that is still running.
@@ -1147,6 +1153,17 @@ holding the single-writer data-dir lock reports `locked_by_serve`
 (healthy-with-note) instead of hanging ~30 seconds and misreporting a healthy
 brain as broken. A failed probe returns a classified diagnosis (reason +
 remediation), not a raw error.
+
+A probe that reaches the brain also prints `brain_ref` (JSON `probe.brain_ref`, human line `Ref:`): a 16-character
+one-way digest of the brain's persistence identity (`persistence_brain.brain_id`), which a reviewed policy uses to
+name one brain, such as the engine swap's dated readiness override. The digest cannot be turned back into the
+identity, and the command never prints the identity itself. While `gbrain serve` holds a PGLite brain, the probe
+reads the reference that serve recorded at start and after each reconnect (`<data dir>.gbrain-brain-ref.json`, 0600, holding the reference and
+a digest of the serve's lock token, never the identity); a file another lock holder wrote is refused
+(`brain_ref_note: serve_brain_ref_stale`). Other notes, with `brain_ref: null`: `no_persistence_identity`,
+`brain_ref_unreadable`, `locked_by_other_process`, `serve_brain_ref_missing` (a serve from before this field).
+
+**Say to your agent:** *"Give me my brain's brain_ref from gbrain engine status, not its id."*
 
 ### `gbrain db-repair [--yes] [--apply-rewrites] [--json] [--force] [--undo-last-rewrite] [--dry-run]`
 
@@ -1850,6 +1867,96 @@ runs on PGLite alone without the flag.
 - `belief_ledger` is a subsystem, not a `BrainEngine` member: `src/core/belief/` appends and reads belief events through
   `executeRaw`. The Rust engine never reports `raw_sql` (design D18), so the ledger refuses until its reads and appends
   have typed members. Nothing in the Rust engine writes belief events today.
+
+## Rust engine shadow mode
+
+Shadow mode checks the Rust engine against your real reads before you switch to it. It is off by default and changes
+nothing about how your brain answers: the primary engine (PGLite or Postgres) always answers first, and a sample of
+reads and searches is then replayed against the Rust engine in a separate, supervised child process. The child
+compares the two answers and records only content-free rows (time, operation, outcome, reason code, row counts, timings) in a local
+ledger. Nothing is written to the brain database, the config table or the brain repo; all shadow state lives in
+`~/.gbrain/shadow/<brain>/` (`$GBRAIN_HOME/.gbrain/shadow/<brain>/` when `GBRAIN_HOME` is set).
+
+**Say to your agent:** *"Turn on Rust engine shadow mode for my brain and show me the report."*
+
+```bash
+gbrain engine shadow seed [--json]                 # copy the brain into the Rust store once (shadow mode off)
+gbrain engine shadow start --plan                  # preview the plan and its plan_hash, writes nothing
+gbrain engine shadow start --yes --expect <hash>   # turn it on (loads the Rust addon first; refuses without it)
+gbrain engine shadow status [--json]
+gbrain engine shadow report [--json]               # writes reports/provisional.{json,md}
+gbrain engine shadow stop [--delete]               # turn it off; --delete removes the shadow directory
+```
+
+- **Fail-open.** Mirroring never slows or fails a primary call. The queue is bounded (`--queue-bound`, default 256)
+  and sheds when full; reads inside a transaction are skipped; `--sample-rate` (default 0.1) picks which reads are
+  mirrored. Only sampled reads are copied, the arguments before the call and the result the moment the primary answers, so a caller that changes a result
+  afterwards cannot cause a false difference. The copy stops as soon as a call's arguments or result pass about
+  1 MiB (every value counts, even a null), so a huge result is counted as too large and never built. A
+  call that stays stuck in the Rust engine holds one of four slots; past that new reads are recorded as `timeout` (stalled) without being replayed and the child goes
+  quiet so it is restarted. Reads still queued when a process closes are delivered, not dropped. The child restarts with backoff, and mirroring turns itself off after 5 child exits in 10 minutes, a
+  child silent for 60 seconds is killed, and a privacy divergence pauses comparison.
+- **What a privacy divergence is.** Before any equality check, every row of the Rust result is tested against the call's own
+  arguments, and one hit records `privacy_diverged` and pauses mirroring (a plain `diff` can never hide it). A hit is a row with
+  a source outside the call's scope, read the way the primary applies it: `sourceIds` first, else `sourceId`, else the
+  positional source of `listFactsByEntity` (first argument), `resolveSlugWithAlias` (second) and `findByTitleFuzzy` (fourth); an
+  empty `sourceIds` with no `sourceId` names no scope, so the read is unscoped, as in the primary. The row's `source_id`, and on a link its `from_source_id`, `to_source_id`
+  and `origin_source_id`, must all be in a `sourceIds` scope; a one-source link read checks only the end the primary scopes
+  (`getLinks` the from page, `getBacklinks` the to page). A hit is also a page row (one carrying `frontmatter`) that a call with
+  `excludePrivate` should hide: `visibility: private`, a pinned question, an unmarked atom, question or synthesized concept, or (with `visibility` unset) an
+  `access` or `confidentiality` alias the primary reads as private; an alias row counts only when the primary's own answer left it out,
+  because a brain can turn the aliases off and the child cannot read that setting.
+  Not checked, because the result carries nothing to check: `resolveSlugs`, `resolveSlugWithAlias`, `getTags`, `getTimeline`,
+  `getChunks`, `findByTitleFuzzy`, `getStats`, `countKeywordPages` and `searchTakes` rows have no source column, search rows only
+  when they carry `source_id`, and `excludePrivate` only on rows with `frontmatter` (so not facts, links, finds or search rows).
+  A leak in those shows as `diff`.
+- **Brains and deleting.** Each brain gets its own directory, keyed by its engine and where it lives: the database path for PGLite, or the host, port, database and user name for Postgres
+  (two Supabase projects behind one pooler differ by user name; the password is never part of it). `stop --delete`
+  removes the directory, and a child that is still running cannot write it back. The commands cover the host brain only:
+  with `--brain <id>` or `GBRAIN_BRAIN_ID` naming another brain they refuse and change nothing.
+- **No network in the background.** gbrain downloads no addon. `start --yes`, the child
+  and `gbrain doctor` only use an addon that is already installed; without one, `start --yes` refuses and stays off, `gbrain doctor` fails
+  the `rust_engine_addon` check, and the child records `addon_unavailable` (`rust_engine_addon_missing`, reason `not_installed`).
+- **Doctor.** `rust_engine_addon` checks the installed addon when shadow mode is on and is not applicable otherwise.
+- **Evals.** `gbrain eval longmemeval` and `gbrain eval brainbench` take `--engine pglite|rust`. With `rust`, a missing
+  or mismatched addon stops the run with its code and reason, and so does a Rust store that cannot yet run the table
+  reset between fixtures (`rust_benchmark_unsupported`), so until the benchmark can reset a Rust store without raw SQL (the Rust engine never reports `raw_sql`) the flag
+  stops before any work. A longmemeval run records the engine in its resume hash, and the memory-trust brainbench
+  suites refuse `--engine rust` because they always build PGLite brains.
+- **Seed.** `seed` copies the brain into the Rust store once, from one read-only snapshot, and writes
+  `seed.json`: what it copied, the values the store could not keep, the unfinished jobs and segmented pages it left
+  behind, and the unseeded gap rows (tables the Rust store cannot serve yet; a swap is refused while any remain).
+  It refuses while shadow mode is on. To seed again, `stop --delete` and seed into the new directory.
+  Rust store layout: [rust/docs/store/seed.md](../rust/docs/store/seed.md).
+- **Managed storage: seeded, not refused.** Shadow mode gathers evidence on managed brains too; only the swap
+  refuses them (`engine_swap_refused`, reason `managed_storage`, which `gbrain engine swap` still returns and shadow mode
+  never does). `seed` and `seed --json` run on a managed brain and copy it like any other. Right before its snapshot, in
+  a statement of its own so a failed read cannot abort the snapshot, `seed` reads one row, `persistence_brain.enabled`,
+  and records `storage: { managed, checked_at, reason? }` in `seed.json`. A managed brain prints `storage: this brain
+  cannot swap while it uses managed storage`; `managed` is `false` for an unmanaged brain (no line). A mode that cannot be
+  read (another process holds a PGLite brain, or the row is missing or malformed) does not stop the seed: it prints
+  `storage: could not read whether this brain uses managed storage; the swap will check it (<reason>)` and records
+  `managed: null` with the error's code (`pglite_busy`, `storage_error`) or `read_failed`, never free-form error text. A
+  brain that cannot be opened at all cannot be read, so that is an error, not a mode: `seed` exits 1 with `could not open
+  the brain (<code>)` before it loads the addon or creates anything, and a PGLite path that holds no brain is never
+  created. `status --json` carries the record as `seed.storage: { managed, checked_at, note, reason? }` (null before a
+  seed, or for a seed written before the field existed), where `note` is `this brain cannot swap while it uses managed
+  storage` for a managed brain, `could not read whether this brain uses managed storage; the swap will check it` when
+  `managed` is null, and null for an unmanaged brain. `status` and the report print the note; the report's `seed.storage`
+  has the same shape. `seed` writes no table row, source file, managed-root ownership marker or registry entry, and it
+  never writes the primary's worktrees, write effects or writer coordination locks, so every `persistence_*` row and the
+  content root are byte-identical across it. Opening a PGLite brain still touches its own files: the open takes the
+  datastore's process lock (the `.gbrain-lock` folder and the `<datastore>.gbrain-owner.json` and `.gbrain-owner.lock`
+  files beside it) until `seed` closes the brain, and PGLite rewrites its control and log files (`global/pg_control`,
+  `pg_wal/`), as any open of that brain does. `seed` opens a PGLite brain without recording its managed roots and without
+  repairing a damaged log, so it moves no datastore file aside. A brain with an open repair episode is not opened
+  (`seed` exits 1 with `could not open the brain (repair_episode_open)`), because a healthy open would close the episode
+  and prune its repair backups. A repair episode recorded while `seed` waits for the datastore lock is left open too, and
+  its backups stay.
+- **Provisional report.** The verdict is always `NOT READY`: this phase compares reads only, the seeded store does
+  not follow later writes yet, and writes and the readiness decision come in later phases of the plan
+  (`docs/designs/RUST_ENGINE.md`, Phase S). Until the Rust engine serves reads, comparisons record
+  `capability_missing`.
 
 ## Adding a new engine
 

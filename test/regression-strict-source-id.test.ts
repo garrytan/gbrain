@@ -41,6 +41,7 @@ const pageEngine = {
   }),
   getTags: async () => [],
   getConfig: async () => null,
+  getSource: async () => null,
   executeRaw: async () => [],
 } as unknown as BrainEngine;
 

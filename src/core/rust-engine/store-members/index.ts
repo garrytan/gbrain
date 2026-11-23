@@ -42,6 +42,7 @@ import * as cliReadsSearchPages from './cli-reads-search-pages.ts';
 import * as fieldUsage from './field-usage.ts';
 import * as decideProposals from './decide-proposals.ts';
 import * as decideStore from './decide-store.ts';
+import * as jobsHealth from './jobs-health.ts';
 import * as openLoops from './open-loops.ts';
 import * as jobsInsight from './jobs-insight.ts';
 
@@ -63,6 +64,8 @@ export const STORE_MEMBERS = {
   ...decideProposals, ...decideStore, ...openLoops,
   // Typed reads that CLI paths ran through executeRaw (docs/research/rust-cli-executeraw-map.md).
   ...cliReadsSearchPages,
+  // Queue health reads (rust/crates/gbrain-store/src/jobs/health.rs).
+  ...jobsHealth,
   // The reads behind describeJobs (rust/docs/store/jobs-insight.md).
   ...jobsInsight,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };

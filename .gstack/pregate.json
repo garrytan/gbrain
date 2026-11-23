@@ -260,6 +260,46 @@
       ],
       "pattern": "\\[load_[a-z0-9_]+, \"(?:[a-z][A-Za-z]*Operations|[a-z]+(?:_[a-z]+)+)\"\\],?$",
       "reason": "generated operation-loader table: each value is a loader identifier and an operations export name, never a credential; an operation named like a secret (reveal_secret) trips the key-name heuristic"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/src/link_queries/link_temporal.rs"
+      ],
+      "pattern": "^&RelationshipKey,$",
+      "reason": "a Rust type annotation, `key: &RelationshipKey,` (three places): a type, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/src/persistence/effect_worker.rs"
+      ],
+      "pattern": "^Option<&str>,$",
+      "reason": "a Rust type annotation, `token: Option<&str>,`: a type, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/src/occ_kv.rs"
+      ],
+      "pattern": "^Mutex<HashMap<Vec<u8>, u64>>,$",
+      "reason": "a Rust type annotation, `by_key: Mutex<HashMap<Vec<u8>, u64>>,`: a type, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/src/write_attribution.rs"
+      ],
+      "pattern": "^Option<PrivacyPolicy>,$",
+      "reason": "a Rust type annotation, `exclude_private: Option<PrivacyPolicy>,`: a type, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/src/cli_reads/reads.rs"
+      ],
+      "pattern": "^:Char\\(c\\) => \\{$",
+      "reason": "a match arm, `Token::Char(c) => {`, in a tokenizer: an enum pattern, never a credential value"
     }
   ]
 }

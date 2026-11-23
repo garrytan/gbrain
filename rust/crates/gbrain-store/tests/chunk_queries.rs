@@ -8,6 +8,7 @@ use gbrain_store::chunk_queries::{
     ChunkPageOptions, ChunkWindowOptions, ChunkWindowRequest, ChunklessOptions,
 };
 use gbrain_store::chunks::{ChunkInput, UpsertChunksOptions};
+use gbrain_store::facts::PrivacyPolicy;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::redb_kv::RedbKv;
 use gbrain_store::sources::SourceInput;
@@ -82,6 +83,8 @@ fn page_opts(source: &str, from: f64, limit: f64) -> ChunkPageOptions {
         source_id: source.into(),
         from_index: from,
         limit,
+        exclude_private: None,
+        require_safe_chunks: false,
     }
 }
 
@@ -347,4 +350,93 @@ fn chunkless_pages_have_a_body_and_no_chunks() {
             .unwrap(),
         3
     );
+}
+
+#[test]
+fn chunk_reads_hide_private_pages_and_pages_short_of_the_safe_fence() {
+    let b = Brain::new("chunk-private");
+    let pages = [
+        ("notes/open", json!({})),
+        (
+            "notes/private",
+            json!({"frontmatter": {"visibility": "private"}}),
+        ),
+        (
+            "notes/readers",
+            json!({"frontmatter": {"readable_by": ["alice-example"]}}),
+        ),
+        (
+            "notes/alias",
+            json!({"frontmatter": {"access": "restricted"}}),
+        ),
+        ("notes/unsafe", json!({})),
+    ];
+    let mut ids = Vec::new();
+    for (slug, extra) in &pages {
+        ids.push(b.page(slug, "default", extra.clone()));
+        b.seal(slug, "default", &[(0, "a chunk", "compiled_truth")]);
+    }
+    // Sealed text, but a chunker version short of the safe fence.
+    b.store
+        .set_chunker_version("notes/unsafe", "3", Some("default"))
+        .unwrap();
+    let honored = PrivacyPolicy {
+        honor_aliases: true,
+        entity_privacy: true,
+        ..Default::default()
+    };
+    let visibility_only = PrivacyPolicy {
+        honor_aliases: false,
+        entity_privacy: true,
+        ..Default::default()
+    };
+    let page_seen = |policy: Option<PrivacyPolicy>, safe: bool| -> Vec<&str> {
+        pages
+            .iter()
+            .map(|(slug, _)| *slug)
+            .filter(|slug| {
+                let options = ChunkPageOptions {
+                    exclude_private: policy.clone(),
+                    require_safe_chunks: safe,
+                    ..page_opts("default", 0.0, 10.0)
+                };
+                b.store.get_chunk_page(slug, &options).unwrap()["total_chunks"] == 1
+            })
+            .collect()
+    };
+    assert_eq!(page_seen(None, false).len(), 5);
+    assert_eq!(page_seen(Some(honored.clone()), true), ["notes/open"]);
+    assert_eq!(
+        page_seen(Some(honored.clone()), false),
+        ["notes/open", "notes/unsafe"]
+    );
+    assert_eq!(
+        page_seen(Some(visibility_only.clone()), true),
+        ["notes/open", "notes/alias"]
+    );
+    assert_eq!(page_seen(None, true).len(), 4);
+
+    let requests: Vec<ChunkWindowRequest> = ids.iter().map(|&id| req(id, 0, 5, 0)).collect();
+    let window_seen = |policy: Option<PrivacyPolicy>, safe: bool| -> Vec<u64> {
+        let options = ChunkWindowOptions {
+            exclude_private: policy,
+            require_safe_chunks: safe,
+            ..win_opts(&["compiled_truth"], 50)
+        };
+        let rows = b.store.get_chunk_windows(&requests, &options).unwrap();
+        let mut seen: Vec<u64> = kinds(&rows, "page")
+            .iter()
+            .map(|r| r["page_id"].as_u64().unwrap())
+            .collect();
+        seen.sort_unstable();
+        seen
+    };
+    assert_eq!(window_seen(None, false).len(), 5);
+    assert_eq!(window_seen(Some(honored.clone()), true), [ids[0]]);
+    assert_eq!(window_seen(Some(honored.clone()), false), [ids[0], ids[4]]);
+    assert_eq!(
+        window_seen(Some(visibility_only.clone()), true),
+        [ids[0], ids[3]]
+    );
+    assert_eq!(window_seen(None, true).len(), 4);
 }

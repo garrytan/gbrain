@@ -87,6 +87,15 @@ pub struct PageCoordinate {
     pub slug: String,
 }
 
+/// `readFenceRowOccupant` arguments: a page coordinate and a row number.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FenceRowOccupantQuery {
+    pub source_id: String,
+    pub slug: String,
+    pub row_num: i64,
+}
+
 /// `countUnconsolidatedFactsBySource` arguments.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
@@ -472,6 +481,22 @@ impl Store {
             .max()
             .map_or(0, i64::from)
             .max(0))
+    }
+
+    /// `readFenceRowOccupant` (src/core/facts/fence-fact-append.ts): the id of the row of a page
+    /// coordinate that holds `rowNum`, the oldest when several do, or none.
+    pub fn read_fence_row_occupant(&self, q: &FenceRowOccupantQuery) -> Result<Option<u64>> {
+        no_nul(
+            "readFenceRowOccupant",
+            &[("sourceId", &q.source_id), ("slug", &q.slug)],
+        )?;
+        let read = self.read()?;
+        let rows = page_rows(&*read, &q.source_id, &q.slug)?;
+        Ok(rows
+            .iter()
+            .filter(|r| r.row_num.is_some_and(|n| i64::from(n) == q.row_num))
+            .map(|r| r.id)
+            .min())
     }
 
     /// `listStoredFenceFactRows` (src/core/fence-repair/import-step.ts): `{ row_num, fact }` of a page coordinate's

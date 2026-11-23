@@ -13,6 +13,9 @@
       "anomalies": [
         "./commands/anomalies.ts"
       ],
+      "apple-contacts": [
+        "./commands/apple-contacts.ts"
+      ],
       "autopilot": [
         "./commands/autopilot.ts"
       ],
@@ -242,9 +245,6 @@
         "./core/eligibility/scan.ts",
         "./core/trust/label-lowerings.ts",
         "./core/trust/backfill.ts"
-      ],
-      "waiting": [
-        "./commands/loops.ts"
       ],
       "wakeshift": [
         "./commands/wakeshift.ts"

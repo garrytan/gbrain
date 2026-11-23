@@ -5,7 +5,9 @@
  * Dates, as the SQL engines return them, and loops-store.ts normalizes the rows the same way on every engine.
  *
  * Times sent to the store: ISO text ending in `Z` with at most 6 fractional digits passes as written. An ISO time
- * with an offset (`+02:00`) and at most 3 fractional digits is rewritten through `Date#toISOString`. Any other
+ * with an offset (`+02:00`) and at most 3 fractional digits is rewritten through `Date#toISOString`, unless its date
+ * names a day the calendar lacks (`02-30`): that goes as written and the store refuses it, as PGLite does (Postgres,
+ * through postgres.js, reads it as the next valid day: TODOS.md). Any other
  * spelling (a bare date, a time with no zone) refuses with `invalid_argument`, where Postgres would read it in the
  * session time zone (rust/docs/store/facts.md).
  */
@@ -23,8 +25,16 @@ const OFFSET_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?[+-]\d{2}:\d
 function storeTime(value: string | null | undefined): string | null {
   if (value === null || value === undefined) return null;
   if (UTC_ISO.test(value) || !OFFSET_ISO.test(value)) return value;
+  if (!calendarExists(value)) return value;
   const ms = Date.parse(value);
   return Number.isFinite(ms) ? new Date(ms).toISOString() : value;
+}
+
+/** True when the date of an offset time is a day the calendar has: `Date.parse` carries 02-30 over to 03-02, where Postgres refuses it. */
+function calendarExists(value: string): boolean {
+  const [, y, mo, d] = /^(\d{4})-(\d{2})-(\d{2})/.exec(value) ?? [];
+  const day = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d)));
+  return day.getUTCFullYear() === Number(y) && day.getUTCMonth() === Number(mo) - 1 && day.getUTCDate() === Number(d);
 }
 
 /** `string_to_array($1, ',')` over the joined ids: null reads every source, an empty string matches none. */

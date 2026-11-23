@@ -300,32 +300,46 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
   const mirrors = new Set(managed ? [] : sources.filter(s => parseSourceConfig(s.config).mirror_read_only === true).map(s => s.id));
   const localPathById = new Map(sources.map(s => [s.id, s.local_path] as const));
   const archived = new Set(sources.filter(s => s.archived).map(s => s.id));
-  const rows = await engine.executeRaw<UnfencedFactRow>(
-    `SELECT id, source_id, entity_slug, fact, kind, visibility, notability,
-            context, valid_from, valid_until, source, confidence,
-            claim_metric, claim_value, claim_unit, claim_period, attributed_to,
-            EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id
-              AND p.slug = f.entity_slug AND p.deleted_at IS NULL) AS page_exists
-       FROM facts f
-      WHERE row_num IS NULL AND expired_at IS NULL AND dimension IS NULL
-        ${opts.sourceId !== undefined ? 'AND source_id = $1' : ''}
-      ORDER BY source_id, entity_slug, id`,
-    opts.sourceId !== undefined ? [opts.sourceId] : [],
-  );
   const outcome: UnfencedFactsOutcome = {
-    scanned: rows.length, fenced: 0, skipped_no_entity: 0, skipped_no_local_path: 0, skipped_no_page: 0,
+    scanned: 0, fenced: 0, skipped_no_entity: 0, skipped_no_local_path: 0, skipped_no_page: 0,
     skipped_archived: 0, skipped_url_clone: 0, skipped_mirror_read_only: 0, pages_touched: 0, failed_pages: [], write_errors: 0, fenced_slugs: [], missing_files: [], unbound_refused: [], unadoptable_rows: [],
   };
-  const groups = new Map<string, UnfencedFactRow[]>();
-  for (const row of rows) {
-    if (row.entity_slug === null) { outcome.skipped_no_entity += 1; continue; }
+  // #10005: every serve's maintenance sweep runs this, so the rows that can never be fenced here (no entity, no live
+  // page, a skipped source) are counted on the server and only the fenceable ones are transferred.
+  const unfenced = `row_num IS NULL AND expired_at IS NULL AND dimension IS NULL${opts.sourceId !== undefined ? ' AND source_id = $1' : ''}`;
+  const pageLive = 'EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)';
+  const counts = await engine.executeRaw<{ source_id: string; has_entity: boolean; page_exists: boolean; n: number | string }>(
+    `SELECT source_id, has_entity, page_exists, COUNT(*) AS n
+       FROM (SELECT f.source_id, f.entity_slug IS NOT NULL AS has_entity, ${pageLive} AS page_exists FROM facts f WHERE ${unfenced}) c
+      GROUP BY source_id, has_entity, page_exists`,
+    opts.sourceId !== undefined ? [opts.sourceId] : [],
+  );
+  const fenceableSources = new Set<string>();
+  for (const count of counts) {
+    const n = Number(count.n);
+    outcome.scanned += n;
+    if (!count.has_entity) { outcome.skipped_no_entity += n; continue; }
     // A managed brain publishes through the source's maintenance authority,
     // which an archived source does not grant; it never blocks the others.
-    if (managed && archived.has(row.source_id)) { outcome.skipped_archived += 1; continue; }
-    if (mirrors.has(row.source_id)) { outcome.skipped_mirror_read_only += 1; continue; }
-    if (urlClones.has(row.source_id)) { outcome.skipped_url_clone += 1; continue; }
-    if (!localPathById.get(row.source_id) && !managed) { outcome.skipped_no_local_path += 1; continue; }
-    if (!row.page_exists) { outcome.skipped_no_page += 1; continue; }
+    if (managed && archived.has(count.source_id)) { outcome.skipped_archived += n; continue; }
+    if (mirrors.has(count.source_id)) { outcome.skipped_mirror_read_only += n; continue; }
+    if (urlClones.has(count.source_id)) { outcome.skipped_url_clone += n; continue; }
+    if (!localPathById.get(count.source_id) && !managed) { outcome.skipped_no_local_path += n; continue; }
+    if (!count.page_exists) { outcome.skipped_no_page += n; continue; }
+    fenceableSources.add(count.source_id);
+  }
+  const rows = fenceableSources.size === 0 ? [] : await engine.executeRaw<UnfencedFactRow>(
+    `SELECT id, source_id, entity_slug, fact, kind, visibility, notability,
+            context, valid_from, valid_until, source, confidence,
+            claim_metric, claim_value, claim_unit, claim_period, attributed_to, TRUE AS page_exists
+       FROM facts f
+      WHERE row_num IS NULL AND expired_at IS NULL AND dimension IS NULL
+        AND source_id = ANY($1::text[]) AND entity_slug IS NOT NULL AND ${pageLive}
+      ORDER BY source_id, entity_slug, id`,
+    [[...fenceableSources]],
+  );
+  const groups = new Map<string, UnfencedFactRow[]>();
+  for (const row of rows) {
     const key = `${row.source_id}\0${row.entity_slug}`;
     groups.set(key, [...groups.get(key) ?? [], row]);
   }
