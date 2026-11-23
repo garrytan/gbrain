@@ -48,8 +48,8 @@ const EFFECTIVE_SQL = `SELECT c.relname::text AS name FROM pg_trigger t JOIN pg_
 JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND ${effectiveHookSql('$1')} ORDER BY 1`;
 /** One key for hook installs and removals, so a repair cannot interleave with a stop (pg_advisory_xact_lock). */
 const HOOKS_LOCK = `pg_advisory_xact_lock(hashtext('gbrain_writer_hooks'))`;
-const CREATE_HOOK = (table: string): string =>
-  `CREATE TRIGGER ${WRITER_HOOK_TRIGGER} AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON ${quoted(table)} FOR EACH STATEMENT EXECUTE FUNCTION gbrain_note_writer()`;
+const CREATE_HOOK = (table: string, replace = false): string =>
+  `CREATE ${replace ? 'OR REPLACE ' : ''}TRIGGER ${WRITER_HOOK_TRIGGER} AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON ${quoted(table)} FOR EACH STATEMENT EXECUTE FUNCTION gbrain_note_writer()`;
 
 function quoted(name: string): string {
   if (!IDENTIFIER.test(name)) throw Object.assign(new Error(`writer hooks: unexpected table name ${JSON.stringify(name)}`), { code: 'writer_hooks_bad_name' });
@@ -94,7 +94,7 @@ export async function listEffectiveHookedTables(engine: BrainEngine): Promise<st
 
 export interface HookOptions {
   /** Seam for tests: called after each table is hooked (a throw simulates a killed start). */
-  afterTable?: (table: string, index: number) => void;
+  afterTable?: (table: string, index: number) => void | Promise<void>;
   now?: () => Date;
   /** A gap row to record in the install's own transaction (a restart after stop: the hooks were off for a while). */
   gap?: string;
@@ -105,19 +105,37 @@ export interface HookOptions {
  * with a short lock timeout, so a busy table refuses the start instead of queueing writers behind it.
  */
 export async function installWriterHooks(engine: BrainEngine, dir: string, o: HookOptions = {}): Promise<string[]> {
-  await removeWriterHooks(engine, dir);
+  const prior = existsSync(writerHooksManifestPath(dir)) ? readWriterHooksManifest(dir) : null;
   const tables = await listTables(engine);
   writeManifest(dir, { version: 1, state: 'installing', at: (o.now?.() ?? new Date()).toISOString(), tables });
-  await engine.transaction(async (tx) => {
-    await tx.executeRaw(`SET LOCAL lock_timeout = '5s'`);
-    await tx.executeRaw(`SELECT ${HOOKS_LOCK}`);
-    let i = 0;
-    for (const table of tables) {
-      await tx.executeRaw(CREATE_HOOK(table));
-      o.afterTable?.(table, i++);
-    }
-    if (o.gap) await tx.executeRaw(`INSERT INTO engine_writer_coverage_gaps (created_at, code) VALUES (clock_timestamp(), $1)`, [o.gap]);
-  });
+  let committed = false;
+  try {
+    // One transaction replaces every hook: writers see the old hooks until the commit and the new ones after it, so a
+    // restart leaves no committed stretch without a hook, and a failed install rolls back to the hooks that were there.
+    await engine.transaction(async (tx) => {
+      await tx.executeRaw(`SET LOCAL lock_timeout = '5s'`);
+      await tx.executeRaw(`SELECT ${HOOKS_LOCK}`);
+      const existing = new Set((await tx.executeRaw<{ name: string }>(HOOKED_SQL, [WRITER_HOOK_TRIGGER])).map(r => r.name));
+      // CREATE OR REPLACE TRIGGER (PostgreSQL 14 and newer) swaps a hook without the ACCESS EXCLUSIVE lock a DROP takes, so reads
+      // are never blocked; older servers drop and create. Hooks on tables that are no longer brain tables are dropped.
+      const [{ v }] = await tx.executeRaw<{ v: string }>(`SELECT current_setting('server_version_num') AS v`) as [{ v: string }];
+      const replaceOk = Number(v) >= 140000;
+      for (const table of existing) if (!tables.includes(table) || !replaceOk) await tx.executeRaw(`DROP TRIGGER IF EXISTS ${WRITER_HOOK_TRIGGER} ON ${quoted(table)}`);
+      let i = 0;
+      for (const table of tables) {
+        await tx.executeRaw(CREATE_HOOK(table, replaceOk && existing.has(table)));
+        await o.afterTable?.(table, i++);
+      }
+      // A replaced hook must come out enabled and complete; anything else rolls the whole install back to the hooks that were there.
+      const effective = new Set((await tx.executeRaw<{ name: string }>(EFFECTIVE_SQL, [WRITER_HOOK_TRIGGER])).map(r => r.name));
+      if (tables.some(t => !effective.has(t))) throw Object.assign(new Error('writer hooks: a hook is not effective after install'), { code: 'writer_hooks_ineffective' });
+      if (o.gap) await tx.executeRaw(`INSERT INTO engine_writer_coverage_gaps (created_at, code) VALUES (clock_timestamp(), $1)`, [o.gap]);
+    });
+    committed = true;
+  } finally {
+    // Rolled back: the earlier hooks, if any, are still in place, so put their manifest back and let repairs resume.
+    if (!committed && prior) writeManifest(dir, prior);
+  }
   writeManifest(dir, { version: 1, state: 'installed', at: (o.now?.() ?? new Date()).toISOString(), tables });
   return tables;
 }
@@ -135,6 +153,9 @@ export async function removeWriterHooks(engine: BrainEngine, dir: string): Promi
     await tx.executeRaw(`SELECT ${HOOKS_LOCK}`);
     const hooked = (await tx.executeRaw<{ name: string }>(HOOKED_SQL, [WRITER_HOOK_TRIGGER])).map(r => r.name);
     for (const table of hooked) await tx.executeRaw(`DROP TRIGGER IF EXISTS ${WRITER_HOOK_TRIGGER} ON ${quoted(table)}`);
+    // Coverage ends here, so the stretch until hooks return is unknown: record it in the same transaction as the removal.
+    // A table that cannot take the row leaves the eligibility read failing, which is NOT READY too, so it must not stop the removal.
+    if (hooked.length > 0) await tx.executeRaw(`DO $gap$ BEGIN INSERT INTO engine_writer_coverage_gaps (created_at, code) VALUES (clock_timestamp(), 'hooks_removed'); EXCEPTION WHEN OTHERS THEN NULL; END $gap$`);
     return hooked.length;
   });
   rmSync(writerHooksManifestPath(dir), { force: true });

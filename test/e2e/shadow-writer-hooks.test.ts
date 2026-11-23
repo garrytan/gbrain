@@ -548,7 +548,7 @@ d('writer hooks on Postgres', () => {
     }
   }, 60_000);
 
-  test('restarting shadow mode keeps the evidence epoch: yesterday\'s unclaimed writer still counts, and a restart after stop records a gap', async () => {
+  test('restarting shadow mode keeps the evidence epoch: yesterday\'s unclaimed writer still counts, and stop records a gap', async () => {
     const home = tempDir();
     const url = (engine as unknown as { connectedDatabaseUrl: string }).connectedDatabaseUrl;
     const config = { engine: 'postgres' as const, database_url: url };
@@ -577,14 +577,80 @@ d('writer hooks on Postgres', () => {
       expect(restarted.writer_evidence_since).toBe(t0.toISOString());
       expect(Date.parse(restarted.started_at)).toBeGreaterThan(t0.getTime());
       expect((await read())!).toBeGreaterThanOrEqual(before);
-      // Stop, then start: same epoch, and one gap row for the stretch with no hooks.
+      // Stop, then start: same epoch, and one gap row, recorded by the stop in the transaction that removed the hooks.
       const gapsBefore = (await evidence()).gaps;
       expect(await runEngineShadow(['stop'], make(new Date()))).toBe(0);
+      expect((await evidence()).gaps).toBe(gapsBefore + 1);
+      expect((await engine.executeRaw<{ code: string }>(`SELECT code FROM engine_writer_coverage_gaps ORDER BY created_at DESC LIMIT 1`))[0]!.code).toBe('hooks_removed');
       expect(await runEngineShadow(['start', '--yes', '--expect', planHash], make(new Date()))).toBe(0);
       expect(readShadowState(dir)!.writer_evidence_since).toBe(t0.toISOString());
       expect((await evidence()).gaps).toBe(gapsBefore + 1);
-      expect((await engine.executeRaw<{ code: string }>(`SELECT code FROM engine_writer_coverage_gaps ORDER BY created_at DESC LIMIT 1`))[0]!.code).toBe('hooks_off_interval');
       await runEngineShadow(['stop'], make(new Date()));
+    });
+  }, 60_000);
+
+  test('a restart replaces the hooks in one transaction: writers keep being recorded during it, and a failed install keeps the old hooks', async () => {
+    const dir = tempDir();
+    await installWriterHooks(engine, dir);
+    const total = await brainTableCount();
+    const unclaimed = connection('psql');
+    // Mid-install, with the new transaction open and not committed, a write from a connection no process claims is still hooked.
+    let sawWriter = false;
+    await installWriterHooks(engine, dir, {
+      afterTable: async (_t, i) => {
+        if (i !== 0) return;
+        await unclaimed`INSERT INTO config (key, value) VALUES ('hooks-mid-install', '1') ON CONFLICT (key) DO NOTHING`;
+        sawWriter = true;
+      },
+    });
+    expect(sawWriter).toBe(true);
+    expect((await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM engine_writer_sessions WHERE application_name = 'psql'`))[0]!.n).toBe(1);
+    expect((await listHookedTables(engine)).length).toBe(total);
+    // A second install that fails part-way rolls back to the hooks that were there, and the manifest says installed again.
+    await expect(installWriterHooks(engine, dir, { afterTable: (_t, i) => { if (i === 3) throw new Error('killed'); } })).rejects.toThrow('killed');
+    expect((await listHookedTables(engine)).length).toBe(total);
+    expect((await evidence()).unhooked).toBe(0);
+    expect(readWriterHooksManifest(dir)?.state).toBe('installed');
+    // A restart over a disabled hook leaves every hook effective (or fails whole): never a quietly disabled one.
+    await engine.executeRaw('ALTER TABLE config DISABLE TRIGGER gbrain_writer_note');
+    expect((await evidence()).unhooked).toBe(1);
+    await installWriterHooks(engine, dir);
+    expect((await evidence()).unhooked).toBe(0);
+  }, 60_000);
+
+  test('a state file from before the epoch fields keeps its start on the first restart (and a stopped one records a gap)', async () => {
+    const home = tempDir();
+    const url = (engine as unknown as { connectedDatabaseUrl: string }).connectedDatabaseUrl;
+    const config = { engine: 'postgres' as const, database_url: url };
+    const out: string[] = [];
+    const view = new Proxy(engine, { get: (t, p) => (p === 'disconnect' ? async () => undefined : Reflect.get(t, p, t)) });
+    const make = () => ({ config: () => config, out: (l: string) => out.push(l), err: (l: string) => out.push(l), openPrimary: async () => view as never, loadAddon: async () => ({ ok: true }) as never, now: () => new Date() });
+    const t0 = new Date(Date.now() - 3 * 3_600_000);
+    await withEnv({ GBRAIN_HOME: home }, async () => {
+      const { shadowBrainKey, shadowDirFor, readShadowState } = await import('../../src/shadow/state.ts');
+      const dir = shadowDirFor(shadowBrainKey(config)!);
+      expect(await runEngineShadow(['start', '--plan'], make())).toBe(0);
+      const planHash = out.find(l => l.startsWith('plan_hash: '))!.slice('plan_hash: '.length);
+      const legacy = (enabled: boolean): ShadowState => ({ version: SHADOW_STATE_VERSION, enabled, started_at: t0.toISOString(), sample_rate: 0.1, queue_bound: 256, plan_hash: planHash, brain: 'legacy', primary_engine: 'postgres', ...(enabled ? {} : { stopped_at: new Date().toISOString() }) });
+      await installWriterHooks(engine, dir);
+      writeShadowState(dir, legacy(true));
+      const other = connection('psql');
+      await other`INSERT INTO config (key, value) VALUES ('hooks-legacy', '1') ON CONFLICT (key) DO NOTHING`;
+      await engine.executeRaw(`UPDATE engine_writer_sessions SET last_seen = clock_timestamp() - interval '1 hour'`);
+      const { buildEligibilityStatus } = await import('../../src/shadow/eligibility.ts');
+      const unknown = async () => (await buildEligibilityStatus({ dir, state: readShadowState(dir), engine, source: { name: 'none', unknownPaths: () => 0 }, brainId: () => 'host', addonTarget: () => null })).eligibility.unknown_writer_paths!;
+      expect(await unknown()).toBeGreaterThanOrEqual(1);
+      expect(await runEngineShadow(['start', '--yes', '--expect', planHash], make())).toBe(0);
+      // The restart adopted the legacy start as the epoch, so the hour-old second writer is still inside the window.
+      expect(readShadowState(dir)!.writer_evidence_since).toBe(t0.toISOString());
+      expect(await unknown()).toBeGreaterThanOrEqual(1);
+      // A stopped legacy state (an older stop recorded no gap) records one at the next start.
+      writeShadowState(dir, legacy(false));
+      const gapsBefore = (await evidence()).gaps;
+      expect(await runEngineShadow(['start', '--yes', '--expect', planHash], make())).toBe(0);
+      expect(readShadowState(dir)!.writer_evidence_since).toBe(t0.toISOString());
+      expect((await evidence()).gaps).toBe(gapsBefore + 1);
+      await runEngineShadow(['stop'], make());
     });
   }, 60_000);
 

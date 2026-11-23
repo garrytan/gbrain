@@ -316,6 +316,10 @@ describe('coverage source (plan as written)', () => {
     expect(planAsWrittenSource(fault({ kind: 'writer_observation_failed', ts: 'yesterday' })).unknownPaths(far)).toBe(1);
     expect(planAsWrittenSource(fault({ ts: new Date().toISOString() })).unknownPaths(far)).toBe(1);
     expect(planAsWrittenSource(fault({ kind: 7, ts: new Date().toISOString() })).unknownPaths(far)).toBe(1);
+    // A pass missing either count counts: absent is incomplete evidence, never zero.
+    expect(planAsWrittenSource(passFile({ id: 'p', finished_at: new Date().toISOString() })).unknownPaths(new Date(0))).toBe(1);
+    expect(planAsWrittenSource(passFile({ id: 'p', finished_at: new Date().toISOString(), follower_misses: 0 })).unknownPaths(new Date(0))).toBe(1);
+    expect(planAsWrittenSource(passFile({ id: 'p', finished_at: new Date().toISOString(), repaired_rows: 0 })).unknownPaths(new Date(0))).toBe(1);
     // A pass with no finish time, or with counts of the wrong type, counts too.
     expect(planAsWrittenSource(passFile({ id: 'p', follower_misses: 0, repaired_rows: 0 })).unknownPaths(far)).toBe(1);
     expect(planAsWrittenSource(passFile({ id: 'p', finished_at: 'soon', follower_misses: 0, repaired_rows: 0 })).unknownPaths(far)).toBe(1);

@@ -1928,7 +1928,9 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   4.00 ms, about 10% fewer per second). The cost applies only while shadow mode is on.
 - **Eligibility.** The swap reads the evidence with one read-only query: `eligibility.writer_hosts_7d` counts the
   machines that claimed writes in the last 7 days (from the first start of the current seed at the earliest, with 10 minutes of slack; starting again keeps that
-  start, and a start after `stop` also records a gap row, because nothing was hooked while shadow mode was off),
+  start, `start` replaces the hooks in one transaction so writers are never unhooked in between, and `stop` records a gap row in
+  the transaction that removes the hooks, because nothing records writers after that; a state file from before this
+  start was recorded keeps its own start, and a stopped one records the gap at the next start),
   and `eligibility.unknown_writer_paths` counts what no claim accounts for: a writing connection no gbrain process on
   the shadow machine claimed, a gap row, a brain table whose hook is missing or does not fire for every write
   (disabled, replica-only, conditional, the wrong events or another function; the next note repairs it and leaves a
@@ -1942,7 +1944,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   runs under a 50 ms lock timeout and a 2 s statement timeout, so a busy evidence table ends it as a recorded
   failure instead of holding one of the brain's connections,
   reconcile follower misses, repairs made while coverage was invalid, and a lost note. A fault or pass record that is
-  torn, has no time or carries a count of the wrong type is incomplete evidence and counts too. Criterion 11 reads
+  torn, has no time, lacks a count or carries a count of the wrong type is incomplete evidence and counts too. Criterion 11 reads
   NOT READY on any evidence it cannot prove, so a gap nobody thought of fails closed. A write that only takes a lock,
   a log or a cache row counts as a write for the note, though the follower does not copy it. The plan's idea of
   counting how often an enabled process held no attached engine is not built: it cannot be measured from the shadow

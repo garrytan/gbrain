@@ -215,13 +215,21 @@ async function start(
     return 1;
   }
   mkdirSync(brain.dir, { recursive: true, mode: 0o700 });
-  // The writer-evidence epoch: this seed's first start. A restart keeps it, so evidence already gathered stays in the window;
-  // a restart after `stop` also leaves a gap row, because no hook recorded writers while shadow mode was off.
+  // The writer-evidence epoch: this seed's first start. A restart keeps it, so evidence already gathered stays in the window.
+  // `stop` records a gap row when it removes the hooks (nothing recorded writers after that), so a restart after it still refuses.
   const prior = readShadowState(brain.dir);
-  const seedId = readSeedRecord(brain.dir)?.seed_id ?? null;
+  const seed = readSeedRecord(brain.dir);
+  const seedId = seed?.seed_id ?? null;
   const sameEpoch = prior?.writer_evidence_since !== undefined && (prior.writer_evidence_seed ?? null) === seedId;
-  const evidenceSince = sameEpoch ? prior!.writer_evidence_since! : now().toISOString();
-  const hooksWereOff = sameEpoch && prior!.enabled === false;
+  // A state file written before the epoch fields existed names no seed: it is the same seed when that seed finished before
+  // the state's own start (a reseed needs shadow mode off, so a later seed would have finished after it). Adopt its start as the
+  // earliest known one, and treat a stopped legacy state as hooks that were off (an older stop recorded no gap).
+  const priorStart = prior ? Date.parse(prior.started_at) : Number.NaN;
+  const legacySame = prior !== null && prior.writer_evidence_since === undefined && Number.isFinite(priorStart)
+    && (seed === null || (Number.isFinite(Date.parse(seed.finished_at)) && Date.parse(seed.finished_at) <= priorStart));
+  const evidenceSince = sameEpoch ? prior!.writer_evidence_since! : legacySame ? prior!.started_at : now().toISOString();
+  // A stop that ran with this code recorded its own gap in the removal transaction; a legacy stop did not.
+  const hooksWereOff = legacySame && prior!.enabled === false;
   if (primaryTakesWriterHooks(brain.engine)) {
     let primary: BrainEngine | null = null;
     try {
