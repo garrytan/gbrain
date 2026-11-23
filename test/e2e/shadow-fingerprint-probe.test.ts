@@ -1,6 +1,7 @@
 /**
  * The shadow fingerprint probe on Postgres hosts whose lower() or [[:space:]] answers differ from PGLite's (and Rust's):
- * a glibc en_US.utf8 database and a C-ctype database, each its own database with that LC_CTYPE (src/shadow/fingerprints.ts).
+ * a glibc en_US.utf8 database, a C-ctype database and an ICU-provider database (locale en-US, skipped where the server cannot create one),
+ * each its own database with that locale (src/shadow/fingerprints.ts).
  * Twin of test/shadow-fingerprint-probe.test.ts (PGLite, the reference). Needs DATABASE_URL.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
@@ -20,12 +21,12 @@ import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 import { hasDatabase } from './helpers.ts';
 
 interface Host { engine: PostgresEngine; name: string }
-const hosts: Record<'en_US' | 'C', Host> = {} as never;
+const hosts: Partial<Record<'en_US' | 'C' | 'icu', Host>> = {};
 let admin: ReturnType<typeof postgres>;
 
-async function createHost(ctype: string): Promise<Host> {
+async function createHost(locale: string): Promise<Host> {
   const name = `gbrain_test_fp_probe_${randomUUID().replace(/-/g, '')}`;
-  await admin.unsafe(`CREATE DATABASE ${name} TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE '${ctype}' LC_CTYPE '${ctype}'`);
+  await admin.unsafe(`CREATE DATABASE ${name} TEMPLATE template0 ENCODING 'UTF8' ${locale}`);
   const url = new URL(process.env.DATABASE_URL!);
   url.pathname = `/${name}`;
   const engine = new PostgresEngine();
@@ -51,12 +52,14 @@ const clearFacts = (host: Host) => host.engine.executeRaw('DELETE FROM facts');
   beforeAll(async () => {
     assertSafeE2eDatabaseUrl(process.env.DATABASE_URL!);
     admin = postgres(process.env.DATABASE_URL!, { max: 1, prepare: false });
-    hosts.en_US = await createHost('en_US.utf8');
-    hosts.C = await createHost('C');
+    hosts.en_US = await createHost(`LC_COLLATE 'en_US.utf8' LC_CTYPE 'en_US.utf8'`);
+    hosts.C = await createHost(`LC_COLLATE 'C' LC_CTYPE 'C'`);
+    // Postgres 15 and later with ICU built in; a server without it leaves this arm out.
+    hosts.icu = await createHost(`LOCALE_PROVIDER icu ICU_LOCALE 'en-US'`).catch(() => undefined);
   }, 180_000);
   afterAll(async () => {
     for (const host of Object.values(hosts)) {
-      await host?.engine.disconnect();
+      await host.engine.disconnect();
       await admin.unsafe(`DROP DATABASE IF EXISTS ${host.name} WITH (FORCE)`);
     }
     await admin?.end();
@@ -64,9 +67,9 @@ const clearFacts = (host: Host) => host.engine.executeRaw('DELETE FROM facts');
 
   describe('glibc en_US.utf8', () => {
     test('with no fact holding a differing code point the probe passes and names the code points', async () => {
-      await clearFacts(hosts.en_US);
-      await addFact(hosts.en_US, 'Bob likes C++ and .NET, v3.5.');
-      const record = await probe(hosts.en_US);
+      await clearFacts(hosts.en_US!);
+      await addFact(hosts.en_US!, 'Bob likes C++ and .NET, v3.5.');
+      const record = await probe(hosts.en_US!);
       expect(record.ctype).toBe('en_US.utf8');
       expect(record.differing_code_points_total).toBeGreaterThan(0);
       expect(record.differing_code_points).toContain('U+1680');
@@ -75,11 +78,11 @@ const clearFacts = (host: Host) => host.engine.executeRaw('DELETE FROM facts');
     }, 60_000);
 
     test('a stored fact with U+1680 or a circled letter fails the probe and is counted', async () => {
-      await clearFacts(hosts.en_US);
-      await addFact(hosts.en_US, 'Alice\u1680likes tea');
-      await addFact(hosts.en_US, 'Grade \u24b6 student');
-      await addFact(hosts.en_US, 'Plain ASCII claim');
-      const record = await probe(hosts.en_US);
+      await clearFacts(hosts.en_US!);
+      await addFact(hosts.en_US!, 'Alice\u1680likes tea');
+      await addFact(hosts.en_US!, 'Grade \u24b6 student');
+      await addFact(hosts.en_US!, 'Plain ASCII claim');
+      const record = await probe(hosts.en_US!);
       expect(record.state).toBe('fail');
       expect(record.facts_with_differing_code_points).toBe(2);
     }, 60_000);
@@ -87,9 +90,9 @@ const clearFacts = (host: Host) => host.engine.executeRaw('DELETE FROM facts');
 
   describe('C ctype', () => {
     test('with ASCII facts only the probe passes, and the record says what differs', async () => {
-      await clearFacts(hosts.C);
-      await addFact(hosts.C, 'Bob likes C++ and .NET, v3.5.');
-      const record = await probe(hosts.C);
+      await clearFacts(hosts.C!);
+      await addFact(hosts.C!, 'Bob likes C++ and .NET, v3.5.');
+      const record = await probe(hosts.C!);
       expect(record.ctype).toBe('C');
       // C lower() leaves every non-ASCII letter alone, so it differs from PGLite on the cased code points; none is stored.
       expect(record.differing_code_points_total).toBeGreaterThan(0);
@@ -99,11 +102,36 @@ const clearFacts = (host: Host) => host.engine.executeRaw('DELETE FROM facts');
     }, 60_000);
 
     test('a stored fact with a capital E acute fails the probe', async () => {
-      await clearFacts(hosts.C);
-      await addFact(hosts.C, '\u00c9cole claim');
-      const record = await probe(hosts.C);
+      await clearFacts(hosts.C!);
+      await addFact(hosts.C!, '\u00c9cole claim');
+      const record = await probe(hosts.C!);
       expect(record.facts_with_differing_code_points).toBe(1);
       expect(record.state).toBe('fail');
+    }, 60_000);
+  });
+
+  describe('ICU provider (en-US)', () => {
+    test('records the provider and locale; with no fact holding a differing code point the probe passes and names them', async () => {
+      if (!hosts.icu) return console.log('[fingerprint probe] no ICU database on this server; arm skipped');
+      await clearFacts(hosts.icu);
+      await addFact(hosts.icu, 'Bob likes C++ and .NET, v3.5.');
+      const record = await probe(hosts.icu);
+      expect(record.locale_provider).toBe('i');
+      expect(record.locale).toBe('en-US'); // datlocale on Postgres 17, daticulocale on 16
+      expect(record.differing_code_points_total).toBeGreaterThan(0);
+      expect(record.facts_with_differing_code_points).toBe(0);
+      expect(record.state).toBe('pass');
+    }, 60_000);
+
+    test('a stored fact holding a code point ICU treats differently fails the probe', async () => {
+      if (!hosts.icu) return;
+      const first = (await probe(hosts.icu)).differing_code_points[0]!;
+      await clearFacts(hosts.icu);
+      await addFact(hosts.icu, `Alice${String.fromCodePoint(parseInt(first.slice(2), 16))}likes tea`);
+      await addFact(hosts.icu, 'Plain ASCII claim');
+      const record = await probe(hosts.icu);
+      expect(record.state).toBe('fail');
+      expect(record.facts_with_differing_code_points).toBe(1);
     }, 60_000);
   });
 });
