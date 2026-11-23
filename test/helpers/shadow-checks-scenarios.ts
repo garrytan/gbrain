@@ -831,6 +831,32 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       } finally { await reads.close(); await primary.executeRaw(`UPDATE content_chunks SET modality = 'text' WHERE modality <> 'text'`); }
     });
 
+    test('a commit with synchronous_commit=off from another connection moves the position at once: the reference is refused (Postgres only)', async () => {
+      if (ctx.dialect !== 'postgres') return; // PGLite has a single connection: no external writer
+      const primary = ctx.primary();
+      const chunkOf = await vectorFixture(primary);
+      const top = chunkOf.get(3)!;
+      const reads = openReadSource(primary);
+      const { PostgresEngine } = await import('../../src/core/postgres-engine.ts');
+      const other = new PostgresEngine();
+      await other.connect({ engine: 'postgres', database_url: (primary as unknown as { connectedDatabaseUrl?: string }).connectedDatabaseUrl, poolSize: 1 } as never);
+      try {
+        const watch = createLsnWatch(reads);
+        const samples = new SampleRegistry();
+        const args = encodeValue([vec(3), { limit: 10 }]);
+        let clock = 0;
+        const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never, watch, now: () => (clock += 120_000) }); // the reference's one-a-minute gate opens for each
+        const literal = `[${Array.from(vec(88)).join(',')}]`;
+        for (let i = 0; i < 20; i++) { // the WAL writer flushes every 200 ms: repeat so the commit is not always flushed before the reference ends
+          const captured = samples.add({ op: 'searchVector', args, at: Date.now(), lsn: await watch.live() }, 100);
+          await other.transaction(async (tx) => { await tx.executeRaw(`SET LOCAL synchronous_commit = off`); await tx.executeRaw(`UPDATE content_chunks SET embedding = $2::vector WHERE id = $1`, [top, literal]); });
+          await expect(handler({ id: i + 1, kind: 'vector', sid: captured, phase: 'sample' })).rejects.toMatchObject({ code: 'moved' });
+          await primary.executeRaw(`UPDATE content_chunks SET embedding = $2::vector WHERE id = $1`, [top, `[${Array.from(vec(3)).join(',')}]`]);
+          await new Promise((r) => setTimeout(r, 70)); // a different phase of the WAL writer's cycle each time
+        }
+      } finally { await other.disconnect(); await reads.close(); }
+    }, 120_000);
+
     test('the reference has no candidate window: boosted true top results beyond the engine\'s window are found, and the windowed search misses them', async () => {
       const primary = ctx.primary();
       const unit = (v: Float32Array): Float32Array => { let n = 0; for (const x of v) n += x * x; return v.map((x) => x / Math.sqrt(n)); };

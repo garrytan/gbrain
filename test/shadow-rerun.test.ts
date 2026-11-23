@@ -139,3 +139,38 @@ describe('the barrier', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe('rerun attempts', () => {
+  test('two reruns of one sample keep their own result and position; an unknown attempt, or none, is never proven', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-shadow-attempts-'));
+    const epoch = ensureEpoch(dir, { seed_id: 's', rust_addon_sha256: null, comparator_version: 3, adapter_version: 'a', capability_set_hash: null, readiness_policy_hash: 'p' });
+    const samples = new SampleRegistry();
+    const sid = samples.add({ op: 'listPages', args: [], at: Date.now() }, 10);
+    const real = engine.listPages.bind(engine);
+    let answers = 0;
+    const first = gate();
+    const primary = new Proxy(engine, { get: (t, p) => (p === 'listPages' ? async (...a: never[]) => { const n = ++answers; if (n === 1) await first.wait; return n === 1 ? [{ slug: 'first-answer' }] : (real as (...x: unknown[]) => unknown)(...a); } : Reflect.get(t, p, t)) }) as never;
+    const handler = makeAskHandler({ engine: primary, reads: {} as never, dir, samples, rpc: (async () => ({ stamp: 1 })) as never, follower: { idle: () => true, blocked: () => null, settle: async () => {}, published: 0, lastInvalidatedAt: 0 } as never,
+      watch: { current: () => 'lsn', live: async () => `lsn-${answers}`, ready: async () => {} } });
+    const ask = { id: 1, kind: 'rerun', sid, epoch_id: epoch.epoch_id };
+    const a = handler(ask) as Promise<{ attempt: string; digest: string }>; // rerun A waits inside its primary read
+    await sleep(30);
+    const b = await handler(ask) as { attempt: string; digest: string }; // rerun B starts and finishes meanwhile
+    first.open();
+    const a1 = await a;
+    expect(a1.attempt).not.toBe(b.attempt);
+    expect(a1.digest).not.toBe(b.digest); // each answer is its own: B did not overwrite A's slot
+    const held = samples.get(sid)!.reruns!;
+    expect([held.get(a1.attempt)?.lsn, held.get(b.attempt)?.lsn]).toEqual(['lsn-0', 'lsn-1']); // and each keeps the position taken before its own read
+    expect(JSON.stringify(held.get(a1.attempt)?.result)).toContain('first-answer');
+    expect(JSON.stringify(held.get(b.attempt)?.result)).not.toContain('first-answer');
+    // follow-up asks name an attempt: none, an unknown id and a dropped one are `moved`, never clean
+    const rows = [{ payload: 'x', id: 9 }];
+    for (const attempt of [undefined, 'nope']) expect(await handler({ id: 2, kind: 'privacy', sid, phase: 'rerun', attempt, rows })).toEqual({ verdict: 'privacy_check_moved', complete: false });
+    await expect(handler({ id: 3, kind: 'vector', sid, phase: 'rerun', attempt: 'nope' })).rejects.toMatchObject({ code: 'moved' });
+    for (let i = 0; i < 10; i++) await handler(ask); // more attempts than the sample keeps: the oldest are dropped
+    expect(samples.get(sid)!.reruns!.size).toBe(8);
+    expect(await handler({ id: 4, kind: 'privacy', sid, phase: 'rerun', attempt: a1.attempt, rows })).toEqual({ verdict: 'privacy_check_moved', complete: false });
+    rmSync(dir, { recursive: true, force: true });
+  });
+});

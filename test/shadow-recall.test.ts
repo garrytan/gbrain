@@ -18,7 +18,8 @@ import { ensureEpoch } from '../src/shadow/evidence-epoch.ts';
 import { buildEvidenceStatus, renderEvidenceStatus } from '../src/shadow/evidence.ts';
 import { appendFault, appendLedgerRows, type ShadowLedgerRow } from '../src/shadow/ledger.ts';
 import { shadowStatusDocument } from '../src/shadow/status-document.ts';
-import { appendRecall, IntervalGate, readEpochRecall, recallEligible, RECALL_REFERENCE_LIMIT, scoreRecall, type RankedKey } from '../src/shadow/recall.ts';
+import { scoreWithReruns } from '../src/shadow/child.ts';
+import { appendRecall, firstTenKeys, IntervalGate, readEpochRecall, recallEligible, RECALL_REFERENCE_LIMIT, scoreRecall, type RankedKey } from '../src/shadow/recall.ts';
 
 const dirs: string[] = [];
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
@@ -74,6 +75,21 @@ describe('scoring', () => {
     expect(scoreRecall(ref(12), [null, 'x', ...rows(nine)], rows(ids(0, 10)))).toMatchObject({ vector: 1, primary: 0.8 }); // the same for the primary's own answer
     expect(scoreRecall(ref(12), rows(ids(0, 10)), [...rows(nine), null, ...rows(['c9'])])).toMatchObject({ vector: 0.9 }); // a hole at the tenth place pushes the next row out
     expect(scoreRecall(ref(12), rows(ids(0, 10)), null)).toMatchObject({ vector: 0 }); // not a list: nothing
+  });
+  test('the rerun representation of an answer keeps its holes: a null ahead of ten neighbours scores 0.9 for the primary through the rerun path too', async () => {
+    const keys = firstTenKeys([null, ...rows(ids(0, 10))]); // what the serving process sends back for a moved vector sample's rerun
+    expect(keys).toHaveLength(10);
+    expect(keys[0]).toBeNull();
+    const env = {
+      timeoutMs: 1000, now: () => 0, curEpoch: () => 'e',
+      ask: async (p: Record<string, unknown>) => (p.kind === 'rerun' ? { stamp: 1, epoch_id: 'e', keys, attempt: 'a1' } : p.attempt === 'a1' ? ref(12) : (() => { throw Object.assign(new Error('moved'), { code: 'moved' }); })()),
+      exclusive: async (_s: number, fn: () => Promise<unknown>) => fn(),
+      callRust: async () => ({ value: rows(ids(0, 10)) }),
+      write: (score: unknown) => { written.push(score); },
+    };
+    const written: unknown[] = [];
+    await scoreWithReruns(env as never, { op: 'searchVector', sid: 's', result: [], args: [] } as never, [], rows(ids(0, 10)));
+    expect(written).toMatchObject([{ vector: 1, primary: 0.9 }]); // the primary lost a place to the null, so it scores 0.9, never 1
   });
   test('ten copies of one true neighbour are one neighbour, not ten', () => {
     const copies = Array.from({ length: 10 }, () => ({ chunk_id: 'c0', score: 0.5 }));

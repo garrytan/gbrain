@@ -142,26 +142,28 @@ interface RecallEnv {
  * ended (`moved`), both engines and the reference are run again from a new position, up to RERUN_ATTEMPTS times in all; a
  * sample that keeps moving is not scored. An unscored sample is skipped, never counted.
  */
-async function scoreWithReruns(env: RecallEnv, event: ReadEvent, args: unknown[], rust: unknown): Promise<void> {
+export async function scoreWithReruns(env: RecallEnv, event: ReadEvent, args: unknown[], rust: unknown): Promise<void> {
   try {
     const deadline = env.now() + RERUN_DEADLINE_MS * RERUN_ATTEMPTS;
     let primary: unknown = event.result;
     let theirs: unknown = rust;
     let phase: 'sample' | 'rerun' = 'sample';
+    let attemptId: string | undefined; // the rerun attempt the reference is held to: never another's
     for (let attempt = 1; ; attempt++) {
       try {
-        const reference = await env.ask({ kind: 'vector', sid: event.sid, phase }, RERUN_DEADLINE_MS) as RankedKey[];
+        const reference = await env.ask({ kind: 'vector', sid: event.sid, phase, ...(attemptId === undefined ? {} : { attempt: attemptId }) }, RERUN_DEADLINE_MS) as RankedKey[];
         const score = scoreRecall(reference, primary, theirs);
         const epoch = env.curEpoch(); // a child that is no longer an owner names no epoch: the sample is dropped
         if (score && epoch) env.write(score, epoch);
         return;
       } catch (error) {
         if (safeCode((error as { code?: unknown })?.code) !== 'moved' || attempt >= RERUN_ATTEMPTS || env.now() > deadline) return;
-        const answer = await env.ask({ kind: 'rerun', sid: event.sid, epoch_id: env.curEpoch() }, RERUN_DEADLINE_MS) as { stamp: number; epoch_id: string; keys?: RankedKey[] };
-        if (env.curEpoch() === null || answer.epoch_id !== env.curEpoch() || !answer.keys) return;
+        const answer = await env.ask({ kind: 'rerun', sid: event.sid, epoch_id: env.curEpoch() }, RERUN_DEADLINE_MS) as { stamp: number; epoch_id: string; keys?: Array<RankedKey | null>; attempt?: string };
+        if (env.curEpoch() === null || answer.epoch_id !== env.curEpoch() || !answer.keys || !answer.attempt) return;
         const out = await env.exclusive(answer.stamp, () => env.callRust(event.op, args, event.access, env.timeoutMs));
         if (out === null || out.timedOut) return;
-        primary = answer.keys.map((k) => ({ chunk_id: k.k, score: k.s }));
+        primary = answer.keys.map((k) => (k ? { chunk_id: k.k, score: k.s } : null)); // holes kept: a malformed position still takes its place
+        attemptId = answer.attempt;
         theirs = encodeValue(out.value);
         phase = 'rerun';
       }
@@ -333,7 +335,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     // answer, and for a ranked read its membership (rows without scores, in a fixed order). Only a leak, equality, or equal membership is decided here:
     // the same rows in another order or with other scores are an order_diff, as on a first read; anything else is a plain diff, and the privacy question compares rows there.
     const kind = SHADOW_READ_MEMBERS[op as ShadowReadMember];
-    const asked = primary as { digest?: string; members?: string; list?: boolean };
+    const asked = primary as { digest?: string; members?: string; list?: boolean; attempt?: string };
     const c = phase === 'rerun'
       ? ((leak) => (leak.outcome === 'privacy_diverged' ? leak
         : resultDigest(rust) === asked.digest ? { outcome: 'match' as const }
@@ -344,7 +346,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     const args = decodeValue(encodedArgs) as unknown[];
     // A read that answers a list is one the primary answered with a list (the first answer, for a rerun) or a ranked read: its answer must be a list.
     const expectList = kind === 'ranked' || (phase === 'rerun' ? asked.list === true : Array.isArray(primary));
-    const { verdict, complete } = await privacyVerdict(ask, args, phase === 'rerun' ? undefined : primary, rust, sid, phase, at, expectList);
+    const { verdict, complete } = await privacyVerdict(ask, args, phase === 'rerun' ? undefined : primary, rust, sid, phase, at, expectList, phase === 'rerun' ? asked.attempt : undefined);
     if (verdict === 'violation') return { outcome: 'privacy_diverged', reason: 'row_not_readable_by_caller' };
     if (verdict !== 'clean') return { outcome: 'inconclusive', reason: verdict, mismatch: c.outcome as 'diff' | 'order_diff' };
     if (exactnessArm(op) === 'private_ranked') {
@@ -366,7 +368,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     try {
       for (let attempt = 1; attempt <= RERUN_ATTEMPTS; attempt++) {
         const retry = (): boolean => { const more = attempt < RERUN_ATTEMPTS; if (!more) skip('moved'); return more; };
-        const deadline = now() + RERUN_DEADLINE_MS; let answer: { digest: string; members?: string; stamp: number; epoch_id: string };
+        const deadline = now() + RERUN_DEADLINE_MS; let answer: { digest: string; members?: string; stamp: number; epoch_id: string; attempt?: string };
         try { answer = await ask({ kind: 'rerun', sid: event.sid, epoch_id: curEpoch() }, RERUN_DEADLINE_MS) as typeof answer; } catch (error) {
           if (!MOVED_CODES.has(safeCode((error as { code?: unknown })?.code))) throw error;
           if (retry()) continue; return;
@@ -376,7 +378,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
         const out = await follow.exclusive(answer.stamp, () => callRust(event.op, args, event.access, Math.max(1, Math.min(timeoutMs, deadline - now())), (p) => { call = p; }));
         if (out?.timedOut) trackStall(call);
         if (out === null || out.timedOut) return skip(out === null ? 'watermark_moved' : 'timeout');
-        const c2 = await judge(event.op, event.args, { digest: answer.digest, members: answer.members, list: Array.isArray(event.result) }, encodeValue(out.value), event.sid, 'rerun', now(), null);
+        const c2 = await judge(event.op, event.args, { digest: answer.digest, members: answer.members, attempt: answer.attempt, list: Array.isArray(event.result) }, encodeValue(out.value), event.sid, 'rerun', now(), null);
         if (c2.outcome === 'inconclusive' && c2.reason === 'privacy_check_moved') { if (retry()) continue; return; }
         settleRerun((why) => record(event, c, rustMs, rows, why), (row, why) => record(event, row, rustMs, rows, why), event.op, c, c2);
         return;

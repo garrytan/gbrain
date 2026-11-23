@@ -28,7 +28,7 @@ export interface CapturedRead {
   at: number;
   /** The serving process's write generation before the primary read started (MirrorQueue.token). */
   gen?: number;
-  /** The primary's WAL position (pg_current_wal_lsn) the serving process knew before the primary read started (MirrorQueue.token). */
+  /** The primary's WAL position (pg_current_wal_insert_lsn) the serving process knew before the primary read started (MirrorQueue.token). */
   lsn?: string;
 }
 

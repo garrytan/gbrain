@@ -131,7 +131,7 @@ export interface PrivacyResult { verdict: PrivacyVerdict; complete: boolean }
  * identity, a payload that differs from the primary's row of that page and chunk, a page or chunk the primary does not have,
  * a failed, skipped or moved check) leaves `complete` false.
  */
-export async function privacyVerdict(ask: Asker, args: unknown[], primary: unknown, rust: unknown, sid: string | undefined, phase: 'sample' | 'rerun', at: number, expectList = false): Promise<PrivacyResult> {
+export async function privacyVerdict(ask: Asker, args: unknown[], primary: unknown, rust: unknown, sid: string | undefined, phase: 'sample' | 'rerun', at: number, expectList = false, attempt?: string): Promise<PrivacyResult> {
   if (!policyApplies(args)) return { verdict: 'clean', complete: false };
   const rows = rowIdentities(rust);
   const whole = !hasMalformedElement(rust, expectList); // an answer that is not the list the read answers, or an element that is not a row, has no identity to judge: the verdict is never complete
@@ -143,7 +143,7 @@ export async function privacyVerdict(ask: Asker, args: unknown[], primary: unkno
   try {
     // A slug leaves the child only for a row with no page id.
     const wire = rows.map(({ key, ...r }) => (r.id === undefined && key !== undefined ? { ...r, key } : r));
-    const answer = await ask({ kind: 'privacy', sid, phase, at, rows: wire }, PRIVACY_ASK_TIMEOUT_MS) as Partial<PrivacyResult> | null;
+    const answer = await ask({ kind: 'privacy', sid, phase, at, ...(attempt === undefined ? {} : { attempt }), rows: wire }, PRIVACY_ASK_TIMEOUT_MS) as Partial<PrivacyResult> | null;
     const v = answer?.verdict;
     if (v === 'clean') return { verdict: 'clean', complete: whole && answer?.complete === true };
     if (v === 'violation' || v === 'privacy_check_moved') return { verdict: v, complete: false };

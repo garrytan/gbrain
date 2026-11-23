@@ -1987,13 +1987,13 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   field but the ranking ones; a row with a primary row's page and chunk but another payload (a substituted title or flag), or one
   that claims a chunk without a numeric chunk id, is never cleared and the diff counts. A new row is judged on the primary with the
   read policy, the safe-chunk fence the read asked for and the chunk visibility the primary used. "Nothing changed" is proven by one thing: the primary's WAL position
-  (`pg_current_wal_lsn()`), read BEFORE the primary read started (never a newer one) and read again at the end of the check, must be
+  (`pg_current_wal_insert_lsn()`, the insert position: a commit made with `synchronous_commit=off` is visible before its WAL is written out, never before it is inserted), read BEFORE the primary read started (never a newer one) and read again at the end of the check, must be
   the same, with this process's write generation and the access tables' generation. Any committed write to any table, to the
   catalog (a policy altered in place) or a change undone again (A, B, A) moves it, in this database or any other of the same
   cluster. When it moved, both engines and the reference are run again from a new position, up to 3 times; a sample still moving
   after that stays unresolved (`skipped:moved`) and counts into `reads.diverged_unexplained_7d` (criterion 3). So busy brains clear
   fewer samples; an idle one clears them all (on this VM an idle PGLite brain never moved, an idle Postgres moved in 2% of 1 s windows,
-  and under one write every 2 seconds a sample moved in about 10% of 250 ms windows and 50% of 1 s windows). A list of more than 2,000 row identities, or one holding anything invalid,
+  and under one write every 2 seconds a sample moved in about 10% of 250 ms windows and 50% of 1 s windows). Each rerun is its own attempt, with its own answer and position; the follow-up questions name the attempt, and an unknown or dropped one is never proven. A list of more than 2,000 row identities, or one holding anything invalid,
   is never complete. The vector reference is the engine's own exact statement with no candidate
   window and is used only when the same proof holds from the sample's capture to the end of the reference run; otherwise the sample is
   not scored. Tied rows at the cutoff count only for the top-ten places the strictly better rows leave, and a reference whose last row

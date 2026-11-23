@@ -8,6 +8,10 @@
 import { randomBytes } from 'node:crypto';
 import type { CallerAccess } from '../core/search/private-visibility.ts';
 
+/** One stable rerun of a sample, immutable once made: its own time, write generation, WAL position and encoded answer. The asks about it name its attempt id; two reruns of one sample never share a slot. */
+export interface RerunAttempt { at: number; gen?: number; lsn?: string; result?: unknown }
+export const RERUN_ATTEMPTS_KEPT = 8;
+
 export interface Sample {
   op: string;
   /** Encoded call arguments. */
@@ -17,12 +21,12 @@ export interface Sample {
   at: number;
   /** The serving process's write generation (follower.published) when the read was captured; undefined without a follower. */
   gen?: number;
-  /** The primary's WAL position (pg_current_wal_lsn) known before the read started (checks.ts `createLsnWatch`); undefined when none was known yet, and then nothing is proven unchanged. */
+  /** The primary's WAL position (pg_current_wal_insert_lsn) known before the read started (checks.ts `createLsnWatch`); undefined when none was known yet, and then nothing is proven unchanged. */
   lsn?: string;
   /** The primary's encoded answer; the serving process compares the child's rows with it, so it never goes back over the control channel. */
   result?: unknown;
-  /** Set when the stable rerun read the primary again: the time, generation and WAL position of that read, and its encoded answer once it returned. */
-  rerun?: { at: number; gen?: number; lsn?: string; result?: unknown };
+  /** The stable reruns of this sample by attempt id (the last RERUN_ATTEMPTS_KEPT): an id not here, or one dropped, answers `moved`. */
+  reruns?: Map<string, RerunAttempt>;
 }
 
 export const SAMPLE_REGISTRY_MAX_ENTRIES = 1024;

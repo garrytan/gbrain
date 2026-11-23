@@ -43,6 +43,9 @@ function firstTen(encoded: unknown): Array<RankedKey | null> {
   return Array.isArray(encoded) ? encoded.slice(0, RECALL_TOP).map(keyOf) : [];
 }
 
+/** The first ten positions as content-free keys, holes kept (null): the rerun representation of an answer, so a malformed position still takes its place when it is scored. */
+export const firstTenKeys = firstTen;
+
 /** Only an unpaged read of at least ten rows has a top ten to score. Unset limit is the engine default (20). */
 export function recallEligible(args: unknown[]): boolean {
   const opts = (args[1] ?? {}) as { limit?: unknown; offset?: unknown };

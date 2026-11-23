@@ -10,7 +10,7 @@
  *            policy fragment (private-visibility.ts `privatePagesFilterForCaller`) under the captured `CallerAccess`, the
  *            primary's safe-chunk fence when its read asked for it, and the chunk visibility the primary used. The answer is a
  *            verdict (`clean` with `complete`, `violation`, `moved`), never content. It is `moved` unless this process can PROVE
- *            nothing was written since the primary read started: the primary's WAL position (`pg_current_wal_lsn()`, `createLsnWatch`),
+ *            nothing was written since the primary read started: the primary's WAL position (`pg_current_wal_insert_lsn()`, `createLsnWatch`),
  *            known before that read started, must be the same at the end of the check (any table, the catalog, or a change
  *            undone again moves it); its own write generation (follower.published, read live before and after the check) must
  *            equal the one captured with the sample, no page or access row may carry a time later than the read, and the access
@@ -40,9 +40,9 @@ import { candidatesOf, extraIds, membersDigest, resultDigest, rowIdentities, typ
 import { readEpoch } from './evidence-epoch.ts';
 import type { ShadowFollower } from './follower.ts';
 import type { ReadSource } from './read-pool.ts';
-import { IntervalGate, rankedKeys, RECALL_INTERVAL_MS, RECALL_REFERENCE_LIMIT, type RankedKey } from './recall.ts';
+import { firstTenKeys, IntervalGate, rankedKeys, RECALL_INTERVAL_MS, RECALL_REFERENCE_LIMIT, type RankedKey } from './recall.ts';
 import { isShadowReadMember, SHADOW_READ_MEMBERS, type ShadowReadMember } from './reads.ts';
-import type { Sample, SampleRegistry } from './samples.ts';
+import { RERUN_ATTEMPTS_KEPT, type RerunAttempt, type Sample, type SampleRegistry } from './samples.ts';
 
 export const RERUN_DEADLINE_MS = 30_000;
 
@@ -51,7 +51,7 @@ export interface PageCandidates { ids: number[]; keys: string[]; chunks: number[
 /** The serving process's verdict on a sample's Rust rows (never content). `complete`: every extra row was identified and judged. */
 export interface PrivacyAnswer { verdict: 'clean' | 'violation' | 'privacy_check_moved'; complete: boolean }
 /** `digest`: the whole answer; `members`: the same rows with scores and order taken out, for a ranked read (reads.ts), else absent. */
-export interface RerunAnswer { stamp: number; epoch_id: string; digest: string; members?: string; /** A vector read's rerun answer as ranked keys (chunk ids and scores, no content), for the recall score of the rerun. */ keys?: RankedKey[] }
+export interface RerunAnswer { stamp: number; epoch_id: string; digest: string; members?: string; /** A vector read's rerun answer as ranked keys (chunk ids and scores, no content), for the recall score of the rerun. */ keys?: Array<RankedKey | null>; /** The attempt id the follow-up privacy and reference asks name. */ attempt?: string }
 
 /** Runs `fn` as the captured caller, or outside any caller record when the read had none (a record changes the page policy text). */
 const asCaller = <T>(access: Partial<CallerAccess> | undefined, fn: () => T): T => (access ? withCallerAccess(access, fn) : withoutCallerAccess(fn));
@@ -73,8 +73,8 @@ const CHANGED_AFTER_SQL = `SELECT (EXISTS (SELECT 1 FROM pages WHERE updated_at 
   OR EXISTS (SELECT 1 FROM access_pending_coverage WHERE created_at > to_timestamp($1::double precision / 1000.0))
   OR EXISTS (SELECT 1 FROM access_policy_revisions WHERE created_at > to_timestamp($1::double precision / 1000.0) OR applied_at > to_timestamp($1::double precision / 1000.0))) AS changed`;
 
-/** The primary's WAL position now: any committed change to any table, to the catalog (a policy altered in place) or a change that is undone again (A, then B, then A) moves it. */
-const LSN_SQL = `SELECT pg_current_wal_lsn()::text AS lsn`;
+/** The primary's WAL insert position now (pg_current_wal_insert_lsn; PGLite has it too): any committed change to any table, to the catalog (a policy altered in place) or a change that is undone again (A, then B, then A) moves it. */
+const LSN_SQL = `SELECT pg_current_wal_insert_lsn()::text AS lsn`; // the INSERT position: a commit with synchronous_commit=off is visible before its WAL is written out, never before it is inserted
 const lsnOf = async (tx: BrainEngine): Promise<string> => String((await tx.executeRaw<{ lsn: string }>(LSN_SQL))[0]?.lsn);
 
 /**
@@ -147,10 +147,15 @@ const isRowIdentity = (v: unknown): v is RowIdentity => {
 };
 
 /** The verdict on the child's Rust rows for `sample`: compared with the primary's own answer, the extra rows judged, nothing but a verdict going back. */
-async function privacyAnswer(d: AskDeps, sample: Sample, ask: { phase?: unknown; rows?: unknown }): Promise<PrivacyAnswer> {
+/** The rerun attempt a follow-up ask names, if the sample still holds it. */
+const attemptOf = (sample: Sample, id: unknown): RerunAttempt | undefined => (typeof id === 'string' ? sample.reruns?.get(id) : undefined);
+
+async function privacyAnswer(d: AskDeps, sample: Sample, ask: { phase?: unknown; rows?: unknown; attempt?: unknown }): Promise<PrivacyAnswer> {
   const rerun = ask.phase === 'rerun';
-  const base: Base | undefined = rerun ? sample.rerun : { at: sample.at, gen: sample.gen, lsn: sample.lsn };
-  const primary = rerun ? sample.rerun?.result : sample.result;
+  const attempt = rerun ? attemptOf(sample, ask.attempt) : undefined;
+  if (rerun && !attempt) return { verdict: 'privacy_check_moved', complete: false }; // an unknown, dropped or replaced attempt is never proven
+  const base: Base | undefined = rerun ? attempt : { at: sample.at, gen: sample.gen, lsn: sample.lsn };
+  const primary = rerun ? attempt?.result : sample.result;
   if (primary === undefined) throw coded('failed'); // what the primary answered is not known: nothing can be held against it
   // Only a whole, valid list of at most IDENTITY_LIMIT rows can complete a check: a list that is cut or holds anything invalid is judged as far as it goes
   // (a violation in it still pauses) and is never complete, so a row beyond the limit is never cleared by its absence.
@@ -191,6 +196,8 @@ export interface AskDeps {
   watch?: LsnWatch;
 }
 
+let rerunCounter = 0;
+
 async function stableRerun(d: AskDeps, watch: LsnWatch, sid: string, sample: Sample, ask: { epoch_id: unknown }): Promise<RerunAnswer> {
   const now = d.now ?? Date.now;
   const deadline = now() + (d.deadlineMs ?? RERUN_DEADLINE_MS);
@@ -211,15 +218,18 @@ async function stableRerun(d: AskDeps, watch: LsnWatch, sid: string, sample: Sam
   const ack = await d.rpc<{ stamp: number }>('barrier', {}, left());
   const args = decodeValue(sample.args) as unknown[];
   const lsn = await watch.live().catch(() => undefined); // none known: the rerun's privacy check is unproven, never clean; taken before the primary read below starts
-  sample.rerun = { at: now(), gen: published, lsn }; // the privacy check of the rerun is held to this read
+  const attempt: RerunAttempt = { at: now(), gen: published, lsn }; // the privacy check of the rerun is held to this read, and to no other attempt's
+  const attemptId = String(++rerunCounter);
+  (sample.reruns ??= new Map()).set(attemptId, attempt);
+  while (sample.reruns.size > RERUN_ATTEMPTS_KEPT) sample.reruns.delete(sample.reruns.keys().next().value as string);
   const read = asCaller(sample.access, () => (d.engine as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[sample.op]!(...args));
   const result = await Promise.race([read, sleep(left()).then(() => { throw coded('timeout'); })]);
   if (!f.idle() || f.published !== published || f.lastInvalidatedAt !== invalidated) throw coded('write_after_barrier');
   const encoded = encodeValue(result);
-  sample.rerun.result = encoded; // kept here for the privacy question; only its digest goes back
+  attempt.result = encoded; // kept here for the privacy question; only its digest goes back
   d.samples.charge(sid, JSON.stringify(encoded)?.length ?? 0);
   const members = SHADOW_READ_MEMBERS[sample.op as ShadowReadMember] === 'ranked' ? membersDigest(encoded) : undefined;
-  return { stamp: ack.stamp, epoch_id: epoch, digest: resultDigest(encoded), ...(members === undefined ? {} : { members }), ...(sample.op === 'searchVector' ? { keys: rankedKeys(encoded) } : {}) };
+  return { stamp: ack.stamp, epoch_id: epoch, digest: resultDigest(encoded), ...(members === undefined ? {} : { members }), ...(sample.op === 'searchVector' ? { keys: firstTenKeys(encoded) } : {}), attempt: attemptId };
 }
 
 /**
@@ -229,11 +239,11 @@ async function stableRerun(d: AskDeps, watch: LsnWatch, sid: string, sample: Sam
  * read from the position the sample (or, for `phase: 'rerun'`, its rerun) was held to: the reference is refused (`moved`) unless
  * the primary's WAL position at the end of the run is that position, and this process's write generation is the one captured.
  */
-async function vectorReference(d: AskDeps, sample: Sample, phase: 'sample' | 'rerun'): Promise<RankedKey[]> {
+async function vectorReference(d: AskDeps, sample: Sample, phase: 'sample' | 'rerun', attemptId?: unknown): Promise<RankedKey[]> {
   const [embedding, opts] = decodeValue(sample.args) as [Float32Array, SearchOpts | undefined];
   const dialect = hasCapability(d.engine, 'postgres_admin') ? 'postgres' : 'pglite';
   const hasFollower = d.follower !== undefined;
-  const base = phase === 'rerun' ? sample.rerun : { gen: sample.gen, lsn: sample.lsn };
+  const base = phase === 'rerun' ? attemptOf(sample, attemptId) : { gen: sample.gen, lsn: sample.lsn };
   if (!base || base.lsn === undefined || (hasFollower && base.gen === undefined)) throw coded('moved'); // nothing was captured to hold the reference to
   const gen0 = d.follower?.published;
   const rows = await d.reads.read(async (tx) => {
@@ -258,12 +268,12 @@ export function makeAskHandler(d: AskDeps): (ask: { id: number; kind: string; [k
     const sample = d.samples.get(ask.sid);
     if (!sample) throw coded('sample_unknown'); // evicted, or from another process: the sample stays unresolved
     switch (ask.kind) {
-      case 'privacy': return privacyAnswer(d, sample, ask as { phase?: unknown; rows?: unknown });
+      case 'privacy': return privacyAnswer(d, sample, ask as { phase?: unknown; rows?: unknown; attempt?: unknown });
       case 'rerun': return stableRerun(d, watch, ask.sid as string, sample, { epoch_id: ask.epoch_id });
       case 'vector': {
         const phase = ask.phase === 'rerun' ? 'rerun' : 'sample';
         if (phase === 'sample' && !gate.take()) throw coded('rate_limited'); // a rerun of a sample that moved is the same reference run, asked again
-        return vectorReference(d, sample, phase);
+        return vectorReference(d, sample, phase, ask.attempt);
       }
       default: throw coded('unsupported');
     }
