@@ -291,7 +291,8 @@ function summarize(mode: TrustBackfillReport['mode'], schema: TrustBackfillRepor
  * name, before the first read or write, so a backfill never starts a run it cannot finish.
  */
 function refuseWithoutRawSql(engine: Partial<Pick<BrainEngine, 'capabilities'>>, member: string): void {
-  requireRawSql(engine, `${member} (the trust backfill's batch, apply and relower statements are raw SQL)`);
+  // The step names only the entry point: doctor's checks and the CLI match the typed refusal text `does not support <member> yet`.
+  requireRawSql(engine, member);
 }
 
 /** The read-only projection: counts by table x tier, in keyset batches inside one READ ONLY transaction. */
