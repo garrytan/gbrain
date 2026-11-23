@@ -175,7 +175,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
         return;
       }
       const encoded = encodeValue(out.value);
-      record(event, classifyResult(SHADOW_READ_MEMBERS[event.op], event.args, event.result, encoded), rustMs, rowCount(encoded));
+      record(event, classifyResult(SHADOW_READ_MEMBERS[event.op], event.args, event.result, encoded, event.op), rustMs, rowCount(encoded));
     } catch (error) {
       record(event, classifyError(error), performance.now() - started, null);
     }
