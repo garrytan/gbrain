@@ -2,7 +2,7 @@
 //! `pages.salience_touched_at` columns of the PGLite engine, and the reads that rank pages by them.
 //!
 //! Members: batchLoadEmotionalInputs, setEmotionalWeightBatch, getRecentSalience,
-//! getSalienceScores.
+//! getSalienceScores, countZeroWeightWithTakes (`salience/health.rs`).
 //!
 //! Keys (every record starts with `keys::SALIENCE`, `s`):
 //! - `s <page id u64 BE>` -> `SalienceRecord` (JSON): the page's weight and the time it last
@@ -20,16 +20,19 @@
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
 use crate::facts::{OwnerOnlyCache, PrivacyPolicy};
-use crate::kv::{KvRead, KvWrite};
+use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::page_columns::PageColumns;
 use crate::pages::{PageRecord, all_pages, read_page};
 use crate::sources::read_source;
-use crate::takes::{TakeRecord, page_takes, real, real_out};
+use crate::takes::{TakeRecord, all_takes, page_takes, real, real_out};
+use crate::trust::{TrustPolicy, TrustTier};
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap, HashSet};
+
+mod health;
 
 /// What is stored for a page whose weight was ever set.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -140,8 +143,7 @@ pub struct RecentSalienceOptions {
     #[serde(default)]
     pub holders: Option<Vec<Option<String>>>,
     pub recency: Recency,
-    /// `excludePrivate`: the page policy `pageReadFilter` adds, as `facts/privacy.rs`
-    /// `page_hidden` reads it; null hides nothing.
+    /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`); null reads every page.
     #[serde(default)]
     pub exclude_private: Option<PrivacyPolicy>,
 }
@@ -167,10 +169,29 @@ pub struct SalienceScoresInput {
     /// applies them whenever a read policy is passed.
     #[serde(default)]
     pub live: bool,
-    /// `excludePrivate`: the page policy `pageReadFilter` adds, as `facts/privacy.rs`
-    /// `page_hidden` reads it; null hides nothing.
+    /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`); null reads every page.
     #[serde(default)]
     pub exclude_private: Option<PrivacyPolicy>,
+    /// `minTrust`: `pageEligibleSql`'s trust floor over the page's stored tier; null sets none.
+    #[serde(default)]
+    pub min_trust: Option<String>,
+    /// `suppressFlagged`: drop a page `activationSuppressedSql` flags (`trust::TrustPolicy`).
+    #[serde(default)]
+    pub suppress_flagged: bool,
+}
+
+/// Whether the read's `excludePrivate` policy hides `page`. `owner_only` holds the owner-only
+/// sources, read once per read on the first page it judges.
+fn private_hidden(
+    owner_only: &mut OwnerOnlyCache,
+    read: &dyn KvRead,
+    page: &PageRecord,
+    policy: &Option<PrivacyPolicy>,
+) -> Result<bool> {
+    match policy {
+        Some(policy) => owner_only.page_hidden(read, page, policy),
+        None => Ok(false),
+    }
 }
 
 fn listed(list: &Option<Vec<Option<String>>>, value: &str) -> bool {
@@ -275,7 +296,7 @@ impl Store {
             let now = self.env.now_micros();
             let mut seen = HashSet::new();
             let mut changed = 0;
-            for (row, weight) in rows.iter().zip(weights) {
+            for (row, weight) in rows.iter().zip(weights.iter().cloned()) {
                 let Some(page) = read_page(tx, &row.source_id, &row.slug)? else {
                     continue;
                 };
@@ -325,11 +346,7 @@ impl Store {
                 || (opts.exclude_briefings && page.slug.starts_with("briefings/"))
                 || !listed(&opts.source_ids, &page.source_id)
                 || !live.passes(&page)?
-            {
-                continue;
-            }
-            if let Some(policy) = &opts.exclude_private
-                && owner_only.page_hidden(&*read, &page, policy)?
+                || private_hidden(&mut owner_only, &*read, &page, &opts.exclude_private)?
             {
                 continue;
             }
@@ -385,6 +402,7 @@ impl Store {
     pub fn get_salience_scores(&self, input: &SalienceScoresInput) -> Result<Vec<Value>> {
         let restricted = input.holders.is_some();
         let read = self.read()?;
+        let trust = TrustPolicy::parse(input.min_trust.as_deref(), input.suppress_flagged)?;
         let mut live = Live {
             read: &*read,
             archived: HashMap::new(),
@@ -399,11 +417,13 @@ impl Store {
             if !seen.insert(page.id)
                 || !listed(&input.source_ids, &page.source_id)
                 || (input.live && !live.passes(&page)?)
-            {
-                continue;
-            }
-            if let Some(policy) = &input.exclude_private
-                && owner_only.page_hidden(&*read, &page, policy)?
+                || private_hidden(&mut owner_only, &*read, &page, &input.exclude_private)?
+                || !trust.admits(
+                    &*read,
+                    "pages",
+                    page.id,
+                    TrustTier::stored(page.trust_tier.as_deref()),
+                )?
             {
                 continue;
             }

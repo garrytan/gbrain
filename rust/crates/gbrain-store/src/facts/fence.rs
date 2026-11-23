@@ -48,7 +48,7 @@ pub struct FenceContext {
 
 impl FenceContext {
     /// `trustRankSql(COALESCE(NULLIF(current_setting('gbrain.write_trust_tier', true), ''), 'unknown'))`.
-    fn writer_rank(&self) -> u8 {
+    pub(crate) fn writer_rank(&self) -> u8 {
         match self.writer.as_deref() {
             None | Some("") => TrustTier::Unknown.rank(),
             Some(name) => TrustTier::parse(name).map_or(0, TrustTier::rank),
@@ -142,7 +142,7 @@ fn held(read: &dyn KvRead, row: &FactRecord, row_num: i32, cells: &[Cell]) -> Re
 }
 
 /// `timestamptz` as `jsonb_build_object` writes it: `2026-06-18T09:00:00.5+00:00`.
-fn jsonb_time(micros: i64) -> String {
+pub(crate) fn jsonb_time(micros: i64) -> String {
     let text = timestamptz_text(micros).replacen(' ', "T", 1);
     format!("{}:00", text)
 }

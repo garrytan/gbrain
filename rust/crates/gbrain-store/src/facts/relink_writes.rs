@@ -8,8 +8,8 @@
 //! Each member reads the one row by id, applies the statement's `WHERE` to it, and writes the
 //! changed row through [`write_fact`], so the trust stamp and the unique indexes run as the
 //! `UPDATE` would. A row the `WHERE` does not match is left alone and the member returns false (the
-//! statement's empty `RETURNING`). The withdrawal and purge guards of the `UPDATE` are not modeled
-//! (\"Not modeled\" in rust/docs/store/facts.md): their ledgers have no Rust writer.
+//! statement's empty `RETURNING`). [`write_fact`] runs the purge guard of the `UPDATE` (\"The fact
+//! purge ledger\" in rust/docs/store/facts.md); the withdrawal guard is not modeled.
 
 use super::relink::Memos;
 use super::{
