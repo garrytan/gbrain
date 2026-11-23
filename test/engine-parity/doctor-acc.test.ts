@@ -303,4 +303,45 @@ describe('doctor reads, second set', () => {
     expect(out.live.map(r => (r as { id?: unknown }).id)).toEqual(['bob-example', 'carol-example']);
     return out;
   });
+
+  // The store keeps tokens and OAuth clients, so the three credential reads the grant, legacy-token and attest-read doctor
+  // checks run list them on every arm (they once answered none on Rust). The rows are whole: a token row carries its
+  // hash as `SELECT *` does, a client's attest row leaves its secret hash out, and the attest rows' times are to_jsonb text.
+  parityTest('listActiveAccessTokenRows, listActiveOauthClientRows and listAttestCredentialRows list the stored credentials', {
+    methods: ['insertAccessToken', 'insertOauthClient', 'writeCredentialBinding', 'listActiveAccessTokenRows', 'listActiveOauthClientRows', 'listAttestCredentialRows'],
+  }, async (engine) => {
+    const token = (name: string, created: string, extra: Record<string, unknown> = {}) => engine.insertAccessToken({
+      name, token_hash: `hash-${name}`, scopes: ['read'], permissions: { source_id: 'default' }, source_grant: 'scalar', source_id: 'default',
+      federated_read: null, allowed_operations: ['query'], takes_holders: ['world'], member_id: null, created_at: new Date(created), ...extra });
+    const alpha = await token('alpha-key', '2026-01-03T00:00:00.215Z');
+    const beta = await token('beta-key', '2026-01-02T08:30:00Z', { scopes: null });
+    const gone = await token('gone-key', '2026-01-01T00:00:00Z', { revoked_at: new Date('2026-01-04T00:00:00Z') });
+    const attest = { member: null, mayActFor: null, attestActor: 'slack', attestOps: ['query'], attestSources: ['default'], attestRead: 'person' as const };
+    await engine.writeCredentialBinding({ kind: 'token', id: alpha.id }, attest);
+    await engine.writeCredentialBinding({ kind: 'token', id: gone.id }, attest);
+    const created_at = new Date('2026-02-01T10:00:00.5Z');
+    await engine.insertOauthClient({ client_id: 'zed-app', client_name: 'Zed', client_secret_hash: 'secret-zed', grant_types: ['client_credentials'],
+      scope: 'read write', budget_usd_per_day: 2.5, client_id_issued_at: 1700000000, created_at, attest_actor: 'slack', attest_ops: ['query'],
+      attest_sources: ['default'], attest_read: 'scope', reads_unscoped: new Date('2026-02-02T00:00:00.125Z') });
+    await engine.insertOauthClient({ client_id: 'amy-app', client_name: 'Amy', created_at });
+    await engine.insertOauthClient({ client_id: 'old-app', client_name: 'Old', created_at, deleted_at: new Date('2026-02-03T00:00:00Z'), attest_actor: 'slack' });
+    // Token ids are generated; name them so the arms compare. A bigint column (client_id_issued_at) is a BigInt on
+    // Postgres and a number on PGLite from the same SELECT *; no doctor check reads it.
+    const ids = new Map([[alpha.id, 'id:alpha-key'], [beta.id, 'id:beta-key'], [gone.id, 'id:gone-key']]);
+    const plain = (row: Record<string, unknown>) => Object.fromEntries(Object.entries(row).sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([k, v]) => [k, v instanceof Date ? `Date:${v.toISOString()}` : typeof v === 'bigint' ? Number(v)
+        : typeof v === 'string' && ids.has(v) ? ids.get(v) : v]));
+    const out = {
+      tokens: (await engine.listActiveAccessTokenRows()).map(plain),
+      clients: (await engine.listActiveOauthClientRows()).map(plain),
+      attest: (await engine.listAttestCredentialRows()).map(r => ({ kind: r.kind, id: ids.get(r.id) ?? r.id, name: r.name,
+        row: plain(typeof r.row === 'string' ? JSON.parse(r.row) : r.row) })),
+    };
+    expect(out.tokens.map(t => t.name)).toEqual(['beta-key', 'alpha-key']);
+    expect(out.clients.map(c => c.client_id)).toEqual(['amy-app', 'zed-app']);
+    expect(out.attest.map(a => `${a.kind}:${a.name}`)).toEqual(['client:Zed', 'token:alpha-key']);
+    expect(out.attest[0]!.row.client_secret_hash).toBeUndefined();
+    expect(out.attest[1]!.row.created_at).toBe('2026-01-03T00:00:00.215+00:00');
+    return out;
+  });
 });

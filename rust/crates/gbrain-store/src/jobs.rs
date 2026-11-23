@@ -70,6 +70,7 @@ mod attachments;
 mod checks;
 mod client_grants;
 mod credential_binding;
+mod doctor_credentials;
 mod drain_lease;
 mod facts_extraction;
 mod health;

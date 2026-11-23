@@ -8,6 +8,7 @@ import type { BrainEngine } from '../../engine.ts';
 import { AVAILABLE_CHRONICLE_LEDGER_STATS } from '../../engine-sql/doctor-acc.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { withDates } from '../store-codec.ts';
+import { normalizeOauthClientRow } from '../../engine-sql/oauth-clients.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -36,9 +37,17 @@ export const listLabelledOnlyMemberIds: Member<'listLabelledOnlyMemberIds'> = as
 export const listAccessMemberRows: Member<'listAccessMemberRows'> = async (brain, includeRemoved) =>
   ((await storeCall({ member: 'listAccessMemberRows' }, () => brain.readAccessMembers({ includeRemoved }))) as Array<Record<string, unknown>>)
     .map(row => withDates(row, ['disabled_at', 'tombstoned_at', 'created_at']));
-export const listAttestCredentialRows: Member<'listAttestCredentialRows'> = async () => [];
-export const listActiveAccessTokenRows: Member<'listActiveAccessTokenRows'> = async () => [];
-export const listActiveOauthClientRows: Member<'listActiveOauthClientRows'> = async () => [];
+/** The store's live credentials with an attest actor (jobs/doctor_credentials.rs): a token's row is to_jsonb text, a client's leaves its secret hash out. */
+export const listAttestCredentialRows: Member<'listAttestCredentialRows'> = async (brain) =>
+  (await storeCall({ member: 'listAttestCredentialRows' }, () => brain.listAttestCredentialRows())) as Awaited<ReturnType<BrainEngine['listAttestCredentialRows']>>;
+/** The store's tokens not revoked, whole with their hash as `SELECT *` returns them, oldest first. */
+export const listActiveAccessTokenRows: Member<'listActiveAccessTokenRows'> = async (brain) =>
+  ((await storeCall({ member: 'listActiveAccessTokenRows' }, () => brain.listActiveAccessTokenRows())) as Array<Record<string, unknown>>)
+    .map(row => withDates(row, ['created_at', 'last_used_at', 'revoked_at', 'reads_unscoped']));
+/** The store's clients not deleted, whole as `SELECT *` returns them, by client id. */
+export const listActiveOauthClientRows: Member<'listActiveOauthClientRows'> = async (brain) =>
+  ((await storeCall({ member: 'listActiveOauthClientRows' }, () => brain.listActiveOauthClientRows())) as Array<Record<string, unknown>>)
+    .map(row => normalizeOauthClientRow(row) as unknown as Record<string, unknown>);
 export const listOauthClientAuthShapes: Member<'listOauthClientAuthShapes'> = async () => [];
 export const listDanglingFederatedReads: Member<'listDanglingFederatedReads'> = async () => [];
 export const listPrivilegedDcrClients: Member<'listPrivilegedDcrClients'> = async () => [];

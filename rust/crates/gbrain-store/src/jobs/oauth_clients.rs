@@ -311,7 +311,7 @@ impl ClientRecord {
 
 /// A timestamp as `to_jsonb` prints one in a UTC session: `2026-01-02T03:04:05.5+00:00` (the fraction without trailing
 /// zeros, and none when it is zero).
-fn jsonb_time(micros: i64) -> String {
+pub(super) fn jsonb_time(micros: i64) -> String {
     let text = iso(micros);
     let (whole, frac) = text.trim_end_matches('Z').split_at(19);
     let frac = frac.trim_end_matches('0');
