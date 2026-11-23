@@ -159,6 +159,12 @@ describe('rankOpenAIChatModels — newest PRICED family, tier ladder', () => {
     const { tiers } = rankOpenAIChatModels(['gpt-6.1-sol', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']);
     expect(tiers).toMatchObject({ utility: 'openai:gpt-5.6-luna', reasoning: 'openai:gpt-5.6-terra', deep: 'openai:gpt-5.6-sol' });
   });
+
+  test('a metered-only id has a price, so discovery never reports it as unpriced', () => {
+    const { tiers, newestUnpriced } = rankOpenAIChatModels(['gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']);
+    expect(tiers?.deep).toBe('openai:gpt-5.6-sol');
+    expect(newestUnpriced).toBeUndefined();
+  });
 });
 
 describe('refresh + cache + resolution overlay', () => {

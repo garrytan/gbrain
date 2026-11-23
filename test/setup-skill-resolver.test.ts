@@ -197,6 +197,10 @@ describe('setup --skill-loading resolve: refusals and other keys', () => {
     expect((await run('get', 'skills.resolver.lane_payload_chars')).stdout.trim()).toBe('600');
     expect((await run('set', 'skills.resolver.lane_payload_chars', '20')).exitCode).not.toBe(0);
     expect((await run('set', 'skills.resolver.harnesses', 'codex')).exitCode).not.toBe(0);
+    expect((await run('set', 'skills.resolver.router_usd_per_mtok', '1, 2, 0.1')).exitCode).toBe(0);
+    expect(JSON.parse(read(configPath(b))!).skills.resolver.router_usd_per_mtok).toEqual([1, 2, 0.1]);
+    expect((await run('set', 'skills.resolver.router_usd_per_mtok', '1,2,0.1,3')).exitCode).not.toBe(0);
+    expect((await run('unset', 'skills.resolver.router_usd_per_mtok')).exitCode).toBe(0);
     expect((await run('unset', 'skills.resolver.lane_payload_chars')).exitCode).toBe(0);
     expect(read(configPath(b))).toBeNull();
   });

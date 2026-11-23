@@ -115,6 +115,7 @@ test/derived-origin-carry-private.test.ts
 test/derived-origin-recheck-plan.test.ts
 test/direct-pool-profile.test.ts
 test/doctor-access-pages-read-by-nobody.test.ts
+test/doctor-access-reach.test.ts
 test/doctor-attest-read-shared-scope.test.ts
 test/doctor-database-encoding.test.ts
 test/doctor-frontmatter-holds.test.ts
@@ -177,6 +178,7 @@ test/engine-parity/search-private-fence.test.ts
 test/engine-parity/search-reads.test.ts
 test/engine-parity/search.test.ts
 test/engine-parity/segmented-body.test.ts
+test/engine-parity/slug-normalize.test.ts
 test/engine-parity/stats-vectors.test.ts
 test/engine-parity/stats.test.ts
 test/engine-parity/sync-aliases.test.ts
@@ -636,6 +638,7 @@ test/persistence-publication-deadline.test.ts
 test/persistence-receipt-git-state.test.ts
 test/persistence-receipt-true-up.test.ts
 test/persistence-reconcile-git-dirty-6138.test.ts
+test/persistence-recovery-scan-payload-10083.test.ts
 test/persistence-skill-bundles.serial.test.ts
 test/persistence-skill-crash.slow.test.ts
 test/persistence-skip-cost.test.ts
