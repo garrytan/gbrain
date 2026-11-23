@@ -31,7 +31,7 @@ export const DOCTOR_DERIVED_MEMBERS: readonly string[] = [
   'listImageAssetFiles', 'listAmbiguousExtractionInputs', 'listExtractionInputReceipts', 'listUnpricedDerivationModels',
   'listRestorableAtomRetirements', 'countLedgerCoveredAtomRetirements', 'listLiveGenerationRetirements', 'listHeldGenerations',
   'listOrphanGenerationCandidates', 'listOntologyFactCandidates', 'readAtomProvenanceCounts',
-  'readExtractRollup7d', 'listRecordedHaltReasons7d',
+  'readExtractRollup7d', 'listRecordedHaltReasons7d', 'listBodyRecheckGroups', 'readBodyRecheckPage', 'listBodyRecheckVersions',
 ];
 
 /** The `content_chunks` vector column name `withEmbeddingColumn` puts in: a registry-resolved or COLUMN_NAME_REGEX-checked name. */
@@ -653,6 +653,69 @@ export async function readAtomProvenanceCounts(raw: EngineRawRead): Promise<Atom
     total: n(r.total), slug_unbound: n(r.slug_unbound), drifted: n(r.drifted), source_changed: n(r.source_changed),
     source_gone: n(r.source_gone), oldest_ext: r.oldest_ext == null ? null : String(r.oldest_ext),
   };
+}
+
+// ---- the unchanged-body recheck of atom_provenance_drift (commands/doctor/checks/atom-body-recheck.ts) -----------------
+
+/** The page-bound and slug-unbound atoms atom_provenance_drift reads (`ss` NULL: slug-unbound), as a CTE body. */
+export const ATOM_PROVENANCE_CTE = `atom AS (
+         SELECT a.source_id,
+                -- managed atoms keep their provisional prefix for good (#5770)
+                CASE WHEN a.frontmatter->>'managed_extraction' = 'true'
+                     THEN regexp_replace(a.frontmatter->>'source_hash', '^pending:', '')
+                     ELSE a.frontmatter->>'source_hash' END AS sh,
+                -- NULL = slug-unbound: transcript-minted (source_path only) or
+                -- pre-binding-era. \`ss IS NULL\` is THE predicate for that
+                -- population everywhere below (#4799 / #4806).
+                NULLIF(a.frontmatter->>'source_slug', '') AS ss,
+                CASE WHEN a.frontmatter->>'extracted_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                     THEN a.frontmatter->>'extracted_at' END AS ext
+           FROM pages a
+          WHERE a.type = 'atom'
+            AND a.deleted_at IS NULL
+            AND a.frontmatter->>'source_hash' IS NOT NULL
+            -- in-flight marker written before an unmanaged extraction commits
+            AND (a.frontmatter->>'source_hash' NOT LIKE 'pending:%' OR a.frontmatter->>'managed_extraction' = 'true')
+         )`;
+
+/** (page, source_hash) groups of drifted atoms the recheck reads per run; the rest keep their drift verdict. */
+export const BODY_RECHECK_GROUPS = 200;
+/** The newest versions of a page searched for an atom's extraction edition. */
+export const BODY_RECHECK_VERSIONS = 20;
+
+export interface BodyRecheckGroup { page_id: number; sh: string; n: number }
+export interface BodyRecheckPage { body_storage: string | null; compiled_truth: string | null; timeline: string | null }
+export interface BodyRecheckVersion { compiled_truth: string | null; timeline: string | null; title: string; type: string; frontmatter: unknown; tags: unknown }
+
+/**
+ * The drifted atoms of live inline pages, grouped by page and 16-character source hash, whose hash names no live page
+ * of their source: the first BODY_RECHECK_GROUPS groups by page id, then hash in byte order.
+ */
+export async function listBodyRecheckGroups(raw: EngineRawRead): Promise<BodyRecheckGroup[]> {
+  const rows = await raw<{ page_id: number | string; sh: string; n: number | string }>(
+    `WITH ${ATOM_PROVENANCE_CTE}, live_hashes AS MATERIALIZED (
+       SELECT DISTINCT source_id, substring(content_hash from 1 for 16) AS sh FROM pages WHERE deleted_at IS NULL AND content_hash IS NOT NULL
+     )
+     SELECT p.id AS page_id, atom.sh, count(*)::int AS n
+       FROM atom
+       JOIN pages p ON p.source_id = atom.source_id AND p.slug = atom.ss AND p.deleted_at IS NULL AND p.body_storage = 'inline'
+       LEFT JOIN live_hashes h ON h.source_id = atom.source_id AND h.sh = atom.sh
+      WHERE h.sh IS NULL AND length(atom.sh) = 16
+      GROUP BY p.id, atom.sh ORDER BY p.id, atom.sh COLLATE "C" LIMIT ${BODY_RECHECK_GROUPS}`, []);
+  return rows.map(r => ({ page_id: Number(r.page_id), sh: r.sh, n: Number(r.n) }));
+}
+
+/** The body storage and body columns of the page with this id, or null when no page has it. */
+export async function readBodyRecheckPage(raw: EngineRawRead, pageId: number): Promise<BodyRecheckPage | null> {
+  const [page] = await raw<BodyRecheckPage>('SELECT body_storage, compiled_truth, timeline FROM pages WHERE id = $1', [pageId]);
+  return page ?? null;
+}
+
+/** The newest BODY_RECHECK_VERSIONS inline versions of the page that hold a body, newest first. */
+export async function listBodyRecheckVersions(raw: EngineRawRead, pageId: number): Promise<BodyRecheckVersion[]> {
+  return raw<BodyRecheckVersion>(
+    `SELECT compiled_truth, timeline, title, type, frontmatter, tags FROM page_versions
+        WHERE page_id = $1 AND body_storage = 'inline' AND compiled_truth IS NOT NULL ORDER BY id DESC LIMIT $2`, [pageId, BODY_RECHECK_VERSIONS]);
 }
 
 export interface ExtractRollupRow {

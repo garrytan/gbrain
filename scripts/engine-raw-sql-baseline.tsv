@@ -29,7 +29,6 @@ src/commands/db-repair.ts	execute_raw	5
 src/commands/decide/claims-sweep.ts	execute_raw	1
 src/commands/decide/proposals.ts	execute_raw	2
 src/commands/diag.ts	execute_raw	4
-src/commands/doctor/checks/atom-body-recheck.ts	execute_raw	3
 src/commands/doctor/checks/calibration.ts	execute_raw	3
 src/commands/doctor/checks/consolidation-cycle.ts	execute_raw	1
 src/commands/doctor/checks/content-quality.ts	execute_raw	3

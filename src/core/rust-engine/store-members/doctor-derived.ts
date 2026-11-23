@@ -32,6 +32,13 @@ export const readPageCompiledTruths: Member<'readPageCompiledTruths'> = async (b
 /** The one aggregate row; the store holds one vector column, so `column` names it. */
 export const readEmbeddingBacklogAge: Member<'readEmbeddingBacklogAge'> = async (brain, column) =>
   storeCall({ member: 'readEmbeddingBacklogAge' }, () => brain.readEmbeddingBacklogAge(column));
+/** The unchanged-body recheck (engine-sql/doctor-derived.ts listBodyRecheckGroups, readBodyRecheckPage, listBodyRecheckVersions). */
+export const listBodyRecheckGroups: Member<'listBodyRecheckGroups'> = async (brain) =>
+  storeCall({ member: 'listBodyRecheckGroups' }, () => brain.listBodyRecheckGroups());
+export const readBodyRecheckPage: Member<'readBodyRecheckPage'> = async (brain, pageId) =>
+  storeCall({ member: 'readBodyRecheckPage' }, () => brain.readBodyRecheckPage(Number(pageId)));
+export const listBodyRecheckVersions: Member<'listBodyRecheckVersions'> = async (brain, pageId) =>
+  storeCall({ member: 'listBodyRecheckVersions' }, () => brain.listBodyRecheckVersions(Number(pageId)));
 export const readAtomProvenanceCounts: Member<'readAtomProvenanceCounts'> = async (brain) =>
   storeCall({ member: 'readAtomProvenanceCounts' }, () => brain.readAtomProvenanceCounts());
 export const countCredentialProjectionPending: Member<'countCredentialProjectionPending'> = async (brain, sourceIds) =>

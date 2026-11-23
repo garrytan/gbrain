@@ -14,8 +14,9 @@
  *  - Why existing coverage misses it: the cases used ids that sort the same in every locale, and CI's Postgres runs
  *    in C.UTF-8. Every case here mixes keys such as `a-z`, `ab`, `a.b` and `a_b`; run it against an en_US Postgres to see
  *    it fail.
- *  - Seam: none. The pages go through putPage; the receipts, events and retirement stamps are the rows the writers
- *    leave, inserted with raw SQL because no engine method writes them.
+ *  - Seam: none. The pages go through putPage and the derivation receipts through upsertSegmentDerivations; the
+ *    volunteer events and extraction receipts are the rows the writers leave, inserted with raw SQL where no engine
+ *    method writes them.
  */
 import { describe, expect } from 'bun:test';
 import { createSource, parityArms } from './harness.ts';
@@ -174,33 +175,35 @@ describe('doctor lists text keys by byte', () => {
   });
 
   parityTest('the unchanged-body recheck cuts its 200 groups in byte order', {
-    methods: ['putPage', 'executeRaw'], requires: 'raw_sql',
+    methods: ['putPage', 'createVersion', 'getPage', 'listBodyRecheckGroups', 'readBodyRecheckPage', 'listBodyRecheckVersions'],
   }, async (engine) => {
     const body = { type: 'note' as const, title: 'Origin', compiled_truth: 'Origin body.', timeline: '' };
-    await engine.putPage('notes/origin', body);
     // The edition the matching atom was extracted from: a version whose hash starts with a lower-case letter, which
-    // sorts after the upper-case filler hashes below by byte and before them under en_US.
-    let edition = '';
-    for (let nonce = 0; !/^[a-f]/.test(edition); nonce++) {
-      edition = contentHash({ ...body, frontmatter: { nonce }, tags: [] });
-      if (/^[a-f]/.test(edition)) {
-        await engine.executeRaw(
-          `INSERT INTO page_versions (page_id, compiled_truth, frontmatter, title, type, timeline, tags, body_storage)
-           SELECT p.id, $1::text, $2::text::jsonb, $3::text, $4::text, $5::text, '[]'::jsonb, 'inline' FROM pages p WHERE p.slug = 'notes/origin'`,
-          [body.compiled_truth, JSON.stringify({ nonce }), body.title, body.type, body.timeline]);
-      }
-    }
-    const atom = (hash: string) => JSON.stringify({ source_hash: hash, source_slug: 'notes/origin', extracted_at: '2026-01-01T00:00:00Z' });
-    await engine.executeRaw(
-      `INSERT INTO pages (source_id, slug, type, title, compiled_truth, frontmatter)
-       SELECT 'default', 'atoms/filler-' || g, 'atom', 'Filler ' || g, 'Filler.', jsonb_build_object('source_hash', 'Fz' || lpad(g::text, 14, '0'), 'source_slug', 'notes/origin')
-         FROM generate_series(1, 200) g`);
-    await engine.executeRaw(
-      `INSERT INTO pages (source_id, slug, type, title, compiled_truth, frontmatter) VALUES ('default', 'atoms/match', 'atom', 'Match', 'Match.', $1::text::jsonb)`,
-      [atom(edition.slice(0, 16))]);
+    // sorts after the upper-case filler hashes below by byte and before them under en_US. The page is written with the
+    // nonce, snapshotted, then written back without it, so no live page holds that hash.
+    let nonce = 0;
+    let edition = contentHash({ ...body, frontmatter: { nonce }, tags: [] });
+    while (!/^[a-f]/.test(edition)) edition = contentHash({ ...body, frontmatter: { nonce: ++nonce }, tags: [] });
+    await engine.putPage('notes/origin', { ...body, frontmatter: { nonce } });
+    await engine.createVersion('notes/origin');
+    await engine.putPage('notes/origin', body);
+    const atom = (slug: string, title: string, hash: string) => engine.putPage(slug, { type: 'atom' as never, title, compiled_truth: `${title}.`, timeline: '',
+      frontmatter: { source_hash: hash, source_slug: 'notes/origin', extracted_at: '2026-01-01T00:00:00Z' } });
+    for (let g = 1; g <= 200; g++) await atom(`atoms/filler-${g}`, `Filler ${g}`, `Fz${String(g).padStart(14, '0')}`);
+    await atom('atoms/match', 'Match', edition.slice(0, 16));
+    // The cut keeps the 200 upper-case filler hashes; the match sorts after them by byte, so it is not rechecked.
+    const cut = (await engine.listBodyRecheckGroups()).map(g => `${g.sh}:${g.n}`);
+    expect(cut).toEqual(Array.from({ length: 200 }, (_, g) => `Fz${String(g + 1).padStart(14, '0')}:1`));
+    // The page and the edition the recheck would compare: the live inline body, and the one snapshot with the nonce.
+    const originId = Number((await engine.getPage('notes/origin'))!.id);
+    const page = await engine.readBodyRecheckPage(originId);
+    expect(page).toEqual({ body_storage: 'inline', compiled_truth: body.compiled_truth, timeline: body.timeline });
+    const versions = (await engine.listBodyRecheckVersions(originId)).map(v => ({ title: v.title, type: v.type, compiled_truth: v.compiled_truth,
+      frontmatter: typeof v.frontmatter === 'string' ? JSON.parse(v.frontmatter) : v.frontmatter }));
+    expect(versions).toEqual([{ title: body.title, type: body.type, compiled_truth: body.compiled_truth, frontmatter: { nonce } }]);
     const unchanged = await unchangedBodyAtoms(engine);
     expect(unchanged).toBe(0);
-    return unchanged;
+    return { cut, page, versions, unchanged };
   });
 
   parityTest('function-search-path reads list overloads by byte signature', {

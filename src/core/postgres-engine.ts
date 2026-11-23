@@ -1398,6 +1398,9 @@ export class PostgresEngine implements BrainEngine {
   listHeldGenerations(sourceIds: string[]) { return doctorDerivedImpl.listHeldGenerations(this.executeRaw.bind(this), sourceIds); }
   listOrphanGenerationCandidates(sourceIds: readonly string[], kind: string | null) { return doctorDerivedImpl.listOrphanGenerationCandidates(this.executeRaw.bind(this), sourceIds, kind); }
   readAtomProvenanceCounts() { return doctorDerivedImpl.readAtomProvenanceCounts(this.executeRaw.bind(this)); }
+  listBodyRecheckGroups() { return doctorDerivedImpl.listBodyRecheckGroups(this.executeRaw.bind(this)); }
+  readBodyRecheckPage(pageId: number) { return doctorDerivedImpl.readBodyRecheckPage(this.executeRaw.bind(this), pageId); }
+  listBodyRecheckVersions(pageId: number) { return doctorDerivedImpl.listBodyRecheckVersions(this.executeRaw.bind(this), pageId); }
   readExtractRollup7d(withExpected: boolean) { return doctorDerivedImpl.readExtractRollup7d(this.executeRaw.bind(this), withExpected); }
   listRecordedHaltReasons7d() { return doctorDerivedImpl.listRecordedHaltReasons7d(this.executeRaw.bind(this)); }
   listCapacityCounters() { return doctorPersistenceImpl.listCapacityCounters(this.executeRaw.bind(this)); }

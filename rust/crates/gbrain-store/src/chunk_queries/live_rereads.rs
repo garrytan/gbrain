@@ -134,7 +134,7 @@ impl Store {
             if input
                 .holders
                 .as_ref()
-                .is_some_and(|h| !h.iter().any(|x| *x == take.holder))
+                .is_some_and(|h| !h.contains(&take.holder))
             {
                 continue;
             }

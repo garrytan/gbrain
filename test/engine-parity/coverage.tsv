@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2006/2022
+# covered: 2009/2025
 # lifecycle: 9/9
 # pages: 81/82
 # search: 7/7
@@ -100,7 +100,7 @@
 # shared_skill_members: 16/16
 # brief_reads: 6/6
 # reflex_reads: 3/3
-# doctor_derived: 24/24
+# doctor_derived: 27/27
 # doctor_persistence: 36/36
 # doctor_pages: 18/18
 # doctor_search: 10/10
@@ -124,7 +124,7 @@ transaction	lifecycle	yes	303	no	yes	yes	serves
 transactionDirect	lifecycle	yes	14	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	204	yes	yes	yes	serves
+getPage	pages	yes	205	yes	yes	yes	serves
 readPageSnapshot	pages	yes	60	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
 lockPageKeys	pages	yes	14	no	yes	yes	serves
@@ -134,7 +134,7 @@ findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	37	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	289	yes	yes	yes	serves
+softDeletePage	pages	yes	290	yes	yes	yes	serves
 softDeletePages	pages	yes	3	yes	yes	yes	serves
 restorePage	pages	yes	14	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	6	no	yes	yes	serves
@@ -559,13 +559,13 @@ openBodyStaging	segmented_body	yes	32	no	yes	yes	serves
 setBodyStagingState	segmented_body	yes	29	no	yes	yes	serves
 sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	3	no	yes	yes	serves
-upsertSegmentDerivations	segmented_body	yes	5	no	yes	yes	serves
+upsertSegmentDerivations	segmented_body	yes	6	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 lockBodyStagingState	segmented_body	yes	1	no	yes	yes	serves
 deleteUnstagedSegmentChunks	segmented_body	yes	1	no	yes	yes	serves
 deleteRewrittenSegmentDerivations	segmented_body	yes	1	no	yes	yes	serves
 listInlineVersionTexts	versions	yes	2	no	yes	yes	serves
-createVersion	versions	yes	70	no	yes	yes	serves
+createVersion	versions	yes	71	no	yes	yes	serves
 getVersions	versions	yes	27	no	yes	yes	serves
 readLatestVersionId	versions	yes	1	no	yes	yes	serves
 readLatestVersionIdAtTier	versions	yes	1	no	yes	yes	serves
@@ -1522,7 +1522,7 @@ listSegmentedPages	withdrawal_pages	yes	2	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	2	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	176	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	169	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	4	yes	yes	yes	serves
@@ -1978,6 +1978,9 @@ listLiveGenerationRetirements	doctor_derived	yes	1	no	yes	yes	serves
 listHeldGenerations	doctor_derived	yes	1	no	yes	yes	serves
 listOrphanGenerationCandidates	doctor_derived	yes	1	no	yes	yes	serves
 readAtomProvenanceCounts	doctor_derived	yes	1	no	yes	yes	serves
+listBodyRecheckGroups	doctor_derived	yes	1	no	yes	yes	serves
+readBodyRecheckPage	doctor_derived	yes	1	no	yes	yes	serves
+listBodyRecheckVersions	doctor_derived	yes	1	no	yes	yes	serves
 readExtractRollup7d	doctor_derived	yes	1	no	yes	yes	serves
 listRecordedHaltReasons7d	doctor_derived	yes	1	no	yes	yes	serves
 listCapacityCounters	doctor_persistence	yes	2	no	yes	yes	serves

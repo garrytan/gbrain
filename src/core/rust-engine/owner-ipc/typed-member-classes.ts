@@ -331,7 +331,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'oauthClientHoldsAuthorization', 'oauthClientLive', 'originIndexPresent', 'pagePrefixSamples', 'pageTypeTotals',
   'pingStore', 'probePageTypes', 'readAccessGroups', 'readAccessMemberLink', 'readAccessTokenMemberGrant',
   'readAccessTokenReceiptGrant', 'readActiveAccessTokenByHash', 'readActiveAccessTokenGrant', 'readAdmissionSample',
-  'readAtomProvenanceCounts', 'readBriefEditPage', 'readBriefEmailAliasPages', 'readBriefEntityPages',
+  'readAtomProvenanceCounts', 'listBodyRecheckGroups', 'readBodyRecheckPage', 'listBodyRecheckVersions', 'readBriefEditPage', 'readBriefEmailAliasPages', 'readBriefEntityPages',
   'readBriefMeetingPages', 'readBriefPageVersions', 'readBriefTimelineEntry', 'readBriefWorldFacts',
   'readBudgetHoldAge', 'readBudgetLedgerDay', 'readCheckpointManifestRow', 'readChronicleDuplicateEvents',
   'readChronicleLedgerStats', 'readChunkColumnTypes', 'readCounterDrift', 'readCredentialBindingForUpdate',

@@ -1670,6 +1670,9 @@ export class PGLiteEngine implements BrainEngine {
   listHeldGenerations(sourceIds: string[]) { return doctorDerivedImpl.listHeldGenerations(this.rawRead, sourceIds); }
   listOrphanGenerationCandidates(sourceIds: readonly string[], kind: string | null) { return doctorDerivedImpl.listOrphanGenerationCandidates(this.rawRead, sourceIds, kind); }
   readAtomProvenanceCounts() { return doctorDerivedImpl.readAtomProvenanceCounts(this.rawRead); }
+  listBodyRecheckGroups() { return doctorDerivedImpl.listBodyRecheckGroups(this.rawRead); }
+  readBodyRecheckPage(pageId: number) { return doctorDerivedImpl.readBodyRecheckPage(this.rawRead, pageId); }
+  listBodyRecheckVersions(pageId: number) { return doctorDerivedImpl.listBodyRecheckVersions(this.rawRead, pageId); }
   readExtractRollup7d(withExpected: boolean) { return doctorDerivedImpl.readExtractRollup7d(this.rawRead, withExpected); }
   listRecordedHaltReasons7d() { return doctorDerivedImpl.listRecordedHaltReasons7d(this.rawRead); }
   listCapacityCounters() { return doctorPersistenceImpl.listCapacityCounters(this.rawRead); }

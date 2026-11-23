@@ -69,6 +69,12 @@ export interface DoctorMembers {
   listOrphanGenerationCandidates(sourceIds: readonly string[], kind: string | null): Promise<DoctorDerivedSql.OrphanGenerationCandidateRow[]>;
   /** The atom provenance drift counts (none when the aggregate returned no row). */
   readAtomProvenanceCounts(): Promise<DoctorDerivedSql.AtomProvenanceCounts | undefined>;
+  /** The unchanged-body recheck's drifted atom groups of live inline pages, by page id then source hash (at most 200). */
+  listBodyRecheckGroups(): Promise<DoctorDerivedSql.BodyRecheckGroup[]>;
+  /** The body storage and body columns of the page with this id, or null. */
+  readBodyRecheckPage(pageId: number): Promise<DoctorDerivedSql.BodyRecheckPage | null>;
+  /** The newest 20 inline versions of the page that hold a body, newest first. */
+  listBodyRecheckVersions(pageId: number): Promise<DoctorDerivedSql.BodyRecheckVersion[]>;
   /** The 7-day extract rollup per kind; `withExpected: false` is the pre-v141 text. */
   readExtractRollup7d(withExpected: boolean): Promise<DoctorDerivedSql.ExtractRollupRow[]>;
   /** The recorded halt reasons of the 7-day extract rollup, per kind and reason. */

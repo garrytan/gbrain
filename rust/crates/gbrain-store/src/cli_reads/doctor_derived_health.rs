@@ -15,6 +15,11 @@ use serde_json::{Map, Value, json};
 use super::doctor_derived::{LiveSources, in_scope, rebuildable};
 use super::pg_text::{fm_text, jsonb_text};
 use crate::Store;
+
+/// `BODY_RECHECK_GROUPS` (`src/core/engine-sql/doctor-derived.ts`).
+const BODY_RECHECK_GROUPS: usize = 200;
+/// `BODY_RECHECK_VERSIONS` (`src/core/engine-sql/doctor-derived.ts`).
+const BODY_RECHECK_VERSIONS: usize = 20;
 use crate::aliases::{read_slug_alias, renamed_to};
 use crate::chunks::read_chunks;
 use crate::config::read_config;
@@ -238,6 +243,110 @@ impl Store {
             "unaged": unaged,
             "backfilled": oldest.zip(backfilled_at).map(|(o, b)| o <= b),
         }))
+    }
+
+    /// `listBodyRecheckGroups()`: the unchanged-body recheck's groups. For each live atom with a
+    /// `source_hash` (a `pending:` marker only on a managed atom, which sheds it) and a
+    /// `source_slug` naming a live inline page of its source, whose 16-character hash is no live
+    /// page's `content_hash` prefix in that source: `{ page_id, sh, n }` per (page, hash), by page
+    /// id then hash in byte order, at most [`BODY_RECHECK_GROUPS`].
+    pub fn list_body_recheck_groups(&self) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let pages = all_pages(&*read)?;
+        let live_pages = || pages.iter().filter(|p| p.deleted_at_us.is_none());
+        let hashes: HashSet<(&str, String)> = live_pages()
+            .filter_map(|p| {
+                let hash = p.content_hash.as_deref()?;
+                Some((p.source_id.as_str(), hash.chars().take(16).collect()))
+            })
+            .collect();
+        let inline: BTreeMap<(&str, &str), u64> = live_pages()
+            .filter(|p| !crate::chunks::segmented(p))
+            .map(|p| ((p.source_id.as_str(), p.slug.as_str()), p.id))
+            .collect();
+        let mut groups: BTreeMap<(u64, String), u64> = BTreeMap::new();
+        for atom in live_pages().filter(|p| p.page_type == "atom") {
+            let fm = &atom.frontmatter;
+            let Some(hash) = fm_text(fm, "source_hash") else {
+                continue;
+            };
+            let managed = fm_text(fm, "managed_extraction").as_deref() == Some("true");
+            if hash.starts_with("pending:") && !managed {
+                continue;
+            }
+            let hash = if managed {
+                hash.strip_prefix("pending:").unwrap_or(&hash).to_string()
+            } else {
+                hash
+            };
+            let Some(slug) = fm_text(fm, "source_slug").filter(|s| !s.is_empty()) else {
+                continue;
+            };
+            let source = atom.source_id.as_str();
+            let Some(&page_id) = inline.get(&(source, slug.as_str())) else {
+                continue;
+            };
+            if hash.chars().count() != 16 || hashes.contains(&(source, hash.clone())) {
+                continue;
+            }
+            *groups.entry((page_id, hash)).or_default() += 1;
+        }
+        Ok(groups
+            .into_iter()
+            .take(BODY_RECHECK_GROUPS)
+            .map(|((page_id, sh), n)| json!({ "page_id": page_id, "sh": sh, "n": n }))
+            .collect())
+    }
+
+    /// `readBodyRecheckPage(pageId)`: `{ body_storage, compiled_truth, timeline }` of the page with
+    /// this id (soft-deleted too, as the SQL has no `deleted_at` test), or `None`.
+    pub fn read_body_recheck_page(&self, page_id: i64) -> Result<Option<Value>> {
+        let Ok(id) = u64::try_from(page_id) else {
+            return Ok(None);
+        };
+        let read = self.read()?;
+        Ok(read_page_by_id(&*read, id)?.map(|p| {
+            let storage = if crate::chunks::segmented(&p) {
+                "segmented"
+            } else {
+                "inline"
+            };
+            json!({
+                "body_storage": storage,
+                "compiled_truth": p.compiled_truth.as_deref(),
+                "timeline": p.timeline.as_deref(),
+            })
+        }))
+    }
+
+    /// `listBodyRecheckVersions(pageId)`: the newest [`BODY_RECHECK_VERSIONS`] inline versions of
+    /// the page that hold a body (`compiled_truth` not NULL), newest first, as `{ compiled_truth,
+    /// timeline, title, type, frontmatter, tags }`.
+    pub fn list_body_recheck_versions(&self, page_id: i64) -> Result<Vec<Value>> {
+        let Ok(id) = u64::try_from(page_id) else {
+            return Ok(Vec::new());
+        };
+        let read = self.read()?;
+        let mut versions: Vec<_> = crate::pages::versions_of(&*read, id)?
+            .into_iter()
+            .filter(|v| v.body_storage.as_deref().is_none_or(|s| s == "inline"))
+            .filter(|v| !v.compiled_truth.is_null())
+            .collect();
+        versions.sort_by_key(|v| std::cmp::Reverse(v.id));
+        Ok(versions
+            .into_iter()
+            .take(BODY_RECHECK_VERSIONS)
+            .map(|v| {
+                json!({
+                    "compiled_truth": v.compiled_truth.as_deref(),
+                    "timeline": v.timeline.as_deref(),
+                    "title": v.title,
+                    "type": v.page_type,
+                    "frontmatter": crate::jsonb::order_map(v.frontmatter),
+                    "tags": v.tags,
+                })
+            })
+            .collect())
     }
 
     /// `readAtomProvenanceCounts()`: one row over the live atoms that carry a `source_hash`

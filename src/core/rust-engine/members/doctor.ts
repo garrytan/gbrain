@@ -26,6 +26,9 @@ export const DOCTOR_MEMBERS = {
   listHeldGenerations: 'health',
   listOrphanGenerationCandidates: 'health',
   readAtomProvenanceCounts: 'health',
+  listBodyRecheckGroups: 'health',
+  readBodyRecheckPage: 'health',
+  listBodyRecheckVersions: 'health',
   readExtractRollup7d: 'health',
   listRecordedHaltReasons7d: 'health',
   // doctor page reads (engine-sql/doctor-pages.ts)

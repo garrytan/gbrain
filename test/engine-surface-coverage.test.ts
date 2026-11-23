@@ -212,7 +212,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'readEmbeddingBacklogAge', 'listBudgetLimitedRows', 'readBudgetHoldAge', 'listImageAssetFiles', 'listAmbiguousExtractionInputs',
   'listExtractionInputReceipts', 'listUnpricedDerivationModels', 'listRestorableAtomRetirements', 'countLedgerCoveredAtomRetirements',
   'listLiveGenerationRetirements', 'listHeldGenerations', 'listOrphanGenerationCandidates',
-  'listOntologyFactCandidates', 'readAtomProvenanceCounts', 'readExtractRollup7d', 'listRecordedHaltReasons7d',
+  'listOntologyFactCandidates', 'readAtomProvenanceCounts', 'listBodyRecheckGroups', 'readBodyRecheckPage', 'listBodyRecheckVersions', 'readExtractRollup7d', 'listRecordedHaltReasons7d',
   // Doctor persistence reads (engine-sql/doctor-persistence.ts; covered by test/engine-parity/doctor-persistence.test.ts)
   'listCapacityCounters', 'listOutstandingHolders', 'countPersistenceRequestRows', 'listLifetimeCounters',
   'readAdmissionSample', 'listRunningRequestStalls', 'readLiveConsumerSummary', 'readCounterDrift',
