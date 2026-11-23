@@ -118,6 +118,22 @@ export async function moveFactClaimDates(raw: EngineRawRead, sourceId: string, r
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
+// purged-page-facts (src/core/repair/purged-page-facts.ts expireBatch)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** Locks the named facts of the source for the rest of the transaction. */
+export async function lockApprovedFacts(raw: EngineRawRead, sourceId: string, factIds: readonly number[]): Promise<void> {
+  await raw('SELECT id FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[]) FOR UPDATE', [sourceId, [...factIds]]);
+}
+
+/** Expires the named unexpired facts of the source and clears their fence row number; the ids it expired. */
+export async function expireApprovedFacts(raw: EngineRawRead, sourceId: string, factIds: readonly number[]): Promise<number[]> {
+  return ids(await raw<{ id: number | string }>(
+    'UPDATE facts SET expired_at = now(), row_num = NULL WHERE source_id = $1 AND id = ANY($2::bigint[]) AND expired_at IS NULL RETURNING id',
+    [sourceId, [...factIds]]));
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
 // url-clone-fences (src/core/repair/url-clone-fences.ts keepRowsDatabaseOnly)
 // ---------------------------------------------------------------------------------------------------------------------
 

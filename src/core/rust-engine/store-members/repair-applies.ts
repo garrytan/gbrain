@@ -2,7 +2,8 @@
  * The rechecks and writes of `gbrain repair` applies (engine-sql/repair-applies.ts), served from
  * facts/repair_applies.rs: restoreConsolidationTie (consolidate-ties), listLiveDuplicateRows, supersedeDuplicateFacts
  * and linkStruckDuplicateFacts (duplicate-facts), listCommittedRestorePages, listActivePositionedFactIds,
- * readFactRestorePage and restoreExtractorFact (extractor-facts), moveFactClaimDates (fact-claim-dates),
+ * readFactRestorePage and restoreExtractorFact (extractor-facts), moveFactClaimDates (fact-claim-dates), lockApprovedFacts
+ * (no store call: the store's write transaction already holds every row) and expireApprovedFacts (purged-page-facts),
  * detachFenceRowFacts and hasDatabaseOnlyClaim (url-clone-fences) and readSourceCloneRow (the url-clone check). The fact writes go through the store's fact writer, so the trust stamp, the
  * withdrawal guard and the unique indexes run as their triggers and indexes do on SQL.
  *
@@ -53,6 +54,14 @@ export const restoreExtractorFact: Member<'restoreExtractorFact'> = (brain, sour
 export const moveFactClaimDates: Member<'moveFactClaimDates'> = (brain, sourceId, rows) =>
   storeCall({ member: 'moveFactClaimDates' }, () =>
     brain.moveFactClaimDates({ sourceId, rows: rows.map(({ id, valid_from, date }) => ({ id, valid_from, date })) }));
+
+/** No store call: a store write transaction holds the whole store until it ends, as the SQL's `FOR UPDATE` holds the rows. */
+export const lockApprovedFacts: Member<'lockApprovedFacts'> = async (_brain, _sourceId, ids) => {
+  wholeIds('lockApprovedFacts', ids);
+};
+
+export const expireApprovedFacts: Member<'expireApprovedFacts'> = (brain, sourceId, ids) =>
+  storeCall({ member: 'expireApprovedFacts' }, () => brain.expireApprovedFacts({ sourceId, ids: wholeIds('expireApprovedFacts', ids) }));
 
 export const detachFenceRowFacts: Member<'detachFenceRowFacts'> = (brain, sourceId, slug, rowNum) =>
   storeCall({ member: 'detachFenceRowFacts' }, () => brain.detachFenceRowFacts({ sourceId, slug, rowNum }));

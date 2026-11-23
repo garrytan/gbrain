@@ -129,6 +129,19 @@ impl Brain {
         })
     }
 
+    /// `expireApprovedFacts({ sourceId, ids })`: resolves the expired ids.
+    #[napi]
+    pub fn expire_approved_facts<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: DuplicateArgs = required(args, "expireApprovedFacts args")?;
+            s.expire_approved_facts(&a)
+        })
+    }
+
     /// `detachFenceRowFacts({ sourceId, slug, rowNum })`: resolves the changed ids.
     #[napi]
     pub fn detach_fence_row_facts<'env>(

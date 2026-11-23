@@ -759,6 +759,10 @@ export interface FactsStatementMembers {
   restoreExtractorFact(sourceId: string, id: number, rowNum: number, expiredAt: string): Promise<boolean>;
   /** fact-claim-dates: moves the named database-only facts to their claim's day; the ids it moved. Writes facts. */
   moveFactClaimDates(sourceId: string, rows: readonly RepairAppliesSql.ClaimDateMove[]): Promise<number[]>;
+  /** purged-page-facts: locks the named facts of the source for the rest of the transaction. Reads facts FOR UPDATE. */
+  lockApprovedFacts(sourceId: string, factIds: readonly number[]): Promise<void>;
+  /** purged-page-facts: expires the named unexpired facts and clears their fence row number; the ids it expired. Writes facts. */
+  expireApprovedFacts(sourceId: string, factIds: readonly number[]): Promise<number[]>;
   /** url-clone-fences: makes the fact at a fence row of the page database-only; the ids it changed. Writes facts. */
   detachFenceRowFacts(sourceId: string, slug: string, rowNum: number): Promise<number[]>;
   /** url-clone-fences: whether the entity already holds a database-only fact with this claim text. Reads facts. */

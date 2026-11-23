@@ -501,6 +501,8 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   restoreExtractorFact: 'listActivePositionedFactIds for that fact (a restored fact is active at its row)',
   moveFactClaimDates: 'listFactsOnValidDay for that source and day (a moved fact no longer reads on the bulk day)',
   detachFenceRowFacts: 'hasDatabaseOnlyClaim for that fact\'s claim (a detached fact is database-only)',
+  lockApprovedFacts: nothingLock,
+  expireApprovedFacts: 'listActivePositionedFactIds for those facts (an expired fact is no longer active)',
   // Additive: a rerun bumps the generation once more, which only re-keys the page's next atom extraction (a rebuildable run key).
   recordAtomGenerationBump: 'readAtomGeneration for that page (the generation moved on)',
   closeOpenLoop: 'listOpenLoops for that source', upsertOpenLoop: 'listOpenLoops for that source',

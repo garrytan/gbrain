@@ -391,6 +391,30 @@ impl Store {
         })
     }
 
+    /// `expireApprovedFacts(sourceId, ids)`: expires each named unexpired fact of the source and clears its `row_num`.
+    /// The ids it expired, by id.
+    pub fn expire_approved_facts(&self, a: &DuplicateArgs) -> Result<Vec<u64>> {
+        const OP: &str = "expireApprovedFacts";
+        no_nul(OP, &[("sourceId", a.source_id.as_str())])?;
+        let ids = id_set(OP, &a.ids)?;
+        let trust = &self.write_trust()?;
+        self.write(|tx| {
+            let now = self.env.now_micros();
+            let mut changed = Vec::new();
+            for old in named_rows(&*tx, &a.source_id, &ids)? {
+                if old.expired_at_us.is_some() {
+                    continue;
+                }
+                let mut new = old.clone();
+                new.expired_at_us = Some(now);
+                new.row_num = None;
+                write_fact(tx, trust, Some(&old), &new)?;
+                changed.push(old.id);
+            }
+            Ok(changed)
+        })
+    }
+
     /// `detachFenceRowFacts(sourceId, slug, rowNum)`: clears `row_num` and `source_markdown_slug` on the facts of the
     /// source at that fence row of that page. The ids it changed, by id.
     pub fn detach_fence_row_facts(&self, a: &FenceRowArgs) -> Result<Vec<u64>> {

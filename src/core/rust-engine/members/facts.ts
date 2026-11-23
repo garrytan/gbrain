@@ -232,6 +232,8 @@ export const FACTS_MEMBERS = {
   readFactRestorePage: 'facts',
   restoreExtractorFact: 'facts',
   moveFactClaimDates: 'facts',
+  lockApprovedFacts: 'facts',
+  expireApprovedFacts: 'facts',
   detachFenceRowFacts: 'facts',
   hasDatabaseOnlyClaim: 'facts',
   readSourceCloneRow: 'sources',
