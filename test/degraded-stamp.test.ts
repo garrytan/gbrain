@@ -5,7 +5,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import type { Notice } from '../src/core/agent-output.ts';
-import { DEGRADED_STAMP_PREFIX, degradedStampFor, degradedStampLine, KEYWORD_ONLY_BY_CHOICE_EMPTY } from '../src/core/degraded-stamp.ts';
+import { DEGRADED_STAMP_PREFIX, degradedStampFor, degradedStampLine, emptyRetrievalStages, KEYWORD_ONLY_BY_CHOICE_EMPTY } from '../src/core/degraded-stamp.ts';
 import { withDegradedStamp } from '../src/cli/op-notices.ts';
 import { recallInteropNotices } from '../src/core/interop-notices.ts';
 
@@ -157,5 +157,13 @@ describe('the empty line on a brain keyless on purpose', () => {
   test('it scopes the negative to what this caller can read, since restricted pages it cannot read may hold the words', () => {
     expect(KEYWORD_ONLY_BY_CHOICE_EMPTY).toContain('and no page this caller can read holds these words');
     expect(KEYWORD_ONLY_BY_CHOICE_EMPTY).not.toContain('and no page holds these words');
+  });
+
+  test('it is used only when the keyword arm itself found nothing, never for a page past the end or hits a later step dropped', () => {
+    const byChoice = { stage: 'embed_unavailable', reason: 'embedding_disabled' };
+    expect(emptyRetrievalStages([byChoice, { stage: 'keyword_zero' }])).toEqual({ stages: [], byChoice: true });
+    expect(emptyRetrievalStages([byChoice])).toEqual({ stages: [], byChoice: false });
+    expect(emptyRetrievalStages([{ stage: 'embed_unavailable', reason: 'no_provider' }, { stage: 'keyword_zero' }]))
+      .toEqual({ stages: ['embed_unavailable', 'keyword_zero'], byChoice: false });
   });
 });

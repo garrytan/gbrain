@@ -18,6 +18,7 @@ import { brainServes } from '../../../core/access/serves.ts';
 import { credentialReadSources, stdioReadSources } from '../../../core/grants/shared-exposure.ts';
 import { grantFromClient, grantFromRow, grantFromTokenRow, type PrincipalGrant } from '../../../core/grants/model.ts';
 import { stdioMemberId } from '../../../core/access/caller.ts';
+import { guestSourceSql } from '../../../core/guests/marker.ts';
 
 const SAMPLE = 20;
 const SHOWN = 5;
@@ -33,6 +34,7 @@ async function sharedSourceUnread(engine: BrainEngine, remote: boolean): Promise
     `SELECT s.id FROM sources s
       WHERE s.archived IS NOT TRUE
         AND NOT EXISTS (SELECT 1 FROM access_member_sources ms WHERE ms.source_id = s.id)
+        AND NOT ${guestSourceSql('s.config', 's.id')}
         AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id = s.id AND p.deleted_at IS NULL)
       ORDER BY s.id`)).map(r => r.id);
   const grants: PrincipalGrant[] = [

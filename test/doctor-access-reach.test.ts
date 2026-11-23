@@ -103,6 +103,16 @@ for (const kind of testBackends()) {
       await engine.executeRaw("DELETE FROM access_member_sources WHERE source_id = 'company'");
     }, 60_000);
 
+    test('a guest source is not a shared source: members reach it only through an owner grant, which guest_source checks', async () => {
+      await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ('guests-a', 'guests-a', '{"federated": true, "guest": true}'::jsonb), ('guests-b', 'guests-b', '{"federated": false}'::jsonb)`);
+      await importFromContent(engine, 'notes/guest-a', page(), { sourceId: 'guests-a', noEmbed: true });
+      await importFromContent(engine, 'notes/guest-b', page(), { sourceId: 'guests-b', noEmbed: true });
+      await engine.executeRaw("INSERT INTO guest_sources (source_id, writers) VALUES ('guests-b', ARRAY[]::text[])");
+      const c = await check('access_shared_source_unread');
+      expect(c.details!.sources ?? []).not.toContain('guests-a');
+      expect(c.details!.sources ?? []).not.toContain('guests-b');
+    }, 60_000);
+
     test('a key of a disabled member does not count as a reader of a shared source', async () => {
       await token('dave-company', null, ['company']);
       await addMember(engine, 'dave-example');
