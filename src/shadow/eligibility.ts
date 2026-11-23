@@ -56,7 +56,8 @@ export interface EligibilityInput {
 
 /** The window start: the later of the shadow start and now minus 7 days, minus the refresh slack. */
 export function eligibilityWindowStart(state: ShadowState | null, now: Date): Date {
-  const started = state?.started_at ? Date.parse(state.started_at) : Number.NaN;
+  const since = state?.writer_evidence_since ?? state?.started_at;
+  const started = since ? Date.parse(since) : Number.NaN;
   const base = Math.max(now.getTime() - ELIGIBILITY_WINDOW_MS, Number.isFinite(started) ? started : Number.NEGATIVE_INFINITY);
   return new Date(base - OBSERVATION_REFRESH_MS);
 }

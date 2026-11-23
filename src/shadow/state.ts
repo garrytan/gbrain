@@ -43,6 +43,13 @@ export interface ShadowState {
   brain: string;
   /** The primary engine kind at start. */
   primary_engine: string;
+  /**
+   * The start of the writer-evidence epoch: the first `start --yes` of the current seed. A later `start` keeps it (and the
+   * seed it names), so a restart cannot move the eligibility window past evidence already gathered; a new seed begins a new one.
+   */
+  writer_evidence_since?: string;
+  /** The seed id the epoch belongs to (null: no seed yet at that start). */
+  writer_evidence_seed?: string | null;
 }
 
 /** The identity of the brain a config opens, without credentials. Null when the config names no brain store. */

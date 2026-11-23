@@ -37,11 +37,12 @@ WHERE engine_writer_observations.last_seen < now() - interval '${OBSERVATION_REF
  * The eligibility read, one read-only statement: hosts that claimed writes in the window; on a hooked (Postgres)
  * primary also the writing connections no process claimed, the gap rows, the brain tables with no hook, and the login
  * roles that can write a brain table but have no complete way to record evidence. The roles judged are the login roles and
- * every role a non-superuser login can reach as a member (SET ROLE, even without INHERIT), because the trigger runs with the
- * rights of the role that is current when it fires; a table privilege or a column privilege on any column is a write. A role records through one of two
- * routes: the session route (SELECT, INSERT and UPDATE on engine_writer_sessions) or the gap route (INSERT on
- * engine_writer_coverage_gaps, which has no sequence), and either needs row-level security to let the role in (not
- * enabled, or the role is a superuser, bypasses it, or owns the table and the table does not force it). A role's
+ * every role a non-superuser login can SET ROLE to (the SET option of a membership on PostgreSQL 16 and newer, direct or
+ * through a chain; plain membership below 16), because the trigger runs with the rights of the role that is current when
+ * it fires; a table privilege or a column privilege on any column is a write. A role is covered only with the gap route:
+ * INSERT on engine_writer_coverage_gaps (which has no sequence) and row-level security that lets it in (not enabled, or the
+ * role is a superuser, bypasses it, or owns the table and the table does not force it). The session route alone is not
+ * enough: a refresh the trigger skips (a row another transaction holds) can only be recorded as a gap. A role's
  * inherited rights count, so a member of pg_write_all_data is judged as itself. A brain table counts as unhooked
  * unless its hook is enabled for ordinary writes, statement-level, unconditional, on all four events and calls gbrain_note_writer().
  * A process claim resolves a session only while the claim is inside the window too: an expired claim cannot hide a current writer.
@@ -61,13 +62,13 @@ SELECT
   (SELECT count(*) FROM engine_writer_coverage_gaps WHERE created_at >= $1::timestamptz)::int AS gaps,
   CASE WHEN $2::boolean THEN (SELECT count(*) FROM brain b WHERE NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = b.oid AND ${effectiveHookSql('$4')}))::int ELSE 0 END AS unhooked,
   CASE WHEN $2::boolean THEN (SELECT count(*) FROM pg_roles r
-    WHERE (r.rolcanlogin OR EXISTS (SELECT 1 FROM pg_roles l WHERE l.rolcanlogin AND NOT l.rolsuper AND pg_has_role(l.oid, r.oid, 'MEMBER')))
+    WHERE (r.rolcanlogin OR EXISTS (SELECT 1 FROM pg_roles l WHERE l.rolcanlogin AND NOT l.rolsuper
+        AND CASE WHEN current_setting('server_version_num')::int >= 160000 THEN pg_has_role(l.oid, r.oid, 'SET') ELSE pg_has_role(l.oid, r.oid, 'MEMBER') END))
       AND EXISTS (SELECT 1 FROM brain b WHERE has_table_privilege(r.oid, b.oid, 'INSERT, UPDATE, DELETE, TRUNCATE')
         OR has_any_column_privilege(r.oid, b.oid, 'INSERT') OR has_any_column_privilege(r.oid, b.oid, 'UPDATE'))
       AND NOT EXISTS (SELECT 1 FROM evidence e
-        WHERE (NOT e.relrowsecurity OR r.rolsuper OR r.rolbypassrls OR (pg_has_role(r.oid, e.relowner, 'USAGE') AND NOT e.relforcerowsecurity))
-          AND ((e.name = 'engine_writer_sessions' AND has_table_privilege(r.oid, e.oid, 'SELECT') AND has_table_privilege(r.oid, e.oid, 'INSERT') AND has_table_privilege(r.oid, e.oid, 'UPDATE'))
-            OR (e.name = 'engine_writer_coverage_gaps' AND has_table_privilege(r.oid, e.oid, 'INSERT')))))::int ELSE 0 END AS uncovered_roles`;
+        WHERE e.name = 'engine_writer_coverage_gaps' AND has_table_privilege(r.oid, e.oid, 'INSERT')
+          AND (NOT e.relrowsecurity OR r.rolsuper OR r.rolbypassrls OR (pg_has_role(r.oid, e.relowner, 'USAGE') AND NOT e.relforcerowsecurity))))::int ELSE 0 END AS uncovered_roles`;
 
 export interface WriterEvidence { hosts: number; unresolved: number; gaps: number; unhooked: number; uncovered_roles: number }
 

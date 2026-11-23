@@ -285,7 +285,7 @@ d('writer hooks on Postgres', () => {
     } finally { await gapOnly.drop(); }
   }, 60_000);
 
-  test('a role with only part of a recording route is uncovered, and its write leaves no evidence', async () => {
+  test('a role with only part of a recording route, or only the session route, is uncovered', async () => {
     const dir = tempDir();
     await installWriterHooks(engine, dir);
     const baseline = await evidence();
@@ -304,13 +304,16 @@ d('writer hooks on Postgres', () => {
     try {
       expect((await evidence()).uncovered_roles).toBe(baseline.uncovered_roles + 1);
     } finally { await noUpdate.drop(); }
-    // The full session route (and no gap right) is covered.
+    // The session route alone is not enough: a refresh the trigger skips can only be recorded as a gap, which this role cannot insert.
     const full = await roleConnection(['GRANT INSERT ON config TO $ROLE', 'GRANT SELECT, INSERT, UPDATE ON engine_writer_sessions TO $ROLE'], true);
     try {
-      expect((await evidence()).uncovered_roles).toBe(baseline.uncovered_roles);
-      await full.sql`INSERT INTO config (key, value) VALUES ('hooks-full-route', '1')`;
-      expect((await evidence()).unresolved).toBe(baseline.unresolved + 1);
+      expect((await evidence()).uncovered_roles).toBe(baseline.uncovered_roles + 1);
     } finally { await full.drop(); }
+    // The gap route is covered.
+    const gapRoute = await roleConnection(['GRANT INSERT ON config TO $ROLE', 'GRANT INSERT ON engine_writer_coverage_gaps TO $ROLE'], true);
+    try {
+      expect((await evidence()).uncovered_roles).toBe(baseline.uncovered_roles);
+    } finally { await gapRoute.drop(); }
   }, 60_000);
 
   test('a hook that does not fire for every write counts as no hook: disabled, replica-only, wrong events; repair records a gap', async () => {
@@ -482,6 +485,107 @@ d('writer hooks on Postgres', () => {
       await engine.executeRaw(`REVOKE ALL ON ALL TABLES IN SCHEMA public FROM ${target}`).catch(() => undefined);
       await engine.executeRaw(`DROP ROLE IF EXISTS ${target}`).catch(() => undefined);
     }
+  }, 60_000);
+
+  test('a session-only writer whose refresh is skipped leaves no gap row, so the audit must refuse it: it is uncovered', async () => {
+    const dir = tempDir();
+    await installWriterHooks(engine, dir);
+    const baseline = await evidence();
+    const sessionOnly = await roleConnection(['GRANT INSERT ON config TO $ROLE', 'GRANT SELECT, INSERT, UPDATE ON engine_writer_sessions TO $ROLE'], true);
+    const holder = connection('psql');
+    try {
+      await sessionOnly.sql`INSERT INTO config (key, value) VALUES ('hooks-session-only-1', '1')`;
+      await engine.executeRaw(`UPDATE engine_writer_sessions SET last_seen = clock_timestamp() - interval '11 minutes' WHERE application_name LIKE 'gbrain cli:900:%'`);
+      let release!: () => void;
+      const held = new Promise<void>((r) => { release = r; });
+      const tx = holder.begin(async (t) => { await t`SELECT 1 FROM engine_writer_sessions WHERE application_name LIKE 'gbrain cli:900:%' FOR UPDATE`; await held; });
+      await new Promise((r) => setTimeout(r, 200));
+      await sessionOnly.sql`INSERT INTO config (key, value) VALUES ('hooks-session-only-2', '1')`;
+      release();
+      await tx;
+      const ev = await evidence();
+      // The skipped refresh left no gap row (the role cannot insert one) ...
+      expect(ev.gaps).toBe(baseline.gaps);
+      // ... so the only thing that keeps criterion 11 honest is the role audit.
+      expect(ev.uncovered_roles).toBe(baseline.uncovered_roles + 1);
+    } finally { await sessionOnly.drop(); }
+  }, 60_000);
+
+  test('a membership with SET FALSE, or a chain with SET off on one edge, is not reachable by SET ROLE (PostgreSQL 16 and newer)', async () => {
+    const [v] = await engine.executeRaw<{ n: number }>(`SELECT current_setting('server_version_num')::int AS n`);
+    if (v!.n < 160000) return;
+    const dir = tempDir();
+    await installWriterHooks(engine, dir);
+    const baseline = await evidence();
+    const suffix = `${process.pid}_${Math.floor(Math.random() * 1e6)}`;
+    const target = `hooks_set_t_${suffix}`;
+    const mid = `hooks_set_m_${suffix}`;
+    await engine.executeRaw(`CREATE ROLE ${target} NOLOGIN BYPASSRLS`);
+    await engine.executeRaw(`GRANT INSERT, UPDATE ON config TO ${target}`);
+    await engine.executeRaw(`CREATE ROLE ${mid} NOLOGIN`);
+    // The login has a complete route of its own, so it is covered whatever it inherits.
+    const login = await roleConnection(['GRANT INSERT ON engine_writer_coverage_gaps TO $ROLE'], true);
+    try {
+      // INHERIT TRUE, SET FALSE: the login inherits the target's rights (judged as itself) but cannot SET ROLE to it.
+      await engine.executeRaw(`GRANT ${target} TO ${login.role} WITH INHERIT TRUE, SET FALSE`);
+      expect((await evidence()).uncovered_roles).toBe(baseline.uncovered_roles);
+      await expect(login.sql.begin(async (t) => { await t.unsafe(`SET LOCAL ROLE ${target}`); })).rejects.toThrow();
+      // A chain login -> mid (SET true) -> target (SET false) is not reachable either.
+      await engine.executeRaw(`REVOKE ${target} FROM ${login.role}`);
+      await engine.executeRaw(`GRANT ${mid} TO ${login.role} WITH SET TRUE`);
+      await engine.executeRaw(`GRANT ${target} TO ${mid} WITH INHERIT FALSE, SET FALSE`);
+      expect((await evidence()).uncovered_roles).toBe(baseline.uncovered_roles);
+      // With SET on the last edge the target is reachable and has no gap route: uncovered.
+      await engine.executeRaw(`REVOKE ${target} FROM ${mid}`);
+      await engine.executeRaw(`GRANT ${target} TO ${mid} WITH INHERIT FALSE, SET TRUE`);
+      expect((await evidence()).uncovered_roles).toBe(baseline.uncovered_roles + 1);
+    } finally {
+      await login.drop();
+      for (const r of [mid, target]) {
+        await engine.executeRaw(`REVOKE ALL ON ALL TABLES IN SCHEMA public FROM ${r}`).catch(() => undefined);
+        await engine.executeRaw(`DROP ROLE IF EXISTS ${r}`).catch(() => undefined);
+      }
+    }
+  }, 60_000);
+
+  test('restarting shadow mode keeps the evidence epoch: yesterday\'s unclaimed writer still counts, and a restart after stop records a gap', async () => {
+    const home = tempDir();
+    const url = (engine as unknown as { connectedDatabaseUrl: string }).connectedDatabaseUrl;
+    const config = { engine: 'postgres' as const, database_url: url };
+    const out: string[] = [];
+    const view = new Proxy(engine, { get: (t, p) => (p === 'disconnect' ? async () => undefined : Reflect.get(t, p, t)) });
+    const t0 = new Date(Date.now() - 2 * 3_600_000);
+    const make = (at: Date) => ({ config: () => config, out: (l: string) => out.push(l), err: (l: string) => out.push(l), openPrimary: async () => view as never, loadAddon: async () => ({ ok: true }) as never, now: () => at });
+    await withEnv({ GBRAIN_HOME: home }, async () => {
+      expect(await runEngineShadow(['start', '--plan'], make(t0))).toBe(0);
+      const planHash = out.find(l => l.startsWith('plan_hash: '))!.slice('plan_hash: '.length);
+      expect(await runEngineShadow(['start', '--yes', '--expect', planHash], make(t0))).toBe(0);
+      const { shadowBrainKey, shadowDirFor, readShadowState } = await import('../../src/shadow/state.ts');
+      const dir = shadowDirFor(shadowBrainKey(config)!);
+      expect(readShadowState(dir)?.writer_evidence_since).toBe(t0.toISOString());
+      // A second host's unclaimed connection writes, then its row ages to an hour ago.
+      const other = connection('psql');
+      await other`INSERT INTO config (key, value) VALUES ('hooks-epoch', '1') ON CONFLICT (key) DO NOTHING`;
+      await engine.executeRaw(`UPDATE engine_writer_sessions SET last_seen = clock_timestamp() - interval '1 hour'`);
+      const { buildEligibilityStatus } = await import('../../src/shadow/eligibility.ts');
+      const read = async () => (await buildEligibilityStatus({ dir, state: readShadowState(dir), engine, source: { name: 'none', unknownPaths: () => 0 }, brainId: () => 'host', addonTarget: () => null })).eligibility.unknown_writer_paths;
+      const before = (await read())!;
+      expect(before).toBeGreaterThanOrEqual(1);
+      // Start again now: started_at moves, the epoch does not, and the old second writer still counts.
+      expect(await runEngineShadow(['start', '--yes', '--expect', planHash], make(new Date()))).toBe(0);
+      const restarted = readShadowState(dir)!;
+      expect(restarted.writer_evidence_since).toBe(t0.toISOString());
+      expect(Date.parse(restarted.started_at)).toBeGreaterThan(t0.getTime());
+      expect((await read())!).toBeGreaterThanOrEqual(before);
+      // Stop, then start: same epoch, and one gap row for the stretch with no hooks.
+      const gapsBefore = (await evidence()).gaps;
+      expect(await runEngineShadow(['stop'], make(new Date()))).toBe(0);
+      expect(await runEngineShadow(['start', '--yes', '--expect', planHash], make(new Date()))).toBe(0);
+      expect(readShadowState(dir)!.writer_evidence_since).toBe(t0.toISOString());
+      expect((await evidence()).gaps).toBe(gapsBefore + 1);
+      expect((await engine.executeRaw<{ code: string }>(`SELECT code FROM engine_writer_coverage_gaps ORDER BY created_at DESC LIMIT 1`))[0]!.code).toBe('hooks_off_interval');
+      await runEngineShadow(['stop'], make(new Date()));
+    });
   }, 60_000);
 
   test('an expired process claim cannot resolve a current session: the writer stays unresolved', async () => {

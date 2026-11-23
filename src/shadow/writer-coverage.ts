@@ -9,7 +9,8 @@
  *   - a pass that repaired rows while the follower's coverage watermark was invalid (repaired_rows > follower_misses):
  *     those writes cannot be told apart from an unseen writer;
  *   - a `writer_observation_failed` record: a process wrote and its observation was lost;
- *   - a torn or unreadable pass or fault record: the evidence itself is incomplete.
+ *   - a torn or unreadable pass or fault record, or one missing its time or carrying a count of the wrong type: the
+ *     evidence itself is incomplete, so it counts rather than reading as old or clean.
  *
  * Known limit, named rather than hidden: reconcile compares final rows, so a write from an unwrapped process that a
  * later wrapped write overwrites before any pass leaves no evidence here. A database-side source would close that gap;
@@ -26,7 +27,15 @@ export interface WriterCoverageSource {
   unknownPaths(since: Date): number;
 }
 
-function jsonLines<T>(path: string): { rows: T[]; torn: number } {
+const isTime = (v: unknown): boolean => typeof v === 'string' && Number.isFinite(Date.parse(v));
+const isCount = (v: unknown): boolean => v === undefined || (typeof v === 'number' && Number.isInteger(v) && v >= 0);
+
+/** A fault record the source can classify: a kind and a time. Anything else is incomplete evidence. */
+const validFault = (r: { ts?: unknown; kind?: unknown }): boolean => typeof r.kind === 'string' && isTime(r.ts);
+/** A pass record the source can classify: a finish time, and counts that are absent or non-negative integers. */
+const validPass = (r: Partial<Record<keyof PassRecord, unknown>>): boolean => isTime(r.finished_at) && isCount(r.follower_misses) && isCount(r.repaired_rows);
+
+function jsonLines<T>(path: string, valid: (row: T) => boolean): { rows: T[]; torn: number } {
   if (!existsSync(path)) return { rows: [], torn: 0 };
   let text: string;
   // silent-read-ok: not silent; a record file that cannot be read is incomplete evidence and counts as one torn record
@@ -38,7 +47,9 @@ function jsonLines<T>(path: string): { rows: T[]; torn: number } {
     // A line that parses to something other than an object (null, a number, an array) is as incomplete as a torn one.
     try {
       const row: unknown = JSON.parse(line);
-      if (row !== null && typeof row === 'object' && !Array.isArray(row)) rows.push(row as T); else torn++;
+      // A record that is not an object, or lacks the fields this source must read (a time, well-typed counts), is as incomplete
+      // as a torn one: it cannot be shown to be old or clean, so it counts.
+      if (row !== null && typeof row === 'object' && !Array.isArray(row) && valid(row as T)) rows.push(row as T); else torn++;
     } catch { torn++; }
   }
   return { rows, torn };
@@ -52,8 +63,8 @@ export function planAsWrittenSource(dir: string): WriterCoverageSource {
     name: 'process_observations',
     unknownPaths(since: Date): number {
       const t = since.getTime();
-      const passes = jsonLines<PassRecord>(passesPath(dir));
-      const faults = jsonLines<{ ts?: string; kind?: string }>(faultsPath(dir));
+      const passes = jsonLines<PassRecord>(passesPath(dir), validPass);
+      const faults = jsonLines<{ ts?: string; kind?: string }>(faultsPath(dir), validFault);
       let n = passes.torn + faults.torn;
       for (const p of passes.rows) {
         if (!after(p.finished_at, t)) continue;

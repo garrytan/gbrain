@@ -307,6 +307,25 @@ describe('coverage source (plan as written)', () => {
     expect(planAsWrittenSource(other).unknownPaths(new Date(0))).toBe(1);
   });
 
+  test('a record that parses but lacks its time, or carries counts of the wrong type, is incomplete evidence and counts', () => {
+    const fault = (rec: unknown): string => { const d = tempDir(); appendFileSync(join(d, 'faults.jsonl'), JSON.stringify(rec) + '\n'); return d; };
+    const passFile = (rec: unknown): string => { const d = tempDir(); mkdirSync(join(d, 'reconcile'), { recursive: true }); appendFileSync(join(d, 'reconcile', 'passes.jsonl'), JSON.stringify(rec) + '\n'); return d; };
+    const far = new Date(Date.now() + 3_600_000); // a window that starts after every valid record here
+    // A writer failure with no time is not old: it counts.
+    expect(planAsWrittenSource(fault({ kind: 'writer_observation_failed' })).unknownPaths(far)).toBe(1);
+    expect(planAsWrittenSource(fault({ kind: 'writer_observation_failed', ts: 'yesterday' })).unknownPaths(far)).toBe(1);
+    expect(planAsWrittenSource(fault({ ts: new Date().toISOString() })).unknownPaths(far)).toBe(1);
+    expect(planAsWrittenSource(fault({ kind: 7, ts: new Date().toISOString() })).unknownPaths(far)).toBe(1);
+    // A pass with no finish time, or with counts of the wrong type, counts too.
+    expect(planAsWrittenSource(passFile({ id: 'p', follower_misses: 0, repaired_rows: 0 })).unknownPaths(far)).toBe(1);
+    expect(planAsWrittenSource(passFile({ id: 'p', finished_at: 'soon', follower_misses: 0, repaired_rows: 0 })).unknownPaths(far)).toBe(1);
+    expect(planAsWrittenSource(passFile({ id: 'p', finished_at: new Date().toISOString(), follower_misses: '3', repaired_rows: 0 })).unknownPaths(far)).toBe(1);
+    expect(planAsWrittenSource(passFile({ id: 'p', finished_at: new Date().toISOString(), follower_misses: 0, repaired_rows: -1 })).unknownPaths(far)).toBe(1);
+    // Well-formed old records, an unrelated fault kind and a clean pass do not count.
+    expect(planAsWrittenSource(fault({ kind: 'something_else', ts: new Date().toISOString() })).unknownPaths(far)).toBe(0);
+    expect(planAsWrittenSource(passFile({ id: 'p', finished_at: new Date().toISOString(), follower_misses: 0, repaired_rows: 0 })).unknownPaths(far)).toBe(0);
+  });
+
   test('a torn record is incomplete evidence and counts', () => {
     const dir = tempDir();
     mkdirSync(join(dir, 'reconcile'), { recursive: true });
@@ -361,6 +380,15 @@ describe('eligibility builder', () => {
   test('a mounted brain is a team brain; an unresolvable brain is never called personal', async () => {
     expect((await buildEligibilityStatus({ dir: tempDir(), state: null, brainId: () => 'team-a', addonTarget: () => null })).eligibility.team_brain).toBe(true);
     expect((await buildEligibilityStatus({ dir: tempDir(), state: null, brainId: () => { throw new Error('bad mounts'); }, addonTarget: () => null })).eligibility.team_brain).toBe(true);
+  });
+
+  test('the window binds to the evidence epoch, not to the latest start: a restart does not move it', () => {
+    const now = new Date('2026-12-01T12:00:00.000Z');
+    const restarted = { ...state('2026-11-30T23:00:00.000Z'), writer_evidence_since: '2026-11-29T00:00:00.000Z' };
+    expect(eligibilityWindowStart(restarted, now).toISOString()).toBe(new Date(Date.parse('2026-11-29T00:00:00.000Z') - OBSERVATION_REFRESH_MS).toISOString());
+    // The epoch is still capped at 7 days.
+    const old = { ...state('2026-11-30T23:00:00.000Z'), writer_evidence_since: '2026-11-01T00:00:00.000Z' };
+    expect(eligibilityWindowStart(old, now).toISOString()).toBe(new Date(now.getTime() - ELIGIBILITY_WINDOW_MS - OBSERVATION_REFRESH_MS).toISOString());
   });
 
   test('window: the later of shadow start and 7 days ago, minus the refresh slack', () => {

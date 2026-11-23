@@ -96,6 +96,8 @@ export interface HookOptions {
   /** Seam for tests: called after each table is hooked (a throw simulates a killed start). */
   afterTable?: (table: string, index: number) => void;
   now?: () => Date;
+  /** A gap row to record in the install's own transaction (a restart after stop: the hooks were off for a while). */
+  gap?: string;
 }
 
 /**
@@ -114,6 +116,7 @@ export async function installWriterHooks(engine: BrainEngine, dir: string, o: Ho
       await tx.executeRaw(CREATE_HOOK(table));
       o.afterTable?.(table, i++);
     }
+    if (o.gap) await tx.executeRaw(`INSERT INTO engine_writer_coverage_gaps (created_at, code) VALUES (clock_timestamp(), $1)`, [o.gap]);
   });
   writeManifest(dir, { version: 1, state: 'installed', at: (o.now?.() ?? new Date()).toISOString(), tables });
   return tables;

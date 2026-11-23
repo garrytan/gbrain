@@ -215,11 +215,18 @@ async function start(
     return 1;
   }
   mkdirSync(brain.dir, { recursive: true, mode: 0o700 });
+  // The writer-evidence epoch: this seed's first start. A restart keeps it, so evidence already gathered stays in the window;
+  // a restart after `stop` also leaves a gap row, because no hook recorded writers while shadow mode was off.
+  const prior = readShadowState(brain.dir);
+  const seedId = readSeedRecord(brain.dir)?.seed_id ?? null;
+  const sameEpoch = prior?.writer_evidence_since !== undefined && (prior.writer_evidence_seed ?? null) === seedId;
+  const evidenceSince = sameEpoch ? prior!.writer_evidence_since! : now().toISOString();
+  const hooksWereOff = sameEpoch && prior!.enabled === false;
   if (primaryTakesWriterHooks(brain.engine)) {
     let primary: BrainEngine | null = null;
     try {
       primary = await (deps.openPrimary ?? openConfiguredPrimary)();
-      const tables = await installWriterHooks(primary, brain.dir);
+      const tables = await installWriterHooks(primary, brain.dir, hooksWereOff ? { gap: 'hooks_off_interval' } : {});
       out(`Hooked ${tables.length} brain tables to record which connections write (swap eligibility).`);
     } catch (e) {
       const code = (e as { code?: unknown })?.code;
@@ -233,6 +240,7 @@ async function start(
   const state: ShadowState = {
     version: SHADOW_STATE_VERSION, enabled: true, started_at: now().toISOString(), sample_rate: o.sampleRate,
     queue_bound: o.queueBound, plan_hash: hash, brain: brain.key, primary_engine: brain.engine,
+    writer_evidence_since: evidenceSince, writer_evidence_seed: seedId,
   };
   writeShadowState(brain.dir, state);
   out(`Shadow mode is on for brain ${brain.key}. Processes that open this brain from now on mirror reads.`);
