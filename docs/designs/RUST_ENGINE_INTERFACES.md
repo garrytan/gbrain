@@ -1342,7 +1342,7 @@ The secret store (GST-2988) and the page-store reads and writes of `gbrain repai
 - **Members (31), capability:** `persistence_journal`: `findSecretEntryByMac`, `secretEntryExists`, `insertSecretEntry`, `insertSecretOccurrence`, `readSecretEntry`, `listSecretOccurrences`, `listSecretEntrySummaries`, `countSecretsByRule`, `listAllowedSecretMacs`, `listSecretKeysInUse`, `readSecretStoreSnapshot`, `insertBackupSecretEntry`, `readBackupEntryHold`, `insertBackupSecretOccurrence`, `deleteUnreferencedSecretEntry`, `listSecretHoldingPages`, `countUnreferencedSecretEntries`, `readRestorePageHit`, `markSecretEntryAllowed`, `readPageRedactionRow`, `readPageRedactionRows`, `listTimelineDedupRows`, `listVersionBodiesForRedaction`, `countPageVersionRows`, `setRetainedVersionBody`, `listChunkTextsForRedaction`, `deleteChunksByIds`, `setRedactedPageFields`, `readRawDataValue`, `setRawDataValue`, `setRedactedRowText`; the queue row after a rewrite is main's `queuePageProjectionJob`. `deletePageViewDigests` (capability `facts`) is served with no rows.
 - **Postgres tables:** `secret_store`, `secret_store_occurrence`; SQL in `src/core/engine-sql/secret-store.ts`, `secret-spans-rows.ts`.
 - **Parity cases:** `test/engine-parity/repair-secret-spans.test.ts`.
-- **Known gaps:** the reseal after a commit and a segmented body write run raw SQL (`docs/designs/RUST_ENGINE.md` loss row 46).
+- **Known gaps:** none for the scan, the apply (inline and segmented) and the restore. On a Rust brain `clearCodeEdgesLeavingChunks` has no `edges_backfilled_at` marker to clear (the store keeps none), and a raw data row is named by its position, not a serial id.
 
 ### timeline_queries
 

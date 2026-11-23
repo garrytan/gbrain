@@ -465,7 +465,7 @@ describe('engine parity: repair secret-spans', () => {
     none, elsewhere });
   });
 
-  parityTest('a segmented page with a withdrawn fact: the replace chunks the body under the withdrawal ledger and the apply keeps the struck row out of its chunks on PGLite and Postgres', {
+  parityTest('a segmented page with a withdrawn fact: the replace chunks the body under the withdrawal ledger and the apply keeps the struck row out of its chunks on every engine', {
     methods: ['openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'createSegmentedPageShell', 'flipBodyGeneration', 'setBodyStagingState', 'lockBodyStagingState',
       'readManifest', 'sealSegmentedPage', 'readPageSnapshot', 'insertFactWithdrawal', 'listChunkedOccurrences', 'getChunks', 'listVectorlessChunkIndexes'],
     timeout: 180_000,
@@ -496,9 +496,9 @@ describe('engine parity: repair secret-spans', () => {
       const after = await chunksOf();
       const snapshot = await engine.readPageSnapshot(slug, { sourceId: SRC });
       const vectorless = (await engine.listVectorlessChunkIndexes(created.pageId, column)).length;
-      // Open gap (RUST_ENGINE.md row 46): the Rust store's page snapshot does not list a page's withdrawals yet
-      // (origin/rust-engine/pg-fold-gap2, 2573915b55), so the chunker there keeps the struck row. PGLite and Postgres drop it.
-      if (backend !== 'rust') expect(after.join('\n')).not.toContain('lives in Lima');
+      // The page snapshot lists the page's withdrawals on every engine (the Rust store's snapshot_withdrawals), so the
+      // chunker of the replaced body drops the struck row everywhere.
+      expect(after.join('\n')).not.toContain('lives in Lima');
       return norm({ created: created.complete, outcomes: result.outcomes, before: before.map(t => t.includes('Lima')), chunks: after.length,
         leaked: leaked(after), sealed: snapshot!.page.text_projection_revision === snapshot!.revision, vectorless: vectorless === after.length });
     });
