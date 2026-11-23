@@ -1588,6 +1588,7 @@ mod tests {
             ("cats{w}or{w}dogs", "'cat' | 'dog'"),
             ("cats{w}-dogs", "'cat' & !'dog'"),
             ("-{w}cats", "!'cat'"),
+            ("{w}-dogs", "!'dog'"),
             ("cats{w}or", "'cat'"),
             (
                 "running{w}\"quick{w}fox\"{w}or{w}jumps",

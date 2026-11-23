@@ -44,13 +44,23 @@ const PGLITE_ANSWER: Record<number, string> = {
 const hex = (cp: number) => `U+${cp.toString(16).toUpperCase().padStart(4, '0')}`;
 const probe = (cp: number) => `dogs${String.fromCodePoint(cp)}cats`;
 
+/**
+ * PGLite's `websearch_to_tsquery('english', probe(cp))::text`, pinned so the Postgres arm can be calibrated on its own
+ * (a Postgres-only run, `GBRAIN_TEST_BACKEND=postgres`, has no PGLite arm to compare with). A run that has the PGLite
+ * arm checks these pins against it first.
+ */
+const AND_QUERY = "'dog' & 'cat'";
+const PHRASE_QUERY = "'dog' <-> 'cat'";
+const PGLITE_QUERY = (cp: number): string => {
+  if (PGLITE_ANSWER[cp] === BOTH) return AND_QUERY;
+  if (PGLITE_ANSWER[cp] === 'notes/adjacent') return PHRASE_QUERY;
+  return `'dogs${String.fromCodePoint(cp)}cat'`;
+};
+
 /** Code points whose query the Postgres arm parses differently from PGLite (host locale). */
 let hostDifferences = new Set<number>();
 
 beforeAll(async () => {
-  const pglite = suite.arms().find((arm) => arm.backend === 'pglite');
-  const pg = suite.arms().find((arm) => arm.backend === 'postgres');
-  if (!pglite || !pg) return;
   const parse = async (engine: BrainEngine) => {
     const out = new Map<number, string>();
     for (const cp of CODE_POINTS) {
@@ -59,8 +69,15 @@ beforeAll(async () => {
     }
     return out;
   };
-  const [a, b] = [await parse(pglite.engine), await parse(pg.engine)];
-  hostDifferences = new Set(CODE_POINTS.filter((cp) => a.get(cp) !== b.get(cp)));
+  const pglite = suite.arms().find((arm) => arm.backend === 'pglite');
+  if (pglite) {
+    const read = await parse(pglite.engine);
+    for (const cp of CODE_POINTS) expect({ code_point: hex(cp), query: read.get(cp) }).toEqual({ code_point: hex(cp), query: PGLITE_QUERY(cp) });
+  }
+  const pg = suite.arms().find((arm) => arm.backend === 'postgres');
+  if (!pg) return;
+  const read = await parse(pg.engine);
+  hostDifferences = new Set(CODE_POINTS.filter((cp) => read.get(cp) !== PGLITE_QUERY(cp)));
 }, 120_000);
 
 parityTest(
@@ -87,10 +104,11 @@ parityTest(
       expect({ backend, code_point: hex(cp), slugs }).toEqual({ backend, code_point: hex(cp), slugs: PGLITE_ANSWER[cp]! });
       if (!hostDifferences.has(cp)) found.push(`${hex(cp)} ${slugs}`);
     }
-    // Not vacuous: an ASCII space finds both pages, and U+3000 (a separator on PGLite) is compared.
+    // Not vacuous: an ASCII space finds both pages, and U+3000 (a separator on PGLite) is compared unless the Postgres host
+    // reads it differently (then it is a named host difference, and PGLite and Rust still gave PGLite's answer above).
     const space = (await engine.searchKeyword('dogs cats', { limit: 10 })).map((r) => r.slug).sort();
     expect(space).toEqual(['notes/adjacent', 'notes/apart']);
-    expect(found.some((line) => line.startsWith('U+3000 '))).toBe(true);
+    expect(hostDifferences.has(0x3000) || found.some((line) => line.startsWith('U+3000 '))).toBe(true);
     return found;
   },
 );
