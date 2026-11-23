@@ -18,7 +18,7 @@ import { hostOnlyError } from '../ops/op-fix.ts';
 import { ACCESS_ID_RE } from './principals.ts';
 import { assertAccessId, boundCredentials, existingMember, getMember, type MemberRecord } from './members.ts';
 import { labelledOnlyOwnerError, ownerMemberId } from './owner.ts';
-import { isMissingSchemaObject } from '../utils.ts';
+import { isEngineCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 /**
  * Marks a member labelled-only or clears it. Only the trusted local operator may (remote strictly false), and never on the
@@ -74,9 +74,8 @@ export async function labelledOnlyFor(engine: Pick<BrainEngine, 'hasLabelledOnly
   try {
     return await engine.hasLabelledOnlyMemberAmong(members);
   } catch (e) {
-    // A brain from before the access tables cannot say, so it counts as yes (fail closed: it only narrows). Any other
-    // failure, an engine that refuses the read included, is thrown rather than quietly narrowing every read.
-    if (isMissingSchemaObject(e, 'table', ['access_members', 'config']) || isMissingSchemaObject(e, 'column', 'labelled_only')) return true;
-    throw e;
+    // An engine that refuses the read is reported, never read as labelled-only for every member.
+    if (isEngineCapabilityRefusal(e)) throw e;
+    return true;
   }
 }

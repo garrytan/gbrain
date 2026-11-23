@@ -27,6 +27,8 @@ import { __setPackLocatorForTests, _resetPackLocatorForTests } from '../../src/c
 import { _resetPackCacheForTests } from '../../src/core/schema-pack/registry.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { assertUnscopedReadReachesPages } from '../../src/core/sources-not-readable.ts';
+import { __resetAccessReadLogForTests, droppedAccessReads, flushAccessReadLog, pruneAccessReadLog, recordAccessRead } from '../../src/core/access/read-log.ts';
+import { readAccessLog, whoRead } from '../../src/commands/access-read-log.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -153,5 +155,54 @@ describe('callers that once read a quiet default on a Rust brain', () => {
       worldFactSearch: 'sources_not_readable', worldFactRecall: 'answered', namedSource: 'answered', direct: 'true', readableHere: 'answered',
     });
     return steps;
+  });
+
+  // The read log's insert once ran raw SQL in a catch that dropped the batch: on Rust no read was ever logged.
+  parityTest('the access read log keeps every logged read, and access log and who-read list them', {
+    methods: ['putPage', 'softDeletePage', 'insertAccessReadLogRows', 'pruneAccessReadLog', 'readAccessReadLog', 'listAccessReadPageRefs', 'readAccessReadsOfPages', 'tallyAccessReadsOfPages'],
+  }, async (engine, backend) => {
+    __resetAccessReadLogForTests();
+    try {
+      await createSource(engine, backend, 'wiki');
+      const id = async (slug: string, sourceId = 'default') => (await engine.putPage(slug, note(slug), { sourceId })).id;
+      const [a, b, c] = [await id('notes/a'), await id('notes/a', 'wiki'), await id('notes/b')];
+      await engine.softDeletePage('notes/b');
+      const read = (member: string | null, audience: string[] | null, pageIds: number[], operation = 'search') =>
+        recordAccessRead(engine, { member, audience, operation, transport: 'http', result_code: 'ok', page_ids: pageIds });
+      read('alice-example', null, [a, c]);
+      read(null, ['member:alice-example', 'member:bob-example'], [b], 'query');
+      read('bob-example', null, [a]);
+      read(null, null, [987654], 'get_page');
+      await flushAccessReadLog();
+      const ids = new Map([[`#987654`, 'missing']]);
+      const view = (e: { member: string | null; audience: string[] | null; operation: string; pages: string[] }) =>
+        `${e.member ?? (e.audience?.join('+') ?? '-')} ${e.operation} ${e.pages.map(p => ids.get(p) ?? p).join(',')}`;
+      const all = (await readAccessLog(engine, {})).map(view);
+      const alice = (await readAccessLog(engine, { member: 'alice-example' })).map(view);
+      const limited = (await readAccessLog(engine, { limit: '1' })).length;
+      const who = await whoRead(engine, 'notes/a', {});
+      const whoWiki = await whoRead(engine, 'notes/a', { source: 'wiki' });
+      const out = {
+        dropped: droppedAccessReads(), all: [...all].sort(), alice: [...alice].sort(), limited,
+        whoPages: who.pages, whoReaders: who.readers.map(r => `${r.who}:${r.reads}`).sort(), whoReads: who.reads.length,
+        wikiReaders: whoWiki.readers.map(r => r.who), deleted: (await whoRead(engine, 'notes/b', {})).readers.map(r => r.who),
+      };
+      await pruneAccessReadLog(engine, 365, 1);
+      const left = (await readAccessLog(engine, {})).length;
+      expect({ ...out, left }).toEqual({
+        dropped: 0,
+        all: ['- get_page missing', 'alice-example search default:notes/a,default:notes/b', 'bob-example search default:notes/a', 'member:alice-example+member:bob-example query wiki:notes/a'],
+        alice: ['alice-example search default:notes/a,default:notes/b', 'member:alice-example+member:bob-example query wiki:notes/a'],
+        limited: 1,
+        whoPages: ['default:notes/a', 'wiki:notes/a'], whoReaders: ['alice-example:1', 'bob-example:1', 'member:alice-example+member:bob-example:1'], whoReads: 3,
+        wikiReaders: ['member:alice-example+member:bob-example'], deleted: ['alice-example'], left: 1,
+      });
+      // The writer flushes through the engine's own key (engineKey), so the harness sees the insert here; an empty batch writes nothing.
+      await engine.insertAccessReadLogRows([]);
+      await engine.pruneAccessReadLog(0, 0);
+      return { ...out, left };
+    } finally {
+      __resetAccessReadLogForTests();
+    }
   });
 });

@@ -194,6 +194,7 @@ in its module header:
 | `0x09` | `TELEMETRY_BUDGET_LEDGER` | `budget_ledger` |
 | `0x0A` | `TELEMETRY_BUDGET_RESERVATION` | `budget_reservations` |
 | `0x0B` | `TELEMETRY_CHAT_USAGE` | `chat_usage_log` |
+| `0x11` | `TELEMETRY_ACCESS_READ_LOG` | `access_read_log` (0x0C to 0x10 are held by the chronicle and volunteer tables of lanes not yet on this trunk) |
 
 `eval_candidates` stays with eval_capture (`Z`). A new telemetry table takes the next unused sub-tag in a reviewed
 change to this table and to `keys.rs`.

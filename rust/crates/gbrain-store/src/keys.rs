@@ -100,6 +100,8 @@ pub const TELEMETRY_RETRIEVAL_WEIGHT: u8 = 0x08; // retrieval_weights
 pub const TELEMETRY_BUDGET_LEDGER: u8 = 0x09; // budget_ledger
 pub const TELEMETRY_BUDGET_RESERVATION: u8 = 0x0A; // budget_reservations
 pub const TELEMETRY_CHAT_USAGE: u8 = 0x0B; // chat_usage_log
+/// 0x0C to 0x10 are held by the chronicle and volunteer telemetry tables of lanes not yet on this trunk.
+pub const TELEMETRY_ACCESS_READ_LOG: u8 = 0x11; // access_read_log
 /// Family `jobs`, the `dream_synthesis_completions` archive (`jobs/synthesis_completions.rs`).
 pub const DREAM_SYNTHESIS_COMPLETION: u8 = b'f';
 /// Family `entity_identities` (`entity_identities.rs`).

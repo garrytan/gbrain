@@ -18,7 +18,7 @@ import type { BrainEngine } from '../engine.ts';
 import { readRecentMutations } from './mutate-audit.ts';
 import { classifyStoredType, sanitizeTypeForDisplay, safeCliToken } from './type-usage.ts';
 import { NESTED_QUANTIFIER_RE } from './redos-guard.ts';
-import { isMissingSchemaObject } from '../utils.ts';
+import { isEngineCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 export type LintSeverity = 'error' | 'warning';
 
@@ -327,9 +327,10 @@ export const extractableEmptyCorpus: LintRule = async (manifest, opts) => {
       try {
         totalPages += await opts.engine.countLivePagesAtPathPrefix(p);
       } catch (e) {
-        // A brain with no `pages` table yet has no corpus to judge; any other failure is the lint's error.
-        if (isMissingSchemaObject(e, 'table', 'pages')) return [];
-        throw e;
+        // An engine that cannot count (it refuses the read) is reported, never read as an empty corpus.
+        if (isEngineCapabilityRefusal(e)) throw e;
+        // Engine call failed (no `pages` table on a fresh PGLite install?); skip.
+        return [];
       }
     }
     if (totalPages === 0) {

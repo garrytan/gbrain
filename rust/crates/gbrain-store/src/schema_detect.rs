@@ -142,10 +142,10 @@ impl Store {
             if p.deleted_at_us.is_some() {
                 continue;
             }
-            if let Some(path) = p.source_path.as_deref() {
-                if crate::facts::like(path, &pattern, false)? {
-                    out.push(p);
-                }
+            if let Some(path) = p.source_path.as_deref()
+                && crate::facts::like(path, &pattern, false)?
+            {
+                out.push(p);
             }
         }
         Ok(out)

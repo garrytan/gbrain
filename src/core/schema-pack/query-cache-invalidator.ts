@@ -19,7 +19,7 @@
 // cache, so a Rust brain answers 0 instead of refusing.
 
 import type { BrainEngine } from '../engine.ts';
-import { isMissingSchemaObject } from '../utils.ts';
+import { isEngineCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 export interface InvalidateQueryCacheResult {
   rows_invalidated: number;
@@ -39,9 +39,10 @@ export interface InvalidateQueryCacheResult {
  * OVER-match, and a false-positive delete is just one extra cache miss —
  * always the safe direction for an invalidator.
  *
- * A pre-v51 brain without the table returns {rows_invalidated: 0}. Any
- * other failure is thrown; the mutation post-hooks (mutate.ts) catch it so
- * the mutation itself still succeeds.
+ * Best-effort: failures (e.g. pre-v51 brain without the table) return
+ * {rows_invalidated: 0}. An engine capability refusal is thrown instead, so
+ * a brain that cannot clear the cache never reports it cleared; the mutation
+ * post-hooks (mutate.ts) catch it, so the mutation itself still succeeds.
  *
  * `sourceId` omitted clears the whole table. Used by Phase 4 reload and
  * any cross-source mutation.
@@ -53,9 +54,9 @@ export async function invalidateQueryCache(
   try {
     return { rows_invalidated: await engine.invalidateQueryCacheRows(sourceId) };
   } catch (e) {
-    // A brain from before the query cache has nothing cached; any other failure (a refused delete included) is thrown,
-    // so a stale cache is never reported as cleared.
-    if (isMissingSchemaObject(e, 'table', 'query_cache')) return { rows_invalidated: 0 };
-    throw e;
+    // An engine that refuses the delete is reported, never read as a cleared cache; any other failure (a brain from
+    // before the query cache) reads 0, as the mutation post-hooks expect.
+    if (isEngineCapabilityRefusal(e)) throw e;
+    return { rows_invalidated: 0 };
   }
 }

@@ -20,7 +20,7 @@ import type { BrainEngine } from '../engine.ts';
 import { loadActivePackBestEffort } from './best-effort.ts';
 import type { OperationContext } from '../operations.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
-import { isMissingSchemaObject } from '../utils.ts';
+import { isEngineCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 export interface SyncOpts {
   /** Apply UPDATE statements. Default false (dry-run). */
@@ -73,9 +73,9 @@ async function probePrefix(
   try {
     return await engine.probeUntypedPathPrefix(prefix, sourceId);
   } catch (e) {
-    // A brain with no `pages` table yet has nothing under the prefix; any other failure is the sync's error.
-    if (isMissingSchemaObject(e, 'table', 'pages')) return { count: 0, sample: [] };
-    throw e;
+    // An engine that cannot probe (it refuses the read) is reported, never read as an empty prefix.
+    if (isEngineCapabilityRefusal(e)) throw e;
+    return { count: 0, sample: [] };
   }
 }
 

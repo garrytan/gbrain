@@ -25,7 +25,7 @@ import { opError } from './ops/contract.ts';
 import { federatedSearchScope } from './ops/context.ts';
 import { hostFix } from './ops/op-fix.ts';
 import { resolveExcludePrivatePages } from './search/private-visibility.ts';
-import { isMissingSchemaObject } from './utils.ts';
+import { isEngineCapabilityRefusal } from './engine-capability-refusal.ts';
 
 const UNSCOPED_READ_OPS: ReadonlySet<string> = new Set(['search', 'query', 'recall', 'list_pages']);
 
@@ -47,10 +47,10 @@ export async function assertUnscopedReadReachesPages(op: string, params: Record<
       readable, withFacts: op === 'recall' || op === 'query', floor: await resolveExcludePrivatePages(ctx.engine, ctx.remote),
     });
   } catch (e) {
-    // A brain from before the facts table has nothing more to say; any other failure, an engine that refuses the probe
-    // included, is thrown rather than answering the empty read as if it were a clean miss.
-    if (isMissingSchemaObject(e, 'table', 'facts')) return;
-    throw e;
+    // A probe that fails never fails the read; an engine that refuses it is reported rather than answering the empty
+    // read as a clean miss.
+    if (isEngineCapabilityRefusal(e)) throw e;
+    return;
   }
   if (!refuse) return;
   throw opError('sources_not_readable',

@@ -6,7 +6,6 @@
 src/cli/enforced-commit-push.ts	execute_raw	1
 src/cli/enforced-member.ts	execute_raw	5
 src/commands/access-read-by-nobody.ts	execute_raw	1
-src/commands/access-read-log.ts	execute_raw	4	GST-2476 gap 1: the access read log readers (access log, who-read) over the new access_read_log table (v331); the access area is still raw SQL (access.ts, access-rules.ts) and converts with it
 src/commands/access-rules.ts	execute_raw	4
 src/commands/access.ts	execute_raw	5
 src/commands/agent-logs.ts	execute_raw	1
@@ -166,7 +165,6 @@ src/core/access/member-sources.ts	execute_raw	8
 src/core/access/members.ts	sql_template	1
 src/core/access/open-pages.ts	execute_raw	1	the statement timeout bounded() sets on a Postgres transaction (SET LOCAL statement_timeout); PGLite and the Rust engine never run it
 src/core/access/open-twins.ts	execute_raw	1
-src/core/access/read-log.ts	execute_raw	3	GST-2476 gap 1: the access read log writer (batched insert, two retention deletes) over access_read_log (v331); the access area is still raw SQL (caller.ts, members.ts) and converts with it; on Rust the write is refused and dropped (loss row 43)
 src/core/access/requester-scope.ts	execute_raw	2
 src/core/access/room.ts	execute_raw	2
 src/core/advisor/collect-chronicle.ts	execute_raw	1

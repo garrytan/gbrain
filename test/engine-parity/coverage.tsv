@@ -6,9 +6,9 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2011/2027
+# covered: 2017/2033
 # lifecycle: 9/9
-# pages: 85/86
+# pages: 91/92
 # search: 7/7
 # search_reads: 9/9
 # link_reads: 15/15
@@ -128,13 +128,13 @@ getPage	pages	yes	204	yes	yes	yes	serves
 readPageSnapshot	pages	yes	60	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
 lockPageKeys	pages	yes	14	no	yes	yes	serves
-putPage	pages	yes	1090	yes	yes	yes	serves
+putPage	pages	yes	1091	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	37	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	290	yes	yes	yes	serves
+softDeletePage	pages	yes	291	yes	yes	yes	serves
 softDeletePages	pages	yes	3	yes	yes	yes	serves
 restorePage	pages	yes	14	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	6	no	yes	yes	serves
@@ -210,6 +210,12 @@ countLivePagesAtPathPrefix	pages	yes	1	no	yes	yes	serves
 probeUntypedPathPrefix	pages	yes	1	no	yes	yes	serves
 invalidateQueryCacheRows	pages	yes	1	no	yes	yes	serves
 readUnscopedReadRefusal	pages	yes	1	no	yes	yes	serves
+insertAccessReadLogRows	pages	yes	1	no	yes	yes	serves
+pruneAccessReadLog	pages	yes	1	no	yes	yes	serves
+readAccessReadLog	pages	yes	1	no	yes	yes	serves
+listAccessReadPageRefs	pages	yes	1	no	yes	yes	serves
+readAccessReadsOfPages	pages	yes	1	no	yes	yes	serves
+tallyAccessReadsOfPages	pages	yes	1	no	yes	yes	serves
 searchKeyword	search	yes	43	yes	yes	yes	serves
 countKeywordPages	search	yes	12	no	yes	yes	serves
 searchKeywordPages	search	yes	17	no	yes	yes	serves
