@@ -43,6 +43,10 @@ import { renderFactsTable } from '../../src/core/facts-fence.ts';
 import { buildSegmentedProjection } from '../../src/core/page-body/projection.ts';
 import { parseEmbedding } from '../../src/core/utils.ts';
 
+/** A key id is 16 hex characters (keyring.ts keyIdOf); a repeated pair keeps it from reading as a credential. */
+const KEY_ID = 'ab'.repeat(8);
+/** A secret store entry id (`ss_` and 12 hex); repeated pairs keep a marker next to a rule name from reading as a credential. */
+const DIRECT_ID = `ss_${'ab'.repeat(6)}`;
 const { parityTest } = parityArms(testBackends());
 
 // The cases that embed configure the process-global gateway; put the preload's baseline back for the next file.
@@ -558,25 +562,25 @@ describe('engine parity: repair secret-spans', () => {
       await recordOccurrence(engine, { entryId: first.id, sourceId: SRC, pageId: Number(page.id), slug: 'notes/store-a', field: 'compiled_truth', origin: 'repair', createdBy: 'test' });
       await recordOccurrence(engine, { entryId: first.id, sourceId: SRC, slug: 'notes/store-b', field: 'title', origin: 'transcript' });
       await recordOccurrence(engine, { entryId: other.id, sourceId: SRC, field: 'compiled_truth', origin: 'publish_rebuild', commit: 'abc123', path: 'notes/c.md', line: 7 });
-      const spool = await sealWithId(engine, { id: 'ss_0123456789ab', sourceId: SRC, rule: 'openai', value: OPENAI });
-      const spoolAgain = await sealWithId(engine, { id: 'ss_0123456789ab', sourceId: SRC, rule: 'openai', value: OPENAI });
+      const spool = await sealWithId(engine, { id: DIRECT_ID, sourceId: SRC, rule: 'openai', value: OPENAI });
+      const spoolAgain = await sealWithId(engine, { id: DIRECT_ID, sourceId: SRC, rule: 'openai', value: OPENAI });
       const spoolDuplicate = await sealWithId(engine, { id: 'ss_ba9876543210', sourceId: SRC, rule: 'openai', value: OPENAI });
       expect(spool).toEqual({ kind: 'inserted' });
       expect(spoolAgain).toEqual({ kind: 'exists' });
-      expect(spoolDuplicate).toEqual({ kind: 'duplicate', existing: 'ss_0123456789ab' });
+      expect(spoolDuplicate).toEqual({ kind: 'duplicate', existing: DIRECT_ID });
       // A row the CHECKs or the foreign keys refuse is refused on every engine, and nothing is written.
       const refused = async (run: () => Promise<unknown>) => run().then(() => false, () => true);
       const refusals = {
-        badRule: await refused(() => engine.insertSecretEntry({ id: 'ss_aaaaaaaaaaaa', sourceId: SRC, rule: 'Bad Rule', ciphertext: 'c', nonce: 'n', tag: 't', keyId: '0123456789abcdef', keyHost: '', valueMac: 'a'.repeat(64) }, 'value')),
-        unknownSource: await refused(() => engine.insertSecretEntry({ id: 'ss_bbbbbbbbbbbb', sourceId: 'nowhere', rule: 'r', ciphertext: 'c', nonce: 'n', tag: 't', keyId: '0123456789abcdef', keyHost: '', valueMac: 'b'.repeat(64) }, 'value')),
-        idClash: await refused(() => engine.insertSecretEntry({ id: first.id, sourceId: SRC, rule: 'r', ciphertext: 'c', nonce: 'n', tag: 't', keyId: '0123456789abcdef', keyHost: '', valueMac: 'c'.repeat(64) }, 'value')),
+        badRule: await refused(() => engine.insertSecretEntry({ id: 'ss_aaaaaaaaaaaa', sourceId: SRC, rule: 'Bad Rule', ciphertext: 'c', nonce: 'n', tag: 't', keyId: KEY_ID, keyHost: '', valueMac: 'a'.repeat(64) }, 'value')),
+        unknownSource: await refused(() => engine.insertSecretEntry({ id: 'ss_bbbbbbbbbbbb', sourceId: 'nowhere', rule: 'r', ciphertext: 'c', nonce: 'n', tag: 't', keyId: KEY_ID, keyHost: '', valueMac: 'b'.repeat(64) }, 'value')),
+        idClash: await refused(() => engine.insertSecretEntry({ id: first.id, sourceId: SRC, rule: 'r', ciphertext: 'c', nonce: 'n', tag: 't', keyId: KEY_ID, keyHost: '', valueMac: 'c'.repeat(64) }, 'value')),
         unknownEntry: await refused(() => recordOccurrence(engine, { entryId: 'ss_cccccccccccc', sourceId: SRC, field: 'title', origin: 'repair' })),
         badOrigin: await refused(() => recordOccurrence(engine, { entryId: first.id, sourceId: SRC, field: 'title', origin: 'nowhere' as never })),
         invalidId: await refused(() => entryRow(engine, 'not-an-id')),
         missing: await refused(() => entryRow(engine, 'ss_dddddddddddd')),
       };
       expect(Object.values(refusals)).toEqual(Array(7).fill(true));
-      await engine.markSecretEntryAllowed(spool.kind === 'inserted' ? 'ss_0123456789ab' : first.id);
+      await engine.markSecretEntryAllowed(spool.kind === 'inserted' ? DIRECT_ID : first.id);
       const summaries = await listEntries(engine, { sourceId: SRC });
       const atSlug = await listEntries(engine, { slug: 'notes/store-b' });
       expect(await engine.deleteUnreferencedSecretEntry(first.id)).toBe(false);
@@ -702,20 +706,20 @@ describe('engine parity: repair secret-spans', () => {
       'countUnreferencedSecretEntries', 'readRestorePageHit', 'readSecretEntry', 'listSecretOccurrences', 'readPageSnapshot', 'deletePages'],
     timeout: 120_000,
   }, async engine => {
-    const page = await engine.putPage('notes/direct', { type: 'note' as never, title: 'Direct', compiled_truth: `holds ${markerOf('github_token', 'ss_0123456789ab')}`, timeline: '' }, { sourceId: SRC });
-    const base = { ciphertext: 'Y2lwaGVy', nonce: 'bm9uY2U=', tag: 'dGFn', keyId: '0123456789abcdef', keyHost: 'host-a' };
-    const first = await engine.insertSecretEntry({ id: 'ss_0123456789ab', sourceId: SRC, rule: 'github_token', valueMac: 'a'.repeat(64), ...base }, 'value');
+    const page = await engine.putPage('notes/direct', { type: 'note' as never, title: 'Direct', compiled_truth: `holds ${markerOf('github_token', DIRECT_ID)}`, timeline: '' }, { sourceId: SRC });
+    const base = { ciphertext: 'Y2lwaGVy', nonce: 'bm9uY2U=', tag: 'dGFn', keyId: KEY_ID, keyHost: 'host-a' };
+    const first = await engine.insertSecretEntry({ id: DIRECT_ID, sourceId: SRC, rule: 'github_token', valueMac: 'a'.repeat(64), ...base }, 'value');
     const clash = await engine.insertSecretEntry({ id: 'ss_ba9876543210', sourceId: SRC, rule: 'github_token', valueMac: 'a'.repeat(64), ...base }, 'any');
-    await engine.insertSecretOccurrence({ entryId: 'ss_0123456789ab', sourceId: SRC, pageId: Number(page.id), slug: 'notes/direct', field: 'compiled_truth', origin: 'repair',
+    await engine.insertSecretOccurrence({ entryId: DIRECT_ID, sourceId: SRC, pageId: Number(page.id), slug: 'notes/direct', field: 'compiled_truth', origin: 'repair',
       commit: null, path: null, line: null, preFieldSha256: null, createdBy: 'test' });
-    const entry = (await engine.readSecretEntry('ss_0123456789ab'))!;
+    const entry = (await engine.readSecretEntry(DIRECT_ID))!;
     const backup = { ...entry, updated_at: '2026-11-21T11:00:00.456Z', id: 'ss_aaaaaaaaaaaa', value_mac: 'b'.repeat(64), status: 'allowed' as const, created_at: '2026-11-21T10:00:00.123Z' };
     const written = [await engine.insertBackupSecretEntry(backup), await engine.insertBackupSecretEntry(backup)];
     const place = { entry_id: backup.id, source_id: SRC, page_id: null, slug: 'notes/direct', field: 'compiled_truth', origin: 'repair' as const, commit_sha: null, path: null, line: null,
       pre_field_sha256: null, created_by: 't', created_at: '2026-11-21T10:00:00.789Z' };
     const placed = [await engine.insertBackupSecretOccurrence(place, null), await engine.insertBackupSecretOccurrence(place, Number(page.id)), await engine.insertBackupSecretOccurrence(place, Number(page.id))];
     const hold = [await engine.readBackupEntryHold(backup.id, SRC, 'b'.repeat(64)), await engine.readBackupEntryHold(backup.id, SRC, 'c'.repeat(64)), await engine.readBackupEntryHold('ss_cccccccccccc', SRC, 'b'.repeat(64))];
-    const hit = await engine.readRestorePageHit(SRC, 'notes/direct', markerOf('github_token', 'ss_0123456789ab'));
+    const hit = await engine.readRestorePageHit(SRC, 'notes/direct', markerOf('github_token', DIRECT_ID));
     const miss = await engine.readRestorePageHit(SRC, 'notes/direct', markerOf('github_token', 'ss_bbbbbbbbbbbb'));
     const snapshot = await engine.readPageSnapshot('notes/direct', { sourceId: SRC });
     expect(hit!.revision).toBe(snapshot!.revision);

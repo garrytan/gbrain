@@ -86,3 +86,7 @@ ef56be48bd4bca977ed5eee7012070573039b142:.gitleaksignore:generic-api-key:77
 44e49da06d44da87504ebf908fdcfd49ed67b46c:test/apple-contacts-write.test.ts:generic-api-key:123
 44e49da06d44da87504ebf908fdcfd49ed67b46c:test/apple-contacts-write.test.ts:generic-api-key:156
 44e49da06d44da87504ebf908fdcfd49ed67b46c:test/apple-contacts-write.test.ts:generic-api-key:157
+# repair-rust B6c: a synthetic secret-store marker (rule github_token, entry id ss_0123456789ab) in test/engine-parity/repair-secret-spans.test.ts
+# (commit 7ea9c21a14) reads as generic-api-key; the tree now builds low-entropy ids (DIRECT_ID, KEY_ID). History-only fingerprints, not secrets.
+7ea9c21a149e196ba50f3d103ef643733cad38ed:test/engine-parity/repair-secret-spans.test.ts:generic-api-key:367
+7ea9c21a149e196ba50f3d103ef643733cad38ed:test/engine-parity/repair-secret-spans.test.ts:generic-api-key:380

@@ -301,7 +301,7 @@ readEmbeddingStateCounts	chunks	yes	2	no	yes	yes	serves
 listEmbeddingStateRows	chunks	yes	3	no	yes	yes	serves
 deleteChunks	chunks	yes	3	no	yes	yes	serves
 deleteChunksExcept	chunks	yes	4	no	yes	yes	serves
-setChunkerVersion	chunks	yes	20	no	yes	yes	serves
+setChunkerVersion	chunks	yes	19	no	yes	yes	serves
 writeTextProjectionSeal	chunks	yes	3	no	yes	yes	serves
 moveChunkIndexes	chunks	yes	2	no	yes	yes	serves
 getChunkReuseRows	chunks	yes	4	no	yes	yes	serves
@@ -1344,7 +1344,7 @@ listQueuedPageProjections	projection_rebuild	yes	18	no	yes	yes	serves
 readProjectionJobReason	projection_rebuild	yes	10	no	yes	yes	serves
 readChunkKeepState	projection_rebuild	yes	5	no	yes	yes	serves
 clearUnkeptChunkVectors	projection_rebuild	yes	4	no	yes	yes	serves
-setProjectionChunkerVersion	projection_rebuild	yes	1	no	yes	yes	serves
+setProjectionChunkerVersion	projection_rebuild	yes	2	no	yes	yes	serves
 hasDrainableProjectionJob	projection_rebuild	yes	1	no	yes	yes	serves
 readChunkRowsFingerprint	projection_rebuild	yes	2	no	yes	yes	serves
 deleteUnkeptChunks	projection_rebuild	yes	1	no	yes	yes	serves
