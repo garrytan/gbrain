@@ -304,6 +304,7 @@ export async function runLoopsCatchup(ctx: {
   const pages = await ctx.engine.executeRaw<{ slug: string; thread_id: string; date: string }>(
     `SELECT slug, frontmatter->>'thread_id' AS thread_id, frontmatter->>'date' AS date FROM pages
       WHERE source_id=$1 AND type='email' AND deleted_at IS NULL AND frontmatter->>'thread_id' IS NOT NULL AND frontmatter->>'date' >= $2
+        AND COALESCE(frontmatter->>'extract_atoms', '') <> 'false'
       ORDER BY frontmatter->>'date' DESC`, [ctx.sourceId, new Date(cu.floor_ms).toISOString()]);
   const outcomes = await readLoopsExtractOutcomes(ctx.engine, ctx.sourceId);
   const keyOf = (slug: string, rev: number) => `loops-catchup:${ctx.sourceId}:${slug}:${rev}`;
