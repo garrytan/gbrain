@@ -40,37 +40,8 @@ env:
   HARNESS_EVALS_PIN: 7e8d872edb6d121cc7376b1ce415bd04ad1f3bfe
 
 jobs:
-  # Trunk Dynamic CI filter (docs/ci-event-parity.md#trunk-dynamic-ci): it asks Trunk
-  # whether this pull-request push needs keyless and writes one output per job;
-  # each runs unless its output is exactly 'false'. It fails open: a missing token (a
-  # fork's pull request gets no secrets), a Trunk outage or a job with no verdict runs
-  # the job. In Learning mode it records verdicts and skips nothing.
-  # Event parity (docs/ci-event-parity.md#trunk-dynamic-ci): pull_request only; this workflow has no other trigger.
-  # scripts/check-dynamic-ci.ts guards the wiring.
-  dynamic-ci:
-    if: github.event_name == 'pull_request'
-    runs-on: ubicloud-standard-2-ubuntu-2404
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      pull-requests: read
-    outputs:
-      keyless: ${{ steps.dynamic-ci.outputs.keyless }}
-    steps:
-      - id: dynamic-ci
-        uses: trunk-io/dynamic-ci@09739668b8d766d05e3dbf6f3eb0159da6597aaf  # v1 (v0.1.12)
-        continue-on-error: true
-        timeout-minutes: 3
-        with:
-          token: ${{ secrets.TRUNK_API_TOKEN }}
-          job-keys: keyless
-          enable-annotation: 'true'
-
   # Event parity: docs/ci-event-parity.md#classification (harness-check.yml): a fork head is refused, a missing token skips.
-  # Gated by dynamic-ci (docs/ci-event-parity.md#trunk-dynamic-ci): runs unless Trunk's verdict is 'false'.
   keyless:
-    needs: [dynamic-ci]
-    if: ${{ !cancelled() && needs.dynamic-ci.outputs.keyless != 'false' }}
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 45
     steps:

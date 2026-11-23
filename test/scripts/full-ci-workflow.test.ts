@@ -98,10 +98,10 @@ describe('full CI on pull requests', () => {
     }
   });
 
-  // persistence-validation.yml, harness-check.yml and tla-spec.yml carry their own filter jobs: in Learning mode (an empty or 'true'
+  // persistence-validation.yml and tla-spec.yml carry their own filter jobs: in Learning mode (an empty or 'true'
   // verdict) every lane runs, only an exact 'false' skips one lane, and every other event skips the filter and runs every lane.
-  test('the persistence, harness and TLA+ workflows gate each lane on its own verdict and never filter another event', () => {
-    for (const [name, gated] of [['persistence-validation.yml', ['convergence', 'crash-robot']], ['harness-check.yml', ['keyless']], ['tla-spec.yml', ['tla']]] as const) {
+  test('the persistence and TLA+ workflows gate each lane on its own verdict and never filter another event', () => {
+    for (const [name, gated] of [['persistence-validation.yml', ['convergence', 'crash-robot']], ['tla-spec.yml', ['tla']]] as const) {
       const w = workflow(name);
       expect(Object.keys(w.jobs['dynamic-ci']!.outputs!).sort(), name).toEqual([...gated]);
       const all = runs(w, { event: 'pull_request' });
@@ -114,6 +114,7 @@ describe('full CI on pull requests', () => {
       }
     }
     expect(runs(workflow('persistence-validation.yml'), { event: 'pull_request', inputs: { convergence: 'skip' } })).not.toContain('convergence');
+    expect(Object.keys(workflow('harness-check.yml').jobs)).not.toContain('dynamic-ci');
     const caller = unit.jobs['persistence-validation'] as Job & { secrets?: Record<string, string> };
     expect(caller.needs).not.toContain('dynamic-ci');
     expect(caller.secrets).toEqual({ TRUNK_API_TOKEN: '${{ secrets.TRUNK_API_TOKEN }}' });

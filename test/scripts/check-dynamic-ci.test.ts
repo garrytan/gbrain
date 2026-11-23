@@ -23,7 +23,7 @@ describe('check-dynamic-ci.ts', () => {
     expect(r.status, r.stderr).toBe(0);
     expect(checkWorkflow('test.yml', real('test.yml'))).toEqual([]);
     expect(checkWorkflow('scale-tier.yml', real('scale-tier.yml'))).toEqual([]);
-    for (const name of ['persistence-validation.yml', 'harness-check.yml', 'tla-spec.yml']) expect(checkWorkflow(name, real(name))).toEqual([]);
+    for (const name of ['persistence-validation.yml', 'tla-spec.yml']) expect(checkWorkflow(name, real(name))).toEqual([]);
   });
 
   test.each<[string, (doc: Doc) => void, RegExp]>([
