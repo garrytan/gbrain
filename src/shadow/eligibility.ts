@@ -3,7 +3,9 @@
  * readiness" item 11 and "Swap and the way back").
  *
  *   writer_hosts_7d       distinct host ids in engine_writer_observations seen in the window (one read-only SELECT)
- *   unknown_writer_paths  evidence of a write no observation accounts for, from the coverage source
+ *   unknown_writer_paths  evidence of a write no process accounts for: on a hooked (Postgres) primary, writing
+ *                         connections no process claimed, trigger gap rows, brain tables with no hook and roles that
+ *                         cannot record evidence (writer-hooks.ts), plus the file-side source (writer-coverage.ts)
  *   team_brain            the configured brain is a mounted brain, not the personal `host` brain
  *   preview_target        this machine's addon target is one a release ships (linux-x64-glibc, darwin-arm64)
  *
@@ -19,7 +21,8 @@ import { HOST_BRAIN_ID } from '../core/brain-registry.ts';
 import { detectAddonTarget } from '../core/rust-engine/addon-target.ts';
 import { RELEASE_ADDON_TARGETS } from '../core/rust-engine/addon-manifest.ts';
 import type { ShadowState } from './state.ts';
-import { OBSERVATION_REFRESH_MS, readWriterHosts } from './writer-observations.ts';
+import { OBSERVATION_REFRESH_MS, readWriterEvidence } from './writer-observations.ts';
+import { primaryTakesWriterHooks, WRITER_EVIDENCE_TABLES, WRITER_HOOK_TRIGGER } from './writer-hooks.ts';
 import { planAsWrittenSource, type WriterCoverageSource } from './writer-coverage.ts';
 
 export const ELIGIBILITY_WINDOW_MS = 7 * 86_400_000;
@@ -79,12 +82,13 @@ export async function buildEligibilityStatus(input: EligibilityInput): Promise<E
   };
   if (!input.engine) return { eligibility: fields };
   const since = eligibilityWindowStart(input.state, now);
-  let hosts: number;
+  let ev;
   try {
-    hosts = (await readWriterHosts(input.engine, since)).length;
+    ev = await readWriterEvidence(input.engine, since, primaryTakesWriterHooks(input.state?.primary_engine), WRITER_HOOK_TRIGGER, WRITER_EVIDENCE_TABLES);
   } catch (error) {
     return { eligibility: fields, eligibility_evidence: { state: 'read_failed', code: errorCode(error) } };
   }
   const source = input.source ?? planAsWrittenSource(input.dir);
-  return { eligibility: { writer_hosts_7d: hosts, unknown_writer_paths: source.unknownPaths(since), ...fields } };
+  const unknown = ev.unresolved + ev.gaps + ev.unhooked + ev.uncovered_roles + source.unknownPaths(since);
+  return { eligibility: { writer_hosts_7d: ev.hosts, unknown_writer_paths: unknown, ...fields } };
 }

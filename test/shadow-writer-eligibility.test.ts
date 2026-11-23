@@ -23,7 +23,8 @@ import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { wrapShadowEngine, type ShadowSink } from '../src/shadow/wrapper.ts';
 import { newMirrorCounters } from '../src/shadow/mirror.ts';
-import { OBSERVATION_REFRESH_MS, WriterObserver, readWriterHosts } from '../src/shadow/writer-observations.ts';
+import { OBSERVATION_REFRESH_MS, WriterObserver, readWriterEvidence } from '../src/shadow/writer-observations.ts';
+import { WRITER_EVIDENCE_TABLES, WRITER_HOOK_TRIGGER } from '../src/shadow/writer-hooks.ts';
 import { planAsWrittenSource } from '../src/shadow/writer-coverage.ts';
 import { buildEligibilityStatus, eligibilityWindowStart, isPreviewTarget, ELIGIBILITY_WINDOW_MS } from '../src/shadow/eligibility.ts';
 import { writerIdentity } from '../src/shadow/attach.ts';
@@ -255,9 +256,9 @@ describe('eligibility builder', () => {
     observer(dir).note();
     await settle(observers[0]!);
     await primary.executeRaw(`UPDATE engine_writer_observations SET last_seen = now() - interval '7 days' - interval '5 minutes'`);
-    expect((await readWriterHosts(primary, eligibilityWindowStart(null, new Date()))).length).toBe(1);
+    expect((await readWriterEvidence(primary, eligibilityWindowStart(null, new Date()), false, WRITER_HOOK_TRIGGER, WRITER_EVIDENCE_TABLES)).hosts).toBe(1);
     await primary.executeRaw(`UPDATE engine_writer_observations SET last_seen = now() - interval '7 days' - interval '11 minutes'`);
-    expect((await readWriterHosts(primary, eligibilityWindowStart(null, new Date()))).length).toBe(0);
+    expect((await readWriterEvidence(primary, eligibilityWindowStart(null, new Date()), false, WRITER_HOOK_TRIGGER, WRITER_EVIDENCE_TABLES)).hosts).toBe(0);
   });
 
   test('preview_target: release targets only; musl, unknown libc and other targets are false', () => {

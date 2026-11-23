@@ -19,6 +19,7 @@ import type { ShadowState } from './state.ts';
 import { ShadowSupervisor, type ShadowSupervisorOptions } from './supervisor.ts';
 import { wrapShadowEngine } from './wrapper.ts';
 import { WriterObserver, type WriterIdentity } from './writer-observations.ts';
+import { ensureWriterHooks, primaryTakesWriterHooks } from './writer-hooks.ts';
 import { claimOwner } from '../core/persistence/claim-phase.ts';
 import { hostIdFor } from '../core/persistence/identity.ts';
 import { VERSION } from '../version.ts';
@@ -71,7 +72,10 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   }) : undefined;
   const reconciler = reads ? new Reconciler({ dir, reads, rpc, follower }) : undefined;
   reconciler?.startNightly();
-  const observer = new WriterObserver({ primary: engine, dir, identity: () => writerIdentity(engine) });
+  const observer = new WriterObserver({
+    primary: engine, dir, identity: () => writerIdentity(engine),
+    ...(primaryTakesWriterHooks(state.primary_engine) ? { beforeFirstNote: () => ensureWriterHooks(engine) } : {}),
+  });
   engine.registerBeforeDisconnect(async () => {
     observer.stop();
     try {

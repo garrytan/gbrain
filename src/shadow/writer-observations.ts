@@ -9,7 +9,7 @@
  *
  *   wrapped write commits ──▶ WriterObserver.note() ──▶ (throttled) upsert on the bare primary
  *                                                     └─ failure ──▶ faults.jsonl `writer_observation_failed` (code only)
- *   swap / status builder ──▶ readWriterHosts(engine, since): one read-only SELECT
+ *   swap / status builder ──▶ readWriterEvidence(engine, since, ...): one read-only SELECT
  *
  * A failed write is never retried into the caller's path; it leaves a fault record whose time the eligibility source
  * counts as a gap, so a missing row can only make eligibility stricter. The background-work registry drains an
@@ -28,9 +28,40 @@ VALUES ($1, $2, $3, $4)
 ON CONFLICT (host_id, application_name) DO UPDATE SET last_seen = now(), process_kind = EXCLUDED.process_kind, gbrain_version = EXCLUDED.gbrain_version
 WHERE engine_writer_observations.last_seen < now() - interval '${OBSERVATION_REFRESH_MS / 1000} seconds'`;
 
-/** The eligibility read: distinct hosts with a row seen at or after `since` (database clock), plus the newest time. */
-const HOSTS_SQL = `SELECT host_id::text AS host_id, max(last_seen) AS last_seen FROM engine_writer_observations
-WHERE last_seen >= $1::timestamptz GROUP BY host_id ORDER BY host_id`;
+/**
+ * The eligibility read, one read-only statement: hosts that claimed writes in the window; on a hooked (Postgres)
+ * primary also the writing connections no process claimed, the gap rows, the brain tables with no hook, and the login
+ * roles that can write a brain table but cannot record evidence (missing rights, or row security they do not bypass;
+ * a role's inherited rights count, so a member of pg_write_all_data is judged as itself).
+ * $1 window start, $2 hooks expected, $3 evidence tables, $4 trigger name.
+ */
+const EVIDENCE_SQL = `WITH brain AS (
+  SELECT c.oid, c.relowner FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = current_schema() AND c.relkind IN ('r', 'p') AND c.relname::text <> ALL($3::text[])
+), evidence AS (
+  SELECT c.oid, c.relrowsecurity, c.relowner FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = current_schema() AND c.relname IN ('engine_writer_sessions', 'engine_writer_coverage_gaps')
+)
+SELECT
+  (SELECT count(DISTINCT host_id) FROM engine_writer_observations WHERE last_seen >= $1::timestamptz)::int AS hosts,
+  CASE WHEN $2::boolean THEN (SELECT count(*) FROM (SELECT DISTINCT s.application_name, s.client_addr FROM engine_writer_sessions s
+    WHERE s.last_seen >= $1::timestamptz AND NOT EXISTS (SELECT 1 FROM engine_writer_observations o WHERE o.application_name = s.application_name)) u)::int ELSE 0 END AS unresolved,
+  (SELECT count(*) FROM engine_writer_coverage_gaps WHERE created_at >= $1::timestamptz)::int AS gaps,
+  CASE WHEN $2::boolean THEN (SELECT count(*) FROM brain b WHERE NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = b.oid AND t.tgname = $4))::int ELSE 0 END AS unhooked,
+  CASE WHEN $2::boolean THEN (SELECT count(*) FROM pg_roles r
+    WHERE r.rolcanlogin AND EXISTS (SELECT 1 FROM brain b WHERE has_table_privilege(r.oid, b.oid, 'INSERT, UPDATE, DELETE, TRUNCATE'))
+      AND NOT EXISTS (SELECT 1 FROM evidence e WHERE has_table_privilege(r.oid, e.oid, 'INSERT')
+        AND (NOT e.relrowsecurity OR r.rolsuper OR r.rolbypassrls OR pg_has_role(r.oid, e.relowner, 'USAGE'))))::int ELSE 0 END AS uncovered_roles`;
+
+export interface WriterEvidence { hosts: number; unresolved: number; gaps: number; unhooked: number; uncovered_roles: number }
+
+/** The eligibility read: one read-only SELECT. Throws what the engine throws; the caller turns that into an omission. */
+export async function readWriterEvidence(engine: BrainEngine, since: Date, hooksExpected: boolean, trigger: string, evidenceTables: readonly string[]): Promise<WriterEvidence> {
+  const [row] = await engine.executeRaw<Record<keyof WriterEvidence, unknown>>(EVIDENCE_SQL, [since.toISOString(), hooksExpected, [...evidenceTables], trigger]);
+  const n = (v: unknown): number => { const x = Number(v); if (!Number.isInteger(x) || x < 0) throw Object.assign(new Error('writer evidence: bad count'), { code: 'writer_evidence_malformed' }); return x; };
+  if (!row) throw Object.assign(new Error('writer evidence: no row'), { code: 'writer_evidence_malformed' });
+  return { hosts: n(row.hosts), unresolved: n(row.unresolved), gaps: n(row.gaps), unhooked: n(row.unhooked), uncovered_roles: n(row.uncovered_roles) };
+}
 
 export interface WriterIdentity {
   hostId: string;
@@ -49,6 +80,8 @@ export interface WriterObserverOptions {
   now?: () => number;
   /** Seam for tests: where a failure is recorded. */
   recordFailure?: (code: string) => void;
+  /** Run once, before the first note (a hooked primary: rehook a table that has no hook). A failure is recorded. */
+  beforeFirstNote?: () => Promise<unknown>;
 }
 
 function errorCode(error: unknown): string {
@@ -96,7 +129,13 @@ export class WriterObserver {
     } catch { /* the shadow never fails a call */ }
   }
 
+  private firstDone = false;
+
   private async write(): Promise<void> {
+    if (!this.firstDone && this.o.beforeFirstNote) {
+      this.firstDone = true;
+      try { await this.o.beforeFirstNote(); } catch (error) { this.fail(`hooks_${errorCode(error)}`); }
+    }
     try {
       const id = this.o.identity();
       await this.o.primary.transaction(async (tx) => {
@@ -104,11 +143,14 @@ export class WriterObserver {
       });
     } catch (error) {
       this.lastWritten = Number.NEGATIVE_INFINITY;
-      const code = errorCode(error);
-      try {
-        (this.o.recordFailure ?? ((c: string) => appendFault(this.o.dir, { ts: new Date(this.now()).toISOString(), kind: 'writer_observation_failed', detail: `code=${c}` })))(code);
-      } catch { /* a full disk loses the record, never the caller */ }
+      this.fail(errorCode(error));
     }
+  }
+
+  private fail(code: string): void {
+    try {
+      (this.o.recordFailure ?? ((c: string) => appendFault(this.o.dir, { ts: new Date(this.now()).toISOString(), kind: 'writer_observation_failed', detail: `code=${c}` })))(code);
+    } catch { /* a full disk loses the record, never the caller */ }
   }
 
   /** Stops new notes (engine disconnect); an in-flight note still settles through the drainer. */
@@ -117,12 +159,4 @@ export class WriterObserver {
     if (!this.inFlight) live.delete(this);
     else void this.inFlight.finally(() => live.delete(this));
   }
-}
-
-export interface WriterHostRow { host_id: string; last_seen: string }
-
-/** The eligibility read: one read-only SELECT. Throws what the engine throws; the caller turns that into an omission. */
-export async function readWriterHosts(engine: BrainEngine, since: Date): Promise<WriterHostRow[]> {
-  const rows = await engine.executeRaw<{ host_id: string; last_seen: unknown }>(HOSTS_SQL, [since.toISOString()]);
-  return rows.map(r => ({ host_id: String(r.host_id), last_seen: r.last_seen instanceof Date ? r.last_seen.toISOString() : String(r.last_seen) }));
 }
