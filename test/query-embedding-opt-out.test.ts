@@ -1,10 +1,12 @@
 /**
  * A brain that opted out of embedding never sends query text to the
  * embedding provider: search, query, recall and think run keyword-only and
- * say so (retrieval degraded `embed_unavailable` / `embedding_disabled`,
+ * record it (retrieval degraded `embed_unavailable` / `embedding_disabled`,
  * recall `keyword_only_embedding_disabled`, think
- * `QUESTION_EMBED_SKIPPED_EMBEDDING_DISABLED`, and a `degraded_recall` notice
- * that names the enable path without coaching). Image search refuses with
+ * `QUESTION_EMBED_SKIPPED_EMBEDDING_DISABLED`). Keyword-only on purpose is not
+ * degraded: MCP search, query and recall carry no degraded stamp and no
+ * `degraded_recall` notice, while a brain with no provider configured still
+ * gets both. Image search refuses with
  * `embedding_disabled`. A brain with embedding on still embeds the query.
  * A fake embedder records every call. PostgreSQL arm:
  * test/e2e/query-embedding-opt-out.test.ts.
@@ -101,21 +103,49 @@ for (const backend of testBackends()) {
       expect(embedded).toEqual([]);
     }, 120_000);
 
-    test('the MCP degraded_recall notice says nothing was sent and names the enable path without coaching', async () => {
+    test('MCP search, query and recall carry no degraded stamp and no degraded_recall notice, and still record the keyword-only run', async () => {
       await engine.setConfig('embedding_disabled', 'true');
-      // stdio dedupes a notice once per process; each backend's arm reads its own.
       __resetProcessNoticeLedgerForTests();
       await withEnv({ GBRAIN_BACKUP_CHECK: '0' }, async () => {
-        const res = await dispatchToolCall(engine, 'search', { query: 'heron pricing' }, { remote: true, transport: 'stdio', sourceId: 'default' });
-        const notices = (res._meta?.gbrain_notices ?? []) as Array<{ code: string; why: string; fix?: unknown; user_message?: unknown }>;
-        const notice = notices.find(n => n.code === 'degraded_recall')!;
-        expect(notice.why).toContain("keyword-only by the user's choice");
-        expect(notice.why).toContain('No query text was sent to an embedding provider');
-        expect(notice.why).toContain('gbrain doctor --json');
-        expect(notice.fix).toBeUndefined();
-        expect(notice.user_message).toBeUndefined();
+        for (const [op, params] of [['search', { query: 'heron pricing' }], ['query', { query: 'heron pricing' }], ['recall', { query: 'heron pricing' }],
+          ['search', { query: 'zebra flamingo' }]] as const) {
+          const res = await dispatchToolCall(engine, op, { ...params }, { remote: true, transport: 'stdio', sourceId: 'default' }) as
+            { content: Array<{ text: string }>; _meta?: Record<string, unknown>; isError?: boolean };
+          expect(res.isError).toBeFalsy();
+          expect(res._meta?.degraded).toBeUndefined();
+          expect(res.content.map(c => c.text).join('\n')).not.toContain('[gbrain degraded:');
+          const notices = (res._meta?.gbrain_notices ?? []) as Array<{ code: string; kind: string; why?: string }>;
+          expect(notices.filter(n => n.code === 'degraded_recall' || n.kind === 'degraded')).toEqual([]);
+          if (op === 'recall') {
+            expect(JSON.parse(res.content[0]!.text).search_degraded).toBe(RECALL_KEYWORD_ONLY_OPTED_OUT);
+          } else if (params.query === 'zebra flamingo') {
+            const empty = notices.find(n => n.code === 'empty_retrieval')!;
+            expect(empty.kind).toBe('info');
+            expect(empty.why).toContain('Search was keyword-only because embeddings are off on this brain on purpose, and no page this caller can read holds these words');
+          } else {
+            const retrieval = res._meta?.retrieval as { vector_enabled: boolean; degraded: Array<{ stage: string; reason?: string }> };
+            expect(retrieval.vector_enabled).toBe(false);
+            expect(retrieval.degraded).toContainEqual({ stage: 'embed_unavailable', reason: 'embedding_disabled' });
+          }
+        }
       });
       expect(embedded).toEqual([]);
+    }, 120_000);
+
+    test('with no embedding provider configured (not turned off on purpose) every search is still stamped and noticed', async () => {
+      await engine.setConfig('embedding_disabled', 'false');
+      __resetProcessNoticeLedgerForTests();
+      configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: {} });
+      await withEnv({ GBRAIN_BACKUP_CHECK: '0', OPENAI_API_KEY: undefined }, async () => {
+        const res = await dispatchToolCall(engine, 'search', { query: 'heron pricing' }, { remote: true, transport: 'stdio', sourceId: 'default' }) as
+          { content: Array<{ text: string }>; _meta?: Record<string, unknown> };
+        expect((res._meta?.degraded as { reasons: string[] }).reasons).toContain('embed_unavailable');
+        expect(res.content[res.content.length - 1]!.text).toContain('[gbrain degraded: embed_unavailable');
+        expect(((res._meta?.gbrain_notices ?? []) as Array<{ code: string }>).map(n => n.code)).toContain('degraded_recall');
+        const recall = await dispatchToolCall(engine, 'recall', { query: 'heron pricing' }, { remote: true, transport: 'stdio', sourceId: 'default' }) as
+          { _meta?: Record<string, unknown> };
+        expect((recall._meta?.degraded as { reasons: string[] }).reasons).toContain('embed_unavailable');
+      });
     }, 120_000);
 
     test('image search refuses with embedding_disabled before anything is sent', async () => {
