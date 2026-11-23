@@ -341,6 +341,7 @@
   "test/engine-parity/projection-drain-reads.test.ts": 9500,
   "test/engine-parity/projection-rebuild-steps.test.ts": 11400,
   "test/engine-parity/purge-dry-run.test.ts": 8200,
+  "test/engine-parity/purge-gazetteer.test.ts": 5000,
   "test/engine-parity/purge-plan.test.ts": 9800,
   "test/engine-parity/purge-writes.test.ts": 8500,
   "test/engine-parity/put-source-fork.test.ts": 7700,

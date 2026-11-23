@@ -443,14 +443,15 @@ fn write_changed(tx: &mut dyn KvWrite, env: &dyn Env, page: &mut PageRecord) -> 
 
 /// The rows PGLite scrubs after a hard delete that name a page outside any foreign key
 /// (`scrubPurgedSlugs` and friends), run in the delete's transaction after the pages are gone.
-/// The store keeps the eval candidates' `retrieved_slugs` (`scrubPurgedSlugs`) and, of
+/// The store keeps the eval candidates' `retrieved_slugs` (`scrubPurgedSlugs`), the mention
+/// gazetteer of `scrubPurgedNameStores` (`mention_state::scrub_purged_entries`) and, of
 /// `scrubPurgedSlugStores`, the page aliases, slug aliases and rename history
 /// (`aliases::scrub_purged_slug_stores`), scrubbed in PGLite's order
-/// (src/core/engine-sql/pages.ts:235-237). Retrieval logs, ratings, the volunteer log, the
-/// gazetteer, take proposals, open loops, core-edit notices and write-gate holds do not exist here
-/// yet.
+/// (src/core/engine-sql/pages.ts:240-242). Retrieval logs, ratings, the volunteer log, take
+/// proposals, open loops, core-edit notices and write-gate holds do not exist here yet.
 fn scrub_purged_slugs(tx: &mut dyn KvWrite, source_id: &str, slugs: &[String]) -> Result<()> {
     crate::eval_capture::remove_retrieved_slugs(tx, source_id, slugs)?;
+    crate::mention_state::scrub_purged_entries(tx, source_id, slugs)?;
     crate::aliases::scrub_purged_slug_stores(tx, source_id, slugs)?;
     Ok(())
 }

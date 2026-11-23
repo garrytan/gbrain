@@ -25,13 +25,13 @@ type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infe
 const STORE_PROBED_TABLES: ReadonlySet<string> = new Set([
   'links', 'timeline_entries', 'raw_data', 'wanted_links', 'calibration_profiles', 'decision_receipts', 'dream_verdicts',
   'eval_candidates', 'eval_contradictions_cache', 'eval_contradictions_runs', 'fact_relink_attempts', 'ingest_log',
-  'mcp_request_log', 'minion_attachments', 'minion_inbox', 'minion_jobs', 'persistence_topology_changes',
+  'mcp_request_log', 'mention_gazetteer_entries', 'minion_attachments', 'minion_inbox', 'minion_jobs', 'persistence_topology_changes',
   'subagent_messages', 'subagent_tool_executions',
 ]);
 
 /** Inventory tables the store keeps no rows of: a probe of one finds nothing. */
 const STORE_ABSENT_PROBE_TABLES: ReadonlySet<string> = new Set([
-  'context_volunteer_events', 'mention_gazetteer_entries', 'conversation_parser_llm_cache', 'drift_decisions',
+  'context_volunteer_events', 'conversation_parser_llm_cache', 'drift_decisions',
   'eval_takes_quality_runs', 'link_edge_proposals', 'memory_proposals', 'migration_impact_log', 'persistence_graduation',
   'persistence_worktree_refreshes', 'pinned_questions', 'session_context_state', 'shared_skill_revisions',
   'source_ingestion_receipts', 'sync_notifier_sources', 'take_grade_cache', 'think_ab_results',

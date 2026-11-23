@@ -213,6 +213,58 @@ fn source_entries(read: &dyn KvRead, source: &str) -> Result<Vec<(String, String
     Ok(out)
 }
 
+/// `scrubPurgedNameStores` on `mention_gazetteer_entries` (src/core/persistence/purge-name-stores.ts): deletes the
+/// entries of `source` whose target is one of the purged `slugs`, every name and case flag, and returns how many went
+/// (`DELETE .. WHERE source_id = $1 AND target_slug = ANY($2) RETURNING 1`). Entries have no foreign key to pages, so a
+/// hard page delete calls this; a soft delete keeps them, because restore_page can bring the page back.
+pub(crate) fn scrub_purged_entries(
+    tx: &mut dyn KvWrite,
+    source: &str,
+    slugs: &[String],
+) -> Result<u64> {
+    if source.contains('\0') || slugs.is_empty() {
+        return Ok(0);
+    }
+    let mut removed = 0;
+    for (name, target, cs) in source_entries(&*tx, source)? {
+        if slugs.contains(&target) {
+            tx.delete(&entry_key(source, &name, &target, cs))?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
+/// The `mention_gazetteer_entries` rows a purge verification probes (facts/purge_probe.rs `table_rows`): every saved
+/// entry of every source, with its `source_id`, `name_norm` and `target_slug` as text.
+pub(crate) fn purge_probe_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow};
+    let mut sources = BTreeSet::new();
+    let p = prefix(&[ENTRY]);
+    scan_prefix(read, &p, false, &mut |k, _| {
+        if let Some(source) = k[p.len()..].split(|b| *b == 0).next() {
+            sources.insert(String::from_utf8_lossy(source).into_owned());
+        }
+        true
+    })?;
+    let mut out = Vec::new();
+    for source in sources {
+        for (name, target, _) in source_entries(read, &source)? {
+            out.push(ProbeRow {
+                cells: vec![
+                    ("source_id", ProbeCell::text(&source)),
+                    ("name_norm", ProbeCell::text(&name)),
+                    ("target_slug", ProbeCell::text(&target)),
+                ],
+                source_id: Some(source.clone()),
+            });
+        }
+    }
+    Ok(out)
+}
+
 /// The page's `page_mention_state` row, for a hard page delete.
 pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()> {
     tx.delete(&page_key(page.id))

@@ -354,6 +354,7 @@ test/engine-parity/private-page-reads.test.ts
 test/engine-parity/projection-drain-reads.test.ts
 test/engine-parity/projection-rebuild-steps.test.ts
 test/engine-parity/purge-dry-run.test.ts
+test/engine-parity/purge-gazetteer.test.ts
 test/engine-parity/purge-plan.test.ts
 test/engine-parity/purge-writes.test.ts
 test/engine-parity/put-source-fork.test.ts
