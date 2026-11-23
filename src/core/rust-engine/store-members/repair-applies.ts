@@ -3,13 +3,14 @@
  * facts/repair_applies.rs: restoreConsolidationTie (consolidate-ties), listLiveDuplicateRows, supersedeDuplicateFacts
  * and linkStruckDuplicateFacts (duplicate-facts), listCommittedRestorePages, listActivePositionedFactIds,
  * readFactRestorePage and restoreExtractorFact (extractor-facts), moveFactClaimDates (fact-claim-dates), lockApprovedFacts
- * (no store call: the store's write transaction already holds every row) and expireApprovedFacts (purged-page-facts),
+ * (no store call: the store's write transaction already holds every row) and expireApprovedFacts (purged-page-facts), tightenDatabaseFactVisibility (visibility), listPageAccessKeys (moved-pages),
  * detachFenceRowFacts and hasDatabaseOnlyClaim (url-clone-fences) and readSourceCloneRow (the url-clone check). The fact writes go through the store's fact writer, so the trust stamp, the
  * withdrawal guard and the unique indexes run as their triggers and indexes do on SQL.
  *
  * An id list binds as `bigint[]` on PGLite, so an id that is not an integer refuses rather than guess at its cast error.
  */
 import type { BrainEngine } from '../../engine.ts';
+import { privacyAliasSql, privateSnapshotFilterFragment } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
@@ -62,6 +63,19 @@ export const lockApprovedFacts: Member<'lockApprovedFacts'> = async (_brain, _so
 
 export const expireApprovedFacts: Member<'expireApprovedFacts'> = (brain, sourceId, ids) =>
   storeCall({ member: 'expireApprovedFacts' }, () => brain.expireApprovedFacts({ sourceId, ids: wholeIds('expireApprovedFacts', ids) }));
+
+export const tightenDatabaseFactVisibility: Member<'tightenDatabaseFactVisibility'> = (brain, sourceId, ids) =>
+  storeCall({ member: 'tightenDatabaseFactVisibility' }, () =>
+    brain.tightenDatabaseFactVisibility({ sourceId, ids: wholeIds('tightenDatabaseFactVisibility', ids) }));
+
+/**
+ * `listPageAccessKeys`: `world` is the snapshot filter's answer, so `honorAliases` is read off the rendered filter, the one
+ * process-wide setting the SQL engines render (as listWorldFactsFromPrivateSources does).
+ */
+export const listPageAccessKeys: Member<'listPageAccessKeys'> = (brain, pageIds) => {
+  const honorAliases = privateSnapshotFilterFragment('p').includes(privacyAliasSql('p'));
+  return storeCall({ member: 'listPageAccessKeys' }, () => brain.listPageAccessKeys({ ids: wholeIds('listPageAccessKeys', pageIds), honorAliases }));
+};
 
 export const detachFenceRowFacts: Member<'detachFenceRowFacts'> = (brain, sourceId, slug, rowNum) =>
   storeCall({ member: 'detachFenceRowFacts' }, () => brain.detachFenceRowFacts({ sourceId, slug, rowNum }));

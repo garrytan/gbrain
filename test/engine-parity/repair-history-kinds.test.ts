@@ -451,9 +451,9 @@ describe('engine parity: the history repair kinds of batch 6a', () => {
     return previewed;
   }));
 
-  parityTest('moved-pages lists a moved file on the SQL arms, and the Rust engine refuses the access comparison by name', {
+  parityTest('moved-pages lists a moved file the same way on every arm', {
     methods: ['putPage', 'attachSourcePath', 'getWorktreeBinding', 'listLivePagesBySourcePaths', 'hasSegmentedHistory'],
-    requires: 'raw_sql', timeout: 60_000,
+    timeout: 60_000,
   }, async (engine, backend) => withDir(async (dir) => {
     const root = await ownedCheckout(engine, dir);
     await keepPages(engine, root);

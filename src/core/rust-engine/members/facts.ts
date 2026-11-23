@@ -234,6 +234,8 @@ export const FACTS_MEMBERS = {
   moveFactClaimDates: 'facts',
   lockApprovedFacts: 'facts',
   expireApprovedFacts: 'facts',
+  tightenDatabaseFactVisibility: 'facts',
+  listPageAccessKeys: 'access_control',
   detachFenceRowFacts: 'facts',
   hasDatabaseOnlyClaim: 'facts',
   readSourceCloneRow: 'sources',

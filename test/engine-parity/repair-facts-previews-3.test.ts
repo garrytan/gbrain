@@ -224,8 +224,8 @@ describe('engine parity: repair kind previews of batch 4.3a', () => {
     return byOrder(shaped, ids);
   }));
 
-  parityTest('visibility applies the facts class on the SQL arms, and the Rust engine refuses the write by name', {
-    methods: ['putPage', 'insertFacts', 'listWorldFactsFromPrivateSources', 'getConfig', 'writeOpCheckpointRecord'], requires: 'raw_sql', timeout: 90_000,
+  parityTest('visibility applies the facts class to a database-only fact the same way on every arm', {
+    methods: ['putPage', 'insertFacts', 'listWorldFactsFromPrivateSources', 'getConfig', 'writeOpCheckpointRecord'], timeout: 90_000,
   }, async (engine, backend) => withHome(async () => {
     const ids = await seedWorldFacts(engine);
     const out = await previewThenApply(engine, backend, 'visibility', 'repair visibility page write', { driftClass: 'facts' });

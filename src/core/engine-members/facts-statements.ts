@@ -763,6 +763,10 @@ export interface FactsStatementMembers {
   lockApprovedFacts(sourceId: string, factIds: readonly number[]): Promise<void>;
   /** purged-page-facts: expires the named unexpired facts and clears their fence row number; the ids it expired. Writes facts. */
   expireApprovedFacts(sourceId: string, factIds: readonly number[]): Promise<number[]>;
+  /** visibility: makes the named database-only world facts private; the ids it changed. Writes facts. */
+  tightenDatabaseFactVisibility(sourceId: string, factIds: readonly number[]): Promise<number[]>;
+  /** moved-pages: each named page's access key (derived readers, folder rule ids, readable_by, world snapshot). Reads pages. */
+  listPageAccessKeys(pageIds: readonly number[]): Promise<RepairAppliesSql.PageAccessKey[]>;
   /** url-clone-fences: makes the fact at a fence row of the page database-only; the ids it changed. Writes facts. */
   detachFenceRowFacts(sourceId: string, slug: string, rowNum: number): Promise<number[]>;
   /** url-clone-fences: whether the entity already holds a database-only fact with this claim text. Reads facts. */

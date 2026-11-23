@@ -213,9 +213,7 @@ export function aliasOnlyPagesSql(p: string): string {
 export const FACT_VISIBILITY_INTENT = 'managed_maintenance_tighten_fact_visibility';
 
 /** Database-only rows still world and unfenced become private; the compare runs in the UPDATE, which locks the row. */
-const tightenDatabaseFacts = (tx: BrainEngine, sourceId: string, ids: number[]) => tx.executeRaw<{ id: number | string }>(
-  `UPDATE facts SET visibility='private' WHERE source_id=$1 AND id=ANY($2::bigint[]) AND visibility='world' AND row_num IS NULL AND expired_at IS NULL RETURNING id`,
-  [sourceId, ids]);
+const tightenDatabaseFacts = (tx: BrainEngine, sourceId: string, ids: number[]) => tx.tightenDatabaseFactVisibility(sourceId, ids);
 
 /** Preparer for `managed_maintenance_tighten_fact_visibility`: makes the named database-only world facts private. */
 export async function prepareFactVisibilityTighten(engine: BrainEngine, row: WriteRequest): Promise<PreparedMutation> {
@@ -228,7 +226,7 @@ export async function prepareFactVisibilityTighten(engine: BrainEngine, row: Wri
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
   return { observedRevision: snapshot?.revision ?? null, noop: true,
     validate: async tx => { await authorizeWrite(tx, row.authority, 'submit_job', row.slug); },
-    apply: async tx => ({ status: 'completed', tightened: (await tightenDatabaseFacts(tx, row.source_id, ids as number[])).map(r => Number(r.id)) }) };
+    apply: async tx => ({ status: 'completed', tightened: await tightenDatabaseFacts(tx, row.source_id, ids as number[]) }) };
 }
 
 /**
@@ -261,6 +259,9 @@ async function applyFactItem(ctx: Parameters<RepairHandler['apply']>[0], item: R
       `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`);
     return ((receipt.tightened as number[] | undefined) ?? []).includes(factId);
   }
+  // A fenced row is rewritten through its page's facts fence (the page write door), whose projection the Rust engine does not
+  // serve yet, so a Rust brain stops a fenced fact here by name, before its first write; a database-only row is typed above.
+  requireRawSql(ctx.engine, 'repair visibility page write');
   const snapshot = fact.source_markdown_slug ? await ctx.engine.readPageSnapshot(fact.source_markdown_slug, { sourceId: item.source_id }) : null;
   if (!snapshot) return false;
   if (isSegmentedPage(snapshot.page)) return leftWorld(fact, 'its page is stored in segments, which this repair does not rewrite');
@@ -525,8 +526,9 @@ export const visibilityRepair: RepairHandler = {
     const item = entry as VisibilityItem;
     const target = item.target ?? item.cursor;
     if (target.phase === READERS_PHASE) return applyReaders(ctx.engine, item as ReadersItem, (snapshot, content, edit, batch) => labelWrite(ctx, { ...item, cursor: target }, snapshot, content, edit, batch));
-    // The fact tightening, the page label guard and the page write door all write through raw SQL, so a Rust brain stops here by name, before its first write.
-    requireRawSql(ctx.engine, 'repair visibility page write');
+    // The page label guard and the page write door write through raw SQL, so a Rust brain stops a page item here by name, before
+    // its first write; a fact item (phase 4) stops only on a fenced row (applyFactItem).
+    if (target.phase !== 4) requireRawSql(ctx.engine, 'repair visibility page write');
     return retireAfterLastItem(ctx.engine, 'visibility', item.hash, !!item.last, async () => {
       if (target.phase === 4) return await applyFactItem(ctx, item, target.id);
       const snapshot = await ctx.engine.readPageSnapshot(item.slug, { sourceId: item.source_id });

@@ -4,6 +4,8 @@
  * Ids come back as numbers on every engine (Postgres returns `bigint` as text).
  */
 import type { EngineRawRead } from './cli-reads-ops.ts';
+import { privateSnapshotFilterFragment } from '../search/private-visibility.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
 export type { EngineRawRead } from './cli-reads-ops.ts';
 
@@ -131,6 +133,31 @@ export async function expireApprovedFacts(raw: EngineRawRead, sourceId: string, 
   return ids(await raw<{ id: number | string }>(
     'UPDATE facts SET expired_at = now(), row_num = NULL WHERE source_id = $1 AND id = ANY($2::bigint[]) AND expired_at IS NULL RETURNING id',
     [sourceId, [...factIds]]));
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// visibility (src/core/repair/visibility.ts tightenDatabaseFacts)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** Makes the named database-only world facts of the source private (the compare runs in the UPDATE); the ids it changed. */
+export async function tightenDatabaseFactVisibility(raw: EngineRawRead, sourceId: string, factIds: readonly number[]): Promise<number[]> {
+  return ids(await raw<{ id: number | string }>(
+  `UPDATE facts SET visibility='private' WHERE source_id=$1 AND id=ANY($2::bigint[]) AND visibility='world' AND row_num IS NULL AND expired_at IS NULL RETURNING id`,
+  [sourceId, [...factIds]]));
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// moved-pages (src/core/persistence/moved-pages.ts readMovedPage, the access comparison)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** Who may read a page: its derived readers, its folder rule ids, its `readable_by` and whether its snapshot is world. */
+export interface PageAccessKey { id: number; readers: unknown; folder: unknown; readable_by: unknown; world: boolean }
+
+/** The access key of each named page (the moved-pages fold compares two of them). */
+export async function listPageAccessKeys(raw: EngineRawRead, pageIds: readonly number[]): Promise<PageAccessKey[]> {
+  const { text, params } = renderFragment(sqlFragment`SELECT p.id, p.page_readers AS readers, p.folder_rule_ids AS folder,
+    p.frontmatter->'readable_by' AS readable_by, ${trustedSql(privateSnapshotFilterFragment('p'))} AS world FROM pages p WHERE p.id=ANY(${[...pageIds]}::int[])`);
+  return raw<PageAccessKey>(text, params);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

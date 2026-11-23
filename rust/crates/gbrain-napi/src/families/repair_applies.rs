@@ -11,7 +11,8 @@ use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
 use gbrain_store::facts::repair_applies::{
-    ClaimDateArgs, CommittedRestoreArgs, DuplicateArgs, ExtractorRestoreArgs, FenceRowArgs, TieArgs,
+    AccessKeyArgs, ClaimDateArgs, CommittedRestoreArgs, DuplicateArgs, ExtractorRestoreArgs,
+    FenceRowArgs, TieArgs,
 };
 
 #[napi]
@@ -142,6 +143,19 @@ impl Brain {
         })
     }
 
+    /// `tightenDatabaseFactVisibility({ sourceId, ids })`: resolves the changed ids.
+    #[napi]
+    pub fn tighten_database_fact_visibility<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: DuplicateArgs = required(args, "tightenDatabaseFactVisibility args")?;
+            s.tighten_database_fact_visibility(&a)
+        })
+    }
+
     /// `detachFenceRowFacts({ sourceId, slug, rowNum })`: resolves the changed ids.
     #[napi]
     pub fn detach_fence_row_facts<'env>(
@@ -165,6 +179,19 @@ impl Brain {
         self.run(env, move |s| {
             let a: FenceRowArgs = required(args, "hasDatabaseOnlyClaim args")?;
             s.has_database_only_claim(&a)
+        })
+    }
+
+    /// `listPageAccessKeys({ ids, honorAliases })`: resolves `[{ id, readers, folder, readable_by, world }]`.
+    #[napi]
+    pub fn list_page_access_keys<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: AccessKeyArgs = required(args, "listPageAccessKeys args")?;
+            s.list_page_access_keys(&a)
         })
     }
 

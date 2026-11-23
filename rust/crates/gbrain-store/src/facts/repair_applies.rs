@@ -88,6 +88,14 @@ pub struct FenceRowArgs {
     pub fact: Option<String>,
 }
 
+/// `listPageAccessKeys({ ids, honorAliases })`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AccessKeyArgs {
+    pub ids: Vec<f64>,
+    pub honor_aliases: bool,
+}
+
 /// One row of `moveFactClaimDates`: the fact, the `valid_from` the preview read and the claim's day.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -415,6 +423,29 @@ impl Store {
         })
     }
 
+    /// `tightenDatabaseFactVisibility(sourceId, ids)`: sets `visibility` to `private` on each named world fact of the
+    /// source that has no `row_num` and is unexpired. The ids it changed, by id.
+    pub fn tighten_database_fact_visibility(&self, a: &DuplicateArgs) -> Result<Vec<u64>> {
+        const OP: &str = "tightenDatabaseFactVisibility";
+        no_nul(OP, &[("sourceId", a.source_id.as_str())])?;
+        let ids = id_set(OP, &a.ids)?;
+        let trust = &self.write_trust()?;
+        self.write(|tx| {
+            let mut changed = Vec::new();
+            for old in named_rows(&*tx, &a.source_id, &ids)? {
+                if old.visibility != "world" || old.row_num.is_some() || old.expired_at_us.is_some()
+                {
+                    continue;
+                }
+                let mut new = old.clone();
+                new.visibility = "private".to_string();
+                write_fact(tx, trust, Some(&old), &new)?;
+                changed.push(old.id);
+            }
+            Ok(changed)
+        })
+    }
+
     /// `detachFenceRowFacts(sourceId, slug, rowNum)`: clears `row_num` and `source_markdown_slug` on the facts of the
     /// source at that fence row of that page. The ids it changed, by id.
     pub fn detach_fence_row_facts(&self, a: &FenceRowArgs) -> Result<Vec<u64>> {
@@ -462,6 +493,28 @@ impl Store {
         Ok(entity_rows(&*read, &a.source_id, entity)?
             .iter()
             .any(|r| r.row_num.is_none() && &r.fact == fact))
+    }
+
+    /// `listPageAccessKeys({ ids, honorAliases })`: per named page, `{ id, readers, folder, readable_by, world }`: the
+    /// `page_readers` column (`gbrain_access_readers`), the folder rule ids the last stamp kept (`folder_rule_ids`),
+    /// `frontmatter->'readable_by'` and the snapshot filter (`privateSnapshotFilterFragment`), by id.
+    pub fn list_page_access_keys(&self, a: &AccessKeyArgs) -> Result<Vec<Value>> {
+        let ids = id_set("listPageAccessKeys", &a.ids)?;
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for id in ids {
+            let Some(page) = crate::pages::read_page_by_id(&*read, id)? else {
+                continue;
+            };
+            out.push(json!({
+                "id": page.id,
+                "readers": super::privacy::access_readers(&page.frontmatter),
+                "folder": crate::access_policy::kept_rule_ids(&*read, &page.source_id, page.id)?,
+                "readable_by": page.frontmatter.get("readable_by"),
+                "world": super::privacy::snapshot_fields_allow(&page.page_type, &page.frontmatter, a.honor_aliases),
+            }));
+        }
+        Ok(out)
     }
 
     /// `readSourceCloneRow(sourceId)`: the source's `{ local_path, config }`, archived or not, or null.
