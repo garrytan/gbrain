@@ -299,10 +299,10 @@ export async function labelSeveral(engine: BrainEngine, roster: string[], source
   const labelledOnly = opts.labelledOnly === true;
   const receipt = await plan(engine, roster, sourceId, labelledOnly, opts.owner);
   if (!apply || blocked(receipt)) return receipt;
-  // Adding a folder rule (its preview count, access-rules.ts previewRules) and widening a kept key (legacy-token.ts,
-  // row 32k) still run raw SQL, which a Rust brain refuses: refuse before the first write, not after the members.
-  if (receipt.rules.some(r => r.action === 'add') || receipt.company_rule?.action === 'add' || receipt.keys.some(k => k.action === 'keep' && k.adds?.length)) {
-    sqlEngineKind(engine.kind, 'gbrain access serves several --yes that adds a folder rule or widens a kept key');
+  // Adding a folder rule (its preview count, access-rules.ts previewRules) still runs raw SQL, which a Rust brain
+  // refuses: refuse before the first write, not after the members.
+  if (receipt.rules.some(r => r.action === 'add') || receipt.company_rule?.action === 'add') {
+    sqlEngineKind(engine.kind, 'gbrain access serves several --yes that adds a folder rule');
   }
   receipt.applied = true;
   try {

@@ -525,4 +525,30 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
     const count = (s: string) => checks.filter((c) => c.status === s).length;
     table.push({ command: 'doctor --json', state: 'runs', note: ` ${checks.length} checks, ${count('ok')} ok, ${count('warn')} warn, 0 fail; PGLite ${pgReport!.checks!.length}` });
   }, 600_000);
+
+  // Row 32g-port (a named, swap-critical loss): `gbrain auth list` on a Rust brain. The Rust list read leaves out a
+  // token's source_grant, source_id and federated_read, so the text form drops the "write: ... reads: ... (+ shared)"
+  // line of a key with the read-shared switch on. --json does not print those columns and answers the same.
+  test('loss (32g-port): auth list on a Rust brain drops the write/reads line of a read-shared key; --json is equal', async () => {
+    if (rustArm !== 'on') return;
+    const mark = (t: string) => t.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '<uuid>')
+      .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?/g, '<timestamp>');
+    const out: Record<string, { text: string; json: unknown }> = {};
+    for (const backend of ['pglite', 'rust'] as const) {
+      const brain = brains[backend];
+      // `auth create --sources` still refuses on Rust (raw SQL), so the key is switched with a rescope, which runs.
+      for (const args of [['auth', 'create', 'k-shared'], ['auth', 'rescope', '--token', 'k-shared', '--sources', 'default', '--read-shared', 'on']]) {
+        const run = await cli(brain, args);
+        expect({ backend, args, exitCode: run.exitCode, stderr: run.exitCode ? run.stderr : '' }).toEqual({ backend, args, exitCode: 0, stderr: '' });
+      }
+      const [text, json] = [await cli(brain, ['auth', 'list']), await cli(brain, ['auth', 'list', '--json'])];
+      expect({ backend, text: text.exitCode, json: json.exitCode }).toEqual({ backend, text: 0, json: 0 });
+      out[backend] = { text: mark(text.stdout), json: normalize(parseJson(json.stdout), pathsOf(brain)) };
+    }
+    expect(out.pglite!.text).toContain('    write: default  reads: default (+ shared)');
+    expect(out.rust!.json).toEqual(out.pglite!.json);
+    // Pinned until row 32g-port lands; then this line becomes expect(out.rust.text).toBe(out.pglite.text).
+    expect(out.rust!.text).toBe(out.pglite!.text.split('\n').filter(l => !l.startsWith('    write: ')).join('\n'));
+    table.push({ command: 'auth list (read-shared key)', state: 'diverged', note: 'loss 32g-port: the write/reads line is missing on Rust' });
+  }, 300_000);
 });
