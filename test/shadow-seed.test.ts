@@ -226,7 +226,8 @@ describe('gbrain engine shadow seed', () => {
       expect(first.out.join('\n')).toContain('links 1');
       const st = capture();
       expect(await runEngineShadow(['status', '--json'], { ...deps, ...st.deps })).toBe(0);
-      expect(JSON.parse(st.out.join('\n')).seed).toEqual({ seed_id: rec.seed_id, finished_at: rec.finished_at, unseeded_gap_rows_total: rec.unseeded_gap_rows_total });
+      expect(JSON.parse(st.out.join('\n')).seed).toEqual({ seed_id: rec.seed_id, finished_at: rec.finished_at, unseeded_gap_rows_total: rec.unseeded_gap_rows_total,
+        storage: { managed: false, checked_at: rec.storage!.checked_at, note: null } });
       for (const args of [['seed'], ['seed', '--reseed']]) {
         const again = capture();
         expect(await runEngineShadow(args, { ...deps, ...again.deps, openPrimary: async () => keep })).toBe(1);
@@ -254,7 +255,7 @@ describe('gbrain engine shadow seed', () => {
     await inHome(async (_dir, deps) => {
       const st = capture();
       expect(await runEngineShadow(['status', '--json'], { ...deps, ...st.deps })).toBe(0);
-      expect(JSON.parse(st.out.join('\n')).seed).toEqual({ seed_id: null, finished_at: null, unseeded_gap_rows_total: null });
+      expect(JSON.parse(st.out.join('\n')).seed).toEqual({ seed_id: null, finished_at: null, unseeded_gap_rows_total: null, storage: null });
     });
   });
 
@@ -270,7 +271,7 @@ describe('gbrain engine shadow seed', () => {
     const after = buildProvisionalReport(dir, 'b', null, new Date('2026-11-21T00:00:00Z'));
     expect(after.verdict).toBe('NOT READY');
     expect(after.seed).toEqual({ seed_id: 'seed-x', finished_at: '2026-11-20T12:00:00.000Z', age_hours: 12, segmented_pages: 5,
-      non_terminal_jobs: 2, unseeded_gap_rows_total: 3, unseeded_gap_rows: { access_rules: 3 } });
+      non_terminal_jobs: 2, storage: null, unseeded_gap_rows_total: 3, unseeded_gap_rows: { access_rules: 3 } });
     expect(after.why_not_ready.join(' ')).toContain('3 rows of the brain have no Rust home yet');
     expect(renderProvisionalMarkdown(after)).toContain('Seed: seed-x, finished 2026-11-20T12:00:00.000Z (12 hours ago). Segmented pages read as shells: 5. Unfinished jobs not copied: 2. Unseeded gap rows: 3 (access_rules 3).');
   });

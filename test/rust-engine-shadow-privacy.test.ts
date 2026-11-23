@@ -67,6 +67,24 @@ describe('shadow privacy guard', () => {
     expect(classify('getPage', ['a', { sourceId: '__none__' }], null, leak)).toBe('privacy_diverged');
   });
 
+  test("sourceId '__none__' allows nothing: any Rust row, in any source column, is a privacy divergence", () => {
+    const none = { sourceId: '__none__' };
+    const row = (source: string) => ({ slug: 'a', source_id: source, frontmatter: {} });
+    for (const source of ['default', 's1', 'hidden']) {
+      expect(classify('getPage', ['a', none], null, row(source)), `getPage ${source}`).toBe('privacy_diverged');
+      expect(classify('listPages', [none], [], [row(source)]), `listPages ${source}`).toBe('privacy_diverged');
+      expect(classify('searchKeyword', ['q', none], [], [row(source)]), `searchKeyword ${source}`).toBe('privacy_diverged');
+      expect(classify('getLinks', ['a', none], [], [link(source, source)]), `getLinks ${source}`).toBe('privacy_diverged');
+      expect(classify('getBacklinks', ['a', none], [], [link(source, source)]), `getBacklinks ${source}`).toBe('privacy_diverged');
+      expect(classify('getTags', ['a', none], [], [row(source)]), `getTags ${source}`).toBe('privacy_diverged');
+    }
+    // The sentinel next to an empty list is still that single source, and no rows at all is not a leak.
+    expect(classify('getPage', ['a', { sourceIds: [], sourceId: '__none__' }], null, row('default'))).toBe('privacy_diverged');
+    expect(classify('listPages', [none], [], [])).toBe('match');
+    // A positional fact scope of the sentinel allows nothing too.
+    expect(classify('listFactsByEntity', ['__none__', 'alice'], [], [{ id: 1, source_id: 'default', fact: 'x' }])).toBe('privacy_diverged');
+  });
+
   test('excludePrivate: a Rust page the call asked to hide as private is a divergence', () => {
     const priv = { slug: 'p', source_id: 's1', type: 'note', frontmatter: { visibility: 'private' } };
     expect(classify('listPages', [{ excludePrivate: true }], [], [priv])).toBe('privacy_diverged');
@@ -121,6 +139,8 @@ describe('shadow privacy guard in the child', () => {
   const cases: Array<[string, string, unknown[], unknown]> = [
     ['link endpoint', 'getLinks', ['a', { sourceIds: ['s1'] }], [link('s1', 'hidden')]],
     ['positional fact scope', 'listFactsByEntity', ['s1', 'alice'], [{ id: 1, source_id: 'hidden', fact: 'x' }]],
+    ["sourceId '__none__'", 'listPages', [{ sourceId: '__none__' }], [{ slug: 'p', source_id: 'default', frontmatter: {} }]],
+    ["sourceId '__none__' read by position", 'listFactsByEntity', ['__none__', 'alice'], [{ id: 1, source_id: 'default', fact: 'x' }]],
     ['excludePrivate', 'listPages', [{ excludePrivate: true }], [{ slug: 'p', source_id: 's1', type: 'note', frontmatter: { visibility: 'private' } }]],
   ];
 

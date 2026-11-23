@@ -14,9 +14,9 @@ import { join } from 'node:path';
 import { loadConfig } from '../core/config.ts';
 import type { EngineConfig } from '../core/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
-import type { OperationError } from '../core/ops/contract.ts';
 import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
 import { readFaults, readShadowSummary } from '../shadow/ledger.ts';
+import { readManagedStorage, storageLine, storageReport, type StorageReport } from '../shadow/managed-gate.ts';
 import { readSeedRecord, runSeed, SeedBudgetError, writeSeedRecord, type SeedRecord, type SeedTarget } from '../shadow/seed.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown, writeProvisionalReport } from '../shadow/report.ts';
 import {
@@ -59,8 +59,8 @@ brain repo; everything lives in <gbrain home>/shadow/<brain>/. stop --delete rem
 
 seed copies this brain into the Rust store once, in one read-only snapshot, before shadow mode compares answers.
 It writes nothing to the brain. A store is seeded once: to seed again, delete the shadow directory first.
-A brain that uses managed storage is refused (exit 3): the Rust engine never holds managed storage, so seeding it
-copies data nothing can use. seed checks that first and writes nothing when it refuses.
+seed runs on a brain that uses managed storage too; only the swap refuses such a brain. seed reads the brain's storage
+mode right before its snapshot and records it in seed.json; a mode it cannot read does not stop the seed.
 
 The report is provisional and always says NOT READY.`;
 
@@ -248,13 +248,20 @@ function status(brain: { key: string; dir: string }, json: boolean, out: (l: str
   }
   const seeded = readSeedRecord(brain.dir);
   out(seeded ? `  seed ${seeded.seed_id} finished ${seeded.finished_at}; unseeded gap rows ${seeded.unseeded_gap_rows_total}` : '  seed: none (gbrain engine shadow seed)');
+  const seedStorage = storageLine(seeded?.storage);
+  if (seedStorage) out(`  storage: ${seedStorage}`);
   for (const f of faults) out(`  fault ${f.ts} ${f.kind}: ${f.detail}`);
   return 0;
 }
 
 /** The `seed` block of `status --json`: null fields until a seed finished. */
-export function seedStatus(record: SeedRecord | null): { seed_id: string | null; finished_at: string | null; unseeded_gap_rows_total: number | null } {
-  return { seed_id: record?.seed_id ?? null, finished_at: record?.finished_at ?? null, unseeded_gap_rows_total: record?.unseeded_gap_rows_total ?? null };
+export function seedStatus(record: SeedRecord | null): {
+  seed_id: string | null; finished_at: string | null; unseeded_gap_rows_total: number | null; storage: StorageReport | null;
+} {
+  return {
+    seed_id: record?.seed_id ?? null, finished_at: record?.finished_at ?? null, unseeded_gap_rows_total: record?.unseeded_gap_rows_total ?? null,
+    storage: storageReport(record?.storage),
+  };
 }
 
 const RESEED_STEP = 'A Rust store is seeded once. To seed again, start from a new shadow directory: '
@@ -274,49 +281,23 @@ async function seed(
     err('engine shadow: stop shadow mode first (gbrain engine shadow stop): its child holds the Rust store. Nothing was written.');
     return 1;
   }
-  // The managed-storage gate: the Rust engine never holds managed storage, so seeding it copies data nothing can use.
-  // It runs before the addon loads, before the shadow directory exists, before the store opens and before the snapshot starts.
-  const { managedStorageRefusal, unopenableBrainRefusal } = await import('../shadow/managed-gate.ts');
+  // The brain must open to be read; a brain that cannot be opened is an error, not a mode (nothing is written, no store is opened).
   let primary: BrainEngine;
   try {
     primary = await (deps.openPrimary ?? openConfiguredPrimary)();
   } catch (e) {
-    return await refuseManaged(unopenableBrainRefusal(e), json, out, err);
+    const code = (e as { code?: unknown } | null)?.code;
+    err(`engine shadow: could not open the brain (${typeof code === 'string' && /^[a-z0-9_]{1,64}$/i.test(code) ? code : 'open_failed'}). ${code === 'pglite_busy' ? 'Stop `gbrain serve` and any other process holding this brain, then run the command again. ' : ''}Nothing was written.`);
+    return 1;
   }
   try {
-    const refusal = await managedStorageRefusal(primary);
-    if (refusal) return await refuseManaged(refusal, json, out, err);
     return await seedFrom(primary, brain, json, deps, out, err, now);
   } finally {
     await primary.disconnect().catch(() => undefined);
   }
 }
 
-/** Renders the managed-storage refusal: one line, the why and the next step on stderr; with --json also the error envelope on stdout; exit 3 (consent). */
-function renderManagedRefusal(e: OperationError, err: (l: string) => void): number {
-  err(`engine shadow: ${e.code} (${e.reason}): ${e.message}`);
-  if (e.why) err(e.why);
-  if (e.detail && !e.why?.includes(e.detail)) err(`Detail: ${e.detail}`);
-  err(e.suggestion ?? 'Ask the user; nothing was written.');
-  return 3;
-}
-
-async function refuseManaged(e: OperationError, json: boolean, out: (l: string) => void, err: (l: string) => void): Promise<number> {
-  // The refusal can carry a database error's own text (a DSN, a host, a user name): scrub it before either stream shows it.
-  const { redactConnectionInfo } = await import('../core/audit/redact-connection-info.ts');
-  const { redactUrlsInText } = await import('../core/url-redact.ts');
-  const clean = (text: string): string => redactUrlsInText(redactConnectionInfo(text));
-  if (e.why) e.why = clean(e.why);
-  if (e.detail) e.detail = clean(e.detail);
-  if (e.fix?.why) e.fix.why = clean(e.fix.why);
-  if (json) {
-    const { renderCliError } = await import('../core/agent-output.ts');
-    out(renderCliError(e, { json: true, command: 'engine shadow seed', tty: false }).stdout!.trimEnd());
-  }
-  return renderManagedRefusal(e, err);
-}
-
-/** The rest of `seed` once the primary is open and unmanaged: the addon, the shadow directory, the store, the snapshot. */
+/** The rest of `seed` once the primary is open: the addon, the shadow directory, the store, the storage mode, the snapshot. */
 async function seedFrom(
   primary: BrainEngine, brain: { key: string; dir: string; engine: string }, json: boolean, deps: EngineShadowDeps,
   out: (l: string) => void, err: (l: string) => void, now: () => Date,
@@ -344,8 +325,10 @@ async function seedFrom(
     throw e;
   }
   try {
+    // Read right before the snapshot, outside its transaction: a failed read there would abort the snapshot. Never throws.
+    const storage = await readManagedStorage(primary, now());
     const record = await runSeed(primary, store, {
-      primaryEngine: brain.engine, now,
+      primaryEngine: brain.engine, now, storage,
       onBatch: json ? undefined : (relation, rows) => err(`  seeding ${relation}: ${rows} rows`),
     });
     const path = writeSeedRecord(brain.dir, record);
@@ -373,6 +356,10 @@ async function openConfiguredPrimary(): Promise<BrainEngine> {
   const cfg = loadConfig();
   if (!cfg) throw new UsageError('No brain is configured here.');
   const config = toEngineConfig(cfg);
+  // PGLite runs initdb on a missing or uninitialized directory when it connects; a seed must not make a brain.
+  if (!config.database_url && (!config.database_path || !existsSync(join(config.database_path, 'PG_VERSION')))) {
+    throw Object.assign(new Error(`no brain exists at ${config.database_path ?? '(no path configured)'}`), { code: 'no_brain' });
+  }
   const engine = await constructEngine(config);
   await engine.connect(config);
   return engine;
@@ -382,6 +369,8 @@ function renderSeed(r: SeedRecord, path: string, out: (l: string) => void): void
   const rows = Object.values(r.relations).reduce((a, x) => a + x.imported, 0);
   out(`Seeded the Rust store from brain ${r.primary_engine} (${r.seed_id}): ${rows} rows in ${Object.keys(r.relations).length} relations.`);
   out(`  finished ${r.finished_at}; wrote ${path}`);
+  const storage = storageLine(r.storage);
+  if (storage) out(`  storage: ${storage}`);
   const values = Object.entries(r.losses.values);
   if (values.length) out(`  values not kept: ${values.map(([k, n]) => `${k} ${n}`).join(', ')}`);
   for (const [rel, x] of Object.entries(r.relations)) if (x.unmapped_columns.length) out(`  ${rel}: columns not kept: ${x.unmapped_columns.join(', ')}`);

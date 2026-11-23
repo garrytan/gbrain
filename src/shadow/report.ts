@@ -10,6 +10,7 @@ import { SHADOW_OUTCOMES, type ShadowOutcome } from './classify.ts';
 import { readFaults, readShadowSummary, type ShadowFault, type ShadowSummary } from './ledger.ts';
 import type { ShadowState } from './state.ts';
 import { readSeedRecord, type SeedRecord } from './seed.ts';
+import { storageLine, storageReport, type StorageReport } from './managed-gate.ts';
 
 export const PROVISIONAL_VERDICT = 'NOT READY' as const;
 
@@ -39,6 +40,8 @@ export interface ReportSeed {
   age_hours: number;
   segmented_pages: number;
   non_terminal_jobs: number;
+  /** The storage mode the seed recorded, null for a seed written before it was recorded. */
+  storage: StorageReport | null;
   unseeded_gap_rows_total: number;
   /** Only the gap tables and columns that hold rows. */
   unseeded_gap_rows: Record<string, number>;
@@ -53,6 +56,7 @@ function reportSeed(record: SeedRecord | null, now: Date): ReportSeed | null {
     age_hours: Number.isFinite(age) ? Math.max(0, Math.round(age * 10) / 10) : 0,
     segmented_pages: record.segmented_pages,
     non_terminal_jobs: record.non_terminal_jobs,
+    storage: storageReport(record.storage),
     unseeded_gap_rows_total: record.unseeded_gap_rows_total,
     unseeded_gap_rows: Object.fromEntries(Object.entries(record.unseeded_gap_rows).filter(([, n]) => n > 0)),
   };
@@ -140,7 +144,8 @@ function renderSeedLine(seed: ReportSeed | null): string {
   const gaps = Object.entries(seed.unseeded_gap_rows).sort(([a], [b]) => a.localeCompare(b)).map(([k, n]) => `${k} ${n}`);
   return `Seed: ${seed.seed_id}, finished ${seed.finished_at} (${seed.age_hours} hours ago). `
     + `Segmented pages read as shells: ${seed.segmented_pages}. Unfinished jobs not copied: ${seed.non_terminal_jobs}. `
-    + `Unseeded gap rows: ${seed.unseeded_gap_rows_total}${gaps.length ? ` (${gaps.join(', ')})` : ''}.`;
+    + `Unseeded gap rows: ${seed.unseeded_gap_rows_total}${gaps.length ? ` (${gaps.join(', ')})` : ''}.`
+    + (storageLine(seed.storage) ? ` Storage: ${storageLine(seed.storage)}.` : '');
 }
 
 /** Writes `reports/provisional.json` and `.md` (0600) and returns their paths. */
