@@ -99,6 +99,19 @@ describe('autopilot refusal-swallow sites', () => {
     }
   });
 
+  test('S3 typed: the recent cycle failures come from the typed listRecentSourceCycleFailures, so an engine whose raw SQL refuses reports them as PGLite does', async () => {
+    const queue = new MinionQueue(pg);
+    await pg.executeRaw('DELETE FROM minion_jobs');
+    for (const source of ['s3a', 's3a', 's3b']) {
+      const job = await queue.add('autopilot-cycle', { source_id: source }, { queue: 'default' });
+      await pg.executeRaw(`UPDATE minion_jobs SET status = 'dead', finished_at = now() WHERE id = $1`, [job.id]);
+    }
+    const view = async (engine: BrainEngine) => [...(await readRecentSourceFailures(engine)).entries()].map(([id, f]) => [id, f.count]).sort();
+    expect(await view(pg)).toEqual([['s3a', 2], ['s3b', 1]]);
+    expect(await view(refusingEngine(pg))).toEqual([['s3a', 2], ['s3b', 1]]);
+    await pg.executeRaw('DELETE FROM minion_jobs');
+  });
+
   test('S4 isSourceInCooldown: the source row is read through the typed getSource, so an engine whose raw SQL refuses answers as PGLite does', async () => {
     const queue = new MinionQueue(pg);
     await pg.executeRaw('INSERT INTO sources(id,name,config) VALUES($1,$1,$2::jsonb)', ['s4', JSON.stringify({ last_source_cycle_at: new Date(Date.now() + 60_000).toISOString() })]);
