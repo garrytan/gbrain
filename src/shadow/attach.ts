@@ -18,6 +18,10 @@ import { MirrorQueue } from './mirror.ts';
 import type { ShadowState } from './state.ts';
 import { ShadowSupervisor, type ShadowSupervisorOptions } from './supervisor.ts';
 import { wrapShadowEngine } from './wrapper.ts';
+import { WriterObserver, type WriterIdentity } from './writer-observations.ts';
+import { claimOwner } from '../core/persistence/claim-phase.ts';
+import { hostIdFor } from '../core/persistence/identity.ts';
+import { VERSION } from '../version.ts';
 
 export interface AttachShadowDeps {
   /** argv of the gbrain CLI to spawn; default the running gbrain, never a different one on PATH. */
@@ -39,6 +43,8 @@ export interface AttachedShadow<E extends BrainEngine> {
   /** Set when the brain is seeded and `follow` was left out. */
   follower?: ShadowFollower;
   reconciler?: Reconciler;
+  /** Notes this process's committed writes for swap eligibility (writer-observations.ts). */
+  observer: WriterObserver;
 }
 
 /** The child's argv for `dir`. */
@@ -65,7 +71,9 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   }) : undefined;
   const reconciler = reads ? new Reconciler({ dir, reads, rpc, follower }) : undefined;
   reconciler?.startNightly();
+  const observer = new WriterObserver({ primary: engine, dir, identity: () => writerIdentity(engine) });
   engine.registerBeforeDisconnect(async () => {
+    observer.stop();
     try {
       if (supervisor.active() && supervisor.childPid !== null) queue.flushStats();
       // Let the follower finish reading what was just committed; a slow read is shed rather than waited on.
@@ -78,7 +86,16 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
     }
   });
   const follow = follower ? { sink: follower } : deps.follow;
-  return { engine: wrapShadowEngine(engine, sink, { sampleRate: state.sample_rate, random: deps.random, follow }), queue, supervisor, follower, reconciler };
+  const onCommittedWrite = () => observer.note();
+  return { engine: wrapShadowEngine(engine, sink, { sampleRate: state.sample_rate, random: deps.random, follow, onCommittedWrite }), queue, supervisor, follower, reconciler, observer };
+}
+
+/** This process's writer identity: the engine's host id, the name its pools give their connections, its kind, version. */
+export function writerIdentity(engine: BrainEngine): WriterIdentity {
+  const owner = claimOwner();
+  // The same text db.ts gbrainApplicationName() gives the pools (pinned by a test), without loading the driver here.
+  const applicationName = `gbrain ${owner.kind}:${owner.pid}:${(owner.nonce ?? '').slice(0, 8)}`.slice(0, 63);
+  return { hostId: hostIdFor(engine), applicationName, processKind: owner.kind, gbrainVersion: VERSION };
 }
 
 /** The engine factory's entry point: the wrapped engine. */

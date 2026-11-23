@@ -52,7 +52,7 @@ export interface ShadowSummary {
 
 export interface ShadowFault {
   ts: string;
-  kind: 'child_exit' | 'child_hung' | 'spawn_failed' | 'mirroring_disabled' | 'privacy_pause';
+  kind: 'child_exit' | 'child_hung' | 'spawn_failed' | 'mirroring_disabled' | 'privacy_pause' | 'writer_observation_failed';
   detail: string;
 }
 

@@ -17,6 +17,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
 import { readFaults, readShadowSummary } from '../shadow/ledger.ts';
 import { buildFollowStatus, renderFollowStatus } from '../shadow/follow-status.ts';
+import { buildEligibilityStatus } from '../shadow/eligibility.ts';
 import { readSeedRecord, runSeed, SeedBudgetError, writeSeedRecord, type SeedRecord, type SeedTarget } from '../shadow/seed.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown, writeProvisionalReport } from '../shadow/report.ts';
 import {
@@ -55,8 +56,10 @@ Usage:
 
 Shadow mode is off by default. When on, a sample of reads this brain answers is sent, after the answer, to a
 supervised child process that runs the same read on the Rust engine and records match, diff or why it could not
-compare. The primary answer never waits for the child. It writes nothing to the brain database, its config or the
-brain repo; everything lives in <gbrain home>/shadow/<brain>/. stop --delete removes that directory.
+compare. The primary answer never waits for the child. Its only write to the brain database is one row per writing
+process in engine_writer_observations (host id, connection name, command kind, version, first and last write time), at
+most every 10 minutes, which the swap's eligibility check reads. It writes nothing to the brain config or the brain
+repo; everything else lives in <gbrain home>/shadow/<brain>/. stop --delete removes that directory.
 
 seed copies this brain into the Rust store once, in one read-only snapshot, before shadow mode compares answers.
 It writes nothing to the brain. A store is seeded once: to seed again, delete the shadow directory first.
@@ -122,8 +125,9 @@ export function shadowPlan(brain: string, primaryEngine: string, dir: string, o:
   const plan: ShadowPlan = {
     brain, primary_engine: primaryEngine, directory: dir, sample_rate: o.sampleRate, queue_bound: o.queueBound,
     mirrors: 'a sample of reads and searches this brain answers, after the answer; none inside a transaction',
-    writes: [`${dir}/state.json`, `${dir}/store (the Rust engine's own store)`, `${dir}/ledger, summaries, faults.jsonl, reports, child.log`],
-    never_writes: ['the brain database', 'the brain config table', 'the brain repo'],
+    writes: [`${dir}/state.json`, `${dir}/store (the Rust engine's own store)`, `${dir}/ledger, summaries, faults.jsonl, reports, child.log`,
+      'the brain database: one row per writing process in engine_writer_observations, at most every 10 minutes (swap eligibility)'],
+    never_writes: ['brain content (pages, chunks, facts, links)', 'the brain config table', 'the brain repo'],
   };
   const hash = createHash('sha256').update(JSON.stringify(plan)).digest('hex').slice(0, 16);
   return { plan, hash };
@@ -159,7 +163,7 @@ export async function runEngineShadow(args: string[], deps: EngineShadowDeps = {
     }
     const brain = resolveBrain(deps);
     if (sub === 'start') return await start(brain, parseStart(rest), deps, out, err, now);
-    if (sub === 'status') return status(brain, flags(rest, ['--json'], 'status').has('--json'), out);
+    if (sub === 'status') return await status(brain, flags(rest, ['--json'], 'status').has('--json'), out);
     if (sub === 'stop') return stop(brain, flags(rest, ['--delete'], 'stop').has('--delete'), out, now);
     if (sub === 'report') return report(brain, flags(rest, ['--json'], 'report').has('--json'), out, now);
     if (sub === 'seed') return await seed(brain, flags(rest, ['--json', '--reseed'], 'seed'), deps, out, err, now);
@@ -215,7 +219,7 @@ async function start(
   return 0;
 }
 
-function status(brain: { key: string; dir: string }, json: boolean, out: (l: string) => void): number {
+async function status(brain: { key: string; dir: string }, json: boolean, out: (l: string) => void): Promise<number> {
   const state = readShadowState(brain.dir);
   const summary = existsSync(brain.dir) ? readShadowSummary(brain.dir) : null;
   const faults = existsSync(brain.dir) ? readFaults(brain.dir, 5) : [];
@@ -229,6 +233,8 @@ function status(brain: { key: string; dir: string }, json: boolean, out: (l: str
       totals, by_op: summary?.by_op ?? {}, serving: summary?.primary ?? null, child_shed: summary?.child_shed ?? 0,
       children: summary?.children ?? 0, recent_faults: faults,
       ...buildFollowStatus(brain.dir, state),
+      // No engine: status never opens the database, so the writer fields stay out (the swap passes its primary).
+      ...(await buildEligibilityStatus({ dir: brain.dir, state })),
     }, null, 2));
     return 0;
   }
