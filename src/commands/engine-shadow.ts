@@ -154,8 +154,8 @@ export async function runEngineShadow(args: string[], deps: EngineShadowDeps = {
       const dir = rest[0];
       if (!dir) throw new UsageError('__child needs the shadow directory');
       const run = deps.runChild ?? (async (d: string) => {
-        const { runShadowChild } = await import('../shadow/child.ts');
-        await runShadowChild(d, { input: process.stdin, writeControl: (s) => { process.stdout.write(s); } });
+        const { runShadowChild, pipeControlWriter } = await import('../shadow/child.ts');
+        await runShadowChild(d, { input: process.stdin, writeControl: pipeControlWriter(process.stdout), exit: (code) => process.exit(code) });
         return 0;
       });
       return await run(dir);

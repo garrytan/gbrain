@@ -27,6 +27,8 @@ import { shadowStatePath } from './state.ts';
 export const SHADOW_CHILD_CALL_TIMEOUT_MS = 10_000;
 export const SHADOW_CHILD_QUEUE_BOUND = 1024;
 export const SHADOW_HEARTBEAT_MS = 5_000;
+/** After input ends the child drains, writes its evidence and exits; past this it flushes what it has and exits anyway (the parent's own kill timer dies with the parent). */
+export const SHADOW_CHILD_EXIT_DEADLINE_MS = 30_000;
 /** Timed-out calls that may still be running at once; past it new reads are shed and the heartbeat stops, so the supervisor restarts the child. */
 export const SHADOW_CHILD_STALL_LIMIT = 4;
 
@@ -41,6 +43,10 @@ export interface ShadowChildDeps {
   openEngine?: (addon: RustEngineAddonHandle, storePath: string) => ShadowEngine;
   timeoutMs?: number;
   heartbeatMs?: number;
+  /** Set by the process entry: called with 0 at the exit deadline. In-process callers leave it unset and get no deadline. */
+  exit?: (code: number) => void;
+  exitDeadlineMs?: number;
+  flushMs?: number;
   childId?: string;
   now?: () => number;
 }
@@ -66,6 +72,17 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<{ timedOut: tr
     promise.then((value) => { clearTimeout(timer); resolve({ timedOut: false, value }); },
       (error) => { clearTimeout(timer); reject(error); });
   });
+}
+
+/** The control writer for a child process's stdout. A short-lived parent (a CLI call, a cron job) closes its end before the first heartbeat; that must not kill the child before it writes evidence. */
+export function pipeControlWriter(out: NodeJS.WriteStream): (line: string) => void {
+  let closed = false;
+  // cli.ts exits on SIGPIPE and on an EPIPE from stdout (a pipeline's `| head`); this child has no pipeline, so it takes both over.
+  process.removeAllListeners('SIGPIPE');
+  process.on('SIGPIPE', () => {});
+  out.removeAllListeners('error');
+  out.on('error', () => { closed = true; }); // EPIPE: the parent is gone, so no more heartbeats
+  return (line) => { if (!closed) out.write(line); };
 }
 
 /** Runs the child loop until stdin closes. Resolves with the number of events handled. */
@@ -132,6 +149,10 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
       writeSummaryFile(shadowDir, summary);
     } catch { /* a full disk loses evidence, never the child */ }
   };
+
+  // Finished comparisons reach disk within a couple of seconds even when no more reads arrive (a kill loses at most that window).
+  const flusher = setInterval(() => { if (rows.length) flush(true); }, deps.flushMs ?? 2_000);
+  (flusher as { unref?: () => void }).unref?.();
 
   const record = (event: ReadEvent, c: Classification, rustMs: number | null, rustRows: number | null): void => {
     const ts = new Date(event.at || now()).toISOString();
@@ -200,8 +221,13 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     pending.push(event as ReadEvent);
     void drain();
   }
+  if (deps.exit) {
+    const timer = setTimeout(() => { flush(true); deps.exit!(0); }, deps.exitDeadlineMs ?? SHADOW_CHILD_EXIT_DEADLINE_MS);
+    (timer as { unref?: () => void }).unref?.();
+  }
   await drain();
   clearInterval(heartbeat);
+  clearInterval(flusher);
   flush(true);
   if (engine) { try { await engine.disconnect(); } catch { /* exiting anyway */ } }
   return handled;

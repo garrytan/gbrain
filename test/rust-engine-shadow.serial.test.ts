@@ -4,7 +4,8 @@
  * supervisor. Serial because it sets GBRAIN_HOME.
  */
 import { describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withEnv } from './helpers/with-env.ts';
@@ -17,6 +18,8 @@ import { rustEngineAddonCheck } from '../src/commands/doctor/checks/rust-engine-
 import { readShadowSummary } from '../src/shadow/ledger.ts';
 import { readShadowState, shadowBrainKey, shadowDirFor } from '../src/shadow/state.ts';
 import { ShadowSupervisor } from '../src/shadow/supervisor.ts';
+import { runShadowChild } from '../src/shadow/child.ts';
+import { Readable } from 'node:stream';
 import { encodeValue } from '../src/shadow/codec.ts';
 import type { EngineConfig } from '../src/core/types.ts';
 
@@ -227,4 +230,103 @@ describe('real child process', () => {
       expect(alive).toBe(false);
     });
   }, 120_000);
+});
+
+describe('a short-lived parent', () => {
+  const readLine = (op: string) => JSON.stringify({ t: 'read', id: 1, at: Date.now(), op, primary_ms: 1, args: encodeValue(['a']), result: encodeValue({ slug: 'a' }) }) + '\n';
+  const childArgv = (dir: string) => [join(REPO, 'src', 'cli.ts'), 'engine', 'shadow', '__child', dir];
+  const gone = async (pid: number, ms: number): Promise<boolean> => {
+    const until = Date.now() + ms;
+    while (Date.now() < until) {
+      try { process.kill(pid, 0); await new Promise((r) => setTimeout(r, 100)); } catch { return true; }
+    }
+    return false;
+  };
+  const ledgerRows = (dir: string): number => {
+    const file = join(dir, 'ledger', new Date().toISOString().slice(0, 10) + '.jsonl');
+    return existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter(Boolean).length : 0;
+  };
+
+  test('a CLI-shaped parent that queues reads and closes its end of the pipe still gets ledger rows, not a SIGPIPE exit', async () => {
+    await inHome(async (_home, config) => {
+      await startShadow(config);
+      const dir = shadowDirFor(shadowBrainKey(config)!);
+      const child = spawn(process.execPath, childArgv(dir), { stdio: ['pipe', 'pipe', 'ignore'] });
+      const exited = new Promise<{ code: number | null; signal: string | null }>((resolve) => child.once('exit', (code, signal) => resolve({ code, signal })));
+      child.stdin!.write(readLine('getPage') + readLine('getPage'));
+      child.stdout!.destroy(); // the parent's read end closes first, as when a CLI call ends
+      child.stdin!.end();
+      const result = await Promise.race([exited, new Promise<null>((r) => setTimeout(() => r(null), 60_000))]);
+      expect(result).not.toBeNull();
+      expect(result).toEqual({ code: 0, signal: null });
+      expect(ledgerRows(dir)).toBeGreaterThanOrEqual(1);
+    });
+  }, 120_000);
+
+  test('a child whose parent has exited still records its reads and exits', async () => {
+    await inHome(async (home, config) => {
+      await startShadow(config);
+      const dir = shadowDirFor(shadowBrainKey(config)!);
+      const script = join(home, 'parent.mjs');
+      writeFileSync(script, `import { spawn } from 'node:child_process';
+const c = spawn(process.argv[2], JSON.parse(process.argv[3]), { stdio: ['pipe', 'pipe', 'ignore'] });
+c.stdin.write(${JSON.stringify(readLine('getPage'))});
+console.log(c.pid);
+process.exit(0);
+`);
+      const parent = spawn(process.execPath, [script, process.execPath, JSON.stringify(childArgv(dir))], { stdio: ['ignore', 'pipe', 'inherit'] });
+      let printed = '';
+      parent.stdout!.on('data', (d) => { printed += d; });
+      await new Promise((r) => parent.once('exit', r));
+      const pid = Number(printed.trim());
+      expect(pid).toBeGreaterThan(0);
+      expect(await gone(pid, 60_000)).toBe(true);
+      expect(ledgerRows(dir)).toBeGreaterThanOrEqual(1);
+    });
+  }, 120_000);
+
+  test('a child stuck in a call after its input ends flushes what it has and exits at the deadline', async () => {
+    await inHome(async (_home, config) => {
+      await startShadow(config);
+      const dir = shadowDirFor(shadowBrainKey(config)!);
+      const never = new Promise<never>(() => {});
+      let exitCode: number | null = null;
+      const input = Readable.from([readLine('getPage'), readLine('getPage')]);
+      const done = runShadowChild(dir, {
+        input,
+        writeControl: () => {},
+        loadAddon: async () => ({ ok: true as const, addon: {} as never }),
+        openEngine: () => ({ connect: async () => {}, disconnect: async () => {}, getPage: () => never }) as never,
+        timeoutMs: 60_000,
+        exitDeadlineMs: 300,
+        exit: (code) => { exitCode = code; },
+      });
+      const until = Date.now() + 10_000;
+      while (exitCode === null && Date.now() < until) await new Promise((r) => setTimeout(r, 25));
+      expect(exitCode).toBe(0);
+      void done;
+    });
+  }, 60_000);
+
+  test('a completed comparison reaches the ledger on a timer, without waiting for more reads or the end of input', async () => {
+    await inHome(async (_home, config) => {
+      await startShadow(config);
+      const dir = shadowDirFor(shadowBrainKey(config)!);
+      const input = new Readable({ read() {} });
+      input.push(readLine('getPage'));
+      const done = runShadowChild(dir, {
+        input,
+        writeControl: () => {},
+        loadAddon: async () => ({ ok: true as const, addon: {} as never }),
+        openEngine: () => ({ connect: async () => {}, disconnect: async () => {}, getPage: async () => ({ slug: 'a' }) }) as never,
+        flushMs: 100,
+      });
+      const until = Date.now() + 10_000;
+      while (ledgerRows(dir) === 0 && Date.now() < until) await new Promise((r) => setTimeout(r, 25));
+      const flushedWhileOpen = ledgerRows(dir);
+      input.push(null);
+      await done;
+      expect(flushedWhileOpen).toBe(1);
+    });
+  }, 60_000);
 });
