@@ -2,6 +2,7 @@
  * google-clients — client-behavior tests against a scripted fetchImpl.
  *
  * Covers: 401 → single token refresh + retry, 429 Retry-After honoring,
+ * 5xx / socket-reset transient retries,
  * 403 accessNotConfigured → CredentialError 'api_not_enabled' with the
  * project deep link, 404/410 → GoogleCursorExpiredError, drainPages
  * pagination, and the Gmail/Calendar/People client normalizations
@@ -28,8 +29,10 @@ import {
   GmailClient,
   GoogleApiClient,
   GoogleCursorExpiredError,
+  isTransientNetworkError,
   PeopleClient,
   rateLimitBackoffMs,
+  transientBackoffMs,
   type FetchImpl,
 } from '../src/core/google/google-clients.ts';
 
@@ -538,6 +541,148 @@ describe('GoogleApiClient retry exhaustion + 403 mapping', () => {
 });
 
 // ── GmailClient ──────────────────────────────────────────────────────────────
+
+describe('GoogleApiClient transient 5xx / network retries', () => {
+  const URL_ = 'https://people.googleapis.com/v1/people/me/connections';
+
+  test('503 with Retry-After: 0 then success: retried once, logged as transient, no token refresh', async () => {
+    let apiCalls = 0;
+    const h = makeHarness(() => {
+      apiCalls++;
+      if (apiCalls === 1) return json({ error: { code: 503, message: 'The service is currently unavailable.' } }, 503, { 'retry-after': '0' });
+      return json({ ok: true });
+    });
+    const logs: string[] = [];
+    const client = new GoogleApiClient(h.tokens, h.fetchImpl, (m) => logs.push(m));
+    const body = await client.fetchJSON<{ ok: boolean }>(URL_, 'people');
+    expect(body.ok).toBe(true);
+    expect(apiCalls).toBe(2);
+    expect(h.tokenPosts()).toBe(0);
+    expect(logs.some((l) => l.startsWith('[google] HTTP 503 on people; retrying in 0s (transient, attempt 1/3)'))).toBe(true);
+  });
+
+  test("always-503 exhausts the default transient budget (3 retries, 4 calls) and keeps the 'upstream' error", async () => {
+    let apiCalls = 0;
+    const h = makeHarness(() => {
+      apiCalls++;
+      return json({ error: { code: 503, message: 'The service is currently unavailable.' } }, 503, { 'retry-after': '0' });
+    });
+    const client = new GoogleApiClient(h.tokens, h.fetchImpl);
+    let thrown: unknown;
+    try {
+      await client.fetchJSON(URL_, 'people');
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(CredentialError);
+    expect((thrown as CredentialError).code).toBe('upstream');
+    expect((thrown as Error).message).toContain('HTTP 503 on people (The service is currently unavailable.)');
+    expect(apiCalls).toBe(4);
+  });
+
+  test('500 with no Retry-After backs off (jittered, attempt 0 in [0.5s, 1s]) and succeeds on the retry', async () => {
+    let apiCalls = 0;
+    const h = makeHarness(() => {
+      apiCalls++;
+      if (apiCalls === 1) return json({ error: { code: 500, message: 'Internal error encountered.' } }, 500);
+      return json({ ok: true });
+    });
+    const client = new GoogleApiClient(h.tokens, h.fetchImpl);
+    const t0 = Date.now();
+    const body = await client.fetchJSON<{ ok: boolean }>('https://gmail.googleapis.com/gmail/v1/fake', 'gmail', { transientRetries: 1 });
+    expect(body.ok).toBe(true);
+    expect(apiCalls).toBe(2);
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(450);
+  });
+
+  test('transientRetries: 0 restores fail-fast on a 5xx', async () => {
+    let apiCalls = 0;
+    const h = makeHarness(() => {
+      apiCalls++;
+      return json({ error: { message: 'bad gateway' } }, 502);
+    });
+    const client = new GoogleApiClient(h.tokens, h.fetchImpl);
+    await expect(client.fetchJSON(URL_, 'people', { transientRetries: 0 })).rejects.toBeInstanceOf(CredentialError);
+    expect(apiCalls).toBe(1);
+  });
+
+  test('a socket reset thrown by fetch is retried, then succeeds', async () => {
+    let apiCalls = 0;
+    const h = makeHarness(() => {
+      apiCalls++;
+      if (apiCalls === 1) {
+        throw Object.assign(new Error('The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()'), { code: 'ECONNRESET' });
+      }
+      return json({ ok: true });
+    });
+    const logs: string[] = [];
+    const client = new GoogleApiClient(h.tokens, h.fetchImpl, (m) => logs.push(m));
+    const body = await client.fetchJSON<{ ok: boolean }>(URL_, 'people', { transientRetries: 1 });
+    expect(body.ok).toBe(true);
+    expect(apiCalls).toBe(2);
+    expect(logs.some((l) => l.includes('(transient, attempt 1/1)'))).toBe(true);
+  });
+
+  test('a socket reset that persists past the budget rethrows the original error', async () => {
+    let apiCalls = 0;
+    const reset = Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+    const h = makeHarness(() => {
+      apiCalls++;
+      throw reset;
+    });
+    const client = new GoogleApiClient(h.tokens, h.fetchImpl);
+    await expect(client.fetchJSON(URL_, 'people', { transientRetries: 1 })).rejects.toBe(reset);
+    expect(apiCalls).toBe(2);
+  });
+
+  test('a non-network fetch error and an abort are NOT retried', async () => {
+    for (const err of [new TypeError('Invalid URL'), Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' })]) {
+      let apiCalls = 0;
+      const h = makeHarness(() => {
+        apiCalls++;
+        throw err;
+      });
+      const client = new GoogleApiClient(h.tokens, h.fetchImpl);
+      await expect(client.fetchJSON(URL_, 'people')).rejects.toBe(err);
+      expect(apiCalls).toBe(1);
+    }
+  });
+
+  test('a 400 is still not retried', async () => {
+    let apiCalls = 0;
+    const h = makeHarness(() => {
+      apiCalls++;
+      return json({ error: { message: 'Invalid argument' } }, 400);
+    });
+    const client = new GoogleApiClient(h.tokens, h.fetchImpl);
+    await expect(client.fetchJSON('https://gmail.googleapis.com/gmail/v1/fake', 'gmail')).rejects.toBeInstanceOf(CredentialError);
+    expect(apiCalls).toBe(1);
+  });
+});
+
+describe('isTransientNetworkError / transientBackoffMs (pure)', () => {
+  test('classifies codes through the cause chain and by message; aborts and plain errors are not transient', () => {
+    expect(isTransientNetworkError(Object.assign(new Error('x'), { code: 'ECONNRESET' }))).toBe(true);
+    expect(isTransientNetworkError(new TypeError('fetch failed', { cause: Object.assign(new Error('y'), { code: 'UND_ERR_SOCKET' }) }))).toBe(true);
+    expect(isTransientNetworkError(new Error('ECONNRESET: The socket connection was closed unexpectedly'))).toBe(true);
+    expect(isTransientNetworkError(new Error('getaddrinfo EAI_AGAIN people.googleapis.com'))).toBe(true);
+    expect(isTransientNetworkError(Object.assign(new Error('timeout'), { name: 'TimeoutError' }))).toBe(true);
+    expect(isTransientNetworkError(Object.assign(new Error('aborted'), { name: 'AbortError' }))).toBe(false);
+    expect(isTransientNetworkError(new TypeError('Invalid URL'))).toBe(false);
+    expect(isTransientNetworkError(new Error('HTTP 400'))).toBe(false);
+  });
+
+  test('backoff stays within [half, base] and never exceeds the 16s cap', () => {
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const base = Math.min(16_000, 2 ** attempt * 1_000);
+      for (let i = 0; i < 20; i++) {
+        const ms = transientBackoffMs(attempt);
+        expect(ms).toBeGreaterThanOrEqual(base / 2);
+        expect(ms).toBeLessThanOrEqual(base);
+      }
+    }
+  });
+});
 
 describe('GmailClient', () => {
   test('listMessageIds passes q through and drains pages', async () => {
