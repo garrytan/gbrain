@@ -12,7 +12,7 @@ Every site the silent-read-catches guard lists under rule `capability_refusal_sw
 ## How it was made
 
 - Worktree `/var/tmp/rst`, branch `vorflux/refusal-swallow-triage`, at rust-engine/main `b7b18e5ab3fb4b55ab00a28a4d75690d0324b178`.
-- Guard: `scripts/check-silent-read-catches.ts`, `scripts/silent-read-rules.ts`, `scripts/capability-refusal-rule.ts` and `scripts/lib/count-ratchet.ts` copied out of `git show 83eab8df37:<path>` (origin/master `83eab8df37dfe0175274e28c1082d504a942d836`) into `/var/tmp/rst-guard/`, `node_modules` symlinked to `/var/tmp/rmt/node_modules`.
+- Guard: `check-silent-read-catches.ts`, `silent-read-rules.ts`, `capability-refusal-rule.ts` and `lib/count-ratchet.ts` from the scripts directory at master, copied out of `git show 83eab8df37:scripts/<file>` (origin/master `83eab8df37dfe0175274e28c1082d504a942d836`) into `/var/tmp/rst-guard/`, `node_modules` symlinked to `/var/tmp/rmt/node_modules`.
 - Run: `GBRAIN_GUARD_ROOT=/var/tmp/rst bun /var/tmp/rst-guard/check-silent-read-catches.ts --list`. It prints 2096 rows (351 `capability_refusal_swallowed`, 1294 `catch_empty`, 451 `promise_catch_empty`); the 351 rows with the capability rule are the triage set. `file:line` is the catch line.
 - Classification: each site was read in context with a small TypeScript helper that prints the guarded raw-SQL call, the handler body, any Rust gate earlier in the enclosing function (`answersFromCatalog`, `servesRawSql`, `engine.kind`, managed checks) and whether every raw call sits inside a nested catch. Helper callees (`checkError`, `capabilityUnknownCheck`, `schemaBehindGuests`, `recoverOrThrow`, `refusal()`) were read where a handler leaned on them.
 
