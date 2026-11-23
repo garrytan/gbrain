@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS engine_writer_coverage_gaps (
 );
 CREATE INDEX IF NOT EXISTS idx_engine_writer_coverage_gaps_time ON engine_writer_coverage_gaps (created_at);
 CREATE OR REPLACE FUNCTION gbrain_note_writer() RETURNS trigger
-LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $fn$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
 DECLARE
   schema_name text := TG_TABLE_SCHEMA;
   app text := coalesce(current_setting('application_name', true), '');
