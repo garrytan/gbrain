@@ -31,7 +31,7 @@ export async function shadowStatusDocument(brain: { key: string; dir: string }, 
     totals, by_op: summary?.by_op ?? {}, serving: summary?.primary ?? null, child_shed: summary?.child_shed ?? 0,
     children: summary?.children ?? 0, recent_faults: faults,
     ...buildFollowStatus(brain.dir, state, now),
-    ...(await buildEligibilityStatus({ dir: brain.dir, state, engine, now })),
+    ...(await buildEligibilityStatus({ dir: brain.dir, state, engine, now, stateRequired: true })),
   };
 }
 

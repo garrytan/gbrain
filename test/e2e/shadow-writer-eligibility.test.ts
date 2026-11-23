@@ -181,4 +181,52 @@ d('writer observations on Postgres', () => {
     expect(withField).toBeGreaterThanOrEqual(1);
     expect(without).toBeGreaterThanOrEqual(withField + 1);
   }, 60_000);
+
+  test('a restart killed after the hooks changed still counts: the marker is written before any hook is touched', async () => {
+    const { home, out, make, dirOf, unknown } = coverageHarness();
+    const other = postgres((engine as unknown as { connectedDatabaseUrl: string }).connectedDatabaseUrl, { max: 1, onnotice: () => undefined, prepare: false, connection: { application_name: 'psql' } });
+    try {
+      await withEnv({ GBRAIN_HOME: home }, async () => {
+        expect(await runEngineShadow(['start', '--plan'], make())).toBe(0);
+        const planHash = out.find(l => l.startsWith('plan_hash: '))!.slice('plan_hash: '.length);
+        expect(await runEngineShadow(['start', '--yes', '--expect', planHash], make())).toBe(0);
+        expect(await unknown()).toBe(0);
+        // A hook is lost while shadow mode is on, and a writer nobody claims commits through that table.
+        await engine.executeRaw('DROP TRIGGER gbrain_writer_note ON config');
+        await other`INSERT INTO config (key, value) VALUES ('hooks-killed-restart', '1') ON CONFLICT (key) DO NOTHING`;
+        // The restart repairs the hook and is killed before it publishes its state.
+        await expect(runEngineShadow(['start', '--yes', '--expect', planHash], { ...make(), afterHooks: () => { throw new Error('killed'); } })).rejects.toThrow('killed');
+        expect((await listHookedTables(engine)).length).toBeGreaterThan(0);
+        expect(readShadowState(dirOf())?.writer_coverage_restarted_at).toBeDefined();
+        expect(await unknown()).toBeGreaterThanOrEqual(1);
+      });
+    } finally { await other.end({ timeout: 5 }).catch(() => undefined); }
+  }, 90_000);
+
+  test('the trigger never waits on an evidence lock, even for a writer with a 10 ms statement timeout: the write commits and a gap row records it', async () => {
+    const dir = tempDir();
+    const { installWriterHooks } = await import('../../src/shadow/writer-hooks.ts');
+    await installWriterHooks(engine, dir);
+    const url = (engine as unknown as { connectedDatabaseUrl: string }).connectedDatabaseUrl;
+    const locker = postgres(url, { max: 1, onnotice: () => undefined, prepare: false });
+    const writer = postgres(url, { max: 1, onnotice: () => undefined, prepare: false, connection: { application_name: 'gbrain cli:930:abcdef30', statement_timeout: 10 } });
+    try {
+      let release!: () => void;
+      const held = new Promise<void>((r) => { release = r; });
+      let granted!: () => void;
+      const ready = new Promise<void>((r) => { granted = r; });
+      const locked = locker.begin(async (t) => { await t`LOCK TABLE engine_writer_sessions IN ACCESS EXCLUSIVE MODE`; granted(); await held; });
+      await ready;
+      const started = Date.now();
+      await writer`INSERT INTO config (key, value) VALUES ('hooks-short-deadline', '1') ON CONFLICT (key) DO NOTHING`;
+      expect(Date.now() - started).toBeLessThan(1_000);
+      expect((await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM config WHERE key = 'hooks-short-deadline'`))[0]!.n).toBe(1);
+      release();
+      await locked.catch(() => undefined);
+      expect((await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM engine_writer_coverage_gaps`))[0]!.n).toBeGreaterThanOrEqual(1);
+    } finally {
+      await writer.end({ timeout: 5 }).catch(() => undefined);
+      await locker.end({ timeout: 5 }).catch(() => undefined);
+    }
+  }, 60_000);
 });

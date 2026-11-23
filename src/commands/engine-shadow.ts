@@ -33,6 +33,8 @@ export interface EngineShadowDeps {
   loadAddon?: () => Promise<RustEngineAddonLoad>;
   out?: (line: string) => void;
   err?: (line: string) => void;
+  /** Test seam: runs after the writer hooks are installed and before the new state is written. */
+  afterHooks?: () => void;
   now?: () => Date;
   /** The `__child` loop; default runShadowChild on stdin/stdout. */
   runChild?: (dir: string) => Promise<number>;
@@ -232,6 +234,14 @@ async function start(
   const hooksWereOff = legacySame && prior!.enabled === false;
   // Continuing an epoch is a coverage break criterion 11 cannot see inside (hooks were replaced or off), so it fails closed for the window.
   const continuing = sameEpoch || legacySame;
+  if (continuing && prior) {
+    // The restart marker goes into the state file BEFORE any hook is touched, so a start that dies after the hooks change cannot
+    // leave a healthy-looking catalog with no trace. If it cannot be written, nothing was changed and the start stops.
+    try { writeShadowState(brain.dir, { ...prior, writer_coverage_restarted_at: now().toISOString() }); } catch (e) {
+      err(`engine shadow: state_unwritable (${typeof (e as { code?: unknown })?.code === 'string' ? (e as { code: string }).code : 'unknown'}): could not record the restart, so no hook was touched.`);
+      return 3;
+    }
+  }
   if (primaryTakesWriterHooks(brain.engine)) {
     let primary: BrainEngine | null = null;
     try {
@@ -247,6 +257,7 @@ async function start(
       await primary?.disconnect().catch(() => undefined);
     }
   }
+  deps.afterHooks?.(); // test seam: a throw here stands for a start killed after the hooks changed and before the state is published
   const state: ShadowState = {
     version: SHADOW_STATE_VERSION, enabled: true, started_at: now().toISOString(), sample_rate: o.sampleRate,
     queue_bound: o.queueBound, plan_hash: hash, brain: brain.key, primary_engine: brain.engine,

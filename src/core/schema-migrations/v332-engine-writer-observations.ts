@@ -12,7 +12,7 @@ import type { Migration } from './types.ts';
 // calls gbrain_note_writer(): it records the writing connection (application_name, client address, backend pid) in
 // engine_writer_sessions, so a writer that is not a wrapped gbrain process (another machine, psql, an old binary)
 // still leaves a row the swap can count. The function never fails the writer and never waits on the evidence tables:
-// a function-scoped lock_timeout of 50 ms turns a lock wait into 55P03, which it catches like any error. It skips a
+// it takes each evidence table's lock with NOWAIT, so a lock someone else holds is 55P03 at once, which it catches like any error, and a function-scoped lock_timeout of 50 ms bounds any other wait (a conflicting uncommitted row). It does not catch query_canceled, so a user's own cancel still cancels. It skips a
 // row another transaction holds (and records that skip as a gap, because the write went unrecorded), refreshes at most every 10 minutes per connection, and turns any error into a row in
 // engine_writer_coverage_gaps (which has no sequence, so an INSERT alone records a gap). It stamps with
 // clock_timestamp(), not now(): now() is the start of the writer's transaction, which can lie before the shadow
@@ -61,6 +61,9 @@ DECLARE
   touched bigint;
 BEGIN
   BEGIN
+    -- Never wait for an evidence table: take its lock without waiting first, so a lock held by someone else (55P03) becomes a gap
+    -- at once, before any statement could queue behind it and run into a caller's own statement timeout.
+    EXECUTE format('LOCK TABLE %I.engine_writer_sessions IN ROW EXCLUSIVE MODE NOWAIT', schema_name);
     EXECUTE format('SELECT last_seen FROM %I.engine_writer_sessions WHERE application_name = $1 AND client_addr = $2 AND backend_pid = $3', schema_name)
       INTO seen USING app, addr, pg_backend_pid();
     IF seen IS NOT NULL AND seen > clock_timestamp() - interval '600 seconds' THEN RETURN NULL; END IF;
@@ -76,6 +79,7 @@ BEGIN
     END IF;
   EXCEPTION WHEN OTHERS THEN
     BEGIN
+      EXECUTE format('LOCK TABLE %I.engine_writer_coverage_gaps IN ROW EXCLUSIVE MODE NOWAIT', schema_name);
       EXECUTE format('INSERT INTO %I.engine_writer_coverage_gaps (created_at, code, backend_pid) VALUES (clock_timestamp(), $1, $2)', schema_name) USING SQLSTATE, pg_backend_pid();
     EXCEPTION WHEN OTHERS THEN
       RAISE WARNING 'gbrain_note_writer: could not record a writer or a gap (%)', SQLSTATE;

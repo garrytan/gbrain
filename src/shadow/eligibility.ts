@@ -52,6 +52,8 @@ export interface EligibilityInput {
   source?: WriterCoverageSource;
   brainId?: () => string;
   addonTarget?: () => string | null;
+  /** The status document passes true: with an engine in hand, a missing or unreadable state file counts as an unknown path. */
+  stateRequired?: boolean;
 }
 
 /** The window start: the later of the shadow start and now minus 7 days, minus the refresh slack. */
@@ -70,7 +72,7 @@ export function eligibilityWindowStart(state: ShadowState | null, now: Date): Da
  */
 export function coverageBreaks(state: ShadowState | null, since: Date): number {
   if (!state) return 0;
-  let n = state.enabled === false ? 1 : 0;
+  let n = state.enabled === true ? 0 : 1; // off, or not provably on (a missing or mistyped field)
   for (const t of [state.writer_coverage_restarted_at, state.writer_coverage_stopped_at]) {
     if (t === undefined) continue;
     const ms = Date.parse(t);
@@ -104,7 +106,9 @@ export async function buildEligibilityStatus(input: EligibilityInput): Promise<E
   // unreadable one) or names another kind than the engine in hand is not proof of anything, so it counts as an unknown path.
   const hooksExpected = input.engine.capabilities?.has('postgres_admin') === true; // the server database: hooks and role rights exist only there
   const stateKind = input.state?.primary_engine as unknown;
-  const stateDisagrees = input.state ? (typeof stateKind !== 'string' || primaryTakesWriterHooks(stateKind) !== hooksExpected) : false;
+  const stateDisagrees = input.state ? !(typeof stateKind === 'string' && (stateKind === 'pglite' || stateKind === 'postgres') && stateKind === input.engine.kind) : false;
+  // No readable state is no proof of an enabled shadow: the status document asks for one, and a missing one counts.
+  const stateMissing = input.stateRequired === true && !input.state;
   let ev;
   try {
     ev = await readWriterEvidence(input.engine, since, hooksExpected, WRITER_HOOK_TRIGGER, WRITER_EVIDENCE_TABLES);
@@ -112,6 +116,6 @@ export async function buildEligibilityStatus(input: EligibilityInput): Promise<E
     return { eligibility: fields, eligibility_evidence: { state: 'read_failed', code: errorCode(error) } };
   }
   const source = input.source ?? planAsWrittenSource(input.dir);
-  const unknown = ev.unresolved + ev.gaps + ev.unhooked + ev.uncovered_roles + source.unknownPaths(since) + coverageBreaks(input.state, since) + (stateDisagrees ? 1 : 0);
+  const unknown = ev.unresolved + ev.gaps + ev.unhooked + ev.uncovered_roles + source.unknownPaths(since) + coverageBreaks(input.state, since) + (stateDisagrees ? 1 : 0) + (stateMissing ? 1 : 0);
   return { eligibility: { writer_hosts_7d: ev.hosts, unknown_writer_paths: unknown, ...fields } };
 }

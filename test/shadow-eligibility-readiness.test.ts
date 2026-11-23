@@ -181,6 +181,43 @@ describe('criterion 11 does not trust a state file that disagrees with the open 
   });
 });
 
+describe('criterion 11 needs a state it can prove', () => {
+  const base = { version: SHADOW_STATE_VERSION, enabled: true, started_at: new Date(Date.now() - 2 * 86_400_000).toISOString(), sample_rate: 1, queue_bound: 8, plan_hash: 'h', brain: 'b' };
+  const read = async (state: unknown, stateRequired = false) => {
+    const out = await buildEligibilityStatus({ dir, state: state as ShadowState | null, stateRequired, engine: primary, source: { name: 'test', unknownPaths: () => 0 }, brainId: () => 'host', addonTarget: () => 'linux-x64-glibc' });
+    const verdict = evaluateReadiness({ eligibility: out.eligibility } as ShadowStatus);
+    return { out, row: verdict.criteria.find(c => c.n === 11)! };
+  };
+
+  test('a primary_engine that is not exactly the open engine\'s kind counts, whatever the hook requirement says', async () => {
+    await observe('11111111-1111-4111-8111-111111111111', 'gbrain cli:1:aaaaaaaa');
+    for (const bad of ['rust', '', 'postgre', 'PGLITE', ' pglite']) {
+      const { out, row } = await read({ ...base, primary_engine: bad });
+      expect([bad, out.eligibility.unknown_writer_paths]).toEqual([bad, 1]);
+      expect(row.state).toBe('fail');
+    }
+  });
+
+  test('a state that is not provably enabled counts: enabled missing, mistyped or false', async () => {
+    await observe('11111111-1111-4111-8111-111111111111', 'gbrain cli:1:aaaaaaaa');
+    for (const enabled of [undefined, 'true', 1, null, false]) {
+      const state = { ...base, primary_engine: 'pglite', ...(enabled === undefined ? {} : { enabled }) };
+      if (enabled === undefined) delete (state as { enabled?: unknown }).enabled;
+      const { out, row } = await read(state);
+      expect([String(enabled), out.eligibility.unknown_writer_paths]).toEqual([String(enabled), 1]);
+      expect(row.state).toBe('fail');
+    }
+  });
+
+  test('the status document asks for a state: with an engine in hand and no readable state it counts, never a clean pass', async () => {
+    await observe('11111111-1111-4111-8111-111111111111', 'gbrain cli:1:aaaaaaaa');
+    const { out, row } = await read(null, true);
+    expect(out.eligibility.unknown_writer_paths).toBe(1);
+    expect(row.state).toBe('fail');
+    expect((await read(null, false)).out.eligibility.unknown_writer_paths).toBe(0);
+  });
+});
+
 describe('the status document the swap reads', () => {
   test('with the primary passed in it carries the writer fields; without it they are absent', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-elig-doc-'));

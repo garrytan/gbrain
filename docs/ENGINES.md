@@ -1908,8 +1908,9 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   brain table, and `stop` removes them. Each trigger records the writing connection (its `application_name`, client
   address and backend pid) in `engine_writer_sessions`, at most every 10 minutes per connection, so a writer that is
   not a gbrain process on the shadow machine (another machine, `psql`, an older gbrain) still leaves a row. A trigger
-  never fails the write and never waits on the evidence tables: its own `lock_timeout` of 50 ms (set on the function,
-  so the writer's settings are untouched afterwards) turns a lock wait into an error it catches, it skips a row
+  never fails the write and never waits on the evidence tables: it takes each table's lock with `NOWAIT`, so a lock someone else
+  holds is an error it catches at once, and its own `lock_timeout` of 50 ms (set on the function, so the writer's settings are
+  untouched afterwards) bounds any other wait. It does not catch a cancelled query, so a user's own cancel still cancels, it skips a row
   another transaction holds (that skip is recorded as a gap, since the write went unrecorded), and any error becomes a row in `engine_writer_coverage_gaps` (that table has no
   sequence, so an INSERT alone records a gap). It stamps the time it ran, not the start of the writer's transaction.
   If both evidence tables are unusable at once, the trigger can only warn; a table that is missing or locked then
@@ -1950,7 +1951,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   being off, a `stop`, and a `start` that continues an existing epoch each count as one unknown writer path (recorded in
   `state.json` as `writer_coverage_stopped_at` and `writer_coverage_restarted_at`, so a failed gap insert cannot hide
   them) while they are inside the 7-day window, and for as long as shadow mode stays off; the swap is refused with
-  `writer_coverage_unknown` until the window has passed. The open engine decides whether the hooks must exist: a state file that names no primary engine, or another kind than the engine in hand, counts as one more unknown path. Known limit: criterion 11 reads role privileges as they are now, so a privilege repair inside the window can hide an earlier unrecorded write (follow-up: a durable coverage-break record across role and ACL changes). A write that only takes a lock,
+  `writer_coverage_unknown` until the window has passed. The open engine decides whether the hooks must exist: a state file that names no primary engine, any value that is not exactly the open engine's kind, or a missing or not-enabled state, counts as one more unknown path (the swap's status document also counts a missing or unreadable state file). Known limit: criterion 11 reads role privileges as they are now, so a privilege repair inside the window can hide an earlier unrecorded write (follow-up: a durable coverage-break record across role and ACL changes). A write that only takes a lock,
   a log or a cache row counts as a write for the note, though the follower does not copy it. The plan's idea of
   counting how often an enabled process held no attached engine is not built: it cannot be measured from the shadow
   machine, and the database hooks replace it. Any
