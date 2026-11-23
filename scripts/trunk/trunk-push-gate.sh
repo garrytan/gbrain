@@ -234,7 +234,7 @@ s_addon_serial() {
 step addon-serial 1 0 s_addon_serial
 
 # ---- 3c the rest of the rust-engine.yml addon job (see header): CLI parity, withdrawn-lead with its receipt, the receipt check
-ADDON_JOB_FILES=(test/rust-cli-parity.serial.test.ts test/rust-engine-withdrawn-lead.test.ts scripts/run-with-receipt.sh scripts/require-executed-tests.ts)
+ADDON_JOB_FILES=(test/rust-cli-parity.serial.test.ts test/token-member-cli-parity.serial.test.ts test/rust-mcp-receipts.serial.test.ts test/rust-engine-withdrawn-lead.test.ts scripts/run-with-receipt.sh scripts/require-executed-tests.ts)
 ADDON_JOB_VARS=(GBRAIN_TEST_RUST_ADDON_REQUIRED GBRAIN_TEST_RUST_ARM GBRAIN_TEST_REQUIRE_RUST_ADDON GBRAIN_TEST_RECEIPT_DIR GBRAIN_RUST_ENGINE_ADDON)
 addon_job_drift() {   # fail when the workflow's addon job names a file or GBRAIN_ variable this script does not run or set
   local wf=.github/workflows/rust-engine.yml job known tok bad=0
@@ -267,6 +267,18 @@ s_addon_job() {
   cat "$out"
   [ "$rc" -eq 0 ] || { echo "PARITY_FAIL test/rust-cli-parity.serial.test.ts"; return 1; }
   if grep -Eq '^ *[1-9][0-9]* skip$' "$out" || ! grep -Eq '^ *[1-9][0-9]* pass$' "$out"; then echo "PARITY_FAIL test/rust-cli-parity.serial.test.ts skipped or ran no test with the addon required"; return 1; fi
+  # The other addon-required serial files the workflow's addon job runs (a file the checkout lacks is skipped: older bases).
+  local f t
+  for f in test/token-member-cli-parity.serial.test.ts:60000 test/rust-mcp-receipts.serial.test.ts:150000; do
+    t=${f#*:}; f=${f%%:*}
+    [ -f "$f" ] || continue
+    echo "== $f"
+    out="$G/addon-job-$(basename "$f" .ts).out"
+    F env -u DATABASE_URL -u GBRAIN_TEST_ALLOW_DATABASE_URL -u GBRAIN_TEST_RUST_ARM GBRAIN_TEST_RUST_ADDON_REQUIRED=1 bun test --timeout="$t" "$f" > "$out" 2>&1; rc=$?
+    cat "$out"
+    [ "$rc" -eq 0 ] || { echo "PARITY_FAIL $f"; return 1; }
+    if grep -Eq '^ *[1-9][0-9]* skip$' "$out" || ! grep -Eq '^ *[1-9][0-9]* pass$' "$out"; then echo "PARITY_FAIL $f skipped or ran no test with the addon required"; return 1; fi
+  done
   echo "== test/rust-engine-withdrawn-lead.test.ts (with a receipt)"
   F env -u DATABASE_URL -u GBRAIN_TEST_ALLOW_DATABASE_URL -u GBRAIN_TEST_RUST_ARM GBRAIN_TEST_REQUIRE_RUST_ADDON=1 GBRAIN_TEST_RECEIPT_DIR="$dir" bash scripts/run-with-receipt.sh rust-store withdrawn-lead -- bun test --timeout=60000 test/rust-engine-withdrawn-lead.test.ts || { echo "PARITY_FAIL test/rust-engine-withdrawn-lead.test.ts"; return 1; }
   echo "== scripts/require-executed-tests.ts (the withdrawn-lead lane ran, nothing skipped)"
