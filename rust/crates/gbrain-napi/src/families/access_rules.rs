@@ -289,4 +289,53 @@ impl Brain {
             s.list_open_twin_rows(&pages, &outside, honor_aliases, listed as usize)
         })
     }
+
+    /// `readUnfinishedAccessMigration(sourceId)`: `{ id, phase, direction, receipts }` or null.
+    #[napi]
+    pub fn read_unfinished_access_migration<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_unfinished_access_migration(&source_id))
+    }
+
+    /// `insertAccessMigration(id, sourceId, direction)`.
+    #[napi]
+    pub fn insert_access_migration<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+        source_id: String,
+        direction: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.insert_access_migration(&id, &source_id, &direction)
+        })
+    }
+
+    /// `recordAccessMigrationPhase(id, phase, receipts)`.
+    #[napi]
+    pub fn record_access_migration_phase<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+        phase: String,
+        receipts: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.record_access_migration_phase(&id, &phase, &receipts)
+        })
+    }
+
+    /// `switchAccessMigration(id, receipts)`.
+    #[napi]
+    pub fn switch_access_migration<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+        receipts: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.switch_access_migration(&id, &receipts))
+    }
 }

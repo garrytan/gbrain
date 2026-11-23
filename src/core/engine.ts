@@ -16,6 +16,7 @@ import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRo
 import type { AccessCredentialLookup, AccessCredentialRow, AccessGroupRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AppliedPolicyRevision, AudiencePrincipalRows, MayActForVia, FolderAccessRows, PageNamingReaderRow } from './engine-sql/access-control.ts';
 import type * as AccessMembersSql from './engine-sql/access-members.ts';
 import type * as AccessPolicySql from './engine-sql/access-policy.ts';
+import type { AccessMigrationRow } from './engine-sql/access-policy-migrations.ts';
 import type * as AccessCredentialsSql from './engine-sql/access-credentials.ts';
 import type { LiveAccessTokenRow, MemberKeyReadingRow, OpenPageCount, OpenPageExclusion, PeopleFolderCount, WhoCanReadPageRow } from './engine-sql/access-setup.ts';
 import type { OwnerOnlyForm } from './access/owner-only.ts';
@@ -4527,6 +4528,11 @@ export interface BrainEngine {
   finishAccessRestamp(sourceId: string): Promise<number>;
   insertAccessPolicyRevision(row: AccessPolicySql.AccessRevisionInsert): Promise<void>;
   markAccessRevisionsApplied(sourceId: string, upTo?: number): Promise<void>;
+  /** The policy-store migration journal (access/policy-migrate.ts; engine-sql/access-policy-migrations.ts): switchAccessMigration belongs inside the transaction that switches the store. */
+  readUnfinishedAccessMigration(sourceId: string): Promise<AccessMigrationRow | null>;
+  insertAccessMigration(row: { id: string; sourceId: string; direction: string }): Promise<void>;
+  recordAccessMigrationPhase(id: string, phase: string, receipts: Record<string, unknown>): Promise<void>;
+  switchAccessMigration(id: string, receipts: Record<string, unknown>): Promise<void>;
   approveAccessPolicyRevision(sourceId: string, revision: number, actor: string): Promise<void>;
   hasAccessPolicyState(sourceId: string): Promise<boolean>;
   listAccessPrefixSlugs(sourceId: string, prefixes: string | readonly string[]): Promise<string[]>;

@@ -10,6 +10,7 @@
 
 mod access_flag;
 pub mod access_members;
+pub mod access_migrations;
 pub mod access_policy;
 pub mod access_rules;
 mod cascade;

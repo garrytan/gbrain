@@ -15,17 +15,22 @@
  *  - Why existing coverage misses it: test/access-folder-*.test.ts run on the SQL engines only, and the parity
  *    harness's restrictFolder fixture wrote rules with raw SQL, which stopped on the Rust arm.
  *  - Seam: none. Rules go in through proposeRevision, members through addMember, pages through putPage.
- *  - Known loss on Rust (docs/designs/RUST_ENGINE.md row 32h): moving a source's rules between the database and git
- *    (policy-migrate.ts). The last describe pins its refusal.
+ *  - Moving a source's rules between the database and git (policy-migrate.ts): the journal reads and writes are typed
+ *    members, so the same cases run on every arm. The last describe reads the Rust arm's own engine.
  */
 import { describe, expect, test } from 'bun:test';
-import { parityArms, resetArm } from './harness.ts';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createSource, parityArms, resetArm } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 import { addMember } from '../../src/core/access/members.ts';
 import { applyApproved, clearPolicyInvalid, listRevisions, markPolicyInvalid, policyStatus, previewApply, proposeRevision, resumePolicy } from '../../src/core/access/policy.ts';
-import { migrateAccessStore } from '../../src/core/access/policy-migrate.ts';
+import { migrateAccessStore, migrateSeams, previewMigrate } from '../../src/core/access/policy-migrate.ts';
+import { APPROVED_FILE, POLICY_FILE } from '../../src/core/access/policy-git.ts';
 import { remoteCallerAccess } from '../../src/core/access/caller.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
@@ -146,9 +151,86 @@ describe('engine parity: folder rule writes and reads', () => {
   });
 });
 
-describe('the Rust arm serves folder rules, and still refuses the store migration (row 32h)', () => {
-  // A parity case counts a typed refusal as a pass, so this reads the Rust arm's own engine: it is red while the rule
-  // write stops on Rust, and it must never show a covered page to a member outside the rule.
+describe('engine parity: moving a source\'s folder rules between the database and git', () => {
+  const journal = async (engine: BrainEngine, sourceId: string) => {
+    const j = await engine.readUnfinishedAccessMigration(sourceId);
+    return j && { id: j.id.startsWith('mig_'), phase: j.phase, direction: j.direction, receipts: Object.keys(j.receipts).sort() };
+  };
+  const plain = (text: string) => text.replace(/mig_[0-9a-f-]{36}/g, '<id>');
+  /** One migrate: the journal after each phase (the seam), a stop at phase `stop`, and the result or the refusal. */
+  async function migrate(engine: BrainEngine, sourceId: string, requested?: 'git' | 'database', stop?: string) {
+    const seen: unknown[] = [];
+    migrateSeams.afterPhase = async (phase) => { seen.push([phase, await journal(engine, sourceId)]); if (phase === stop) throw new Error('interrupted'); };
+    try {
+      const done = await migrateAccessStore(engine, sourceId, requested);
+      const receipts = Object.fromEntries(Object.entries(done.receipts).map(([k, v]) => [k, typeof v === 'object' && v ? (v as { outcome?: string }).outcome : v]));
+      return { seen, id: done.id, done: { from: done.from, to: done.to, phase: done.phase, receipts } };
+    } catch (e) { return { seen, id: null, error: plain((e as Error).message) }; } finally { migrateSeams.afterPhase = undefined; }
+  }
+
+  parityTest('migrate --to database from no store journals each phase and switches the store', { methods: ['readUnfinishedAccessMigration', 'insertAccessMigration', 'recordAccessMigrationPhase', 'switchAccessMigration', 'writeAccessStoreConfig'] }, async (engine) => {
+    await engine.setConfig('version', String(LATEST_SCHEMA_VERSION));
+    const before = await previewMigrate(engine, 'default', 'database');
+    const run = await migrate(engine, 'default', 'database');
+    const after = { store: (await policyStatus(engine, 'default')).store, journal: await journal(engine, 'default'), resume: await previewMigrate(engine, 'default').then(p => p.resume, (e: Error) => plain(e.message)) };
+    const again = await migrate(engine, 'default', 'database');
+    expect({ from: before.from, to: before.to, resume: before.resume, store: after.store, journal: after.journal }).toEqual({ from: null, to: 'database', resume: null, store: 'database', journal: null });
+    expect(run.seen).toEqual([['committed', { id: true, phase: 'committed', direction: 'to_database', receipts: [] }], ['switched', null]]);
+    return { run: { ...run, id: run.id?.startsWith('mig_') }, after, again };
+  });
+
+  parityTest('an interrupted migrate resumes from its journal; a move the other way is refused until it finishes', { methods: ['readUnfinishedAccessMigration', 'insertAccessMigration', 'recordAccessMigrationPhase', 'switchAccessMigration', 'writeAccessStoreConfig'] }, async (engine) => {
+    await engine.setConfig('version', String(LATEST_SCHEMA_VERSION));
+    const stopped = await migrate(engine, 'default', 'database', 'committed');
+    const left = await engine.readUnfinishedAccessMigration('default');
+    const preview = await previewMigrate(engine, 'default');
+    const refused = await previewMigrate(engine, 'default', 'git').then(() => 'allowed', (e: Error) => plain(e.message));
+    const refusedRun = await migrate(engine, 'default', 'git');
+    const untouched = { store: (await policyStatus(engine, 'default')).store, journal: await journal(engine, 'default') };
+    const resumed = await migrate(engine, 'default');
+    expect({ stopped: stopped.error, resume: preview.resume?.phase, same: preview.resume?.id === left?.id, finished: resumed.id === left?.id }).toEqual({ stopped: 'interrupted', resume: 'committed', same: true, finished: true });
+    expect(refused).toBe('Source default has an unfinished migration <id> to the database store, so it cannot move to the git store now; nothing was written.');
+    return { stopped, preview: { ...preview, resume: preview.resume && { ...preview.resume, id: true } }, refused, refusedRun, untouched, resumed: { ...resumed, id: true }, after: await journal(engine, 'default') };
+  });
+
+  parityTest('migrate --to git writes the rules into the work tree, journals each phase and switches the store', { methods: ['readUnfinishedAccessMigration', 'insertAccessMigration', 'recordAccessMigrationPhase', 'switchAccessMigration', 'writeAccessStoreConfig'] }, async (engine, backend) => {
+    const git = (dir: string, ...args: string[]) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-parity-mig-'));
+    try {
+      git(root, 'init', '-q', '-b', 'main');
+      git(root, 'config', 'user.email', 't@t.co');
+      git(root, 'config', 'user.name', 't');
+      writeFileSync(join(root, 'README.md'), 'repo\n');
+      git(root, 'add', '-A');
+      git(root, 'commit', '-q', '-m', 'init');
+      await engine.setConfig('version', String(LATEST_SCHEMA_VERSION));
+      await createSource(engine, backend, 'mg', {}, root);
+      await addMember(engine, 'alice-example');
+      await proposeRevision(engine, 'mg', [{ id: 'alice', prefix: 'partners/alice/', readable_by: ['member:alice-example'] }], { origin: 'cli', store: 'database' });
+      const run = await migrate(engine, 'mg', 'git');
+      const status = await policyStatus(engine, 'mg');
+      const files = { yml: readFileSync(join(root, POLICY_FILE), 'utf8'), approved: readFileSync(join(root, APPROVED_FILE), 'utf8'), commits: git(root, 'log', '--format=%s').replaceAll('mg', '<src>').split('\n') };
+      expect({ store: status.store, rules: status.rules.map(r => r.id), phase: run.done?.phase }).toEqual({ store: 'git', rules: ['alice'], phase: 'switched' });
+      return { run: { ...run, id: run.id?.startsWith('mig_') }, files, journal: await journal(engine, 'mg') };
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+});
+
+// The switched row itself has no typed read (the Rust store's unit tests cover it there); the SQL arms are read directly.
+test('a finished migrate leaves one switched journal row with the receipts of its phases', async () => {
+  for (const arm of arms().filter((x) => x.backend !== 'rust')) {
+    await resetArm(arm);
+    await arm.engine.setConfig('version', String(LATEST_SCHEMA_VERSION));
+    await migrateAccessStore(arm.engine, 'default', 'database');
+    const rows = await arm.engine.executeRaw<{ id: string; direction: string; phase: string; receipts: Record<string, unknown>; ordered: boolean }>(
+      'SELECT id, direction, phase, receipts, updated_at >= created_at AS ordered FROM access_policy_migrations WHERE source_id = $1', ['default']);
+    expect(rows.map((r) => ({ id: r.id.slice(0, 4), direction: r.direction, phase: r.phase, receipts: r.receipts, ordered: r.ordered }))).toEqual([{ id: 'mig_', direction: 'to_database', phase: 'switched', receipts: {}, ordered: true }]);
+  }
+});
+
+describe('the Rust arm migrates a source\'s folder rules', () => {
+  // A parity case counts a typed refusal as a pass, so these read the Rust arm's own engine: the first is red while the
+  // rule write stops on Rust, and it must never show a covered page to a member outside the rule.
   test('a rule written on Rust hides the covered pages from a member outside it', async () => {
     const rust = arms().find((arm) => arm.backend === 'rust');
     if (!rust) return;
@@ -156,16 +238,14 @@ describe('the Rust arm serves folder rules, and still refuses the store migratio
     await seedRule(rust.engine);
     expect(await readAs(rust.engine, 'bob-example')).toEqual(['notes/open']);
   });
-  // Row 32h: moving a source's rules between the database and git (policy-migrate.ts) still runs raw SQL.
-  test('loss (32h): gbrain access rule migrate stops on the raw_sql refusal, with nothing written', async () => {
+  // A refusal would pass the parity case above; this one fails unless the journal is written and the store switches.
+  test('gbrain access rule migrate journals its phases and switches the store on Rust', async () => {
     const rust = arms().find((arm) => arm.backend === 'rust');
     if (!rust) return;
     await resetArm(rust);
     await rust.engine.setConfig('version', String(LATEST_SCHEMA_VERSION));
-    const RAW_SQL = "This brain's engine does not support executeRaw yet (it needs the raw_sql capability), so nothing ran.";
-    // `--to database` on a source with no store yet needs no git tree, so the migration reaches its journal read.
-    const refused = await migrateAccessStore(rust.engine, 'default', 'database').then(() => ({ refused: false }), (e: Error & { code?: string }) => ({ code: e.code, message: e.message }));
-    expect(refused).toEqual({ code: 'engine_capability_missing', message: RAW_SQL });
-    expect((await policyStatus(rust.engine, 'default')).store).toBeNull();
+    const done = await migrateAccessStore(rust.engine, 'default', 'database');
+    expect({ to: done.to, phase: done.phase, store: (await policyStatus(rust.engine, 'default')).store, left: await rust.engine.readUnfinishedAccessMigration('default') })
+      .toEqual({ to: 'database', phase: 'switched', store: 'database', left: null });
   });
 });

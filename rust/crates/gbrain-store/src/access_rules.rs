@@ -49,7 +49,6 @@ pub(crate) const REVISION: u8 = 0x04;
 /// Sub-tag: a page's restamped rule ids (`pages.folder_rule_ids`), which only the restamp writes.
 pub(crate) const STAMP: u8 = 0x05;
 /// Sub-tag: a policy-store migration (`access_policy_migrations`, `access_migrations.rs`).
-#[allow(dead_code)] // policy-migrate.ts stays raw SQL on Rust (docs/designs/RUST_ENGINE.md row 32h).
 pub(crate) const MIGRATION: u8 = 0x06;
 
 pub(crate) fn key(sub: u8, parts: &[&[u8]]) -> Vec<u8> {

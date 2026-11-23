@@ -550,6 +550,26 @@ const PINS: Pin[] = [
     texts: ['UPDATE access_policy_revisions SET approved_by = $3, approved_at = now() WHERE source_id = $1 AND revision = $2'],
   },
   {
+    from: 'src/core/access/policy-migrate.ts:41 unfinished at 178a49695f',
+    case: { method: 'readUnfinishedAccessMigration', variant: 'default', run: e => e.readUnfinishedAccessMigration('default') },
+    texts: [`SELECT id, phase, direction, receipts FROM access_policy_migrations WHERE source_id = $1 AND phase <> 'switched' ORDER BY created_at DESC LIMIT 1`],
+  },
+  {
+    from: 'src/core/access/policy-migrate.ts:80 migrateAccessStore at 178a49695f (the insert)',
+    case: { method: 'insertAccessMigration', variant: 'default', run: e => e.insertAccessMigration({ id: 'mig_x', sourceId: 'default', direction: 'to_git' }) },
+    texts: [`INSERT INTO access_policy_migrations (id, source_id, direction, phase) VALUES ($1, $2, $3, 'started')`],
+  },
+  {
+    from: 'src/core/access/policy-migrate.ts:85 migrateAccessStore at 178a49695f (a phase)',
+    case: { method: 'recordAccessMigrationPhase', variant: 'default', run: e => e.recordAccessMigrationPhase('mig_x', 'exported', {}) },
+    texts: ['UPDATE access_policy_migrations SET phase = $2, receipts = $3::text::jsonb, updated_at = now() WHERE id = $1'],
+  },
+  {
+    from: 'src/core/access/policy-migrate.ts:104 migrateAccessStore at 178a49695f (the switch)',
+    case: { method: 'switchAccessMigration', variant: 'default', run: e => e.switchAccessMigration('mig_x', {}) },
+    texts: [`UPDATE access_policy_migrations SET phase = 'switched', receipts = $2::text::jsonb, updated_at = now() WHERE id = $1`],
+  },
+  {
     from: "src/core/access/policy.ts:296 resumePolicy at 8d2e667543",
     case: { method: 'hasAccessPolicyState', variant: 'default', run: e => e.hasAccessPolicyState('default') },
     texts: ['SELECT count(*)::int AS n FROM access_policy_state WHERE source_id = $1'],

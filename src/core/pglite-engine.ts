@@ -225,6 +225,7 @@ import * as accessControlImpl from './engine-sql/access-control.ts';
 import * as accessSetupImpl from './engine-sql/access-setup.ts';
 import * as accessCredentialsImpl from './engine-sql/access-credentials.ts';
 import * as accessPolicyImpl from './engine-sql/access-policy.ts';
+import * as accessMigrationsImpl from './engine-sql/access-policy-migrations.ts';
 import type { AccessCredentialLookup, AccessCredentialRow, AccessGroupRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AudiencePrincipalRows, MayActForVia, FolderAccessRows, PageNamingReaderRow } from './engine-sql/access-control.ts';
 import * as accessMembersImpl from './engine-sql/access-members.ts';
 import type * as AccessMembersSql from './engine-sql/access-members.ts';
@@ -2025,6 +2026,10 @@ export class PGLiteEngine implements BrainEngine {
   finishAccessRestamp(sourceId: string) { return accessPolicyImpl.finishAccessRestamp(this, sourceId); }
   insertAccessPolicyRevision(row: accessPolicyImpl.AccessRevisionInsert) { return accessPolicyImpl.insertAccessPolicyRevision(this, row); }
   markAccessRevisionsApplied(sourceId: string, upTo?: number) { return accessPolicyImpl.markAccessRevisionsApplied(this, sourceId, upTo); }
+  readUnfinishedAccessMigration(sourceId: string) { return accessMigrationsImpl.readUnfinishedAccessMigration(this, sourceId); }
+  insertAccessMigration(row: { id: string; sourceId: string; direction: string }) { return accessMigrationsImpl.insertAccessMigration(this, row); }
+  recordAccessMigrationPhase(id: string, phase: string, receipts: Record<string, unknown>) { return accessMigrationsImpl.recordAccessMigrationPhase(this, id, phase, receipts); }
+  switchAccessMigration(id: string, receipts: Record<string, unknown>) { return accessMigrationsImpl.switchAccessMigration(this, id, receipts); }
   approveAccessPolicyRevision(sourceId: string, revision: number, actor: string) { return accessPolicyImpl.approveAccessPolicyRevision(this, sourceId, revision, actor); }
   hasAccessPolicyState(sourceId: string) { return accessPolicyImpl.hasAccessPolicyState(this, sourceId); }
   listAccessPrefixSlugs(sourceId: string, prefixes: string | readonly string[]) { return accessPolicyImpl.listAccessPrefixSlugs(this, sourceId, prefixes); }

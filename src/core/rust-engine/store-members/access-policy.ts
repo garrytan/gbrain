@@ -8,6 +8,7 @@ import type {
   AccessCoverageRow, OpenTwinReader, OpenTwinRow, AccessPolicyMarks, AccessRestampWindow, AccessRevisionInsert, AccessRevisionQuery, AccessRevisionRow, AccessRuleChanges, AccessRuleRow,
 } from '../../engine-sql/access-policy.ts';
 import { RULE_COVERED_PAGES_LIMIT } from '../../engine-sql/access-policy.ts';
+import type { AccessMigrationRow } from '../../engine-sql/access-policy-migrations.ts';
 import { ruleCovers, validQualifiedRuleId } from '../../access/folder-rules.ts';
 import { validIdentity } from '../../access/principals.ts';
 import { callerAccessRecord, privateSnapshotFilterFragment } from '../../search/private-visibility.ts';
@@ -61,6 +62,22 @@ export const insertAccessPolicyRevision: StoreMember<[row: AccessRevisionInsert]
 
 export const markAccessRevisionsApplied: StoreMember<[sourceId: string, upTo?: number], void> = async (brain, sourceId, upTo) => {
   await storeCall({ member: 'markAccessRevisionsApplied', sourceId }, () => brain.markAccessRevisionsApplied(sourceId, upTo));
+};
+
+/** The policy-store migration journal (gbrain-store `access_migrations`): an unknown direction or phase, an id the journal has and a source with no access state refuse. */
+export const readUnfinishedAccessMigration: StoreMember<[sourceId: string], AccessMigrationRow | null> = (brain, sourceId) =>
+  storeCall({ member: 'readUnfinishedAccessMigration', sourceId }, () => brain.readUnfinishedAccessMigration(sourceId));
+
+export const insertAccessMigration: StoreMember<[row: { id: string; sourceId: string; direction: string }], void> = async (brain, row) => {
+  await storeCall({ member: 'insertAccessMigration', sourceId: row.sourceId }, () => brain.insertAccessMigration(row.id, row.sourceId, row.direction));
+};
+
+export const recordAccessMigrationPhase: StoreMember<[id: string, phase: string, receipts: Record<string, unknown>], void> = async (brain, id, phase, receipts) => {
+  await storeCall({ member: 'recordAccessMigrationPhase' }, () => brain.recordAccessMigrationPhase(id, phase, JSON.parse(JSON.stringify(receipts))));
+};
+
+export const switchAccessMigration: StoreMember<[id: string, receipts: Record<string, unknown>], void> = async (brain, id, receipts) => {
+  await storeCall({ member: 'switchAccessMigration' }, () => brain.switchAccessMigration(id, JSON.parse(JSON.stringify(receipts))));
 };
 
 export const approveAccessPolicyRevision: StoreMember<[sourceId: string, revision: number, actor: string], void> = async (brain, sourceId, revision, actor) => {

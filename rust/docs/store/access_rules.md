@@ -15,7 +15,7 @@ same state under key tag `z` (`crates/gbrain-store/src/access_rules.rs`). The by
 | `z 0x03 <source> \0 <prefix> \0 <reason>` | `{ source_id, prefix, reason, revision }` | `access_pending_coverage` |
 | `z 0x04 <source> \0 <revision u64 BE>` | `{ source_id, revision, applied, rules, digest, change_kind, origin, operation_id, proposed_by, approved_by, created_at_us, applied_at_us, approved_at_us }` | `access_policy_revisions` |
 | `z 0x05 <source> \0 <page id u64 BE>` | the sorted rule ids the last restamp gave the page | `pages.folder_rule_ids` |
-| `z 0x06 <source> \0 <id>` | reserved for `access_policy_migrations`; nothing writes it yet (row 32h) | `access_policy_migrations` |
+| `z 0x06 <source> \0 <id>` | `{ id, source_id, direction, phase, receipts, created_at_us, updated_at_us }` | `access_policy_migrations` |
 
 The writes mirror the v283 and v303 checks: a rule id matches `^[a-z0-9][a-z0-9._-]{0,63}$`, a prefix is a folder
 (segments that each end in `/`) or one page (the same segments without the final `/`), at most 512 bytes with no `..`,
@@ -133,11 +133,17 @@ The SQL sorts the rule list, the pending prefixes and the prefix slugs with `COL
 collation is not `C` gives the byte order PGLite and the store give. `listRuleCoveredPages` sorts by `slug` with the
 database collation, as the command did before; on such a server its order can differ from the store's byte order.
 
-## Not served yet
+## The migration journal
 
-- Moving a source's rules between the database and git (`src/core/access/policy-migrate.ts`, `gbrain access rule migrate`)
-  runs `executeRaw`, so it stops on the `raw_sql` refusal before any work (row 32h). `previewMigrate` reads no
-  migration row on this engine, because none can exist.
+`gbrain access rule migrate` (`src/core/access/policy-migrate.ts`) journals each phase through four members
+(`access_migrations.rs`; SQL in `engine-sql/access-policy-migrations.ts`): `readUnfinishedAccessMigration(sourceId)`
+returns the source's newest migration (by creation time) whose phase is not `switched`, or null;
+`insertAccessMigration({ id, sourceId, direction })` journals one at phase `started`; `recordAccessMigrationPhase(id,
+phase, receipts)` sets the phase, receipts and update time; `switchAccessMigration(id, receipts)` marks it `switched`
+inside the transaction that switches the store. The table's checks hold: a direction is `to_git` or `to_database`
+and a phase is `started`, `exported`, `committed` or `switched` (`invalid_argument` otherwise, an unknown id changes
+nothing), an id is unique across sources (`constraint_violation`), and a source needs access state. Times are the
+store clock.
 
 ## Tests
 
@@ -154,7 +160,10 @@ database collation, as the command did before; on such a server its order can di
 - `test/engine-parity/access-rules.test.ts`: on every arm, a member outside a folder rule reads none of the pages
   under it and the member it names reads them; a widening is held until it is applied; the folder reads, invalid
   marks and resume; a page written under an applied rule is stamped; the rule add preview counts; and the fact cache
-  watermark moves with a rule. It also pins the policy-store migration refusal (row 32h).
+  watermark moves with a rule; and `gbrain access rule migrate` journals each phase, resumes after a stop, refuses the
+  other direction while one is unfinished, and moves a git work tree's rules (`--to git`).
+- `crates/gbrain-store/src/access_migrations.rs` (unit tests): the newest unfinished migration is read, a phase update
+  keeps the receipts, the table checks refuse and leave nothing behind, and a switched migration is no longer unfinished.
 - `test/engine-parity/write-misc.test.ts`: `readFolderAccess`, `isFolderRestricted` and `listAppliedPolicyRevisions`
   on every arm, through `restrictFolder` (`test/engine-parity/harness.ts`, the typed policy members) and
   `proposeRevision`.

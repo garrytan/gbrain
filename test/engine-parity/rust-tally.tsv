@@ -3,7 +3,7 @@ test/engine-parity/access-flag.test.ts	1	0
 test/engine-parity/access-members.test.ts	20	0
 test/engine-parity/access-reports.test.ts	9	0
 test/engine-parity/access-rule-add.test.ts	4	0
-test/engine-parity/access-rules.test.ts	5	0
+test/engine-parity/access-rules.test.ts	8	0
 test/engine-parity/access-serves.test.ts	4	0
 test/engine-parity/access-tokens.test.ts	2	0
 test/engine-parity/alias-fanout-reads.test.ts	11	0

@@ -8,6 +8,7 @@
 # SQL-bearing engine member never gets a row: move the SQL, or mark it
 # `// engine-sql-ok: <reason>`.
 # docs/ci-guards.md#engine-sql-ratchet
+migrated	access-policy-migrations
 migrated	chunks
 migrated	cjk-search
 migrated	code-edges

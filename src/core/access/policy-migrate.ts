@@ -37,13 +37,6 @@ export interface MigratePreview {
 /** Test seam: runs after a phase is journaled ('committed', then 'switched'), before the next step. */
 export const migrateSeams: { afterPhase?: (phase: string) => Promise<void> | void } = {};
 
-async function unfinished(engine: BrainEngine, sourceId: string): Promise<{ id: string; phase: string; direction: string; receipts: Record<string, unknown> } | null> {
-  const [row] = await engine.executeRaw<{ id: string; phase: string; direction: string; receipts: unknown }>(
-    `SELECT id, phase, direction, receipts FROM access_policy_migrations WHERE source_id = $1 AND phase <> 'switched' ORDER BY created_at DESC LIMIT 1`, [sourceId]);
-  if (!row) return null;
-  return { ...row, receipts: (typeof row.receipts === 'string' ? JSON.parse(row.receipts) : row.receipts) as Record<string, unknown> ?? {} };
-}
-
 /**
  * The direction is the unfinished migration's, else `requested` (GST-2638: `--to database` sets the database store from
  * unset with no commit and no file, for a checkout that cannot take commits), else the other store (git when unset).
@@ -52,7 +45,7 @@ export async function previewMigrate(engine: BrainEngine, sourceId: string, requ
   const from = await readAccessStore(engine, sourceId);
   const root = await sourcePolicyRoot(engine, sourceId);
   const gitRoot = root && isGitWorkTree(root) ? root : null;
-  const pending = await unfinished(engine, sourceId).catch(() => null);
+  const pending = await engine.readUnfinishedAccessMigration(sourceId).catch(() => null);
   const to: AccessStore = pending ? (pending.direction === 'to_git' ? 'git' : 'database') : requested ?? (from === 'git' ? 'database' : 'git');
   if (pending && requested && requested !== to) {
     throw opError('invalid_params', `Source ${sourceId} has an unfinished migration ${pending.id} to the ${to} store, so it cannot move to the ${requested} store now; nothing was written.`,
@@ -74,15 +67,16 @@ export async function previewMigrate(engine: BrainEngine, sourceId: string, requ
 export async function migrateAccessStore(engine: BrainEngine, sourceId: string, requested?: AccessStore): Promise<{ id: string; from: AccessStore | null; to: AccessStore; phase: string; receipts: Record<string, unknown> }> {
   const p = await previewMigrate(engine, sourceId, requested);
   await ensurePolicyState(engine, sourceId);
-  let job = await unfinished(engine, sourceId);
+  let job = await engine.readUnfinishedAccessMigration(sourceId);
   if (!job) {
     const id = `mig_${randomUUID()}`;
-    await engine.executeRaw(`INSERT INTO access_policy_migrations (id, source_id, direction, phase) VALUES ($1, $2, $3, 'started')`, [id, sourceId, p.to === 'git' ? 'to_git' : 'to_database']);
-    job = { id, phase: 'started', direction: p.to === 'git' ? 'to_git' : 'to_database', receipts: {} };
+    const direction = p.to === 'git' ? 'to_git' : 'to_database';
+    await engine.insertAccessMigration({ id, sourceId, direction });
+    job = { id, phase: 'started', direction, receipts: {} };
   }
   const receipts = { ...job.receipts };
   const record = async (phase: string) => {
-    await engine.executeRaw('UPDATE access_policy_migrations SET phase = $2, receipts = $3::text::jsonb, updated_at = now() WHERE id = $1', [job!.id, phase, JSON.stringify(receipts)]);
+    await engine.recordAccessMigrationPhase(job!.id, phase, receipts);
     job!.phase = phase;
   };
   if (p.to === 'git') {
@@ -101,7 +95,7 @@ export async function migrateAccessStore(engine: BrainEngine, sourceId: string, 
   await engine.transaction(async tx => {
     await lockSource(tx, sourceId);
     await writeAccessStore(tx, sourceId, p.to);
-    await tx.executeRaw(`UPDATE access_policy_migrations SET phase = 'switched', receipts = $2::text::jsonb, updated_at = now() WHERE id = $1`, [job!.id, JSON.stringify(receipts)]);
+    await tx.switchAccessMigration(job!.id, receipts);
   });
   job.phase = 'switched';
   await migrateSeams.afterPhase?.('switched');
