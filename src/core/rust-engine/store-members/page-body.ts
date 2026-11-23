@@ -28,7 +28,7 @@ import { sanitizeRemoteBody } from '../../remote-body.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
-import { overlayStoreLead, type StoreSnapshot } from '../snapshot-overlay.ts';
+import { overlayStoreLead, storeNormalizer, type StoreSnapshot } from '../snapshot-overlay.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 
 const hex = (bytes: Uint8Array): string => Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('hex');
@@ -212,7 +212,7 @@ export const sealSegmentedPage: StoreMember<[pageId: number, opts?: { timelineLe
   const lead = typeof o.timelineLead === 'string' ? o.timelineLead : stored.lead;
   const ledger: StoreSnapshot | null = await storeCall({ member: 'sealSegmentedPage', slug: stored.slug },
     () => brain.readPageSnapshot(stored.slug, { sourceId: stored.sourceId, includeDeleted: true }));
-  const overlaid = ledger ? overlayStoreLead(lead, ledger) : lead;
+  const overlaid = ledger ? await overlayStoreLead(storeNormalizer(brain), lead, ledger) : lead;
   await storeCall({ member: 'sealSegmentedPage', expectedRevision: stored.revision },
     () => brain.sealSegmentedPage(pageId, sanitizeRemoteBody(overlaid), stored.revision));
 };

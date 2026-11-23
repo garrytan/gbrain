@@ -97,7 +97,7 @@ describe('a segmented page read with a subject-* purge crosses the owner socket 
     const stored: StoreSnapshot = { page: segmentedPage('notes/large') as never, tags: [], revision: REVISION, sourceIncarnation: '1', withdrawals: [],
       globalPurges: { count: 1, latest: '2026-11-23T20:00:00.000Z', world_only: false },
       globalPurgeRows: [{ visibility: 'private', fact_hash: claimHash('Drinks green tea'), withdrawn_at: '2026-11-23T20:00:00.000Z', purged: true }] };
-    const snapshot: PageSnapshot = crossTheSocket(overlayStoreSnapshot(stored));
+    const snapshot: PageSnapshot = crossTheSocket(await overlayStoreSnapshot(noSql.normalizeFenceLines, stored));
     expect(snapshot.globalPurges?.count).toBe(1);
     const out = await overlayCanonicalBodies(noSql, lead, '', snapshot.withdrawals, { sourceId: 'default', marker: snapshot.globalPurges });
     expect(rows(out.compiled_truth)).toHaveLength(1);

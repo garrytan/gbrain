@@ -138,6 +138,26 @@ describe('engine parity: page withdrawal overlay', () => {
         batch: batched.page.compiled_truth === snap.page.compiled_truth };
     });
 
+  parityTest('the fence fold lower-cases as the engine does: a withdrawn claim with U+0130 or a Greek capital sigma is struck in getPage, the snapshot and the batch read',
+    { methods: ['insertFactWithdrawal', 'putPage', 'readPageSnapshot', 'getPage', 'readPageSnapshotsBatch'] },
+    async (engine) => {
+      // JavaScript's toLowerCase maps U+0130 to "i" + U+0307 and a final capital sigma to a final small sigma; the engines' own lower() decide the hash.
+      const claims = ['\u0130stanbul trip', '\u039f\u03a3 Odysseus sails', 'Plain claim'];
+      const truth = `# Names\n\n${fence(claims.map((claim, i) => row(i + 1, claim)))}\n`;
+      await engine.putPage('notes/lower', { type: 'note', title: 'Lower', compiled_truth: truth, timeline: '' });
+      await engine.insertFactWithdrawal('default', 'private', claims[0]!, 'notes/lower', T1);
+      await engine.insertFactWithdrawal('default', 'private', claims[1]!, 'notes/lower', T1);
+      const snap = (await engine.readPageSnapshot('notes/lower', { sourceId: 'default' }))!;
+      const page = (await engine.getPage('notes/lower'))!;
+      const batched = (await engine.readPageSnapshotsBatch([{ slug: 'notes/lower', sourceId: 'default' }])).snapshots.get('default\u0000notes/lower')!;
+      const forgotten = (text: string) => fenceLines(text).map(line => line.includes('forgotten:'));
+      expect(forgotten(snap.page.compiled_truth)).toEqual([true, true, false]);
+      expect(forgotten(page.compiled_truth)).toEqual([true, true, false]);
+      expect(forgotten(batched.page.compiled_truth)).toEqual([true, true, false]);
+      return { withdrawals: snap.withdrawals, truth: fenceLines(snap.page.compiled_truth), getPage: page.compiled_truth === snap.page.compiled_truth,
+        batch: batched.page.compiled_truth === snap.page.compiled_truth };
+    });
+
   const PURGE_LEAD = `Intro prose.\n\n${fence([row(1, 'Drinks green tea'), row(2, 'Prefers the aisle seat'), row(3, 'Walks\u0085to work')])}\n\nClosing prose.`;
   const purgeHash = (claim: string) => sha(normalizeLoweredClaim(claim.toLowerCase()));
 

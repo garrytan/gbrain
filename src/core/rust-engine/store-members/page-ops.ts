@@ -30,7 +30,7 @@ import type { MovedPageRow } from '../../engine-sql/moved-page-reads.ts';
 import type { StaleAtomRow } from '../../engine-sql/stale-atom-reads.ts';
 import type { PageRefRow, RelationalPageRow } from '../../engine-sql/relational-reads.ts';
 import { toGetPage } from '../store-codec.ts';
-import { overlayStoreSnapshot, type StoreSnapshot } from '../snapshot-overlay.ts';
+import { overlayStoreSnapshots, storeNormalizer, type StoreSnapshot } from '../snapshot-overlay.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { HYBRID_BAG_KEYS, WHOKNOWS_KEYS, storePagePolicy } from './private-provenance.ts';
@@ -75,13 +75,14 @@ export const readPageSnapshotsBatch: StoreMember<
   const { absentIsNull, ...options } = takeOptions('readPageSnapshotsBatch', opts, ['maxBytes', 'includeDeleted', 'absentIsNull']);
   const snapshots = new Map<string, PageSnapshot>();
   if (!refs.length) return { snapshots, covered: 0 };
+  const stored = new Map<string, StoreSnapshot>();
   const batch: { covered: number; snapshots: Array<StoreSnapshot | null> } = await storeCall({ member: 'readPageSnapshotsBatch' }, () =>
     brain.readPageSnapshotsBatch(refs.map((r) => ({ slug: r.slug, sourceId: r.sourceId })), options));
   for (const [i, snapshot] of batch.snapshots.entries()) {
     const ref = refs[i]!;
     const key = pageSnapshotKey(ref.sourceId, ref.slug);
     if (snapshot) {
-      snapshots.set(key, overlayStoreSnapshot({ ...snapshot, page: toGetPage(snapshot.page) }));
+      stored.set(key, { ...snapshot, page: toGetPage(snapshot.page) });
       continue;
     }
     // PGLite reads an absent ref again through readPageSnapshot (same exact key), unless absentIsNull; an empty
@@ -89,8 +90,11 @@ export const readPageSnapshotsBatch: StoreMember<
     if (absentIsNull || ref.sourceId === '') continue;
     const again: StoreSnapshot | null = await storeCall({ member: 'readPageSnapshotsBatch', slug: ref.slug }, () =>
       brain.readPageSnapshot(ref.slug, { sourceId: ref.sourceId, ...(options.includeDeleted ? { includeDeleted: true } : {}) }));
-    if (again) snapshots.set(key, overlayStoreSnapshot({ ...again, page: toGetPage(again.page) }));
+    if (again) stored.set(key, { ...again, page: toGetPage(again.page) });
   }
+  // One overlay of every page, the store normalizing the fence text of those with ledger rows to apply in one call.
+  const overlaid = await overlayStoreSnapshots(storeNormalizer(brain), [...stored.values()]);
+  [...stored.keys()].forEach((key, i) => snapshots.set(key, overlaid[i]!));
   return { snapshots, covered: batch.covered };
 };
 

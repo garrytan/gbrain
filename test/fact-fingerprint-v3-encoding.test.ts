@@ -8,7 +8,9 @@
  *  - Regression: v336 swept chr(1..65535) for characters the locale's [[:space:]] and the explicit list disagree on, and
  *    chr(256) raises "requested character too large for encoding" on a non-UTF8 database, so the upgrade stopped there.
  *  - Why existing coverage misses it: every other arm runs on the UTF8 test database.
- *  - Seam: a scratch SQL_ASCII database created beside the test database (template0, C collation) and dropped after.
+ *    The sweep now stays inside the range chr() takes on the database's encoding. A single-byte encoding such as LATIN1
+ *    (sweep to 255) is not pinned here: initSchema on a fresh LATIN1 database stops earlier, on schema text outside LATIN1.
+ *  - Seam: a scratch SQL_ASCII database created beside the test database (template0, C collation), dropped after.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import postgres from '#postgres';
@@ -46,3 +48,4 @@ describe.skipIf(!databaseUrl)('fact fingerprint v3 on a SQL_ASCII database (post
     expect(fp).toMatch(/^[0-9a-f]{64}$/);
   }, 60_000);
 });
+

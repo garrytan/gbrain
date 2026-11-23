@@ -124,11 +124,11 @@ transaction	lifecycle	yes	312	no	yes	yes	serves
 transactionDirect	lifecycle	yes	14	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	218	yes	yes	yes	serves
-readPageSnapshot	pages	yes	65	no	yes	yes	serves
-readPageSnapshotsBatch	pages	yes	6	no	yes	yes	serves
+getPage	pages	yes	219	yes	yes	yes	serves
+readPageSnapshot	pages	yes	66	no	yes	yes	serves
+readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	16	no	yes	yes	serves
-putPage	pages	yes	1093	yes	yes	yes	serves
+putPage	pages	yes	1094	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	37	yes	yes	yes	serves
@@ -1573,7 +1573,7 @@ listEnrichCandidates	salience_enrich	yes	5	yes	yes	yes	serves
 findAnomalies	salience_enrich	yes	9	yes	yes	yes	serves
 countZeroWeightWithTakes	salience_enrich	yes	1	no	yes	yes	serves
 hasCoveringFactWithdrawal	trust	yes	6	no	yes	yes	serves
-insertFactWithdrawal	trust	yes	59	no	yes	yes	serves
+insertFactWithdrawal	trust	yes	60	no	yes	yes	serves
 isFactWithdrawn	trust	yes	3	no	yes	yes	serves
 isFactPurged	trust	yes	5	no	yes	yes	serves
 listFactWithdrawalDates	trust	yes	3	no	yes	yes	serves

@@ -34,10 +34,14 @@ ${REFUSE_PURGED_TAKE_FUNCTION_SQL};
 DO $fp_v3$
 DECLARE differing text[];
 BEGIN
-  -- Only a UTF8 database holds U+0085 and the other characters the two folds disagree on; chr() above 255 raises on a
-  -- SQL_ASCII or single-byte one, which keeps running with a database_encoding warning, so its upgrade must not stop here.
-  IF current_setting('server_encoding') <> 'UTF8' THEN RETURN; END IF;
-  SELECT array_agg(chr(g)) INTO differing FROM generate_series(1, 65535) g
+  -- chr() takes a code point only up to what the database encoding holds: every BMP point on UTF8, 255 on a single-byte
+  -- encoding (LATIN1 holds U+0085), and ASCII on SQL_ASCII and the other multibyte encodings. A larger argument raises,
+  -- and such a brain keeps running with a database_encoding warning, so the sweep stays inside the range.
+  SELECT array_agg(chr(g)) INTO differing FROM generate_series(1, CASE
+      WHEN current_setting('server_encoding') = 'UTF8' THEN 65535
+      WHEN current_setting('server_encoding') <> 'SQL_ASCII'
+        AND pg_catalog.pg_encoding_max_length(pg_catalog.pg_char_to_encoding(current_setting('server_encoding'))) = 1 THEN 255
+      ELSE 127 END) g
     WHERE g NOT BETWEEN 55296 AND 57343 AND (chr(g) ~ '[[:space:]]') IS DISTINCT FROM (chr(g) ~ '${FACT_SPACE_CLASS}');
   IF differing IS NULL THEN RETURN; END IF;
   IF EXISTS (SELECT 1 FROM fact_withdrawals) THEN
