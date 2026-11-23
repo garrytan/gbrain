@@ -10,9 +10,9 @@
  *  - Seam: none. addMember, proposeRevision, putPage, the real caller record. A refusal is returned as a value, since
  *    the harness counts a thrown typed refusal as a pass and refusing a plain member is the bug.
  */
-import { describe, expect } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import { createSource, parityArms, type ParityBackend } from './harness.ts';
+import { createSource, parityArms, resetArm, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { addMember } from '../../src/core/access/members.ts';
 import { setMemberLabelledOnly, labelledOnlyFor } from '../../src/core/access/labelled-only.ts';
@@ -21,7 +21,7 @@ import { proposeRevision } from '../../src/core/access/policy.ts';
 import { remoteCallerAccess } from '../../src/core/access/caller.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
-const { parityTest } = parityArms(testBackends());
+const { parityTest, arms } = parityArms(testBackends());
 const SRC = 'work';
 const page = (title: string, fm: Record<string, unknown> = {}) =>
   ({ type: 'note' as const, title, compiled_truth: `harbor ${title}`, timeline: '', frontmatter: { always_load: true, ...fm } });
@@ -67,4 +67,17 @@ describe('engine parity: a plain member reads what it may', () => {
     expect(out.verdict).toEqual({ alice: false, carol: true, owner: false });
     return out;
   });
+
+  // Row 32e-c-1 (a named loss): an entity-filtered listFactsSince for a plain member still refuses on Rust, loudly.
+  test('loss (32e-c-1): listFactsSince with an entity filter refuses a plain member on Rust and answers elsewhere', async () => {
+    for (const arm of arms()) {
+      await resetArm(arm);
+      await seed(arm.engine, arm.backend);
+      await arm.engine.setConfig('mcp.stdio_member', 'alice-example');
+      const access = await remoteCallerAccess(arm.engine, undefined, [], 'stdio');
+      const outcome = await withCallerAccess(access, () => arm.engine.listFactsSince(SRC, new Date(0), { entity: 'people/a-example', excludePrivate: true } as never))
+        .then(() => 'answers', (e: { code?: string }) => String(e.code));
+      expect({ backend: arm.backend, outcome }).toEqual({ backend: arm.backend, outcome: arm.backend === 'rust' ? 'engine_capability_missing' : 'answers' });
+    }
+  }, 120_000);
 });
