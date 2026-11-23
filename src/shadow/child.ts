@@ -25,7 +25,7 @@ import type { RustAddon } from '../core/rust-engine/addon-loader.ts';
 import { servedCapabilities } from '../core/rust-engine/store-capabilities.ts';
 import { loadRustEngineAddonOffline, type RustEngineAddonLoaderFn } from './addon.ts';
 import { RERUN_DEADLINE_MS } from './checks.ts';
-import { createAsker, createSerialQueue, policyApplies, privacyVerdict, RERUN_QUEUE_BOUND, safeCode } from './child-checks.ts';
+import { createAsker, createSerialQueue, policyApplies, privacyVerdict, RERUN_QUEUE_BOUND, resultDigest, safeCode } from './child-checks.ts';
 import { classifyError, classifyResult, type Classification } from './classify.ts';
 import { decodeValue, encodeValue } from './codec.ts';
 import { adapterIdentity, capabilitySetHash, currentBuild, ensureEpoch, internalErrorRecorder, type EpochBuild, type EpochManifest } from './evidence-epoch.ts';
@@ -270,10 +270,15 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
    * mismatch on an exactness comparison is qualified as stale or inconclusive (`lagged`); a rerun passes null and keeps the raw mismatch.
    */
   const judge = async (op: string, encodedArgs: unknown[], primary: unknown, rust: unknown, sid: string | undefined, phase: 'sample' | 'rerun', at: number, lagged: boolean | null): Promise<Classification> => {
-    const c = classifyResult(SHADOW_READ_MEMBERS[op as ShadowReadMember], encodedArgs, primary, rust, op);
+    // A rerun holds the DIGEST of the primary's answer (the serving process keeps the answer: nothing but a digest crosses the control channel).
+    // Only a leak, or equality of the whole answer, is decided here; a rerun that is not equal is a plain diff, and the privacy question compares rows there.
+    const kind = SHADOW_READ_MEMBERS[op as ShadowReadMember];
+    const c = phase === 'rerun'
+      ? ((leak) => (leak.outcome === 'privacy_diverged' ? leak : resultDigest(rust) === primary ? { outcome: 'match' as const } : { outcome: 'diff' as const }))(classifyResult(kind, encodedArgs, null, rust, op))
+      : classifyResult(kind, encodedArgs, primary, rust, op);
     if (c.outcome === 'match' || c.outcome === 'privacy_diverged') return c;
     const args = decodeValue(encodedArgs) as unknown[];
-    const { verdict, complete } = await privacyVerdict(ask, args, primary, rust, sid, phase, at);
+    const { verdict, complete } = await privacyVerdict(ask, args, phase === 'rerun' ? undefined : primary, rust, sid, phase, at);
     if (verdict === 'violation') return { outcome: 'privacy_diverged', reason: 'row_not_readable_by_caller' };
     if (verdict !== 'clean') return { outcome: 'inconclusive', reason: verdict, mismatch: c.outcome as 'diff' | 'order_diff' };
     if (exactnessArm(op) === 'private_ranked') {
@@ -289,13 +294,13 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     const skip = (why: string): void => record(event, c, rustMs, rows, `skipped:${why}`);
     const deadline = now() + RERUN_DEADLINE_MS;
     try {
-      const answer = await ask({ kind: 'rerun', sid: event.sid, epoch_id: curEpoch() }, RERUN_DEADLINE_MS) as { result: unknown; stamp: number; epoch_id: string };
+      const answer = await ask({ kind: 'rerun', sid: event.sid, epoch_id: curEpoch() }, RERUN_DEADLINE_MS) as { digest: string; stamp: number; epoch_id: string };
       if (curEpoch() === null || answer.epoch_id !== curEpoch()) return skip('epoch_changed'); // an answer for another epoch is dropped, never restamped
       let call!: Promise<unknown>;
       const out = await follow.exclusive(answer.stamp, () => callRust(event.op, args, event.access, Math.max(1, Math.min(timeoutMs, deadline - now())), (p) => { call = p; }));
       if (out?.timedOut) trackStall(call);
       if (out === null || out.timedOut) return skip(out === null ? 'watermark_moved' : 'timeout');
-      const c2 = await judge(event.op, event.args, answer.result, encodeValue(out.value), event.sid, 'rerun', now(), null);
+      const c2 = await judge(event.op, event.args, answer.digest, encodeValue(out.value), event.sid, 'rerun', now(), null);
       if (c2.outcome === 'match') record(event, c, rustMs, rows, 'matched'); // closed as unsuccessful, never a match
       else if (c2.outcome === 'privacy_diverged') record(event, c2, rustMs, rows, 'differed');
       else if (c2.outcome === 'inconclusive') skip(c2.reason ?? 'privacy_check');

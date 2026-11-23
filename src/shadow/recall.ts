@@ -4,8 +4,9 @@
  * The reference is the PRIMARY's own `searchVector` with the same arguments, run in a read-only transaction with index
  * scans turned off (`enable_indexscan`, `enable_bitmapscan`): the same statements, the primary's own filters, but an
  * exact scan over the primary's whole corpus. Both engines' answers are scored against it: the hits among an engine's own
- * first ten rows, over the size of the reference's top ten, counting every reference row tied with its tenth score. The
- * reference is asked for `RECALL_REFERENCE_LIMIT` rows so a tie at the cutoff is visible. A sample with an offset, a
+ * first ten rows, over the size of the reference's top ten; a reference row tied with its tenth score counts for the places the
+ * strictly better rows leave. The reference is asked for `RECALL_REFERENCE_LIMIT` rows so a tie at the cutoff is visible; a
+ * reference whose last row still ties the cutoff is not scored, and neither is a sample whose corpus moved (checks.ts). A sample with an offset, a
  * limit under ten or an empty reference is skipped. Reference runs are at most one a minute and never on the request path:
  * the child asks the serving process after it has recorded the comparison. Scores go to `recall/YYYY-MM-DD.jsonl`
  * (ids never; epoch, three numbers and a size), and the status averages the epoch's lines once there are
@@ -42,24 +43,34 @@ export function recallEligible(args: unknown[]): boolean {
   return Number(opts.offset ?? 0) === 0 && limit >= RECALL_TOP;
 }
 
-/** Distinct identities among an engine's own first ten rows that are true neighbours: a repeated row is one neighbour, never ten. */
-const hitsIn = (engine: RankedKey[], truth: Set<string>): number => new Set(engine.slice(0, RECALL_TOP).map((r) => r.k).filter((k) => truth.has(k))).size;
+const TIE = 1e-9;
 
 /**
- * Scores the primary's and Rust's answers (encoded result arrays) against the reference rows. Null when the reference
- * is empty. Reference rows tied with the tenth score count as true neighbours, however the engines ordered them.
+ * Scores the primary's and Rust's answers (encoded result arrays) against the reference rows. Reference rows tied with the
+ * tenth score are true neighbours, however the engines ordered them, but only for the top-ten slots the strictly better
+ * rows leave: an engine that returns ten tied rows and none of nine better ones scores one, not ten. Null when the reference
+ * is empty, and when it cannot be trusted to hold the whole tie: asked for `RECALL_REFERENCE_LIMIT` rows and the last one
+ * still ties the tenth score, more tied rows may lie beyond it, so the sample is unscorable.
  */
 export function scoreRecall(reference: RankedKey[], primary: unknown, rust: unknown): RecallScore | null {
   if (reference.length === 0) return null;
   const top = reference.filter((r, i) => reference.findIndex((x) => x.k === r.k) === i).slice(0, RECALL_TOP); // distinct identities only
   const cutoff = top[top.length - 1]!.s;
-  const truth = new Set(reference.filter((r, i) => i < RECALL_TOP || Math.abs(r.s - cutoff) <= 1e-9).map((r) => r.k));
+  if (reference.length >= RECALL_REFERENCE_LIMIT && Math.abs(reference[reference.length - 1]!.s - cutoff) <= TIE) return null;
+  const tied = (r: RankedKey): boolean => Math.abs(r.s - cutoff) <= TIE;
+  const better = new Set(top.filter((r) => !tied(r)).map((r) => r.k));
+  const ties = new Set(reference.filter(tied).map((r) => r.k));
+  const slots = top.length - better.size; // top-ten places the tied rows fill
+  const hits = (answer: RankedKey[]): number => {
+    const first = new Set(answer.slice(0, RECALL_TOP).map((r) => r.k)); // a repeated row is one neighbour, never ten
+    return [...first].filter((k) => better.has(k)).length + Math.min(slots, [...first].filter((k) => ties.has(k) && !better.has(k)).length);
+  };
   const p = rankedKeys(primary);
   const r = rankedKeys(rust);
-  const share = (hits: number): number => Math.min(hits, top.length) / top.length;
+  const share = (n: number): number => Math.min(n, top.length) / top.length;
   const both = new Set(p.slice(0, RECALL_TOP).map((x) => x.k));
   const shared = new Set(r.slice(0, RECALL_TOP).map((x) => x.k).filter((k) => both.has(k))).size;
-  return { vector: share(hitsIn(r, truth)), primary: share(hitsIn(p, truth)), ref_size: top.length, overlap: shared / Math.max(1, both.size) };
+  return { vector: share(hits(r)), primary: share(hits(p)), ref_size: top.length, overlap: shared / Math.max(1, both.size) };
 }
 
 /** At most one `take` per interval. */

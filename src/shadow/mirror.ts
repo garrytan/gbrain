@@ -28,6 +28,8 @@ export interface CapturedRead {
   at: number;
   /** The serving process's write generation when the read was captured (MirrorQueueOptions.generation). */
   gen?: number;
+  /** The policy fingerprint the serving process held when the read was captured (MirrorQueueOptions.fingerprint). */
+  fp?: string;
 }
 
 /** Counters the serving process keeps; sent to the child in `stats` events. Cumulative for the process. */
@@ -114,6 +116,8 @@ export interface MirrorQueueOptions {
   samples?: SampleRegistry;
   /** The serving process's write generation, read the moment a read is captured (follower.published). */
   generation?: () => number | undefined;
+  /** The policy fingerprint of the primary's data, read the moment a read is captured: the latest known, never newer than the read (checks.ts `createPolicyWatch`). */
+  fingerprint?: () => string | undefined;
 }
 
 export const DEFAULT_MAX_LINE_BYTES = 1024 * 1024;
@@ -142,6 +146,7 @@ export class MirrorQueue {
   private readonly schedule: (fn: () => void) => void;
   private readonly samples?: SampleRegistry;
   private readonly generation?: () => number | undefined;
+  private readonly fingerprint?: () => string | undefined;
 
   constructor(opts: MirrorQueueOptions) {
     this.bound = Math.max(1, opts.bound);
@@ -151,6 +156,7 @@ export class MirrorQueue {
     this.schedule = opts.schedule ?? ((fn) => { setImmediate(fn); });
     this.samples = opts.samples;
     this.generation = opts.generation;
+    this.fingerprint = opts.fingerprint;
   }
 
   /** Queued, not yet delivered. */
@@ -178,6 +184,7 @@ export class MirrorQueue {
       return;
     }
     try { read.gen = this.generation?.(); } catch { /* a sample with no generation is unresolved, never cleared */ }
+    try { read.fp = this.fingerprint?.(); } catch { /* a sample with no fingerprint is unresolved, never cleared */ }
     this.items.push(read);
     this.kick();
   }
@@ -212,7 +219,7 @@ export class MirrorQueue {
       let sid: string | undefined;
       try {
         // The child names this sample by `sid` alone when it asks the serving process about it (samples.ts).
-        sid = this.samples?.add({ op: read.op, args: read.args, access: read.access, at: read.at, gen: read.gen }, JSON.stringify(read.args).length + 1024);
+        sid = this.samples?.add({ op: read.op, args: read.args, result: read.result, access: read.access, at: read.at, gen: read.gen, fp: read.fp }, 1024);
         line = JSON.stringify({
           t: 'read', id: nextId++, sid, at: read.at, op: read.op, primary_ms: read.primary_ms,
           args: read.args, result: read.result, access: read.access,
@@ -223,6 +230,7 @@ export class MirrorQueue {
         this.meter.note(read.op, 'unmirrorable');
         continue;
       }
+      if (sid) this.samples?.charge(sid, line.length); // the sample keeps the arguments and the answer the line carries
       if (Buffer.byteLength(line) > this.maxLineBytes) {
         if (sid) this.samples?.drop(sid);
         this.counters.shed_too_large++;

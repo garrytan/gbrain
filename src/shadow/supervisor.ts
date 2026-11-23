@@ -49,7 +49,7 @@ export interface ShadowSupervisorOptions {
 /** The only codes an `ask` failure carries back to the child: never an exception message (it can hold content). */
 export const ASK_CODES: ReadonlySet<string> = new Set([
   'epoch_changed', 'no_follower', 'not_a_read', 'busy', 'timeout', 'write_after_barrier', 'watermark_invalid', 'child_unavailable',
-  'rate_limited', 'unsupported', 'sample_unknown', 'invalidation_pending', 'failed',
+  'rate_limited', 'unsupported', 'sample_unknown', 'invalidation_pending', 'moved', 'failed',
 ]);
 export const askCode = (error: unknown): string => {
   const code = (error as { code?: unknown } | null)?.code;

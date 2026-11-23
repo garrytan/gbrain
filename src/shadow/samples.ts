@@ -17,8 +17,12 @@ export interface Sample {
   at: number;
   /** The serving process's write generation (follower.published) when the read was captured; undefined without a follower. */
   gen?: number;
-  /** Set when the stable rerun read the primary again: the time and generation of that read. */
-  rerun?: { at: number; gen?: number };
+  /** The policy fingerprint of the primary's data at capture (checks.ts `createPolicyWatch`): the latest the database held before the read returned; undefined when none was known yet, and then nothing is proven unchanged. */
+  fp?: string;
+  /** The primary's encoded answer; the serving process compares the child's rows with it, so it never goes back over the control channel. */
+  result?: unknown;
+  /** Set when the stable rerun read the primary again: the time, generation and fingerprint of that read, and its encoded answer once it returned. */
+  rerun?: { at: number; gen?: number; fp?: string; result?: unknown };
 }
 
 export const SAMPLE_REGISTRY_MAX_ENTRIES = 1024;
@@ -37,13 +41,26 @@ export class SampleRegistry {
     const id = `${this.nonce}.${++this.counter}`;
     this.entries.set(id, { sample, bytes });
     this.bytes += bytes;
+    this.evict(id);
+    return id;
+  }
+
+  private evict(keep: string): void {
     for (const [oldest, e] of this.entries) {
       if (this.entries.size <= this.maxEntries && this.bytes <= this.maxBytes) break;
-      if (oldest === id) break; // a single sample over the byte cap is kept until the next one arrives
+      if (oldest === keep) break; // a single sample over the byte cap is kept until the next one arrives
       this.entries.delete(oldest);
       this.bytes -= e.bytes;
     }
-    return id;
+  }
+
+  /** Charges `bytes` more to an entry (a rerun's answer kept beside the sample); the oldest entries go first when the cap is passed. */
+  charge(id: string, bytes: number): void {
+    const e = this.entries.get(id);
+    if (!e) return;
+    e.bytes += bytes;
+    this.bytes += bytes;
+    this.evict(id);
   }
 
   get(id: unknown): Sample | undefined { return typeof id === 'string' ? this.entries.get(id)?.sample : undefined; }

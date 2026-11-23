@@ -1976,13 +1976,25 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   ranking difference, because vector and default-ranker membership differences are legitimate (D17). A row the check cannot
   evaluate (no page identity, a page the primary lacks, a failed, skipped or moved check) is unchecked, and the diff counts. Accepted
   ranking differences are never dropped: the status and the report list them per member (`evidence.ranking_differences`) next to the
-  rule. The control channel carries no content: the serving process keeps a bounded registry of recent samples (arguments and the
-  caller's record) and the child asks about a sample by an opaque sample id, in answers a failure is an allowlisted code, and
+  rule. The control channel carries no content: the serving process keeps a bounded registry of recent samples (arguments, the
+  caller's record and the primary's own answer) and the child asks about a sample by an opaque sample id. The child sends only
+  the identities of the Rust rows (page, chunk and digests), the serving process does the comparing, and an answer is a verdict
+  (a rerun's answer is the epoch, a stamp and a digest), never a row, a title, a slug or chunk text. A failure is an allowlisted code, and
   an answer is bound to the asking child's session, so a restarted child never receives its predecessor's. An unresolved
   comparison is written to the ledger (`rerun: pending`) before its rerun starts and settled by a completion row with the same
   sample id; one never completed (a crash, a restart) counts as unexplained. A ranked diff is cleared only at row identity
-  (the same chunk id and text on the same page, judged by the primary) and only when nothing the policy reads changed since the
-  read, lineage origins included; the vector reference is the engine's own exact statement with no candidate window.
+  and only when nothing the policy reads changed since the read. A Rust row is held when it is byte-equal to a primary row in every
+  field but the ranking ones; a row with a primary row's page and chunk but another payload (a substituted title or flag), or one
+  that claims a chunk without a numeric chunk id, is never cleared and the diff counts. A new row is judged on the primary with the
+  read policy, the safe-chunk fence the read asked for and the chunk visibility the primary used. "Nothing changed" is proven by this
+  process's write generation (read live before and after the check), a fingerprint of pages (deletions included), concept-provenance
+  links, sources, config and chunks that was captured with the sample, the access tables and the page timestamps; without that proof
+  the sample is `inconclusive` (`privacy_check_moved`). The vector reference is the engine's own exact statement with no candidate
+  window and is used only when the same proof holds from the sample's capture to the end of the reference run; otherwise the sample is
+  not scored. Tied rows at the cutoff count only for the top-ten places the strictly better rows leave, and a reference whose last row
+  (of 50) still ties the cutoff is not scored. Known limits, not fixed here: a Rust row on a page the primary did not return is
+  judged by page policy, chunk identity and chunk text, not by its other fields; and a read the caller was authorized to make that
+  returns a private page still reads `private_row_returned` and pauses comparison (it fails closed).
 - **Status fields.** `status --json` adds: `follower.state` (`not_seeded`, `stopped`, `invalid`, `behind`,
   `following`), `lag_ms`, `lag_ms_p99_24h` and `lag_ms_p99_epoch` (a power-of-two bucket upper bound, not an exact
   value), `queue_depth`, `applied_rows`, `coverage_watermark`; `reconcile.state` (`never_run`, `ok`, `repaired`,

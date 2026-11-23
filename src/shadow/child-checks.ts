@@ -5,12 +5,14 @@
  * Privacy verdict (plan decision 6, review F1). The source-scope check in classify.ts runs first. After it, every Rust row
  * the primary's own answer did not hold is a page the primary did not show this caller: the serving process judges it
  * with the primary's read policy under the captured `CallerAccess` (named by sample id: the record, the arguments and the policy
- * never travel back over the control channel). A page the caller may not read is a violation. A rise
+ * never travel back over the control channel, and neither does any content: the answer is a verdict). A page the caller may not read is a violation. A rise
  * of the policy generation during the check, or no answer, is `inconclusive`, never a pass. A row the primary's answer
  * holds needs no check, and a read that did not ask for the policy (`excludePrivate`) is not judged.
  */
 import { createHash } from 'node:crypto';
-import type { PageCandidates, PrivacyAnswer } from './checks.ts';
+import type { PageCandidates } from './checks.ts';
+import { stripScores } from './classify.ts';
+import { canonicalJson } from './codec.ts';
 
 export const PRIVACY_ASK_TIMEOUT_MS = 10_000;
 export const RERUN_QUEUE_BOUND = 64;
@@ -33,42 +35,66 @@ function pageOf(row: Row): { id?: number; key?: string } {
 }
 
 const md5 = (text: string): string => createHash('md5').update(text).digest('hex');
-/** The chunk a result row carries: its id and a digest of its text (null when the row has none), so a substituted chunk is not the same row. */
-function chunkOf(row: Row): { id: number; sum: string | null } | undefined {
-  return typeof row.chunk_id === 'number' ? { id: row.chunk_id, sum: typeof row.chunk_text === 'string' ? md5(row.chunk_text) : null } : undefined;
+const sha = (text: string): string => createHash('sha256').update(text).digest('hex');
+/** The digest of an encoded result in the comparison form (codec.ts canonicalJson): what a rerun's answer carries instead of the result. */
+export const resultDigest = (encoded: unknown): string => sha(canonicalJson(encoded));
+
+/** The chunk a result row carries: its id and a digest of its text (null when the row has none), so a substituted chunk is not the same row. `invalid` is a row that claims a chunk it does not identify. */
+export type ChunkIdentity = { id: number; sum: string | null } | 'invalid';
+function chunkOf(row: Row): ChunkIdentity | undefined {
+  if (typeof row.chunk_id === 'number' && Number.isSafeInteger(row.chunk_id)) return { id: row.chunk_id, sum: typeof row.chunk_text === 'string' ? md5(row.chunk_text) : null };
+  // A ranked row (it has a score), or any row that names a chunk id or carries chunk text, must name a valid chunk: a missing or non-numeric id is never a page-only row.
+  const claims = (row.chunk_id !== undefined && row.chunk_id !== null) || typeof row.chunk_text === 'string' || typeof row.score === 'number';
+  return claims ? 'invalid' : undefined;
 }
 
+/** One result row reduced to identity: its page, its chunk and a digest of every field but the ranking ones. No content. */
+export interface RowIdentity { id?: number; key?: string; chunk?: ChunkIdentity; payload: string }
 export interface ExtraRow { id?: number; key?: string; chunk?: { id: number; sum: string | null } }
 
+export function rowIdentities(encoded: unknown): RowIdentity[] {
+  return rowsOf(encoded).map((r) => ({ ...pageOf(r), ...(chunkOf(r) === undefined ? {} : { chunk: chunkOf(r) }), payload: sha(canonicalJson(stripScores(r))) }));
+}
+
+const pageSigs = (r: { id?: number; key?: string }): string[] => [...(r.id === undefined ? [] : [`i${r.id}`]), ...(r.key === undefined ? [] : [`k${r.key}`])];
+const chunkSig = (c: ChunkIdentity | undefined): string => (c === undefined ? '-' : c === 'invalid' ? '!' : `${c.id}:${c.sum}`);
+
 /**
- * The Rust rows the primary's answer did not hold, at ROW identity: the same page AND the same chunk (id and text) is the
- * primary's row; a row on a known page with another chunk, or another text, is extra, because the page's policy cannot vouch
- * for a chunk the primary did not return. `unidentified` counts the rows that name no page at all.
+ * The Rust rows the primary's answer did not hold, at ROW identity. A row held by the primary is byte-equal to one of its rows
+ * in every field but the ranking ones (a score is not identity). Not held, and then: a row with no page identity, or that
+ * claims a chunk it does not identify, or that has the page and chunk of a primary row but another payload (a substituted
+ * title, flags, text) is UNIDENTIFIED: never cleared. A row on a page or chunk the primary did not return is extra, for the
+ * serving process to judge (page policy, safe fence, the chunk is that page's with the text the primary stores).
  */
-export function extraRows(encodedPrimary: unknown, encodedRust: unknown): { rows: ExtraRow[]; unidentified: number } {
-  const sig = (p: { id?: number; key?: string }, c: { id: number; sum: string | null } | undefined): string[] =>
-    [...(p.id === undefined ? [] : [`i${p.id}`]), ...(p.key === undefined ? [] : [`k${p.key}`])].map((page) => `${page}|${c ? `${c.id}:${c.sum}` : '-'}`);
-  const have = new Set(rowsOf(encodedPrimary).flatMap((r) => sig(pageOf(r), chunkOf(r))));
+export function extraIds(primary: RowIdentity[], rust: RowIdentity[]): { rows: ExtraRow[]; unidentified: number } {
+  const chunky = primary.some((r) => typeof r.chunk === 'object');
+  const full = new Set(primary.flatMap((r) => pageSigs(r).map((p) => `${p}|${chunkSig(r.chunk)}|${r.payload}`)));
+  const ident = new Set(primary.flatMap((r) => pageSigs(r).map((p) => `${p}|${chunkSig(r.chunk)}`)));
   const out: { rows: ExtraRow[]; unidentified: number } = { rows: [], unidentified: 0 };
-  for (const r of rowsOf(encodedRust)) {
-    const p = pageOf(r);
-    const c = chunkOf(r);
-    if (sig(p, c).some((s) => have.has(s))) continue;
-    if (p.id === undefined && p.key === undefined) out.unidentified++; else out.rows.push({ ...p, ...(c ? { chunk: c } : {}) });
+  for (const r of rust) {
+    const pages = pageSigs(r);
+    if (pages.some((p) => full.has(`${p}|${chunkSig(r.chunk)}|${r.payload}`))) continue;
+    if (pages.length === 0 || r.chunk === 'invalid' || (chunky && r.chunk === undefined) || pages.some((p) => ident.has(`${p}|${chunkSig(r.chunk)}`))) { out.unidentified++; continue; }
+    out.rows.push({ ...(r.id === undefined ? {} : { id: r.id }), ...(r.key === undefined ? {} : { key: r.key }), ...(r.chunk ? { chunk: r.chunk as { id: number; sum: string | null } } : {}) });
   }
   return out;
 }
 
-/** The pages (and chunk ids) of the Rust answer that the primary's answer did not hold. */
-export function missingPages(encodedPrimary: unknown, encodedRust: unknown): PageCandidates {
+export const extraRows = (encodedPrimary: unknown, encodedRust: unknown): { rows: ExtraRow[]; unidentified: number } => extraIds(rowIdentities(encodedPrimary), rowIdentities(encodedRust));
+
+/** The pages (and chunk ids) of extra rows. */
+export function candidatesOf(rows: ExtraRow[]): PageCandidates {
   const out: PageCandidates = { ids: [], keys: [], chunks: [] };
-  for (const p of extraRows(encodedPrimary, encodedRust).rows) {
+  for (const p of rows) {
     if (p.id !== undefined) out.ids.push(p.id);
     else if (p.key !== undefined) out.keys.push(p.key); // a slug leaves the child only for a row with no page id
     if (p.chunk) out.chunks.push(p.chunk.id);
   }
   return out;
 }
+
+/** The pages (and chunk ids) of the Rust answer that the primary's answer did not hold. */
+export const missingPages = (encodedPrimary: unknown, encodedRust: unknown): PageCandidates => candidatesOf(extraRows(encodedPrimary, encodedRust).rows);
 
 /** Did the read ask for the read policy (`excludePrivate`, plain, under `remote`, or on a find's `untrusted` policy)? Only then is a missing row a policy question. */
 export function policyApplies(args: unknown[]): boolean {
@@ -83,31 +109,30 @@ export type PrivacyVerdict = 'clean' | 'violation' | 'privacy_check_moved' | 'pr
 export interface PrivacyResult { verdict: PrivacyVerdict; complete: boolean }
 
 /**
- * Asks the serving process (checks.ts `policyCheck`) about every Rust page the primary's answer lacked, for the sample `sid`
- * (its captured caller record, and the primary's own policy text). `phase` says which primary read to hold the check to: the
- * sample's own, or the stable rerun's. A row the check cannot evaluate (no page identity, a page or chunk the primary does
- * not have, a chunk on another page or with other text, a failed, skipped or moved check) leaves `complete` false.
+ * Asks the serving process (checks.ts `privacyAnswer`) about the Rust rows the primary's answer lacked, for the sample `sid`
+ * (its captured caller record, arguments and primary answer all stay there). The ask carries only the Rust rows' identities
+ * (page, chunk, digests; no content) and the answer is a verdict, never content: the serving process compares the rows with
+ * the primary's own answer for `phase` (the sample's, or the stable rerun's), judges the extra ones with the primary's read
+ * policy and safe fence, and says clean, violation or moved. A row the check cannot evaluate (no page identity, no valid chunk
+ * identity, a payload that differs from the primary's row of that page and chunk, a page or chunk the primary does not have,
+ * a failed, skipped or moved check) leaves `complete` false.
  */
 export async function privacyVerdict(ask: Asker, args: unknown[], primary: unknown, rust: unknown, sid: string | undefined, phase: 'sample' | 'rerun', at: number): Promise<PrivacyResult> {
   if (!policyApplies(args)) return { verdict: 'clean', complete: false };
-  const extra = extraRows(primary, rust);
-  if (extra.rows.length === 0) return { verdict: 'clean', complete: extra.unidentified === 0 };
+  const rows = rowIdentities(rust);
+  if (phase === 'sample') {
+    const extra = extraIds(rowIdentities(primary), rows);
+    if (extra.rows.length === 0) return { verdict: 'clean', complete: extra.unidentified === 0 };
+  }
   if (!sid) return { verdict: 'privacy_check_unavailable', complete: false };
   try {
-    const answer = await ask({ kind: 'privacy', sid, phase, at, candidates: missingPages(primary, rust) }, PRIVACY_ASK_TIMEOUT_MS) as PrivacyAnswer;
-    if (answer.moved) return { verdict: 'privacy_check_moved', complete: false };
-    if (answer.violations > 0) return { verdict: 'violation', complete: false };
-    const pageIds = new Map(answer.found.pages.map((p) => [p.id, p.key]));
-    const pageKeys = new Map(answer.found.pages.map((p) => [p.key, p.id]));
-    const chunks = new Map(answer.found.chunks.map((c) => [c.id, c]));
-    const judged = (r: ExtraRow): boolean => {
-      const page = r.id !== undefined ? (pageIds.has(r.id) ? r.id : undefined) : r.key !== undefined ? pageKeys.get(r.key) : undefined;
-      if (page === undefined) return false;
-      if (!r.chunk) return true;
-      const c = chunks.get(r.chunk.id);
-      return !!c && c.page_id === page && r.chunk.sum !== null && c.sum === r.chunk.sum; // the chunk is that page's, with the text the primary stores
-    };
-    return { verdict: 'clean', complete: extra.unidentified === 0 && extra.rows.every(judged) };
+    // A slug leaves the child only for a row with no page id.
+    const wire = rows.map(({ key, ...r }) => (r.id === undefined && key !== undefined ? { ...r, key } : r));
+    const answer = await ask({ kind: 'privacy', sid, phase, at, rows: wire }, PRIVACY_ASK_TIMEOUT_MS) as Partial<PrivacyResult> | null;
+    const v = answer?.verdict;
+    if (v === 'clean') return { verdict: 'clean', complete: answer?.complete === true };
+    if (v === 'violation' || v === 'privacy_check_moved') return { verdict: v, complete: false };
+    return { verdict: 'privacy_check_unavailable', complete: false };
   } catch { return { verdict: 'privacy_check_unavailable', complete: false }; }
 }
 

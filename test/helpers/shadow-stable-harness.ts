@@ -94,6 +94,7 @@ export async function startRig(o: RigOptions): Promise<Rig> {
   }) as never;
   const state = { version: 1, enabled: true, started_at: 'x', sample_rate: 1, queue_bound: 64, plan_hash: 'h', brain: 'b', primary_engine: 'pglite' };
   const attached = attachShadowParts(o.primary, dir, state as never, { gbrainArgv: ['never'], supervisor: { spawn: spawn as never, stillEnabled: () => true, minBackoffMs: 0, maxBackoffMs: 0 } });
+  await attached.policyWatch?.ready(); // a sample captured from here on carries the policy fingerprint it is held to
   const seen: Array<Record<string, unknown>> = [];
   const waiting: Array<Record<string, unknown>> = [];
   const rows = (): Array<Record<string, unknown>> => seen;

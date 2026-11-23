@@ -18,7 +18,7 @@ import { ensureEpoch } from '../src/shadow/evidence-epoch.ts';
 import { buildEvidenceStatus, renderEvidenceStatus } from '../src/shadow/evidence.ts';
 import { appendFault, appendLedgerRows, type ShadowLedgerRow } from '../src/shadow/ledger.ts';
 import { shadowStatusDocument } from '../src/shadow/status-document.ts';
-import { appendRecall, IntervalGate, readEpochRecall, recallEligible, scoreRecall, type RankedKey } from '../src/shadow/recall.ts';
+import { appendRecall, IntervalGate, readEpochRecall, recallEligible, RECALL_REFERENCE_LIMIT, scoreRecall, type RankedKey } from '../src/shadow/recall.ts';
 
 const dirs: string[] = [];
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
@@ -54,6 +54,19 @@ describe('scoring', () => {
     const tied = ref(13, (i) => (i < 9 ? 1 - i / 100 : 0.5)); // c9, c10, c11 and c12 tie at the cutoff
     expect(scoreRecall(tied, rows(ids(0, 10)), rows([...ids(0, 9), 'c12']))).toMatchObject({ vector: 1 });
     expect(scoreRecall(tied, rows(ids(0, 10)), rows([...ids(0, 9), 'c13']))).toMatchObject({ vector: 0.9 });
+  });
+  test('tied rows fill only the top-ten places the strictly better rows leave: ten tied rows and none of nine better ones score 0.1', () => {
+    const tied = ref(29, (i) => (i < 9 ? 1 - i / 100 : 0.5)); // nine strictly better rows, then twenty tied at the cutoff
+    expect(scoreRecall(tied, rows(ids(0, 10)), rows(ids(9, 19)))).toMatchObject({ vector: 0.1, primary: 1 }); // the nine better rows were all missed
+    expect(scoreRecall(tied, rows(ids(0, 10)), rows([...ids(0, 9), 'c20']))).toMatchObject({ vector: 1 }); // one tied row takes the one place left
+    expect(scoreRecall(tied, rows(ids(0, 10)), rows([...ids(0, 8), 'c12', 'c13']))).toMatchObject({ vector: 0.9 }); // two tied rows, one place
+  });
+  test('a reference that fills its window with rows tied at the cutoff is unscorable: the tie may run past it', () => {
+    const full = ref(RECALL_REFERENCE_LIMIT, (i) => (i < 9 ? 1 - i / 100 : 0.5)); // the fiftieth row still ties the tenth score
+    expect(scoreRecall(full, rows(ids(0, 10)), rows(ids(0, 10)))).toBeNull();
+    expect(scoreRecall(full, rows(ids(0, 10)), rows(ids(9, 19)))).toBeNull(); // never a miss for rows beyond the window
+    expect(scoreRecall(ref(RECALL_REFERENCE_LIMIT, (i) => 1 - i / 100), rows(ids(0, 10)), rows(ids(0, 10)))).toMatchObject({ vector: 1 }); // a window whose last row is strictly worse holds the whole tie
+    expect(scoreRecall(ref(RECALL_REFERENCE_LIMIT - 1, (i) => (i < 9 ? 1 - i / 100 : 0.5)), rows(ids(0, 10)), rows(ids(0, 10)))).toMatchObject({ vector: 1 }); // fewer rows than asked for: the tie is whole
   });
   test('ten copies of one true neighbour are one neighbour, not ten', () => {
     const copies = Array.from({ length: 10 }, () => ({ chunk_id: 'c0', score: 0.5 }));

@@ -3,31 +3,40 @@
  * about the primary, which only this process can read. The child names the sample by its OPAQUE sample id (samples.ts); the
  * read's arguments and the caller's access record stay in this process, and a failure goes back as an allowlisted code.
  *
- *   privacy  Is each of these pages (ids and chunk ids only) readable by the captured caller under the primary's read policy,
- *            and is each returned chunk that page's, with the text the primary stores? One read-only snapshot judges them with
- *            the existing policy fragment (private-visibility.ts `privatePagesFilterForCaller`) under the captured
- *            `CallerAccess`. The answer is `moved` unless this process can PROVE nothing the policy reads changed since the
- *            read: its own write generation (follower.published) must equal the one captured with the sample, and no page or
- *            access row (lineage origins included) may carry a time later than the read; the access tables' generation must
- *            hold across the check too. Without proof the child calls the sample inconclusive, never clean.
+ *   privacy  The child sends the identities of the Rust rows (page, chunk, digests: no content). This process compares them with
+ *            the primary's own answer, which it kept under the sample id: a row byte-equal to a primary row in every field but
+ *            the ranking ones is held; a row that has a primary row's page and chunk but another payload, or claims a chunk
+ *            it does not identify, is unexplained; any other row is judged here, in one read-only snapshot, with the existing
+ *            policy fragment (private-visibility.ts `privatePagesFilterForCaller`) under the captured `CallerAccess`, the
+ *            primary's safe-chunk fence when its read asked for it, and the chunk visibility the primary used. The answer is a
+ *            verdict (`clean` with `complete`, `violation`, `moved`), never content. It is `moved` unless this process can PROVE
+ *            nothing the policy reads changed since the read: its own write generation (follower.published, read live before
+ *            and after the check) must equal the one captured with the sample, the policy fingerprint (pages, concept-provenance
+ *            links, sources, config, chunks: deletions included; `createPolicyWatch`) must equal the one captured with the
+ *            sample, no page or access row may carry a time later than the read, and the access tables' generation must hold
+ *            across the check. Without proof the child calls the sample inconclusive, never clean.
  *   rerun    The stable-generation barrier for a mismatch that nothing explains (plan decision 7). When everything published
  *            has been read and sent, a `barrier` call goes down the follow stream behind the last batch; the child acks
  *            only when it applied everything before it and its watermark is valid. The primary read runs next, and the
  *            rerun is refused if any batch was published, or a send was shed, since the barrier. The child then runs the
  *            Rust read holding its follow lock (follow-child.ts `exclusive`). Any race, restart, invalid watermark or the
  *            30 s deadline throws and leaves the sample inconclusive. It never spins: an invalidation that cannot progress
- *            refuses at once, and every wait yields to the event loop.
+ *            refuses at once, and every wait yields to the event loop. The answer is the epoch, the barrier stamp and a digest
+ *            of the primary's rerun answer (kept here for the privacy question), never the answer itself.
  *   vector   The exact reference of a vector sample (recall.ts), at most one a minute: the engine's own exact statement
  *            (`exactSql`: no candidate window, `ORDER BY (distance) + 0`) with its filters, scoring, per-page collapse and
- *            tie-break, run here on a reference-only path. The engine's search itself is not touched.
+ *            tie-break, run here on a reference-only path. The engine's search itself is not touched. The sample is dropped
+ *            (`moved`) unless nothing the corpus or the policy reads changed between its capture and the end of the reference
+ *            (the same generation and fingerprint proof as the privacy question).
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { hasCapability } from '../core/engine-capabilities.ts';
 import { privatePagesFilterForCaller, withCallerAccess, withoutCallerAccess, type CallerAccess } from '../core/search/private-visibility.ts';
-import { chunkVisibleFilter } from '../core/search/safe-chunks.ts';
+import { chunkVisibleFilter, requiresSafeChunks, safeChunksFilter } from '../core/search/safe-chunks.ts';
 import { buildVectorSearchStatement } from '../core/search/vector-statement.ts';
 import type { SearchOpts } from '../core/types.ts';
 import { decodeValue, encodeValue } from './codec.ts';
+import { candidatesOf, extraIds, resultDigest, rowIdentities, type ExtraRow, type RowIdentity } from './child-checks.ts';
 import { readEpoch } from './evidence-epoch.ts';
 import type { ShadowFollower } from './follower.ts';
 import type { ReadSource } from './read-pool.ts';
@@ -39,14 +48,9 @@ export const RERUN_DEADLINE_MS = 30_000;
 
 /** Pages a Rust answer named that the primary's own answer did not: by id, by (source, slug) and by chunk id. */
 export interface PageCandidates { ids: number[]; keys: string[]; chunks: number[] }
-export interface PrivacyAnswer {
-  checked: number;
-  violations: number;
-  moved: boolean;
-  /** What the primary has of the candidates (ids, keys and a digest of each chunk's text; no content): a candidate not here was not checked. */
-  found: { pages: Array<{ id: number; key: string }>; chunks: Array<{ id: number; page_id: number; sum: string }> };
-}
-export interface RerunAnswer { result: unknown; stamp: number; epoch_id: string }
+/** The serving process's verdict on a sample's Rust rows (never content). `complete`: every extra row was identified and judged. */
+export interface PrivacyAnswer { verdict: 'clean' | 'violation' | 'privacy_check_moved'; complete: boolean }
+export interface RerunAnswer { stamp: number; epoch_id: string; digest: string }
 
 /** Runs `fn` as the captured caller, or outside any caller record when the read had none (a record changes the page policy text). */
 const asCaller = <T>(access: Partial<CallerAccess> | undefined, fn: () => T): T => (access ? withCallerAccess(access, fn) : withoutCallerAccess(fn));
@@ -69,28 +73,110 @@ const CHANGED_AFTER_SQL = `SELECT (EXISTS (SELECT 1 FROM pages WHERE updated_at 
   OR EXISTS (SELECT 1 FROM access_policy_revisions WHERE created_at > to_timestamp($1::double precision / 1000.0) OR applied_at > to_timestamp($1::double precision / 1000.0))) AS changed`;
 
 /**
- * Judges the candidates for `sample`, held to the generation of the read that produced them (`base`: the sample's own, or the
- * stable rerun's). `generation` is this process's write generation now (follower.published), when it has a follower.
+ * A fingerprint of everything the read policy, the safe fence and the vector corpus read that no timestamp or counter of this
+ * process covers: pages (count and newest write, so a deletion shows), the concept-provenance links `privatePagesFilterForCaller`
+ * reads (their rows, so a removed or re-pointed edge shows), the sources (config and archive state: owner-only sources), the
+ * config rows and the chunks (count and newest embedding). Another process's write moves it; it does not tell which.
  */
-export async function policyCheck(reads: ReadSource, access: Partial<CallerAccess> | undefined, cand: PageCandidates, base: { at: number; gen?: number } | undefined, generation: number | undefined, hasFollower: boolean): Promise<PrivacyAnswer> {
+export const POLICY_FINGERPRINT_SQL = `SELECT concat_ws('|',
+  (SELECT count(*) || ':' || COALESCE(max(updated_at)::text, '') FROM pages),
+  (SELECT count(*) || ':' || md5(COALESCE(string_agg(id || '/' || from_page_id || '/' || to_page_id, ',' ORDER BY id), '')) FROM links WHERE link_source = 'concept-provenance' AND link_type = 'synthesized_from'),
+  (SELECT md5(COALESCE(string_agg(id || '=' || config::text || archived::text, ',' ORDER BY id), '')) FROM sources),
+  (SELECT md5(COALESCE(string_agg(key || '=' || value, ',' ORDER BY key), '')) FROM config),
+  (SELECT count(*) || ':' || COALESCE(max(embedded_at)::text, '') FROM content_chunks -- chunk-visibility-ok: the fingerprint covers every stored chunk row, staged and retired included: a change to any of them moves it
+  )) AS fp`;
+
+const fingerprintOf = async (tx: BrainEngine): Promise<string> => String((await tx.executeRaw<{ fp: string }>(POLICY_FINGERPRINT_SQL))[0]?.fp);
+
+/**
+ * The policy fingerprint, kept fresh off the request path. `current()` is synchronous (a read is captured on the request path):
+ * it returns the latest fingerprint a refresh completed BEFORE this moment, so it is never newer than the read it is stored
+ * with, and starts a refresh when the one it holds is older than `ttlMs`. Unchanged data compares equal later; changed data
+ * does not, and neither does an older fingerprint than the change: a stale value only makes the proof fail, never pass.
+ * `undefined` until the first refresh completes (a sample captured before then is never proven).
+ */
+export interface PolicyWatch { current(): string | undefined; live(): Promise<string>; ready(): Promise<void> }
+export function createPolicyWatch(reads: ReadSource, now: () => number = Date.now, ttlMs = 2000): PolicyWatch {
+  let value: string | undefined;
+  let at = -Infinity;
+  let inflight: Promise<void> | null = null;
+  const refresh = (): Promise<void> => (inflight ??= (async () => {
+    try { const v = await reads.read(fingerprintOf); value = v; at = now(); } catch { /* the value stays older: the proof fails, never passes */ }
+    inflight = null;
+  })());
+  return {
+    current: () => { if (now() - at >= ttlMs) void refresh(); return value; },
+    live: () => reads.read(fingerprintOf),
+    ready: () => refresh(),
+  };
+}
+
+/** Does the read's own scope ask for the safe-chunk fence (`requireSafeChunks`, else `excludePrivate`)? Any argument that does, does. */
+const safeFenceApplies = (args: unknown[]): boolean => args.some((a) => !!a && typeof a === 'object' && requiresSafeChunks(a as { requireSafeChunks?: boolean; excludePrivate?: boolean }))
+  || args.some((a) => { const o = a as { remote?: unknown; untrusted?: unknown } | null; return !!o && typeof o === 'object' && [o.remote, o.untrusted].some((x) => !!x && typeof x === 'object' && requiresSafeChunks(x as { requireSafeChunks?: boolean; excludePrivate?: boolean })); });
+
+interface Base { at: number; gen?: number; fp?: string }
+
+/**
+ * What the primary's policy says about the candidates, held to the generation of the read that produced the rows (`base`: the
+ * sample's own, or the stable rerun's). `generation` reads this process's write generation NOW (follower.published), before and
+ * after the snapshot, when it has a follower. `moved` is true unless everything the policy reads is proven unchanged.
+ */
+async function policySnapshot(reads: ReadSource, access: Partial<CallerAccess> | undefined, cand: PageCandidates, safe: boolean, base: Base | undefined, generation: () => number | undefined, hasFollower: boolean) {
   const accessGeneration = (): Promise<string> => reads.read(async (tx) => String((await tx.executeRaw<{ generation: string }>(POLICY_GENERATION_SQL))[0]?.generation));
+  const gen0 = generation();
   const before = await accessGeneration();
-  const { rows, chunks, changed } = await reads.read(async (tx) => ({
+  const { rows, chunks, changed, fp } = await reads.read(async (tx) => ({
     rows: await asCaller(access, () => tx.executeRaw<{ id: number | string; key: string; allowed: boolean }>(
       `SELECT p.id, p.source_id || E'\\x1f' || p.slug AS key, (${privatePagesFilterForCaller('p')}) AS allowed FROM pages p
         WHERE p.id = ANY($1::bigint[]) OR (p.source_id || E'\\x1f' || p.slug) = ANY($2::text[])`, [cand.ids, cand.keys])),
     chunks: await tx.executeRaw<{ id: number | string; page_id: number | string; sum: string }>(
       `SELECT c.id, c.page_id, md5(c.chunk_text) AS sum FROM content_chunks c JOIN pages p ON p.id = c.page_id
-        WHERE c.id = ANY($1::bigint[]) AND ${chunkVisibleFilter('p', 'c')}`, [cand.chunks]), // a staged or retired chunk is not one the primary can return
+        WHERE c.id = ANY($1::bigint[]) AND ${chunkVisibleFilter('p', 'c')}${safe ? ` AND ${safeChunksFilter('p')}` : ''}`, [cand.chunks]), // a staged, retired or unsealed chunk is not one the primary can return
     // 1 ms of slack: a write that finished before the read can carry a microsecond time past the read's millisecond.
     changed: base ? (await tx.executeRaw<{ changed: boolean }>(CHANGED_AFTER_SQL, [base.at + 1]))[0]?.changed === true : true,
+    fp: await fingerprintOf(tx),
   }));
-  const unproven = !base || (hasFollower && (base.gen === undefined || base.gen !== generation));
-  const moved = unproven || changed || before !== await accessGeneration();
+  const gen1 = generation();
+  const unproven = !base || base.fp === undefined || (hasFollower && base.gen === undefined);
+  const moved = unproven || changed || fp !== base?.fp || (hasFollower && (gen0 !== base?.gen || gen1 !== base?.gen)) || before !== await accessGeneration();
   return {
-    checked: rows.length, violations: rows.filter((r) => r.allowed !== true).length, moved,
-    found: { pages: rows.map((r) => ({ id: Number(r.id), key: r.key })), chunks: chunks.map((c) => ({ id: Number(c.id), page_id: Number(c.page_id), sum: c.sum })) },
+    moved, violations: rows.filter((r) => r.allowed !== true).length,
+    pages: rows.map((r) => ({ id: Number(r.id), key: r.key })), chunks: chunks.map((c) => ({ id: Number(c.id), page_id: Number(c.page_id), sum: c.sum })),
   };
+}
+
+const isRowIdentity = (v: unknown): v is RowIdentity => {
+  const r = v as Record<string, unknown> | null;
+  const c = r?.chunk as Record<string, unknown> | 'invalid' | undefined;
+  return !!r && typeof r === 'object' && typeof r.payload === 'string' && (r.id === undefined || typeof r.id === 'number') && (r.key === undefined || typeof r.key === 'string')
+    && (c === undefined || c === 'invalid' || (!!c && typeof c === 'object' && typeof c.id === 'number' && (c.sum === null || typeof c.sum === 'string')));
+};
+
+/** The verdict on the child's Rust rows for `sample`: compared with the primary's own answer, the extra rows judged, nothing but a verdict going back. */
+async function privacyAnswer(d: AskDeps, sample: Sample, ask: { phase?: unknown; rows?: unknown }): Promise<PrivacyAnswer> {
+  const rerun = ask.phase === 'rerun';
+  const base: Base | undefined = rerun ? sample.rerun : { at: sample.at, gen: sample.gen, fp: sample.fp };
+  const primary = rerun ? sample.rerun?.result : sample.result;
+  if (primary === undefined) throw coded('failed'); // what the primary answered is not known: nothing can be held against it
+  const rows = Array.isArray(ask.rows) ? ask.rows.filter(isRowIdentity).slice(0, 2000) : [];
+  const extra = extraIds(rowIdentities(primary), rows);
+  if (extra.rows.length === 0) return { verdict: 'clean', complete: extra.unidentified === 0 };
+  const args = decodeValue(sample.args) as unknown[];
+  const snap = await policySnapshot(d.reads, sample.access, candidatesOf(extra.rows), safeFenceApplies(args), base, () => d.follower?.published, d.follower !== undefined);
+  if (snap.moved) return { verdict: 'privacy_check_moved', complete: false };
+  if (snap.violations > 0) return { verdict: 'violation', complete: false };
+  const pageIds = new Map(snap.pages.map((p) => [p.id, p.key]));
+  const pageKeys = new Map(snap.pages.map((p) => [p.key, p.id]));
+  const chunks = new Map(snap.chunks.map((c) => [c.id, c]));
+  const judged = (r: ExtraRow): boolean => {
+    const page = r.id !== undefined ? (pageIds.has(r.id) ? r.id : undefined) : r.key !== undefined ? pageKeys.get(r.key) : undefined;
+    if (page === undefined) return false;
+    if (!r.chunk) return true;
+    const c = chunks.get(r.chunk.id);
+    return !!c && c.page_id === page && r.chunk.sum !== null && c.sum === r.chunk.sum; // the chunk is that page's, visible and fenced as the primary served it, with the text the primary stores
+  };
+  return { verdict: 'clean', complete: extra.unidentified === 0 && extra.rows.every(judged) };
 }
 
 export interface AskDeps {
@@ -104,9 +190,11 @@ export interface AskDeps {
   now?: () => number;
   /** Seam for tests; default `RERUN_DEADLINE_MS`. */
   deadlineMs?: number;
+  /** The policy fingerprint (`createPolicyWatch`); the same one the mirror queue captures with each sample. Default: one over `reads`. */
+  watch?: PolicyWatch;
 }
 
-async function stableRerun(d: AskDeps, sample: Sample, ask: { epoch_id: unknown }): Promise<RerunAnswer> {
+async function stableRerun(d: AskDeps, watch: PolicyWatch, sid: string, sample: Sample, ask: { epoch_id: unknown }): Promise<RerunAnswer> {
   const now = d.now ?? Date.now;
   const deadline = now() + (d.deadlineMs ?? RERUN_DEADLINE_MS);
   const left = (): number => Math.max(1, deadline - now());
@@ -125,48 +213,55 @@ async function stableRerun(d: AskDeps, sample: Sample, ask: { epoch_id: unknown 
   const invalidated = f.lastInvalidatedAt;
   const ack = await d.rpc<{ stamp: number }>('barrier', {}, left());
   const args = decodeValue(sample.args) as unknown[];
-  sample.rerun = { at: now(), gen: published }; // the privacy check of the rerun is held to this read
+  const fp = await watch.live().catch(() => undefined); // none known: the rerun's privacy check is unproven, never clean
+  sample.rerun = { at: now(), gen: published, fp }; // the privacy check of the rerun is held to this read
   const read = asCaller(sample.access, () => (d.engine as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[sample.op]!(...args));
   const result = await Promise.race([read, sleep(left()).then(() => { throw coded('timeout'); })]);
   if (!f.idle() || f.published !== published || f.lastInvalidatedAt !== invalidated) throw coded('write_after_barrier');
-  return { result: encodeValue(result), stamp: ack.stamp, epoch_id: epoch };
+  const encoded = encodeValue(result);
+  sample.rerun.result = encoded; // kept here for the privacy question; only its digest goes back
+  d.samples.charge(sid, JSON.stringify(encoded)?.length ?? 0);
+  return { stamp: ack.stamp, epoch_id: epoch, digest: resultDigest(encoded) };
 }
 
 /**
  * The primary's exact top rows for the sample's `searchVector`: ids and scores only. The engine's own exact statement
  * (`exactSql`, bound with no candidate window) keeps the caller's filters, the source boosts, the per-page collapse and the
- * tie-break; asked for `RECALL_REFERENCE_LIMIT` rows so a tie at the cutoff is visible.
+ * tie-break; asked for `RECALL_REFERENCE_LIMIT` rows so a tie at the cutoff is visible. The answers the sample holds were
+ * read at its capture; the reference is refused (`moved`) unless nothing the corpus reads changed since then: this process's
+ * write generation and the policy fingerprint must equal the ones captured with the sample, before and after the statement.
  */
 async function vectorReference(d: AskDeps, sample: Sample): Promise<RankedKey[]> {
   const [embedding, opts] = decodeValue(sample.args) as [Float32Array, SearchOpts | undefined];
   const dialect = hasCapability(d.engine, 'postgres_admin') ? 'postgres' : 'pglite';
-  const rows = await d.reads.read(async (tx) => {
+  const hasFollower = d.follower !== undefined;
+  if (sample.fp === undefined || (hasFollower && sample.gen === undefined)) throw coded('moved'); // nothing was captured to hold the reference to
+  const gen0 = d.follower?.published;
+  const { rows, fpBefore, fpAfter } = await d.reads.read(async (tx) => {
     await tx.executeRaw('SET LOCAL enable_indexscan = off');
     await tx.executeRaw('SET LOCAL enable_bitmapscan = off');
-    return asCaller(sample.access, async () => {
+    const fpBefore = await fingerprintOf(tx);
+    const rows = await asCaller(sample.access, async () => {
       const stmt = buildVectorSearchStatement({ dialect, embedding, limit: RECALL_REFERENCE_LIMIT, offset: 0, opts: { ...opts, limit: RECALL_REFERENCE_LIMIT, offset: 0 } });
       const params = [...stmt.params];
       params[stmt.innerLimitIdx] = null; // no candidate window: every eligible chunk is scored
       return tx.executeRaw<Record<string, unknown>>(stmt.exactSql, params);
     });
+    return { rows, fpBefore, fpAfter: await fingerprintOf(tx) };
   });
+  if (fpBefore !== sample.fp || fpAfter !== sample.fp || (hasFollower && (gen0 !== sample.gen || d.follower?.published !== sample.gen))) throw coded('moved');
   return rankedKeys(encodeValue(rows.filter((r) => r.chunk_id !== null && r.chunk_id !== undefined)));
 }
 
 export function makeAskHandler(d: AskDeps): (ask: { id: number; kind: string; [key: string]: unknown }) => Promise<unknown> {
   const gate = new IntervalGate(RECALL_INTERVAL_MS, d.now);
+  const watch = d.watch ?? createPolicyWatch(d.reads, d.now);
   return async (ask) => {
     const sample = d.samples.get(ask.sid);
     if (!sample) throw coded('sample_unknown'); // evicted, or from another process: the sample stays unresolved
     switch (ask.kind) {
-      case 'privacy': {
-        const base = ask.phase === 'rerun' ? sample.rerun : { at: sample.at, gen: sample.gen };
-        const c = ask.candidates as Partial<PageCandidates> | undefined;
-        const bound = <T>(list: unknown, ok: (v: unknown) => v is T): T[] => (Array.isArray(list) ? list.filter(ok).slice(0, 2000) : []);
-        const cand: PageCandidates = { ids: bound(c?.ids, Number.isFinite as (v: unknown) => v is number), keys: bound(c?.keys, (v): v is string => typeof v === 'string'), chunks: bound(c?.chunks, Number.isFinite as (v: unknown) => v is number) };
-        return policyCheck(d.reads, sample.access, cand, base, d.follower?.published, d.follower !== undefined);
-      }
-      case 'rerun': return stableRerun(d, sample, { epoch_id: ask.epoch_id });
+      case 'privacy': return privacyAnswer(d, sample, ask as { phase?: unknown; rows?: unknown });
+      case 'rerun': return stableRerun(d, watch, ask.sid as string, sample, { epoch_id: ask.epoch_id });
       case 'vector':
         if (!gate.take()) throw coded('rate_limited');
         return vectorReference(d, sample);

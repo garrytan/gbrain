@@ -52,6 +52,7 @@ describe('policy generation', () => {
       };
     } }) as BrainEngine;
     const rig = await startRig({ primary: moving, unseeded: true });
+    transactions = 0; // the rig's own first policy fingerprint read is not the check
     try {
       rig.rust.listPages = async () => [{ id: ids['priv/a'], slug: 'priv/a', source_id: 'default', title: 'x', type: 'note' }];
       await withCallerAccess(ALICE, () => rig.engine.listPages({ limit: 100, excludePrivate: true }));
@@ -78,6 +79,16 @@ describe('page candidates', () => {
     expect(extraRows([own], [{ ...own, chunk_id: 11, chunk_text: 'another chunk' }]).rows).toMatchObject([{ id: 1, chunk: { id: 11 } }]);
     expect(missingPages([own], [{ ...own, chunk_id: 11, chunk_text: 'x' }])).toEqual({ ids: [1], keys: [], chunks: [11] });
     expect(extraRows([own], [{ chunk_text: 'no page identity' }]).unidentified).toBe(1);
+  });
+
+  test('a row that differs from the primary\'s row of that page and chunk in any field but a score, or names no valid chunk, is unidentified, never cleared', () => {
+    const own = { page_id: 1, source_id: 's', slug: 'a', title: 'T', chunk_id: 10, chunk_text: 'the primary text', score: 0.9 };
+    expect(extraRows([own], [{ ...own, score: 0.1 }])).toEqual({ rows: [], unidentified: 0 });
+    for (const changed of [{ title: 'SUBSTITUTED TITLE' }, { stale: true }, { chunk_source: 'timeline' }]) expect([changed, extraRows([own], [{ ...own, ...changed }])]).toEqual([changed, { rows: [], unidentified: 1 }]);
+    for (const chunk of [{ chunk_id: undefined }, { chunk_id: null }, { chunk_id: '10' }, { chunk_id: 1.5 }]) expect([chunk, extraRows([own], [{ ...own, ...chunk, chunk_text: 'ARBITRARY' }]).unidentified]).toEqual([chunk, 1]);
+    expect(extraRows([own], [{ page_id: 2, source_id: 's', slug: 'b', title: 'T', score: 0.5 }]).unidentified).toBe(1); // a ranked row on another page with no chunk at all
+    expect(extraRows([own], [{ page_id: 2, source_id: 's', slug: 'b', title: 'T', chunk_id: 12, chunk_text: 'other', score: 0.5 }])).toMatchObject({ rows: [{ id: 2, chunk: { id: 12 } }], unidentified: 0 }); // a new chunk on a new page is for the primary to judge
+    expect(extraRows([{ page_id: 1, source_id: 's', slug: 'a' }], [{ page_id: 3, source_id: 's', slug: 'c' }]).rows).toMatchObject([{ id: 3 }]); // page rows carry no chunk: page-only
   });
 
   test('an answer is accepted only with the asking child\'s session nonce, and a failure code is a plain bounded token', async () => {

@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { callerAccessRecord, withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { buildVectorSearchStatement } from '../../src/core/search/vector-statement.ts';
-import { makeAskHandler } from '../../src/shadow/checks.ts';
+import { createPolicyWatch, makeAskHandler } from '../../src/shadow/checks.ts';
 import { openReadSource } from '../../src/shadow/read-pool.ts';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -296,6 +296,69 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       counts(await ranked((theirs) => [...theirs.slice(0, 9), { ...theirs[9], chunk_id: Number(secret!.id), chunk_text: secret!.chunk_text }]));
     });
 
+    test('an extra row on a chunk below the safe-chunk fence is never cleared, though its page and chunk are visible to the caller', async () => {
+      const primary = ctx.primary();
+      await primary.putPage('fence/page', { type: 'note', title: 'fence/page', compiled_truth: 'fenced chunk text', timeline: '' });
+      await installFixtureChunks(primary, 'fence/page', [{ chunk_index: 0, chunk_text: 'fenced chunk text', chunk_source: 'compiled_truth', embedding: vec(502), model: 'openai:text-embedding-3-large', token_count: 3 }]);
+      try {
+        await primary.executeRaw(`UPDATE pages SET chunker_version = 0 WHERE slug = 'fence/page'`); // not sealed by the strict fence chunker: a remote read never serves it
+        const [chunk] = await primary.executeRaw<{ id: number; page_id: number; chunk_text: string }>(`SELECT c.id, c.page_id, c.chunk_text FROM content_chunks c JOIN pages p ON p.id = c.page_id WHERE p.slug = 'fence/page'`);
+        counts(await ranked((theirs) => [...theirs, { ...theirs[0], page_id: Number(chunk!.page_id), slug: 'fence/page', source_id: 'default', chunk_id: Number(chunk!.id), chunk_text: chunk!.chunk_text }]));
+      } finally { await primary.executeRaw(`DELETE FROM pages WHERE slug = 'fence/page'`); }
+    });
+
+    test('a row that names no valid chunk is unexplained: a missing, null or non-numeric chunk id with arbitrary text never clears', async () => {
+      counts(await ranked((theirs) => [...theirs.slice(0, 9), { ...theirs[9], chunk_id: undefined, chunk_text: 'ARBITRARY TEXT' }]));
+      counts(await ranked((theirs) => [...theirs.slice(0, 9), { ...theirs[9], chunk_id: String(theirs[9]!.chunk_id), chunk_text: 'ARBITRARY TEXT' }]));
+    });
+
+    test('the primary\'s own page and chunk with a substituted title or flag are unexplained, not a ranking difference', async () => {
+      counts(await ranked((theirs) => [...theirs.slice(0, 9), { ...theirs[9], title: 'SUBSTITUTED TITLE' }]));
+      counts(await ranked((theirs) => [...theirs.slice(0, 9), { ...theirs[9], stale: true }]));
+    });
+
+    test('a policy dependency changed between the read and the check without a page timestamp (a deleted page, a source or config row, a provenance link) leaves the sample unresolved', async () => {
+      const primary = ctx.primary();
+      const ids = await privacyFixture(primary);
+      const [src] = await primary.executeRaw<{ id: string; config: unknown }>(`SELECT id, config FROM sources ORDER BY id LIMIT 1`);
+      const [cfg] = await primary.executeRaw<{ key: string; value: string }>(`SELECT key, value FROM config WHERE key = 'embedding_model'`);
+      const changes: Array<[string, () => Promise<unknown>, () => Promise<unknown>]> = [
+        ['a deleted page', () => primary.executeRaw(`DELETE FROM pages WHERE slug = 'gone/soon'`), async () => undefined],
+        ['a source row', () => primary.executeRaw(`UPDATE sources SET config = config || '{"moved_probe":true}'::jsonb WHERE id = $1`, [src!.id]), () => primary.executeRaw(`UPDATE sources SET config = config - 'moved_probe' WHERE id = $1`, [src!.id])],
+        ['a config row', () => primary.executeRaw(`UPDATE config SET value = value || '-probe' WHERE key = 'embedding_model'`), () => primary.executeRaw(`UPDATE config SET value = $1 WHERE key = 'embedding_model'`, [cfg!.value])],
+        ['a provenance link', () => primary.executeRaw(`INSERT INTO links (from_page_id, to_page_id, link_type, link_source) VALUES ($1, $2, 'synthesized_from', 'concept-provenance')`, [ids['summary/x'], ids['secrets/plan']]), () => primary.executeRaw(`DELETE FROM links WHERE from_page_id = $1 AND link_source = 'concept-provenance'`, [ids['summary/x']])],
+      ];
+      for (const [name, change, undo] of changes) {
+        await primary.putPage('gone/soon', { type: 'note', title: 'gone', compiled_truth: 'gone soon', timeline: '' }); // there before the rig's fingerprint is taken
+        const rig = await start({ unseeded: true });
+        const supervisor = rig.attached.supervisor as unknown as { o: { onAsk: (a: Record<string, unknown>) => Promise<unknown> } };
+        const real = supervisor.o.onAsk;
+        supervisor.o.onAsk = async (ask) => { if (ask.kind === 'privacy') await change(); return real(ask); };
+        rig.rust.listPages = async () => [{ id: ids['priv/a'], slug: 'priv/a', source_id: 'default', title: 'x', type: 'note' }];
+        try {
+          await withCallerAccess(ALICE, () => rig.engine.listPages({ limit: 100, excludePrivate: true }));
+          expect([name, (await rig.finish())[0]]).toEqual([name, expect.objectContaining({ outcome: 'inconclusive', reason: 'privacy_check_moved' })]);
+          expect([name, rig.stoppedBy]).toEqual([name, null]);
+        } finally { await undo(); await primary.executeRaw(`DELETE FROM pages WHERE slug = 'gone/soon'`); }
+      }
+    });
+
+    test('a write this process publishes DURING the check, not before it, leaves the sample unresolved', async () => {
+      const primary = ctx.primary();
+      const ids = await privacyFixture(primary);
+      const rig = await start();
+      const supervisor = rig.attached.supervisor as unknown as { o: { onAsk: (a: Record<string, unknown>) => Promise<unknown> } };
+      const real = supervisor.o.onAsk;
+      supervisor.o.onAsk = (ask) => { // the check starts, then a write is published while its snapshots are awaited
+        const answer = real(ask);
+        if (ask.kind === 'privacy') rig.attached.follower!.publish(batch(1, [{ kind: 'relation', relation: 'config', reason: 'x' }]));
+        return answer;
+      };
+      rig.rust.getPage = async () => ({ id: ids['open/a'], slug: 'open/a', source_id: 'default', title: 'x', type: 'note' });
+      await withCallerAccess(ALICE, () => rig.engine.getPage('missing/page', { excludePrivate: true } as never));
+      expect((await rig.finish())[0]).toMatchObject({ outcome: 'inconclusive', reason: 'privacy_check_moved' });
+    });
+
     test('a write this process published after the read, and before the check, leaves the sample unresolved', async () => {
       const primary = ctx.primary();
       const ids = await privacyFixture(primary);
@@ -391,6 +454,33 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       for (const canary of ['canary-args-slug-zzz', 'canary-identity-zzz', 'canary-rule-zzz', 'canary-thrown-message-zzz', 'canary-title-zzz']) expect([canary, bytes.includes(canary)]).toEqual([canary, false]);
     });
 
+    test('a SUCCESSFUL rerun and a successful privacy check put no content on the control channel: no body, title, slug, chunk text or member key in any ask or answer', async () => {
+      const primary = ctx.primary();
+      const canaries = ['canary-ok-slug-zzz', 'canary-ok-title-zzz', 'canary-ok-body-zzz'];
+      try {
+        await primary.putPage('canary-ok-slug-zzz', { type: 'note', title: 'canary-ok-title-zzz', compiled_truth: 'canary-ok-body-zzz', timeline: '' });
+        const ids = await privacyFixture(primary);
+        const [canary] = await primary.executeRaw<{ id: number }>(`SELECT id FROM pages WHERE slug = 'canary-ok-slug-zzz'`);
+        // a rerun that succeeds: Rust's first answer is empty, the primary has pages (the canary page among them), and the rerun runs on both
+        const rerun = await mismatching('agrees');
+        await rerun.settled();
+        await sample(rerun);
+        expect((await rows(rerun))[0]).toMatchObject({ outcome: 'inconclusive', rerun: 'matched' }); // the rerun ran and succeeded
+        // a privacy check that succeeds: Rust shows an extra page the caller may read
+        const check = await start({ unseeded: true });
+        const top = await withCallerAccess(BOB, () => primary.listPages({ excludePrivate: true, limit: 1 }));
+        check.rust.listPages = async () => [top[0]!, { id: Number(canary!.id), slug: 'canary-ok-slug-zzz', source_id: 'default', title: 'canary-ok-title-zzz', type: 'note' }, { id: ids['mem/a'], slug: 'mem/a', source_id: 'default', title: 'mem/a', type: 'note' }];
+        await withCallerAccess(BOB, () => check.engine.listPages({ excludePrivate: true, limit: 1 }));
+        await check.finish();
+        for (const rig of [rerun, check]) {
+          expect(rig.control.answers.length).toBeGreaterThan(0);
+          const bytes = [rig.control.fromChild.join(''), rig.control.answers.join('')].join('\n');
+          for (const canary of canaries) expect([canary, bytes.includes(canary)]).toEqual([canary, false]);
+        }
+        expect(check.control.answers.some((l) => l.includes('"verdict"'))).toBe(true); // a verdict, nothing else, went back for the check
+      } finally { await primary.executeRaw(`DELETE FROM pages WHERE slug = 'canary-ok-slug-zzz'`); }
+    });
+
     test('an unresolved comparison is on disk and counted while its rerun waits, and settles when the completion row lands', async () => {
       await privacyFixture(ctx.primary());
       const rig = await mismatching('agrees');
@@ -471,7 +561,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       try {
         const samples = new SampleRegistry();
         const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never });
-        const ask = { id: 1, kind: 'vector', sid: samples.add({ op: 'searchVector', args: encodeValue([embedded.embedding, { limit: 10, exclude_slugs: ['priv/chunked', 'summary/x'] }]), at: Date.now() }, 100) }; // the filters of the caller's own read apply
+        const ask = { id: 1, kind: 'vector', sid: samples.add({ op: 'searchVector', args: encodeValue([embedded.embedding, { limit: 10, exclude_slugs: ['priv/chunked', 'summary/x'] }]), at: Date.now(), fp: await createPolicyWatch(real).live() }, 100) }; // the filters of the caller's own read apply
         const reference = await handler(ask) as RankedKey[];
         const cosine = (a: Float32Array, b: Float32Array): number => { let d = 0, x = 0, y = 0; for (let i = 0; i < a.length; i++) { d += a[i]! * b[i]!; x += a[i]! ** 2; y += b[i]! ** 2; } return d / Math.sqrt(x * y); };
         const exact = [...chunkOf.keys()].sort((p, q) => cosine(vec(3), vec(q)) - cosine(vec(3), vec(p))).map((i) => String(chunkOf.get(i)));
@@ -480,6 +570,31 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         expect(sql.slice(0, 2)).toEqual(['SET LOCAL enable_indexscan = off', 'SET LOCAL enable_bitmapscan = off']); // before any search statement
         await expect(handler(ask)).rejects.toMatchObject({ code: 'rate_limited' });
       } finally { await real.close(); }
+    });
+
+    test('a reference is refused (moved) when the corpus changed after the sample was captured, and when no fingerprint was captured with it', async () => {
+      const primary = ctx.primary();
+      await vectorFixture(primary);
+      const reads = openReadSource(primary);
+      try {
+        const watch = createPolicyWatch(reads);
+        const args = encodeValue([vec(3), { limit: 10 }]);
+        const samples = new SampleRegistry();
+        const handler = (now: number) => makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never, watch, now: () => now });
+        const proven = samples.add({ op: 'searchVector', args, at: Date.now(), fp: await watch.live() }, 100);
+        const unproven = samples.add({ op: 'searchVector', args, at: Date.now() }, 100); // captured before any fingerprint was known
+        await expect(handler(0)({ id: 1, kind: 'vector', sid: unproven })).rejects.toMatchObject({ code: 'moved' });
+        // a nearer neighbour is added after the capture: the answers the sample holds cannot be scored against a corpus that has it
+        await primary.putPage('vec/late', { type: 'note', title: 'late', compiled_truth: 'late vec', timeline: '' });
+        await installFixtureChunks(primary, 'vec/late', [{ chunk_index: 0, chunk_text: 'late vec', chunk_source: 'compiled_truth', embedding: vec(3), model: MODEL, token_count: 3 }]);
+        await expect(handler(120_000)({ id: 2, kind: 'vector', sid: proven })).rejects.toMatchObject({ code: 'moved' });
+        // and a deletion, which no timestamp shows
+        const deleted = samples.add({ op: 'searchVector', args, at: Date.now(), fp: await watch.live() }, 100);
+        await primary.executeRaw(`DELETE FROM pages WHERE slug = 'vec/late'`);
+        await expect(handler(240_000)({ id: 3, kind: 'vector', sid: deleted })).rejects.toMatchObject({ code: 'moved' });
+        const still = samples.add({ op: 'searchVector', args, at: Date.now(), fp: await watch.live() }, 100);
+        expect(await handler(360_000)({ id: 4, kind: 'vector', sid: still })).toBeInstanceOf(Array); // unchanged since the capture: scored as before
+      } finally { await reads.close(); await primary.executeRaw(`DELETE FROM pages WHERE slug = 'vec/late'`); }
     });
 
     test('the reference has no candidate window: boosted true top results beyond the engine\'s window are found, and the windowed search misses them', async () => {
@@ -499,7 +614,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         const opts = { limit: 10, source_boosts: { 'boost/': 5 } };
         const samples = new SampleRegistry();
         const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never });
-        const reference = await handler({ id: 1, kind: 'vector', sid: samples.add({ op: 'searchVector', args: encodeValue([vec(3), opts]), at: Date.now() }, 100) }) as RankedKey[];
+        const reference = await handler({ id: 1, kind: 'vector', sid: samples.add({ op: 'searchVector', args: encodeValue([vec(3), opts]), at: Date.now(), fp: await createPolicyWatch(reads).live() }, 100) }) as RankedKey[];
         expect(reference.slice(0, 10).filter((r) => boosted.has(r.k))).toHaveLength(10); // the true top ten, all beyond the raw-similarity window
         const windowed = await primary.searchVector(vec(3), { ...opts, limit: 50 });
         expect(windowed.slice(0, 10).filter((r) => boosted.has(String(r.chunk_id))).length).toBeLessThan(10); // the engine's candidate window never saw them

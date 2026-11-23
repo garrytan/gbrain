@@ -111,7 +111,7 @@ export function leakReason(encodedRust: unknown, scope: SourceScope | null, excl
   return null;
 }
 
-function stripScores(row: unknown): unknown {
+export function stripScores(row: unknown): unknown {
   if (!row || typeof row !== 'object' || Array.isArray(row)) return row;
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(row as Record<string, unknown>)) if (!SCORE_FIELDS.has(key)) out[key] = value;
