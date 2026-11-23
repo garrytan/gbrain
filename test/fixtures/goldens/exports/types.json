@@ -7494,7 +7494,7 @@
           "clearCodeTraversalCache: (opts: codeTraversalCache.CodeTraversalCacheClear) => Promise<number>",
           "closeRetainingLock: () => Promise<LockHandle>",
           "connect: (config: EngineConfig) => Promise<void>",
-          "connectForRestore: (config: EngineConfig) => Promise<void>",
+          "connectForRestore: (config: EngineConfig, opts?: { keepRepairEpisode?: boolean; }) => Promise<void>",
           "connectWithHeldLock: (config: EngineConfig, lock: LockHandle) => Promise<void>",
           "consolidateFact: (id: number, takeId: number) => Promise<void>",
           "cosinesByChunkIds: (ids: number[], column: string, query: Float32Array) => Promise<Map<number, number>>",

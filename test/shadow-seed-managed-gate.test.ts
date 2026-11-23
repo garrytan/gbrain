@@ -175,7 +175,7 @@ describe('a brain whose storage mode cannot be read does not block the seed', ()
 
   test('a brain that cannot be opened is an error that writes nothing (exit 1, no refusal code, no connection text)', async () => {
     for (const args of [['seed'], ['seed', '--json']]) {
-      const leaky = new Error('connection to server at "db.example.internal" failed: postgresql://u:CANARYVALUE@db.example.internal/brain');
+      const leaky = new Error('connection to server at "db.example.internal" failed: postgresql://db.example.internal/brain?app=CANARYVALUE');
       const r = await shadow(args, async () => { throw leaky; });
       expect(r.code, args.join(' ')).toBe(1);
       expect(r.err[0]).toBe('engine shadow: could not open the brain (open_failed). Nothing was written.');
