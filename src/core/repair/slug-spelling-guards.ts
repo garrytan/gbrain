@@ -14,7 +14,8 @@
  *
  * What stays open: the writer of a hold takes no page lock, and a hold row that does not exist yet has nothing to lock.
  * A new hold recorded for the old spelling by a transaction that commits while the move runs can still name the old
- * spelling after the move; `gbrain doctor` (`legacy_slug_spellings`) and a rerun of the preview list the page again.
+ * spelling after the move; neither `gbrain doctor` (`legacy_slug_spellings`) nor a rerun of the preview detects it, so
+ * that held row no longer hides its content on the moved page.
  *
  * Every table the carry reads or writes must be fully readable by the running role: row-level security without a
  * policy of the role shows a table empty, which would copy nothing and let the move commit with the guard left
