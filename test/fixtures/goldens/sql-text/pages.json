@@ -1028,6 +1028,14 @@
             "textSha256": "b39eedd33ecbafda103e026deee71de92d3fe35b4d61fe4354c2e503794e569c"
           },
           {
+            "lane": "tx",
+            "params": [
+              "number"
+            ],
+            "sql": "UPDATE write_gate_holds h SET page_id = p.id FROM pages p WHERE p.id = $1 AND h.source_id = p.source_id AND h.slug = p.slug AND h.page_id IS NULL AND h.page_candidates IS NULL AND h.created_at <= p.created_at",
+            "textSha256": "2d000a4346f97ae470deece7e2078ab1e7a07e223116dbe260e2cb8f1fb3ddfa"
+          },
+          {
             "event": "commit",
             "lane": "tx"
           }
@@ -1105,6 +1113,14 @@
             ],
             "sql": "INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename, chunker_version, source_path, source_kind, source_uri, ingested_via, ingested_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), $10, $11, $12, $13::smallint, $14, $15, $16, $17, $18) ON CONFLICT (source_id, slug) DO UPDATE SET type = EXCLUDED.type, page_kind = EXCLUDED.page_kind, title = EXCLUDED.title, compiled_truth = EXCLUDED.compiled_truth, timeline = EXCLUDED.timeline, frontmatter = EXCLUDED.frontmatter, content_hash = EXCLUDED.content_hash, updated_at = now(), deleted_at = NULL, effective_date = COALESCE(EXCLUDED.effective_date, pages.effective_date), effective_date_source = COALESCE(EXCLUDED.effective_date_source, pages.effective_date_source), import_filename = COALESCE(EXCLUDED.import_filename, pages.import_filename), chunker_version = CASE WHEN pages.compiled_truth IS NOT DISTINCT FROM EXCLUDED.compiled_truth AND pages.timeline IS NOT DISTINCT FROM EXCLUDED.timeline THEN pages.chunker_version WHEN pages.chunker_version < 0 OR (CASE WHEN pages.body_storage = 'segmented' THEN pages.body_flags->>'has_protected' IS DISTINCT FROM 'false' ELSE (COALESCE(pages.compiled_truth, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->' OR COALESCE(pages.timeline, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->') END) OR COALESCE(EXCLUDED.compiled_truth, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->' OR COALESCE(EXCLUDED.timeline, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->' THEN -1 ELSE LEAST(COALESCE(pages.chunker_version, 0), 3) END, source_path = COALESCE(EXCLUDED.source_path, pages.source_path), database_only_reason = CASE WHEN EXCLUDED.source_path IS NOT NULL AND pages.database_only_reason IN ('detached', 'origin_twin', 'mirror_read_only') THEN NULL ELSE pages.database_only_reason END, source_kind = COALESCE(EXCLUDED.source_kind, pages.source_kind), source_uri = COALESCE(EXCLUDED.source_uri, pages.source_uri), ingested_via = COALESCE(EXCLUDED.ingested_via, pages.ingested_via), ingested_at = COALESCE(EXCLUDED.ingested_at, pages.ingested_at) RETURNING knowledge_revision, text_projection_revision, id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at",
             "textSha256": "b39eedd33ecbafda103e026deee71de92d3fe35b4d61fe4354c2e503794e569c"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number"
+            ],
+            "sql": "UPDATE write_gate_holds h SET page_id = p.id FROM pages p WHERE p.id = $1 AND h.source_id = p.source_id AND h.slug = p.slug AND h.page_id IS NULL AND h.page_candidates IS NULL AND h.created_at <= p.created_at",
+            "textSha256": "2d000a4346f97ae470deece7e2078ab1e7a07e223116dbe260e2cb8f1fb3ddfa"
           },
           {
             "event": "commit",
@@ -1195,6 +1211,14 @@
             ],
             "sql": "INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename, chunker_version, source_path, source_kind, source_uri, ingested_via, ingested_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), $10, $11, $12, $13::smallint, $14, $15, $16, $17, $18) ON CONFLICT (source_id, slug) DO UPDATE SET type = EXCLUDED.type, page_kind = EXCLUDED.page_kind, title = EXCLUDED.title, compiled_truth = EXCLUDED.compiled_truth, timeline = EXCLUDED.timeline, frontmatter = EXCLUDED.frontmatter, content_hash = EXCLUDED.content_hash, updated_at = now(), deleted_at = NULL, effective_date = COALESCE(EXCLUDED.effective_date, pages.effective_date), effective_date_source = COALESCE(EXCLUDED.effective_date_source, pages.effective_date_source), import_filename = COALESCE(EXCLUDED.import_filename, pages.import_filename), chunker_version = CASE WHEN pages.compiled_truth IS NOT DISTINCT FROM EXCLUDED.compiled_truth AND pages.timeline IS NOT DISTINCT FROM EXCLUDED.timeline THEN pages.chunker_version WHEN pages.chunker_version < 0 OR (CASE WHEN pages.body_storage = 'segmented' THEN pages.body_flags->>'has_protected' IS DISTINCT FROM 'false' ELSE (COALESCE(pages.compiled_truth, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->' OR COALESCE(pages.timeline, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->') END) OR COALESCE(EXCLUDED.compiled_truth, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->' OR COALESCE(EXCLUDED.timeline, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->' THEN -1 ELSE LEAST(COALESCE(pages.chunker_version, 0), 3) END, source_path = COALESCE(EXCLUDED.source_path, pages.source_path), database_only_reason = CASE WHEN EXCLUDED.source_path IS NOT NULL AND pages.database_only_reason IN ('detached', 'origin_twin', 'mirror_read_only') THEN NULL ELSE pages.database_only_reason END, source_kind = COALESCE(EXCLUDED.source_kind, pages.source_kind), source_uri = COALESCE(EXCLUDED.source_uri, pages.source_uri), ingested_via = COALESCE(EXCLUDED.ingested_via, pages.ingested_via), ingested_at = COALESCE(EXCLUDED.ingested_at, pages.ingested_at) RETURNING knowledge_revision, text_projection_revision, id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at",
             "textSha256": "b39eedd33ecbafda103e026deee71de92d3fe35b4d61fe4354c2e503794e569c"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number"
+            ],
+            "sql": "UPDATE write_gate_holds h SET page_id = p.id FROM pages p WHERE p.id = $1 AND h.source_id = p.source_id AND h.slug = p.slug AND h.page_id IS NULL AND h.page_candidates IS NULL AND h.created_at <= p.created_at",
+            "textSha256": "2d000a4346f97ae470deece7e2078ab1e7a07e223116dbe260e2cb8f1fb3ddfa"
           },
           {
             "event": "commit",
