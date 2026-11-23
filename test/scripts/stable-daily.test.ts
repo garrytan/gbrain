@@ -17,7 +17,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { load } from 'js-yaml';
 import { promote, renderTagMessage, scheduleAuthorized, Refusal, type GitResult } from '../../scripts/promote-stable.ts';
-import { daily, integrityFailures, parseRecord, shapeFailures, type DailyDeps, type Scoreboard, type SoakRunRow } from '../../scripts/stable-daily.ts';
+import { daily, integrityFailures, parseRecord, searchGateFailures, shapeFailures, type DailyDeps, type Scoreboard, type SoakRunRow } from '../../scripts/stable-daily.ts';
 import type { MatrixReceipt, MatrixRunRow } from '../../scripts/stable-matrix.ts';
 import { parseStableRecord } from '../../src/core/stable-channel.ts';
 
@@ -29,7 +29,8 @@ const tree = (n: number) => String(n).padStart(40, 'e');
 const CLEAN: Scoreboard[] = [2, 65].map(rtt => ({
   label: `rtt${rtt}`, rtt_ms: rtt, hours: 2, elapsed_s: 7204, privacy: { probes: 40, probe_errors: 0 },
   brain: { fixture: { pages: 598_561, options: { pages: 600_000 } } },
-  gates: ['privacy_leaks', 'read_errors', 'version_skew', 'residents_alive', 'session_refusals', 'freshness_p95'].map(id => ({ id, pass: id === 'freshness_p95' ? false : true })),
+  gates: ['privacy_leaks', 'read_errors', 'version_skew', 'residents_alive', 'session_refusals', 'freshness_p95', 'search_gate_jit_on', 'search_gate_jit_off']
+    .map(id => ({ id, pass: id === 'freshness_p95' || (rtt === 65 && id.startsWith('search_gate_')) ? false : true })),
 }));
 const ok = (stdout = ''): GitResult => ({ code: 0, stdout: `${stdout}\n`, stderr: '' });
 const fail: GitResult = { code: 1, stdout: '', stderr: 'fatal: bad revision' };
@@ -250,6 +251,16 @@ describe('integrity gates', () => {
     expect(integrityFailures([{ label: 'rtt2', gates: [] }])).toHaveLength(5);
   });
 
+  test('the search speed gate must pass in the 2 ms cell only; a missing cell or gate fails closed', () => {
+    expect(searchGateFailures(CLEAN)).toEqual([]);
+    const slow = structuredClone(CLEAN);
+    slow[0]!.gates!.find(g => g.id === 'search_gate_jit_on')!.pass = false;
+    expect(searchGateFailures(slow)).toEqual(['rtt2: search_gate_jit_on failed']);
+    const before = CLEAN.map(b => ({ ...b, gates: b.gates!.filter(g => !g.id.startsWith('search_gate_')) }));
+    expect(searchGateFailures(before)).toEqual(['rtt2: search_gate_jit_on missing', 'rtt2: search_gate_jit_off missing']);
+    expect(searchGateFailures([CLEAN[1]!])).toEqual(['no 2 ms cell for the search speed gate']);
+  });
+
   test('a soak short of the full default shape is not promotable: a missing cell, a short run, a small requested fixture, no clean privacy probes', () => {
     expect(shapeFailures(CLEAN)).toEqual([]);
     const smoke: Scoreboard[] = [{ ...CLEAN[0]!, hours: 0.01, elapsed_s: 36, privacy: { probes: 0, probe_errors: 0 } }];
@@ -349,6 +360,15 @@ describe('daily: important fixes', () => {
     const r = await daily(w.deps);
     expect(r.action === 'promoted' && r.promotion.version).toBe('1.0.3');
     expect(w.logs.some(l => l.includes('rtt2: privacy_leaks failed'))).toBe(true);
+  });
+
+  test('a soak whose search speed gate failed in the 2 ms cell is skipped for an older one that passed', async () => {
+    const slow = structuredClone(CLEAN);
+    slow[0]!.gates!.find(g => g.id === 'search_gate_jit_off')!.pass = false;
+    const w = world(base({ importantPrs: [{ number: 30, merge: 3 }], runs: [soak(9, 3), soak(10, 4, { boards: slow })] }));
+    const r = await daily(w.deps);
+    expect(r.action === 'promoted' && r.promotion.version).toBe('1.0.3');
+    expect(w.logs.some(l => l.includes('rtt2: search_gate_jit_off failed'))).toBe(true);
   });
 
   test('a soak already running means wait; a finished soak on the newest release that did not qualify is never re-dispatched', async () => {
