@@ -43,7 +43,7 @@ mod ops;
 const RAW: u8 = 0x01;
 const FILE: u8 = 0x02;
 const FILE_BY_PAGE: u8 = 0x03;
-const NEXT_FILE_ID: &str = "next_file_id";
+pub(crate) const NEXT_FILE_ID: &str = "next_file_id";
 const NEXT_RAW_DATA_ID: &str = "next_raw_data_id";
 
 fn raw_page_prefix(page_id: u64) -> Vec<u8> {
@@ -272,6 +272,42 @@ fn read_file(read: &dyn KvRead, storage_path: &str) -> Result<Option<FileRecord>
 
 fn put_file(tx: &mut dyn KvWrite, record: &FileRecord) -> Result<()> {
     put_json(tx, &file_key(&record.storage_path), record)
+}
+
+/// The shadow seed (`seed.rs`): stores `record`, a file copied from another engine with its own id
+/// and `created_at`, with the page index entry `upsert_file` writes. `false` when the path already
+/// holds that file; the path held by another id is the unique `storage_path` violation. The caller
+/// checked the source and the page.
+pub(crate) fn seed_file(tx: &mut dyn KvWrite, record: &FileRecord) -> Result<bool> {
+    if let Some(stored) = read_file(&*tx, &record.storage_path)? {
+        if stored.id == record.id {
+            return Ok(false);
+        }
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            "duplicate key value violates unique constraint on files (storage_path)",
+        ));
+    }
+    if let Some(page) = record.page_id {
+        tx.put(
+            &file_page_key(page, record.id),
+            &serde_json::to_vec(&record.storage_path)?,
+        )?;
+    }
+    put_file(tx, record)?;
+    Ok(true)
+}
+
+/// The shadow seed: stores `record`, raw data copied from another engine with its own `fetched_at`,
+/// where `put_raw_data` stores it. `false` when the page already holds raw data of that source.
+/// The caller checked the page.
+pub(crate) fn seed_raw_data(tx: &mut dyn KvWrite, record: &RawRecord) -> Result<bool> {
+    let key = raw_key(record.page_id, &record.source);
+    if tx.get(&key)?.is_some() {
+        return Ok(false);
+    }
+    put_json(tx, &key, record)?;
+    Ok(true)
 }
 
 /// The raw_data rows of page `page_id`, in key order (the export reads every row of a page).
@@ -752,6 +788,32 @@ impl Store {
         files.truncate(limit as usize);
         Ok(files.iter().map(FileRecord::to_json).collect())
     }
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the file `id` stored at `storage_path`, with its
+/// page index entry. `false` when the path holds no file of that id.
+pub(crate) fn remove_file(tx: &mut dyn KvWrite, id: u64, storage_path: &str) -> Result<bool> {
+    let Some(old) = read_file(&*tx, storage_path)? else {
+        return Ok(false);
+    };
+    if old.id != id {
+        return Ok(false);
+    }
+    if let Some(page) = old.page_id {
+        tx.delete(&file_page_key(page, id))?;
+    }
+    tx.delete(&file_key(storage_path))?;
+    Ok(true)
+}
+
+/// The shadow follow: removes the raw data of `source` on a page. `false` when there is none.
+pub(crate) fn remove_raw_data(tx: &mut dyn KvWrite, page_id: u64, source: &str) -> Result<bool> {
+    let key = raw_key(page_id, source);
+    if tx.get(&key)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&key)?;
+    Ok(true)
 }
 
 #[cfg(test)]

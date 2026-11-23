@@ -3,7 +3,7 @@
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
 These are statements that a page write ran through `executeRaw` and that belong to no other storage domain
-([docs/research/rust-put-write-path.md](../../../docs/research/rust-put-write-path.md)). PGLite and Postgres run the
+(the write-path research note from the Rust engine branch; it is not on master). PGLite and Postgres run the
 same SQL as before, now in `src/core/engine-sql/write-misc.ts`. The store answers the source read
 and the path attach from its source records, and the reader-naming page list from its page records (`crates/gbrain-store/src/write_misc.rs`) and has no keys of its own. The folder
 access reads go to the `access_rules` family ([access_rules.md](access_rules.md)). The TypeScript

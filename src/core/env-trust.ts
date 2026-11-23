@@ -202,6 +202,8 @@ export const CWD_DOTENV_PROTECTED_KEYS: readonly string[] = [
   'GBRAIN_NO_SANITY',                // disables content sanity checks
   'GBRAIN_REMOTE_PRIVATE_PAGES',     // exposes private pages to remote callers
   'GBRAIN_SURFACE',                  // stdio MCP tool surface: a planted `full` widens the tools an agent sees (a shell export still widens; GBRAIN_MCP_FORCE_SURFACE stays narrow-only)
+  // --- trusted-output injection --------------------------------------------
+  'GBRAIN_TEST_SKILLS_MOVED_REGISTRY', // test seam read by bundled-skill and skillpack: a planted registry puts an install command of its choosing in output agents follow
 ];
 
 /**

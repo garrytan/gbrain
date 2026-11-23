@@ -93,6 +93,22 @@ const row = (front: string, text = 'Text.') => `---\n${front}\n---\n${text}\n`;
 const record = (surface: string, name: string, removeAfter: string) => `---\nsurface: ${surface}\nname: ${name}\nowner: alice-example\nremove_after: ${removeAfter}\n---\nUse the new one.\n`;
 
 describe('dropped manifest entries', () => {
+  test('a --json field removed with no record is refused', () => {
+    const r = run(repo({ [MANIFEST]: manifest({ 'json-field': ['gbrain skills resolve --json .block', 'gbrain skills resolve --json .no_skill'] }) }, { [MANIFEST]: manifest({ 'json-field': ['gbrain skills resolve --json .block'] }) }));
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('json-field `gbrain skills resolve --json .no_skill` is removed or changed with no deprecations.d/<id>.md naming it');
+  });
+
+  test('a cli-command record covers its subcommands and their flags', () => {
+    const base = manifest({ 'cli-command': ['gbrain search', 'gbrain skills index', 'gbrain skills index build'], 'cli-flag': ['gbrain search --limit', 'gbrain search --match', 'gbrain skills index --dir'] });
+    const head = { [MANIFEST]: manifest() };
+    const r = run(repo({ [MANIFEST]: base, 'deprecations.d/skills_index_1234.md': record('cli-command', 'gbrain skills index', '2026-11-16') }, head));
+    expect(r.code).toBe(0);
+    const other = run(repo({ [MANIFEST]: base, 'deprecations.d/skills_1234.md': record('cli-command', 'gbrain skill', '2026-11-16') }, head));
+    expect(other.code).toBe(1);
+    expect(other.out).toContain('cli-command `gbrain skills index build` is removed or changed with no deprecations.d/<id>.md naming it');
+  });
+
   test('a flag removed with no record is refused', () => {
     const r = run(repo({}, { [MANIFEST]: manifest({ 'cli-flag': ['gbrain search --match'] }) }));
     expect(r.code).toBe(1);
@@ -367,7 +383,7 @@ describe('deprecation records', () => {
   test('a record with a bad surface, no owner or no date is refused', () => {
     const r = run(repo({}, { 'deprecations.d/bad_record_1234.md': '---\nsurface: cli-thing\nname: gbrain x\n---\nText.\n' }));
     expect(r.code).toBe(1);
-    expect(r.out).toContain('surface: must be one of cli-command, cli-flag, mcp-tool, mcp-param, config-key, exit-code, page-format, json-field');
+    expect(r.out).toContain('surface: must be one of cli-command, cli-flag, mcp-tool, mcp-param, config-key, exit-code, json-field, page-format, bundled-skill');
     expect(r.out).toContain('owner: is missing');
     expect(r.out).toContain('remove_after: must be a date (YYYY-MM-DD)');
   });
@@ -376,6 +392,13 @@ describe('deprecation records', () => {
     for (const surface of ['page-format', 'json-field']) {
       expect(run(repo({}, { 'deprecations.d/old_field_1234.md': record(surface, 'gbrain stats --json .old_field', '2026-11-30') })).code).toBe(0);
     }
+  });
+
+  test('a bundled-skill record names a skill; the manifest does not list skills, and the 14-day rule still applies', () => {
+    expect(run(repo({}, { 'deprecations.d/skill_moved_alpha_example.md': record('bundled-skill', 'alpha-example', '2026-11-30') })).code).toBe(0);
+    const short = run(repo({}, { 'deprecations.d/skill_moved_alpha_example.md': record('bundled-skill', 'alpha-example', '2026-11-29') }));
+    expect(short.code).toBe(1);
+    expect(short.out).toContain('remove_after 2026-11-29 is less than 14 days away');
   });
 });
 
@@ -441,11 +464,27 @@ describe('the committed manifest', () => {
     expect(typeof m['exit-code'].not_found).toBe('number');
   });
 
+  test('lists the skill resolver surface that outside skill sets build on', async () => {
+    const m = await buildSurface();
+    for (const c of ['gbrain skills index build', 'gbrain skills index status', 'gbrain skills index remove', 'gbrain skills resolve', 'gbrain skills library', 'gbrain skills pin', 'gbrain bundled-skill', 'gbrain skillpack health', 'gbrain skillpack doctor']) expect(m['cli-command']).toContain(c);
+    for (const f of ['gbrain skills index --dir', 'gbrain skills index --claude-plugins', 'gbrain skills index --harness', 'gbrain skills resolve --input-json', 'gbrain skills resolve --top-gate', 'gbrain skills resolve --top-k', 'gbrain skills resolve --session', 'gbrain skills resolve --fail-open', 'gbrain skills resolve --json', 'gbrain setup --skill-loading']) expect(m['cli-flag']).toContain(f);
+    for (const k of ['skills.resolver.top_k', 'skills.resolver.top_gate', 'skills.resolver.pinned', 'skills.resolver.pins.<catalog>', 'skills.resolver.session_token_budget', 'skills.resolver.per_harness.<harness>.dirs']) expect(m['config-key']).toContain(k);
+    expect(m['json-field']).toEqual(['gbrain bundled-skill --json .skills_root', 'gbrain skills resolve --json .block', 'gbrain skills resolve --json .no_skill', 'gbrain skills resolve --json .suggestions[].id']);
+    for (const t of ['list_skills', 'get_skill']) expect(m['mcp-tool']).toContain(t);
+  });
+
   test('lists only commands the CLI dispatches, and keeps MCP-only operations as tools', async () => {
     const { cliOps, OPERATION_MANIFEST } = await import('../../src/cli/op-manifest.ts');
     const { cliAliases } = await import('../../src/cli/flag-validation.ts');
     const { CLI_COMMANDS } = await import('../../src/cli/command-table.ts');
-    const dispatched = (name: string) => cliOps.has(name) || cliAliases.has(name) || CLI_COMMANDS.some(r => r.name === name);
+    const { routeCommand } = await import('../../src/cli/command-route.ts');
+    const { SKILLPACK_SUBCOMMANDS } = await import('../../src/commands/skillpack.ts');
+    const dispatched = (name: string) => {
+      const [command, sub, ...more] = name.split(' ');
+      if (sub === undefined) return cliOps.has(command!) || cliAliases.has(command!) || CLI_COMMANDS.some(r => r.name === command);
+      if (routeCommand(command!, [sub]).command === 'skill-resolver') return more.length <= 1;
+      return command === 'skillpack' && !more.length && (SKILLPACK_SUBCOMMANDS as readonly string[]).includes(sub);
+    };
     const m = await buildSurface();
     expect(m['cli-command'].filter(c => !dispatched(c.slice('gbrain '.length)))).toEqual([]);
     expect(m['cli-flag'].filter(f => !dispatched(f.slice('gbrain '.length, f.indexOf(' --'))))).toEqual([]);

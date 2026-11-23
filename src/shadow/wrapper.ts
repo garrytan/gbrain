@@ -1,0 +1,173 @@
+/**
+ * The transaction-aware shadow wrapper over the primary engine (plan PR S1; docs/designs/RUST_ENGINE.md, "What shadow
+ * mode does").
+ *
+ * A Proxy over the primary BrainEngine. Every member reads through to the primary, bound to it, so the primary's own
+ * code runs unchanged. For an allowlisted read (reads.ts) the wrapper calls the primary, returns the primary's promise
+ * outcome to the caller unchanged, and, after the primary resolves and before the caller sees the result, offers the
+ * sink a capture of `{ op, args, result, primary_ms }`. A sampled read encodes its arguments (codec.ts `encodeValue`)
+ * before the primary call and its result inside that capture, so neither the primary nor the caller can change what
+ * the shadow compares; unsampled reads encode nothing. Nothing awaits the sink and a sink or encode error never
+ * reaches the caller. Writes are not mirrored as reads.
+ *
+ * `transaction` and `transactionDirect` hand the callback a wrapped transaction engine whose reads are counted as
+ * `skipped_in_transaction` and not mirrored: a read inside an open transaction may see uncommitted state the shadow
+ * cannot have. Reads with a function argument are counted `shed_unmirrorable` (a callback cannot cross the pipe).
+ *
+ * With the `follow` option the wrapper also watches writes (follow.ts): every committed write is published as an
+ * invalidation batch after the outermost commit. Without it, writes pass through bound and untouched.
+ */
+import type { BrainEngine } from '../core/engine.ts';
+import { registerEngineView } from '../core/persistence/switches.ts';
+import { CAPTURE_BUDGET_BYTES, CaptureTooLargeError, encodeArgs, encodeValue } from './codec.ts';
+import { followRaw, followScope, followWrite, type FollowContext, type FollowOptions, type Frame } from './follow.ts';
+import type { CapturedRead, MirrorCounters } from './mirror.ts';
+import { isShadowReadMember, SHADOW_TRANSACTION_MEMBERS } from './reads.ts';
+import { memberKind } from './write-map.ts';
+
+export interface ShadowSink {
+  readonly counters: MirrorCounters;
+  /** Takes a capture function; the sink calls it synchronously when it accepts the read (mirror.ts). */
+  offer(capture: () => CapturedRead): void;
+  /** False once mirroring stopped in this process (state off, restart budget spent, privacy pause). */
+  active(): boolean;
+}
+
+export interface ShadowWrapperOptions {
+  /** Share of eligible reads mirrored, 0..1. */
+  sampleRate: number;
+  /** Seam for tests; default Math.random. */
+  random?: () => number;
+  /** Seam for tests; default performance.now. */
+  now?: () => number;
+  /**
+   * Shadow follow (follow.ts): when set, committed primary writes are published to this sink as invalidation batches.
+   * Active only while the shadow sink is active; when off, writes cost nothing extra.
+   */
+  follow?: FollowOptions;
+}
+
+const TX_MEMBERS: ReadonlySet<PropertyKey> = new Set(SHADOW_TRANSACTION_MEMBERS);
+
+function hasFunctionArg(args: unknown[]): boolean {
+  for (const arg of args) {
+    if (typeof arg === 'function') return true;
+    if (arg && typeof arg === 'object' && !Array.isArray(arg) && !ArrayBuffer.isView(arg)) {
+      for (const [key, value] of Object.entries(arg)) if (key !== 'signal' && typeof value === 'function') return true;
+    }
+  }
+  return false;
+}
+
+function isThenable(value: unknown): value is Promise<unknown> {
+  return !!value && typeof (value as { then?: unknown }).then === 'function';
+}
+
+/** Wraps `engine` for shadow mode. The result is registered as a view of `engine` (persistence/switches.ts). */
+export function wrapShadowEngine<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: ShadowWrapperOptions): E {
+  return buildProxy(engine, sink, opts, false, null);
+}
+
+/** A real method, not an accessor: `get sql()` hands out the driver client, a function with its own properties that a bound copy would lose. */
+function isMethod(target: object, prop: PropertyKey): boolean {
+  for (let o: object | null = target; o; o = Object.getPrototypeOf(o)) {
+    const d = Object.getOwnPropertyDescriptor(o, prop);
+    if (d) return !d.get && !d.set;
+  }
+  return true;
+}
+
+function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: ShadowWrapperOptions, inTransaction: boolean, frame: Frame | null): E {
+  const random = opts.random ?? Math.random;
+  const now = opts.now ?? (() => performance.now());
+  const sampleRate = Math.min(1, Math.max(0, opts.sampleRate));
+  // Bound functions cached per member, re-bound when the primary replaces a member (the factory wraps disconnect).
+  const cache = new Map<PropertyKey, { original: Function; wrapped: Function }>();
+
+  const wrapRead = (op: string, fn: Function): Function => function shadowRead(this: unknown, ...args: unknown[]) {
+    if (inTransaction) {
+      if (sink.active()) sink.counters.skipped_in_transaction++;
+      return fn.apply(engine, args);
+    }
+    if (!sink.active()) return fn.apply(engine, args);
+    if (sampleRate < 1 && random() >= sampleRate) {
+      sink.counters.sampled_out++;
+      return fn.apply(engine, args);
+    }
+    if (hasFunctionArg(args)) {
+      sink.counters.shed_unmirrorable++;
+      return fn.apply(engine, args);
+    }
+    let encodedArgs: unknown;
+    try {
+      encodedArgs = encodeArgs(args, { left: CAPTURE_BUDGET_BYTES });
+    } catch (error) {
+      try { sink.counters[error instanceof CaptureTooLargeError ? 'shed_too_large' : 'encode_error']++; } catch { /* fail open */ }
+      return fn.apply(engine, args);
+    }
+    const started = now();
+    const out = fn.apply(engine, args);
+    if (!isThenable(out)) return out;
+    return out.then((result: unknown) => {
+      const primaryMs = now() - started;
+      try {
+        sink.offer(() => ({ op, args: encodedArgs, result: encodeValue(result, undefined, { left: CAPTURE_BUDGET_BYTES }), primary_ms: primaryMs, at: Date.now() }));
+      } catch { /* the shadow never fails a call */ }
+      return result;
+    }, (error: unknown) => {
+      try { sink.counters.primary_error++; } catch { /* fail open */ }
+      throw error;
+    });
+  };
+
+  const follow = opts.follow;
+  const followCtx = (target: unknown, at: Frame | null, inTx: boolean): FollowContext =>
+    ({ follow: follow!, shadowActive: () => sink.active(), engine: target, frame: at, inTransaction: inTx });
+
+  const wrapTransaction = (fn: Function): Function => function shadowTransaction(this: unknown, callback: unknown, ...rest: unknown[]) {
+    if (typeof callback !== 'function') return fn.apply(engine, [callback, ...rest]);
+    const call = (scope: Frame | null) => fn.apply(engine, [
+      (tx: BrainEngine) => (callback as (tx: BrainEngine) => unknown)(tx && typeof tx === 'object' ? buildProxy(tx, sink, opts, true, scope) : tx),
+      ...rest,
+    ]);
+    return follow ? followScope(followCtx(engine, frame, inTransaction), false, call) : call(null);
+  };
+
+  /** `withReservedConnection`: the callback's connection gets a raw-SQL wrapper whose writes publish when the callback ends. */
+  const wrapReserved = (fn: Function): Function => function shadowReserved(this: unknown, callback: unknown, ...rest: unknown[]) {
+    if (typeof callback !== 'function') return fn.apply(engine, [callback, ...rest]);
+    return followScope(followCtx(engine, frame, inTransaction), true, (scope) => fn.apply(engine, [
+      (conn: any) => (callback as (conn: unknown) => unknown)(
+        scope && conn && typeof conn.executeRaw === 'function'
+          ? new Proxy(conn, { get: (target, prop) => (prop === 'executeRaw' ? followRaw(followCtx(target, scope, false), target.executeRaw) : Reflect.get(target, prop, target)) })
+          : conn),
+      ...rest,
+    ]));
+  };
+
+  /** A member outside the mirrored reads: ignored and read-named ones stay bound; raw SQL and writes publish invalidations. */
+  const wrapFollowed = (name: string, fn: Function, target: E): Function => {
+    const kind = memberKind(name);
+    if (kind === 'ignored' || kind === 'read_name') return fn.bind(target);
+    if (kind === 'reserved') return wrapReserved(fn);
+    const ctx = followCtx(target, frame, inTransaction);
+    return kind === 'raw' ? followRaw(ctx, fn) : followWrite(ctx, name, fn);
+  };
+
+  const proxy = new Proxy(engine, {
+    get(target, prop) {
+      const value = Reflect.get(target, prop, target);
+      if (typeof value !== 'function' || !isMethod(target, prop)) return value;
+      const hit = cache.get(prop);
+      if (hit && hit.original === value) return hit.wrapped;
+      let wrapped: Function;
+      if (isShadowReadMember(prop)) wrapped = wrapRead(prop, value);
+      else if (TX_MEMBERS.has(prop)) wrapped = wrapTransaction(value);
+      else if (follow && typeof prop === 'string') wrapped = wrapFollowed(prop, value, target);
+      else wrapped = value.bind(target);
+      cache.set(prop, { original: value, wrapped });
+      return wrapped;
+    },
+  });
+  return registerEngineView(proxy, engine);
+}

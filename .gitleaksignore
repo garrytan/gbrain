@@ -86,3 +86,11 @@ ef56be48bd4bca977ed5eee7012070573039b142:.gitleaksignore:generic-api-key:77
 44e49da06d44da87504ebf908fdcfd49ed67b46c:test/apple-contacts-write.test.ts:generic-api-key:123
 44e49da06d44da87504ebf908fdcfd49ed67b46c:test/apple-contacts-write.test.ts:generic-api-key:156
 44e49da06d44da87504ebf908fdcfd49ed67b46c:test/apple-contacts-write.test.ts:generic-api-key:157
+# Rust engine main fixtures (commits a7bad7a128 and 7a31297ba1, merged into every lane head that takes main): the doctor secret-marker
+# detector's test strings are PEM header lines with no key body, and the token id is a made-up UUID. History-only fingerprints, not credentials.
+a7bad7a1284c432d21ecd52bcabcc11ccb4e2b4b:rust/crates/gbrain-store/src/cli_reads/doctor_derived_health.rs:private-key:473
+a7bad7a1284c432d21ecd52bcabcc11ccb4e2b4b:rust/crates/gbrain-store/src/cli_reads/doctor_derived_health.rs:private-key:477
+a7bad7a1284c432d21ecd52bcabcc11ccb4e2b4b:rust/crates/gbrain-store/src/cli_reads/doctor_derived_health.rs:private-key:480
+a7bad7a1284c432d21ecd52bcabcc11ccb4e2b4b:rust/crates/gbrain-store/src/cli_reads/doctor_derived_health.rs:private-key:484
+a7bad7a1284c432d21ecd52bcabcc11ccb4e2b4b:rust/crates/gbrain-store/tests/cli_reads_doctor_derived_health.rs:private-key:220
+7a31297ba15da78af3b23a11a792cef1947347df:test/rust-engine-store.test.ts:generic-api-key:578

@@ -37,9 +37,13 @@ async function gitAsync(root: string, args: string[]): Promise<string | null> {
   return r.error ? null : r.stdout.trim() || null;
 }
 
+/** An empty file records nothing: a fetch that fails (remote gone) truncates FETCH_HEAD and leaves a fresh mtime (#9933). */
 function mtime(path: string | null): number {
   if (!path) return 0;
-  try { return statSync(path).mtimeMs; } catch { return 0; }
+  try {
+    const stat = statSync(path);
+    return stat.size > 0 ? stat.mtimeMs : 0;
+  } catch { return 0; }
 }
 
 /** Whether the checkout's branch tracks an upstream (a `git pull` would have something to refresh). */
@@ -61,7 +65,11 @@ export async function observeUpstream(root: string, syncedCommit: string | null)
   return { checkedAt: new Date(checkedMs), commit, behind: count === null ? null : Number(count) };
 }
 
-/** Best-effort: never fails a sync. Compares the upstream with the source's synced commit as stored after the run. */
+/**
+ * Best-effort: never fails a sync. Compares the upstream with the source's synced commit as stored after the run.
+ * A check time never moves back for the same upstream commit: a failed fetch empties FETCH_HEAD, and the reflog
+ * can be older than the no-change fetch already recorded (#9933). The write member keeps that rule on every engine.
+ */
 export async function recordUpstreamObservation(engine: Pick<BrainEngine, 'getSource' | 'writeSourceUpstreamObservation'>, sourceId: string, repoPath?: string): Promise<void> {
   try {
     const source = await engine.getSource(sourceId);

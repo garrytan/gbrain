@@ -37,6 +37,10 @@ describe('affectsRecall', () => {
     expect(affectsRecall({ stage: 'rerank_passthrough', reason: 'malformed_shape' })).toBe(true);
     // keyword_relaxed_carried: OR-relaxed rows voted in fusion — recall-shaped.
     expect(affectsRecall({ stage: 'keyword_relaxed_carried' })).toBe(true);
+    // supersede_check_failed: the supersession read threw (timeout / connection), so an outdated page may rank first
+    // unflagged. Order-shaped like rerank_failed, but transient: the short degraded TTL lets the next query re-check.
+    expect(affectsRecall({ stage: 'supersede_check_failed', reason: 'timeout' })).toBe(true);
+    expect(RANKING_ONLY_DEGRADED_STAGES.has('supersede_check_failed')).toBe(false);
     // The ranking-only set is exactly the config-state skip.
     expect([...RANKING_ONLY_DEGRADED_STAGES]).toEqual(['reranker_skipped']);
   });
