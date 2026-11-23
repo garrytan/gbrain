@@ -1,5 +1,5 @@
 /**
- * Queue and asset health: queue health, subagent capability, facts health, the opt-in index audit, image assets and OCR.
+ * Queue and asset health: queue health, subagent capability, facts health, image assets and OCR.
  *
  * Doctor registry entry module (refactor wave 1, W4 doctor). Each run*(ctx)
  * function holds one block of the former `buildChecks` body, moved
@@ -7,7 +7,6 @@
  * src/commands/doctor/registry.ts and src/core/doctor-categories.ts.
  */
 
-import * as db from '../../../core/db.ts';
 import { startHeartbeat } from '../../../core/progress.ts';
 import { computeQueueHealthCheck } from './queue-jobs.ts';
 import { checkSubagentCapability } from './search-eval.ts';
@@ -90,67 +89,6 @@ export const queueHealthEntry: DoctorEntry = {
   emits: ['queue_health', 'subagent_capability', 'facts_health'],
   tier: 'quick',
   run: runQueueHealth,
-};
-
-async function runIndexAudit(ctx: DoctorContext): Promise<Check[]> {
-  const { args, progress } = ctx;
-  const engine = connectedEngine(ctx);
-  const checks: Check[] = [];
-
-  // 12. Index audit (opt-in via --index-audit). v0.13.1 follow-up to #170.
-  // Reports indexes with zero recorded scans on Postgres. Informational only;
-  // we DO NOT auto-drop. On #170's brain, idx_pages_frontmatter and
-  // idx_pages_trgm showed 0 scans — the suggestion there is "consider
-  // investigating on YOUR brain," not "drop these globally." Zero scans on a
-  // fresh install is also normal (nothing has queried yet); the real signal
-  // is zero scans on a long-running active brain.
-  if (args.includes('--index-audit')) {
-    progress.heartbeat('index_audit');
-    if (engine.kind === 'pglite') {
-      checks.push({
-        name: 'index_audit',
-        status: 'ok',
-        message: 'Skipped (PGLite — pg_stat_user_indexes is a Postgres extension)',
-      });
-    } else {
-      try {
-        const sql = db.getConnection();
-        const rows = await sql`
-          SELECT schemaname, relname AS table, indexrelname AS index,
-                 idx_scan, pg_size_pretty(pg_relation_size(indexrelid)) AS size
-            FROM pg_stat_user_indexes
-           WHERE schemaname = 'public'
-             AND idx_scan = 0
-           ORDER BY pg_relation_size(indexrelid) DESC
-           LIMIT 21
-        `;
-        if (rows.length === 0) {
-          checks.push({ name: 'index_audit', status: 'ok', message: 'All public indexes have recorded scans' });
-        } else {
-          // #7145: 21 rows means more than the 20 listed.
-          const list = rows.slice(0, 20).map((r: any) => `${r.index}(${r.size})`).join(', ');
-          checks.push({
-            name: 'index_audit',
-            status: 'warn',
-            details: { exact: rows.length <= 20 },
-            message: `${rows.length > 20 ? '20+' : rows.length} zero-scan index(es): ${list}. ` +
-                     `Consider investigating whether they're used on YOUR workload (fresh brains naturally show zero scans until queries accumulate). ` +
-                     `Do not drop without confirming.`,
-          });
-        }
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        checks.push({ name: 'index_audit', status: 'warn', message: `Index audit failed: ${msg}` });
-      }
-    }
-  }
-  return checks;
-}
-
-export const indexAuditEntry: DoctorEntry = {
-  name: 'index_audit',
-  emits: ['index_audit'],
-  run: runIndexAudit,
 };
 
 async function runImageAssets(ctx: DoctorContext): Promise<Check[]> {
