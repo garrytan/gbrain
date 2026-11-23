@@ -471,7 +471,8 @@ function entryKey(e: GazetteerEntry | GazetteerEntryKey): string {
 /**
  * Diff the saved entry set of one source against `gazetteer`; on change, save
  * it, bump the generation and mark affected pages due, in one transaction under
- * the source's advisory lock. Returns whether the set changed.
+ * the source's advisory lock. Returns false when the set changed but no time
+ * was left before `deadline` to save it this run.
  *
  * The scan for pages naming an added name gets half the time left before
  * `deadline`. When it stops early, every page in scope it did not reach is
@@ -487,7 +488,8 @@ async function saveEntries(engine: BrainEngine, sourceId: string, gazetteer: Gaz
   const currentKeys = new Set(current.map(entryKey));
   const added = current.filter(k => !beforeKeys.has(entryKey(k)));
   const removed = before.filter(k => !currentKeys.has(entryKey(k)));
-  if (!added.length && !removed.length) return false;
+  if (!added.length && !removed.length) return true;
+  if (Date.now() > deadline) return false;
   // The first save for a source marks the whole candidate scope due (cheap); later saves only affected pages.
   const firstSave = before.length === 0;
   let candidates: number[] = [];
@@ -704,12 +706,12 @@ export async function runMentionPass(engine: BrainEngine, opts: MentionPassOpts 
         return { ...result, state: 'failed', error: message, remaining: await countMentionDuePages(engine, opts.sourceId) };
       }
     }
-    // With no time left the name list is not saved: its scan would only mark pages for a reconcile that cannot run.
+    // With no time left a changed name list is not saved: its scan would only mark pages for a reconcile that cannot run.
     step = 'name list save';
+    const unsaved = new Set<string>();
     for (const sourceId of sources) {
-      if (Date.now() > deadline) break;
       current = sourceId;
-      await saveEntries(engine, sourceId, gazetteer, allowCrossSource ? allSources : [sourceId], allowCrossSource, deadline);
+      if (!await saveEntries(engine, sourceId, gazetteer, allowCrossSource ? allSources : [sourceId], allowCrossSource, deadline)) unsaved.add(sourceId);
     }
     step = 'reconcile';
     for (const sourceId of sources) {
@@ -717,14 +719,18 @@ export async function runMentionPass(engine: BrainEngine, opts: MentionPassOpts 
       await reconcileSource(engine, sourceId, gazetteer, allowCrossSource ? allSources : [sourceId], allowCrossSource, opts, deadline, result);
       const pending = await countIndexDuePages(engine, sourceId, types.get(sourceId)!);
       result.remaining += pending;
-      await writeStatus(engine, sourceId, { state: pending > 0 ? 'pending' : 'complete', pending, error: null, lastPassAt: passStart });
+      // A source whose name list is still unsaved stays pending and keeps its last completed pass time.
+      await writeStatus(engine, sourceId, unsaved.has(sourceId)
+        ? { state: 'pending', pending, error: null }
+        : { state: pending > 0 ? 'pending' : 'complete', pending, error: null, lastPassAt: passStart });
     }
+    if (unsaved.size) result.state = 'pending';
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (current) await writeStatus(engine, current, { state: 'failed', error: `stopped in the ${step}: ${message}`.slice(0, 2000) }).catch(() => {});
     throw error;
   }
-  result.state = result.remaining > 0 ? 'pending' : 'complete';
+  if (result.remaining > 0) result.state = 'pending';
   return result;
 }
 

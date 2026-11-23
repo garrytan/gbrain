@@ -158,6 +158,21 @@ describe('the scan for added names stays inside the pass budget', () => {
     expect(linked[0]!.n).toBe(600);
   });
 
+  test('a pass that leaves a changed name list unsaved does not record the source complete', async () => {
+    await page(engine, 'companies/acme', 'company', 'Acme Example', 'A company.');
+    await page(engine, 'notes/n1', 'note', 'n1', 'Met Acme Example today.');
+    await sweep(engine);
+    await engine.executeRaw("DELETE FROM mention_gazetteer_entries WHERE source_id = 'default' AND target_slug = 'companies/acme'");
+    const before = await status();
+    expect(before.state).toBe('complete');
+    const t = clock();
+    const r = await runMentionPass(engine, { deadline: t.base - 1 });
+    const s = await status();
+    expect(s.state).toBe('pending');
+    expect(s.last_pass_at).toBe(before.last_pass_at);
+    expect(r.state).toBe('pending');
+  });
+
   test('a pass with no time left before the save does not scan, and still writes its status', async () => {
     await seedAddedName();
     const t = clock();
