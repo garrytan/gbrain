@@ -217,4 +217,42 @@ describe('takes revisit by a stored spelling', () => {
     rmSync(home, { recursive: true, force: true });
     expect(opened).toEqual({ exitCode: 1, refused: true, marked: false });
   });
+
+  test('opens a historical page whose recorded path is only the file name, in the brain repo', async () => {
+    await storeWithTake('journal/daily-note', 'Daily claim', { sourcePath: 'daily-note.md' });
+    const { home, repo } = newBrain();
+    const file = writeMarkdown(join(repo, 'journal', 'daily-note.md'));
+    const result = await revisit('journal/daily-note', home);
+    const opened = { exitCode: result.exitCode, notFound: result.stderr.includes('Page not found'), marked: marked(file) };
+    rmSync(home, { recursive: true, force: true });
+    expect(opened).toEqual({ exitCode: 0, notFound: false, marked: true });
+  });
+
+  test('opens a page whose recorded file is an .mdx file, in the brain repo', async () => {
+    await storeWithTake('notes/mdx-example', 'Mdx claim', { sourcePath: 'notes/mdx-example.mdx' });
+    const { home, repo } = newBrain();
+    const file = writeMarkdown(join(repo, 'notes', 'mdx-example.mdx'));
+    const result = await revisit('notes/mdx-example', home);
+    const opened = { exitCode: result.exitCode, notFound: result.stderr.includes('Page not found'), marked: marked(file) };
+    rmSync(home, { recursive: true, force: true });
+    expect(opened).toEqual({ exitCode: 0, notFound: false, marked: true });
+  });
+
+  test.each([
+    ['a clone gbrain owns', { managed_clone: true }],
+    ['a read-only mirror', { mirror_read_only: true }],
+  ])('leaves the checkout of %s unchanged and refuses', async (_label, config) => {
+    const slugName = `Clone-Example-${Object.keys(config)[0]!.slice(0, 3)}`;
+    const { home } = newBrain();
+    const checkout = join(home, 'checkout');
+    const file = writeMarkdown(join(checkout, 'Companies', `${slugName}.md`));
+    const before = readFileSync(file, 'utf8');
+    const id = `ro-src-${Object.keys(config)[0]!.slice(0, 3)}`;
+    await storeWithTake(`Companies/${slugName}`, 'Clone claim', { sourceId: id, sourcePath: `Companies/${slugName}.md` });
+    await engine.executeRaw('UPDATE sources SET local_path = $1, config = $2::jsonb WHERE id = $3', [checkout, JSON.stringify(config), id]);
+    const result = await revisit(`Companies/${slugName}`, home);
+    const after = readFileSync(file, 'utf8');
+    rmSync(home, { recursive: true, force: true });
+    expect({ exitCode: result.exitCode, refused: result.stderr.includes('read-only'), unchanged: after === before }).toEqual({ exitCode: 1, refused: true, unchanged: true });
+  });
 });
