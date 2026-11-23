@@ -14,6 +14,7 @@ import { operations, OperationError, enforceBoundClientOpAllowList, opError } fr
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
 import { asSegmentedWriteRefusal } from '../core/page-body/page-shape.ts';
 import type { Operation, OperationMeta } from '../core/ops/contract.ts';
+import { resolveEndUser } from '../core/persistence/attribution.ts';
 import { loadConfig } from '../core/config.ts';
 import { withRequestConfigSnapshot, withoutRequestConfigSnapshot } from '../core/config-snapshot.ts';
 import { currentCallerAccess, withCallerAccess } from '../core/search/private-visibility.ts';
@@ -208,6 +209,8 @@ export interface DispatchOpts {
   admissionOrigin?: OperationContext['admissionOrigin'];
   /** The caller's self-declared agent label (X-Gbrain-Agent-Label), parsed by the transport; recorded only, never authority. */
   agentLabel?: string;
+  /** The raw X-Gbrain-End-User header the HTTP transport read; dispatch checks it (resolveEndUser) and sets endUser. */
+  endUserHeader?: string | null; endUser?: string;
   /** Configuration selected by the resident transport, never populated from wire params. */
   config?: OperationContext['config'];
   /** Defaults to true (remote/untrusted). Local CLI callers (`gbrain call`) pass false. */
@@ -977,7 +980,7 @@ export function buildOperationContext(
     ...(opts.revealTools ? { revealTools: opts.revealTools } : {}),
     ...(opts.writeWaitMs !== undefined ? { writeWaitMs: opts.writeWaitMs } : {}),
     ...(opts.admissionOrigin ? { admissionOrigin: opts.admissionOrigin } : {}),
-    ...(opts.agentLabel ? { agentLabel: opts.agentLabel } : {}),
+    ...(opts.agentLabel ? { agentLabel: opts.agentLabel } : {}), ...(opts.endUser ? { endUser: opts.endUser } : {}),
     ...(opts.resultRows ? { resultRows: opts.resultRows } : {}),
     ...(opts.thinClient ? { thinClient: true } : {}),
     ...(opts.mcpCaller ? { mcpCaller: opts.mcpCaller } : {}),
@@ -1013,6 +1016,8 @@ export async function dispatchToolCall(
   const roomDeclaration = opts.remote === false ? undefined : roomRead.declaration ?? undefined;
   const op = operations.find(o => o.name === name);
   const readOnly = op?.mutating === false;
+  // The end user a declare_end_user service names (persistence/attribution.ts): refused before any work unless granted.
+  try { opts = { ...opts, endUser: opts.remote === false ? undefined : resolveEndUser(opts.endUserHeader, opts.auth, name, opts.transport === 'stdio' ? 'stdio' : 'http') }; } catch (e) { return errorResult(e, opts, { op: name }); }
   const args = op && params ? normalizeOptionalParams(op, params) : params;
   const [privateSources, privateFactSources] = readOnly && opts.remote !== false && !WORLD_ONLY_PACK_OPS.has(name) ? [opts.auth?.privatePages?.sources, opts.auth?.privateFacts?.sources] : [];
   const resolved = opts.metaHook && (opts.hotMemoryOff === true || hotMemoryOffIn(params)) ? { ...opts, metaHook: undefined } : opts;

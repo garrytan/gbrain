@@ -22,7 +22,7 @@
  * vs user-account-mgmt — neither implies the other).
  */
 
-export type Scope = 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent' | 'skill_editor' | 'skill_publisher' | 'skills_member_self' | 'memory_confirm';
+export type Scope = 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent' | 'skill_editor' | 'skill_publisher' | 'skills_member_self' | 'memory_confirm' | 'declare_end_user';
 
 export const ALLOWED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
   'read',
@@ -35,6 +35,7 @@ export const ALLOWED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
   'skill_publisher',
   'skills_member_self',
   'memory_confirm',
+  'declare_end_user',
 ]);
 
 /**
@@ -44,6 +45,7 @@ export const ALLOWED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
 export const ALLOWED_SCOPES_LIST: ReadonlyArray<Scope> = Object.freeze([
   'admin',
   'agent',
+  'declare_end_user',
   'memory_confirm',
   'read',
   'skill_editor',
@@ -170,6 +172,9 @@ const IMPLIES: Record<Scope, ReadonlySet<Scope>> = {
   skill_publisher: new Set(['skill_publisher']),
   skills_member_self: new Set(['skills_member_self']),
   memory_confirm: new Set(['memory_confirm']),
+  // A trusted service may name the person a request's writes are for (X-Gbrain-End-User, persistence/attribution.ts).
+  // Attribution only, never access. A sibling: admin does not imply it, so only a credential granted it may declare.
+  declare_end_user: new Set(['declare_end_user']),
 };
 
 /**

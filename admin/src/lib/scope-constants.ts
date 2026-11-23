@@ -10,7 +10,7 @@
  * or `bun run verify` will reject the change.
  */
 
-export type Scope = 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent' | 'skill_editor' | 'skill_publisher' | 'skills_member_self' | 'memory_confirm';
+export type Scope = 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent' | 'skill_editor' | 'skill_publisher' | 'skills_member_self' | 'memory_confirm' | 'declare_end_user';
 
 // MIRROR OF src/core/scope.ts ALLOWED_SCOPES_LIST — keep alphabetically sorted.
 // v0.38: 'agent' added for the submit_agent remote-MCP op (sibling to admin,
@@ -20,6 +20,7 @@ export type Scope = 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin'
 export const ALLOWED_SCOPES_LIST: ReadonlyArray<Scope> = [
   'admin',
   'agent',
+  'declare_end_user',
   'memory_confirm',
   'read',
   'skill_editor',

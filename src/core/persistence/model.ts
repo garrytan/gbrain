@@ -8,6 +8,8 @@ export type RequestState = 'queued' | 'deferred' | 'running' | 'recovering' | 'c
 export interface WriteAuthority {
   /** The caller's self-declared agent label (X-Gbrain-Agent-Label). Unverified text: nothing authorizes on it. */
   agentLabel?: string;
+  /** The person a trusted service declared the write is for (X-Gbrain-End-User, a declare_end_user credential). Attribution only. */
+  endUser?: string;
   version: 1;
   principal: Principal;
   remote: boolean;

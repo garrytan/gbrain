@@ -4,6 +4,9 @@ import type { BrainEngine } from '../engine.ts';
 import { withWriteAttribution } from './context.ts';
 import type { WriteTrust } from '../trust/tier.ts';
 import { requestChannelTrust } from '../trust/channel.ts';
+import { hasScope } from '../scope.ts';
+import { opError, type AuthInfo } from '../ops/contract.ts';
+import { scopeDeniedError } from '../ops/op-fix.ts';
 export { ownerSourceGateInput, suppliedTrustMarkerView, trustMarkerChanged, writeTrustOfGate } from '../trust/channel.ts';
 
 /**
@@ -33,6 +36,41 @@ export const AGENT_LABEL_HEADER = 'X-Gbrain-Agent-Label';
 export function parseAgentLabel(value: string | null | undefined): string | undefined {
   const text = value?.trim();
   return text && /^[\x20-\x7e]{1,120}$/.test(text) ? text : undefined;
+}
+
+/**
+ * The HTTP MCP request header a trusted service (a multi-user MCP gateway in front of a shared brain) uses to say
+ * which person a request's writes are for: an opaque id such as an email or `oidc:<subject>`. Unlike the agent label,
+ * only a credential the operator granted the `declare_end_user` scope may send it; any other credential's request is
+ * refused before any work (`insufficient_scope`), and a malformed value is refused too (`invalid_params`), so a
+ * caller never believes a write was attributed when it was not. It is attribution only: stored on the request's
+ * authority, shown as `end_user` by attribution reads, and read by no grant, access rule, audience or trust tier, so
+ * it never widens or narrows what the request may do and needs no member per person. Stdio and the local CLI have no
+ * request headers and record none.
+ */
+export const END_USER_HEADER = 'X-Gbrain-End-User';
+export const END_USER_SCOPE = 'declare_end_user';
+/** 1-256 visible ASCII characters after trimming (no spaces, controls, bidi or non-ASCII bytes). */
+const END_USER_RE = /^[\x21-\x7e]{1,256}$/;
+
+/**
+ * The end user a request declares, checked against the credential: undefined when no header was sent, the trimmed id
+ * when the credential holds `declare_end_user` and the value is well formed, else an OperationError the transport
+ * returns before any work.
+ */
+export function resolveEndUser(raw: string | null | undefined, auth: Pick<AuthInfo, 'clientId' | 'scopes' | 'principal' | 'clientName'> | undefined,
+  op: string, transport: 'stdio' | 'http'): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!auth || !hasScope(auth.scopes ?? [], END_USER_SCOPE)) {
+    throw scopeDeniedError({ op, required: [END_USER_SCOPE], auth, transport,
+      message: `This connection may not declare the end user (${END_USER_HEADER}) without the '${END_USER_SCOPE}' scope; nothing was read or written.` });
+  }
+  const id = raw.trim();
+  if (!END_USER_RE.test(id)) {
+    throw opError('invalid_params', `${END_USER_HEADER} must be 1-256 visible ASCII characters (an email or an opaque id such as oidc:<subject>); nothing was read or written.`,
+      `Send the person's canonical id in ${END_USER_HEADER}, or leave the header out.`);
+  }
+  return id;
 }
 
 /** A journaled request publishes as itself. */

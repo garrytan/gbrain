@@ -2025,6 +2025,7 @@
         "members": [
           "agent_label?: string | undefined",
           "at: string | null",
+          "end_user?: string | undefined",
           "operation: string | null",
           "origin: \"request\" | \"maintenance\" | \"unrecorded\"",
           "principal: { kind: string; id: string; name: string | null; } | null",
@@ -7425,6 +7426,7 @@
           "emitNotice?: ((n: Notice) => void) | undefined",
           "emitResponseMeta?: ((key: string, value: unknown) => void) | undefined",
           "emitToolTail?: ((tail: { text?: string; meta?: Record<string, unknown>; }) => void) | undefined",
+          "endUser?: string | undefined",
           "engine: BrainEngine",
           "explicitReadBinding?: ExplicitReadBinding | undefined",
           "guestChannels?: GuestChannels | undefined",
@@ -11304,6 +11306,7 @@
         "members": [
           "agent_label?: string | undefined",
           "at: string | null",
+          "end_user?: string | undefined",
           "operation: string | null",
           "origin: \"request\" | \"maintenance\" | \"unrecorded\"",
           "principal: { kind: string; id: string; name: string | null; } | null",

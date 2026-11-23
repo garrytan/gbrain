@@ -36,7 +36,7 @@ const whoami: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Your identity: transport, scopes and, over OAuth, client, source_id and federated_read.',
+  description: 'Your identity: transport, scopes and, over OAuth, client, source_id and federated_read; end_user when the request declared one (X-Gbrain-End-User).',
   params: {},
   scope: 'read',
   handler: async (ctx) => {
@@ -109,6 +109,7 @@ const whoami: Operation = {
         client_name: ctx.auth.clientName ?? ctx.auth.clientId,
         ...sourcesView,
         ...await resolveAuthCapabilities(ctx.auth, ctx.engine, ctx.config, { surfaceCeiling: ctx.surfaceCeiling }),
+        ...(ctx.endUser ? { end_user: ctx.endUser } : {}),
         access: await withApplied(await credentialAccessView(ctx.engine, ctx.auth)),
       };
     }
@@ -118,6 +119,7 @@ const whoami: Operation = {
       token_name: ctx.auth.clientName ?? ctx.auth.clientId,
       scopes: ctx.auth.scopes,
       expires_at: null,
+      ...(ctx.endUser ? { end_user: ctx.endUser } : {}),
       ...sourcesView,
       access: await withApplied(await credentialAccessView(ctx.engine, ctx.auth)),
       grant_diagnosis: await resolveGrantDiagnosis(ctx.auth, ctx.engine, ctx.config, { surfaceCeiling: ctx.surfaceCeiling }),

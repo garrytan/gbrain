@@ -734,7 +734,7 @@ gbrain attribution people/alice-example --timeline 17
 ```
 
 Each attribution is `{ request_id, operation, principal: { kind, id, name }, at,
-agent_label?, origin }`. Branch on `origin`:
+agent_label?, end_user?, origin }`. Branch on `origin`:
 
 | `origin` | Meaning |
 | --- | --- |
@@ -756,6 +756,21 @@ dropped, not refused. Stdio MCP and the local CLI have no request headers and
 record no label; their principal already names the lane. Without the header a
 write is recorded exactly as before.
 
+**Which person a gateway wrote for.** A multi-user MCP gateway in front of a
+shared brain calls it with one service credential, so every write would read as
+the gateway. A credential the operator granted the `declare_end_user` scope may
+name the person on each request with the `X-Gbrain-End-User` header, for
+example `X-Gbrain-End-User: alice@example.com` or `oidc:<subject>`. Writes from
+that request show it as `end_user`, `whoami` echoes it, and the gateway itself
+gets `written_by` / `archived_by` on `get_versions` so it can show its users who
+changed a page. Unlike the agent label it is checked: a credential without the
+scope that sends the header is refused before any work (`insufficient_scope`),
+and a value that is not 1 to 256 visible ASCII characters is refused
+(`invalid_params`). It is attribution only: it never changes what the request
+may read or write, needs no member per person, and `admin` does not imply the
+scope. Grant it on the brain host:
+`gbrain auth rescope --token <name> --scopes read,write,declare_end_user`.
+
 Who can read it:
 
 - `get_write_attribution` needs `admin` scope (the local CLI always has it).
@@ -763,7 +778,7 @@ Who can read it:
   the take holders their grant allows. A page outside the grant reads as
   `page_not_found`.
 - `get_versions` (`gbrain history`) adds `written_by` and `archived_by` to each
-  version only for the local CLI and `admin` holders. A `read` or `write` grant
+  version only for the local CLI, `admin` holders and `declare_end_user` holders. A `read` or `write` grant
   gets the same version rows without any attribution field.
 
 Rows written before v0.60.37.0 read `unrecorded`. Fill the ones the write

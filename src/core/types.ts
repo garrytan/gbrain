@@ -1898,6 +1898,8 @@ export interface WriteAttributionView {
   principal: { kind: string; id: string; name: string | null } | null;
   /** The agent label the caller declared on the write request (X-Gbrain-Agent-Label); unverified, absent when none was sent. */
   agent_label?: string;
+  /** The person a declare_end_user credential named for the write (X-Gbrain-End-User); absent when none was declared. */
+  end_user?: string;
   origin: 'request' | 'maintenance' | 'unrecorded';
 }
 /** A `get_versions` row as trusted local and admin callers see it. */

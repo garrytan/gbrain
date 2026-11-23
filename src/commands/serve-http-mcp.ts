@@ -50,7 +50,7 @@ import { ON_BEHALF_OF_HEADER } from '../core/access/audience.ts';
 import { ROOM_HEADER } from '../core/access/room.ts';
 import { GUEST_HEADER } from '../core/guests/admission.ts';
 import { ACTOR_HEADER, EXTERNAL_ID_RE, QM_AUDIENCE_HEADER } from '../core/access/actor-model.ts';
-import { parseAgentLabel, AGENT_LABEL_HEADER } from '../core/persistence/attribution.ts';
+import { parseAgentLabel, AGENT_LABEL_HEADER, END_USER_HEADER } from '../core/persistence/attribution.ts';
 import { qmMemoryToolResult } from '../core/ops/qm-memory.ts';
 import { attestableOp } from '../core/access/actor.ts';
 
@@ -92,6 +92,8 @@ interface McpRequestState {
   userAgent: string | undefined;
   /** The caller's self-declared agent label (X-Gbrain-Agent-Label): recorded on its write requests, never authority. */
   agentLabel: string | undefined;
+  /** The raw X-Gbrain-End-User header; dispatch honours it only for a declare_end_user credential. */
+  endUserHeader: string | undefined;
 }
 
 export function mountMcp(app: Express, ctx: ServeHttpContext): void {
@@ -213,7 +215,7 @@ export function mountMcp(app: Express, ctx: ServeHttpContext): void {
     const thinClient = isGbrainThinClient(req.get(GBRAIN_CLIENT_HEADER));
     const state: McpRequestState = { authInfo, agentName, startTime, mcpOperations, surface, surfaceCeiling, surfaceAllowedOps, resultRows, thinClient,
       onBehalfOfHeader: req.get(ON_BEHALF_OF_HEADER), roomHeader: req.get(ROOM_HEADER), guestHeader: req.get(GUEST_HEADER), actorHeader: req.get(ACTOR_HEADER), audienceHeader: req.get(QM_AUDIENCE_HEADER),
-      userAgent: req.get('user-agent'), agentLabel: parseAgentLabel(req.get(AGENT_LABEL_HEADER)) };
+      userAgent: req.get('user-agent'), agentLabel: parseAgentLabel(req.get(AGENT_LABEL_HEADER)), endUserHeader: req.get(END_USER_HEADER) };
     const server = createMcpRequestServer(ctx, state, writeback, writeback?.enabled ? await engine.getConfig(OWNER_MEMBER_KEY).catch(() => null) : null);
     await serveMcpRequest(server, req, res);
   }
@@ -471,7 +473,7 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
       guest: { header: state.guestHeader, requestMeta: (request.params as { _meta?: unknown })._meta },
       mcpCaller: { client: authInfo.clientName, userAgent: state.userAgent, meta: (request.params as { _meta?: Record<string, unknown> })._meta },
       actor: { header: state.actorHeader, audience: state.audienceHeader },
-      ...(state.agentLabel ? { agentLabel: state.agentLabel } : {}),
+      ...(state.agentLabel ? { agentLabel: state.agentLabel } : {}), endUserHeader: state.endUserHeader,
       takesHoldersAllowList: tokenAllowList,
       sourceId: tokenSourceId,
       ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),

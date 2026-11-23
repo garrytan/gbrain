@@ -41,9 +41,12 @@ function originObject(value: unknown): WriteOrigin | null {
 const iso = (value: Date | string | null | undefined): string | null =>
   value == null ? null : value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 
-/** Trusted local callers and `admin` holders see who wrote what; plain readers never do. */
+/**
+ * Trusted local callers and `admin` holders see who wrote what; plain readers never do. A `declare_end_user` service
+ * does too: it names the people writes are for, and shows its users who changed a page.
+ */
 export function canReadWriteAttribution(ctx: OperationContext): boolean {
-  return ctx.remote === false || hasScope(ctx.auth?.scopes ?? [], 'admin');
+  return ctx.remote === false || hasScope(ctx.auth?.scopes ?? [], 'admin') || hasScope(ctx.auth?.scopes ?? [], 'declare_end_user');
 }
 
 /** Resolve stored snapshots to views: one query per joined table, whatever the input size. */
@@ -52,8 +55,8 @@ export async function resolveWriteAttributions(engine: BrainEngine, stored: Stor
   const requestIds = [...new Set(stored.map(s => s.request_id).filter((id): id is string => !!id))];
   const localIds = [...ids('local_cli'), ...ids('local_stdio')];
   const [requests, clients, tokens, writers] = await Promise.all([
-    requestIds.length ? engine.executeRaw<{ id: string; operation: string; completed_at: Date | string | null; agent_label: string | null }>(
-      "SELECT id::text AS id, operation, completed_at, authority->>'agentLabel' AS agent_label FROM persistence_requests WHERE id = ANY($1::uuid[])", [requestIds]) : [],
+    requestIds.length ? engine.executeRaw<{ id: string; operation: string; completed_at: Date | string | null; agent_label: string | null; end_user: string | null }>(
+      "SELECT id::text AS id, operation, completed_at, authority->>'agentLabel' AS agent_label, authority->>'endUser' AS end_user FROM persistence_requests WHERE id = ANY($1::uuid[])", [requestIds]) : [],
     ids('oauth_client').length ? engine.executeRaw<{ id: string; name: string }>(
       'SELECT client_id AS id, client_name AS name FROM oauth_clients WHERE client_id = ANY($1::text[])', [ids('oauth_client')]) : [],
     ids('legacy_token').length ? engine.executeRaw<{ id: string; name: string }>(
@@ -77,6 +80,7 @@ export async function resolveWriteAttributions(engine: BrainEngine, stored: Stor
         ? { kind: s.principal_kind, id: s.principal_id, name: names.get(`${s.principal_kind}:${s.principal_id}`) ?? null } : null,
       at: iso(request?.completed_at ?? s.at),
       ...(request?.agent_label ? { agent_label: request.agent_label } : {}),
+      ...(request?.end_user ? { end_user: request.end_user } : {}),
       origin: s.request_id ? 'request' : 'maintenance',
     };
   });
