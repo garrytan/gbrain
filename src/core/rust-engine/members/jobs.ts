@@ -40,6 +40,8 @@ export const JOBS_MEMBERS = {
   addJobTokens: 'minion_queue',
   delayActiveJob: 'minion_queue',
   releaseWatchdogClaim: 'minion_queue',
+  releaseClaimForPause: 'minion_queue',
+  deferClaimForQuietHours: 'minion_queue',
   markJobWatchdogSuspect: 'minion_queue',
   promoteDelayedJobs: 'minion_queue',
   cancelJobs: 'minion_queue',

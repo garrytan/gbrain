@@ -4529,7 +4529,7 @@ export class PostgresEngine implements BrainEngine {
 
   // Stats + health
   /** The liveness round trip through this engine's executeRaw, as master ran it; under a read deadline it ends at the deadline (statement-deadline.ts bounds it). */
-  pingStore(opts?: { signal?: AbortSignal }) { return this.ownRawRead(exec => healthImpl.pingStore(exec, opts)); }
+  pingStore(opts?: { signal?: AbortSignal; direct?: boolean }) { return opts?.direct ? healthImpl.pingStore({ executeRaw: (sql, params, o) => this.executeRawDirect(sql, params, o) }, opts) : this.ownRawRead(exec => healthImpl.pingStore(exec, opts)); }
   async getStats(opts?: { sourceId?: string; sourceIds?: string[] }): Promise<BrainStats> {
     const sql = this.sql;
     // #4592: optional source scope. NULL = brain-wide (trusted local); a
@@ -5148,6 +5148,8 @@ export class PostgresEngine implements BrainEngine {
   async addJobTokens(id: number, lockToken: string, tokens: JobTokenCounts) { return jobsQueue.addJobTokens(this, id, lockToken, tokens); }
   async delayActiveJob(id: number, lockToken: string, spec: DelayActiveJobSpec, opts?: { signal?: AbortSignal }) { return jobsQueue.delayActiveJob(this, id, lockToken, spec, opts); }
   async releaseWatchdogClaim(id: number, lockToken: string, errorText: string) { return jobsQueue.releaseWatchdogClaim(this, id, lockToken, errorText); }
+  async releaseClaimForPause(id: number, lockToken: string) { return jobsQueue.releaseClaimForPause(this, id, lockToken); }
+  async deferClaimForQuietHours(id: number, lockToken: string) { return jobsQueue.deferClaimForQuietHours(this, id, lockToken); }
   async markJobWatchdogSuspect(id: number) { return jobsQueue.markJobWatchdogSuspect(this, id); }
   async promoteDelayedJobs() { return jobsQueue.promoteDelayedJobs(this); }
   async cancelJobs(ids: readonly number[], spec?: CancelJobsSpec) { return this.transaction(tx => jobsQueue.cancelJobs(tx, ids, spec)); }

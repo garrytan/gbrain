@@ -292,6 +292,7 @@
   "test/engine-parity/jobs-status.test.ts": 18101,
   "test/engine-parity/jobs-subagent.test.ts": 9560,
   "test/engine-parity/jobs-wake.test.ts": 8334,
+  "test/engine-parity/jobs-worker-liveness.test.ts": 10680,
   "test/engine-parity/jobs.test.ts": 10328,
   "test/engine-parity/journal-purge-terminal.test.ts": 11200,
   "test/engine-parity/journal-typed-sites.test.ts": 19500,

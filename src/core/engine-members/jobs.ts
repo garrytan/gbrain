@@ -98,6 +98,13 @@ export interface JobsMembers {
   delayActiveJob(id: number, lockToken: string, spec: DelayActiveJobSpec, opts?: { signal?: AbortSignal }): Promise<JobRow | null>;
   /** Requeue a co-runner of a watchdog drain with the suspect mark, no attempt counted; false when the claim moved on. */
   releaseWatchdogClaim(id: number, lockToken: string, errorText: string): Promise<boolean>;
+  /**
+   * Hand a just-taken claim back un-run because the pause marker appeared after the claim: the row this token locks goes
+   * to `delayed` for one minute, lock cleared, start time, error text and attempt counts untouched. A stale token changes nothing.
+   */
+  releaseClaimForPause(id: number, lockToken: string): Promise<void>;
+  /** The same hand-back for a quiet-hours deferral: `delayed` for fifteen minutes. */
+  deferClaimForQuietHours(id: number, lockToken: string): Promise<void>;
   /** Append the watchdog suspect mark once to a job's stacktrace (any status, `updated_at` untouched). */
   markJobWatchdogSuspect(id: number): Promise<void>;
   /** Move delayed jobs whose delay passed back to waiting. */

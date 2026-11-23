@@ -304,6 +304,7 @@ test/engine-parity/jobs-spend.test.ts
 test/engine-parity/jobs-status.test.ts
 test/engine-parity/jobs-subagent.test.ts
 test/engine-parity/jobs-wake.test.ts
+test/engine-parity/jobs-worker-liveness.test.ts
 test/engine-parity/jobs.test.ts
 test/engine-parity/journal-purge-terminal.test.ts
 test/engine-parity/journal-typed-sites.test.ts

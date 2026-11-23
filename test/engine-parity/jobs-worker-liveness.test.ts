@@ -8,7 +8,9 @@
  *  - Contract: a worker whose store answers its health probe runs past more than three health intervals without
  *    emitting `unhealthy`, and still takes and finishes a job afterwards. A claim released for the pause marker or
  *    deferred for quiet hours goes back to `delayed` with its lock cleared and a delay of one minute or fifteen minutes,
- *    keeps its start time, attempt counts and error text, and a claim another worker holds is left alone.
+ *    keeps its start time, attempt counts and error text, and a claim another worker holds is left alone. The store's
+ *    liveness round trip (`pingStore`, on the default and the direct lane) answers while the store is open and rejects
+ *    once it is closed or the call's signal has aborted, so the worker's health logic still sees a dead store.
  *  - Regression: the Rust engine refuses raw SQL, so its worker's `SELECT 1` probe failed three times in a row and the
  *    worker stopped as `db_dead` after about three health intervals, and the release and defer statements threw the same
  *    refusal, so a released claim stayed active until its lock expired.
@@ -98,7 +100,7 @@ async function quietly<T>(run: () => Promise<T>): Promise<{ value: T; errors: st
 
 describe('engine parity: a minion worker stays alive and releases a claim as every engine does', () => {
   parityTest('a worker runs past more than three health intervals without going unhealthy and still finishes a job',
-    { methods: ['admitJob', 'claimNextJob', 'completeJob', 'getJob'], timeout: 90_000 }, async (engine) => {
+    { methods: ['pingStore', 'admitJob', 'claimNextJob', 'completeJob', 'getJob'], timeout: 90_000 }, async (engine) => {
       const worker = new MinionWorker(engine, {
         queue: 'default', concurrency: 1, pollInterval: 25, maxRssMb: 0, healthCheckInterval: 20, dbFailExitAfter: 3,
         dbProbeTimeoutMs: 1_000,
@@ -125,7 +127,7 @@ describe('engine parity: a minion worker stays alive and releases a claim as eve
     });
 
   parityTest('a claim released because the pause marker appeared goes back to delayed for a minute, and a claim another worker holds is left alone',
-    { methods: ['admitJob', 'claimNextJob', 'getJob'] }, async (engine) => {
+    { methods: ['releaseClaimForPause', 'admitJob', 'claimNextJob', 'getJob'] }, async (engine) => {
       const { id, job } = await active(engine, 'paused', 'w1:a');
       const v = view(id);
       const worker = new MinionWorker(engine, { queue: 'default', concurrency: 1 }) as unknown as WorkerInternals;
@@ -141,13 +143,25 @@ describe('engine parity: a minion worker stays alive and releases a claim as eve
       expect(afterStale).toEqual(held);
       expect(afterRelease).toMatchObject({ status: 'delayed', lock_token: null, error_text: null, delay_minutes: 1, attempts_made: 0, attempts_started: 1 });
       expect(afterRelease?.has).toMatchObject({ lock_until: false, delay_until: true, started_at: true });
+      // The member the worker calls, on its own: a stale token changes nothing, the holder's token releases, a repeat changes nothing.
+      const direct = await active(engine, 'paused-direct', 'w3:a');
+      const dv = view(direct.id);
+      await engine.releaseClaimForPause(direct.id, 'w9:a');
+      const directStale = dv(await engine.getJob(direct.id));
+      await engine.releaseClaimForPause(direct.id, 'w3:a');
+      const directReleased = dv(await engine.getJob(direct.id));
+      await engine.releaseClaimForPause(direct.id, 'w3:a');
+      const directAgain = dv(await engine.getJob(direct.id));
+      expect(directStale?.status).toBe('active');
+      expect(directReleased).toMatchObject({ status: 'delayed', lock_token: null, delay_minutes: 1 });
       return {
         held, afterStale, afterRelease, afterAgain, errors: [stale.errors, released.errors, again.errors],
+        directStale, directReleased, directAgain,
       };
     });
 
   parityTest('quiet hours defer returns a claim to delayed for fifteen minutes and leaves a claim another worker holds alone',
-    { methods: ['admitJob', 'claimNextJob', 'getJob'] }, async (engine) => {
+    { methods: ['deferClaimForQuietHours', 'admitJob', 'claimNextJob', 'getJob'] }, async (engine) => {
       const deferred = await active(engine, 'defer-me', 'w1:a');
       const other = await active(engine, 'held-by-other', 'w2:a');
       const v = view(deferred.id);
@@ -166,8 +180,41 @@ describe('engine parity: a minion worker stays alive and releases a claim as eve
       expect(afterWrongToken).toMatchObject({ status: 'active', lock_token: 'w2:a' });
       expect(afterDefer).toMatchObject({ status: 'delayed', lock_token: null, error_text: null, delay_minutes: 15, attempts_made: 0, attempts_started: 1 });
       expect(afterDefer?.has).toMatchObject({ lock_until: false, delay_until: true, started_at: true });
+      // The member the worker calls, on its own.
+      const direct = await active(engine, 'defer-direct', 'w3:a');
+      const dv = view(direct.id);
+      await engine.deferClaimForQuietHours(direct.id, 'w9:a');
+      const directStale = dv(await engine.getJob(direct.id));
+      await engine.deferClaimForQuietHours(direct.id, 'w3:a');
+      const directDeferred = dv(await engine.getJob(direct.id));
+      await engine.deferClaimForQuietHours(direct.id, 'w3:a');
+      const directAgain = dv(await engine.getJob(direct.id));
+      expect(directStale?.status).toBe('active');
+      expect(directDeferred).toMatchObject({ status: 'delayed', lock_token: null, delay_minutes: 15 });
       return {
         held, afterWrongToken, afterDefer, afterAgain, errors: [wrongToken.errors, defer.errors, again.errors],
+        directStale, directDeferred, directAgain,
       };
+    });
+
+  parityTest('pingStore answers on the default and the direct lane, and rejects once the store is closed',
+    { methods: ['pingStore', 'connect', 'initSchema', 'disconnect'] }, async (_engine, _backend, ctx) => {
+      const { engine: second, config } = ctx.unconnectedEngine();
+      await second.connect(config);
+      await second.initSchema();
+      const answers = [
+        await second.pingStore().then(() => 'answered', () => 'rejected'),
+        await second.pingStore({ signal: new AbortController().signal }).then(() => 'answered', () => 'rejected'),
+        await second.pingStore({ direct: true }).then(() => 'answered', () => 'rejected'),
+      ];
+      const aborted = new AbortController();
+      aborted.abort();
+      const abortedAnswer = await second.pingStore({ signal: aborted.signal }).then(() => 'answered', () => 'rejected');
+      await second.disconnect();
+      const closed = await second.pingStore().then(() => 'answered', () => 'rejected');
+      const closedDirect = await second.pingStore({ direct: true }).then(() => 'answered', () => 'rejected');
+      expect(answers).toEqual(['answered', 'answered', 'answered']);
+      expect({ abortedAnswer, closed, closedDirect }).toEqual({ abortedAnswer: 'rejected', closed: 'rejected', closedDirect: 'rejected' });
+      return { answers, abortedAnswer, closed, closedDirect };
     });
 });

@@ -17,7 +17,7 @@ import * as jobsSpend from '../../src/core/engine-sql/jobs-spend.ts';
 
 const MEMBERS = [
   'deleteTerminalJob', 'pauseJob', 'resumeJob', 'failParentJob', 'resolveParentJob', 'resolveStrandedParents', 'detachChildJob',
-  'updateJobProgress', 'addJobTokens', 'delayActiveJob', 'releaseWatchdogClaim', 'markJobWatchdogSuspect',
+  'updateJobProgress', 'addJobTokens', 'delayActiveJob', 'releaseWatchdogClaim', 'releaseClaimForPause', 'deferClaimForQuietHours', 'markJobWatchdogSuspect',
   'promoteDelayedJobs', 'cancelJobs', 'killTimedOutJobs', 'killWallClockJobs', 'pruneJobs', 'retryJob',
   'listSynthesisCompletionKeys', 'listRecentSynthesisCompletions',
   'postInboxMessage', 'readJobInbox', 'readChildCompletions',

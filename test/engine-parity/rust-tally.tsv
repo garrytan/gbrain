@@ -152,6 +152,7 @@ test/engine-parity/jobs-spend.test.ts	4	0
 test/engine-parity/jobs-status.test.ts	12	0
 test/engine-parity/jobs-subagent.test.ts	16	0
 test/engine-parity/jobs-wake.test.ts	20	0
+test/engine-parity/jobs-worker-liveness.test.ts	4	0
 test/engine-parity/jobs.test.ts	16	0
 test/engine-parity/journal-purge-terminal.test.ts	2	0
 test/engine-parity/journal-typed-sites.test.ts	6	1

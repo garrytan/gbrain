@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2006/2022
+# covered: 2008/2024
 # lifecycle: 9/9
 # pages: 81/82
 # search: 7/7
@@ -37,7 +37,7 @@
 # entity_reads: 28/28
 # cycle_locks: 10/10
 # minion_jobs: 10/10
-# minion_queue: 134/137
+# minion_queue: 136/139
 # minion_status: 12/12
 # minion_subagent: 17/17
 # cli_reads_export: 14/14
@@ -115,10 +115,10 @@
 # session_state: 7/7
 # doctor_join: 6/6
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
-connect	lifecycle	yes	2	yes	yes	yes	serves
-disconnect	lifecycle	yes	2	yes	yes	yes	serves
+connect	lifecycle	yes	3	yes	yes	yes	serves
+disconnect	lifecycle	yes	3	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
-initSchema	lifecycle	yes	3	yes	yes	yes	serves
+initSchema	lifecycle	yes	4	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
 transaction	lifecycle	yes	303	no	yes	yes	serves
 transactionDirect	lifecycle	yes	14	no	yes	yes	serves
@@ -587,7 +587,7 @@ countChunksBySource	stats_ingest	yes	1	no	yes	yes	serves
 readBrainMaturity	stats_ingest	yes	3	no	yes	yes	serves
 getStats	stats_ingest	yes	6	yes	yes	yes	serves
 getHealth	stats_ingest	yes	6	yes	yes	yes	serves
-pingStore	stats_ingest	yes	1	no	yes	yes	serves
+pingStore	stats_ingest	yes	3	no	yes	yes	serves
 listVisiblePageSlugs	stats_ingest	yes	1	no	yes	yes	refuses:pages
 readPagesForVersionHistory	stats_ingest	yes	1	no	yes	yes	refuses:pages
 logIngest	stats_ingest	yes	9	no	yes	yes	serves
@@ -915,14 +915,14 @@ takePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 renewPageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 releasePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 assertCycleLease	cycle_locks	yes	1	no	yes	yes	serves
-admitJob	minion_jobs	yes	115	no	yes	yes	serves
-getJob	minion_jobs	yes	39	no	yes	yes	serves
+admitJob	minion_jobs	yes	118	no	yes	yes	serves
+getJob	minion_jobs	yes	42	no	yes	yes	serves
 readJobDataByIdempotencyKey	minion_jobs	yes	2	no	yes	yes	serves
 coalesceOnIdempotencyKey	minion_jobs	yes	2	no	yes	yes	serves
 listJobs	minion_jobs	yes	1	no	yes	yes	serves
-claimNextJob	minion_jobs	yes	82	no	yes	yes	serves
+claimNextJob	minion_jobs	yes	85	no	yes	yes	serves
 renewJobLease	minion_jobs	yes	1	no	yes	yes	serves
-completeJob	minion_jobs	yes	48	no	yes	yes	serves
+completeJob	minion_jobs	yes	49	no	yes	yes	serves
 failJob	minion_jobs	yes	37	no	yes	yes	serves
 reclaimStalledJobs	minion_jobs	yes	2	no	yes	yes	serves
 readActiveAccessTokenGrant	minion_queue	yes	3	no	yes	yes	serves
@@ -985,6 +985,8 @@ updateJobProgress	minion_queue	yes	2	no	yes	yes	serves
 addJobTokens	minion_queue	yes	3	no	yes	yes	serves
 delayActiveJob	minion_queue	yes	1	no	yes	yes	serves
 releaseWatchdogClaim	minion_queue	yes	1	no	yes	yes	serves
+releaseClaimForPause	minion_queue	yes	1	no	yes	yes	serves
+deferClaimForQuietHours	minion_queue	yes	1	no	yes	yes	serves
 markJobWatchdogSuspect	minion_queue	yes	2	no	yes	yes	serves
 promoteDelayedJobs	minion_queue	yes	3	no	yes	yes	serves
 cancelJobs	minion_queue	yes	17	no	yes	yes	serves

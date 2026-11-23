@@ -54,7 +54,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'admitJob', 'getJob', 'listJobs', 'claimNextJob', 'renewJobLease', 'completeJob', 'failJob', 'reclaimStalledJobs',
   // Minion queue: operator writes, sweeps, inbox, private queues, stats and attachments (engine-sql/jobs-queue.ts)
   'deleteTerminalJob', 'pauseJob', 'resumeJob', 'failParentJob', 'resolveParentJob', 'resolveStrandedParents', 'detachChildJob',
-  'updateJobProgress', 'addJobTokens', 'delayActiveJob', 'releaseWatchdogClaim', 'markJobWatchdogSuspect',
+  'updateJobProgress', 'addJobTokens', 'delayActiveJob', 'releaseWatchdogClaim', 'releaseClaimForPause', 'deferClaimForQuietHours', 'markJobWatchdogSuspect',
   'promoteDelayedJobs', 'cancelJobs', 'killTimedOutJobs', 'killWallClockJobs', 'pruneJobs', 'retryJob',
   'listSynthesisCompletionKeys', 'listRecentSynthesisCompletions',
   'postInboxMessage', 'readJobInbox', 'readChildCompletions',

@@ -77,6 +77,7 @@ said.
 | `brain.detachChildJob(childId)` | null; parent cleared, `updated_at` moves, no status guard |
 | `brain.updateJobProgress(id, token, progress)` / `addJobTokens(id, token, { input, output, cache_read })` | true when the `active` row this token holds was updated (a JSON null progress is SQL NULL) |
 | `brain.delayActiveJob(id, token, { errorText, delayMs, appendStack, clearTimeout })` | the `delayed` row, or null: `delay_until = now + delayMs`, `started_at` and the lock cleared, the stack optionally appended, `timeout_at` optionally cleared |
+| `brain.delayHeldClaim(id, token, delayMs)` | true when a row this token locks went back to `delayed` (the worker's pause release at 60 000 ms and quiet-hours deferral at 900 000 ms): the lock cleared, `delay_until = now + delayMs`, `updated_at` moves; `started_at`, `error_text`, the stack, the attempt counts and `timeout_at` stay. No status guard, as the SQL statement has none |
 | `brain.releaseWatchdogClaim(id, token, errorText, mark)` / `markJobWatchdogSuspect(id, mark)` | true/null; the first returns an `active` co-runner to `waiting` with the mark appended once; the second appends the mark once on any row and leaves `updated_at` alone |
 | `brain.retryJobUpdate(id)` | the row, or null: a `failed`/`dead` row back to a fresh `waiting` row |
 | `brain.promoteDelayedJobs()` | the `delayed` rows whose `delay_until` has passed, now `waiting` |

@@ -360,7 +360,6 @@ src/core/mentions/siblings.ts	execute_raw	1
 src/core/migrate.ts	execute_raw	2
 src/core/migration-preludes.ts	execute_raw	12
 src/core/minions/authorize-legacy.ts	execute_raw	7
-src/core/minions/db-probe.ts	execute_raw	2
 src/core/minions/handlers/autopilot-cycle.ts	execute_raw	1
 src/core/minions/handlers/contextual-reindex-per-chunk.ts	execute_raw	1
 src/core/minions/handlers/embed-backfill.ts	execute_raw	2
@@ -380,7 +379,7 @@ src/core/minions/sync-queue-wake.ts	execute_raw	2
 src/core/minions/terminal-events.ts	execute_raw	1
 src/core/minions/terminal-hook.ts	execute_raw	1
 src/core/minions/worker-shutdown.ts	execute_raw	1
-src/core/minions/worker.ts	execute_raw	7
+src/core/minions/worker.ts	execute_raw	3
 src/core/multi-source-drift.ts	execute_raw	1
 src/core/oauth-grants.ts	sql_template	16
 src/core/oauth-provider.ts	sql_template	22

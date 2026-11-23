@@ -140,6 +140,21 @@ impl Brain {
         })
     }
 
+    /// `delayHeldClaim(id, lockToken, delayMs)`: whether a row held by this token went back to
+    /// `delayed` (the worker's pause release and quiet-hours deferral).
+    #[napi]
+    pub fn delay_held_claim<'env>(
+        &self,
+        env: &'env Env,
+        id: f64,
+        lock_token: String,
+        delay_ms: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.delay_held_claim(job_id(id, "delayHeldClaim")?, &lock_token, delay_ms)
+        })
+    }
+
     /// `releaseWatchdogClaim(id, lockToken, errorText, mark)`: whether the claim was released.
     #[napi]
     pub fn release_watchdog_claim<'env>(
