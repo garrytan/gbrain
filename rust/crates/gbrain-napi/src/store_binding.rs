@@ -8,7 +8,7 @@
 //!   store codes in the README;
 //! - a call made while the brain is closed rejects with `store_closed`.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -23,6 +23,7 @@ use serde_json::Value;
 use crate::binding::{Pool, spawn};
 use crate::error::TaskError;
 use crate::pool;
+use crate::store_bind::bind_into;
 
 type Slot = Arc<Mutex<Option<Arc<Store>>>>;
 
@@ -79,6 +80,8 @@ pub struct Brain {
     /// Bumped by every `close`. An `open` still queued when `close` is called sees a newer value
     /// and refuses, so a close never resolves while a queued open can still take the brain's lock.
     closes: Arc<AtomicU64>,
+    /// True while a `bind` on this handle is running, so a second one is refused at once.
+    binding: Arc<AtomicBool>,
 }
 
 impl Brain {
@@ -118,16 +121,11 @@ impl Brain {
         open: impl FnOnce() -> Result<Store, StoreError> + Send + 'static,
     ) -> napi::Result<Object<'env>> {
         let slot = self.slot.clone();
+        let binding = self.binding.clone();
+        let closes = self.closes.clone();
+        let closes_at_call = closes.load(Ordering::SeqCst);
         spawn(env, &self.pool, move || {
-            let mut guard = slot.lock().unwrap_or_else(|e| e.into_inner());
-            if guard.is_some() {
-                return Err(TaskError::new(
-                    gbrain_store::error::INVALID_STATE,
-                    "this handle already has a brain open; close it first",
-                ));
-            }
-            *guard = Some(Arc::new(open().map_err(task_error)?));
-            Ok(Value::Null)
+            bind_into(&slot, &binding, &closes, closes_at_call, open)
         })
     }
 }
@@ -141,6 +139,7 @@ impl Brain {
             pool: pool.pool.clone(),
             slot: Arc::new(Mutex::new(None)),
             closes: Arc::new(AtomicU64::new(0)),
+            binding: Arc::new(AtomicBool::new(false)),
         }
     }
 

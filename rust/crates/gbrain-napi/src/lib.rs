@@ -15,6 +15,7 @@ pub mod error;
 #[cfg_attr(test, allow(dead_code))]
 mod families;
 pub mod pool;
+mod store_bind;
 #[cfg_attr(test, allow(dead_code))]
 mod store_binding;
 
