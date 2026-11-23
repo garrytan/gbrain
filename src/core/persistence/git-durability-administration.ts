@@ -19,7 +19,7 @@ import { chmodSync, existsSync, readFileSync, statSync, writeFileSync } from 'no
 import { join, relative } from 'node:path';
 import { execFileBounded } from '../bounded-child-exec.ts';
 import { classifyGitCheckout } from '../git-checkout.ts';
-import { durableSsrfFlags, GIT_ENV, GIT_ENV_AUTH, GIT_SSRF_SUBCOMMAND_FLAGS } from '../git-remote.ts';
+import { ownRemoteTransportFlags, GIT_ENV, GIT_ENV_AUTH, GIT_SSRF_SUBCOMMAND_FLAGS } from '../git-transport.ts';
 import { gitChildEnv } from '../git-env.ts';
 import { NON_FAST_FORWARD } from './effect-git.ts';
 import { ensureGbrainHome, resolveGbrainHome } from '../gbrain-home.ts';
@@ -36,7 +36,7 @@ import { GIT_PUSH_CODES } from './git-push-holds.ts';
 import { patchManagedDurabilityBlock } from '../brain-repo-durability.ts';
 import { findResolverFile } from '../resolver-filenames.ts';
 
-export const GIT_DURABILITY_PARAMS = ['source_id', 'enable', 'disable', 'pat_file', 'dry_run', 'admin_intent', 'expected_state'] as const;
+export const GIT_DURABILITY_PARAMS = ['source_id', 'enable', 'disable', 'future_only', 'pat_file', 'dry_run', 'admin_intent', 'expected_state'] as const;
 
 /** The same repo-local key `sources harden` writes, so `sources unharden` removes a credential this verb wired. */
 const CRED_MANAGED_KEY = 'gbrain.durability.managedcredential';
@@ -46,14 +46,18 @@ const statusFix = (sourceId: string): Action => readFix(`Shows source ${sourceId
   { argv: ['gbrain', 'sources', 'writer', 'status', sourceId, '--json'] });
 const invalid = (message: string, suggestion: string, sourceId?: string) => opError('invalid_params', message, suggestion, sourceId ? { fix: statusFix(sourceId) } : {});
 
-export interface GitDurabilityInput { sourceId: string; enable: boolean; disable: boolean; patFile?: string; dryRun: boolean }
+export interface GitDurabilityInput { sourceId: string; enable: boolean; disable: boolean; futureOnly: boolean; patFile?: string; dryRun: boolean }
 
 export function parseGitDurabilityParams(params: Record<string, unknown>): GitDurabilityInput {
-  for (const key of ['enable', 'disable', 'dry_run'] as const) {
+  for (const key of ['enable', 'disable', 'future_only', 'dry_run'] as const) {
     if (params[key] !== undefined && typeof params[key] !== 'boolean') throw invalid(`${key} must be a boolean.`, `Pass --${key.replace('_', '-')} as a bare flag; it takes no value.`);
   }
   if (params.enable === true && params.disable === true) throw invalid('Choose --enable or --disable, not both.',
     'Run gbrain sources writer git-durability <source> --enable to publish through the persistence owner, or --disable to keep Git effects off.');
+  if (params.future_only === true && (params.enable !== true || params.pat_file !== undefined)) {
+    throw invalid('--future-only requires --enable without --pat-file.',
+      'Enable Git durability for future writes first. A credential change separately retries parked pushes.');
+  }
   if (params.pat_file !== undefined && (typeof params.pat_file !== 'string' || !params.pat_file.trim() || params.pat_file.includes('\0'))) {
     throw invalid('pat_file must be a path to a file holding the token.', 'Pass --pat-file <path>; the token is read from that 0600 file and never from the command line.');
   }
@@ -61,12 +65,12 @@ export function parseGitDurabilityParams(params: Record<string, unknown>): GitDu
     'Disable without a token, or re-wire the credential with --enable --pat-file <path> (or --pat-file alone to keep the current setting).');
   if (params.enable !== true && params.disable !== true && params.pat_file === undefined) throw invalid('Name the change: --enable, --disable, or --pat-file <path>.',
     'gbrain sources writer git-durability <source> --enable publishes page writes through the owner\'s Git effect; --disable turns that off; --pat-file <path> alone re-wires the push credential and retries parked pushes.');
-  return { sourceId: String(params.source_id), enable: params.enable === true, disable: params.disable === true,
+  return { sourceId: String(params.source_id), enable: params.enable === true, disable: params.disable === true, futureOnly: params.future_only === true,
     patFile: typeof params.pat_file === 'string' ? params.pat_file : undefined, dryRun: params.dry_run === true };
 }
 
 async function git(root: string, args: string[], auth = false): Promise<{ code: number; stdout: string; stderr: string }> {
-  const { error, stdout, stderr } = await execFileBounded('git', ['-C', root, ...(auth ? durableSsrfFlags() : []), ...args],
+  const { error, stdout, stderr } = await execFileBounded('git', ['-C', root, ...(auth ? ownRemoteTransportFlags() : []), ...args],
     { timeout: GIT_TIMEOUT_MS, maxBuffer: 1024 * 1024, env: gitChildEnv({ ...GIT_ENV, ...(auth ? GIT_ENV_AUTH : {}), LC_ALL: 'C' }) });
   if (error && (error.killed || typeof error.code !== 'number')) throw opError('git_unavailable', 'Git did not finish within its bounded attempt.',
     `git ${args[0]} in ${root} did not finish within ${GIT_TIMEOUT_MS / 1000} seconds or could not start; nothing was changed. Check that git runs in that checkout on the brain host, then rerun.`);
@@ -325,7 +329,9 @@ export async function runGitDurabilityAdministration(engine: BrainEngine, params
     }
   }
   const plan = target === 'enabled' ? await planGitDurabilityCatchUp(engine, binding) : [];
-  report.catch_up = { planned: plan.length, paths: plan.slice(0, 50).map(effect => effect.relative_path) };
+  const pending = input.futureOnly ? [] : plan;
+  report.catch_up = { planned: pending.length, paths: pending.slice(0, 50).map(effect => effect.relative_path),
+    ...(input.futureOnly ? { deferred: plan.length } : {}) };
   // #5808: a block `sources harden` rendered before activation tells agents to pull --rebase and run the push helper;
   // on this managed root it is replaced with the managed variant (a non-page file: the operator commits it).
   if (checkout) {
@@ -342,8 +348,11 @@ export async function runGitDurabilityAdministration(engine: BrainEngine, params
   if (input.dryRun) {
     const state = await writerAdminState(engine);
     if (before === target && !token) return { ...report, queued_catch_up: 0, why: 'The setting is already as requested; nothing to apply.' };
-    return { ...report, queued_catch_up: 0, why: 'Review this preview, then run the apply command; it records the setting on this host\'s binding and re-queues the listed effects.',
+    return { ...report, queued_catch_up: 0, why: input.futureOnly
+      ? 'Apply records the setting for future writes and leaves historical skipped effects as recorded.'
+      : 'Review this preview, then run the apply command; it records the setting on this host\'s binding and re-queues the listed effects.',
       fix: { argv: ['gbrain', 'sources', 'writer', 'git-durability', input.sourceId, ...(input.enable ? ['--enable'] : input.disable ? ['--disable'] : []),
+        ...(input.futureOnly ? ['--future-only'] : []),
         ...(input.patFile ? ['--pat-file', input.patFile] : []), '--admin-intent', 'writer_git_durability', '--expected-state', state],
         consent: token ? ['credentials'] : [], actor: 'agent', requires_exclusive: false, why: 'Applies the previewed Git durability change on the owner host.',
         verify: { argv: ['gbrain', 'sources', 'writer', 'status', input.sourceId, '--json'] } } };
@@ -355,7 +364,7 @@ export async function runGitDurabilityAdministration(engine: BrainEngine, params
       WHERE worktree_id=$1::uuid AND host_id=$2::uuid RETURNING git_durability`, [binding.worktree_id, binding.owner_host_id, target]);
     if (!updated) throw opError('source_changed', 'The host binding disappeared while the setting was being recorded.',
       `Source ${input.sourceId}'s host binding was removed by another topology change, so nothing was recorded. Inspect writer status before trying again.`, { fix: statusFix(input.sourceId) });
-    return target === 'enabled' ? await requeueGitDurabilityCatchUp(tx, binding, plan.map(effect => effect.id)) : [];
+    return target === 'enabled' ? await requeueGitDurabilityCatchUp(tx, binding, pending.map(effect => effect.id)) : [];
   });
   return { ...report, applied: true, queued_catch_up: queued.length, fix: statusFix(input.sourceId),
     why: target === 'enabled' ? `Page writes to ${input.sourceId} now commit (and push to ${checkout?.remote ?? 'no tracking remote: commits stay local'}) through the persistence owner's Git effect; ${queued.length} earlier skipped effect(s) were re-queued.`

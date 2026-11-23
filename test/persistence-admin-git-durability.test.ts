@@ -237,6 +237,31 @@ describe('[R7ii] writer git-durability verb', () => {
     expect(again).toMatchObject({ catch_up: { planned: 0 }, why: expect.stringContaining('already as requested') });
   }), 120_000);
 
+  test('future-only enable keeps historical skips and automatically pushes a subsequent write', () => isolated(async home => {
+    const root = await gitRoot(home, { remote: true });
+    const { sourceId } = await claimedSource(root);
+    const historical = await committedWrite(root, sourceId, 'historical');
+    await runEffects();
+    const before = await gitOutcome(historical);
+    expect(before).toMatchObject({ state: 'committed', outcome: { reason: 'durability_not_enabled' } });
+    const parsed = parsePersistenceAdminArgs('writer', ['git-durability', sourceId, '--enable', '--future-only', '--dry-run']);
+    expect(parsed.params).toMatchObject({ future_only: true });
+    const input = { source_id: sourceId, enable: true, future_only: true };
+    const preview = await runPersistenceAdministration(engine, 'writer_git_durability', { ...input, dry_run: true });
+    expect(preview).toMatchObject({ catch_up: { planned: 0, deferred: 1 }, queued_catch_up: 0 });
+    expect((preview.fix as { argv: string[] }).argv).toContain('--future-only');
+    const applied = await runPersistenceAdministration(engine, 'writer_git_durability', {
+      ...input, ...await reviewedWriterIntent(engine, 'writer_git_durability'),
+    });
+    expect(applied).toMatchObject({ applied: true, queued_catch_up: 0 });
+    const fresh = await committedWrite(root, sourceId, 'fresh');
+    await withEnv({ GBRAIN_GIT_ALLOW_FILE_TRANSPORT: undefined }, runEffects);
+    expect(await gitOutcome(historical)).toEqual(before);
+    expect(await gitOutcome(fresh)).toMatchObject({ state: 'committed', outcome: { git: 'committed', push: 'committed' } });
+    expect(await gitAsync(root, 'ls-tree', '--name-only', 'origin/main')).toContain('fresh.md');
+    expect(await gitAsync(root, 'ls-tree', '--name-only', 'origin/main')).not.toContain('historical.md');
+  }), 120_000);
+
   for (const refusal of ['missing', 'wrong', 'stale'] as const) {
     test(`#7634 a refused apply (${refusal} approval) leaves the checkout, the credential store and the parked push unchanged`, () => isolated(async home => {
       const root = await gitRoot(home, { remote: true });

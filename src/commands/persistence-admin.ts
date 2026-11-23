@@ -23,7 +23,7 @@ export const WRITER_HELP = `Usage:
   gbrain sources writer retry-effects <source> --parked-pushes [--dry-run] [--json]
   gbrain sources writer retry-effects <source> --parked-code <code> [--dry-run] [--json]
   gbrain sources writer settle-effects <source> --request-id <uuid>|--parked-code <code> [--unsettle | --retire] [--dry-run | --apply --expect <plan_hash>] [--json]
-  gbrain sources writer git-durability <source> --enable|--disable [--pat-file <path>] [administration options] [--dry-run] [--json]
+  gbrain sources writer git-durability <source> --enable|--disable [--future-only | --pat-file <path>] [administration options] [--dry-run] [--json]
   gbrain sources writer claim <source> --path <directory> [administration options] [--dry-run] [--json]
   gbrain sources writer activate --confirm-quiesced [--cleanup-dead-local-locks] [--shared-skills] [administration options] [--dry-run] [--json]
   gbrain sources writer deactivate [--admin-intent writer_deactivate --expected-state <admin_state>] [--dry-run] [--json]
@@ -49,7 +49,8 @@ must not change ownership or activate managed persistence. Read the operator
 procedure in docs/architecture/topologies.md before deliberate administration.
 git-durability records whether this owner commits (and pushes) page writes through
 its Git effect; --enable runs a read-only push probe first and re-queues the Git
-effects skipped while it was off, --pat-file wires a repo-scoped push credential
+effects skipped while it was off. --future-only with --enable preserves those
+historical outcomes. --pat-file wires a repo-scoped push credential
 (same keys as sources harden) and retries this worktree's parked pushes.
 Non-dry-run changes require --admin-intent <writer_claim|writer_activate|writer_deactivate|writer_transfer_prepare|writer_transfer_accept|writer_transfer_cancel|writer_git_durability>
 matching the action and --expected-state <admin_state from reviewed status>.
@@ -155,7 +156,7 @@ export function adminHostConfig<T extends GBrainConfig>(config: T | null | undef
 
 type Group = 'writer' | 'local-writer';
 const GROUP_ARGV: Record<Group, string[]> = { writer: ['gbrain', 'sources', 'writer'], 'local-writer': ['gbrain', 'auth', 'local-writer'] };
-const BARE_FLAGS = ['--json', '--dry-run', '--replace', '--probe', '--confirm-quiesced', '--self-transfer', '--confirm-relocated-root', '--cleanup-dead-local-locks', '--shared-skills', '--enable', '--disable', '--parked-pushes', '--apply', '--unsettle', '--retire'];
+const BARE_FLAGS = ['--json', '--dry-run', '--replace', '--probe', '--confirm-quiesced', '--self-transfer', '--confirm-relocated-root', '--cleanup-dead-local-locks', '--shared-skills', '--enable', '--disable', '--future-only', '--parked-pushes', '--apply', '--unsettle', '--retire'];
 /** A CLI usage refusal: the exact usage in the suggestion, the group's help as the read-only fix. */
 function invalid(group: Group, message: string, suggestion: string) {
   return opError('invalid_params', message, suggestion, {

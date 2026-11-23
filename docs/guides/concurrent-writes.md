@@ -705,6 +705,10 @@ gbrain sources writer git-durability <source> --enable \
 
 The preview lists the skipped Git effects; enabling re-queues them, one per
 file, so the pages written while durability was off get committed and pushed.
+If the historical checkout was independently recovered and you intend to
+start Git durability with new writes, include `--future-only` in both the
+preview and apply. The preview reports the number of historical effects it
+will leave in their existing state.
 
 CLI and stdio registrations are durable, separate principals. The CLI lane is
 trusted local administration; stdio remains an untrusted memory caller.

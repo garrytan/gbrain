@@ -25,11 +25,11 @@ const homes: string[] = [];
 beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }, 120_000);
 afterAll(async () => { await disposePersistenceConsumer(engine); await engine.disconnect(); for (const home of homes) rmSync(home, { recursive: true, force: true }); });
 
-async function isolated<T>(run: (home: string) => Promise<T>): Promise<T> {
+async function isolated<T>(run: (home: string) => Promise<T>, allowFileTransport = true): Promise<T> {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-probe-moved-')); homes.push(home);
   try {
     return await withEnv({ GBRAIN_HOME: home, GBRAIN_BRAIN_ID: 'host', GBRAIN_SOURCE: undefined, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined,
-      GBRAIN_GIT_ALLOW_FILE_TRANSPORT: '1' }, async () => { await registerLocalWriter(engine, 'cli'); return run(home); });
+      GBRAIN_GIT_ALLOW_FILE_TRANSPORT: allowFileTransport ? '1' : undefined }, async () => { await registerLocalWriter(engine, 'cli'); return run(home); });
   } finally { await disposePersistenceConsumer(engine); }
 }
 
@@ -117,6 +117,14 @@ describe('GBRA-133 git-durability push probe: a moved remote is publishable', ()
     expect(await probeDurabilityPush(root, tracking, same)).toEqual({ ok: true });
     expect(await probeDurabilityPush(root, { remote: null, merge: null }, same)).toEqual({ ok: true, skipped: 'no_tracking_remote' });
   }), 120_000);
+
+  test('probes an owned checkout tracking a local bare repository without a file transport override', () => isolated(async home => {
+    const { root, remote } = await checkoutWithRemote(home);
+    await commit(root, 'local.md');
+    const oldTip = await gitAsync(remote, 'rev-parse', 'refs/heads/main');
+    expect(await probeDurabilityPush(root, tracking, same)).toEqual({ ok: true });
+    expect(await gitAsync(remote, 'rev-parse', 'refs/heads/main')).toBe(oldTip);
+  }, false), 120_000);
 
   test('a missing remote stays refused, and enable records nothing', () => isolated(async home => {
     const { root, remote } = await checkoutWithRemote(home);
