@@ -110,7 +110,7 @@ CPU count less one, at most 6), `--engine=pglite` (the control arm: the workers
 run on PGLite, without the store's own crash points), `--keep` (keep the scratch
 directory).
 
-Open notes:
+Only a real SIGKILL counts toward a minimum. A worker that had already exited
+when its kill point came (a timer past the end of the sequence) fails the run.
 
-- A timer kill whose worker had already exited counts as a kill.
-- `log.ts` `readLog` has no unit test.
+Open note: `log.ts` `readLog` has no unit test.

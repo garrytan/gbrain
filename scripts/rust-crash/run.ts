@@ -130,7 +130,7 @@ function newRun(seed: number): Run {
 
 interface Kill { at?: string; seam?: string; afterAck?: number; afterMs?: number }
 /** Starts a worker, kills it as `kill` says (no kill: it runs to the end), and returns what its log says. */
-async function runWorker(run: Run, seed: number, kill: Kill = {}): Promise<{ log: LogState; exit: number | null; stderr: string; pid: number }> {
+async function runWorker(run: Run, seed: number, kill: Kill = {}): Promise<{ log: LogState; exit: number | null; stderr: string; pid: number; killed: boolean }> {
   const extra = [
     ...(ENGINE === 'pglite' ? ['engine', 'pglite'] : []),
     ...(kill.seam !== undefined ? ['seam', kill.seam] : []),
@@ -152,9 +152,13 @@ async function runWorker(run: Run, seed: number, kill: Kill = {}): Promise<{ log
     const due = kill.afterMs !== undefined && openedAt !== null && Date.now() - openedAt >= kill.afterMs;
     if (log.freeze || due) break;
   }
-  if (child.exitCode === null) child.kill('SIGKILL');
+  // `killed`: this driver sent the SIGKILL while the worker was still running, and the worker died of it. A worker
+  // that had already exited (or failed) when its kill point came was never killed, and its run is no kill.
+  const running = child.exitCode === null;
+  if (running) child.kill('SIGKILL');
   await child.exited;
-  return { log: readLog(run.log), exit: child.exitCode, stderr: await stderr, pid: child.pid };
+  const killed = running && child.signalCode === 'SIGKILL';
+  return { log: readLog(run.log), exit: child.exitCode, stderr: await stderr, pid: child.pid, killed };
 }
 
 function firstDifference(a: string, b: string): string {
@@ -267,6 +271,8 @@ async function runJob(job: Job): Promise<void> {
     const result = await runWorker(run, job.seed, job.kill);
     if (result.log.error) throw new Error(`the worker failed before the kill: ${result.log.error}`);
     if (!result.log.freeze && job.kind !== 'timer') throw new Error(`the worker never reached ${job.label} (exit ${result.exit}) ${result.stderr.slice(-300)}`);
+    // Only a real SIGKILL counts toward its class's minimum: a timer that fired after the worker had exited killed nothing.
+    if (!result.killed) throw new Error(`the worker was not running when its kill point (${job.label}) came (exit ${result.exit}), so nothing was killed`);
     tally[job.kind]++;
     outcomes.push({ seed: job.seed, point: job.label, ok: true, detail: await check(run, result.pid, job.ops, job.states, result.log) });
   } catch (error) {

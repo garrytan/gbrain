@@ -353,7 +353,8 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # The crash cell (scripts/rust-crash/README.md) on both addon targets, with the addon the addon job built: real
+  # The crash cell (scripts/rust-crash/README.md) on both addon targets, with an addon this job builds with the
+  # crash-points feature (the release addon has no crash points): real
   # writer processes on real redb files, SIGKILLed mid-commit, before and after an fsync, at the persistence
   # boundaries, between operations and at a seeded time, then reopened and compared with a PGLite oracle. The second
   # step is its fail-first check: a worker that acknowledges before it writes must be caught.
