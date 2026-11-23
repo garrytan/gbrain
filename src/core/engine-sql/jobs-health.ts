@@ -3,9 +3,10 @@
  * the submit-time queue probe ask of `minion_jobs`. SQL once for both engines; a store that is not SQL serves the same
  * members (rust/docs/store/jobs-health.md).
  *
- * Each read is the statement its caller ran through `executeRaw`, byte for byte, with the counts as numbers and the
- * rows put in the order a Rust store sorts in: ties the old statement left to the planner are broken bytewise here, in
- * JavaScript, so the statement text stays the text the caller sent. The windows the callers fixed in the statement text
+ * Each read is the statement its caller ran through `executeRaw`, byte for byte, with the counts as numbers. Rows
+ * the statement returns are put in bytewise order in JavaScript, so the statement text stays the text the caller sent.
+ * Ties before a `LIMIT 5` are still left to the SQL planner, so which tied rows are kept can differ from the Rust store,
+ * which breaks ties deterministically (rust/docs/store/jobs-health.md). The windows the callers fixed in the statement text
  * (24 hours, 1 hour) stay fixed: `windowHours` and `stalledAfterHours` are for the store arm, and every caller passes
  * 24 and 1.
  *

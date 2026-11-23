@@ -1,8 +1,8 @@
 /**
  * The statements gbrain export runs (src/commands/export.ts, src/core/export-snapshot.ts), one function per
- * BrainEngine member. PGLite and Postgres run the same text the export ran through executeRaw before; the Rust engine
- * answers from its store (rust/docs/store/cli-reads-export.md). Each runs on the engine it is given, so a call on a
- * transaction engine reads inside that transaction.
+ * BrainEngine member. PGLite and Postgres run the same text the export ran through executeRaw before. The Rust engine
+ * does not serve these 12 members: they are held as `raw_sql` in `src/core/rust-engine/members.ts`, so they refuse
+ * on Rust. Each runs on the engine it is given, so a call on a transaction engine reads inside that transaction.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { Page } from '../types.ts';
