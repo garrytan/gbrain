@@ -361,7 +361,21 @@ async function openConfiguredPrimary(): Promise<BrainEngine> {
     throw Object.assign(new Error(`no brain exists at ${config.database_path ?? '(no path configured)'}`), { code: 'no_brain' });
   }
   const engine = await constructEngine(config);
-  await engine.connect(config);
+  // Only a local brain (PGLite) has this open: no recording of its managed roots (that writes ownership markers into the
+  // datastore and source checkouts) and, with repair off, no repair of a damaged log (that renames the primary's files).
+  const quiet = (engine as unknown as { connectForRestore?: (c: EngineConfig) => Promise<void> }).connectForRestore?.bind(engine);
+  if (!quiet) {
+    await engine.connect(config);
+    return engine;
+  }
+  const savedRepair = process.env.GBRAIN_PGLITE_WAL_REPAIR;
+  process.env.GBRAIN_PGLITE_WAL_REPAIR = 'off';
+  try {
+    await quiet(config);
+  } finally {
+    if (savedRepair === undefined) delete process.env.GBRAIN_PGLITE_WAL_REPAIR;
+    else process.env.GBRAIN_PGLITE_WAL_REPAIR = savedRepair;
+  }
   return engine;
 }
 

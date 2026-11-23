@@ -191,3 +191,58 @@ describe('a brain whose storage mode cannot be read does not block the seed', ()
     expect(existsSync(busy.dir)).toBe(false);
   });
 });
+
+describe('engine shadow seed opens the configured brain without writing to it', () => {
+  let home: string;
+  let config: { engine: 'pglite'; database_path: string };
+  beforeAll(async () => {
+    // A real PGLite brain on disk, found the way `seed` finds it: through the config file under GBRAIN_HOME (no injected engine).
+    home = mkdtempSync(join(tmpdir(), 'gbrain-shadow-seed-open-'));
+    config = { engine: 'pglite', database_path: join(home, 'brain.pglite') };
+    mkdirSync(join(home, '.gbrain'), { recursive: true });
+    writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify(config));
+    const fresh = new PGLiteEngine();
+    await fresh.connect(config);
+    await fresh.initSchema();
+    await fillSeedFixture(fresh);
+    await fresh.disconnect();
+  });
+  afterAll(() => { rmSync(home, { recursive: true, force: true }); });
+  const onBrain = async <T>(fn: (e: PGLiteEngine) => Promise<T>): Promise<T> => {
+    const e = new PGLiteEngine();
+    await e.connectForRestore(config); // this test's own opens must not record roots either
+    try { return await fn(e); } finally { await e.disconnect(); }
+  };
+
+  withAddon('a registered source checkout gets no ownership marker and no registry entry, and persistence_* and the content root stay identical', async () => {
+    // Registering a source is allowed only while the brain is unmanaged.
+    await onBrain(e => e.executeRaw(`INSERT INTO sources(id,name,local_path,config) VALUES('checkout','checkout',$1,'{}') ON CONFLICT (id) DO UPDATE SET local_path=EXCLUDED.local_path`, [contentRoot]));
+    await onBrain(e => e.executeRaw(MANAGED));
+    const markers = [join(contentRoot, '.gbrain-managed'), join(config.database_path, '.gbrain-managed')];
+    const registry = join(home, '.gbrain', 'persistence');
+    for (const m of markers) rmSync(m, { force: true });
+    rmSync(registry, { recursive: true, force: true });
+    const watched = async () => ({
+      tables: await onBrain(snapshotPersistence),
+      files: snapshotTree(contentRoot),
+      registry: existsSync(registry) ? snapshotTree(registry) : {},
+    });
+    const before = await watched();
+    expect(before.tables.persistence_brain!.some(r => r.includes('"enabled":true'))).toBe(true);
+    expect(Object.keys(before.files)).toContain('people/a.md');
+    expect(markers.filter(m => existsSync(m))).toEqual([]);
+
+    const out: string[] = [];
+    const err: string[] = [];
+    const code = await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, () =>
+      runEngineShadow(['seed'], { out: l => out.push(l), err: l => err.push(l), now: () => NOW, loadAddon: async () => ({ ok: true as const, addon }) }));
+    expect(code, [...out, ...err].join('\n')).toBe(0);
+    expect(out).toContain(`  storage: ${LINE}`);
+
+    expect(markers.filter(m => existsSync(m))).toEqual([]);
+    const after = await watched();
+    expect(after.registry).toEqual(before.registry);
+    expect(after.files).toEqual(before.files);
+    expect(after.tables).toEqual(before.tables);
+  }, 120_000);
+});
