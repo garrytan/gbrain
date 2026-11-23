@@ -71,8 +71,15 @@ const byteRows = (rows: string[][]) => [...rows].sort((x, y) => {
 /** Every (first, second) pair in byte order. */
 const byteTuples = (firsts: readonly string[], seconds: readonly string[]) => byteRows(firsts.flatMap(a => seconds.map(b => [a, b])));
 
-/** A page over the inline limit with one chunk waiting for a vector and a held budget row carrying `reason`. */
+/** A page over the inline limit with one chunk waiting for a vector and a held budget row carrying `reason`, by typed writers. */
 async function heldPage(engine: BrainEngine, sourceId: string, slug: string, reason: string) {
+  const page = await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'x'.repeat(PAGE_INLINE_MAX_BYTES + 1), timeline: '' }, { sourceId });
+  await engine.upsertChunks(slug, [{ chunk_index: 0, chunk_text: 'chunk', chunk_source: 'compiled_truth' }], { sourceId });
+  await engine.recordPageEmbeddingHold(Number(page.id), reason);
+}
+
+/** The same rows written by harness SQL, for source ids no engine writer accepts (the Rust arm stops on its raw_sql refusal). */
+async function rawHeldPage(engine: BrainEngine, sourceId: string, slug: string, reason: string) {
   await engine.executeRaw(
     `INSERT INTO pages (slug, source_id, type, title, compiled_truth, frontmatter, content_hash, created_at, updated_at)
      VALUES ($1, $2, 'note', $1, repeat('x', ${PAGE_INLINE_MAX_BYTES + 1}), '{}', 'h', now(), now())`, [slug, sourceId]);
@@ -251,16 +258,23 @@ describe('store listings come out by byte', () => {
     expect((await slotUsage(engine)).map(r => r.slot)).toEqual([...BYTE_SLUGS]);
   });
 
-  parityTest('readBudgetLimited lists held reasons by byte of source and reason', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('readBudgetLimited lists held reasons by byte of source and reason', { methods: ['putPage', 'upsertChunks', 'recordPageEmbeddingHold', 'listBudgetLimitedRows'] }, async (engine, backend) => {
     await seedSources(engine, backend);
     // The rows come back by (source, state, reason); held_reasons keeps that order. One reason per source shows the source order.
     for (const source of MIXED_SOURCES) await heldPage(engine, source, 'big', `by-${source}`);
-    expect(Object.keys((await readBudgetLimited(engine)).held_reasons)).toEqual(BYTE_SOURCES.map(source => `by-${source}`));
+    const limited = await readBudgetLimited(engine);
+    expect(Object.keys(limited.held_reasons)).toEqual(BYTE_SOURCES.map(source => `by-${source}`));
+    // The whole report (counts, pending chunks and characters per source) is compared across engines.
+    return limited;
   });
 
-  parityTest('readBudgetLimited lists the held reasons of one source by byte', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('readBudgetLimited lists the held reasons of one source by byte', { methods: ['putPage', 'upsertChunks', 'recordPageEmbeddingHold', 'listBudgetLimitedRows', 'readBudgetHoldAge'] }, async (engine) => {
     for (const reason of MIXED_SLUGS) await heldPage(engine, 'default', `big-${reason}`, reason);
     expect(Object.keys((await readBudgetLimited(engine)).held_reasons)).toEqual([...BYTE_SLUGS]);
+    // The same holds feed the hold age: none has waited a day, and the oldest update time is set.
+    const age = await engine.readBudgetHoldAge();
+    expect({ stale: Number(age?.stale), oldest: age?.oldest != null }).toEqual({ stale: 0, oldest: true });
+    return await readBudgetLimited(engine);
   });
 
   parityTest('readBudgetLimited lists sources with equal pending chunks by byte of source id', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
@@ -268,7 +282,7 @@ describe('store listings come out by byte', () => {
     // puts `a_b` before `a-z` and `B` last; bytes put `B` first and `a-z` before `a_b`. (Valid ids, a-z 0-9 and `-`,
     // sort the same both ways.) The Rust store refuses such ids, so they go in by harness SQL.
     for (const id of MIXED_IDS) await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ($1, $1)`, [id]);
-    for (const id of MIXED_IDS) await heldPage(engine, id, 'big', 'r');
+    for (const id of MIXED_IDS) await rawHeldPage(engine, id, 'big', 'r');
     const bySource = (await readBudgetLimited(engine)).by_source;
     expect(bySource.map(s => s.pending_chunks)).toEqual(MIXED_IDS.map(() => 1));
     expect(bySource.map(s => s.source_id)).toEqual([...BYTE_IDS]);
