@@ -84,7 +84,7 @@ describe('engine parity: the fence repair kinds of batch 9', () => {
 
   for (const kind of ['fences', 'slug-conflicts'] as const) {
     parityTest(`${kind} previews a checkout file with a mendable fence on a legacy source the same way on every engine`, {
-      methods: [], timeout: 120_000,
+      methods: ['readOldestSyncHoldAt'], timeout: 120_000,
     }, async (engine, backend) => withHome(async () => {
       const root = mkdtempSync(join(tmpdir(), 'gbrain-repair-b9-root-'));
       try {

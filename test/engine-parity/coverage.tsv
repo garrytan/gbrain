@@ -785,7 +785,7 @@ listSourceCheckpointRecords	persistence_journal	yes	3	no	yes	yes	serves
 insertOpCheckpointIfAbsent	persistence_journal	yes	3	no	yes	yes	serves
 replaceOpCheckpointAtVersion	persistence_journal	yes	1	no	yes	yes	serves
 upsertFenceTrendRunRecord	persistence_journal	yes	1	no	yes	yes	serves
-readOldestSyncHoldAt	persistence_journal	yes	2	no	yes	yes	serves
+readOldestSyncHoldAt	persistence_journal	yes	3	no	yes	yes	serves
 reclaimBudgetReservations	persistence_journal	yes	1	no	yes	yes	serves
 reserveBudgetReservation	persistence_journal	yes	2	no	yes	yes	serves
 dispatchBudgetReservation	persistence_journal	yes	2	no	yes	yes	serves
