@@ -1,4 +1,0 @@
-**The skill-resolver hook now delivers its skill block on cold or busy machines instead of silently dropping it.**
-
-### Fixed
-- The hook's 50 ms turn deadline used to start when the hook process entered the lane, while the ranking worker thread was still loading its modules. On a cold or loaded machine that load alone could use the whole budget, so the block was dropped with only a timeout line in the lane log (0 of 6 turns delivered in a cold, loaded test; 8 of 8 after this change). The worker now reports when it has loaded, the 50 ms counts from that moment, and the load gets its own 250 ms bound. A worker that never loads still ends the turn at that bound with no output. The lane log line gains `worker_ms`, the time from lane entry until the worker was ready. Session-start turns have no worker and keep 50 ms from entry. Settings and hook output are unchanged.
