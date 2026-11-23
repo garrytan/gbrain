@@ -39,6 +39,7 @@ const REGISTRATIONS: Record<string, Kind> = {
   'src/core/ai/decide/injection.ts': 'cli-only',
   'src/core/ai/decide/intent.ts': 'cli-only',
   'src/core/ai/decide/recall-needed.ts': 'cli-only',
+  'src/core/access/read-log.ts': 'owns-queue',
   'src/core/ai/decide/runtime.ts': 'owns-queue',
   'src/core/ai/decide/store.ts': 'owns-queue',
   'src/core/context/volunteer-events.ts': 'owns-queue',

@@ -9,7 +9,7 @@
  * canonical value and never look at other cells, so the validator can
  * recompute what a rule may output for a given before value.
  */
-import { isValidHolder, TAKE_KIND_VALUES } from '../takes-fence.ts';
+import { isValidHolder, parseWeightCell, TAKE_KIND_VALUES } from '../takes-fence.ts';
 import type { FenceKind } from './types.ts';
 
 export const FACTS_COLUMNS = [
@@ -171,7 +171,7 @@ export function cellValid(kind: FenceKind, column: string, text: string): boolea
     case 'attributed_to': return !lower || ATTRIBUTIONS.has(lower);
     case 'takes:kind': return TAKE_KIND_VALUES.has(lower);
     case 'takes:who': return isValidHolder(text.trim());
-    case 'takes:weight': return Number.isFinite(parseFloat(text));
+    case 'takes:weight': return parseWeightCell(text) !== undefined;
     default: return true;
   }
 }

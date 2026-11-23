@@ -52,10 +52,10 @@ transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 getPage	pages	yes	41	yes	yes	yes	serves
-readPageSnapshot	pages	yes	11	no	yes	yes	serves
+readPageSnapshot	pages	yes	12	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	161	yes	yes	yes	serves
+putPage	pages	yes	165	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	17	yes	yes	yes	serves
@@ -83,7 +83,7 @@ listPrefixSampledPages	pages	yes	1	no	yes	yes	serves
 listCorpusSample	pages	yes	1	no	yes	yes	serves
 getPageSealState	pages	yes	1	no	yes	yes	refuses:pages
 refreshPageOrigin	pages	yes	1	no	yes	yes	refuses:pages
-searchKeyword	search	yes	27	yes	yes	yes	serves
+searchKeyword	search	yes	28	yes	yes	yes	serves
 countKeywordPages	search	yes	5	no	yes	yes	serves
 searchKeywordPages	search	yes	8	no	yes	yes	serves
 searchTitles	search	yes	13	yes	yes	yes	serves
@@ -91,8 +91,8 @@ searchVector	search	yes	9	yes	yes	yes	serves
 getEmbeddingsByChunkIds	search	yes	1	no	yes	yes	serves
 searchKeywordChunks	search	yes	6	yes	yes	yes	serves
 cosinesByChunkIds	search_reads	yes	1	no	yes	yes	serves
-hasSupersedeEdges	search_reads	yes	1	no	yes	yes	serves
-supersedingPageSlugs	search_reads	yes	7	no	yes	yes	serves
+hasSupersedeEdges	search_reads	yes	3	no	yes	yes	serves
+supersedingPageSlugs	search_reads	yes	10	no	yes	yes	serves
 aliasCanonicalRefs	search_reads	yes	8	no	yes	yes	serves
 pageCollapseFacts	search_reads	yes	3	no	yes	yes	serves
 slugsEndingIn	search_reads	yes	2	no	yes	yes	serves
@@ -100,7 +100,7 @@ generatedPagesIn	search_reads	yes	2	no	yes	yes	serves
 livePageIdsAt	search_reads	yes	2	no	yes	yes	serves
 pagesLinkingTo	search_reads	yes	2	no	yes	yes	serves
 upsertChunks	chunks	yes	21	yes	yes	yes	serves
-sealChunks	chunks	yes	15	no	yes	yes	serves
+sealChunks	chunks	yes	16	no	yes	yes	serves
 getChunks	chunks	yes	25	yes	yes	yes	serves
 getChunkPage	chunks	yes	9	no	yes	yes	serves
 getChunkWindows	chunks	yes	9	no	yes	yes	serves
@@ -128,7 +128,7 @@ markPagesAttendanceBlocked	extraction	yes	1	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	34	yes	yes	yes	serves
+addLink	links	yes	37	yes	yes	yes	serves
 addLinksBatch	links	yes	1	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	1	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
@@ -201,7 +201,7 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	27	yes	yes	yes	serves
+insertFact	facts	yes	28	yes	yes	yes	serves
 insertFacts	facts	yes	13	no	yes	yes	serves
 deleteFactsForPage	facts	yes	2	no	yes	yes	serves
 expireFact	facts	yes	9	no	yes	yes	serves
@@ -213,7 +213,7 @@ listSupersessions	facts	yes	5	yes	yes	yes	serves
 countUnconsolidatedFacts	facts	yes	2	yes	yes	yes	serves
 findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
 consolidateFact	facts	yes	3	no	yes	yes	serves
-findTrajectory	facts	yes	3	yes	yes	yes	serves
+findTrajectory	facts	yes	4	yes	yes	yes	serves
 getFactsHealth	facts	yes	2	yes	yes	yes	serves
 allocateBodyOccurrenceIds	segmented_body	yes	6	no	yes	yes	serves
 stageSegmentTexts	segmented_body	yes	5	no	yes	yes	serves
@@ -273,7 +273,7 @@ readCycleLocks	cycle_locks	yes	8	no	yes	yes	refuses:minion_queue
 deleteCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
 deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	5	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	7	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	3	yes	yes	yes	serves

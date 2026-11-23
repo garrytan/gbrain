@@ -423,8 +423,13 @@ If any chapter failed, the CLI exits 1 and the user can re-run — idempotency
 keys (`book-mirror:<slug>:ch-<N>`) deduplicate completed chapters at the
 queue level, so retry is cheap. Note that reproducing verbatim book quotes
 plus the reader's verbatim words can occasionally trip a provider output
-filter; a chapter blocked that way is just a failed chapter — re-run, or
-retry with a different `--model`.
+filter. The CLI marks that chapter failed with `provider refusal or output
+filter stop (job <id> stop_reason=refusal)`: that is the chapter's result, a
+provider refusal rather than a model failure. Tell the user which chapters
+failed and why, quoting any other error as it is. Retry, with the same or a
+different `--model`, only if the user chooses to; delete a refused chapter's
+job first (`gbrain jobs delete <id>`), or its idempotency key returns the
+same refusal.
 
 ### Model: Opus by default
 
@@ -483,7 +488,8 @@ Cross-link entities mentioned in the analysis:
 The **Chapter half** should:
 
 - Preserve the author's actual stories, statistics, frameworks, examples.
-- Quote memorable phrases verbatim.
+- Quote memorable phrases verbatim, a sentence or two at a time; never copy
+  whole passages.
 - Be detailed enough that the reader could skip the book and not lose much.
 
 The **Mirror half** should:

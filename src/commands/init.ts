@@ -182,8 +182,21 @@ async function runInitBranches(args: string[]) {
     }
   }
 
+  // --non-interactive with no engine flag keeps the brain the config file already names (PGLite or Postgres) instead
+  // of demanding --url; an env DATABASE_URL keeps its precedence in the non-interactive branch below.
+  const keptCfg = isNonInteractive && !isPGLite && !isSupabase && !manualUrl && !args.includes('--prefer-postgres') && !isThinClient(existing) ? existing : null;
+  let keptPglitePath: string | null = null;
+  let keptPostgresUrl: string | null = null;
+  const keptEngine = keptCfg?.engine;
+  switch (keptEngine) {
+    case undefined: break; // no config: the routing below is unchanged
+    case 'pglite': if (!effectiveEnvDatabaseUrl()) keptPglitePath = keptCfg?.database_path ?? gbrainPath('brain.pglite'); break;
+    case 'postgres': keptPostgresUrl = keptCfg?.database_url ?? null; break;
+    default: { const unknownEngine: never = keptEngine; void unknownEngine; }
+  }
+
   // Explicit PGLite mode
-  if (!preservedPostgresUrl && (isPGLite || (!isSupabase && !manualUrl && !isNonInteractive))) {
+  if (!preservedPostgresUrl && (isPGLite || (!isSupabase && !manualUrl && (!isNonInteractive || keptPglitePath !== null)))) {
     // Smart detection: scan for .md files unless --pglite flag forces it
     if (!isPGLite && !isSupabase) {
       const fileCount = countMarkdownFiles(process.cwd());
@@ -198,7 +211,7 @@ async function runInitBranches(args: string[]) {
       }
     }
 
-    return initPGLite({ jsonOutput, apiKey, customPath, aiOpts, schemaPack, skipEmbedCheck, content });
+    return initPGLite({ jsonOutput, apiKey, customPath: customPath ?? keptPglitePath, aiOpts, schemaPack, skipEmbedCheck, content });
   }
 
   // Supabase/Postgres mode
@@ -215,6 +228,8 @@ async function runInitBranches(args: string[]) {
       databaseUrl = envUrl;
     } else if (preservedPostgresUrl) {
       databaseUrl = preservedPostgresUrl;
+    } else if (keptPostgresUrl) {
+      databaseUrl = keptPostgresUrl;
     } else {
       console.error('--non-interactive requires --url <connection_string> or GBRAIN_DATABASE_URL env var');
       process.exit(1);

@@ -15,7 +15,7 @@
 //! - Id counter: `M next_file_id`. A refused insert takes no id; an update keeps the row's id.
 //!
 //! `data` and `metadata` are JSONB in Postgres, which stores object keys ordered by length, then
-//! bytes. The store keeps that order (`jsonb_order`), so rows come back as Postgres returns them.
+//! bytes. The store keeps that order (`crate::jsonb::order`), so rows come back as Postgres returns them.
 //!
 //! Cascades:
 //! - Page hard delete (`remove_page_rows`): deletes the page's raw data (`ON DELETE CASCADE`) and
@@ -33,7 +33,7 @@ use crate::pages::{PageRecord, next_id, read_page, read_page_by_id, scope_source
 use crate::sources::{all_sources, read_source};
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 const RAW: u8 = 0x01;
 const FILE: u8 = 0x02;
@@ -77,13 +77,14 @@ fn file_page_key(page_id: u64, file_id: u64) -> Vec<u8> {
 pub(crate) struct RawRecord {
     pub page_id: u64,
     pub source: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     pub data: Value,
     pub fetched_at_us: i64,
 }
 
 impl RawRecord {
     fn to_json(&self) -> Value {
-        json!({ "source": self.source, "data": self.data, "fetched_at": iso(self.fetched_at_us) })
+        json!({ "source": self.source, "data": crate::jsonb::ordered(&self.data), "fetched_at": iso(self.fetched_at_us) })
     }
 }
 
@@ -103,6 +104,7 @@ pub(crate) struct FileRecord {
     #[serde(default)]
     pub size_bytes: Option<i64>,
     pub content_hash: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     pub metadata: Value,
     pub created_at_us: i64,
 }
@@ -120,19 +122,21 @@ impl FileRecord {
             "mime_type": self.mime_type,
             "size_bytes": self.size_bytes,
             "content_hash": self.content_hash,
-            "metadata": self.metadata,
+            "metadata": crate::jsonb::ordered(&self.metadata),
             "created_at": iso(self.created_at_us),
         })
     }
 }
 
-/// `getRawData` options: the page scope of `PageReadScope` plus `includeDeleted`.
+/// `getRawData` options: the page scope of `PageReadScope`, `includeDeleted`, and the page policy
+/// `excludePrivate` names (`privatePagesFilterForCaller('p')`): a page it hides has no raw data.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct RawDataScope {
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
     pub include_deleted: bool,
+    pub exclude_private: Option<crate::facts::PrivacyPolicy>,
 }
 
 /// `FileSpec`. Numbers arrive as JSON numbers (whole or not) so a bad one fails as Postgres
@@ -158,25 +162,6 @@ pub struct UpsertFileResult {
     pub created: bool,
 }
 
-/// A JSON value as Postgres's jsonb keeps it: object keys ordered by length, then bytes (the
-/// last of duplicate keys wins, which a parsed `Map` already did).
-pub(crate) fn jsonb_order(value: Value) -> Value {
-    match value {
-        Value::Object(map) => {
-            let mut entries: Vec<(String, Value)> = map.into_iter().collect();
-            entries.sort_by(|(a, _), (b, _)| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
-            Value::Object(
-                entries
-                    .into_iter()
-                    .map(|(k, v)| (k, jsonb_order(v)))
-                    .collect::<Map<String, Value>>(),
-            )
-        }
-        Value::Array(items) => Value::Array(items.into_iter().map(jsonb_order).collect()),
-        other => other,
-    }
-}
-
 fn has_nul(value: &Value) -> bool {
     match value {
         Value::String(s) => s.contains('\0'),
@@ -199,7 +184,7 @@ fn jsonb(op: &str, column: &str, text: &str) -> Result<Value> {
             "{op}: unsupported Unicode escape sequence in {column} (\\u0000 cannot be converted to text)"
         )));
     }
-    Ok(jsonb_order(value))
+    Ok(crate::jsonb::order(value))
 }
 
 fn not_null(table: &str, column: &str) -> StoreError {
@@ -259,6 +244,16 @@ fn read_file(read: &dyn KvRead, storage_path: &str) -> Result<Option<FileRecord>
 
 fn put_file(tx: &mut dyn KvWrite, record: &FileRecord) -> Result<()> {
     put_json(tx, &file_key(&record.storage_path), record)
+}
+
+/// The raw_data rows of page `page_id`, in key order (the export reads every row of a page).
+pub(crate) fn page_raw_rows(read: &dyn KvRead, page_id: u64) -> Result<Vec<RawRecord>> {
+    Ok(
+        collect_values::<RawRecord>(read, &raw_page_prefix(page_id))?
+            .into_iter()
+            .map(|(_, row)| row)
+            .collect(),
+    )
 }
 
 fn collect_values<T: serde::de::DeserializeOwned>(
@@ -382,11 +377,11 @@ impl Store {
         })
     }
 
-    /// `getRawData(slug, source?, { sourceId?, sourceIds?, includeDeleted? })`: the raw data of
-    /// every page by that slug in scope (`sourceIds` when not empty, else `sourceId` when not
-    /// empty, else every source), only `source` when one is given (not empty). Pages that are
-    /// soft deleted are skipped unless `includeDeleted`. Rows come in SQL's order: page source,
-    /// then raw-data source, both byte-wise (`COLLATE "C"`). `sourceIds` is a set: a repeated id
+    /// `getRawData(slug, source?, { sourceId?, sourceIds?, includeDeleted?, excludePrivate? })`: the
+    /// raw data of every page by that slug in scope (`sourceIds` when not empty, else `sourceId`
+    /// when not empty, else every source), only `source` when one is given (not empty). Pages that
+    /// are soft deleted are skipped unless `includeDeleted`, and pages the page policy hides always. Rows come in SQL's
+    /// order: page source, then raw-data source, both byte-wise (`COLLATE "C"`). `sourceIds` is a set: a repeated id
     /// returns its rows once.
     pub fn get_raw_data(
         &self,
@@ -411,6 +406,11 @@ impl Store {
                 continue;
             };
             if page.deleted_at_us.is_some() && !scope.include_deleted {
+                continue;
+            }
+            if let Some(policy) = &scope.exclude_private
+                && crate::facts::page_hidden(&*read, &page, policy)?
+            {
                 continue;
             }
             let rows: Vec<(Vec<u8>, RawRecord)> =
@@ -590,6 +590,41 @@ impl Store {
         files.sort_by_key(|f| (f.created_at_us, f.id));
         Ok(files.iter().map(FileRecord::to_json).collect())
     }
+
+    /// `listFiles({ pageSlug?, limit })`: with a `page_slug`, the files of that slug in any source,
+    /// by `filename`; without one, every file, by `page_slug` (files with no slug last), then
+    /// `filename`. Ties go by id, and text sorts by bytes. At most `limit` rows. `limit` must be a
+    /// whole number in the `integer` range and not negative (`invalid_argument` otherwise).
+    pub fn list_files(&self, page_slug: Option<&str>, limit: &Value) -> Result<Vec<Value>> {
+        if let Some(slug) = page_slug {
+            no_nul("listFiles", &[("pageSlug", slug)])?;
+        }
+        let limit = int4("listFiles", "limit", limit)?;
+        if limit < 0 {
+            return Err(StoreError::invalid(
+                "listFiles: limit must not be negative".to_string(),
+            ));
+        }
+        let read = self.read()?;
+        let all: Vec<(Vec<u8>, FileRecord)> = collect_values(&*read, &[keys::RAW_FILES, FILE])?;
+        let mut files: Vec<FileRecord> = all
+            .into_iter()
+            .map(|(_, f)| f)
+            .filter(|f| page_slug.is_none_or(|slug| f.page_slug.as_deref() == Some(slug)))
+            .collect();
+        files.sort_by(|a, b| {
+            let slug = match (&a.page_slug, &b.page_slug) {
+                (Some(x), Some(y)) => x.as_bytes().cmp(y.as_bytes()),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            };
+            slug.then_with(|| a.filename.as_bytes().cmp(b.filename.as_bytes()))
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        files.truncate(limit as usize);
+        Ok(files.iter().map(FileRecord::to_json).collect())
+    }
 }
 
 #[cfg(test)]
@@ -619,16 +654,6 @@ mod tests {
             metadata: Some("{}".into()),
             ..FileSpec::default()
         }
-    }
-
-    #[test]
-    fn jsonb_orders_keys_by_length_then_bytes() {
-        let value =
-            jsonb_order(json!({"bb": 1, "a": {"zz": 1, "b": 2}, "ab": [{"cc": 1, "c": 2}]}));
-        assert_eq!(
-            serde_json::to_string(&value).unwrap(),
-            r#"{"a":{"b":2,"zz":1},"ab":[{"c":2,"cc":1}],"bb":1}"#
-        );
     }
 
     #[test]

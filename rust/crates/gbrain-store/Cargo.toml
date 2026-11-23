@@ -13,6 +13,16 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 getrandom = "0.3"
 sha2 = "0.10"
+# The storage bake-off only (`fjall_kv`); off by default, so the addon does not link it.
+fjall = { version = "3.1", optional = true }
+
+[features]
+fjall = ["dep:fjall"]
 
 [dev-dependencies]
 gbrain-sim = { path = "../gbrain-sim" }
+
+# The bench tool's unit tests (the query generator) run with `cargo test`.
+[[example]]
+name = "keyword_scale"
+test = true
