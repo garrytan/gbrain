@@ -716,6 +716,11 @@ fn ids_under(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<i64>> {
     Ok(ids)
 }
 
+/// The `minion_jobs` rows with `status='active'`.
+pub(crate) fn active_job_rows(read: &dyn KvRead) -> Result<Vec<JobRecord>> {
+    rows_with_status(read, "active")
+}
+
 fn rows_with_status(read: &dyn KvRead, status: &str) -> Result<Vec<JobRecord>> {
     let mut rows = Vec::new();
     for id in ids_under(read, &status_prefix(status))? {

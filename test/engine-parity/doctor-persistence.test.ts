@@ -138,9 +138,9 @@ describe('doctor persistence reads', () => {
           expect(answers.catchups).toEqual([busyRow('a-c', 1, '2026-02-01T00:00:00.000Z', 1), busyRow('ab', 0, '2999-01-01T00:00:00.000Z', 0),
             busyRow('work', 1, '2026-01-01T00:00:00.000Z', 3)]);
           expect(answers.scoped.map(r => r.source_id)).toEqual(['ab', 'work']);
-          const moved = { source_id: 'default', former: 'binding_changed', effects: 1, targets: 1, worktree_ids: ['<claimed>'], current_worktree_id: null,
+          const moved = { source_id: 'default', former: 'binding_changed' as const, effects: 1, targets: 1, worktree_ids: ['<claimed>'], current_worktree_id: null,
             requests: ['b0000000-0000-4000-8000-0000000000b3'] };
-          expect(answers.groups).toEqual([{ ...moved, code: 'held_by_rule', rule: 'r-5' }, { ...moved, code: null, rule: null },
+          expect(answers.groups).toEqual([{ ...moved, code: 'held_by_rule', rule: 'r-5' }, { ...moved, code: null as unknown as string, rule: null },
             { source_id: 'work', code: 'held_by_rule', former: null, effects: 1, targets: 2, rule: 'r-0', worktree_ids: ['<claimed>'],
               current_worktree_id: '<claimed>', requests: [REQ_2] }]);
           expect(answers.scopedGroups).toEqual(['default', 'default']);

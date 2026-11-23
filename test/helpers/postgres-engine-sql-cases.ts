@@ -710,6 +710,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'readSyncRecoveryProbeRow': OOS.callerRawSql,
   'readIdentityDowngradeRows': OOS.callerRawSql,
   'readWriteWatermarkRow': OOS.callerRawSql,
+  'readSourceMovementRows': OOS.callerRawSql,
+  'readLiveSyncJobId': OOS.callerRawSql,
   'readSourceCheckoutRoot': OOS.callerRawSql,
   'readUnembeddedPageSummary': OOS.callerRawSql,
   'readSyncDispatchRow': OOS.callerRawSql,

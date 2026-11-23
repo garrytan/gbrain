@@ -81,6 +81,8 @@ export const PERSISTENCE_MEMBERS = {
   readSyncRecoveryProbeRow: 'persistence_journal',
   readIdentityDowngradeRows: 'persistence_journal',
   readWriteWatermarkRow: 'persistence_journal',
+  readSourceMovementRows: 'persistence_journal',
+  readLiveSyncJobId: 'persistence_journal',
   readSourceCheckoutRoot: 'persistence_journal',
   readUnembeddedPageSummary: 'persistence_journal',
   heldGenerationRowsForInput: 'persistence_journal',

@@ -93,4 +93,28 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.movement_binding_rows(source_ids.as_deref()))
     }
+
+    /// `readSourceMovementRows(binding)`: `{ watermark, head, hold }`.
+    #[napi]
+    pub fn source_movement_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        worktree_id: String,
+        source_incarnation: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.source_movement_rows(&source_id, &worktree_id, &source_incarnation)
+        })
+    }
+
+    /// `readLiveSyncJobId(sourceId)`: the job id, or null.
+    #[napi]
+    pub fn live_sync_job_id<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.live_sync_job_id(&source_id))
+    }
 }

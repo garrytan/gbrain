@@ -1,6 +1,8 @@
 //! The three queue reads of `gbrain sources writer status` that the doctor checks share
 //! (`listStalledCatchupRows`, `listParkedGroupRows` and `listSourceBindingsForMovement` in
-//! `src/core/engine-sql/doctor-persistence.ts`; rust/docs/store/persistence.md, "Writer status").
+//! `src/core/engine-sql/doctor-persistence.ts`), and the per-binding movement rows
+//! (`readSourceMovementRows`, `src/core/engine-sql/applied-watermark-reads.ts`);
+//! rust/docs/store/persistence.md, "Writer status".
 //!
 //! Each read answers what its statement answers on Postgres, from the effect, request, source
 //! binding, worktree and source records: the stalled `writer_busy` catch-ups per source, the
@@ -14,7 +16,10 @@ use super::projection_queue::parse_timestamptz;
 use super::worktrees::{
     SOURCE_BINDING, SourceBindingRecord, WORKTREE, WorktreeRecord, scan_records,
 };
-use super::{RequestRecord, all_requests, json_text};
+use super::{
+    RequestRecord, all_requests, extra_bool, extra_time, json_text, list_op_checkpoint_records_in,
+    sql_like,
+};
 use crate::Store;
 use crate::env::iso;
 use crate::error::{Result, StoreError};
@@ -305,6 +310,148 @@ pub(crate) fn movement_binding_rows_in(
         .collect())
 }
 
+/// The `persistence_requests.worktree_id` of a request, as stored.
+fn request_worktree(r: &RequestRecord) -> Option<&str> {
+    r.extra.get("worktree_id").and_then(Value::as_str)
+}
+
+/// `COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'`.
+fn managed_sync(r: &RequestRecord) -> bool {
+    sql_like(
+        &json_text(r.intent.get("kind")).unwrap_or_default(),
+        "managed_sync_%",
+    )
+}
+
+/// `(completed_keys->0->>key)::int`: null when absent, a refusal when not an integer.
+fn hold_int(first: Option<&Value>, key: &str) -> Result<Value> {
+    match json_text(first.and_then(|f| f.get(key))) {
+        None => Ok(Value::Null),
+        Some(t) => t.trim().parse::<i32>().map(|n| json!(n)).map_err(|_| {
+            StoreError::invalid(format!("invalid input syntax for type integer: \"{t}\""))
+        }),
+    }
+}
+
+/// `readSourceMovementRows(binding)`: the three statements readSourceMovement runs for one source
+/// binding. `watermark` is always one row (`MOVEMENT_WATERMARK_SQL`): the newest committed
+/// managed-sync completion under the incarnation, and how many managed-sync requests are queued or
+/// running and since when. `head` is the worktree's head unfinished request, the running one first,
+/// then by sequence, or null. `hold` is the git hold summary's counters for the source and
+/// incarnation, or null.
+pub(crate) fn source_movement_rows_in(
+    read: &dyn KvRead,
+    now: i64,
+    source_id: &str,
+    worktree_id: &str,
+    source_incarnation: &str,
+) -> Result<Value> {
+    let requests = all_requests(read)?;
+    let on_worktree = |r: &&RequestRecord| {
+        request_worktree(r).is_some_and(|w| w.eq_ignore_ascii_case(worktree_id))
+    };
+    // `ORDER BY r.completed_at DESC LIMIT 1`: a null completion sorts first.
+    let committed: Vec<Option<i64>> = requests
+        .iter()
+        .filter(on_worktree)
+        .filter(|r| {
+            r.state == "committed"
+                && r.source_incarnation
+                    .eq_ignore_ascii_case(source_incarnation)
+                && managed_sync(r)
+        })
+        .map(|r| r.completed_at_us)
+        .collect();
+    let last_commit = if committed.iter().any(Option::is_none) {
+        None
+    } else {
+        committed.iter().flatten().max().copied()
+    };
+    let admitted: Vec<&RequestRecord> = requests
+        .iter()
+        .filter(on_worktree)
+        .filter(|r| (r.state == "queued" || r.state == "running") && managed_sync(r))
+        .collect();
+    let head = requests
+        .iter()
+        .filter(on_worktree)
+        .filter(|r| matches!(r.state.as_str(), "queued" | "running" | "recovering"))
+        .min_by_key(|r| (r.state != "running", r.sequence))
+        .map(|r| {
+            json!({
+                "request_id": r.request_id.to_lowercase(),
+                "state": r.state,
+                "claim_phase": r.extra.get("claim_phase").cloned().unwrap_or(Value::Null),
+                "execution_token": r.extra.get("execution_token").and_then(Value::as_str),
+                "claim_lapsed": extra_time(r, "claim_expires_at").is_some_and(|t| t < now),
+                "publication_started": extra_bool(r, "publication_started"),
+            })
+        });
+    let mut hold = Value::Null;
+    if let Value::Array(rows) = list_op_checkpoint_records_in(read, "sync-hold-summary")? {
+        for row in &rows {
+            let first = row["completed_keys"].get(0);
+            let text = |k: &str| json_text(first.and_then(|f| f.get(k)));
+            if text("source_id").as_deref() == Some(source_id)
+                && text("incarnation").as_deref() == Some(source_incarnation)
+            {
+                hold = json!({
+                    "count": hold_int(first, "count")?,
+                    "stalled": hold_int(first, "stalled")?,
+                    "fences": hold_int(first, "fences")?,
+                    "concurrent": hold_int(first, "concurrent")?,
+                    "updated_at": row["updated_at_us"].as_i64().map(iso),
+                });
+                break;
+            }
+        }
+    }
+    Ok(json!({
+        "watermark": {
+            "last_commit_at": last_commit.map(iso),
+            "admitted": admitted.len(),
+            "admitted_since": admitted.iter().map(|r| r.created_at_us).min().map(iso),
+        },
+        "head": head,
+        "hold": hold,
+    }))
+}
+
+/// `readLiveSyncJobId(sourceId)` (`LIVE_SYNC_JOB_SQL`): the active `sync` job, outside the drain
+/// lease queue, whose lock is live and that drains `source_id` (its `sourceId` or `source_id`, or,
+/// when it names none, its `repoPath`: none for `default`, else the source's path); by `started_at`
+/// (a null last), then id.
+pub(crate) fn live_sync_job_id_in(
+    read: &dyn KvRead,
+    now: i64,
+    source_id: &str,
+) -> Result<Option<i64>> {
+    let local_path = all_sources(read)?
+        .into_iter()
+        .find(|s| s.id == source_id)
+        .and_then(|s| s.local_path);
+    let mut jobs: Vec<_> = crate::jobs::active_job_rows(read)?
+        .into_iter()
+        .filter(|j| {
+            let text = |k: &str| json_text(j.data.get(k));
+            let named = text("sourceId").or_else(|| text("source_id"));
+            let drains = match named {
+                Some(named) => named == source_id,
+                None => match text("repoPath") {
+                    None => source_id == "default",
+                    Some(repo) => local_path.as_deref() == Some(repo.as_str()),
+                },
+            };
+            j.name == "sync"
+                && j.lock_until.is_some_and(|l| l > now)
+                && j.queue != "gbrain-drain-lease"
+                && drains
+        })
+        .collect();
+    jobs.sort_by_key(|j| (j.started_at.is_none(), j.started_at, j.id));
+    Ok(jobs.first().map(|j| j.id))
+}
+
 impl Store {
     /// `listStalledCatchupRows(sourceIds, stallMs)`.
     pub fn stalled_catchup_rows(
@@ -323,5 +470,26 @@ impl Store {
     /// `listSourceBindingsForMovement(sourceIds)`.
     pub fn movement_binding_rows(&self, source_ids: Option<&[String]>) -> Result<Vec<Value>> {
         movement_binding_rows_in(&*self.read()?, source_ids)
+    }
+
+    /// `readSourceMovementRows(binding)`.
+    pub fn source_movement_rows(
+        &self,
+        source_id: &str,
+        worktree_id: &str,
+        source_incarnation: &str,
+    ) -> Result<Value> {
+        source_movement_rows_in(
+            &*self.read()?,
+            self.env.now_micros(),
+            source_id,
+            worktree_id,
+            source_incarnation,
+        )
+    }
+
+    /// `readLiveSyncJobId(sourceId)`.
+    pub fn live_sync_job_id(&self, source_id: &str) -> Result<Option<i64>> {
+        live_sync_job_id_in(&*self.read()?, self.env.now_micros(), source_id)
     }
 }

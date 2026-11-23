@@ -1,6 +1,5 @@
 import type { BrainEngine } from '../engine.ts';
 import { GIT_PUSH_CODES } from './git-push-holds.ts';
-import { assertServesStatusRead, UNTYPED_STATUS_READS } from './untyped-status-reads.ts';
 
 /**
  * #7985: parked Git effects recorded under a binding the source no longer has. `binding_changed`: the source moved to
@@ -26,7 +25,6 @@ export const CURRENT_BINDING_SQL = `(e.worktree_id IS NULL OR EXISTS (SELECT 1 F
  * one, up to five request ids and the settle preview (`--retire` for a replaced source), never the bulk retry that cannot select them.
  */
 export async function readParkedGroups(engine: Pick<BrainEngine, 'listParkedGroupRows'>, sourceIds?: string[]): Promise<ParkedGroup[]> {
-  assertServesStatusRead(engine, UNTYPED_STATUS_READS.parkedGroups);
   const rows = await engine.listParkedGroupRows(sourceIds ?? null);
   return rows.map(({ rule, former, worktree_ids, current_worktree_id, requests, ...row }) => {
     if (former) {

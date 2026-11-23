@@ -147,6 +147,7 @@ import * as accessMembers from './access-members.ts';
 import * as sharedSkillMembers from './shared-skill-members.ts';
 import * as doctorDerived from './doctor-derived.ts';
 import * as doctorPersistence from './doctor-persistence.ts';
+import * as sourceMovement from './source-movement.ts';
 import * as doctorPages from './doctor-pages.ts';
 import * as doctorSearch from './doctor-search.ts';
 import * as doctorAcc from './doctor-acc.ts';
@@ -300,6 +301,7 @@ export const STORE_MEMBERS = {
   ...doctorDerived,
   // The persistence checks' request journal and counter reads (rust/docs/store/cli-reads-doctor-per.md).
   ...doctorPersistence,
+  ...sourceMovement,
   ...doctorPages,
   // Search and knowledge doctor reads (rust/docs/store/cli-reads-doctor-search.md).
   ...doctorSearch,

@@ -684,7 +684,7 @@ answered here by `persistence/writer_status.rs`:
 - `listActiveWorktreeRefreshRows(sourceId)`: the active worktree refreshes, oldest first, with
   their deferred request count and age.
 
-The status's three queue reads, shared with the persistence doctor checks
+The status's queue and movement reads, three of them shared with the persistence doctor checks
 (`src/core/engine-sql/doctor-persistence.ts`), are answered by `persistence/writer_status_queue.rs`:
 
 - `listStalledCatchupRows(sourceIds, stallMs)`: per source, the queued `writer_busy` effects that
@@ -697,6 +697,13 @@ The status's three queue reads, shared with the persistence doctor checks
   request ids and the source's current worktree.
 - `listSourceBindingsForMovement(sourceIds)`: each source binding whose source still has the bound
   incarnation, with its worktree's owner.
+- `readSourceMovementRows(binding)` (`src/core/engine-sql/applied-watermark-reads.ts`): one
+  binding's managed-sync watermark (the newest committed completion under the incarnation, a null
+  completion first as `DESC` sorts it, and the queued or running managed-sync requests with the
+  oldest), its head unfinished request (the running one first, then by sequence) and its git hold
+  summary counters.
+- `readLiveSyncJobId(sourceId)`: the active `sync` job, outside the drain lease queue, with a live
+  lock that drains the source (by `sourceId`, `source_id`, or else `repoPath`), oldest started first.
 
 Text keys sort in byte order on every engine (`COLLATE "C"` in the SQL). Ages are whole
 milliseconds, rounded as `EXTRACT(EPOCH ...)*1000` cast to bigint rounds.

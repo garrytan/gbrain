@@ -8,7 +8,6 @@
 import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
 import { readFix } from '../ops/op-fix.ts';
-import { assertServesStatusRead, UNTYPED_STATUS_READS } from './untyped-status-reads.ts';
 
 /** How long an effect may wait on a busy worktree before its catch-up counts as not progressing. */
 export const CATCHUP_STALL_MS = 10 * 60_000;
@@ -27,7 +26,6 @@ export interface StalledCatchup {
 }
 
 export async function readStalledCatchups(engine: BrainEngine, sourceIds?: string[], stallMs = CATCHUP_STALL_MS): Promise<StalledCatchup[]> {
-  assertServesStatusRead(engine, UNTYPED_STATUS_READS.stalledCatchups);
   const rows = await engine.listStalledCatchupRows(sourceIds ?? null, stallMs);
   return rows.filter(row => Number(row.stalled) > 0).map(row => ({
     source_id: row.source_id, stalled_effects: Number(row.stalled), busy_effects: Number(row.busy), busy_since: new Date(row.since).toISOString(),
