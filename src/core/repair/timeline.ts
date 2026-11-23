@@ -34,8 +34,7 @@ async function removedRowIds(engine: BrainEngine, page: TimelinePage, storedRows
 async function storedRowsByPage(engine: BrainEngine, pages: readonly TimelinePage[]): Promise<Map<number, StoredTimelineTuple[]>> {
   const byPage = new Map<number, StoredTimelineTuple[]>(pages.map(page => [Number(page.id), []]));
   if (!pages.length) return byPage;
-  const rows = await engine.executeRaw<StoredTimelineTuple & { page_id: number }>(`SELECT t.page_id, t.id, to_char(t.date, 'YYYY-MM-DD') AS date, t.source, t.summary, t.detail
-    FROM timeline_entries t WHERE t.page_id = ANY($1::bigint[]) AND t.event_page_id IS NULL`, [pages.map(page => page.id)]);
+  const rows = await engine.storedTimelineRowsByPageIds(pages.map(page => Number(page.id)));
   for (const { page_id, ...row } of rows) byPage.get(Number(page_id))?.push(row);
   return byPage;
 }
@@ -103,15 +102,9 @@ export const SEGMENTED_SAMPLE = 10;
  * counted, with their rows, and the first SEGMENTED_SAMPLE are named.
  */
 export async function segmentedTimelinePages(engine: BrainEngine, sourceIds: string[]): Promise<{ pages: number; rows: number; sample: string[] }> {
-  const [counts] = await engine.executeRaw<{ pages: number; rows: number }>(`SELECT count(DISTINCT p.id)::int AS pages, count(*)::int AS rows
-    FROM timeline_entries t JOIN pages p ON p.id=t.page_id
-    WHERE p.source_id=ANY($1::text[]) AND p.deleted_at IS NULL AND p.body_storage='segmented' AND t.event_page_id IS NULL`, [sourceIds]);
-  if (!counts?.pages) return { pages: 0, rows: 0, sample: [] };
-  const named = await engine.executeRaw<{ source_id: string; slug: string }>(`SELECT p.source_id, p.slug FROM pages p
-    WHERE p.source_id=ANY($1::text[]) AND p.deleted_at IS NULL AND p.body_storage='segmented'
-      AND EXISTS (SELECT 1 FROM timeline_entries t WHERE t.page_id=p.id AND t.event_page_id IS NULL)
-    ORDER BY p.id LIMIT ${SEGMENTED_SAMPLE}`, [sourceIds]);
-  return { pages: Number(counts.pages), rows: Number(counts.rows), sample: named.map(page => `${page.source_id}:${page.slug}`) };
+  const { pages, rows, sample } = await engine.countSegmentedTimelinePages(sourceIds, SEGMENTED_SAMPLE);
+  if (!pages) return { pages: 0, rows: 0, sample: [] };
+  return { pages, rows, sample: sample.map(page => `${page.source_id}:${page.slug}`) };
 }
 
 /** The sentence a preview or doctor prints for segmented pages carrying timeline rows. */
@@ -127,9 +120,7 @@ export const timelineRepair: RepairHandler = {
     const { pages } = await scanTimelineHistory(engine, scope.source_ids, after?.id ?? 0);
     const items: RepairItem[] = pages.filter(p => p.materializable > 0).map(p => ({ cursor: { phase: 0, id: p.id }, source_id: p.source_id,
       slug: p.slug, chars: p.compiled_truth.length + (p.timeline ?? '').length, action: `materialize ${p.materializable} row(s)` }));
-    const [{ n: markup }] = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM timeline_entries t JOIN pages p ON p.id=t.page_id
-      WHERE p.source_id=ANY($1::text[]) AND p.deleted_at IS NULL AND t.event_page_id IS NULL
-        AND (t.summary LIKE '%<!--%' OR t.summary LIKE '%-->%' OR t.source LIKE '%<!--%' OR t.source LIKE '%-->%')`, [scope.source_ids]);
+    const markup = await engine.countTimelineCommentMarkupRows(scope.source_ids);
     // #6184: such rows are never rendered back (they would duplicate a section END marker); name the cleanup.
     const warnings = markup ? [`timeline_comment_markup: ${markup} timeline row(s) carry HTML comment markup and stay database-side; `
       + `preview the cleanup with gbrain repair timeline-comments${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}.`] : [];
