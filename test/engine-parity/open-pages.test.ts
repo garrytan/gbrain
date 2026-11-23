@@ -96,7 +96,7 @@ describe('open-page count and the access reads around it', () => {
     return { all, excluded, none, missing };
   });
 
-  parityTest('the count asked inside a remote caller record answers the same, or the Rust arm refuses it', {
+  parityTest('the count asked inside a remote caller record answers the same on every engine', {
     methods: ['countOpenPages'],
   }, async (engine, backend) => {
     await seedPages(engine, backend);

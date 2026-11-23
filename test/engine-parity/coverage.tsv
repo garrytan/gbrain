@@ -518,10 +518,10 @@ setEdgeProposalStatus	contradictions	yes	3	no	yes	yes	serves
 rejectOpenEdgeProposal	contradictions	yes	2	no	yes	yes	serves
 markEdgeProposalUndone	contradictions	yes	2	no	yes	yes	serves
 markRevertedEdgeProposals	contradictions	yes	4	no	yes	yes	serves
-listLiveChunksByIds	contradictions	yes	1	no	yes	yes	refuses:chunks
-listLiveTakesByIds	contradictions	yes	1	no	yes	yes	refuses:takes
+listLiveChunksByIds	contradictions	yes	1	no	yes	yes	serves
+listLiveTakesByIds	contradictions	yes	1	no	yes	yes	serves
 readLastContradictionsPromptVersion	contradictions	yes	1	no	yes	yes	serves
-listEvalCandidateQueries	contradictions	yes	1	no	yes	yes	refuses:eval_capture
+listEvalCandidateQueries	contradictions	yes	1	no	yes	yes	serves
 hasActiveFactText	facts	yes	2	no	yes	yes	serves
 readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
@@ -588,8 +588,8 @@ readBrainMaturity	stats_ingest	yes	3	no	yes	yes	serves
 getStats	stats_ingest	yes	6	yes	yes	yes	serves
 getHealth	stats_ingest	yes	6	yes	yes	yes	serves
 pingStore	stats_ingest	yes	1	no	yes	yes	serves
-listVisiblePageSlugs	stats_ingest	yes	1	no	yes	yes	refuses:pages
-readPagesForVersionHistory	stats_ingest	yes	1	no	yes	yes	refuses:pages
+listVisiblePageSlugs	stats_ingest	yes	1	no	yes	yes	serves
+readPagesForVersionHistory	stats_ingest	yes	1	no	yes	yes	serves
 logIngest	stats_ingest	yes	9	no	yes	yes	serves
 getIngestLog	stats_ingest	yes	2	no	yes	yes	serves
 updateSlug	sync_aliases	yes	29	no	yes	yes	serves

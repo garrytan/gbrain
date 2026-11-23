@@ -64,6 +64,8 @@ import * as persistence from './persistence.ts';
 import * as syncHoldStore from './sync-hold-store.ts';
 import * as syncStatusReads from './sync-status-reads.ts';
 import * as cliEntities from './cli-entities.ts';
+import * as adminReads from './admin-reads.ts';
+import * as liveRereads from './live-rereads.ts';
 import * as reflexReads from './reflex-reads.ts';
 import * as briefReads from './brief-reads.ts';
 import * as factsDoctor from './facts-doctor.ts';
@@ -197,7 +199,7 @@ export const STORE_MEMBERS = {
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages, ...sweepReads,
   // The reads gbrain export makes (rust/docs/store/cli-reads-export.md).
   ...cliReadsExport,
-  ...cliEntities, ...reflexReads, ...briefReads,
+  ...cliEntities, ...adminReads, ...liveRereads, ...reflexReads, ...briefReads,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
   ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...purgePlan, ...purgeEffects, ...beliefPurge, ...projectionRebuild, ...factsRepair, ...labelRepairReads, ...factTextRepair, ...lostFenceReads, ...factsTrust, ...derivationTrust, ...factsTrustReads, ...factsTrustOwner, ...factRelinkAttempts,
   ...ontologyRepair, ...factsRecall, ...factsForget, ...factsRemember, ...factsWritePath, ...factsProvenance, ...factsQuoted,

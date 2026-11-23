@@ -10,6 +10,7 @@ mod brief_reads;
 mod chronicle_events;
 mod chunks;
 mod cli_entities;
+mod cli_reads_admin;
 mod cli_reads_doctor;
 mod cli_reads_doctor_acc;
 mod cli_reads_doctor_brain;

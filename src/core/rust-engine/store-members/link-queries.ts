@@ -474,11 +474,12 @@ export const entityGraphCoverage: StoreMember<[filter: EntityTypeFilter], { enti
 
 /**
  * How many live unquarantined entity pages there are and how many have an inbound link or a timeline entry. The store
- * reads every page, so it has no sample to draw: a `samplePercent` refuses.
+ * reads every page, so it has no sample to draw: a `samplePercent` of 100 (TABLESAMPLE BERNOULLI (100) keeps every row)
+ * reads the whole population, and any other percent refuses.
  */
 export const entityFeatureCoverage: StoreMember<[filter: EntityTypeFilter, feature: 'links' | 'timeline', opts?: { samplePercent?: number }], { sampleSize: number; matched: number }> =
   async (brain, filter, feature, opts) => {
-    if (opts?.samplePercent !== undefined) refuseMember('entityFeatureCoverage', 'a TABLESAMPLE percent (the store reads every page)');
+    if (opts?.samplePercent !== undefined && opts.samplePercent !== 100) refuseMember('entityFeatureCoverage', 'a TABLESAMPLE percent below 100 (the store reads every page)');
     if (feature !== 'links' && feature !== 'timeline') refuseMember('entityFeatureCoverage', `the feature ${String(feature)}`);
     const r: { sampleSize: number; matched: number } = await storeCall({ member: 'entityFeatureCoverage' },
       () => brain.entityFeatureCoverage({ filter, feature }));

@@ -38,6 +38,16 @@ impl Brain {
         })
     }
 
+    /// `listEvalCandidateQueries(limit)`: resolves the queries of the newest `limit` candidates.
+    #[napi]
+    pub fn list_eval_candidate_queries<'env>(
+        &self,
+        env: &'env Env,
+        limit: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_eval_candidate_queries(limit))
+    }
+
     /// `deleteEvalCandidatesBefore(date)`: `date` is an ISO string; resolves the count deleted.
     #[napi]
     pub fn delete_eval_candidates_before<'env>(

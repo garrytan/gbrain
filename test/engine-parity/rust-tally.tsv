@@ -82,7 +82,7 @@ test/engine-parity/entity-card-option-reads.test.ts	6	0
 test/engine-parity/entity-card-timeline.test.ts	2	0
 test/engine-parity/entity-fuzzy.test.ts	3	0
 test/engine-parity/entity-identities.test.ts	9	4
-test/engine-parity/entity-reads.test.ts	13	1
+test/engine-parity/entity-reads.test.ts	14	0
 test/engine-parity/export-bytes.test.ts	2	0
 test/engine-parity/extract-takes-reads.test.ts	9	0
 test/engine-parity/extract-takes.test.ts	0	2
@@ -113,7 +113,7 @@ test/engine-parity/facts-trust-owner.test.ts	6	0
 test/engine-parity/facts-trust.test.ts	13	0
 test/engine-parity/facts-unique-violation.test.ts	3	0
 test/engine-parity/facts.test.ts	36	0
-test/engine-parity/family-tail-sites.test.ts	6	6
+test/engine-parity/family-tail-sites.test.ts	10	2
 test/engine-parity/fence-overlay.test.ts	2	0
 test/engine-parity/fenced-import-purge.test.ts	1	0
 test/engine-parity/field-usage.test.ts	3	0
@@ -159,7 +159,7 @@ test/engine-parity/keyword-visibility.test.ts	7	0
 test/engine-parity/large-page.test.ts	3	0
 test/engine-parity/lifecycle.test.ts	10	1
 test/engine-parity/link-read-options.test.ts	17	0
-test/engine-parity/link-reads.test.ts	15	1
+test/engine-parity/link-reads.test.ts	16	0
 test/engine-parity/link-temporal.test.ts	22	0
 test/engine-parity/links.test.ts	38	0
 test/engine-parity/loop-mutes.test.ts	4	1
@@ -179,7 +179,7 @@ test/engine-parity/ontology-propose.test.ts	5	0
 test/engine-parity/ontology-repair-sites.test.ts	4	0
 test/engine-parity/op-checkpoint.test.ts	2	0
 test/engine-parity/open-loops.test.ts	6	0
-test/engine-parity/open-pages.test.ts	3	1
+test/engine-parity/open-pages.test.ts	4	0
 test/engine-parity/owner-only-marks.test.ts	1	1
 test/engine-parity/owner-only-reads.test.ts	4	0
 test/engine-parity/owner-recovery-scans.test.ts	5	0
@@ -217,7 +217,7 @@ test/engine-parity/remember-members.test.ts	9	0
 test/engine-parity/remember-meta.test.ts	3	0
 test/engine-parity/remember-supersede.test.ts	1	1
 test/engine-parity/remember-whole.test.ts	1	0
-test/engine-parity/remote-links.test.ts	7	1
+test/engine-parity/remote-links.test.ts	8	0
 test/engine-parity/remote-policy.test.ts	2	0
 test/engine-parity/repair-aliases.test.ts	1	0
 test/engine-parity/repair-bookkeeping.test.ts	7	1

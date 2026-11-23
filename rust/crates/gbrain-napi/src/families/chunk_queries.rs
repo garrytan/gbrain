@@ -243,6 +243,34 @@ impl Brain {
         })
     }
 
+    /// `listLiveChunksByIds({ ids, scope })`: the live chunk rows in id order.
+    #[napi]
+    pub fn list_live_chunks_by_ids<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::chunk_queries::LiveChunksInput =
+                arg(input, "listLiveChunksByIds input")?;
+            s.list_live_chunks_by_ids(&input)
+        })
+    }
+
+    /// `listLiveTakesByIds({ ids, scope, holders, ownerOnly, floor })`: the live take rows in id order.
+    #[napi]
+    pub fn list_live_takes_by_ids<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::chunk_queries::LiveTakesInput =
+                arg(input, "listLiveTakesByIds input")?;
+            s.list_live_takes_by_ids(&input)
+        })
+    }
+
     /// `readSegmentRegions(hits)`: `[{ chunk_id, byte_start }]` for the hits on served segmented
     /// pages.
     #[napi]

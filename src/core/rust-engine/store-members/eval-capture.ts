@@ -1,5 +1,5 @@
 /**
- * Eval capture members (BrainEngine logEvalCandidate, listEvalCandidates, deleteEvalCandidatesBefore,
+ * Eval capture members (BrainEngine logEvalCandidate, listEvalCandidates, listEvalCandidateQueries, deleteEvalCandidatesBefore,
  * logEvalCaptureFailure, listEvalCaptureFailures). The store keeps the `eval_candidates` and `eval_capture_failures`
  * rows (rust/docs/store/eval_capture.md); timestamps cross the binding as ISO strings and come back as `Date`s.
  */
@@ -27,6 +27,10 @@ export const listEvalCandidates: StoreMember<[filter?: { since?: Date; limit?: n
     const rows: EvalCandidate[] = await storeCall({ member: 'listEvalCandidates' }, () => brain.listEvalCandidates(scope));
     return rows.map((row) => withDates(row, ['created_at', 'as_of_ts']));
   };
+
+/** The newest captured queries by id, at most `limit` (engine-sql/contradictions-cycle.ts listEvalCandidateQueries). */
+export const listEvalCandidateQueries: StoreMember<[limit: number], string[]> = (brain, limit) =>
+  storeCall({ member: 'listEvalCandidateQueries' }, () => brain.listEvalCandidateQueries(limit));
 
 export const deleteEvalCandidatesBefore: StoreMember<[date: Date], number> = (brain, date) =>
   storeCall({ member: 'deleteEvalCandidatesBefore' }, () => brain.deleteEvalCandidatesBefore(isoArg(date)));

@@ -38,8 +38,10 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 
+mod live_rereads;
 mod segment_regions;
 mod site_reads;
+pub use live_rereads::{LiveChunkRow, LiveChunksInput, LiveTakeRow, LiveTakesInput};
 pub use segment_regions::SegmentHit;
 pub(crate) use site_reads::Policy as PageReadPolicy;
 pub use site_reads::{

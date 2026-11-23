@@ -44,6 +44,11 @@ function writerPolicy(policy: WriterReadPolicy): StorePrivacyPolicy {
   const fragment = (record: Parameters<typeof renderForStoreCaller>[0]) =>
     `(${renderForStoreCaller(record, () => callerAccessAllowedSql('p'))} AND TRUE)`;
   if (text === fragment({})) return off;
+  // A writer with no identities, folder rules or coverage renders the record form with no readers: no pending-coverage
+  // or unreadable-state clause, as a caller record with an empty folder coverage reads (`callerRecord`).
+  if (policy.identities.length === 0 && text === fragment({ folderCoverage: [] })) {
+    return { ...off, identity: [], privateReadableSources: [], callerRecord: true };
+  }
   const [identity] = policy.identities;
   if (policy.identities.length === 1 && identity && text === fragment({ identity: [...identity], privateReadableSources: [], hidePrivate: true })) {
     return { ...off, identity: [...identity], privateReadableSources: [] };
