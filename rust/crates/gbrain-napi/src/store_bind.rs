@@ -1,8 +1,8 @@
 //! How `Brain#bind` puts a store on a handle (`families/transactions.rs` uses it to start a
 //! transaction). It holds no JavaScript types, so plain `cargo test` covers it.
 
-use std::sync::atomic::{AtomicBool, AtomicU64};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use gbrain_store::StoreError;
 use serde_json::Value;
@@ -10,29 +10,79 @@ use serde_json::Value;
 use crate::error::TaskError;
 use crate::store_binding::task_error;
 
-/// Makes the store `open` returns this handle's store. Rejects `invalid_state` when the handle
-/// already has one.
+/// Clears the "a bind is running" flag however the bind ends.
+struct Claim<'a>(&'a AtomicBool);
+
+impl Drop for Claim<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+fn lock<S>(slot: &Mutex<Option<Arc<S>>>) -> MutexGuard<'_, Option<Arc<S>>> {
+    slot.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn already_open() -> TaskError {
+    TaskError::new(
+        gbrain_store::error::INVALID_STATE,
+        "this handle already has a brain open; close it first",
+    )
+}
+
+fn closed_first() -> TaskError {
+    TaskError::new(
+        gbrain_store::error::STORE_CLOSED,
+        "the brain was closed before it opened",
+    )
+}
+
+/// Makes the store `open` returns this handle's store.
+///
+/// `open` can wait a long time (a transaction waits for the writer), so the slot is not held
+/// while it runs: the JavaScript thread takes the slot for `isOpen`, `run` and `close`, and the
+/// transaction that owns the writer needs it to commit. The slot is checked before `open` and
+/// again after, and `binding` keeps a second bind from queueing behind this one.
+///
+/// Rejects `invalid_state` when the handle already has a store or another bind is running, and
+/// `store_closed` when `close` was called after this bind was queued (`closes` moved past
+/// `closes_at_call`), before or during the wait; a store opened for a closed handle is dropped.
 pub(crate) fn bind_into<S>(
     slot: &Mutex<Option<Arc<S>>>,
-    _binding: &AtomicBool,
-    _closes: &AtomicU64,
-    _closes_at_call: u64,
+    binding: &AtomicBool,
+    closes: &AtomicU64,
+    closes_at_call: u64,
     open: impl FnOnce() -> Result<S, StoreError>,
 ) -> Result<Value, TaskError> {
-    let mut guard = slot.lock().unwrap_or_else(|e| e.into_inner());
-    if guard.is_some() {
-        return Err(TaskError::new(
-            gbrain_store::error::INVALID_STATE,
-            "this handle already has a brain open; close it first",
-        ));
+    {
+        let guard = lock(slot);
+        if closes.load(Ordering::SeqCst) != closes_at_call {
+            return Err(closed_first());
+        }
+        if guard.is_some() || binding.swap(true, Ordering::SeqCst) {
+            return Err(already_open());
+        }
     }
-    *guard = Some(Arc::new(open().map_err(task_error)?));
-    Ok(Value::Null)
+    let _claim = Claim(binding);
+    let store = open().map_err(task_error)?;
+    let mut guard = lock(slot);
+    // `close` bumps the counter before it takes the slot, so a close called while `open` waited
+    // is seen here, or else waits for the slot and releases the store set below.
+    let refusal = if closes.load(Ordering::SeqCst) != closes_at_call {
+        closed_first()
+    } else if guard.is_some() {
+        already_open()
+    } else {
+        *guard = Some(Arc::new(store));
+        return Ok(Value::Null);
+    };
+    drop(guard);
+    drop(store);
+    Err(refusal)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::Ordering;
     use std::sync::mpsc::{Receiver, Sender, channel};
     use std::thread;
     use std::time::{Duration, Instant};

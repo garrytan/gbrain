@@ -114,7 +114,9 @@ impl Brain {
 
     /// Runs `open` on this handle's pool and makes the store it returns this handle's store: how a
     /// handle comes to run on a store bound to a transaction (`families/transactions.rs`). Rejects
-    /// `invalid_state` when this handle is already open. `run` then works unchanged.
+    /// `invalid_state` when this handle is already open or binding, and `store_closed` when `close`
+    /// was called on it after the bind was queued. `run` then works unchanged. The wait inside
+    /// `open` does not hold the handle's slot (`store_bind.rs`).
     pub(crate) fn bind<'env>(
         &self,
         env: &'env Env,
