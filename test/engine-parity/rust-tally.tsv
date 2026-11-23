@@ -11,6 +11,7 @@ test/engine-parity/admin-http.test.ts	3	0
 test/engine-parity/admin-unowned-http.test.ts	8	0
 test/engine-parity/alias-fanout-reads.test.ts	11	0
 test/engine-parity/alias-trust.test.ts	6	0
+test/engine-parity/attest-rights.test.ts	1	0
 test/engine-parity/attested-actor-link.test.ts	1	0
 test/engine-parity/backup-readiness-callers.test.ts	3	0
 test/engine-parity/belief-ledger.test.ts	11	0

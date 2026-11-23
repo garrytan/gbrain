@@ -2634,6 +2634,10 @@ export class PostgresEngine implements BrainEngine {
   readCredentialBindingForUpdate(target: AccessMembersSql.CredentialTarget, opts: { readsUnscoped: boolean }) { return accessMembersImpl.readCredentialBindingForUpdate(this.engineSql, target, opts); }
   /** A preparation read (page-visibility.ts defaultSourceMemberWriter): master sent it through executeRaw, so it ends at a read deadline. */
   readCredentialMemberId(target: AccessMembersSql.CredentialTarget) { return this.ownRawRead(exec => accessMembersImpl.readCredentialMemberId(exec, target)); }
+  readAccessTokenAttest(id: string) { return this.ownRawRead(exec => accessMembersImpl.readAccessTokenAttest(exec, id)); }
+  readOauthClientAttest(clientId: string, opts?: { lock?: boolean }) {
+    return opts?.lock ? accessMembersImpl.readOauthClientAttest(this.engineSql, clientId, opts) : this.ownRawRead(exec => accessMembersImpl.readOauthClientAttest(exec, clientId));
+  }
   /** The attested-actor link read (access/actor.ts linkedMember): master sent it through executeRaw, so it ends at a read deadline. */
   readLinkedMember(system: string, externalId: string) { return this.ownRawRead(exec => accessMembersImpl.readLinkedMember(exec, system, externalId)); }
   writeCredentialBinding(target: AccessMembersSql.CredentialTarget, binding: AccessMembersSql.CredentialBinding) { return accessMembersImpl.writeCredentialBinding(this.engineSql, target, binding); }

@@ -1863,6 +1863,10 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   readCredentialBindingForUpdate(target: AccessMembersSql.CredentialTarget, opts: { readsUnscoped: boolean }): Promise<AccessMembersSql.CredentialBindingRow | undefined>;
   /** The member a credential is bound to (a revoked or deleted one too, nothing locked), or null. */
   readCredentialMemberId(target: AccessMembersSql.CredentialTarget): Promise<string | null>;
+  /** A legacy token's attest columns and revoked_at by id text, revoked or not, or null (access/actor.ts attestRightOf). */
+  readAccessTokenAttest(id: string): Promise<AccessMembersSql.AccessTokenAttestRow | null>;
+  /** An OAuth client's attest columns, deleted_at, grant types and confidential flag by client_id, or null; `lock` is FOR UPDATE. */
+  readOauthClientAttest(clientId: string, opts?: { lock?: boolean }): Promise<AccessMembersSql.OauthClientAttestRow | null>;
   /** The enabled member linked to (system, externalId), with its groups, or null (access/actor.ts linkedMember). */
   readLinkedMember(system: string, externalId: string): Promise<AccessMembersSql.LinkedMemberRow | null>;
   /** Writes a credential's member, may_act_for and attest columns. */

@@ -536,7 +536,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'readWriteRequestsByRequestId', 'listUnretiredPagesBySlugPattern', 'listNameVariantCandidates',
   'countDistinctInboundLinkers', 'insertAccessMember', 'setAccessMemberDisabled', 'setAccessMemberEmail', 'setAccessMemberKind',
   'setAccessMemberLabelledOnly', 'tombstoneAccessMember', 'addAccessGroupMembers', 'removeAccessGroupMembers', 'deleteAccessGroup',
-  'readCredentialBindingForUpdate', 'writeCredentialBinding', 'writeCredentialReadsUnscoped',
+  'readCredentialBindingForUpdate', 'writeCredentialBinding', 'writeCredentialReadsUnscoped', 'readAccessTokenAttest', 'readOauthClientAttest',
   'revokeAccessTokensNamed', 'revokeAccessToken', 'deleteOAuthClient', 'readAccessGroups', 'listPagesNamingReader', 'upsertSessionState',
   'readSessionCursor', 'readDeltaSessionRow', 'readCheckpointManifestRow', 'writeCheckpointManifest', 'ageOutSessionState',
   'capSessionStatePerClient', 'listAccessTokens', 'readActiveAccessTokenGrant', 'accessTokenLive', 'oauthClientLive',

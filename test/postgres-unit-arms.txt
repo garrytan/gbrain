@@ -163,6 +163,7 @@ test/engine-parity/admin-http.test.ts
 test/engine-parity/admin-unowned-http.test.ts
 test/engine-parity/alias-fanout-reads.test.ts
 test/engine-parity/alias-trust.test.ts
+test/engine-parity/attest-rights.test.ts
 test/engine-parity/attested-actor-link.test.ts
 test/engine-parity/backup-readiness-callers.test.ts
 test/engine-parity/belief-ledger.test.ts
