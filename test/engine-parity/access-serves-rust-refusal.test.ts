@@ -67,7 +67,7 @@ describe('gbrain access serves several --yes on a Rust brain', () => {
   }, 120_000);
 
   test('the guard on a brain that reports Rust: a re-run that adds nothing runs; one that only widens a kept key or only adds the company/ rule is refused', async () => {
-    const arm = arms().find(a => a.backend === 'pglite')!;
+    const arm = arms().find(a => a.backend !== 'rust')!; // any SQL arm: a --postgres-only run has no PGLite arm
     const fresh = async (company: boolean) => {
       await resetArm(arm);
       await arm.engine.setConfig('version', String(LATEST_SCHEMA_VERSION));
