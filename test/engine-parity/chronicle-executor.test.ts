@@ -112,7 +112,7 @@ async function atGenerationsStop<T>(engine: BrainEngine, backend: string, fn: ()
   };
   watch(target, 'executeRaw', engine);
   watch(target, 'recordDerivationEdges', engine);
-  target.transaction = (fnTx: (tx: unknown) => Promise<unknown>) => originals.transaction.call(engine, (tx: unknown) => fnTx(new Proxy(tx as object, {
+  target.transaction = (...args: unknown[]) => originals.transaction.call(engine, (tx: unknown) => (args[0] as (tx: unknown) => Promise<unknown>)(new Proxy(tx as object, {
     get(obj, prop) {
       const value = Reflect.get(obj, prop, obj);
       if ((prop === 'recordDerivationEdges' || prop === 'executeRaw') && typeof value === 'function') {
