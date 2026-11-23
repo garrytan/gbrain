@@ -13,10 +13,11 @@
  * Engine-free, read-only; the log never holds params or messages.
  */
 import { readAgentContractEvents, type AgentContractEvent } from '../../../core/agent-contract-log.ts';
+import { agentContractEventDigest, isAgentContractFault, readAgentContractResolutions } from '../audit/agent-contract-resolution.ts';
 import { PREAPPROVE_PAID_MAX_USD_PER_RUN, PREAPPROVE_PERSISTENT_INSTALL, preapprovalCommand } from '../../../core/consent-preapproval.ts';
 import type { Action } from '../../../core/agent-output.ts';
 import type { Check } from '../../doctor.ts';
-import { doctorVerify } from '../check-fix.ts';
+import { checkError, doctorVerify } from '../check-fix.ts';
 import { VERSION } from '../../../version.ts';
 import type { DoctorEntry } from '../context.ts';
 
@@ -56,10 +57,15 @@ function preapproveInstall(): Action {
 }
 
 /** Pure: the check for a list of events (newest last), relative to `now`. */
-export function agentContractCheck(events: readonly Event[], now = Date.now()): Check {
+export function agentContractCheck(
+  events: readonly Event[], now = Date.now(), resolved: ReadonlySet<string> = new Set(), resolutionUnreadable = false,
+): Check {
   const since = now - AGENT_CONTRACT_WINDOW_DAYS * 86_400_000;
   const recent = events.filter((e) => Date.parse(e.ts) >= since);
-  const faults = recent.filter((e) => e.code === 'internal_error' || e.code === 'internal' || e.has_suggestion === false);
+  const faults = recent.filter(isAgentContractFault);
+  const closedEvents = faults.map(agentContractEventDigest).filter(hash => resolved.has(hash));
+  const closed = closedEvents.length;
+  const unresolved = faults.filter(e => !resolved.has(agentContractEventDigest(e)));
   const refused = recent.filter((e) => e.code === 'confirmation_required' && (e.outcome === 'refused' || e.outcome === 'declined'));
   const paidRefused = refused.filter((e) => e.effects?.includes('paid'));
   const installRefused = refused.filter((e) => e.effects?.includes('persistent_install') && !e.effects.includes('paid'));
@@ -67,22 +73,32 @@ export function agentContractCheck(events: readonly Event[], now = Date.now()): 
   const noDoc = recent.filter((e) => e.code === 'json_document_missing');
   const details = {
     window_days: AGENT_CONTRACT_WINDOW_DAYS, events: recent.length,
-    internal_errors: faults.length, consent_refused: refused.length, derived_cap_exhausted: capped.length, json_document_missing: noDoc.length,
+    internal_errors: faults.length, resolved_internal_errors: closed, unresolved_internal_errors: unresolved.length,
+    consent_refused: refused.length, derived_cap_exhausted: capped.length, json_document_missing: noDoc.length,
+    ...(resolutionUnreadable ? { resolution_evidence: 'unreadable' } : {}),
+    ...(closed ? { resolved_event_sha256: closedEvents.sort() } : {}),
   };
   const parts: string[] = [];
-  if (faults.length) parts.push(`${faults.length} error(s) reached an agent without a specific next step (${top(faults)}); report them to the user with \`gbrain doctor --json\` output`);
+  if (unresolved.length) parts.push(`${unresolved.length} error(s) reached an agent without a specific next step (${top(unresolved)}); report them to the user with \`gbrain doctor --json\` output`);
   if (refused.length) parts.push(`${refused.length} unattended run(s) stopped for consent (${top(refused)})`);
   if (capped.length) parts.push(`${capped.length} paid run(s) hit their derived spend cap (${top(capped)})`);
   if (noDoc.length) parts.push(`${noDoc.length} \`--json\` run(s) printed no JSON document (${top(noDoc)})`);
+  if (resolutionUnreadable) parts.push('Historical fault verification receipts could not be read or validated');
   if (parts.length === 0) {
-    return { name: NAME, status: 'ok', message: `No agent dead ends in the last ${AGENT_CONTRACT_WINDOW_DAYS} days (${recent.length} non-success event(s) logged).`, details };
+    const message = closed
+      ? `${closed} historical agent dead end(s) have verified repairs. ${recent.length} non-success event(s) remain in the ${AGENT_CONTRACT_WINDOW_DAYS}-day log.`
+      : `No agent dead ends in the last ${AGENT_CONTRACT_WINDOW_DAYS} days (${recent.length} non-success event(s) logged).`;
+    return { name: NAME, status: 'ok', message, details };
   }
   const fix = paidRefused.length || capped.length ? preapprovePaid() : installRefused.length ? preapproveInstall() : undefined;
   const counted = [...new Set([...faults, ...refused, ...capped, ...noDoc])];
   const versions = [...new Set(counted.flatMap((e) => e.version && e.version !== VERSION ? [e.version] : []))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   const builds = { this_build: counted.filter((e) => e.version === VERSION).length, other_builds: counted.filter((e) => e.version && e.version !== VERSION).length,
     unknown_build: counted.filter((e) => !e.version).length, versions };
-  const incident = { scope: builds.this_build > 0 ? 'current' : 'historical', since: counted.reduce((min, e) => (e.ts < min ? e.ts : min), counted[0]!.ts) };
+  const incident = counted.length ? {
+    scope: builds.this_build > 0 ? 'current' : 'historical',
+    since: counted.reduce((min, e) => (e.ts < min ? e.ts : min), counted[0]!.ts),
+  } : undefined;
   const range = versions.length > 1 ? `${versions[0]} to ${versions.at(-1)}` : versions[0];
   const elsewhere = [builds.other_builds ? `${builds.other_builds} of ${counted.length} were recorded by another gbrain build (${range})` : '',
     builds.unknown_build ? `${builds.unknown_build} by a build that did not record its version` : ''].filter(Boolean).join(' and ');
@@ -94,10 +110,19 @@ export function agentContractCheck(events: readonly Event[], now = Date.now()): 
 }
 
 async function runAgentContract(): Promise<Check[]> {
-  const checks: Check[] = [];
-  // #7145: the whole log (size-bounded on write), so the window is judged on every event in it, not the newest 500.
-  checks.push(agentContractCheck(readAgentContractEvents(Infinity)));
-  return checks;
+  // The whole size-bounded log represents the window.
+  let events: Event[];
+  try {
+    events = readAgentContractEvents(Infinity, true);
+  } catch {
+    return [checkError(NAME, 'read the agent contract event log', undefined, { details: { health: 'unknown' } })];
+  }
+  try {
+    const resolved = await readAgentContractResolutions(events, VERSION);
+    return [agentContractCheck(events, Date.now(), resolved)];
+  } catch {
+    return [agentContractCheck(events, Date.now(), new Set(), true)];
+  }
 }
 
 export const agentContractEntry: DoctorEntry = {

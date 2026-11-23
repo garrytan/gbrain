@@ -81,6 +81,7 @@ const previewBoundKinds = PREVIEW_BOUND_REPAIR_REGISTRY.map(spec => spec.kind).j
 const llmKinds = LLM_REPAIR_REGISTRY.map(spec => spec.kind).join(', ');
 
 export const REPAIR_HELP = `Usage: gbrain repair [<kind>] [--apply] [--source <id>] [--limit <n>] [--no-embed] [--json]
+       gbrain repair agent-contract-resolve --evidence-file <path> [--apply --expect <preview-hash>] [--json]
        gbrain repair --all [--apply] [--source <id>] [--json]
        gbrain repair <explicit-only kind> [--include-ambiguous] [--apply --expect <preview-hash>] [--source <id>] [--json]
        gbrain repair frontmatter [--source <id>] [--include-ambiguous] [--only <path>]... [--skip <path>]... [--diff]
@@ -614,6 +615,10 @@ export function renderRepairResult(result: RepairResult, opts: { diff: boolean }
 }
 
 export async function runRepairCommand(engine: BrainEngine, args: string[]): Promise<void> {
+  if (args[0] === 'agent-contract-resolve') {
+    const { runAgentContractResolution } = await import('./repair-agent-contract-resolve.ts');
+    return runAgentContractResolution(args.slice(1));
+  }
   if (args.includes('--help') || args.includes('-h')) { console.log(REPAIR_HELP); return; }
   const { kind, apply, all, json, noEmbed, includeAmbiguous, includeCrossEntity, source, expect, only, skip, slugs, diff, noLlm, maxUsd, limit: limitText,
     prefer, requests, allDrifted, driftClass, since, held, side, state, provenance, cursor, wholeClass, keep, requestId, olderThan, includeFailures, force, from, close, afterPage,

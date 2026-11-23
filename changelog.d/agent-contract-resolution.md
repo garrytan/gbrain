@@ -1,0 +1,1 @@
+Doctor can recognize an owner-reviewed repair receipt for an individual historical agent-contract fault. The original event and its seven-day counters remain available. A recurrence, an unreadable receipt, or a different executable keeps the finding open.

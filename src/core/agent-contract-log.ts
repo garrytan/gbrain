@@ -56,12 +56,19 @@ export function recordAgentContractEvent(event: AgentContractEvent): void {
   appendBoundedJsonl(agentContractLogPath(), { ts: new Date().toISOString(), ...event, version: event.version ?? VERSION });
 }
 
-/** Read back recent events (newest last). Never throws. */
-export function readAgentContractEvents(limit = 500): Array<AgentContractEvent & { ts: string }> {
+/** Read back recent events (newest last). Strict audit callers can distinguish unreadable logs. */
+export function readAgentContractEvents(limit = 500, strict = false): Array<AgentContractEvent & { ts: string }> {
   try {
     const lines = readFileSync(agentContractLogPath(), 'utf8').split('\n').filter(Boolean);
-    return lines.slice(-limit).map(l => JSON.parse(l));
-  } catch {
+    return lines.slice(-limit).map(l => {
+      const event = JSON.parse(l);
+      if (strict && (!event || typeof event.code !== 'string' || !Number.isFinite(Date.parse(event.ts)))) {
+        throw new Error('Invalid event log record');
+      }
+      return event;
+    });
+  } catch (error) {
+    if (strict && (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     return [];
   }
 }
