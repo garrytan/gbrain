@@ -306,6 +306,7 @@
   "test/engine-parity/journal-purge-terminal.test.ts": 11200,
   "test/engine-parity/journal-typed-sites.test.ts": 19500,
   "test/engine-parity/keyword-visibility.test.ts": 11076,
+  "test/engine-parity/label-guard-tiers.test.ts": 6000,
   "test/engine-parity/large-page.test.ts": 8172,
   "test/engine-parity/lifecycle.test.ts": 9864,
   "test/engine-parity/link-read-options.test.ts": 10634,

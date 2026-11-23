@@ -64,6 +64,16 @@ impl Brain {
         self.run(env, move |s| s.read_page_label_row(&source_id, &slug))
     }
 
+    /// `readLabelGuardTiers(pageId)`: resolves `{ owner_set, priors }`, the tiers a label guard over the page raises to.
+    #[napi]
+    pub fn read_label_guard_tiers<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_label_guard_tiers(page_id))
+    }
+
     /// `writePageLabelGuard(pageId, tier)`: `null` deletes the page's label guard; a tier sets it.
     #[napi]
     pub fn write_page_label_guard<'env>(

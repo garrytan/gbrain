@@ -10380,6 +10380,7 @@
         "readJournalCeiling": "none",
         "readJournalLimitRows": "none",
         "readKnowledgeRevisionNotNull": "none",
+        "readLabelGuardTiers": "none",
         "readLastAutopilotCycles": "none",
         "readLastCompletedJobAt": "none",
         "readLastContradictionsPromptVersion": "none",
