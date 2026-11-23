@@ -9278,7 +9278,7 @@
         "kind": "type",
         "name": "CatalogHandleOptions",
         "signature": [
-          "{ home?: string | undefined; failOpen?: boolean | undefined; deadlineMs?: number | undefined; sessionTokenBudget?: number | undefined; loadHint?: string | undefined; namesOnly?: boolean | undefined; explainTarget?: string | undefined; env?: NodeJS.ProcessEnv | undefined; now?: (() => number) | undefined; }"
+          "{ home?: string | undefined; failOpen?: boolean | undefined; deadlineMs?: number | undefined; sessionTokenBudget?: number | undefined; loadHint?: string | undefined; namesOnly?: boolean | undefined; explainTarget?: string | undefined; router?: boolean | undefined; env?: NodeJS.ProcessEnv | undefined; now?: (() => number) | undefined; }"
         ]
       },
       {
@@ -9298,7 +9298,7 @@
         "kind": "type",
         "name": "CatalogTurnOptions",
         "signature": [
-          "{ failOpen?: boolean | undefined; deadlineMs?: number | undefined; sessionTokenBudget?: number | undefined; loadHint?: string | undefined; namesOnly?: boolean | undefined; explainTarget?: string | undefined; now?: (() => number) | undefined; }"
+          "{ failOpen?: boolean | undefined; deadlineMs?: number | undefined; sessionTokenBudget?: number | undefined; loadHint?: string | undefined; namesOnly?: boolean | undefined; explainTarget?: string | undefined; router?: boolean | undefined; now?: (() => number) | undefined; }"
         ]
       },
       {
@@ -9350,7 +9350,7 @@
         "kind": "type",
         "name": "MatchStrength",
         "signature": [
-          "\"body\" | \"name\" | \"description\" | \"named\" | \"triggers\" | \"routing\""
+          "\"body\" | \"name\" | \"description\" | \"named\" | \"picked\" | \"triggers\" | \"routing\""
         ]
       },
       {
@@ -9372,6 +9372,7 @@
           "loadHint?: string | undefined",
           "namesOnly?: boolean | undefined",
           "now?: (() => number) | undefined",
+          "router?: boolean | undefined",
           "sessionTokenBudget?: number | undefined"
         ],
         "name": "ResolveOptions"
@@ -9485,6 +9486,7 @@
           "no_skill: boolean",
           "no_skill_reason: \"ack\" | \"no_match\" | null",
           "ranker: { id: string; version: number; variant: string | null; k: number; }",
+          "router?: RouterReport | undefined",
           "schema_version: 1",
           "shadow: boolean",
           "suggestions: Suggestion[]",

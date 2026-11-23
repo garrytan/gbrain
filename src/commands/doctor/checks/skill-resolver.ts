@@ -5,7 +5,9 @@
  * hook (wired, untrusted in Codex or unapproved in Hermes, outdated when it predates the SessionStart
  * compaction reset, or missing), each catalog's freshness
  * (the content tier: source re-read, index re-hashed) and the recent
- * outcomes and error codes from the lane log. It emits nothing when the
+ * outcomes and error codes from the lane log, and, with the model picker on
+ * (skills.resolver.router), its last 24 hours: picker turns, fallbacks by
+ * code and today's spend against the daily cap. It emits nothing when the
  * resolver is not configured: no keys, no hook, no catalog and no lane log.
  * harness_wiring carries the same view in its details.
  *
@@ -20,6 +22,8 @@ import { logsDir } from '../../../core/skills/resolver/paths.ts';
 import { LANE_LOG, readRecentDailyLog } from '../../../core/skills/resolver/daily-log.ts';
 import { CLAUDE_PLUGINS_CATALOG, projectCatalogPrefix, userCatalogName } from '../../../core/skills/resolver/hook-lane.ts';
 import { readResolverConfig, resolverHarnesses } from '../../../core/setup/skill-resolver-config.ts';
+import { routerSettings } from '../../../core/skills/resolver/config.ts';
+import { readRouterSpend } from '../../../core/skills/resolver/router.ts';
 import { inspectSkillResolverHook, type ResolverHarness, type ResolverHookState } from '../../../core/setup/skill-resolver-hook.ts';
 import { describeOpenclawSkill, openclawSkillView, type OpenclawSkillView } from './skill-resolver-openclaw.ts';
 import { describePiSkillView, piSkillView, type PiSkillView } from './skill-resolver-pi.ts';
@@ -37,12 +41,36 @@ export interface SkillResolverView {
   config: 'ok' | 'absent' | 'unreadable';
   harnesses: SkillResolverHarnessView[];
   recent: { turns: number; outcomes: Record<string, number>; errors: Record<string, number> };
+  /** With skills.resolver.router on: the last 24 hours of picker turns in the lane log and today's spend. */
+  router?: SkillResolverRouterView;
   /** The OpenClaw plugin (gbrain setup openclaw --skill-loading resolve|shadow), when any of it exists. */
   openclaw?: OpenclawSkillView;
   /** The Pi extension (gbrain setup pi --skill-loading resolve), when any of it exists. */
   pi?: PiSkillView;
   /** Cursor's pinned-skills rules (gbrain setup cursor --skill-loading resolve), when a project is recorded. */
   cursor?: CursorSkillView;
+}
+
+export interface SkillResolverRouterView { turns: number; picker: number; fallbacks: Record<string, number>; spent_usd: number; cap_usd: number; day: string }
+/** Below this many picker turns in 24 hours, the fallback rate is not judged. */
+const ROUTER_MIN_TURNS = 10;
+/** A fallback share at or above this warns. */
+const ROUTER_FALLBACK_WARN = 0.2;
+/** Fallbacks that need the user: one is enough to warn. */
+const ROUTER_SETUP_CODES = ['daily_cap', 'missing_key', 'no_pricing', 'config_invalid'];
+
+function recentRouter(home: string, now = Date.now()): Omit<SkillResolverRouterView, 'spent_usd' | 'cap_usd' | 'day'> {
+  const text = readRecentDailyLog(logsDir(home), LANE_LOG, LOG_TAIL_BYTES * 16, now) ?? '';
+  const out = { turns: 0, picker: 0, fallbacks: {} as Record<string, number> };
+  for (const line of text.split('\n')) {
+    let j: { at?: unknown; router?: { by?: unknown; code?: unknown } };
+    try { j = JSON.parse(line); } catch { continue; }
+    if (!j.router || typeof j.at !== 'string' || now - Date.parse(j.at) > 86_400_000) continue;
+    out.turns++;
+    if (j.router.by === 'picker') out.picker++;
+    if (typeof j.router.code === 'string') out.fallbacks[j.router.code] = (out.fallbacks[j.router.code] ?? 0) + 1;
+  }
+  return out;
 }
 
 function recentLane(home: string): SkillResolverView['recent'] | null {
@@ -88,7 +116,10 @@ export async function skillResolverView(home = configDir()): Promise<SkillResolv
   const pi = await piSkillView(home);
   const cursor = await cursorSkillView(home);
   if (harnesses.length === 0 && !recent && !(cfg.state === 'ok' && on.length) && !openclaw && !pi && !cursor) return null;
-  return { config: cfg.state, harnesses, recent: recent ?? { turns: 0, outcomes: {}, errors: {} }, ...(openclaw ? { openclaw } : {}), ...(pi ? { pi } : {}), ...(cursor ? { cursor } : {}) };
+  const section = cfg.state === 'ok' ? ((cfg.doc.skills as { resolver?: Record<string, unknown> } | undefined)?.resolver ?? {}) : {};
+  const rs = routerSettings(section);
+  const router = rs.on ? { ...recentRouter(home), ...(await readRouterSpend(home).then(x => ({ spent_usd: x.charged_usd, day: x.day }))), cap_usd: rs.maxUsdPerDay } : null;
+  return { config: cfg.state, harnesses, recent: recent ?? { turns: 0, outcomes: {}, errors: {} }, ...(router ? { router } : {}), ...(openclaw ? { openclaw } : {}), ...(pi ? { pi } : {}), ...(cursor ? { cursor } : {}) };
 }
 
 const setupArgv = (harness: string) => ['gbrain', 'setup', harness, '--skill-loading', 'resolve'];
@@ -105,7 +136,9 @@ export function describeSkillResolver(v: SkillResolverView): string {
   const oc = v.openclaw ? `; ${describeOpenclawSkill(v.openclaw).line}` : '';
   const pi = v.pi ? `; ${describePiSkillView(v.pi).line}` : '';
   const cursor = v.cursor ? `; ${describeCursorSkillView(v.cursor).line}` : '';
-  return `Skill resolver: ${parts.join('; ') || (v.openclaw || v.pi || v.cursor ? 'no hook harness on' : 'no harness on')}${v.recent.turns ? `; last ${v.recent.turns} turns${errs ? ` with ${errs}` : ' without errors'}` : ''}${oc}${pi}${cursor}.`;
+  const r = v.router;
+  const rt = r ? `; model picker on: answered ${r.picker} of ${r.turns} turns in 24 h${Object.keys(r.fallbacks).length ? ` (fell back: ${Object.entries(r.fallbacks).map(([c, n]) => `${c} x${n}`).join(', ')})` : ''}, ${r.spent_usd.toFixed(4)} of ${r.cap_usd.toFixed(2)} USD today` : '';
+  return `Skill resolver: ${parts.join('; ') || (v.openclaw || v.pi || v.cursor ? 'no hook harness on' : 'no harness on')}${v.recent.turns ? `; last ${v.recent.turns} turns${errs ? ` with ${errs}` : ' without errors'}` : ''}${rt}${oc}${pi}${cursor}.`;
 }
 
 export function skillResolverCheck(v: SkillResolverView | null): Check | null {
@@ -125,6 +158,8 @@ export function skillResolverCheck(v: SkillResolverView | null): Check | null {
       fix: { argv: setupArgv(broken.harness), consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify: doctorVerify(name),
         why: `Rebuilds the ${broken.harness} user catalog and rewrites only the skill-resolver hook entry; --skill-loading off removes it instead.` } };
   }
+  const router = v.router ? routerProblem(v.router) : null;
+  if (router) return { name, status: 'warn', message: `${describeSkillResolver(v)} ${router.what}`, details: { ...details, code: `skill_router_${router.code}` }, fix: router.fix };
   const oc = v.openclaw ? describeOpenclawSkill(v.openclaw).problem : null;
   if (oc) {
     return { name, status: 'warn', message: `${describeSkillResolver(v)} OpenClaw: ${oc.what}.`, details: { ...details, code: oc.code },
@@ -144,4 +179,27 @@ export function skillResolverCheck(v: SkillResolverView | null): Check | null {
         why: `Run it in ${cursor.project}: it rebuilds that project's catalog and rewrites its pinned-skills rule; gbrain setup cursor --skill-loading off there removes them instead.` } };
   }
   return { name, status: 'ok', message: describeSkillResolver(v), details };
+}
+
+/** The model picker's problem worth a warning, or null: a fallback that needs the user, or a high fallback rate. */
+function routerProblem(r: SkillResolverRouterView): { code: string; what: string; fix: NonNullable<Check['fix']> } | null {
+  const docs = (code: string) => `docs/guides/skill-resolver.md#router_fallback-${code}`;
+  const base = { requires_exclusive: false, verify: doctorVerify(name) };
+  const setup = ROUTER_SETUP_CODES.find(c => r.fallbacks[c]);
+  if (setup === 'daily_cap') {
+    return { code: setup, what: `The model picker reached its daily cap: ${r.spent_usd.toFixed(4)} of ${r.cap_usd.toFixed(2)} USD spent on ${r.day} (UTC), so the word matcher answers until the cap resets at 00:00 UTC.`,
+      fix: { ...base, argv: ['gbrain', 'config', 'set', 'skills.resolver.router_max_usd_per_day', String(Math.max(1, r.cap_usd * 2))], consent: ['paid'], actor: 'agent', docs: docs(setup),
+        why: 'Raises the daily spend cap for the model picker; each turn costs about $0.0001 to $0.001.',
+        user_message: `The skill picker spent its ${r.cap_usd.toFixed(2)} USD daily cap and resets at 00:00 UTC. Raise the cap to ${Math.max(1, r.cap_usd * 2)} USD a day?` } };
+  }
+  if (setup) {
+    const what = { missing_key: 'has no key for its model (set an Anthropic, OpenAI or Google key, or skills.resolver.router_model)', no_pricing: 'names a model gbrain has no price for, so its daily cap cannot be enforced (set skills.resolver.router_model to a priced model)', config_invalid: 'has a bad setting under skills.resolver.router_*' }[setup]!;
+    return { code: setup, what: `The model picker is on but ${what}, so the word matcher answers.`,
+      fix: { ...base, argv: ['gbrain', 'config', 'get', 'skills.resolver.router_model'], consent: [], actor: 'user', docs: docs(setup), why: 'Shows the picker model in use; the docs section names the fix for this code.' } };
+  }
+  const fell = r.turns - r.picker;
+  if (r.turns < ROUTER_MIN_TURNS || fell / r.turns < ROUTER_FALLBACK_WARN) return null;
+  const top = Object.entries(r.fallbacks).sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'timeout';
+  return { code: top, what: `The model picker fell back on ${fell} of ${r.turns} turns in 24 hours (mostly ${top}), so the word matcher answered them.`,
+    fix: { ...base, argv: ['gbrain', 'config', 'get', 'skills.resolver.router_timeout_ms'], consent: [], actor: 'user', docs: docs(top), why: 'A slow or failing provider; the docs section for the code names the fix.' } };
 }

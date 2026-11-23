@@ -295,6 +295,7 @@ async function runResolve(args: string[]): Promise<void> {
       ...(p.flags.get('--catalog') ? { catalogs: p.flags.get('--catalog') } : {}), failOpen,
       ...(one(p, '--load-hint') ? { loadHint: one(p, '--load-hint') } : {}), namesOnly: p.bools.has('--names-only'),
       ...(one(p, '--explain-target') !== undefined ? { explainTarget: one(p, '--explain-target') } : {}),
+      router: true,
     });
   } catch (e) {
     if (!(e instanceof ResolverError)) throw e;

@@ -209,6 +209,10 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // repair default (#6188) meters exactly; it is NOT a tier default yet
   // (openai-latest.ts METERED_ONLY keeps discovery on the gpt-5.6 family).
   'openai:gpt-6.1-sol':                   { input:  2.00, output: 10.00 },
+  // gpt-6-luna: list rate from developers.openai.com/api/docs/models/gpt-6-luna
+  // (checked 2026-11-22; standard tier). Priced so the skill resolver's model
+  // picker meters exactly; METERED_ONLY keeps it out of tier discovery.
+  'openai:gpt-6-luna':                    { input:  0.10, output:  0.50 },
 
   // ── Google ─────────────────────────────────────────────────────────────
   // `gemini-1.5-pro` was retired by Google (#3510); kept so historical

@@ -1,0 +1,7 @@
+**The skill resolver can ask a small model which skill a message needs (opt-in, off by default).**
+
+### Added
+- `gbrain config set skills.resolver.router true` turns on the model picker: Claude Haiku 5.5 (or GPT-6 Luna, or Gemini 3.5 Flash-Lite, by which key you have) reads your skill list and picks the skills a message needs, or none, so a request phrased in the user's own words still finds the right skill. It runs only from `gbrain skills resolve` and the Claude Code and Codex hooks, waits at most 1.5 seconds in Claude Code (2 seconds elsewhere), and spends at most $0.50 a day by default (`skills.resolver.router_max_usd_per_day`). When it can't answer in time, has no key or hits the cap, the turn is the word matcher's, unchanged, and `router.fallback.code` says why.
+- A model of your own (self-hosted or fine-tuned) plugs in as `router_model compat:<model id>` on any OpenAI-compatible endpoint, with `router_base_url`, the key's environment variable name in `router_api_key_env`, and its price in `router_usd_per_mtok` so the daily cap still holds.
+- `gbrain doctor` shows the last 24 hours of picker turns, fallbacks by reason and today's spend, and warns when one reason dominates. `gbrain setup claude-code` and `codex` print the one line that turns it on when a model key is configured.
+- Each `gbrain skills index build` writes `picker.json` (skill ids and descriptions) beside the index. Installs that leave the picker off behave exactly as before, and nothing leaves the machine.
