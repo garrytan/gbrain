@@ -6,6 +6,7 @@
  */
 import type { PageReadPolicy, PageReadScope } from '../types.ts';
 import { pageReadFilter } from '../search/read-policy-sql.ts';
+import { privatePagesFilterFragmentFast } from '../search/private-visibility.ts';
 import { chunkGenerationFilter } from '../search/safe-chunks.ts';
 import type { EngineRawRead } from './cli-reads-ops.ts';
 import { LIVE_STAGING_STATES } from './page-body.ts';
@@ -376,4 +377,25 @@ export async function listEnabledLabelledOnlyMemberIds(raw: EngineRawRead): Prom
   const rows = await raw<{ id: string }>(
     'SELECT id FROM access_members WHERE labelled_only AND disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id COLLATE "C"');
   return rows.map(r => r.id);
+}
+
+/** One source's chat page count and distinct channel count (grants/shared-exposure.ts chatChannelCensus). */
+export interface ChatCensusRow { source_id: string; chat_pages: number | string; channels: number | string }
+
+/**
+ * Per source among `sourceIds`, its live chat pages (types `chatTypes`; a `dmTypes` page is its own channel) that the
+ * private-page rule admits when `hidePrivate`, and their distinct channels, by source id in byte order (chatChannelCensus).
+ */
+export async function readChatCensusRows(raw: EngineRawRead, sourceIds: readonly string[], chatTypes: readonly string[], dmTypes: readonly string[], hidePrivate: boolean): Promise<ChatCensusRow[]> {
+  return raw<ChatCensusRow>(
+    `SELECT p.source_id, count(*) AS chat_pages,
+            count(DISTINCT CASE WHEN p.type = ANY($3::text[]) THEN 'dm:' || p.slug
+              ELSE COALESCE(NULLIF(p.frontmatter->>'channel', ''), NULLIF(p.frontmatter->>'chat', ''), NULLIF(p.frontmatter->>'conversation', ''),
+                lower(substring(p.title from '^#([A-Za-z0-9._-]+)')), '') END) AS channels
+       FROM pages p
+      WHERE p.deleted_at IS NULL AND p.type = ANY($1::text[]) AND p.source_id = ANY($2::text[])
+        ${hidePrivate ? `AND ${privatePagesFilterFragmentFast('p')}` : ''}
+      GROUP BY p.source_id ORDER BY p.source_id COLLATE "C"`,
+    [[...chatTypes], [...sourceIds], [...dmTypes]],
+  );
 }

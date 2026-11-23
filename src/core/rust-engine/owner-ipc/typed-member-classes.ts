@@ -19,7 +19,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   // The page-list, slug-source, access and source-add reads that moved off raw SQL together: plain SELECTs.
   'listSourcePathRows', 'readTopologyChangeDigest', 'listLiveSlugSourceIds', 'resolveChainAnchorRows', 'probeTargetRows', 'readCompanyBrainEvidenceRows', 'listCardRows', 'readShelfPageRows', 'readFirstLiveSlugAtPath', 'listPathTwinSlugs', 'listLiveSlugOrigins',
   'probeRetypeRows', 'listAliasCandidatePages', 'listLinkCandidatePages', 'countLivePagesByType', 'listTypeOrphanRows', 'readStaleMentionScan',
-  'readClockMillisText', 'listLiveSourceIncarnations', 'readAttendanceWindow', 'listEmailAliasPages', 'readUploadSessionByRequest', 'readSourceIncarnationArchived', 'listEnabledLabelledOnlyMemberIds',
+  'readClockMillisText', 'listLiveSourceIncarnations', 'readAttendanceWindow', 'listEmailAliasPages', 'readUploadSessionByRequest', 'readSourceIncarnationArchived', 'listEnabledLabelledOnlyMemberIds', 'readChatCensusRows',
   // The mention pass's and the gazetteer, extract snapshot and explain reads (engine-sql/mention-pass.ts, mention-reads.ts).
   // readMentionPageRevisions and readMentionGenerations take row locks (FOR SHARE) only, so they stay reads.
   'readSegmentedPageSealed',

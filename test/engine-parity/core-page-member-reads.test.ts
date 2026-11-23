@@ -16,6 +16,8 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { runCore } from '../../src/commands/core.ts';
+import { isCapabilityRefusal } from './arm-capabilities.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -61,4 +63,36 @@ describe('engine parity: core-memory page list for a member caller', () => {
       return out;
     },
   );
+});
+
+describe('engine parity: gbrain core remove', () => {
+  // `core remove` un-cores the page and closes its pending remote-edit notices. A Rust brain keeps no notices, so it must
+  // refuse before it un-cores the page: the page stays core and nothing changes. PGLite and Postgres un-core it.
+  parityTest('core remove un-cores the page, and an engine without notices refuses it before changing anything', {
+    methods: ['putPage', 'readPageSnapshot'], requires: 'raw_sql',
+  }, async (engine: BrainEngine, backend) => {
+    await engine.putPage('core/about', core({}), { sourceId: 'default' });
+    const isCore = async () => (await engine.readPageSnapshot('core/about', { sourceId: 'default' }))?.page.frontmatter?.always_load === true;
+    const errors: string[] = [];
+    const error = console.error;
+    const log = console.log;
+    console.error = (...a: unknown[]) => { errors.push(a.join(' ')); };
+    console.log = () => {};
+    let refused: unknown = null;
+    try {
+      await runCore(engine, ['remove', 'core/about']);
+    } catch (e) {
+      refused = e;
+    } finally {
+      console.error = error;
+      console.log = log;
+    }
+    if (backend === 'rust') {
+      expect({ refused: isCapabilityRefusal(refused, 'raw_sql'), stillCore: await isCore(), errors }).toEqual({ refused: true, stillCore: true, errors: [] });
+      throw refused;
+    }
+    const out = { refused, core: await isCore(), errors };
+    expect(out).toEqual({ refused: null, core: false, errors: [] });
+    return out;
+  });
 });

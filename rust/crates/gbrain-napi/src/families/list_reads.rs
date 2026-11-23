@@ -221,4 +221,10 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_email_alias_pages(&alias_norm, &source_id))
     }
+
+    /// `readChatCensusRows(query)`: `[{ source_id, chat_pages, channels }]` by source.
+    #[napi]
+    pub fn read_chat_census_rows<'env>(&self, env: &'env Env, query: Value) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_chat_census_rows(&required(query, "query")?))
+    }
 }

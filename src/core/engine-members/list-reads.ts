@@ -3,7 +3,7 @@
  * `BrainEngine` extends this interface.
  */
 import type { PageReadPolicy } from '../types.ts';
-import type { AttendanceWindowRow, CardListQuery, CardRow, CompanyBrainEvidenceRows, MentionScanLinkRow, MentionScanPageRow, PageBodyRow, PageSourceIdRow, RetypeProbeQuery, ShelfPageRow, SourceIdScope, TargetProbeSqlRow } from '../engine-sql/list-reads.ts';
+import type { AttendanceWindowRow, CardListQuery, ChatCensusRow, CardRow, CompanyBrainEvidenceRows, MentionScanLinkRow, MentionScanPageRow, PageBodyRow, PageSourceIdRow, RetypeProbeQuery, ShelfPageRow, SourceIdScope, TargetProbeSqlRow } from '../engine-sql/list-reads.ts';
 
 export interface ListReadMembers {
   /** The sources holding a live page at `slug`, by id in byte order (page-ref ambiguity, quarantine clear, --grammar). */
@@ -48,4 +48,6 @@ export interface ListReadMembers {
   readSourceIncarnationArchived(sourceId: string): Promise<{ incarnation: string; archived: boolean } | null>;
   /** The enabled labelled-only members, by id in byte order. */
   listEnabledLabelledOnlyMemberIds(): Promise<string[]>;
+  /** Per source, its live chat pages the private-page rule admits (when asked) and their distinct channels, by source id in byte order. */
+  readChatCensusRows(sourceIds: readonly string[], chatTypes: readonly string[], dmTypes: readonly string[], hidePrivate: boolean): Promise<ChatCensusRow[]>;
 }

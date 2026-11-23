@@ -4,9 +4,10 @@
  * readRetainedSources is the connector status's "retained" flag (persistence/connector-status.ts).
  */
 import type { PageReadPolicy } from '../../types.ts';
-import type { AttendanceWindowRow, CardListQuery, CardRow, CompanyBrainEvidenceRows, MentionScanLinkRow, MentionScanPageRow, PageBodyRow, PageSourceIdRow, RetypeProbeQuery, ShelfPageRow, SourceIdScope, TargetProbeSqlRow } from '../../engine-sql/list-reads.ts';
+import type { AttendanceWindowRow, CardListQuery, ChatCensusRow, CardRow, CompanyBrainEvidenceRows, MentionScanLinkRow, MentionScanPageRow, PageBodyRow, PageSourceIdRow, RetypeProbeQuery, ShelfPageRow, SourceIdScope, TargetProbeSqlRow } from '../../engine-sql/list-reads.ts';
 import { storeCall, takeOptions, type StoreMember } from './common.ts';
-import { storePagePolicy } from './private-provenance.ts';
+import { storePagePolicy, storePageTextPolicy } from './private-provenance.ts';
+import { privatePagesFilterFragment } from '../../search/private-visibility.ts';
 
 /**
  * A caller's read policy as the store's page read scope (`pageReadFilter` with its live filter, search/read-policy-sql.ts):
@@ -115,4 +116,14 @@ export const listEnabledLabelledOnlyMemberIds: StoreMember<[], string[]> = async
     Array<{ id: string; labelled_only: boolean; disabled_at: unknown; tombstoned_at: unknown }>;
   return rows.filter(r => r.labelled_only === true && r.disabled_at == null && r.tombstoned_at == null).map(r => r.id)
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+};
+
+/**
+ * The chat census. The SQL engines filter with `privatePagesFilterFragmentFast`, which never reads the caller: it is the
+ * no-caller private-page rule (`privatePagesFilterFragment`) with a cheap first test for pages every rule admits, so the
+ * store applies that rule's page policy (`noReaders`).
+ */
+export const readChatCensusRows: StoreMember<[sourceIds: readonly string[], chatTypes: readonly string[], dmTypes: readonly string[], hidePrivate: boolean], ChatCensusRow[]> = async (brain, sourceIds, chatTypes, dmTypes, hidePrivate) => {
+  const excludePrivate = hidePrivate ? storePageTextPolicy('readChatCensusRows', () => privatePagesFilterFragment('p'), { noReaders: true }) : null;
+  return (await storeCall({ member: 'readChatCensusRows' }, () => brain.readChatCensusRows({ sourceIds: [...sourceIds], chatTypes: [...chatTypes], dmTypes: [...dmTypes], excludePrivate }))) as ChatCensusRow[];
 };

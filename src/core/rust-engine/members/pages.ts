@@ -198,6 +198,7 @@ export const PAGES_MEMBERS = {
   readUploadSessionByRequest: 'pages',
   readSourceIncarnationArchived: 'pages',
   listEnabledLabelledOnlyMemberIds: 'access_control',
+  readChatCensusRows: 'pages',
   hasCompanyBrainReceipt: 'sources',
   readGuestSourceRow: 'sources',
   listGuestSourceIds: 'sources',

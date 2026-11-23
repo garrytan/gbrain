@@ -327,6 +327,34 @@ pub struct SlugSourceRow {
     pub source_id: String,
 }
 
+/// One source's chat census (`ChatCensusRow`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ChatCensusRow {
+    pub source_id: String,
+    pub chat_pages: u64,
+    pub channels: u64,
+}
+
+/// `readChatCensusRows(query)`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ChatCensusQuery {
+    pub source_ids: Vec<String>,
+    pub chat_types: Vec<String>,
+    pub dm_types: Vec<String>,
+    pub exclude_private: Option<crate::facts::PrivacyPolicy>,
+}
+
+/// `lower(substring(title from '^#([A-Za-z0-9._-]+)'))`: the channel a leading `#name` names.
+fn title_channel(title: &str) -> Option<String> {
+    let rest = title.strip_prefix('#')?;
+    let name: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        .collect();
+    (!name.is_empty()).then(|| name.to_ascii_lowercase())
+}
+
 /// The pages at `slug` that the read policy admits with its live filter on, by source id.
 fn readable_copies(store: &Store, slug: &str, scope: &PageReadScope) -> Result<Vec<PageRecord>> {
     let read = store.read()?;
@@ -788,6 +816,56 @@ impl Store {
             .into_iter()
             .take(2)
             .map(|(source_id, slug)| SlugSourceRow { slug, source_id })
+            .collect())
+    }
+
+    /// `readChatCensusRows(query)`: per source among `sourceIds` (by id in byte order), its live pages
+    /// of a chat type that the page policy admits (when given), and how many distinct channels they
+    /// come from: a DM-type page is its own channel (`dm:<slug>`), else the frontmatter `channel`,
+    /// `chat` or `conversation` (the first non-empty), else a leading `#name` of the title lowered,
+    /// else the empty channel. A source with no such page has no row.
+    pub fn read_chat_census_rows(&self, query: &ChatCensusQuery) -> Result<Vec<ChatCensusRow>> {
+        let read = self.read()?;
+        let scope = PageReadScope {
+            source_ids: Some(query.source_ids.clone()),
+            exclude_private: query.exclude_private.clone(),
+            ..PageReadScope::default()
+        };
+        let pages = pages_in_read_scope(
+            &*read,
+            all_pages(&*read)?
+                .into_iter()
+                .filter(|p| {
+                    p.deleted_at_us.is_none()
+                        && query.chat_types.contains(&p.page_type)
+                        && query.source_ids.contains(&p.source_id)
+                })
+                .collect(),
+            &scope,
+        )?;
+        let mut by_source: std::collections::BTreeMap<String, (u64, std::collections::BTreeSet<String>)> =
+            Default::default();
+        for p in pages {
+            let channel = if query.dm_types.contains(&p.page_type) {
+                format!("dm:{}", p.slug)
+            } else {
+                ["channel", "chat", "conversation"]
+                    .iter()
+                    .find_map(|k| fm_text(&p.frontmatter, k).filter(|v| !v.is_empty()))
+                    .or_else(|| title_channel(&p.title))
+                    .unwrap_or_default()
+            };
+            let entry = by_source.entry(p.source_id).or_default();
+            entry.0 += 1;
+            entry.1.insert(channel);
+        }
+        Ok(by_source
+            .into_iter()
+            .map(|(source_id, (chat_pages, channels))| ChatCensusRow {
+                source_id,
+                chat_pages,
+                channels: channels.len() as u64,
+            })
             .collect())
     }
 

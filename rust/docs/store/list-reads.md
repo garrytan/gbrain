@@ -31,3 +31,4 @@ Answered in the TypeScript member with no store call:
 
 - `readUploadSessionByRequest`: `null`. The store keeps no `page_body_stagings` row of kind `upload`; the session insert in persistence/page-upload.ts runs raw SQL, which this engine refuses, so no session exists to find.
 - `readSourceIncarnationArchived`: the `incarnation` and `archived` of `brain.readSourceState(sourceId)`, or `null`.
+| `brain.readChatCensusRows({ sourceIds, chatTypes, dmTypes, excludePrivate })` | `[{ source_id, chat_pages, channels }]` by source id: each listed source's live pages of a chat type that the page policy admits (when given), and their distinct channels (a DM-type page is its own channel `dm:<slug>`; else the first non-empty frontmatter `channel`, `chat` or `conversation`; else a leading `#name` of the title, lowered; else the empty channel). A source with no such page has no row | `readChatCensusRows` (grants/shared-exposure.ts chatChannelCensus) |
