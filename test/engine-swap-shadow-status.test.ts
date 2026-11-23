@@ -82,7 +82,7 @@ describe('the engine swap reads the shadow status document', () => {
       const dir = writeShadow(now, { ...NOT_RUN_PROBE, state: 'pass', checked_at: now.toISOString(), server_version: '16', collation: 'C' });
       let printed = '';
       expect(await runEngineShadow(['status', '--json'], { config: () => CONFIG, out: l => { printed += l; }, now: () => now })).toBe(0);
-      const doc = shadowStatusDocument({ key: shadowBrainKey(CONFIG)!, dir }, now);
+      const doc = await shadowStatusDocument({ key: shadowBrainKey(CONFIG)!, dir }, now);
       expect(JSON.parse(printed)).toEqual(JSON.parse(JSON.stringify(doc)));
       expect(await readConfiguredShadowStatus(() => CONFIG, now)).toEqual(doc as never);
     });

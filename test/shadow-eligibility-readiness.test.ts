@@ -17,6 +17,10 @@ import { evaluateReadiness, type ShadowStatus } from '../src/core/engine-swap/re
 import { buildEligibilityStatus } from '../src/shadow/eligibility.ts';
 import { WriterObserver } from '../src/shadow/writer-observations.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { readConfiguredShadowStatus } from '../src/shadow/status-document.ts';
+import { shadowBrainKey, shadowDirFor, writeShadowState, SHADOW_STATE_VERSION } from '../src/shadow/state.ts';
+import { withEnv } from './helpers/with-env.ts';
+import { mkdirSync } from 'node:fs';
 
 let primary: PGLiteEngine;
 let dir: string;
@@ -101,5 +105,26 @@ describe('criterion 11 from the eligibility producer', () => {
     await observe('11111111-1111-4111-8111-111111111111', 'gbrain cli:1:aaaaaaaa');
     expect((await criterion11({ engine: primary, brain: 'team-a' })).verdict.reason).toBe('team_brain');
     expect((await criterion11({ engine: primary, target: 'linux-x64-musl' })).row.state).toBe('fail');
+  });
+});
+
+describe('the status document the swap reads', () => {
+  test('with the primary passed in it carries the writer fields; without it they are absent', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-elig-doc-'));
+    try {
+      await withEnv({ GBRAIN_HOME: home }, async () => {
+        const config = { engine: 'pglite' as const, database_path: join(home, 'brain.pglite') };
+        const sdir = shadowDirFor(shadowBrainKey(config)!);
+        mkdirSync(sdir, { recursive: true });
+        writeShadowState(sdir, { version: SHADOW_STATE_VERSION, enabled: true, started_at: new Date(Date.now() - 86_400_000).toISOString(), sample_rate: 1, queue_bound: 8, plan_hash: 'h', brain: 'b', primary_engine: 'pglite' });
+        await observe('11111111-1111-4111-8111-111111111111', 'gbrain cli:1:aaaaaaaa');
+        const withEngine = await readConfiguredShadowStatus(() => config, new Date(), primary);
+        expect(withEngine?.eligibility).toMatchObject({ writer_hosts_7d: 1, unknown_writer_paths: 0, team_brain: false });
+        const without = await readConfiguredShadowStatus(() => config, new Date());
+        expect(without && 'writer_hosts_7d' in without.eligibility).toBe(false);
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
