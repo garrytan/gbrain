@@ -62,7 +62,9 @@ compare. The primary answer never waits for the child. It writes nothing to the 
 brain repo; everything lives in <gbrain home>/shadow/<brain>/. stop --delete removes that directory.
 
 seed copies this brain into the Rust store once, in one read-only snapshot, before shadow mode compares answers.
-It writes nothing to the brain. A store is seeded once: to seed again, delete the shadow directory first.
+It writes no table row, source file, ownership marker or registry entry of the brain. Opening a PGLite brain still
+takes its process lock, and PGLite rewrites its own control and log files. A brain with an open repair episode is not
+opened. A store is seeded once: to seed again, delete the shadow directory first.
 seed runs on a brain that uses managed storage too; only the swap refuses such a brain. seed reads the brain's storage
 mode right before its snapshot and records it in seed.json; a mode it cannot read does not stop the seed.
 
@@ -408,6 +410,11 @@ async function openConfiguredPrimary(): Promise<BrainEngine> {
   if (!quiet) {
     await engine.connect(config);
     return engine;
+  }
+  // A healthy open also closes an open repair episode and prunes older repair backups; a seed must not, so it leaves that brain unopened.
+  const { readRepairSidecar } = await import('../core/pglite-repair.ts');
+  if (readRepairSidecar(config.database_path!).episodeStartedAt !== null) {
+    throw Object.assign(new Error('a repair episode is open on this brain; opening it would close the episode and prune its backups'), { code: 'repair_episode_open' });
   }
   const savedRepair = process.env.GBRAIN_PGLITE_WAL_REPAIR;
   process.env.GBRAIN_PGLITE_WAL_REPAIR = 'off';
