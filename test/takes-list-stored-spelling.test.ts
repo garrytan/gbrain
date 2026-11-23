@@ -7,13 +7,16 @@
  *     `takes revisit <stored spelling>` opens the file the stored spelling names.
  *  2. Regression: both commands ran `normalizeSlug` on the typed slug and looked only at the normal form, so a page stored
  *     with capitals or decomposed accents answered "No takes" / "Page not found" by the very name it is stored under.
+ *     Also pinned: a deleted page under the typed spelling never hides its live twin, a name in normal form and a list with no
+ *     page read as before, two sources holding one slug both list, and revisit opens the file the chosen page records (inside
+ *     the source root, never a decoy under the typed name).
  *  3. Existing coverage: test/takes-horizon-cli.test.ts covers `takes horizon` by a stored spelling, not list or revisit.
  *  4. Seam: none. A real PGLite engine and the CLI command; revisit gets a temp brain repo and `EDITOR=true`.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runTakes } from '../src/commands/takes.ts';
 
@@ -28,11 +31,15 @@ async function capture(run: () => Promise<void>): Promise<string> {
 }
 
 /** A page with one take, stored under `stored` the way an older writer left it. */
-async function storeWithTake(stored: string, claim: string): Promise<void> {
+async function storeWithTake(stored: string, claim: string, opts: { sourceId?: string; deleted?: boolean; sourcePath?: string } = {}): Promise<void> {
+  const sourceId = opts.sourceId ?? 'default';
+  if (sourceId !== 'default') await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [sourceId]);
   const seed = `companies/seed-${Math.random().toString(36).slice(2, 8)}`;
-  await engine.putPage(seed, { type: 'company', title: claim, compiled_truth: 'Body.' });
-  await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2', [stored, seed]);
-  const [page] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug = $1', [stored]);
+  await engine.putPage(seed, { type: 'company', title: claim, compiled_truth: 'Body.' }, { sourceId });
+  await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2 AND source_id = $3', [stored, seed, sourceId]);
+  if (opts.deleted) await engine.executeRaw('UPDATE pages SET deleted_at = now() WHERE slug = $1 AND source_id = $2', [stored, sourceId]);
+  if (opts.sourcePath) await engine.executeRaw('UPDATE pages SET source_path = $1 WHERE slug = $2 AND source_id = $3', [opts.sourcePath, stored, sourceId]);
+  const [page] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug = $1 AND source_id = $2', [stored, sourceId]);
   await engine.addTakesBatch([{ page_id: page!.id, row_num: 1, claim, kind: 'bet', holder: 'world', weight: 0.7, since_date: '2025-01-01' }]);
 }
 
@@ -55,34 +62,142 @@ describe('takes list by a stored spelling', () => {
     const json = JSON.parse(await capture(() => runTakes(engine, ['list', 'companies/cafe\u0301-example', '--json'])));
     expect(json.map((t: { claim: string }) => t.claim)).toEqual(['Decomposed claim']);
   });
+
+  test('a deleted page stored under the typed spelling does not hide its live normal-form twin', async () => {
+    await storeWithTake('Companies/Twin-Example', 'Deleted claim', { deleted: true });
+    await storeWithTake('companies/twin-example', 'Live claim');
+    const json = JSON.parse(await capture(() => runTakes(engine, ['list', 'Companies/Twin-Example', '--json'])));
+    expect(json.map((t: { claim: string }) => t.claim)).toEqual(['Live claim']);
+  });
+
+  test('a name already in normal form lists what it lists today', async () => {
+    await storeWithTake('companies/normal-example', 'Normal claim');
+    const json = JSON.parse(await capture(() => runTakes(engine, ['list', 'companies/normal-example', '--json'])));
+    expect(json.map((t: { claim: string }) => t.claim)).toEqual(['Normal claim']);
+  });
+
+  test('a list with no page lists every active take, as the engine does', async () => {
+    const expected = JSON.parse(JSON.stringify(await engine.listTakes({ active: true })));
+    const json = JSON.parse(await capture(() => runTakes(engine, ['list', '--json'])));
+    expect(expected.length).toBeGreaterThan(0);
+    expect(json).toEqual(expected);
+  });
+
+  test('a normal-form name held by two sources lists both, as today', async () => {
+    await storeWithTake('companies/shared-example', 'Default shared claim');
+    await storeWithTake('companies/shared-example', 'Other shared claim', { sourceId: 'other-src' });
+    const json = JSON.parse(await capture(() => runTakes(engine, ['list', 'companies/shared-example', '--json'])));
+    expect(json.map((t: { claim: string }) => t.claim).sort()).toEqual(['Default shared claim', 'Other shared claim']);
+  });
+
+  test('a stored spelling held by two sources lists both', async () => {
+    await storeWithTake('Companies/Dup-Example', 'Default dup claim');
+    await storeWithTake('Companies/Dup-Example', 'Other dup claim', { sourceId: 'other-src' });
+    const json = JSON.parse(await capture(() => runTakes(engine, ['list', 'Companies/Dup-Example', '--json'])));
+    expect(json.map((t: { claim: string }) => t.claim).sort()).toEqual(['Default dup claim', 'Other dup claim']);
+  });
 });
+
+/** A temp home with a brain repo configured as `sync.repo_path`. */
+function newBrain(): { home: string; repo: string } {
+  const home = mkdtempSync(join(tmpdir(), 'gbrain-revisit-'));
+  const repo = join(home, 'brain');
+  mkdirSync(repo, { recursive: true });
+  mkdirSync(join(home, '.gbrain'), { recursive: true });
+  writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', sync: { repo_path: repo } }));
+  return { home, repo };
+}
+
+function writeMarkdown(file: string): string {
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, '---\ntitle: Revisit\n---\nBody.\n');
+  return file;
+}
+
+const marked = (file: string): boolean => readFileSync(file, 'utf8').includes('<!-- gbrain:revisit -->');
+
+/** Runs `takes revisit <typed>` against the brain in `home` with `EDITOR=true`; returns the exit code and what it wrote to stderr. */
+async function revisit(typed: string, home: string): Promise<{ exitCode: number; stderr: string }> {
+  const env = { GBRAIN_HOME: process.env.GBRAIN_HOME, EDITOR: process.env.EDITOR, VISUAL: process.env.VISUAL };
+  process.env.GBRAIN_HOME = home; process.env.EDITOR = 'true'; delete process.env.VISUAL;
+  const exit = process.exit;
+  let exitCode = 0;
+  const stderr: string[] = [];
+  const write = process.stderr.write.bind(process.stderr);
+  (process as { exit: unknown }).exit = (code?: number) => { exitCode = code ?? 0; throw new Error(`exit ${code}`); };
+  (process.stderr as { write: unknown }).write = (s: string) => { stderr.push(String(s)); return true; };
+  try {
+    await runTakes(engine, ['revisit', typed]).catch(() => {});
+  } finally {
+    (process as { exit: unknown }).exit = exit;
+    (process.stderr as { write: unknown }).write = write;
+    for (const [k, v] of Object.entries(env)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+  return { exitCode, stderr: stderr.join('') };
+}
 
 describe('takes revisit by a stored spelling', () => {
   test('opens the file the stored capitalised spelling names', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'gbrain-revisit-'));
-    const repo = join(home, 'brain');
-    mkdirSync(join(repo, 'Companies'), { recursive: true });
-    const file = join(repo, 'Companies', 'Revisit-Example.md');
-    writeFileSync(file, '---\ntitle: Revisit\n---\nBody.\n');
-    mkdirSync(join(home, '.gbrain'), { recursive: true });
-    writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', sync: { repo_path: repo } }));
-    const env = { GBRAIN_HOME: process.env.GBRAIN_HOME, EDITOR: process.env.EDITOR, VISUAL: process.env.VISUAL };
-    process.env.GBRAIN_HOME = home; process.env.EDITOR = 'true'; delete process.env.VISUAL;
-    const exit = process.exit;
-    let exitCode: number | undefined;
-    const stderr: string[] = [];
-    const write = process.stderr.write.bind(process.stderr);
-    (process as { exit: unknown }).exit = (code?: number) => { exitCode = code ?? 0; throw new Error(`exit ${code}`); };
-    (process.stderr as { write: unknown }).write = (s: string) => { stderr.push(String(s)); return true; };
-    try {
-      await runTakes(engine, ['revisit', 'Companies/Revisit-Example']).catch(() => {});
-    } finally {
-      (process as { exit: unknown }).exit = exit;
-      (process.stderr as { write: unknown }).write = write;
-      for (const [k, v] of Object.entries(env)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
-    }
-    const opened = { exitCode: exitCode ?? 0, notFound: stderr.some(s => s.includes('Page not found')), marked: readFileSync(file, 'utf8').includes('<!-- gbrain:revisit -->') };
+    await storeWithTake('Companies/Revisit-Example', 'Revisit claim');
+    const { home, repo } = newBrain();
+    const file = writeMarkdown(join(repo, 'Companies', 'Revisit-Example.md'));
+    const result = await revisit('Companies/Revisit-Example', home);
+    const opened = { exitCode: result.exitCode, notFound: result.stderr.includes('Page not found'), marked: marked(file) };
     rmSync(home, { recursive: true, force: true });
     expect(opened).toEqual({ exitCode: 0, notFound: false, marked: true });
+  });
+
+  test('a name in normal form opens the file under that name', async () => {
+    await storeWithTake('companies/plain-revisit-example', 'Plain claim');
+    const { home, repo } = newBrain();
+    const file = writeMarkdown(join(repo, 'companies', 'plain-revisit-example.md'));
+    const result = await revisit('companies/plain-revisit-example', home);
+    const opened = { exitCode: result.exitCode, marked: marked(file) };
+    rmSync(home, { recursive: true, force: true });
+    expect(opened).toEqual({ exitCode: 0, marked: true });
+  });
+
+  test('opens the page the name selects, never a decoy file under the typed name', async () => {
+    await storeWithTake('companies/decoy-example', 'Decoy claim', { sourcePath: 'notes/real-example.md' });
+    const { home, repo } = newBrain();
+    const real = writeMarkdown(join(repo, 'notes', 'real-example.md'));
+    const decoy = writeMarkdown(join(repo, 'Companies', 'Decoy-Example.md'));
+    const result = await revisit('Companies/Decoy-Example', home);
+    const opened = { exitCode: result.exitCode, real: marked(real), decoy: marked(decoy) };
+    rmSync(home, { recursive: true, force: true });
+    expect(opened).toEqual({ exitCode: 0, real: true, decoy: false });
+  });
+
+  test('opens the file recorded for a page in a source inside a git checkout', async () => {
+    const { home, repo } = newBrain();
+    mkdirSync(join(repo, '.git'), { recursive: true });
+    const file = writeMarkdown(join(repo, 'public', 'Companies', 'Git-Example.md'));
+    await storeWithTake('Companies/Git-Example', 'Git claim', { sourceId: 'git-src', sourcePath: 'public/Companies/Git-Example.md' });
+    await engine.executeRaw('UPDATE sources SET local_path = $1 WHERE id = $2', [join(repo, 'public'), 'git-src']);
+    const result = await revisit('Companies/Git-Example', home);
+    const opened = { exitCode: result.exitCode, notFound: result.stderr.includes('Page not found'), marked: marked(file) };
+    rmSync(home, { recursive: true, force: true });
+    expect(opened).toEqual({ exitCode: 0, notFound: false, marked: true });
+  });
+
+  test('refuses a recorded path that leaves the source root, and leaves that file alone', async () => {
+    await storeWithTake('companies/escape-example', 'Escape claim', { sourcePath: '../outside/escape-example.md' });
+    const { home } = newBrain();
+    const outside = writeMarkdown(join(home, 'outside', 'escape-example.md'));
+    const result = await revisit('Companies/Escape-Example', home);
+    const opened = { exitCode: result.exitCode, refused: result.stderr.includes('inside the source root'), marked: marked(outside) };
+    rmSync(home, { recursive: true, force: true });
+    expect(opened).toEqual({ exitCode: 1, refused: true, marked: false });
+  });
+
+  test('refuses a recorded path that a symlink carries out of the source root', async () => {
+    await storeWithTake('companies/link-example', 'Link claim', { sourcePath: 'link/link-example.md' });
+    const { home, repo } = newBrain();
+    const outside = writeMarkdown(join(home, 'elsewhere', 'link-example.md'));
+    symlinkSync(join(home, 'elsewhere'), join(repo, 'link'));
+    const result = await revisit('Companies/Link-Example', home);
+    const opened = { exitCode: result.exitCode, refused: result.stderr.includes('inside the source root'), marked: marked(outside) };
+    rmSync(home, { recursive: true, force: true });
+    expect(opened).toEqual({ exitCode: 1, refused: true, marked: false });
   });
 });
