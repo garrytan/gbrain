@@ -38,7 +38,7 @@ start here.
    export PATH="$HOME/.bun/bin:$PATH"
    bun install -g github:garrytan/gbrain#stable
    ```
-   Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](INSTALL_FOR_AGENTS.md#no-unzip), not an improvised one.
+   Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](INSTALL_FOR_AGENTS.md#no-unzip), not an improvised one. A command scanner (Hermes) refuses the Bun installer or `bun install -g`? Use the [release binary route](INSTALL_FOR_AGENTS.md#release-binary).
    If `bun install -g` aborts or `gbrain doctor` reports `schema_version: 0`
    ([#218](https://github.com/garrytan/gbrain/issues/218)), run `gbrain apply-migrations --yes --no-autopilot-install`.
    Exit 1 with `migrations_pending` means the schema is still behind and another `--yes` repeats the failure:
@@ -323,7 +323,8 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   typed metric claims in its `## Facts` fence (`metric: mrr`, `value: 50000`,
   `unit: USD`, `period: monthly` columns), run
   `gbrain eval trajectory <entity-slug>` for the chronological history
-  with regressions auto-flagged, or `gbrain founder scorecard <entity-slug>`
+  with regressions auto-flagged (a 10% drop, or a 10% rise for a
+  lower-is-better metric such as burn, churn or cost, but not cost_savings), or `gbrain founder scorecard <entity-slug>`
   for a four-signal JSON rollup (claim_accuracy / consistency /
   growth_trajectory / red_flags). MCP op `find_trajectory` exposes the
   same data — read scope, visibility-filtered for remote callers.
@@ -1026,6 +1027,19 @@ The PATH line goes in `~/.profile`, which new login shells read. Bash skips `~/.
 Next, on Claude Code or Codex: `gbrain setup claude-code` (or `gbrain setup codex`), which needs no API
 key ([Step 3](#step-3-create-the-brain)). On any other harness, `gbrain init --pglite --no-embedding` (Step 3).
 
+<a id="release-binary"></a>
+
+**A command scanner blocks the Bun installer or `bun install` (Hermes).** Some harnesses check each shell command before running it and refuse what they can't approve without a person. Hermes in single-query mode refuses `curl … | bash`, `bun install -g github:…` (its scanner, Tirith, can't finish a package lookup for a `github:` spec) and commands that append to a dotfile such as `~/.profile`. Install the release binary instead: one file built from the same release, which needs no Bun, no git and no package install. Run each line as its own command, exactly as written (Linux x64; on an Apple Silicon Mac use `gbrain-darwin-arm64`):
+
+```bash
+curl -fL --create-dirs -o ~/.local/bin/gbrain https://github.com/garrytan/gbrain/releases/latest/download/gbrain-linux-x64
+chmod +x ~/.local/bin/gbrain
+~/.local/bin/gbrain --version
+~/.local/bin/gbrain init --pglite --no-embedding
+```
+
+`releases/latest` is the stable release. Use the absolute path `~/.local/bin/gbrain` in every command and MCP registration instead of editing shell profiles. Run each line as written: an added `2>&1`, `$(…)` or `{ …; }` group can make the scanner refuse a line it would otherwise pass. Then run `~/.local/bin/gbrain setup hermes`: it registers gbrain through Hermes's own `hermes mcp add` (no hand edit of Hermes's protected `config.yaml`), adds the brain-first rule and its per-turn hook, and checks the server with `hermes mcp test gbrain`. If it prints a `hermes mcp add` command instead, or (an older gbrain) says setup does not register Hermes's MCP server, run the registration command from [docs/mcp/HERMES.md](docs/mcp/HERMES.md#register-by-hand) with `~/.local/bin/gbrain` as the command. If the user would rather keep the Bun install, Hermes's own refusal names its setting for this: `approvals.single_query_mode: approve` in Hermes's config, which is the user's call. `gbrain upgrade` updates a release binary in place.
+
 > **If `bun install -g` aborts or `gbrain doctor` reports `schema_version: 0`**
 > ([#218](https://github.com/garrytan/gbrain/issues/218)), run `gbrain apply-migrations --yes --no-autopilot-install`.
 > Exit 0 means the schema is at head. Exit 1 with `migrations_pending` means it is still behind and another
@@ -1498,15 +1512,34 @@ model gbrain removed in v0.33, needs `gbrain skillpack migrate-fence` once.)
 > Postgres/Supabase engine, which tolerates concurrent connections. Details:
 > [docs/architecture/serve-sync-concurrency.md](docs/architecture/serve-sync-concurrency.md).
 
-**If you are Hermes:** register gbrain as your MCP server:
+**If you are Hermes:** run setup by the path you installed gbrain at:
 
 ```bash
-printf 'Y\n' | hermes mcp add gbrain --env GBRAIN_HOME=$HOME --connect-timeout 60 --command $(which gbrain) --args serve --surface starter --advertise verbs
+~/.local/bin/gbrain setup hermes
 ```
 
-Keep `--args` last (everything after it becomes server argv) and verify with
-`hermes mcp test gbrain` — the add exits 0 even on failure. Full reference:
-[docs/mcp/HERMES.md](docs/mcp/HERMES.md).
+It registers gbrain as your MCP server through Hermes's own `hermes mcp add`, so
+you never edit `config.yaml` yourself (Hermes refuses that edit), adds the
+brain-first rule and its per-turn hook (without them a new session seldom calls
+gbrain), and checks the server with `hermes mcp test gbrain`. If it prints a
+`hermes mcp add` command instead of registering, or (an older gbrain) says it does
+not register Hermes's MCP server, run the command in
+[Register by hand](docs/mcp/HERMES.md#register-by-hand) and verify with
+`hermes mcp test gbrain`. Full reference: [docs/mcp/HERMES.md](docs/mcp/HERMES.md).
+
+**If you are OpenClaw:** register gbrain as your MCP server, then add the
+brain-first rule:
+
+```bash
+openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg starter --arg --advertise --arg verbs --env GBRAIN_HOME=$HOME
+gbrain setup openclaw
+```
+
+Run both lines. With only the first, the tools are registered but a new session
+answers from OpenClaw's own memory and chat history instead of gbrain. Once the
+gateway runs `gbrain serve`, use the MCP tools rather than the `gbrain` CLI on a
+PGLite brain (the CLI stops with `pglite_busy`). Full reference:
+[docs/mcp/OPENCLAW.md](docs/mcp/OPENCLAW.md).
 
 **If you are Grok Build** (xAI's `grok` CLI): register gbrain as your MCP server:
 
@@ -1913,7 +1946,7 @@ Since 16 November 2026, stable comes with a written promise about what a script 
 - Search ranking, speed and the exact results of model-backed features.
 - Very large brains during an upgrade. The upgrade tests build small brains, on PGLite and on Postgres, with and without a git repository. The two-hour load test runs a 600,000-page brain on the new release but does not upgrade one. Until [#9192](https://github.com/garrytan/gbrain/issues/9192) is fixed, a large brain on a remote Postgres database can return no search results for hours after an upgrade while it catches up.
 
-**How it is checked.** Every pull request runs a check (`bun run check:public-surface`) against a list of the commands, MCP tools and their parameters, config keys and exit codes, built from the code into [docs/contracts/public-surface.json](contracts/public-surface.json). The list has the flags of every command defined as an operation, and of the 8 CLI-only commands (out of 132) that have a curated help record; the flags of the other 124, `recall` and `forget` among them, are checked in review. The check refuses a pull request that:
+**How it is checked.** Every pull request runs a check (`bun run check:public-surface`) against a list of the commands, MCP tools and their parameters, config keys and exit codes, built from the code into [docs/contracts/public-surface.json](contracts/public-surface.json). The list has the flags of every command defined as an operation, and of the 8 CLI-only commands (out of 132) that have a curated help record; the flags of the other 124, `recall` and `forget` among them, are checked in review. It also has the skill resolver surface that outside skill sets build on: the `gbrain skills index`, `resolve`, `library` and `pin` subcommands with all their flags, `gbrain skillpack health` and `doctor`, `gbrain setup --skill-loading`, the `skills.resolver.*` config keys `top_k`, `top_gate`, `pinned`, `pins.<catalog>`, `session_token_budget` and `per_harness.<harness>.dirs`, and the `block`, `no_skill` and `suggestions[].id` fields of `gbrain skills resolve --json`. The check refuses a pull request that:
 
 - drops one of them, or changes an exit code, before a [deprecations.d/](../deprecations.d/README.md) record for it has reached its `remove_after` date, unless the pull request adds a behaviour-change row marked `exception: security` or `exception: data-loss`;
 - adds a deprecation record whose date is less than 14 days away, or changes what a merged record names, or moves its date earlier;
@@ -1922,7 +1955,7 @@ Since 16 November 2026, stable comes with a written promise about what a script 
 
 What never reached stable isn't covered. The check compares with the list at the current stable release (the `stable` tag), so something added since then can be removed with no record. When the clone lacks the tag, the check fetches it from GitHub. In CI a fetch that fails or takes more than 20 seconds fails the check and asks for a rerun, so a missing tag never waives the rule; a local run without the tag says so and counts everything as on stable. Until a stable release carries the list, the check says so and counts everything as on stable; a revert then marks its behaviour-change row `exception: revert` and names the pull request it reverts.
 
-The rest is checked when the pull request is reviewed: `--json` fields, the page format, wording, what a command does beyond its name, and the part of the deprecation rule that asks for two stable releases. If a stable release breaks one of these rules anyway, that is a regression, and it is handled like any other: fixed, with the fix sent to stable as an important fix.
+The rest is checked when the pull request is reviewed: other `--json` fields, the page format, wording, what a command does beyond its name, and the part of the deprecation rule that asks for two stable releases. If a stable release breaks one of these rules anyway, that is a regression, and it is handled like any other: fixed, with the fix sent to stable as an important fix.
 
 ## How a release becomes stable
 
@@ -3647,7 +3680,8 @@ GBrain is MIT-licensed and free to self-host, and it starts with no API keys: se
 | How it connects | Agents |
 |---|---|
 | One command wires memory, hooks and instructions | [Claude Code](docs/mcp/CLAUDE_CODE.md) (`gbrain setup claude-code`), [Codex](docs/mcp/CODEX.md) (`gbrain setup codex`) |
-| MCP from its guide, then `gbrain setup <name>` adds the brain-first instructions | [OpenClaw](docs/mcp/OPENCLAW.md), [Hermes](docs/mcp/HERMES.md), [opencode](docs/mcp/OPENCODE.md), [Cursor](#connect-gbrain-to-your-ai-client-mcp) |
+| `gbrain setup hermes` registers MCP through Hermes's own CLI and adds the brain-first instructions | [Hermes](#hermes) |
+| MCP from its guide, then `gbrain setup <name>` adds the brain-first instructions | [OpenClaw](docs/mcp/OPENCLAW.md), [opencode](docs/mcp/OPENCODE.md), [Cursor](#connect-gbrain-to-your-ai-client-mcp) |
 | MCP from its guide | [ChatGPT](docs/mcp/CHATGPT.md), [Claude Desktop](docs/mcp/CLAUDE_DESKTOP.md), [Claude Cowork](docs/mcp/CLAUDE_COWORK.md), [Perplexity](docs/mcp/PERPLEXITY.md), [Grok Build](docs/mcp/GROK.md), [Grok Bot](docs/guides/grok-bot.md), [Muse](docs/guides/muse.md), [Windsurf and other stdio clients](#connect-gbrain-to-your-ai-client-mcp) |
 | Any other coding agent | Paste the [install prompt](#heres-how-to-self-host-it) below |
 
@@ -3673,7 +3707,7 @@ New releases come out many times a day, but the install command below gives you 
 > (codex mcp get gbrain >/dev/null 2>&1 || codex mcp add gbrain --url https://gbrain.io/mcp) && gbrain setup codex --instructions-only
 > ```
 >
-> Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](INSTALL_FOR_AGENTS.md#no-unzip), not an improvised one.
+> Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](INSTALL_FOR_AGENTS.md#no-unzip), not an improvised one. A command scanner (Hermes) refuses the Bun installer or `bun install -g`? Use the [release binary route](INSTALL_FOR_AGENTS.md#release-binary).
 >
 > `gbrain setup <harness> --instructions-only` tells the agent the brain is there; agents seldom call an MCP server nobody told them about. It writes the [brain-first block](docs/guides/setup.md#brain-first-instructions) into `~/.claude/CLAUDE.md` or Codex's `AGENTS.md` (a non-empty `AGENTS.override.md` instead when Codex has one) with a per-turn rule hook, and leaves the MCP entry alone; the same command with `--no-instructions` added takes them out.
 >
@@ -3706,6 +3740,19 @@ https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
 Keep my current identity and instructions, start keyless, and show me the
 search-mode choice. Verify a remember/recall round trip with real GBrain calls.
 ```
+
+### Hermes
+
+Hermes checks every shell command before it runs it, and with nobody there to approve (`hermes chat -q`, a gateway or cron run) it refuses the Bun installer and `bun install -g`. Install the release binary instead, one file that needs no Bun and no package install, and let setup register it through Hermes's own `hermes mcp add`. Run each line as its own command (Linux x64; on an Apple Silicon Mac use `gbrain-darwin-arm64`):
+
+```bash
+curl -fL --create-dirs -o ~/.local/bin/gbrain https://github.com/garrytan/gbrain/releases/latest/download/gbrain-linux-x64
+chmod +x ~/.local/bin/gbrain
+~/.local/bin/gbrain init --pglite --no-embedding
+~/.local/bin/gbrain setup hermes
+```
+
+Then start a new Hermes session. Setup registers the MCP server (`hermes mcp test gbrain` checks it) and adds the brain-first rule to `~/.hermes/SOUL.md` with a per-turn hook. Hermes's approval and command-scanner settings stay as they are; setup only records the approval for its own per-turn hook. If setup prints a `hermes mcp add` command instead of registering, run that command as printed. To paste it to Hermes instead, use the prompt above. Details: [docs/mcp/HERMES.md](docs/mcp/HERMES.md).
 
 Postgres, thin clients, API keys and upgrades: [docs/INSTALL.md](docs/INSTALL.md). Agents: [INSTALL_FOR_AGENTS.md](INSTALL_FOR_AGENTS.md). Memory-only walkthrough: [give your coding agent a memory](docs/tutorials/connect-coding-agent.md).
 
@@ -4965,9 +5012,15 @@ means the unclean-shutdown genesis is still active — see the ladder's rung 4).
 
 One gbrain process opens a PGLite brain at a time. While `gbrain serve` (stdio
 or `--http`) holds it, page and fact writes from the CLI (`gbrain put`,
-`gbrain remember`) go through the running server and work. Commands that need
-the database to themselves, which includes the admin commands
-(`gbrain access …`, `gbrain sources …`, `gbrain auth …`) and most reads,
+`gbrain remember`) and everyday reads (`gbrain find`, `list`, `search`, `query`,
+`get`, `tags`, `links`, `backlinks`, `timeline`, `history`, `graph`, `whois`,
+`entity`, `search-exact` and `gbrain waiting`) go through the
+running server and print what they print with no server running. A read run
+with a read-affecting `GBRAIN_*` variable or provider key the server does not
+share stays with the refusal below. Edits to `config.json` reach the server's
+answers only after the server restarts. Commands
+that need the database to themselves, which includes the admin commands
+(`gbrain access …`, `gbrain sources …`, `gbrain auth …`) and the remaining reads,
 refuse with `pglite_busy` reason `live_serve`. The refusal names the server's
 PID, and its fix is two steps: stop that server, then run the command again.
 Never remove the lock of a server that is still running.
@@ -5201,6 +5254,17 @@ holding the single-writer data-dir lock reports `locked_by_serve`
 (healthy-with-note) instead of hanging ~30 seconds and misreporting a healthy
 brain as broken. A failed probe returns a classified diagnosis (reason +
 remediation), not a raw error.
+
+A probe that reaches the brain also prints `brain_ref` (JSON `probe.brain_ref`, human line `Ref:`): a 16-character
+one-way digest of the brain's persistence identity (`persistence_brain.brain_id`), which a reviewed policy uses to
+name one brain, such as the engine swap's dated readiness override. The digest cannot be turned back into the
+identity, and the command never prints the identity itself. While `gbrain serve` holds a PGLite brain, the probe
+reads the reference that serve recorded at start and after each reconnect (`<data dir>.gbrain-brain-ref.json`, 0600, holding the reference and
+a digest of the serve's lock token, never the identity); a file another lock holder wrote is refused
+(`brain_ref_note: serve_brain_ref_stale`). Other notes, with `brain_ref: null`: `no_persistence_identity`,
+`brain_ref_unreadable`, `locked_by_other_process`, `serve_brain_ref_missing` (a serve from before this field).
+
+**Say to your agent:** *"Give me my brain's brain_ref from gbrain engine status, not its id."*
 
 ### `gbrain db-repair [--yes] [--apply-rewrites] [--json] [--force] [--undo-last-rewrite] [--dry-run]`
 
@@ -5966,11 +6030,30 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   value), `queue_depth`, `applied_rows`, `coverage_watermark`; `reconcile.state` (`never_run`, `ok`, `repaired`,
   `error`), `last_pass` (with `repaired_rows`, `repaired_by_relation` and `follower_misses`: repaired rows found while the
   watermark claimed coverage), `consecutive_clean_full_passes`, `next_full_pass_due`; `fingerprints` (`checked_rows`,
-  `mismatches`, and a `probe` that runs a fixed text corpus through the primary's fingerprint SQL); `allocators`;
+  `mismatches`, and a `probe`, described below); `allocators`;
   `seed`; `primary_refreshes` (`nonterminal_rows`: primary `gbrain sources refresh` rows that are neither completed nor
   aborted, counted by the last full pass, with its `checked_at`; `null` before one; a swap must drain them first, and
   this is a reading, not the swap's own check); and `write_comparisons`, which is `capability_missing` until write comparisons are built. The
   `write_comparisons` and `fingerprints` counts are totals for the current epoch; one epoch is one seed.
+- **Fingerprint probe.** Withdrawals and purge tombstones key on the fact fingerprint, so a primary whose `lower()` or
+  `[[:space:]]` answers differ from PGLite's (and Rust's) for some code point would fingerprint a claim holding it
+  differently, and a withdrawn fact would not match on Rust. At follower start and on each full pass the probe reads, in
+  one read-only set-based query, `lower(chr(cp))` and `chr(cp) ~ '[[:space:]]'` for every Unicode scalar value (surrogates
+  and U+0000 excluded) plus the word-final sigma rule, and compares them with PGLite's tables in
+  `rust/crates/gbrain-store/tests/fixtures/fact_fingerprints.json`. It also runs every hand row and every sixth seeded row of
+  that corpus through `gbrain_fact_fingerprint` and `gbrain_fact_fingerprint_v1` (texts as bind parameters, never logged).
+  If any code point differs it counts the stored `facts` rows whose claim holds one (a count, never the text). The query costs
+  about 0.5 s on Postgres 16 and 17 with a glibc database, 0.7 s with an ICU database and 0.7 s on PGLite, measured on a dev
+  container; it reads only. `probe` carries
+  `state` (`pass`, `fail`, `not_run`), `checked_at`, `server_version`, `mismatches` (the fixed 20-claim corpus against Rust), the
+  database's `collation`, `ctype`, `locale_provider` (`c` libc, `i` ICU, `b` builtin) and `locale` (`datlocale` on Postgres 17,
+  `daticulocale` on 16, `null` where absent), `differing_code_points` (the first 50 as `U+XXXX`) with
+  `differing_code_points_total`, `corpus_mismatches` with `corpus_mismatch_rows` (the first five row names, never text) and
+  `facts_with_differing_code_points`. `state` is `fail` when code points differ and at least one stored fact holds one, or when
+  a corpus row or the fixed corpus differs and no differing code point explains it; otherwise `pass`, and a pass still lists the
+  differing code points so a swap report can name them. A probe that errors is `not_run`. A glibc `en_US.utf8` host differs
+  (U+0085, U+1680, circled letters and more); a C-ctype host differs on every cased non-ASCII letter, so it fails once a fact
+  holds one.
 - **Provisional report.** The verdict is always `NOT READY`: this phase compares reads only, write comparisons
   are not built yet, and the readiness decision come in later phases of the plan
   (`docs/designs/RUST_ENGINE.md`, Phase S). Until the Rust engine serves reads, comparisons record
@@ -6180,10 +6263,12 @@ Timing knobs the drain uses:
 
 A long-running process (the serve, `gbrain sync --watch`) keeps the tree
 listing of the commit its last pass read and lists only what changed since
-(`git diff-tree`), still judging every path. It also keeps its last synced
-pass's pages-and-import-records read (`I⋈P`) and re-reads in its own
-snapshot only rows changed since. Any doubt reads whole: a new
-process, another source, a failed or unsynced pass, a read older than 10
+(`git diff-tree`), still judging every path. It also keeps its last
+pass's pages-and-import-records read (`I⋈P`), when that pass synced or stopped
+resumable, and re-reads in its own snapshot only rows changed since; a round
+whose `HEAD` moved since the pass's previous round patches that round's read
+the same way. Any doubt reads whole: a new
+process, another source, a failed pass, a read older than 10
 minutes, a change over a quarter of the tree or source (and over 2,000), counts
 that do not add up, a wide transaction-id span, pathspec characters in scope,
 or any error. Holds, markers, open work and the Git level are read every round.
@@ -7910,7 +7995,21 @@ note/conversation containers;
 most-recently-touched breaks ties within the same match shape. A non-entity
 exact-title page remains a valid fallback. Multi-hit ⇒ best match's card +
 runners-up in `suggestions`. Miss ⇒ `found: false` + keyword near-misses with
-`create_safety` hints.
+`create_safety` hints. A miss is an answer only when every lookup read ran: when
+a page-lookup read fails (the alias, exact title / slug, alias-hydrate or name-variant read, or a name-variant
+candidate's retirement or redirect-target read),
+the call still answers (`found: false` with whatever the other reads found, or
+the best hit they found) and is marked degraded with the stage
+`entity_lookup_failed` (reason `timeout` or `provider_error`) in
+`_meta.retrieval.degraded`, so MCP carries `_meta.degraded` and the
+`[gbrain degraded: entity_lookup_failed]` text block and the CLI carries a
+`degraded` key (`--json`) or the same line on stderr. Exit code stays 0, as for
+every degraded result; `GBRAIN_FAIL_ON_EMPTY=1` does not turn a failed lookup
+into `no_results`, also under `GBRAIN_ENFORCED_MEMBER`. A failed lookup is never "the entity does not exist": retry
+or run `gbrain doctor`. A brain without the `page_aliases` table (before its
+migration) is not degraded: the alias arm is empty by design. An engine that
+refuses raw reads ends the call on its typed `engine_capability_missing`
+refusal instead.
 
 Response: `{ protocol_version, found, latency_ms, card?, suggestions? }`.
 Card: `{ entity{slug,title,type}, aka[], summary, last_touched{updated_at,
@@ -9052,6 +9151,7 @@ Refused writes a caller never saw land (`lost_caller_writes`) have their own rep
 | `local_path_missing` | This host owns the worktree but has no checkout path registered. | Register the checkout again on the brain host. |
 | `coordination_path_missing` | This host's registration has no coordination directory. | Repair the registration on the brain host. |
 | `not_sent`, `outcome_unknown` | The local owner's IPC lane did not take the write, or lost its acknowledgment. | `gbrain sources writer status --probe --json`; for `outcome_unknown` read the receipt (`gbrain write-request -- <id>`) before resubmitting. |
+| `earlier_call_running` | Rust brain only: the owner held this read back because an earlier write it would confirm is still running. Nothing ran, and the read tells nothing about that write. | Wait for the earlier call to end, then run the read again. Do not rerun the earlier write before the read answers. |
 
 A running sync is not one of these: `gbrain repair fences` now runs during a catch-up for every candidate the sync does not still name ([fence repair during a sync](repair.md#fence-repair-during-a-sync)), and a candidate it does name is `sync_in_progress`, not `owner_unavailable`.
 

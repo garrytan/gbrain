@@ -27,6 +27,9 @@ pub const REVISION_CONFLICT: &str = "revision_conflict";
 pub const REVISION_REQUIRED: &str = "revision_required";
 /// The named page does not exist (only where PGLite throws instead of returning null).
 pub const PAGE_NOT_FOUND: &str = "page_not_found";
+/// `readPageSnapshot` under `requireUnambiguous` found more than one readable page for the
+/// identifier (PGLite's `PageSnapshotAmbiguousError`).
+pub const PAGE_AMBIGUOUS: &str = "page_ambiguous";
 /// The write breaks a table constraint that PGLite enforces (a CHECK list or a unique key). The
 /// whole write rolls back.
 pub const CONSTRAINT_VIOLATION: &str = "constraint_violation";
@@ -48,6 +51,12 @@ pub const WRITER_REJECTED: &str = "writer_rejected";
 pub const SOURCE_CHANGED: &str = "source_changed";
 /// A journal request is not in a state that allows the call.
 pub const INVALID_STATE: &str = "invalid_state";
+/// Internal: an optimistic write transaction read something another transaction changed before
+/// it committed. `Store::write` runs the transaction again; callers do not see this code unless
+/// a write keeps losing until its retry budget is spent.
+pub const WRITE_CONFLICT: &str = "write_conflict";
+/// A write inside a read-only transaction (Postgres SQLSTATE 25006, `read_only_sql_transaction`).
+pub const READ_ONLY_TRANSACTION: &str = "read_only_transaction";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoreError {

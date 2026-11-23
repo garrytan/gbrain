@@ -29,7 +29,7 @@ function transactionOn<T extends object>(engine: T): T {
 describe('decide spend cache', () => {
   test('a page transaction reads its engine\'s cached daily figure instead of querying again', async () => {
     let reads = 0;
-    const engine = { executeRaw: async () => { reads++; return [{ total: 2, remote: 1 }]; } } as unknown as BrainEngine;
+    const engine = { dailyDecideSpend: async () => { reads++; return { total: 2, remote: 1 }; } } as unknown as BrainEngine;
     const now = Date.now();
     expect(await dailySpend(engine, now)).toEqual({ total: 2, remote: 1 });
     expect(await dailySpend(transactionOn(engine), now)).toEqual({ total: 2, remote: 1 });
@@ -39,10 +39,9 @@ describe('decide spend cache', () => {
   test('spend rows buffered for one brain are written to that brain when the next row names another, even during a flush', async () => {
     const written = new Map<string, string[]>();
     const brain = (name: string, delayMs: number) => ({
-      executeRaw: async (_sql: string, params: string[][]) => {
+      insertDecideSpend: async (rows: readonly SpendRow[]) => {
         await Bun.sleep(delayMs);
-        written.set(name, [...(written.get(name) ?? []), ...params[0]!]);
-        return [];
+        written.set(name, [...(written.get(name) ?? []), ...rows.map((r) => r.request_id)]);
       },
     }) as unknown as BrainEngine;
     const a = brain('a', 200);

@@ -463,3 +463,40 @@ describe('checkBackupCoverage — GBRA-585 item 7', () => {
   });
 });
 
+
+// ── Failed reads are not a confident answer ─────────────────────────────────
+
+describe('checkBackupCoverage — unreadable receipt and maturity', () => {
+  test('a healthy repo with an unreadable install receipt warns instead of reading ok', async () => {
+    const repo = makeHealthyRepo('src-ok');
+    const dir = join(tmp, '.gbrain', 'bootstrap');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'receipt.json'), '{ not json');
+
+    const check = await checkBackupCoverage(makeEngine([{ id: 'src-ok', local_path: repo }], 3), { localOnly: true });
+
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('receipt_unreadable');
+  });
+
+  test('a failed maturity read says the database was unreadable instead of reading as a young brain', async () => {
+    const repo = makeNoOriginRepo('src-young');
+    const engine = {
+      kind: 'pglite',
+      executeRaw: async (sql: string) => {
+        if (/FROM facts/i.test(sql)) throw new Error('facts unreadable');
+        if (/FROM sources/i.test(sql)) {
+          return [{ id: 'src-young', name: 'src-young', local_path: repo, last_commit: null, last_sync_at: null, config: '{}', created_at: new Date(), archived: false, newest_content_at: null }];
+        }
+        if (/FROM pages/i.test(sql)) return [{ n: 1 }];
+        throw new Error(`unexpected sql in stub: ${sql}`);
+      },
+    } as unknown as BrainEngine;
+
+    const check = await checkBackupCoverage(engine, { localOnly: true });
+
+    expect(check.status).toBe('warn');
+    expect((check.details as { degraded: boolean }).degraded).toBe(true);
+    expect(check.message).toContain('the database was unreadable during the check');
+  });
+});

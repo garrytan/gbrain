@@ -936,9 +936,9 @@ export async function runPhaseExtractAtoms(
   try {
     extractModel = await resolveExtractAtomsModel(engine);
     const configuredBudget = await engine.getConfig('cycle.extract_atoms.budget_usd');
-    if (configuredBudget) {
+    if (configuredBudget?.trim()) {
       const n = Number(configuredBudget);
-      if (Number.isFinite(n) && n > 0) { budgetCap = n; explicitBudget = true; }
+      if (Number.isFinite(n) && n >= 0) { budgetCap = n; explicitBudget = true; }
     }
     const configuredMaxOutput = await engine.getConfig('cycle.extract_atoms.max_output_tokens');
     if (configuredMaxOutput) {

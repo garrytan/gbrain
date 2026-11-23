@@ -170,20 +170,13 @@ describe('purgeDeletedPages (TTL boundary)', () => {
     expect(remaining[0].n).toBe(0);
   });
 
-  test('clamps negative hours to 0 (no crash, no future-cutoff explosion)', async () => {
+  test('refuses negative hours and purges nothing', async () => {
     await seedPage(engine, 'people/ivan');
     await engine.softDeletePage('people/ivan');
-    // The contract being pinned: negative input must NOT pass through to the
-    // SQL as a literal negative interval (which would purge from the future
-    // and effectively delete every soft-deleted row). Implementation does
-    // `Math.max(0, Math.floor(olderThanHours))`, so -72 collapses to 0. With
-    // hours=0, the predicate `deleted_at < now()` may or may not match a row
-    // soft-deleted in the same statement (timing-dependent), so this test
-    // pins only the safety contract: it returns successfully with a finite
-    // count and doesn't blow up the brain.
-    const result = await engine.purgeDeletedPages(-72);
-    expect(result.count).toBeGreaterThanOrEqual(0);
-    expect(Number.isFinite(result.count)).toBe(true);
+    // The contract being pinned: a negative age must NOT purge anything. It used to clamp to 0 hours and purge every
+    // tombstone; it is now refused before any statement runs (#9823 post-land finding 1, every engine alike).
+    await expect(engine.purgeDeletedPages(-72)).rejects.toMatchObject({ name: 'PurgeAgeError', code: 'invalid_argument' });
+    expect((await engine.getPage('people/ivan', { includeDeleted: true }))?.slug).toBe('people/ivan');
   });
 });
 
@@ -291,10 +284,8 @@ describe('purgeDeletedPages dry-run (shares the delete predicate)', () => {
     expect(purged.slugs).toContain('cap/victim');
   });
 
-  test('dry-run clamps negative hours (no crash, finite count)', async () => {
-    const preview = await engine.purgeDeletedPages(-72, { dryRun: true });
-    expect(Number.isFinite(preview.count)).toBe(true);
-    expect(preview.count).toBeGreaterThanOrEqual(0);
+  test('dry-run refuses negative hours like the real run', async () => {
+    await expect(engine.purgeDeletedPages(-72, { dryRun: true })).rejects.toMatchObject({ name: 'PurgeAgeError', code: 'invalid_argument' });
   });
 });
 

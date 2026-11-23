@@ -797,7 +797,8 @@ impl Store {
         digests: &[DigestInput],
     ) -> Result<FollowResult> {
         check_seed_id(seed_id)?;
-        let mut apply = Apply::new(relation, generation)?;
+        // Checked here for its errors; the write below builds its own, since it may run again.
+        Apply::new(relation, generation)?;
         let digests = row_digests(rows, digests)?;
         let mut sorts = BTreeMap::new();
         for key in keys {
@@ -813,6 +814,7 @@ impl Store {
         }
         let with_row: BTreeSet<&Vec<u8>> = digests.iter().map(|d| &d.sort).collect();
         self.write_as(seed_trust(), |tx| {
+            let mut apply = Apply::new(relation, generation)?;
             apply.begin(tx, seed_id)?;
             for (sort, key) in &sorts {
                 if !with_row.contains(sort) {
@@ -840,7 +842,8 @@ impl Store {
         digests: &[DigestInput],
     ) -> Result<FollowResult> {
         check_seed_id(seed_id)?;
-        let mut apply = Apply::new(relation, generation)?;
+        // Checked here for its errors; the write below builds its own, since it may run again.
+        Apply::new(relation, generation)?;
         let (lo, hi) = (parse_bound("lo", lo)?, parse_bound("hi", hi)?);
         let digests = row_digests(rows, digests)?;
         for d in &digests {
@@ -854,6 +857,7 @@ impl Store {
         }
         let given: BTreeSet<&Vec<u8>> = digests.iter().map(|d| &d.sort).collect();
         self.write_as(seed_trust(), |tx| {
+            let mut apply = Apply::new(relation, generation)?;
             apply.begin(tx, seed_id)?;
             for (sort, _) in entries_in(&*tx, relation, lo.as_deref(), hi.as_deref(), None)? {
                 if !given.contains(&sort) {

@@ -136,8 +136,10 @@ sanitizes it with `sanitizeRemoteBody`, and calls `seal_segmented_page`. In one 
    shows the published segment chunks.
 4. Records the text as the page's sealed search timeline (`pages::record_search_timeline`).
 
-PGLite overlays the page's withdrawals and global purges on the stored lead first. The store keeps no
-withdrawal ledger or purge markers, so here that overlay is the identity.
+PGLite overlays the page's withdrawals and global purges on the stored lead first. Here that overlay is the
+identity: the seal reads the stored lead directly and the store keeps no purge markers, so the stored lead is the
+lead sealed. `readPageSnapshot` does report the page's withdrawals, for the overlay a reader applies to a
+segmented page's lead.
 
 ## Refusals
 

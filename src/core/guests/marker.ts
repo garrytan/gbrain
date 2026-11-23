@@ -72,13 +72,16 @@ const attributed = (g: GuestStamp): g is GuestStamp & { sender: string; group: s
 /** `[outside guest · <sender> · <group> · <YYYY-MM-DD> · not the owner's words, not verified]`, or the unattributed form. */
 export function guestWarningLine(guest: GuestStamp): string {
   if (!attributed(guest)) return `[outside guest · unattributed · ${NOT_OWNER}]`;
-  return `[outside guest · ${escapeGuestLabel(guest.sender)} · ${escapeGuestLabel(guest.group)} · ${guest.saved_at ?? 'undated'} · ${NOT_OWNER}]`;
+  return `[outside guest · ${escapeGuestLabel(guest.sender)} · ${escapeGuestLabel(guest.group)} · ${escapeGuestLabel(guest.saved_at ?? 'undated')} · ${NOT_OWNER}]`;
 }
+
+/** A line guestWarningLine writes, with its newline, at the start of the text: `gbrain get` prints it above a guest page. */
+export const GUEST_WARNING_LINE_RE = /^\[outside guest · (?:unattributed|[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}\[\]·<>";]{0,64} · [^\p{Cc}\p{Cf}\p{Zl}\p{Zp}\[\]·<>";]{0,64} · [^\p{Cc}\p{Cf}\p{Zl}\p{Zp}\[\]·<>";]{0,64}) · not the owner's words, not verified\]\r?\n/u;
 
 /** What the remote quote fence names instead of "conversation excerpt" for a guest page (search/transcript-quote.ts). */
 export function guestQuoteLabel(guest: GuestStamp): string {
   if (!attributed(guest)) return `outside guest note, unattributed, ${NOT_OWNER}`;
-  return `outside guest note from ${escapeGuestLabel(guest.sender)} in ${escapeGuestLabel(guest.group)}, saved ${guest.saved_at ?? 'undated'}, ${NOT_OWNER}`;
+  return `outside guest note from ${escapeGuestLabel(guest.sender)} in ${escapeGuestLabel(guest.group)}, saved ${escapeGuestLabel(guest.saved_at ?? 'undated')}, ${NOT_OWNER}`;
 }
 
 /** The fixed line gbrain appends to a think answer built from guest notes; the model never writes it. */

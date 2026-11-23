@@ -99,7 +99,7 @@ fn page_versions_keep_ids_times_and_columns() {
     second.insert("write_request_id".into(), Some(REV.into()));
     let r = import(&s, "page_versions", vec![version_row("31", "7"), second]);
     assert_eq!((r.imported, r.skipped, r.dropped), (2, 0, 0));
-    assert_eq!(r.unmapped_columns, vec!["write_request_id".to_string()]);
+    assert!(r.unmapped_columns.is_empty());
     assert!(r.losses.is_empty());
 
     let got = s
@@ -129,6 +129,11 @@ fn page_versions_keep_ids_times_and_columns() {
     assert_eq!(stored.change_reason.as_deref(), Some("edited"));
     assert!(stored.successor_pruned);
     assert_eq!(stored.body_storage, None);
+    assert!(stored.receipt.is_empty());
+    let second: crate::pages::VersionRecord =
+        get_json(&*read, &keys::version(7, 32)).unwrap().unwrap();
+    assert_eq!(second.receipt.written.request_id.as_deref(), Some(REV));
+    assert!(second.receipt.archived.is_empty());
     drop(read);
 
     assert_eq!(

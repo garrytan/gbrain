@@ -19,7 +19,7 @@
 import { appendFileSync, closeSync, openSync, readSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { RustStore } from '../core/rust-engine/store.ts';
-import { countFingerprintMismatches, PROBE_CORPUS, probeRecord, type FingerprintPair } from './fingerprints.ts';
+import { countFingerprintMismatches, PROBE_CORPUS, probeRecord, type FingerprintPair, type ProbeMeta } from './fingerprints.ts';
 import { lagBucket, NOT_RUN_PROBE, readFollowerFile, writeFollowerFile, type FollowerFile } from './follow-status.ts';
 import { readSeedRecord } from './seed.ts';
 
@@ -250,7 +250,8 @@ export class FollowChild {
       }
       case 'probe': {
         const rust = await store.factFingerprints([...PROBE_CORPUS]);
-        file.probe = probeRecord(a.sql as FingerprintPair[], rust, { server_version: (a.server_version ?? null) as string | null, collation: (a.collation ?? null) as string | null }, new Date(this.now()));
+        const { sql, ...meta } = a as { sql: FingerprintPair[] } & Partial<ProbeMeta>;
+        file.probe = probeRecord(sql, rust, meta, new Date(this.now()));
         return file.probe;
       }
       case 'watermark': {

@@ -400,7 +400,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   { name: 'sources', phase: 'post-connect', thinClient: 'route-then-refuse', selfHelp: true,
     slowRead: args => args[0] === 'status' ? `source status for ${positional(args.slice(1)) ?? 'every source'}` : null, load: () => import('./commands/sources.ts') },
   // CLI_ONLY: Open-loop engine CLI (engine-bound; trusted-local op dispatch).
-  { name: 'waiting', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/waiting.ts') },
+  { name: 'waiting', phase: 'pre-connect-own-engine', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/waiting.ts') },
   { name: 'loops', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/loops.ts') },
   // CLI_ONLY: pinned questions (C4); trusted-local op dispatch of the questions_* ops.
   { name: 'questions', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/questions.ts') },
@@ -413,6 +413,9 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // selfHelp: connectors ships its own printHelp (commands/connectors/index.ts) with the
   // per-subcommand usage; keep the generic short-circuit from hiding it.
   { name: 'connectors', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/connectors.ts') },
+  // selfHelp: Apple Contacts writes through GBrain Helper (commands/apple-contacts.ts HELP), docs/guides/apple-contacts.md. Thin client:
+  // refused, because the owner signing key and the helper route live on the brain host, never behind a remote brain.
+  { name: 'apple-contacts', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/apple-contacts.ts') },
   // selfHelp: Wakeshift report-back switch (commands/wakeshift.ts HELP), docs/guides/wakeshift.md. Thin client: only
   // `watch` routes (watch_job / watch_write_request / watch_cron over MCP); the rest writes the host file plane and key.
   { name: 'wakeshift', phase: 'post-connect', thinClient: 'route-then-refuse', selfHelp: true, load: () => import('./commands/wakeshift.ts') },

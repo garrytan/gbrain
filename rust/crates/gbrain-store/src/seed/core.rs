@@ -48,6 +48,7 @@ static SOURCES: Relation = Relation {
         ("archived", Kept),
         ("incarnation", Kept),
         ("created_at", Kept),
+        ("chunker_version", Kept),
         ("trust_frontmatter_overrides", Unmapped(Some("false"))),
         ("purge_epoch", Unmapped(Some("0"))),
     ],
@@ -64,6 +65,7 @@ fn import_source(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Outc
         incarnation: row.req("incarnation")?,
         archived: row.bool("archived")?.unwrap_or(false),
         created_at_us: row.req_ts("created_at")?,
+        chunker_version: row.text("chunker_version"),
     };
     let stored = read_source(&*tx, &record.id)?;
     if stored.is_some_and(|s| serde_json::to_value(&s).ok() == serde_json::to_value(&record).ok()) {
@@ -138,6 +140,9 @@ static PAGES: Relation = Relation {
         ("embedding_signature", Kept),
         ("trust_tier", Kept),
         ("write_origin", Kept),
+        ("revision_write_request_id", Kept),
+        ("revision_principal_kind", Kept),
+        ("revision_principal_id", Kept),
         ("body_storage", Kept),
         ("body_bytes", Kept),
         ("truth_bytes", Kept),
@@ -205,6 +210,11 @@ fn import_page(tx: &mut dyn KvWrite, row: &Row, losses: &mut Losses) -> Result<O
         tag_sources: BTreeMap::new(),
         trust_tier: (tier != "unknown").then_some(tier),
         write_origin: row.json("write_origin")?,
+        revision_receipt: row.actor(
+            "revision_write_request_id",
+            "revision_principal_kind",
+            "revision_principal_id",
+        ),
         version_history_gap_at_us: row.ts("version_history_gap_at")?,
     };
     // Before the page: its vector check reads the timeline lead.
@@ -453,6 +463,7 @@ static LINKS: Relation = Relation {
         ("origin_page_id", Kept),
         ("origin_field", Kept),
         ("resolution_type", Kept),
+        ("assertion_tense", Kept),
         ("created_at", Kept),
     ],
     import: import_link,
@@ -470,6 +481,7 @@ fn import_link(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Outcom
         origin_page_id: row.id("origin_page_id")?,
         origin_field: row.text("origin_field"),
         resolution_type: row.text("resolution_type"),
+        assertion_tense: row.text("assertion_tense"),
         created_at_us: row.req_ts("created_at")?,
     };
     for page in [record.from_page_id, record.to_page_id]
@@ -506,7 +518,15 @@ static TIMELINE: Relation = Relation {
         ("detail", Kept),
         ("event_page_id", Kept),
         ("created_at", Kept),
-        ("trust_tier", Unmapped(Some("unknown"))),
+        ("trust_tier", Kept),
+        ("write_origin", Kept),
+        ("write_request_id", Kept),
+        ("write_principal_kind", Kept),
+        ("write_principal_id", Kept),
+        ("last_write_request_id", Kept),
+        ("last_write_principal_kind", Kept),
+        ("last_write_principal_id", Kept),
+        ("last_written_at", Kept),
     ],
     import: import_timeline,
 };
@@ -523,6 +543,8 @@ fn import_timeline(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Ou
         detail: row.text_or("detail", ""),
         event_page_id: row.id("event_page_id")?,
         created_at_us: row.req_ts("created_at")?,
+        receipt: row.write_receipt()?,
+        trust: row.row_trust()?,
     };
     for page in std::iter::once(record.page_id).chain(record.event_page_id) {
         require_page(&*tx, page)?;
@@ -573,20 +595,31 @@ static PAGE_ALIASES: Relation = Relation {
         ("alias_norm", Kept),
         ("slug", Kept),
         ("origin", Kept),
-        ("case_sensitive", Unmapped(Some("false"))),
+        ("case_sensitive", Kept),
+        ("alias_text", Kept),
     ],
     import: import_page_alias,
 };
 
-fn import_page_alias(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Outcome> {
+fn import_page_alias(tx: &mut dyn KvWrite, row: &Row, losses: &mut Losses) -> Result<Outcome> {
     let source = row.req("source_id")?;
     require_source(&*tx, &source)?;
+    let origin = row.text_or("origin", "frontmatter");
+    let value = crate::aliases::DerivedAliasValue {
+        case_sensitive: row.bool("case_sensitive")?.unwrap_or(false),
+        alias_text: row.text("alias_text"),
+    };
+    // A frontmatter row is stored without the two columns (`setPageAliases` writes the defaults).
+    if origin == "frontmatter" && (value.case_sensitive || value.alias_text.is_some()) {
+        losses.add("frontmatter_alias_columns");
+    }
     let stored = crate::aliases::seed_page_alias(
         tx,
         &source,
         &row.req("alias_norm")?,
         &row.req("slug")?,
-        &row.text_or("origin", "frontmatter"),
+        &origin,
+        &value,
     )?;
     Ok(if stored {
         Outcome::Imported
@@ -636,6 +669,13 @@ static FACTS: Relation = Relation {
         ("attributed_to", Kept),
         ("trust_tier", Kept),
         ("write_origin", Kept),
+        ("write_request_id", Kept),
+        ("write_principal_kind", Kept),
+        ("write_principal_id", Kept),
+        ("last_write_request_id", Kept),
+        ("last_write_principal_kind", Kept),
+        ("last_write_principal_id", Kept),
+        ("last_written_at", Kept),
     ],
     import: import_fact,
 };
@@ -684,6 +724,7 @@ fn import_fact(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Outcom
         attributed_to: row.text("attributed_to"),
         trust_tier: row.text_or("trust_tier", "unknown"),
         write_origin: row.json("write_origin")?,
+        receipt: row.write_receipt()?,
     };
     crate::facts::write_fact(tx, &seed_trust(), None, &record)?;
     raise_counter(tx, crate::facts::COUNTER, id)?;
@@ -720,7 +761,15 @@ static TAKES: Relation = Relation {
         ("embedding", Kept),
         ("embedding_model", Kept),
         ("embedded_text_hash", Kept),
-        ("trust_tier", Unmapped(Some("unknown"))),
+        ("trust_tier", Kept),
+        ("write_origin", Kept),
+        ("write_request_id", Kept),
+        ("write_principal_kind", Kept),
+        ("write_principal_id", Kept),
+        ("last_write_request_id", Kept),
+        ("last_write_principal_kind", Kept),
+        ("last_write_principal_id", Kept),
+        ("last_written_at", Kept),
     ],
     import: import_take,
 };
@@ -760,6 +809,8 @@ fn import_take(tx: &mut dyn KvWrite, row: &Row, losses: &mut Losses) -> Result<O
         created_at_us: row.req_ts("created_at")?,
         updated_at_us: row.req_ts("updated_at")?,
         claim_rev: 0,
+        receipt: row.write_receipt()?,
+        trust: row.row_trust()?,
     };
     if !crate::takes::seed_take(tx, &take)? {
         return Ok(Outcome::Skipped);

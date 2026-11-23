@@ -17,11 +17,16 @@ pub(crate) struct SourceRecord {
     pub name: Option<String>,
     pub local_path: Option<String>,
     pub last_sync_at_us: Option<i64>,
+    #[serde(deserialize_with = "crate::jsonb::de_map")]
     pub config: Map<String, Value>,
     /// Changes when a source is deleted and created again; page snapshots carry it.
     pub incarnation: String,
     pub archived: bool,
     pub created_at_us: i64,
+    /// The chunker version the source's last full sync stamped (`sources.chunker_version`), or
+    /// `None` before the first stamp. Records written before the field existed read as `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chunker_version: Option<String>,
 }
 
 /// A source as JavaScript sees it: `SourceRow` of `src/core/engine.ts`, with `last_sync_at` as an
@@ -100,6 +105,7 @@ pub struct SourceInput {
     pub config: Option<Map<String, Value>>,
 }
 
+/// The key of a source record. Other families that change a source record write it here.
 pub(crate) fn source_key(id: &str) -> Vec<u8> {
     keys::text(keys::SOURCE, &[id])
 }
@@ -137,6 +143,7 @@ pub(crate) fn seed_default_source(tx: &mut dyn KvWrite, env: &dyn Env) -> Result
         incarnation: env.new_uuid(),
         archived: false,
         created_at_us: env.now_micros(),
+        chunker_version: None,
     };
     put_json(tx, &source_key(DEFAULT_SOURCE), &record)
 }
@@ -209,6 +216,7 @@ impl Store {
                     incarnation: self.env.new_uuid(),
                     archived: false,
                     created_at_us: self.env.now_micros(),
+                    chunker_version: None,
                 },
             };
             if input.name.is_some() {
