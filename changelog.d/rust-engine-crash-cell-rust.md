@@ -6,4 +6,4 @@
 - Two CI jobs in the `Rust engine` workflow run the crash test on Linux, and on macOS whenever the workflow runs its macOS target, and a third builds the Rust addon with a deliberately non-durable commit and expects the test to catch it.
 
 ### Changed
-- `gbrain-store` and `gbrain-sim` now forbid `unsafe` code. The only `unsafe` code left in the Rust crates is in `gbrain-napi`.
+- The libraries `gbrain-store` and `gbrain-sim` now forbid `unsafe` code. The `gbrain-napi` crate, the benchmark workspaces and the `keyword_scale` example in `gbrain-store` still hold `unsafe` code.

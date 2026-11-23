@@ -166,6 +166,16 @@ GBRAIN_SIM_SEEDS=10000 cargo test --release -p gbrain-store --test sim -- --noca
 GBRAIN_SIM_SEED=1234 cargo test -p gbrain-store --test sim     # repeat one seed
 ```
 
+### Real-process crash cell
+
+`scripts/rust-crash/` kills real writer processes on a real `records.redb` with SIGKILL, mid-commit,
+before and after an fsync, at the persistence boundaries, between operations and at a seeded time,
+then reopens the brain and compares it with a PGLite oracle. The store's test-only file backend
+(`crates/gbrain-store/src/crash_points.rs`) is off unless `GBRAIN_TEST_RUST_CRASH_LOG` is set when a
+brain opens. It covers process crashes, not power loss (the simulation above covers torn writes and
+fsync lies). How to run it and what it checks: [scripts/rust-crash/README.md](../scripts/rust-crash/README.md).
+CI runs it in the `crash-cell` and `crash-cell-plant` jobs of `rust-engine.yml`.
+
 ## Error codes
 
 Errors from the addon are real `Error` objects with a `code`:
@@ -215,6 +225,9 @@ can reach.
   `internal_error` and stops the threads it started.
 - The callback queue (`Sink`) holds 4 values. That size is fixed at compile time by napi-rs.
 - `rust/bench/` is a separate workspace and is not part of this one.
+- The libraries `gbrain-store` and `gbrain-sim` forbid `unsafe` code (`#![forbid(unsafe_code)]`). Of
+  this workspace's library code, only `gbrain-napi` uses `unsafe`. The `keyword_scale` example of
+  `gbrain-store` is a separate target, not covered by the attribute, and has one `unsafe` block.
 - gbrain's addon loader (`src/core/rust-engine/addon-loader.ts`) uses `GBRAIN_RUST_ENGINE_ADDON`
   first, then an addon cached under `<gbrain home>/engines/rust/` whose SHA-256 matches this
   release's cached manifest. It does not download anything: with no cached addon it refuses with
