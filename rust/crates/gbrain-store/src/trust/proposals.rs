@@ -670,6 +670,26 @@ impl Store {
     }
 }
 
+/// The shadow follow (`seed/follow.rs`): removes the proposal `id` with its index entries. `false`
+/// when there is none.
+pub(crate) fn remove_proposal(tx: &mut dyn KvWrite, id: u64) -> Result<bool> {
+    let Some(record) = read_record(&*tx, id)? else {
+        return Ok(false);
+    };
+    if record.status == "pending" {
+        let key = record.pending_key();
+        if get_id(&*tx, &key)? == Some(record.id) {
+            tx.delete(&key)?;
+        }
+    }
+    tx.delete(&row_key(&record.target_table, record.target_id, record.id))?;
+    if let (Some(table), Some(row)) = (&record.related_table, record.related_id) {
+        tx.delete(&row_key(table, row, record.id))?;
+    }
+    tx.delete(&by_id(record.id))?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

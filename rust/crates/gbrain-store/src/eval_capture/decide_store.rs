@@ -37,9 +37,12 @@ use std::collections::BTreeMap;
 
 mod calibrations;
 mod receipts;
-pub(crate) use calibrations::{CALIBRATION_ID, CalibrationRecord, seed_calibration};
+pub(crate) use calibrations::{
+    CALIBRATION_ID, CalibrationRecord, remove_calibration, seed_calibration,
+};
 pub use calibrations::{DecideCalibrationInput, DecideQualificationInput};
 pub use receipts::DecideReceiptInput;
+pub(crate) use receipts::remove_receipt;
 pub(crate) use receipts::{RECEIPT_ID, ReceiptRecord, seed_receipt};
 
 const STATE: u8 = 0x10;
@@ -403,4 +406,39 @@ impl Store {
                 .collect(),
         ))
     }
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the `decide_state` row `key`. `false` when there
+/// is none.
+pub(crate) fn remove_state(tx: &mut dyn KvWrite, key: &str) -> Result<bool> {
+    if key.contains('\0') || load_state(&*tx, key)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&state_key(key))?;
+    Ok(true)
+}
+
+/// The shadow follow: removes the `decide_spend` row of `request_id` with its time-index entry,
+/// which is found by the row's `created_at`. `false` when there is none.
+pub(crate) fn remove_spend(tx: &mut dyn KvWrite, request_id: &str) -> Result<bool> {
+    let Some(bytes) = tx.get(&spend_key(request_id))? else {
+        return Ok(false);
+    };
+    let record: SpendRecord = serde_json::from_slice(&bytes)?;
+    let (start, end) = (
+        spend_time_key(record.created_at_us, 0),
+        spend_time_key(record.created_at_us.saturating_add(1), 0),
+    );
+    let mut index = Vec::new();
+    tx.scan(&start, &end, false, &mut |k, v| {
+        if v == request_id.as_bytes() {
+            index.push(k.to_vec());
+        }
+        true
+    })?;
+    for key in index {
+        tx.delete(&key)?;
+    }
+    tx.delete(&spend_key(request_id))?;
+    Ok(true)
 }

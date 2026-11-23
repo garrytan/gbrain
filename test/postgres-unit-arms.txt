@@ -177,6 +177,7 @@ test/engine-parity/search-private-fence.test.ts
 test/engine-parity/search-reads.test.ts
 test/engine-parity/search.test.ts
 test/engine-parity/segmented-body.test.ts
+test/engine-parity/slug-normalize.test.ts
 test/engine-parity/stats-vectors.test.ts
 test/engine-parity/stats.test.ts
 test/engine-parity/sync-aliases.test.ts
@@ -213,6 +214,7 @@ test/extract-timeline-from-meetings-managed.test.ts
 test/extraction-watermark-atoms.test.ts
 test/fact-embedding-oversized-7211.test.ts
 test/fact-fence-adoption-exits.test.ts
+test/fact-fingerprint-corpus.test.ts
 test/fact-purge-lookup-timeout-6511.test.ts
 test/fact-reads-page-access.test.ts
 test/facts-absorb-stalled-receipt-7439.test.ts

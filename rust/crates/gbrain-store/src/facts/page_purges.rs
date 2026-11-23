@@ -116,3 +116,22 @@ pub(crate) fn put_purge(
         },
     )
 }
+
+/// The shadow follow (`seed/follow.rs`): removes the tombstone of `content_hash` in `source_id`.
+/// `false` when there is none.
+pub(crate) fn remove_purge(
+    tx: &mut dyn crate::kv::KvWrite,
+    source_id: &str,
+    content_hash: &str,
+) -> Result<bool> {
+    if source_id.contains('\0') || content_hash.contains('\0') {
+        return Ok(false);
+    }
+    let mut key = keys::text(keys::FACT, &[source_id, content_hash]);
+    key.insert(1, PURGE);
+    if tx.get(&key)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&key)?;
+    Ok(true)
+}

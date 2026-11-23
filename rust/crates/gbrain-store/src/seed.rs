@@ -19,6 +19,7 @@
 mod core;
 mod decide;
 mod decode;
+mod follow;
 mod history;
 mod not_copied;
 mod privacy;
@@ -28,6 +29,10 @@ mod tests;
 mod wake;
 
 pub use decode::SeedRow;
+pub use follow::{
+    AllocatorCheck, DigestInput, EntryInfo, FactFingerprints, FollowResult, IntervalDigest,
+    KeyInput, MAX_ENTRIES, UNSUPPORTED, fact_fingerprints,
+};
 pub use not_copied::{GapRows, LossKind, NOT_COPIED, NotCopied};
 
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, INVALID_STATE, Result, StoreError};
@@ -61,6 +66,9 @@ pub struct RelationPlan {
     pub relation: &'static str,
     /// The primary key columns: the caller reads the table in this order, in keyset batches.
     pub key: &'static [&'static str],
+    /// Whether the follow calls can delete and replace rows of the relation (`false`: they refuse
+    /// with `unsupported`).
+    pub removable: bool,
 }
 
 /// The seed plan: the relations it copies, the tables it carries inside them, and the tables it
@@ -109,6 +117,7 @@ pub fn plan() -> SeedPlan {
             .map(|(relation, spec)| RelationPlan {
                 relation,
                 key: spec.key,
+                removable: follow::removable(relation),
             })
             .collect(),
         carried: CARRIED.to_vec(),
@@ -212,6 +221,17 @@ impl Store {
         relation: &str,
         rows: Vec<SeedRow>,
     ) -> Result<ImportResult> {
+        self.import_rows(seed_id, relation, rows, None)
+    }
+
+    /// [`Store::import_relation`], storing a digest entry per row when `digests` align with `rows`.
+    fn import_rows(
+        &self,
+        seed_id: &str,
+        relation: &str,
+        rows: Vec<SeedRow>,
+        digests: Option<&[follow::RowDigest]>,
+    ) -> Result<ImportResult> {
         let spec = relation_spec(relation)?;
         if seed_id.is_empty() || seed_id.contains('\0') {
             return Err(StoreError::new(
@@ -230,6 +250,9 @@ impl Store {
                 let outcome = (spec.import)(tx, &row, &mut losses).map_err(|e| {
                     StoreError::new(e.code, format!("{relation} row {n}: {}", e.message))
                 })?;
+                if let Some(digests) = digests {
+                    follow::store_import_entry(tx, relation, &row, &digests[n])?;
+                }
                 match outcome {
                     Outcome::Imported => result.imported += 1,
                     Outcome::Skipped => result.skipped += 1,

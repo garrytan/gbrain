@@ -5,6 +5,7 @@ import type { GBrainConfig } from '../config.ts';
 import { claimableWriteSql, foregroundPrioritySql, claimGroupFollowers, claimNextLaneHead, claimNextWrite, publicationGroupKey, syncGroup, floorPreparationAttempts, hasClaimableWrite, getWriteRequestById, releaseUnpublishedClaim, renewWriteClaim, vacuumPersistenceQueues, independentGroup, sweepSegmentStorage, yieldToEventLoop } from './journal.ts';
 import { expireDeferredWrites, overdueDeferredWorkSql } from './refresh-barrier.ts';
 import { connectionCapFailure, finishPreparationStalled, finishUnpublishedFailure, preparationAbortReason, recoverPublication, transientDatabaseFailure, type PreparedMutation } from './coordinator.ts';
+import { inStoredSlugScope } from './legacy-slug-put.ts';
 import { hostIdFor } from './identity.ts';
 import { executeClaimedGroup, PAGE_BATCH_GROUP_MAX, publishSingleWrite, singleWrite } from './group-publish.ts';
 import { preparationConfigView } from './config-snapshot.ts';
@@ -1094,7 +1095,10 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       await floorPreparationAttempts(this.statements, row.id, this.policy.maxAttempts).catch(error => this.report(error));
     });
   }
-  private async execute(row: WriteRequest, root: RootHold): Promise<boolean> {
+  private execute(row: WriteRequest, root: RootHold): Promise<boolean> {
+    return inStoredSlugScope(row, () => this.executeRow(row, root));
+  }
+  private async executeRow(row: WriteRequest, root: RootHold): Promise<boolean> {
     let preparationActive = true;
     const observation = { request_id: row.request_id, started_at: new Date().toISOString(), deadline_exceeded: false, attempt: ++this.preparationAttempts };
     this.preparing.set(row.id, observation);
