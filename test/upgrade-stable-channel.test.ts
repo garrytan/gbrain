@@ -103,7 +103,7 @@ describe('channel selection', () => {
 });
 
 interface Run { home: string; exitCode: number; stdout: string; stderr: string; bunCalls: string[]; gbrainCalls: string[] }
-interface RunOpts { stableCommit?: string | null; record?: string | null; recordStatus?: number; config?: Record<string, unknown>; env?: Record<string, string>; failAdd?: string; spec?: string; noRepoConfig?: boolean }
+interface RunOpts { stableCommit?: string | null; record?: string | null; recordStatus?: number; config?: Record<string, unknown>; env?: Record<string, string>; failAdd?: string; spec?: string; noRepoConfig?: boolean; tagOutput?: string; gitStatus?: number; targetVersion?: string; checkBunFloor?: boolean; bunFloor?: string }
 
 async function runStableUpgrade(args: string[], opts: RunOpts = {}): Promise<Run> {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-stable-'));
@@ -111,10 +111,10 @@ async function runStableUpgrade(args: string[], opts: RunOpts = {}): Promise<Run
   mkdirSync(bin);
   const state = join(home, 'installed-version');
   writeFileSync(state, VERSION);
-  writeFileSync(join(bin, 'git'), `#!/bin/sh\ncase "$1" in ls-remote) cat '${join(home, 'tags.txt')}'; exit 0;; esac\nexit 1\n`);
-  writeFileSync(join(home, 'tags.txt'), tags(opts.stableCommit === undefined ? C_NEWER : opts.stableCommit));
+  writeFileSync(join(bin, 'git'), `#!/bin/sh\ncase "$1" in ls-remote) cat '${join(home, 'tags.txt')}'; exit ${opts.gitStatus ?? 0};; esac\nexit 1\n`);
+  writeFileSync(join(home, 'tags.txt'), opts.tagOutput ?? tags(opts.stableCommit === undefined ? C_NEWER : opts.stableCommit));
   // `bun add -g --backend=copyfile github:garrytan/gbrain#v<x>` installs <x>; `gbrain --version` reports what is installed.
-  writeFileSync(join(bin, 'bun'), `#!/bin/sh\necho "$*" >> '${join(home, 'bun-calls.log')}'\n${opts.failAdd ? `case "$*" in "add -g --backend=copyfile github:garrytan/gbrain#v${opts.failAdd}") exit 1;; esac\n` : ''}case "$*" in "add -g --backend=copyfile github:garrytan/gbrain#v"*) echo "$4" | sed 's/.*#v//' > '${state}';; esac\nexit 0\n`);
+  writeFileSync(join(bin, 'bun'), `#!/bin/sh\nif [ "$1" = "--version" ]; then echo 1.4.4; exit 0; fi\necho "$*" >> '${join(home, 'bun-calls.log')}'\n${opts.failAdd ? `case "$*" in "add -g --backend=copyfile github:garrytan/gbrain#v${opts.failAdd}") exit 1;; esac\n` : ''}case "$*" in "add -g --backend=copyfile github:garrytan/gbrain#v"*) echo "$4" | sed 's/.*#v//' > '${state}';; esac\nexit 0\n`);
   writeFileSync(join(bin, 'gbrain'), `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "gbrain $(cat '${state}')"; exit 0; fi\necho "$*" >> '${join(home, 'gbrain-calls.log')}'\nexit 0\n`);
   for (const f of ['git', 'bun', 'gbrain']) chmodSync(join(bin, f), 0o755);
   if (opts.config) {
@@ -131,6 +131,11 @@ async function runStableUpgrade(args: string[], opts: RunOpts = {}): Promise<Run
   writeFileSync(driver, [
     `const body = ${JSON.stringify(body)};`,
     `globalThis.fetch = (async (url: unknown) => {`,
+    `  if (String(url).endsWith('/package.json')) {`,
+    `    const { appendFileSync } = await import('node:fs');`,
+    `    appendFileSync(${JSON.stringify(join(home, 'package-reads.log'))}, String(url) + '\\n');`,
+    `    return new Response(${JSON.stringify(JSON.stringify({ version: NEWEST, engines: { bun: opts.bunFloor ?? '>=1.4.4' } }))});`,
+    `  }`,
     `  if (!String(url).endsWith('/stable-record/stable.json')) return new Response('', { status: 404 });`,
     `  if (body === null) throw new Error('network down');`,
     `  return new Response(body, { status: ${opts.recordStatus ?? 200} });`,
@@ -138,7 +143,7 @@ async function runStableUpgrade(args: string[], opts: RunOpts = {}): Promise<Run
     `const { runUpgrade } = await import('${REPO}/src/commands/upgrade.ts');`,
     `const { currentExitCode, _resetCliExitVerdictForTests } = await import('${REPO}/src/core/cli-force-exit.ts');`,
     `_resetCliExitVerdictForTests();`,
-    `await runUpgrade(${JSON.stringify(['--no-bun-floor-check', '--no-autopilot-install', ...args])});`,
+    `await runUpgrade(${JSON.stringify([...(opts.checkBunFloor ? [] : ['--no-bun-floor-check']), '--no-autopilot-install', ...args])}, ${JSON.stringify(opts.targetVersion ? { targetVersion: opts.targetVersion } : {})});`,
     `process.exitCode = currentExitCode();`,
   ].join('\n'));
   const env: Record<string, string | undefined> = { ...process.env, HOME: home, GBRAIN_HOME: home, PATH: `${bin}:${process.env.PATH}`, ...opts.env };
@@ -224,6 +229,86 @@ describe('gbrain upgrade on the stable channel', () => {
       });
     }
   });
+
+  test('#8790: alpha escapes both moving channel pins through the published release, not bun update', async () => {
+    for (const ref of ['stable', 'latest-stable']) {
+      await withRun(['--channel', 'alpha', '--swap-only'], { spec: `github:garrytan/gbrain#${ref}` }, r => {
+        expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:garrytan/gbrain#v${NEWEST}`]);
+        expect(r.stdout).toContain(`Now running: gbrain ${NEWEST}`);
+        expect(r.exitCode).toBe(0);
+      });
+    }
+  });
+
+  test('#8790: configured alpha and automatic target selection both escape the stable install pin', async () => {
+    const config = { engine: 'pglite', database_path: '/tmp/gbrain-alpha-example.pglite', self_upgrade: { channel: 'alpha' } };
+    await withRun(['--swap-only'], { spec: 'github:garrytan/gbrain#stable', config, targetVersion: NEWER }, r => {
+      expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:garrytan/gbrain#v${NEWER}`]);
+      expect(r.exitCode).toBe(0);
+    });
+    await withRun(['--swap-only'], { spec: 'github:garrytan/gbrain#stable', config }, r => {
+      expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:garrytan/gbrain#v${NEWEST}`]);
+      expect(r.exitCode).toBe(0);
+    });
+  });
+
+  test('#8790: no newer published release never falls back to moving the stable ref', async () => {
+    await withRun(['--channel', 'alpha', '--swap-only'], { spec: 'github:garrytan/gbrain#stable', tagOutput: `${C_OLDER}\trefs/tags/v${OLDER}` }, r => {
+      expect(r.bunCalls).toEqual([]);
+      expect(r.stdout).toContain('No newer published release');
+      expect(r.exitCode).toBe(0);
+      expect(existsSync(join(r.home, '.gbrain', 'just-upgraded-from'))).toBe(false);
+    });
+  });
+
+  test('#8790: an unreadable release census leaves the channel-pinned install unchanged and reports failure', () => withRun(['--channel', 'alpha', '--swap-only'], { spec: 'github:garrytan/gbrain#stable', tagOutput: '', gitStatus: 128 }, r => {
+    expect(r.bunCalls).toEqual([]);
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr).toContain('published release');
+  }));
+
+  test('#8790: a failed alpha tag install retains remove-before-add recovery', () => withRun(['--channel', 'alpha', '--swap-only'], { spec: 'github:garrytan/gbrain#stable', failAdd: NEWEST }, r => {
+    expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:garrytan/gbrain#v${NEWEST}`, `add -g --backend=copyfile github:garrytan/gbrain#v${VERSION}`]);
+    expect(r.stderr).toContain(`Restored gbrain ${VERSION}.`);
+    expect(r.exitCode).not.toBe(0);
+  }));
+
+  test('#8790: ordinary branches and foreign moving refs keep their own update lane', async () => {
+    for (const spec of ['github:garrytan/gbrain#master', 'github:example/gbrain#stable']) {
+      await withRun(['--channel', 'alpha', '--swap-only'], { spec }, r => {
+        expect(r.bunCalls).toEqual(['update --backend=copyfile gbrain']);
+        expect(r.exitCode).toBe(0);
+      });
+    }
+  });
+
+  test('#8790: alternate upstream Git spec spellings and latest alias use the same alpha target', async () => {
+    for (const spec of ['garrytan/gbrain#stable', 'git+https://github.com/garrytan/gbrain.git#latest-stable', 'git+ssh://git@github.com/garrytan/gbrain#stable']) {
+      await withRun(['--channel', 'latest', '--swap-only'], { spec }, r => {
+        expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:garrytan/gbrain#v${NEWEST}`]);
+        expect(r.exitCode).toBe(0);
+      });
+    }
+  });
+
+  test('#8790: the alpha target Bun floor is checked before removal, not the persisted stable ref', async () => {
+    for (const bunFloor of ['>=999.0.0', 'unreadable']) {
+      await withRun(['--channel', 'alpha', '--swap-only'], { spec: 'github:garrytan/gbrain#stable', checkBunFloor: true, bunFloor }, r => {
+        expect(r.bunCalls).toEqual([]);
+        expect(r.exitCode).toBe(78);
+        expect(readFileSync(join(r.home, 'package-reads.log'), 'utf8').trim()).toBe(`https://raw.githubusercontent.com/garrytan/gbrain/v${NEWEST}/package.json`);
+      });
+    }
+    await withRun(['--channel', 'alpha', '--swap-only'], { spec: 'github:garrytan/gbrain#stable', checkBunFloor: true }, r => {
+      expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:garrytan/gbrain#v${NEWEST}`]);
+      expect(r.exitCode).toBe(0);
+    });
+  });
+
+  test('#8790: an unavailable requested tag refuses before removal, even if another tag is advertised', () => withRun(['--channel', 'alpha', '--swap-only'], { spec: 'github:garrytan/gbrain#stable', targetVersion: NEWER, gitStatus: 2 }, r => {
+    expect(r.bunCalls).toEqual([]);
+    expect(r.exitCode).toBe(1);
+  }));
 
   test('stable_missing: nothing promoted exits non-zero with the code and the config fix, and installs nothing', () => withRun(['--json'], { stableCommit: null, record: 'Not Found', recordStatus: 404 }, r => {
     const env = JSON.parse(r.stdout.slice(r.stdout.indexOf('{')));
