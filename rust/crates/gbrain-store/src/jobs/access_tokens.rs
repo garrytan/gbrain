@@ -880,10 +880,18 @@ mod tests {
         clock.0.fetch_add(60_000_000, SeqCst);
         touch(&id);
         assert_eq!(writes.load(SeqCst) - base, 1, "at 60 s: no write");
-        // Past the debounce the token is stamped again, with the new time, in exactly one write.
+        // Past the debounce the token is stamped again, with the new time, in exactly one write; the id is compared
+        // lower-cased, so an upper-case id finds it.
         clock.0.fetch_add(1, SeqCst);
-        touch(&id);
+        touch(&id.to_ascii_uppercase());
         assert_eq!(writes.load(SeqCst) - base, 2, "past 60 s: one more write");
+        // Without `unified` a row with no source_grant is stamped too.
+        s.touch_access_token_last_used(&legacy, false).unwrap();
+        assert_eq!(
+            writes.load(SeqCst) - base,
+            3,
+            "not unified: the legacy row is stamped"
+        );
         let row = by_hash_of(&s, "a").unwrap();
         assert_eq!(
             row["last_used_at"].as_str().map(str::to_owned),
