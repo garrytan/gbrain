@@ -94,6 +94,7 @@ import { isWatchdogSuspect, settleWatchdogAbort } from './watchdog-attribution.t
 import { IdleWaiter } from './idle-wait.ts';
 import { jobOutcomeResult, jobResultOutcome } from './job-outcome.ts';
 import { DEFAULT_LONG_JOB_NAMES, DEFAULT_SHORT_JOB_RESERVED_SLOTS, claimExclusions } from './lanes.ts';
+import { isEngineCapabilityRefusal, rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { jobRefusal, refusedJobResult } from './refusal.ts';
 import { readFileSync } from 'fs';
 import { parseRssFromProcStatus } from './proc-rss.ts';
@@ -782,7 +783,10 @@ export class MinionWorker extends EventEmitter {
               } else {
                 stallWarningSince = null; // Queue empty (for our handlers) — not stalled, just idle
               }
-            } catch {
+            } catch (e) {
+              // A capability refusal is not a flaky query: this engine cannot count waiting jobs, so the check could never
+              // run. Let it out; tickHealthCheck stops the worker as unhealthy, as a dead DB probe does.
+              rethrowCapabilityRefusal(e);
               // DB query failed — the liveness probe above will catch persistent failures
             }
           } else {
@@ -792,14 +796,27 @@ export class MinionWorker extends EventEmitter {
         } finally {
           healthRunning = false;
           if (this.running && !healthExited) {
-            healthTimer = setTimeout(runHealthCheck, this.opts.healthCheckInterval);
+            healthTimer = setTimeout(tickHealthCheck, this.opts.healthCheckInterval);
           }
         }
       };
 
+      // One tick. A capability refusal out of the stall count stops the worker as unhealthy, as a dead DB probe does;
+      // anything else escapes as before.
+      const tickHealthCheck = (): void => {
+        void runHealthCheck().catch((e: unknown) => {
+          if (!isEngineCapabilityRefusal(e)) throw e;
+          const message = e instanceof Error ? e.message : String(e);
+          console.error(`[health] stall check refused: ${message} Emitting 'unhealthy' for process-manager restart.`);
+          healthExited = true;
+          if (healthTimer) clearTimeout(healthTimer);
+          this.emitUnhealthy({ reason: 'db_dead', consecutiveFailures: consecutiveDbFailures + 1, message, verdict: 'unknown' });
+        });
+      };
+
       // First tick scheduled after one interval so newly-started workers have
       // a chance to do real work before the stall clock starts ticking.
-      healthTimer = setTimeout(runHealthCheck, this.opts.healthCheckInterval);
+      healthTimer = setTimeout(tickHealthCheck, this.opts.healthCheckInterval);
     }
 
     const runLoop = async () => {
@@ -1003,6 +1020,9 @@ export class MinionWorker extends EventEmitter {
         [job.id, lockToken],
       );
     } catch (e) {
+      // A capability refusal is not a failed UPDATE: the engine cannot release a claim at all, so the claim would expire
+      // on every pause. Let it out (the worker loop stops loudly) instead of logging one line per job.
+      rethrowCapabilityRefusal(e);
       // Fail-open: if the release UPDATE itself fails, the claim lock simply
       // expires and the stall detector requeues the row — slower, same end
       // state, and never a reason to crash the worker.
@@ -1049,6 +1069,7 @@ export class MinionWorker extends EventEmitter {
         console.log(`Quiet-hours defer: ${job.name} (id=${job.id}) → retry after 15m`);
       }
     } catch (e) {
+      rethrowCapabilityRefusal(e); // the engine cannot release or cancel the claim: say so, do not leave it to expire
       console.error(`handleQuietHoursDefer error for job ${job.id}:`, e instanceof Error ? e.message : String(e));
     }
   }
