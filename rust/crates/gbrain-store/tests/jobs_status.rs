@@ -530,8 +530,17 @@ fn recent_source_cycle_failures_group_dead_and_failed_cycles_by_source() {
     );
     fail(json!({}), "dead", None, "w:5");
     fail(json!({"source_id": null}), "dead", None, "w:6");
-    let id = active(&b, "work", "default", json!({"source_id": "d"}), "w:7", 30_000);
-    b.fail_job(id, "w:7", "boom", "dead", None, None).unwrap().unwrap();
+    let id = active(
+        &b,
+        "work",
+        "default",
+        json!({"source_id": "d"}),
+        "w:7",
+        30_000,
+    );
+    b.fail_job(id, "w:7", "boom", "dead", None, None)
+        .unwrap()
+        .unwrap();
     let rows = |cutoff: &str, only: Option<&str>| -> Vec<(String, i64)> {
         b.list_recent_source_cycle_failures(cutoff, only)
             .unwrap()
@@ -552,7 +561,9 @@ fn recent_source_cycle_failures_group_dead_and_failed_cycles_by_source() {
     assert_eq!(rows(past, Some("b")), vec![("b".to_string(), 1)]);
     assert!(rows(past, Some("c")).is_empty());
     assert!(rows("2099-01-01T00:00:00.000Z", None).is_empty());
-    let last = b.list_recent_source_cycle_failures(past, Some("a")).unwrap();
+    let last = b
+        .list_recent_source_cycle_failures(past, Some("a"))
+        .unwrap();
     assert!(last[0]["last_failed_at"].as_str().unwrap().ends_with('Z'));
     assert!(
         b.list_recent_source_cycle_failures("not a time", None)
