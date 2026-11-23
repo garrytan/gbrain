@@ -159,7 +159,6 @@ const DELETED_CHANGES: Record<DeletedDriftChange, string> = {
   file_gone: 'the file is gone now, so nothing is left to resolve',
   live_page: 'a live page records the file again, so it is no longer a deleted-side Decision',
   no_deletion: 'no deleted page or deletion marker is left at its origin; the next sync re-classifies it',
-  deleted_same: 'the file holds the bytes the deleted page had, so the deletion already stands',
 };
 
 const ALL_DRIFTED_LIMIT = 1000;

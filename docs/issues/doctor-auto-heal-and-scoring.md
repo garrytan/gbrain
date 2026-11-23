@@ -20,7 +20,7 @@ By counting them the same as `YAML_PARSE` (actual parse failures) or `MISSING_OP
 frontmatter_integrity: 7131 issues across 3 sources
   default: 7012 (NESTED_QUOTES=6922, YAML_PARSE=90)
   media-corpus: 16 (MISSING_OPEN=15, YAML_PARSE=1)
-  zion-brain: 103 (MISSING_OPEN=14, NESTED_QUOTES=89)
+  source-b: 103 (MISSING_OPEN=14, NESTED_QUOTES=89)
 ```
 
 Only 280 of 7,131 issues are real problems. 96% are cosmetic noise.

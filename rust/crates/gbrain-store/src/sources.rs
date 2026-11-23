@@ -440,8 +440,8 @@ impl Store {
     }
 
     /// `writeSourceUpstreamObservation(sourceId, checkedAt, commit, behind)`: the sync's upstream
-    /// observation of the source's checkout. `checked_at` is an ISO time. An unknown source changes
-    /// nothing.
+    /// observation of the source's checkout. `checked_at` is an ISO time, and it never moves back for
+    /// the same upstream commit (#9933). An unknown source changes nothing.
     pub fn write_source_upstream_observation(
         &self,
         source_id: &str,
@@ -456,7 +456,13 @@ impl Store {
             let Some(mut record) = read_source(&*tx, source_id)? else {
                 return Ok(());
             };
-            record.upstream_checked_at_us = Some(checked_us);
+            // A check time never moves back for the same upstream commit (#9933): a failed fetch empties
+            // FETCH_HEAD and the reflog can be older than the no-change fetch already recorded.
+            let moves_back = record.upstream_commit.as_deref() == Some(commit)
+                && record.upstream_checked_at_us.is_some_and(|recorded| recorded > checked_us);
+            if !moves_back {
+                record.upstream_checked_at_us = Some(checked_us);
+            }
             record.upstream_commit = Some(commit.to_owned());
             record.upstream_behind = behind;
             put_json(tx, &source_key(source_id), &record)

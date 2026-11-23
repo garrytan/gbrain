@@ -2,6 +2,7 @@ import type { BrainEngine } from './engine.ts';
 import type { EngineConfig } from './types.ts';
 import { registerChatUsageSink, makeEngineChatUsageSink } from './ai/chat-usage.ts';
 import { constructEngine } from './engine-construct.ts';
+import { shadowStateFor } from '../shadow/state.ts';
 
 /**
  * Create an engine instance based on config.
@@ -26,6 +27,14 @@ export async function createEngine(config: EngineConfig): Promise<BrainEngine> {
     deregisterUsageSink();
     await origDisconnect();
   };
+
+  // Rust engine shadow mode (docs/ENGINES.md "Rust engine shadow mode"): off unless `gbrain engine shadow start`
+  // turned it on for this brain. Off costs one existsSync.
+  const shadow = shadowStateFor(config);
+  if (shadow) {
+    const { attachShadow } = await import('../shadow/attach.ts');
+    return attachShadow(engine, shadow.dir, shadow.state);
+  }
 
   return engine;
 }

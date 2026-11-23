@@ -4569,6 +4569,7 @@
         "isPidReusedByOtherProgram",
         "isProcessAlive",
         "legacyOwnerUnverified",
+        "liveHolderToken",
         "msSinceLastReap",
         "peekLock",
         "pgliteLockDirFor",

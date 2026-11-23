@@ -429,6 +429,7 @@ test/engine-parity/sync-checkpoint.test.ts
 test/engine-parity/sync-import-provenance.test.ts
 test/engine-parity/sync-pass-pages.test.ts
 test/engine-parity/sync-requests.test.ts
+test/engine-parity/sync-restored-file-holds.test.ts
 test/engine-parity/sync-route.test.ts
 test/engine-parity/sync-run-reads.test.ts
 test/engine-parity/sync-run.test.ts
@@ -489,6 +490,8 @@ test/engine-parity/writer-versions.test.ts
 test/engine-sql-fact-relink-attempts.test.ts
 test/engine-sql-fact-relink-writes.test.ts
 test/engine-sql-facts-keyset.test.ts
+test/engine-swap-managed-storage.test.ts
+test/engine-swap-refresh-drain.test.ts
 test/entity-company-auto-link.test.ts
 test/entity-dedupe-decisions.test.ts
 test/entity-dedupe-person-confirm.test.ts
@@ -1171,6 +1174,7 @@ test/sync-pass-stop-in-level-gbra133.test.ts
 test/sync-plain-directory-7973.test.ts
 test/sync-prescreen-both-delta-6712.test.ts
 test/sync-prescreen-drift-6712.test.ts
+test/sync-restored-deleted-file-lc1.test.ts
 test/sync-restored-file-purge.test.ts
 test/sync-sigterm-gst2869.test.ts
 test/sync-slug-root-mode-6694.test.ts

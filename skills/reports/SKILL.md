@@ -43,12 +43,12 @@ This skill guarantees:
    report_type: {category name}
    category: {category name}
    date: {YYYY-MM-DD}
-   time: {HH:MM PT}
+   time: {HH:MM, the user's time zone}
    ---
    ```
 2. **Load latest.** Given a category, find the most recent report file.
 3. **Keyword routing.** Map common queries to report categories:
-   - "email" / "inbox" → ea-inbox-sweep
+   - "email" / "inbox" → inbox-sweep (reports filed before this name may sit under ea-inbox-sweep; check both and take the newest)
    - "social" / "mentions" → social-mentions
    - "briefing" / "morning" → morning-briefing
    - "meeting" → meeting-sync
