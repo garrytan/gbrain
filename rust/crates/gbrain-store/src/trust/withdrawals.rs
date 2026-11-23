@@ -75,6 +75,21 @@ fn key(parts: &[&str]) -> Vec<u8> {
     key
 }
 
+/// Whether any withdrawal of the source has this subject (`hasFactWithdrawalForSubject`), read from one snapshot.
+pub(crate) fn has_subject_withdrawal(
+    read: &dyn KvRead,
+    source_id: &str,
+    subject: &str,
+) -> Result<bool> {
+    let prefix = source_prefix(source_id);
+    let mut found = false;
+    scan_prefix(read, &prefix, false, &mut |k, _| {
+        found = split(k, prefix.len()).is_some_and(|(_, s, _)| s == subject);
+        !found
+    })?;
+    Ok(found)
+}
+
 /// `t 0x01 source \0`: every withdrawal of a source.
 fn source_prefix(source_id: &str) -> Vec<u8> {
     let mut prefix = key(&[source_id]);
@@ -527,13 +542,7 @@ impl Store {
             &[("sourceId", source_id), ("subject", subject)],
         )?;
         let read = self.read()?;
-        let prefix = source_prefix(source_id);
-        let mut found = false;
-        scan_prefix(&*read, &prefix, false, &mut |k, _| {
-            found = split(k, prefix.len()).is_some_and(|(_, s, _)| s == subject);
-            !found
-        })?;
-        Ok(found)
+        has_subject_withdrawal(&*read, source_id, subject)
     }
 
     /// `readSourcePurgeFlags`: whether the source has a fact purge tombstone (the fact purge

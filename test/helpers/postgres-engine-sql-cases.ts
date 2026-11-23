@@ -1290,6 +1290,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listOriginTwinGroups': OOS.repairBookkeeping,
   'listLegacyOriginPairs': OOS.repairBookkeeping,
   'listLiveOriginPages': OOS.repairBookkeeping,
+  'listOriginClaimants': OOS.repairBookkeeping,
   'countLiveFileBackedPages': OOS.repairBookkeeping,
   'listRepairScanPages': OOS.repairBookkeeping,
   'listFileTombstones': OOS.repairBookkeeping,

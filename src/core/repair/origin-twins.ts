@@ -36,7 +36,7 @@ import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { maintenancePreflight, submitDatabaseMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { decideOriginTwins, ORIGIN_TWIN_REASON, readOriginClaimants, slugPathOccupied, type OriginClaimant, type OriginConflictReason, type OriginTwinVerdict } from '../persistence/origin-twins.ts';
-import { mergeTwinInto, twinMergeConflicts, requireTwinMerge } from '../persistence/twin-merge.ts';
+import { mergeTwinInto, twinMergeConflicts } from '../persistence/twin-merge.ts';
 import { buildOriginIndexIfClean, originTwinsRepairCommand } from '../persistence/origin-index.ts';
 import { legacySyncOrigin, sameSyncOrigin, syncOriginPath, type SyncOriginScope } from '../persistence/sync-origin.ts';
 import { frontmatterIdentity } from '../sync-rename-identity.ts';
@@ -286,8 +286,7 @@ const changed = (reason: string): RepairItemOutcome => ({ applied: false, outcom
 export async function originPairNow(engine: BrainEngine, pair: OriginTwinPair, owner: GhostOwner | null): Promise<string | null> {
   const context = await originOwnerContext(engine, pair.source_id);
   if (!context.ok || (owner && !sameOwner(context.owner, owner))) return 'the source\'s canonical owner changed since the preview';
-  const rows = await engine.executeRaw<{ id: number; slug: string; revision: string; source_path: string | null }>(`SELECT id, slug, knowledge_revision::text AS revision, source_path FROM pages
-    WHERE source_id=$1 AND id=ANY($2::bigint[]) AND deleted_at IS NULL`, [pair.source_id, [pair.survivor.page_id, pair.twin.page_id]]);
+  const rows = (await engine.listRepairScanPages(pair.source_id, { ids: [pair.survivor.page_id, pair.twin.page_id] })).filter(row => !row.deleted);
   const survivor = rows.find(row => Number(row.id) === pair.survivor.page_id), twin = rows.find(row => Number(row.id) === pair.twin.page_id);
   if (!survivor || !twin) return 'one of the two pages was deleted or purged';
   if (survivor.slug !== pair.survivor.slug || twin.slug !== pair.twin.slug) return 'one of the two pages was renamed';
@@ -303,8 +302,6 @@ export async function originPairNow(engine: BrainEngine, pair: OriginTwinPair, o
 /** Resolves one pair; a managed brain submits it under `requestId()`. Returns the receipt fields on success. */
 export async function resolveOriginTwin(ctx: OperationContext, pair: OriginTwinPair, owner: GhostOwner | null, requestId: () => Promise<string>): Promise<RepairItemOutcome> {
   const engine = ctx.engine;
-  // A merge runs mergeTwinInto, whose store side the Rust engine does not serve yet: it stops here by name, before any read.
-  if (pair.mode === 'merge') requireTwinMerge(engine);
   const moved = await originPairNow(engine, pair, owner);
   if (moved) return changed(moved);
   if (await managedPersistenceEnabled(engine)) {
@@ -339,9 +336,8 @@ async function pairLocked(tx: BrainEngine, pair: OriginTwinPair): Promise<string
 const DROPPED_VALUE_MAX = 1000;
 /** Keys of the twin's frontmatter the survivor lacks or holds differently, with the twin's values (listed in the receipt). */
 async function droppedFrontmatter(tx: BrainEngine, pair: OriginTwinPair): Promise<Record<string, unknown>> {
-  const rows = await tx.executeRaw<{ id: number; frontmatter: Record<string, unknown> | string | null }>('SELECT id, frontmatter FROM pages WHERE id=ANY($1::bigint[])', [[pair.survivor.page_id, pair.twin.page_id]]);
-  const of = (id: number) => { const raw = rows.find(row => Number(row.id) === id)?.frontmatter; return (typeof raw === 'string' ? JSON.parse(raw) : raw ?? {}) as Record<string, unknown>; };
-  const survivor = of(pair.survivor.page_id), twin = of(pair.twin.page_id);
+  const frontmatter = async (slug: string) => ((await tx.getPage(slug, { sourceId: pair.source_id }))?.frontmatter ?? {}) as Record<string, unknown>;
+  const survivor = await frontmatter(pair.survivor.slug), twin = await frontmatter(pair.twin.slug);
   return Object.fromEntries(Object.entries(twin).filter(([key, value]) => JSON.stringify(survivor[key]) !== JSON.stringify(value))
     .map(([key, value]) => { const text = JSON.stringify(value) ?? 'null'; return [key, text.length > DROPPED_VALUE_MAX ? `${text.slice(0, DROPPED_VALUE_MAX)}… (truncated; the twin's page version holds it)` : value]; }));
 }

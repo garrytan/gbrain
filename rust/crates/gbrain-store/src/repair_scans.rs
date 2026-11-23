@@ -2,8 +2,9 @@
 //! plans, and the twin-merge conflict read (`src/core/engine-sql/repair-page-scans.ts`).
 //!
 //! Members: listSafeChunksPending, listOriginTwinGroups, listLegacyOriginPairs,
-//! listLiveOriginPages, countLiveFileBackedPages, listRepairScanPages, listTwinMergeLosers, and
-//! listFileTombstones (the tombstone read of `gbrain repair uncommitted-deletions`).
+//! listLiveOriginPages, listOriginClaimants, countLiveFileBackedPages, listRepairScanPages,
+//! listTwinMergeLosers, and listFileTombstones (the tombstone read of `gbrain repair
+//! uncommitted-deletions`).
 //!
 //! Each member reads every page record once and filters it as the SQL's `WHERE` does, so a brain
 //! the store never wrote through its own guards still answers what the SQL engines answer. A
@@ -16,16 +17,22 @@ use crate::chunks::{SAFE_FENCE_CHUNKER_VERSION, segmented};
 use crate::cli_reads::pg_text::{fm_text, jsonb_text};
 use crate::env::iso;
 use crate::error::{Result, StoreError};
+use crate::facts::PrivacyPolicy;
+use crate::facts::md5_hex;
+use crate::facts::privacy::page_hidden_with;
+use crate::facts::purge_ledger::purges_under_subject;
 use crate::journal::RequestRecord;
 use crate::keys;
 use crate::kv::{KvRead, scan_prefix};
 use crate::link_queries::link_temporal::{TransitionRecord, all_transitions};
 use crate::links::{LinkRecord, in_links, origin_page_links, out_links};
+use crate::owner_only::OwnerOnlySources;
 use crate::pages::{PageRecord, all_pages};
 use crate::persistence::projection_queue::parse_timestamptz;
 use crate::persistence::{all_requests, extra_bool, op_checkpoint_completed_keys};
 use crate::raw_files::page_raw_rows;
 use crate::timeline::TimelineRecord;
+use crate::trust::withdrawals::has_subject_withdrawal;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -68,6 +75,33 @@ pub struct LegacyOriginPair {
 pub struct LiveOriginPage {
     pub id: u64,
     pub source_path: String,
+}
+
+/// A live page the origin-twins verdict judges (`OriginClaimant`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OriginClaimant {
+    pub id: u64,
+    pub slug: String,
+    pub revision: String,
+    /// `md5(compiled_truth) || md5(COALESCE(timeline, ''))`; `None` for a segmented body.
+    pub body_hash: Option<String>,
+    /// `frontmatter ->> 'id'`.
+    pub fm_id: Option<String>,
+    pub trust_tier: String,
+    /// The page policy of `privatePagesFilterFragment('p')` keeps the page (its SQL value, whatever its name).
+    pub private: bool,
+    /// A fact withdrawal or purge is keyed to the page's slug.
+    pub restricted: bool,
+}
+
+/// `listOriginClaimants`'s input: the source, the page ids and the no-caller page policy.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct OriginClaimantsInput {
+    pub source_id: String,
+    pub ids: Vec<u64>,
+    /// Required.
+    pub policy: Option<PrivacyPolicy>,
 }
 
 /// The `op_checkpoints.op` of a managed sync deletion's tombstone record
@@ -334,6 +368,57 @@ impl Store {
                     })
             })
             .collect())
+    }
+
+    /// `listOriginClaimants({ sourceId, ids, policy })`: the live pages of the source with these
+    /// ids, by id, each with the inputs of the origin-twins verdict.
+    pub fn list_origin_claimants(
+        &self,
+        input: &OriginClaimantsInput,
+    ) -> Result<Vec<OriginClaimant>> {
+        let policy = input
+            .policy
+            .as_ref()
+            .ok_or_else(|| StoreError::invalid("listOriginClaimants needs policy"))?;
+        let read = self.read()?;
+        let read = &*read;
+        let wanted: BTreeSet<u64> = input.ids.iter().copied().collect();
+        let mut pages: Vec<PageRecord> = all_pages(read)?
+            .into_iter()
+            .filter(|p| {
+                p.source_id == input.source_id
+                    && p.deleted_at_us.is_none()
+                    && wanted.contains(&p.id)
+            })
+            .collect();
+        pages.sort_by_key(|p| p.id);
+        let owner_only = OwnerOnlySources::read(read)?;
+        let mut out = Vec::with_capacity(pages.len());
+        for page in pages {
+            let restricted = has_subject_withdrawal(read, &page.source_id, &page.slug)?
+                || !purges_under_subject(read, &page.source_id, "private", &page.slug)?.is_empty()
+                || !purges_under_subject(read, &page.source_id, "world", &page.slug)?.is_empty();
+            out.push(OriginClaimant {
+                id: page.id,
+                body_hash: page.compiled_truth.as_deref().map(|truth| {
+                    format!(
+                        "{}{}",
+                        md5_hex(truth),
+                        md5_hex(page.timeline.as_deref().unwrap_or(""))
+                    )
+                }),
+                fm_id: field_text(&Value::Object(page.frontmatter.clone()), "id"),
+                trust_tier: page
+                    .trust_tier
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_owned()),
+                private: !page_hidden_with(read, &page, policy, &owner_only)?,
+                restricted,
+                revision: page.knowledge_revision,
+                slug: page.slug,
+            });
+        }
+        Ok(out)
     }
 
     /// `countLiveFileBackedPages(sourceId, { nonBlank })`: the live pages of the source that record

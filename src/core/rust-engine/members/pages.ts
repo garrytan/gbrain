@@ -255,6 +255,7 @@ export const PAGES_MEMBERS = {
   listOriginTwinGroups: 'pages',
   listLegacyOriginPairs: 'pages',
   listLiveOriginPages: 'pages',
+  listOriginClaimants: 'pages',
   countLiveFileBackedPages: 'pages',
   listRepairScanPages: 'pages',
   listFileTombstones: 'pages',

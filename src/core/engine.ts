@@ -145,7 +145,7 @@ import type { AtomFenceCandidate, AtomFenceQuery, ContactRowQuery, RepairPageRef
 import type { AttributionTable, DriftConflictBounds, DriftConflictDetails, DriftConflictGroups, DriftConflictQuery, FailedWriteQuery, FailedWriteRow, OriginPathPageRow, SourceHoldQuery, SourceHoldRecordRow, UntiledPage, UntiledPageQuery } from './engine-sql/repair-plan-scans.ts';
 import type { ConnectorSourceRow, LoopFactState, OrphanBinding, OrphanCheckpointBounds, OrphanCheckpointRow } from './engine-sql/repair-bookkeeping.ts';
 import type { ContentReceiptBinding, OwnedContentRow } from './engine-sql/owned-content.ts';
-import type { FileTombstone, FileTombstoneQuery, LegacyOriginPair, LiveOriginPage, OriginTwinGroupRow, RepairScanPage, RepairScanQuery, SafeChunksPendingRow, TwinMergeLosers } from './engine-sql/repair-page-scans.ts';
+import type { FileTombstone, FileTombstoneQuery, LegacyOriginPair, LiveOriginPage, OriginClaimantRow, OriginTwinGroupRow, RepairScanPage, RepairScanQuery, SafeChunksPendingRow, TwinMergeLosers } from './engine-sql/repair-page-scans.ts';
 import type { LinkTargetPage, LinksRearm, OwnedLink, WriterReadPolicy } from './engine-sql/remote-links.ts';
 import type { ManagedSyncOrphanRows, ManagedSyncRetireMode, ManagedSyncRetireTarget } from './engine-sql/managed-sync-orphans.ts';
 import type { OriginIndexState, OriginTwinCount, PageRef, TornPages } from './engine-sql/repair-page-reads.ts';
@@ -1774,6 +1774,8 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   listLegacyOriginPairs(sourceId: string, prefix: string, limit: number): Promise<LegacyOriginPair[]>;
   /** Live pages of the source recording any of `paths`, by id. */
   listLiveOriginPages(sourceId: string, paths: readonly string[]): Promise<LiveOriginPage[]>;
+  /** The verdict inputs of the live pages of the source with these ids, by id: body digest, frontmatter id, trust tier, the no-caller page policy and slug-keyed withdrawals (the origin-twins verdict). */
+  listOriginClaimants(sourceId: string, ids: readonly number[]): Promise<OriginClaimantRow[]>;
   /** How many live pages of the source record an origin (`nonBlank`: a non-blank one). */
   countLiveFileBackedPages(sourceId: string, opts?: { nonBlank?: boolean }): Promise<number>;
   /** The ghost-pages and legacy-twins page reads of one source, by id (engine-sql/repair-page-scans.ts `RepairScanQuery`). */

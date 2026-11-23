@@ -502,7 +502,6 @@ src/core/persistence/moved-pages.ts	execute_raw	1
 src/core/persistence/noop-kernel.ts	execute_raw	2
 src/core/persistence/origin-guard.ts	execute_raw	2
 src/core/persistence/origin-index.ts	execute_raw	2
-src/core/persistence/origin-twins.ts	execute_raw	1
 src/core/persistence/owner-activity.ts	execute_raw	1
 src/core/persistence/page-advisories.ts	execute_raw	1
 src/core/persistence/page-append.ts	execute_raw	2
@@ -620,7 +619,6 @@ src/core/repair/missing-tables.ts	execute_raw	2
 src/core/repair/open-facts.ts	execute_raw	11
 src/core/repair/origin-carry.ts	execute_raw	4
 src/core/repair/origin-twins-heal.ts	execute_raw	4
-src/core/repair/origin-twins.ts	execute_raw	2
 src/core/repair/private-labels.ts	execute_raw	5
 src/core/repair/provenance.ts	execute_raw	1
 src/core/repair/purged-page-facts.ts	execute_raw	2
