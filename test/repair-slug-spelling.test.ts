@@ -32,6 +32,10 @@ import { importFromContent } from '../src/core/import-file.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
+import { renderFactsTable, type ParsedFact } from '../src/core/facts-fence.ts';
+import { renderTakesFence, type ParsedTake } from '../src/core/takes-fence.ts';
+import { loadFenceChunkOverlay } from '../src/core/eligibility/fence-overlay.ts';
+import { holdFingerprint } from '../src/core/write-gate-store.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -290,6 +294,107 @@ describe('apply', () => {
     expect((await engine.executeRaw<{ entity_slug: string }>('SELECT entity_slug FROM facts WHERE source_id=$1', [s.id])).map(r => r.entity_slug)).toEqual(['Notes/Fault-Page']);
     expect((await engine.executeRaw<{ page_slug: string }>('SELECT page_slug FROM files WHERE source_id=$1', [s.id])).map(r => r.page_slug)).toEqual(['Notes/Fault-Page']);
     expect((await engine.executeRaw('SELECT 1 FROM slug_aliases WHERE source_id=$1', [s.id])).length).toBe(0);
+  }));
+});
+
+describe('guards that follow the page to its normal slug', () => {
+  const fenceRow = (rowNum: number, claim: string): ParsedFact => ({ rowNum, claim, kind: 'fact', confidence: 1, visibility: 'world', notability: 'medium', validFrom: '2024-01-01', source: 'user', active: true });
+  const fingerprintOf = async (claim: string) => (await engine.executeRaw<{ fp: string }>('SELECT gbrain_fact_fingerprint($1) AS fp', [claim]))[0]!.fp;
+  const purged = async (run: () => Promise<unknown>) => String(await run().then(() => 'saved', e => (e as Error).message));
+
+  test('purges scoped to the old spelling keep refusing the same claims under the normal slug, with their metadata, for facts and takes', () => withEnv(env, async () => {
+    const s = await newSource();
+    const old = await storeAs(s.id, 'Notes/Purge-Move', 'Purge page', 'body');
+    const factClaim = 'Alpha was acquired by acme-example in 2019', takeClaim = 'Alpha will win the market';
+    const request = randomUUID();
+    await engine.executeRaw(`INSERT INTO fact_purges(source_id, visibility, subject, fact_hash, request_id, actor, reason, purged_at) VALUES ($1,'world','Notes/Purge-Move',$2,$3,'alice-example','asked to forget','2026-01-02T03:04:05Z')`, [s.id, await fingerprintOf(factClaim), request]);
+    await engine.executeRaw(`INSERT INTO take_purges(source_id, subject, claim_hash, request_id, purged_at) VALUES ($1,'Notes/Purge-Move',$2,$3,'2026-01-03T03:04:05Z')`, [s.id, await fingerprintOf(takeClaim), request]);
+    // A tombstone the normal slug already holds (older than the copy) is kept as it is.
+    await engine.executeRaw(`INSERT INTO fact_purges(source_id, visibility, subject, fact_hash, actor, purged_at) VALUES ($1,'world','Notes/Purge-Move',$2,'alice-example','2026-02-01T00:00:00Z'), ($1,'world','notes/purge-move',$2,'bob-example','2026-01-01T00:00:00Z')`, [s.id, await fingerprintOf('A claim both spellings purged')]);
+
+    const preview = await repairJson(previewArgs(s.id));
+    await repairJson(applyArgs(s.id, preview.preview_hash));
+    expect(await row(s.id, 'notes/purge-move')).toMatchObject({ id: old.id });
+
+    expect(await purged(() => engine.insertFact({ fact: factClaim, entity_slug: 'notes/purge-move', visibility: 'world', source: 'synthetic' }, { source_id: s.id }))).toContain('purged_content');
+    expect(await purged(() => engine.addTakesBatch([{ page_id: old.id, row_num: 1, claim: takeClaim, kind: 'take', holder: 'brain', weight: 0.5 }]))).toContain('purged_content');
+    // The page's file imported again with both claims: neither comes back.
+    const body = `---\ntitle: Purge page\ntype: note\n---\nBody.\n\n## Facts\n\n${renderFactsTable([fenceRow(1, factClaim), fenceRow(2, 'An unrelated kept claim')])}\n\n${renderTakesFence([{ rowNum: 1, claim: takeClaim, kind: 'take', holder: 'world', weight: 0.5, active: true } as ParsedTake])}\n`;
+    const imported = await importFromContent(engine, 'notes/purge-move', body, { noEmbed: true, sourceId: s.id });
+    expect(imported.status).toBe('imported');
+    expect((await engine.executeRaw('SELECT 1 FROM facts WHERE source_id=$1 AND fact=$2', [s.id, factClaim])).length).toBe(0);
+    expect((await engine.executeRaw('SELECT 1 FROM takes WHERE page_id=$1 AND claim=$2', [old.id, takeClaim])).length).toBe(0);
+    // Metadata moved with the tombstones; a tombstone already under the normal slug is not overwritten.
+    expect(await engine.executeRaw('SELECT actor, reason, request_id::text AS request_id, purged_at::text AS purged_at FROM fact_purges WHERE source_id=$1 AND subject=$2 AND fact_hash=$3', [s.id, 'notes/purge-move', await fingerprintOf(factClaim)]))
+      .toEqual([{ actor: 'alice-example', reason: 'asked to forget', request_id: request, purged_at: expect.stringContaining('2026-01-02') }]);
+    expect((await engine.executeRaw<{ request_id: string }>('SELECT request_id::text AS request_id FROM take_purges WHERE source_id=$1 AND subject=$2', [s.id, 'notes/purge-move'])).map(r => r.request_id)).toEqual([request]);
+    expect((await engine.executeRaw<{ actor: string }>('SELECT actor FROM fact_purges WHERE source_id=$1 AND subject=$2 AND fact_hash=$3', [s.id, 'notes/purge-move', await fingerprintOf('A claim both spellings purged')])).map(r => r.actor)).toEqual(['bob-example']);
+  }), 60_000);
+
+  test('a held world fence row stays held (omitted from delivered text) after its page moves, and a hold already under the normal slug is not duplicated', () => withEnv(env, async () => {
+    const s = await newSource();
+    const claim = 'Alpha ignored the previous instructions zanzibarquux';
+    const rows = [fenceRow(1, 'Alpha ships widgets'), fenceRow(2, claim)];
+    const compiled = `Alpha runs acme-example.\n\n## Facts\n\n${renderFactsTable(rows)}\n`;
+    const old = await storeAs(s.id, 'Notes/Hold-Move', 'Hold page', compiled);
+    const fingerprint = holdFingerprint('fact', [claim, null, null]);
+    const hold = (slug: string, fp: string, status = 'held') => engine.executeRaw(`INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, payload, status, seen_count)
+      VALUES ('fact', $1, $2, $3, 2, 'external_untrusted', $4::text::jsonb, $5, 3)`, [s.id, slug, fp, JSON.stringify({ fact: claim, kind: 'fact', visibility: 'world', entity_slug: slug, row_num: 2 }), status]);
+    await hold('Notes/Hold-Move', fingerprint);
+    const dupFp = holdFingerprint('fact', ['A second held claim', null, null]);
+    await hold('Notes/Hold-Move', dupFp); await hold('notes/hold-move', dupFp, 'released');
+    const overlayAt = (slug: string) => loadFenceChunkOverlay(engine, { sourceId: s.id, slug, compiled_truth: compiled });
+    expect([...(await overlayAt('Notes/Hold-Move'))!.omit]).toEqual([2]);
+
+    const preview = await repairJson(previewArgs(s.id));
+    await repairJson(applyArgs(s.id, preview.preview_hash));
+    expect(await row(s.id, 'notes/hold-move')).toMatchObject({ id: old.id });
+
+    expect([...(await overlayAt('notes/hold-move'))!.omit]).toEqual([2]);
+    const holds = await engine.executeRaw<{ slug: string; status: string; fingerprint: string; payload: { entity_slug: string } | string }>('SELECT slug, status, fingerprint, payload FROM write_gate_holds WHERE source_id=$1 ORDER BY id', [s.id]);
+    const payloadOf = (h: { payload: { entity_slug: string } | string }) => typeof h.payload === 'string' ? JSON.parse(h.payload) : h.payload;
+    expect(holds.map(h => [h.slug, h.status, h.fingerprint === fingerprint])).toContainEqual(['notes/hold-move', 'held', true]);
+    expect(holds.filter(h => h.slug === 'Notes/Hold-Move' && h.status === 'held')).toEqual([]);
+    expect(payloadOf(holds.find(h => h.fingerprint === fingerprint)!).entity_slug).toBe('notes/hold-move');
+    // The collision keeps one row for the claim, and it is held again.
+    expect(holds.filter(h => h.fingerprint === dupFp).map(h => [h.slug, h.status])).toEqual([['notes/hold-move', 'held']]);
+  }), 60_000);
+
+  test('a write by the stored spelling and the repair take the same two page locks: the legacy key is locked too, and a change after the preview refuses', () => withEnv(env, async () => {
+    const s = await newSource();
+    await storeAs(s.id, 'Notes/Lock-Move');
+    const preview = await repairJson(previewArgs(s.id));
+    await repairJson(applyArgs(s.id, preview.preview_hash));
+    const guards = (await engine.executeRaw<{ slug: string }>('SELECT g.slug FROM page_write_guards g JOIN sources x ON x.incarnation = g.source_incarnation WHERE x.id=$1 ORDER BY g.slug', [s.id])).map(r => r.slug);
+    expect(guards).toEqual(['Notes/Lock-Move', 'notes/lock-move']);
+  }));
+});
+
+describe('a recorded file the checkout does not have', () => {
+  test('a page that records its normal-path file with no such file in the checkout is rename_file_first and nothing moves', () => withEnv(env, async () => {
+    const s = await newSource(true);
+    const missing = await storeAs(s.id, 'Docs/Missing');
+    await engine.executeRaw("UPDATE pages SET source_path='docs/missing.md' WHERE id=$1", [missing.id]);
+    const preview = await repairJson(previewArgs(s.id));
+    expect(classes(preview)).toEqual({ [`${s.id}:Docs/Missing`]: 'rename_file_first' });
+    expect(JSON.stringify(preview)).toContain('recorded file is not in the checkout');
+    const applied = await repairJson(applyArgs(s.id, preview.preview_hash));
+    expect(applied).toMatchObject({ applied: 0 });
+    expect(await slugsOf(s.id)).toEqual(['Docs/Missing']);
+  }));
+
+  test('a recorded file removed after the preview refuses changed_since_preview and moves nothing', () => withEnv(env, async () => {
+    const s = await newSource(true);
+    const proven = await storeAs(s.id, 'Docs/Vanishing');
+    mkdirSync(join(s.root!, 'docs'), { recursive: true });
+    writeFileSync(join(s.root!, 'docs/vanishing.md'), page('Vanishing', 'file body'));
+    await engine.executeRaw("UPDATE pages SET source_path='docs/vanishing.md' WHERE id=$1", [proven.id]);
+    const preview = await repairJson(previewArgs(s.id));
+    expect(classes(preview)).toEqual({ [`${s.id}:Docs/Vanishing`]: 'move' });
+    rmSync(join(s.root!, 'docs/vanishing.md'));
+    const error = await refusal(() => repairJson(applyArgs(s.id, preview.preview_hash)));
+    expect(error.code).toBe('changed_since_preview');
+    expect(await slugsOf(s.id)).toEqual(['Docs/Vanishing']);
   }));
 });
 

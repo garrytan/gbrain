@@ -19,7 +19,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
 import { normalizeSlug } from '../src/core/utils.ts';
-import { MAX_SPELLING_VARIANTS, spellingKeys } from '../src/core/slug-spelling-key.ts';
+import { MAX_SPELLING_VARIANTS, spellingKey, spellingKeys } from '../src/core/slug-spelling-key.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 
@@ -166,6 +166,22 @@ for (const kind of backends) {
       expect(usesScan(lookupOf(scanned.sent)!)).toBe(true);
     });
 
+    test('a capital with a combining mark that lowercases and composes into one character is found by the normal slug (U+03AA U+0301 is U+0390)', async () => {
+      const engine = brain();
+      const stored = 'notes/\u03AA\u0301-iota';
+      expect(normalizeSlug(stored)).toBe('notes/\u0390-iota');
+      await store(engine, A, stored);
+      const { page } = await read(engine, A, 'notes/\u0390-iota');
+      expect(page?.slug).toBe(stored);
+      // The lowercase mark order, a half-capital spelling and the all-composed spelling reach the same page.
+      for (const other of ['notes/\u03CA\u0301-iota', 'notes/\u0399\u0308\u0301-iota']) {
+        expect(normalizeSlug(other)).toBe('notes/\u0390-iota');
+        await store(engine, B, other);
+        expect((await read(engine, B, 'notes/\u0390-iota')).page?.slug).toBe(other);
+        await engine.executeRaw('DELETE FROM pages WHERE source_id=$1', [B]);
+      }
+    });
+
     test('every capital letter of Unicode that lowercases to something else, composed or decomposed, finds its page by the normal slug', async () => {
       const engine = brain();
       const stored: string[] = [];
@@ -188,3 +204,39 @@ for (const kind of backends) {
     }, 240_000);
   });
 }
+
+describe('the keys a lookup probes cover every stored spelling that reads as the slug', () => {
+  const capitals: string[] = [];
+  for (let cp = 0x41; cp < 0x20000; cp++) {
+    if (cp >= 0xd800 && cp < 0xe000) continue;
+    const ch = String.fromCodePoint(cp);
+    if (ch.toLowerCase() !== ch) capitals.push(ch);
+  }
+  // Marks that compose with capitals or that change what the lowercase text composes to.
+  const marks = ['\u0300', '\u0301', '\u0302', '\u0303', '\u0304', '\u0306', '\u0307', '\u0308', '\u030A', '\u030B', '\u030C', '\u0313', '\u0314', '\u0323', '\u0327', '\u0328', '\u0342', '\u0345'];
+  const missing = (stored: string): boolean => {
+    const keys = spellingKeys(normalizeSlug(stored));
+    return keys !== null && !keys.includes(spellingKey(stored));
+  };
+
+  test('every capital followed by one or two combining marks, and every pair of capitals, is probed or answered by the scan', () => {
+    const missed: string[] = [];
+    for (const c of capitals) {
+      for (const m of marks) {
+        if (missing(`x${c}${m}y`)) missed.push(`${c}${m}`);
+        if (missing(`${c.toLowerCase()}${m}`)) missed.push(`lower ${c}${m}`);
+      }
+      for (const m of ['\u0301', '\u0308', '\u0345', '\u0323', '\u0313']) for (const n of ['\u0301', '\u0308', '\u0345', '\u0342', '\u0300']) if (missing(`${c}${m}${n}`)) missed.push(`${c}${m}${n}`);
+    }
+    for (const c of ['\u0391', '\u0399', '\u03A3', '\u03AA', '\u0130', '\u212A', '\u212B', '\u1E9E', '\u01C5', '\u1FBC', 'E', 'I']) {
+      for (const d of capitals.filter((_, i) => i % 7 === 0)) if (missing(`${c}${d}`) || missing(`${d}\u0301${c}\u0308`)) missed.push(`${c}${d}`);
+    }
+    expect(missed).toEqual([]);
+  }, 120_000);
+
+  test('the example of a capital iota with diaeresis and a combining acute is probed by its stored key', () => {
+    const stored = 'notes/\u03AA\u0301';
+    const keys = spellingKeys(normalizeSlug(stored));
+    expect(keys === null || keys.includes(spellingKey(stored))).toBe(true);
+  });
+});
