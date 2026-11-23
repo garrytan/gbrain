@@ -17,6 +17,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { attachShadowParts } from '../src/shadow/attach.ts';
 import { encodeValue } from '../src/shadow/codec.ts';
 import { runShadowChild, type ShadowChildDeps } from '../src/shadow/child.ts';
+import { createWaiter } from '../src/shadow/child-checks.ts';
 import { SHADOW_COMPARATOR_VERSION } from '../src/shadow/exactness.ts';
 import { ensureEpoch, epochWatch } from '../src/shadow/evidence-epoch.ts';
 import { appendRecall, readEpochRecall } from '../src/shadow/recall.ts';
@@ -491,5 +492,39 @@ describe('a rerun waiting for a quiet window', () => {
     await done;
     expect(Date.now() - started).toBeLessThan(450); // the full wait is 500 ms
     expect(ledgerRows(dir).at(-1)).toMatchObject({ op: 'getPage', rerun: 'skipped:child_closing' });
+  });
+});
+
+describe('a rerun wait that starts after the end of input', () => {
+  test('a privacy answer that says moved, followed at once by the end of input: shutdown does not wait for the back-off', async () => {
+    const dir = seeded();
+    const input = new PassThrough();
+    let asked = 0;
+    const page = { page_id: 1, source_id: 's', slug: 'a' };
+    const line = JSON.stringify({ t: 'read', id: 1, sid: 's1', at: Date.parse('2026-11-23T00:00:00Z'), op: 'listPages', primary_ms: 2, args: encodeValue([{ excludePrivate: true }]), result: encodeValue([page]) }) + '\n';
+    const done = runShadowChild(dir, { input, writeControl: (l) => {
+      const m = JSON.parse(l) as { t?: string; id?: number; session?: string; kind?: string };
+      if (m.t === 'ask' && m.kind === 'privacy' && ++asked === 1) {
+        input.write(JSON.stringify({ t: 'answer', id: m.id, session: m.session ?? '', ok: true, value: { verdict: 'privacy_check_moved', complete: false } }) + '\n'); // the position moved: the rerun would wait 0.5 s first
+        input.end(); // and the input ends in the same breath, before that wait can start
+      }
+    }, ...BASE, random: () => 0.5, openEngine: () => ({ async connect() {}, async disconnect() {}, async listPages() { return [page, { page_id: 2, source_id: 's', slug: 'extra' }]; } }) as never });
+    const started = Date.now();
+    input.write(line);
+    await done;
+    expect(asked).toBe(1); // the privacy question was asked, so the wait is the one that follows its moved answer
+    expect(Date.now() - started).toBeLessThan(450); // the full wait is 500 ms
+    expect(ledgerRows(dir).at(-1)).toMatchObject({ op: 'listPages', reason: 'privacy_check_moved', rerun: expect.stringMatching(/^skipped:/) });
+  });
+});
+
+describe('the rerun waiter', () => {
+  test('a pause asked for after close() returns at once and starts no timer', async () => {
+    const waiter = createWaiter();
+    waiter.close();
+    const started = Date.now();
+    await waiter.pause(5_000);
+    expect(Date.now() - started).toBeLessThan(100);
+    expect(waiter.closed()).toBe(true);
   });
 });

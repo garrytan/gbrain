@@ -210,11 +210,11 @@ export function createWaiter(sleep?: (ms: number) => Promise<void>) {
   let closed = false;
   const wakers = new Set<() => void>();
   return {
-    pause: sleep ?? ((ms: number): Promise<void> => new Promise((resolve) => {
+    pause: sleep ?? ((ms: number): Promise<void> => (closed ? Promise.resolve() : new Promise((resolve) => { // already closed: no timer, so a moved answer followed at once by the end of input holds nothing
       const done = (): void => { clearTimeout(timer); wakers.delete(done); resolve(); };
       const timer = setTimeout(done, ms);
       wakers.add(done);
-    })),
+    }))),
     close(): void { closed = true; for (const wake of [...wakers]) wake(); },
     closed: (): boolean => closed,
   };
