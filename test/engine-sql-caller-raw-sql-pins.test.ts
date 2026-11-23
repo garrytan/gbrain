@@ -2839,6 +2839,20 @@ const PINS: Pin[] = [
     WHERE h.op=$1 AND s.id=ANY($2::text[]) AND COALESCE((h.completed_keys->0->>'images')::int,0)>0`],
   },
   {
+    from: 'src/core/link-extraction.ts:1836 makeResolver resolveAttendance (at 34057d8e2f)',
+    case: { method: 'listAttendanceMatches', variant: 'default', run: e => e.listAttendanceMatches('default', ['people/a'], 'A') },
+    texts: [`SELECT slug FROM pages
+        WHERE source_id=$1 AND deleted_at IS NULL AND type='person'
+          AND (slug=ANY($2::text[]) OR lower(title)=lower($3)
+            OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(frontmatter->'aliases')='array'
+              THEN frontmatter->'aliases' ELSE '[]'::jsonb END) alias WHERE lower(alias)=lower($3))) LIMIT 2`],
+  },
+  {
+    from: 'src/core/meetings/meetings-source.ts:297 existingPath (at 34057d8e2f)',
+    case: { method: 'readMeetingPage', variant: 'default', run: e => e.readMeetingPage('default', 'm-1') },
+    texts: [`SELECT slug,source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND frontmatter->>'meeting_id'=$2 ORDER BY id LIMIT 1`],
+  },
+  {
     from: 'src/core/persistence/sync-holds.ts:1168 readSyncConversions (at 77ac0ed0e9)',
     case: { method: 'readSyncConversionRows', variant: 'default', run: e => e.readSyncConversionRows(['default']) },
     texts: [`SELECT s.id AS source_id, c.completed_keys->0->'conversions' AS conversions

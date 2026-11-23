@@ -812,6 +812,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'listLivePagesBySourcePaths': OOS.repairHistoryKinds,
   'listLivePagesByFileName': OOS.repairHistoryKinds,
   'listLivePagesSharingFrontmatterId': OOS.repairHistoryKinds,
+  'readMeetingPage': OOS.callerRawSql,
+  'listAttendanceMatches': OOS.callerRawSql,
   'hasSegmentedHistory': OOS.repairHistoryKinds,
   'readLivePagesByIds': OOS.repairHistoryKinds,
   'listRetiredFenceItems': OOS.repairGenerationKinds,

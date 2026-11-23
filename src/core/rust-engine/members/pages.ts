@@ -83,6 +83,8 @@ export const PAGES_MEMBERS = {
   listLivePagesBySourcePaths: 'pages',
   listLivePagesByFileName: 'pages',
   listLivePagesSharingFrontmatterId: 'pages',
+  readMeetingPage: 'pages',
+  listAttendanceMatches: 'pages',
   hasSegmentedHistory: 'pages',
   readLivePagesByIds: 'pages',
   listRetiredFenceItems: 'persistence_journal',

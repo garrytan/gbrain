@@ -1973,6 +1973,10 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   listLivePagesSharingFrontmatterId(sourceId: string, pageId: number): Promise<string[]>;
   /** Whether the page or one of its versions is stored in segments. */
   hasSegmentedHistory(pageId: number): Promise<boolean>;
+  /** The live page of a source holding the meeting (frontmatter `meeting_id`), lowest id first; null when none (SQL in engine-sql/meeting-pages.ts). */
+  readMeetingPage(sourceId: string, meetingId: string): Promise<import('./engine-sql/meeting-pages.ts').MeetingPageRow | null>;
+  /** At most two live person pages of a source an attendee name can mean: by slug, lower(title) or a lower(alias) (SQL in engine-sql/attendance-pages.ts). */
+  listAttendanceMatches(sourceId: string, slugs: readonly string[], name: string): Promise<string[]>;
   /** The named live pages of a source with their revision and recorded path. */
   readLivePagesByIds(sourceId: string, ids: readonly number[]): Promise<import('./engine-sql/moved-page-reads.ts').MovedPageRow[]>;
   /** repair lost-fence-rows: the retired fence items of unproven, unheld page fence generations (engine-sql/lost-fence-reads.ts). */
