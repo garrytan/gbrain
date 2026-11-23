@@ -128,17 +128,17 @@ export interface SourceCycleFailureRow { source_id: string; fail_count: number; 
  */
 export async function listRecentSourceCycleFailures(tx: Raw, spec: { cutoff: string; sourceId?: string | null }): Promise<SourceCycleFailureRow[]> {
   const only = spec.sourceId ? sqlFragment` AND data->>'source_id' = ${spec.sourceId}` : sqlFragment``;
+  // The statement's bytes are the old inline text (pinned in test/engine-sql-cycle-failures-pins.test.ts); sqlFragment only numbers its parameters.
   const { text, params } = renderFragment(sqlFragment`SELECT data->>'source_id' AS source_id,
-            count(*)::int AS fail_count,
-            max(finished_at) AS last_failed_at
-       FROM minion_jobs
-      WHERE name = 'autopilot-cycle'
-        AND status IN ('dead','failed')
-        AND (result->>'job_outcome' IS NULL OR result->>'job_outcome' <> 'phase_failed')
-        AND data->>'source_id' IS NOT NULL
-        AND finished_at IS NOT NULL
-        AND finished_at > ${spec.cutoff}${only}
-      GROUP BY data->>'source_id'`);
+              count(*)::int AS fail_count,
+              max(finished_at) AS last_failed_at
+         FROM minion_jobs
+        WHERE name = 'autopilot-cycle'
+          AND status IN ('dead','failed')
+          AND (result->>'job_outcome' IS NULL OR result->>'job_outcome' <> 'phase_failed')
+          AND data->>'source_id' IS NOT NULL
+          AND finished_at IS NOT NULL
+          AND finished_at > ${spec.cutoff}${only} GROUP BY data->>'source_id'`);
   const rows = await tx.executeRaw<{ source_id: string; fail_count: number | string; last_failed_at: Timestamp }>(text, params);
   return rows
     .map(r => ({ source_id: r.source_id, fail_count: Number(r.fail_count), last_failed_at: date(r.last_failed_at) }))
