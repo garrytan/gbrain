@@ -16,10 +16,11 @@
  *  - Why existing coverage misses it: the tests of these readers use keys that sort the same in every locale, and
  *    CI's Postgres runs in C.UTF-8. Every case here uses keys that differ by byte and by en_US; run it against an
  *    en_US Postgres to see it fail.
- *  - Seam: rows are written with the production writers where one exists (insertPin, insertRetrievalEvents, the
- *    OAuth provider, addMember, bindCredential, setOwner, insertCalibration) and harness-only SQL otherwise
- *    (receipts, weights, plain OAuth clients). Every reader goes through raw SQL, so the Rust arm stops on its
- *    raw_sql refusal.
+ *  - Seam: rows are written with the production writers or typed engine writers where one exists (insertPin,
+ *    insertRetrievalEvents, addMember, bindCredential, setOwner, insertCalibration, insertDecideReceipts,
+ *    insertOauthClient, enrollSharedSkillMember, putPage, upsertChunks, recordPageEmbeddingHold) and harness-only
+ *    SQL otherwise (weights, event links, volunteer and chronicle rows, source ids the Rust store refuses). A case
+ *    whose writer or reader still runs raw SQL stops on the Rust arm's raw_sql refusal; the rest compare equal.
  */
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';

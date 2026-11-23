@@ -13,7 +13,7 @@
  *    than on PGLite and Rust brains.
  *  - Why existing coverage misses it: the cases used keys that sort the same in every locale, and CI's Postgres
  *    runs in C.UTF-8. Every case here mixes `a-z`, `a/z` and `ab`; run it against an en_US Postgres to see it fail.
- *  - Seam: none. Raw inserts only seed rows the engine has no write for (credentials, hold records).
+ *  - Seam: none. Raw SQL only stamps times no engine writer sets (updated_at, deleted_at, first_due_at).
  */
 import { describe, expect } from 'bun:test';
 import { createSource, parityArms, recordFenceRetirement } from './harness.ts';

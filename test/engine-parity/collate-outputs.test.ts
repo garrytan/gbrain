@@ -15,8 +15,8 @@
  *  - Why existing coverage misses it: the cases used keys that sort the same in every locale, checked list lengths or
  *    sorted the lists first, and CI's Postgres runs in C.UTF-8. Every case here mixes `a-z`, `ab`, `a.b` and `a_b`; run
  *    it against an en_US Postgres to see it fail.
- *  - Seam: none. Pages, tags and links go through the engine writers; receipts, readers and persistence rows are the
- *    rows the writers leave, inserted with raw SQL because no engine method writes them.
+ *  - Seam: none. Pages, tags, links and segment derivations go through the engine writers; pages no writer stores as
+ *    given (an unknown reader, an upper-case or `_` slug) and persistence rows are inserted with raw SQL.
  */
 import { describe, expect } from 'bun:test';
 import { randomUUID } from 'node:crypto';

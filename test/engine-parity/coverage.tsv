@@ -128,7 +128,7 @@ getPage	pages	yes	204	yes	yes	yes	serves
 readPageSnapshot	pages	yes	60	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
 lockPageKeys	pages	yes	14	no	yes	yes	serves
-putPage	pages	yes	1088	yes	yes	yes	serves
+putPage	pages	yes	1090	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	37	yes	yes	yes	serves
@@ -284,7 +284,7 @@ listWithdrawalChunks	chunks	yes	1	no	yes	yes	serves
 deleteChunksForPages	chunks	yes	3	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	6	no	yes	yes	serves
-upsertChunks	chunks	yes	56	yes	yes	yes	serves
+upsertChunks	chunks	yes	58	yes	yes	yes	serves
 sealChunks	chunks	yes	84	no	yes	yes	serves
 getChunks	chunks	yes	58	yes	yes	yes	serves
 getChunkPage	chunks	yes	14	no	yes	yes	serves
@@ -306,7 +306,7 @@ writeTextProjectionSeal	chunks	yes	2	no	yes	yes	serves
 moveChunkIndexes	chunks	yes	2	no	yes	yes	serves
 getChunkReuseRows	chunks	yes	4	no	yes	yes	serves
 readPageEmbeddingBudget	chunks	yes	8	no	yes	yes	serves
-recordPageEmbeddingHold	chunks	yes	2	no	yes	yes	serves
+recordPageEmbeddingHold	chunks	yes	4	no	yes	yes	serves
 openPageEmbeddingHold	chunks	yes	2	no	yes	yes	serves
 reservePageEmbedding	chunks	yes	6	no	yes	yes	serves
 settlePageEmbeddingReservation	chunks	yes	2	no	yes	yes	serves
@@ -1522,7 +1522,7 @@ listSegmentedPages	withdrawal_pages	yes	2	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	2	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	156	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	154	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	4	yes	yes	yes	serves
@@ -1972,8 +1972,8 @@ listUntiledSegmentedPageRows	doctor_derived	yes	1	no	yes	yes	serves
 listTimelineHistoryBatch	doctor_derived	yes	1	no	yes	yes	serves
 readPageCompiledTruths	doctor_derived	yes	1	no	yes	yes	serves
 readEmbeddingBacklogAge	doctor_derived	yes	1	no	yes	yes	serves
-listBudgetLimitedRows	doctor_derived	yes	1	no	yes	yes	serves
-readBudgetHoldAge	doctor_derived	yes	1	no	yes	yes	serves
+listBudgetLimitedRows	doctor_derived	yes	3	no	yes	yes	serves
+readBudgetHoldAge	doctor_derived	yes	2	no	yes	yes	serves
 listImageAssetFiles	doctor_derived	yes	1	no	yes	yes	serves
 listAmbiguousExtractionInputs	doctor_derived	yes	1	no	yes	yes	serves
 listExtractionInputReceipts	doctor_derived	yes	1	no	yes	yes	serves

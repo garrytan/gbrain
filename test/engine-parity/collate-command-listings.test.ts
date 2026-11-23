@@ -15,10 +15,11 @@
  *  - Why existing coverage misses it: the tests for these commands use keys that sort the same in every locale, and
  *    CI's Postgres runs in C.UTF-8. Every case here uses keys that differ by byte and by en_US; run it against an en_US
  *    Postgres to see it fail.
- *  - Seam: source and member rows come from the createSource fixture and insertAccessMember; page frontmatter, link,
- *    hold and effect rows from harness-only SQL. `files verify` runs with an empty GBRAIN_HOME and stubbed process.exit
- *    and console.error. The admin clients list is read over HTTP from an express app on an
- *    ephemeral port. Every command here reads raw SQL, so the Rust arm stops on its raw_sql refusal.
+ *  - Seam: source and member rows come from the createSource fixture and insertAccessMember; pages with their
+ *    frontmatter from putPage, OAuth clients (with a stamped created_at) from insertOauthClient and file rows from
+ *    upsertCliFileRow; link, hold and effect rows from harness-only SQL. `files verify` runs with an empty GBRAIN_HOME
+ *    and stubbed process.exit and console.error. The admin clients list is read over HTTP from an express app on an
+ *    ephemeral port. A command that still reads raw SQL stops on the Rust arm's raw_sql refusal.
  */
 import { describe, expect, spyOn } from 'bun:test';
 import express from 'express';
