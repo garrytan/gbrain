@@ -889,6 +889,7 @@ test/terminal-failures-6650.test.ts
 test/think-remote-model.test.ts
 test/timeline-chunk-reuse.test.ts
 test/timeline-date-parity.test.ts
+test/timeline-placement-drift.test.ts
 test/transcript-redaction-key-names.test.ts
 test/trust-channel-writes.test.ts
 test/trust-claim-chronicle-9284.test.ts

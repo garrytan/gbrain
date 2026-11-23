@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+A page whose database row keeps its timeline inside the body (an import before v0.46.25.0 left a bare dated ## Timeline section there with an empty timeline) no longer counts as differing from its file when the file holds the same text and only the split differs, which is how today's parser reads such a file when it has no timeline sentinel. Writes to such a page (remember, put_page, timeline entries, maintenance writes) are no longer refused source_changed (file_database_drift), and sync imports the next edit of its file instead of holding it file_drift. A file_drift hold an earlier release wrote on a live page is checked once more by the next gbrain sync: a page whose only difference is where its timeline is split imports its file and the hold clears, and a page that differs in any line stays held for gbrain repair file-drift --held. Any line that differs still refuses as before.
