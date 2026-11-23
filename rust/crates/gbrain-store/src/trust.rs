@@ -38,6 +38,7 @@ mod stamp;
 
 mod eligibility;
 pub(crate) mod fingerprint;
+pub(crate) use fingerprint::fact_fingerprint_v1;
 pub mod held_rows;
 pub mod proposals;
 mod row_trust;

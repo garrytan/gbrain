@@ -523,3 +523,19 @@ impl Store {
         Ok(Value::Array(out))
     }
 }
+
+/// The shadow follow (`seed/follow.rs`): removes the ledger row `id` and its owner-index entries.
+/// `false` when there is none.
+pub(crate) fn remove_log(tx: &mut dyn KvWrite, id: i64) -> Result<bool> {
+    let Some(row) = get_json::<LogRecord>(&*tx, &log_key(id))? else {
+        return Ok(false);
+    };
+    if let Some(client) = &row.client_id {
+        tx.delete(&own_key(b'c', client, row.created_at, row.id))?;
+    }
+    if let Some(budget) = &row.budget_key {
+        tx.delete(&own_key(b'b', budget, row.created_at, row.id))?;
+    }
+    tx.delete(&log_key(id))?;
+    Ok(true)
+}

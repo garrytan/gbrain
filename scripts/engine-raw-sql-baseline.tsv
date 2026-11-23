@@ -547,7 +547,8 @@ src/core/github-source.ts	execute_raw	3
 src/core/google/attachment-backfill.ts	execute_raw	2
 src/core/google/counterparty.ts	execute_raw	2
 src/core/google/file-modes.ts	execute_raw	2
-src/core/google/google-source.ts	execute_raw	4
+src/core/google/google-source.ts	execute_raw	5	+1 GST-3452: re-tier pages whose participants joined the private-senders list (one read of connector email pages, until the Google connector moves behind engine methods)
+src/core/google/ingest-tiers.ts	execute_raw	1	GST-3452: which participants have a person page (one alias read per thread, as counterparty.ts does, until the Google connector moves behind engine methods)
 src/core/google/loop-catchup.ts	execute_raw	8
 src/core/google/loops-exclusion.ts	execute_raw	4
 src/core/google/loops-extract.ts	execute_raw	1
@@ -676,6 +677,7 @@ src/core/ops/links.ts	execute_raw	1
 src/core/ops/loops.ts	execute_raw	6
 src/core/ops/page-upload.ts	execute_raw	3
 src/core/ops/pages.ts	execute_raw	1
+src/core/ops/slug-params.ts	execute_raw	1	one bounded read for stored spellings of a slug that normalize to the asked one (slug_reads_normal_form); an engine without raw reads skips it; moves behind a typed engine member with the key migration
 src/core/ops/persistence.ts	execute_raw	4
 src/core/ops/put-page-revision-source.ts	execute_raw	1
 src/core/ops/qm-memory.ts	execute_raw	2
@@ -1249,3 +1251,6 @@ src/eval/longmemeval/retrieval-arms.ts	execute_raw	2
 src/eval/shared/embed-cache.ts	driver_call	4
 src/mcp/http-transport.ts	sql_template	3
 src/mcp/source-preflight.ts	execute_raw	1
+src/shadow/fingerprints.ts	execute_raw	6	the fingerprint probe and fact-fingerprint check run the primary's own SQL functions and read its own lower(), [[:space:]], locale and facts text (gbrain_fact_fingerprint, per-code-point tables, datctype, a count of facts holding a differing code point); the comparison is against the primary's SQL by design
+src/shadow/follow.ts	execute_raw	1	selectWhere: the shadow follow producer reads page ids and the keys of rows a delete removes, on the engine or transaction the write runs on
+src/shadow/follower.ts	execute_raw	1	the shadow follower re-reads the changed keys from the primary in one read-only REPEATABLE READ transaction; only the primary's rows can say what the Rust store must hold

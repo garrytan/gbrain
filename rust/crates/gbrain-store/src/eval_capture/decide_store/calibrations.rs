@@ -333,3 +333,12 @@ impl Store {
         })
     }
 }
+
+/// The shadow follow (`seed/follow.rs`): removes the calibration `id`. `false` when there is none.
+pub(crate) fn remove_calibration(tx: &mut dyn KvWrite, id: u64) -> Result<bool> {
+    if tx.get(&calibration_key(id))?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&calibration_key(id))?;
+    Ok(true)
+}

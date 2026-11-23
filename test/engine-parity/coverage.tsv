@@ -60,11 +60,11 @@ transaction	lifecycle	yes	19	no	yes	yes	refuses:transactions
 transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	45	yes	yes	yes	serves
-readPageSnapshot	pages	yes	12	no	yes	yes	serves
+getPage	pages	yes	49	yes	yes	yes	serves
+readPageSnapshot	pages	yes	20	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	181	yes	yes	yes	serves
+putPage	pages	yes	194	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	17	yes	yes	yes	serves
@@ -194,7 +194,7 @@ upsertFile	raw_files	yes	2	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
 listFilesForPage	raw_files	yes	1	no	yes	yes	serves
 listFiles	raw_files	no	0	no	-	-	-
-addTakesBatch	takes	yes	23	yes	yes	yes	serves
+addTakesBatch	takes	yes	24	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	2	no	yes	yes	serves
 listTakes	takes	yes	13	no	yes	yes	serves
 searchTakes	takes	yes	1	no	yes	yes	serves
