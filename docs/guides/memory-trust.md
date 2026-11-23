@@ -405,8 +405,10 @@ Claim your own sources first, so your notes are not treated as unverified.
   whose page was soft-deleted, or that name a page that never existed (for
   example a write held before its page was created), are listed as
   informational only. A scan that stops at its 5000-row limit or its time
-  limit warns that the count is unknown instead of reporting ok, and an
-  engine that refuses the read is reported unknown too.
+  limit warns that the count is unknown instead of reporting ok. So does a
+  database role that row-level security keeps from reading the holds, the
+  aliases, the rename history or the pages (a hidden table reads as empty, not
+  as an error), and so does an engine that refuses the read.
   This check detects; it does not fix the leak. Neither releasing nor dropping
   a hold restores the quarantine on the renamed page or takes back text
   already delivered: drop only disposes of the hold, release publishes the held

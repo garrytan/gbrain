@@ -16,7 +16,10 @@
  * Bounded: held rows are read in `(source_id, id)` keyset batches on the `(status, source_id, id)` index, projecting
  * only id, kind, source and slug. The row budget counts held rows before any slug, page or rename filtering. When
  * the scan stops at the budget (an extra-row probe tells a full read from a cut one) or at its deadline, the check
- * warns that the count is unknown. An evidence table that cannot be read is unknown too, never an empty answer.
+ * warns that the count is unknown. An evidence table that cannot be read is unknown too, never an empty answer, and
+ * so is one that row-level security hides from the role: it would read as zero rows, so each relation's visibility is
+ * checked before anything is read. The page lookup probes `pages` by its `(source_id, slug)` key for a candidate slug
+ * set resolved first (the hold's own slug, its alias targets and its history targets).
  *
  * A refusal from an engine without raw SQL (`engine_capability_missing`, the optional Rust engine) is reported
  * as a named unknown. The scan itself does not catch anything; this entry classifies what the scan throws.
@@ -44,7 +47,7 @@ const MESSAGE_CAP = 5;
 type HoldClass = 'renamed' | 'page_deleted' | 'no_page';
 type Counts = Record<HoldClass, number>;
 interface Item { hold_ref: string; kind: string; source_id: string; slug: string; class: HoldClass; current_slug?: string; destination_count?: number }
-interface Scan { scanned: number; stopped: 'row_limit' | 'deadline' | null; items: Item[] }
+interface Scan { scanned: number; stopped: 'row_limit' | 'deadline' | null; items: Item[]; hidden: string[] }
 
 interface HoldRow { hold_id: string; kind: string; source_id: string; slug: string }
 interface Verdict { id: string; live_n: number; deleted_n: number; page_deleted: boolean; current_slug: string | null }
@@ -59,28 +62,52 @@ function readHolds(engine: BrainEngine, scope: string[] | undefined, after: { so
     [scope ?? null, after.source, after.id, limit]);
 }
 
-/** The holds of one batch whose slug has no live page, with what the aliases and rename history say about each. */
+/**
+ * The holds of one batch whose slug has no live page, with what the aliases and rename history say about each.
+ * The candidate slugs (the hold's own, its alias targets, its history targets) are resolved first, so pages is
+ * probed by its `(source_id, slug)` key for each candidate and never scanned for a slug alternative.
+ */
 function readVerdicts(engine: BrainEngine, rows: HoldRow[]): Promise<Verdict[]> {
   return engine.executeRaw<Verdict>(
-    `SELECT h.id, d.live_n, d.deleted_n, d.page_deleted, d.current_slug
-       FROM unnest($1::text[], $2::text[], $3::text[]) AS h(source_id, slug, id)
-       CROSS JOIN LATERAL (
-         SELECT count(*) FILTER (WHERE p.deleted_at IS NULL AND p.slug <> h.slug)::int AS live_n,
-                count(*) FILTER (WHERE p.deleted_at IS NOT NULL AND p.slug <> h.slug)::int AS deleted_n,
-                COALESCE(bool_or(p.deleted_at IS NOT NULL AND p.slug = h.slug), false) AS page_deleted,
-                min(p.slug) FILTER (WHERE p.deleted_at IS NULL AND p.slug <> h.slug) AS current_slug
-           FROM pages p
-          WHERE p.source_id = h.source_id
-            AND (p.slug = h.slug OR p.slug IN (
-                  SELECT a.canonical_slug FROM slug_aliases a WHERE a.source_id = h.source_id AND a.alias_slug = h.slug
-                  UNION
-                  SELECT r.new_slug FROM slug_rename_history r WHERE r.source_id = h.source_id AND r.old_slug = h.slug))) d
-      WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = h.source_id AND p.slug = h.slug AND p.deleted_at IS NULL)`,
+    `WITH h AS (SELECT * FROM unnest($1::text[], $2::text[], $3::text[]) AS h(source_id, slug, id)),
+          cand AS (
+            SELECT h.id, h.source_id, h.slug AS cand_slug, true AS exact FROM h
+            UNION
+            SELECT h.id, h.source_id, a.canonical_slug, false FROM h JOIN slug_aliases a ON a.source_id = h.source_id AND a.alias_slug = h.slug
+            UNION
+            SELECT h.id, h.source_id, r.new_slug, false FROM h JOIN slug_rename_history r ON r.source_id = h.source_id AND r.old_slug = h.slug)
+     SELECT c.id,
+            count(DISTINCT p.id) FILTER (WHERE NOT c.exact AND p.deleted_at IS NULL AND c.cand_slug <> h.slug)::int AS live_n,
+            count(DISTINCT p.id) FILTER (WHERE NOT c.exact AND p.deleted_at IS NOT NULL AND c.cand_slug <> h.slug)::int AS deleted_n,
+            COALESCE(bool_or(c.exact AND p.deleted_at IS NOT NULL), false) AS page_deleted,
+            min(c.cand_slug) FILTER (WHERE NOT c.exact AND p.deleted_at IS NULL AND c.cand_slug <> h.slug) AS current_slug
+       FROM cand c JOIN h ON h.id = c.id
+       LEFT JOIN pages p ON p.source_id = c.source_id AND p.slug = c.cand_slug
+      GROUP BY c.id
+     HAVING NOT COALESCE(bool_or(c.exact AND p.id IS NOT NULL AND p.deleted_at IS NULL), false)`,
     [rows.map(r => r.source_id), rows.map(r => r.slug), rows.map(r => r.hold_id)]);
+}
+
+/**
+ * The evidence relations this role cannot read in full. Row-level security gives a role without a policy zero rows,
+ * not an error, so a clean read proves nothing: held rows, aliases, rename history or pages could all be hidden. The
+ * test is the one the folder-access tables and the writer guards use (docs/ENGINES.md "Folder access tables"):
+ * row security is active for the role on the relation and no permissive SELECT policy applies to it.
+ */
+async function hiddenEvidence(engine: BrainEngine): Promise<string[]> {
+  const rows = await engine.executeRaw<{ rel: string }>(
+    `SELECT t.rel FROM unnest(ARRAY['write_gate_holds', 'slug_aliases', 'slug_rename_history', 'pages']) WITH ORDINALITY AS t(rel, n)
+      WHERE pg_catalog.to_regclass(t.rel) IS NOT NULL AND pg_catalog.row_security_active(pg_catalog.to_regclass(t.rel))
+        AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = pg_catalog.to_regclass(t.rel)::pg_catalog.oid AND p.polpermissive AND p.polcmd::pg_catalog.text IN ('*', 'r')
+          AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::pg_catalog.oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END))
+      ORDER BY t.n`);
+  return rows.map(r => r.rel);
 }
 
 async function scanHolds(engine: BrainEngine, scope: string[] | undefined, deadlineAt: number): Promise<Scan> {
   const items: Item[] = [];
+  const hidden = await hiddenEvidence(engine);
+  if (hidden.length) return { scanned: 0, stopped: null, items, hidden };
   let scanned = 0;
   let stopped: Scan['stopped'] = null;
   let after = { source: '', id: '0' };
@@ -108,7 +135,7 @@ async function scanHolds(engine: BrainEngine, scope: string[] | undefined, deadl
     const last = rows[rows.length - 1]!;
     after = { source: last.source_id, id: last.hold_id };
   }
-  return { scanned, stopped, items };
+  return { scanned, stopped, items, hidden };
 }
 
 const NOT_A_FIX = 'This check only detects: it does not fix the leak, and neither release nor drop restores the quarantine on the renamed page or takes back text already delivered '
@@ -130,12 +157,14 @@ function examples(items: Item[], cls: HoldClass): string {
 
 function tally(items: Item[]): { counts: Counts; bySource: Record<string, Counts> } {
   const counts = zero();
-  const bySource: Record<string, Counts> = {};
+  // A Map: a source id such as `constructor` must not meet an inherited property.
+  const sources = new Map<string, Counts>();
   for (const i of items) {
     counts[i.class]++;
-    (bySource[i.source_id] ??= zero())[i.class]++;
+    if (!sources.has(i.source_id)) sources.set(i.source_id, zero());
+    sources.get(i.source_id)![i.class]++;
   }
-  return { counts, bySource };
+  return { counts, bySource: Object.fromEntries(sources) };
 }
 
 function otherClasses(counts: Counts): string {
@@ -147,6 +176,12 @@ function otherClasses(counts: Counts): string {
 }
 
 function report(scan: Scan): Omit<Check, 'name'> {
+  if (scan.hidden.length) {
+    return { status: 'warn', details: { health: 'unknown', reason: 'row_level_security', count: 'unknown', complete: false, hidden_tables: scan.hidden },
+      fix_unavailable_reason: 'operator_judgement',
+      message: `gbrain could not check held writes for a renamed or removed page: row-level security hides ${scan.hidden.join(', ')} from this database role, so what it would read is incomplete and the count is unknown, not zero. `
+        + 'Run gbrain as the table owner, or give this role a SELECT policy on each (docs/ENGINES.md, "Folder access tables"). Nothing was read and nothing was changed.' };
+  }
   // Renamed holds first: they are the ones that may have let held text out.
   const ordered = [...scan.items].sort((a, b) => Number(b.class === 'renamed') - Number(a.class === 'renamed'));
   const { counts, bySource } = tally(ordered);

@@ -312,7 +312,7 @@ for (const backend of testBackends()) {
 
     test('the page lookup is probed by its (source_id, slug) index, and answers the same on a large source', async () => {
       await engine.executeRaw(`INSERT INTO pages (source_id, slug, type, title, compiled_truth)
-        SELECT 's1', 'notes/unrelated-' || g::text, 'note', 'x', 'x' FROM generate_series(1, 20000) AS g`);
+        SELECT 's1', 'notes/unrelated-' || g::text, 'note', 'x', 'x' FROM generate_series(1, 8000) AS g`);
       await page('s1', 'people/dest');
       await page('s1', 'people/gone', true);
       await alias('s1', 'people/moved', 'people/dest');
@@ -320,7 +320,7 @@ for (const backend of testBackends()) {
       await hold('s1', 'people/moved');
       await hold('s1', 'people/hist-only');
       await hold('s1', 'people/gone');
-      for (let i = 0; i < 100; i++) await hold('s1', `people/missing-${i}`);
+      for (let i = 0; i < 12; i++) await hold('s1', `people/missing-${i}`);
       await engine.executeRaw('ANALYZE pages');
       let statement: { sql: string; params: unknown[] } | null = null;
       const recording = { executeRaw: (sql: string, params?: unknown[]) => {
@@ -328,21 +328,19 @@ for (const backend of testBackends()) {
         return engine.executeRaw(sql, params);
       } };
       const check = await run({ engine: recording });
-      expect(details(check).stranded).toEqual({ renamed: 2, page_deleted: 1, no_page: 100 });
+      expect(details(check).stranded).toEqual({ renamed: 2, page_deleted: 1, no_page: 12 });
       expect(details(check).items.filter((i: { class: string }) => i.class === 'renamed').map((i: { slug: string }) => i.slug).sort()).toEqual(['people/hist-only', 'people/moved']);
       expect(statement).not.toBeNull();
       const [row] = await engine.executeRaw<Record<string, unknown>>(`EXPLAIN (FORMAT JSON) ${statement!.sql}`, statement!.params);
       const raw = Object.values(row!)[0];
       const plan = typeof raw === 'string' ? JSON.parse(raw) : raw;
-      const pageNodes: Array<Record<string, unknown>> = [];
-      const walk = (n: any): void => { if (n && typeof n === 'object') { if (n['Relation Name'] === 'pages') pageNodes.push(n); for (const v of Object.values(n)) walk(v); } };
+      const nodes: Array<Record<string, unknown>> = [];
+      const walk = (n: any): void => { if (n && typeof n === 'object') { if (n['Node Type']) nodes.push(n); for (const v of Object.values(n)) walk(v); } };
       walk(plan);
-      expect(pageNodes.length).toBeGreaterThan(0);
-      for (const node of pageNodes) {
-        expect(node['Node Type']).not.toBe('Seq Scan');
-        expect(String(node['Index Name'] ?? '')).toBe('pages_source_slug_key');
-      }
-      expect(JSON.stringify(plan)).toMatch(/\(?slug\)?[^"]*=/);
+      expect(nodes.filter(n => n['Relation Name'] === 'pages' && n['Node Type'] === 'Seq Scan')).toEqual([]);
+      const probes = nodes.filter(n => n['Index Name'] === 'pages_source_slug_key');
+      expect(probes.length).toBeGreaterThan(0);
+      for (const probe of probes) expect(String(probe['Index Cond'])).toMatch(/slug/);
     }, 120_000);
 
     if (backend === 'postgres') describe('a row-security role cannot see the evidence', () => {

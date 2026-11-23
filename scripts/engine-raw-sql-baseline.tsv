@@ -157,7 +157,7 @@ src/commands/doctor/checks/unwithdrawn-facts.ts	execute_raw	1
 src/commands/doctor/checks/vector-coverage.ts	execute_raw	2
 src/commands/doctor/checks/vector-plan.ts	execute_raw	4
 src/commands/doctor/checks/wakeshift.ts	execute_raw	3
-src/commands/doctor/checks/write-gate-holds-stranded.ts	execute_raw	2	read-only doctor check: one keyset read of held rows and one per-batch page and rename lookup; both stay raw SQL until holds have a typed engine method (a raw-SQL refusal on the Rust engine is reported as a named unknown)
+src/commands/doctor/checks/write-gate-holds-stranded.ts	execute_raw	3	read-only doctor check: a row-security visibility preflight, one keyset read of held rows and one per-batch page and rename lookup; all stay raw SQL until holds have a typed engine method (a raw-SQL refusal on the Rust engine is reported as a named unknown)
 src/commands/doctor/checks/writer-version.ts	execute_raw	1
 src/commands/doctor/last-known.ts	execute_raw	2
 src/commands/doctor/registry.ts	execute_raw	1
