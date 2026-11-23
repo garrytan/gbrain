@@ -71,6 +71,7 @@ const UNRESOLVED_OK: Readonly<Record<string, string>> = {
   // source list and the checkpoint rows: brain.listSourceRecords, brain.readSourceIncarnation, the checkpoint row reads); hand-read.
   listArchivedSourceIds: 'reads the source list through the read-only Snapshot helper',
   listManagedSyncFailureKeys: 'reads checkpoint rows through the read-only Snapshot helper',
+  listSourceManagedSyncFailures: 'reads checkpoint rows through the read-only Snapshot helper',
   listManagedSyncOrphanRows: 'reads the source list and checkpoint rows through the read-only Snapshot helper',
   // The napi function is list_source_oauth_clients; the test's snake-case rule splits `OAuth` into o_auth.
   listSourceOAuthClients: 'its napi function list_source_oauth_clients only lists the source\'s OAuth clients',

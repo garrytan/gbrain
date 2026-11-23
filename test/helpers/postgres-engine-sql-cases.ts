@@ -1215,7 +1215,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'countConnectorCheckpointsKeyed': OOS.repairBookkeeping, 'deleteOrphanConnectorCheckpoint': OOS.repairBookkeeping,
   'readLoopFactState': OOS.repairBookkeeping, 'expireSourceFactNow': OOS.repairBookkeeping, 'listManagedSyncOrphanRows': OOS.repairBookkeeping,
   'listArchivedSourceIds': OOS.repairBookkeeping, 'listManagedSyncFailureKeys': OOS.repairBookkeeping, 'deleteManagedSyncFailureRow': OOS.repairBookkeeping,
-  'deleteManagedSyncManifest': OOS.repairBookkeeping, 'retireManagedSyncCursor': OOS.repairBookkeeping, 'retireManagedSyncPassSlugMode': OOS.repairBookkeeping,
+  'deleteManagedSyncManifest': OOS.repairBookkeeping, 'listSourceManagedSyncFailures': OOS.repairBookkeeping, 'deleteManagedSyncFailureObservation': OOS.repairBookkeeping, 'retireManagedSyncCursor': OOS.repairBookkeeping, 'retireManagedSyncPassSlugMode': OOS.repairBookkeeping,
   'applyManagedSyncRetireLimits': OOS.repairBookkeeping, 'readContentReceiptBinding': OOS.repairBookkeeping,
   'readConfigForUpdate': OOS.repairBookkeeping, 'readOpCheckpointRecord': OOS.repairBookkeeping, 'writeOpCheckpointRecord': OOS.repairBookkeeping,
   'listSourceIncarnations': OOS.repairBookkeeping,

@@ -557,7 +557,7 @@ src/core/persistence/sync-delete-tombstones.ts	execute_raw	2
 src/core/persistence/sync-discovery.ts	execute_raw	6
 src/core/persistence/sync-drain.ts	execute_raw	2
 src/core/persistence/sync-dry-run-writer.ts	execute_raw	1
-src/core/persistence/sync-failures.ts	execute_raw	7
+src/core/persistence/sync-failures.ts	execute_raw	4
 src/core/persistence/sync-freshness.ts	execute_raw	3
 src/core/persistence/sync-ghosts.ts	execute_raw	3
 src/core/persistence/sync-group.ts	execute_raw	1

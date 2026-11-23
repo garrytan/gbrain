@@ -232,6 +232,8 @@ export const PAGES_MEMBERS = {
   retireManagedSyncCursor: 'persistence_journal',
   deleteManagedSyncFailureRow: 'persistence_journal',
   deleteManagedSyncManifest: 'persistence_journal',
+  listSourceManagedSyncFailures: 'persistence_journal',
+  deleteManagedSyncFailureObservation: 'persistence_journal',
   listOwnedContentRows: 'persistence_journal',
   readContentReceiptBinding: 'persistence_journal',
   readConfigForUpdate: 'config',
