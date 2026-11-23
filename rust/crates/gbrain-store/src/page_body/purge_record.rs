@@ -107,7 +107,7 @@ pub(super) fn records_of_source(read: &dyn KvRead, source_id: &str) -> Result<Ve
 const REPAIR_BATCH: usize = 256;
 
 /// The marker of a completed repair of the source index.
-pub(super) fn repair_done_key() -> Vec<u8> {
+pub(crate) fn repair_done_key() -> Vec<u8> {
     crate::keys::meta("derivation_purge_source_index")
 }
 
