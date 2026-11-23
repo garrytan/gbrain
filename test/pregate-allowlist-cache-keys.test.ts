@@ -276,7 +276,7 @@ describe('pregate allowlist: Rust store lines the secrets check reads as keys, p
   ];
   const added = policy.allowlist.slice(ORIGINAL);
   const secret = ['sk-live-', '0123456789abcdef', '0123456789abcdef'].join('');
-  const pemBody = ['-----BEGIN ', 'RSA ', 'PRIVATE KEY-----', ' MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gun'].join('');
+  const pemBody = ['-----BEGIN ', 'RSA ', 'PRIVATE KEY-----', ' probe body that is not a key'].join('');
   const phone = ['+1 (415) ', '555', '-0100'].join('');
 
   test('one entry per file and finding (a long list takes two), in order, each for one exact path with no glob and a pattern anchored at both ends', () => {
