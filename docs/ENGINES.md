@@ -1855,7 +1855,8 @@ Shadow mode checks the Rust engine against your real reads before you switch to 
 nothing about how your brain answers: the primary engine (PGLite or Postgres) always answers first, and a sample of
 reads and searches is then replayed against the Rust engine in a separate, supervised child process. The child
 compares the two answers and records only content-free rows (operation, outcome, sizes, timings, hashes) in a local
-ledger. Nothing is written to the brain database, the config table or the brain repo; all shadow state lives in
+ledger. Its only write to the brain database is one row per writing process in `engine_writer_observations` (below);
+nothing is written to brain content, the config table or the brain repo, and all other shadow state lives in
 `~/.gbrain/shadow/<brain>/` (`$GBRAIN_HOME/.gbrain/shadow/<brain>/` when `GBRAIN_HOME` is set).
 
 **Say to your agent:** *"Turn on Rust engine shadow mode for my brain and show me the report."*
@@ -1880,6 +1881,16 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   and `gbrain doctor` only use an addon that is already installed; without one they record `addon_unavailable`
   (`rust_engine_addon_missing`, reason `not_installed`).
 - **Doctor.** `rust_engine_addon` checks the installed addon when shadow mode is on and is not applicable otherwise.
+- **Writer observations (swap eligibility).** While shadow mode is on, each process that writes to the brain through
+  gbrain notes itself in `engine_writer_observations`: its host id, the name its database connections carry, its
+  command kind and gbrain version, and when it first and last wrote. The note runs after the write committed, in its
+  own short transaction, at most every 10 minutes per process; a rolled-back transaction leaves none. A brain without
+  a shadow keeps the table empty. The swap check reads it with one read-only query: `eligibility.writer_hosts_7d`
+  counts the machines that wrote in the last 7 days (from the shadow start at the earliest, with 10 minutes of slack),
+  and `eligibility.unknown_writer_paths` counts evidence of a write no process noted (reconcile follower misses,
+  repairs made while coverage was invalid, a lost note). `gbrain engine shadow status` never opens the database, so it
+  shows only `team_brain` and `preview_target`; the swap passes in the brain it already has open. Known limit: a write
+  from outside gbrain that a later gbrain write overwrites before any reconcile pass leaves no evidence.
 - **Seed.** `seed` copies the brain into the Rust store once, from one read-only snapshot, and writes
   `seed.json`: what it copied, the values the store could not keep, the unfinished jobs and segmented pages it left
   behind, and the unseeded gap rows (tables the Rust store cannot serve yet; a swap is refused while any remain).
