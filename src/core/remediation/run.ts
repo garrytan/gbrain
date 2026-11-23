@@ -82,7 +82,9 @@ function manualOnlySkips(engine: BrainEngine) {
       const queued: Array<{ id: number | string; name: string; status: string }> = [];
       try {
         for (const name of new Set(manual.map((s) => s.job))) {
-          for (const status of UNFINISHED_JOB_STATUSES) queued.push(...await engine.listJobs({ name, status, limit: 1000 }));
+          for (const status of UNFINISHED_JOB_STATUSES) {
+            for (const row of await engine.listJobs({ name, status, limit: 1000 })) queued.push({ id: row.id as number | string, name: row.name as string, status: row.status as string });
+          }
         }
         queued.sort((a, b) => Number(a.id) - Number(b.id));
       } catch (e) {

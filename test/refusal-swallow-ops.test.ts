@@ -18,7 +18,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName } from '../src/core/operations.ts';
-import type { Notice } from '../src/core/ops/contract.ts';
+import type { Notice } from '../src/core/agent-output.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { refusingEngine } from './helpers/refusing-engine.ts';
