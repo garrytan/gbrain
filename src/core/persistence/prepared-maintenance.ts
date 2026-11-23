@@ -718,7 +718,7 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
   if (row.intent?.kind === 'managed_maintenance_takes_reextract') return (await import('../cycle/extract-takes.ts')).prepareTakesReextract(engine, row);
   if (row.intent?.kind === 'managed_maintenance_take_reproject') return (await import('../repair/take-supersession.ts')).prepareTakeReprojection(engine, row);
   if (row.intent?.kind === THINK_TAKE_INTENT) {
-    const prepared = await prepareTakesMutation(engine, { ...row, operation: 'takes_add', intent: { ...row.intent, kind: 'take' } }, config);
+    const prepared = await prepareTakesMutation(engine, { ...row, operation: 'takes_add', intent: { ...row.intent, kind: 'take' } }, config, undefined, derivationWriteTrust(row.intent));
     return { ...prepared, apply: async (tx, preimage) => {
       const outcome = await prepared.apply(tx, preimage);
       const [take] = await tx.executeRaw<{ id: number }>('SELECT id FROM takes WHERE page_id=$1 AND row_num=$2', [row.page_id, outcome.row_num]);

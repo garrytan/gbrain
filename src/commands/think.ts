@@ -142,12 +142,14 @@ prints what would have been the input (exit 0).
   let takeRow: number | null = null;
   let takePath: string | undefined;
   // GST-3612: a managed save or take accepted but still publishing: the answer still prints, then the CLI exits 10 with
-  // the receipt and its poll command (the write publishes under that request id).
-  let pending: OperationError | undefined;
+  // the receipt and its poll command (the write publishes under that request id). A later refusal still prints every
+  // accepted receipt before it exits.
+  const pending: OperationError[] = [];
   const deferPending = (e: unknown): null => {
-    if (e instanceof OperationError && e.code === 'write_pending') { pending = e; return null; }
+    if (e instanceof OperationError && e.code === 'write_pending') { pending.push(e); return null; }
     throw e;
   };
+  const reportPending = (receipts: OperationError[]) => { for (const p of receipts) writeCliError(p, 'think', { json: false }); };
   const cfg = loadConfig();
   if (isThinClient(cfg)) {
     if (save || take) {
@@ -237,6 +239,7 @@ prints what would have been the input (exit 0).
             'think: --save requested but no synthesis was produced (no LLM available ' +
             'or empty result) — nothing saved.',
           );
+          reportPending(pending);
           process.exit(1);
         }
       }
@@ -248,7 +251,7 @@ prints what would have been the input (exit 0).
       // posture as --save: the user explicitly asked for a persist).
       if (take && anchor) {
         const { persistTakeFromSynthesis } = await import('../core/think/persist-take.ts');
-        const persisted = await persistTakeFromSynthesis(engine, result, { anchor }).catch(deferPending);
+        const persisted = await persistTakeFromSynthesis(engine, result, { anchor, ...(sourceId ? { sourceId } : {}) }).catch(deferPending);
         takeRow = persisted?.take_row ?? null;
         takePath = persisted?.path;
         for (const w of persisted?.warnings ?? []) result.warnings.push(w);
@@ -256,6 +259,7 @@ prints what would have been the input (exit 0).
           console.error(
             `think: --take requested but no take row was appended (${persisted.warnings.join(', ') || 'unknown reason'}).`,
           );
+          reportPending(pending);
           process.exit(1);
         }
       }
@@ -263,6 +267,7 @@ prints what would have been the input (exit 0).
       // #1698: an unresolvable explicit --model throws here. Clean non-zero exit
       // with the actionable message, not a stack trace.
       console.error((e as Error).message);
+      reportPending(pending);
       process.exit(1);
     }
   }
@@ -285,7 +290,8 @@ prints what would have been the input (exit 0).
     take_row: takeRow,
   }, json, { op: 'think', retrieval: null });
   if (json) {
-    if (pending) process.exit(writeCliError(pending, 'think', { json: true, extra: jsonDoc as Record<string, unknown> }));
+    reportPending(pending.slice(0, -1));
+    if (pending.length) process.exit(writeCliError(pending.at(-1), 'think', { json: true, extra: jsonDoc as Record<string, unknown> }));
     console.log(JSON.stringify(jsonDoc, null, 2));
     return;
   }
@@ -313,5 +319,6 @@ prints what would have been the input (exit 0).
   if (result.warnings.length > 0) {
     console.error(`Warnings: ${result.warnings.join(', ')}`);
   }
-  if (pending) exitCliError(pending, 'think', { json: false });
+  reportPending(pending.slice(0, -1));
+  if (pending.length) exitCliError(pending.at(-1), 'think', { json: false });
 }

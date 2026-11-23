@@ -420,7 +420,7 @@ const think: Operation = {
         const { persistTakeFromSynthesis } = await import('../think/persist-take.ts');
         const persisted = await persistTakeFromSynthesis(ctx.engine, result, {
           anchor: String(p.anchor),
-          sourceId: ctx.sourceId,
+          sourceId: ctx.sourceId === ALL_SOURCES ? undefined : ctx.sourceId,
           lockTimeoutMs: 2000,
         }).catch(pendingWarning('TAKE_PENDING'));
         takeRow = persisted?.take_row ?? null;
