@@ -2085,11 +2085,19 @@ Each page in the preview is one of:
   too: the purge tombstones of its facts and takes are copied to the normal slug (so a purged claim stays refused and an
   import still drops it), and every held write (a quarantined fence row) is re-keyed to it, so held text stays out of
   what is delivered until its owner releases it. The apply takes the page lock of the stored spelling as well as the
-  normal one, so an edit under way waits for the move (or the move refuses, below).
+  normal one, so an edit under way waits for the move (or the move refuses, below). A database role that row-level security
+  keeps from `fact_purges`, `take_purges` or `write_gate_holds` reads them as empty, so the preview and the apply refuse
+  with [`writer_coordinator_required`](error-codes.md#writer_coordinator_required) naming the table, before anything moves;
+  give the role the policy `docs/ENGINES.md#purge-and-withdrawal-guards` describes, or run it as the table owner.
 - **needs_human** ([`slug_spelling_collision`](error-codes.md#slug_spelling_collision)): another page (live or
   soft-deleted) already holds the normal slug, or two stored spellings share it. Nothing moves, because that would merge
   two pages. The listing names the pages to compare; keep the content you want in one, soft-delete the other with
   `gbrain delete`, and preview again.
+- **needs_human** ([`slug_spelling_hold_conflict`](error-codes.md#slug_spelling_hold_conflict)): a held write of the page
+  matches a held write already at the normal slug (same text) but the two would publish different fields (visibility,
+  attribution, entity or row), so merging them would publish the kept one's fields at the owner's release. Nothing moves;
+  release or drop one with `gbrain trust release` / `gbrain trust drop`, then preview again. Held writes that would publish
+  identically are merged.
 - **rename_file_first** ([`rename_file_first`](error-codes.md#rename_file_first)): the page's file in the source's
   checkout is not at the path of the normal slug (or the recorded file is not in the checkout, or a file sits at the old spelling's path). Moving only
   the row would split the page from its file. `git mv` the file to the normal path, commit and sync; sync carries the page

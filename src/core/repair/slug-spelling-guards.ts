@@ -11,14 +11,83 @@
  *    made `held` again and counts both sightings, and the old one becomes a decided record (`dropped`, by this repair), so
  *    one hold stays active, never zero. Released and dropped holds are decided records and stay where they are.
  *
- * The caller runs this inside the page's maintenance transaction, under both page locks.
+ * A held write is merged into a hold the normal slug already has only when both would publish identically: the same payload
+ * (visibility, attribution, entity, row number and every other field a release reads, after the slug rewrite), tier, gate
+ * reasons, origin and request. The fingerprint ignores those fields, so a private held claim can match a world hold of
+ * the same text; merging would publish the kept hold's fields at the owner's release. A pair that differs is a
+ * `holdConflicts` finding: the preview lists the page as needs_human and the apply refuses, and nothing moves.
+ *
+ * Every table the carry reads or writes must be fully readable by the running role: row-level security without a
+ * policy of the role shows a table empty, which would copy nothing and let the move commit with the guard left
+ * behind. `assertGuardTablesReadable` refuses first, with the policy lookup the purge guards themselves run.
+ *
+ * The caller runs the carry inside the page's maintenance transaction, under both page locks.
  */
 import type { BrainEngine } from '../engine.ts';
+import { OperationError } from '../ops/contract.ts';
+import { unreadableTablesSql, type PolicyCommand } from '../derived-state-maintainers.ts';
 
 /** Payload keys that name the page a held write was meant for. */
 const PAYLOAD_SLUG_KEYS = ['entity_slug', 'source_markdown_slug', 'page_slug', 'slug'] as const;
 
 interface HoldRow { id: number | string; fingerprint: string; detector_version: number; payload: unknown; seen_count: number }
+interface HoldDetail extends HoldRow {
+  slug: string; tier: string; reason_families: unknown; reasons: unknown; detector_error: boolean; write_origin: unknown; request_id: string | null;
+}
+const HOLD_DETAIL = 'id, slug, fingerprint, detector_version, tier, reason_families, reasons, detector_error, payload, write_origin, request_id, seen_count';
+
+/** What each guard table needs of the running role: the carry reads it, and writes the rows it copies or re-keys. */
+const GUARD_TABLE_NEEDS: ReadonlyArray<readonly [string, readonly PolicyCommand[]]> = [
+  ['fact_purges', ['SELECT', 'INSERT']], ['take_purges', ['SELECT', 'INSERT']], ['write_gate_holds', ['SELECT', 'UPDATE']],
+];
+
+/** Refuses (`writer_coordinator_required`, nothing written) when row-level security keeps the running role from any guard table. */
+export async function assertGuardTablesReadable(tx: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<void> {
+  const hidden = (await tx.executeRaw<{ unreadable: string }>(unreadableTablesSql(GUARD_TABLE_NEEDS))).map(row => row.unreadable);
+  if (!hidden.length) return;
+  const error = new OperationError('writer_coordinator_required',
+    `Pages of source ${sourceId} were not moved: this database role cannot fully read ${hidden.join(', ')} (row-level security applies to it and no policy of the role covers the table), so the purge tombstones and held writes of a page could not be carried to its normal name; nothing was written.`,
+    `Give the role a policy on ${hidden.join(', ')} allowing select, insert and update on the rows of the sources it writes (docs/ENGINES.md#purge-and-withdrawal-guards), or run the repair as the table owner; then preview again.`,
+    'docs/guides/repair.md#slug-spelling');
+  error.fix = { consent: [], actor: 'user', why: 'A role that row-level security keeps from the purge or hold tables reads them as empty, so a move would leave their guards on the old spelling.',
+    user_message: `Run gbrain repair slug-spelling as a database role that owns or fully reads ${hidden.join(', ')}.`, requires_exclusive: false };
+  throw error;
+}
+
+const canonical = (value: unknown): string => {
+  const parsed = typeof value === 'string' ? (() => { try { return JSON.parse(value) as unknown; } catch { return value; } })() : value;
+  const sort = (v: unknown): unknown => Array.isArray(v) ? v.map(sort) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => a < b ? -1 : 1).map(([k, x]) => [k, sort(x)])) : v;
+  return JSON.stringify(sort(parsed ?? null));
+};
+
+/** The fields a release reads, as one comparable text; `rekey` rewrites the page-naming payload keys of a moving hold first. */
+const publication = (hold: HoldDetail, rekey?: { from: string; to: string }): string => canonical({
+  payload: rekey ? rekeyedPayload(hold.payload, rekey.from, rekey.to) : typeof hold.payload === 'string' ? JSON.parse(hold.payload) : hold.payload,
+  tier: hold.tier, reason_families: hold.reason_families, reasons: hold.reasons, detector_error: hold.detector_error, write_origin: hold.write_origin, request_id: hold.request_id,
+});
+
+/** A held write whose twin at the normal slug would publish differently. */
+export interface HoldConflict { slug: string; hold_id: number; other_id: number }
+
+/**
+ * For each page (`from` to `to`), the first active hold of `from` whose twin at `to` (same fingerprint and detector
+ * version, in any status) differs in what a release publishes. Keyed by `from`; a page without a conflict has no entry.
+ */
+export async function holdConflicts(db: Pick<BrainEngine, 'executeRaw'>, sourceId: string, pages: ReadonlyArray<{ from: string; to: string }>): Promise<Map<string, HoldConflict>> {
+  const found = new Map<string, HoldConflict>();
+  if (!pages.length) return found;
+  const held = await db.executeRaw<HoldDetail>(`SELECT ${HOLD_DETAIL} FROM write_gate_holds WHERE source_id = $1 AND slug = ANY($2::text[]) AND status = 'held' ORDER BY id`, [sourceId, pages.map(p => p.from)]);
+  if (!held.length) return found;
+  const twins = await db.executeRaw<HoldDetail>(`SELECT ${HOLD_DETAIL} FROM write_gate_holds WHERE source_id = $1 AND slug = ANY($2::text[]) ORDER BY id`, [sourceId, pages.map(p => p.to)]);
+  const to = new Map(pages.map(p => [p.from, p.to]));
+  for (const hold of held) {
+    if (found.has(hold.slug)) continue;
+    const target = to.get(hold.slug)!;
+    const twin = twins.find(other => other.slug === target && other.fingerprint === hold.fingerprint && other.detector_version === hold.detector_version);
+    if (twin && publication(hold, { from: hold.slug, to: target }) !== publication(twin)) found.set(hold.slug, { slug: hold.slug, hold_id: Number(hold.id), other_id: Number(twin.id) });
+  }
+  return found;
+}
 
 /** The payload with every page-naming key that holds `from` rewritten to `to`; the same object when none does. */
 export function rekeyedPayload(payload: unknown, from: string, to: string): Record<string, unknown> {

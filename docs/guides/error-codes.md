@@ -6132,6 +6132,16 @@ More: [docs/guides/write-refusals.md#slug_page_mismatch](../../docs/guides/write
 
 More: [docs/guides/repair.md#slug-spelling](../../docs/guides/repair.md#slug-spelling)
 
+### slug_spelling_hold_conflict
+
+<a id="slug_spelling_hold_conflict"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain repair slug-spelling did not move a page because a held write of the page matches a held write at its normal name but the two would publish different fields; nothing was written. | Held writes of the same text match whatever their visibility, attribution, entity or row, so merging them would publish the kept one's fields when the owner releases it. The preview lists the page as needs_human and names both holds. | Release or drop one of the two held writes with gbrain trust release / gbrain trust drop (gbrain trust review lists them), then preview again with gbrain repair slug-spelling --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/repair.md#slug-spelling](../../docs/guides/repair.md#slug-spelling)
+
 ### source_binding_required
 
 <a id="source_binding_required"></a>

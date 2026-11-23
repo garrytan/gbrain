@@ -23,17 +23,36 @@ const POLICY_COMMAND: Record<PolicyCommand, string> = { SELECT: 'r', INSERT: 'a'
  * the first; `hint`, a constant without quotes, becomes the refusal's HINT.
  */
 export function requireMaintainerPoliciesSql(table: string, commands: readonly PolicyCommand[], pad = '  ', hint?: string): string {
+  const [head, middle, tail] = policyGapLines(table, commands);
   return [
     `IF pg_catalog.row_security_active('${table}') THEN`,
-    `  IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY[${commands.map(c => `'${POLICY_COMMAND[c]}'`).join(',')}]) AS needed(cmd) WHERE NOT EXISTS (`,
-    `      SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = '${table}'::regclass::oid AND p.polpermissive AND p.polcmd::text IN ('*', needed.cmd)`,
-    `        AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END))) THEN`,
+    `  IF ${head}`,
+    middle,
+    `${tail} THEN`,
     `    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',`,
     `      TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',`,
     `      DETAIL=pg_catalog.jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','${table}')::text${hint ? `,\n${pad}      HINT='${hint}'` : ''};`,
     '  END IF;',
     'END IF;',
   ].join(`\n${pad}`);
+}
+
+/** The three lines of the policy lookup: true when some command in `commands` has no permissive policy of the caller on `table`. */
+function policyGapLines(table: string, commands: readonly PolicyCommand[]): [string, string, string] {
+  return [
+    `EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY[${commands.map(c => `'${POLICY_COMMAND[c]}'`).join(',')}]) AS needed(cmd) WHERE NOT EXISTS (`,
+    `      SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = '${table}'::regclass::oid AND p.polpermissive AND p.polcmd::text IN ('*', needed.cmd)`,
+    `        AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END)))`,
+  ];
+}
+
+/**
+ * A statement (no parameters) listing, one row of `unreadable` each, the tables of `needs` that row-level security applies to for
+ * the caller and no permissive policy of the caller covers for a command the caller needs there: the same lookup the
+ * guards and maintainers run, for code that must refuse before it writes rather than read such a table as empty.
+ */
+export function unreadableTablesSql(needs: ReadonlyArray<readonly [table: string, commands: readonly PolicyCommand[]]>): string {
+  return needs.map(([table, commands]) => `SELECT '${table}' AS unreadable WHERE pg_catalog.row_security_active('${table}') AND ${policyGapLines(table, commands).join('\n')}`).join('\nUNION ALL\n');
 }
 
 /**
