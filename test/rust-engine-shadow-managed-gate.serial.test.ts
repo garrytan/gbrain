@@ -1,27 +1,33 @@
 /**
- * `gbrain engine shadow start` refuses a brain that uses managed storage (src/shadow/managed-gate.ts).
+ * `gbrain engine shadow start` on a brain that uses managed storage.
  *
- * Protects: the Rust engine never holds managed storage, so a shadow on such a brain measures nothing it could use.
- * The preview, `--plan` and `--yes --expect <hash>` each exit 3 with `engine_swap_refused (managed_storage)` before
- * the addon loads and before any shadow file exists; a brain whose mode cannot be read or opened refuses the same way
- * (never a silent pass); an unmanaged brain still gets its plan. Uses a real PGLite brain on disk and the real default
- * open path (no injected engine). Serial because it sets GBRAIN_HOME.
- * Regression it catches: start that mirrors a managed brain, or that writes state.json before checking.
+ * Protects: shadow mode gathers evidence on managed brains too; only the swap refuses them. The preview, `--plan` and
+ * `--yes --expect <hash>` all succeed on a managed brain, print the line "this brain cannot swap while it uses managed
+ * storage", and record `storage: { managed: true, checked_at }` in state.json; `status --json` and the report carry it.
+ * A mode that cannot be read (open or read failure, a busy PGLite brain, no brain at the path) never blocks start: it is
+ * recorded as `managed: null` with a reason. Nothing on this path emits `engine_swap_refused`. And start leaves the
+ * primary untouched: every `persistence_*` table and the content root beside the brain are byte-identical before and after.
+ * Uses a real PGLite brain on disk and the real default open path (no injected engine) unless a test injects a failure.
+ * Serial because it sets GBRAIN_HOME.
+ * Regression it catches: start that refuses over the storage mode, drops the record, or writes to the primary.
  * Not covered elsewhere: test/rust-engine-shadow.serial.test.ts covers start on an unmanaged brain with a fake engine.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runEngineShadow, shadowPlan } from '../src/commands/engine-shadow.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { EngineConfig } from '../src/core/types.ts';
-import { DEFAULT_SHADOW_QUEUE_BOUND, DEFAULT_SHADOW_SAMPLE_RATE, shadowBrainKey, shadowDirFor } from '../src/shadow/state.ts';
+import { DEFAULT_SHADOW_QUEUE_BOUND, DEFAULT_SHADOW_SAMPLE_RATE, readShadowState, shadowBrainKey, shadowDirFor } from '../src/shadow/state.ts';
+import { snapshotPersistence, snapshotTree } from './helpers/primary-snapshot.ts';
 
+const LINE = 'this brain cannot swap while it uses managed storage';
 let home: string;
 let restoreEnv: () => void;
 let config: EngineConfig;
+let contentRoot: string;
 
 function capture() {
   const out: string[] = [];
@@ -36,18 +42,33 @@ async function onBrain(sql: string): Promise<void> {
   try { await engine.executeRaw(sql); } finally { await engine.disconnect(); }
 }
 
+/** Every persistence table of the brain, plus the content root beside it (the checkout a managed brain keeps its files in): paths, sizes, mtimes and SHA-256. */
+async function snapshotPrimary(): Promise<{ tables: Record<string, string[]>; files: Record<string, string> }> {
+  const engine = new PGLiteEngine();
+  await engine.connect(config);
+  try {
+    return {
+      tables: await snapshotPersistence(engine),
+      files: snapshotTree(contentRoot),
+    };
+  } finally { await engine.disconnect(); }
+}
+
 const MANAGED = 'UPDATE persistence_brain SET enabled=true WHERE singleton=1';
 const UNMANAGED = 'UPDATE persistence_brain SET enabled=false WHERE singleton=1';
 const shadowDir = (): string => shadowDirFor(shadowBrainKey(config)!);
 const planHash = (): string => shadowPlan(shadowBrainKey(config)!, 'pglite', shadowDir(),
   { sampleRate: DEFAULT_SHADOW_SAMPLE_RATE, queueBound: DEFAULT_SHADOW_QUEUE_BOUND }).hash;
-const loadAddonMustNotRun = async (): Promise<never> => { throw new Error('the addon was loaded before the managed-storage check'); };
+const okAddon = async () => ({ ok: true as const, addon: { target: 'linux-x64-glibc', engineAbi: 1, engineBuild: 'b1' } as never });
+const NOW = new Date('2026-03-04T05:06:07.000Z');
 
 async function run(args: string[], extra: Record<string, unknown> = {}) {
   const c = capture();
-  const code = await runEngineShadow(args, { ...c.deps, config: () => config, loadAddon: loadAddonMustNotRun, ...extra });
-  return { code, out: c.out, err: c.err };
+  const code = await runEngineShadow(args, { ...c.deps, config: () => config, loadAddon: okAddon, now: () => NOW, ...extra });
+  return { code, out: c.out, err: c.err, text: [...c.out, ...c.err].join('\n') };
 }
+
+const reset = (): void => { rmSync(shadowDir(), { recursive: true, force: true }); };
 
 beforeAll(async () => {
   home = mkdtempSync(join(tmpdir(), 'gbrain-shadow-managed-'));
@@ -57,6 +78,10 @@ beforeAll(async () => {
   delete process.env.GBRAIN_RUST_ENGINE_ADDON;
   restoreEnv = () => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } };
   config = { engine: 'pglite', database_path: join(home, 'brain.pglite') };
+  contentRoot = join(home, 'content-root');
+  mkdirSync(join(contentRoot, 'people'), { recursive: true });
+  writeFileSync(join(contentRoot, 'people', 'a.md'), '# a\n');
+  writeFileSync(join(contentRoot, 'index.md'), '# index\n');
   const engine = new PGLiteEngine();
   await engine.connect(config);
   await engine.initSchema();
@@ -66,93 +91,146 @@ beforeAll(async () => {
 afterAll(() => { restoreEnv(); rmSync(home, { recursive: true, force: true }); });
 
 describe('engine shadow start on a managed-storage brain', () => {
-  test('--plan, the bare preview and --yes --expect each refuse with exit 3 and write nothing', async () => {
+  test('--plan, the bare preview and --yes --expect all succeed, print the line, and record managed: true', async () => {
     await onBrain(MANAGED);
+    const plan = await run(['start', '--plan']);
+    expect(plan.err).toEqual([]);
+    expect(plan.code).toBe(0);
+    expect(plan.out).toContain(`  storage: ${LINE}`);
+    expect(plan.out.join('\n')).toContain(`plan_hash: ${planHash()}`);
+    expect(existsSync(shadowDir())).toBe(false);
+
+    const preview = await run(['start']);
+    expect(preview.code).toBe(3); // the preview exits 3 until --yes, as for an unmanaged brain
+    expect(preview.out).toContain(`  storage: ${LINE}`);
+    expect(preview.err).toEqual([]);
+    expect(existsSync(shadowDir())).toBe(false);
+
+    const go = await run(['start', '--yes', '--expect', planHash()]);
+    expect(go.err).toEqual([]);
+    expect(go.code).toBe(0);
+    expect(go.out).toContain(`storage: ${LINE}`);
+    expect(go.text).not.toContain('engine_swap_refused');
+    const state = readShadowState(shadowDir())!;
+    expect(state.enabled).toBe(true);
+    expect(state.storage).toEqual({ managed: true, checked_at: NOW.toISOString() });
+    expect(JSON.parse(readFileSync(join(shadowDir(), 'state.json'), 'utf8')).storage).toEqual({ managed: true, checked_at: NOW.toISOString() });
+  });
+
+  test('status --json and the markdown status and report show the line', async () => {
+    const json = await run(['status', '--json']);
+    expect(JSON.parse(json.out.join('\n')).storage).toEqual({ managed: true, checked_at: NOW.toISOString(), note: LINE });
+    expect((await run(['status'])).out).toContain(`  storage: ${LINE}`);
+    const report = await run(['report']);
+    expect(report.out.join('\n')).toContain(`Storage: ${LINE}.`);
+    const reportJson = JSON.parse((await run(['report', '--json'])).out.join('\n'));
+    expect(reportJson.storage).toEqual({ managed: true, checked_at: NOW.toISOString(), note: LINE });
+    expect(reportJson.verdict).toBe('NOT READY');
+    reset();
+  });
+
+  test('start leaves the primary untouched: every persistence table and the content root are byte-identical', async () => {
+    await onBrain(MANAGED);
+    const before = await snapshotPrimary();
+    expect(Object.keys(before.tables)).toContain('persistence_brain');
+    expect(before.tables.persistence_brain!.some((r) => r.includes('"enabled":true'))).toBe(true);
+    expect(Object.keys(before.files)).toContain('people/a.md');
     const hash = planHash();
-    for (const args of [['start', '--plan'], ['start'], ['start', '--yes', '--expect', hash]]) {
-      const r = await run(args);
-      expect(r.code, args.join(' ')).toBe(3);
-      expect(r.err[0], args.join(' ')).toBe('engine shadow: engine_swap_refused (managed_storage): Shadow mode is refused: this brain uses managed storage.');
-      const text = r.err.join('\n');
-      expect(text).toContain('The Rust engine never holds managed storage, so this brain can never swap to Rust');
-      expect(text).toContain('Ask the user');
-      expect(text).toContain('Brains made by a default `gbrain init` use managed storage and cannot be shadowed or swapped yet.');
-      expect(text).toContain('`gbrain init --db-only`');
-      expect(text).toContain('`gbrain sources writer deactivate --dry-run`');
-      expect(text).toContain('Nothing was written');
-      expect(r.out.join('\n')).not.toContain('plan_hash');
-      expect(existsSync(shadowDir()), args.join(' ')).toBe(false);
+    for (const args of [['start', '--plan'], ['start'], ['start', '--yes', '--expect', hash], ['status', '--json'], ['report']]) {
+      expect((await run(args)).err, args.join(' ')).toEqual([]);
     }
+    expect(readShadowState(shadowDir())?.storage?.managed).toBe(true);
+    const after = await snapshotPrimary();
+    expect(after.tables).toEqual(before.tables);
+    expect(after.files).toEqual(before.files);
+    reset();
   });
 
-  test('an unmanaged brain still gets its plan', async () => {
-    await onBrain('INSERT INTO persistence_brain(singleton) VALUES (1) ON CONFLICT DO NOTHING');
+  test('an unmanaged brain records managed: false and prints no storage line', async () => {
     await onBrain(UNMANAGED);
-    const r = await run(['start', '--plan']);
-    expect(r.err).toEqual([]);
-    expect(r.code).toBe(0);
-    expect(r.out.join('\n')).toContain(`plan_hash: ${planHash()}`);
-    expect(existsSync(shadowDir())).toBe(false);
+    const plan = await run(['start', '--plan']);
+    expect(plan.code).toBe(0);
+    expect(plan.text).not.toContain('storage:');
+    const go = await run(['start', '--yes', '--expect', planHash()]);
+    expect(go.code).toBe(0);
+    expect(go.text).not.toContain('storage:');
+    expect(readShadowState(shadowDir())?.storage).toEqual({ managed: false, checked_at: NOW.toISOString() });
+    const status = JSON.parse((await run(['status', '--json'])).out.join('\n'));
+    expect(status.storage).toEqual({ managed: false, checked_at: NOW.toISOString(), note: null });
+    reset();
   });
 
-  test('a brain that cannot be opened refuses and names the open error', async () => {
-    const r = await run(['start', '--plan'], { openPrimary: async () => { throw new Error('connection refused by the test'); } });
-    expect(r.code).toBe(3);
-    expect(r.err[0]).toBe('engine shadow: engine_swap_refused (managed_storage): Shadow mode is refused: gbrain could not confirm that this brain does not use managed storage.');
-    expect(r.err.join('\n')).toContain('connection refused by the test');
-    expect(r.err.join('\n')).not.toMatch(/refused: this brain uses managed storage|This brain uses managed storage/);
-    expect(existsSync(shadowDir())).toBe(false);
+  test('a state file written before the field existed still reads, and reports storage: null', async () => {
+    await onBrain(UNMANAGED);
+    await run(['start', '--yes', '--expect', planHash()]);
+    const file = join(shadowDir(), 'state.json');
+    const old = JSON.parse(readFileSync(file, 'utf8'));
+    delete old.storage;
+    writeFileSync(file, JSON.stringify(old));
+    expect(readShadowState(shadowDir())?.enabled).toBe(true);
+    const status = await run(['status', '--json']);
+    expect(JSON.parse(status.out.join('\n')).storage).toBeNull();
+    expect((await run(['status'])).text).not.toContain('storage:');
+    reset();
+  });
+});
+
+describe('a brain whose storage mode cannot be read does not block start', () => {
+  const unread = (reason: string) => ({ managed: null, checked_at: NOW.toISOString(), reason });
+  const READ_LINE = 'could not read whether this brain uses managed storage';
+
+  async function startsWith(extra: Record<string, unknown>, reason: string, cfg?: EngineConfig) {
+    const c = cfg ?? config;
+    const key = shadowBrainKey(c)!;
+    const dir = shadowDirFor(key);
+    const hash = shadowPlan(key, 'pglite', dir, { sampleRate: DEFAULT_SHADOW_SAMPLE_RATE, queueBound: DEFAULT_SHADOW_QUEUE_BOUND }).hash;
+    const opts = { ...extra, ...(cfg ? { config: () => cfg } : {}) };
+    const plan = await run(['start', '--plan'], opts);
+    expect(plan.err).toEqual([]);
+    expect(plan.code).toBe(0);
+    expect(plan.out.join('\n')).toContain(`  storage: ${READ_LINE}; the swap will check it (${reason})`);
+    const go = await run(['start', '--yes', '--expect', hash], opts);
+    expect(go.err).toEqual([]);
+    expect(go.code).toBe(0);
+    expect(go.text).not.toContain('engine_swap_refused');
+    expect(readShadowState(dir)?.enabled).toBe(true);
+    expect(readShadowState(dir)?.storage).toEqual(unread(reason));
+    const status = JSON.parse((await run(['status', '--json'], opts)).out.join('\n'));
+    expect(status.storage).toEqual({ ...unread(reason), note: `${READ_LINE}; the swap will check it` });
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  test('a brain that cannot be opened', async () => {
+    await startsWith({ openPrimary: async () => { throw new Error('connection refused by the test'); } }, 'open_failed');
   });
 
-  test('a busy PGLite brain (another gbrain holds it) is refused honestly, with the stop-serve next step', async () => {
-    const busy = Object.assign(new Error('A running gbrain holds the PGLite lock.'), { code: 'pglite_busy' });
-    const r = await run(['start', '--plan'], { openPrimary: async () => { throw busy; } });
-    expect(r.code).toBe(3);
-    expect(r.err[0]).toBe('engine shadow: engine_swap_refused (managed_storage): Shadow mode is refused: gbrain could not confirm that this brain does not use managed storage.');
-    const text = r.err.join('\n');
-    expect(text).toContain('pglite_busy');
-    expect(text).toContain('stop `gbrain serve`');
-    expect(text).toContain('restart serve');
-    expect(text).not.toMatch(/refused: this brain uses managed storage|This brain uses managed storage/);
-    expect(existsSync(shadowDir())).toBe(false);
+  test('a busy PGLite brain (another gbrain holds it)', async () => {
+    await startsWith({ openPrimary: async () => { throw Object.assign(new Error('A running gbrain holds the PGLite lock.'), { code: 'pglite_busy' }); } }, 'pglite_busy');
   });
 
-  test('a configured PGLite path with no brain refuses and is never created', async () => {
+  test('a configured PGLite path with no brain: start succeeds and never creates the brain', async () => {
     const missing = join(home, 'no-such-brain');
-    const r = await run(['start', '--plan'], { config: () => ({ engine: 'pglite', database_path: missing }) });
-    expect(r.code).toBe(3);
-    expect(r.err[0]).toBe('engine shadow: engine_swap_refused (managed_storage): Shadow mode is refused: gbrain could not confirm that this brain does not use managed storage.');
-    expect(r.err.join('\n')).toContain(`no brain exists at ${missing}`);
+    const cfg: EngineConfig = { engine: 'pglite', database_path: missing };
+    await startsWith({}, 'no_brain', cfg);
     expect(existsSync(missing)).toBe(false);
   });
 
-  test('an engine whose mode read throws refuses and is still disconnected', async () => {
+  test('an engine whose mode read throws is still disconnected', async () => {
     let disconnected = 0;
     const broken = { executeRaw: async () => { throw new Error('relation "persistence_brain" does not exist'); }, disconnect: async () => { disconnected++; } } as unknown as BrainEngine;
-    const r = await run(['start', '--plan'], { openPrimary: async () => broken });
-    expect(r.code).toBe(3);
-    expect(r.err.join('\n')).toContain('persistence_brain" does not exist');
-    expect(disconnected).toBe(1);
+    await startsWith({ openPrimary: async () => broken }, 'read_failed');
+    expect(disconnected).toBe(2); // the preview and --yes each open and close it
   });
 
-  test('an engine whose managed-mode row is missing or malformed refuses with persistence_mode_unknown', async () => {
+  test('a missing or malformed managed-mode row is unread (storage_error), never unmanaged', async () => {
     for (const rows of [[], [{ enabled: 'yes' }]]) {
-      let disconnected = 0;
-      const odd = { executeRaw: async () => rows, disconnect: async () => { disconnected++; } } as unknown as BrainEngine;
-      const r = await run(['start', '--plan'], { openPrimary: async () => odd });
-      expect(r.code, JSON.stringify(rows)).toBe(3);
-      expect(r.err[0]).toContain('engine_swap_refused (managed_storage)');
-      expect(r.err.join('\n')).toContain('persistence_mode_unknown');
-      expect(disconnected).toBe(1);
+      const odd = { executeRaw: async () => rows, disconnect: async () => undefined } as unknown as BrainEngine;
+      await startsWith({ openPrimary: async () => odd }, 'storage_error');
     }
   });
 
-  test('a brain whose managed-mode row is missing cannot even be opened, and refuses (no silent pass)', async () => {
+  test('a real brain whose managed-mode row was deleted is unread, and start still succeeds', async () => {
     await onBrain('DELETE FROM persistence_brain WHERE singleton=1');
-    const r = await run(['start', '--plan']);
-    expect(r.code).toBe(3);
-    expect(r.err[0]).toContain('engine_swap_refused (managed_storage)');
-    expect(r.err.join('\n')).toContain('storage_error');
-    expect(existsSync(shadowDir())).toBe(false);
+    await startsWith({}, 'storage_error');
   });
 });

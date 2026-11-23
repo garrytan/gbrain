@@ -4,8 +4,9 @@
  * Shadow mode mirrors a sample of the host brain's reads to the Rust engine in a supervised child process and
  * records whether the answers agree. It is off by default and writes nothing to the brain database, its config
  * table or the brain repo: every file lives in `<gbrain home>/shadow/<brain>/`. `start` previews a plan with a hash
- * and needs `--yes --expect <hash>`; the installed addon is loaded then, in the foreground. `start` first opens the brain
- * to read its storage mode and refuses a managed-storage brain (the Rust engine never holds one). The
+ * and needs `--yes --expect <hash>`; the installed addon is loaded then, in the foreground. Shadow mode gathers evidence on
+ * managed-storage brains too; only the swap refuses them. `start` opens the brain once, best-effort, to read its storage
+ * mode, reports a brain that cannot swap, records the mode in state.json, and never refuses over it. The
  * hidden `__child <dir>` is the child the serving process spawns.
  */
 import { createHash } from 'node:crypto';
@@ -14,7 +15,7 @@ import { join } from 'node:path';
 import { loadConfig } from '../core/config.ts';
 import type { EngineConfig } from '../core/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
-import type { OperationError } from '../core/ops/contract.ts';
+import { storageLine, storageReport, type ManagedStorageRecord } from '../shadow/managed-gate.ts';
 import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
 import { readFaults, readShadowSummary } from '../shadow/ledger.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown, writeProvisionalReport } from '../shadow/report.ts';
@@ -53,8 +54,9 @@ supervised child process that runs the same read on the Rust engine and records 
 compare. The primary answer never waits for the child. It writes nothing to the brain database, its config or the
 brain repo; everything lives in <gbrain home>/shadow/<brain>/. stop --delete removes that directory.
 
-A brain that uses managed storage is refused (exit 3): the Rust engine never holds managed storage, so a shadow on it
-measures nothing it could use. start opens the brain database to read that, even with --plan.
+Shadow mode runs on a brain that uses managed storage too; only the swap refuses such a brain. start opens the brain
+database once to read its storage mode, even with --plan, prints a line when the brain cannot swap, and records the mode
+in state.json. A brain whose mode cannot be read is not refused: the mode is recorded as unread.
 
 The report is provisional and always says NOT READY: the Rust store is not seeded until a later release.`;
 
@@ -189,29 +191,20 @@ async function openConfiguredPrimary(config: ResolvedBrain['config']): Promise<B
   return engine;
 }
 
-/** The managed-storage refusal for this brain, or null. A brain that cannot be opened is refused too (the mode is unknown). */
-async function managedRefusal(brain: ResolvedBrain, deps: EngineShadowDeps): Promise<OperationError | null> {
-  const { managedStorageRefusal, unopenableBrainRefusal } = await import('../shadow/managed-gate.ts');
+/** The brain's storage mode, read best-effort: a brain that cannot be opened or read is `managed: null` with a reason, never a refusal. */
+async function readStorage(brain: ResolvedBrain, deps: EngineShadowDeps, now: () => Date): Promise<ManagedStorageRecord> {
+  const { readManagedStorage, unopenableManagedStorage } = await import('../shadow/managed-gate.ts');
   let primary: BrainEngine;
   try {
     primary = await (deps.openPrimary ?? (() => openConfiguredPrimary(brain.config)))();
   } catch (e) {
-    return unopenableBrainRefusal(e);
+    return unopenableManagedStorage(e, now());
   }
   try {
-    return await managedStorageRefusal(primary);
+    return await readManagedStorage(primary, now());
   } finally {
     await primary.disconnect().catch(() => undefined);
   }
-}
-
-/** Renders the managed-storage refusal: one line, the why and the next step on stderr; exit 3 (consent). */
-function renderManagedRefusal(e: OperationError, err: (l: string) => void): number {
-  err(`engine shadow: ${e.code} (${e.reason}): ${e.message}`);
-  if (e.why) err(e.why);
-  if (e.detail && !e.why?.includes(e.detail)) err(`Detail: ${e.detail}`);
-  err(e.suggestion ?? 'Ask the user; nothing was written.');
-  return 3;
 }
 
 async function start(
@@ -219,14 +212,14 @@ async function start(
   out: (l: string) => void, err: (l: string) => void, now: () => Date,
 ): Promise<number> {
   const { plan, hash } = shadowPlan(brain.key, brain.engine, brain.dir, o);
-  const refusal = await managedRefusal(brain, deps);
-  if (refusal) return renderManagedRefusal(refusal, err);
   if (o.plan || !o.yes) {
     out(`Shadow mode plan for brain ${plan.brain} (${plan.primary_engine}):`);
     out(`  mirrors: ${plan.mirrors}`);
     out(`  sample rate ${plan.sample_rate}, serving-process queue bound ${plan.queue_bound}`);
     for (const w of plan.writes) out(`  writes: ${w}`);
     out(`  never writes: ${plan.never_writes.join(', ')}`);
+    const line = storageLine(await readStorage(brain, deps, now));
+    if (line) out(`  storage: ${line}`);
     out(`  the installed Rust engine addon is loaded and verified now`);
     out(`plan_hash: ${hash}`);
     out(`To turn it on: gbrain engine shadow start --yes --expect ${hash}${o.sampleRate !== DEFAULT_SHADOW_SAMPLE_RATE ? ` --sample-rate ${o.sampleRate}` : ''}${o.queueBound !== DEFAULT_SHADOW_QUEUE_BOUND ? ` --queue-bound ${o.queueBound}` : ''}`);
@@ -245,13 +238,16 @@ async function start(
     err('Shadow mode stays off; nothing was written.');
     return 1;
   }
+  const storage = await readStorage(brain, deps, now);
   mkdirSync(brain.dir, { recursive: true, mode: 0o700 });
   const state: ShadowState = {
     version: SHADOW_STATE_VERSION, enabled: true, started_at: now().toISOString(), sample_rate: o.sampleRate,
-    queue_bound: o.queueBound, plan_hash: hash, brain: brain.key, primary_engine: brain.engine,
+    queue_bound: o.queueBound, plan_hash: hash, brain: brain.key, primary_engine: brain.engine, storage,
   };
   writeShadowState(brain.dir, state);
   out(`Shadow mode is on for brain ${brain.key}. Processes that open this brain from now on mirror reads.`);
+  const line = storageLine(storage);
+  if (line) out(`storage: ${line}`);
   out('gbrain engine shadow status shows the counts; gbrain engine shadow stop turns it off.');
   return 0;
 }
@@ -268,12 +264,14 @@ function status(brain: { key: string; dir: string }, json: boolean, out: (l: str
     out(JSON.stringify({
       schema_version: 1, brain: brain.key, enabled: state?.enabled === true, state, directory: brain.dir,
       totals, by_op: summary?.by_op ?? {}, serving: summary?.primary ?? null, child_shed: summary?.child_shed ?? 0,
-      children: summary?.children ?? 0, recent_faults: faults,
+      children: summary?.children ?? 0, recent_faults: faults, storage: storageReport(state?.storage),
     }, null, 2));
     return 0;
   }
   out(`Shadow mode: ${state?.enabled ? 'on' : 'off'} (brain ${brain.key})`);
   if (state) out(`  started ${state.started_at}${state.stopped_at ? `, stopped ${state.stopped_at}` : ''}; sample rate ${state.sample_rate}`);
+  const line = storageLine(state?.storage);
+  if (line) out(`  storage: ${line}`);
   const compared = Object.values(totals).reduce((a, b) => a + b, 0);
   out(`  comparisons: ${compared}${compared ? ` (${Object.entries(totals).map(([k, v]) => `${k} ${v}`).join(', ')})` : ''}`);
   if (summary) {

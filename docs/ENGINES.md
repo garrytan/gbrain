@@ -1878,7 +1878,7 @@ ledger. Nothing is written to the brain database, the config table or the brain 
 **Say to your agent:** *"Turn on Rust engine shadow mode for my brain and show me the report."*
 
 ```bash
-gbrain engine shadow start --plan                  # preview the plan and its plan_hash, writes nothing (refuses a managed-storage brain)
+gbrain engine shadow start --plan                  # preview the plan and its plan_hash, writes nothing (also reports whether the brain can swap)
 gbrain engine shadow start --yes --expect <hash>   # turn it on (loads the Rust addon first; refuses without it)
 gbrain engine shadow status [--json]
 gbrain engine shadow report [--json]               # prints the report; writes reports/provisional.{json,md} only once the shadow directory exists
@@ -1898,20 +1898,28 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   (two Supabase projects behind one pooler differ by user name; the password is never part of it). `stop --delete`
   removes the directory, and a child that is still running cannot write it back. The commands cover the host brain only:
   with `--brain <id>` or `GBRAIN_BRAIN_ID` naming another brain they refuse and change nothing.
-- **Managed storage is refused.** The Rust engine never holds managed storage, so a brain that uses it can never swap
-  to Rust and a shadow on it would measure nothing it could use. Brains made by a default `gbrain init` use managed
-  storage and cannot be shadowed or swapped yet. `start` (the preview, `--plan` and `--yes`) opens the brain database
-  to read its storage mode, writes nothing to it, and refuses a managed-storage brain with `engine_swap_refused`
-  (`managed_storage`, exit 3), telling the agent to ask the user. The next step names the ways out that exist today.
-  For a new brain, `gbrain init --db-only` creates one without managed storage. For an existing managed brain, `gbrain
-  sources writer deactivate --dry-run` previews converting it back to classic mode; the real deactivate needs your
-  consent. It refuses before the addon loads and before any shadow file is created. A brain whose mode cannot be read,
-  or that cannot be opened (for example the database is down, or a PGLite path holds no brain, which `start` never creates), is refused the same way (exit 3, `managed_storage`) but
-  says so honestly: "gbrain could not confirm that this brain does not use managed storage", with the read or open
-  error in the why. Only a mode read as managed says "this brain uses managed storage". When another gbrain holds a
-  PGLite brain (`pglite_busy`, usually `gbrain serve`), the next step is to stop `gbrain serve` and anything else
-  holding it, run the command again, then restart serve. It is never a silent pass. The cost: `start` now opens the
-  brain database, even for `--plan`, so the database has to be reachable.
+- **Managed storage: reported, not refused.** Shadow mode gathers evidence on managed brains too; only the swap
+  refuses them (`engine_swap_refused`, reason `managed_storage`, which `gbrain engine swap` still returns and shadow
+  mode never does). `start` (the preview, `--plan` and `--yes`) opens the brain database once, best-effort, and reads one
+  row: `persistence_brain.enabled`. A managed brain prints `storage: this brain cannot swap while it uses managed
+  storage` in the plan and after `--yes`, and `state.json` records `storage: { managed: true, checked_at }` (`false` for
+  an unmanaged brain). A brain whose mode cannot be read (the database is down, another process holds a PGLite brain, a
+  PGLite path holds no brain which `start` never creates, or the row is missing or malformed) does not block `start`: it
+  prints `storage: could not read whether this brain uses managed storage; the swap will check it (<reason>)` and records
+  `{ managed: null, checked_at, reason }`, where `reason` is the error's code (`pglite_busy`, `no_brain`,
+  `storage_error`) or `open_failed` / `read_failed`, never free-form error text. `start` opens the database only for
+  this record, so it is the one place that needs the database reachable, and a failed open never changes the exit code.
+  `status --json` and the report carry the same record as `storage: { managed, checked_at, note, reason? }` (the
+  field a later command reads to know the brain cannot swap), where `note` is `this brain cannot swap while it uses
+  managed storage` for a managed brain, `could not read whether this brain uses managed storage; the swap will check
+  it` when `managed` is null, and null for an unmanaged brain; `storage` is null for a state written before the field
+  existed. `status` and the report print the note as a line. `status` and the report read the recorded value; they do
+  not open the database.
+- **Why this is safe for the primary.** `start` reads one row and writes nothing. The mirror replays sampled reads
+  into the Rust store under the shadow directory. Nothing in shadow mode writes the primary database, its worktrees, its
+  write effects or its locks. The residual risk is to the evidence: a write the owner process or an effect worker
+  applies outside the wrapped engine is not seen by shadow mode, so the comparison for it may differ; such a write
+  shows up as a difference or a miss in the counts, never as silent equality.
 - **No network in the background.** gbrain downloads no addon. `start --yes`, the child
   and `gbrain doctor` only use an addon that is already installed; without one, `start --yes` refuses and stays off, `gbrain doctor` fails
   the `rust_engine_addon` check, and the child records `addon_unavailable` (`rust_engine_addon_missing`, reason `not_installed`).

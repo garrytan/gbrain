@@ -41,7 +41,7 @@ function capture() {
   return { out, err, deps: { out: (l: string) => out.push(l), err: (l: string) => err.push(l) } };
 }
 
-/** The brain `start` opens to read its storage mode: an unmanaged one, so these tests keep exercising start itself. */
+/** A stand-in for the brain `start` opens once to read its storage mode, so these tests do not open a real database. */
 const unmanagedBrain = { openPrimary: async () => ({ executeRaw: async () => [{ enabled: false }], disconnect: async () => undefined }) as never };
 
 const okAddon = async () => ({ ok: true as const, addon: { target: 'linux-x64-glibc', engineAbi: 1, engineBuild: 'b1' } as never });

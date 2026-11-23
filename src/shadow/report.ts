@@ -7,6 +7,7 @@ import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { SHADOW_OUTCOMES, type ShadowOutcome } from './classify.ts';
 import { readFaults, readShadowSummary, type ShadowFault, type ShadowSummary } from './ledger.ts';
+import { storageLine, storageReport, type StorageReport } from './managed-gate.ts';
 import type { ShadowState } from './state.ts';
 
 export const PROVISIONAL_VERDICT = 'NOT READY' as const;
@@ -20,6 +21,8 @@ export interface ProvisionalReport {
   brain: string;
   enabled: boolean;
   sample_rate: number | null;
+  /** The storage mode `start` recorded, null for a state written before it was recorded. */
+  storage: StorageReport | null;
   window: { first_event_at: string | null; last_event_at: string | null };
   totals: Record<ShadowOutcome, number> & { compared: number };
   by_op: Array<{ op: string; total: number } & Record<ShadowOutcome, number>>;
@@ -62,6 +65,7 @@ export function buildProvisionalReport(dir: string, brain: string, state: Shadow
     brain,
     enabled: state?.enabled === true,
     sample_rate: state?.sample_rate ?? null,
+    storage: storageReport(state?.storage),
     window: { first_event_at: summary.first_event_at, last_event_at: summary.last_event_at },
     totals,
     by_op: byOp,
@@ -78,6 +82,8 @@ export function renderProvisionalMarkdown(r: ProvisionalReport): string {
   lines.push(`Verdict: **${r.verdict}**`, '');
   for (const why of r.why_not_ready) lines.push(`- ${why}`);
   lines.push('', `Brain: ${r.brain}. Shadow mode: ${r.enabled ? 'on' : 'off'}. Generated ${r.generated_at}.`);
+  const storage = storageLine(r.storage);
+  if (storage) lines.push(`Storage: ${storage}.`);
   lines.push(`Window: ${r.window.first_event_at ?? 'no comparisons yet'} to ${r.window.last_event_at ?? '-'}.`, '');
   const cols: ShadowOutcome[] = [...SHADOW_OUTCOMES];
   lines.push(`| operation | total | ${cols.join(' | ')} |`);

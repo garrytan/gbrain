@@ -21,6 +21,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { join, resolve } from 'node:path';
 import { configDir } from '../core/config.ts';
 import type { EngineConfig } from '../core/types.ts';
+import type { ManagedStorageRecord } from './managed-gate.ts';
 
 export const SHADOW_STATE_VERSION = 1;
 /** Default share of eligible reads mirrored (`shadow.read_sample` in the plan). */
@@ -43,6 +44,8 @@ export interface ShadowState {
   brain: string;
   /** The primary engine kind at start. */
   primary_engine: string;
+  /** Whether the brain used managed storage when `start` read it. Absent in a state written before this field existed. */
+  storage?: ManagedStorageRecord;
 }
 
 /** The identity of the brain a config opens, without credentials. Null when the config names no brain store. */
