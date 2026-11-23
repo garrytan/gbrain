@@ -115,6 +115,8 @@ hrefs = {i.get('id'): i.get('href') for i in opf.iterfind('.//{*}manifest/{*}ite
 base = posixpath.dirname(opf_rel)
 files = [f"{root}/{posixpath.join(base, urllib.parse.unquote(hrefs[r.get('idref')]))}"
          for r in opf.iterfind('.//{*}spine/{*}itemref') if r.get('idref') in hrefs]
+inside = os.path.realpath(root) + os.sep
+files = [f for f in files if os.path.realpath(f).startswith(inside)]  # ignore paths that leave the book
 for i, path in enumerate(files, 1):
     html = open(path, encoding='utf-8', errors='replace').read()
     text = BeautifulSoup(html, 'html.parser').get_text('\n')
