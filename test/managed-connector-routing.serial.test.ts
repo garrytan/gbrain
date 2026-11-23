@@ -48,19 +48,23 @@ for (const kind of ['google', 'github']) for (const caller of ['explicit', 'job'
         const effects = await engine.executeRaw('SELECT id,state FROM persistence_effects ORDER BY id');
         const controller = new AbortController();
         const reason = new Error('connector fixture cancelled');
-        const execute = engine.executeRaw;
+        const getSource = engine.getSource;
         let reached = boundary === 'entry', calls = 0;
         const fetcher = spyOn(globalThis, 'fetch').mockImplementation((async () => {
           calls++; throw new Error('Unexpected connector fixture network call');
         }) as unknown as typeof fetch);
         if (boundary === 'entry') controller.abort(reason);
-        else engine.executeRaw = async function(this: BrainEngine, sql, params) {
-          const rows = await execute.call(this, sql, params);
-          if (sql === 'SELECT local_path,config FROM sources WHERE id=$1' && params?.[0] === sourceId) {
+        // The connector's source read is the typed getSource member; the sync anchor checks before it read the same row, so
+        // only the read from runConnectorSync is the boundary.
+        else engine.getSource = async function(this: BrainEngine, id: string) {
+          // Read the stack before the await: after it, the Postgres engine's promise chain no longer names the caller.
+          const fromConnector = id === sourceId && Boolean(new Error().stack?.includes('runConnectorSync'));
+          const row = await getSource.call(this, id);
+          if (fromConnector) {
             reached = true; controller.abort(reason);
           }
-          return rows;
-        } as BrainEngine['executeRaw'];
+          return row;
+        } as BrainEngine['getSource'];
         try {
           const run = () => performSync(engine, { sourceId, ...(caller === 'explicit' ? { signal: controller.signal } : {}) });
           await expect(caller === 'job' ? withSubmissionAuthority(APPLICATION_AUTHORITY, run, controller.signal) : run())
@@ -73,7 +77,7 @@ for (const kind of ['google', 'github']) for (const caller of ['explicit', 'job'
           expect(await engine.executeRaw('SELECT id FROM persistence_requests WHERE source_id=$1', [sourceId])).toHaveLength(0);
           expect(await engine.executeRaw('SELECT op,fingerprint,completed_keys FROM op_checkpoints ORDER BY op,fingerprint')).toEqual(checkpoints);
           expect(await engine.executeRaw('SELECT id,state FROM persistence_effects ORDER BY id')).toEqual(effects);
-        } finally { engine.executeRaw = execute; fetcher.mockRestore(); }
+        } finally { engine.getSource = getSource; fetcher.mockRestore(); }
       });
     }
   }, 120_000);

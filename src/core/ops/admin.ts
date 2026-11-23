@@ -262,8 +262,7 @@ const get_versions: Operation = {
     const versions = canReadWriteAttribution(ctx) ? await attributeVersions(ctx.engine, plain) : plain;
     // Wave B: a segmented version's body is never returned whole; body_ref names its size (no read serves an older segmented body yet, #7800).
     const out = [];
-    const snapshotTiers = ctx.remote === false || versions.length === 0 ? new Map<number, unknown>() : new Map((await ctx.engine.executeRaw<{ id: number | string; trust_tier: string | null }>(
-      'SELECT id, trust_tier FROM page_versions WHERE id = ANY($1::bigint[])', [versions.map(v => Number(v.id))])).map(r => [Number(r.id), r.trust_tier] as const));
+    const snapshotTiers = ctx.remote === false || versions.length === 0 ? new Map<number, unknown>() : new Map((await ctx.engine.listVersionTrustTiers(versions.map(v => Number(v.id)))).map(r => [r.id, r.trust_tier] as const));
     const reason = await remoteReasons(ctx, String(p.slug), versions);
     const lives = ctx.remote === false || versions.length === 0 ? [] : await ctx.engine.executeRaw<{ id: number | string; slug: string; source_id: string; frontmatter: Record<string, unknown> }>(
       'SELECT id, slug, source_id, frontmatter FROM pages WHERE id = ANY($1::bigint[])', [[...new Set(versions.map(v => Number(v.page_id)))]]);
@@ -309,11 +308,7 @@ async function remoteReasons(ctx: OperationContext, slug: string, versions: Read
   Promise<(v: { id: number; replaced_because?: string | null }) => { replaced_because?: string }> {
   const ids = versions.filter(v => typeof v.replaced_because === 'string').map(v => Number(v.id));
   if (ctx.remote === false || ids.length === 0) return () => ({});
-  const writers = new Map((await ctx.engine.executeRaw<{ id: number | string; type: string | null; tier: string | null }>(
-    `SELECT pv.id, COALESCE(nx.type, p.type) AS type, CASE WHEN nx.id IS NULL THEN p.trust_tier ELSE nx.trust_tier END AS tier
-       FROM page_versions pv JOIN pages p ON p.id = pv.page_id
-       LEFT JOIN LATERAL (SELECT n.id, n.type, n.trust_tier FROM page_versions n WHERE n.page_id = pv.page_id AND n.id > pv.id ORDER BY n.id LIMIT 1) nx ON true
-      WHERE pv.id = ANY($1::bigint[])`, [ids])).map(r => [Number(r.id), r] as const));
+  const writers = new Map((await ctx.engine.listVersionReasonWriters(ids)).map(r => [r.id, r] as const));
   return v => {
     if (typeof v.replaced_because !== 'string') return {};
     const clean = sanitizeRemoteBody(v.replaced_because);

@@ -73,77 +73,22 @@ export async function computeQueueHealthCheck(
   if (engine.kind === 'pglite') return computePgliteQueueHealth(engine, opts.readWorkers);
 
   try {
-    // issue #1801: column is `status`, not `state` (schema.sql:780).
-    // #7145: total counts every stalled job, not only the five listed.
-    const stalledRows: Array<{ id: number; name: string; started_at: string; total: number }> =
-      await engine.executeRaw(
-        `SELECT id, name, started_at::text AS started_at, count(*) OVER ()::int AS total
-           FROM minion_jobs
-          WHERE status = 'active'
-            AND started_at IS NOT NULL
-            AND started_at < now() - interval '1 hour'
-          ORDER BY started_at ASC
-          LIMIT 5`,
-      );
-
+    // One typed read for the five statements this check used to run through `executeRaw` (queue-health members,
+    // engine-sql/jobs-health.ts): stalled-forever (issue #1801; #7145: `total` counts every stalled job, not only
+    // the five listed), deep waiting queues, RSS-watchdog kills, prompt_too_long deaths by dream phase and
+    // embed-backfill rows waiting past the no-worker warn window.
     const threshold = opts.waitingDepthThreshold
       ?? _resolveEnvNumber('GBRAIN_QUEUE_WAITING_THRESHOLD', 10);
-    const depthRows: Array<{ name: string; queue: string; depth: number }> =
-      await engine.executeRaw(
-        `SELECT name, queue, count(*)::int AS depth
-           FROM minion_jobs
-          WHERE status = 'waiting'
-          GROUP BY name, queue
-         HAVING count(*) > $1
-          ORDER BY depth DESC
-          LIMIT 5`,
-        [threshold],
-      );
-
-    const rssKillRows: Array<{ cnt: number }> = await engine.executeRaw(
-      `SELECT count(*)::int AS cnt
-         FROM minion_jobs
-        WHERE status IN ('dead', 'failed')
-          AND finished_at > now() - interval '24 hours'
-          AND error_text = 'aborted: watchdog'`,
-    );
-    const rssKillCount = Number(rssKillRows[0]?.cnt ?? 0);
-
-    const promptTooLongRows: Array<{ phase: 'patterns' | 'synthesize' | 'other'; cnt: number }> = await engine.executeRaw(
-      `SELECT CASE WHEN key LIKE 'dream:patterns:%' THEN 'patterns'
-                   WHEN key LIKE 'dream:synth%' THEN 'synthesize'
-                   ELSE 'other' END AS phase,
-              count(*)::int AS cnt
-         FROM (SELECT COALESCE(idempotency_key, data->>'__released_idempotency_key') AS key
-                 FROM minion_jobs
-                WHERE name = 'subagent'
-                  AND status = 'dead'
-                  AND finished_at > now() - interval '24 hours'
-                  AND error_text LIKE 'prompt_too_long:%') dead
-        GROUP BY 1`,
-    );
-    const promptTooLong = Object.fromEntries(promptTooLongRows.map(r => [r.phase, Number(r.cnt)]));
-
     const oldWaitingHours = opts.oldWaitingHours
       ?? _resolveEnvNumber('GBRAIN_QUEUE_NO_WORKER_WARN_HOURS', 1);
-    const oldWaitingRows: Array<{
-      name: string;
-      queue: string;
-      depth: number;
-      oldest_age_seconds: number;
-    }> = await engine.executeRaw(
-      `SELECT name,
-              queue,
-              count(*)::int AS depth,
-              EXTRACT(EPOCH FROM (now() - min(created_at)))::int AS oldest_age_seconds
-         FROM minion_jobs
-        WHERE status = 'waiting'
-          AND name = 'embed-backfill'
-        GROUP BY name, queue
-       HAVING min(created_at) < now() - ($1::text::interval)
-        ORDER BY oldest_age_seconds DESC`,
-      [`${oldWaitingHours} hours`],
-    );
+    const signals = await engine.readQueueHealthSignals({
+      waitingThreshold: threshold, oldWaitingHours, windowHours: 24, stalledAfterHours: 1,
+    });
+    const stalledRows = signals.stalled;
+    const depthRows = signals.depth;
+    const rssKillCount = signals.rss_kills;
+    const promptTooLong = Object.fromEntries(signals.prompt_too_long.map(r => [r.phase, r.cnt]));
+    const oldWaitingRows = signals.old_embed_backfill;
 
     // Read the live-worker registry unconditionally (was: only when old
     // embed-backfill rows existed) — the structured `details.worker_alive`
@@ -163,23 +108,8 @@ export async function computeQueueHealthCheck(
     // the oldest waiting job (null when the queue is empty); worker_alive =
     // every queue holding waiting work has a live registered worker
     // (vacuously true with zero waiting jobs). Messages stay unchanged.
-    // Perf note (twin of buildQueueDepths in status.ts): WHERE constrains
-    // only `status` — the second column of the (queue, status, updated_at)
-    // wedge index — so this GROUP BY full-scans minion_jobs today. Acceptable
-    // at doctor frequency over pruned waiting sets; a partial
-    // (queue, created_at) WHERE status='waiting' index is the fix if hot.
-    const waitingByQueue: Array<{
-      queue: string;
-      depth: number | string;
-      oldest_age_seconds: number | string | null;
-    }> = await engine.executeRaw(
-      `SELECT queue,
-              count(*)::int AS depth,
-              EXTRACT(EPOCH FROM (now() - min(created_at)))::int AS oldest_age_seconds
-         FROM minion_jobs
-        WHERE status = 'waiting'
-        GROUP BY queue`,
-    );
+    // (The waiting-by-queue read keeps the perf note of buildQueueDepths in status.ts: a full GROUP BY scan, fine at doctor frequency.)
+    const waitingByQueue = await engine.listWaitingByQueue();
     const details: Record<string, unknown> = {
       depth: waitingByQueue.reduce((n, r) => n + Number(r.depth), 0),
       oldest_age_seconds: waitingByQueue.reduce<number | null>(
@@ -248,23 +178,10 @@ export async function computeQueueHealthCheck(
       const { sanitizeTypeForDisplay } = await import('../../../core/schema-pack/type-usage.ts');
       const divergenceRatio = resolveEnvNumber('GBRAIN_QUEUE_DIVERGENCE_RATIO', 2);
       const divergenceMinWaiting = resolveEnvNumber('GBRAIN_QUEUE_DIVERGENCE_MIN_WAITING', 50);
-      const divRows = await engine.executeRaw<{ name: string; intake: string; completed: string; waiting: string }>(
-        `SELECT w.name,
-                COALESCE(i.intake, '0') AS intake,
-                COALESCE(c.completed, '0') AS completed,
-                w.waiting
-           FROM (SELECT name, count(*)::text AS waiting FROM minion_jobs
-                  WHERE status = 'waiting' GROUP BY name) w
-           LEFT JOIN (SELECT name, count(*)::text AS intake FROM minion_jobs
-                  WHERE created_at > now() - interval '24 hours' GROUP BY name) i ON i.name = w.name
-           LEFT JOIN (SELECT name, count(*)::text AS completed FROM minion_jobs
-                  WHERE finished_at > now() - interval '24 hours' AND status = 'completed'
-                  GROUP BY name) c ON c.name = w.name`,
-      );
+      // Intake and completions over the same 24h window (the member's `windowHours`), per name with work waiting.
+      const { divergence: divRows, ttl_cancelled: ttlRows } = await engine.readQueueDivergence({ windowHours: 24, ttlReasonPrefix: TTL_REASON_PREFIX });
       for (const r of divRows) {
-        const waiting = parseInt(r.waiting, 10);
-        const intake = parseInt(r.intake, 10);
-        const completed = parseInt(r.completed, 10);
+        const { waiting, intake, completed } = r;
         if (waiting > divergenceMinWaiting && intake > divergenceRatio * Math.max(completed, 1)) {
           // Job names originate from the MCP-exposed submit surface —
           // sanitize for display; strict-gate names embedded in the
@@ -278,13 +195,6 @@ export async function computeQueueHealthCheck(
       }
       // Waiting-TTL cancellations mean the divergence is being SHREDDED, not
       // worked — that's operating as designed but the operator must know.
-      const ttlRows = await engine.executeRaw<{ name: string; count: string }>(
-        `SELECT name, count(*)::text AS count FROM minion_jobs
-          WHERE status = 'cancelled' AND error_text LIKE $1
-            AND finished_at > now() - interval '24 hours'
-          GROUP BY name`,
-        [`${TTL_REASON_PREFIX}%`],
-      );
       for (const r of ttlRows) {
         problems.push(
           `waiting-TTL cancelled ${r.count} '${sanitizeTypeForDisplay(r.name)}' job(s) in the last 24h (queued work expired ` +
@@ -398,26 +308,12 @@ export async function computeWedgedQueueCheck(
   }
   const thresholdMin = _resolveEnvNumber('GBRAIN_WEDGED_QUEUE_WARN_MINUTES', 15);
   try {
-    const rows = await engine.executeRaw<{
-      queue: string;
-      active_healthy: string | number;
-      waiting: string | number;
-      mins_since_completion: string | number | null;
-    }>(
-      `SELECT queue,
-         count(*) FILTER (WHERE status = 'active' AND lock_until > now()) AS active_healthy,
-         count(*) FILTER (WHERE status = 'waiting') AS waiting,
-         EXTRACT(EPOCH FROM (now() - max(updated_at) FILTER (WHERE status = 'completed'))) / 60
-           AS mins_since_completion
-       FROM minion_jobs
-       WHERE queue NOT LIKE 'dream-inline-%'
-       GROUP BY queue`,
-    );
+    const rows = await engine.listQueueWedgeCounts();
     const wedged: { queue: string; label: string }[] = [];
     for (const r of rows) {
-      const activeHealthy = Number(r.active_healthy ?? 0);
-      const waiting = Number(r.waiting ?? 0);
-      const mins = r.mins_since_completion === null ? null : Number(r.mins_since_completion);
+      const activeHealthy = r.active_healthy;
+      const waiting = r.waiting;
+      const mins = r.mins_since_completion;
       // Conservative: only flag stale-after-progress (non-null mins past
       // threshold). The null-completions case is the supervisor's job.
       if (activeHealthy === 0 && waiting > 0 && mins !== null && mins > thresholdMin) {
@@ -572,28 +468,7 @@ export async function computeOrphanedPrivateQueueCheck(engine: BrainEngine): Pro
     const { dreamInlineQueueAgeMs } = await import('../../../core/cycle/synthesize.ts');
     const { resolveStealGraceSeconds } = await import('../../../core/db-lock.ts');
     const { LOCK_TTL_MINUTES } = await import('../../../core/cycle.ts');
-    const rows = await engine.executeRaw<{
-      queue: string;
-      source_id: string | null;
-      active_healthy: string | number;
-      waiting: string | number;
-      paused: string | number;
-      oldest_waiting_minutes: string | number | null;
-      birth_epoch_ms: string | number | null;
-    }>(
-      `SELECT queue,
-         min(data->>'source_id') AS source_id,
-         count(*) FILTER (WHERE status = 'active' AND lock_until > now()) AS active_healthy,
-         count(*) FILTER (WHERE status IN ('waiting','delayed')) AS waiting,
-         count(*) FILTER (WHERE status = 'paused') AS paused,
-         EXTRACT(EPOCH FROM (now() - min(created_at) FILTER (WHERE status IN ('waiting','delayed')))) / 60
-           AS oldest_waiting_minutes,
-         EXTRACT(EPOCH FROM min(created_at)) * 1000 AS birth_epoch_ms
-       FROM minion_jobs
-       WHERE queue LIKE 'dream-inline-%'
-       GROUP BY queue
-       ORDER BY queue`,
-    );
+    const rows = await engine.listPrivateQueueHealth();
     // Live cycle locks with their acquisition time, for ownership correlation.
     // Liveness matches db-lock's own model: an unexpired TTL, OR a lapsed TTL
     // whose holder refreshed within the steal grace (starved-but-alive —
