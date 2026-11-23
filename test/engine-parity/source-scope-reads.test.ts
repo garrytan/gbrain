@@ -19,7 +19,13 @@
  *    private pages, archived sources, or private and expired facts (the refusal then fires on a real miss, or never).
  *  - Why existing coverage misses it: test/mcp-sources-not-readable.test.ts drives the refusal through the HTTP server
  *    on PGLite and Postgres only, and no test runs `assertExplicitSourceLive` against the Rust engine.
- *  - Seam: none. Real engines and the real op helpers; the remote caller is a plain OperationContext.
+ *    Through the MCP dispatcher: a remote recall or query with no source grant answers `sources_not_readable` while
+ *    its source holds nothing it may read, and answers normally once a world fact (recall, query) or a page lands
+ *    there; get_page with an explicit live source reads it, and one that names an archived or unknown source refuses
+ *    `unknown_source` (ops/pages.ts, through assertExplicitSourceLive). The harness fails a Rust case that caught a typed refusal on the way, so the
+ *    dispatcher's catch around the check cannot hide a refused read.
+ *  - Seam: none. Real engines, the real op helpers and the real dispatcher; the remote caller is a plain
+ *    OperationContext or dispatch auth.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -30,6 +36,11 @@ import { assertUnscopedReadReachesPages } from '../../src/core/sources-not-reada
 import type { PageInput } from '../../src/core/types.ts';
 import { archiveSource, createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { withEnv } from '../helpers/with-env.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -59,6 +70,11 @@ function page(frontmatter?: Record<string, unknown>): PageInput {
   return { type: 'note', title: 'Note', compiled_truth: 'A short note.', ...(frontmatter ? { frontmatter } : {}) };
 }
 
+async function withHome<T>(run: () => Promise<T>): Promise<T> {
+  const home = mkdtempSync(join(tmpdir(), 'gbrain-parity-source-scope-'));
+  try { return await withEnv({ GBRAIN_HOME: home }, run); } finally { rmSync(home, { recursive: true, force: true }); }
+}
+
 describe('engine parity: source-scope checks', () => {
   parityTest('an explicit source_id passes only for a live source, and recall reads it', { methods: ['readSourceRow'] }, async (engine, backend) => {
     await createSource(engine, backend, 'live');
@@ -83,6 +99,49 @@ describe('engine parity: source-scope checks', () => {
     expect(gone).toBe('not_found');
     return { checks, pages, gone };
   });
+
+  parityTest('through MCP, a remote recall or query with no grant is refused while its source shows nothing, and answers once it does',
+    { methods: ['readSourcesNotReadable', 'insertFact'], timeout: 90_000 },
+    async (engine, backend) => withHome(async () => {
+      const auth = { token: 'parity', clientId: 'parity', clientName: 'parity', scopes: ['read'], hasSourceGrant: false } as never;
+      const call = async (op: string, params: Record<string, unknown>) => {
+        const result = await dispatchToolCall(engine, op, params, { remote: true, sourceId: 'default', auth });
+        const text = result.content.map(part => (part as { text?: string }).text ?? '').join('');
+        if (!result.isError) return 'answered';
+        const code = /"(?:code|error)"\s*:\s*"([a-z_]+)"/.exec(text)?.[1];
+        return code ?? text.slice(0, 120);
+      };
+      const reads = async () => ({ recall: await call('recall', { query: 'harbor schedule' }), query: await call('query', { query: 'harbor schedule' }) });
+      await createSource(engine, backend, 'team');
+      await engine.putPage('notes/team', page(), { sourceId: 'team' });
+      const steps: Record<string, unknown> = {};
+      steps.nothingReadable = await reads();
+      await engine.insertFact({ fact: 'The harbor schedule moved to Friday.', entity_slug: null, visibility: 'world', source: 'test', embedding: null }, { source_id: 'default' });
+      steps.worldFact = await reads();
+      expect(steps).toEqual({
+        nothingReadable: { recall: 'sources_not_readable', query: 'sources_not_readable' },
+        worldFact: { recall: 'answered', query: 'answered' },
+      });
+      return steps;
+    }));
+
+  parityTest('through MCP, get_page with an explicit source_id reads a live source and refuses an archived one',
+    { methods: ['readSourceRow'], timeout: 90_000 },
+    async (engine, backend) => withHome(async () => {
+      await createSource(engine, backend, 'team');
+      await createSource(engine, backend, 'old');
+      await engine.putPage('notes/live', page(), { sourceId: 'team' });
+      await engine.putPage('notes/kept', page(), { sourceId: 'old' });
+      await archiveSource(engine, backend, 'old');
+      const get = async (slug: string, sourceId: string) => {
+        const result = await dispatchToolCall(engine, 'get_page', { slug, source_id: sourceId }, { remote: false, sourceId: 'default' });
+        const text = result.content.map(part => (part as { text?: string }).text ?? '').join('');
+        return result.isError ? (/"(?:code|error)"\s*:\s*"([a-z_]+)"/.exec(text)?.[1] ?? text.slice(0, 120)) : (JSON.parse(text) as { slug?: string }).slug ?? 'read';
+      };
+      const steps = { live: await get('notes/live', 'team'), archived: await get('notes/kept', 'old'), unknown: await get('notes/live', 'missing-example') };
+      expect(steps).toEqual({ live: 'notes/live', archived: 'unknown_source', unknown: 'unknown_source' });
+      return steps;
+    }));
 
   parityTest('an unscoped remote read with no source grant is refused only when its sources hold nothing it may read', { methods: ['readSourcesNotReadable'] }, async (engine, backend) => {
     const ctx = remoteCtx(engine);

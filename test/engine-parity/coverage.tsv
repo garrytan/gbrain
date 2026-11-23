@@ -6,9 +6,9 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2006/2022
+# covered: 2007/2023
 # lifecycle: 9/9
-# pages: 81/82
+# pages: 82/83
 # search: 7/7
 # search_reads: 9/9
 # link_reads: 15/15
@@ -168,7 +168,7 @@ listSourceIds	pages	yes	3	no	yes	yes	serves
 readSoleSourceId	pages	yes	1	no	yes	yes	serves
 readFirstSourceId	pages	yes	1	no	yes	yes	serves
 lockAllSourceRows	pages	yes	1	no	yes	yes	serves
-readSourceRow	pages	yes	3	no	yes	yes	serves
+readSourceRow	pages	yes	5	no	yes	yes	serves
 lockSourceRow	pages	yes	5	no	yes	yes	serves
 advanceSourceCommit	pages	yes	8	no	yes	yes	serves
 writeSourceSyncHeartbeat	pages	yes	1	no	yes	yes	serves
@@ -177,6 +177,7 @@ readPageIdentity	pages	yes	2	no	yes	yes	serves
 markSourceSynced	pages	yes	4	no	yes	yes	serves
 advanceSyncCheckpoint	pages	yes	2	no	yes	yes	serves
 countSourcePages	pages	yes	6	no	yes	yes	serves
+readSourcesNotReadable	pages	yes	2	no	yes	yes	serves
 insertSource	pages	yes	13	no	yes	yes	serves
 deleteSourceRecord	pages	yes	6	no	yes	yes	serves
 readSourceDeleteImpact	pages	yes	2	no	yes	yes	serves
@@ -526,7 +527,7 @@ hasActiveFactText	facts	yes	2	no	yes	yes	serves
 readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
-insertFact	facts	yes	160	yes	yes	yes	serves
+insertFact	facts	yes	161	yes	yes	yes	serves
 insertFacts	facts	yes	220	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	84	no	yes	yes	serves

@@ -6,8 +6,8 @@ mod common;
 use common::{TempDir, open};
 use gbrain_store::Store;
 use gbrain_store::cli_reads::sources::DefaultSourceSplit;
-use gbrain_store::import_members::PageOriginRefresh;
 use gbrain_store::facts::{ExpireFactArgs, InsertFactArgs, PrivacyPolicy};
+use gbrain_store::import_members::PageOriginRefresh;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::sources::SourceInput;
 use serde_json::json;
@@ -188,9 +188,6 @@ fn page_at(store: &Store, source_id: &str, slug: &str, path: Option<&str>, fm: s
     let input: PageInput = serde_json::from_value(json!({
         "type": "note", "title": slug, "compiled_truth": "body",
         "source_path": path, "frontmatter": fm,
-fn page_with(store: &Store, source_id: &str, slug: &str, frontmatter: serde_json::Value) {
-    let input: PageInput = serde_json::from_value(json!({
-        "type": "note", "title": slug, "compiled_truth": "body", "frontmatter": frontmatter,
     }))
     .unwrap();
     let options: PutPageOptions = serde_json::from_value(json!({"sourceId": source_id})).unwrap();
@@ -511,6 +508,17 @@ fn identity_reads_match_by_id_and_title_and_read_one_live_page() {
     );
     assert_eq!(store.read_page_identity(gone).unwrap(), None);
     assert_eq!(store.read_page_identity(999_999).unwrap(), None);
+}
+
+fn page_with(store: &Store, source_id: &str, slug: &str, frontmatter: serde_json::Value) {
+    let input: PageInput = serde_json::from_value(json!({
+        "type": "note", "title": slug, "compiled_truth": "body", "frontmatter": frontmatter,
+    }))
+    .unwrap();
+    let options: PutPageOptions = serde_json::from_value(json!({"sourceId": source_id})).unwrap();
+    store.put_page(slug, &input, &options).unwrap();
+}
+
 fn fact(store: &Store, source_id: &str, text: &str, visibility: &str) -> u64 {
     let args: InsertFactArgs = serde_json::from_value(json!({
         "input": {"fact": text, "source": "test", "visibility": visibility, "kind": "event"},

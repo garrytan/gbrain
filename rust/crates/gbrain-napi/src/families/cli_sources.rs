@@ -223,6 +223,26 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.write_source_upstream_observation(&source_id, &checked_at, &commit, behind)
+        })
+    }
+
+    /// `insertSource(id, name, localPath, config)`: the new `SourceRow`; `constraint_violation`
+    /// when the id or the name is taken.
+    #[napi]
+    pub fn insert_source<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+        name: String,
+        local_path: Option<String>,
+        config: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let config: Map<String, Value> = required(config, "insertSource config")?;
+            s.insert_source(&id, &name, local_path.as_deref(), &config)
+        })
+    }
+
     /// `readSourcesNotReadable(readable, facts, policy)`: whether an unscoped remote read over
     /// `readable` reads nothing while another live source holds a page; a `null` policy reads
     /// every page.
@@ -244,23 +264,6 @@ impl Brain {
                 })
                 .transpose()?;
             s.read_sources_not_readable(&readable, facts, policy.as_ref())
-        })
-    }
-
-    /// `insertSource(id, name, localPath, config)`: the new `SourceRow`; `constraint_violation`
-    /// when the id or the name is taken.
-    #[napi]
-    pub fn insert_source<'env>(
-        &self,
-        env: &'env Env,
-        id: String,
-        name: String,
-        local_path: Option<String>,
-        config: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let config: Map<String, Value> = required(config, "insertSource config")?;
-            s.insert_source(&id, &name, local_path.as_deref(), &config)
         })
     }
 }

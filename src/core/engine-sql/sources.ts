@@ -525,6 +525,8 @@ export async function readLiveIdentityHolders(exec: LegacyUnscopedRead, sourceId
         WHERE source_id = $1 AND deleted_at IS NULL AND (frontmatter->>'id' = ANY($2::text[]) OR title = ANY($3::text[]))`,
     [sourceId, [...ids], [...titles]],
   );
+}
+
 /** What `readSourcesNotReadable` counts (sources-not-readable.ts): world facts too (recall, query), and the remote read floor. */
 export interface SourcesNotReadableOpts { facts: boolean; excludePrivate: boolean }
 
