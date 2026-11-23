@@ -17,10 +17,9 @@ src/commands/auth-read-shared.ts	execute_raw	2	reads sources (ids that exist and
 src/commands/auth.ts	sql_template	1
 src/commands/autopilot-daemon.ts	execute_raw	1
 src/commands/autopilot-dispatch.ts	execute_raw	4
-src/commands/autopilot-fanout.ts	execute_raw	2
+src/commands/autopilot-fanout.ts	execute_raw	1
 src/commands/autopilot-health.ts	execute_raw	1
 src/commands/autopilot-retry-global.ts	execute_raw	1
-src/commands/autopilot.ts	execute_raw	1
 src/commands/autopilot/install-repo.ts	execute_raw	1
 src/commands/code-scope.ts	execute_raw	1
 src/commands/config.ts	execute_raw	1
@@ -365,7 +364,6 @@ src/core/minions/handlers/contextual-reindex-per-chunk.ts	execute_raw	1
 src/core/minions/handlers/embed-backfill.ts	execute_raw	2
 src/core/minions/handlers/facts-absorb.ts	execute_raw	1
 src/core/minions/handlers/ingest-capture.ts	execute_raw	3
-src/core/minions/handlers/subagent-oneshot.ts	execute_raw	2
 src/core/minions/handlers/sync-job-drain.ts	execute_raw	1
 src/core/minions/handlers/sync.ts	execute_raw	3
 src/core/minions/idempotency-coalesce.ts	execute_raw	1
@@ -377,7 +375,6 @@ src/core/minions/rate-leases.ts	execute_raw	6
 src/core/minions/spend-authorization.ts	execute_raw	3
 src/core/minions/sync-queue-wake.ts	execute_raw	2
 src/core/minions/terminal-events.ts	execute_raw	1
-src/core/minions/terminal-hook.ts	execute_raw	1
 src/core/minions/worker-shutdown.ts	execute_raw	1
 src/core/minions/worker.ts	execute_raw	7
 src/core/multi-source-drift.ts	execute_raw	1
@@ -388,7 +385,7 @@ src/core/onboard/mcp-onboarding.ts	execute_raw	1
 src/core/ops/chronicle.ts	execute_raw	1
 src/core/ops/context.ts	execute_raw	1
 src/core/ops/get-page-body.ts	execute_raw	2
-src/core/ops/jobs.ts	execute_raw	4
+src/core/ops/jobs.ts	execute_raw	3
 src/core/ops/known-as-of.ts	execute_raw	3
 src/core/ops/loops.ts	execute_raw	3
 src/core/ops/page-upload.ts	execute_raw	3
@@ -618,7 +615,6 @@ src/core/questions/refresh.ts	execute_raw	14
 src/core/questions/service.ts	execute_raw	1
 src/core/questions/store.ts	execute_raw	7
 src/core/reindex-consent.ts	execute_raw	1
-src/core/remediation/run.ts	execute_raw	1
 src/core/repair/attribution-backfill.ts	execute_raw	5
 src/core/repair/consolidate-ties.ts	execute_raw	1
 src/core/repair/duplicate-facts.ts	execute_raw	3

@@ -411,6 +411,20 @@ export class MinionWorker extends EventEmitter {
     });
   }
 
+  /**
+   * One health-check tick. A capability refusal out of the stall count means this engine cannot count waiting jobs, so the
+   * check could never run: stop the worker as unhealthy, as a dead DB probe does. Any other error escapes as before.
+   */
+  private tickHealthCheck(run: () => Promise<void>, markExited: () => void, failures: () => number): void {
+    void run().catch((e: unknown) => {
+      if (!isEngineCapabilityRefusal(e)) throw e;
+      const message = e instanceof Error ? e.message : String(e);
+      console.error(`[health] stall check refused: ${message} Emitting 'unhealthy' for process-manager restart.`);
+      markExited();
+      this.emitUnhealthy({ reason: 'db_dead', consecutiveFailures: failures(), message, verdict: 'unknown' });
+    });
+  }
+
   blockForConfiguration(error: LocalConfigurationError): void {
     if (this._configurationError) return;
     this._configurationError = error;
@@ -783,12 +797,7 @@ export class MinionWorker extends EventEmitter {
               } else {
                 stallWarningSince = null; // Queue empty (for our handlers) — not stalled, just idle
               }
-            } catch (e) {
-              // A capability refusal is not a flaky query: this engine cannot count waiting jobs, so the check could never
-              // run. Let it out; tickHealthCheck stops the worker as unhealthy, as a dead DB probe does.
-              rethrowCapabilityRefusal(e);
-              // DB query failed — the liveness probe above will catch persistent failures
-            }
+            } catch (e) { rethrowCapabilityRefusal(e); /* a refusal ends the worker via tickHealthCheck; else the liveness probe catches it */ }
           } else {
             stallWarningSince = null;
           }
@@ -801,18 +810,7 @@ export class MinionWorker extends EventEmitter {
         }
       };
 
-      // One tick. A capability refusal out of the stall count stops the worker as unhealthy, as a dead DB probe does;
-      // anything else escapes as before.
-      const tickHealthCheck = (): void => {
-        void runHealthCheck().catch((e: unknown) => {
-          if (!isEngineCapabilityRefusal(e)) throw e;
-          const message = e instanceof Error ? e.message : String(e);
-          console.error(`[health] stall check refused: ${message} Emitting 'unhealthy' for process-manager restart.`);
-          healthExited = true;
-          if (healthTimer) clearTimeout(healthTimer);
-          this.emitUnhealthy({ reason: 'db_dead', consecutiveFailures: consecutiveDbFailures + 1, message, verdict: 'unknown' });
-        });
-      };
+      const tickHealthCheck = (): void => this.tickHealthCheck(runHealthCheck, () => { healthExited = true; if (healthTimer) clearTimeout(healthTimer); }, () => consecutiveDbFailures + 1);
 
       // First tick scheduled after one interval so newly-started workers have
       // a chance to do real work before the stall clock starts ticking.
