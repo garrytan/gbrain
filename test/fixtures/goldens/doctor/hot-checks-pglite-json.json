@@ -1466,7 +1466,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 192 table(s) the applied migrations create exist.",
+            "message": "All 193 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -7040,7 +7040,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 192 table(s) the applied migrations create exist.",
+            "message": "All 193 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
