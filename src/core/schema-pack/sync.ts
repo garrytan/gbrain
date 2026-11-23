@@ -20,6 +20,7 @@ import type { BrainEngine } from '../engine.ts';
 import { loadActivePackBestEffort } from './best-effort.ts';
 import type { OperationContext } from '../operations.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { isMissingSchemaObject } from '../utils.ts';
 
 export interface SyncOpts {
   /** Apply UPDATE statements. Default false (dry-run). */
@@ -69,26 +70,12 @@ async function probePrefix(
   prefix: string,
   sourceId: string | undefined,
 ): Promise<{ count: number; sample: string[] }> {
-  let where = `WHERE deleted_at IS NULL AND (type IS NULL OR type = '') AND source_path LIKE $1`;
-  const params: unknown[] = [`${prefix}%`];
-  if (sourceId) {
-    where += ` AND source_id = $2`;
-    params.push(sourceId);
-  }
   try {
-    const cntRows = await engine.executeRaw<{ cnt: string }>(
-      `SELECT COUNT(*)::text AS cnt FROM pages ${where}`,
-      params,
-    );
-    const count = parseInt(cntRows[0]?.cnt ?? '0', 10) || 0;
-    if (count === 0) return { count: 0, sample: [] };
-    const sampleRows = await engine.executeRaw<{ slug: string }>(
-      `SELECT slug FROM pages ${where} ORDER BY slug COLLATE "C" LIMIT 10`,
-      params,
-    );
-    return { count, sample: sampleRows.map((r) => r.slug) };
-  } catch {
-    return { count: 0, sample: [] };
+    return await engine.probeUntypedPathPrefix(prefix, sourceId);
+  } catch (e) {
+    // A brain with no `pages` table yet has nothing under the prefix; any other failure is the sync's error.
+    if (isMissingSchemaObject(e, 'table', 'pages')) return { count: 0, sample: [] };
+    throw e;
   }
 }
 

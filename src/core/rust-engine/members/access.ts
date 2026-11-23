@@ -10,6 +10,7 @@ export const ACCESS_MEMBERS = {
   readFolderAccess: 'access_control',
   listActiveAccessMembers: 'access_control',
   hasLabelledOnlyMember: 'access_control',
+  hasLabelledOnlyMemberAmong: 'access_control',
   readMayActFor: 'access_control',
   readJobPrincipal: 'access_control',
   readAudiencePrincipals: 'access_control',

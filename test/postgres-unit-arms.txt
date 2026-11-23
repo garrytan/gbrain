@@ -421,6 +421,7 @@ test/engine-parity/source-verify-reads.test.ts
 test/engine-parity/spend-log.test.ts
 test/engine-parity/stats-vectors.test.ts
 test/engine-parity/stats.test.ts
+test/engine-parity/surfaced-reads.test.ts
 test/engine-parity/sweep-reads.test.ts
 test/engine-parity/sync-admission-effects.test.ts
 test/engine-parity/sync-admission.test.ts

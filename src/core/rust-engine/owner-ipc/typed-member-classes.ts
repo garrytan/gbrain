@@ -328,7 +328,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listUnretiredPagesBySlugPattern', 'listUntiledSegmentedPageRows', 'listVisibilityCandidatePages',
   'listVolunteerChannels', 'listWorktreeBlockerRequests', 'listWorktreeIds', 'lockActiveAccessTokens',
   'lockAllSourceRows', 'lockLegacyAccessTokens', 'lockSharedSkillBrainId', 'matchHeadStems',
-  'oauthClientHoldsAuthorization', 'oauthClientLive', 'originIndexPresent', 'pagePrefixSamples', 'pageTypeTotals',
+  'oauthClientHoldsAuthorization', 'oauthClientLive', 'originIndexPresent', 'pagePrefixSamples', 'pageTypeTotals', 'countLivePagesAtPathPrefix', 'probeUntypedPathPrefix', 'hasLabelledOnlyMemberAmong', 'readUnscopedReadRefusal',
   'pingStore', 'probePageTypes', 'readAccessGroups', 'readAccessMemberLink', 'readAccessTokenMemberGrant',
   'readAccessTokenReceiptGrant', 'readActiveAccessTokenByHash', 'readActiveAccessTokenGrant', 'readAdmissionSample',
   'readAtomProvenanceCounts', 'readBriefEditPage', 'readBriefEmailAliasPages', 'readBriefEntityPages',
@@ -372,6 +372,7 @@ const nothingLock = 'nothing: the lock is released when the call ends, so runnin
 
 /** Typed writes and the read that confirms each. */
 export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> = {
+  invalidateQueryCacheRows: 'nothing: the delete removes cached search results only, so running it again deletes none of what the first run removed',
   // The mention pass's writes (engine-sql/mention-pass.ts). The two advisory locks take nothing on the rust store.
   storeSegmentDerivationsIfLive: 'readSegmentDerivations for that page (the rows are there only when the page was live at that generation)',
   writeMentionIndexStatus: 'readMentionStatusStates and readMentionPolicyFingerprints for that source (a bumped generation shows in readMentionGenerations)',

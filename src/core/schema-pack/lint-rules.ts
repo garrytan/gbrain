@@ -18,6 +18,7 @@ import type { BrainEngine } from '../engine.ts';
 import { readRecentMutations } from './mutate-audit.ts';
 import { classifyStoredType, sanitizeTypeForDisplay, safeCliToken } from './type-usage.ts';
 import { NESTED_QUANTIFIER_RE } from './redos-guard.ts';
+import { isMissingSchemaObject } from '../utils.ts';
 
 export type LintSeverity = 'error' | 'warning';
 
@@ -324,15 +325,11 @@ export const extractableEmptyCorpus: LintRule = async (manifest, opts) => {
     let totalPages = 0;
     for (const p of t.path_prefixes) {
       try {
-        const rows = await opts.engine.executeRaw(
-          `SELECT COUNT(*)::text AS cnt FROM pages WHERE deleted_at IS NULL AND source_path LIKE $1`,
-          [`${p}%`],
-        ) as Array<{ cnt?: string }>;
-        const cnt = rows[0]?.cnt ? parseInt(rows[0].cnt, 10) : 0;
-        totalPages += cnt;
-      } catch {
-        // Engine call failed (no `pages` table on a fresh PGLite install?); skip.
-        return [];
+        totalPages += await opts.engine.countLivePagesAtPathPrefix(p);
+      } catch (e) {
+        // A brain with no `pages` table yet has no corpus to judge; any other failure is the lint's error.
+        if (isMissingSchemaObject(e, 'table', 'pages')) return [];
+        throw e;
       }
     }
     if (totalPages === 0) {

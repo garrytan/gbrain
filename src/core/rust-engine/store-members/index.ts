@@ -83,6 +83,7 @@ import * as factsForget from './facts-forget.ts';
 import * as factsRecall from './facts-recall.ts';
 import * as factsQuoted from './facts-quoted.ts';
 import * as schemaDetect from './schema-detect.ts';
+import * as unscopedReadReach from './unscoped-read-reach.ts';
 import * as edgeProposals from './edge-proposals.ts';
 import * as factsWritePath from './facts-write-path.ts';
 import * as factsRemember from './facts-remember.ts';
@@ -204,6 +205,8 @@ export const STORE_MEMBERS = {
   ...factRelinkWrites,
   // The `gbrain schema detect` page-shape reads (rust/docs/store/schema_detect.md).
   ...schemaDetect,
+  // The sources_not_readable probe of an empty unscoped remote read (rust/docs/store/cli-reads-ops.md).
+  ...unscopedReadReach,
   // The edge-contradictions dream phase and its proposal ledger (rust/docs/store/edge_proposals.md).
   ...edgeProposals,
   // The Life Chronicle event statements (rust/crates/gbrain-store/src/generations/chronicle_events.rs).

@@ -113,7 +113,75 @@ fn visible_chunks(read: &dyn KvRead, page: &PageRecord) -> Result<Vec<ChunkRecor
     Ok(chunks)
 }
 
+/// `readUnscopedReadRefusal` input: the sources the connection reads, and whether a world fact in force counts too
+/// (recall and query). The remote read floor arrives as the page policy (`None`: no floor).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UnscopedReachInput {
+    pub readable: Vec<String>,
+    pub with_facts: bool,
+}
+
+/// A page an empty unscoped read could have returned: live, not quarantined (`NOT (frontmatter ? 'quarantine')`) and,
+/// under the floor, not hidden by it.
+fn reach_visible(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    policy: Option<&PrivacyPolicy>,
+) -> Result<bool> {
+    if page.deleted_at_us.is_some() || page.frontmatter.contains_key("quarantine") {
+        return Ok(false);
+    }
+    match policy {
+        Some(policy) => Ok(!page_hidden(read, page, policy)?),
+        None => Ok(true),
+    }
+}
+
 impl Store {
+    /// `readUnscopedReadRefusal`: true when no readable source holds a visible page (nor, with `with_facts`, a world
+    /// fact that is not expired and whose `valid_until` is unset or after now) while a source that is not archived and
+    /// is not readable holds one. A page whose source record is missing is not joined, as the SQL's `JOIN sources`.
+    pub fn read_unscoped_read_refusal(
+        &self,
+        input: &UnscopedReachInput,
+        policy: Option<&PrivacyPolicy>,
+    ) -> Result<bool> {
+        let now = self.env.now_micros();
+        let read = self.read()?;
+        let read = &*read;
+        let readable: BTreeSet<&str> = input.readable.iter().map(String::as_str).collect();
+        let pages = all_pages(read)?;
+        for page in &pages {
+            if readable.contains(page.source_id.as_str()) && reach_visible(read, page, policy)? {
+                return Ok(false);
+            }
+        }
+        if input.with_facts {
+            let in_force = crate::facts::doctor::every_fact(read)?
+                .into_iter()
+                .any(|f| {
+                    readable.contains(f.source_id.as_str())
+                        && f.visibility == "world"
+                        && f.expired_at_us.is_none()
+                        && f.valid_until_us.is_none_or(|until| until > now)
+                });
+            if in_force {
+                return Ok(false);
+            }
+        }
+        let mut sources = Sources::new(read);
+        for page in &pages {
+            if !readable.contains(page.source_id.as_str())
+                && sources.live(&page.source_id)?
+                && reach_visible(read, page, policy)?
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// `readRankCoverage`: over the pages of `source_id` the caller may read (live, not
     /// quarantined, in an unarchived source, not hidden by its page policy), whether any still owes
     /// link extraction (`staleForExtractionSql`, guest sources never stale) and, with

@@ -17,6 +17,7 @@
  * the leaver is enabled again. Works with no repository: labels then write the database, rules use the database store.
  */
 import type { BrainEngine } from '../engine.ts';
+import { isMissingSchemaObject } from '../utils.ts';
 import type { OperationContext } from '../operations.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { getMember, listMembers, type MemberRecord } from './members.ts';
@@ -121,6 +122,17 @@ const leaverRule = (rule: FolderRule, ctx: PlanContext) => rule.readable_by.leng
   && rule.readable_by.some(p => ctx.leaverPrincipals.has(p)) && !rule.readable_by.some(p => liveReader(p, ctx));
 
 /** Plans the handover: every item it would write, grouped, with who gains and loses access. Writes only the approved set. */
+/**
+ * A count an older schema cannot answer (no facts table, no member_id column) reads 0; any other error, an engine that
+ * refuses the read included, fails the preview rather than showing 0.
+ */
+function zeroOnMissing(kind: 'table' | 'column', name: string) {
+  return (e: unknown): Array<{ n: number }> => {
+    if (isMissingSchemaObject(e, kind, name)) return [{ n: 0 }];
+    throw e;
+  };
+}
+
 export async function previewHandover(engine: BrainEngine, rawMember: string, choices: HandoverChoices): Promise<HandoverPreview> {
   const leaver = await getMember(engine, rawMember);
   if (!leaver) throw opError('not_found', 'No member "' + rawMember + '".', 'List members with gbrain access member list --all.');
@@ -174,7 +186,8 @@ export async function previewHandover(engine: BrainEngine, rawMember: string, ch
     items.push({ ...base, group, to: to === undefined ? from.map(plain) : to });
   }
   const [memoryPage] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE deleted_at IS NULL AND slug = $1', [MEMBER_PAGE_PREFIX + leaver.id]);
-  const [memoryFacts] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM facts f JOIN pages p ON p.id = f.page_id WHERE p.deleted_at IS NULL AND p.slug = $1', [MEMBER_PAGE_PREFIX + leaver.id]).catch(() => [{ n: 0 }]);
+  const [memoryFacts] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM facts f JOIN pages p ON p.source_id = f.source_id AND p.slug = f.source_markdown_slug WHERE p.deleted_at IS NULL AND p.slug = $1', [MEMBER_PAGE_PREFIX + leaver.id])
+    .catch(zeroOnMissing('table', 'facts'));
   if (leaver.status === 'removed') warnings.push(leaver.id + ' was removed, so its group memberships were dropped: pages it read only through a group cannot be attributed to it. gbrain doctor lists pages no member reads.');
   for (const binding of leaver.status === 'removed' ? [] : await listMemberSources(engine, { member: leaver.id })) {
     if (sourceTarget) items.push({ kind: 'binding', group: 'source', source_id: binding.source_id, from: leaver.id, to: sourceTarget });
@@ -192,7 +205,8 @@ export async function previewHandover(engine: BrainEngine, rawMember: string, ch
   const groups: GroupSummary[] = [groupOf('kept'), groupOf('folder'), groupOf('shared'), groupOf('source'),
     { group: 'memory', choice: 'never', count: memory + Number(memoryPage?.n ?? 0) - memory, sample: Number(memoryPage?.n ?? 0) ? [MEMBER_PAGE_PREFIX + leaver.id] : [],
       note: Number(memoryFacts?.n ?? 0) + ' private fact(s); never opened. The owner reads them on the brain host.' }];
-  const [creds] = await engine.executeRaw<{ n: number }>("SELECT (SELECT count(*) FROM access_tokens WHERE member_id = $1 AND revoked_at IS NULL) + (SELECT count(*) FROM oauth_clients WHERE member_id = $1) AS n", [leaver.id]).catch(() => [{ n: 0 }]);
+  const [creds] = await engine.executeRaw<{ n: number }>("SELECT (SELECT count(*) FROM access_tokens WHERE member_id = $1 AND revoked_at IS NULL) + (SELECT count(*) FROM oauth_clients WHERE member_id = $1) AS n", [leaver.id])
+    .catch(zeroOnMissing('column', 'member_id'));
   const [undone] = await engine.executeRaw<{ id: string }>("SELECT id FROM access_handovers WHERE member_id = $1 AND state = 'undone' ORDER BY undone_at DESC LIMIT 1", [leaver.id]);
   const hash = previewHash({ kind: 'member-handover-v1', member: leaver.id, owner: ctx.owner, choices, items: changed, ...(undone ? { after_undo: String(undone.id) } : {}) });
   if (changed.length) await saveApprovedSet<HandoverItem>(engine, { command: approvalCommand(leaver.id), hash }, changed);

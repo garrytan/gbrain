@@ -18,6 +18,7 @@ The store answers from its page, chunk, link, extraction, wanted-link and source
 | `brain.listExactIdentityCandidates({ probes, sourceIds, types, remote, emailsOnly, limit })` | live pages in `sourceIds` whose title, slug basename, page alias, frontmatter email or phone digits equal a probe, by `(source_id, slug)` in byte order: `{ slug, source_id, title, type, email, emails, phone, phones, aliases }` | `listExactIdentityCandidates` |
 | `brain.rankEntities({ direction, types, sourceIds, linkType, includeMentions, limit, foldedCap, remote })` | pages ranked by distinct in-scope edges, retired pages folded in: `{ slug, title, type, source_id, inbound, outbound, neighbors, folded_total, folded }` | `rankEntities` |
 | `brain.readRankCoverage({ sourceId, versionTs, mentionTypes, excludePrivate })` | over the pages of the source the caller may read: `{ link_behind, mention_due }` | `readRankCoverage` |
+| `brain.readUnscopedReadRefusal({ readable, withFacts }, policy)` | whether an empty unscoped remote read is refused `sources_not_readable` | `readUnscopedReadRefusal` |
 | `brain.readExactSnippetChunks({ keys, excludePrivate })` | per `{ pageId, chunkIndex, snippet }` key, its visible chunk when the chunk holds the snippet, in key order: `{ i, chunk_text }` (`i` from 1) | `readExactSnippetChunks` |
 | `brain.listExactRescanChunks({ pageIds, excludePrivate })` | the visible chunks of the safe-fenced pages, by page id then chunk index: `{ page_id, chunk_index, chunk_source, chunk_text }` | `listExactRescanChunks` |
 | `brain.listExtractionPendingPages({ sourceIds, sourceId, limit, offset })` | unverified auto-extracted pages in scope, newest first: `{ slug, title, type, source_id, extracted_from, created_at }` | `listExtractionPendingPages` |
@@ -67,6 +68,11 @@ negative `LIMIT` or `OFFSET` is an `invalid_argument` error, as Postgres rejects
   the page is live, served, has no `quarantine` or `pinned_question` key, is in scope and its source exists and is not
   archived. `extracted_from` is frontmatter `source` as `->>` reads it. `created_at` is `timestamptz::text` in UTC.
 
+- **readUnscopedReadRefusal.** A page counts when it is live, has no `quarantine` key and, when `policy` is set (the
+  remote read floor rendered for the caller), the policy does not hide it. True when no page of a `readable` source
+  counts (nor, with `withFacts`, a `world` fact of one that is not expired and whose `valid_until` is unset or later than
+  now) and a page of another source that exists and is not archived counts. A caller the store page policy cannot
+  represent refuses before the read (`engine_capability_missing`).
 - **readRankCoverage.** A readable page is live, in `sourceId`, has no `quarantine` key, its source exists and is not
   archived, and the caller's page policy (when sent) does not hide it. `link_behind` is true when a readable page outside
   a guest source owes link extraction (`staleForExtractionSql`): no extraction stamp, a stamp older than `versionTs` or

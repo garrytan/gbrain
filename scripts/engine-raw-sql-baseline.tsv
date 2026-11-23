@@ -160,7 +160,7 @@ src/core/access/attest-sources.ts	sql_template	7
 src/core/access/federation-exposure.ts	execute_raw	1
 src/core/access/handover.ts	execute_raw	14	GBRA-582 item 9 (handover PR 2): the new access_handovers record (v322) and the planner reads of pages, sources, access_group_members and credentials; writes go through the label and rule doors
 src/core/access/implicit-placement.ts	execute_raw	1	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
-src/core/access/labelled-only.ts	execute_raw	2
+src/core/access/labelled-only.ts	execute_raw	1
 src/core/access/member-facts.ts	execute_raw	2	GST-2897 B (#9670, opened before this ratchet): one access_members lookup to see whether the member a share is about is enabled; no typed engine method exists yet
 src/core/access/member-sources.ts	execute_raw	8
 src/core/access/members.ts	sql_template	1
@@ -671,14 +671,13 @@ src/core/schema-migrations/v302-link-transitions-source.ts	execute_raw	5
 src/core/schema-missing-tables.ts	execute_raw	1
 src/core/schema-pack/engine-resolution.ts	execute_raw	1
 src/core/schema-pack/entity-types.ts	execute_raw	1
-src/core/schema-pack/lint-rules.ts	execute_raw	3
+src/core/schema-pack/lint-rules.ts	execute_raw	2
 src/core/schema-pack/page-to-alias.ts	execute_raw	3
 src/core/schema-pack/page-to-link.ts	execute_raw	1
-src/core/schema-pack/query-cache-invalidator.ts	execute_raw	1
 src/core/schema-pack/retype.ts	execute_raw	3
 src/core/schema-pack/review.ts	execute_raw	2
 src/core/schema-pack/stats.ts	execute_raw	2
-src/core/schema-pack/sync.ts	execute_raw	3
+src/core/schema-pack/sync.ts	execute_raw	1
 src/core/schema-pack/unify-types-handler.ts	execute_raw	1
 src/core/schema-verify.ts	execute_raw	2
 src/core/search-vector-backfill.ts	execute_raw	3
@@ -718,7 +717,6 @@ src/core/similar-pages.ts	execute_raw	1
 src/core/skillpack/shared-brain-bridge.ts	execute_raw	4
 src/core/slack/slack-source.ts	execute_raw	3
 src/core/source-default-search.ts	execute_raw	1
-src/core/sources-not-readable.ts	execute_raw	1
 src/core/sources-ops.ts	execute_raw	3	#9634, pre-ratchet: +1 is the INSERT that registers a database-only api source row (imessage); no typed engine method exists yet
 src/core/sql-query.ts	execute_raw	2
 src/core/storage-manifest/adopt.ts	execute_raw	4

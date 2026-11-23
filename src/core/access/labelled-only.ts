@@ -18,7 +18,7 @@ import { hostOnlyError } from '../ops/op-fix.ts';
 import { ACCESS_ID_RE } from './principals.ts';
 import { assertAccessId, boundCredentials, existingMember, getMember, type MemberRecord } from './members.ts';
 import { labelledOnlyOwnerError, ownerMemberId } from './owner.ts';
-import { OWNER_MEMBER_KEY } from '../search/private-visibility.ts';
+import { isMissingSchemaObject } from '../utils.ts';
 
 /**
  * Marks a member labelled-only or clears it. Only the trusted local operator may (remote strictly false), and never on the
@@ -68,13 +68,15 @@ export async function anyLabelledOnlyMember(engine: Pick<BrainEngine, 'hasLabell
  * cannot be read counts as yes (fail closed: it only narrows). Identities without a member (unbound, a group, a guest)
  * are never labelled-only, and neither is the configured owner (access.owner_member), whichever door the call came in by.
  */
-export async function labelledOnlyFor(engine: Pick<BrainEngine, 'executeRaw'>, identities: readonly (readonly string[])[]): Promise<boolean> {
+export async function labelledOnlyFor(engine: Pick<BrainEngine, 'hasLabelledOnlyMemberAmong'>, identities: readonly (readonly string[])[]): Promise<boolean> {
   const members = [...new Set(identities.flat().filter(p => p.startsWith('member:')).map(p => p.slice('member:'.length)).filter(id => ACCESS_ID_RE.test(id)))];
   if (!members.length) return false;
   try {
-    return (await engine.executeRaw(`SELECT 1 FROM access_members WHERE labelled_only AND id = ANY($1::text[])
-      AND id IS DISTINCT FROM (SELECT btrim(value) FROM config WHERE key = $2) LIMIT 1`, [members, OWNER_MEMBER_KEY])).length > 0;
-  } catch {
-    return true;
+    return await engine.hasLabelledOnlyMemberAmong(members);
+  } catch (e) {
+    // A brain from before the access tables cannot say, so it counts as yes (fail closed: it only narrows). Any other
+    // failure, an engine that refuses the read included, is thrown rather than quietly narrowing every read.
+    if (isMissingSchemaObject(e, 'table', ['access_members', 'config']) || isMissingSchemaObject(e, 'column', 'labelled_only')) return true;
+    throw e;
   }
 }
