@@ -527,7 +527,7 @@ export async function purgeStaleCheckpoints(
            AND op<>'owed-page-purge'
            AND NOT (op='sync-identity-downgrade' AND completed_keys->0->>'disposition' IS NULL AND EXISTS (
              SELECT 1 FROM pages p WHERE p.id::text=op_checkpoints.fingerprint AND p.deleted_at=(op_checkpoints.completed_keys->0->>'old_deleted_at')::timestamptz))
-           AND NOT (op IN ('sync-hold','sync-hold-retry','sync-import-provenance','sync-hold-summary','sync-conversions','${FENCE_CANDIDATE_OP}','${FENCE_SCAN_OP}','${FENCE_REPAIR_ATTEMPT_OP}','${FENCE_UNCOMMITTED_OP}',${SYNC_PASS_ROW_OPS.map(op => `'${op}'`).join(',')})
+           AND NOT (op IN ('sync-hold','sync-hold-retry','sync-import-provenance','plain-directory-agreed','sync-hold-summary','sync-conversions','${FENCE_CANDIDATE_OP}','${FENCE_SCAN_OP}','${FENCE_REPAIR_ATTEMPT_OP}','${FENCE_UNCOMMITTED_OP}',${SYNC_PASS_ROW_OPS.map(op => `'${op}'`).join(',')})
              AND NOT (op='sync-hold-summary' AND COALESCE((completed_keys->0->>'count')::int,0)=0)
              AND EXISTS (SELECT 1 FROM sources s WHERE s.id=op_checkpoints.completed_keys->0->>'source_id'
                AND s.incarnation::text=op_checkpoints.completed_keys->0->>'incarnation'))
