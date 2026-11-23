@@ -201,6 +201,20 @@ describe('engine parity: the generation repair kinds of batch 7', () => {
     return { listed, preview: shape(previewed) };
   }));
 
+  parityTest('the atom generation ledger reads 0, bumps, and keeps the kept content at its generation', {
+    methods: ['putPage', 'readAtomGeneration', 'recordAtomGenerationBump', 'listSourceIncarnations'], timeout: 60_000,
+  }, async (engine) => {
+    const page = await engine.putPage('notes/ledger', { type: 'note' as never, title: 'ledger', compiled_truth: 'Ledger body.', timeline: '' }, { sourceId: 'default' });
+    const [source] = await engine.listSourceIncarnations(['default']);
+    const read = async () => [await engine.readAtomGeneration(page.id, 'hash-a'), await engine.readAtomGeneration(page.id, 'hash-b')];
+    const before = await read();
+    await engine.recordAtomGenerationBump('default', source!.incarnation, page.id, null, null);
+    const first = await read();
+    await engine.recordAtomGenerationBump('default', source!.incarnation, page.id, 'hash-a', await engine.readAtomGeneration(page.id, 'hash-a'));
+    const kept = await read();
+    return { before, first, kept };
+  });
+
   parityTest('stale-atoms retires the approved atoms the same way on every arm', {
     methods: ['putPage', 'listStaleAtoms', 'readAtomGeneration', 'recordAtomGenerationBump'],
     timeout: 60_000,

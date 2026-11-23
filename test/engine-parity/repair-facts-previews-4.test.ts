@@ -178,6 +178,54 @@ describe('engine parity: repair fact applies, rename-identity and unwithdrawn-fa
     return byOrder(out, ids);
   });
 
+  parityTest('the repair apply members recheck and write the same rows on every arm', {
+    methods: ['putPage', 'insertFacts', 'consolidateFact', 'computeFactFingerprints', 'restoreConsolidationTie', 'listLiveDuplicateRows',
+      'supersedeDuplicateFacts', 'linkStruckDuplicateFacts', 'listCommittedRestorePages', 'listActivePositionedFactIds', 'readFactRestorePage',
+      'restoreExtractorFact', 'moveFactClaimDates', 'readSourceCloneRow', 'detachFenceRowFacts', 'hasDatabaseOnlyClaim', 'lockApprovedFacts',
+      'expireApprovedFacts'], timeout: 60_000,
+  }, async (engine) => {
+    await engine.putPage('notes/fenced', note('Fenced'), { sourceId: 'default' });
+    const at = new Date('2026-01-01T00:00:00.000Z');
+    const ids = await insert(engine, [
+      { fact: 'Ana keeps bees', entity_slug: 'people/ana-example', source: 'mcp:extract_facts' },
+      { fact: '  ana KEEPS bees ', entity_slug: 'people/ana-example', source: 'mcp:extract_facts' },
+      { fact: 'Fenced claim', entity_slug: 'notes/fenced', source: 'mcp:put_page', source_markdown_slug: 'notes/fenced', row_num: 3 },
+      { fact: 'Acme ARR is 5', entity_slug: 'companies/acme-example', claim_metric: 'arr', claim_unit: 'usd', claim_period: '2026', valid_from: at,
+        valid_until: at, source: 'test' },
+      { fact: 'Ana keeps hives', source: `${EXTRACTOR}:v1`, expired_at: new Date('2026-03-04T05:06:07.654321Z') },
+      { fact: 'Acme closed a seed round on 2025-03-14', entity_slug: 'companies/acme-example', source: 'test',
+        valid_from: new Date('2026-02-03T10:11:12.345678Z') },
+    ]);
+    const [f0, f1, f2, f3, f4, f5] = ids;
+    await engine.consolidateFact(f3!, 7);
+    const name = (v: unknown): unknown => (Array.isArray(v) ? v.map(name) : typeof v === 'number' && ids.includes(v) ? `f${ids.indexOf(v)}` : v);
+    const [fingerprint] = await engine.computeFactFingerprints(['Ana keeps bees']);
+    const live = async () => (await engine.listLiveDuplicateRows('default', [f0!, f1!, f2!], 'private', fingerprint!)).map(r => ({ ...r, id: name(r.id) }));
+    const before = await live();
+    const superseded = name(await engine.supersedeDuplicateFacts('default', [f1!], f0!, 'private', fingerprint!));
+    const supersededAgain = name(await engine.supersedeDuplicateFacts('default', [f1!], f0!, 'private', fingerprint!));
+    const after = await live();
+    // A JS Date carries milliseconds, so the seeded expiry and valid_from are stored to the millisecond on every arm.
+    const restored = [await engine.restoreExtractorFact('default', f4!, 9, '2026-03-04T05:06:07.653000Z'),
+      await engine.restoreExtractorFact('default', f4!, 9, '2026-03-04T05:06:07.654000Z'),
+      await engine.restoreExtractorFact('default', f4!, 9, '2026-03-04T05:06:07.654000Z')];
+    const positioned = name(await engine.listActivePositionedFactIds([f0!, f2!, f4!]));
+    const page = await engine.readFactRestorePage('default', 'notes/fenced');
+    const pages = { page: page && { ...page, id: typeof page.id }, gone: await engine.readFactRestorePage('default', 'notes/no-such-page') };
+    const tie = { source_id: 'default', id: f3!, entity_slug: 'companies/acme-example', take_id: 7, valid_from: at };
+    const ties = [await engine.restoreConsolidationTie(tie), await engine.restoreConsolidationTie(tie)];
+    const move = [{ id: f5!, valid_from: '2026-02-03T10:11:12.345000Z', date: '2025-03-14' }];
+    const moved = [name(await engine.moveFactClaimDates('default', move)), name(await engine.moveFactClaimDates('default', move))];
+    const detached = [name(await engine.detachFenceRowFacts('default', 'notes/fenced', 3)), name(await engine.detachFenceRowFacts('default', 'notes/fenced', 3))];
+    const claims = [await engine.hasDatabaseOnlyClaim('default', 'notes/fenced', 'Fenced claim'), await engine.hasDatabaseOnlyClaim('default', 'notes/fenced', 'Other claim')];
+    await engine.lockApprovedFacts('default', [f0!]);
+    const expired = name(await engine.expireApprovedFacts('default', [f0!, f5!]));
+    const linked = [name(await engine.linkStruckDuplicateFacts('default', [f0!, f2!], f5!)), name(await engine.linkStruckDuplicateFacts('default', [f0!], f5!))];
+    const committed = await engine.listCommittedRestorePages(['default'], ['chats/one-example'], 'no-such-hash', []);
+    const clone = { known: await engine.readSourceCloneRow('default'), unknown: await engine.readSourceCloneRow('no-such-source') };
+    return { before, superseded, supersededAgain, after, restored, positioned, pages, ties, moved, detached, claims, expired, linked, committed, clone };
+  });
+
   parityTest('rename-identity lists no pair on a seeded source with no downgrade record', {
     methods: ['putPage', 'softDeletePage', 'readIdentityDowngradeRows'], timeout: 60_000,
   }, async (engine) => {

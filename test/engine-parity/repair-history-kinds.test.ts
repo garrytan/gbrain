@@ -279,6 +279,18 @@ async function keepPages(engine: BrainEngine, root: string) {
 }
 
 describe('engine parity: the history repair kinds of batch 6a', () => {
+  parityTest('readPageVersionRow reads the version row revert_version reverts to, and null for another page or id', {
+    methods: ['putPage', 'createVersion', 'readPageVersionRow'], timeout: 60_000,
+  }, async (engine) => {
+    const page = await engine.putPage('notes/versioned', { type: 'note', title: 'First', compiled_truth: 'First body.', timeline: '- **2024-03-01** | manual — One', frontmatter: { tags_note: 'a' } }, { sourceId: 'default' });
+    const version = await engine.createVersion('notes/versioned', { sourceId: 'default' });
+    const other = await engine.putPage('notes/other', { type: 'note', title: 'Other', compiled_truth: 'Other body.', timeline: '' }, { sourceId: 'default' });
+    const row = await engine.readPageVersionRow(Number(version.id), page.id);
+    const pick = (v: typeof row) => v && { page: v.page_id === page.id, title: v.title, type: v.type, compiled_truth: v.compiled_truth, timeline: v.timeline,
+      frontmatter: v.frontmatter, tags: v.tags, is_deleted: v.is_deleted ?? null, body_storage: v.body_storage ?? null };
+    return { row: pick(row), otherPage: await engine.readPageVersionRow(Number(version.id), other.id), noSuchId: await engine.readPageVersionRow(Number(version.id) + 1000, page.id) };
+  });
+
   parityTest('purged-change-reasons previews the leaked reasons and the apply purges the approved ones on every arm', {
     methods: ['putPage', 'createVersion', 'attachSourcePath', 'writeReasonPurgeTombstones', 'listVersionsByChangeReason', 'replaceVersionChangeReasons', 'getVersions'],
     timeout: 60_000,
