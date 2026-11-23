@@ -1007,13 +1007,29 @@ export function removeHarnessBridge(opts: {
     }
   }
 
-  if (!dryRun && toRemove.length > 0) {
-    const next = removeBridgeSlugs(
+  if (!dryRun && entry) {
+    let next = removeBridgeSlugs(
       state,
       { harness: opts.harness, dest: opts.destDir, nowIso: opts.nowIso },
       toRemove,
     );
-    saveBridgeState(next, { statePath: opts.statePath });
+    const remaining = findBridgeEntry(next, { harness: opts.harness, dest: opts.destDir });
+    // A retired destination has no shared files left to protect. Also handle
+    // entries already reduced to _shared by an earlier remove. lstat keeps a
+    // dangling symlink distinct from an absent directory; other errors refuse.
+    if (remaining && ownedBridgeSlugs(remaining).length === 0) {
+      try {
+        lstatSync(opts.destDir);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        next = removeBridgeSlugs(next,
+          { harness: opts.harness, dest: opts.destDir, nowIso: opts.nowIso },
+          [SHARED_DEP_LEDGER_KEY]);
+      }
+    }
+    if (toRemove.length > 0 || !findBridgeEntry(next, { harness: opts.harness, dest: opts.destDir })) {
+      saveBridgeState(next, { statePath: opts.statePath });
+    }
   }
 
   return { dryRun, removedFiles, keptEdited, prunedDirs: pruned, notOwned };

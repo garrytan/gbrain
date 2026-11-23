@@ -83,6 +83,43 @@ describe('scaffold --harness claude-code', () => {
   }, 120_000);
 });
 
+describe('retired harness destinations (#10098)', () => {
+  test('remove retires deleted installs from status, including a pre-existing shared-only ledger', () => {
+    const { home, gbrainHome } = homes();
+    const env = { HOME: home, GBRAIN_HOME: gbrainHome, CLAUDE_CONFIG_DIR: '' };
+    const destinations = [join(home, 'first'), join(home, 'second')];
+    const statePath = join(gbrainHome, '.gbrain', 'skillpack-bridge-state.json');
+    for (const dest of destinations) {
+      const installed = run(['scaffold', '--harness', 'claude-code', '--skill', 'query', '--dest', dest], env);
+      expect(installed.code, installed.stderr).toBe(0);
+    }
+    const remove = (dest: string, extra: string[] = []) => run(['remove', '--harness', 'claude-code', '--dest', dest, '--json', ...extra], env);
+    expect(remove(destinations[0]).code).toBe(0);
+    const sharedOnly = remove(destinations[0]);
+    expect(sharedOnly.stderr).toContain('only shared files recorded');
+    expect(sharedOnly.stderr).not.toContain('no bridge install recorded');
+    expect(existsSync(join(destinations[0], 'conventions'))).toBe(true);
+    const before = readFileSync(statePath, 'utf8');
+    for (const dest of destinations) rmSync(dest, { recursive: true });
+    for (const dest of destinations) {
+      expect(remove(dest, ['--dry-run']).code).toBe(0);
+      expect(readFileSync(statePath, 'utf8')).toBe(before);
+    }
+    for (const dest of destinations) {
+      const retired = remove(dest);
+      expect(retired.code, retired.stderr).toBe(0);
+      expect(retired.stderr).not.toContain('no bridge install recorded');
+      expect(JSON.parse(retired.stdout).removedFiles).toEqual([]);
+      expect(existsSync(dest)).toBe(false);
+    }
+    expect(JSON.parse(readFileSync(statePath, 'utf8')).entries).toEqual([]);
+    const status = run(['status', '--workspace', home, '--json'], env);
+    expect(status.code, status.stderr).toBe(0);
+    expect(JSON.parse(status.stdout).bridges).toEqual([]);
+    expect(remove(destinations[0]).code).toBe(0);
+  }, 180_000);
+});
+
 describe('refusals (typed, actionable)', () => {
   test('codex/opencode without a dest exit 2 naming the observation-run gap', () => {
     const { home, gbrainHome } = homes();

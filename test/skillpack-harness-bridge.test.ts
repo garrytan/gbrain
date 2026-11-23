@@ -279,6 +279,81 @@ describe('confinement', () => {
 });
 
 describe('remove', () => {
+  test('does not forget a shared-only ledger at a dangling destination symlink', () => {
+    const root = fixtureRoot();
+    const dest = tmp('gb-bridge-dest-');
+    const statePath = join(tmp('gb-bridge-st-'), 'state.json');
+    applyHarnessBridge(planHarnessBridge({ gbrainRoot: root, destDir: dest, slugs: ['alpha'], mode: 'full' }), APPLY(dest, statePath));
+    const remove = () => removeHarnessBridge({
+      harness: 'claude-code', destDir: dest, slugs: null, statePath, nowIso: '2026-08-16T00:00:00Z',
+    });
+    remove();
+    const before = readFileSync(statePath, 'utf8');
+    rmSync(dest, { recursive: true });
+    symlinkSync(`${dest}-missing`, dest);
+    remove();
+    expect(readFileSync(statePath, 'utf8')).toBe(before);
+  });
+
+  test('retains unselected slugs at a missing destination until explicitly removed', () => {
+    const root = fixtureRoot();
+    const dest = tmp('gb-bridge-dest-');
+    const statePath = join(tmp('gb-bridge-st-'), 'state.json');
+    applyHarnessBridge(planHarnessBridge({ gbrainRoot: root, destDir: dest, slugs: ['alpha', 'beta'], mode: 'full' }), APPLY(dest, statePath));
+    rmSync(dest, { recursive: true });
+    removeHarnessBridge({ harness: 'claude-code', destDir: dest, slugs: ['alpha'], statePath, nowIso: '2026-08-16T00:00:00Z' });
+    const entry = findBridgeEntry(loadBridgeState({ statePath }), { harness: 'claude-code', dest })!;
+    expect(Object.keys(entry.written).sort()).toEqual(['_shared', 'beta']);
+    removeHarnessBridge({ harness: 'claude-code', destDir: dest, slugs: ['beta'], statePath, nowIso: '2026-08-16T00:00:00Z' });
+    expect(loadBridgeState({ statePath }).entries).toEqual([]);
+  });
+
+  test('retires an already shared-only entry after deletion, but preserves an existing destination', () => {
+    const root = fixtureRoot();
+    const dest = tmp('gb-bridge-dest-');
+    const statePath = join(tmp('gb-bridge-st-'), 'state.json');
+    applyHarnessBridge(planHarnessBridge({ gbrainRoot: root, destDir: dest, slugs: ['alpha'], mode: 'full' }), APPLY(dest, statePath));
+    const remove = (dryRun = false) => removeHarnessBridge({
+      harness: 'claude-code', destDir: dest, slugs: null, statePath, dryRun, nowIso: '2026-08-16T00:00:00Z',
+    });
+    remove();
+    expect(readFileSync(join(dest, 'conventions', 'style.md'), 'utf8')).toBe('convention content\n');
+    const before = readFileSync(statePath, 'utf8');
+    remove();
+    expect(readFileSync(statePath, 'utf8')).toBe(before);
+    rmSync(dest, { recursive: true });
+    remove(true);
+    expect(readFileSync(statePath, 'utf8')).toBe(before);
+    remove();
+    expect(loadBridgeState({ statePath }).entries).toEqual([]);
+  });
+
+  test('retires a deleted destination including its shared ledger without affecting another install', () => {
+    const root = fixtureRoot();
+    const dest = tmp('gb-bridge-dest-');
+    const sibling = tmp('gb-bridge-sibling-');
+    const statePath = join(tmp('gb-bridge-st-'), 'state.json');
+    for (const target of [dest, sibling]) {
+      applyHarnessBridge(planHarnessBridge({ gbrainRoot: root, destDir: target, slugs: ['alpha'], mode: 'full' }), APPLY(target, statePath));
+    }
+    const before = loadBridgeState({ statePath });
+    rmSync(dest, { recursive: true });
+    const remove = (dryRun: boolean) => removeHarnessBridge({
+      harness: 'claude-code', destDir: dest, slugs: null, statePath, dryRun, nowIso: '2026-08-16T00:00:00Z',
+    });
+    remove(true);
+    expect(loadBridgeState({ statePath })).toEqual(before);
+    remove(false);
+    expect(findBridgeEntry(loadBridgeState({ statePath }), { harness: 'claude-code', dest })).toBeUndefined();
+    expect(findBridgeEntry(loadBridgeState({ statePath }), { harness: 'claude-code', dest: sibling })).toEqual(
+      findBridgeEntry(before, { harness: 'claude-code', dest: sibling }),
+    );
+    expect(existsSync(dest)).toBe(false);
+    expect(readFileSync(join(sibling, 'conventions', 'style.md'), 'utf8')).toBe('convention content\n');
+    remove(false);
+    expect(loadBridgeState({ statePath }).entries).toHaveLength(1);
+  });
+
   test('removes ledger-owned files only; user files and shared deps survive', () => {
     const root = fixtureRoot();
     const dest = tmp('gb-bridge-dest-');
