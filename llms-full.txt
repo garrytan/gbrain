@@ -5984,6 +5984,7 @@ gbrain engine shadow start --plan                  # preview the plan and its pl
 gbrain engine shadow start --yes --expect <hash>   # turn it on (loads the Rust addon first; refuses without it)
 gbrain engine shadow reconcile [--full] [--json]   # compare the whole brain with the Rust store and repair differences
 gbrain engine shadow status [--json]
+gbrain engine shadow bench --import <receipt.json> [--json]   # load an engine-bench speed receipt as criterion 8's evidence
 gbrain engine shadow report [--json]               # writes reports/provisional.{json,md}
 gbrain engine shadow stop [--delete]               # turn it off; --delete removes the shadow directory
 ```
@@ -6091,6 +6092,21 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   differing code points so a swap report can name them. A probe that errors is `not_run`. A glibc `en_US.utf8` host differs
   (U+0085, U+1680, circled letters and more); a C-ctype host differs on every cased non-ASCII letter, so it fails once a fact
   holds one.
+- **Speed (criterion 8, reported and never gating).** `bench --import <receipt.json>` reads the engine-bench speed
+  receipt (gbrain-evals `eval/runner/engine-bench/perf.ts`: `benchmark: "engine-bench"`, `stage: "speed"`,
+  `schema_version: 1`, 10,000 pages, Rust against PGLite and Postgres) into `evidence/bench/engine-bench-speed.json` and
+  fills `bench.pairs`, `bench.rust_no_worse` and `bench.losses` in `status --json`. The file must be a regular file under
+  256 MiB (a pipe, directory, device or symbolic link is refused without being read); a receipt with other margins, a
+  Rust arm that refused, or a malformed number is refused and the earlier evidence stays. The rule is the evals' own:
+  for each of the 13 operation classes, at p50 and p99, against each TypeScript engine, Rust is **worse** when the 95%
+  interval of the Rust over other ratio lies above 1, **better** below 1, and **not shown** otherwise; a class with
+  fewer than 100 pairs, one Rust refused, or one the receipt leaves out is **not measured** and never passes. Cold start,
+  RSS, import and throughput follow the same direction rule. Every loss and every not-measured row is named in `losses`
+  (each starts with "bench corpus:") and `rust_no_worse` is true only when everything was measured against both engines.
+  The build in the receipt is compared with the evidence epoch's build (same, differs or unknown, reported and not gating).
+  These are numbers from the benchmark corpus, not from this brain: replaying your own reads on both engines
+  (`gbrain engine shadow bench` with no `--import`) is not built, so that source reads "not measured". The D14 margin for
+  filtered vector search is not set, so `filtered_vector_margin_met` is absent and the report says "D14 margin not set".
 - **Provisional report.** The verdict is always `NOT READY`: this phase compares reads only, write comparisons
   are not built yet, and the readiness decision come in later phases of the plan
   (`docs/designs/RUST_ENGINE.md`, Phase S). Until the Rust engine serves reads, comparisons record
