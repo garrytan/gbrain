@@ -291,7 +291,8 @@ FROM f n JOIN f o
     from: 'src/core/facts/claim-conflicts.ts:125 runClaimConflicts',
     member: 'listUnarchivedSourceRows',
     runs: [{ run: e => e.listUnarchivedSourceRows(), params: undefined }],
-    text: `SELECT id FROM sources WHERE NOT archived ORDER BY id`,
+    // The byte-order pass (source-id-order-collation guard, commit 5065136f1f) added COLLATE "C" to the member's one read.
+    text: `SELECT id FROM sources WHERE NOT archived ORDER BY id COLLATE "C"`,
   },
   {
     from: 'src/core/engine-sql/facts-trust.ts listAllUnarchivedSourceIds (the same read as listUnarchivedSourceRows, byte order)',
