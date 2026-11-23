@@ -31,10 +31,12 @@ async function detailed(
   sourceOrSources: string | readonly string[],
   opts: { excludePrivate?: boolean } | undefined,
 ): Promise<{ canonical_slug: string; source_id: string } | null> {
-  takeOptions(member, opts, []);
+  const o = takeOptions(member, opts, ['excludePrivate']) as { excludePrivate?: boolean };
   const sources = Array.isArray(sourceOrSources) ? [...sourceOrSources] : [sourceOrSources as string];
   if (sources.length === 0) return null;
-  const found: SlugAliasMatch | null = await storeCall({ member, slug }, () => brain.resolveSlugWithAliasDetailed(slug, sources));
+  // `excludePrivate`: the alias row counts only when its live canonical page passes the caller's page policy.
+  const excludePrivate = storePagePolicy(member, o.excludePrivate, { callerReaders: true }) ?? null;
+  const found: SlugAliasMatch | null = await storeCall({ member, slug }, () => brain.resolveSlugWithAliasDetailed(slug, sources, excludePrivate));
   if (found === null) return null;
   if (found.matches > 1) {
     warnOncePerProcess(

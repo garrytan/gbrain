@@ -4,6 +4,7 @@
 //! Each method decodes its arguments, runs one `Store` call on the pool through `Brain::run`,
 //! and resolves plain JSON (rust/README.md, "The brain store").
 
+use gbrain_store::facts::PrivacyPolicy;
 use napi::Env;
 use napi::bindgen_prelude::Object;
 use napi_derive::napi;
@@ -35,10 +36,17 @@ impl Brain {
         env: &'env Env,
         slug: String,
         sources: Value,
+        exclude_private: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             let sources: Vec<String> = required(sources, "resolveSlugWithAliasDetailed sources")?;
-            s.resolve_slug_with_alias_detailed(&slug, &sources)
+            let policy: Option<PrivacyPolicy> = match exclude_private {
+                Some(v) if !v.is_null() => {
+                    Some(required(v, "resolveSlugWithAliasDetailed excludePrivate")?)
+                }
+                _ => None,
+            };
+            s.resolve_slug_with_alias_detailed(&slug, &sources, policy.as_ref())
         })
     }
 

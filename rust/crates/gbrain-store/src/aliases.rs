@@ -1087,23 +1087,40 @@ impl Store {
         Ok(out)
     }
 
-    /// `resolveSlugWithAliasDetailed(slug, sources)`: the `slug_aliases` row of `slug` in the first
-    /// source, in the given order, that has one; `None` when none does or `sources` is empty.
+    /// `resolveSlugWithAliasDetailed(slug, sources, excludePrivate)`: the `slug_aliases` row of `slug`
+    /// in the first source, in the given order, that has one; `None` when none does or `sources` is
+    /// empty. Under `exclude_private` a row counts only when its canonical page exists, is not soft
+    /// deleted and passes the page policy (`facts/privacy.rs` `page_hidden`), as the SQL's `EXISTS`.
     pub fn resolve_slug_with_alias_detailed(
         &self,
         slug: &str,
         sources: &[String],
+        exclude_private: Option<&PrivacyPolicy>,
     ) -> Result<Option<SlugAliasMatch>> {
         let read = self.read()?;
+        let mut owner_only = OwnerOnlyCache::default();
         let mut seen: BTreeSet<&str> = BTreeSet::new();
         let mut found: Vec<(&str, SlugAliasRecord)> = Vec::new();
         for source in sources {
             if !seen.insert(source.as_str()) {
                 continue;
             }
-            if let Some(record) = read_slug_alias(&*read, source, slug)? {
-                found.push((source.as_str(), record));
+            let Some(record) = read_slug_alias(&*read, source, slug)? else {
+                continue;
+            };
+            if let Some(policy) = exclude_private {
+                let visible = match read_page(&*read, source, &record.canonical_slug)? {
+                    Some(page) => {
+                        page.deleted_at_us.is_none()
+                            && !owner_only.page_hidden(&*read, &page, policy)?
+                    }
+                    None => false,
+                };
+                if !visible {
+                    continue;
+                }
             }
+            found.push((source.as_str(), record));
         }
         let matches = found.len();
         Ok(found
