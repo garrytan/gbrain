@@ -149,7 +149,7 @@ test/engine-parity/jobs-health.test.ts	8	0
 test/engine-parity/jobs-insight.test.ts	2	0
 test/engine-parity/jobs-queue.test.ts	40	0
 test/engine-parity/jobs-spend.test.ts	4	0
-test/engine-parity/jobs-status.test.ts	13	0
+test/engine-parity/jobs-status.test.ts	14	0
 test/engine-parity/jobs-subagent.test.ts	16	0
 test/engine-parity/jobs-wake.test.ts	20	0
 test/engine-parity/jobs.test.ts	16	0
