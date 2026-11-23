@@ -45,9 +45,10 @@ export function parseCanaryPosters(value: string | undefined): string[] {
  */
 export function judgeCanary(statuses: readonly CommitStatus[], version: string, posters: readonly string[]): CanaryVerdict {
   const allowed = new Set(posters.map(p => p.toLowerCase()));
-  const named = new RegExp(`^v${version.replace(/\./g, '\\.')}(\\s|:|$)`);
+  const tag = `v${version}`;
+  const named = (d: string) => d.startsWith(tag) && (d.length === tag.length || /^[\s:]/.test(d.slice(tag.length)));
   const ours = statuses.filter(s => s.context === CANARY_CONTEXT);
-  const trusted = ours.filter(s => allowed.has((s.creator?.login ?? '').toLowerCase()) && named.test((s.description ?? '').trim()));
+  const trusted = ours.filter(s => allowed.has((s.creator?.login ?? '').toLowerCase()) && named((s.description ?? '').trim()));
   const newest = [...trusted].sort((a, b) => Date.parse(b.created_at ?? '') - Date.parse(a.created_at ?? ''))[0];
   if (!newest) {
     const ignored = ours.length ? ` (${ours.length} ${CANARY_CONTEXT} status${ours.length === 1 ? '' : 'es'} ignored: not posted by ${[...allowed].join(', ')} or not naming v${version})` : '';
