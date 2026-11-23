@@ -146,8 +146,9 @@ type StepResult = { step: string; exitCode: number; stdout: string; failure: str
 
 /**
  * `stats --json` lists pages_by_type by count, and types with equal counts come back in no set order on PGLite and
- * Postgres (`ORDER BY count DESC`, no tie-break; TODOS.md "stats pages_by_type tie order"). Rewrite that object with
- * tied types in byte order so the arms compare on what is defined; every other byte stays as printed.
+ * Postgres (`ORDER BY count DESC`, no tie-break; lane 10's rust-engine/repair-rust-b9 adds the byte-order tie-break).
+ * Rewrite that object with tied types in byte order so the arms compare on what is defined; every other byte stays as
+ * printed.
  */
 function settleTiedTypes(stdout: string): string {
   let parsed: unknown;
