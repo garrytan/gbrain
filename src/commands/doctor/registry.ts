@@ -168,6 +168,7 @@ import { ownerReadsRestrictedEntry } from './checks/owner-reads-restricted.ts';
 import { accessLineageEntry } from './checks/access-lineage.ts';
 import { accessLabelledOnlyEntry } from './checks/access-labelled-only.ts';
 import { accessPagesReadByNobodyEntry } from './checks/access-pages-read-by-nobody.ts';
+import { accessReachEntry } from './checks/access-reach.ts';
 import { attestReadAccessEntry } from './checks/attest-read-access.ts';
 import { guestSourceEntry } from './checks/guest-source.ts';
 import { originTwinsEntry } from './checks/origin-twins.ts';
@@ -272,6 +273,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   accessLineageEntry,
   accessLabelledOnlyEntry,
   accessPagesReadByNobodyEntry,
+  accessReachEntry,
   attestReadAccessEntry,
   guestSourceEntry,
   rlsEntry,

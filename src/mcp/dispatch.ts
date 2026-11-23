@@ -8,7 +8,6 @@
 
 import { savedFactsNoticeBlock, wholeItemsWithin, type SavedFactNotice } from './saved-facts-notice.ts';
 import { writeReceiptCapacityNotices } from '../core/persistence/capacity-snapshot.ts';
-import { affectsRecall } from '../core/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError, enforceBoundClientOpAllowList, opError } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
@@ -39,7 +38,7 @@ import { searchCountLine } from '../core/search/keyword-paging.ts';
 import { pageCapLine } from '../core/search/remote-page-cap.ts';
 import { dateLabelLine } from '../core/search/date-labels.ts';
 import { emptyRead, hiddenTakesNotice, localTranscriptsNotice, recallInteropNotices, wantsTranscriptHint } from '../core/interop-notices.ts';
-import { degradedStampFor, degradedStampLine, type DegradedStamp } from '../core/degraded-stamp.ts';
+import { degradedStampFor, degradedStampLine, emptyRetrievalStages, KEYWORD_ONLY_BY_CHOICE_EMPTY, type DegradedStamp } from '../core/degraded-stamp.ts';
 import { assertUnscopedReadReachesPages } from '../core/sources-not-readable.ts';
 import { accessPolicyNotices } from '../core/access/policy-notice.ts';
 import { hiddenToolHint, hiddenToolNext, hiddenToolRoute, itemParamKeys, paramCallable, paramNotOnSurface, type ToolConnection } from './hidden-tool-hint.ts';
@@ -517,12 +516,10 @@ export function buildEmptyRetrievalBlock(retrieval: unknown): string | null {
   if (typeof r.retrieved_count === 'number') parts.push(`retrieved ${r.retrieved_count} before trimming.`);
   // Ranking-only stages (a skipped reranker) cannot cause a miss — the model
   // must not be told recall was impaired when only ordering was.
-  const stages = (r.degraded ?? [])
-    .filter(affectsRecall)
-    .map(d => d?.stage)
-    .filter((s): s is string => typeof s === 'string' && s.length > 0);
+  const { stages, byChoice } = emptyRetrievalStages(r.degraded);
   parts.push(stages.length > 0
-    ? `degraded: ${[...new Set(stages)].join(', ')}.`
+    ? `degraded: ${stages.join(', ')}.`
+    : byChoice ? KEYWORD_ONLY_BY_CHOICE_EMPTY
     : 'retrieval healthy (no recall-impairing stage). Try the display name, a synonym or hybrid match (the default) before concluding the brain has nothing.');
   if (typeof r.hint === 'string' && r.hint.length > 0) parts.push(`hint: ${r.hint}`);
   return parts.join(' ');
