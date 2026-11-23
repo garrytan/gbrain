@@ -88,14 +88,16 @@ const SOURCE_SQL = 'SELECT incarnation,archived,local_path,config FROM sources W
  */
 const CALL_STABLE_READS = new Set([LEASE_SQL, SOURCE_SQL, WORKTREE_BINDING_SQL, LOCAL_WRITER_SQL, MIRROR_READ_ONLY_SQL, SLUG_ROOT_MODE_SQL]
   .map(sql => sql.replace(/\s+/g, ' ').trim()));
+const FORGET_CALL_READS = Symbol('forgetCallReads');
 /** `engine` for one connector call: each read in CALL_STABLE_READS is sent once for the call; every other statement goes through. */
 function callReads(engine: BrainEngine): BrainEngine {
   const reads = new Map<string, Promise<Record<string, unknown>[]>>();
   return registerEngineView(new Proxy(engine, { get(target, key) {
+    if (key === FORGET_CALL_READS) return () => reads.clear();
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) => {
       const text = sql.replace(/\s+/g, ' ').trim();
       const stable = CALL_STABLE_READS.has(text) && !opts?.signal;
-      const id = JSON.stringify([text, params ?? null]);
+      const id = stable ? JSON.stringify([text, params ?? null]) : '';
       let rows = stable ? reads.get(id) : undefined;
       if (!rows) {
         rows = target.executeRaw<Record<string, unknown>>(sql, params, opts);
@@ -697,7 +699,10 @@ export class ManagedConnectorSync {
         })(),
         new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), remaining); }),
       ]).finally(() => { if (timer) clearTimeout(timer); });
-      if (progress?.drained) return;
+      if (progress?.drained) {
+        (reads as { [FORGET_CALL_READS]?: () => void })[FORGET_CALL_READS]?.();
+        return;
+      }
       if (progress) row = progress.row;
       await new Promise(resolve => setTimeout(resolve, Math.min(50, Math.max(1, deadline - performance.now()))));
     }

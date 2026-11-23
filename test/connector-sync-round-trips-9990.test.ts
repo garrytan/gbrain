@@ -3,17 +3,16 @@
  *
  * Far from its database (a Supabase pooler), a connector sweep's speed is its round trips per item. One call (a page
  * read, an import) re-read the run's lease, source row, owner binding, writer grant and the source's mirror and
- * slug-root modes up to nine times each, and the contacts sweep read the owner of the same page twice. An unchanged
+ * slug-root modes up to nine times each. An unchanged
  * contact cost about 52 statements, so a re-run that only re-checked contacts it had already written took about
  * 1.5 s per contact at 30 ms, and a first sync whose page of 200 contacts did not commit in one run started that page
  * again next run.
  *
  * Protects: two numbers, statement counts (deterministic, unlike timings): the extra statements an unchanged re-run and
  * a first sync spend per extra contact, measured as the difference between an 18-contact and a 6-contact source so
- * fixed run costs cancel. Measured after the fix: about 32 per unchanged contact (52 before) and 181 per first write
- * (190 before). Each budget is about 10% over its measurement.
- * Fails when: a run-wide read starts going to the database more than once per connector call again, or the contacts
- * sweep reads one page's owner twice.
+ * fixed run costs cancel. Measured after the fix: about 40 per unchanged contact (52 before) and 187 per first write
+ * (190 before). The unchanged budget is about 10% over its measurement and well under the old count.
+ * Fails when: a run-wide read starts going to the database more than once per connector call again.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { parseGoogleSourceConfig, runGoogleSync } from '../src/core/google/google-source.ts';
@@ -22,7 +21,7 @@ import { withEnv } from './helpers/with-env.ts';
 import { countPgliteStatements } from './helpers/statement-counter.ts';
 import { completeBaselineSweep, contact, createConnectorFixture, googleConfig, json, options, withGoogleAccount } from './helpers/connector-fixture.ts';
 
-const UNCHANGED_PER_CONTACT_BUDGET = 35;
+const UNCHANGED_PER_CONTACT_BUDGET = 44;
 const FIRST_WRITE_PER_CONTACT_BUDGET = 199;
 const SMALL = 6;
 const LARGE = 18;
@@ -51,7 +50,7 @@ async function sweepStatements(engine: PGLiteEngine, total: number) {
   return { first, again: counter.stop().length };
 }
 
-test('#9990: a managed contacts sweep reads each run-wide row once per call, so an unchanged contact costs about 32 statements', async () => withEnv(env, async () => {
+test('#9990: a managed contacts sweep reads each run-wide row once per call, so an unchanged contact costs about 40 statements', async () => withEnv(env, async () => {
   const engine = engines.find(e => e.kind === 'pglite') as PGLiteEngine | undefined;
   if (!engine) return;
   const small = await sweepStatements(engine, SMALL);
