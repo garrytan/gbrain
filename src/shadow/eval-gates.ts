@@ -100,16 +100,34 @@ export function parseEvalGatesFile(raw: string): EvalGatesFile | null {
 
 const PIN_URL = /^https:\/\/raw\.githubusercontent\.com\/garrytan\/gbrain-evals\/([0-9a-f]{40})\/eval\/results\/engine-bench\/eval-gates\/([^/]+)\/([^/]+)\.json$/;
 
-/** Strict parse of the pin; the URL must be the commit-pinned raw path of the file the pin names, and nothing else. */
-export function parsePin(raw: string): EvalGatesPin | null {
+/**
+ * Strict parse of the pin: the pin, or the reason it is invalid. `evals_ref` is required (a 40-character lowercase hex
+ * commit of gbrain-evals): the URL is the raw path of the file at that commit, and nothing else. A bad field is named:
+ * `eval_gates_pin_invalid: evals_ref`. Text that is not a JSON object of this schema is `eval_gates_unreadable`.
+ */
+export function pinProblem(raw: string): { pin: EvalGatesPin } | { reason: string } {
   let v: unknown;
-  try { v = JSON.parse(raw); } catch { return null; } // silent-read-ok: unparseable text is the typed marker
-  if (!isObject(v) || v.schema_version !== 1) return null;
-  const { gbrain_tag: tag, gbrain_commit: commit, evals_commit: evals, evals_ref: ref, path, url, sha256: digest, target } = v;
-  if (!text(tag) || !FINAL_TAG.test(tag) || !HEX40.test(String(commit)) || !text(evals) || !/^[A-Za-z0-9._-]+$/.test(evals) || !HEX40.test(String(ref))) return null;
-  if (!HEX64.test(String(digest)) || !text(target) || path !== evalGatesPath(evals, tag) || url !== evalGatesUrl(String(ref), path)) return null;
-  const m = PIN_URL.exec(url as string);
-  return m && m[1] === ref && m[2] === tag && m[3] === evals ? v as unknown as EvalGatesPin : null;
+  try { v = JSON.parse(raw); } catch { return { reason: 'eval_gates_unreadable' }; } // silent-read-ok: unparseable text is the typed marker
+  if (!isObject(v) || v.schema_version !== 1) return { reason: 'eval_gates_unreadable' };
+  const evals = v.evals_commit;
+  const checks: Array<[string, boolean]> = [
+    ['gbrain_tag', text(v.gbrain_tag) && FINAL_TAG.test(v.gbrain_tag)],
+    ['gbrain_commit', HEX40.test(String(v.gbrain_commit))],
+    ['evals_commit', text(evals) && /^[A-Za-z0-9._-]+$/.test(evals)],
+    ['evals_ref', typeof v.evals_ref === 'string' && HEX40.test(v.evals_ref)],
+    ['sha256', typeof v.sha256 === 'string' && HEX64.test(v.sha256)],
+    ['target', text(v.target)],
+    ['path', text(evals) && text(v.gbrain_tag) && v.path === evalGatesPath(evals, v.gbrain_tag)],
+    ['url', typeof v.path === 'string' && typeof v.evals_ref === 'string' && v.url === evalGatesUrl(v.evals_ref, v.path)],
+  ];
+  for (const [field, ok] of checks) if (!ok) return { reason: `eval_gates_pin_invalid: ${field}` };
+  const m = PIN_URL.exec(v.url as string);
+  return m && m[1] === v.evals_ref && m[2] === v.gbrain_tag && m[3] === evals ? { pin: v as unknown as EvalGatesPin } : { reason: 'eval_gates_pin_invalid: url' };
+}
+
+export function parsePin(raw: string): EvalGatesPin | null {
+  const parsed = pinProblem(raw);
+  return 'pin' in parsed ? parsed.pin : null;
 }
 
 /** Why the eval half is not a pass, or null for a pass. Pure: every input is passed in. */
@@ -123,9 +141,11 @@ export interface VerdictInput {
 
 export function evalGatesReason(i: VerdictInput): string | null {
   if (i.file === null || i.pin === null) return 'eval_gates_missing';
-  const pin = parsePin(i.pin);
+  const pinned = pinProblem(i.pin);
+  if ('reason' in pinned) return pinned.reason;
+  const pin = pinned.pin;
   const file = parseEvalGatesFile(i.file);
-  if (!pin || !file) return 'eval_gates_unreadable';
+  if (!file) return 'eval_gates_unreadable';
   if (sha256(i.file) !== pin.sha256) return 'eval_gates_digest_mismatch';
   if (file.status !== 'FINAL' || file.gbrain_tag === null || !FINAL_TAG.test(file.gbrain_tag)) return 'eval_gates_provisional';
   if (file.gbrain_tag !== pin.gbrain_tag || file.gbrain_commit !== pin.gbrain_commit || file.evals_commit !== pin.evals_commit || file.target !== pin.target) return 'eval_gates_pin_mismatch';
@@ -247,8 +267,9 @@ export async function fetchEvalGates(dir: string, epoch: EpochManifest | null, d
     const tag = `v${build.gbrain_version}`;
     if (!FINAL_TAG.test(tag)) throw new FetchRefused('eval_gates_provisional');
     const pinText = await pinSource(tag, deps);
-    const pin = parsePin(pinText);
-    if (!pin) throw new FetchRefused('eval_gates_unreadable');
+    const pinned = pinProblem(pinText);
+    if ('reason' in pinned) throw new FetchRefused(pinned.reason);
+    const pin = pinned.pin;
     if (pin.gbrain_tag !== tag || pin.gbrain_commit !== build.gbrain_commit) throw new FetchRefused('eval_gates_commit_mismatch');
     const fileText = await boundedGet(pin.url, MAX_FILE_BYTES, deps);
     if (sha256(fileText) !== pin.sha256) throw new FetchRefused('eval_gates_digest_mismatch');

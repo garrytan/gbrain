@@ -136,8 +136,23 @@ describe('eval gates verdict', () => {
       `https://raw.githubusercontent.com/garrytan/gbrain-evals/main/eval/results/engine-bench/eval-gates/${TAG}/${EVALS_COMMIT}.json`,
       `https://raw.githubusercontent.com/someone/gbrain-evals/${EVALS_REF}/eval/results/engine-bench/eval-gates/${TAG}/${EVALS_COMMIT}.json`,
     ]) {
-      expect(judge(() => undefined, { pin: p => { p.url = url; } }).verdict.reason).toBe('eval_gates_unreadable');
+      expect(judge(() => undefined, { pin: p => { p.url = url; } }).verdict.reason).toBe('eval_gates_pin_invalid: url');
     }
+  });
+
+  test.each([
+    ['missing', (p: Record<string, unknown>) => { delete p.evals_ref; }],
+    ['null', (p: Record<string, unknown>) => { p.evals_ref = null; }],
+    ['a branch name', (p: Record<string, unknown>) => { p.evals_ref = 'main'; }],
+    ['39 characters', (p: Record<string, unknown>) => { p.evals_ref = EVALS_REF.slice(1); }],
+    ['uppercase hex', (p: Record<string, unknown>) => { p.evals_ref = EVALS_REF.toUpperCase().replace(/F/g, 'A'); }],
+    ['a number', (p: Record<string, unknown>) => { p.evals_ref = 7; }],
+  ])('a pin whose evals_ref is %s is invalid and NOT READY, naming the field', (_name, patch) => {
+    // The URL still names the right file at EVALS_REF, so only the required field is wrong.
+    const { verdict, row } = judge(() => undefined, { pin: patch });
+    expect(verdict).toEqual({ passed: false, reason: 'eval_gates_pin_invalid: evals_ref' });
+    expect(row.state).toBe('fail');
+    expect(row.detail).toContain('eval_gates_pin_invalid: evals_ref');
   });
 
   test('the readiness row prints the reason, and the Nov 28 timing only while the file is missing', () => {
@@ -207,7 +222,7 @@ describe('fetchEvalGates (drill --evals)', () => {
     ['a redirect to plain http', (r: Record<string, () => Response>) => { r[pinUrl] = () => redirect('http://objects.githubusercontent.com/x'); }, 'eval_gates_fetch_redirect_refused'],
     ['a pin over 64 KiB', (r: Record<string, () => Response>) => { r[pinUrl] = () => new Response('x'.repeat(65 * 1024)); }, 'eval_gates_fetch_too_large'],
     ['a pin that is not JSON', (r: Record<string, () => Response>) => { r[pinUrl] = () => new Response('<html>'); }, 'eval_gates_unreadable'],
-    ['a pin for another release', (r: Record<string, () => Response>) => { r[pinUrl] = () => new Response(JSON.stringify(pinFor(fileText, p => { p.gbrain_tag = 'v0.1.0'; p.path = p.path; }))); }, 'eval_gates_unreadable'],
+    ['a pin for another release', (r: Record<string, () => Response>) => { r[pinUrl] = () => new Response(JSON.stringify(pinFor(fileText, p => { p.gbrain_tag = 'v0.1.0'; p.path = p.path; }))); }, 'eval_gates_pin_invalid: path'],
     ['a pin for another commit', (r: Record<string, () => Response>) => { r[pinUrl] = () => new Response(JSON.stringify(pinFor(fileText, p => { p.gbrain_commit = OTHER_COMMIT; }))); }, 'eval_gates_commit_mismatch'],
     ['a file whose bytes differ from the pin', (r: Record<string, () => Response>) => { r[evalUrl()] = () => new Response(fileText + ' '); }, 'eval_gates_digest_mismatch'],
     ['a file that is missing', (r: Record<string, () => Response>) => { delete r[evalUrl()]; }, 'eval_gates_fetch_http_404'],
@@ -220,6 +235,26 @@ describe('fetchEvalGates (drill --evals)', () => {
     expect(result).toEqual({ cached: false, reason, passed: false });
     expect(readEvalGatesVerdict(dir, epoch, TARGET).reason).toBe('eval_gates_missing');
     expect(JSON.parse(readFileSync(cachePaths(dir).fetch, 'utf8')).reason).toBe(reason);
+  });
+
+  test('a pin whose URL uses evals_commit as the ref fails while the file is absent at that commit; the same pin with evals_ref works', async () => {
+    // evals_commit names the build the results were measured on; the file is committed afterwards, so it is not at that commit.
+    const atEvalsCommit = `https://raw.githubusercontent.com/garrytan/gbrain-evals/${EVALS_COMMIT}/eval/results/engine-bench/eval-gates/${TAG}/${EVALS_COMMIT}.json`;
+    const oldStyle = (r: Record<string, () => Response>, pin: Record<string, unknown>): void => { r[pinUrl] = () => new Response(JSON.stringify(pin)); r[atEvalsCommit] = () => new Response('', { status: 404 }); };
+    // 1. Old shape: no evals_ref at all.
+    const bare = shadow();
+    const noRef = goodRoutes();
+    oldStyle(noRef, pinFor(fileText, p => { delete p.evals_ref; p.url = atEvalsCommit; }));
+    expect(await fetchEvalGates(bare.dir, bare.epoch, { fetch: fakeFetch(noRef), hostTarget: TARGET })).toEqual({ cached: false, reason: 'eval_gates_pin_invalid: evals_ref', passed: false });
+    // 2. evals_ref set to evals_commit: well formed, but the file is not there.
+    const wrong = shadow();
+    const atCommit = goodRoutes();
+    oldStyle(atCommit, pinFor(fileText, p => { p.evals_ref = EVALS_COMMIT; p.url = atEvalsCommit; }));
+    expect(await fetchEvalGates(wrong.dir, wrong.epoch, { fetch: fakeFetch(atCommit), hostTarget: TARGET })).toEqual({ cached: false, reason: 'eval_gates_fetch_http_404', passed: false });
+    expect(readEvalGatesVerdict(wrong.dir, wrong.epoch, TARGET).reason).toBe('eval_gates_missing');
+    // 3. The same pin with the evals_ref the publisher read the file at works.
+    const right = shadow();
+    expect(await fetchEvalGates(right.dir, right.epoch, { fetch: fakeFetch(goodRoutes()), hostTarget: TARGET })).toEqual({ cached: true, reason: null, passed: true });
   });
 
   test('a failed fetch keeps the good cache that is already there', async () => {
