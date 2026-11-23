@@ -1067,7 +1067,6 @@ src/core/enrichment-service.ts#writeManagedEntities<anon@4>	capability_refusal_s
 src/core/entities/identity-decisions.ts#parseDecisionFile	catch_empty	1
 src/core/entities/resolve-on-save.ts#resolveExtractedEntitiesForSave	capability_refusal_swallowed	1
 src/core/entities/resolve.ts#entityReferenceCandidates	capability_refusal_swallowed	1
-src/core/entities/resolve.ts#findExactBasenameCandidates	capability_refusal_swallowed	1
 src/core/entities/resolve.ts#findExactBasenameCandidates	catch_empty	1
 src/core/entities/resolve.ts#findPrefixCandidates	capability_refusal_swallowed	1
 src/core/entities/resolve.ts#findPrefixCandidates	catch_empty	1
@@ -2039,7 +2038,6 @@ src/core/source-resolver.ts#requestSourceRows<anon@1>	promise_catch_empty	1
 src/core/source-resolver.ts#resolveSourceIdChain	promise_catch_empty	1
 src/core/source-resolver.ts#resolveSourceWithTierChain	promise_catch_empty	1
 src/core/sources-load.ts#fetchSource	capability_refusal_swallowed	1
-src/core/sources-load.ts#loadAllSources	capability_refusal_swallowed	1
 src/core/sources-not-readable.ts#assertUnscopedReadReachesPages	capability_refusal_swallowed	1
 src/core/sources-not-readable.ts#assertUnscopedReadReachesPages	catch_empty	1
 src/core/sources-ops.ts#addSource	capability_refusal_swallowed	1
