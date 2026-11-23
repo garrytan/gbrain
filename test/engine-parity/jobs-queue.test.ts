@@ -936,7 +936,8 @@ describe('engine parity: minion queue', () => {
       const delayed = await add(engine, 'm-delayed', { status: 'delayed', delay_until: FAR });
       const paused = await add(engine, 'm-paused');
       await engine.pauseJob(paused);
-      const children = await add(engine, 'm-children', { status: 'waiting-children' });
+      // A parent waiting on children is inserted directly; the insert type lists only the two statuses a submission makes.
+      const children = await add(engine, 'm-children', { status: 'waiting-children' as unknown as 'waiting' });
       const done = await finished(engine, 'm-done', 'completed');
       const failed = await finished(engine, 'm-failed', 'failed');
       const dead = await finished(engine, 'm-dead', 'dead');
