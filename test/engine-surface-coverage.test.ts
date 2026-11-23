@@ -295,6 +295,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'readFeedbackStatus',
   
   'listVolunteerChannels',
+  // The push-context log (engine-sql/volunteer-events.ts; covered by test/engine-parity/volunteer-events.test.ts)
+  'insertVolunteerEventRows', 'listVolunteerUsage', 'deleteVolunteerEventsOlderThan', 'deleteVolunteerEventsForSlugs', 'countVolunteerEventsForSlug',
   // Doctor checkpoint reads (engine-sql/doctor-checkpoints.ts; covered by test/engine-parity/doctor-checkpoints.test.ts)
   'listFenceCandidateRecords', 'listDerivedOriginParks', 'listPurgeParks', 'readSoakCounterRows', 'listUnfinishedManagedSyncCursors', 'listManagedSyncPassStops', 'listManagedSyncBacklogHeaders', 'readManagedSyncPassRow', 'listLiveManagedSyncPassRows', 'listCheckpointBlockedSources', 'listOpenIdentityDowngrades', 'listHeldManagedAtomRows', 'readDoctorLastKnown', 'writeDoctorLastKnown', 'readSyncAdmissionSettingRow', 'readLatestConnectorReceipt', 'listFactsAbsorbFailureGroups', 'listCredentialResealHoldRows',
   // Doctor terminal reads: the grouped terminal write failure aggregate, its drill-down batch and the open-pass blocker statements doctor ran through executeRaw (engine-sql/doctor-terminal.ts; covered by test/engine-parity/doctor-terminal.test.ts)

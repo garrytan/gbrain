@@ -467,6 +467,7 @@ test/engine-parity/unrestricted-member-page-reads.test.ts
 test/engine-parity/valid-time-member-reads.test.ts
 test/engine-parity/vector-options.test.ts
 test/engine-parity/versions-raw.test.ts
+test/engine-parity/volunteer-events.test.ts
 test/engine-parity/wanted-links.test.ts
 test/engine-parity/wanted-markers.test.ts
 test/engine-parity/wedged-reservation.test.ts

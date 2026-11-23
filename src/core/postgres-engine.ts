@@ -334,6 +334,7 @@ import * as titlesImpl from './engine-sql/titles.ts';
 import * as keywordPagesImpl from './engine-sql/keyword-pages.ts';
 import * as entityReadsImpl from './engine-sql/entity-reads.ts';
 import * as mentionPassImpl from './engine-sql/mention-pass.ts';
+import * as volunteerEventsImpl from './engine-sql/volunteer-events.ts';
 import * as mentionReadsImpl from './engine-sql/mention-reads.ts';
 import * as segmentDeriveStoreImpl from './engine-sql/segment-derive-store.ts';
 import * as pageEmbeddingBudgetImpl from './engine-sql/page-embedding-budget.ts';
@@ -2294,6 +2295,11 @@ export class PostgresEngine implements BrainEngine {
   countLivePagesInSource(sourceId: string) { return this.preparationRead(exec => entityReadsImpl.countLivePagesInSource(unscopedExecutor(exec, 'entities: live-page count ran unscoped through executeRaw'), sourceId)); }
   countMentionDueSince(sourceId: string, since: string, mentionVersion: number) { return this.preparationRead(exec => entityReadsImpl.countMentionDueSince(unscopedExecutor(exec, 'entities: mention due-since count ran unscoped through executeRaw'), sourceId, since, mentionVersion)); }
   recountMentionIndexStatus(sourceId: string, recount: entityReadsImpl.MentionIndexRecount) { return entityReadsImpl.recountMentionIndexStatus(this.engineSql, sourceId, recount); }
+  insertVolunteerEventRows(rows: readonly volunteerEventsImpl.VolunteerEventInsertRow[]) { return volunteerEventsImpl.insertVolunteerEventRows(this, rows); }
+  listVolunteerUsage(sourceIds: readonly string[], days: number) { return volunteerEventsImpl.listVolunteerUsage(this, sourceIds, days); }
+  deleteVolunteerEventsOlderThan(ttlDays: number) { return volunteerEventsImpl.deleteVolunteerEventsOlderThan(this, ttlDays); }
+  deleteVolunteerEventsForSlugs(sourceId: string, slugs: readonly string[]) { return volunteerEventsImpl.deleteVolunteerEventsForSlugs(this, sourceId, slugs); }
+  countVolunteerEventsForSlug(sourceId: string, slug: string) { return volunteerEventsImpl.countVolunteerEventsForSlug(this, sourceId, slug); }
   readSegmentedPageSealed(sourceId: string, slug: string) { return segmentDeriveStoreImpl.readSegmentedPageSealed(this, sourceId, slug); }
   storeSegmentDerivationsIfLive(pageId: number, generation: number, rows: readonly segmentDeriveStoreImpl.SegmentDerivationStoreRow[]) { return segmentDeriveStoreImpl.storeSegmentDerivationsIfLive(this, pageId, generation, rows); }
   listMentionSourceIds() { return mentionPassImpl.listMentionSourceIds(this); }

@@ -222,6 +222,21 @@ async function boundedCount(engine: BrainEngine, sql: string, params: unknown[],
   }
 }
 
+/** One bounded typed count (a member of the transaction handle), under the same deadline, row bound and statement time as boundedCount. */
+async function boundedMemberCount(engine: BrainEngine, count: (tx: BrainEngine) => Promise<number>, deadline: number): Promise<ProbeResult> {
+  if (performance.now() > deadline) return { unverified: 'verification_deadline' };
+  try {
+    return await engine.transaction(async tx => {
+      await tx.setPurgeProbeTimeout(probeLimits.statementMs);
+      const n = await count(tx);
+      return n > probeLimits.rows ? { unverified: 'row_bound' } : { count: n };
+    });
+  } catch (error) {
+    if (getCode(error) === '57014') return { unverified: 'statement_deadline' };
+    throw error;
+  }
+}
+
 const textMatch = (column: string, at: number) => `(strpos(lower(${column}::text),$${at})>0 OR strpos(lower(${column}::text),$${at + 1})>0)`;
 
 /**
@@ -583,7 +598,11 @@ export async function verifyPagePurge(engine: BrainEngine, input: { sourceId: st
     AND ((element_kind='page' AND element_key=$2) OR (element_kind='link' AND ${edgeNames('element_key')}))`, [src, slug]);
   await keyed('eval_candidates.retrieved_slugs', `SELECT 1 FROM eval_candidates WHERE $1 = ANY(source_ids) AND $2 = ANY(retrieved_slugs)
     AND NOT EXISTS (SELECT 1 FROM pages po WHERE po.slug = $2 AND po.source_id = ANY(eval_candidates.source_ids) AND po.source_id <> $1)`, [src, slug]);
-  await keyed('context_volunteer_events', 'SELECT 1 FROM context_volunteer_events WHERE source_id=$1 AND slug=$2', [src, slug]);
+  const volunteered = await boundedMemberCount(engine, tx => tx.countVolunteerEventsForSlug(src, slug), deadline);
+  const volunteerRemoved = removed.context_volunteer_events ?? 0;
+  if ('unverified' in volunteered) stores.push({ store: 'context_volunteer_events', status: 'unverified', reason: volunteered.unverified, removed: volunteerRemoved });
+  else if (volunteered.count) stores.push({ store: 'context_volunteer_events', status: 'incomplete', remaining: volunteered.count, removed: volunteerRemoved });
+  else stores.push({ store: 'context_volunteer_events', status: volunteerRemoved ? 'deleted' : 'not_present', removed: volunteerRemoved });
   await keyed('mention_gazetteer_entries', 'SELECT 1 FROM mention_gazetteer_entries WHERE source_id=$1 AND target_slug=$2', [src, slug]);
   await keyed('files', 'SELECT 1 FROM files WHERE page_id IS NULL AND page_slug=$2 AND (source_id=$1 OR source_id IS NULL)', [src, slug]);
   await keyed('write_gate_holds', 'SELECT 1 FROM write_gate_holds WHERE source_id=$1 AND slug=$2', [src, slug]);

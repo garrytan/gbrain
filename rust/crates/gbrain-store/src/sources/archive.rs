@@ -11,9 +11,10 @@
 //! always fires here, so no page is ever stranded), the records keyed by source
 //! (`cascade::remove_source_rows`), then the rows the SQL scrubs by hand: the source's
 //! managed-sync cursors, its write gate holds with their receipts and the eval candidates'
-//! retrieved slugs no other covered source has. The store keeps no persistence source bindings,
-//! no retrieval events or feedback, no volunteer events and no core edit notices, so those steps
-//! have nothing to remove. An OAuth client that names the source refuses the delete, as the
+//! retrieved slugs no other covered source has. The source's volunteer events go with the other
+//! records keyed by source (`cascade::remove_source_rows`). The store keeps no persistence source
+//! bindings, no retrieval events or feedback and no core edit notices, so those steps have nothing
+//! to remove. An OAuth client that names the source refuses the delete, as the
 //! `ON DELETE RESTRICT` key does.
 //!
 //! The archive times live on the source record (`archived_at_us`, `archive_expires_at_us`), as

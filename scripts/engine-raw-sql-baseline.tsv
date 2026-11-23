@@ -232,8 +232,6 @@ src/core/connectors/item-holds-store.ts	execute_raw	9
 src/core/content-drift-sweep.ts	execute_raw	2
 src/core/context/compile-view.ts	execute_raw	1
 src/core/context/corpus-source.ts	execute_raw	1
-src/core/context/volunteer-events.ts	execute_raw	2
-src/core/context/volunteer.ts	execute_raw	1
 src/core/contextual-retrieval-service.ts	execute_raw	3
 src/core/conversation-parser/llm-base.ts	execute_raw	2
 src/core/core-memory.ts	execute_raw	1

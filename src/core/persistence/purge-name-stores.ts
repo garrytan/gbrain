@@ -1,4 +1,5 @@
 import type { BrainEngine } from '../engine.ts';
+import { deleteVolunteerEventsForSlugs } from '../engine-sql/volunteer-events.ts';
 
 /**
  * #9068: the two stores that keep a page's name next to its slug. context_volunteer_events logs each time the page
@@ -6,16 +7,20 @@ import type { BrainEngine } from '../engine.ts';
  * normalized title and aliases for the mention pass. Neither has a foreign key to pages, so a purge's cascade never
  * reaches them: every hard delete of a page calls this inside its transaction. A soft delete keeps both, because
  * restore_page can bring the page back. Returns rows removed per store, keyed as the purge receipt names them.
+ * A BrainEngine runs the volunteer-event delete through its typed member (the Rust engine keeps those rows in its
+ * store); a SQL transaction handle runs the same statement through its own executeRaw.
  */
 export async function scrubPurgedNameStores(
-  engine: Pick<BrainEngine, 'executeRaw'>,
+  engine: Pick<BrainEngine, 'executeRaw'> & Partial<Pick<BrainEngine, 'deleteVolunteerEventsForSlugs'>>,
   sourceId: string,
   slugs: readonly string[],
 ): Promise<Record<string, number>> {
   if (!slugs.length) return {};
   const count = async (sql: string) => (await engine.executeRaw(sql, [sourceId, [...slugs]])).length;
   return {
-    context_volunteer_events: await count('DELETE FROM context_volunteer_events WHERE source_id = $1 AND slug = ANY($2::text[]) RETURNING 1'),
+    context_volunteer_events: engine.deleteVolunteerEventsForSlugs
+      ? await engine.deleteVolunteerEventsForSlugs(sourceId, slugs)
+      : await deleteVolunteerEventsForSlugs(engine, sourceId, slugs),
     mention_gazetteer_entries: await count('DELETE FROM mention_gazetteer_entries WHERE source_id = $1 AND target_slug = ANY($2::text[]) RETURNING 1'),
   };
 }

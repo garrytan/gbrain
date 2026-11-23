@@ -109,7 +109,7 @@ The source members below behave differently on the Rust engine. Each difference 
   SQL engines now do (`s.id COLLATE "C" DESC`).
 - `deleteSourceRecord` always removes the pages, as the `pages -> sources` cascade does, so it
   never reports `stranded` pages (the SQL engines report them when that cascade would not fire,
-  #7072). The store keeps no `persistence_source_bindings`, retrieval events or feedback,
-  `context_volunteer_events` or `core_edit_notices`, so those steps of the SQL delete have nothing
-  to remove. The SQL engines run the scrub again in a second statement for a write that waited on
+  #7072). The store keeps no `persistence_source_bindings`, retrieval events or feedback
+  or `core_edit_notices`, so those steps of the SQL delete have nothing to remove; it removes the
+  source's `context_volunteer_events` rows (`volunteer-events.md`). The SQL engines run the scrub again in a second statement for a write that waited on
   the delete; the store's one write transaction leaves no such gap.

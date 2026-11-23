@@ -3380,6 +3380,51 @@ const PINS: Pin[] = [
     JOIN pages o ON o.id=l.origin_page_id WHERE o.source_id=$1 AND l.link_source IN ('markdown','wikilink-resolved','frontmatter')
       AND l.link_type='attended' AND l.to_page_id=l.origin_page_id AND o.slug = ANY($2::text[])`],
   },
+  // The push-context log: the insert, the usage read and the retention delete moved out of src/core/context, the page purge's name-store delete out of
+  // persistence/purge-name-stores.ts and the receipt's per-page check out of facts/purge-verify.ts (copied verbatim, at 9ddd6ac59a).
+  {
+    from: 'src/core/context/volunteer-events.ts:200 insertVolunteerEvents (at 9ddd6ac59a)',
+    case: { method: 'insertVolunteerEventRows', variant: 'default', run: e => e.insertVolunteerEventRows([{ source_id: 'src-a', slug: 'people/alice-example', confidence: 0.9, match_arm: 'exact', rationale: 'matched', channel: 'op' }]) },
+    texts: () => [`INSERT INTO context_volunteer_events
+       (source_id, slug, confidence, match_arm, rationale, channel, session_id, turn)
+     SELECT v.* FROM (VALUES ($1::text, $2::text, $3::float8, $4::text, $5::text, $6::text, $7::text, $8::int)) AS v(source_id, slug, confidence, match_arm, rationale, channel, session_id, turn)
+     WHERE EXISTS (SELECT 1 FROM pages pg WHERE pg.source_id = v.source_id AND pg.slug = v.slug FOR KEY SHARE)`],
+  },
+  {
+    from: 'src/core/context/volunteer.ts:374 volunteerUsageStats (at 9ddd6ac59a)',
+    case: { method: 'listVolunteerUsage', variant: 'default', run: e => e.listVolunteerUsage(['src-a', 'src-b'], 30) },
+    texts: () => [`SELECT e.match_arm, e.channel,
+              count(*)::text AS volunteered,
+              count(*) FILTER (WHERE GREATEST(p.last_retrieved_at, r.last_retrieved_at) > e.volunteered_at)::text AS used
+         FROM context_volunteer_events e
+         LEFT JOIN pages p
+           ON p.source_id = e.source_id AND p.slug = e.slug AND p.deleted_at IS NULL
+         LEFT JOIN page_retrievals r ON r.page_id = p.id
+        WHERE e.source_id = ANY($1::text[])
+          AND e.volunteered_at > now() - ($2 || ' days')::interval
+        GROUP BY e.match_arm, e.channel
+        ORDER BY e.match_arm COLLATE "C", e.channel COLLATE "C"`],
+  },
+  {
+    from: 'src/core/context/volunteer-events.ts:287 purgeStaleVolunteerEvents (at 9ddd6ac59a)',
+    case: { method: 'deleteVolunteerEventsOlderThan', variant: 'default', run: e => e.deleteVolunteerEventsOlderThan(90) },
+    texts: () => [`WITH deleted AS (
+         DELETE FROM context_volunteer_events
+         WHERE volunteered_at < now() - ($1 || ' days')::interval
+         RETURNING 1
+       )
+       SELECT count(*)::text AS count FROM deleted`],
+  },
+  {
+    from: 'src/core/persistence/purge-name-stores.ts:18 scrubPurgedNameStores (at 9ddd6ac59a)',
+    case: { method: 'deleteVolunteerEventsForSlugs', variant: 'default', run: e => e.deleteVolunteerEventsForSlugs('src-a', ['people/alice-example']) },
+    texts: () => ['DELETE FROM context_volunteer_events WHERE source_id = $1 AND slug = ANY($2::text[]) RETURNING 1'],
+  },
+  {
+    from: 'src/core/facts/purge-verify.ts:586 verifyPagePurge keyed (at 9ddd6ac59a); the typed count selects count(*) itself instead of the bounded wrapper',
+    case: { method: 'countVolunteerEventsForSlug', variant: 'default', run: e => e.countVolunteerEventsForSlug('src-a', 'people/alice-example') },
+    texts: () => ['SELECT count(*)::int AS n FROM context_volunteer_events WHERE source_id=$1 AND slug=$2'],
+  },
 ];
 
 type PinPrivacy = 'none' | 'caller' | 'floor';

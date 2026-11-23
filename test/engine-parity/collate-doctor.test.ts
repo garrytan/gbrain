@@ -7,16 +7,16 @@
  *    facts pages, the schema-pack source grading, the unchanged-body atom recheck (which atoms fall inside its 200-group cut), and the two
  *    function-search-path reads (the doctor check and the hardening's pre-count) return the same order on every engine arm (PGLite
  *    always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1): byte order, as PGLite and the Rust
- *    store sort. The doctor reads go through raw SQL, so a Rust brain stops on the typed raw_sql refusal.
+ *    store sort. The volunteer-channel counts are seeded through the typed event insert on every engine.
  *  - Regression: an en_US Postgres sorted these keys by its locale, which skips punctuation (`ab` before `a-z`) and
  *    folds case, so the channels, slugs, models, kinds and sources doctor printed came back in another order than on
  *    PGLite and Rust brains, and the atom recheck cut its 200 groups at a different place.
  *  - Why existing coverage misses it: the cases used ids that sort the same in every locale, and CI's Postgres runs
  *    in C.UTF-8. Every case here mixes keys such as `a-z`, `ab`, `a.b` and `a_b`; run it against an en_US Postgres to see
  *    it fail.
- *  - Seam: none. The pages go through putPage and the derivation receipts through upsertSegmentDerivations; the
- *    volunteer events and extraction receipts are the rows the writers leave, inserted with raw SQL where no engine
- *    method writes them.
+ *  - Seam: none. The pages go through putPage, the derivation receipts through upsertSegmentDerivations and the
+ *    volunteer events through insertVolunteerEventRows; the extraction receipts are the rows the writers leave, inserted
+ *    with raw SQL where no engine method writes them.
  */
 import { describe, expect } from 'bun:test';
 import { createSource, parityArms } from './harness.ts';
@@ -54,12 +54,13 @@ const rawProbe = (engine: BrainEngine) => engine.executeRaw('SELECT 1 AS one');
 
 describe('doctor lists text keys by byte', () => {
   parityTest('volunteer channels list by byte name, scoped to sources and brain-wide', {
-    methods: ['executeRaw'], requires: 'raw_sql',
-  }, async (engine) => {
+    methods: ['putPage', 'insertVolunteerEventRows'],
+  }, async (engine, backend) => {
+    for (const source of SOURCES) await createSource(engine, backend, source);
     for (const [i, channel] of MIXED_IDS.entries()) {
-      await engine.executeRaw(
-        `INSERT INTO context_volunteer_events (source_id, slug, confidence, match_arm, channel) VALUES ($1, $2, 0.9, 'exact', $3)`,
-        [SOURCES[i % 2], `notes/n${i}`, channel]);
+      const sourceId = SOURCES[i % 2]!;
+      await engine.putPage(`notes/n${i}`, { type: 'note', title: `N${i}`, compiled_truth: `Note ${i}.`, timeline: '' }, { sourceId });
+      await engine.insertVolunteerEventRows([{ source_id: sourceId, slug: `notes/n${i}`, confidence: 0.9, match_arm: 'exact', rationale: '', channel }]);
     }
     const unscoped = await checkVolunteerChannels(engine);
     const scoped = await checkVolunteerChannels(engine, { sourceIds: SOURCES });

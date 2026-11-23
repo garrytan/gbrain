@@ -6,6 +6,7 @@
  */
 import type { BrainEngine } from '../../engine.ts';
 import { AVAILABLE_CHRONICLE_LEDGER_STATS } from '../../engine-sql/doctor-acc.ts';
+import { withDates } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
@@ -62,11 +63,15 @@ export const listDriftVersionRows: Member<'listDriftVersionRows'> = (brain, _sch
   pageIds.length === 0 ? Promise.resolve([]) : storeCall({ member: 'listDriftVersionRows' }, async () =>
     (await brain.listDriftVersionRows({ pageIds: [...pageIds] })) as never);
 
-// Decide, proposals, chronicle, feedback, belief and volunteer state: none is written on this engine.
+// Decide, proposals, chronicle, feedback and belief state: none is written on this engine.
 export const readChronicleLedgerStats: Member<'readChronicleLedgerStats'> = async () => AVAILABLE_CHRONICLE_LEDGER_STATS;
 export const readChronicleDuplicateEvents: Member<'readChronicleDuplicateEvents'> = async () => ({ pages: 0, surplus: 0 });
 export const readFeedbackStatus: Member<'readFeedbackStatus'> = async () => ({
   events: 0, ratings_explicit: 0, ratings_cited: 0, weights_total: 0, weights_off_neutral: 0,
   last_rating_at: null, top_client_share_7d: null, lowest: [], highest: [],
 });
-export const listVolunteerChannels: Member<'listVolunteerChannels'> = async () => [];
+
+/** The volunteer events of the last 7 days per channel, kept by the store (rust/docs/store/volunteer-events.md); `last_fired` comes back as a `Date`. */
+export const listVolunteerChannels: Member<'listVolunteerChannels'> = async (brain, sourceIds) =>
+  (await storeCall({ member: 'listVolunteerChannels' }, () => brain.listVolunteerChannels(sourceIds === null ? null : [...sourceIds])) as Array<{ channel: string; n: number; last_fired: string | null }>)
+    .map(row => withDates(row, ['last_fired']));

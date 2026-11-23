@@ -144,6 +144,7 @@ pub(crate) fn table_rows(
             crate::eval_capture::calibration_profiles::purge_probe_rows(read)?
         }
         "decision_receipts" => crate::eval_capture::decide_store::purge_probe_receipt_rows(read)?,
+        "context_volunteer_events" => crate::volunteer_events::purge_probe_rows(read)?,
         "dream_verdicts" => crate::dream::purge_probe_rows(read)?,
         "eval_candidates" => crate::eval_capture::purge_probe_rows(read)?,
         "eval_contradictions_cache" => crate::contradictions::purge_probe_cache_rows(read)?,

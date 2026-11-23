@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2009/2025
+# covered: 2011/2027
 # lifecycle: 9/9
 # pages: 81/82
 # search: 7/7
@@ -100,10 +100,11 @@
 # shared_skill_members: 16/16
 # brief_reads: 6/6
 # reflex_reads: 3/3
-# doctor_derived: 27/27
+# doctor_derived: 24/24
 # doctor_persistence: 36/36
 # doctor_pages: 18/18
 # doctor_search: 10/10
+# volunteer_events: 5/5
 # doctor_reads_acc: 25/25
 # doctor_checkpoints: 18/18
 # doctor_sync: 3/3
@@ -124,20 +125,20 @@ transaction	lifecycle	yes	303	no	yes	yes	serves
 transactionDirect	lifecycle	yes	14	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	205	yes	yes	yes	serves
+getPage	pages	yes	204	yes	yes	yes	serves
 readPageSnapshot	pages	yes	60	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
 lockPageKeys	pages	yes	14	no	yes	yes	serves
-putPage	pages	yes	1087	yes	yes	yes	serves
+putPage	pages	yes	1095	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	37	yes	yes	yes	serves
-deletePages	pages	yes	2	yes	yes	yes	serves
+deletePages	pages	yes	3	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	290	yes	yes	yes	serves
+softDeletePage	pages	yes	292	yes	yes	yes	serves
 softDeletePages	pages	yes	3	yes	yes	yes	serves
-restorePage	pages	yes	14	yes	yes	yes	serves
-purgeDeletedPages	pages	yes	6	no	yes	yes	serves
+restorePage	pages	yes	15	yes	yes	yes	serves
+purgeDeletedPages	pages	yes	7	no	yes	yes	serves
 listPages	pages	yes	18	yes	yes	yes	serves
 findPages	pages	yes	4	no	yes	yes	serves
 countPagesBy	pages	yes	1	no	yes	yes	serves
@@ -178,7 +179,7 @@ markSourceSynced	pages	yes	4	no	yes	yes	serves
 advanceSyncCheckpoint	pages	yes	2	no	yes	yes	serves
 countSourcePages	pages	yes	6	no	yes	yes	serves
 insertSource	pages	yes	13	no	yes	yes	serves
-deleteSourceRecord	pages	yes	6	no	yes	yes	serves
+deleteSourceRecord	pages	yes	7	no	yes	yes	serves
 readSourceDeleteImpact	pages	yes	2	no	yes	yes	serves
 readPageSizeRows	pages	yes	4	no	yes	yes	serves
 holdPageEmbedding	pages	yes	4	no	yes	yes	serves
@@ -565,7 +566,7 @@ lockBodyStagingState	segmented_body	yes	1	no	yes	yes	serves
 deleteUnstagedSegmentChunks	segmented_body	yes	1	no	yes	yes	serves
 deleteRewrittenSegmentDerivations	segmented_body	yes	1	no	yes	yes	serves
 listInlineVersionTexts	versions	yes	2	no	yes	yes	serves
-createVersion	versions	yes	71	no	yes	yes	serves
+createVersion	versions	yes	70	no	yes	yes	serves
 getVersions	versions	yes	27	no	yes	yes	serves
 readLatestVersionId	versions	yes	1	no	yes	yes	serves
 readLatestVersionIdAtTier	versions	yes	1	no	yes	yes	serves
@@ -1522,7 +1523,7 @@ listSegmentedPages	withdrawal_pages	yes	2	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	2	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	169	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	168	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	4	yes	yes	yes	serves
@@ -1978,9 +1979,6 @@ listLiveGenerationRetirements	doctor_derived	yes	1	no	yes	yes	serves
 listHeldGenerations	doctor_derived	yes	1	no	yes	yes	serves
 listOrphanGenerationCandidates	doctor_derived	yes	1	no	yes	yes	serves
 readAtomProvenanceCounts	doctor_derived	yes	1	no	yes	yes	serves
-listBodyRecheckGroups	doctor_derived	yes	1	no	yes	yes	serves
-readBodyRecheckPage	doctor_derived	yes	1	no	yes	yes	serves
-listBodyRecheckVersions	doctor_derived	yes	1	no	yes	yes	serves
 readExtractRollup7d	doctor_derived	yes	1	no	yes	yes	serves
 listRecordedHaltReasons7d	doctor_derived	yes	1	no	yes	yes	serves
 listCapacityCounters	doctor_persistence	yes	2	no	yes	yes	serves
@@ -2047,6 +2045,11 @@ countPagesHiddenByPrefix	doctor_search	yes	1	no	yes	yes	serves
 listOrphanedAliasCounts	doctor_search	yes	1	no	yes	yes	serves
 readSoftDeletedAliasCounts	doctor_search	yes	1	no	yes	yes	serves
 listPageTypePairs	doctor_search	yes	1	no	yes	yes	serves
+insertVolunteerEventRows	volunteer_events	yes	8	no	yes	yes	serves
+listVolunteerUsage	volunteer_events	yes	1	no	yes	yes	serves
+deleteVolunteerEventsOlderThan	volunteer_events	yes	1	no	yes	yes	serves
+deleteVolunteerEventsForSlugs	volunteer_events	yes	1	no	yes	yes	serves
+countVolunteerEventsForSlug	volunteer_events	yes	6	no	yes	yes	serves
 listDecideReceiptStats	doctor_reads_acc	yes	8	no	yes	yes	serves
 isAccessStateUnreadable	doctor_reads_acc	yes	1	no	yes	yes	serves
 listRawOnlyRules	doctor_reads_acc	yes	1	no	yes	yes	serves
@@ -2071,7 +2074,7 @@ originIndexPresent	doctor_reads_acc	yes	1	no	yes	yes	serves
 readChronicleLedgerStats	doctor_reads_acc	yes	1	no	yes	yes	serves
 readChronicleDuplicateEvents	doctor_reads_acc	yes	1	no	yes	yes	serves
 readFeedbackStatus	doctor_reads_acc	yes	1	no	yes	yes	serves
-listVolunteerChannels	doctor_reads_acc	yes	1	no	yes	yes	serves
+listVolunteerChannels	doctor_reads_acc	yes	3	no	yes	yes	serves
 listFenceCandidateRecords	doctor_checkpoints	yes	3	no	yes	yes	serves
 listDerivedOriginParks	doctor_checkpoints	yes	1	no	yes	yes	serves
 listPurgeParks	doctor_checkpoints	yes	1	no	yes	yes	serves

@@ -100,8 +100,9 @@ outer catch of the retrieval reflex in `src/core/context/reflex.ts`.
   `timestamptz` text).
 - `revertToVersion` writes no new version, as PGLite. The interface spec says it snapshots first.
 - After a hard delete PGLite also scrubs ratings, weights, the volunteer log, the
-  gazetteer, take proposals, open loops, core-edit notices and write-gate holds. The store keeps none
-  of those yet, so only eval candidates, retrieval records, page aliases, slug aliases and rename history change.
+  gazetteer, take proposals, open loops, core-edit notices and write-gate holds. The store keeps
+  none of those but the volunteer log (`volunteer-events.md`), so only eval candidates, retrieval
+  records, volunteer events, page aliases, slug aliases and rename history change.
 
 ## The purgeDeletedPages holds
 

@@ -526,7 +526,7 @@ describe('volunteer-events sink — timeout branch (long-lived process safety)',
     } = await import('../src/core/context/volunteer-events.ts');
     _resetPendingVolunteerEventWritesForTests();
     const hangingEngine = {
-      executeRaw: () => new Promise(() => { /* never settles */ }),
+      insertVolunteerEventRows: () => new Promise(() => { /* never settles */ }),
     } as never;
     logVolunteerEventsFireAndForget(hangingEngine, [
       { source_id: 'default', slug: 'people/x', confidence: 0.9, match_arm: 'alias', rationale: 'r', channel: 'watch' },

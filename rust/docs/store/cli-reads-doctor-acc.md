@@ -30,7 +30,7 @@ An answer the store cannot contradict, because it keeps no such state:
 
 | Members | Answer |
 | --- | --- |
-| `listPolicySourceIds`, `listRawOnlyRules`, `listAudienceMemberIds`, `listLabelledOnlyMemberIds`, `listAccessMemberRows`, `listAttestCredentialRows`, `listActiveAccessTokenRows`, `listActiveOauthClientRows`, `listOauthClientAuthShapes`, `listDanglingFederatedReads`, `listPrivilegedDcrClients`, `listBeliefCoveredSources`, `listVolunteerChannels` | no rows: no access state, tokens, OAuth clients, coverage events or volunteer events exist |
+| `listPolicySourceIds`, `listRawOnlyRules`, `listAudienceMemberIds`, `listLabelledOnlyMemberIds`, `listAccessMemberRows`, `listAttestCredentialRows`, `listActiveAccessTokenRows`, `listActiveOauthClientRows`, `listOauthClientAuthShapes`, `listDanglingFederatedReads`, `listPrivilegedDcrClients`, `listBeliefCoveredSources` | no rows: no access state, tokens, OAuth clients or coverage events exist |
 | `isAccessStateUnreadable` | false |
 | `readKnowledgeRevisionNotNull` | true: the revision is always set |
 | `readDriftSchema` | `current` |

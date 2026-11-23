@@ -97,6 +97,12 @@ export const DOCTOR_MEMBERS = {
   readChronicleDuplicateEvents: 'health',
   readFeedbackStatus: 'health',
   listVolunteerChannels: 'health',
+  // The push-context log (engine-sql/volunteer-events.ts)
+  insertVolunteerEventRows: 'telemetry',
+  listVolunteerUsage: 'telemetry',
+  deleteVolunteerEventsOlderThan: 'telemetry',
+  deleteVolunteerEventsForSlugs: 'telemetry',
+  countVolunteerEventsForSlug: 'telemetry',
 
   // doctor checkpoint reads (engine-sql/doctor-checkpoints.ts)
   listFenceCandidateRecords: 'persistence_journal',

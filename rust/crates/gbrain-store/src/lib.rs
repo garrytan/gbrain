@@ -109,6 +109,7 @@ pub mod transactions;
 pub mod trust;
 pub mod vectors;
 mod version_prune;
+pub mod volunteer_events;
 pub mod wanted_links;
 pub mod write_attribution;
 pub mod write_guards;

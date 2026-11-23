@@ -195,13 +195,10 @@ describe('store listings come out by byte', () => {
     }
   });
 
-  parityTest('volunteerUsageStats lists arms and channels by byte', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
-    for (const arm of MIXED_SLUGS) {
-      await engine.executeRaw(`INSERT INTO context_volunteer_events (source_id, slug, confidence, match_arm, channel) VALUES ('default', 'p', 0.5, $1, 'op')`, [arm]);
-    }
-    for (const channel of MIXED_SLUGS) {
-      await engine.executeRaw(`INSERT INTO context_volunteer_events (source_id, slug, confidence, match_arm, channel) VALUES ('default', 'p', 0.5, 'z-arm', $1)`, [channel]);
-    }
+  parityTest('volunteerUsageStats lists arms and channels by byte', { methods: ['putPage', 'insertVolunteerEventRows'] }, async (engine) => {
+    await engine.putPage('p', { type: 'note', title: 'P', compiled_truth: 'P body.', timeline: '' });
+    const row = (match_arm: string, channel: string) => ({ source_id: 'default', slug: 'p', confidence: 0.5, match_arm, rationale: '', channel });
+    await engine.insertVolunteerEventRows([...MIXED_SLUGS.map(arm => row(arm, 'op')), ...MIXED_SLUGS.map(channel => row('z-arm', channel))]);
     const stats = await volunteerUsageStats(engine, ['default']);
     expect(stats.by_arm.map(r => [r.match_arm, r.channel])).toEqual(byteRows([...MIXED_SLUGS.map(arm => [arm, 'op']), ...MIXED_SLUGS.map(channel => ['z-arm', channel])]));
   });
