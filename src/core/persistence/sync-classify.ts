@@ -250,8 +250,9 @@ function afterHold(s: SyncPathState): Matched {
       const sub = s.attested ? 'pending' : s.record?.revision != null ? 'db_only' : 'unproven';
       const keepDbWrite = sub === 'db_only' && s.keepDb && s.mode === 'committed' && s.dirty === 'clean';
       // As #7931 for legacy_unverified: a hold someone asked to re-screen (`sources retry-held`, a `release_hold` apply) re-runs as
-      // database-side drift, whose import runs only when the file holds the page; otherwise it is held again.
-      if (s.hold?.retried && !keepDbWrite) return { cls: 'drift', settled: false, action: 'hold', side: 'database' };
+      // database-side drift, whose import runs only when the file holds the page; otherwise it is held again. A pending door
+      // write and a storage.db_only page keep the database copy, so their retried hold stays db_ahead.
+      if (s.hold?.retried && !keepDbWrite && sub !== 'pending' && !s.dbOnly) return { cls: 'drift', settled: false, action: 'hold', side: 'database' };
       return { cls: 'db_ahead', settled: true, action: keepDbWrite ? 'keep_db' : 'none', sub,
         ...(keepDbWrite ? { keepDbWrite: true as const } : {}), ...(s.episodeUnsatisfied && sub !== 'pending' ? { fullSkipped: true as const } : {}) };
     }
