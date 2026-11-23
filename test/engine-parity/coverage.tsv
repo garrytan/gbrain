@@ -219,7 +219,7 @@ listPathTwinSlugs	pages	yes	1	no	yes	yes	serves
 listLiveSlugOrigins	pages	yes	1	no	yes	yes	serves
 probeRetypeRows	pages	yes	2	no	yes	yes	serves
 listAliasCandidatePages	pages	yes	2	no	yes	yes	serves
-listLinkCandidatePages	pages	yes	2	no	yes	yes	serves
+listLinkCandidatePages	pages	yes	3	no	yes	yes	serves
 countLivePagesByType	pages	yes	2	no	yes	yes	serves
 listTypeOrphanRows	pages	yes	2	no	yes	yes	serves
 readStaleMentionScan	pages	yes	2	no	yes	yes	serves
@@ -1559,7 +1559,7 @@ listSegmentedPages	withdrawal_pages	yes	2	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	2	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	149	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	148	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	4	yes	yes	yes	serves

@@ -206,7 +206,8 @@ describe('no PGLite or Postgres path raises engine_capability_missing', () => {
     walk(root);
     // git-durability-administration.ts and topology-stop.ts raise it only behind `!servesRawSql(engine)`, which is false on PGLite and
     // Postgres: the Rust engine's named refusals of the parked-push retry and of a topology change (unbound-claim-rust).
-    expect(callers.sort()).toEqual(['core/persistence/git-durability-administration.ts', 'core/persistence/skill-activation.ts', 'core/persistence/topology-stop.ts',
+    // commands/core.ts raises it the same way: `core remove` refuses on a brain that cannot close core edit notices.
+    expect(callers.sort()).toEqual(['commands/core.ts', 'core/persistence/git-durability-administration.ts', 'core/persistence/skill-activation.ts', 'core/persistence/topology-stop.ts',
       'core/shared-skills/publication.ts', 'core/sql-engine-kind.ts']);
     // Each shared-skill call sits behind isRustBrain, so a PGLite or Postgres brain never reaches it.
     // test-reads-source-ok[structural]: the guard proves where the only raiser is called from, which no runtime probe can show.
