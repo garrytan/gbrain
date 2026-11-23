@@ -128,6 +128,7 @@ test/doctor-session-lane-gbra133.test.ts
 test/doctor-strict-facts-outside-git.test.ts
 test/doctor-sync-freshness-skill-pack-6076.test.ts
 test/doctor-typed-reads-deadline.test.ts
+test/doctor-write-gate-holds-stranded.test.ts
 test/edge-whitespace-twins.test.ts
 test/effect-commit-moved-head.test.ts
 test/embed-once-per-content-version.serial.test.ts

@@ -28,7 +28,7 @@ function entry(): DoctorEntry {
   return found;
 }
 
-type Ctx = Partial<DoctorContext> & { engine: unknown };
+type Ctx = Omit<Partial<DoctorContext>, 'engine'> & { engine: unknown };
 async function run(ctx: Ctx): Promise<Check> {
   const checks = await entry().run(ctx as unknown as DoctorContext) as Check[];
   expect(checks.map(c => c.name)).toEqual([NAME]);
@@ -217,7 +217,7 @@ for (const backend of testBackends()) {
       await hold('default', 'people/a');
       await hold('default', 'people/never');
       const snapshot = async () => JSON.stringify(await Promise.all(['write_gate_holds ORDER BY id', 'pages ORDER BY id', 'slug_aliases ORDER BY id', 'slug_rename_history ORDER BY old_slug']
-        .map(t => engine.executeRaw(`SELECT * FROM ${t}`))));
+        .map(t => engine.executeRaw(`SELECT * FROM ${t}`))), (_k, v) => (typeof v === 'bigint' ? v.toString() : v));
       const before = await snapshot();
       await run({ engine });
       expect(await snapshot()).toBe(before);

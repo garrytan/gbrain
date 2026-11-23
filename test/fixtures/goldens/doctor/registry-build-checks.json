@@ -1127,6 +1127,10 @@
       },
       {
         "category": "brain",
+        "name": "write_gate_holds_stranded"
+      },
+      {
+        "category": "brain",
         "name": "core_memory"
       },
       {

@@ -395,3 +395,22 @@ Claim your own sources first, so your notes are not treated as unverified.
   without showing them. Review each listed fact (`gbrain trust explain f<id>`)
   and edit the row or forget the fact if a field is wrong. The check is
   read-only and never lowers a tier.
+- `write_gate_holds_stranded` finds held writes (quarantined facts and takes)
+  whose page no longer has the name the hold remembers. A hold names its page
+  only by slug, so renaming a page (a sync Git rename, `gbrain repair
+  rename-identity`) leaves the hold on the old name, and the page at the new
+  name is no longer protected by it: its held text can reach readers. The
+  check warns when the rename record leads from a hold's name to a live page
+  (a suspected strand, since the history can name more than one page). Holds
+  whose page was soft-deleted, or that name a page that never existed (for
+  example a write held before its page was created), are listed as
+  informational only. A scan that stops at its 5000-row limit or its time
+  limit warns that the count is unknown instead of reporting ok, and an
+  engine that refuses the read is reported unknown too.
+  This check detects; it does not fix the leak. Neither releasing nor dropping
+  a hold restores the quarantine on the renamed page or takes back text
+  already delivered: drop only disposes of the hold, release publishes the held
+  text at the hold's old name, and a held take cannot be released. Read the
+  current page and edit it if it shows text that should stay hidden. The next
+  step is the read-only `gbrain trust review`. The real fix, holds that follow
+  a page id, is pending.
