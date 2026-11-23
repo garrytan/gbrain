@@ -579,12 +579,12 @@ fn decided_at_micros(text: &str) -> Option<i64> {
     if let Some(at) = parse_iso(text) {
         return Some(at);
     }
-    let base = text.strip_suffix("+00")?;
-    let (time, frac) = base.split_once('.').unwrap_or((base, ""));
-    if time.len() != 19 || time.as_bytes()[10] != b' ' || frac.len() > 6 {
+    // The listed text carries a zone (`+00`, or another offset such as `-01:30`); a time with none is refused.
+    let t = text.trim();
+    if t.len() <= 19 || !t[19..].contains(['+', '-']) {
         return None;
     }
-    parse_iso(&format!("{}T{}.{:0<6}Z", &time[..10], &time[11..], frac))
+    crate::persistence::projection_queue::parse_timestamptz(t, "decided_at").ok()
 }
 
 #[cfg(test)]
