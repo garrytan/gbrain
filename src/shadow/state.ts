@@ -53,7 +53,9 @@ export function brainIdentity(config: Pick<EngineConfig, 'engine' | 'database_pa
       if (!config.database_url) return null;
       try {
         const url = new URL(config.database_url);
-        return { engine, identity: `postgres://${url.hostname}:${url.port || '5432'}/${decodeURIComponent(url.pathname.replace(/^\//, ''))}` };
+        // The user name stays: a pooler routes by it (Supabase `postgres.<project>`), so two brains share host, port and database. It is only hashed, never stored or shown.
+        const user = url.username ? `${decodeURIComponent(url.username)}@` : '';
+        return { engine, identity: `postgres://${user}${url.hostname}:${url.port || '5432'}/${decodeURIComponent(url.pathname.replace(/^\//, ''))}` };
       } catch {
         return null;
       }
@@ -94,6 +96,8 @@ export function readShadowState(dir: string): ShadowState | null {
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as ShadowState;
     if (!parsed || typeof parsed !== 'object' || parsed.version !== SHADOW_STATE_VERSION) return null;
+    // A hand-edited file with a bad rate or bound reads as off, never as an unbounded or always-on mirror.
+    if (!(parsed.sample_rate > 0 && parsed.sample_rate <= 1) || !Number.isInteger(parsed.queue_bound) || parsed.queue_bound < 1) return null;
     return parsed;
   } catch {
     return null;
