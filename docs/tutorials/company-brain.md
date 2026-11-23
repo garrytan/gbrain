@@ -660,7 +660,7 @@ gbrain doctor --only access_shared_source_unread,access_pages_read_by_nobody,acc
 - `access_pages_read_by_nobody`: pages no enabled member reads, such as pages a leaver kept to themselves.
 - `access_disabled_member_credentials`: live tokens or OAuth clients still bound to a member you disabled or removed. Every read they make is refused, yet `gbrain auth list` still shows them as active.
 
-The first and last read every member's keys, so they run only on the brain host: a remote `run_doctor` that names either one is refused with the `gbrain doctor --only <check>` command to run there.
+`access_shared_source_unread` and `access_disabled_member_credentials` read every member's keys, so they run only on the brain host: a remote `run_doctor` that names either one is refused with the `gbrain doctor --only <check>` command to run there.
 
 ### When someone leaves
 
@@ -718,9 +718,9 @@ Otherwise, check `gbrain auth list` on the host and confirm their client has `--
 
 ### "Search says keyword-only. Is it broken?"
 
-No, when you turned embeddings off on purpose. A brain made with `gbrain init --no-embedding` (what `gbrain setup` creates when there is no brain and you don't pass `--providers`) searches by keywords by design. Its search, query, find_experts and recall results don't carry the `[gbrain degraded: …]` stamp or a `degraded_recall` notice. An empty result says the search was keyword-only and that no page the caller can read holds those words within that search's filters, so an agent can honestly answer "no notes on that" for those words in that scope (a synonym or a display name may still match).
+Not if you turned embeddings off on purpose. A brain made with `gbrain init --no-embedding` (what `gbrain setup` creates when there is no brain and you don't pass `--providers`) searches by keywords by design. Its search, query, find_experts and recall results don't carry the `[gbrain degraded: …]` stamp or a `degraded_recall` notice. An empty result says the search was keyword-only and that no page the caller can read holds those words within that search's filters, so an agent can honestly answer "no notes on that" for those words in that scope (a synonym or a display name may still match).
 
-A brain that is set up for embeddings but missing its key, an embedding call that timed out and a search arm that failed are still marked degraded, and there an empty result is not proof the notes aren't there. To add semantic search to a keyless brain, run `gbrain embeddings enable --embedding-model <provider:model>` on the host.
+A brain with no embedding provider that wasn't turned off on purpose, a brain set up for embeddings but missing its key, an embedding call that timed out and a search arm that failed are still marked degraded, and there an empty result is not proof the notes aren't there. To add semantic search to a keyless brain, run `gbrain embeddings enable --embedding-model <provider:model>` on the host.
 
 ### "Sync is slow and feels stuck"
 
