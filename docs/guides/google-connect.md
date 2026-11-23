@@ -132,7 +132,8 @@ whose email or phone is exactly the same as one of the contact's, the rule
 the Apple Contacts source uses:
 
 - A name alone never links.
-- A contact whose email or phone matches two or more people stays unlinked
+- A contact whose email or phone matches two or more people, or one person
+  whose page has another name (a shared or reused address), stays unlinked
   and waits for you: `gbrain sync status --source <id>` lists it, and
   `gbrain dedupe confirm` or `reject` on those people settles it.
 - `gbrain dedupe reject` on a contact and person pair removes that link,

@@ -69,8 +69,8 @@ link-contacts       count how the contact pages of a Google Contacts source woul
   --apply           link each contact page to the one person page with exactly the same email or phone, and keep
                     the contacts each sync changes linked (sets google_contacts.identity_links on)
   --unlink          remove every link the source made and stop linking (sets google_contacts.identity_links off)
-                    a contact whose email or phone matches two or more people stays unlinked and waits for you in
-                    gbrain sync status; nothing matches by name; gbrain dedupe reject on a contact and person pair
+                    a contact whose email or phone matches two or more people, or one person whose page has another
+                    name, stays unlinked and waits for you in gbrain sync status; nothing matches by name alone; gbrain dedupe reject on a contact and person pair
                     removes its link for good
 
 Companies link automatically: each sync links the cross-source company groups its changed pages belong to when
@@ -465,6 +465,7 @@ async function runLinkContacts(engine: BrainEngine, args: string[]): Promise<voi
     `  ${counts.linked} ${would}linked to the one person page with exactly the same email or phone`,
     `  ${counts.already_linked} already linked`,
     `  ${counts.waiting} match two or more people and wait for you (gbrain sync status --source ${sourceId})`,
+    `  ${counts.name_disagrees} match one person whose page has another name and wait for you`,
     `  ${counts.no_match} match no person page`,
     `  ${counts.rejected} match one person you recorded as a different person`,
     `  ${counts.other_writer} sit in an identity group another writer made and are left as they are`,

@@ -110,6 +110,35 @@ describe('gbrain dedupe link-contacts (Google Contacts)', () => {
     expect((await linkOf('people/c-finn', 'gc'))?.entity_id).toBe('manual-finn');
   });
 
+  test('one matching person whose page has another name waits for the owner instead of linking', async () => {
+    await page('people/hank-example', 'Hank Example', { email: 'shared@example.invalid' });
+    await page('people/ivy-example', 'Ivy B. Example', { email: 'ivy@example.invalid' });
+    await contact('c-grace', 'Grace Sample', ['shared@example.invalid']);
+    await contact('c-ivy', 'Ivy Example', ['ivy@example.invalid']);
+    await contact('c-hank-address', 'shared@example.invalid', ['shared@example.invalid']);
+    const counts = await linkGoogleContacts(engine, 'gc', { apply: true, slugs: ['people/c-grace', 'people/c-ivy', 'people/c-hank-address'] });
+    expect(counts).toMatchObject({ contacts: 3, linked: 2, name_disagrees: 1 });
+    expect(await linkOf('people/c-grace', 'gc')).toBeNull();
+    expect((await linkOf('people/c-ivy', 'gc'))?.entity_id).toBe((await linkOf('people/ivy-example', 'default'))?.entity_id);
+    const review = (await readSyncStatus(engine, 'gc')).identity_reviews!.find(r => r.contact_slug === 'people/c-grace')!;
+    expect(review).toMatchObject({ needs_human: true, candidates: [{ source_id: 'default', slug: 'people/hank-example' }] });
+    expect(review.human_reason).toContain('has another name');
+  });
+
+  test('names agree on variants, initials and a missing middle name, and disagree on another person', async () => {
+    const { namesAgree } = await import('../src/core/entities/name-variants.ts');
+    expect(namesAgree('Bob E', 'Bob Example')).toBe(true);
+    expect(namesAgree('Bob Example', 'Robert Example')).toBe(true);
+    expect(namesAgree('Alice Example', 'Alice B. Example')).toBe(true);
+    expect(namesAgree('A. Example', 'Alice Example')).toBe(true);
+    expect(namesAgree('Alice', 'Alice Example')).toBe(true);
+    expect(namesAgree('Grace Sample', 'Hank Example')).toBe(false);
+    expect(namesAgree('Grace Example', 'Hank Example')).toBe(false);
+    expect(namesAgree('Hank', 'Grace Example')).toBe(false);
+    expect(namesAgree('grace@example.invalid', 'Hank Example')).toBeNull();
+    expect(namesAgree('', 'Hank Example')).toBeNull();
+  });
+
   test('a source that is not a Google source is refused and nothing is written', async () => {
     await expect(dedupe(['link-contacts', '--source', 'people-b'])).rejects.toMatchObject({ code: 'invalid_source' });
     await expect(dedupe(['link-contacts', '--source', 'missing'])).rejects.toMatchObject({ code: 'unknown_source' });
