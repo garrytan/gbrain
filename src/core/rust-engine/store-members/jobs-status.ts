@@ -32,7 +32,7 @@ export const readLastCompletedJobAt: StoreMember<[], Date | null> = async (brain
 };
 
 export const listRecentSourceCycleFailures: StoreMember<[spec: { cutoff: string; sourceId?: string | null }], SourceCycleFailureRow[]> = async (brain, spec) => {
-  const rows: SourceCycleFailureRow[] = await call('listRecentSourceCycleFailures', () => brain.listRecentSourceCycleFailures(spec.cutoff, spec.sourceId ?? null));
+  const rows: SourceCycleFailureRow[] = await call('listRecentSourceCycleFailures', () => brain.listRecentSourceCycleFailures(spec.cutoff, spec.sourceId || null));
   return rows.map((row) => withDates(row, ['last_failed_at']));
 };
 
