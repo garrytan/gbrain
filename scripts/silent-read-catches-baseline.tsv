@@ -283,6 +283,7 @@ src/commands/doctor/checks/routing-federation.ts#checkOauthClientScopeHealth	cap
 src/commands/doctor/checks/routing-federation.ts#checkOauthConfidentialHealth	capability_refusal_swallowed	1
 src/commands/doctor/checks/routing-federation.ts#checkSourceRoutingHealth	capability_refusal_swallowed	1
 src/commands/doctor/checks/rows-behind.ts#runRowsBehind	capability_refusal_swallowed	1
+src/commands/doctor/checks/rust-engine-addon.ts#runRustEngineAddon	catch_empty	1	shadow mode code written before master added this guard; known debt, fix by a typed degraded marker
 src/commands/doctor/checks/safe-index.ts#safeIndexPendingCheck	capability_refusal_swallowed	1
 src/commands/doctor/checks/schema-health.ts#readBacklogAge	capability_refusal_swallowed	1
 src/commands/doctor/checks/schema-health.ts#readBacklogAge	catch_empty	1
@@ -2185,3 +2186,4 @@ src/mcp/source-preflight.ts#assertStdioSourceBindable	capability_refusal_swallow
 src/mcp/surface.ts#resolveAdvertisedSurface	catch_empty	1
 src/mcp/surface.ts#resolveDefaultClientSurface	catch_empty	1
 src/mcp/surface.ts#sessionWidenAllowed	catch_empty	1
+src/shadow/state.ts#readShadowState	catch_empty	1	shadow mode code written before master added this guard; known debt, fix by a typed degraded marker
