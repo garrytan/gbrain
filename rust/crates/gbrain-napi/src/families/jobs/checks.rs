@@ -47,6 +47,16 @@ impl Brain {
         })
     }
 
+    /// `readFenceAutoRepairRows(keys)`: `{ config, lastJobAt }`.
+    #[napi]
+    pub fn read_fence_auto_repair_rows<'env>(
+        &self,
+        env: &'env Env,
+        keys: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_fence_auto_repair_rows(&keys))
+    }
+
     /// `listFactsAbsorbJobsStillDead({ hours, limit })`: `{ total, jobs }`.
     #[napi]
     pub fn list_facts_absorb_jobs_still_dead<'env>(

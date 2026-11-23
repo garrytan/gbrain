@@ -63,9 +63,13 @@ fn ended(b: &Brain, name: &str, extra: Value, how: &str, error: &str) -> i64 {
     b.claim_next_job(&claim_spec(&token, &queue, &[name], json!({})))
         .unwrap()
         .expect("the job is claimed");
-    b.fail_job(id, &token, error, how, None, None)
-        .unwrap()
-        .unwrap();
+    if how == "completed" {
+        b.complete_job(id, &token, None).unwrap().unwrap();
+    } else {
+        b.fail_job(id, &token, error, how, None, None)
+            .unwrap()
+            .unwrap();
+    }
     id
 }
 
@@ -382,4 +386,32 @@ fn build_skew_lines_follow_the_window_and_the_scan_limit() {
             .len(),
         rows.len()
     );
+}
+
+#[test]
+fn fence_auto_repair_rows_read_the_keys_and_the_last_completed_maintenance_finish_to_the_second() {
+    let b = brain("checks-fence-auto");
+    let gm = "autopilot-global-maintenance";
+    let keys = ["fences.repair.enabled", "fences.repair.llm"].map(String::from);
+    let empty = b.read_fence_auto_repair_rows(&keys).unwrap();
+    assert_eq!(empty, json!({ "config": [], "lastJobAt": null }));
+    b.set_config("fences.repair.llm", "false").unwrap();
+    b.set_config("other.key", "x").unwrap();
+    ended(&b, gm, json!({}), "failed", "boom");
+    ended(&b, "minion-other", json!({}), "completed", "");
+    let failed_only = b.read_fence_auto_repair_rows(&keys).unwrap();
+    assert_eq!(
+        failed_only["config"],
+        json!([{ "key": "fences.repair.llm", "value": "false" }])
+    );
+    assert_eq!(failed_only["lastJobAt"], Value::Null);
+    ended(&b, gm, json!({}), "completed", "");
+    b.clock.advance(HOUR);
+    ended(&b, gm, json!({}), "completed", "");
+    let at = b.read_fence_auto_repair_rows(&keys).unwrap()["lastJobAt"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(at.len(), 20, "{at}");
+    assert!(at.ends_with('Z') && at.as_bytes()[10] == b'T', "{at}");
 }

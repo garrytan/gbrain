@@ -144,7 +144,7 @@ test/engine-parity/import-folder-stamp.test.ts	5	0
 test/engine-parity/import-members.test.ts	10	0
 test/engine-parity/import-path.test.ts	8	0
 test/engine-parity/import-writes.test.ts	11	0
-test/engine-parity/jobs-checks.test.ts	9	0
+test/engine-parity/jobs-checks.test.ts	10	0
 test/engine-parity/jobs-health.test.ts	8	0
 test/engine-parity/jobs-insight.test.ts	2	0
 test/engine-parity/jobs-queue.test.ts	38	0

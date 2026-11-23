@@ -10084,6 +10084,7 @@
         "readFactsEmbeddingColumn": "none",
         "readFactsFtsIndexState": "none",
         "readFeedbackStatus": "none",
+        "readFenceAutoRepairRows": "none",
         "readFenceHoldFiles": "none",
         "readFenceOriginGone": "none",
         "readFenceOverlayRows": "none",

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2022/2048
+# covered: 2023/2049
 # lifecycle: 9/9
 # pages: 81/82
 # search: 7/7
@@ -74,7 +74,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 16/16
 # wanted_links: 2/2
-# write_misc: 108/121
+# write_misc: 109/122
 # repair_bookkeeping: 55/55
 # write_attribution: 5/5
 # telemetry: 14/14
@@ -603,7 +603,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	2	no	yes	yes	serves
 getConfig	config	yes	49	no	yes	yes	serves
-setConfig	config	yes	73	no	yes	yes	serves
+setConfig	config	yes	74	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	5	no	yes	yes	serves
 getAllConfig	config	yes	3	no	yes	yes	serves
@@ -915,15 +915,15 @@ takePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 renewPageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 releasePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 assertCycleLease	cycle_locks	yes	1	no	yes	yes	serves
-admitJob	minion_jobs	yes	115	no	yes	yes	serves
+admitJob	minion_jobs	yes	116	no	yes	yes	serves
 getJob	minion_jobs	yes	39	no	yes	yes	serves
 readJobDataByIdempotencyKey	minion_jobs	yes	2	no	yes	yes	serves
 coalesceOnIdempotencyKey	minion_jobs	yes	2	no	yes	yes	serves
 listJobs	minion_jobs	yes	1	no	yes	yes	serves
-claimNextJob	minion_jobs	yes	82	no	yes	yes	serves
+claimNextJob	minion_jobs	yes	83	no	yes	yes	serves
 renewJobLease	minion_jobs	yes	1	no	yes	yes	serves
-completeJob	minion_jobs	yes	48	no	yes	yes	serves
-failJob	minion_jobs	yes	37	no	yes	yes	serves
+completeJob	minion_jobs	yes	49	no	yes	yes	serves
+failJob	minion_jobs	yes	38	no	yes	yes	serves
 reclaimStalledJobs	minion_jobs	yes	2	no	yes	yes	serves
 readActiveAccessTokenGrant	minion_queue	yes	3	no	yes	yes	serves
 accessTokenLive	minion_queue	yes	2	no	yes	yes	serves
@@ -1736,6 +1736,7 @@ listAudienceAccessMembers	write_misc	yes	5	no	yes	yes	serves
 readAccessGroups	write_misc	yes	4	no	yes	yes	serves
 listPagesNamingReader	write_misc	yes	6	no	yes	yes	serves
 listSharedMemberMigrationRows	write_misc	yes	1	no	yes	yes	serves
+readFenceAutoRepairRows	write_misc	yes	1	no	yes	yes	serves
 listAdminClientRows	write_misc	yes	1	no	yes	yes	serves
 listSourceIncarnations	repair_bookkeeping	yes	14	no	yes	yes	serves
 listOrphanBindings	repair_bookkeeping	yes	4	no	yes	yes	serves

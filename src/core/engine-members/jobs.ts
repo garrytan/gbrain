@@ -7,7 +7,7 @@ import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow
 import type { AgentClientSpendRow, ClientReserveOutcome, ClientReserveSpec, GroupReserveOutcome, GroupReserveSpec, GroupSpendRow, OauthClientInsert, SettleLogOutcome, SpendLogInsert } from '../engine-sql/spend-log.ts';
 import type { BudgetOwnerRow, EmbedBackfillState, FailedJobError, JobStatusCount, JobStatusFilter, LastAutopilotCycles, QueueDepth, SourceJobCounts, TtlCancelledCount, WaitingScopeState } from '../engine-sql/jobs-status.ts';
 import type { CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobSourceState, JobStatsRead, JobTokenCounts, PrivateQueueState, PruneJobsSpec, QueueFamilyRow, RetryJobPolicy, SynthesisCompletion, SynthesisCompletionPrefix } from '../engine-sql/jobs-queue.ts';
-import type { DeadDreamSubmissionSpec, FactsAbsorbJobRow, FactsAbsorbStillDead, GlobalMaintenanceDeaths, LastFailedGlobalMaintenanceJob, LegacyJobAuthorityRead, QueuedSpendRows } from '../engine-sql/jobs-checks.ts';
+import type { DeadDreamSubmissionSpec, FactsAbsorbJobRow, FactsAbsorbStillDead, GlobalMaintenanceDeaths, LastFailedGlobalMaintenanceJob, FenceAutoRepairRows, LegacyJobAuthorityRead, QueuedSpendRows } from '../engine-sql/jobs-checks.ts';
 import type { ExpireSpendScope, JobSpendTreeSpec, LeasePressureFilter, LeasePressureInsert, LeasePressureRow, SettleSpendOutcome, SpendReservationInsert, SpendTreeRow } from '../engine-sql/jobs-spend.ts';
 import type { JobInsightRows, JobInsightSpec } from '../engine-sql/jobs-insight.ts';
 import type * as JobsWake from '../engine-sql/jobs-wake.ts';
@@ -228,6 +228,8 @@ export interface JobsMembers {
   readGlobalMaintenanceDeaths(spec: { deaths: number }): Promise<GlobalMaintenanceDeaths>;
   /** The newest brain-wide maintenance job that ended without completing after `since` (a timestamp text, or null for all), with the count and earliest finish of them all. */
   readLastFailedGlobalMaintenanceJob(since: string | null): Promise<LastFailedGlobalMaintenanceJob | null>;
+  /** The stored config rows of `keys` and the finish (UTC, to the second) of the last completed brain-wide maintenance job, or null (fence-repair/hold-fix.ts readFenceAutoRepair). */
+  readFenceAutoRepairRows(keys: readonly string[]): Promise<FenceAutoRepairRows>;
   /** Facts-absorb jobs dead or failed inside `hours` that no later job for the same page completed: the total and the newest `limit` (the `facts_extraction_health` check). */
   listFactsAbsorbJobsStillDead(spec: { hours: number; limit: number }): Promise<FactsAbsorbStillDead>;
   /** The claim gate's population and the terminal keyed rows with SQL NULL authority (the `legacy_job_authority` check). */

@@ -99,6 +99,7 @@ export const JOBS_MEMBERS = {
   listStalledEmbedBackfillSources: 'minion_queue',
   readGlobalMaintenanceDeaths: 'minion_queue',
   readLastFailedGlobalMaintenanceJob: 'minion_queue',
+  readFenceAutoRepairRows: 'minion_queue',
   listFactsAbsorbJobsStillDead: 'minion_queue',
   readLegacyJobAuthority: 'minion_queue',
   readQueuedSpendRows: 'minion_queue',

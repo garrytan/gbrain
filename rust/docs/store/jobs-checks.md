@@ -15,6 +15,7 @@ engines return for that field.
 | `listStalledEmbedBackfillSources()` | the `data.sourceId` of every failed or dead `embed-backfill` job whose progress carries a `stall` record, each once, in byte order; a job with no `sourceId` yields `null`, which sorts last |
 | `readGlobalMaintenanceDeaths({ deaths })` | the last `deaths` finished `autopilot-global-maintenance` jobs (newest first), and the dream phases whose last `deaths` children all died at their timeout |
 | `readLastFailedGlobalMaintenanceJob(since)` | the newest maintenance job that ended without completing after `since` (a `Date#toISOString` text, or `null` for all), and how many did |
+| `readFenceAutoRepairRows(keys)` | `{ config, lastJobAt }`: the stored config rows of `keys` (any order; a key with no row is absent) and the finish of the last completed `autopilot-global-maintenance` job, UTC to the second (`YYYY-MM-DDTHH:MM:SSZ`), or null when none completed |
 | `listFactsAbsorbJobsStillDead({ hours, limit })` | dead or failed `facts-absorb` jobs finished inside the window with no later job for the same page completed, newest first, and the full count |
 | `readLegacyJobAuthority()` | the live jobs whose submission authority is not the application authority, the first ten active ids, and the keyed terminal rows with a NULL authority |
 | `readQueuedSpendRows({ legacyPrefixes, waitMs })` | queued jobs counted by name and spend basis (a recorded kind, a legacy key prefix of the right name, or unrecorded), and the spend-authorized rows waiting longer than `waitMs` |

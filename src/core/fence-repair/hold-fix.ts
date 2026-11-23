@@ -23,6 +23,7 @@
  * Location only: fence, section, rows, columns, classes and lines.
  */
 import type { BrainEngine } from '../engine.ts';
+import { readFenceAutoRepairRows } from '../engine-sql/jobs-checks.ts';
 import type { Action, ActionInput } from '../agent-output.ts';
 import type { GitHoldRecord } from '../persistence/sync-holds.ts';
 import { FENCE_REPAIR_ENABLED_KEY, FENCE_REPAIR_LLM_KEY } from './config.ts';
@@ -31,7 +32,8 @@ import { FENCE_REASONS, renderFenceFix, type FenceMessageLocation } from './reas
 import { fenceWhere } from './refusal.ts';
 import type { FenceReason, FenceTier } from './types.ts';
 
-type Exec = Pick<BrainEngine, 'executeRaw'>;
+/** An engine (its typed readFenceAutoRepairRows) or an executeRaw-only view of one. */
+type Exec = Pick<BrainEngine, 'executeRaw'> & Partial<Pick<BrainEngine, 'readFenceAutoRepairRows'>>;
 
 /** A brain-wide maintenance pass at most this old counts as an active maintenance job (autopilot runs one about hourly). */
 export const FENCE_MAINTENANCE_ACTIVE_MS = 24 * 3_600_000;
@@ -52,13 +54,15 @@ export interface FenceAutoRepair {
 
 const FALSE = /^(false|0|off|no)$/i;
 
-/** Two reads: the fence switches with the maintenance stamp, and the last completed maintenance job. A read error counts as no evidence. */
+/**
+ * Two reads (engine-sql/jobs-checks.ts readFenceAutoRepairRows): the fence switches with the maintenance stamp, and the
+ * last completed maintenance job. A read error surfaces: a refused or failed read is never taken for the defaults.
+ */
 export async function readFenceAutoRepair(engine: Exec, now: Date = new Date()): Promise<FenceAutoRepair> {
-  const config = await engine.executeRaw<{ key: string; value: string | null }>('SELECT key, value FROM config WHERE key = ANY($1::text[])',
-    [[FENCE_REPAIR_ENABLED_KEY, FENCE_REPAIR_LLM_KEY, LAST_GLOBAL_MAINTENANCE_KEY]]).catch(() => []);
+  const keys = [FENCE_REPAIR_ENABLED_KEY, FENCE_REPAIR_LLM_KEY, LAST_GLOBAL_MAINTENANCE_KEY];
+  const { config, lastJobAt } = engine.readFenceAutoRepairRows ? await engine.readFenceAutoRepairRows(keys) : await readFenceAutoRepairRows(engine, keys);
   const value = (key: string) => config.find(row => row.key === key)?.value?.trim() ?? '';
-  const job = await engine.executeRaw<{ at: string | null }>(`SELECT to_char(max(finished_at) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') AS at
-    FROM minion_jobs WHERE name='autopilot-global-maintenance' AND status='completed'`).then(rows => rows[0]?.at ?? '', () => '');
+  const job = lastJobAt ?? '';
   const times = [value(LAST_GLOBAL_MAINTENANCE_KEY), job].map(at => Date.parse(at)).filter(Number.isFinite);
   const last = times.length ? Math.max(...times) : null;
   const enabled = !FALSE.test(value(FENCE_REPAIR_ENABLED_KEY));

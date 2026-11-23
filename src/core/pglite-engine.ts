@@ -5026,6 +5026,7 @@ export class PGLiteEngine implements BrainEngine {
   async listStalledEmbedBackfillSources() { return jobsChecks.listStalledEmbedBackfillSources(this); }
   async readGlobalMaintenanceDeaths(spec: { deaths: number }) { return jobsChecks.readGlobalMaintenanceDeaths(this, spec); }
   async readLastFailedGlobalMaintenanceJob(since: string | null) { return jobsChecks.readLastFailedGlobalMaintenanceJob(this, since); }
+  async readFenceAutoRepairRows(keys: readonly string[]) { return jobsChecks.readFenceAutoRepairRows(this, keys); }
   async listFactsAbsorbJobsStillDead(spec: { hours: number; limit: number }) { return jobsChecks.listFactsAbsorbJobsStillDead(this, spec); }
   async readLegacyJobAuthority() { return jobsChecks.readLegacyJobAuthority(this); }
   async readQueuedSpendRows(spec: { legacyPrefixes: Readonly<Record<string, readonly string[]>>; waitMs: number }) { return jobsChecks.readQueuedSpendRows(this, spec); }

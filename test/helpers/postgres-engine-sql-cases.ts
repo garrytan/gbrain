@@ -1512,6 +1512,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readOpCheckpointRecords': OOS.callerRawSql,
   'writeOpCheckpointRecords': OOS.callerRawSql,
   'listUncommittedFenceRepairRows': OOS.callerRawSql,
+  'readFenceAutoRepairRows': OOS.callerRawSql,
   'readGitGapSourceRow': OOS.callerRawSql,
   'countGitGapLivePages': OOS.callerRawSql,
   'markTransactionReadOnly': OOS.callerRawSql,

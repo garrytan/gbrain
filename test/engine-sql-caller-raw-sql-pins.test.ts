@@ -2853,6 +2853,13 @@ const PINS: Pin[] = [
     WHERE e.source_id=$1 GROUP BY 1, 2 ORDER BY 1, 2`],
   },
   {
+    from: 'src/core/fence-repair/hold-fix.ts:57 readFenceAutoRepair (at b7b18e5ab3; the config rows, then the last completed maintenance job)',
+    case: { method: 'readFenceAutoRepairRows', variant: 'default', run: e => e.readFenceAutoRepairRows(['fences.repair.enabled', 'fences.repair.llm', 'autopilot.last_global_at']) },
+    texts: ['SELECT key, value FROM config WHERE key = ANY($1::text[])',
+      `SELECT to_char(max(finished_at) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') AS at
+    FROM minion_jobs WHERE name='autopilot-global-maintenance' AND status='completed'`],
+  },
+  {
     from: 'src/core/persistence/sync-admission.ts:34 readSyncAdmission',
     case: { method: 'readStoredConfigValue', variant: 'default', run: e => e.readStoredConfigValue('sync.admission') },
     texts: ['SELECT value FROM config WHERE key=$1'],
