@@ -17,7 +17,7 @@ import { persistencePostgresTemplate } from '../helpers/persistence-postgres.ts'
 const d = hasDatabase() ? describe : describe.skip;
 const NEW_RELATIONS = [
   'engine_writer_observations', 'engine_writer_sessions', 'engine_writer_coverage_gaps',
-  'engine_writer_observations_pkey', 'engine_writer_sessions_pkey',
+  'engine_writer_observations_pkey', 'idx_engine_writer_sessions_key',
   'idx_engine_writer_observations_last_seen', 'idx_engine_writer_sessions_last_seen', 'idx_engine_writer_coverage_gaps_time',
 ];
 

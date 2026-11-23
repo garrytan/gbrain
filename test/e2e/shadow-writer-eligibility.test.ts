@@ -23,6 +23,8 @@ import { persistencePostgresTemplate } from '../helpers/persistence-postgres.ts'
 import { wrapShadowEngine } from '../../src/shadow/wrapper.ts';
 import { newMirrorCounters } from '../../src/shadow/mirror.ts';
 import { WriterObserver } from '../../src/shadow/writer-observations.ts';
+import { readWriterEvidence } from '../../src/shadow/writer-observations.ts';
+import { WRITER_EVIDENCE_TABLES, WRITER_HOOK_TRIGGER } from '../../src/shadow/writer-hooks.ts';
 import { buildEligibilityStatus } from '../../src/shadow/eligibility.ts';
 import postgres from '#postgres';
 import { listHookedTables } from '../../src/shadow/writer-hooks.ts';
@@ -228,5 +230,64 @@ d('writer observations on Postgres', () => {
       await writer.end({ timeout: 5 }).catch(() => undefined);
       await locker.end({ timeout: 5 }).catch(() => undefined);
     }
+  }, 60_000);
+
+  test('an uncommitted row with the writer\'s exact session key cannot cancel a short-deadline write: the trigger has no uniqueness check to wait on', async () => {
+    const dir = tempDir();
+    const { installWriterHooks } = await import('../../src/shadow/writer-hooks.ts');
+    await installWriterHooks(engine, dir);
+    const url = (engine as unknown as { connectedDatabaseUrl: string }).connectedDatabaseUrl;
+    const holder = postgres(url, { max: 1, onnotice: () => undefined, prepare: false });
+    const app = 'gbrain cli:931:abcdef31';
+    const writer = postgres(url, { max: 1, onnotice: () => undefined, prepare: false, connection: { application_name: app, statement_timeout: 10 } });
+    try {
+      // The writer's own key, as the trigger will compute it, read on the writer's one connection.
+      const [me] = await writer.unsafe(`SELECT coalesce(host(inet_client_addr()), 'local') AS addr, pg_backend_pid() AS pid`);
+      let release!: () => void;
+      const held = new Promise<void>((r) => { release = r; });
+      let inserted!: () => void;
+      const ready = new Promise<void>((r) => { inserted = r; });
+      const open = holder.begin(async (t) => {
+        await t`INSERT INTO engine_writer_sessions (application_name, client_addr, backend_pid) VALUES (${app}, ${me!.addr as string}, ${me!.pid as number})`;
+        inserted(); await held;
+      });
+      await ready;
+      const started = Date.now();
+      await writer`INSERT INTO config (key, value) VALUES ('hooks-same-key', '1') ON CONFLICT (key) DO NOTHING`;
+      expect(Date.now() - started).toBeLessThan(1_000);
+      expect((await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM config WHERE key = 'hooks-same-key'`))[0]!.n).toBe(1);
+      release();
+      await open;
+      // Both rows are committed now: the same connection is one session, and the write left evidence.
+      expect((await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM engine_writer_sessions WHERE application_name = $1`, [app]))[0]!.n).toBe(2);
+      const ev = await readWriterEvidence(engine, new Date(Date.now() - 3_600_000), true, WRITER_HOOK_TRIGGER, WRITER_EVIDENCE_TABLES);
+      expect(ev.unresolved).toBe(1);
+    } finally {
+      await writer.end({ timeout: 5 }).catch(() => undefined);
+      await holder.end({ timeout: 5 }).catch(() => undefined);
+    }
+  }, 60_000);
+
+  test('repeated session rows count as one session, and a refresh updates every matching row', async () => {
+    const dir = tempDir();
+    const { installWriterHooks } = await import('../../src/shadow/writer-hooks.ts');
+    await installWriterHooks(engine, dir);
+    const url = (engine as unknown as { connectedDatabaseUrl: string }).connectedDatabaseUrl;
+    const app = 'gbrain cli:932:abcdef32';
+    const writer = postgres(url, { max: 1, onnotice: () => undefined, prepare: false, connection: { application_name: app } });
+    try {
+      await writer`INSERT INTO config (key, value) VALUES ('hooks-dup-1', '1') ON CONFLICT (key) DO NOTHING`;
+      // A second identical row (a restore, a race) ages together with the first.
+      await engine.executeRaw(`INSERT INTO engine_writer_sessions (application_name, client_addr, backend_pid, first_seen, last_seen)
+        SELECT application_name, client_addr, backend_pid, first_seen, last_seen FROM engine_writer_sessions WHERE application_name = $1`, [app]);
+      await engine.executeRaw(`UPDATE engine_writer_sessions SET last_seen = clock_timestamp() - interval '11 minutes' WHERE application_name = $1`, [app]);
+      const read = () => readWriterEvidence(engine, new Date(Date.now() - 3_600_000), true, WRITER_HOOK_TRIGGER, WRITER_EVIDENCE_TABLES);
+      expect((await read()).unresolved).toBe(1);
+      await writer`UPDATE config SET value = '2' WHERE key = 'hooks-dup-1'`;
+      const rows = await engine.executeRaw<{ age: number }>(`SELECT extract(epoch FROM clock_timestamp() - last_seen)::int AS age FROM engine_writer_sessions WHERE application_name = $1`, [app]);
+      expect(rows.length).toBe(2);
+      expect(rows.every(r => r.age < 60)).toBe(true);
+      expect((await read()).unresolved).toBe(1);
+    } finally { await writer.end({ timeout: 5 }).catch(() => undefined); }
   }, 60_000);
 });

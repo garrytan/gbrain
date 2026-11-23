@@ -6011,7 +6011,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   not a gbrain process on the shadow machine (another machine, `psql`, an older gbrain) still leaves a row. A trigger
   never fails the write and never waits on the evidence tables: it takes each table's lock with `NOWAIT`, so a lock someone else
   holds is an error it catches at once, and its own `lock_timeout` of 50 ms (set on the function, so the writer's settings are
-  untouched afterwards) bounds any other wait. It does not catch a cancelled query, so a user's own cancel still cancels, it skips a row
+  untouched afterwards) bounds any other wait. The sessions table has no unique key, so the trigger's insert has no uniqueness check that could wait on another transaction's uncommitted row (a repeated row counts as one session, and a refresh updates every matching row). It does not catch a cancelled query, so a user's own cancel still cancels, it skips a row
   another transaction holds (that skip is recorded as a gap, since the write went unrecorded), and any error becomes a row in `engine_writer_coverage_gaps` (that table has no
   sequence, so an INSERT alone records a gap). It stamps the time it ran, not the start of the writer's transaction.
   If both evidence tables are unusable at once, the trigger can only warn; a table that is missing or locked then

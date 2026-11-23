@@ -12,7 +12,7 @@ import type { Migration } from './types.ts';
 // calls gbrain_note_writer(): it records the writing connection (application_name, client address, backend pid) in
 // engine_writer_sessions, so a writer that is not a wrapped gbrain process (another machine, psql, an old binary)
 // still leaves a row the swap can count. The function never fails the writer and never waits on the evidence tables:
-// it takes each evidence table's lock with NOWAIT, so a lock someone else holds is 55P03 at once, which it catches like any error, and a function-scoped lock_timeout of 50 ms bounds any other wait (a conflicting uncommitted row). It does not catch query_canceled, so a user's own cancel still cancels. It skips a
+// it takes each evidence table's lock with NOWAIT, so a lock someone else holds is 55P03 at once, which it catches like any error, and a function-scoped lock_timeout of 50 ms bounds any other wait (a conflicting uncommitted row). The sessions table has no unique key, so the trigger's INSERT has no uniqueness check that could wait on another transaction's uncommitted row; a repeated row is harmless because every reader counts a session as the set (application_name, client_addr, backend_pid) and the refresh updates every matching row. It does not catch query_canceled, so a user's own cancel still cancels. It skips a
 // row another transaction holds (and records that skip as a gap, because the write went unrecorded), refreshes at most every 10 minutes per connection, and turns any error into a row in
 // engine_writer_coverage_gaps (which has no sequence, so an INSERT alone records a gap). It stamps with
 // clock_timestamp(), not now(): now() is the start of the writer's transaction, which can lie before the shadow
@@ -41,10 +41,10 @@ CREATE TABLE IF NOT EXISTS engine_writer_sessions (
   client_addr TEXT NOT NULL,
   backend_pid INTEGER NOT NULL,
   first_seen TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-  last_seen TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-  PRIMARY KEY (application_name, client_addr, backend_pid)
+  last_seen TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 CREATE INDEX IF NOT EXISTS idx_engine_writer_sessions_last_seen ON engine_writer_sessions (last_seen);
+CREATE INDEX IF NOT EXISTS idx_engine_writer_sessions_key ON engine_writer_sessions (application_name, client_addr, backend_pid);
 CREATE TABLE IF NOT EXISTS engine_writer_coverage_gaps (
   created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   code TEXT NOT NULL,
@@ -64,11 +64,11 @@ BEGIN
     -- Never wait for an evidence table: take its lock without waiting first, so a lock held by someone else (55P03) becomes a gap
     -- at once, before any statement could queue behind it and run into a caller's own statement timeout.
     EXECUTE format('LOCK TABLE %I.engine_writer_sessions IN ROW EXCLUSIVE MODE NOWAIT', schema_name);
-    EXECUTE format('SELECT last_seen FROM %I.engine_writer_sessions WHERE application_name = $1 AND client_addr = $2 AND backend_pid = $3', schema_name)
+    EXECUTE format('SELECT max(last_seen) FROM %I.engine_writer_sessions WHERE application_name = $1 AND client_addr = $2 AND backend_pid = $3', schema_name)
       INTO seen USING app, addr, pg_backend_pid();
     IF seen IS NOT NULL AND seen > clock_timestamp() - interval '600 seconds' THEN RETURN NULL; END IF;
     IF seen IS NULL THEN
-      EXECUTE format('INSERT INTO %I.engine_writer_sessions (application_name, client_addr, backend_pid, first_seen, last_seen) VALUES ($1, $2, $3, clock_timestamp(), clock_timestamp()) ON CONFLICT DO NOTHING', schema_name)
+      EXECUTE format('INSERT INTO %I.engine_writer_sessions (application_name, client_addr, backend_pid, first_seen, last_seen) VALUES ($1, $2, $3, clock_timestamp(), clock_timestamp())', schema_name)
         USING app, addr, pg_backend_pid();
     ELSE
       EXECUTE format('UPDATE %I.engine_writer_sessions SET last_seen = clock_timestamp() WHERE ctid IN (SELECT ctid FROM %I.engine_writer_sessions WHERE application_name = $1 AND client_addr = $2 AND backend_pid = $3 FOR UPDATE SKIP LOCKED)', schema_name, schema_name)
