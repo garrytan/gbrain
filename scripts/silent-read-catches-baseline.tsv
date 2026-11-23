@@ -1193,7 +1193,7 @@ src/core/google/counterparty.ts#emailAliasElsewhere	capability_refusal_swallowed
 src/core/google/file-modes.ts#scanGoogleFileModes	catch_empty	1
 src/core/google/google-clients.ts#GoogleApiClient.fetchJSON	promise_catch_empty	1
 src/core/google/google-source.ts#runGoogleSyncInner	capability_refusal_swallowed	1
-src/core/google/google-source.ts#runGoogleSyncInner	catch_empty	3
+src/core/google/google-source.ts#runGoogleSyncInner	catch_empty	2
 src/core/google/loop-catchup.ts#pendingLoopsExtractDepth	capability_refusal_swallowed	1
 src/core/google/loop-catchup.ts#pendingLoopsExtractDepth	catch_empty	1
 src/core/google/loop-detect.ts#upsertThreadLoop	catch_empty	1

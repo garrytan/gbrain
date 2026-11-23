@@ -25,6 +25,7 @@ import { createHash } from 'node:crypto';
 
 import type { BrainEngine } from '../engine.ts';
 import { CredentialError } from '../creds/errors.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { hasBulkCategory } from './gmail-categories.ts';
@@ -100,6 +101,7 @@ async function addressesWithPersonPage(engine: BrainEngine, addresses: string[])
     );
     return new Set(rows.map((r) => byNorm.get(r.alias_norm) ?? r.alias_norm));
   } catch (err) {
+    rethrowCapabilityRefusal(err);
     if (isMissingSchemaObject(err, 'table', 'page_aliases')) return new Set();
     throw err;
   }

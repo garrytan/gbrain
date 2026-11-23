@@ -937,7 +937,7 @@ async function resolveSyncAccess(cfg: GoogleSourceConfig, opts: SyncOpts, log: (
       // token may not carry the settings scope — degrade to account-only.
       const aliases = await fetchSendAsAliases(await tokens.getAccessToken(), fetchImpl ?? fetch);
       if (aliases.length > 0) entry.meta.sendas_aliases = aliases;
-    } catch { /* account-only identity */ }
+    } catch { /* account-only identity */ } // silent-read-ok: the token may lack the Gmail settings scope; identity then falls back to the account address alone
   } else {
     const vault = vaultOverride ?? openVault();
     const vaultEntry = await vault.get(credentialId(GOOGLE_PROVIDER, cfg.account));
