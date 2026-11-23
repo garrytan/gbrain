@@ -1714,6 +1714,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readPageProvenanceComplete': OOS.embedStaleWork,
   'lockContentDriftState': OOS.embedStaleWork,
   'invalidateContentDriftChunks': OOS.embedStaleWork,
+  'listUnembeddedChunkIndexes': OOS.embedStaleWork,
   'listReadablePageSlugs': OOS.factsQuotedReads,
 };
 

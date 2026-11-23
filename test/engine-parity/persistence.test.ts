@@ -1050,9 +1050,10 @@ describe('engine parity: write journal', () => {
   });
 
   // Doctor's stale_embedding_effects reads: the Rust engine answered them as always empty, though its store keeps the
-  // effect rows. A re-queued embedding effect of a committed write counts; one of an uncommitted write does not.
-  parityTest('readStaleEmbeddingCounts and listStaleEmbeddingEffects count and list the re-queued embedding effects of committed writes', {
-    methods: ['readStaleEmbeddingCounts', 'listStaleEmbeddingEffects', 'insertPublicationEffects', 'transactionDirect', 'declarePersistence',
+  // effect rows. A failed (through a real claim) and a re-queued embedding effect of a committed write count; one of an
+  // uncommitted write does not.
+  parityTest('readStaleEmbeddingCounts and listStaleEmbeddingEffects count and list the failed and re-queued embedding effects of committed writes', {
+    methods: ['readStaleEmbeddingCounts', 'listStaleEmbeddingEffects', 'insertPublicationEffects', 'transactionDirect', 'declarePersistence', 'selectClaimableEffect', 'stampEffectClaim', 'failEffectRow',
       'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow', 'putPage', 'getPage'],
   }, async (engine) => {
     const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
@@ -1079,6 +1080,22 @@ describe('engine parity: write journal', () => {
       effect_id: /^\d+$/.test(r.effect_id) ? 'id' : r.effect_id, updated_at: /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(\.\d+)?\+00$/.test(r.updated_at) ? 'stamp' : r.updated_at,
     }));
     const empty = { counts: await engine.readStaleEmbeddingCounts(null), rows: await engine.listStaleEmbeddingEffects(null) };
+    // A failed embedding effect, failed through a real effect-worker claim (the only effect, so the claim takes it).
+    const failedRequest = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000e5');
+    await engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      return tx.insertPublicationEffects({ requestId: failedRequest, revision: null, sourceId: 'default', sourceIncarnation: incarnation, worktreeId: null,
+        effects: [{ kind: 'embedding', data: { slug: 'notes/parity', page_id: pageId } }] });
+    });
+    type Claimed = { id: string | number; kind: string; execution_token: string | null };
+    const claimed = await engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      const candidate = await tx.selectClaimableEffect<Claimed>(HOST, []);
+      if (!candidate) return null;
+      return tx.stampEffectClaim<Claimed>({ id: candidate.id, token: OTHER_TOKEN, ownerJson: JSON.stringify({ token: OTHER_TOKEN, owner: { pid: 1, nonce: 'n', start: 's' } }) });
+    });
+    await engine.failEffectRow({ id: claimed!.id, token: claimed!.execution_token, reason: 'parity_failed' });
+    await commit(failedRequest);
     const first = await queue('b0000000-0000-4000-8000-0000000000e6');
     await queue('b0000000-0000-4000-8000-0000000000e7');
     const uncommitted = await engine.readStaleEmbeddingCounts(null);
@@ -1092,11 +1109,12 @@ describe('engine parity: write journal', () => {
       rows: view(rows),
       otherRows: await engine.listStaleEmbeddingEffects(['other']),
     };
-    const counts = (count: number) => ({ count, failed: 0, requeued: count });
-    expect(answers).toEqual({
-      empty: { counts: counts(0), rows: [] }, uncommitted: counts(0), counts: counts(1), scoped: counts(1), other: counts(0),
-      rows: [{ source_id: 'default', slug: 'notes/parity-example', request_id: 'b0000000-0000-4000-8000-0000000000e6', state: 'queued', effect_id: 'id', updated_at: 'stamp' }],
-      otherRows: [],
+    const counts = (count: number, failed: number, requeued: number) => ({ count, failed, requeued });
+    const row = (request_id: string, state: string) => ({ source_id: 'default', slug: 'notes/parity-example', request_id, state, effect_id: 'id', updated_at: 'stamp' });
+    expect({ ...answers, claimedKind: claimed?.kind }).toEqual({
+      empty: { counts: counts(0, 0, 0), rows: [] }, uncommitted: counts(1, 1, 0), counts: counts(2, 1, 1), scoped: counts(2, 1, 1), other: counts(0, 0, 0),
+      rows: [row('b0000000-0000-4000-8000-0000000000e5', 'failed'), row('b0000000-0000-4000-8000-0000000000e6', 'queued')],
+      otherRows: [], claimedKind: 'embedding',
     });
     return answers;
   });

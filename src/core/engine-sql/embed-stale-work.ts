@@ -145,6 +145,17 @@ export async function hasEmbeddingSignatureDrift(raw: EngineRawRead, opts: Signa
   return row?.drift === true;
 }
 
+/** embed-stale.ts embedStaleForSource: the chunk indexes of the page's live body with no vector in `column`, ascending. */
+export async function listUnembeddedChunkIndexes(raw: EngineRawRead, slug: string, sourceId: string, column: string): Promise<number[]> {
+  const colId = trustedSql(quoteIdentifier(column));
+  const liveBody = trustedSql(chunkGenerationFilter('p', 'cc'));
+  const { text, params } = renderFragment(sqlFragment`SELECT cc.chunk_index
+             FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+            WHERE p.slug = ${slug} AND p.source_id = ${sourceId} AND cc.${colId} IS NULL AND ${liveBody}
+            ORDER BY cc.chunk_index`);
+  return (await raw<{ chunk_index: number | string }>(text, params)).map(r => Number(r.chunk_index));
+}
+
 /** The content-drift sweep's cursor row: created with `initial` when absent, then locked for the caller's transaction. */
 export async function lockContentDriftState(raw: EngineRawRead, key: string, initial: string): Promise<string | null> {
   await raw(`INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`, [key, initial]);

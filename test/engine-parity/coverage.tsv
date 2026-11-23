@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2015/2031
+# covered: 2016/2032
 # lifecycle: 9/9
 # pages: 81/82
 # search: 7/7
@@ -94,7 +94,7 @@
 # decide_proposals: 16/16
 # decide_store: 19/19
 # owner_only: 1/1
-# embed_stale_work: 8/8
+# embed_stale_work: 9/9
 # engine_migration: 5/5
 # access_grants: 7/7
 # access_members: 18/18
@@ -203,7 +203,7 @@ readLivePagesByIds	pages	yes	1	no	yes	yes	serves
 listStaleAtoms	pages	yes	2	no	yes	yes	serves
 getPageSealState	pages	yes	5	no	yes	yes	serves
 refreshPageOrigin	pages	yes	6	no	yes	yes	serves
-readLivePageIdBySlug	pages	yes	2	no	yes	yes	serves
+readLivePageIdBySlug	pages	yes	3	no	yes	yes	serves
 readPageTierRef	pages	yes	1	no	yes	yes	serves
 readPageTierRows	pages	yes	1	no	yes	yes	serves
 pageHasFrontmatterKey	pages	yes	1	no	yes	yes	serves
@@ -809,7 +809,7 @@ deleteProjectionJob	persistence_journal	yes	10	no	yes	yes	serves
 markProjectionRebuildFailed	persistence_journal	yes	5	no	yes	yes	serves
 listGatedMirrorRequests	persistence_journal	yes	2	no	yes	yes	serves
 listEffectRecoveries	persistence_journal	yes	1	no	yes	yes	serves
-selectClaimableEffect	persistence_journal	yes	5	no	yes	yes	serves
+selectClaimableEffect	persistence_journal	yes	6	no	yes	yes	serves
 readRequestEffects	persistence_journal	yes	11	no	yes	yes	serves
 listEmbeddingCandidates	persistence_journal	yes	1	no	yes	yes	serves
 listOverdueHeldWrites	persistence_journal	yes	1	no	yes	yes	serves
@@ -817,7 +817,7 @@ lockOverdueHold	persistence_journal	yes	1	no	yes	yes	serves
 listOwnerRecoveryHeads	persistence_journal	yes	1	no	yes	yes	serves
 listResumableRefreshes	persistence_journal	yes	1	no	yes	yes	serves
 listSourceLastCommits	persistence_journal	yes	1	no	yes	yes	serves
-stampEffectClaim	persistence_journal	yes	3	no	yes	yes	serves
+stampEffectClaim	persistence_journal	yes	4	no	yes	yes	serves
 renewEffectClaim	persistence_journal	yes	1	no	yes	yes	serves
 advanceEffectRow	persistence_journal	yes	1	no	yes	yes	serves
 completeEffectRow	persistence_journal	yes	2	no	yes	yes	serves
@@ -825,7 +825,7 @@ retryEffectRow	persistence_journal	yes	1	no	yes	yes	serves
 retryBusyEffectRow	persistence_journal	yes	1	no	yes	yes	serves
 requeueEffectRow	persistence_journal	yes	1	no	yes	yes	serves
 parkEffectRow	persistence_journal	yes	2	no	yes	yes	serves
-failEffectRow	persistence_journal	yes	1	no	yes	yes	serves
+failEffectRow	persistence_journal	yes	2	no	yes	yes	serves
 readMirrorGateRows	persistence_journal	yes	2	no	yes	yes	serves
 lockEffectGuard	persistence_journal	yes	1	no	yes	yes	serves
 hasRearmableTargets	persistence_journal	yes	1	no	yes	yes	serves
@@ -1909,6 +1909,7 @@ listEmbedPendingProjections	embed_stale_work	yes	1	no	yes	yes	serves
 listEmbedProjectionRepairPages	embed_stale_work	yes	1	no	yes	yes	serves
 readPageIsSegmented	embed_stale_work	yes	1	no	yes	yes	serves
 hasEmbeddingSignatureDrift	embed_stale_work	yes	2	no	yes	yes	serves
+listUnembeddedChunkIndexes	embed_stale_work	yes	1	no	yes	yes	serves
 lockContentDriftState	embed_stale_work	yes	2	no	yes	yes	serves
 invalidateContentDriftChunks	embed_stale_work	yes	2	no	yes	yes	serves
 readEngineMigrationHistory	engine_migration	yes	2	no	yes	yes	serves

@@ -104,6 +104,7 @@ export const CONTENT_MEMBERS = {
   readPageIsSegmented: 'pages',
   hasEmbeddingSignatureDrift: 'embeddings',
   lockContentDriftState: 'config',
+  listUnembeddedChunkIndexes: 'embeddings',
   invalidateContentDriftChunks: 'embeddings',
   readPageEmbeddingBudget: 'embeddings',
   recordPageEmbeddingHold: 'embeddings',

@@ -73,6 +73,19 @@ impl Brain {
         })
     }
 
+    /// `listUnembeddedChunkIndexes(slug, sourceId)`: resolves the chunk indexes, ascending.
+    #[napi]
+    pub fn list_unembedded_chunk_indexes<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_unembedded_chunk_indexes(&slug, &source_id)
+        })
+    }
+
     /// `readPageIsSegmented(pageId)`: resolves a boolean.
     #[napi]
     pub fn read_page_is_segmented<'env>(

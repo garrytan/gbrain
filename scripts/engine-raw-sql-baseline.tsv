@@ -269,7 +269,6 @@ src/core/embed-backfill-submit.ts	execute_raw	2
 src/core/embed-consent.ts	execute_raw	2
 src/core/embed-facts.ts	execute_raw	8
 src/core/embed-stale-images.ts	execute_raw	2
-src/core/embed-stale.ts	execute_raw	2
 src/core/embed-takes.ts	execute_raw	1
 src/core/embedding-ann-build.ts	execute_raw	8
 src/core/embedding-dim-check.ts	execute_raw	2

@@ -20,6 +20,8 @@ export interface EmbedStaleMembers {
   hasEmbeddingSignatureDrift(opts: EmbedStaleWork.SignatureDriftOpts): Promise<boolean>;
   /** Whether every visible chunk of the page holds a vector in `column` that is current for `model` at `dims` wide (engine-sql/embedding-provenance.ts; the embedding signature stamp). */
   readPageProvenanceComplete(slug: string, sourceId: string, model: string, dims: number | null, column: string): Promise<boolean>;
+  /** The chunk indexes of the page's live body with no vector in `column`, ascending (embed-stale.ts embedStaleForSource). */
+  listUnembeddedChunkIndexes(slug: string, sourceId: string, column: string): Promise<number[]>;
   /** The content-drift sweep's cursor row, created with `initial` when absent and locked for the transaction; run it on the transaction handle. */
   lockContentDriftState(key: string, initial: string): Promise<string | null>;
   /** One content-drift batch: drop the vectors of the next chunk rows whose text changed since they were embedded; run it on the transaction handle. */

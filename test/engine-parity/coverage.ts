@@ -465,7 +465,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   owner_only: ['ownerOnlyMarkTriggers'],
   // embed_stale_work: the embed --stale reads and writes embedding-readiness.ts, embedding-invalidation.ts and content-drift-sweep.ts ran through executeRaw (engine-sql/embed-stale-work.ts)
   embed_stale_work: ['countArchivedEmbeddingWork', 'countEmbedPendingProjections', 'listEmbedPendingProjections', 'listEmbedProjectionRepairPages',
-    'readPageIsSegmented', 'hasEmbeddingSignatureDrift', 'lockContentDriftState', 'invalidateContentDriftChunks'],
+    'readPageIsSegmented', 'hasEmbeddingSignatureDrift', 'lockContentDriftState', 'invalidateContentDriftChunks', 'listUnembeddedChunkIndexes'],
   // engine_migration: the source-side reads of `gbrain migrate --to <engine>` (engine-sql/engine-migration.ts)
   engine_migration: ['readEngineMigrationHistory', 'readMigrationRows', 'readMigrationPageColumns', 'listManualLinkTransitions', 'countLiveTimelineEntries'],
   access_grants: ['readOAuthClientReceiptGrant', 'readAccessTokenReceiptGrant', 'readOAuthClientMemberGrant', 'readAccessTokenMemberGrant', 'readLocalWriterMemberGrant', 'readSharedSkillServingEpoch', 'revokeLocalWriterRow'],

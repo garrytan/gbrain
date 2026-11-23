@@ -362,7 +362,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readWorktreeManifest', 'readWriteRequestsByRequestId', 'readWriterDiagnosticRows', 'readWriterStatusRows',
   // embed --stale (engine-sql/embed-stale-work.ts, embedding-provenance.ts): counts, listings and probes over pages and chunks.
   'countArchivedEmbeddingWork', 'countEmbedPendingProjections', 'hasEmbeddingSignatureDrift', 'readPageIsSegmented',
-  'listEmbedPendingProjections', 'listEmbedProjectionRepairPages', 'readPageProvenanceComplete',
+  'listEmbedPendingProjections', 'listEmbedProjectionRepairPages', 'listUnembeddedChunkIndexes', 'readPageProvenanceComplete',
 ];
 
 const nothingSetting = 'nothing: the setting lasts only for the call, so running it again repeats no write';

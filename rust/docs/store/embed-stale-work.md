@@ -18,6 +18,7 @@ TypeScript side is `src/core/rust-engine/store-members/embed-stale-work.ts`; the
 | `brain.countEmbedPendingProjections(scope)` | live, non-`embed_skip`, unsealed pages of the scope (`sourceId`, `activeSourcesOnly`, `existingChunksOnly`, and with `stale` a segmented body or a chunk with embedding work) |
 | `brain.listEmbedPendingProjections(scope, limit)` | the first `limit` of them in active sources, by page id: `{ source_id, slug, page_kind }` |
 | `brain.listEmbedProjectionRepairPages(scope, afterPageId, limit)` | the next `limit` of them in active sources after `afterPageId` that are markdown, code or segmented: `{ slug, source_id, id }` |
+| `brain.listUnembeddedChunkIndexes(slug, sourceId)` | the chunk indexes of the page's live body (`chunkGenerationFilter`) with no vector, ascending; `embedStaleForSource`, the embed-backfill job, reads it |
 | `brain.readPageIsSegmented(pageId)` | whether the page keeps its body in segments |
 | `brain.hasEmbeddingSignatureDrift({ column, signature, sourceId, includeNullSignature, nullSignatureOnly })` | whether a live, non-`embed_skip`, not budget-limited page of a live source with a live-body chunk that has a vector carries a signature the rule names |
 | `brain.ensureConfig(key, initial)` | `lockContentDriftState`: stores `initial` when the key has no value and returns the stored value |

@@ -312,6 +312,25 @@ impl Store {
             .collect())
     }
 
+    /// `listUnembeddedChunkIndexes(slug, sourceId)`: the chunk indexes of the page's live body (`chunkGenerationFilter`)
+    /// with no vector, ascending. The SQL does not filter on the page's deleted state, so a soft-deleted page answers too;
+    /// an unknown page answers none.
+    pub fn list_unembedded_chunk_indexes(&self, slug: &str, source_id: &str) -> Result<Vec<u32>> {
+        let read = self.read()?;
+        let mut out: Vec<u32> = Vec::new();
+        for ctx in page_contexts(&*read)? {
+            if ctx.page.slug == slug && ctx.page.source_id == source_id {
+                out.extend(
+                    ctx.live_body()
+                        .filter(|c| !c.embed.has_vector())
+                        .map(|c| c.chunk_index),
+                );
+            }
+        }
+        out.sort_unstable();
+        Ok(out)
+    }
+
     /// `readPageIsSegmented(pageId)`: whether the page (live or soft-deleted) keeps its body in segments.
     pub fn read_page_is_segmented(&self, page_id: u64) -> Result<bool> {
         let read = self.read()?;

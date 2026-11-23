@@ -75,6 +75,7 @@ export function mockEmbedProjectionEngine(overrides: Partial<Record<string, any>
   overrides.listEmbedProjectionRepairPages ??= (scope: embedStaleWork.PendingProjectionScope, after: number, limit: number) => embedStaleWork.listEmbedProjectionRepairPages(raw, scope, after, limit);
   overrides.readPageIsSegmented ??= (pageId: number) => embedStaleWork.readPageIsSegmented(raw, pageId);
   overrides.hasEmbeddingSignatureDrift ??= (opts: embedStaleWork.SignatureDriftOpts) => embedStaleWork.hasEmbeddingSignatureDrift(raw, opts);
+  overrides.listUnembeddedChunkIndexes ??= (slug: string, sourceId: string, column: string) => embedStaleWork.listUnembeddedChunkIndexes(raw, slug, sourceId, column);
   overrides.lockContentDriftState ??= (key: string, initial: string) => embedStaleWork.lockContentDriftState(raw, key, initial);
   overrides.invalidateContentDriftChunks ??= (window: embedStaleWork.ContentDriftChunkWindow) => embedStaleWork.invalidateContentDriftChunks(raw, window);
   overrides.readPageProvenanceComplete ??= (slug: string, sourceId: string, model: string, dims: number | null, column: string) =>

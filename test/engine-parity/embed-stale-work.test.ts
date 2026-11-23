@@ -21,6 +21,7 @@ import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../../src/core/ai/gateway.ts';
 import { runEmbedCore } from '../../src/commands/embed.ts';
+import { embedStalePages } from '../../src/core/embed-stale.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { computeRecommendations } from '../../src/core/brain-score-recommendations.ts';
 import { checkEmbeddingWidthConsistency } from '../../src/commands/doctor/checks/graph-embedding.ts';
@@ -163,6 +164,25 @@ describe('embed --stale', () => {
         coverageClimbed: after.embed_coverage > before.embed_coverage,
       };
       expect(out).toMatchObject({ planRecommendsEmbed: true, missingBefore: true, missingAfter: 0, failures: 0, failureSamples: [], coverageClimbed: true });
+      return out;
+    },
+  );
+
+  // Gap (a): embedStalePages (the repairs' and synthesize's per-page embed) read the page id and the stale chunk indexes
+  // through executeRaw, so a Rust brain stopped before embedding.
+  parityTest(
+    'embedStalePages embeds the named pages\' stale chunks and skips a deleted or unknown page',
+    { methods: ['readLivePageIdBySlug', 'listUnembeddedChunkIndexes'] },
+    async (engine) => {
+      await stalePage(engine, 'a/one');
+      await stalePage(engine, 'a/gone');
+      await engine.softDeletePage('a/gone');
+      const embedFn = async (texts: string[]) => texts.map((t) => Float32Array.from({ length: DIMS }, (_, i) => ((t.length + i) % 7) / 10 + 0.01));
+      const listed = await engine.listUnembeddedChunkIndexes('a/one', 'default', 'embedding');
+      const first = await embedStalePages(engine, ['a/one', 'a/gone', 'a/none'], 'default', { embedFn });
+      const again = await embedStalePages(engine, ['a/one'], 'default', { embedFn });
+      const out = { listed, first, again, after: await engine.listUnembeddedChunkIndexes('a/one', 'default', 'embedding'), stale: await engine.countStaleChunks() };
+      expect(out).toEqual({ listed: [0], first: { embedded: 1, pagesProcessed: 1, aborted: false }, again: { embedded: 0, pagesProcessed: 0, aborted: false }, after: [], stale: 0 });
       return out;
     },
   );

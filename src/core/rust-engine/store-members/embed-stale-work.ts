@@ -59,3 +59,8 @@ export const invalidateContentDriftChunks: Member<'invalidateContentDriftChunks'
   return await storeCall({ member: 'invalidateContentDriftChunks' }, () =>
     brain.invalidateContentDriftChunks({ column: window.column, afterChunkId: after, limit, ...(window.sourceId !== undefined && { sourceId: window.sourceId }) })) as ContentDriftChunkResult;
 };
+
+export const listUnembeddedChunkIndexes: Member<'listUnembeddedChunkIndexes'> = async (brain, slug, sourceId, column) => {
+  storeColumn('listUnembeddedChunkIndexes', column);
+  return ((await storeCall({ member: 'listUnembeddedChunkIndexes', slug }, () => brain.listUnembeddedChunkIndexes(slug, sourceId))) as Array<number | string>).map(Number);
+};
