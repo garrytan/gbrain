@@ -521,6 +521,23 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
         }
       }
     };
+    // #2179: the optional `token_ttl_seconds` hint (dcrRegistrationContext): absent or malformed → server default; out of
+    // range → clamped into [dcrTtlMin, dcrTtlMax]; never rejected. Persisted into token_ttl and echoed as stored.
+    let effectiveTtl: number | undefined;
+    const requestedTtl = dcrRegistrationContext.getStore()?.tokenTtlSeconds;
+    const clampedTtl = typeof requestedTtl === 'number' && Number.isFinite(requestedTtl)
+      ? clampDcrTokenTtl(requestedTtl, this.dcrTtlMin, this.dcrTtlMax) : undefined;
+    // An engine stores the row, ttl included, through its typed member (a Rust brain too); an older schema uses the ladder.
+    if (this.engine) {
+      try {
+        await this.engine.insertOauthClient({ client_id: clientId, client_secret_hash: secretHash, client_name: client.client_name || 'unnamed',
+          redirect_uris: (client.redirect_uris || []).map(String), grant_types: grantTypes, scope: registeredScope, token_endpoint_auth_method: authMethod,
+          client_id_issued_at: now, source_id: 'default', federated_read: ['default'], registered_via: 'dcr', ...(clampedTtl !== undefined ? { token_ttl: clampedTtl } : {}) });
+        return this.registrationResponse(client, clientId, clientSecret, registeredScope, now, clampedTtl);
+      } catch (err) {
+        if (!isUndefinedColumnError(err, 'registered_via')) throw err;
+      }
+    }
     try {
       await this.sql`
         INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
@@ -537,17 +554,8 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
       await insertUnmarked();
     }
 
-    // #2179: optional `token_ttl_seconds` hint from the DCR request body,
-    // carried via dcrRegistrationContext (the SDK strips unknown body
-    // members). Fail-safe posture: absent or malformed → server default TTL;
-    // out-of-range → clamped into [dcrTtlMin, dcrTtlMax]; never rejected.
-    // Persist into oauth_clients.token_ttl (the same per-client override the
-    // admin API writes) and echo the EFFECTIVE value in the registration
-    // response so the caller can show the user what it actually got.
-    let effectiveTtl: number | undefined;
-    const requestedTtl = dcrRegistrationContext.getStore()?.tokenTtlSeconds;
-    if (typeof requestedTtl === 'number' && Number.isFinite(requestedTtl)) {
-      const clamped = clampDcrTokenTtl(requestedTtl, this.dcrTtlMin, this.dcrTtlMax);
+    if (clampedTtl !== undefined) {
+      const clamped = clampedTtl;
       try {
         await this.sql`UPDATE oauth_clients SET token_ttl = ${clamped} WHERE client_id = ${clientId}`;
         effectiveTtl = clamped;
@@ -558,23 +566,15 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
       }
     }
 
-    // Public clients: omit `client_secret` entirely from the response so
-    // the wire payload matches RFC 7591 §3.2.1 ("if the client is a
-    // public client, the authorization server MUST NOT issue a client
-    // secret"). Confidential clients return the freshly-generated secret
-    // exactly once — same shape as before.
-    // Override scope with the filtered grant so the client sees what was
-    // actually registered (RFC 7591 §3.2.1 returned metadata).
-    const response: OAuthClientInformationFull = {
-      ...client,
-      scope: registeredScope,
-      client_id: clientId,
-      client_id_issued_at: now,
-    };
+    return this.registrationResponse(client, clientId, clientSecret, registeredScope, now, effectiveTtl);
+  }
+
+  /** RFC 7591 §3.2.1: no `client_secret` for a public client, the secret once for a confidential one, the filtered scope, and the TTL only as stored. */
+  private registrationResponse(client: Omit<OAuthClientInformationFull, 'client_id' | 'client_id_issued_at'>, clientId: string,
+    clientSecret: string | undefined, registeredScope: string, now: number, effectiveTtl: number | undefined): OAuthClientInformationFull {
+    const response: OAuthClientInformationFull = { ...client, scope: registeredScope, client_id: clientId, client_id_issued_at: now };
     if (clientSecret) response.client_secret = clientSecret;
-    if (effectiveTtl !== undefined) {
-      (response as Record<string, unknown>).token_ttl_seconds = effectiveTtl;
-    }
+    if (effectiveTtl !== undefined) (response as Record<string, unknown>).token_ttl_seconds = effectiveTtl;
     return response;
   }
 }
