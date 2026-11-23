@@ -3189,6 +3189,62 @@ const PINS: Pin[] = [
       ORDER BY dg.completed_keys->0->>'recorded_at', dg.fingerprint`],
   },
   {
+    from: 'src/core/chronicle/ledger.ts:134 upsertChronicleRow, at dded7edc51',
+    case: { method: 'upsertChronicleRow', variant: 'default', run: e => e.upsertChronicleRow({ sourceId: 'default', pageId: 1, contentHash: 'h', extractorVersion: 2, slug: 'p', state: 'skipped', reason: 'r', trigger: 'auto', principalKind: null, principalId: null, requestId: null, noExtract: false, nextAttemptAt: null }) },
+    texts: [`INSERT INTO chronicle_page_state AS c (source_id, page_id, content_hash, extractor_version, slug, state, reason, trigger,
+       principal_kind, principal_id, request_id, no_extract, next_attempt_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::uuid, $12, $13::timestamptz)
+     ON CONFLICT (source_id, page_id, content_hash, extractor_version) DO UPDATE SET
+       slug=EXCLUDED.slug, state=EXCLUDED.state, reason=EXCLUDED.reason, trigger=EXCLUDED.trigger,
+       principal_kind=EXCLUDED.principal_kind, principal_id=EXCLUDED.principal_id, request_id=EXCLUDED.request_id,
+       no_extract=EXCLUDED.no_extract, next_attempt_at=EXCLUDED.next_attempt_at, decided_at=now(), updated_at=now(),
+       campaign_id=NULL, attempt_cap_usd=NULL, max_attempts=NULL, pricing_policy=NULL, campaign_max_usd=NULL
+     WHERE NOT (EXCLUDED.trigger='auto' AND c.trigger='backfill' AND c.state IN ('pending','failed'))
+       AND (c.state <> 'extracted' OR EXISTS (SELECT 1 FROM chronicle_page_state newer
+         WHERE newer.source_id=c.source_id AND newer.page_id=c.page_id AND newer.content_hash<>c.content_hash
+           AND newer.state='extracted' AND newer.updated_at > c.updated_at))
+     RETURNING page_id`],
+  },
+  // The write-time chronicle decision's other statements (engine-sql/chronicle-ledger.ts), from ledger.ts at ac7d551949.
+  {
+    from: 'src/core/chronicle/ledger.ts:219 readChronicleRow, at ac7d551949',
+    case: { method: 'readChronicleRow', variant: 'default', run: e => e.readChronicleRow({ sourceId: 'default', pageId: 1, contentHash: 'h', extractorVersion: 2 }) },
+    texts: ['SELECT * FROM chronicle_page_state WHERE source_id=$1 AND page_id=$2 AND content_hash=$3 AND extractor_version=$4'],
+  },
+  {
+    from: 'src/core/chronicle/ledger.ts:181 recordChronicleDecision (the add_link pending read), at ac7d551949',
+    case: { method: 'hasPendingAutoChronicleRow', variant: 'default', run: e => e.hasPendingAutoChronicleRow('default', 1, 2) },
+    texts: [`SELECT 1 FROM chronicle_page_state WHERE source_id=$1 AND page_id=$2 AND state='pending'
+      AND trigger='auto' AND no_extract=false AND extractor_version=$3 LIMIT 1`],
+  },
+  {
+    from: 'src/core/chronicle/ledger.ts:84 chronicleDailyRemaining, at ac7d551949',
+    case: { method: 'countRecentChronicleReservations', variant: 'default', run: e => e.countRecentChronicleReservations() },
+    texts: ["SELECT count(*) AS n FROM chronicle_judge_reservations WHERE reserved_at > now() - interval '24 hours'"],
+  },
+  {
+    from: 'src/core/chronicle/ledger.ts:92 reserveChronicleSlot, at e4420913f5',
+    case: { method: 'reserveChronicleJudgeSlot', variant: 'default', run: e => e.reserveChronicleJudgeSlot(2, { sourceId: 'default', pageId: 1, contentHash: 'h' }) },
+    texts: ["SELECT pg_advisory_xact_lock(hashtext('gbrain:chronicle:daily_reservation'))",
+      "SELECT count(*) AS n FROM chronicle_judge_reservations WHERE reserved_at > now() - interval '24 hours'",
+      'INSERT INTO chronicle_judge_reservations (source_id, page_id, content_hash) VALUES ($1, $2, $3)'],
+  },
+  {
+    from: 'src/core/chronicle/ledger.ts:107 pruneChronicleReservations, at e4420913f5',
+    case: { method: 'pruneChronicleReservations', variant: 'default', run: e => e.pruneChronicleReservations() },
+    texts: ["DELETE FROM chronicle_judge_reservations WHERE reserved_at < now() - interval '48 hours'"],
+  },
+  {
+    from: 'src/core/chronicle/ledger.ts:195 recordChronicleDecision (the activation insert), at ac7d551949',
+    case: { method: 'insertConfigIfAbsent', variant: 'default', run: e => e.insertConfigIfAbsent('chronicle.activated_at', '2026-01-01T00:00:00.000Z') },
+    texts: ['INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING'],
+  },
+  {
+    from: 'src/core/chronicle/ledger.ts:201 recordChronicleDecision (the truth-lead read), at ac7d551949',
+    case: { method: 'readPageTruthLead', variant: 'default', run: e => e.readPageTruthLead(1) },
+    texts: ['SELECT truth_lead FROM pages WHERE id=$1'],
+  },
+  {
     from: 'src/core/persistence/intent-redaction.ts:248 cancelRequestsHoldingStagings (at b220b0df91)',
     case: { method: 'lockWriteRequestsById', variant: 'default', run: e => e.lockWriteRequestsById(['b0000000-0000-4000-8000-0000000000d1']) },
     texts: ['SELECT * FROM persistence_requests WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE'],

@@ -8,6 +8,7 @@ export const CONTENT_MEMBERS = {
   getConfig: 'config',
   readStoredConfigValue: 'config',
   setConfig: 'config',
+  insertConfigIfAbsent: 'config',
   unsetConfig: 'config',
   listConfigKeys: 'config',
   getAllConfig: 'config',

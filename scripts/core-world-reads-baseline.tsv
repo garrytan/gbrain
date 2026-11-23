@@ -643,6 +643,7 @@ src/core/persistence/bounded-reads.ts	module_collection	1	W6: per-engine state, 
 src/core/persistence/bundle-files.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/bundle-files.ts	process_global	1	W7: process-wide effects move to src/cli
 src/core/persistence/canonical-projections.ts	module_collection	1	W6: per-engine state, or mark as a constant table
+src/core/persistence/capability-retry.ts	module_collection	1	Publication retry limit: the consumer's bounded count of capability refusals per write request; holds no setting or process state, and a durable column would need a schema migration
 src/core/persistence/capacity-snapshot.ts	module_collection	2	W6: per-engine state, or mark as a constant table
 src/core/persistence/checkout-state.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/persistence/compaction-pass.ts	module_collection	1	W6: per-engine state, or mark as a constant table

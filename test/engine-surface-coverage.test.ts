@@ -591,6 +591,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'stampEffectClaim', 'renewEffectClaim', 'advanceEffectRow', 'completeEffectRow', 'retryEffectRow', 'retryBusyEffectRow', 'requeueEffectRow', 'parkEffectRow', 'failEffectRow', 'readMirrorGateRows', 'lockEffectGuard', 'hasRearmableTargets', 'probeIdleWork',
   // The no-op embedding settle statements (engine-sql/persistence-embedding-noop-settle.ts).
   'probeNoopEmbeddingSettle', 'lockNoopEmbeddingWindow', 'readNoopEmbeddingCandidates', 'settleNoopEmbeddingRows',
+  // The write-time chronicle decision (engine-sql/chronicle-ledger.ts).
+  'upsertChronicleRow', 'readChronicleRow', 'hasPendingAutoChronicleRow', 'countRecentChronicleReservations', 'reserveChronicleJudgeSlot', 'pruneChronicleReservations', 'chronicleStore', 'insertConfigIfAbsent', 'readPageTruthLead',
   // The shared-skill catalog, members and delivery batches (engine-sql/shared-skill-members.ts).
   'readSharedSkillCatalogIdentity', 'listSharedSkillCatalogHeads', 'readSharedSkillPolicyRow', 'writeSharedSkillPolicy', 'writeSharedSkillRevision',
   'readSharedSkillRevision', 'listSharedSkillFollowSources', 'lockSharedSkillBrainId', 'readSharedSkillMember', 'countSharedSkillMembers',

@@ -97,7 +97,6 @@ src/core/conversation-parser/body.ts	readSummaryBody	field	STREAM
 src/core/core-memory.ts	applyCoreSensitivity	field	INLINE	
 src/core/core-memory.ts	listCorePages	field	INLINE	
 src/core/core-memory.ts	renderCorePage	field	INLINE	
-src/core/cycle/chronicle.ts	discover	sql	STREAM	
 src/core/cycle/concept-publication.ts	composeConceptRepublication	call:serializeMarkdown	INLINE	
 src/core/cycle/concept-publication.ts	composeConceptRepublication	field	INLINE	
 src/core/cycle/concept-publication.ts	conceptPreservationHold	field	INLINE	
@@ -177,6 +176,7 @@ src/core/engine-sql/atom-backlog.ts	ATOM_BACKLOG_SCOPED_CONNECTORS_OUT_SQL	sql	S
 src/core/engine-sql/atom-backlog.ts	ATOM_BACKLOG_SCOPED_SQL	sql	STREAM	moved from extract-atoms.ts countExtractAtomsBacklog (minCompiledTruthChars): octet_length of a NULL body is not true, so a segmented page is never counted (skip until per-segment extraction)
 src/core/engine-sql/brief-reads.ts	readBriefEditPage	sql	INLINE	moved from context/proactive-brief.ts editItem: reads the body only at or under 64 KiB, below the segmented threshold; a segmented page's NULL body skips the edit arm
 src/core/engine-sql/brief-reads.ts	readBriefPageVersions	sql	INLINE	moved from context/proactive-brief.ts editItem: reads the body only at or under 64 KiB, below the segmented threshold; a segmented page's NULL body skips the edit arm
+src/core/engine-sql/chronicle-executor.ts	CHRONICLE_EXECUTOR_SQL	sql	STREAM	the chronicle discovery read (discoveryPages), moved unchanged from cycle/chronicle.ts discover: coalesce(compiled_truth, truth_lead), so a segmented page ships its lead
 src/core/engine-sql/chunk-reads.ts	countOversizedEmbedSkips	sql	META	doctor content-quality's oversized embed-skip count, moved from runContentSanity: octet_length metadata
 src/core/engine-sql/chunks.ts	chunklessPagesWhere	sql	META	lane 1e file: body <> '' predicate
 src/core/engine-sql/chunks.ts	getChunkWindows	sql	STREAM	lane 1e file: ships whole bodies per hit for inline pages; a segmented page ships none (NULL) and its chunks carry occurrence_id + span, read by search/segmented-evidence.ts

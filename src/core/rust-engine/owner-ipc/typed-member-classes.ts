@@ -377,6 +377,8 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readLiveTakePage', 'readOpCheckpointDoc', 'readOpenPassWork', 'readPageLabelRow', 'readPrivacyOrigin', 'readPurgePageBody',
   'readRecoveringHeadRow', 'readStrandedTakeProposalClaim', 'readTakeClaim', 'readTakeGrade', 'readTakeProposal', 'readTombstoneWindow',
   'relationExists', 'sweepJournalChunk', 'takeProposalCached',
+  // the write-time chronicle decision's reads (engine-sql/chronicle-ledger.ts): SELECTs only
+  'countRecentChronicleReservations', 'hasPendingAutoChronicleRow', 'readChronicleRow', 'readPageTruthLead',
 ];
 
 const nothingSetting = 'nothing: the setting lasts only for the call, so running it again repeats no write';
@@ -824,6 +826,11 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   writeSourceUpstreamObservation: 'getSource for that source id',
   writeTrustScanCursor: 'readTrustScanCursor',
   writerReleaseStore: 'a SELECT of the rows the call writes',
+  chronicleStore: 'a SELECT of the rows the call writes',
+  insertConfigIfAbsent: 'getConfig for that key',
+  pruneChronicleReservations: nothingPurge,
+  reserveChronicleJudgeSlot: 'countRecentChronicleReservations',
+  upsertChronicleRow: 'readChronicleRow for that page, content hash and extractor version',
   // It creates the catalog token secret once, in one write, when the brain has none (rust shared_skill_members.rs `shared_skill_token_secret`).
   readSharedSkillCatalogIdentity: nothingSecret,
   // The page purge port's own typed writes and the read that confirms each (continued):

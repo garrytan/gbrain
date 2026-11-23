@@ -413,7 +413,9 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'readAdmittedWriteRequests', 'readPageRevisionWriter', 'readRevisionWriterRequest', 'writeSyncAdmissionStamp', 'readSyncAdmissionEffects',
     'readHealthMemoClock', 'listSynopsisSourceIds', 'readSynopsisTierSources', 'setSourceContextualMode',
     'revokeAccessTokensNamed', 'revokeAccessToken', 'deleteOAuthClient', 'readAccessGroups', 'listPagesNamingReader', 'countOpenPages', 'hasSynopsisFrontmatterOverride',
-    'readWorktreeManifest', 'writerReleaseStore', 'addPersistenceCounters', 'publicationJournalStore', ],
+    'readWorktreeManifest', 'writerReleaseStore', 'addPersistenceCounters', 'publicationJournalStore',
+    // the write-time chronicle decision (engine-sql/chronicle-ledger.ts) and the chronicle executor (engine-sql/chronicle-executor.ts)
+    'upsertChronicleRow', 'readChronicleRow', 'hasPendingAutoChronicleRow', 'countRecentChronicleReservations', 'reserveChronicleJudgeSlot', 'pruneChronicleReservations', 'chronicleStore', 'insertConfigIfAbsent', 'readPageTruthLead'],
   // repair_bookkeeping: source incarnations, writer bindings, loop facts, connector checkpoints (engine-sql/repair-bookkeeping.ts)
   repair_bookkeeping: ['listSourceIncarnations', 'listOrphanBindings', 'deleteOrphanBinding', 'readLoopFactState', 'expireSourceFactNow',
     'listConnectorSources', 'listOrphanConnectorCheckpoints', 'countConnectorCheckpointsKeyed', 'deleteOrphanConnectorCheckpoint',

@@ -76,6 +76,7 @@ test/capacity-bounded-read-6803.test.ts
 test/capture-consent-admission.test.ts
 test/capture-dispatch-provenance-6524.test.ts
 test/chronicle-backfill-max-usd.test.ts
+test/chronicle-reservations-prune.test.ts
 test/claim-fifo-foreground-waiting.test.ts
 test/claim-head-deferred-decisions.test.ts
 test/claim-lease-holder-only-6712.test.ts
@@ -175,7 +176,10 @@ test/engine-parity/brief-reads.test.ts
 test/engine-parity/calibration-profiles.test.ts
 test/engine-parity/caller-typed-reads.test.ts
 test/engine-parity/checkpoint-validation.test.ts
+test/engine-parity/chronicle-decision.test.ts
+test/engine-parity/chronicle-executor.test.ts
 test/engine-parity/chronicle-publish-parity.test.ts
+test/engine-parity/chronicle-reservations.test.ts
 test/engine-parity/chunk-page-segmented.test.ts
 test/engine-parity/chunk-reads.test.ts
 test/engine-parity/chunk-safe-fence.test.ts
@@ -384,6 +388,7 @@ test/engine-parity/private-page-reads.test.ts
 test/engine-parity/private-reads-remote.test.ts
 test/engine-parity/projection-drain-reads.test.ts
 test/engine-parity/projection-rebuild-steps.test.ts
+test/engine-parity/publication-retry-limit.test.ts
 test/engine-parity/publication-source-lock.test.ts
 test/engine-parity/purge-dry-run.test.ts
 test/engine-parity/purge-plan.test.ts

@@ -51,6 +51,8 @@ export const PAGES_MEMBERS = {
   readPageBodySizes: 'pages',
   getPage: 'pages',
   readPageSnapshot: 'pages',
+  // the chronicle decision's stored truth lead (engine-sql/chronicle-ledger.ts)
+  readPageTruthLead: 'pages',
   readPageSnapshotsBatch: 'pages',
   putPage: 'pages',
   findDuplicatePage: 'pages',

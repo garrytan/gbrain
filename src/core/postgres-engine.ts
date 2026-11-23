@@ -148,6 +148,7 @@ import * as federationExposureImpl from './engine-sql/federation-exposure.ts';
 import * as notifierImpl from './engine-sql/notifier.ts';
 import * as cliReadsImpl from './engine-sql/cli-reads-import.ts';
 import * as writeMiscImpl from './engine-sql/write-misc.ts';
+import * as chronicleLedger from './engine-sql/chronicle-ledger.ts';
 import * as repairBookkeepingImpl from './engine-sql/repair-bookkeeping.ts';
 import * as managedSyncOrphansImpl from './engine-sql/managed-sync-orphans.ts';
 import * as ownedContentImpl from './engine-sql/owned-content.ts';
@@ -177,6 +178,7 @@ import * as originHoldsImpl from './engine-sql/origin-holds.ts';
 import type { DerivedOriginPark } from './persistence/derived-origin-hold.ts';
 import * as headBlockerImpl from './engine-sql/head-blocker.ts';
 import * as checkpointValidationImpl from './engine-sql/checkpoint-validation.ts';
+import * as chronicleExecutorImpl from './engine-sql/chronicle-executor.ts';
 import type { StoredWorktreeManifest } from './persistence/worktree-manifest.ts';
 import * as writeAttributionImpl from './engine-sql/write-attribution.ts';
 import * as opCheckpointImpl from './engine-sql/op-checkpoint.ts';
@@ -2608,8 +2610,17 @@ export class PostgresEngine implements BrainEngine {
   writerAdminStore(): Promise<WriterAdminStore> { return writerAdminImpl.writerAdminStore(this); }
   writerReleaseStore(): Promise<WriterReleaseStore> { return writerReleaseImpl.writerReleaseStore(this); }
   publicationJournalStore() { return publicationJournalImpl.publicationJournalStore(this); }
+  chronicleStore() { return chronicleExecutorImpl.chronicleStore(this); }
   addPersistenceCounters(key: string, delta: Partial<Record<CounterColumn, number>>): Promise<void> { return writerReleaseImpl.addPersistenceCounters(this, key, delta); }
   hasExtractedEvents(sourceId: string, pageId: number) { return writeMiscImpl.hasExtractedEvents(this.writeMiscReads, sourceId, pageId); }
+  async upsertChronicleRow(w: chronicleLedger.ChronicleRowUpsert) { return chronicleLedger.upsertChronicleRow(this, w); }
+  async readChronicleRow(key: chronicleLedger.ChronicleRowKey) { return chronicleLedger.readChronicleRow(this, key); }
+  async hasPendingAutoChronicleRow(sourceId: string, pageId: number, extractorVersion: number) { return chronicleLedger.hasPendingAutoChronicleRow(this, sourceId, pageId, extractorVersion); }
+  async countRecentChronicleReservations() { return chronicleLedger.countRecentChronicleReservations(this); }
+  async reserveChronicleJudgeSlot(limit: number, key: chronicleLedger.ChronicleJudgeKey) { return chronicleLedger.reserveChronicleJudgeSlot(this, limit, key); }
+  async pruneChronicleReservations() { return chronicleLedger.pruneChronicleReservations(this); }
+  async insertConfigIfAbsent(key: string, value: string) { return chronicleLedger.insertConfigIfAbsent(this, key, value); }
+  async readPageTruthLead(pageId: number) { return chronicleLedger.readPageTruthLead(this, pageId); }
   listActiveAccessMembers() { return writeMiscImpl.listActiveAccessMembers(this.writeMiscReads); }
   hasLabelledOnlyMember() { return this.engineSqlRead(exec => writeMiscImpl.hasLabelledOnlyMember(unscopedExecutor(exec, 'write misc: page writes ran these unscoped through executeRaw'))); }
   listAccessTokens() { return accessCredentials.listAccessTokens(this); }
