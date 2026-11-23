@@ -271,7 +271,8 @@ export function ghostKeptDetail(code: GhostKeptCode, ghost: GhostPage, root?: st
   if (code === WORKTREE_ONLY_CODE) return `file ${ghost.path} is deleted in the working tree only: HEAD still holds it; not soft-deleted. `
     + `Restore it with git -C ${root ?? '<source root>'} checkout -- ${ghost.path} and sync the source; if the removal is intended, commit the deletion, sync, then preview again`;
   return `Git could not say which commit deleted ${ghost.path} (the source is not a Git checkout, its history is shallow, or the history read failed), so page ${ghost.slug} may hold the only copy of its content; not soft-deleted. `
-    + `Write the file from the page with ${recreateFile(ghost)}, or fetch the full history (git fetch --unshallow) and preview again`;
+    + `Write the file from the page with ${recreateFile(ghost)}; in a shallow clone, fetch the full history (git fetch --unshallow) and preview again; `
+    + `in a folder that is not a Git checkout, delete the page by hand (gbrain delete ${ghost.slug}) if its removal is intended`;
 }
 
 /**

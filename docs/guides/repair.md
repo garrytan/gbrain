@@ -1615,7 +1615,7 @@ older approval names it:
 | `ghost_never_committed` | No commit ever held the recorded file (a page written in the database only, or a file removed before any commit), so the page holds the only copy of its content. | Write the file from the page with `gbrain repair file-drift --source <id> --slug <slug> --prefer database`, commit it and sync, or keep the page. |
 | `ghost_worktree_only` | HEAD still holds the file; only the working tree lost it. | Restore it with `git -C <source root> checkout -- <path>` and sync. If the removal is intended, commit the deletion, sync, then preview again. |
 | `database_ahead_of_file` | The page was written in the database after its file last held it. | Recreate the file from the page (`--prefer database` above), or keep the page. |
-| `ghost_history_unknown` | Git cannot say which commit deleted the file (the source is not a Git checkout, its history is shallow, or the history read failed). | Recreate the file from the page, or fetch the full history (`git fetch --unshallow`) and preview again. |
+| `ghost_history_unknown` | Git cannot say which commit deleted the file (the source is not a Git checkout, its history is shallow, or the history read failed). | Recreate the file from the page. In a shallow clone, fetch the full history (`git fetch --unshallow`) and preview again. In a folder that is not a Git checkout, delete the page by hand (`gbrain delete <slug>`) if you meant to remove it. |
 
 `gbrain repair file-drift --prefer file` applies the same check before it
 soft-deletes a page whose file is gone.

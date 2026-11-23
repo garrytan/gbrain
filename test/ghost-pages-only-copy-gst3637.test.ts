@@ -12,7 +12,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { ghostPageNow } from '../src/core/ghost-pages.ts';
@@ -83,5 +83,24 @@ for (const backend of testBackends()) describe('[' + backend + '] GST-3637: ghos
     // A deletion Git cannot place keeps the page as well.
     const stub = (await ghostPageNow(engine, 'default', STUB))!;
     expect(await ghostBacking(engine, stub.ghost!, stub.owner!, { kind: 'unknown' })).toBe('ghost_history_unknown');
+  }, { databaseUrl, setup }), 120_000);
+
+  test('a ghost whose deletion Git cannot place is listed apart and the soft-delete refuses it', () => managedBrain(async ({ engine, ctx, root }) => {
+    expect((await performManagedSync(engine, { sourceId: 'default', noPull: true, noEmbed: true, noExtract: true })).status).toBe('first_sync');
+    git(root, 'rm', '-q', 'notes/committed.md'); git(root, 'commit', '-qm', 'remove notes/committed', '--date=' + new Date(Date.now() + 2000).toISOString());
+    // The folder stops being a Git checkout, so no commit can be named as the one that deleted the file.
+    rmSync(join(root, '.git'), { recursive: true, force: true });
+
+    const preview = await (await repairRunner(engine, { apply: false, logger })).run('ghost-pages', await resolveRepairScope(engine, 'default'), { explicit: true, sourceFlag: 'default' });
+    expect(preview.affected).toBe(0);
+    expect(preview.residuals).toMatchObject({ history_unknown: 1 });
+    const entry = preview.listing!.find(row => row.item === 'default:notes/committed')!;
+    expect(entry.class).toBe('ghost_history_unknown');
+    expect(entry.detail).toContain('gbrain delete notes/committed');
+
+    const now = await ghostPageNow(engine, 'default', 'notes/committed');
+    expect(now.ghost).not.toBeNull();
+    expect(await retireGhost(ctx, now.ghost!, now.owner!, async () => randomUUID())).toMatchObject({ applied: false, outcome: 'refused', reason: 'ghost_history_unknown' });
+    expect((await engine.executeRaw<{ live: boolean }>("SELECT deleted_at IS NULL AS live FROM pages WHERE source_id='default' AND slug='notes/committed'"))[0]!.live).toBe(true);
   }, { databaseUrl, setup }), 120_000);
 });
