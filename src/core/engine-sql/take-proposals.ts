@@ -180,7 +180,7 @@ export interface TakeProposalTombstone { id: number; slug: string; claim_text: s
 export async function listTakeProposalTombstones(tx: Raw, sourceId: string, prefix: string): Promise<TakeProposalTombstone[]> {
   const rows = await tx.executeRaw<TakeProposalTombstone>(
     `SELECT id, page_slug AS slug, claim_text, prompt_version, proposed_at::text AS proposed_at FROM take_proposals
-      WHERE source_id = $1 AND status = 'rejected' AND acted_at IS NULL AND starts_with(claim_text, $2) ORDER BY page_slug, id`,
+      WHERE source_id = $1 AND status = 'rejected' AND acted_at IS NULL AND starts_with(claim_text, $2) ORDER BY page_slug COLLATE "C", id`,
     [sourceId, prefix]);
   return rows.map(row => ({ ...row, id: Number(row.id) }));
 }
