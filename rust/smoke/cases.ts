@@ -254,7 +254,7 @@ export const cases: Case[] = [
       assert.equal(addon.engineAbi, 1);
       assert.match(addon.engineBuild, /^[0-9a-f]{64}$/);
       assert.equal(addon.catalogVersion, 0);
-      assert.deepEqual(addon.formatVersions, [1, 2, 3, 4, 5, 6]);
+      assert.deepEqual(addon.formatVersions, [1, 2, 3, 4, 5, 6, 7]);
     },
   },
   {
@@ -565,7 +565,7 @@ export const cases: Case[] = [
         assert.equal(first.isOpen, false);
         const opened = await first.open(dir, { schemaVersion: 319 });
         assert.equal(opened.created, true);
-        assert.equal(opened.format_version, 6);
+        assert.equal(opened.format_version, 7);
         assert.match(opened.brain_id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
         assert.equal(first.isOpen, true);
 

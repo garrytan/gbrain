@@ -174,10 +174,19 @@ counter is `M next_facts_id`.
 | `F 0x0A source fact_id` | `AttemptRecord` (JSON) | One `fact_relink_attempts` row (primary key `(source_id, fact_id)`). `fact_id` is sign-flipped big-endian, so key order is numeric order. |
 | `F 0x0B source tier target_slug fact_id` | empty | Attempts that carry both a tier and a target page, for `deleteFactRelinkMemos` and the paid memo read. |
 | `F 0x0C source content_hash` | JSON: `slug`, `request_id`, `purged_at_us` | One `page_purges` row (primary key `(source_id, content_hash)`); `facts/page_purges.rs`. |
-| `F 0x10 source kind value` | `SuppressionRecord` (JSON: `id`, `created_at_us`) | One `loop_suppressions` row (unique `(source_id, kind, value)`); `facts/loops/mutes.rs`. Its counter is `M next_loop_suppressions_id`. |
 | `F 0x0C source content_hash` | `PagePurgeRecord` (JSON) | One `page_purges` row (primary key `(source_id, content_hash)`); `facts/page_purges.rs`. |
 | `F 0x0F source visibility subject fact_hash` | `PurgeRecord` (JSON: `request_id`, `actor`, `reason`, `purged_at_us`) | One `fact_purges` row (primary key `(source_id, visibility, subject, fact_hash)`); `facts/purge_ledger.rs`. |
-| `F 0x10 source subject claim_hash` | `TakePurgeRecord` (JSON: `request_id`, `purged_at_us`) | One `take_purges` row (primary key `(source_id, subject, claim_hash)`); `facts/take_purges.rs`. |
+| `F 0x10 source subject claim_hash` | `TakePurgeRecord` (JSON: `request_id`, `purged_at_us`) | One `take_purges` row (primary key `(source_id, subject, claim_hash)`); `facts/take_purges.rs`. Stays at `0x10`. |
+| `F 0x11 source kind value` | `SuppressionRecord` (JSON: `id`, `created_at_us`) | One `loop_suppressions` row (unique `(source_id, kind, value)`); `facts/loops/mutes.rs`. Its counter is `M next_loop_suppressions_id`. Store formats 6 and older kept these rows at `F 0x10`, the take purge ledger's prefix, so every take purge read scanned the mutes; format 7 moved them (see "Sub-tags" below). |
+
+Sub-tags: each record kind has its own byte after `F`, assigned in the module that writes it. `0x0E`
+is retired (the v0.60.766.0 addon's inline generation ledger) and must not be reused; `0x12` is the
+next free byte. `crates/gbrain-store/tests/key_registry.rs` scans the store source for every
+`(family, sub-tag)` a module declares and fails when two record kinds share one, so a new kind takes
+a free byte or the build fails. Format 7 split `F 0x10`: take purges kept it and the loop mutes moved
+to `0x11` (the loop mutes were the smaller set to move; a brain's mutes are a handful, its take
+purges one record per purged claim). The open-time upgrade is `facts/key_split.rs` (see
+[format.md](format.md)).
 
 ### Page purge ledger (`facts/page_purges.rs`)
 

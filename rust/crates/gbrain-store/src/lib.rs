@@ -699,6 +699,21 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
             )
         })?;
     }
+    // Format 7: the loop mutes leave the take purge ledger's `F 0x10` prefix for `F 0x11`, or the
+    // brain is refused naming the record that is neither.
+    if stored.format_version <= 6 {
+        let from = stored.format_version;
+        facts::key_split::split_take_purges_from_loop_mutes(&mut *tx).map_err(|e| {
+            StoreError::new(
+                error::SHADOW_RESEED_REQUIRED,
+                format!(
+                    "this brain (store format {from}) holds a record this build cannot sort into the take purge ledger or the loop mutes: {}; nothing was changed. Re-seed the shadow store: {}",
+                    e.message,
+                    seed::RESEED_STEPS
+                ),
+            )
+        })?;
+    }
     stored.format_version = FORMAT_VERSION;
     put_json(&mut *tx, &keys::meta("format"), &stored)?;
     tx.commit()?;
