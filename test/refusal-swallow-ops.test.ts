@@ -82,4 +82,23 @@ describe('job operation refusal-swallow sites', () => {
     expect(await skipped(pg)).toEqual([{ id: queued.id, status: 'waiting' }]);
     expect(await skipped(refusingEngine(pg, { needle: 'FROM minion_jobs\n          WHERE name = ANY' }))).toEqual([{ id: queued.id, status: 'waiting' }]);
   });
+
+  test('S13 over a page: 1,001 queued jobs of one manual-only name are all reported, by id, from one read', async () => {
+    await pg.executeRaw('DELETE FROM minion_jobs');
+    const queue = new MinionQueue(pg);
+    const ids: number[] = [];
+    for (let i = 0; i < 1001; i++) {
+      ids.push((await queue.add('unify-types', { target_pack: 'example-pack', apply: true }, { queue: 'default', idempotency_key: `refusal-swallow-many-${i}` }, { allowProtectedSubmit: true })).id);
+    }
+    const pack = makeRemediationStep({ id: 'onboard.pack_upgrade_example', job: 'unify-types', params: { target_pack: 'example-pack', apply: true },
+      severity: 'medium', est_seconds: 5, est_usd_cost: 0, rationale: 'synthetic onboard-check extra', protected: true });
+    const write = process.stderr.write;
+    process.stderr.write = (() => true) as typeof process.stderr.write;
+    try {
+      const result = await runRemediation(pg, { targetScore: 0, inlineJobs: true, extraRemediations: [pack] });
+      const queued = result.manual_only_skipped![0]!.queued_jobs!;
+      expect(queued).toHaveLength(1001);
+      expect(queued.map((q) => q.id)).toEqual(ids);
+    } finally { process.stderr.write = write; await pg.executeRaw('DELETE FROM minion_jobs'); }
+  }, 60_000);
 });
