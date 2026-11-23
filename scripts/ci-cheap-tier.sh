@@ -6,7 +6,8 @@
 # skipped only when their selector left them out (native scope smoke,
 # convergence skip); a selected lane that skipped, failed or was cancelled
 # fails the tier. A lane gated by Trunk Dynamic CI (DCI_SECURITY DCI_STRESS
-# DCI_NATIVE DCI_PERSISTENCE, docs/ci-event-parity.md#trunk-dynamic-ci) may also
+# DCI_NATIVE, and DCI_PERSISTENCE for the crash robot's verdict inside
+# persistence-validation.yml; docs/ci-event-parity.md#trunk-dynamic-ci) may also
 # be skipped when its verdict is exactly 'false'; Learning mode never says
 # 'false'. The step summary always says the full suite did not run.
 set -euo pipefail

@@ -321,7 +321,7 @@ test/scripts/build-schema-migrations.test.ts	generator diagnostics (FAIL/Why/Fix
 test/scripts/build-schema-migrations.test.ts	out-of-order landing check	2	exec-scan
 test/scripts/check-agent-contract-baselines.test.ts	agent-contract baselines	2	readFileSync
 test/scripts/check-core-world-reads.test.ts	check-core-world-reads.ts: the ratchet	5	readFileSync
-test/scripts/check-dynamic-ci.test.ts	check-dynamic-ci.ts	1	exec-scan,readFileSync
+test/scripts/check-dynamic-ci.test.ts	check-dynamic-ci.ts	3	exec-scan,readFileSync
 test/scripts/check-function-size.test.ts	check-function-size.ts rules	11	readFileSync
 test/scripts/check-item-allowlist-catches.test.ts	CLI	2	readFileSync
 test/scripts/check-public-surface.test.ts	dropped manifest entries	7	bun-file
@@ -355,7 +355,7 @@ test/scripts/e2e-shard-budget.test.ts	E2E shard-time budget	3	readFileSync
 test/scripts/e2e-wiring.test.ts	(file-level)	14	readFileSync
 test/scripts/engine-raw-sql-ratchet.test.ts	check-engine-raw-sql-ratchet.ts: shrink-only baseline	11	readFileSync
 test/scripts/fix-wave-gate.test.ts	fix-wave gate workflow	3	readFileSync
-test/scripts/full-ci-workflow.test.ts	full CI on pull requests	7	readFileSync
+test/scripts/full-ci-workflow.test.ts	full CI on pull requests	8	readFileSync
 test/scripts/full-ci-workflow.test.ts	full-ci label lifetime	4	readFileSync
 test/scripts/full-ci-workflow.test.ts	master-push reuse of a passed full-suite run	2	readFileSync
 test/scripts/gh-issue-agent-filed.test.ts	agent-filed label	2	readFileSync
