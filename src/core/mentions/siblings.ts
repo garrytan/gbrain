@@ -17,6 +17,7 @@
  * turns the rule off. Untrusted callers never see a private page as a sibling.
  */
 
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { BrainEngine } from '../engine.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { canonicalTypeOf, linkableTypesFor, loadSourcePack, readMentionPolicy, type MentionPolicy, type PackTypes } from './policy.ts';
@@ -97,17 +98,15 @@ export async function siblingCanonical(engine: BrainEngine, sourceId: string, sl
   try {
     const policy = await readMentionPolicy(engine);
     if (!policy.siblingMerge) return null;
-    const { privatePagesFilterForCaller } = await import('../search/private-visibility.ts');
-    const rows = await engine.executeRaw<{ slug: string; title: string | null; type: string | null; identity: unknown }>(
-      `SELECT slug, title, type, frontmatter->>'identity' AS identity FROM pages
-        WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[])${opts.excludePrivate ? ` AND ${privatePagesFilterForCaller('pages')}` : ''}`,
-      [sourceId, unique]);
+    const rows = await engine.readSiblingGroupRows(sourceId, unique, { excludePrivate: opts.excludePrivate === true });
     if (rows.length !== unique.length) return null;
     const pack = await loadSourcePack(engine, sourceId);
     const types = new Set(linkableTypesFor(pack, policy));
     if (!rows.every(r => r.type != null && types.has(r.type))) return null;
     return siblingVerdict(rows, pack, policy) === 'group' ? unique[0]! : null;
-  } catch {
+  } catch (err) {
+    // A refused read is not "no group": the fact writer would store the fact under a slug no page has.
+    rethrowCapabilityRefusal(err);
     return null;
   }
 }

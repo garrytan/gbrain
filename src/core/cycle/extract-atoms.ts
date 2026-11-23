@@ -58,6 +58,7 @@
 // sourceId arg — atoms always wrote to 'default' regardless of source,
 // which made the NOT EXISTS guard ineffective on federated brains.
 
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { observationDateLine, observationDateRule } from '../ai/date-grounding.ts';
 import { isConsumerDateGroundingOn } from '../facts/extract.ts';
 import type { BrainEngine, LinkBatchInput } from '../engine.ts';
@@ -468,6 +469,7 @@ export async function discoverExtractablePages(
       identity: { pageId: r.id, sourceIncarnation: r.source_incarnation, revision: r.knowledge_revision },
     }));
   } catch (err) {
+    rethrowCapabilityRefusal(err); // no page discovery is not "no pages": the phase must not report no_work
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[extract_atoms] page-discovery query failed: ${msg}`);
     return []; // fail-soft: transcript path still proceeds
@@ -565,6 +567,7 @@ export async function atomsExistingForHashes(
     );
     return new Set(rows.map(r => r.h));
   } catch (err) {
+    rethrowCapabilityRefusal(err); // "none extracted" would re-spend every page
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[extract_atoms] batch idempotency check failed (assuming none extracted): ${msg}`);
     return new Set();
@@ -610,6 +613,7 @@ export async function tombstonedTranscriptsForHashes(
     );
     return new Set(rows.map(r => transcriptStateKey(r.file_path, r.content_hash)));
   } catch (err) {
+    rethrowCapabilityRefusal(err); // "none tombstoned" would re-spend every tombstoned transcript
     if (isMissingSchemaObject(err, 'table', 'extract_atoms_transcript_state')) {
       // Un-migrated brain: the table lands with v146. Once per process, not a
       // full error line on every cycle until the operator migrates.
@@ -1018,6 +1022,7 @@ export async function runPhaseExtractAtoms(
         const cnt = rows[0]?.cnt;
         return cnt == null ? null : Number(cnt);
       } catch (err) {
+        rethrowCapabilityRefusal(err); // a strike that is refused is not a strike that failed: the phase must say it cannot run
         // A strike that never lands means this transcript never tombstones and
         // re-spends budget forever (#4916's class) — say so. A missing table
         // was already warned once by the tombstone check above.

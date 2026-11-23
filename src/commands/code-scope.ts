@@ -10,6 +10,7 @@
  * pin), matching the pre-extraction behavior of both callers.
  */
 
+import { rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { errorFor } from '../core/errors.ts';
 import { resolveScopedSourceOrThrow, SourceResolutionError } from '../core/sources-ops.ts';
@@ -215,16 +216,13 @@ export async function shouldWidenForNoCode(
   }
 }
 
-/** Existence check for an explicit --source, mirroring the resolver's own gate. */
-async function sourceExists(engine: BrainEngine, sourceId: string): Promise<boolean> {
+/** Existence check for an explicit --source, mirroring the resolver's own gate. Exported for the engine-parity case. */
+export async function sourceExists(engine: BrainEngine, sourceId: string): Promise<boolean> {
   try {
-    const rows = await engine.executeRaw<{ e: boolean }>(
-      `SELECT EXISTS(SELECT 1 FROM sources WHERE id = $1 AND NOT archived) AS e`,
-      [sourceId],
-    );
-    return rows[0]?.e === true;
-  } catch {
-    // A probe failure must not block a lookup the user could otherwise run.
+    return (await engine.listAllSources()).some((s) => s.id === sourceId);
+  } catch (err) {
+    // A probe failure must not block a lookup the user could otherwise run; a refused read is not a probe failure.
+    rethrowCapabilityRefusal(err);
     return true;
   }
 }

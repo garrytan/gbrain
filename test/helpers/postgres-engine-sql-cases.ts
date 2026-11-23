@@ -288,6 +288,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listOntologyFactCandidates': OOS.doctorDerived,
   'readAtomProvenanceCounts': OOS.doctorDerived,
   'readExtractRollup7d': OOS.doctorDerived,
+  'readExtractKindRollup7d': OOS.doctorDerived,
   'listRecordedHaltReasons7d': OOS.doctorDerived,
   'listCapacityCounters': OOS.doctorPersistence,
   'listOutstandingHolders': OOS.doctorPersistence,
@@ -1582,7 +1583,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listHostConsumerRows': OOS.journal, 'probeLiveConsumerRows': OOS.journal, 'renewConsumerRow': OOS.journal, 'deleteConsumerRow': OOS.journal,
   'stampWorktreeHeartbeats': OOS.journal,
   // entity and mention reads the CLI made through executeRaw
-  'readMentionLastPass': OOS.entityReads, 'countPagesDueForMentions': OOS.entityReads, 'readIdentitySiblingCandidates': OOS.entityReads,
+  'readMentionLastPass': OOS.entityReads, 'countPagesDueForMentions': OOS.entityReads, 'readIdentitySiblingCandidates': OOS.entityReads, 'readSiblingGroupRows': OOS.entityReads,
   'findExactSlug': OOS.entityReads, 'readExtractionLagCounts': OOS.entityReads, 'readIgnoredPrivacyLabelPages': OOS.entityReads,
   'readSourceMembership': OOS.journal, 'findTopologyChanges': OOS.journal, 'renewWriteClaim': OOS.journal, 'releaseUnpublishedClaim': OOS.journal, 'expireStaleWriteClaims': OOS.journal,
   'readSegmentedPageSealed': OOS.callerRawSql, 'storeSegmentDerivationsIfLive': OOS.callerRawSql, 'listMentionSourceIds': OOS.callerRawSql, 'writeMentionIndexStatus': OOS.callerRawSql, 'lockMentionSources': OOS.callerRawSql, 'listMentionLinkOrigins': OOS.callerRawSql, 'deleteSourceMentionLinks': OOS.callerRawSql, 'clearMentionSourceIndex': OOS.callerRawSql, 'listStaleDerivedAliasSlugs': OOS.callerRawSql, 'deleteDerivedAliasesForSlugs': OOS.callerRawSql, 'listAliasDuePages': OOS.callerRawSql, 'listDerivedAliasRows': OOS.callerRawSql, 'readMentionPageRevisions': OOS.callerRawSql, 'insertDerivedAliasRows': OOS.callerRawSql, 'upsertPageAliasState': OOS.callerRawSql, 'listMentionCandidatePages': OOS.callerRawSql, 'listGazetteerEntryKeys': OOS.callerRawSql, 'listMentionLinkersOfTargets': OOS.callerRawSql, 'lockMentionEntries': OOS.callerRawSql, 'applyGazetteerEntryChanges': OOS.callerRawSql, 'resetMentionRevisions': OOS.callerRawSql, 'readMentionGenerations': OOS.callerRawSql, 'listMentionDuePages': OOS.callerRawSql, 'listPageOutLinks': OOS.callerRawSql, 'deleteLinksById': OOS.callerRawSql, 'upsertPageMentionState': OOS.callerRawSql, 'readMentionStatusStates': OOS.callerRawSql, 'readMentionPolicyFingerprints': OOS.callerRawSql, 'resetSourceMentionIndexRevisions': OOS.callerRawSql, 'listLivePageSourceIds': OOS.callerRawSql, 'listGazetteerPages': OOS.callerRawSql, 'listGazetteerAliases': OOS.callerRawSql, 'readPageStampTimes': OOS.callerRawSql, 'readPageRevisionForShare': OOS.callerRawSql, 'readExplainPage': OOS.callerRawSql, 'readExplainScanPage': OOS.callerRawSql, 'countMentionLinksTo': OOS.callerRawSql, 'readPageNameText': OOS.callerRawSql, 'listFrontmatterAliasNorms': OOS.callerRawSql, 'listRejectedDeclarationPages': OOS.callerRawSql,
@@ -2696,6 +2697,10 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('readIdentitySiblingCandidates', [
     ['default', (e) => e.readIdentitySiblingCandidates(SRC, { types: ['person'], subject: 'alice', limit: 5 })],
     ['excludePrivate+excludeQuarantined', (e) => e.readIdentitySiblingCandidates(SRC, { types: ['person'], subject: 'alice', limit: 5, excludePrivate: true, excludeQuarantined: true })],
+  ]),
+  ...variants('readSiblingGroupRows', [
+    ['default', (e) => e.readSiblingGroupRows(SRC, ['companies/a', 'companies/b'])],
+    ['excludePrivate', (e) => e.readSiblingGroupRows(SRC, ['companies/a', 'companies/b'], { excludePrivate: true })],
   ]),
   ...variants('findExactSlug', [
     ['default', (e) => e.findExactSlug(SRC, [SLUG], { retired: false })],

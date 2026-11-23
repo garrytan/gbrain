@@ -72,6 +72,32 @@ interface Pin {
 }
 
 const PINS: Pin[] = [
+  // The refusal-swallow sites (lane 8's triage) whose statements moved verbatim into typed members, at b7b18e5ab3.
+  {
+    from: 'src/commands/extract-explain.ts:169 the kind rollup (at b7b18e5ab3)',
+    case: { method: 'readExtractKindRollup7d', variant: 'default', run: e => e.readExtractKindRollup7d('meeting') },
+    texts: [`SELECT
+         SUM(cost_usd) AS cost_7d_usd,
+         SUM(eval_pass_count)::text AS eval_pass_count,
+         SUM(eval_fail_count)::text AS eval_fail_count,
+         SUM(halt_count)::text AS halt_count,
+         SUM(round_completed_count)::text AS round_completed_count,
+         MAX(updated_at) AS last_updated_at
+       FROM extract_rollup_7d
+       WHERE day >= CURRENT_DATE - 7 AND kind = $1`],
+  },
+  {
+    from: 'src/core/mentions/siblings.ts:110 siblingCanonical (at b7b18e5ab3)',
+    case: { method: 'readSiblingGroupRows', variant: 'default', run: e => e.readSiblingGroupRows('default', ['companies/a', 'companies/b']) },
+    texts: [`SELECT slug, title, type, frontmatter->>'identity' AS identity FROM pages
+        WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[])`],
+  },
+  {
+    from: 'src/core/mentions/siblings.ts:110 siblingCanonical, excludePrivate (at b7b18e5ab3)',
+    case: { method: 'readSiblingGroupRows', variant: 'excludePrivate', run: e => e.readSiblingGroupRows('default', ['companies/a', 'companies/b'], { excludePrivate: true }) },
+    texts: () => [`SELECT slug, title, type, frontmatter->>'identity' AS identity FROM pages
+        WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[]) AND ${privatePagesFilterForCaller('pages')}`],
+  },
   // The segmented page projection check and the derive pass's conditional store, then the mention pass, the gazetteer, the extract walk's snapshot, the by-mention rebuild and explain, copied verbatim
   {
     from: 'src/core/persistence/searchable.ts:33 (at 0af1a6ecf0)',

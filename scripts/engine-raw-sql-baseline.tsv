@@ -22,7 +22,6 @@ src/commands/autopilot-health.ts	execute_raw	1
 src/commands/autopilot-retry-global.ts	execute_raw	1
 src/commands/autopilot.ts	execute_raw	1
 src/commands/autopilot/install-repo.ts	execute_raw	1
-src/commands/code-scope.ts	execute_raw	1
 src/commands/config.ts	execute_raw	1
 src/commands/core.ts	execute_raw	6
 src/commands/db-repair.ts	execute_raw	5
@@ -76,12 +75,10 @@ src/commands/doctor/report-remote.ts	execute_raw	2
 src/commands/doctor/schema-pack-checks.ts	execute_raw	2
 src/commands/doctor/skill-checks.ts	execute_raw	1
 src/commands/edge-proposals.ts	execute_raw	6
-src/commands/edges-backfill.ts	execute_raw	1
 src/commands/embed.ts	execute_raw	1
 src/commands/engine-status.ts	execute_raw	1
 src/commands/eval-whoknows.ts	execute_raw	1
 src/commands/extract-conversation-facts.ts	execute_raw	1
-src/commands/extract-explain.ts	execute_raw	1
 src/commands/extract-stale-options.ts	execute_raw	1
 src/commands/extract-status.ts	execute_raw	1
 src/commands/extract-timeline-db.ts	execute_raw	2
@@ -154,7 +151,6 @@ src/commands/sync/renames.ts	execute_raw	1
 src/commands/sync/run.ts	execute_raw	3
 src/commands/takes.ts	execute_raw	2
 src/commands/trust.ts	execute_raw	1
-src/commands/upgrade.ts	execute_raw	1
 src/core/access/actor.ts	execute_raw	2
 src/core/access/attest-sources.ts	sql_template	7
 src/core/access/federation-exposure.ts	execute_raw	1
@@ -200,7 +196,7 @@ src/core/belief/purge.ts	execute_raw	14
 src/core/belief/retier.ts	execute_raw	3
 src/core/bootstrap/harness-cleanup.ts	execute_raw	1
 src/core/bootstrap/harness-skills.ts	execute_raw	1
-src/core/bootstrap/verify.ts	execute_raw	6
+src/core/bootstrap/verify.ts	execute_raw	3
 src/core/brainstorm/domain-bank.ts	execute_raw	1
 src/core/budget/daily-ledger.ts	execute_raw	5
 src/core/by-mention.ts	execute_raw	2
@@ -246,7 +242,6 @@ src/core/cycle/drift.ts	execute_raw	2
 src/core/cycle/extract-atoms-generation.ts	execute_raw	4
 src/core/cycle/extract-atoms-input.ts	execute_raw	6
 src/core/cycle/extract-atoms-page-state.ts	execute_raw	4
-src/core/cycle/extract-atoms-stamp.ts	execute_raw	1
 src/core/cycle/extract-atoms.ts	execute_raw	5
 src/core/cycle/extract-takes.ts	execute_raw	3
 src/core/cycle/filing-rules.ts	execute_raw	1
@@ -355,7 +350,6 @@ src/core/links-fence-projection.ts	execute_raw	8
 src/core/loops/loops-store.ts	execute_raw	2
 src/core/maintenance/run.ts	execute_raw	1
 src/core/meetings/meetings-source.ts	execute_raw	2
-src/core/mentions/siblings.ts	execute_raw	1
 src/core/migrate.ts	execute_raw	2
 src/core/migration-preludes.ts	execute_raw	12
 src/core/minions/authorize-legacy.ts	execute_raw	7
@@ -383,7 +377,7 @@ src/core/minions/worker.ts	execute_raw	7
 src/core/multi-source-drift.ts	execute_raw	1
 src/core/oauth-grants.ts	sql_template	16
 src/core/oauth-provider.ts	sql_template	22
-src/core/onboard/impact-capture.ts	execute_raw	2
+src/core/onboard/impact-capture.ts	execute_raw	1
 src/core/onboard/mcp-onboarding.ts	execute_raw	1
 src/core/ops/chronicle.ts	execute_raw	1
 src/core/ops/context.ts	execute_raw	1
@@ -792,4 +786,3 @@ src/eval/longmemeval/harness.ts	execute_raw	2
 src/eval/longmemeval/retrieval-arms.ts	execute_raw	2
 src/eval/shared/embed-cache.ts	driver_call	4
 src/mcp/http-transport.ts	sql_template	1
-src/mcp/source-preflight.ts	execute_raw	1

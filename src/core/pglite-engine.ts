@@ -1671,6 +1671,7 @@ export class PGLiteEngine implements BrainEngine {
   listOrphanGenerationCandidates(sourceIds: readonly string[], kind: string | null) { return doctorDerivedImpl.listOrphanGenerationCandidates(this.rawRead, sourceIds, kind); }
   readAtomProvenanceCounts() { return doctorDerivedImpl.readAtomProvenanceCounts(this.rawRead); }
   readExtractRollup7d(withExpected: boolean) { return doctorDerivedImpl.readExtractRollup7d(this.rawRead, withExpected); }
+  readExtractKindRollup7d(kind: string) { return doctorDerivedImpl.readExtractKindRollup7d(this.rawRead, kind); }
   listRecordedHaltReasons7d() { return doctorDerivedImpl.listRecordedHaltReasons7d(this.rawRead); }
   listCapacityCounters() { return doctorPersistenceImpl.listCapacityCounters(this.rawRead); }
   listOutstandingHolders(principal: doctorPersistenceImpl.RequestPrincipal | null) { return doctorPersistenceImpl.listOutstandingHolders(this.rawRead, principal); }
@@ -2595,6 +2596,7 @@ export class PGLiteEngine implements BrainEngine {
   listRejectedDeclarationPages(sourceId: string, types: readonly string[], pattern: string) { return mentionReadsImpl.listRejectedDeclarationPages(this, sourceId, types, pattern); }
   countPagesDueForMentions(q: entityReadsImpl.MentionDueQuery) { return entityReadsImpl.countPagesDueForMentions(unscopedExecutor(this.engineSql, 'entities: mention-due count ran unscoped through executeRaw'), q); }
   readIdentitySiblingCandidates(sourceId: string, q: entityReadsImpl.SiblingCandidateQuery) { return entityReadsImpl.readIdentitySiblingCandidates(unscopedExecutor(this.engineSql, 'entities: sibling candidates ran unscoped through executeRaw'), sourceId, q); }
+  readSiblingGroupRows(sourceId: string, slugs: readonly string[], opts?: { excludePrivate?: boolean }) { return entityReadsImpl.readSiblingGroupRows(unscopedExecutor(this.engineSql, 'entities: sibling group rows ran unscoped through executeRaw'), sourceId, slugs, opts); }
   findExactSlug(sourceId: string, slugs: readonly string[], opts?: { retired?: boolean }) { return entityReadsImpl.findExactSlug(unscopedExecutor(this.engineSql, 'entities: exact slug ran unscoped through executeRaw'), sourceId, slugs, opts); }
   readLiveSlugs(sourceId: string, slugs: readonly string[], opts?: { limit?: 2 }) { return entityReadsImpl.readLiveSlugs(unscopedExecutor(this.engineSql, 'entities: live slug read ran unscoped through executeRaw'), sourceId, slugs, opts); }
   readLivePageTypes(sourceId: string, slugs: readonly string[], privacy: entityReadsImpl.ResolverPrivacy) { return entityReadsImpl.readLivePageTypes(unscopedExecutor(this.engineSql, 'entities: live page type read ran unscoped through executeRaw'), sourceId, slugs, privacy); }

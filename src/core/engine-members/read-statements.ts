@@ -120,6 +120,8 @@ export interface ReadStatementMembers {
    * at most `limit`, with frontmatter `identity` as text. `excludePrivate` and `excludeQuarantined` filter candidates.
    */
   readIdentitySiblingCandidates(sourceId: string, q: SiblingCandidateQuery): Promise<SiblingCandidateRow[]>;
+  /** mentions/siblings.ts siblingCanonical: the live pages of the source at `slugs`, with frontmatter identity as text. */
+  readSiblingGroupRows(sourceId: string, slugs: readonly string[], opts?: { excludePrivate?: boolean }): Promise<SiblingCandidateRow[]>;
   /** The first of `slugs` holding a live page that is (`retired: true`), is not (`false`) or is either (omitted) a retired page (`retiredPageSql`). */
   findExactSlug(sourceId: string, slugs: readonly string[], opts?: { retired?: boolean }): Promise<string | null>;
   /** The slugs among `slugs` holding a live page, retired or not, each once, in no set order; `limit: 2` stops at two. */

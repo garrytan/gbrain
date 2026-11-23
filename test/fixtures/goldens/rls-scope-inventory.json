@@ -6824,6 +6824,28 @@
         ],
         "flagOnScopes": []
       },
+      "readSiblingGroupRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readSiblingGroupRows#excludePrivate": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readSoleSourceId#default": {
         "flagOffLanes": [
           "pool"
@@ -10047,6 +10069,7 @@
         "readExplainScanPage": "none",
         "readExportPageRows": "none",
         "readExportWithdrawalLedgerBytes": "none",
+        "readExtractKindRollup7d": "none",
         "readExtractRollup7d": "none",
         "readExtractionLagCounts": "none",
         "readFactActivity": "none",
@@ -10334,6 +10357,7 @@
         "readSharedSkillRevision": "none",
         "readSharedSkillServingEpoch": "none",
         "readSharedSourceRows": "none",
+        "readSiblingGroupRows": "none",
         "readSoakCounterRows": "none",
         "readSoftDeletedAliasCounts": "none",
         "readSoleSourceId": "none",

@@ -1399,6 +1399,7 @@ export class PostgresEngine implements BrainEngine {
   listOrphanGenerationCandidates(sourceIds: readonly string[], kind: string | null) { return doctorDerivedImpl.listOrphanGenerationCandidates(this.executeRaw.bind(this), sourceIds, kind); }
   readAtomProvenanceCounts() { return doctorDerivedImpl.readAtomProvenanceCounts(this.executeRaw.bind(this)); }
   readExtractRollup7d(withExpected: boolean) { return doctorDerivedImpl.readExtractRollup7d(this.executeRaw.bind(this), withExpected); }
+  readExtractKindRollup7d(kind: string) { return doctorDerivedImpl.readExtractKindRollup7d(this.executeRaw.bind(this), kind); }
   listRecordedHaltReasons7d() { return doctorDerivedImpl.listRecordedHaltReasons7d(this.executeRaw.bind(this)); }
   listCapacityCounters() { return doctorPersistenceImpl.listCapacityCounters(this.executeRaw.bind(this)); }
   listOutstandingHolders(principal: doctorPersistenceImpl.RequestPrincipal | null) { return doctorPersistenceImpl.listOutstandingHolders(this.executeRaw.bind(this), principal); }
@@ -2333,6 +2334,7 @@ export class PostgresEngine implements BrainEngine {
   listRejectedDeclarationPages(sourceId: string, types: readonly string[], pattern: string) { return mentionReadsImpl.listRejectedDeclarationPages(this, sourceId, types, pattern); }
   countPagesDueForMentions(q: entityReadsImpl.MentionDueQuery) { return this.preparationRead(exec => entityReadsImpl.countPagesDueForMentions(unscopedExecutor(exec, 'entities: mention-due count ran unscoped through executeRaw'), q)); }
   readIdentitySiblingCandidates(sourceId: string, q: entityReadsImpl.SiblingCandidateQuery) { return this.preparationRead(exec => entityReadsImpl.readIdentitySiblingCandidates(unscopedExecutor(exec, 'entities: sibling candidates ran unscoped through executeRaw'), sourceId, q)); }
+  readSiblingGroupRows(sourceId: string, slugs: readonly string[], opts?: { excludePrivate?: boolean }) { return this.preparationRead(exec => entityReadsImpl.readSiblingGroupRows(unscopedExecutor(exec, 'entities: sibling group rows ran unscoped through executeRaw'), sourceId, slugs, opts)); }
   findExactSlug(sourceId: string, slugs: readonly string[], opts?: { retired?: boolean }) { return this.preparationRead(exec => entityReadsImpl.findExactSlug(unscopedExecutor(exec, 'entities: exact slug ran unscoped through executeRaw'), sourceId, slugs, opts)); }
   readLiveSlugs(sourceId: string, slugs: readonly string[], opts?: { limit?: 2 }) { return this.preparationRead(exec => entityReadsImpl.readLiveSlugs(unscopedExecutor(exec, 'entities: live slug read ran unscoped through executeRaw'), sourceId, slugs, opts)); }
   readLivePageTypes(sourceId: string, slugs: readonly string[], privacy: entityReadsImpl.ResolverPrivacy) { return this.preparationRead(exec => entityReadsImpl.readLivePageTypes(unscopedExecutor(exec, 'entities: live page type read ran unscoped through executeRaw'), sourceId, slugs, privacy)); }
