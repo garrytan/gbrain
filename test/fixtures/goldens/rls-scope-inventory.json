@@ -636,6 +636,17 @@
         ],
         "flagOnScopes": []
       },
+      "countRecentChronicleReservations#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "countRepoBoundSources#default": {
         "flagOffLanes": [
           "pool"
@@ -2475,6 +2486,17 @@
         ],
         "flagOnScopes": []
       },
+      "hasPendingAutoChronicleRow#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "hasRearmableTargets#default": {
         "flagOffLanes": [
           "pool"
@@ -2531,6 +2553,17 @@
         "flagOnScopes": []
       },
       "insertAccessPolicyRevision#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "insertConfigIfAbsent#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -5112,6 +5145,17 @@
         ],
         "flagOnScopes": []
       },
+      "pruneChronicleReservations#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "pruneSatisfiedWantedMarkers#default": {
         "flagOffLanes": [
           "pool"
@@ -5479,6 +5523,17 @@
         "flagOnScopes": []
       },
       "readChronicleDepthRow#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readChronicleRow#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -6670,6 +6725,17 @@
         ],
         "flagOnScopes": []
       },
+      "readPageTruthLead#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readPersistenceBrainId#default": {
         "flagOffLanes": [
           "pool"
@@ -7416,6 +7482,17 @@
         "flagOnScopes": []
       },
       "requireSynchronousCommit#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "reserveChronicleJudgeSlot#default": {
         "flagOffLanes": [
           "tx"
         ],
@@ -8491,6 +8568,17 @@
         ],
         "flagOnScopes": []
       },
+      "upsertChronicleRow#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "upsertChunks#default": {
         "flagOffLanes": [
           "tx"
@@ -8800,6 +8888,7 @@
         "cancelWriteRow": "none",
         "capSessionStatePerClient": "none",
         "carryConceptIncomingLinks": "none",
+        "chronicleStore": "none",
         "chunkRead": "none",
         "claimFilePage": "none",
         "claimHousekeepingTurn": "none",
@@ -8946,6 +9035,7 @@
         "countPurgeReviewRows": "none",
         "countPurgeVersionsCarryingClaim": "none",
         "countPurgedPageFacts": "none",
+        "countRecentChronicleReservations": "none",
         "countRecentCompletedJobs": "none",
         "countRecentDreamSynthSubmissions": "none",
         "countRedactedFacts": "none",
@@ -9256,6 +9346,7 @@
         "hasMcpLogRowsPastWindow": "none",
         "hasNotifierCoverage": "none",
         "hasOverdueWatchdogSuspect": "none",
+        "hasPendingAutoChronicleRow": "none",
         "hasPendingFactsExtraction": "none",
         "hasPersistenceTable": "none",
         "hasQueuedProjectionWork": "none",
@@ -9290,6 +9381,7 @@
         "insertBeliefRedaction": "none",
         "insertCalibrationProfile": "none",
         "insertCanonicalTimelineRows": "none",
+        "insertConfigIfAbsent": "none",
         "insertDecideCalibration": "none",
         "insertDecideProposal": "none",
         "insertDecideReceipts": "none",
@@ -10063,6 +10155,7 @@
         "probeTornPages": "none",
         "projectionRebuildProgress": "none",
         "promoteDelayedJobs": "none",
+        "pruneChronicleReservations": "none",
         "pruneDecideReceipts": "none",
         "pruneFrontmatterTags": "none",
         "pruneHoldingPageVersions": "none",
@@ -10137,6 +10230,7 @@
         "readChronicleDepthRow": "none",
         "readChronicleDuplicateEvents": "none",
         "readChronicleLedgerStats": "none",
+        "readChronicleRow": "none",
         "readChunkColumnTypes": "none",
         "readChunkKeepState": "none",
         "readChunkRowsFingerprint": "none",
@@ -10418,6 +10512,7 @@
         "readPageTitle": "none",
         "readPageTitlesById": "none",
         "readPageTrustRows": "none",
+        "readPageTruthLead": "none",
         "readPageVersionEdition": "none",
         "readPagesForVersionHistory": "none",
         "readPagesRowEstimate": "none",
@@ -10679,6 +10774,7 @@
         "requeueEffectRow": "none",
         "requeueMutedLoops": "none",
         "requireSynchronousCommit": "none",
+        "reserveChronicleJudgeSlot": "none",
         "reserveClientSpend": "none",
         "reserveGroupSpend": "none",
         "reservePageEmbedding": "none",
@@ -10858,6 +10954,7 @@
         "updateTake": "none",
         "updateTakeEmbeddings": "none",
         "updateTimelineDetails": "none",
+        "upsertChronicleRow": "none",
         "upsertChunks": "via:_upsertChunksOnce",
         "upsertCliFileRow": "none",
         "upsertDecideState": "none",
