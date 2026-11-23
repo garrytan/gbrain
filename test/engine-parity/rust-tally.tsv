@@ -115,6 +115,7 @@ test/engine-parity/facts-unique-violation.test.ts	3	0
 test/engine-parity/facts.test.ts	36	0
 test/engine-parity/family-tail-sites.test.ts	6	6
 test/engine-parity/fence-overlay.test.ts	2	0
+test/engine-parity/fence-row-trust.test.ts	4	0
 test/engine-parity/fenced-import-purge.test.ts	1	0
 test/engine-parity/field-usage.test.ts	3	0
 test/engine-parity/files-ops-sites.test.ts	8	0

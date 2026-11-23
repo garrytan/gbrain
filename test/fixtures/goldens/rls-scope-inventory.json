@@ -9425,6 +9425,7 @@
         "listFenceRowClaims": "none",
         "listFenceRowGroups": "none",
         "listFenceRowSupersession": "none",
+        "listFenceRowTrust": "none",
         "listFenceVersionBodies": "none",
         "listFencedFactsOfMissingPages": "none",
         "listFileRowsForVerify": "none",

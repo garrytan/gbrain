@@ -265,7 +265,6 @@ src/core/db.ts	driver_call	2
 src/core/db.ts	sql_template	4
 src/core/derived-links.ts	execute_raw	10
 src/core/eligibility/explain.ts	execute_raw	3
-src/core/eligibility/stamp.ts	execute_raw	1	came from master #9574 (held private restatements), which landed before this ratchet
 src/core/embed-backfill-stall.ts	execute_raw	1
 src/core/embed-backfill-submit.ts	execute_raw	2
 src/core/embed-consent.ts	execute_raw	2

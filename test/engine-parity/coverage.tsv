@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2006/2022
+# covered: 2007/2023
 # lifecycle: 9/9
 # pages: 81/82
 # search: 7/7
@@ -41,7 +41,7 @@
 # minion_status: 12/12
 # minion_subagent: 17/17
 # cli_reads_export: 14/14
-# cli_reads_ops: 14/14
+# cli_reads_ops: 15/15
 # facts_doctor: 14/14
 # embedding_catalog: 7/7
 # fact_relink_attempts: 3/3
@@ -128,7 +128,7 @@ getPage	pages	yes	204	yes	yes	yes	serves
 readPageSnapshot	pages	yes	60	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
 lockPageKeys	pages	yes	14	no	yes	yes	serves
-putPage	pages	yes	1087	yes	yes	yes	serves
+putPage	pages	yes	1091	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	37	yes	yes	yes	serves
@@ -527,9 +527,9 @@ readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
 insertFact	facts	yes	160	yes	yes	yes	serves
-insertFacts	facts	yes	220	no	yes	yes	serves
-deleteFactsForPage	facts	yes	3	no	yes	yes	serves
-expireFact	facts	yes	84	no	yes	yes	serves
+insertFacts	facts	yes	224	no	yes	yes	serves
+deleteFactsForPage	facts	yes	7	no	yes	yes	serves
+expireFact	facts	yes	88	no	yes	yes	serves
 listFactsByEntity	facts	yes	52	yes	yes	yes	serves
 listFactsSince	facts	yes	34	yes	yes	yes	serves
 listFactsKeyset	facts	yes	11	no	yes	yes	serves
@@ -1116,6 +1116,7 @@ readExactSnippetChunks	cli_reads_ops	yes	1	no	yes	yes	serves
 listExactRescanChunks	cli_reads_ops	yes	1	no	yes	yes	serves
 listHeldFenceCells	cli_reads_ops	yes	5	no	yes	yes	serves
 readFenceOverlayRows	cli_reads_ops	yes	7	no	yes	yes	serves
+listFenceRowTrust	cli_reads_ops	yes	4	no	yes	yes	serves
 listExtractionPendingPages	cli_reads_ops	yes	2	no	yes	yes	serves
 listUnattributedFacts	cli_reads_ops	yes	6	no	yes	yes	serves
 listWantedPages	cli_reads_ops	yes	9	no	yes	yes	serves
@@ -1565,7 +1566,7 @@ readPageRevisions	trust	yes	1	no	yes	yes	serves
 appendFactForgetReason	trust	yes	1	no	yes	yes	serves
 readFactWithdrawnRow	trust	yes	2	no	yes	yes	serves
 readFactWithdrawnBacking	trust	yes	1	no	yes	yes	serves
-upsertWriteGateReceipt	trust	yes	26	no	yes	yes	serves
+upsertWriteGateReceipt	trust	yes	30	no	yes	yes	serves
 upsertPageWriteGateReceipt	trust	yes	17	no	yes	yes	serves
 deleteStalePageWriteGateReceipts	trust	yes	1	no	yes	yes	serves
 listWriteGateReceiptsFor	trust	yes	7	no	yes	yes	serves
@@ -1827,7 +1828,7 @@ listFenceFactRows	trust_fence	yes	5	no	yes	yes	serves
 restorePageTrust	trust_fence	yes	1	no	yes	yes	serves
 listHeldRows	trust_fence	yes	6	no	yes	yes	serves
 listGuardedTakeRows	trust_fence	yes	1	no	yes	yes	serves
-insertTrustProposal	trust_proposals	yes	19	no	yes	yes	serves
+insertTrustProposal	trust_proposals	yes	23	no	yes	yes	serves
 getTrustProposal	trust_proposals	yes	5	no	yes	yes	serves
 listUnreadablePrivacyHoldIds	trust_proposals	yes	1	no	yes	yes	serves
 listTrustProposals	trust_proposals	yes	7	no	yes	yes	serves

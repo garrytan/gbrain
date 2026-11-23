@@ -8,12 +8,12 @@
  * `unrecorded` rather than dropping them or leaving them unlabeled.
  */
 import type { BrainEngine, RowTrustLookup } from '../engine.ts';
+import type { FenceRowTrust } from '../engine-sql/cli-reads-ops.ts';
 import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { admitsTrust, compareTrust, minTrust, storedTrustTier, type TrustTier } from '../trust/tier.ts';
 import { chunkFenceMarker, FENCE_TRUST_ORIGIN, fenceTrustMarker, lowestFenceTrustMarker } from './fence-overlay.ts';
 import { decodeFenceCell, isSeparatorRow, parseRowCells } from '../fence-shared.ts';
 import { needsDataEnvelope, parseContested, renderTrustedText, trustFields, type Contested, type TrustFields } from './labels.ts';
-import { activationSuppressedSql, contestedRefSql } from './sql.ts';
 import { GUEST_ORIGIN, guestView, loadGuestMarks, unattributedGuest, type GuestStamp } from '../guests/marker.ts';
 
 const withFlag = (fields: TrustFields, flagged: unknown): TrustFields => (flagged === true ? { ...fields, unconfirmed: true } : fields);
@@ -25,9 +25,9 @@ interface PageRef {
   fact_row?: { id: number };
 }
 
-type Exec = Pick<BrainEngine, 'executeRaw'>;
+type FenceRowExec = Pick<BrainEngine, 'listFenceRowTrust'>;
 type HeldExec = Pick<BrainEngine, 'listHeldFenceCells'>;
-type TrustExec = Pick<BrainEngine, 'executeRaw' | 'readPageTrustRows' | 'readRowTrustRows' | 'listHeldFenceCells'>;
+type TrustExec = Pick<BrainEngine, 'executeRaw' | 'readPageTrustRows' | 'readRowTrustRows' | 'listHeldFenceCells' | 'listFenceRowTrust'>;
 
 const key = (source: string | null | undefined, slug: string) => `${source ?? 'default'}\u0000${slug}`;
 
@@ -169,12 +169,6 @@ function fenceRowNumbers(text: string | null | undefined): number[] {
   return out;
 }
 
-const FENCE_ROW_SQL = `SELECT DISTINCT ON (f.source_id, f.source_markdown_slug, f.row_num)
-    f.source_id, f.source_markdown_slug AS slug, f.row_num, f.trust_tier, ${activationSuppressedSql('facts', 'f')} AS flagged, ${contestedRefSql('facts', 'f')} AS contested
-  FROM facts f JOIN unnest($1::text[], $2::text[], $3::int[]) AS k(source_id, slug, row_num)
-    ON f.source_id = k.source_id AND f.source_markdown_slug = k.slug AND f.row_num = k.row_num
-  WHERE f.expired_at IS NULL
-  ORDER BY f.source_id, f.source_markdown_slug, f.row_num, f.id DESC`;
 
 /**
  * Read-time truth for chunks that carry facts-fence rows (#5575 37-1, 37-2, A5):
@@ -186,13 +180,13 @@ const FENCE_ROW_SQL = `SELECT DISTINCT ON (f.source_id, f.source_markdown_slug, 
  * its rows wrapped as data. A failed lookup keeps the stored labels; an engine that refuses the read
  * (`engine_capability_missing`) refuses the caller too.
  */
-async function applyFenceRowTrust<T extends PageRef>(engine: Exec, rows: T[]): Promise<void> {
+async function applyFenceRowTrust<T extends PageRef>(engine: FenceRowExec, rows: T[]): Promise<void> {
   const perRow = rows.map(row => fenceRowNumbers(row.chunk_text));
   const keys: Array<[string, string, number]> = [];
   rows.forEach((row, i) => { for (const n of perRow[i]!) keys.push([row.source_id ?? 'default', row.slug, n]); });
   if (!keys.length) return;
-  let found: Array<{ source_id: string; slug: string; row_num: number; trust_tier: string; flagged: boolean; contested: string | null }>;
-  try { found = await engine.executeRaw(FENCE_ROW_SQL, [keys.map(k => k[0]), keys.map(k => k[1]), keys.map(k => k[2])]); } catch (err) { rethrowCapabilityRefusal(err); return; }
+  let found: FenceRowTrust[];
+  try { found = await engine.listFenceRowTrust(keys.map(([source_id, slug, row_num]) => ({ source_id, slug, row_num }))); } catch (err) { rethrowCapabilityRefusal(err); return; }
   const state = new Map(found.map(f => [`${f.source_id}\u0000${f.slug}\u0000${Number(f.row_num)}`, f]));
   rows.forEach((row, i) => {
     const facts = perRow[i]!.map(n => state.get(`${row.source_id ?? 'default'}\u0000${row.slug}\u0000${n}`)).filter(f => f !== undefined);
