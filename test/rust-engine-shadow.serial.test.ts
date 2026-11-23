@@ -332,6 +332,37 @@ process.exit(0);
     });
   }, 60_000);
 
+  test('a child that gave up on opening its store closes the store if the open finishes later, and sends no heartbeat so it is restarted', async () => {
+    await inHome(async (_home, config) => {
+      await startShadow(config);
+      const dir = shadowDirFor(shadowBrainKey(config)!);
+      let finishOpen = () => {};
+      let disconnected = 0;
+      let heartbeats = 0;
+      let exitCode = null as number | null;
+      const input = new Readable({ read() {} });
+      const done = runShadowChild(dir, {
+        input,
+        writeControl: () => { heartbeats++; },
+        loadAddon: async () => ({ ok: true as const, addon: {} as never }),
+        openEngine: () => ({ connect: () => new Promise<void>((r) => { finishOpen = r; }), disconnect: async () => { disconnected++; } }) as never,
+        exitDeadlineMs: 200,
+        heartbeatMs: 25,
+        exit: (code) => { exitCode = code; },
+      });
+      await new Promise((r) => setTimeout(r, 600)); // past the open deadline, input still open
+      expect(heartbeats).toBe(0);
+      finishOpen(); // the open completes after the child gave up on it
+      const until = Date.now() + 5_000;
+      while (disconnected === 0 && Date.now() < until) await new Promise((r) => setTimeout(r, 25));
+      expect(disconnected).toBe(1);
+      expect(heartbeats).toBe(0);
+      input.push(null);
+      await done;
+      expect(exitCode === null || exitCode === 0).toBe(true);
+    });
+  }, 60_000);
+
   test('a completed comparison reaches the ledger on a timer, without waiting for more reads or the end of input', async () => {
     await inHome(async (_home, config) => {
       await startShadow(config);

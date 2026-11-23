@@ -97,6 +97,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
 
   let engine: ShadowEngine | null = null;
   let unavailable: Classification | null = null;
+  let openTimedOut = false;
   let load: Awaited<ReturnType<RustEngineAddonLoaderFn>>;
   try {
     load = await (deps.loadAddon ?? loadRustEngineAddonOffline)();
@@ -118,6 +119,10 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
       // A connect that never returns would keep the exit deadline (armed after input ends) from ever starting; a child with a deadline gives up on it.
       const connecting = engine.connect({ database_path: storePath });
       if (deps.exit && (await withTimeout(connecting, deps.exitDeadlineMs ?? SHADOW_CHILD_EXIT_DEADLINE_MS)).timedOut) {
+        // The child gives up on this store: it closes it if the open ever finishes, and goes quiet so the parent's watchdog restarts the child.
+        const abandoned = engine;
+        void connecting.then(() => abandoned.disconnect(), () => undefined).catch(() => undefined);
+        openTimedOut = true;
         throw Object.assign(new Error('opening the Rust store timed out'), { code: 'open_timeout' });
       }
       await connecting;
@@ -134,10 +139,10 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
 
   const stalled = new Set<Promise<unknown>>();
   const heartbeat = setInterval(() => {
-    if (stalled.size >= SHADOW_CHILD_STALL_LIMIT) return; // wedged in native work: go quiet so the watchdog restarts this child
+    if (openTimedOut || stalled.size >= SHADOW_CHILD_STALL_LIMIT) return; // wedged in native work: go quiet so the watchdog restarts this child
     try { deps.writeControl('{"t":"hb"}\n'); } catch { /* parent gone */ }
   }, deps.heartbeatMs ?? SHADOW_HEARTBEAT_MS);
-  try { deps.writeControl('{"t":"hb"}\n'); } catch { /* parent gone */ }
+  if (!openTimedOut) try { deps.writeControl('{"t":"hb"}\n'); } catch { /* parent gone */ }
 
   const pending: ReadEvent[] = [];
   const rows: ShadowLedgerRow[] = [];

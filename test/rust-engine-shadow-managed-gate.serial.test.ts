@@ -118,6 +118,8 @@ describe('engine shadow start on a managed-storage brain', () => {
   });
 
   test('status --json and the markdown status and report show the line', async () => {
+    await onBrain(MANAGED);
+    expect((await run(['start', '--yes', '--expect', planHash()])).code).toBe(0); // this test sets up its own shadow state
     const json = await run(['status', '--json']);
     expect(JSON.parse(json.out.join('\n')).storage).toEqual({ managed: true, checked_at: NOW.toISOString(), note: LINE });
     expect((await run(['status'])).out).toContain(`  storage: ${LINE}`);
@@ -144,6 +146,31 @@ describe('engine shadow start on a managed-storage brain', () => {
     expect(after.tables).toEqual(before.tables);
     expect(after.files).toEqual(before.files);
     reset();
+  });
+
+  test('the preview and start write nothing when the brain has a registered source checkout: no ownership marker, no registry entry', async () => {
+    await onBrain(UNMANAGED); // registering a source is allowed only while the brain is unmanaged
+    await onBrain(`INSERT INTO sources(id,name,local_path,config) VALUES('checkout','checkout','${contentRoot}','{}') ON CONFLICT (id) DO UPDATE SET local_path=EXCLUDED.local_path`);
+    await onBrain(MANAGED);
+    const watched = (): { tree: Record<string, string>; registry: Record<string, string> } => ({
+      tree: snapshotTree(contentRoot),
+      registry: existsSync(join(home, 'persistence')) ? snapshotTree(join(home, 'persistence')) : {},
+    });
+    const markers = (): string[] => [join(contentRoot, '.gbrain-managed'), join(config.database_path!, '.gbrain-managed')].filter((p) => existsSync(p));
+    for (const p of [join(contentRoot, '.gbrain-managed'), join(config.database_path!, '.gbrain-managed')]) rmSync(p, { force: true });
+    rmSync(join(home, 'persistence'), { recursive: true, force: true });
+    const before = watched();
+    for (const args of [['start', '--plan'], ['start'], ['start', '--yes', '--expect', planHash()]]) {
+      expect((await run(args)).err, args.join(' ')).toEqual([]);
+    }
+    expect(readShadowState(shadowDir())?.storage?.managed).toBe(true);
+    expect(markers()).toEqual([]);
+    expect(watched()).toEqual(before);
+    reset();
+    await onBrain(UNMANAGED);
+    await onBrain(`DELETE FROM sources WHERE id='checkout'`);
+    rmSync(join(home, 'persistence'), { recursive: true, force: true });
+    for (const p of [join(contentRoot, '.gbrain-managed'), join(config.database_path!, '.gbrain-managed')]) rmSync(p, { force: true });
   });
 
   test('an unmanaged brain records managed: false and prints no storage line', async () => {
