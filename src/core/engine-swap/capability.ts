@@ -8,6 +8,7 @@
  * The expected write pause is an estimate, with its inputs: the graduation drain of pending requests plus two full
  * digest passes over the copied relations, at fixed rates. It is printed, never bound into the plan hash.
  */
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { capabilitiesForEngineKind, ENGINE_CAPABILITIES, type Capability } from '../engine-capabilities.ts';
 import type { BrainEngine } from '../engine.ts';
 import { RUST_ENGINE_MEMBERS } from '../rust-engine/members.ts';
@@ -53,6 +54,7 @@ async function scalar(engine: BrainEngine, sql: string): Promise<number> {
     const [row] = await engine.executeRaw<{ n: number | string }>(sql);
     return Math.max(0, Math.round(Number(row?.n ?? 0)));
   } catch (error) {
+    rethrowCapabilityRefusal(error);
     if (/does not exist/i.test(String((error as Error)?.message ?? error))) return 0;
     throw error;
   }

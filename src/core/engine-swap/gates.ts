@@ -6,6 +6,7 @@
  * Each gate reads only, and names what it found without values (rule ids, token names and secrets are never read
  * out). A table an older schema lacks counts as empty.
  */
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
@@ -25,6 +26,7 @@ async function count(engine: BrainEngine, sql: string): Promise<number> {
     const [row] = await engine.executeRaw<{ n: number }>(sql);
     return Number(row?.n ?? 0);
   } catch (error) {
+    rethrowCapabilityRefusal(error);
     if (/does not exist/i.test(String((error as Error)?.message ?? error))) return 0;
     throw error;
   }
@@ -36,6 +38,7 @@ async function sourceRoots(engine: BrainEngine): Promise<string[]> {
     const rows = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE local_path IS NOT NULL ORDER BY id');
     return rows.map(r => r.local_path!).filter(Boolean);
   } catch (error) {
+    rethrowCapabilityRefusal(error);
     if (/does not exist/i.test(String((error as Error)?.message ?? error))) return [];
     throw error;
   }

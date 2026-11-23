@@ -87,7 +87,7 @@ describe('engine swap run refusals (before any write)', () => {
     const notReady = { readShadowStatus: async () => null };
     const r = await run(['--to', 'rust', '--yes', '--expect', await planHash(notReady), '--json'], notReady);
     expect(r.json().code).toBe('engine_swap_refused');
-    expect(r.json().reason).toBe('writer_coverage_unknown');
+    expect(r.json().reason).toBe('no_shadow');
     await nothingWritten();
     const lagging = { readShadowStatus: async () => ({ ...readinessReadyFor(), reconcile: { consecutive_clean_full_passes: 1 } }) };
     const r2 = await run(['--to', 'rust', '--yes', '--expect', await planHash(lagging), '--json'], lagging);

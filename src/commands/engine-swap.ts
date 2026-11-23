@@ -30,7 +30,8 @@ import { blockerRefusal } from '../core/engine-swap/gates.ts';
 import { readSwapRecord, swapRecordPath, type SwapRecord } from '../core/engine-swap/record.ts';
 import { routeOverrideRefusal, subprocessProber } from '../core/engine-swap/route.ts';
 import { runSwapStates, startRecord, type RustSide, type SwapRunDeps } from '../core/engine-swap/run.ts';
-import { shadowStatusFromDir } from '../core/engine-swap/status-source.ts';
+import { readConfiguredShadowStatus } from '../shadow/status-document.ts';
+import type { ShadowStatus } from '../core/engine-swap/readiness.ts';
 import { shadowBrainKey, shadowDirFor } from '../shadow/state.ts';
 import { ENGINE_SELECTING_ENV, planEngineSwap, type ServiceDefinition, type SwapPlan, type SwapPlanInputs } from '../core/engine-swap/plan.ts';
 import { mountedBrainError, swapRefusal, SWAP_RECOVERY } from '../core/engine-swap/refusals.ts';
@@ -270,7 +271,8 @@ export async function runEngineSwap(args: readonly string[], deps: EngineSwapCli
     const brainKey = configured ? shadowBrainKey(toEngineConfig(configured)) : null;
     const shadowDir = brainKey ? shadowDirFor(brainKey) : '';
     const plan = await planEngineSwap(engine, {
-      readShadowStatus: deps.readShadowStatus ?? (async () => (shadowDir ? shadowStatusFromDir(shadowDir, deps.now) : null)),
+      // The one status builder `gbrain engine shadow status --json` prints (src/shadow/status-document.ts).
+      readShadowStatus: deps.readShadowStatus ?? (async () => (await readConfiguredShadowStatus(() => (configured ? toEngineConfig(configured) : null), deps.now)) as ShadowStatus | null),
       now: deps.now, policy: deps.policy, rustServes: deps.rustServes,
       envNames, services,
       disk: { path: dataDir, free_bytes: dataDir ? freeBytes(dataDir) : null },
