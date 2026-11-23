@@ -118,10 +118,11 @@ const HOLD_COLUMNS = 'kind, source_id, slug, fingerprint, detector_version, tier
 const HOLD_VALUES = '$1::text, $2::text, $3::text, $4::text, $5::integer, $6::text, $7::text[], $8::text[], $9::boolean, $10::text::jsonb, $11::text::jsonb, $12::text';
 const HOLD_REOPEN = `DO UPDATE
        SET status = 'held', decided_at = NULL, decided_by = NULL, last_seen_at = now(), seen_count = write_gate_holds.seen_count + 1,
-           tier = EXCLUDED.tier, reason_families = EXCLUDED.reason_families, reasons = EXCLUDED.reasons, payload = EXCLUDED.payload,
+           slug = EXCLUDED.slug, tier = EXCLUDED.tier, reason_families = EXCLUDED.reason_families, reasons = EXCLUDED.reasons, payload = EXCLUDED.payload,
            write_origin = EXCLUDED.write_origin, request_id = COALESCE(EXCLUDED.request_id, write_gate_holds.request_id)
      RETURNING id::text AS id`;
-// The two dedupe keys are disjoint (write-gate-schema.ts): each statement names the index of the kind of hold it writes.
+// A reopened hold takes the slug with the payload (the payload names the page by the slug it was gated under, and a release rebases that name
+// to the bound page's current one only while the two agree). The two dedupe keys are disjoint (write-gate-schema.ts): each statement names the index of the kind of hold it writes.
 const BOUND_KEY = 'ON CONFLICT (source_id, page_id, fingerprint, detector_version) WHERE page_id IS NOT NULL';
 const UNBOUND_KEY = 'ON CONFLICT (source_id, slug, fingerprint, detector_version) WHERE page_id IS NULL AND page_candidates IS NULL';
 
