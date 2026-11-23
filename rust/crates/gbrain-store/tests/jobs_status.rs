@@ -507,3 +507,55 @@ fn no_admitted_job_owns_a_budget_so_the_budget_owner_list_is_empty() {
     );
     assert_eq!(b.list_budget_owner_jobs().unwrap(), Vec::<Value>::new());
 }
+
+#[test]
+fn recent_source_cycle_failures_group_dead_and_failed_cycles_by_source() {
+    let b = brain("st-cycle-failures");
+    let fail = |data: Value, how: &str, result: Option<Value>, token: &str| {
+        let id = active(&b, "autopilot-cycle", "default", data, token, 30_000);
+        b.fail_job(id, token, "boom", how, None, result.as_ref())
+            .unwrap()
+            .unwrap();
+    };
+    fail(json!({"source_id": "a"}), "dead", None, "w:1");
+    b.clock.advance(HOUR);
+    fail(json!({"source_id": "a"}), "failed", None, "w:2");
+    fail(json!({"source_id": "b"}), "dead", None, "w:3");
+    // A failed phase, a job with no source id and another job name do not count.
+    fail(
+        json!({"source_id": "c"}),
+        "failed",
+        Some(json!({"job_outcome": "phase_failed"})),
+        "w:4",
+    );
+    fail(json!({}), "dead", None, "w:5");
+    fail(json!({"source_id": null}), "dead", None, "w:6");
+    let id = active(&b, "work", "default", json!({"source_id": "d"}), "w:7", 30_000);
+    b.fail_job(id, "w:7", "boom", "dead", None, None).unwrap().unwrap();
+    let rows = |cutoff: &str, only: Option<&str>| -> Vec<(String, i64)> {
+        b.list_recent_source_cycle_failures(cutoff, only)
+            .unwrap()
+            .iter()
+            .map(|r| {
+                (
+                    r["source_id"].as_str().unwrap().to_string(),
+                    r["fail_count"].as_i64().unwrap(),
+                )
+            })
+            .collect()
+    };
+    let past = "2000-01-01T00:00:00.000Z";
+    assert_eq!(
+        rows(past, None),
+        vec![("a".to_string(), 2), ("b".to_string(), 1)]
+    );
+    assert_eq!(rows(past, Some("b")), vec![("b".to_string(), 1)]);
+    assert!(rows(past, Some("c")).is_empty());
+    assert!(rows("2099-01-01T00:00:00.000Z", None).is_empty());
+    let last = b.list_recent_source_cycle_failures(past, Some("a")).unwrap();
+    assert!(last[0]["last_failed_at"].as_str().unwrap().ends_with('Z'));
+    assert!(
+        b.list_recent_source_cycle_failures("not a time", None)
+            .is_err()
+    );
+}

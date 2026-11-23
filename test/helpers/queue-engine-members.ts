@@ -35,7 +35,7 @@ const HEALTH_MEMBERS = [
 
 /** The status reads (engine-sql/jobs-status.ts), added the same way. */
 const STATUS_MEMBERS = [
-  'readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'countTtlCancelledByName',
+  'listRecentSourceCycleFailures', 'readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'countTtlCancelledByName',
   'readWaitingScopeState', 'countRecentCompletedJobs', 'listRecentFailedJobErrors', 'readQueuedPageChars', 'readSourceJobCounts',
   'readEmbedBackfillBySource',
 ] as const satisfies ReadonlyArray<keyof typeof jobsStatus>;

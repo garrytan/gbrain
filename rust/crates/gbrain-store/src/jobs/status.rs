@@ -10,6 +10,15 @@
 use super::*;
 use crate::pages::read_page;
 
+/// `data->>'key'` of one JSON value: a string as is, a number or boolean as text; null (SQL NULL) is `None`.
+fn json_text(value: &Value) -> Option<String> {
+    match value {
+        Value::Null => None,
+        Value::String(s) => Some(s.clone()),
+        other => Some(other.to_string()),
+    }
+}
+
 /// `countJobsByStatus` filter: a name, a queue and a set of statuses. An absent field matches
 /// everything; an empty status list matches nothing (`status = ANY('{}')`).
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -192,6 +201,51 @@ impl Store {
             .map(|(queue, depth, age)| {
                 json!({ "queue": queue, "depth": depth, "oldest_waiting_age_seconds": age })
             })
+            .collect())
+    }
+
+    /// `listRecentSourceCycleFailures`: dead or failed `autopilot-cycle` rows that finished after `cutoff` (ISO),
+    /// grouped by `data->>'source_id'` (a JSON string, number or boolean; null or absent is skipped): the count
+    /// and the last `finished_at` as ISO text, by source id (bytewise). A row whose `result->>'job_outcome'` is
+    /// `phase_failed` does not count; `source_id` narrows to one source.
+    pub fn list_recent_source_cycle_failures(
+        &self,
+        cutoff: &str,
+        source_id: Option<&str>,
+    ) -> Result<Vec<Value>> {
+        let cutoff = crate::env::parse_iso(cutoff).ok_or_else(|| {
+            StoreError::invalid(format!(
+                "listRecentSourceCycleFailures: cutoff is not an ISO timestamp: {cutoff}"
+            ))
+        })?;
+        let read = self.read()?;
+        let mut sources: BTreeMap<String, (i64, i64)> = BTreeMap::new();
+        for status in ["dead", "failed"] {
+            for row in rows_with_status(&*read, status)? {
+                if row.name != "autopilot-cycle" {
+                    continue;
+                }
+                let outcome = row.result.as_ref().and_then(|r| r.get("job_outcome"));
+                if outcome.and_then(Value::as_str) == Some("phase_failed") {
+                    continue;
+                }
+                let Some(id) = row.data.get("source_id").and_then(json_text) else {
+                    continue;
+                };
+                if source_id.is_some_and(|want| want != id) {
+                    continue;
+                }
+                let Some(finished) = row.finished_at.filter(|f| *f > cutoff) else {
+                    continue;
+                };
+                let entry = sources.entry(id).or_insert((0, finished));
+                entry.0 += 1;
+                entry.1 = entry.1.max(finished);
+            }
+        }
+        Ok(sources
+            .into_iter()
+            .map(|(id, (count, last))| json!({ "source_id": id, "fail_count": count, "last_failed_at": iso(last) }))
             .collect())
     }
 

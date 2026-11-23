@@ -247,7 +247,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'readLiveAccessTokenScope',
     'setAccessTokenReadSharedRevision', 'setOauthClientReadSharedRevision', 'readSharedSourceRows'],
   // minion_status: lane L5 group B, job counts and last-run reads for the status surfaces (engine-sql/jobs-status.ts)
-  minion_status: ['readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'countTtlCancelledByName',
+  minion_status: ['listRecentSourceCycleFailures', 'readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'countTtlCancelledByName',
     'readWaitingScopeState', 'countRecentCompletedJobs', 'listRecentFailedJobErrors', 'readQueuedPageChars', 'readSourceJobCounts',
     'readEmbedBackfillBySource',
     'listBudgetOwners'],

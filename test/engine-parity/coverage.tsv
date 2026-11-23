@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2007/2023
+# covered: 2008/2024
 # lifecycle: 9/9
 # pages: 81/82
 # search: 7/7
@@ -38,7 +38,7 @@
 # cycle_locks: 10/10
 # minion_jobs: 10/10
 # minion_queue: 135/138
-# minion_status: 12/12
+# minion_status: 13/13
 # minion_subagent: 17/17
 # cli_reads_export: 14/14
 # cli_reads_ops: 14/14
@@ -915,15 +915,15 @@ takePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 renewPageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 releasePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 assertCycleLease	cycle_locks	yes	1	no	yes	yes	serves
-admitJob	minion_jobs	yes	117	no	yes	yes	serves
-getJob	minion_jobs	yes	39	no	yes	yes	serves
+admitJob	minion_jobs	yes	118	no	yes	yes	serves
+getJob	minion_jobs	yes	40	no	yes	yes	serves
 readJobDataByIdempotencyKey	minion_jobs	yes	2	no	yes	yes	serves
 coalesceOnIdempotencyKey	minion_jobs	yes	2	no	yes	yes	serves
 listJobs	minion_jobs	yes	1	no	yes	yes	serves
-claimNextJob	minion_jobs	yes	83	no	yes	yes	serves
+claimNextJob	minion_jobs	yes	84	no	yes	yes	serves
 renewJobLease	minion_jobs	yes	1	no	yes	yes	serves
-completeJob	minion_jobs	yes	49	no	yes	yes	serves
-failJob	minion_jobs	yes	38	no	yes	yes	serves
+completeJob	minion_jobs	yes	50	no	yes	yes	serves
+failJob	minion_jobs	yes	39	no	yes	yes	serves
 reclaimStalledJobs	minion_jobs	yes	2	no	yes	yes	serves
 readActiveAccessTokenGrant	minion_queue	yes	3	no	yes	yes	serves
 accessTokenLive	minion_queue	yes	2	no	yes	yes	serves
@@ -1066,6 +1066,7 @@ listRecentLeasePressure	minion_queue	yes	2	no	yes	yes	serves
 readLastAutopilotCycles	minion_status	yes	1	no	yes	yes	serves
 countJobsByStatus	minion_status	yes	1	no	yes	yes	serves
 readWaitingQueueDepths	minion_status	yes	1	no	yes	yes	serves
+listRecentSourceCycleFailures	minion_status	yes	1	no	yes	yes	serves
 readLastCompletedJobAt	minion_status	yes	1	no	yes	yes	serves
 countTtlCancelledByName	minion_status	yes	1	no	yes	yes	serves
 readWaitingScopeState	minion_status	yes	1	no	yes	yes	serves

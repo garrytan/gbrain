@@ -68,7 +68,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // gbrain migrate --to <engine>: the source-side reads (engine-sql/engine-migration.ts)
   'readEngineMigrationHistory', 'readMigrationRows', 'readMigrationPageColumns', 'listManualLinkTransitions', 'countLiveTimelineEntries',
   // Minion job counts and last-run reads for the status surfaces, lane L5 group B (engine-sql/jobs-status.ts)
-  'readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'countTtlCancelledByName',
+  'listRecentSourceCycleFailures', 'readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'countTtlCancelledByName',
   'readWaitingScopeState', 'countRecentCompletedJobs', 'listRecentFailedJobErrors', 'readQueuedPageChars', 'readSourceJobCounts',
   'readEmbedBackfillBySource',
   // The unowned admin and serve routes' reads and writes, Rust engine lanes admin-unowned-rust and admin-followups-rust (caller raw SQL moved to

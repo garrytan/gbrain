@@ -5,7 +5,7 @@
 import type { AccessTokenInsert, ActiveAccessTokenRow } from '../engine-sql/access-tokens.ts';
 import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow, ListJobsFilter } from '../engine-sql/jobs.ts';
 import type { AgentClientSpendRow, ClientReserveOutcome, ClientReserveSpec, GroupReserveOutcome, GroupReserveSpec, GroupSpendRow, OauthClientInsert, SettleLogOutcome, SpendLogInsert } from '../engine-sql/spend-log.ts';
-import type { BudgetOwnerRow, EmbedBackfillState, FailedJobError, JobStatusCount, JobStatusFilter, LastAutopilotCycles, QueueDepth, SourceJobCounts, TtlCancelledCount, WaitingScopeState } from '../engine-sql/jobs-status.ts';
+import type { BudgetOwnerRow, EmbedBackfillState, FailedJobError, JobStatusCount, JobStatusFilter, LastAutopilotCycles, QueueDepth, SourceCycleFailureRow, SourceJobCounts, TtlCancelledCount, WaitingScopeState } from '../engine-sql/jobs-status.ts';
 import type { CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobSourceState, JobStatsRead, JobTokenCounts, PrivateQueueState, PruneJobsSpec, QueueFamilyRow, RetryJobPolicy, SynthesisCompletion, SynthesisCompletionPrefix, UnfinishedJobRow } from '../engine-sql/jobs-queue.ts';
 import type { DeadDreamSubmissionSpec, FactsAbsorbJobRow, FactsAbsorbStillDead, GlobalMaintenanceDeaths, LastFailedGlobalMaintenanceJob, LegacyJobAuthorityRead, QueuedSpendRows } from '../engine-sql/jobs-checks.ts';
 import type { ExpireSpendScope, JobSpendTreeSpec, LeasePressureFilter, LeasePressureInsert, LeasePressureRow, SettleSpendOutcome, SpendReservationInsert, SpendTreeRow } from '../engine-sql/jobs-spend.ts';
@@ -204,6 +204,8 @@ export interface JobsMembers {
   countJobsByStatus(filter?: JobStatusFilter): Promise<JobStatusCount[]>;
   /** Waiting depth and oldest-waiting age in seconds per queue with waiting work, deepest first. */
   readWaitingQueueDepths(): Promise<QueueDepth[]>;
+  /** Recent whole-cycle failures of `autopilot-cycle` jobs by source (failure cooldown): count and last finish, after an ISO cutoff, by source id. */
+  listRecentSourceCycleFailures(spec: { cutoff: string; sourceId?: string | null }): Promise<SourceCycleFailureRow[]>;
   /** The freshest `updated_at` among completed jobs, or null. */
   readLastCompletedJobAt(): Promise<Date | null>;
   /** Cancelled jobs whose `error_text` matches the LIKE pattern and that finished in the last `withinSeconds`, counted by name. */

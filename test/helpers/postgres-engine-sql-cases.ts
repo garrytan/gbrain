@@ -1115,7 +1115,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'countWaitingJobs': OOS.minionJobs,
   'listStuckActiveJobsByName': OOS.minionJobs,
   // job counts and last-run reads for the status surfaces (lane L5 group B, engine-sql/jobs-status.ts)
-  'readLastAutopilotCycles': OOS.minionJobs,
+  'readLastAutopilotCycles': OOS.minionJobs, 'listRecentSourceCycleFailures': OOS.minionJobs,
   'countJobsByStatus': OOS.minionJobs,
   'readWaitingQueueDepths': OOS.minionJobs,
   'readLastCompletedJobAt': OOS.minionJobs,

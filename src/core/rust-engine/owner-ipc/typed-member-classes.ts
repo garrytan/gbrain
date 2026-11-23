@@ -117,7 +117,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listPrivateQueueHealth', 'listPurgeEffects', 'listPurgeMatchCandidates', 'listPurgePagesById',
   'listPurgeStreamSlugs', 'listPurgeTombstoneMatches', 'listPurgeVersionBodies', 'listPurgedPageRevisions', 'listQualifiedSymbolNames',
   'listQueueWedgeCounts', 'listReadableFilePaths', 'listReadableFileRows', 'listReadersSourcedFactIds',
-  'listRecentFailedJobErrors', 'listRecentLeasePressure', 'listRecentSynthesisCompletions', 'listRecordMetadataRows',
+  'listRecentFailedJobErrors', 'listRecentLeasePressure', 'listRecentSourceCycleFailures', 'listRecentSynthesisCompletions', 'listRecordMetadataRows',
   'listRekeyLosers', 'listRelationshipNoteRows', 'listRelinkCandidateRows', 'listRequestsRecordingReasons',
   'listReservationsAfter', 'listRestatedPrivateCopies', 'listResumableRefreshes', 'listRetainedDreamOutputSources',
   'listRetiredDeactivations', 'listRootPageSlugsAfter', 'listSegmentedPageBodies', 'listSegmentedPagesBySlug',
