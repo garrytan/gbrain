@@ -418,7 +418,6 @@ src/core/import-file.ts	execute_raw	1
 src/core/import-identity.ts	execute_raw	1
 src/core/ingestion/applied-captures.ts	execute_raw	5
 src/core/line-grammar-config.ts	execute_raw	2
-src/core/link-extraction.ts	execute_raw	1
 src/core/link-reconciliation.ts	execute_raw	2
 src/core/link-single-value.ts	execute_raw	2
 src/core/link-source-check-repair.ts	execute_raw	3
@@ -426,7 +425,6 @@ src/core/links-fence-projection.ts	execute_raw	8
 src/core/loops/loops-store.ts	execute_raw	2
 src/core/maintenance/run.ts	execute_raw	1
 src/core/maintenance/status.ts	execute_raw	1
-src/core/meetings/meetings-source.ts	execute_raw	2
 src/core/mentions/coverage.ts	execute_raw	4
 src/core/mentions/newer-mentions.ts	execute_raw	1
 src/core/mentions/pass.ts	execute_raw	33

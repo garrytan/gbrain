@@ -102,6 +102,10 @@ const INTERFACE_METHODS: readonly string[] = [
   'listOverwriteCandidates', 'listVersionsAfter', 'listOverwriteLivePages', 'readVersionContent',
   'listRestorableAtoms', 'countKeptAtomRetirements',
   'listLivePagesBySourcePaths', 'listLivePagesByFileName', 'listLivePagesSharingFrontmatterId', 'hasSegmentedHistory', 'readLivePagesByIds',
+  // The meetings connector's page lookup (engine-sql/meeting-pages.ts; test/engine-parity/meeting-pages.test.ts)
+  'readMeetingPage',
+  // The attendance lookup of link extraction (engine-sql/attendance-pages.ts; test/engine-parity/attendance-pages.test.ts)
+  'listAttendanceMatches',
   // The batch 7 generation repair reads (engine-sql/lost-fence-reads.ts, stale-atom-reads.ts;
   // test/engine-parity/repair-generation-kinds.test.ts)
   'listRetiredFenceItems', 'listInlineVersionTexts', 'hasActiveFactText', 'hasTakeClaim', 'readFactTrustTier', 'listFenceFactRowNums',

@@ -155,6 +155,7 @@ test/engine-parity/access-setup.test.ts
 test/engine-parity/access-tokens.test.ts
 test/engine-parity/alias-fanout-reads.test.ts
 test/engine-parity/alias-trust.test.ts
+test/engine-parity/attendance-pages.test.ts
 test/engine-parity/backup-readiness-callers.test.ts
 test/engine-parity/belief-ledger.test.ts
 test/engine-parity/belief-purge-probes.test.ts
@@ -254,6 +255,7 @@ test/engine-parity/link-reads.test.ts
 test/engine-parity/link-temporal.test.ts
 test/engine-parity/links.test.ts
 test/engine-parity/loop-mutes.test.ts
+test/engine-parity/meeting-pages.test.ts
 test/engine-parity/memory-mutation-reads.test.ts
 test/engine-parity/memory-proposal-reads.test.ts
 test/engine-parity/migrate-engine-source.test.ts

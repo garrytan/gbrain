@@ -34,6 +34,7 @@ import { overlayStoreSnapshot, type StoreSnapshot } from '../snapshot-overlay.ts
 import { storeErrorCode } from '../store-errors.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { HYBRID_BAG_KEYS, WHOKNOWS_KEYS, storePagePolicy } from './private-provenance.ts';
+import type { MeetingPageRow } from '../../engine-sql/meeting-pages.ts';
 
 /** PGLite's single-batch primitives throw a plain `Error` past `DELETE_BATCH_SIZE`; the caller chunks. */
 function checkBatch(member: string, n: number): void {
@@ -373,6 +374,14 @@ export const listLivePagesByFileName: StoreMember<[sourceId: string, excludeId: 
   wholeNumber('listLivePagesByFileName', 'a page id', excludeId);
   return storeCall({ member: 'listLivePagesByFileName', sourceId }, () => brain.listLivePagesByFileName(sourceId, excludeId, name));
 };
+
+/** The live page of the source holding the meeting, lowest id first, or null (engine-sql/meeting-pages.ts; rust/crates/gbrain-store/src/meeting_pages.rs). */
+export const readMeetingPage: StoreMember<[sourceId: string, meetingId: string], MeetingPageRow | null> = (brain, sourceId, meetingId) =>
+  storeCall({ member: 'readMeetingPage', sourceId }, () => brain.readMeetingPage(sourceId, meetingId)) as Promise<MeetingPageRow | null>;
+
+/** At most two live person pages of the source an attendee name can mean (engine-sql/attendance-pages.ts; meeting_pages.rs). */
+export const listAttendanceMatches: StoreMember<[sourceId: string, slugs: readonly string[], name: string], string[]> = (brain, sourceId, slugs, name) =>
+  storeCall({ member: 'listAttendanceMatches', sourceId }, () => brain.listAttendanceMatches(sourceId, [...slugs], name)) as Promise<string[]>;
 
 export const listLivePagesSharingFrontmatterId: StoreMember<[sourceId: string, pageId: number], string[]> = (brain, sourceId, pageId) => {
   wholeNumber('listLivePagesSharingFrontmatterId', 'a page id', pageId);

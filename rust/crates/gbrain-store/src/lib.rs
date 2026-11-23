@@ -70,6 +70,7 @@ pub mod jobs;
 pub mod keyword;
 pub mod large_page;
 pub mod link_queries;
+pub mod meeting_pages;
 pub mod memory_mutation_reads;
 pub mod moved_page_reads;
 pub mod ontology;

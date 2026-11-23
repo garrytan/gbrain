@@ -59,7 +59,11 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listRestorableAtoms', 'countKeptAtomRetirements', 'listLivePagesBySourcePaths', 'listLivePagesByFileName',
     // the batch 7 stale-atoms read (engine-sql/stale-atom-reads.ts)
     'listStaleAtoms',
-    'listLivePagesSharingFrontmatterId', 'hasSegmentedHistory', 'readLivePagesByIds'],
+    'listLivePagesSharingFrontmatterId', 'hasSegmentedHistory', 'readLivePagesByIds',
+    // the meetings connector's page lookup (engine-sql/meeting-pages.ts)
+    'readMeetingPage',
+    // the attendance lookup of frontmatter link extraction (engine-sql/attendance-pages.ts)
+    'listAttendanceMatches'],
   search: ['searchKeyword', 'countKeywordPages', 'searchKeywordPages', 'searchTitles', 'searchVector', 'getEmbeddingsByChunkIds',
     'searchKeywordChunks'],
   search_reads: ['cosinesByChunkIds', 'hasSupersedeEdges', 'supersedingPageSlugs', 'aliasCanonicalRefs', 'pageCollapseFacts',

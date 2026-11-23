@@ -185,7 +185,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listDuplicateFactRows', 'listEmbeddingCandidates', 'listExpiredArchivedSources', 'listFactsHomeCandidates',
   'listFactsOnValidDay', 'listFailedWriteRequests', 'listFenceFactRowNums', 'listFileTombstones',
   'listHeldHomeRows', 'listInlineVersionTexts', 'listLabelFactCandidates', 'listLegacyOriginPairs',
-  'listLiveOriginPages', 'listLivePagesByFileName', 'listLivePagesBySourcePaths', 'listLivePagesSharingFrontmatterId',
+  'listLiveOriginPages', 'listLivePagesByFileName', 'listLivePagesBySourcePaths', 'listLivePagesSharingFrontmatterId', 'readMeetingPage', 'listAttendanceMatches',
   'listLoopSuppressions', 'listManagedSyncFailureKeys', 'listManagedSyncOrphanRows', 'listManualLinkTransitions',
   'listMaterializedMarkerPages', 'listMuteRecheckThreads', 'listNamedVisibilityRows', 'listOriginTwinCounts',
   'listOriginTwinGroups', 'listOrphanBindings', 'listOrphanConnectorCheckpoints', 'listOrphanedFenceRows',
