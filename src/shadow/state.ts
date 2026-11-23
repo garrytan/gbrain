@@ -12,8 +12,8 @@
  *   reports/            the provisional report (report.ts)
  *
  * `<brain>` is the engine kind plus the first 12 hex characters of a SHA-256 over the brain's identity: the resolved
- * `database_path` for PGLite, or the host, port and database name of `database_url` for Postgres (never the user or
- * password). The engine factory reads `state.json` on every engine it builds, so `shadowStateFor` is an existsSync
+ * `database_path` for PGLite, or the user name, host, port and database name of `database_url` for Postgres (a pooler
+ * routes by user name, so it is part of the hash; it is never stored or shown, and the password is never used). The engine factory reads `state.json` on every engine it builds, so `shadowStateFor` is an existsSync
  * and, only when the file exists, one small JSON read.
  */
 import { createHash } from 'node:crypto';

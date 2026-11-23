@@ -290,7 +290,7 @@ process.exit(0);
       await startShadow(config);
       const dir = shadowDirFor(shadowBrainKey(config)!);
       const never = new Promise<never>(() => {});
-      let exitCode: number | null = null;
+      let exitCode = null as number | null;
       const input = Readable.from([readLine('getPage'), readLine('getPage')]);
       const done = runShadowChild(dir, {
         input,

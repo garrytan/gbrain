@@ -5982,18 +5982,18 @@ ledger. Nothing is written to the brain database, the config table or the brain 
 gbrain engine shadow start --plan                  # preview the plan and its plan_hash, writes nothing (refuses a managed-storage brain)
 gbrain engine shadow start --yes --expect <hash>   # turn it on (loads the Rust addon first; refuses without it)
 gbrain engine shadow status [--json]
-gbrain engine shadow report [--json]               # writes reports/provisional.{json,md}
+gbrain engine shadow report [--json]               # prints the report; writes reports/provisional.{json,md} only once the shadow directory exists
 gbrain engine shadow stop [--delete]               # turn it off; --delete removes the shadow directory
 ```
 
-- **Fail-open.** Mirroring never slows or fails a primary call. The queue is bounded (`--queue-bound`, default 256)
+- **Fail-open.** Mirroring never fails a primary call; a sampled read pays only the bounded copy described below. The queue is bounded (`--queue-bound`, default 256)
   and sheds when full; reads inside a transaction are skipped; `--sample-rate` (default 0.1) picks which reads are
   mirrored. Only sampled reads are copied, the arguments before the call and the result the moment the primary answers, so a caller that changes a result
   afterwards cannot cause a false difference. The copy stops as soon as a call's arguments or result pass about
   1 MiB (every value counts, even a null), so a huge result is counted as too large and never built. A
   call that stays stuck in the Rust engine holds one of four slots; past that new reads are recorded as `timeout` (stalled) without being replayed and the child goes
-  quiet so it is restarted. Reads still queued when a process closes are delivered, not dropped. The child restarts with backoff, and mirroring turns itself off after 5 child exits in 10 minutes, a
-  child silent for 60 seconds is killed, and a privacy divergence (Rust returns something the primary hid) pauses
+  quiet so it is restarted. When a process closes, reads still queued are handed to the child and the child records them: it drops the CLI's pipe handlers so a closed pipe cannot kill it, drains what it received, writes its ledger and summary, and exits at most 30 seconds after its input ends (the parent's kill timer dies with the parent, so the child carries its own deadline). Finished comparisons are written every 2 seconds. A read still queued when a process is killed, or one the child had not yet written when it is killed, is lost. The child restarts with backoff, and mirroring turns itself off after 5 child exits in 10 minutes, a
+  child silent for 60 seconds is killed, and a privacy divergence (Rust returned a row whose `source_id` is outside the sources the call asked for) pauses
   comparison.
 - **Brains and deleting.** Each brain gets its own directory, keyed by its engine and where it lives: the database path for PGLite, or the host, port, database and user name for Postgres
   (two Supabase projects behind one pooler differ by user name; the password is never part of it). `stop --delete`
