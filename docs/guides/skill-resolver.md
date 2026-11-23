@@ -148,7 +148,9 @@ The lane always exits 0 and prints nothing when it cannot deliver:
   50 ms on an idle 4-core machine with an empty file cache, and up to about
   105 ms with the CPU oversubscribed), so the turn's own clock starts once it
   is ready. With the [model picker](#model-picker-opt-in) on, the turn also
-  gets the picker's wait (`router_timeout_ms`) plus 100 ms. At either limit
+  gets the picker's wait (`router_timeout_ms`) plus 100 ms; with it off and a
+  catalog built with [skill vectors](#skill-vectors), the turn also gets 1
+  second for the message's vector plus 100 ms. At either limit
   the process prints nothing, exits and commits no session state.
 - **Turn settings:** `skills.resolver.top_k` (1-8, default 5),
   `skills.resolver.min_match` (the weakest `match_strength` to suggest;
@@ -210,8 +212,10 @@ The lane always exits 0 and prints nothing when it cannot deliver:
   Hermes sends no compaction event; the lane resets a session when its history shrinks or on a first turn.
 
 Each turn appends one line (outcome, error code, duration, the worker's load
-time as `worker_ms`, catalogs, and with the model picker on, `router`: who
-answered, the fallback code and the picker's wait; never turn text) to `skill-index/logs/lane-<UTC date>.jsonl`, one file per day,
+time as `worker_ms`, catalogs, with the model picker on, `router`: who
+answered, the fallback code and the picker's wait, and with skill vectors,
+`vectors`: whether the turn ranked with them, the fallback code and the wait
+for the message's vector; never turn text) to `skill-index/logs/lane-<UTC date>.jsonl`, one file per day,
 kept 14 days and capped at 2 MB a day. `gbrain doctor` (`skill_resolver`, and
 `harness_wiring`'s details) reports the hook, each catalog's freshness and
 the recent error codes; it says nothing while the resolver is off. A hook from
@@ -657,7 +661,9 @@ The JSON Schemas are checked in under `docs/schemas/`:
   `--input-json -` or the library.
 - `skill-resolver.v1.turn-output.json`: the `--json` result. Everything outside
   `meta` is byte-identical for the same index, input and session state, except
-  on a turn the model picker answered or was asked, which also carries `router`.
+  on a turn the model picker answered or was asked, which also carries `router`,
+  and on a turn whose catalog has [skill vectors](#skill-vectors), which also
+  carries `vectors`.
 - `skill-resolver.v1.build-input.json`: the `--from-json` catalog,
   `[{id, name, description?, when_to_use?, triggers?, routing?, body?, path?,
   eligible?, disable_model_invocation?}]`. With the same fields a SKILL.md
@@ -670,10 +676,12 @@ Within v1, changes are additive only.
 
 `no_skill` is true only for an acknowledgement from a small multilingual list
 (`no_skill_reason: "ack"`) or when no word of the turn is in the catalog
-(`"no_match"`). The ranker has no score threshold of its own; `top_gate`
+(`"no_match"`; with skill vectors, only when no skill reaches the cosine
+floor either). The ranker has no score threshold of its own; `top_gate`
 (below) empties the block when the best match is weak. Each suggestion's `match_strength` says how it matched
 (`named` in the turn, `picked` by the model picker, else the first of `name`,
-`triggers`, `routing`, `description`, `body`). `min_match_strength` (`--min-match`) filters
+`triggers`, `routing`, `description`, then `vector` for a skill found by
+meaning alone, then `body`). `min_match_strength` (`--min-match`) filters
 candidates: weaker matches are dropped before the cut to `top_k` and the
 stronger ones still fill the block, so `description` drops body-only matches.
 It is not a gate: in a large catalog some skill almost always matches a
@@ -693,7 +701,8 @@ idf, `ln(1 + (n - 0.5) / 1.5)` for a catalog of `n` skills, is below the
 threshold (0 to 100). With merged catalogs it takes the
 highest of those candidates. A skill named in the turn bypasses it. The
 division keeps the number comparable across catalog sizes; it does not undo
-message length, so long messages still score higher.
+message length, so long messages still score higher. A catalog with
+[skill vectors](#skill-vectors) uses its cosine floor instead.
 
 The default is 0.6; `0` turns the gate off. Without it, a large catalog
 almost always has some skill that shares a word with the message, so every
@@ -726,7 +735,8 @@ on stderr and keeps the default.
 
 An empty block carries `block_reason`: `ack`, `no_match`, `filtered` (every
 match was excluded or below `min_match_strength`), `weak_top_match` (the best
-skill scored below `top_gate`), `deduped` (every match was
+skill scored below `top_gate`, or with skill vectors no skill reached the
+floor), `deduped` (every match was
 already suggested in the session), `paced` (past half the budget and the top
 match is not on a name, trigger or routing row), `budget_exhausted`, `shadow`
 (the live output of a `--shadow` turn) or `error`. It is null when the block

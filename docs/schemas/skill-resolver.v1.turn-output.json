@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "skill-resolver.v1.turn-output.json",
   "title": "gbrain skill resolver: turn output (schema_version 1)",
-  "description": "The result of one turn (`gbrain skills resolve --json`, resolveSkills().output). Everything outside `meta` is byte-identical for the same index, input and session state, except on a turn the model picker answered or was asked (router). Within v1, changes are additive only.",
+  "description": "The result of one turn (`gbrain skills resolve --json`, resolveSkills().output). Everything outside `meta` is byte-identical for the same index, input and session state, except on a turn the model picker answered or was asked (router), or a turn whose catalog has skill vectors (vectors). Within v1, changes are additive only.",
   "type": "object",
   "additionalProperties": false,
   "required": [
