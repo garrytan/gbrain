@@ -496,7 +496,7 @@ impl Store {
         Ok(StoreIdentity {
             engine_format_version: info.format_version,
             schema_version: info.schema_version,
-            brain_id: info.brain_id.clone(),
+            brain_id: info.brain_id,
             generation: self.commit_version()?,
         })
     }
@@ -610,7 +610,8 @@ impl Store {
             tx.put(&config_key, inventory.to_string().as_bytes())?;
             Ok(report)
         })?;
-        // `FORMAT` follows the committed record by atomic rename; the next open repairs it if this is cut short.
+        // The open handle reports the committed id from here on, then `FORMAT` follows the committed record by atomic rename; the next open repairs it if this is cut short.
+        self.set_brain_id(&report.brain_id);
         if let Some(dir) = &self.dir
             && let Some(mut on_disk) = format::read(dir)?
         {

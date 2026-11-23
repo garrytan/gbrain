@@ -161,7 +161,9 @@ pub struct Store {
     pub(crate) vectors: vectors::VectorCache,
     /// The write trust context: the transaction-local trust settings (`write_trust.rs`).
     pub(crate) write_context: write_trust::WriteContextSlot,
-    info: StoreInfo,
+    /// What `open` told the caller. Shared with the store's views; a restore that rotates the brain id
+    /// updates it, so the open handle never reports the id the restore replaced.
+    info: Arc<Mutex<StoreInfo>>,
     /// The open transaction this store runs on (`transactions.rs`); `None` for the brain's own
     /// store, whose writes each commit on their own.
     pub(crate) bound: Option<Arc<transactions::Transaction>>,
@@ -282,7 +284,7 @@ impl Store {
         };
         let store = Store::open_kv_in(kv, Arc::new(SystemEnv), options, FORMAT_VERSIONS)?;
         if let Some(on_disk) = existing
-            && on_disk.brain_id != store.info.brain_id
+            && on_disk.brain_id != store.brain_id()
             && !store.rotated_from(&on_disk.brain_id)?
         {
             return Err(StoreError::new(
@@ -351,12 +353,12 @@ impl Store {
             env,
             vectors: vectors::VectorCache::default(),
             write_context: write_trust::WriteContextSlot::default(),
-            info: StoreInfo {
+            info: Arc::new(Mutex::new(StoreInfo {
                 brain_id: stored.brain_id,
                 format_version: stored.format_version,
                 schema_version,
                 created,
-            },
+            })),
             bound: None,
             builder: Mutex::new(None),
             runs_builder: options.keyword_index_builder,
@@ -377,7 +379,7 @@ impl Store {
             env: self.env.clone(),
             vectors: vectors::VectorCache::default(),
             write_context: write_trust::WriteContextSlot::default(),
-            info: self.info.clone(),
+            info: Arc::clone(&self.info),
             bound: None,
             builder: Mutex::new(None),
             runs_builder: false,
@@ -452,7 +454,7 @@ impl Store {
             // The write trust context belongs to the transaction's handle, not the shared store: it
             // starts empty and ends with the handle (`write_trust.rs`, "Lifetime").
             write_context: write_trust::WriteContextSlot::default(),
-            info: self.info.clone(),
+            info: Arc::clone(&self.info),
             bound: Some(tx),
             builder: Mutex::new(None),
             runs_builder: false,
@@ -461,12 +463,17 @@ impl Store {
         }
     }
 
-    pub fn info(&self) -> &StoreInfo {
-        &self.info
+    pub fn info(&self) -> StoreInfo {
+        self.info.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
-    pub fn brain_id(&self) -> &str {
-        &self.info.brain_id
+    pub fn brain_id(&self) -> String {
+        self.info().brain_id
+    }
+
+    /// A restore gave the committed store a fresh brain id (`restore_quarantine`).
+    pub(crate) fn set_brain_id(&self, id: &str) {
+        self.info.lock().unwrap_or_else(|e| e.into_inner()).brain_id = id.to_string();
     }
 
     /// The commit sequence of the latest commit.
@@ -582,12 +589,13 @@ impl Store {
     }
 
     fn format_record(&self, options: &OpenOptions) -> Result<FormatRecord> {
+        let info = self.info();
         Ok(FormatRecord {
-            format_version: self.info.format_version,
+            format_version: info.format_version,
             engine_abi: options.engine_abi,
             catalog_version: options.catalog_version,
-            schema_version: self.info.schema_version,
-            brain_id: self.info.brain_id.clone(),
+            schema_version: info.schema_version,
+            brain_id: info.brain_id,
             created_by: options.created_by.clone(),
         })
     }

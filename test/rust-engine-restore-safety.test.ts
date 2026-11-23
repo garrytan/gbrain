@@ -194,6 +194,9 @@ describe('one restore scenario, both engines', () => {
       expect(fresh).not.toBe(previous);
       expect(report.reconnect.some(line => line.includes(fresh) && line.includes(previous))).toBe(true);
       expect(JSON.parse(readFileSync(join(dir, 'FORMAT'), 'utf8')).brain_id).toBe(fresh);
+      // The handle that ran the restore reports the fresh id too, not the one it replaced.
+      expect((await first.restoreCensus([])).store.brain_id).toBe(fresh);
+      expect(await first.brain.getBrainIdentity()).toEqual({ brain_id: fresh });
     } finally { await first.close(); }
     const again = await openRustStore(addon, dir);
     try {
@@ -212,6 +215,18 @@ describe('one restore scenario, both engines', () => {
       expect(await store.brain.getConfig('autopilot.x.enabled')).toBe('true');
       const missing = await store.restoreCensus(['0a0a0a0a-0000-4000-8000-0000000000aa']);
       expect(missing.blockers).toEqual([{ reason: 'purge_replay', count: 1 }]);
+      // Real unfinished work: a queued write request crosses the addon boundary as `restore_refused`, and the refusal changes nothing.
+      const principal = { kind: 'local_cli', id: 'cli' };
+      const held = await store.brain.admitWrite({ principal, operation: 'put_page', sourceId: 'default', slug: 'notes/held',
+        requestId: '0a0a0a0a-0000-4000-8000-0000000000bb', callerIntent: { slug: 'notes/held' }, intent: {} });
+      const busy = await store.restoreCensus([]);
+      expect(busy.requests).toEqual({ queued: 1 });
+      expect(busy.blockers).toEqual([{ reason: 'pending_requests', count: 1 }]);
+      await expect(store.restoreQuarantine({ ...plan, settings: [] })).rejects.toMatchObject({ code: 'restore_refused', message: expect.stringContaining('pending_requests') });
+      expect(await store.restoreCensus([])).toEqual(busy);
+      expect(await store.brain.getConfig('autopilot.x.enabled')).toBe('true');
+      await store.brain.finishWrite(principal, held.request_id, { state: 'cancelled' });
+      expect((await store.restoreCensus([])).blockers).toEqual([]);
       await expect(store.restoreQuarantine({ ...plan, settings: [] })).resolves.toMatchObject({ jobs_cancelled: 0 });
       await expect(store.restoreQuarantine({ ...plan, settings: [] })).rejects.toMatchObject({ code: 'invalid_state' });
     } finally { await store.close(); }

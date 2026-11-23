@@ -370,6 +370,13 @@ fn quarantine_detaches_rebases_disables_cancels_and_revokes_and_nothing_else_mov
     store
         .revoke_local_writer("eeeeeeee-0000-4000-8000-000000000002")
         .unwrap();
+    // The revocation time the archive already held, read before the restore touches anything.
+    let revoked_before = store
+        .read_local_writer("eeeeeeee-0000-4000-8000-000000000002")
+        .unwrap()
+        .unwrap()["revoked_at"]
+        .clone();
+    assert!(!revoked_before.is_null());
     store
         .insert_oauth_client(
             &serde_json::from_value(
@@ -572,7 +579,8 @@ fn quarantine_detaches_rebases_disables_cancels_and_revokes_and_nothing_else_mov
     assert!(!first["revoked_at"].is_null());
     assert_eq!(
         writers("eeeeeeee-0000-4000-8000-000000000002")["revoked_at"],
-        census_revoked_at(&before, &store)
+        revoked_before,
+        "an earlier revocation keeps its first time"
     );
     assert_eq!(
         changed_tags(&before, &after),
@@ -611,13 +619,102 @@ fn quarantine_detaches_rebases_disables_cancels_and_revokes_and_nothing_else_mov
     assert_eq!(dump(&store), after);
 }
 
-/// The earlier revocation time of a writer, which a restore keeps.
-fn census_revoked_at(_before: &BTreeMap<Vec<u8>, Vec<u8>>, store: &Store) -> Value {
+/// Rewrites fields of a stored write request (a request in a state only a crash or a long run leaves).
+fn patch_request(store: &Store, id: &str, patch: Value) {
     store
-        .read_local_writer("eeeeeeee-0000-4000-8000-000000000002")
+        .write(|tx| {
+            let key = keys::request(id);
+            let mut row: Value = crate::get_json(&*tx, &key)?.expect("the request exists");
+            for (field, value) in patch.as_object().unwrap() {
+                row[field] = value.clone();
+            }
+            crate::put_json(tx, &key, &row)
+        })
+        .unwrap();
+}
+
+/// A stored request's state and fields, and the blockers (reason, count) a census must name for it.
+type Case<'a> = (&'a str, Value, &'a [(&'a str, u64)]);
+
+#[test]
+fn work_that_can_resume_blocks_a_restore_whatever_else_is_or_is_not_pending() {
+    let cases: [Case; 5] = [
+        (
+            "deferred",
+            json!({ "state": "deferred" }),
+            &[("pending_requests", 1)],
+        ),
+        (
+            "recovering",
+            json!({ "state": "recovering" }),
+            &[("recovery_required", 2)],
+        ),
+        (
+            "finished with recovery data",
+            json!({ "state": "committed", "recovery": { "step": 1 } }),
+            &[("recovery_required", 1)],
+        ),
+        (
+            "finished with recovery bytes",
+            json!({ "state": "committed", "recovery_bytes": 10 }),
+            &[("recovery_required", 1)],
+        ),
+        (
+            "running, publication started, no recovery data",
+            json!({ "state": "running", "publication_started": true }),
+            &[("pending_requests", 1), ("recovery_required", 1)],
+        ),
+    ];
+    for (label, patch, expected) in cases {
+        let store = store();
+        let id = admit_request(&store, "bbbbbbbb-0000-4000-8000-000000000003");
+        patch_request(&store, &id, patch);
+        let census = store.restore_census(&[]).unwrap();
+        let blockers: Vec<_> = census
+            .blockers
+            .iter()
+            .map(|b| (b.reason, b.count))
+            .collect();
+        assert_eq!(blockers, expected, "{label}");
+        let (before, generation) = (dump(&store), store.commit_version().unwrap());
+        assert_eq!(
+            store.restore_quarantine(&default_only()).unwrap_err().code,
+            "restore_refused",
+            "{label}"
+        );
+        assert_eq!(
+            (dump(&store), store.commit_version().unwrap()),
+            (before, generation),
+            "{label}"
+        );
+    }
+    // A live effect blocks on its own, once its request has finished and nothing else is pending.
+    let store = store();
+    let id = admit_request(&store, "bbbbbbbb-0000-4000-8000-000000000004");
+    let incarnation = store.read_source_membership("default").unwrap().unwrap()["incarnation"]
+        .as_str()
         .unwrap()
-        .unwrap()["revoked_at"]
-        .clone()
+        .to_string();
+    let effects: PublicationEffectsSpec = serde_json::from_value(
+        json!({ "requestId": id, "revision": "cccccccc-0000-4000-8000-000000000002",
+        "sourceId": "default", "sourceIncarnation": incarnation, "worktreeId": null,
+        "effects": [{ "kind": "embedding", "data": { "slug": "notes/a", "page_id": 1 } }] }),
+    )
+    .unwrap();
+    store.insert_publication_effects(&effects).unwrap();
+    patch_request(&store, &id, json!({ "state": "committed" }));
+    let census = store.restore_census(&[]).unwrap();
+    assert_eq!(
+        census.requests.values().sum::<u64>(),
+        0,
+        "no request is pending"
+    );
+    assert_eq!(census.effects_live, 1);
+    assert!(blocked(&store, "pending_requests"));
+    assert_eq!(
+        store.restore_quarantine(&default_only()).unwrap_err().code,
+        "restore_refused"
+    );
 }
 
 #[test]
@@ -762,6 +859,17 @@ fn a_restore_gives_the_store_a_fresh_brain_id_that_open_accepts() {
         format_file(&dir).brain_id,
         report.brain_id,
         "FORMAT follows the commit"
+    );
+    // The still-open handle reports the fresh id too, not the one the restore replaced.
+    assert_eq!(store.brain_id(), report.brain_id);
+    assert_eq!(store.info().brain_id, report.brain_id);
+    assert_eq!(
+        store.get_brain_identity().unwrap()["brain_id"],
+        report.brain_id
+    );
+    assert_eq!(
+        store.restore_census(&[]).unwrap().store.brain_id,
+        report.brain_id
     );
     store.close();
     let reopened = Store::open_dir(&dir, Default::default()).unwrap();
