@@ -382,7 +382,7 @@ const PINS: Pin[] = [
   {
     from: 'src/core/sync-upstream.ts:71 recordUpstreamObservation',
     case: { method: 'writeSourceUpstreamObservation', variant: 'default', run: e => e.writeSourceUpstreamObservation('default', { checkedAt: '2026-01-02T03:04:05.000Z', commit: 'c1', behind: 2 }) },
-    texts: ['UPDATE sources SET upstream_checked_at=$2::timestamptz,upstream_commit=$3,upstream_behind=$4 WHERE id=$1'],
+    texts: ['UPDATE sources SET upstream_checked_at = CASE WHEN upstream_commit = $3 AND upstream_checked_at > $2::timestamptz THEN upstream_checked_at ELSE $2::timestamptz END,\n  upstream_commit=$3,upstream_behind=$4 WHERE id=$1'],
   },
   {
     from: 'src/core/sync-rename-identity.ts:365 redecideHeldRename',
