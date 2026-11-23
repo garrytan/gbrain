@@ -302,6 +302,8 @@ test/engine-parity/hidden-refusals.test.ts
 test/engine-parity/holding-page-purges.test.ts
 test/engine-parity/hot-memory-meta.test.ts
 test/engine-parity/hot-memory-watermark.test.ts
+test/engine-parity/identity-auto-sweeps.test.ts
+test/engine-parity/identity-finder.test.ts
 test/engine-parity/import-folder-stamp.test.ts
 test/engine-parity/import-members.test.ts
 test/engine-parity/import-path.test.ts
