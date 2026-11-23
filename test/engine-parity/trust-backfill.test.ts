@@ -5,8 +5,9 @@
  *  - Contract: runTrustBackfill (dry run, apply, resume and a source-scoped claim lift) and relowerClaimedRows (dry run
  *    and apply) give the same report on PGLite and Postgres. Their batch, apply and relower statements embed the trust
  *    classifier's generated SQL and stay raw, so an engine without raw SQL (the Rust arm, GBRAIN_TEST_RUST_ARM=1) must
- *    refuse every entry point with `engine_capability_missing` (reason raw_sql) that names the entry point, before it
- *    reads a batch or writes a tier, a cursor or a page.
+ *    refuse every backfill entry point with `engine_capability_missing` (reason raw_sql) that names the entry point, before it
+ *    reads a batch or writes a tier, a cursor or a page; relowerClaimedRows refuses by name the same way once a table holds
+ *    claim-lifted rows to read, and answers an empty report before that.
  *  - Regression: an entry point that starts on an engine that cannot finish it leaves a half-run backfill (a saved
  *    cursor, some tiers moved) or fails with an executeRaw refusal that does not name the trust backfill.
  *  - Why existing coverage misses it: test/trust-backfill.test.ts and test/trust-claim*.test.ts run PGLite or Postgres
@@ -44,7 +45,11 @@ describe('engine parity: trust backfill', () => {
     if (refusals.length) {
       // The Rust arm: every entry point refused up front, by its own name, and the page is as it was.
       const named = refusals.map(([name, r]) => [name, String((r as { error: Error }).error.message)] as const);
-      expect({ refused: named.map(([name]) => name), unchanged }).toEqual({ refused: Object.keys(runs), unchanged: true });
+      // relowerClaimedRows reads the claimed sources and the claim-lifted counts through typed members first, so a brain with
+      // nothing a claim lifted answers it on every engine (doctor's trust_sources_unclaimed relies on that); it refuses by name
+      // only when a table has rows its raw statement must read.
+      expect({ refused: named.map(([name]) => name), unchanged }).toEqual({ refused: ['dryRun', 'apply', 'resume', 'claimLift'], unchanged: true });
+      expect(['relowerDryRun', 'relower'].map(name => ('value' in runs[name as keyof typeof runs]))).toEqual([true, true]);
       for (const [name, message] of named) {
         expect(message).toContain(name.startsWith('relower') ? 'relowerClaimedRows' : 'runTrustBackfill');
       }

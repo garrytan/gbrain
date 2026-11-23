@@ -901,7 +901,7 @@ const PINS: Pin[] = [
   {
     from: 'src/core/ops/facts.ts:706 withProvenance, at 0a68889b57',
     case: { method: 'listFactProvenance', variant: 'default', run: e => e.listFactProvenance('default', [1, 2]) },
-    texts: ['SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[])'],
+    texts: ['SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[]) ORDER BY id'],
   },
   {
     from: 'src/core/belief/writers.ts:41 ontologyStreamSlugs, at 432ac446f4',

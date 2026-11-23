@@ -424,7 +424,6 @@ export interface TrustRelowerReport {
  * claim lifted can still be lowered; without `sources` only claimed sources are considered.
  */
 export async function relowerClaimedRows(engine: BrainEngine, opts: { dryRun?: boolean; sources?: readonly string[] } = {}): Promise<TrustRelowerReport> {
-  refuseWithoutRawSql(engine, 'relowerClaimedRows');
   const cols = await readColumns(engine);
   const mode: TrustRelowerReport['mode'] = opts.dryRun ? 'dry_run' : 'apply';
   if (!cols.has('pages', 'trust_tier') || !cols.has('pages', 'write_origin') || !cols.has('sources', 'config')) return { mode, tables: [], rows: 0, sample: [], sources: [] };
@@ -448,7 +447,11 @@ export async function relowerClaimedRows(engine: BrainEngine, opts: { dryRun?: b
      WHERE x.write_origin->>'channel' = 'trust_claim' AND ${src} = ANY($1::text[])
        AND (${rule}) IS NOT NULL AND (${rule}) < ${trustRankSql('x.trust_tier')}`;
     // Only a row a claim lifted can be a candidate, so a table with none needs no classifier read.
-    const rows = await engine.countClaimLiftedRows(table) === 0 ? [] : await engine.executeRaw<{ id: number | string; source_id: string; slug: string | null; from_tier: string; to_tier: string }>(
+    // The candidate statement is raw SQL: a brain with nothing a claim lifted answers on every engine, and an engine without
+    // raw SQL (the Rust engine) refuses by name only when a table has rows to read, before the first write.
+    const lifted = await engine.countClaimLiftedRows(table);
+    if (lifted !== 0) refuseWithoutRawSql(engine, 'relowerClaimedRows');
+    const rows = lifted === 0 ? [] : await engine.executeRaw<{ id: number | string; source_id: string; slug: string | null; from_tier: string; to_tier: string }>(
       `${candidates} ORDER BY x.id`, [claimed]);
     const to = zero();
     for (const row of rows) {
