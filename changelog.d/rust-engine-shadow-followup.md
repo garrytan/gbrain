@@ -1,0 +1,6 @@
+**Shadow mode's reseed steps now work as printed, and its docs say what the seed and `start` really do.**
+
+### Fixed
+- `gbrain engine shadow status` told a brain seeded before follow existed to finish a reseed with a bare `gbrain engine shadow start`, which only prints the plan and exits 3, so shadow mode stayed off. The steps now end with `gbrain engine shadow start --plan` and then `gbrain engine shadow start --yes --expect <plan_hash>`. A test runs the printed steps through the real command and checks that shadow mode turns on and the follower starts.
+- The docs and the shadow-seed changelog entry said a busy PGLite brain does not stop the seed. It does: `gbrain engine shadow seed` exits 1 with `could not open the brain (pglite_busy)` and writes nothing, so stop `gbrain serve` or the other process holding the brain and run it again.
+- `rust/docs/store/seed.md` now lists the `storage` field of `seed.json` and `status --json`, says what the seed writes (the Rust store and `seed.json`, and PGLite's own control and WAL files while it holds the brain open), and has a heading above its table of JS calls. The architecture notes no longer call shadow mode "reads only", and three code comments (managed storage, the shadow child, `memory_proposals`) now match the code.
