@@ -48,7 +48,7 @@ test/engine-parity/collate-referrer-ties.test.ts	3	0
 test/engine-parity/collate-repair-scans.test.ts	0	4
 test/engine-parity/collate-schema-pack-samples.test.ts	0	4
 test/engine-parity/collate-slug-sources.test.ts	1	7
-test/engine-parity/collate-store-listings.test.ts	1	20
+test/engine-parity/collate-store-listings.test.ts	2	19
 test/engine-parity/collate-ties.test.ts	2	0
 test/engine-parity/config-ingest.test.ts	9	0
 test/engine-parity/connect-gate.test.ts	7	0
