@@ -26,7 +26,6 @@ tools:
   - read
 mutating: false
 writes_pages: false
-upstream: context-audit@fc834ee
 ---
 
 # context-audit — Token Hygiene for the Always-Loaded Context Stack
