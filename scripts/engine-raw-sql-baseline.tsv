@@ -372,7 +372,6 @@ src/core/minions/idempotency-coalesce.ts	execute_raw	1
 src/core/minions/job-context.ts	execute_raw	2
 src/core/minions/legacy-cancel.ts	execute_raw	4
 src/core/minions/legacy-selection.ts	execute_raw	2
-src/core/minions/no-worker.ts	execute_raw	1	minion_jobs read stays raw on PGLite and Postgres (master #9973, the facts_drain no-worker warning); on Rust it is refused (loss row 42), and it moves to a typed member then
 src/core/minions/rate-leases.ts	execute_raw	6
 src/core/minions/spend-authorization.ts	execute_raw	3
 src/core/minions/sync-queue-wake.ts	execute_raw	2

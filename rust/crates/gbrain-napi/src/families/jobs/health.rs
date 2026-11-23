@@ -76,6 +76,20 @@ impl Brain {
         self.run(env, move |s| s.read_oldest_waiting_age(&queue))
     }
 
+    /// `readUntakenWaitingJobs(name, thresholdHours)`: `{ queue, waiting, oldest_age_seconds }`,
+    /// or null.
+    #[napi]
+    pub fn read_untaken_waiting_jobs<'env>(
+        &self,
+        env: &'env Env,
+        name: String,
+        threshold_hours: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_untaken_waiting_jobs(&name, threshold_hours)
+        })
+    }
+
     /// `countWaitingJobs(excludeFactsAbsorb)`: the waiting jobs.
     #[napi]
     pub fn count_waiting_jobs<'env>(

@@ -292,6 +292,33 @@ export async function readOldestWaitingAge(tx: Raw, queue: string, opts?: Signal
   return numOrNull(rows[0]?.age);
 }
 
+/** The queue a facts-drain no-worker warning names: its count of untaken waiting `name` jobs and the age of the oldest. */
+export interface UntakenWaitingJobs { queue: string; waiting: number; oldest_age_seconds: number }
+
+/**
+ * The queue whose waiting `name` jobs nothing is running (moved from minions/no-worker.ts untakenWaitingJobs unchanged):
+ * one such claimable job has waited past `thresholdHours` since it last became waiting, and no job on that queue holds a
+ * live lock or started within that time; the queue with the oldest such job, or null.
+ */
+export async function readUntakenWaitingJobs(tx: Raw, name: string, thresholdHours: number): Promise<UntakenWaitingJobs | null> {
+  const [row] = await tx.executeRaw<{ queue: string; waiting: number; oldest_age_seconds: number }>(
+    `WITH stuck AS (
+       SELECT queue, count(*)::int AS waiting, EXTRACT(EPOCH FROM (now() - min(updated_at)))::int AS oldest_age_seconds
+         FROM minion_jobs
+        WHERE name = $1 AND status = 'waiting' AND submission_authority IS NOT NULL
+        GROUP BY queue
+       HAVING min(updated_at) < now() - $2::text::interval
+     )
+     SELECT queue, waiting, oldest_age_seconds FROM stuck s
+      WHERE NOT EXISTS (SELECT 1 FROM minion_jobs j WHERE j.queue = s.queue
+        AND ((j.status = 'active' AND j.lock_until > now()) OR j.started_at > now() - $2::text::interval))
+      ORDER BY oldest_age_seconds DESC
+      LIMIT 1`,
+    [name, `${thresholdHours} hours`],
+  );
+  return row ? { queue: row.queue, waiting: Number(row.waiting), oldest_age_seconds: Number(row.oldest_age_seconds) } : null;
+}
+
 /**
  * How many jobs wait, for the readiness worker probe. `excludeFactsAbsorb` leaves out `facts-absorb` jobs, which PGLite's
  * automatic facts drain owns (its own readiness entry), not a worker.

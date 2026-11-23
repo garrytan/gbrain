@@ -12,7 +12,7 @@ import type { ExpireSpendScope, JobSpendTreeSpec, LeasePressureFilter, LeasePres
 import type { JobInsightRows, JobInsightSpec } from '../engine-sql/jobs-insight.ts';
 import type * as JobsWake from '../engine-sql/jobs-wake.ts';
 import type { OauthClientPatch, OauthClientPatchGuard, OauthClientPatched, OauthClientRow } from '../engine-sql/oauth-clients.ts';
-import type { PrivateQueueHealthRow, QueueDivergence, QueueDivergenceSpec, QueueHealthSignals, QueueHealthSpec, QueueWedgeRow, QueueWedgeSignals, WaitingByQueueRow } from '../engine-sql/jobs-health.ts';
+import type { PrivateQueueHealthRow, QueueDivergence, QueueDivergenceSpec, QueueHealthSignals, QueueHealthSpec, QueueWedgeRow, QueueWedgeSignals, UntakenWaitingJobs, WaitingByQueueRow } from '../engine-sql/jobs-health.ts';
 import type { SubagentFailureFallback, SubagentMessageInsert, SubagentMessageRow, SubagentOneshotLedgerRow, SubagentRetainedPutPage, SubagentToolInsert, SubagentToolOrder, SubagentToolRow, SubagentToolStart, SubagentToolTarget, SubagentWriteOutcome } from '../engine-sql/jobs-subagent.ts';
 import type { AccessTokenScopeRow } from '../engine-sql/access-tokens.ts';
 import type { EngineMigrationHistory, ManualLinkTransition, MigrationPageColumns, MigrationRows, MigrationTable } from '../engine-sql/engine-migration.ts';
@@ -177,6 +177,8 @@ export interface JobsMembers {
   readWedgeSignals(queue: string, handlerNames: readonly string[], opts?: { signal?: AbortSignal }): Promise<QueueWedgeSignals>;
   /** The age in whole seconds of the oldest waiting job in a queue, or null with none. */
   readOldestWaitingAge(queue: string, opts?: { signal?: AbortSignal }): Promise<number | null>;
+  /** The queue whose waiting `name` jobs no worker takes (waited past `thresholdHours`, no live or recent job there), or null. */
+  readUntakenWaitingJobs(name: string, thresholdHours: number): Promise<UntakenWaitingJobs | null>;
   /** How many jobs wait; `excludeFactsAbsorb` leaves out the `facts-absorb` jobs PGLite's facts drain owns. */
   countWaitingJobs(excludeFactsAbsorb: boolean): Promise<number>;
   /** Active jobs whose lock lapsed or whose stalled counter reached two, per name. */

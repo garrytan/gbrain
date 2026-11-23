@@ -1111,7 +1111,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listQueueWedgeCounts': OOS.minionJobs,
   'listPrivateQueueHealth': OOS.minionJobs,
   'readWedgeSignals': OOS.minionJobs,
-  'readOldestWaitingAge': OOS.minionJobs,
+  'readOldestWaitingAge': OOS.minionJobs, 'readUntakenWaitingJobs': OOS.minionJobs,
   'countWaitingJobs': OOS.minionJobs,
   'listStuckActiveJobsByName': OOS.minionJobs,
   // job counts and last-run reads for the status surfaces (lane L5 group B, engine-sql/jobs-status.ts)
