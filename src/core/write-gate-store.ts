@@ -12,7 +12,6 @@
  * in the same transaction.
  */
 import { createHash } from 'node:crypto';
-import { normalizeSlug } from './utils.ts';
 import type { BrainEngine } from './engine.ts';
 import { noteBelief } from './belief/ledger.ts';
 import {
@@ -103,37 +102,12 @@ export interface WriteGateHoldInput {
 }
 
 /**
- * The key of the transaction lock that serializes the hold writers of one page with a move of that page's slug
- * (`gbrain repair slug-spelling`): a stable signed 64-bit value from a namespaced string of the source and the normal slug,
- * so every spelling of a page shares it. Postgres and PGLite take it as `pg_advisory_xact_lock`.
- */
-export function holdSlugLockKey(sourceId: string, slug: string): string {
-  const digest = createHash('sha256').update(`gbrain:write-gate-hold-slug\u0000${sourceId}\u0000${normalizeSlug(slug)}`).digest();
-  return digest.readBigInt64BE(0).toString();
-}
-
-/** Takes the lock of `holdSlugLockKey` until the transaction ends; a page's hold writers and its slug move queue behind each other. */
-export async function lockHoldSlug(tx: Exec, sourceId: string, slug: string): Promise<void> {
-  await tx.executeRaw('SELECT pg_advisory_xact_lock($1::bigint)', [holdSlugLockKey(sourceId, slug)]);
-}
-
-/** The slug a hold for `slug` belongs to: where a page renamed away from `slug` went (its alias), when no page holds `slug` any more. */
-async function currentHoldSlug(tx: Exec, sourceId: string, slug: string): Promise<string> {
-  const [moved] = await tx.executeRaw<{ canonical_slug: string }>(`SELECT a.canonical_slug FROM slug_aliases a WHERE a.source_id = $1 AND a.alias_slug = $2
-    AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = $1 AND p.slug = $2)`, [sourceId, slug]);
-  return moved?.canonical_slug ?? slug;
-}
-
-/**
  * Hold a quarantined fact or take instead of inserting it, plus its receipt.
  * The same content arriving again (same source, slug, fingerprint and
  * detector version) re-opens the existing hold rather than adding a row.
  */
 export async function recordWriteGateHold(tx: Exec, input: WriteGateHoldInput): Promise<{ holdId: number; receiptId: number | null }> {
   const a = input.assessment;
-  // A page's slug move takes this lock too, so a hold recorded while it runs waits, then lands on the page's new slug.
-  let slug = input.slug ?? '';
-  if (slug) { await lockHoldSlug(tx, input.sourceId, slug); slug = await currentHoldSlug(tx, input.sourceId, slug); }
   const rows = await tx.executeRaw<{ id: string }>(
     `INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, reason_families, reasons, detector_error, payload, write_origin, request_id)
      VALUES ($1, $2, $3, $4, $5, $6, $7::text[], $8::text[], $9, $10::text::jsonb, $11::text::jsonb, $12)
@@ -142,11 +116,11 @@ export async function recordWriteGateHold(tx: Exec, input: WriteGateHoldInput): 
            tier = EXCLUDED.tier, reason_families = EXCLUDED.reason_families, reasons = EXCLUDED.reasons, payload = EXCLUDED.payload,
            write_origin = EXCLUDED.write_origin, request_id = COALESCE(EXCLUDED.request_id, write_gate_holds.request_id)
      RETURNING id::text AS id`,
-    [input.kind, input.sourceId, slug, holdFingerprint(input.kind, input.texts), a.detectorVersion, a.tier, a.families, reasonList(a),
+    [input.kind, input.sourceId, input.slug ?? '', holdFingerprint(input.kind, input.texts), a.detectorVersion, a.tier, a.families, reasonList(a),
       a.detectorError, JSON.stringify(input.payload), input.origin ? JSON.stringify(input.origin) : null, input.requestId ?? null]);
   const holdId = Number(rows[0]!.id);
   const fingerprint = holdFingerprint(input.kind, input.texts);
-  noteBelief({ kind: 'held', holdKind: input.kind, fingerprint, holdId, slug, tier: a.tier, valueHash: fingerprint });
+  noteBelief({ kind: 'held', holdKind: input.kind, fingerprint, holdId, slug: input.slug ?? '', tier: a.tier, valueHash: fingerprint });
   const receiptId = await recordWriteGateReceipt(tx, { targetTable: 'write_gate_holds', targetId: holdId, sourceId: input.sourceId, assessment: { ...a, verdict: 'quarantine' }, requestId: input.requestId });
   return { holdId, receiptId };
 }
