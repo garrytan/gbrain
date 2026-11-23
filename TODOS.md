@@ -1,5 +1,9 @@
 # TODOS
 
+## Stats follow-ups (filed 2026-11-23)
+
+- [ ] **P3 — stats pages_by_type tie order is undefined on PGLite and Postgres; make it byte order on every engine (after Dec 1) (owner: lane 7).** **What:** `getStats` reads `pages_by_type` with `GROUP BY type ORDER BY count DESC` (`src/core/pglite-engine.ts`, `src/core/postgres-engine.ts`), so types with equal counts come back in whatever order the engine's plan gives, and PGLite and Postgres can print different `gbrain stats --json` bytes for one brain. The Rust store orders ties by type in byte order (`rust/crates/gbrain-store/src/stats.rs`). For the Dec 1 swap Rust matches Postgres as it is, so the tests compare tied types order-insensitively (`test/extract-mentions-engines.serial.test.ts`). **Fix:** add `, type COLLATE "C"` to both statements, with a 3-arm pin of two tied types whose byte order differs from the plan order. It changes agent-visible output on PGLite and Postgres, so it waits until after Dec 1. **Effort:** S. **Priority:** P3.
+
 ## Entity identity follow-ups (filed 2026-11-21)
 
 - [ ] **P3 — entity-identity-non-finite-confidence (owner: the maintainer, product decision; not lane 11): refuse non-finite entity identity confidence on all engines (invalid_argument).** **What:** `linkEntityIdentityRow` accepts a `confidence` of NaN, Infinity or -Infinity on PGLite and Postgres (the column is DOUBLE PRECISION) and lists it back; the Rust store now keeps the same values exactly (rust-engine/ra1-identity-confidence). A non-finite confidence has no meaning and sorts and compares wrongly. **Decision needed:** whether every engine should refuse it on write with `invalid_argument` (a behavior change for PGLite and Postgres users). **Fix if yes:** check in the shared member (`src/core/engine-sql/entity-identities.ts`) and the Rust store, with a 3-arm case. **Effort:** S. **Priority:** P3.

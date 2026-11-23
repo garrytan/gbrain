@@ -4576,7 +4576,7 @@ export class PostgresEngine implements BrainEngine {
     const types = await sql`
       SELECT type, count(*)::int as count FROM pages p WHERE p.deleted_at IS NULL
         AND (${scope}::text[] IS NULL OR p.source_id = ANY(${scope}))
-      GROUP BY type ORDER BY count DESC, type COLLATE "C"
+      GROUP BY type ORDER BY count DESC
     `;
     const pages_by_type: Record<string, number> = {};
     for (const t of types) {
