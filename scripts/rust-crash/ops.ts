@@ -206,8 +206,8 @@ const normal = (text: string | null | undefined): string | null => (text == null
 
 /**
  * What the cell compares: for every slug the sequence can write, the page (title, type, body, timeline, tags), its
- * chunks' text and its facts (claim, kind, visibility, whether expired, the end date), with times folded out because
- * the two engines write their own clocks. The sync source's last imported commit is compared as it is: commits are
+ * chunks' text and its facts (claim, kind, visibility, whether expired, whether it has an end date), with times and
+ * dates folded out because the two engines write their own clocks. The sync source's last imported commit is compared as it is: commits are
  * deterministic.
  */
 export async function project(engine: BrainEngine, ops: readonly CrashOp[]): Promise<unknown> {
@@ -218,7 +218,9 @@ export async function project(engine: BrainEngine, ops: readonly CrashOp[]): Pro
     const chunks = (await engine.getChunks(slug, { sourceId })).map(c => normal(c.chunk_text));
     const facts = (await engine.listFactsForPage(sourceId, slug)).sort((a, b) => Number(a.id) - Number(b.id))
       .map(f => ({ fact: f.fact, kind: f.kind, visibility: f.visibility, expired: f.expired_at !== null,
-        valid_until: f.valid_until ? String(f.valid_until instanceof Date ? f.valid_until.toISOString() : f.valid_until).slice(0, 10) : null }));
+        // The day a forgotten fact ends is each engine's own clock date, so a run that crosses midnight UTC would compare two
+        // different days. Only whether the fact has an end date is compared.
+        has_end_date: Boolean(f.valid_until) }));
     pages.push({ sourceId, slug, title: page.title, type: page.type, body: normal(page.compiled_truth), timeline: normal(page.timeline),
       tags: await engine.getTags(slug, { sourceId }), chunks, facts });
   }

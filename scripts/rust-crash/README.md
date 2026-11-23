@@ -25,8 +25,8 @@ three pages, then 24 seeded operations). Per seed:
 
 1. The oracle runs the sequence on PGLite and records a read projection after
    every operation: each page's title, type, body, timeline, tags and chunk text,
-   its facts (claim, kind, visibility, expired or not, end date), and the sync
-   source's last imported commit. Times are folded out; Git commits are fixed.
+   its facts (claim, kind, visibility, expired or not, has an end date or not), and the sync
+   source's last imported commit. Times and dates are folded out; Git commits are fixed.
 2. A counting pass runs the sequence in a worker with no kill. Its brain must
    equal the oracle at the end. The pass records where the kill points fall.
 3. Nine kills, each in its own worker on a fresh brain:
