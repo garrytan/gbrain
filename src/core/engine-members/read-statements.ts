@@ -19,6 +19,8 @@ import type { WithdrawalDiscoveryKind, WithdrawalDiscoveryRead, WithdrawalDiscov
 import type { PageKeyRef } from '../engine-sql/trust-tier-reads.ts';
 
 export interface ReadStatementMembers {
+  /** revert_version: the whole row of version `versionId` of page `pageId`, or null. Reads page_versions. */
+  readPageVersionRow(versionId: number, pageId: number): Promise<import('../page-state/version-types.ts').PageVersion | null>;
   // Read-command statements (engine-sql/cli-reads-ops.ts). Each runs the statement its op ran through executeRaw.
   /**
    * One exact-phrase scan batch: the next `batchPages` in-scope pages after `afterPageId`, in id order, with their

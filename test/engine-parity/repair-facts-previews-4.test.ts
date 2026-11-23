@@ -115,8 +115,8 @@ function withoutRawSql(engine: BrainEngine): BrainEngine {
 }
 
 describe('engine parity: repair fact applies, rename-identity and unwithdrawn-facts (batch 4.3b)', () => {
-  parityTest('consolidate-ties applies on the SQL arms, and the Rust engine refuses the fact write by name', {
-    methods: ['insertFacts', 'consolidateFact', 'listClosedConsolidationTies', 'writeOpCheckpointRecord'], requires: 'raw_sql', timeout: 60_000,
+  parityTest('consolidate-ties applies the same way on every arm', {
+    methods: ['insertFacts', 'consolidateFact', 'listClosedConsolidationTies', 'writeOpCheckpointRecord'], timeout: 60_000,
   }, async (engine, backend) => {
     const at = new Date('2026-01-01T00:00:00.000Z');
     const tie = { entity_slug: 'companies/acme-example', claim_metric: 'arr', claim_unit: 'usd', claim_period: '2026', valid_from: at, valid_until: at, source: 'test' };
@@ -147,8 +147,8 @@ describe('engine parity: repair fact applies, rename-identity and unwithdrawn-fa
     return byOrder(out, ids);
   });
 
-  parityTest('duplicate-facts applies on the SQL arms, and the Rust engine refuses the page write by name', {
-    methods: ['insertFacts', 'putPage', 'createSegmentedPageShell', 'flipBodyGeneration', 'listDuplicateFactRows'], requires: 'raw_sql', timeout: 60_000,
+  parityTest('duplicate-facts applies a database-only group the same way on every arm', {
+    methods: ['insertFacts', 'putPage', 'createSegmentedPageShell', 'flipBodyGeneration', 'listDuplicateFactRows'], timeout: 60_000,
   }, async (engine, backend) => {
     await engine.putPage('people/ana-example', note('Ana Example', 'person'), { sourceId: 'default' });
     await publishSegmentedPage(engine, 'notes/seg-example', [segmentText('a segmented body\n')]);
@@ -158,8 +158,8 @@ describe('engine parity: repair fact applies, rename-identity and unwithdrawn-fa
     return byOrder(out, ids);
   });
 
-  parityTest('extractor-facts applies on the SQL arms, and the Rust engine refuses the fact write by name', {
-    methods: ['putPage', 'insertFacts', 'listExtractorFactsForClassification'], requires: 'raw_sql', timeout: 60_000,
+  parityTest('extractor-facts applies the same way on every arm', {
+    methods: ['putPage', 'insertFacts', 'listExtractorFactsForClassification'], timeout: 60_000,
   }, async (engine, backend) => {
     await engine.putPage('chats/one-example', note('A chat'), { sourceId: 'default' });
     const ids = await insert(engine, [{ fact: 'Ana keeps bees', source: `${EXTRACTOR}:v1`, source_markdown_slug: 'chats/one-example', expired_at: new Date('2026-03-04T05:06:07.654321Z') }]);
@@ -167,8 +167,8 @@ describe('engine parity: repair fact applies, rename-identity and unwithdrawn-fa
     return byOrder({ ...out, after: (await engine.listExtractorFactsForClassification(['default'], null)).map(row => Number(row.id)) }, ids);
   });
 
-  parityTest('fact-claim-dates applies a database-only fact move on the SQL arms, and the Rust engine refuses the fact write by name', {
-    methods: ['insertFacts', 'listFactsOnValidDay'], requires: 'raw_sql', timeout: 60_000,
+  parityTest('fact-claim-dates applies a database-only fact move the same way on every arm', {
+    methods: ['insertFacts', 'listFactsOnValidDay'], timeout: 60_000,
   }, async (engine, backend) => {
     const day = '2026-02-03';
     const ids = await insert(engine, [{ source: 'test', valid_from: new Date(`${day}T10:11:12.345678Z`), fact: 'Acme closed a seed round on 2025-03-14',

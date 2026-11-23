@@ -14,6 +14,7 @@ import type * as FactsPurgePlanSql from '../engine-sql/facts-purge-plan.ts';
 import type * as FactsPurgeSql from '../engine-sql/facts-purge.ts';
 import type * as FactsRecallSql from '../engine-sql/facts-recall.ts';
 import type * as FactsRepairSql from '../engine-sql/facts-repair.ts';
+import type * as RepairAppliesSql from '../engine-sql/repair-applies.ts';
 import type * as FactsTrustSql from '../engine-sql/facts-trust.ts';
 import type { LocalWriterInsert, LocalWriterRow } from '../engine-sql/persistence-state.ts';
 import type { PageReadScope } from '../types.ts';
@@ -739,6 +740,31 @@ export interface FactsStatementMembers {
   readOAuthClientMemberGrant(clientId: string, opts?: { lock?: boolean }): Promise<AccessGrantsSql.MemberClientGrant | undefined>;
   /** A live (not revoked) access token's grant columns read `FOR SHARE` (unless `lock` is false), or undefined. */
   readAccessTokenMemberGrant(tokenId: string, opts?: { lock?: boolean }): Promise<AccessGrantsSql.MemberTokenGrant | undefined>;
+  // Repair apply rechecks and writes (engine-sql/repair-applies.ts). Each runs the statement its caller ran through executeRaw.
+  /** consolidate-ties: reopens the previewed tie's fact when it is still exactly as previewed; true when it did. Writes facts. */
+  restoreConsolidationTie(tie: RepairAppliesSql.ConsolidationTieRestore): Promise<boolean>;
+  /** duplicate-facts: the named facts still active, unsuperseded and stating the group's claim. Reads facts. */
+  listLiveDuplicateRows(sourceId: string, factIds: readonly number[], visibility: string, fingerprint: string): Promise<RepairAppliesSql.LiveDuplicateRow[]>;
+  /** duplicate-facts: expires the named database-only copies as superseded by the kept fact; the ids it changed. Writes facts. */
+  supersedeDuplicateFacts(sourceId: string, factIds: readonly number[], keptId: number, visibility: string, fingerprint: string): Promise<number[]>;
+  /** duplicate-facts: links the struck fenced copies to the kept fact; the ids it changed. Writes facts. */
+  linkStruckDuplicateFacts(sourceId: string, factIds: readonly number[], keptId: number): Promise<number[]>;
+  /** extractor-facts: the pages of committed restore jobs of a preview hash or of the named requests. Reads persistence_requests. */
+  listCommittedRestorePages(sourceIds: readonly string[], slugs: readonly string[], hash: string, requestIds: readonly string[]): Promise<Array<{ source_id: string; slug: string }>>;
+  /** extractor-facts: the named facts that are active and positioned. Reads facts. */
+  listActivePositionedFactIds(factIds: readonly number[]): Promise<number[]>;
+  /** extractor-facts: the live page at the slug, its body and its largest fact row number, or null. Reads pages and facts. */
+  readFactRestorePage(sourceId: string, slug: string): Promise<RepairAppliesSql.FactRestorePage | null>;
+  /** extractor-facts: restores one expired fact at a row number when its expiry is still the previewed one; true when it did. Writes facts. */
+  restoreExtractorFact(sourceId: string, id: number, rowNum: number, expiredAt: string): Promise<boolean>;
+  /** fact-claim-dates: moves the named database-only facts to their claim's day; the ids it moved. Writes facts. */
+  moveFactClaimDates(sourceId: string, rows: readonly RepairAppliesSql.ClaimDateMove[]): Promise<number[]>;
+  /** url-clone-fences: makes the fact at a fence row of the page database-only; the ids it changed. Writes facts. */
+  detachFenceRowFacts(sourceId: string, slug: string, rowNum: number): Promise<number[]>;
+  /** url-clone-fences: whether the entity already holds a database-only fact with this claim text. Reads facts. */
+  hasDatabaseOnlyClaim(sourceId: string, entitySlug: string, fact: string): Promise<boolean>;
+  /** The url-clone check: a source's local path and config, or null. Reads sources. */
+  readSourceCloneRow(sourceId: string): Promise<{ local_path: string | null; config: unknown } | null>;
   /** A local writer's grant ceiling and revoked_at read `FOR SHARE`, revoked or not, or undefined. */
   readLocalWriterMemberGrant(id: string): Promise<AccessGrantsSql.MemberLocalWriterGrant | undefined>;
   /** The shared-skill serving epoch, or null when the brain has no shared-skill state row. */

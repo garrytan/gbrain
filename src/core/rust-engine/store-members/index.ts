@@ -77,6 +77,7 @@ import * as purgeEffects from './purge-effects.ts';
 import * as beliefPurge from './belief-purge.ts';
 import * as projectionRebuild from './projection-rebuild.ts';
 import * as factsRepair from './facts-repair.ts';
+import * as repairApplies from './repair-applies.ts';
 import * as ontologyRepair from './ontology-repair.ts';
 import * as factsTrust from './facts-trust.ts';
 import * as factsForget from './facts-forget.ts';
@@ -331,6 +332,8 @@ export const STORE_MEMBERS = {
   ...remoteLinks,
   // The facts backstop effect's two extraction reads (rust/docs/store/jobs.md, "Facts extraction reads").
   ...factsBackstop,
+  // The rechecks and writes of the repair applies (rust/docs/store/repair-applies.md).
+  ...repairApplies,
   // The dream cycle's persistence journal reads (rust/docs/store/dream.md, "Dream cycle statements").
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 

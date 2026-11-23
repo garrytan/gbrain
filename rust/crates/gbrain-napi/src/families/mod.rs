@@ -130,6 +130,7 @@ mod purge_plan;
 mod raw_files;
 mod relations;
 mod remote_links;
+mod repair_applies;
 mod salience;
 mod schema_detect;
 mod stats;

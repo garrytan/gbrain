@@ -182,6 +182,17 @@ impl Brain {
         })
     }
 
+    /// `readPageVersionRow(versionId, pageId)`: resolves the whole version row, or null.
+    #[napi]
+    pub fn read_page_version_row<'env>(
+        &self,
+        env: &'env Env,
+        version_id: i64,
+        page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_page_version_row(version_id, page_id))
+    }
+
     /// `readVersionContent({ versionId, pageId })`: resolves the content columns of the version, or null.
     #[napi]
     pub fn read_version_content<'env>(

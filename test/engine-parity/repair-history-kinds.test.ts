@@ -381,10 +381,10 @@ describe('engine parity: the history repair kinds of batch 6a', () => {
     const allBodies = (await engine.listRetainedVersionBodies(page.id, 50)).map(b => b.compiled_truth);
     return { candidates, restored, projected, noted, again, wrongSource, bySource, unexpired, maxRow, noRows, after, bodies, allBodies };
   });
-  parityTest('overwritten-edits previews the database edit an import overwrote, and the Rust engine refuses the restore by name', {
+  parityTest('overwritten-edits previews and restores the database edit an import overwrote the same way on every arm', {
     methods: ['insertWriteRequest', 'completeWriteRow', 'setWriteContext', 'putPage', 'createVersion', 'listOverwriteCandidates', 'listVersionsAfter',
       'listOverwriteLivePages', 'readVersionContent'],
-    requires: 'raw_sql', timeout: 60_000,
+    timeout: 60_000,
   }, async (engine, backend) => withDir(async () => {
     await seedOverwrite(engine);
     const scanned = await engine.listOverwriteCandidates('default', null, 10);

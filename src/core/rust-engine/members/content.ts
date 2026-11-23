@@ -25,6 +25,7 @@ export const CONTENT_MEMBERS = {
   listVersionsAfter: 'page_versions',
   listOverwriteLivePages: 'page_versions',
   readVersionContent: 'page_versions',
+  readPageVersionRow: 'page_versions',
   pruneHoldingPageVersions: 'page_versions',
   revertToVersion: 'page_versions',
   // page_body

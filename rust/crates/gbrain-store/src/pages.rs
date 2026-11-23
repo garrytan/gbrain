@@ -2065,6 +2065,31 @@ impl Store {
             .collect())
     }
 
+    /// `readPageVersionRow(versionId, pageId)`: the whole row of version `versionId` of page `pageId`
+    /// (`SELECT * FROM page_versions WHERE id = $1 AND page_id = $2`, the row `createVersion`
+    /// returns), or null.
+    pub fn read_page_version_row(&self, version_id: i64, page_id: i64) -> Result<Value> {
+        let (Ok(version_id), Ok(page_id)) = (u64::try_from(version_id), u64::try_from(page_id))
+        else {
+            return Ok(Value::Null);
+        };
+        let read = self.read()?;
+        let mut found = None;
+        scan_prefix(
+            &*read,
+            &keys::version_prefix(page_id),
+            false,
+            &mut |_, v| match serde_json::from_slice::<VersionRecord>(v) {
+                Ok(row) if row.id == version_id => {
+                    found = Some(row);
+                    false
+                }
+                _ => true,
+            },
+        )?;
+        Ok(found.map_or(Value::Null, |row| row.to_created_json()))
+    }
+
     /// `readLatestVersionId(pageId)`: the page's newest version id, or none when it keeps no
     /// version (`SELECT max(id) FROM page_versions WHERE page_id = $1`).
     pub fn read_latest_version_id(&self, page_id: i64) -> Result<Option<u64>> {

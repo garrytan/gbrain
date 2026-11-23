@@ -31,7 +31,6 @@ import { syncGit, syncGitPath } from '../persistence/sync-discovery.ts';
 import { readSyncImportProvenances, writeGitHold } from '../persistence/sync-holds.ts';
 import { fileDriftHold } from '../persistence/sync-page-fault.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairScope } from './core.ts';
-import { requireRawSql } from '../rust-engine/errors.ts';
 
 const DOCS = 'docs/guides/repair.md#overwritten-edits';
 const COMMAND = 'gbrain repair overwritten-edits';
@@ -150,8 +149,6 @@ async function restoreEdit(ctx: OperationContext, entry: RepairItem, edit: Appro
     if (!snapshot || Number(snapshot.page.id) !== edit.page_id || snapshot.revision !== edit.page_revision) return changed('page_moved', { page_revision: snapshot?.revision ?? null });
     if (await versionMarkdown(engine, edit, snapshot.page) === null) return changed('version_changed');
   }
-  // The restore is a page write (revert_version, lane 7's writer): an engine without raw SQL stops here, before it.
-  requireRawSql(engine, 'repair overwritten-edits page write');
   try {
     await submitPageMutation({ ...ctx, sourceId: edit.source_id }, { operation: 'revert_version', databaseOnly: 'overwrite_restore',
       params: { slug: edit.slug, source_id: edit.source_id, version_id: edit.version_id, expected_revision: edit.page_revision, request_id: requestId } });

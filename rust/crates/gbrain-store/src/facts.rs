@@ -77,6 +77,7 @@ pub mod relink;
 pub mod relink_writes;
 pub mod remember_reads;
 pub mod repair;
+pub mod repair_applies;
 pub mod repair_home;
 pub mod repair_previews;
 pub mod rest_sites;

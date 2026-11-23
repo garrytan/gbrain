@@ -360,6 +360,9 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readSyncAdmissionSettingRow', 'readTakeRowTrust', 'readTakeTrustRef', 'readTerminalFailureGroups',
   'readTextMentionPages', 'readTokenLifetimeClampedClients', 'readTrustScanCeilings', 'readTrustScanCursor',
   'readWorktreeManifest', 'readWriteRequestsByRequestId', 'readWriterDiagnosticRows', 'readWriterStatusRows',
+
+  // The repair applies' rechecks (engine-sql/repair-applies.ts).
+  'listLiveDuplicateRows', 'listCommittedRestorePages', 'listActivePositionedFactIds', 'readFactRestorePage', 'readSourceCloneRow', 'readPageVersionRow', 'hasDatabaseOnlyClaim',
 ];
 
 const nothingSetting = 'nothing: the setting lasts only for the call, so running it again repeats no write';
@@ -491,6 +494,13 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   repointSupersededToKept: 'listActiveFactsForEntity for that fact\'s entity',
   restoreOntologyFact: 'listActiveFactsForEntity for that fact\'s entity',
   setConsolidatedFactValidUntil: 'listActiveFactsForEntity for that fact\'s entity',
+  // The repair applies' writes (engine-sql/repair-applies.ts).
+  restoreConsolidationTie: 'listClosedConsolidationTies for that source (a reopened fact is no longer a closed tie)',
+  supersedeDuplicateFacts: 'listLiveDuplicateRows for those facts (a superseded copy no longer reads live)',
+  linkStruckDuplicateFacts: 'listFactRowsByIds for those facts (their superseded_by names the kept fact)',
+  restoreExtractorFact: 'listActivePositionedFactIds for that fact (a restored fact is active at its row)',
+  moveFactClaimDates: 'listFactsOnValidDay for that source and day (a moved fact no longer reads on the bulk day)',
+  detachFenceRowFacts: 'hasDatabaseOnlyClaim for that fact\'s claim (a detached fact is database-only)',
   closeOpenLoop: 'listOpenLoops for that source', upsertOpenLoop: 'listOpenLoops for that source',
   completeSubagentToolExecution: 'summarizeSubagentToolExecutions for that job',
   failSubagentToolExecution: 'summarizeSubagentToolExecutions for that job',
