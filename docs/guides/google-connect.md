@@ -496,7 +496,7 @@ Threads are sorted into tiers before anything is written:
 | Tier | Which threads | What gbrain does |
 |---|---|---|
 | `full` | You wrote in it, a message is starred or important, or someone in it has a person page | A normal email page |
-| `record` | Other mail that is not bulk | A searchable page with `facts_backstop: false` and `extract_atoms: false`; no model reads it |
+| `record` | Other mail that is not bulk | A searchable page with `facts_backstop: false`, `extract_atoms: false` and `conversation_parseable: false`; no model reads it |
 | none | You never wrote and every other message is bulk (promotions, social and forum categories, mail gbrain.io marks automated, noise senders, mail to more than five people from a sender with no person page) | No page |
 | `private` | Someone in it is on the private-senders list | An owner-only page (`visibility: private`), embedded like other private pages, never read by a model |
 

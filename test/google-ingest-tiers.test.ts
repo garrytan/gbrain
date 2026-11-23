@@ -14,6 +14,8 @@ import { runLoopsCatchup } from '../src/core/google/loop-catchup.ts';
 import { runLoopsExtract } from '../src/core/google/loops-extract.ts';
 import type { GmailMessageMeta, GoogleSourceState } from '../src/core/google/types.ts';
 import { CredentialError } from '../src/core/creds/errors.ts';
+import { isConversationFactsEligiblePage } from '../src/core/facts/conversation-types.ts';
+import { parseMarkdown } from '../src/core/markdown.ts';
 
 test('parsePrivateSenders: comments, case, @domain and malformed lines', () => {
   const list = parsePrivateSenders([
@@ -46,7 +48,7 @@ test('parsePrivateSenders: a list with no usable entries is refused', () => {
 test('applyTierFrontmatter: re-tiering replaces keys, full drops the opt-outs, private sets visibility', () => {
   const page = '---\ntitle: T\n---\nbody\n';
   const record = applyTierFrontmatter(page, 'record');
-  expect(record).toBe('---\ntitle: T\ningest_tier: record\nfacts_backstop: false\nextract_atoms: false\n---\nbody\n');
+  expect(record).toBe('---\ntitle: T\ningest_tier: record\nfacts_backstop: false\nextract_atoms: false\nconversation_parseable: false\n---\nbody\n');
   expect(applyTierFrontmatter(record, 'record')).toBe(record);
   expect(applyTierFrontmatter(record, 'full')).toBe('---\ntitle: T\ningest_tier: full\n---\nbody\n');
   const priv = applyTierFrontmatter(record, 'private');
@@ -55,6 +57,19 @@ test('applyTierFrontmatter: re-tiering replaces keys, full drops the opt-outs, p
   expect(priv).toContain('visibility: private');
   expect(priv).toContain('extract_atoms: false');
   expect(applyTierFrontmatter('no frontmatter', 'record')).toBe('no frontmatter');
+});
+
+test('the conversation-facts extractor never reads record or private email pages', () => {
+  const page = '---\ntype: email\ntitle: T\n---\nPeer: Can you send the statement?\n';
+  const eligible = (markdown: string) =>
+    isConversationFactsEligiblePage({ type: 'email', frontmatter: parseMarkdown(markdown).frontmatter }, ['email']);
+  const record = applyTierFrontmatter(page, 'record');
+  const priv = applyTierFrontmatter(record, 'private');
+  expect(eligible(record)).toBe(false);
+  expect(eligible(priv)).toBe(false);
+  const full = applyTierFrontmatter(priv, 'full');
+  expect(full).not.toContain('conversation_parseable');
+  expect(eligible(full)).toBe(true);
 });
 
 describe('model reads and the private list on a brain', () => {

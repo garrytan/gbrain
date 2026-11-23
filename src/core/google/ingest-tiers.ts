@@ -142,10 +142,10 @@ export async function classifyThreadTier(
 export function applyTierFrontmatter(markdown: string, tier: Exclude<IngestTier, 'none'>): string {
   const match = /^---\n([\s\S]*?)\n---(\n|$)/.exec(markdown);
   if (!match) return markdown;
-  const drop = /^(ingest_tier|facts_backstop|extract_atoms)\s*:/;
+  const drop = /^(ingest_tier|facts_backstop|extract_atoms|conversation_parseable)\s*:/;
   const lines = match[1]!.split('\n').filter((line) => !drop.test(line));
   lines.push('ingest_tier: ' + tier);
-  if (tier !== 'full') lines.push('facts_backstop: false', 'extract_atoms: false');
+  if (tier !== 'full') lines.push('facts_backstop: false', 'extract_atoms: false', 'conversation_parseable: false');
   const out = '---\n' + lines.join('\n') + '\n---' + markdown.slice(match[0].length - match[2]!.length);
   return tier === 'private' ? withPrivateVisibility(out) : out;
 }
