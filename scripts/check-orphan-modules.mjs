@@ -42,19 +42,10 @@ const SELF = 'scripts/check-orphan-modules.mjs';
 // even tests. SHRINK-ONLY: a stale entry (module became reachable or was
 // deleted) fails the guard so the list can't rot.
 const ALLOWLIST = new Map([
-  ['src/core/engine-sql/writer-admin.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
-  ['src/core/engine-sql/writer-status.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
-  ['src/core/engine-sql/writer-versions.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
+  ['src/core/facts/claim-match-sql.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
+  ['src/core/facts/purge-plan-statements.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   ['src/core/peer-cred.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
-  ['src/core/engine-members/decide.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
-  ['src/core/engine-members/doctor.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
-  ['src/core/engine-members/facts-statements.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
-  ['src/core/engine-members/governance.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
-  ['src/core/engine-members/jobs.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
-  ['src/core/engine-members/ledgers.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
-  ['src/core/engine-members/mentions.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
-  ['src/core/engine-members/persistence.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
-  ['src/core/engine-members/read-statements.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
+  ['src/core/search/saved-fact-collapse.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   ['src/core/engine-sql/access-credentials.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   ['src/core/engine-sql/access-members.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   ['src/core/engine-sql/belief-ledger.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
@@ -63,6 +54,9 @@ const ALLOWLIST = new Map([
   ['src/core/engine-sql/embedding-install.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   ['src/core/engine-sql/entity-reads.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   ['src/core/engine-sql/facts-cycle.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
+  ['src/core/engine-sql/facts-purge-plan.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
+  ['src/core/engine-sql/facts-purge.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
+  ['src/core/engine-sql/facts-trust.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   ['src/core/engine-sql/link-temporal.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   ['src/core/engine-sql/oauth-clients.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   ['src/core/engine-sql/page-visibility.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
@@ -74,9 +68,13 @@ const ALLOWLIST = new Map([
   ['src/core/engine-sql/projection-rebuild.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   ['src/core/engine-sql/publication-journal.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   ['src/core/engine-sql/reflex-reads.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
+  ['src/core/engine-sql/takes-reads.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   ['src/core/engine-sql/trust-withdrawals.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   ['src/core/engine-sql/worktree-claim.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   ['src/core/engine-sql/write-guards.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
+  ['src/core/engine-sql/writer-admin.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
+  ['src/core/engine-sql/writer-status.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
+  ['src/core/engine-sql/writer-versions.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   // Empty: every module is reachable from an entrypoint or a test.
 ]);
 

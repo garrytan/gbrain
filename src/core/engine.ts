@@ -475,6 +475,15 @@ import type { StaleTakeOpts, StaleTakeRow, TakeEmbeddingInput } from './takes-ro
 import type { BodyFlipInput, BodyFlipResult, BodyRegion, BodyStagingInput, BodyStagingState, ManifestRow, ManifestRowInput, SegmentChunkInput,
   SegmentedPageMeta, SegmentSweepOptions, SegmentSweepResult, SegmentTextInput } from './page-body/types.ts';
 import type { SegmentDerivationInput, SegmentDerivationKind, SegmentDerivationRow } from './page-body/derivations.ts';
+import type { ReadStatementMembers } from './engine-members/read-statements.ts';
+import type { FactsStatementMembers } from './engine-members/facts-statements.ts';
+import type { PersistenceMembers } from './engine-members/persistence.ts';
+import type { LedgerMembers } from './engine-members/ledgers.ts';
+import type { GovernanceMembers } from './engine-members/governance.ts';
+import type { DecideMembers } from './engine-members/decide.ts';
+import type { JobsMembers } from './engine-members/jobs.ts';
+import type { DoctorMembers } from './engine-members/doctor.ts';
+import type { MentionPassMembers } from './engine-members/mentions.ts';
 export type { StaleTakeOpts, StaleTakeRow, TakeEmbeddingInput } from './takes-row-types.ts';
 
 /** Resolution metadata for resolveTake. */
@@ -922,7 +931,7 @@ export function clampSearchLimit(limit: number | undefined, defaultLimit = 20, c
   return Math.min(Math.floor(limit), cap);
 }
 
-export interface BrainEngine {
+export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers, PersistenceMembers, LedgerMembers, GovernanceMembers, DecideMembers, JobsMembers, DoctorMembers, MentionPassMembers {
   /** Discriminator: lets migrations and other consumers branch on engine kind without instanceof + dynamic imports. */
   readonly kind: 'postgres' | 'pglite';
   readonly capabilities: EngineCapabilities; // what this engine can do, by name (engine-capabilities.ts); ask it instead of branching on kind
@@ -3429,4 +3438,12 @@ export interface BrainEngine {
   getDecideCalibration(id: number): Promise<DecideStoreSql.DecideCalibration | null>;
   /** Retire calibration `id` or bring it back; answers whether the row exists. */
   setDecideCalibrationRetired(id: number, retired: boolean): Promise<boolean>;
+
+
+
+
+
+
+
+
 }

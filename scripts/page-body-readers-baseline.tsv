@@ -737,4 +737,11 @@ src/core/persistence/concept-rebuild.ts	STATED_SQL	sql	INLINE	reads only an inli
 
 src/core/engine-sql/facts-cycle.ts	LIVE_STORED_BODY_SQL	sql	SEGW	lane 4 facts-cycle sites (item 4.2): moved from readStoredBody (the plain and FOR UPDATE texts). reads the inline columns only; a segmented page reads NULL and every caller holds it
 src/core/engine-sql/facts-cycle.ts	LIVE_STORED_BODY_LOCKED_SQL	sql	SEGW	lane 4 facts-cycle sites (item 4.2): moved from readStoredBody (the plain and FOR UPDATE texts). reads the inline columns only; a segmented page reads NULL and every caller holds it
+src/core/engine-sql/facts-purge.ts	listFactsReconcileBacklog	sql	STREAM	group 5 facts sites: moved from facts/reconcile-watermark.ts readFactsReconcileBacklog unchanged
+src/core/engine-sql/facts-purge.ts	selectFactsReconcileDrain	sql	STREAM	group 5 facts sites: moved from facts/reconcile-watermark.ts selectFactsReconcileDrain unchanged
+src/core/engine-sql/facts-purge.ts	PROSE_IN	sql	STREAM	segmented pages probed through their segment texts (purge-verify.ts segmentedProse); moved from verifyPagePurge with listPageProseHits
+src/core/engine-sql/facts-purge.ts	listPagesForPurgeRewrite	sql	SEGW	moved from facts/purge.ts rewritePageBodies unchanged: a segmented row goes to the segment rewrite, only an inline body is edited
+src/core/engine-sql/facts-purge.ts	updatePageBodyForPurge	sql	SEGW	moved from facts/purge.ts rewritePageBodies unchanged: the caller writes inline pages only
+src/core/engine-sql/facts-purge.ts	setPurgeVersionBody	sql	SEGW	moved from facts/purge.ts rewriteVersionBodies unchanged: the caller writes inline versions only
 src/core/engine-sql/reflex-reads.ts	reflexPagesStatement	sql	LEAD	moved from context/retrieval-reflex.ts resolveEntitiesToPointers and weakTitleHits (boundedBodyPrefixSql AS compiled_truth)
+src/core/facts/claim-match-sql.ts	carriesClaimSql	sql	STREAM	strpos over NULL never matches a segmented page; withSegmentedProse probes its segment texts
