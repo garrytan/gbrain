@@ -300,6 +300,8 @@ export interface GBrainConfig {
     last_applied_version?: string;
     /** #8776: a launcher outside gbrain's service starts autopilot again when it exits (`gbrain upgrade` hands it over). */
     autopilot_launcher?: 'external';
+    /** #9483: a launcher outside gbrain's serve service starts serve again when it exits (`gbrain upgrade` stops serve and waits for it, or restarts the systemd unit serve runs in). */
+    serve_launcher?: 'external';
   };
 
   /**
@@ -1690,6 +1692,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'self_upgrade.last_check_ts',
   'self_upgrade.last_applied_version',
   'self_upgrade.autopilot_launcher',
+  'self_upgrade.serve_launcher',
   // Misc
   'artifacts_sync_mode',
   'cross_project_learnings',

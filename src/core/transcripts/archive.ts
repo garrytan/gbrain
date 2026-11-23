@@ -879,6 +879,7 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
           const { pending, ...rest } = before;
           await writeLedger(engine, { ...rest, hash: pending.hash, complete: pending.complete });
           outcome.status = 'unchanged';
+          if (hold === 'release') await releaseOpenDayHold(engine, sourceId, rendered.parts.map(p => p.slug));
           continue;
         }
         if (states.length === before.pending.requests.length && states.every(s => s === 'committed' || !isTerminalWriteState(s as WriteRequestState))) { outcome.status = 'accepted'; continue; }
