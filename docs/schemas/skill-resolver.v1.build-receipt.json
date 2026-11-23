@@ -386,6 +386,11 @@
                 "not_needed",
                 "unmeasured_model"
               ]
+            },
+            "attempts": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "For provider_error, timeout and bad_reply: how many builds in a row ended that way. A turn asks for another build at most 3 times, 10 minutes apart."
             }
           }
         }

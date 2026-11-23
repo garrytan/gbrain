@@ -38,6 +38,10 @@ export const VECTOR_WAIT_MS = 1000;
 /** A build whose embedding failed for a passing reason is retried by the turn's auto-rebuild once its receipt is this old. */
 export const VECTOR_RETRY_MS = 10 * 60_000;
 export const VECTOR_RETRY_CODES: readonly EmbedSkipCode[] = ['provider_error', 'timeout', 'bad_reply'];
+/** Builds in a row that may end in a passing failure before the turn stops asking for another (a failed embed may still be billed). */
+export const VECTOR_RETRY_MAX = 3;
+/** A receipt's vectors when there are none: why, and for a passing failure how many builds in a row ended that way. */
+export interface VectorsSkip { skipped: EmbedSkipCode; attempts?: number }
 /**
  * The no-skill gate with vectors on: a block shows only when one of its
  * skills from a catalog with vectors has a cosine at or above this floor
@@ -186,15 +190,15 @@ export function turnEmbedder(home: string, env: NodeJS.ProcessEnv): { embedder: 
  * Whether a catalog's vectors no longer match what a build would make now: the
  * brain has a measured embedder with a key and the receipt names another model,
  * none (embedder added, or a key found), or a passing failure older than
- * VECTOR_RETRY_MS. A changed width shows only in the message's vector, so the
+ * VECTOR_RETRY_MS, at most VECTOR_RETRY_MAX builds in a row. A changed width shows only in the message's vector, so the
  * turn marks that one itself (resolve.ts). With no usable embedder here it never asks for a
  * rebuild, so a hook without the key cannot drop vectors another build made.
  */
-export function vectorsOutdated(receipt: { vectors?: VectorsReceipt | { skipped: EmbedSkipCode }; catalog: { harness: string | null; scope: 'user' | 'project' }; build: { built_at: string } }, now: number, want: () => string | null): boolean {
+export function vectorsOutdated(receipt: { vectors?: VectorsReceipt | VectorsSkip; catalog: { harness: string | null; scope: 'user' | 'project' }; build: { built_at: string } }, now: number, want: () => string | null): boolean {
   const v = receipt.vectors;
   if (!v || vectorsIneligible(receipt.catalog.harness ?? undefined, receipt.catalog.scope) !== null) return false;
   if ('skipped' in v && v.skipped === 'too_many_skills') return false;
-  if ('skipped' in v && VECTOR_RETRY_CODES.includes(v.skipped) && now - Date.parse(receipt.build.built_at) < VECTOR_RETRY_MS) return false;
+  if ('skipped' in v && VECTOR_RETRY_CODES.includes(v.skipped) && ((v.attempts ?? 1) >= VECTOR_RETRY_MAX || now - Date.parse(receipt.build.built_at) < VECTOR_RETRY_MS)) return false;
   const w = want();
   if (!w) return false;
   return 'skipped' in v || v.model !== w;

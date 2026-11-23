@@ -23,7 +23,7 @@ import { releaseLease, tryAcquireLease } from '../src/core/skills/resolver/lock.
 import { catalogFile } from '../src/core/skills/resolver/paths.ts';
 import { __setPickerTransportForTests } from '../src/core/skills/resolver/router-http.ts';
 import { buildSkillIndex, resolveSkills } from '../src/core/skills/resolver/index.ts';
-import { __setVectorFloorForTests, RRF_K, skillVectorText, VECTOR_FLOOR, vectorFloor, VECTOR_RETRY_MS } from '../src/core/skills/resolver/vectors.ts';
+import { __setVectorFloorForTests, RRF_K, skillVectorText, VECTOR_FLOOR, vectorFloor, VECTOR_RETRY_MAX, VECTOR_RETRY_MS } from '../src/core/skills/resolver/vectors.ts';
 import { RRF_K as SEARCH_RRF_K } from '../src/core/search/hybrid.ts';
 import { loadSchema, validate } from './helpers/json-schema-lite.ts';
 
@@ -111,7 +111,7 @@ describe('building vectors', () => {
     expect(existsSync(join(h, 'skill-index', 'c', 'vectors.bin'))).toBe(true);
     embedder(async () => { throw new Error('HTTP 500'); });
     const r = await buildSkillIndex({ catalog: 'c', fromJson: f }, { home: h });
-    expect(r.vectors).toEqual({ skipped: 'provider_error' });
+    expect(r.vectors).toEqual({ skipped: 'provider_error', attempts: 1 });
     expect(existsSync(join(h, 'skill-index', 'c', 'vectors.bin'))).toBe(false);
     __setEmbedTransportForTests(null);
     const keyless = await buildSkillIndex({ catalog: 'c', fromJson: f }, { home: h, env: { PATH: process.env.PATH } });
@@ -246,11 +246,20 @@ describe('vectors: freshness, the build lease and mixed catalogs', () => {
     writeFileSync(f, JSON.stringify(SKILLS));
     embedder(async () => { throw new Error('HTTP 503'); });
     const r = await buildSkillIndex({ catalog: 'c', fromJson: f }, { home: failed });
-    expect(r.vectors).toEqual({ skipped: 'provider_error' });
+    expect(r.vectors).toEqual({ skipped: 'provider_error', attempts: 1 });
     const built = Date.parse(r.build.built_at);
     const at = async (ms: number) => (await turn(failed, 'summarize meeting notes', {}, { now: () => ms })).output.meta.index_stale;
     expect(await at(built + 60_000)).toBe(false);
     expect(await at(built + VECTOR_RETRY_MS)).toBe(true);
+    let last = r;
+    for (let n = 2; n <= VECTOR_RETRY_MAX; n++) {
+      last = await buildSkillIndex({ catalog: 'c', fromJson: f }, { home: failed });
+      expect(last.vectors).toEqual({ skipped: 'provider_error', attempts: n });
+    }
+    expect(await at(Date.parse(last.build.built_at) + 100 * VECTOR_RETRY_MS)).toBe(false);
+    embedder();
+    expect((await buildSkillIndex({ catalog: 'c', fromJson: f }, { home: failed })).vectors).toEqual({ model: 'voyage:voyage-4', dims: 4, count: 3 });
+    embedder(async () => { throw new Error('HTTP 503'); });
     __setEmbedTransportForTests(null);
     expect((await turn(failed, 'summarize meeting notes', {}, { env: { PATH: process.env.PATH }, now: () => built + VECTOR_RETRY_MS })).output.meta.index_stale).toBe(false);
   });

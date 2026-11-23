@@ -27,8 +27,7 @@ import { TOKENIZER_ID } from './tokenize.ts';
 import { BLOCK_TOKEN_CAP, BLOCK_TOKENIZER, HARNESSES } from './block.ts';
 import { readResolverSettings } from './config.ts';
 import { PICKER_DESCRIPTION_CHARS } from './router.ts';
-import { embedCatalog, turnEmbedder, vectorsIneligible, type VectorsReceipt } from './vectors.ts';
-import type { EmbedSkipCode } from './embed-http.ts';
+import { embedCatalog, turnEmbedder, VECTOR_RETRY_CODES, vectorsIneligible, type VectorsReceipt, type VectorsSkip } from './vectors.ts';
 
 export const RECEIPT_SCHEMA_VERSION = 1;
 export const T_SHARE_ON = 0.25;
@@ -70,7 +69,7 @@ export interface BuildReceipt {
   index: { file: 'index.bin'; index_hash: string; size: number; n_terms: number; n_postings: number; truncated_skills: number };
   block: { token_cap: number; tokenizer: string };
   /** The skill vectors beside the index (vectors.bin), or why the catalog has none. */
-  vectors: VectorsReceipt | { skipped: EmbedSkipCode };
+  vectors: VectorsReceipt | VectorsSkip;
   build: { args: string[]; rebuild_argv: string[] | null; ms: number; built_at: string; generation: number };
 }
 
@@ -232,7 +231,7 @@ export async function buildSkillIndex(input: BuildInput, opts: { home?: string; 
       ranker: { id: RANKER_ID, version: RANKER_VERSION, variant, params: VARIANT_PARAMS[variant], calibration_split_sha256: CALIBRATION_SPLIT_SHA256, tokenizer: TOKENIZER_ID, k: 5, hint_chars: HINT_CHARS, trigger_share: share },
       index: { file: 'index.bin', index_hash: sha(bytes), size: bytes.length, n_terms: header.n_terms, n_postings: header.n_postings, truncated_skills: truncatedSkills },
       block: { token_cap: BLOCK_TOKEN_CAP, tokenizer: BLOCK_TOKENIZER },
-      vectors: 'bytes' in vectors ? vectors.receipt : vectors,
+      vectors: 'bytes' in vectors ? vectors.receipt : VECTOR_RETRY_CODES.includes(vectors.skipped) ? { ...vectors, attempts: (previous?.vectors && 'skipped' in previous.vectors && VECTOR_RETRY_CODES.includes(previous.vectors.skipped) ? previous.vectors.attempts ?? 1 : 0) + 1 } : vectors,
       build: { args, rebuild_argv: fix, ms: 0, built_at: new Date((opts.now ?? Date.now)()).toISOString(), generation: lease.record.generation },
     };
     if (!holdsLease(lease) || !existsSync(dir)) throw removedError();

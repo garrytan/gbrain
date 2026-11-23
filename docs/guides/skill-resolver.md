@@ -468,7 +468,9 @@ turn embeds the message with the same model and compares the two.
   when its vectors no longer match the brain: the embedding model or width
   changed, an embedding model or key was added since the build, or the build's
   embedding failed (`provider_error`, `timeout`, `bad_reply`) more than 10
-  minutes ago. With auto-rebuild on, the hook lane then rebuilds it, at most
+  minutes ago, for at most 3 failed builds in a row (the receipt counts them
+  in `vectors.attempts`), since a failed embed may still be billed. With
+  auto-rebuild on, the hook lane then rebuilds it, at most
   once a minute. The skills are embedded before the build takes the catalog's
   lock, so a slow provider never holds up another build or `setup`.
 
