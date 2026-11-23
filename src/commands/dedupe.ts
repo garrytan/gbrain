@@ -27,6 +27,9 @@ import { opError, OperationError } from '../core/ops/contract.ts';
 import { parseSourceConfig } from '../core/sources-load.ts';
 import { APPLE_CONTACTS_LINK_ORIGIN, unlinkContact } from '../core/apple-contacts/identity-match.ts';
 import { GOOGLE_CONTACTS_LINK_ORIGIN, IDENTITY_LINKS_CONFIG_KEY, linkGoogleContacts, unlinkGoogleContacts } from '../core/google/contact-identity.ts';
+import { classifyPairs, samplePairs, type ClassesReport, type ClassifyOptions } from '../core/entities/evidence/classes.ts';
+import { PAIR_CLASSES, parsePairClass } from '../core/entities/evidence/combine.ts';
+import { EXA_SWITCH_KEY, exaSettings } from '../core/entities/evidence/exa.ts';
 
 const CONTACT_LINK_ORIGINS: string[] = [APPLE_CONTACTS_LINK_ORIGIN, GOOGLE_CONTACTS_LINK_ORIGIN];
 
@@ -37,6 +40,8 @@ const HELP = `Usage: gbrain dedupe --preview [--json] [--kind cross-source|in-so
        gbrain dedupe reject <group-id>... [--json]
        gbrain dedupe reconcile [--json]
        gbrain dedupe link-contacts --source <id> [--apply | --unlink] [--json]
+       gbrain dedupe classes [--source <id>] [--exa [--dry-run]] [--json]
+       gbrain dedupe sample --class <class> [--n 100] [--seed <n>] [--source <id>] [--exa [--dry-run]] [--json]
 
 List groups of person and company pages that are likely the same person or company, with the evidence
 (shared keys by type, never their values) and a class: clean, likely, weak, thin or conflict.
@@ -72,6 +77,17 @@ link-contacts       count how the contact pages of a Google Contacts source woul
                     a contact whose email or phone matches two or more people, or one person whose page has another
                     name, stays unlinked and waits for you in gbrain sync status; nothing matches by name alone; gbrain dedupe reject on a contact and person pair
                     removes its link for good
+classes             count the pairs of person pages by class and by what would happen to them, from the evidence:
+                    shared ids, emails and phones (C1 to C7), your email pages (E1, E3, E4) and chat pages (M1 to M3);
+                    changes nothing
+  --exa             also search the web (Exa) for pairs that would otherwise wait: needs EXA_API_KEY and
+                    ${EXA_SWITCH_KEY} on; sends only a name plus one company or job title, never for a private,
+                    family or minor page; cached, and capped per run and in total
+  --dry-run         with --exa: count the queries a run would send and their cost; sends nothing
+sample              a seeded random sample of one class's pairs with their evidence, for labelling; changes nothing
+  --class <class>   ${PAIR_CLASSES.join(', ')}
+  --n <n>           how many pairs (default 100); a smaller class is sampled whole
+  --seed <n>        the sample's seed (default 1); the same seed and brain give the same sample
 
 Companies link automatically: each sync links the cross-source company groups its changed pages belong to when
 they are clean, share a LinkedIn company page or their own site's domain, and name no different countries
@@ -121,6 +137,7 @@ export async function runDedupe(engine: BrainEngine, args: string[]): Promise<vo
   if (sub === 'reject') return runReject(engine, args.slice(1));
   if (sub === 'reconcile') return runReconcile(engine, args.slice(1));
   if (sub === 'link-contacts') return runLinkContacts(engine, args.slice(1));
+  if (sub === 'classes' || sub === 'sample') return runClasses(engine, sub, args.slice(1));
   let json = false;
   let kind: DuplicateKind | undefined;
   let sourceId: string | undefined;
@@ -514,4 +531,73 @@ async function runReconcile(engine: BrainEngine, args: string[]): Promise<void> 
   if (r.pending.length) console.log(`${r.pending.length} member page(s) are still not linked: ${r.pending.slice(0, 10).map(p => `${p.source_id}:${p.slug} (${p.reason})`).join(', ')}.`);
   console.log(auto.skipped_sweep === 'no_checkout' ? 'Companies that share an id are linked by the host that holds the checkout of the decisions; none were linked here.'
     : `Companies that share an id: linked ${auto.linked} group(s), unlinked ${auto.unlinked}${auto.skipped ? `, ${auto.skipped} changed while they were linked and wait for the next sync` : ''}.`);
+}
+
+/** gbrain dedupe classes and gbrain dedupe sample (GST-3609): read-only counts and labelling samples of candidate person pairs. */
+async function runClasses(engine: BrainEngine, cmd: 'classes' | 'sample', args: string[]): Promise<void> {
+  let json = false, exa = false, dryRun = false, sourceId: string | undefined, cls: string | undefined, n = 100, seed = 1;
+  const usage = (why: string) => { console.error(`gbrain dedupe ${cmd}: ${why}.\n\n${HELP}`); setCliExitVerdict(2); };
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === '--json') { json = true; continue; }
+    if (a === '--exa') { exa = true; continue; }
+    if (a === '--dry-run') { dryRun = true; continue; }
+    const valued = cmd === 'sample' ? ['--source', '--class', '--n', '--seed'] : ['--source'];
+    if (!valued.includes(a)) return usage(`unknown argument ${a}`);
+    const v = args[++i];
+    if (!v) return usage(`${a} needs a value`);
+    if (a === '--source') sourceId = v;
+    else if (a === '--class') cls = v;
+    else {
+      const num = Number(v);
+      if (!Number.isInteger(num) || num < (a === '--n' ? 1 : 0)) return usage(`${a} takes a whole number${a === '--n' ? ' of at least 1' : ''}`);
+      if (a === '--n') n = num; else seed = num;
+    }
+  }
+  if (dryRun && !exa) return usage('--dry-run goes with --exa');
+  const pairClass = cls === undefined ? null : parsePairClass(cls);
+  if (cmd === 'sample' && !pairClass) return usage(`pass --class with one of ${PAIR_CLASSES.join(', ')}`);
+  const opts: ClassifyOptions = { ...(sourceId ? { sourceId } : {}) };
+  if (exa) {
+    const settings = await exaSettings(engine, process.env);
+    if (!dryRun && (!settings.enabled || !settings.hasKey)) {
+      throw opError('dedupe_exa_off', `gbrain dedupe ${cmd} --exa: web search is off on this brain (${[!settings.hasKey ? 'EXA_API_KEY is not set' : '', !settings.enabled ? `${EXA_SWITCH_KEY} is not on` : ''].filter(Boolean).join(', ')}); nothing was sent.`,
+        `Count the queries and their cost first with gbrain dedupe ${cmd} --exa --dry-run, then set EXA_API_KEY and run gbrain config set ${EXA_SWITCH_KEY} on.`,
+        { fix: { argv: ['gbrain', 'dedupe', 'classes', '--exa', '--dry-run', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
+          why: 'Counts the queries a web search would send and what they would cost; sends nothing.' } });
+    }
+    opts.exa = dryRun ? { mode: 'dry_run', settings } : { mode: 'live', settings, apiKey: process.env.EXA_API_KEY!.trim() };
+  }
+  const { report, pairs } = await classifyPairs(engine, opts);
+  if (cmd === 'sample') {
+    const picked = samplePairs(pairs, pairClass!, n, seed);
+    const total = report.classes[pairClass!];
+    if (json) { console.log(JSON.stringify({ schema_version: report.schema_version, class: pairClass, n, seed, total, pairs: picked, exa: report.exa }, null, 2)); return; }
+    console.log(`${picked.length} of ${total} pair(s) in class ${pairClass} (seed ${seed}). Label each one same, different or unsure.`);
+    for (const p of picked) {
+      console.log(`${p.id}  ${p.members.map(m => `${m.source_id}:${m.slug} (${m.title})`).join('  +  ')}`);
+      console.log(`    base ${p.base}; signals ${p.signals.join(' ') || 'none'}; would ${p.verdict}: ${p.reason}`);
+    }
+    return;
+  }
+  if (json) { console.log(JSON.stringify(report, null, 2)); return; }
+  console.log(classesText(report));
+}
+
+function classesText(r: ClassesReport): string {
+  const lines = [`${r.pairs} candidate pair(s) of person pages (nothing was written):`];
+  lines.push(`  would link ${r.verdicts.link}, collapse ${r.verdicts.collapse}, wait ${r.verdicts.wait}, mark different ${r.verdicts.different}`);
+  lines.push('  by class: ' + PAIR_CLASSES.map(c => `${c} ${r.classes[c]}`).join(', '));
+  lines.push(`  left out: ${r.skipped.already_linked} already linked, ${r.skipped.decided_apart} you recorded as different, ${r.skipped.large_groups} name group(s) of more than 10 pages, ${r.skipped.no_class} with names that disagree and nothing shared`);
+  lines.push(`  evidence read: ${r.email.pages} email page(s); ${r.messaging.pages} chat page(s) in ${r.messaging.chats} chat(s), ${r.messaging.one_to_one} one-to-one${r.messaging.too_large ? `, ${r.messaging.too_large} too large to read` : ''}; Signal has no reader`);
+  if (r.exa.mode === 'off') lines.push('  web search: off (add --exa)');
+  else {
+    const x = r.exa;
+    const blocked = Object.entries(x.blocked).map(([k, v]) => `${v} ${k}`).join(', ');
+    lines.push(x.mode === 'dry_run'
+      ? `  web search dry run: ${x.queries} distinct quer(ies), ${x.cached} cached; a run would send ${x.sent} for $${x.cost_usd.toFixed(2)}${x.unsent ? ` and stop at the ${x.stopped === 'run_cap' ? `per-run cap (${x.run_cap})` : `total cap ($${x.total_cap_usd})`} with ${x.unsent} left` : ''}; all of them would cost $${x.uncapped_cost_usd.toFixed(2)}; spent so far $${x.spent_total_usd.toFixed(2)}`
+      : `  web search: sent ${x.sent} quer(ies) for $${x.cost_usd.toFixed(2)}, ${x.cached} cached${x.stopped ? `, stopped (${x.stopped}) with ${x.unsent} left` : ''}; spent so far $${x.spent_total_usd.toFixed(2)} of $${x.total_cap_usd}`);
+    if (blocked) lines.push(`  kept away from web search: ${blocked} page(s)`);
+  }
+  return lines.join('\n');
 }
