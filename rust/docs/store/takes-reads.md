@@ -58,8 +58,8 @@ Differences from PGLite and PostgreSQL:
 ## The reads and the delete of `gbrain extract takes`
 
 `cycle/extract-takes.ts` and `generations/adapters/take-rows.ts` read and prune through these members, not raw SQL
-(the batch guard is `listGuardedTakeRows` in [trust.md](trust.md); the coverage read `listCoveredSources` answers `[]`
-on the store, which records no belief events). The whole re-extract still stops on the typed `raw_sql` refusal inside
+(the batch guard is `listGuardedTakeRows` in [trust.md](trust.md); the coverage read `listCoveredSources` returns the sources with a
+matching coverage event in their current incarnation). The whole re-extract still stops on the typed `raw_sql` refusal inside
 `publishFenceGeneration`, whose ledger statements have no member yet; `test/engine-parity/extract-takes.test.ts` pins it.
 
 | Member | Returns | Used by |

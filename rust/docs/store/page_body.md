@@ -122,19 +122,18 @@ above "Segment chunks" in `rust/crates/gbrain-store/src/chunks.rs`). In one stor
 
 The chunks stay out of `getChunks` and keyword search until a flip publishes their generation. The
 TypeScript member normalises them as `upsertChunks` does (`prepareChunks`), refuses a chunk that
-carries a vector (`engine_capability_missing`: vectors are not stored) and takes the default model
-label from `opts.embeddingColumn` as PGLite does. The option is served for the store's one vector
-column only, as on `upsertChunks` (embeddings.md, "Chunk writes"). Deleting a page for good
+carries a vector (`engine_capability_missing`: vectors are not stored). It also refuses a supplied
+`opts.embeddingColumn` (`engine_capability_missing`): it does not forward the option or take the default
+model label from it, as PGLite does. Deleting a page for good
 also deletes the chunks family's segment view of the page (`chunks::forget_segment_view`).
 
 ## The seal
 
 `sealSegmentedPage(pageId, opts?)` makes a flipped segmented page's chunks and search text visible at
-its current revision, as engine-sql/page-body.ts does. The TypeScript member reads the stored lead,
-revision, slug and source (`readSegmentedSealLead`), takes `opts.timelineLead` in place of the lead when
-given, overlays it with the page's ledger rows (`overlayStoreLead` over the page snapshot read with
-`includeDeleted`: purged fence rows drop, withdrawn ones are struck, as PGLite's `overlayCanonicalBodies`
-does), sanitizes it with `sanitizeRemoteBody`, and calls `seal_segmented_page`. In one store write it:
+its current revision, as engine-sql/page-body.ts does. The TypeScript member reads the stored lead and
+revision (`readSegmentedSealLead`), takes `opts.timelineLead` in place of the lead when given, sanitizes
+the chosen lead with `sanitizeRemoteBody`, and calls `seal_segmented_page` with it and the revision. It reads no
+page snapshot and overlays no withdrawal or purge rows before sealing (see below). In one store write it:
 
 1. Does nothing for a missing page.
 2. Refuses `revision_conflict` when the page's `knowledge_revision` is no longer the one read.
@@ -156,8 +155,8 @@ segmented page's live generation, every body generation a version snapshot refer
 of live stagings. A staging is live in a live state (`open`, `sealed`, `prepared`) or while an
 outstanding persistence request names it in `intent.body_ref.staging_id`, whatever its state. The
 store reads the version generations through `pages::version_generations` and the request-held
-stagings through `journal::request_held_staging_ids`, which reads no request while the brain's
-outstanding-request counter is 0. `now` defaults to the store clock; `graceMs` to
+stagings through `journal::request_held_staging_ids`, which scans every request, whatever the journal's
+outstanding-request counter says, and keeps the staging ids that nonterminal requests name. `now` defaults to the store clock; `graceMs` to
 `SEGMENT_TEXT_GC_GRACE_MS` (one hour).
 
 1. With `expireStagings`: a live staging in scope (its page and source) that is past its hard
@@ -224,8 +223,5 @@ The TypeScript engine refuses these with `engine_capability_missing`:
   sweep to hold rows.
 - The sweep has no upload parts to delete and no upload byte reservations to release when it expires
   an upload staging: the store keeps neither.
-- A segmented version snapshot does not prune older segmented snapshots
-  (`versions.segmented_max_per_page`, `versions.segmented_max_pinned_bytes` in PGLite's
-  `pruneSegmentedVersions`), so a Rust brain can pin more generations than PGLite keeps.
 - PGLite's text delete skips a text another writer has locked (`FOR UPDATE SKIP LOCKED`); the store
   serializes writes, so no text is ever skipped for that reason.

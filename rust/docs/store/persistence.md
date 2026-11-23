@@ -48,7 +48,8 @@ A queue key holds the incarnation as its 36-byte lower-case UUID text, so key or
 
 Each method is one store write transaction (or one read). The row locks Postgres takes for these
 statements (`FOR SHARE`, `FOR UPDATE`, `SKIP LOCKED`), the advisory locks and the page write guards are
-no-ops: the store runs one write transaction at a time, so no read overlaps a write.
+no-ops: reads use a consistent snapshot, or the bound transaction's own view, and may overlap writes. Writers
+serialize by default; `concurrent_writes` enables optimistic concurrent writers.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
@@ -370,7 +371,8 @@ freshness, as on Postgres.
 
 The drain lease still refuses with `engine_capability_missing`; the notifier logs the refusal once
 and keeps running. A source delete removes its notifier row and its wanted markers. A freshness
-marker that names a head stays due on this engine until a drain clears it by generation.
+marker that names a head stops being due once that head equals the source's `last_commit`, and
+`pruneSatisfiedWantedMarkers` can then delete it without a drain clearing it by generation.
 
 | `brain.readSourceSyncShape(sourceId)` | `{ local_path, root, bound }` for a source that exists and is not archived, else `null`. This engine keeps no managed worktree binding, so `root` is `null` and `bound` is `false` | `readSourceSyncShape` |
 | `brain.readNotifierFirstDue(ids)` | one row per existing listed source (archived included), in id order: `{ source_id, observed_head, first_due_at }`. `observed_head` is the notifier row's at the source's incarnation; `first_due_at` is the earlier of that row's `first_due_at` when its state is not idle and the oldest freshness marker whose `wanted_head` is null or differs from the source's `last_commit` | `readNotifierFirstDue` |
@@ -581,7 +583,7 @@ no `last_commit`, so only an empty `deferred_import_from` stands.
 | `brain.lockOverdueHold(hold, id, importFrom, maxWaitMs)` | for `refresh`, `true` while the refresh row `id` exists and is not released (a null id is `false`); for `import`, `true` while request `id` is `deferred` behind `importFrom`, its import hold stands and it is overdue (a null id or `importFrom` is `false`) | `lockOverdueHold` |
 | `brain.listOwnerRecoveryHeads(hostId, excluded)` | the oldest `recovering` write of each owned worktree not in `excluded`, oldest update first, at most 16 | `listOwnerRecoveryHeads` |
 | `brain.listResumableRefreshes(hostId)` | `[]`: refresh resumption has not landed here. The sync budget only marks rows stale, so it is not sent | `listResumableRefreshes` |
-| `brain.getSource(id)`, once per named source | `listSourceLastCommits` answers each named source that exists, in id order; its `last_commit` reads null because the store keeps none | `listSourceLastCommits` |
+| `brain.getSource(id)`, once per named source | `listSourceLastCommits` answers each named source that exists, in id order; its `last_commit` is the stored sync anchor written by `advanceSourceCommit`, or null before the first advance | `listSourceLastCommits` |
 
 
 ## Projection queue
@@ -590,10 +592,10 @@ Every page write updates the queue in the same store transaction, as PGLite's
 `gbrain_queue_page_projection` trigger does: a new knowledge revision that is not sealed queues or
 re-queues the page's job; a seal, a soft delete or a delete removes it; a rename or a move removes the
 job of the old key. `updated_at` is the transaction's clock: the first read of the clock in a store
-write transaction is kept for the rest of it, as Postgres `now()` is. The trigger is the only writer of
-jobs on this engine. The other `reason` values (`segmented_projecting`, `rebuild_failed`,
-`chunk_replacement_continuing`) are written only by raw SQL, which this engine refuses, so every job
-here has reason `canonical_change`; the reads still apply every reason filter. A store written before
+write transaction is kept for the rest of it, as Postgres `now()` is. Page writes are not the only
+writers of jobs: the typed projection members claim jobs (`segmented_projecting`), mark rebuild failures
+(`rebuild_failed`), renew deferred-replacement claims (`chunk_replacement_continuing`) and explicitly queue jobs,
+so reasons other than `canonical_change` are stored too. The reads apply every reason filter. A store written before
 the queue existed has no job for a page it left unsealed, and nothing backfills one: no released Rust
 brain predates the queue, so no such store exists outside development.
 

@@ -34,7 +34,7 @@ every `z 0x01`–`z 0x06` record of the source (`source_prefix(sub, source_id)`)
 | --- | --- | --- |
 | `brain.readFolderAccess(readers)` | `{ rules, coverage }`: each rule whose `readable_by` names any of `readers` (`{ source_id, rule_id, readable_by }`, by source and id; none when `readers` is empty) and each distinct pending prefix (`{ source_id, prefix }`, by source and prefix) | `readFolderAccess` (`FOLDER_RULES_FOR_READERS_SQL`, `FOLDER_COVERAGE_SQL`) |
 | `brain.listAppliedPolicyRevisions()` | `{ source_id, rev }` for each source with policy state, by source id; `rev` is its newest applied revision, `null` when none is applied | `listAppliedPolicyRevisions` |
-| `brain.isFolderRestricted(sourceId, slug)` | `true` when a rule of the source has a prefix the slug starts with, or a pending prefix of the source covers it (`''` covers every slug) | `isFolderRestricted` |
+| `brain.isFolderRestricted(sourceId, slug)` | `true` when a rule or pending prefix of the source covers the slug: a folder prefix ending in `/` matches descendants, a page prefix matches only that exact slug, and an empty pending prefix (`''`) covers every slug | `isFolderRestricted` |
 | `brain.putAccessPolicyState(sourceId)` | records policy state; a second put changes nothing | fixture (`INSERT ... ON CONFLICT DO NOTHING`) |
 | `brain.putAccessRule(rule)` | stores the rule, replacing the same source and id; `covers_derived` defaults to `true` | fixture |
 | `brain.putAccessPendingCoverage(row)` | stores the prefix; the first row for one source, prefix and reason stays | fixture |
