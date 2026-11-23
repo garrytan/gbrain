@@ -227,7 +227,7 @@ fn dump(read: &dyn KvRead) -> Vec<(Vec<u8>, Vec<u8>)> {
 
 /// The records that differ between two stores seeded from the same rows at different times or
 /// with different ids: the brain id, the clocks, the record file's own counters, and the shared
-/// skill catalog's random token secret (`x 0x04`), which a fresh store writes and an older store
+/// skill catalog's random token secret (`x 0x0d`), which a fresh store writes and an older store
 /// gets the first time it is read (`Store::shared_skill_token_secret`).
 fn volatile(key: &[u8]) -> bool {
     [
@@ -236,7 +236,7 @@ fn volatile(key: &[u8]) -> bool {
         b"M\0seq",
         b"Ctrust.backfill_completed_at",
         b"Cwrite_gate.scan_baseline",
-        &[keys::ACCESS_MEMBERS, 0x04],
+        &[keys::ACCESS_MEMBERS, crate::shared_skill_members::STATE],
     ]
     .contains(&key)
 }

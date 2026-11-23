@@ -15,6 +15,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+/// One record: its key and its value.
+type Record = (Vec<u8>, Vec<u8>);
+
 static NEXT: AtomicU32 = AtomicU32::new(0);
 
 /// A store on a record file of its own, and a second handle on the same records to read keys.
@@ -66,7 +69,7 @@ fn with_links(name: &str) -> Brain {
 }
 
 /// Every record of the file, in key order.
-fn dump(kv: &Arc<dyn Kv>) -> Vec<(Vec<u8>, Vec<u8>)> {
+fn dump(kv: &Arc<dyn Kv>) -> Vec<Record> {
     let snapshot = kv.snapshot().unwrap();
     let mut out = Vec::new();
     gbrain_store::kv::scan_prefix(&*snapshot, &[], false, &mut |k, v| {
@@ -78,10 +81,7 @@ fn dump(kv: &Arc<dyn Kv>) -> Vec<(Vec<u8>, Vec<u8>)> {
 }
 
 /// The record that holds `secret`, and the records that are links, by their value fields.
-fn secret_and_links(
-    kv: &Arc<dyn Kv>,
-    secret: &str,
-) -> (Vec<(Vec<u8>, Vec<u8>)>, Vec<(Vec<u8>, Vec<u8>)>) {
+fn secret_and_links(kv: &Arc<dyn Kv>, secret: &str) -> (Vec<Record>, Vec<Record>) {
     let (mut holders, mut links) = (Vec::new(), Vec::new());
     for (key, value) in dump(kv) {
         if key.first() != Some(&keys::ACCESS_MEMBERS) {

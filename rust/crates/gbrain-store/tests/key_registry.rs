@@ -208,6 +208,10 @@ fn the_scan_sees_the_kinds_it_exists_to_tell_apart() {
     assert_eq!(only("FACT", 0x08), "facts/loops.rs::ROW");
     // The two kinds that once shared `x 0x04`.
     assert_eq!(only("ACCESS_MEMBERS", 0x04), "access_member_links.rs::LINK");
+    assert_eq!(
+        only("ACCESS_MEMBERS", 0x0d),
+        "shared_skill_members.rs::STATE"
+    );
     assert!(
         registry.len() > 40,
         "the scan found only {} prefixes",

@@ -12,7 +12,8 @@
 //! - `x 0x03 <group id> 0x00 <member id>` -> empty. Ids never hold NUL (the id check), so a
 //!   group's members are the prefix `x 0x03 <group id> 0x00`.
 //! - `x 0x04 <system> 0x00 <external id>` -> a member link (`access_member_links`, v286); the
-//!   module `access_member_links` reads and writes these.
+//!   module `access_member_links` reads and writes these. Store formats 7 and older also kept the
+//!   shared-skill token secret at exactly `x 0x04`; `access_key_split.rs` moved it to `x 0x0d`.
 //!
 //! A brain holds few members, so the email uniqueness check, the group list of a member and the
 //! enabled-member count scan these prefixes.

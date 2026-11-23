@@ -9,6 +9,7 @@
 //! addon method and each `StoreError::code` into a JavaScript `Error.code`.
 
 mod access_flag;
+mod access_key_split;
 pub mod access_member_links;
 pub mod access_members;
 pub mod access_migrations;
@@ -646,7 +647,9 @@ pub const DEFAULT_WRITE_GATE_DETECTOR_VERSION: u32 = 2;
 /// (`format.rs`); an upgrade from format 3 or older starts an empty, incomplete keyword index
 /// (`keyword/index_build.rs`), 4 to 5 rewrites nothing (a take stored before its trust tier
 /// reads `unknown`), so a format-4 brain keeps its postings, and 5 to 6 carries over the records
-/// the v0.60.766.0 addon's shadow seed kept in other shapes (`seed/format_5.rs`). The format record is re-read inside the transaction:
+/// the v0.60.766.0 addon's shadow seed kept in other shapes (`seed/format_5.rs`), 6 to 7 moves the
+/// loop mutes off the take purge prefix (`facts/key_split.rs`) and 7 to 8 moves the shared-skill
+/// token secret off the member links' prefix (`access_key_split.rs`). The format record is re-read inside the transaction:
 /// another handle on the same records may have upgraded the brain first.
 fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     let mut tx = kv.begin_write_exclusive()?;
@@ -694,6 +697,21 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
                 error::SHADOW_RESEED_REQUIRED,
                 format!(
                     "this brain (store format {from}) holds a record this build cannot sort into the take purge ledger or the loop mutes: {}; nothing was changed. Re-seed the shadow store: {}",
+                    e.message,
+                    seed::RESEED_STEPS
+                ),
+            )
+        })?;
+    }
+    // Format 8: the shared-skill token secret leaves the member links' `x 0x04` prefix for `x 0x0d`,
+    // or the brain is refused naming the record that is neither.
+    if stored.format_version <= 7 {
+        let from = stored.format_version;
+        access_key_split::split_token_secret_from_member_links(&mut *tx).map_err(|e| {
+            StoreError::new(
+                error::SHADOW_RESEED_REQUIRED,
+                format!(
+                    "this brain (store format {from}) holds a record this build cannot sort into the access member links or the shared-skill token secret: {}; nothing was changed. Re-seed the shadow store: {}",
                     e.message,
                     seed::RESEED_STEPS
                 ),
