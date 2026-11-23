@@ -13,7 +13,7 @@ import type { Migration } from './types.ts';
 // engine_writer_sessions, so a writer that is not a wrapped gbrain process (another machine, psql, an old binary)
 // still leaves a row the swap can count. The function never fails the writer and never waits on the evidence tables:
 // a function-scoped lock_timeout of 50 ms turns a lock wait into 55P03, which it catches like any error. It skips a
-// row another transaction holds, refreshes at most every 10 minutes per connection, and turns any error into a row in
+// row another transaction holds (and records that skip as a gap, because the write went unrecorded), refreshes at most every 10 minutes per connection, and turns any error into a row in
 // engine_writer_coverage_gaps (which has no sequence, so an INSERT alone records a gap). It stamps with
 // clock_timestamp(), not now(): now() is the start of the writer's transaction, which can lie before the shadow
 // window for a transaction that wrote only after the hooks existed. It runs with the writer's own rights (no
@@ -58,6 +58,7 @@ DECLARE
   app text := coalesce(current_setting('application_name', true), '');
   addr text := coalesce(host(inet_client_addr()), 'local');
   seen timestamptz;
+  touched bigint;
 BEGIN
   BEGIN
     EXECUTE format('SELECT last_seen FROM %I.engine_writer_sessions WHERE application_name = $1 AND client_addr = $2 AND backend_pid = $3', schema_name)
@@ -69,6 +70,9 @@ BEGIN
     ELSE
       EXECUTE format('UPDATE %I.engine_writer_sessions SET last_seen = clock_timestamp() WHERE ctid IN (SELECT ctid FROM %I.engine_writer_sessions WHERE application_name = $1 AND client_addr = $2 AND backend_pid = $3 FOR UPDATE SKIP LOCKED)', schema_name, schema_name)
         USING app, addr, pg_backend_pid();
+      GET DIAGNOSTICS touched = ROW_COUNT;
+      -- A row another transaction holds is skipped, never waited on; skipped means this write was not recorded, so it is a gap.
+      IF touched = 0 THEN RAISE EXCEPTION 'writer session refresh skipped' USING ERRCODE = '55P03'; END IF;
     END IF;
   EXCEPTION WHEN OTHERS THEN
     BEGIN

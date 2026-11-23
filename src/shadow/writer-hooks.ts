@@ -38,10 +38,11 @@ const HOOKED_SQL = `SELECT c.relname::text AS name FROM pg_trigger t JOIN pg_cla
 JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND t.tgname = $1 ORDER BY 1`;
 /**
  * Tables whose hook works: enabled for ordinary writes ('O' origin or 'A' always, not 'D' disabled or 'R' replica-only),
- * AFTER, statement-level, INSERT OR UPDATE OR DELETE OR TRUNCATE (tgtype 4+8+16+32 = 60), calling gbrain_note_writer().
+ * AFTER, statement-level, INSERT OR UPDATE OR DELETE OR TRUNCATE (tgtype 4+8+16+32 = 60), unconditional (no WHEN, no
+ * UPDATE OF column list), calling gbrain_note_writer().
  * A hook that differs in any of these records nothing for some writes, so it counts as no hook.
  */
-export const effectiveHookSql = (nameParam: string): string => `t.tgname = ${nameParam} AND t.tgenabled IN ('O', 'A') AND NOT t.tgisinternal AND t.tgtype = 60
+export const effectiveHookSql = (nameParam: string): string => `t.tgname = ${nameParam} AND t.tgenabled IN ('O', 'A') AND NOT t.tgisinternal AND t.tgtype = 60 AND t.tgqual IS NULL AND t.tgattr::text = ''
   AND EXISTS (SELECT 1 FROM pg_proc fp WHERE fp.oid = t.tgfoid AND fp.proname = 'gbrain_note_writer' AND fp.pronargs = 0)`;
 const EFFECTIVE_SQL = `SELECT c.relname::text AS name FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
 JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND ${effectiveHookSql('$1')} ORDER BY 1`;

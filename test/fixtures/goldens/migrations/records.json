@@ -5414,8 +5414,8 @@
         "idempotent": true,
         "name": "engine_writer_observations",
         "sql": {
-          "length": 3221,
-          "sha256": "25dcbad16cf5b0a0a67b0909b6ecc950ca28309d49496d2e7dd46fbe7a57e0b8"
+          "length": 3519,
+          "sha256": "08de3158ca6bf813c0c20f36d525236dd2639dd6a25c315cb0c7abadcf6af50d"
         },
         "sqlFor": "absent",
         "transaction": "absent",

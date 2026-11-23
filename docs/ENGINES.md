@@ -1910,7 +1910,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   not a gbrain process on the shadow machine (another machine, `psql`, an older gbrain) still leaves a row. A trigger
   never fails the write and never waits on the evidence tables: its own `lock_timeout` of 50 ms (set on the function,
   so the writer's settings are untouched afterwards) turns a lock wait into an error it catches, it skips a row
-  another transaction holds, and any error becomes a row in `engine_writer_coverage_gaps` (that table has no
+  another transaction holds (that skip is recorded as a gap, since the write went unrecorded), and any error becomes a row in `engine_writer_coverage_gaps` (that table has no
   sequence, so an INSERT alone records a gap). It stamps the time it ran, not the start of the writer's transaction.
   If both evidence tables are unusable at once, the trigger can only warn; a table that is missing or locked then
   makes the eligibility read fail (`eligibility_evidence`, NOT READY), and a role with no usable route is counted by
@@ -1930,9 +1930,15 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   machines that claimed writes in the last 7 days (from the shadow start at the earliest, with 10 minutes of slack),
   and `eligibility.unknown_writer_paths` counts what no claim accounts for: a writing connection no gbrain process on
   the shadow machine claimed, a gap row, a brain table whose hook is missing or does not fire for every write
-  (disabled, replica-only, the wrong events or another function; the next note repairs it and leaves a gap row), a
-  login role that can write brain tables but has no complete way to record evidence (SELECT, INSERT and UPDATE on
-  `engine_writer_sessions`, or INSERT on `engine_writer_coverage_gaps`, and row-level security that lets it in),
+  (disabled, replica-only, conditional, the wrong events or another function; the next note repairs it and leaves a
+  gap row), a role that can write brain tables (a table privilege, or a privilege on any single column) but has no
+  complete way to record evidence (SELECT, INSERT and UPDATE on `engine_writer_sessions`, or INSERT on
+  `engine_writer_coverage_gaps`, and row-level security that lets it in). The roles judged are the login roles and
+  every role a non-superuser login can reach as a member (`SET ROLE`, even without inheritance), because the trigger
+  runs with the rights of whichever role is current when it fires. A process claim resolves a connection's rows only
+  while the claim is inside the window too, so an expired claim cannot hide a current writer. The process-side note
+  runs under a 50 ms lock timeout and a 2 s statement timeout, so a busy evidence table ends it as a recorded
+  failure instead of holding one of the brain's connections,
   reconcile follower misses, repairs made while coverage was invalid, and a lost note. A write that only takes a lock,
   a log or a cache row counts as a write for the note, though the follower does not copy it. The plan's idea of
   counting how often an enabled process held no attached engine is not built: it cannot be measured from the shadow

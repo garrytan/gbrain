@@ -23,6 +23,10 @@ import { effectiveHookSql } from './writer-hooks.ts';
 /** A process refreshes its row at most this often; eligibility subtracts the same slack from its window start. */
 export const OBSERVATION_REFRESH_MS = 10 * 60_000;
 
+/** The bounds a note runs under (SET LOCAL, so they end with its transaction). */
+export const NOTE_LOCK_TIMEOUT_MS = 50;
+export const NOTE_STATEMENT_TIMEOUT_MS = 2_000;
+
 /** The one statement a note runs: insert the row, or refresh last_seen when it is older than the refresh interval. */
 const NOTE_SQL = `INSERT INTO engine_writer_observations (host_id, application_name, process_kind, gbrain_version)
 VALUES ($1, $2, $3, $4)
@@ -32,12 +36,15 @@ WHERE engine_writer_observations.last_seen < now() - interval '${OBSERVATION_REF
 /**
  * The eligibility read, one read-only statement: hosts that claimed writes in the window; on a hooked (Postgres)
  * primary also the writing connections no process claimed, the gap rows, the brain tables with no hook, and the login
- * roles that can write a brain table but have no complete way to record evidence. A role records through one of two
+ * roles that can write a brain table but have no complete way to record evidence. The roles judged are the login roles and
+ * every role a non-superuser login can reach as a member (SET ROLE, even without INHERIT), because the trigger runs with the
+ * rights of the role that is current when it fires; a table privilege or a column privilege on any column is a write. A role records through one of two
  * routes: the session route (SELECT, INSERT and UPDATE on engine_writer_sessions) or the gap route (INSERT on
  * engine_writer_coverage_gaps, which has no sequence), and either needs row-level security to let the role in (not
  * enabled, or the role is a superuser, bypasses it, or owns the table and the table does not force it). A role's
  * inherited rights count, so a member of pg_write_all_data is judged as itself. A brain table counts as unhooked
- * unless its hook is enabled for ordinary writes, statement-level, on all four events and calls gbrain_note_writer().
+ * unless its hook is enabled for ordinary writes, statement-level, unconditional, on all four events and calls gbrain_note_writer().
+ * A process claim resolves a session only while the claim is inside the window too: an expired claim cannot hide a current writer.
  * $1 window start, $2 hooks expected, $3 evidence tables, $4 trigger name.
  */
 const EVIDENCE_SQL = `WITH brain AS (
@@ -50,11 +57,13 @@ const EVIDENCE_SQL = `WITH brain AS (
 SELECT
   (SELECT count(DISTINCT host_id) FROM engine_writer_observations WHERE last_seen >= $1::timestamptz)::int AS hosts,
   CASE WHEN $2::boolean THEN (SELECT count(*) FROM (SELECT DISTINCT s.application_name, s.client_addr FROM engine_writer_sessions s
-    WHERE s.last_seen >= $1::timestamptz AND NOT EXISTS (SELECT 1 FROM engine_writer_observations o WHERE o.application_name = s.application_name)) u)::int ELSE 0 END AS unresolved,
+    WHERE s.last_seen >= $1::timestamptz AND NOT EXISTS (SELECT 1 FROM engine_writer_observations o WHERE o.application_name = s.application_name AND o.last_seen >= $1::timestamptz)) u)::int ELSE 0 END AS unresolved,
   (SELECT count(*) FROM engine_writer_coverage_gaps WHERE created_at >= $1::timestamptz)::int AS gaps,
   CASE WHEN $2::boolean THEN (SELECT count(*) FROM brain b WHERE NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = b.oid AND ${effectiveHookSql('$4')}))::int ELSE 0 END AS unhooked,
   CASE WHEN $2::boolean THEN (SELECT count(*) FROM pg_roles r
-    WHERE r.rolcanlogin AND EXISTS (SELECT 1 FROM brain b WHERE has_table_privilege(r.oid, b.oid, 'INSERT, UPDATE, DELETE, TRUNCATE'))
+    WHERE (r.rolcanlogin OR EXISTS (SELECT 1 FROM pg_roles l WHERE l.rolcanlogin AND NOT l.rolsuper AND pg_has_role(l.oid, r.oid, 'MEMBER')))
+      AND EXISTS (SELECT 1 FROM brain b WHERE has_table_privilege(r.oid, b.oid, 'INSERT, UPDATE, DELETE, TRUNCATE')
+        OR has_any_column_privilege(r.oid, b.oid, 'INSERT') OR has_any_column_privilege(r.oid, b.oid, 'UPDATE'))
       AND NOT EXISTS (SELECT 1 FROM evidence e
         WHERE (NOT e.relrowsecurity OR r.rolsuper OR r.rolbypassrls OR (pg_has_role(r.oid, e.relowner, 'USAGE') AND NOT e.relforcerowsecurity))
           AND ((e.name = 'engine_writer_sessions' AND has_table_privilege(r.oid, e.oid, 'SELECT') AND has_table_privilege(r.oid, e.oid, 'INSERT') AND has_table_privilege(r.oid, e.oid, 'UPDATE'))
@@ -155,12 +164,17 @@ export class WriterObserver {
     try {
       const id = this.o.identity();
       await this.o.primary.transaction(async (tx) => {
+        // A note must never hold a serving connection: a lock or a slow statement ends it in milliseconds, as a recorded failure.
+        await tx.executeRaw(`SET LOCAL lock_timeout = '${NOTE_LOCK_TIMEOUT_MS}ms'`);
+        await tx.executeRaw(`SET LOCAL statement_timeout = '${NOTE_STATEMENT_TIMEOUT_MS}ms'`);
         await tx.executeRaw(NOTE_SQL, [id.hostId, id.applicationName, id.processKind, id.gbrainVersion]);
       });
     // capability-refusal-ok: a background note on the primary (PGLite or Postgres) must never throw into the caller; any refusal becomes a fault that eligibility counts as unknown
     } catch (error) { // silent-read-ok: not silent; the failure becomes a writer_observation_failed fault that eligibility counts as unknown
-      this.lastWritten = Number.NEGATIVE_INFINITY;
-      this.fail(errorCode(error));
+      const code = errorCode(error);
+      // A lock or statement timeout means the table is busy: wait out the refresh interval instead of holding a connection again on every write.
+      if (code !== '55P03' && code !== '57014') this.lastWritten = Number.NEGATIVE_INFINITY;
+      this.fail(code);
     }
   }
 
