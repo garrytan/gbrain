@@ -3380,6 +3380,14 @@ const PINS: Pin[] = [
     JOIN pages o ON o.id=l.origin_page_id WHERE o.source_id=$1 AND l.link_source IN ('markdown','wikilink-resolved','frontmatter')
       AND l.link_type='attended' AND l.to_page_id=l.origin_page_id AND o.slug = ANY($2::text[])`],
   },
+  // The frontmatter `where` check on finished search rows, copied verbatim from its caller (one key with one value, one
+  // whose string value also reads as a number).
+  {
+    from: 'src/core/search/frontmatter-where.ts:104 keepFrontmatterMatches (at 26a78ed132)',
+    case: { method: 'filterPageIdsByFrontmatter', variant: 'default', run: e => e.filterPageIdsByFrontmatter([1, 2], { status: ['active'], cycle: ['2024'] }) },
+    texts: ['SELECT p.id FROM pages p WHERE p.id = ANY($1::bigint[]) AND (p.frontmatter @> $2::text::jsonb OR p.frontmatter @> $3::text::jsonb)'
+      + ' AND (p.frontmatter @> $4::text::jsonb OR p.frontmatter @> $5::text::jsonb OR p.frontmatter @> $6::text::jsonb OR p.frontmatter @> $7::text::jsonb)'],
+  },
 ];
 
 type PinPrivacy = 'none' | 'caller' | 'floor';

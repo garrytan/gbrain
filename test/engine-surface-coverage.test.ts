@@ -441,6 +441,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'insertDecideCalibration', 'storeDecideQualification', 'listDecideCalibrations', 'getDecideCalibration', 'setDecideCalibrationRetired',
   // Search
   'searchKeyword', 'countKeywordPages', 'searchKeywordPages', 'searchTitles', 'searchVector', 'getEmbeddingsByChunkIds',
+  // The frontmatter check on finished search rows (engine-sql/frontmatter-ids.ts; covered by test/engine-parity/query-filters.test.ts)
+  'filterPageIdsByFrontmatter',
   // Chunks
   'upsertChunks', 'sealChunks', 'getChunks', 'getChunkPage', 'getChunkWindows', 'countStaleChunks', 'sumStaleChunkChars', 'setPageEmbeddingSignature',
   'invalidateStaleSignatureEmbeddings', 'invalidateContentDriftEmbeddings', 'listStaleChunks',

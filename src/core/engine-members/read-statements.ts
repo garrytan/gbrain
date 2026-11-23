@@ -14,6 +14,7 @@ import type { ExactIdentityRow, ExactIdentityStatementOpts } from '../engine-sql
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow, LongPageSizeRow, PageTypeProbe, RankCoverageRow, UnattributedFactRow, WantedPageRow } from '../engine-sql/cli-reads-ops.ts';
 import type { FactReadableSpec, FactWithdrawalClaim, FactWithdrawalClaimSpec, ForgetTargetRow, ForgetTargetSpec, LinkedFactCopiesSpec, LinkedFactCopy, OwnerReachSpec, SourceWriteRow } from '../engine.ts';
 import type { PageReadScope } from '../types.ts';
+import type { FrontmatterWhere } from '../search/frontmatter-where.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from '../engine-sql/graph-rank.ts';
 import type { WithdrawalDiscoveryKind, WithdrawalDiscoveryRead, WithdrawalDiscoveryRows } from '../engine-sql/withdrawal-discovery.ts';
 import type { PageKeyRef } from '../engine-sql/trust-tier-reads.ts';
@@ -98,6 +99,8 @@ export interface ReadStatementMembers {
   readChunkColumnTypes(columns: string[]): Promise<EmbeddingCatalogSql.ChunkColumnType[]>;
   /** doctor embedding_column_registry: every `content_chunks` row and the percent holding a value in `column` (pct null with no row). Throws when the column is missing. */
   countChunkColumnCoverage(column: string): Promise<EmbeddingCatalogSql.ChunkColumnCoverage>;
+  /** The ids among `ids` whose page frontmatter holds every `where` key (search's frontmatter check on finished rows), in no set order. */
+  filterPageIdsByFrontmatter(ids: number[], where: FrontmatterWhere): Promise<number[]>;
 
   // Entity and mention reads (engine-sql/entity-reads.ts): the statements the CLI ran through executeRaw.
   /** The newest mention pass time (ISO, UTC, whole seconds) over every source or one source; null when no pass ran. */

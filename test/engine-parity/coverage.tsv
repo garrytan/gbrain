@@ -6,10 +6,10 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2007/2023
+# covered: 2008/2024
 # lifecycle: 9/9
 # pages: 82/83
-# search: 7/7
+# search: 8/8
 # search_reads: 9/9
 # link_reads: 15/15
 # link_temporal: 22/22
@@ -168,7 +168,7 @@ listSourceIds	pages	yes	3	no	yes	yes	serves
 readSoleSourceId	pages	yes	1	no	yes	yes	serves
 readFirstSourceId	pages	yes	1	no	yes	yes	serves
 lockAllSourceRows	pages	yes	1	no	yes	yes	serves
-readSourceRow	pages	yes	5	no	yes	yes	serves
+readSourceRow	pages	yes	7	no	yes	yes	serves
 lockSourceRow	pages	yes	5	no	yes	yes	serves
 advanceSourceCommit	pages	yes	8	no	yes	yes	serves
 writeSourceSyncHeartbeat	pages	yes	1	no	yes	yes	serves
@@ -207,13 +207,14 @@ readLivePageIdBySlug	pages	yes	2	no	yes	yes	serves
 readPageTierRef	pages	yes	1	no	yes	yes	serves
 readPageTierRows	pages	yes	1	no	yes	yes	serves
 pageHasFrontmatterKey	pages	yes	1	no	yes	yes	serves
-searchKeyword	search	yes	43	yes	yes	yes	serves
+searchKeyword	search	yes	47	yes	yes	yes	serves
 countKeywordPages	search	yes	12	no	yes	yes	serves
-searchKeywordPages	search	yes	17	no	yes	yes	serves
+searchKeywordPages	search	yes	18	no	yes	yes	serves
 searchTitles	search	yes	21	yes	yes	yes	serves
 searchVector	search	yes	15	yes	yes	yes	serves
 getEmbeddingsByChunkIds	search	yes	1	no	yes	yes	serves
 searchKeywordChunks	search	yes	16	yes	yes	yes	serves
+filterPageIdsByFrontmatter	search	yes	3	no	yes	yes	serves
 cosinesByChunkIds	search_reads	yes	1	no	yes	yes	serves
 hasSupersedeEdges	search_reads	yes	1	no	yes	yes	serves
 supersedingPageSlugs	search_reads	yes	11	no	yes	yes	serves

@@ -353,6 +353,12 @@ term rarity with `rankOrFallbackByRarity`) and the store answers each statement:
 - `keywordRareTermPages(terms, cap)`: per term, the pages holding it, up to `RARE_TERM_CHUNK_CAP` chunks.
 - the slug handles go through `searchKeywordPages` with `handlesOnly`.
 
+The search and query ops check the `where` filter once more on their finished rows (`keepFrontmatterMatches`), since
+some arms add pages outside the filtered statements. `filterPageIdsByFrontmatter(ids, where)` (`keyword/frontmatter_ids.rs`)
+answers that check: the ids, ascending, whose page frontmatter holds every key, by the same `frontmatter_holds` rule as
+the keyword and vector filters. Like the SQL (`SELECT p.id FROM pages p WHERE p.id = ANY($1)` plus the containment
+clauses), it reads every page row, a soft-deleted one included.
+
 The core BM25 member (`store-members/search.ts`) is gone; its napi method and `Store::search_keyword` stay, unused.
 
 ## CJK queries

@@ -9058,6 +9058,7 @@
         "failParentJob": "none",
         "failSubagentToolExecution": "none",
         "fetchSyncImportPageCursor": "none",
+        "filterPageIdsByFrontmatter": "none",
         "filterPagesAtRevision": "none",
         "filterUnarchivedSourceIds": "none",
         "findActiveAccessTokens": "none",

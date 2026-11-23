@@ -114,6 +114,7 @@ export const CONTENT_MEMBERS = {
   listExactRescanChunks: 'keyword_search',
   countKeywordPages: 'keyword_search',
   searchKeywordPages: 'keyword_search',
+  filterPageIdsByFrontmatter: 'keyword_search',
   searchTitles: 'keyword_search',
   searchKeywordChunks: 'keyword_search',
   findByTitleFuzzy: 'keyword_search',
