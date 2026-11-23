@@ -308,7 +308,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listImageSealChunks', 'listImageSealWindow', 'listInterimStoredObjectCounts', 'listLabelledOnlyMemberIds',
   'listLifetimeCounters', 'listLiveFencePageIds', 'listLiveGenerationRetirements', 'listLiveManagedSyncPassRows',
   'listLocalEditAdoptions', 'listManagedRoots', 'listManagedSyncBacklogHeaders', 'listManagedSyncCursorFailureRows',
-  'listManagedSyncOrphanRowsets', 'listManagedSyncPassStops', 'listNameVariantCandidates',
+  'listManagedSyncOrphanRowsets', 'listManagedSyncPassStops', 'listNameVariantCandidates', 'listVisibleNameVariantCandidates', 'listNameVariantCardCandidates', 'readVisibleVariantPages',
   'listOauthClientAuthShapes', 'listOauthGrantAudit', 'listOlderDriftReceiptSlugs', 'listOnboardingSources',
   'listOntologyStreamSlugs', 'listOpenIdentityDowngrades', 'listOpenPassCheckpointBlockers', 'listOrphanBindingRows',
   'listOrphanGenerationCandidates', 'listOrphanWorkspaceSources', 'listOrphanedAliasCounts',

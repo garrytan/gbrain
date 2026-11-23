@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { buildEntityCard } from '../src/core/verbs/entity-card.ts';
+import { readPossibleDuplicates, resolveNameVariant, VARIANT_ROW_COLUMNS } from '../src/core/verbs/entity-variants.ts';
 
 let engine: PGLiteEngine;
 
@@ -161,6 +162,19 @@ describe('read policy', () => {
     const remote = await lookup('C. Hidden', true);
     expect(remote.found).toBe(false);
     expect((remote.suggestions ?? []).map(s => s.slug)).not.toContain('people/carol-hidden');
+  });
+
+  test('a projection or predicate the typed reads do not serve throws instead of answering no variants', async () => {
+    const base = { retirementPrivacy: 'none' as const, entityTypes: new Set(['person']) };
+    await expect(resolveNameVariant(engine, 'default', 'Allie Example', { ...base, selectColumns: 'slug, title', privatePredicate: '' }))
+      .rejects.toThrow(TypeError);
+    await expect(resolveNameVariant(engine, 'default', 'Allie Example', { ...base, selectColumns: VARIANT_ROW_COLUMNS, privatePredicate: ' AND true' }))
+      .rejects.toThrow(TypeError);
+    const row = { slug: 'people/alice-example', title: 'Alice Example', type: 'person', frontmatter: null };
+    await expect(readPossibleDuplicates(engine, 'default', row, { ...base, selectColumns: 'slug, title', privatePredicate: '' }))
+      .rejects.toThrow(TypeError);
+    const ok = await resolveNameVariant(engine, 'default', 'Allie Example', { ...base, selectColumns: VARIANT_ROW_COLUMNS, privatePredicate: '' });
+    expect(ok.hit?.row.slug).toBe('people/alice-example');
   });
 
   test('entity.name_variants=false turns the arm off', async () => {
