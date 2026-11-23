@@ -5888,7 +5888,9 @@ that is not connected refuses `engine_closed`. These members run on the store (`
   `findCandidateDuplicates`, `consolidateFact`, `findTrajectory`, `getFactsHealth`, `pageCollapseFacts` and
   `migrateFactsToCanonical` (the `facts` capability); `mergeOntologyFact`, `getOntology`, `discoverOntologyDimensions`
   and `findOntologyConflicts` (`ontology`); `logEvalCandidate`, `listEvalCandidates`, `deleteEvalCandidatesBefore`,
-  `logEvalCaptureFailure` and `listEvalCaptureFailures` (`eval_capture`). A caller policy these members cannot honour
+  `logEvalCaptureFailure` and `listEvalCaptureFailures` (`eval_capture`);
+  the four open-loop members `upsertOpenLoop`, `closeOpenLoop`, `listOpenLoops` and `readEntityOpenLoops`
+  (`facts`; `rust/docs/store/facts.md`). A caller policy these members cannot honour
   refuses `engine_capability_missing`. Contracts: `rust/docs/store/facts.md`, `ontology.md`, `eval_capture.md`.
 - Takes, salience, stats and the ingest log, alias and slug members, and the extraction and page-listing reads:
   `rust/docs/store/takes.md`, `salience.md`, `stats.md`, `aliases.md`, `extraction.md` and `page_ops.md`. The `takes`,
@@ -5980,21 +5982,21 @@ ledger. Nothing is written to the brain database, the config table or the brain 
 
 ```bash
 gbrain engine shadow seed [--json]                 # copy the brain into the Rust store once (shadow mode off)
-gbrain engine shadow start --plan                  # preview the plan and its plan_hash, writes nothing
+gbrain engine shadow start --plan                  # preview the plan and its plan_hash, writes nothing to the shadow directory or the brain's tables (also reports whether the brain can swap)
 gbrain engine shadow start --yes --expect <hash>   # turn it on (loads the Rust addon first; refuses without it)
 gbrain engine shadow reconcile [--full] [--json]   # compare the whole brain with the Rust store and repair differences
 gbrain engine shadow status [--json]
-gbrain engine shadow report [--json]               # writes reports/provisional.{json,md}
+gbrain engine shadow report [--json]               # prints the report; writes reports/provisional.{json,md} only once the shadow directory exists
 gbrain engine shadow stop [--delete]               # turn it off; --delete removes the shadow directory
 ```
 
-- **Fail-open.** Mirroring never slows or fails a primary call. The queue is bounded (`--queue-bound`, default 256)
+- **Fail-open.** Mirroring never fails a primary call; a sampled read pays only the bounded copy described below. The queue is bounded (`--queue-bound`, default 256)
   and sheds when full; reads inside a transaction are skipped; `--sample-rate` (default 0.1) picks which reads are
   mirrored. Only sampled reads are copied, the arguments before the call and the result the moment the primary answers, so a caller that changes a result
   afterwards cannot cause a false difference. The copy stops as soon as a call's arguments or result pass about
   1 MiB (every value counts, even a null), so a huge result is counted as too large and never built. A
   call that stays stuck in the Rust engine holds one of four slots; past that new reads are recorded as `timeout` (stalled) without being replayed and the child goes
-  quiet so it is restarted. Reads still queued when a process closes are delivered, not dropped. The child restarts with backoff, and mirroring turns itself off after 5 child exits in 10 minutes, a
+  quiet so it is restarted. When a process closes, reads still queued are handed to the child and the child records them: it drops the CLI's pipe handlers so a closed pipe cannot kill it, drains what it received, writes its ledger and summary, and exits at most 30 seconds after its input ends (the parent's kill timer dies with the parent, so the child carries its own deadline). Finished comparisons are written every 2 seconds. A read still queued when a process is killed, or one the child had not yet written when it is killed, is lost. The child restarts with backoff, and mirroring turns itself off after 5 child exits in 10 minutes, a
   child silent for 60 seconds is killed, and a privacy divergence pauses comparison.
 - **What a privacy divergence is.** Before any equality check, every row of the Rust result is tested against the call's own
   arguments, and one hit records `privacy_diverged` and pauses mirroring (a plain `diff` can never hide it). A hit is a row with
@@ -6014,6 +6016,29 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   (two Supabase projects behind one pooler differ by user name; the password is never part of it). `stop --delete`
   removes the directory, and a child that is still running cannot write it back. The commands cover the host brain only:
   with `--brain <id>` or `GBRAIN_BRAIN_ID` naming another brain they refuse and change nothing.
+- **Managed storage: reported, not refused.** Shadow mode gathers evidence on managed brains too; only the swap
+  refuses them (`engine_swap_refused`, reason `managed_storage`, which `gbrain engine swap` still returns and shadow
+  mode never does). `start` (the preview, `--plan` and `--yes`) opens the brain database once, best-effort, and reads one
+  row: `persistence_brain.enabled`. A PGLite brain opens without recording its managed roots and without repairing a
+  damaged log, so the open writes no managed-root ownership marker or registry entry and moves no datastore file aside; like any PGLite open it takes the datastore's process lock and PGLite rewrites its control and log files until `start` closes the brain. A brain with an open repair episode is left unread (`repair_episode_open`), because a healthy open would close the episode and prune its backups. A managed brain prints `storage: this brain cannot swap while it uses managed
+  storage` in the plan and after `--yes`, and `state.json` records `storage: { managed: true, checked_at }` (`false` for
+  an unmanaged brain). A brain whose mode cannot be read (the database is down, another process holds a PGLite brain, a
+  PGLite path holds no brain which `start` never creates, or the row is missing or malformed) does not block `start`: it
+  prints `storage: could not read whether this brain uses managed storage; the swap will check it (<reason>)` and records
+  `{ managed: null, checked_at, reason }`, where `reason` is the error's code (`pglite_busy`, `no_brain`,
+  `storage_error`) or `open_failed` / `read_failed`, never free-form error text. `start` opens the database only for
+  this record, so it is the one place that needs the database reachable, and a failed open never changes the exit code.
+  `status --json` and the report carry the same record as `storage: { managed, checked_at, note, reason? }` (the
+  field a later command reads to know the brain cannot swap), where `note` is `this brain cannot swap while it uses
+  managed storage` for a managed brain, `could not read whether this brain uses managed storage; the swap will check
+  it` when `managed` is null, and null for an unmanaged brain; `storage` is null for a state written before the field
+  existed. `status` and the report print the note as a line. `status` and the report read the recorded value; they do
+  not open the database.
+- **Why this is safe for the primary.** `start` reads one row and writes no table row, source file, managed-root ownership marker or registry entry. Opening a PGLite brain still touches its own files: it takes the datastore's process lock (the `.gbrain-lock` folder and the `<datastore>.gbrain-owner.json` and `.gbrain-owner.lock` files beside it) until `start` closes the brain, and PGLite rewrites its control and log files (`global/pg_control`, `pg_wal/`), as any open of that brain does. The mirror replays sampled reads
+  into the Rust store under the shadow directory. Nothing in shadow mode writes a row to the primary database, or writes its worktrees, its
+  write effects or its writer coordination locks. The residual risk is to the evidence: a write the owner process or an effect worker
+  applies outside the wrapped engine is not seen by shadow mode, so the comparison for it may differ; such a write
+  shows up as a difference or a miss in the counts, never as silent equality.
 - **No network in the background.** gbrain downloads no addon. `start --yes`, the child
   and `gbrain doctor` only use an addon that is already installed; without one, `start --yes` refuses and stays off, `gbrain doctor` fails
   the `rust_engine_addon` check, and the child records `addon_unavailable` (`rust_engine_addon_missing`, reason `not_installed`).

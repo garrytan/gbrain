@@ -17,10 +17,10 @@ Every window and cut-off is an argument. The clock is the store's, read once per
 | `brain.readOldestWaitingAge(queue)` | whole seconds since the oldest waiting row of the queue was created, or null |
 | `brain.listStuckActiveJobsByName()` | `{ name, n }` for the active rows whose lock lapsed or whose stalled counter reached 2, the most first |
 
-Differences from the SQL engines, decided so every engine answers alike:
+Ordering and other engine differences:
 
-- Ties the old statements left to the planner now break bytewise: the SQL carries `COLLATE "C"` and `id`, `name` or `queue` tie-breaks, and the store sorts by byte order. The queue-health check's output does not change for a brain with no ties.
-- `min(data->>'source_id')` of a private queue is the bytewise smallest, on every engine.
+- The SQL engines retain the original statements without added COLLATE clauses or SQL tie-breaks. The shared TypeScript helpers apply bytewise ordering to returned rows where implemented; they do not stabilize which tied rows SQL selects before LIMIT 5, and stalled rows retain their SQL order. The Rust store breaks ties deterministically, so tied results can differ between engines.
+- A private queue's source_id is min(data->>'source_id') under the database collation on the SQL engines and the bytewise smallest value on the Rust store; these can differ.
 - `readQueueHealthSignals.stalled` no longer returns `started_at`; the check uses the id, name and total only.
 - Seconds are rounded half away from zero, as `EXTRACT(EPOCH FROM interval)::int` does.
 - `opts.signal` of `readWedgeSignals` and `readOldestWaitingAge` cancels the statement on PGLite and PostgreSQL. A store call cannot be cancelled, so the Rust engine ignores it; the probe's own timeout still bounds the wait.

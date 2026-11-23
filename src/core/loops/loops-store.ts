@@ -1,9 +1,12 @@
 /**
  * loops-store — SQL accessors for the open_loops + loop_suppressions tables.
  *
- * One shared module over engine.executeRaw with IDENTICAL SQL text on both
- * engines — parity by construction (the pattern sources-ops.ts uses), no
- * per-engine method twins to keep in lockstep.
+ * Three accessors (`upsertOpenLoop`, `listOpenLoops`, `closeOpenLoop`) call the
+ * engine's typed open-loop members (SQL once in engine-sql/open-loops.ts for
+ * PGLite and Postgres, native in the Rust store; the fourth member,
+ * `readEntityOpenLoops`, serves the entity card). The rest (dedup and thread
+ * lookups, staleness, suppressions) is shared SQL over engine.executeRaw with
+ * IDENTICAL text on both engines (a Rust brain does not serve raw SQL).
  *
  * JSONB discipline: evidence binds through `$N::text::jsonb` (the sanctioned
  * positional pattern) — never a bare `::jsonb` cast over JSON.stringify.
@@ -13,6 +16,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { throwIfRequestAborted } from '../request-signal.ts';
 
 export type LoopType =
   | 'commitment_owed_by_me'
@@ -122,75 +126,10 @@ export async function upsertOpenLoop(
   engine: BrainEngine,
   loop: OpenLoopUpsert,
 ): Promise<{ id: number; created: boolean; applied: boolean }> {
-  const rows = await engine.executeRaw<{ id: number; created: boolean }>(
-    `INSERT INTO open_loops (
-       source_id, dedup_key, loop_type, counterparty_slug, counterparty_email,
-       summary, evidence, thread_id, page_slug, due_at, detector, confidence,
-       fact_id, last_activity_at, opened_at, counterparty_source_id
-     ) VALUES (
-       $1, $2, $3, $4, $5, $6, $7::text::jsonb, $8, $9, $10::timestamptz, $11, $12,
-       $13, COALESCE($14::timestamptz, now()), COALESCE($15::timestamptz, now()), $16
-     )
-     ON CONFLICT (source_id, dedup_key) DO UPDATE SET
-       opened_at = CASE WHEN open_loops.status = 'open'
-                        THEN LEAST(open_loops.opened_at, EXCLUDED.opened_at)
-                        ELSE EXCLUDED.opened_at END,
-       status = 'open',
-       loop_type = EXCLUDED.loop_type,
-       counterparty_slug = COALESCE(EXCLUDED.counterparty_slug, open_loops.counterparty_slug),
-       counterparty_source_id = CASE WHEN EXCLUDED.counterparty_slug IS NULL
-                                     THEN open_loops.counterparty_source_id
-                                     ELSE EXCLUDED.counterparty_source_id END,
-       counterparty_email = COALESCE(EXCLUDED.counterparty_email, open_loops.counterparty_email),
-       summary = EXCLUDED.summary,
-       evidence = EXCLUDED.evidence,
-       page_slug = COALESCE(EXCLUDED.page_slug, open_loops.page_slug),
-       due_at = COALESCE(EXCLUDED.due_at, open_loops.due_at),
-       confidence = EXCLUDED.confidence,
-       fact_id = COALESCE(EXCLUDED.fact_id, open_loops.fact_id),
-       last_activity_at = GREATEST(open_loops.last_activity_at, EXCLUDED.last_activity_at),
-       closed_at = NULL,
-       closed_by = NULL,
-       updated_at = now()
-     WHERE (open_loops.status = 'open'
-            OR EXCLUDED.last_activity_at > open_loops.last_activity_at
-            OR open_loops.closed_by = '${MUTE_RECHECK}')
-       AND (open_loops.closed_by IS DISTINCT FROM '${MUTED}'
-            OR open_loops.counterparty_email IS DISTINCT FROM EXCLUDED.counterparty_email)
-     RETURNING id, (xmax = 0) AS created`,
-    [
-      loop.sourceId,
-      loop.dedupKey,
-      loop.loopType,
-      loop.counterpartySlug ?? null,
-      loop.counterpartyEmail ?? null,
-      loop.summary,
-      JSON.stringify(loop.evidence),
-      loop.threadId ?? null,
-      loop.pageSlug ?? null,
-      loop.dueAt ?? null,
-      loop.detector,
-      loop.confidence ?? 1.0,
-      loop.factId ?? null,
-      loop.lastActivityAt ?? null,
-      loop.openedAt ?? null,
-      loop.counterpartySlug ? (loop.counterpartySourceId ?? null) : null,
-    ],
-  );
-  // The DO UPDATE's WHERE is the manual-close guard: a closed (done/dropped/
-  // stale) row only reopens on GENUINELY newer activity. Without it, any
-  // re-render of an unchanged thread (label-only history touch, re-extraction
-  // of the same content) would silently revert `gbrain loops done`. #5012: a
-  // loop a mute closed never reopens for the same counterparty while muted,
-  // and one an unmute queued for re-check reopens on the re-check's verdict.
-  if (rows.length > 0) {
-    return { id: Number(rows[0].id), created: Boolean(rows[0].created), applied: true };
-  }
-  const existing = await engine.executeRaw<{ id: number }>(
-    `SELECT id FROM open_loops WHERE source_id = $1 AND dedup_key = $2`,
-    [loop.sourceId, loop.dedupKey],
-  );
-  return { id: Number(existing[0]?.id ?? 0), created: false, applied: false };
+  // The statement and its manual-close guard live in engine-sql/open-loops.ts. Master ran it through executeRaw, which
+  // refuses a request that was already cancelled; the member does not, so the check stays here.
+  throwIfRequestAborted();
+  return engine.upsertOpenLoop(loop);
 }
 
 /** Close one loop by id (scoped to its source). Returns the row, or null. */
@@ -201,14 +140,9 @@ export async function closeOpenLoop(
   status: Exclude<LoopStatus, 'open'>,
   closedBy: string,
 ): Promise<OpenLoopRow | null> {
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `UPDATE open_loops
-       SET status = $1, closed_at = now(), closed_by = $2, updated_at = now()
-     WHERE id = $3 AND status = 'open' AND ($4::text IS NULL OR source_id = $4)
-     RETURNING *`,
-    [status, closedBy, id, sourceId],
-  );
-  return rows.length > 0 ? normalizeRow(rows[0]) : null;
+  throwIfRequestAborted();
+  const row = await engine.closeOpenLoop(sourceId, id, status, closedBy);
+  return row ? normalizeRow(row) : null;
 }
 
 /**
@@ -258,27 +192,8 @@ export async function listOpenLoops(
   engine: BrainEngine,
   opts: ListLoopsOpts = {},
 ): Promise<OpenLoopRow[]> {
-  const limit = Math.min(Math.max(opts.limit ?? 200, 1), 1000);
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT * FROM open_loops
-     WHERE ($1::text IS NULL OR source_id = ANY(string_to_array($1, ',')))
-       AND ($2::text IS NULL OR status = $2)
-       AND ($3::text IS NULL OR loop_type = $3)
-       AND ($4::text IS NULL
-            OR (counterparty_slug = $4 AND ($6::text IS NULL OR COALESCE(counterparty_source_id, source_id) = $6))
-            OR counterparty_email = $4)
-       AND ($5::bigint IS NULL OR id = $5::bigint)
-     ORDER BY last_activity_at DESC, id DESC
-     LIMIT ${limit}`,
-    [
-      opts.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds.join(',') : null,
-      opts.status ?? null,
-      opts.loopType ?? null,
-      opts.counterparty ?? null,
-      opts.loopId === undefined ? null : opts.loopId,
-      opts.counterpartySourceId ?? null,
-    ],
-  );
+  throwIfRequestAborted();
+  const rows = await engine.listOpenLoops(opts);
   return rows.map(normalizeRow);
 }
 

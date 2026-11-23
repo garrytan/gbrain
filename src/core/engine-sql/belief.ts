@@ -6,6 +6,7 @@
  * (state reads, event appends, commit marks) stays in `src/core/belief/`.
  */
 import { COVERAGE_KEY } from '../belief/keys.ts';
+import type { BrainEngine } from '../engine.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
 import { managedModeRowsJson } from './persistence-state.ts';
@@ -41,4 +42,14 @@ export async function readLedgerSource(exec: LegacyUnscopedRead, sourceId: strin
   return { incarnation: String(row.incarnation), purgeEpoch: Number(row.purge_epoch), coverage: (row.coverage as string | null) ?? null,
     purgesPossible: row.purges === true,
     ...(opts.batch ? { managedRows: row.managed_rows as Array<{ enabled: unknown }>, planModePrev: String(row.plan_mode_prev) } : {}) };
+}
+
+/**
+ * The sources with a belief event about `subjectKey` (`COVERAGE_KEY` for coverage) in their current incarnation, by id.
+ * The statement `belief/coverage-report.ts` `coveredSources` sent through `executeRaw`.
+ */
+export async function listCoveredSources(tx: Pick<BrainEngine, 'executeRaw'>, subjectKey: string): Promise<string[]> {
+  const rows = await tx.executeRaw<{ id: string }>(`SELECT s.id FROM sources s WHERE EXISTS (SELECT 1 FROM belief_events e
+    WHERE e.source_id = s.id AND e.subject_kind = 'coverage' AND e.subject_key = $1 AND e.source_incarnation = s.incarnation) ORDER BY 1`, [subjectKey]);
+  return rows.map(r => r.id);
 }
