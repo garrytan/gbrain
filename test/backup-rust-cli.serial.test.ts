@@ -67,6 +67,7 @@ afterAll(() => {
     expect(human.stdout).toContain('1 unfinished jobs quarantined');
     expect(human.stdout).toContain('Revoked by this restore: 1 local writer registration(s)');
     expect(human.stdout).toContain('Re-issue access');
+    expect(human.stdout).toContain('Brain id changed by this restore:');
     const json = await cli(['restore', archive, '--into', join(temporary, 'r2'), '--json']);
     expect(json.exitCode).toBe(0);
     expect(JSON.parse(json.stdout.trim())).toMatchObject({ ok: true, quarantined_jobs: 1, revoked: { oauth_clients: ['c1'] } });

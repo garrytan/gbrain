@@ -5,10 +5,9 @@
  * - PGLite: the real restore step (`quarantineSharedSkillRestore`) re-rolls `persistence_brain.brain_id`.
  * - Postgres: the restore tool does not manage a Postgres brain (it keeps pg_dump / pg_restore) and refuses by name,
  *   changing nothing; a restored Postgres database is a new database whose operator re-issues authority.
- * - Rust: the same promise. BLOCKED: no addon member changes the store's brain id (it lives in the `meta:format` record
- *   and the FORMAT file, which `Store::open` insists agree), so a restore today keeps the archived id. That Rust step
- *   is out of this PR's scope (the addon is frozen); the arm below is `test.failing` and starts failing, which tells
- *   whoever lands the step to drop the marker.
+ * - Rust: the same promise. `restoreQuarantine` writes a new uuid into the `meta:format` record (keeping `rotated_from`)
+ *   and rewrites FORMAT by atomic rename (21b-rust); the report and the restore result name the old and the new id, and a
+ *   fresh process opens the restored brain under the new one.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -73,7 +72,7 @@ describe('a new-brain restore makes a fresh brain id', () => {
     expect(refusal?.message).toContain('pg_dump');
   });
 
-  (HAVE_ADDON ? test.failing : test.skip)('Rust: BLOCKED on a Rust step; a restore keeps the archived id today, and must give a fresh one', async () => {
+  (HAVE_ADDON ? test : test.skip)('Rust: the restore rotates the store brain id, names both ids, and the closed store carries the new one', async () => {
     const addon: RustAddon = await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: BUILT } });
     const root = join(temporary, 'rust-home');
     makeHome(root);
@@ -83,7 +82,13 @@ describe('a new-brain restore makes a fresh brain id', () => {
     const archived = (created.manifest as Record<string, any>).store.brain_id as string;
     const into = join(temporary, 'rust-restored');
     const restored = await restoreBackup({ archive, into, addon });
-    expect((await verifyStoreDir(addon, brainDir(into))).brain_id).not.toBe(archived);
-    expect((restored as { brain_id: { restored: string } }).brain_id.restored).not.toBe(archived);
+    const { brain_id } = restored as { brain_id: { archived: string; restored: string }; reconnect_required: string[] };
+    expect(brain_id.archived).toBe(archived);
+    expect(brain_id.restored).not.toBe(archived);
+    const closed = await verifyStoreDir(addon, brainDir(into));
+    expect(closed).toMatchObject({ verdict: 'ok', brain_id: brain_id.restored });
+    expect((restored as { reconnect_required: string[] }).reconnect_required.join('\n')).toContain(`Brain id changed by this restore: ${archived} (the original) -> ${brain_id.restored}`);
+    // The original brain still has its own id.
+    expect((await verifyStoreDir(addon, brainDir(root))).brain_id).toBe(archived);
   }, 60_000);
 });

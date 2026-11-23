@@ -254,7 +254,7 @@ function revokedText(revoked: { local_writers: string[]; oauth_clients: string[]
 export interface RustRestoreResult {
   root: string; quarantined_jobs: number; reconnect_required: string[]; shared_skills: null; purge_replay: PurgeReplayResult;
   revoked: { local_writers: string[]; oauth_clients: string[] };
-  /** The store's identity before and after the restore. */
+  /** The brain id the archive held and the fresh one the restored brain has: the two are never equal. */
   brain_id: { archived: string; restored: string };
 }
 
@@ -330,7 +330,8 @@ export async function restoreRustBackup(options: { archive: string; into: string
     } finally { await store.close(); }
     // A read-only look at the closed store: it refuses a file that was not closed cleanly.
     const phase2 = await verifyStoreDir(addon, dbPath).catch(cause => { throw new AgentInstallError('restore_close_incomplete', `The restored store did not close cleanly (${(cause as { code?: string }).code ?? 'unreadable'}). Staging is preserved; no usable root was published.`); });
-    if (phase2.verdict !== 'ok' || phase2.brain_id !== metadata.store.brain_id) throw new AgentInstallError('restore_close_incomplete', 'The restored store did not verify after the restore. Staging is preserved; no usable root was published.');
+    // The restore gave the store a fresh brain id: the closed store must carry exactly the one the quarantine reported, and not the archived one.
+    if (phase2.verdict !== 'ok' || quarantine.previous_brain_id !== metadata.store.brain_id || quarantine.brain_id === quarantine.previous_brain_id || phase2.brain_id !== quarantine.brain_id) throw new AgentInstallError('restore_close_incomplete', 'The restored store did not verify after the restore. Staging is preserved; no usable root was published.');
 
     const detachedConfig: string[] = [];
     const config = { ...rebaseManagedConfig(state.config, metadata.original_root, root, metadata.managed_paths, detachedConfig), engine: 'rust', database_path: join(root, '.gbrain', 'brain.rust') } as unknown as GBrainConfig;
@@ -370,11 +371,12 @@ export async function restoreRustBackup(options: { archive: string; into: string
       ? [`Purges made after the archive (${metadata.created_at}) could not be checked: no purge mirror could be read under ${metadata.original_root}. Restore again into a new root with the original brain's .gbrain/${PURGE_MIRROR_FILE} in place, or name a copy of it with gbrain backup restore --purge-mirror <absolute path>; otherwise purge the content again.`]
       : unverified.length ? [`Purge(s) ${unverified.map(i => i.request).join(', ')} were recorded but never confirmed committed, and the snapshot does not hold them: review them and run those purges again if the content is still present.`] : [];
     const reconnect = [...new Set([...metadata.credential_references.map(key => `Configure credential: ${key}`), ...metadata.omitted, ...detachedConfig, ...quarantine.reconnect,
+      `Brain id changed by this restore: ${quarantine.previous_brain_id} (the original) -> ${quarantine.brain_id} (this restored brain). Anything that names the old id (a shared-skills member, a receipt) does not reach this brain.`,
       revokedText(quarantine.revoked), ...replayWarning, 'Autopilot is paused; review .gbrain/restore-detached.json before explicitly resuming automation.'])];
     const result: RustRestoreResult = { root, quarantined_jobs: quarantine.jobs_cancelled, reconnect_required: reconnect, shared_skills: null, purge_replay: purgeReplay,
-      revoked: quarantine.revoked, brain_id: { archived: metadata.store.brain_id, restored: phase2.brain_id ?? metadata.store.brain_id } };
+      revoked: quarantine.revoked, brain_id: { archived: quarantine.previous_brain_id, restored: quarantine.brain_id } };
     privateWrite(receiptPath, JSON.stringify({ format_version: 1, restore_id: restoreId, state: 'ready', original_root: metadata.original_root, engine: 'rust', quarantined_jobs: result.quarantined_jobs,
-      reconnect_required: reconnect, purge_replay: purgeReplay, revoked: result.revoked, store: { archived: metadata.store, generation_restored: phase2.generation }, launcher_ready: false, setup_required: true, native_automation_started: false }, null, 2) + '\n');
+      reconnect_required: reconnect, purge_replay: purgeReplay, revoked: result.revoked, store: { archived: metadata.store, generation_restored: phase2.generation }, brain_id: result.brain_id, launcher_ready: false, setup_required: true, native_automation_started: false }, null, 2) + '\n');
     syncDirectory(root);
     published = true;
     return result;

@@ -64,13 +64,15 @@ async function backedUp(extra?: (brain: any) => Promise<void>) {
     expect(created.restore_blockers).toEqual([]);
   });
 
-  test('restore: phase 1 equals the snapshot, phase 2 changes only what it reports, the brain id is the archive\'s, a fresh process reads it', async () => {
+  test('restore: phase 1 equals the snapshot, phase 2 changes only what it reports, the brain id is fresh, a fresh process reads it', async () => {
     const { root, archive } = await backedUp();
     const before = hashFile(join(brainDir(root), 'records.redb'));
     const into = fresh('restored');
     const result = await restoreBackup({ archive, into, mode: 'new_brain', addon });
     expect(result.revoked).toEqual({ local_writers: [WRITER], oauth_clients: ['c1'] });
     expect(result.quarantined_jobs).toBe(1);
+    expect(result.brain_id.restored).not.toBe(result.brain_id.archived);
+    expect(result.brain_id.archived).toBe((readBackupManifest(archive) as Record<string, any>).store.brain_id);
     expect(result.reconnect_required.join('\n')).toContain('Re-issue access');
     expect(result.reconnect_required.join('\n')).toContain('Access tokens are not revoked');
     expect(hashFile(join(brainDir(root), 'records.redb'))).toEqual(before);
@@ -83,8 +85,8 @@ async function backedUp(extra?: (brain: any) => Promise<void>) {
     const after = await verifyStoreDir(addon, brainDir(into));
     expect(after.verdict).toBe('ok');
     const moved = Object.keys({ ...archived.tags, ...after.tags }).filter(tag => archived.tags[tag]?.sha256 !== after.tags[tag]?.sha256).sort();
-    // Only the records a restore step owns changed: config, pages (origins), sources, jobs, writers, meta (commit sequence), OAuth clients.
-    expect(moved).toEqual(['43', '50', '53', '57', '6d', '6f']);
+    // Only the records a restore step owns changed: config, the meta record (new brain id, rotated_from), pages (origins), sources, jobs, writers, the commit sequence, OAuth clients.
+    expect(moved).toEqual(['43', '4d', '50', '53', '57', '6d', '6f']);
     expect(JSON.parse(readFileSync(join(into, '.gbrain', 'config.json'), 'utf8'))).toMatchObject({ engine: 'rust', database_path: brainDir(into) });
     expect(readFileSync(join(into, 'memory', 'note.md'), 'utf8')).toContain('Preserve this file');
     // A fresh process reads the restored brain while the original tree cannot be read.

@@ -297,8 +297,8 @@ against the snapshot before it changes anything, then detaches external sources,
 automation off, cancels unfinished jobs and revokes archived local writers and OAuth clients, and prints exactly which. It
 refuses, by name and publishing nothing, an archive that holds unfinished write requests, a purge that was committed after
 the snapshot, or a record kind this build cannot make safe (access tokens among them); see
-[`restore_step_unsupported`](troubleshooting.md#restore-step-unsupported). The default `new-brain` mode is the only one. A
-restored Rust brain keeps the archive's brain id today (a new one needs an addon step that has not shipped).
+[`restore_step_unsupported`](troubleshooting.md#restore-step-unsupported). The default `new-brain` mode is the only one. The restored brain gets a
+fresh brain id, and the restore output names the old and the new one.
 
 Postgres brains are unchanged: they keep `pg_dump` and `pg_restore` (`gbrain backup create` on one refuses with
 `pglite_required` and names them), and the PGLite path above is as it was.
