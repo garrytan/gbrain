@@ -45,7 +45,8 @@ export async function applyContactPage(contactId: string, deleted: boolean, io: 
   const collides = baseOwner !== null && baseOwner !== 'hand-authored' && baseOwner !== contactId;
   const rendered = io.render(collides);
   if (!rendered) return;
-  if (await io.owner(rendered.relPath) === 'hand-authored') {
+  const renderedOwner = rendered.relPath === `${baseSlug}.md` ? baseOwner : await io.owner(rendered.relPath);
+  if (renderedOwner === 'hand-authored') {
     io.skippedHandAuthored(rendered.relPath);
     return;
   }
