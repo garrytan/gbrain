@@ -774,7 +774,7 @@ insertPublicationEffects	persistence_journal	yes	11	no	yes	yes	serves
 insertWithdrawalEffects	persistence_journal	yes	7	no	yes	yes	serves
 insertRemirrorEffects	persistence_journal	yes	1	no	yes	yes	serves
 readRemirrorEffects	persistence_journal	yes	1	no	yes	yes	serves
-listSourceCheckpointRecords	persistence_journal	yes	2	no	yes	yes	serves
+listSourceCheckpointRecords	persistence_journal	yes	3	no	yes	yes	serves
 insertOpCheckpointIfAbsent	persistence_journal	yes	2	no	yes	yes	serves
 replaceOpCheckpointAtVersion	persistence_journal	yes	1	no	yes	yes	serves
 readOldestSyncHoldAt	persistence_journal	yes	1	no	yes	yes	serves
@@ -1534,7 +1534,7 @@ listSegmentedPages	withdrawal_pages	yes	2	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	2	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	176	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	174	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	4	yes	yes	yes	serves
@@ -1660,8 +1660,8 @@ readPageRevisionWriter	write_misc	yes	1	no	yes	yes	serves
 readRevisionWriterRequest	write_misc	yes	2	no	yes	yes	serves
 writeSyncAdmissionStamp	write_misc	yes	5	no	yes	yes	serves
 readSyncAdmissionEffects	write_misc	yes	6	no	yes	yes	serves
-readOpCheckpointRecord	write_misc	yes	18	no	yes	yes	serves
-writeOpCheckpointRecord	write_misc	yes	33	no	yes	yes	serves
+readOpCheckpointRecord	write_misc	yes	19	no	yes	yes	serves
+writeOpCheckpointRecord	write_misc	yes	35	no	yes	yes	serves
 purgeStaleCheckpoints	write_misc	yes	1	no	yes	yes	serves
 readHealthMemoClock	write_misc	yes	1	no	yes	yes	serves
 listSynopsisSourceIds	write_misc	yes	4	no	yes	yes	serves
