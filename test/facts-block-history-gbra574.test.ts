@@ -159,7 +159,7 @@ describe('G1 contested facts in the block', () => {
   });
   test('a failed lookup leaves the rows unlabeled and marks them', async () => {
     const failing = new Proxy(engine, { get(target, prop) {
-      if (prop === 'executeRaw') return (sql: string, params?: unknown[]) => sql.includes('unnest($1::bigint[]) AS x(id)') ? Promise.reject(new Error('lookup failed')) : target.executeRaw(sql, params);
+      if (prop === 'listContestedProposalPairs') return () => Promise.reject(new Error('lookup failed'));
       const v = (target as unknown as Record<string, unknown>)[prop as string];
       return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
     } }) as BrainEngine;

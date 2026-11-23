@@ -76,7 +76,7 @@ function previewCommand(scope: RepairScope): string {
 }
 
 async function sourcesOf(engine: BrainEngine, scope: RepairScope) {
-  return engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+  return engine.listSourceIncarnations(scope.source_ids);
 }
 
 const hashOf = async (engine: BrainEngine, scope: RepairScope, pages: ApprovedPage[]) =>
@@ -99,19 +99,9 @@ export const splitFactsRepair: RepairHandler = {
       return { items: approved.items.map((page, index) => item(page, opts.expect!, index === approved.items.length - 1)).filter(entry => afterCursor(entry.cursor, after)),
         preview_hash: opts.expect, residuals: {} };
     }
-    const pages = await engine.executeRaw<{ id: number; source_id: string; slug: string }>(
-      `SELECT id, source_id, slug FROM pages
-        WHERE source_id=ANY($1::text[]) AND deleted_at IS NULL AND compiled_truth LIKE '%gbrain:facts:begin%' AND timeline LIKE '%gbrain:facts:begin%' ORDER BY id`,
-      [scope.source_ids]);
+    const { inline: pages, segmented } = await engine.listSplitFactsPages(scope.source_ids);
     const residuals: Record<string, number> = {};
     const listing: NonNullable<RepairPlan['listing']> = [];
-    const segmented = await engine.executeRaw<{ source_id: string; slug: string }>(`SELECT p.source_id, p.slug FROM pages p
-      WHERE p.source_id=ANY($1::text[]) AND p.deleted_at IS NULL AND p.body_storage='segmented'
-        AND EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.page_id=p.id AND m.gen_to IS NULL AND m.staging_id IS NULL AND m.region='truth'
-          AND m.protected_regions @> '[{"kind":"facts"}]'::jsonb)
-        AND EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.page_id=p.id AND m.gen_to IS NULL AND m.staging_id IS NULL AND m.region='timeline'
-          AND m.protected_regions @> '[{"kind":"facts"}]'::jsonb)
-      ORDER BY p.id`, [scope.source_ids]);
     for (const page of segmented) {
       residuals.segmented = (residuals.segmented ?? 0) + 1;
       listing.push({ item: `${page.source_id}:${page.slug}`, class: 'segmented',

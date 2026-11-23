@@ -1,12 +1,12 @@
 /** Trusted local administration, shared by direct CLI and its authenticated resident proxy. */
 import { isAbsolute, join } from 'node:path';
 import { claimedWorktreeRoot, inspectClaimedPhysicalRoot } from './topology-locks.ts';
+import { readTopologyRecoveryStops } from './topology-stop.ts';
 import { movedPhysicalRootRefusal } from './physical-root.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { UNSUPPORTED_MANAGED_BULK_WRITERS } from './maintenance.ts';
 import { opError, OperationError } from '../ops/contract.ts';
-import { assertClaimReleasable } from './claim-release-gate.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { assertValidSlugPrefixes } from '../grants/encoding.ts';
 import { isWriteRequestId } from './types.ts';
@@ -145,8 +145,6 @@ async function writerClaim(engine: BrainEngine, params: Record<string, unknown>)
     return { dry_run: true, action: 'writer_claim', source_id: sourceId, path: root, current: await getWorktreeBinding(engine, sourceId, existingHostIdFor(engine)), ...notice };
   }
   const expectedState = await requireWriterAdminIntent(engine, 'writer_claim', params);
-  // Refused on an engine that could not release or activate the claim (claim-release-gate.ts).
-  assertClaimReleasable(engine);
   try { return { claimed: true, binding: await claimWorktree(engine, sourceId, root, undefined, expectedState), ...notice }; }
   catch (error) {
     if (!(error instanceof OperationError) || error.detail !== 'physical_root_moved' || !worktree) throw error;
@@ -345,6 +343,8 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
       worktree_refreshes: await (await import('./worktree-refresh.ts')).activeWorktreeRefreshes(engine, params.source_id as string | undefined),
       // #8984: stopped remove/purge requests (retire admissions) and the ones a later lifecycle change superseded.
       topology_requests: topologyRequests,
+      // This host's recovering topology changes, and the named Rust stop that keeps them from converging (topology-stop.ts).
+      topology_recoveries: await readTopologyRecoveryStops(engine, existingHostIdFor(engine)),
       // Q1: each canonical checkout on this host against its last fetched upstream: commits it holds that the upstream lacks, and its porcelain.
       checkouts: await writerStatusCheckouts(bindings as Array<{ source_id: string; local_path: string | null }>),
       // #6317 (B4): per managed source, whether sync data moves (shares the reader of sources status, doctor and writer movement).

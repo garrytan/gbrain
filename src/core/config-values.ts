@@ -22,7 +22,7 @@ import { ReadDeadlineError, withReadDeadline } from './read-deadline.ts';
 import { currentStatementDeadline, deadlineFailure, StatementDeadlineError } from './statement-deadline.ts';
 
 /** The statement `getConfigValues` runs on PGLite and Postgres (engine-sql/config.ts), for a handle without it. */
-const CONFIG_VALUES_SQL = 'SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key';
+const CONFIG_VALUES_SQL = 'SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE "C"';
 
 export type ConfigReader = Pick<BrainEngine, 'executeRaw'> & Partial<Pick<BrainEngine, 'getConfigValues'>>;
 
@@ -42,7 +42,12 @@ type KeyedConfigMember = 'getConfigValues';
 export async function readKeyedConfig(engine: Pick<BrainEngine, 'executeRaw'> | Partial<Pick<BrainEngine, KeyedConfigMember>>,
   member: KeyedConfigMember, sql: string, keys: readonly string[], opts: { signal?: AbortSignal } = {}): Promise<Array<{ key: string; value: string }>> {
   opts.signal?.throwIfAborted();
-  const typed = (engine as Partial<Pick<BrainEngine, KeyedConfigMember>>)[member];
+  // The typed read takes no signal, so an abort only stops the wait and a statement still queued for a connection stays
+  // on the pool (#6278: a saturated pool then accumulates one per consumer tick). Where raw SQL serves, a signalled read
+  // runs the statement through executeRaw with the signal, as master did, so the abort cancels the statement itself.
+  const caps = (engine as { capabilities?: ReadonlySet<string> }).capabilities;
+  const cancellable = !!opts.signal && typeof (engine as Partial<ConfigReader>).executeRaw === 'function' && (typeof caps?.has !== 'function' || caps.has('raw_sql'));
+  const typed = cancellable ? undefined : (engine as Partial<Pick<BrainEngine, KeyedConfigMember>>)[member];
   const read = typed
     ? () => untilAborted(typed.call(engine, keys), opts.signal)
     : () => (engine as ConfigReader).executeRaw<{ key: string; value: string }>(sql, [[...keys]], { signal: opts.signal });

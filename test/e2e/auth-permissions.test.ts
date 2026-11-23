@@ -144,7 +144,6 @@ d('mintLegacyToken parity on real Postgres (#4043 — PGLite hides positional-bi
   test('scopes TEXT[] + permissions jsonb round-trip through the exact mint SQL shape', async () => {
     const engine = getEngine();
     const { mintLegacyToken, revokeLegacyTokenById } = await import('../../src/core/token-mint.ts');
-    const { sqlQueryForEngine } = await import('../../src/core/sql-query.ts');
     const minted = await mintLegacyToken(engine, {
       name: `parity-${Date.now()}`,
       takesHolders: ['world'],
@@ -165,8 +164,7 @@ d('mintLegacyToken parity on real Postgres (#4043 — PGLite hides positional-bi
     const { normalizeTokenScopes } = await import('../../src/core/legacy-token-scope.ts');
     expect(normalizeTokenScopes(rows[0].scopes)).toEqual(['read', 'write']);
 
-    const sql = sqlQueryForEngine(engine);
-    expect(await revokeLegacyTokenById(sql, minted.id)).toBe(true);
-    expect(await revokeLegacyTokenById(sql, minted.id)).toBe(false); // already revoked
+    expect(await revokeLegacyTokenById(engine, minted.id)).toBe(true);
+    expect(await revokeLegacyTokenById(engine, minted.id)).toBe(false); // already revoked
   });
 });

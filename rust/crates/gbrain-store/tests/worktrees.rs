@@ -468,6 +468,30 @@ fn a_transfer_prepare_drains_the_worktree_and_a_cancel_reactivates_it() {
 }
 
 #[test]
+fn a_source_delete_removes_the_binding_of_its_incarnation_and_keeps_the_worktree() {
+    let dir = TempDir::new("worktrees-source-delete");
+    let store = open(&dir);
+    let incarnation = source(&store, "work", json!({}));
+    seed(&store, "work", &incarnation);
+    assert!(store.delete_source_record("work", false).unwrap());
+    assert!(store.get_worktree_binding("work", None).unwrap().is_none());
+    assert!(store.read_worktree(WORKTREE).unwrap().is_some());
+    assert!(store.read_host_binding(WORKTREE, HOST_A).unwrap().is_some());
+    let reborn = source(&store, "work", json!({}));
+    store
+        .insert_source_binding(&binding("work", &reborn, WORKTREE))
+        .unwrap();
+
+    // A binding of another incarnation is an orphan already: the delete leaves it for repair.
+    let stale = TempDir::new("worktrees-source-delete-stale");
+    let store = open(&stale);
+    source(&store, "work", json!({}));
+    seed(&store, "work", STALE);
+    assert!(store.delete_source_record("work", false).unwrap());
+    assert!(store.get_worktree_binding("work", None).unwrap().is_some());
+}
+
+#[test]
 fn a_transfer_accept_moves_the_owner_binding_and_content_receipt_to_the_successor() {
     let dir = TempDir::new("worktrees-accept");
     let store = open(&dir);

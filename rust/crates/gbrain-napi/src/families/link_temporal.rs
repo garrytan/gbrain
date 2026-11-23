@@ -194,6 +194,147 @@ impl Brain {
         })
     }
 
+    /// `readReferrerGroupRows`: `{ targetSources, targetSlugs, referrerSources, storedTypes, canonicalTypes,
+    /// excludePrivate, minTrust, suppressFlagged, includeQuarantined, perGroup }`: referrer rows.
+    #[napi]
+    pub fn read_referrer_group_rows<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::ReferrerGroupInput =
+                arg(input, "readReferrerGroupRows input")?;
+            s.read_referrer_group_rows(&input)
+        })
+    }
+
+    /// `readPageReferenceDate`: the live page's reference date as UTC microsecond text, or null.
+    #[napi]
+    pub fn read_page_reference_date<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_page_reference_date(&source_id, &slug))
+    }
+
+    /// `readReferrerPageDetails`: `{ ids }`: the card details of each page id that exists.
+    #[napi]
+    pub fn read_referrer_page_details<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::ReferrerPageDetailsInput =
+                arg(input, "readReferrerPageDetails input")?;
+            s.read_referrer_page_details(&input)
+        })
+    }
+
+    /// `readReferrerTargetCounts`: `{ targetSources, targetSlugs, targetIndexes, referrerSources, storedTypes,
+    /// canonicalTypes, recordTypes, excludePrivate, minTrust, suppressFlagged, includeQuarantined }`: count rows.
+    #[napi]
+    pub fn read_referrer_target_counts<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::ReferrerTargetCountInput =
+                arg(input, "readReferrerTargetCounts input")?;
+            s.read_referrer_target_counts(&input)
+        })
+    }
+
+    /// `listReferrerTargetSources`: `{ slug, sources }`: the sources holding a live page with the slug.
+    #[napi]
+    pub fn list_referrer_target_sources<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::ReferrerTargetSourcesInput =
+                arg(input, "listReferrerTargetSources input")?;
+            s.list_referrer_target_sources(&input)
+        })
+    }
+
+    /// `countReferrerRows`: `{ targetSources, targetSlugs, referrerSources, storedTypes, canonicalTypes,
+    /// excludePrivate, type, minTrust, suppressFlagged, includeQuarantined }`: the referrer total.
+    #[napi]
+    pub fn count_referrer_rows<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::ReferrerRowInput =
+                arg(input, "countReferrerRows input")?;
+            s.count_referrer_rows(&input)
+        })
+    }
+
+    /// `readReferrerRows`: `countReferrerRows`'s input plus `{ cursor, limit }`: one referrer page.
+    #[napi]
+    pub fn read_referrer_rows<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::ReferrerRowInput =
+                arg(input, "readReferrerRows input")?;
+            s.read_referrer_rows(&input)
+        })
+    }
+
+    /// `readReferrerTypes`: `countReferrerRows`'s input (`type` ignored): the distinct
+    /// `{ canonical_type, type }` pairs of the referrers.
+    #[napi]
+    pub fn read_referrer_types<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::ReferrerRowInput =
+                arg(input, "readReferrerTypes input")?;
+            s.read_referrer_types(&input)
+        })
+    }
+
+    /// `readReferrerRecordCandidates`: `readReferrerTargetCounts`'s input plus `{ perTarget }`: the record candidates.
+    #[napi]
+    pub fn read_referrer_record_candidates<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::ReferrerRecordCandidateInput =
+                arg(input, "readReferrerRecordCandidates input")?;
+            s.read_referrer_record_candidates(&input)
+        })
+    }
+
+    /// `readReferrerRecordPages`: `{ ids }`: the title and date source of each page id that exists.
+    #[napi]
+    pub fn read_referrer_record_pages<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::ReferrerPageDetailsInput =
+                arg(input, "readReferrerRecordPages input")?;
+            s.read_referrer_record_pages(&input)
+        })
+    }
+
     /// `countSearchVectorRows`: `{ pages, chunks }`.
     #[napi]
     pub fn count_search_vector_rows<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
@@ -229,13 +370,20 @@ impl Brain {
         })
     }
 
-    /// `readProjectionReadinessGeneration`: the generation the probe's cached answer depends on.
+    /// `readProjectionReadinessGeneration`: the generation the probe's cached answer depends on, or null
+    /// inside a transaction.
     #[napi]
     pub fn read_projection_readiness_generation<'env>(
         &self,
         env: &'env Env,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.projection_readiness_generation())
+    }
+
+    /// `readHealthMemoClock`: the brain and its commit sequence.
+    #[napi]
+    pub fn read_health_memo_clock<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.health_memo_clock())
     }
 
     /// `readProjectionReadiness`: a coverage scope: `{ pending, by_design }`.

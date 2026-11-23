@@ -44,7 +44,7 @@ import { claimableWriteSql, foregroundPrioritySql } from '../src/core/persistenc
 import { PERSISTENCE_PROTOCOL_PREDICATE } from '../src/core/persistence/protocol.ts';
 import { EXPIRED_PREPARING_CHARGE_SQL } from '../src/core/persistence/claim-phase.ts';
 import { CAPACITY_PRINCIPAL_DAYS_SQL, CAPACITY_RECLAIM_SQL, CLAIM_SEGMENTED_PROJECTION_SQL, COMPACTABLE_RECEIPTS_SQL, MARK_PROJECTION_REBUILD_FAILED_SQL,
-  PROJECTION_RETRY_READY_TEXT, SEGMENTED_JOB_PROBES_SQL, SEGMENTED_PROJECTION_CLAIMED_TEXT, TRUE_UP_REQUESTS_SQL, TRUE_UP_RESERVATIONS_SQL, projectionWindowFragment,
+  PROJECTION_RETRY_READY_TEXT, RECEIPT_COMPACTION_CANDIDATES_SQL, SEGMENTED_JOB_PROBES_SQL, SEGMENTED_PROJECTION_CLAIMED_TEXT, TRUE_UP_REQUESTS_SQL, TRUE_UP_RESERVATIONS_SQL, projectionWindowFragment,
 } from '../src/core/engine-sql/persistence-housekeeping.ts';
 import { residentWindowCtes, type ProjectionScanCursor } from '../src/core/page-state/projection-window.ts';
 import { INSERT_TOPOLOGY_CHANGE_SQL, RELEASE_CLAIM_SQL, releaseUnpublishedClaim as releaseClaimStatement, TOPOLOGY_CHANGE_SQL } from '../src/core/engine-sql/persistence-claims.ts';
@@ -127,6 +127,9 @@ describe('written-out write-journal statements', () => {
     ${OPEN_SYNC_CURSOR_EXCLUSION('r')}
     ${NEWEST_SYNC_RECEIPT_EXCLUSION('r')}
     ORDER BY sequence LIMIT 100`);
+    expect(RECEIPT_COMPACTION_CANDIDATES_SQL).toContain(`AND NOT EXISTS (SELECT 1 FROM persistence_effects e WHERE e.request_id=r.id AND e.state<>'committed')
+      ${OPEN_SYNC_CURSOR_EXCLUSION('r')}
+      AND r.id NOT IN`);
     expect(TRUE_UP_REQUESTS_SQL).toBe(`SELECT r.id,r.intent,r.authority,r.outcome,r.error_message,r.error_detail,r.client_request_id,
       r.terminal_reservation,r.principal_kind,r.principal_id,r.compacted,
       COALESCE((SELECT SUM(${EFFECT_BYTES_SQL}) FROM persistence_effects e WHERE e.request_id=r.id),0)::text AS effect_bytes,

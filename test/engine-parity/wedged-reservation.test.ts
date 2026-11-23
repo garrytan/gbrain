@@ -5,8 +5,8 @@
  * reservation's identity, when the brain and host match and no worktree row exists for it.
  *
  * The repair reads this brain's id and the worktree row through the claim store, so every engine answers it. The
- * claim is the internal `claimWorktree` (the automatic claim of a first write), not the `writer claim` verb, which the
- * Rust engine refuses (persistence/claim-release-gate.ts). Each case runs under its own GBRAIN_HOME.
+ * claim is the internal `claimWorktree` (the automatic claim of a first write), not the `writer claim` verb. Each case
+ * runs under its own GBRAIN_HOME.
  */
 import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';

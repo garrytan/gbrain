@@ -18,15 +18,14 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
-import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
-import { privateFactFilterForReader, worldOnlyFacts } from './private-visibility.ts';
-import { grantedPrivateFactSql } from '../access/member-facts.ts';
+import { worldOnlyFacts } from './private-visibility.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { factEntitySlugs } from '../mentions/siblings.ts';
 import { resolveQueryEntities, type ResolvedEntity } from './alias-fanout.ts';
 import { collapseFactReads } from '../facts/capture-dedup.ts';
 import type { FactAttribution } from '../engine.ts';
-import { projectionEligibleSql } from '../eligibility/sql.ts';
 import type { TrustTier } from '../trust/tier.ts';
+import { applySlotEnds } from './slot-ends.ts';
 
 export const ENTITY_FACTS_CAP = 5;
 export const LINKED_FACTS_CAP = 3;
@@ -37,7 +36,7 @@ export interface EntityFact { id: number; fact: string; entity_slug: string | nu
   entity_slugs?: string[]; collapsed_count?: number }
 
 /** Rows read per cap so copies of one claim collapse before the cap (#7043). */
-export const SAVED_FACTS_COLLAPSE_WINDOW = 50;
+export { SAVED_FACTS_COLLAPSE_WINDOW } from '../engine-sql/facts-trust.ts';
 /** The columns the collapse reads besides a saved fact's own; `stripCollapseColumns` drops them from the response. */
 import { SAVED_FACT_COLLAPSE_COLUMNS, type CollapseColumns } from './saved-fact-collapse.ts';
 
@@ -48,23 +47,15 @@ export function stripCollapseColumns<T extends CollapseColumns & { collapsed_ids
   return rest;
 }
 
-async function newestFacts(engine: BrainEngine, sourceId: string, slugs: string[], opts: { remote: boolean; minTrust?: TrustTier }, limit: number): Promise<Array<EntityFact & CollapseColumns>> {
-  const visibility = opts.remote ? `${worldOnlyFacts(opts.remote) ? `AND (f.visibility = 'world' OR ${grantedPrivateFactSql('f')})` : ''} AND ${privateFactFilterForReader('f')}` : '';
-  const rows = await engine.executeRaw<EntityFact & CollapseColumns>(
-    `SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source, ${SAVED_FACT_COLLAPSE_COLUMNS}
-       FROM facts f
-      WHERE f.source_id = $1 AND f.entity_slug = ANY($2::text[])
-        AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
-        AND f.source != ALL($3::text[])
-        ${visibility}
-        AND ${projectionEligibleSql('facts', 'f', { floor: opts.minTrust })}
-      ORDER BY (CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC
-      LIMIT ${SAVED_FACTS_COLLAPSE_WINDOW}`,
-    [sourceId, slugs, [...AUDIT_ROW_SOURCES]]);
-  return (await collapseFactReads(engine, rows.map(r => ({ ...r, id: Number(r.id) })))).slice(0, limit);
+async function newestFacts(engine: BrainEngine, sourceId: string, slugs: string[], opts: { remote: boolean; excludePrivate: boolean; minTrust?: TrustTier }, limit: number): Promise<Array<EntityFact & CollapseColumns>> {
+  const rows = await engine.readEntityNewestFacts({ sourceId, slugs, remote: opts.remote, worldOnly: worldOnlyFacts(opts.remote), minTrust: opts.minTrust });
+  // GST-3170: a slot value a later one ended at read time is no longer current (slot-ends.ts).
+  const current = await applySlotEnds(engine, { sourceId, worldOnly: worldOnlyFacts(opts.remote), excludePrivate: opts.remote || opts.excludePrivate, minTrust: opts.minTrust },
+    rows.map(r => ({ ...r, id: Number(r.id) })), { activeOnly: true, entities: [{ source_id: sourceId, slugs }] });
+  return (await collapseFactReads(engine, current)).slice(0, limit);
 }
 
-/** The named entity's newest facts, then those of entities its facts name, with the collapse columns. Fail-soft: errors return []. */
+/** The named entity's newest facts, then those of entities its facts name, with the collapse columns. Fail-soft: errors return [], but an engine capability refusal is rethrown. */
 export async function entitySavedFacts(engine: BrainEngine, entity: ResolvedEntity, opts: { remote: boolean; excludePrivate: boolean; minTrust?: TrustTier }): Promise<Array<EntityFact & CollapseColumns>> {
   try {
     const sourceId = entity.pages[0]!.source_id;
@@ -89,7 +80,8 @@ export async function entitySavedFacts(engine: BrainEngine, entity: ResolvedEnti
       }
     }
     return out;
-  } catch {
+  } catch (err) {
+    rethrowCapabilityRefusal(err);
     return [];
   }
 }

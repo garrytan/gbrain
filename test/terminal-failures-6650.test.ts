@@ -529,9 +529,8 @@ for (const kind of testBackends()) describe(`the aggregate, doctor and the drill
   test('a read past its statement deadline is unknown, and doctor says health is unknown', async () => {
     await seed({ slug: 'notes/x', state: 'failed', code: 'storage_error', compacted: true });
     const slow = new Proxy(engine, { get(target, key) {
-      if (key === 'executeRaw') return async (sql: string, params?: unknown[], opts?: unknown) => {
-        if (sql.includes('GROUPING SETS') || sql.includes('LEFT JOIN LATERAL')) throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
-        return target.executeRaw(sql, params, opts as never);
+      if (key === 'readTerminalFailureGroups' || key === 'listTerminalFailureBatch') return async () => {
+        throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
       };
       return Reflect.get(target, key);
     } }) as BrainEngine;

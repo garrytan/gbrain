@@ -431,22 +431,13 @@ export async function lookupRefsForSlugs(
   const allSlugs = new Set<string>();
   const slugToSources = new Map<string, string[]>();
   const metadata: Array<{ slug: string; source_id: string; type: string; knowledge_revision: string }> = [];
-  const CHUNK = 200;
-  for (let i = 0; i < slugs.length; i += CHUNK) {
-    const chunk = slugs.slice(i, i + CHUNK);
-    const placeholders = chunk.map((_, j) => `$${j + 1}`).join(', ');
-    const rows = await engine.executeRaw<{ slug: string; source_id: string; type: string; knowledge_revision: string }>(
-      `SELECT slug, source_id, type, knowledge_revision FROM pages
-        WHERE deleted_at IS NULL AND slug IN (${placeholders})`,
-      chunk,
-    );
-    metadata.push(...rows);
-    for (const ref of rows) {
-      allSlugs.add(ref.slug);
-      const list = slugToSources.get(ref.slug) ?? [];
-      list.push(ref.source_id);
-      slugToSources.set(ref.slug, list);
-    }
+  const rows = slugs.length === 0 ? [] : await engine.listPageRefsForSlugs(slugs);
+  metadata.push(...rows);
+  for (const ref of rows) {
+    allSlugs.add(ref.slug);
+    const list = slugToSources.get(ref.slug) ?? [];
+    list.push(ref.source_id);
+    slugToSources.set(ref.slug, list);
   }
   return { allSlugs, slugToSources, metadata };
 }

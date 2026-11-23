@@ -15,7 +15,7 @@ from nine transaction-local settings, which `src/core/persistence/context.ts` se
 | `gbrain.write_trust_backfill` | `on` turns the backfill rule on | `trust::stamp` |
 | `gbrain.write_trust_keep` | the tables whose content changes keep the tier | `trust::stamp` |
 | `gbrain.write_open_facts` | the fact ids `gbrain repair open-facts` opens | the fence reads (`FenceContext::opened`) |
-| `gbrain.write_request` | the persistence request the write runs for (a UUID) | the timeline write receipt (`WriteAttribution::request_id`) |
+| `gbrain.write_request` | the persistence request the write runs for (a UUID) | the timeline write receipt (`WriteAttribution::request_id`); the page, version, fact and take writers check it is a UUID |
 | `gbrain.write_principal_kind` | the kind of the writing principal | the timeline write receipt (`WriteAttribution::principal_kind`) |
 | `gbrain.write_principal_id` | the id of the writing principal | the timeline write receipt (`WriteAttribution::principal_id`) |
 
@@ -80,9 +80,9 @@ rollback, and a savepoint rollback sets the nine back to what they were when the
   - a setting name outside the nine (the engine routes no other name here);
   - lists of different lengths.
   TypeScript sets none of these.
-- A `write_request` that is not a UUID is kept as set, as `set_config` keeps it. A timeline write then refuses with
-  `invalid_argument`, as PGLite's attribution trigger raises at its `::uuid` cast. A page, fact or take write does
-  not read it yet, so it is not refused there (PGLite's trigger raises on those tables too).
-- Only the timeline writer reads the attribution settings. A trust proposal the store files still reads
+- A `write_request` that is not a UUID is kept as set, as `set_config` keeps it. A page, page version, fact, take or
+  timeline write then refuses with `invalid_argument` and writes nothing, as PGLite's attribution triggers raise at
+  their `::uuid` cast on those tables (`WriteAttribution::refuse_request_not_uuid`).
+- Only the timeline writer stamps the attribution settings. A trust proposal the store files still reads
   `proposer_principal_kind`, `proposer_principal_id` and `write_request_id` NULL ([trust.md](trust.md#trust-proposals-trustproposals)),
   and facts, takes and page versions carry no write receipt yet (TODOS.md).

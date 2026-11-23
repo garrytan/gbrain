@@ -439,28 +439,6 @@ export async function loadSyncFreshnessSources(engine: BrainEngine, sourceIds?: 
     upstream_commit: string | null;
     upstream_behind: number | null;
   };
-  const columns = 'id, name, local_path, last_sync_at, last_commit, chunker_version, newest_content_at, config';
-  const scope = sourceIds ? ' AND id = ANY($1::text[])' : '';
-  const params = sourceIds ? [sourceIds] : undefined;
-  let sources: FreshnessSourceRow[];
-  try {
-    sources = await engine.executeRaw<FreshnessSourceRow>(
-      `SELECT ${columns}, upstream_checked_at, upstream_commit, upstream_behind FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE${scope}`,
-      params,
-    );
-  } catch {
-    const noUpstream = 'NULL AS upstream_checked_at, NULL AS upstream_commit, NULL AS upstream_behind';
-    try {
-      sources = await engine.executeRaw<FreshnessSourceRow>(
-        `SELECT ${columns}, ${noUpstream} FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE${scope}`,
-        params,
-      );
-    } catch {
-      sources = await engine.executeRaw<FreshnessSourceRow>(
-        `SELECT ${columns}, ${noUpstream} FROM sources WHERE local_path IS NOT NULL${scope}`,
-        params,
-      );
-    }
-  }
+  const sources: FreshnessSourceRow[] = await engine.readDoctorSources('freshness', { sourceIds });
   return sources.filter((source) => !isSyncDisabledConfig(source.config));
 }

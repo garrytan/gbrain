@@ -2,11 +2,12 @@
  * v0.45.7 ambient recall (issue #1) — per-session cursor + boundary-tie dedup
  * for the `delta` verb and the heartbeat runtime.
  *
- * Parity-free by construction: both engines run the SAME `engine.executeRaw`
- * SQL (no per-engine method, so there is no parity surface to drift). jsonb
- * columns are written through the sanctioned `$N::text::jsonb` positional path
- * (binds as text, the cast parses it — dodges the postgres.js ::jsonb
- * double-encode trap; guarded by scripts/check-jsonb-params.mjs). The table is
+ * Storage runs through typed engine members (BrainEngine upsertSessionState,
+ * readSessionCursor, readDeltaSessionRow, readCheckpointManifestRow,
+ * writeCheckpointManifest, ageOutSessionState, capSessionStatePerClient). On
+ * PGLite and Postgres they run the same SQL this file ran through
+ * `engine.executeRaw` (engine-sql/session-state.ts); the Rust engine serves
+ * them from its store (rust/docs/store/session_state.md). The table is
  * `session_context_state` (migration v126); its schema parity is covered by the
  * schema-drift e2e.
  *
@@ -18,6 +19,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
 
 export const LOCAL_CLIENT_SENTINEL = 'local';
 
@@ -110,22 +112,8 @@ export async function getSessionContextState(
   sessionId: string,
 ): Promise<SessionContextState | null> {
   try {
-    const rows = await engine.executeRaw<{
-      standing_entities: unknown;
-      surfaced_slugs: unknown;
-      last_wake_at: string | null;
-    }>(
-      // ISO UTC at the column's microsecond precision (not ::text — PGLite
-      // renders local-tz text, and a JS Date round-trip would re-round the
-      // keyset cursor to milliseconds, re-delivering same-millisecond pages).
-      `SELECT standing_entities, surfaced_slugs,
-              to_char(last_wake_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_wake_at
-       FROM session_context_state
-       WHERE source_id = $1 AND client_id = $2 AND session_id = $3`,
-      [sourceId, resolveClientId(clientId), normSession(sessionId)],
-    );
-    if (!rows.length) return null;
-    const r = rows[0];
+    const r = await engine.readSessionCursor(sourceId, resolveClientId(clientId), normSession(sessionId));
+    if (!r) return null;
     return {
       standing_entities: toStringArray(r.standing_entities),
       surfaced_slugs: toStringArray(r.surfaced_slugs),
@@ -136,8 +124,6 @@ export async function getSessionContextState(
   }
 }
 
-const ISO_US = (col: string) => `to_char(${col} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
-
 export async function readDeltaSessionState(
   engine: BrainEngine,
   sourceId: string,
@@ -145,29 +131,16 @@ export async function readDeltaSessionState(
   sessionId: string,
 ): Promise<DeltaSessionRead> {
   try {
-    const rows = await engine.executeRaw<{
-      surfaced_slugs: unknown;
-      last_wake_at: string | null;
-      facts_cursor_at: string | null;
-      facts_cursor_id: string | number | null;
-      degraded_wakes: string | number | null;
-    }>(
-      `SELECT surfaced_slugs, ${ISO_US('last_wake_at')} AS last_wake_at,
-              ${ISO_US('facts_cursor_at')} AS facts_cursor_at, facts_cursor_id, degraded_wakes
-       FROM session_context_state
-       WHERE source_id = $1 AND client_id = $2 AND session_id = $3`,
-      [sourceId, resolveClientId(clientId), normSession(sessionId)],
-    );
-    if (!rows.length) return { status: 'absent' };
-    const r = rows[0];
+    const r = await engine.readDeltaSessionRow(sourceId, resolveClientId(clientId), normSession(sessionId));
+    if (!r) return { status: 'absent' };
     return {
       status: 'loaded',
       state: {
-        last_wake_at: r.last_wake_at ?? null,
+        last_wake_at: r.last_wake_at,
         cursor_slug: toStringArray(r.surfaced_slugs)[0],
-        facts_cursor_at: r.facts_cursor_at ?? null,
-        facts_cursor_id: r.facts_cursor_id == null ? null : Number(r.facts_cursor_id),
-        degraded_wakes: Number(r.degraded_wakes ?? 0),
+        facts_cursor_at: r.facts_cursor_at,
+        facts_cursor_id: r.facts_cursor_id,
+        degraded_wakes: r.degraded_wakes,
       },
     };
   } catch (e) {
@@ -198,41 +171,17 @@ export async function upsertSessionContextState(
   try {
     const replaceStanding = Array.isArray(patch.standingEntities);
     const replaceCursorSlug = typeof patch.cursorSlug === 'string';
-    const rows = await engine.executeRaw<{ degraded_wakes: string | number }>(
-      `INSERT INTO session_context_state
-         (source_id, client_id, session_id, standing_entities, surfaced_slugs, last_wake_at,
-          facts_cursor_at, facts_cursor_id, degraded_wakes, updated_at)
-       VALUES ($1, $2, $3, $4::text::jsonb, $5::text::jsonb, $6::text::timestamptz, $9::text::timestamptz, $10::bigint,
-               CASE WHEN $11::text = 'increment' THEN 1 ELSE 0 END, now())
-       ON CONFLICT (source_id, client_id, session_id) DO UPDATE SET
-         standing_entities = CASE WHEN $7::boolean THEN EXCLUDED.standing_entities
-                                  ELSE session_context_state.standing_entities END,
-         surfaced_slugs    = CASE WHEN $8::boolean THEN EXCLUDED.surfaced_slugs
-                                  ELSE session_context_state.surfaced_slugs END,
-         last_wake_at      = COALESCE(EXCLUDED.last_wake_at, session_context_state.last_wake_at),
-         facts_cursor_at   = COALESCE(EXCLUDED.facts_cursor_at, session_context_state.facts_cursor_at),
-         facts_cursor_id   = CASE WHEN EXCLUDED.facts_cursor_at IS NULL THEN session_context_state.facts_cursor_id
-                                  ELSE EXCLUDED.facts_cursor_id END,
-         degraded_wakes    = CASE $11::text WHEN 'increment' THEN session_context_state.degraded_wakes + 1
-                                            WHEN 'reset' THEN 0
-                                            ELSE session_context_state.degraded_wakes END,
-         updated_at        = now()
-       RETURNING degraded_wakes`,
-      [
-        sourceId,
-        resolveClientId(clientId),
-        normSession(sessionId),
-        JSON.stringify(patch.standingEntities ?? []),
-        JSON.stringify(typeof patch.cursorSlug === 'string' ? [patch.cursorSlug.slice(0, ID_MAX_LEN)] : []),
-        patch.lastWakeAt ?? null,
-        replaceStanding,
-        replaceCursorSlug,
-        patch.factsCursor?.at ?? null,
-        patch.factsCursor ? patch.factsCursor.id : null,
-        patch.degradedWakes ?? 'keep',
-      ],
-    );
-    return { ok: true, degradedWakes: Number(rows[0]?.degraded_wakes ?? 0) };
+    const degradedWakes = await engine.upsertSessionState(sourceId, resolveClientId(clientId), normSession(sessionId), {
+      standingEntities: patch.standingEntities ?? [],
+      surfacedSlugs: typeof patch.cursorSlug === 'string' ? [patch.cursorSlug.slice(0, ID_MAX_LEN)] : [],
+      lastWakeAt: patch.lastWakeAt ?? null,
+      replaceStanding,
+      replaceCursorSlug,
+      factsCursorAt: patch.factsCursor?.at ?? null,
+      factsCursorId: patch.factsCursor ? patch.factsCursor.id : null,
+      degradedWakes: patch.degradedWakes ?? 'keep',
+    });
+    return { ok: true, degradedWakes };
   } catch (e) {
     /* fail-open: a state-write failure never blocks the read path; delta surfaces it as `session_state` */
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
@@ -296,14 +245,8 @@ export async function getCheckpointManifest(
   sessionId: string,
 ): Promise<CheckpointLink[] | null> {
   try {
-    const rows = await engine.executeRaw<{ checkpoint_manifest: unknown }>(
-      `SELECT checkpoint_manifest
-       FROM session_context_state
-       WHERE source_id = $1 AND client_id = $2 AND session_id = $3`,
-      [sourceId, resolveClientId(clientId), normSession(sessionId)],
-    );
-    if (!rows.length) return [];
-    return toCheckpointLinks(rows[0].checkpoint_manifest);
+    const row = await engine.readCheckpointManifestRow(sourceId, resolveClientId(clientId), normSession(sessionId));
+    return row ? toCheckpointLinks(row.checkpoint_manifest) : [];
   } catch {
     return null;
   }
@@ -352,15 +295,7 @@ export async function appendCheckpointManifest(
       0,
       CHECKPOINT_MANIFEST_CAP,
     );
-    await engine.executeRaw(
-      `INSERT INTO session_context_state
-         (source_id, client_id, session_id, checkpoint_manifest, updated_at)
-       VALUES ($1, $2, $3, $4::text::jsonb, now())
-       ON CONFLICT (source_id, client_id, session_id) DO UPDATE SET
-         checkpoint_manifest = EXCLUDED.checkpoint_manifest,
-         updated_at          = now()`,
-      [sourceId, resolveClientId(clientId), normSession(sessionId), JSON.stringify(merged)],
-    );
+    await engine.writeCheckpointManifest(sourceId, resolveClientId(clientId), normSession(sessionId), merged);
     return true;
   } catch {
     /* fail-open: a manifest-write failure must never THROW into the harvest */
@@ -378,7 +313,8 @@ export const MAX_ROWS_PER_CLIENT = 1000;
  * `maxRowsPerClient` (default MAX_ROWS_PER_CLIENT) per (source_id, client_id).
  * The cap is injectable (v0.45.7) so tests drive the REAL windowed DELETE with
  * a small cap instead of mirroring the SQL. Best-effort — runs at serve boot
- * and opportunistically on first-wake row creation.
+ * and opportunistically on first-wake row creation — but a capability refusal
+ * (`engine_capability_missing`) reaches the caller.
  */
 export async function gcSessionContextState(
   engine: BrainEngine,
@@ -386,27 +322,11 @@ export async function gcSessionContextState(
   maxRowsPerClient = MAX_ROWS_PER_CLIENT,
 ): Promise<void> {
   try {
-    await engine.executeRaw(
-      `DELETE FROM session_context_state WHERE updated_at < now() - ($1 || ' days')::interval`,
-      [String(Math.max(1, Math.floor(olderThanDays)))],
-    );
+    await engine.ageOutSessionState(Math.max(1, Math.floor(olderThanDays)));
     // Per-client LRU cap: keep the newest `maxRowsPerClient` rows per lane.
-    await engine.executeRaw(
-      `DELETE FROM session_context_state s
-       USING (
-         SELECT source_id, client_id, session_id,
-                row_number() OVER (
-                  PARTITION BY source_id, client_id ORDER BY updated_at DESC
-                ) AS rn
-         FROM session_context_state
-       ) ranked
-       WHERE s.source_id = ranked.source_id
-         AND s.client_id = ranked.client_id
-         AND s.session_id = ranked.session_id
-         AND ranked.rn > $1`,
-      [String(Math.max(1, Math.floor(maxRowsPerClient)))],
-    );
-  } catch {
-    /* best-effort */
+    await engine.capSessionStatePerClient(Math.max(1, Math.floor(maxRowsPerClient)));
+  } catch (e) {
+    // Best-effort, except a capability refusal: an engine that cannot run the GC says so instead of skipping it.
+    rethrowCapabilityMissing(e);
   }
 }

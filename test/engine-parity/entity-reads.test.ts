@@ -297,6 +297,26 @@ describe('engine parity: entity and mention reads', () => {
       return result;
     });
 
+  parityTest('readEntityCardRows reports when a card page was last retrieved, and null for a page never retrieved',
+    { methods: ['putPage', 'getPage', 'bumpPageRetrievals', 'readEntityCardRows'] }, async (engine) => {
+      const page = (title: string) => ({ type: 'person', title, compiled_truth: `${title} body.`, frontmatter: {} }) as Parameters<BrainEngine['putPage']>[1];
+      await engine.putPage('people/retrieved', page('Retrieved'), { sourceId: 'default' });
+      await engine.putPage('people/never', page('Never'), { sourceId: 'default' });
+      const id = (await engine.getPage('people/retrieved', { sourceId: 'default' } as never))!.id;
+      const before = Date.now();
+      await engine.bumpPageRetrievals([Number(id)]);
+      const rows = await engine.readEntityCardRows('default', { slugs: ['people/retrieved', 'people/never'] });
+      // The retrieval time is the engine's clock at the bump: compared as "set, and not before the bump or in the future".
+      const when = (at: Date | string | null) => {
+        if (at === null) return 'null';
+        const ms = new Date(at).getTime();
+        return ms >= before - 1000 && ms <= Date.now() + 1000 ? 'at the bump' : `out of range: ${String(at)}`;
+      };
+      const out = sorted(rows.map(r => ({ slug: r.slug, retrieved: when(r.last_retrieved_at) })), r => r.slug);
+      expect(out).toEqual([{ slug: 'people/never', retrieved: 'null' }, { slug: 'people/retrieved', retrieved: 'at the bump' }]);
+      return out;
+    });
+
   parityTest('readIgnoredPrivacyLabelPages returns labelled pages with no readers or visibility, by slug or since a time',
     { methods: ['readIgnoredPrivacyLabelPages'] }, async (engine, backend) => {
       await seed(engine, backend);

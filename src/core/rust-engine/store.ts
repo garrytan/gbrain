@@ -6,6 +6,7 @@
 import { LATEST_SCHEMA_VERSION } from '../schema-migrations/latest.generated.ts';
 import { embeddedSchemaEmbedding } from '../embedded-engine.ts';
 import { DEFAULT_EMBEDDING_DIMENSIONS, DEFAULT_EMBEDDING_MODEL } from '../ai/defaults.ts';
+import { WRITE_GATE_DETECTOR_VERSION } from '../write-gate-schema.ts';
 import { mapStoreError } from './store-errors.ts';
 
 /** Worker threads the store's pool runs its calls on. One write runs at a time; reads overlap. */
@@ -20,6 +21,8 @@ export interface StoreOpenOptions {
   embeddingModel?: string;
   embeddingDimensions?: number;
   chunkStrategy?: string;
+  /** A fresh brain records the write gate's scan baseline under this detector version. */
+  writeGateDetectorVersion?: number;
 }
 
 /** The strategy the SQL engines' schema seeds as config `chunk_strategy` (src/schema.sql). */
@@ -70,6 +73,7 @@ export async function openRustStore(addon: object, databasePath: string, embeddi
   try {
     await brain.open(databasePath, {
       schemaVersion: LATEST_SCHEMA_VERSION, createdBy: 'gbrain', chunkStrategy: SEED_CHUNK_STRATEGY,
+      writeGateDetectorVersion: WRITE_GATE_DETECTOR_VERSION,
       ...(embedding ? { embeddingModel: embedding.model, embeddingDimensions: embedding.dimensions } : {}),
     });
   } catch (error) {

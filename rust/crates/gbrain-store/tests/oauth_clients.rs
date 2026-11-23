@@ -381,3 +381,72 @@ fn the_list_is_every_row_by_name_then_id_in_byte_order() {
         b.read_oauth_client("c-alpha").unwrap().unwrap()
     );
 }
+
+#[test]
+fn a_source_delete_is_refused_while_a_client_names_it_and_clears_a_bound_source_that_names_it() {
+    let b = brain("oauth-source-delete");
+    sources(&b);
+    insert(
+        &b,
+        json!({ "client_id": "owner", "client_name": "owner", "source_id": "src-a" }),
+    )
+    .unwrap();
+    insert(
+        &b,
+        json!({ "client_id": "bound", "client_name": "bound", "bound_source_id": "src-b" }),
+    )
+    .unwrap();
+
+    let e = b
+        .delete_source_record("src-a", false)
+        .expect_err("a refusal");
+    assert_eq!(e.code, "constraint_violation");
+    assert_eq!(
+        e.message,
+        "update or delete on table \"sources\" violates foreign key constraint \"oauth_clients_source_id_fkey\" on table \"oauth_clients\""
+    );
+    assert!(b.get_source("src-a").unwrap().is_some());
+    assert_eq!(
+        b.read_oauth_client("owner").unwrap().unwrap()["source_id"],
+        json!("src-a")
+    );
+
+    assert!(b.delete_source_record("src-b", false).unwrap());
+    assert!(b.get_source("src-b").unwrap().is_none());
+    assert_eq!(
+        b.read_oauth_client("bound").unwrap().unwrap()["bound_source_id"],
+        Value::Null
+    );
+}
+
+#[test]
+fn a_client_delete_returns_the_row_once_and_ends_its_liveness_and_a_lifetime_write_finds_only_a_kept_client()
+ {
+    let b = brain("clients-delete");
+    insert(&b, json!({ "client_id": "cl-live", "client_name": "Live" })).unwrap();
+    insert(&b, json!({ "client_id": "cl-gone", "client_name": "Gone", "deleted_at": "2027-01-01T00:00:00.000Z" })).unwrap();
+    assert!(b.oauth_client_live("cl-live").unwrap());
+    assert!(
+        !b.oauth_client_live("cl-gone").unwrap(),
+        "a soft-deleted client is not live"
+    );
+    assert!(!b.oauth_client_live("cl-none").unwrap());
+    assert!(b.set_oauth_client_token_ttl("cl-live", 3600).unwrap());
+    assert_eq!(
+        b.read_oauth_client("cl-live").unwrap().unwrap()["token_ttl"],
+        3600
+    );
+    assert!(!b.set_oauth_client_token_ttl("cl-none", 3600).unwrap());
+    assert_eq!(
+        b.delete_oauth_client("cl-live").unwrap(),
+        Some(("cl-live".to_string(), "Live".to_string()))
+    );
+    assert_eq!(b.delete_oauth_client("cl-live").unwrap(), None);
+    assert!(!b.oauth_client_live("cl-live").unwrap());
+    assert!(b.read_oauth_client("cl-live").unwrap().is_none());
+    assert_eq!(
+        b.delete_oauth_client("cl-gone").unwrap().map(|r| r.1),
+        Some("Gone".to_string()),
+        "the delete is not limited to live clients"
+    );
+}

@@ -36,7 +36,7 @@ import { ownWritebackCommit, type PassFold } from './sync-pass-fold.ts';
 import { openPassRequests, settleCarried } from './sync-pass-carried.ts';
 import { loopYield } from './sync-yield.ts';
 import { pathBlobHistories, recallWorkingStatCache, rememberWorkingStatCache, SyncTreeReadIncomplete } from './sync-git-stream.ts';
-import { syncPassKind } from './sync-classify.ts';
+import { DRIFT_HISTORY_DEPTH, DRIFT_HISTORY_VERSIONS, syncPassKind } from './sync-classify.ts';
 import { passBanked } from './sync-pass-status.ts';
 import { PASS_BATCH_KEY_PREFIX, readConvergedWatermark, SyncAdmissionPaused, type PassEntry } from './sync-pass-batch.ts';
 import { assertDrainLease, currentDrainLease } from './sync-lease.ts';
@@ -64,6 +64,7 @@ import { passResumeArgs } from './sync-pass-readers.ts';
 import { applyPassRound, sweepLegacy, finishPassApply, holdPassIdentities, newPassApplyState, passApplyCounts, remoteReconcile } from './sync-pass-apply.ts';
 import { passClosureMemo, passCostDecision, type passEpisodeClosure, readReservedUsd, registerPassCost, unregisterPassCost } from './sync-pass-episode.ts';
 import { currentEmbeddingPricePerMTok } from '../embedding.ts';
+import { unbornHead } from '../hardened-git.ts';
 import { SIZE_STATE_SAMPLE, type SyncSizeStates } from '../page-embedding-budget.ts';
 import { massReconcileAllowed } from '../sync-reconcile.ts';
 import { keepDbHeadroom } from '../repair/keep-db-policy.ts';
@@ -76,8 +77,15 @@ export const PASS_BATCH_MAX = 10_000;
 const IN_FLIGHT_WAITS = 4;
 /** #7355: how often a long level read writes the open pass row, so a follower and `sync status` see it working. */
 const PASS_HEARTBEAT_MS = 30_000;
-/** #7199: how far back (first-parent commits) an older side-`unknown` hold's re-screen looks, and how many earlier versions it compares. */
-const DRIFT_HISTORY_DEPTH = 50, DRIFT_HISTORY_VERSIONS = 3;
+/**
+ * GST-3328 follow-up: the Git time one pass spends reading re-screened holds' file histories. Each read walks every commit
+ * that changed its paths, so on a deep repository a pass over many holds would otherwise spend minutes there. A path whose
+ * history read the budget never started, or cut short, is screened with what was read, is counted in the pass's
+ * `driftHistoryUnread`, and a hold it gets is marked `history_unread`, so the next sync screens it again. A read cut short
+ * does not mark a hold that was already due a screen (marked, or written by an older screen), so it settles after that one
+ * retry; a read never started always marks, since the next pass's budget reaches it first.
+ */
+const DRIFT_HISTORY_BUDGET_MS = 120_000;
 
 export interface SyncPassInput {
   opts: SyncOpts; slice?: { maxPages: number; maxMs: number }; context: ManagedSyncContext; authority: SyncAuthority;
@@ -153,15 +161,24 @@ function entryPaths(level: ShadowLevel, gitPath: string): { path: string; source
  * looks stalled and a pass over many such holds commits each batch before it reads the next one's history. While it reads,
  * the pass row's `telemetry.step` says how far it got (the beat saves it), so status can name the step a killed pass stopped in.
  */
-async function readDriftHistories(level: ShadowLevel, chunk: PassEntry[], owed: ReadonlyMap<PassEntry, ShadowPath>, value: ManagedSyncPassValue, onHistoryRead: () => void): Promise<void> {
+async function readDriftHistories(level: ShadowLevel, chunk: PassEntry[], owed: ReadonlyMap<PassEntry, ShadowPath>, value: ManagedSyncPassValue,
+  onHistoryRead: () => void, budget: { leftMs: number }, counts: Record<string, number>): Promise<void> {
   const due = chunk.flatMap(entry => { const shadow = owed.get(entry); return shadow ? [[entry, shadow] as const] : []; });
   if (!due.length) return;
   let done = 0;
+  const started = Date.now(), partial = new Set<string>(), unstarted = new Set<string>();
+  const step = () => { value.telemetry.step = { name: 'drift_history', at: new Date().toISOString(), done, total: due.length }; };
   const read = await pathBlobHistories(level.gitRoot, level.baselineCommit ?? level.head, due.map(([, shadow]) => shadow.path), DRIFT_HISTORY_DEPTH, () => {
-    value.telemetry.step = { name: 'drift_history', at: new Date().toISOString(), done: ++done, total: due.length };
-    onHistoryRead();
-  }).finally(() => { delete value.telemetry.step; });
+    done++; step(); onHistoryRead();
+  }, { beat: () => { step(); onHistoryRead(); }, deadline: started + budget.leftMs, partial, unstarted }).finally(() => {
+    budget.leftMs = Math.max(0, budget.leftMs - (Date.now() - started));
+    delete value.telemetry.step;
+  });
   for (const [entry, shadow] of due) {
+    if (unstarted.has(shadow.path) || partial.has(shadow.path)) {
+      counts.driftHistoryUnread = (counts.driftHistoryUnread ?? 0) + 1;
+      if (unstarted.has(shadow.path) || !shadow.state.hold?.unscreened) entry.driftHistoryUnread = true;
+    }
     const versions = [...new Set(read.get(shadow.path) ?? [])].filter(oid => oid !== shadow.state.level && oid !== shadow.state.baseline).slice(0, DRIFT_HISTORY_VERSIONS);
     if (versions.length) entry.driftHistory = versions;
   }
@@ -227,8 +244,9 @@ async function batchEntries(engine: BrainEngine, level: ShadowLevel, deletes: Sh
   // #7338: a page with no import record (imported by an older gbrain) has its file at the incarnation's baseline commit as its baseline.
   const driftBaseline = (entry: ShadowPath) => entry.pageId === null ? undefined : entry.result.side === 'both' ? baselineRecords.get(entry.pageId)?.disk_blob_oid ?? undefined
     : entry.result.side === 'unknown' ? entry.state.baseline ?? undefined : undefined;
-  // #7199: a side-`unknown` hold an older gbrain wrote after the pass that held it moved the source's last commit past the one
-  // the classic sync read; its re-screen also compares the page with the file's last few committed versions before the held one.
+  // #7199 / GST-3328: a side-`unknown` screen also compares the page with the file's last few committed versions before the
+  // baseline (or before HEAD when the last synced commit does not resolve): a page one commit or more behind its file, or held
+  // by a screen that compared the baseline alone, imports when it holds one of them.
   // GST-2843: those versions are read per batch, just before the batch drains (readDriftHistories), so a pass over tens of
   // thousands of such holds commits each batch's holds before it reads the next batch's history.
   const historyOwed = new Map<PassEntry, ShadowPath>();
@@ -242,7 +260,7 @@ async function batchEntries(engine: BrainEngine, level: ShadowLevel, deletes: Sh
     const base = { ...paths, ...committedOnly, action: 'import' as const, working: working(entry), level: entry.state.level, ...recheckOf(entry), ...(entry.result.cls === 'drift' && entry.result.side && entry.result.side !== 'deleted' ? { drift: entry.result.side, ...(driftBaseline(entry) ? { driftBaseline: driftBaseline(entry) } : {}) } : {}) };
     if (entry.state.page) {
       const built: PassEntry = { ...base, slug: entry.slug!, pageId: entry.pageId, revision: entry.revision };
-      if (entry.result.cls === 'drift' && entry.result.side === 'unknown' && entry.pageId !== null && entry.state.hold?.unscreened) historyOwed.set(built, entry);
+      if (entry.result.cls === 'drift' && entry.result.side === 'unknown' && entry.pageId !== null) historyOwed.set(built, entry);
       entries.push(built); continue;
     }
     const slug = slugOf.get(entry.path);
@@ -420,7 +438,15 @@ async function pinPass(engine: BrainEngine, input: SyncPassInput, lease: NonNull
   if (handover.hostRequired) return { ended: empty('blocked_by_failures', 'reconcile_host_required') };
   const [prior, admission, configuredWorking, patterns, loadedPack, tail, retry, sourceHolds, rowProbe, failed, idleFacts] = await pin;
   assertActive();
-  const [headLine, refLine] = syncGit(context.gitRoot, ['rev-parse', 'HEAD', '--abbrev-ref', 'HEAD']).split('\n');
+  let headRef: string;
+  try {
+    headRef = syncGit(context.gitRoot, ['rev-parse', 'HEAD', '--abbrev-ref', 'HEAD']);
+  } catch (error) {
+    // GBRA-706: a branch with no commit yet (a fresh `init --git`) has nothing committed to sync; the pass ends up to date.
+    if (unbornHead(context.gitRoot)) return { ended: empty('up_to_date') };
+    throw error;
+  }
+  const [headLine, refLine] = headRef.split('\n');
   const head = headLine!.trim();
   const detached = refLine?.trim() === 'HEAD';
   // G3: a strict source's pass reads its commit alone, a detached HEAD's too (sync-pass.ts).
@@ -779,7 +805,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
 
   const counts = { added: 0, modified: 0, deleted: 0, renamed: 0, chunks: 0, waivedImports: 0, waivedDeletes: 0, held: 0, pausedDeletes: 0, collisions: 0, episodeReleased: 0, costDeferred: costDeferred ? 1 : 0,
     skippedContextualMode: 0, skippedCanonicalBytes: 0 };
-  const collisions: SyncSlugCollision[] = [];
+  const collisions: SyncSlugCollision[] = [], historyBudget = { leftMs: DRIFT_HISTORY_BUDGET_MS };
   // What the batches report beside their counts, as a cursor run reported it: committed pages' size states and #5751's legacy skips.
   let sizeStates: SyncSizeStates | undefined;
   const foldReport = (sizes: SyncSizeStates | undefined) => {
@@ -1017,7 +1043,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
       for (let i = 0; i < built.entries.length; i += PASS_BATCH_MAX) {
         const chunk = built.entries.slice(i, i + PASS_BATCH_MAX), last = !!fold && i + chunk.length >= built.entries.length; opts.onProgress?.({ phase: 'managed_sync.round_batch', round: { round, target: head, paths: level.paths.length, batch: i / PASS_BATCH_MAX + 1, batches: Math.ceil(built.entries.length / PASS_BATCH_MAX), base: i } });
         // A folded stamp writes the pass row with the obligations as they stand when its import is frozen.
-        const stopped = await readDriftHistories(level, chunk, built.historyOwed, value, () => { assertActive(); beat.report(); }).then(async () => drain(chunk, last ? { ...await stampFor(level), fold: { ...fold, obligations: structuredClone(value.obligations), batch: chunk.length } } : undefined));
+        const stopped = await readDriftHistories(level, chunk, built.historyOwed, value, () => { assertActive(); beat.report(); }, historyBudget, counts).then(async () => drain(chunk, last ? { ...await stampFor(level), fold: { ...fold, obligations: structuredClone(value.obligations), batch: chunk.length } } : undefined));
         if (stopped) return stop(stopped);
         await consumeRetry(chunk.map(entry => entry.path));
         value.telemetry.remaining = Math.max(0, built.entries.length - i - chunk.length) + inFlight.length + owed.length + mismatch.length;

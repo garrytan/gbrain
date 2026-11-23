@@ -39,7 +39,7 @@ export async function runSweepCommand(engine: BrainEngine, args: string[]): Prom
   const sinceRaw = flagValue(args, '--since');
   if (sinceRaw !== undefined && !/^\d+$/.test(sinceRaw)) { console.error('--since takes a fact id (a non-negative integer)'); return 1; }
   const source = flagValue(args, '--source');
-  const sources = source ? [source] : (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE NOT archived ORDER BY id')).map((r) => r.id);
+  const sources = source ? [source] : (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE NOT archived ORDER BY id COLLATE "C"')).map((r) => r.id);
   const results: ConflictSweepResult[] = [];
   const reviews: ReviewLaneResult[] = [];
   for (const sourceId of sources) {

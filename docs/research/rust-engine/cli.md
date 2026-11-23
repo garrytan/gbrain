@@ -197,7 +197,7 @@ Key naming: flags are kebab (`--expected-revision`), params are snake (`expected
 #### 2.5 stdin, files, images
 
 - `cliHints.stdin` names the param fed from stdin: `put` -> `content`, `storage-register` -> `card`, `volunteer-context` -> `window`, `append` (via `runPutFile`). `applyStdinParam` (`main.ts:1205-1233`) runs only when the param is unset and `!process.stdin.isTTY`. First-byte timeout 30 s (`GBRAIN_STDIN_TIMEOUT_MS` overrides), 60 s inactivity after data, no total cap (`src/core/interaction.ts:197-241`). The size cap is `PAGE_MAX_BYTES` = 24 MiB (`main.ts:1221`); larger -> `payload_too_large`.
-- `put --file <path>` / `--file=<path>`: read by `runPutFile` before `parseOpArgs`; binary input is refused before any write (`test/cli-page-writes.test.ts:108-111`: "put --file refuses binary input before any write", exit 2, "binary (PNG)").
+- `put --file <path>` / `--file=<path>`: read by `runPutFile` before `parseOpArgs`; binary input is refused before any write (`test/cli-page-writes.serial.test.ts:108-111`: "put --file refuses binary input before any write", exit 2, "binary (PNG)").
 - `query --image <path>`: `resolveQueryImage` -> base64 + `image_mime` (`main.ts:560-572`).
 - A later `--flag` that overwrites a positional value warns on stderr: `Warning: --x overwrites the positional value '...'` (`main.ts:1166`).
 
@@ -641,8 +641,8 @@ Each entry says where the shape comes from: **[test]** a file that asserts it, *
 
 - Human (default): `formatGetPage` (`src/cli/page-render.ts:136-157`). With a string body or window it prints that text (`:153`). Without a body it prints the page as markdown: `serializeMarkdown(frontmatter, compiled_truth, timeline, {type, title, tags})` (`:147-149`). A revision note goes to stderr: `[gbrain] revision <rev>: put or delete this page with --expected-revision <rev>.` (`:148`). The `--body`/`--lines`/`--section`/`--grep` variants go through `renderSlice`, `renderOutline`, or the window text.
 - `--json`: the raw result object (`formatResult`, `main.ts:1546`), 2-space indent. Page row fields spread (`compiled_truth`, `timeline`, `frontmatter`, `type`, `title`, `slug`, `source_id`, `updated_at`), plus `revision`, `size` `{total_bytes,total_lines}`, `chunks` `{total,embedded}`, and `tags` (`src/core/ops/get-page-projection.ts:111, 159-165`; `page-render.ts:136-157`).
-- [test] `test/cli-page-writes.test.ts:52-54`: `JSON.parse(read.stdout)` yields `compiled_truth` and `knowledge_revision`. `--body none --json` yields `tail_sha256` (`:137-141`, regex `"tail_sha256":\s*"([0-9a-f]{64})"`).
-- Missing slug: non-zero exit (`test/cli-page-writes.test.ts:105`). Registry code `page_not_found` is exit 1 (`error-registry.ts:597`).
+- [test] `test/cli-page-writes.serial.test.ts:52-54`: `JSON.parse(read.stdout)` yields `compiled_truth` and `knowledge_revision`. `--body none --json` yields `tail_sha256` (`:137-141`, regex `"tail_sha256":\s*"([0-9a-f]{64})"`).
+- Missing slug: non-zero exit (`test/cli-page-writes.serial.test.ts:105`). Registry code `page_not_found` is exit 1 (`error-registry.ts:597`).
 - Thin-client large page: `page_too_large_for_inline` (exit 1, `error-registry.ts:603`); the CLI pages the body (`printPagedPage`, `main.ts:830-838`).
 
 ```json
@@ -670,7 +670,7 @@ Each entry says where the shape comes from: **[test]** a file that asserts it, *
 - Pending receipt: exit 10 with `write_request` (`test/pending-write-exit.serial.test.ts:206`).
 - Dry run: `{dry_run:true, action:'put_page', slug}` (`pages.ts:379`).
 - Revision conflict: `write_error:'revision_conflict'`, exit 1 (`test/pending-write-exit.serial.test.ts:207`; `error-registry.ts:752`).
-- [test] `test/cli-page-writes.test.ts:101-104`: `put --file` with a missing file is exit 2 with `invalid_params` on stderr.
+- [test] `test/cli-page-writes.serial.test.ts:101-104`: `put --file` with a missing file is exit 2 with `invalid_params` on stderr.
 
 ```json
 {

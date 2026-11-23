@@ -64,6 +64,7 @@ public struct HTTPResponse {
         case 405: return "Method Not Allowed"
         case 408: return "Request Timeout"
         case 409: return "Conflict"
+        case 410: return "Gone"
         case 411: return "Length Required"
         case 413: return "Content Too Large"
         case 422: return "Unprocessable Content"

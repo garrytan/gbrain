@@ -12,27 +12,30 @@ import type { SyncDispatchRow } from '../../engine-sql/sync-dispatch.ts';
 import type { SourceStateRow } from '../../engine-sql/write-misc.ts';
 import { withDates } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
+import { readBrainMode } from './writer-release.ts';
 
 export const listSourceRecords: StoreMember<[], SourceRecordRow[]> = async (brain) => {
   const rows: SourceRecordRow[] = await storeCall({ member: 'listSourceRecords' }, () => brain.listSourceRecords());
-  return rows.map(row => withDates(row, ['last_sync_at', 'created_at']));
+  return rows.map(row => withDates(row, ['last_sync_at', 'created_at', 'newest_content_at']));
 };
 
 export const readSourceIncarnation: StoreMember<[sourceId: string], SourceIncarnationRow | null> = (brain, sourceId) =>
   storeCall({ member: 'readSourceIncarnation', sourceId }, () => brain.readSourceIncarnation(sourceId));
 
 /**
- * The sync routing row from the store's own source reads. The store keeps no writer bindings (isSourceClaimed is false)
- * and one unmanaged brain (readManagedModeRows answers `enabled: false`), so `claimed` is false and `modes` is [false].
+ * The sync routing row from the store's own source reads: `claimed` is `isSourceClaimed` (a binding at the source's
+ * incarnation) and `modes` is the one brain row's stored mode, as `readManagedModeRows` answers.
  */
 export const readSyncDispatchRow: StoreMember<[sourceId: string], SyncDispatchRow> = async (brain, sourceId) => {
   const member = 'readSyncDispatchRow';
   const source: SourceStateRow | null = await storeCall({ member, sourceId }, () => brain.readSourceState(sourceId));
-  if (!source) return { id: null, archived: null, config: null, incarnation: null, local_path: null, claimed: false, company_receipt: false, modes: [false] };
+  const modes = [(await readBrainMode(brain, member)).enabled];
+  if (!source) return { id: null, archived: null, config: null, incarnation: null, local_path: null, claimed: false, company_receipt: false, modes };
   const receipt: boolean = await storeCall({ member, sourceId }, () => brain.hasCompanyBrainReceipt(sourceId));
+  const claimed: boolean = await storeCall({ member, sourceId }, () => brain.isSourceClaimed(sourceId));
   return {
     id: sourceId, archived: source.archived, config: source.config, incarnation: String(source.incarnation),
-    local_path: source.local_path, claimed: false, company_receipt: receipt, modes: [false],
+    local_path: source.local_path, claimed, company_receipt: receipt, modes,
   };
 };
 

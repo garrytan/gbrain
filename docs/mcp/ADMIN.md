@@ -227,7 +227,8 @@ revision refuses the edit; inspect and preview again.
 Removed scopes and source/path/operation restrictions apply to subsequent
 requests. Added scopes require a fresh token; refresh cannot widen the original
 token's scope ceiling. Native OAuth clients must reconnect and obtain fresh
-owner approval. TTL changes affect future tokens only.
+owner approval; a self-registered connector that asks for its old scope again
+is granted its whole widened scope. TTL changes affect future tokens only.
 
 For one bot acting for several members of a shared brain, give each member a
 separate client or token restricted to that member's sources. The grant is the
@@ -315,7 +316,10 @@ declares it and makes the same link `link ID` makes, and an unknown email is
 (text fenced, one request id per decision, `decided_by: admin-api`; an approve whose write did
 not commit reports `outcome: failed` and exits 1). They call `/admin/api/access/attest`,
 `/admin/api/access/members`, `/admin/api/access/member-links` and
-`/admin/api/memory-proposals`. These routes accept only the owner session:
+`/admin/api/memory-proposals`. A leaver's handover runs over
+`/admin/api/access/handover` (preview, apply, undo) and
+`/admin/api/access/handover/<id>` (status); see
+[member handover](../guides/member-handover.md#from-the-admin-page-no-shell-on-the-server). These routes accept only the owner session:
 no OAuth token and no MCP tool reaches them. They refuse exactly what the
 local commands refuse, and each applied change is logged as `access_admin` in
 the request log. Removing a member stays a brain-host command

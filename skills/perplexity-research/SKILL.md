@@ -118,7 +118,7 @@ gbrain query "<topic keywords>"
 #    in the output array; inline [n] markers refer to them.
 
 # 4. Write the structured research page via put_page:
-gbrain put research/<slug>      # via the put_page operation
+gbrain put research/<slug>      # via the put_page operation; if refused with slug_in_other_source, retry with the --source-id it names
 
 # 5. Cross-link entities mentioned (people, companies) per Iron Law.
 ```

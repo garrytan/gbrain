@@ -17,8 +17,9 @@
 //!
 //! Ids are lower-case UUID text. A source binding has no foreign key to its source, as on
 //! Postgres: a removed or re-created source leaves its binding, and the readers compare the
-//! binding's incarnation with the source's. Rows are not deleted on this engine yet (no rebind or
-//! source purge runs here).
+//! binding's incarnation with the source's. A writer deactivation or a pre-activation release
+//! retires worktrees (the rows are kept) and deletes their bindings (worktrees/release.rs, which
+//! also keeps the brain mode).
 //!
 //! The writer admin members (`src/core/engine-sql/writer-admin.ts`) read and change the same rows:
 //! `writer_admin_state_text` is the topology document `--expected-state` hashes, and a writer
@@ -42,8 +43,11 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+mod release;
+pub use release::{CounterDelta, ReleaseRead};
+
 /// `persistence_worktrees.state` CHECK.
-const WORKTREE_STATES: &[&str] = &["active", "draining", "recovering"];
+const WORKTREE_STATES: &[&str] = &["active", "draining", "recovering", "retired"];
 /// `persistence_host_bindings.git_durability` CHECK (null is allowed).
 const GIT_DURABILITY: &[&str] = &["enabled", "disabled"];
 
@@ -416,6 +420,23 @@ pub(crate) fn insert_source_binding_in(
     put_json(tx, &key, &record)
 }
 
+/// The `unbound` step of the source delete (engine-sql/sources.ts `deleteSourceRecord`): the
+/// source's binding goes when it binds `incarnation`, the deleted row's; a binding of another
+/// incarnation stays for `gbrain repair orphan-bindings`. The worktree and host rows stay.
+pub(crate) fn remove_source_binding_in(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    incarnation: &str,
+) -> Result<()> {
+    let key = source_binding_key(source_id);
+    if let Some(binding) = get_json::<SourceBindingRecord>(&*tx, &key)?
+        && binding.source_incarnation.eq_ignore_ascii_case(incarnation)
+    {
+        tx.delete(&key)?;
+    }
+    Ok(())
+}
+
 /// `stampWorktreeHeartbeats(hostId)`: `heartbeat_at = now()` on every worktree `host_id` owns.
 pub(crate) fn stamp_worktree_heartbeats_in(
     tx: &mut dyn KvWrite,
@@ -492,19 +513,20 @@ fn agg(rows: Vec<Value>) -> Value {
 }
 
 /// `WRITER_ADMIN_STATE_SQL` (`engine-sql/writer-admin.ts`): the writer topology as jsonb text,
-/// read in one snapshot. This engine keeps no `persistence_brain` columns besides the brain id,
-/// so `enabled`, `skill_bundles_enabled`, `writer_protocol_floor` and `mode_epoch` hold their
-/// column defaults; a store with no brain id has no brain row (null).
+/// read in one snapshot. `enabled` and `mode_epoch` are the stored brain mode
+/// (worktrees/release.rs); `skill_bundles_enabled` and `writer_protocol_floor` hold their column
+/// defaults. A store with no brain id has no brain row (null).
 pub(crate) fn writer_admin_state_text_in(read: &dyn KvRead, brain_id: &str) -> Result<String> {
     let brain = if brain_id.is_empty() {
         Value::Null
     } else {
+        let mode = release::brain_mode_in(read)?;
         json!({
             "id": brain_id,
-            "enabled": false,
+            "enabled": mode.enabled,
             "skill_bundles_enabled": false,
             "writer_protocol_floor": 1,
-            "mode_epoch": 1,
+            "mode_epoch": mode.mode_epoch,
         })
     };
     let mut sources = all_sources(read)?;

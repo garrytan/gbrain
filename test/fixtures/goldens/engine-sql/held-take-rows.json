@@ -1,0 +1,20 @@
+{
+  "golden": [
+    {
+      "params": [
+        "string",
+        "number",
+        "object"
+      ],
+      "text": "SELECT x.id, x.trust_tier FROM takes x CROSS JOIN (SELECT $1::text AS writer) w\n      WHERE x.page_id = $2 AND x.id = ANY($3::bigint[]) AND ((CASE x.trust_tier WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END) > (CASE w.writer WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END) OR EXISTS (SELECT 1 FROM trust_proposals tp WHERE tp.status = 'pending' AND tp.action = 'forget'\n  AND tp.target_table = 'takes' AND tp.target_id = x.id)) ORDER BY x.id FOR UPDATE OF x"
+    },
+    {
+      "params": [
+        "number",
+        "object"
+      ],
+      "text": "SELECT x.id, x.trust_tier FROM takes x\n      WHERE x.page_id = $1 AND x.id = ANY($2::bigint[]) AND ((CASE x.trust_tier WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END) > (CASE COALESCE(NULLIF(current_setting('gbrain.write_trust_tier', true), ''), 'unknown') WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END)) ORDER BY x.id FOR UPDATE OF x"
+    }
+  ],
+  "normalizer": "held-take-rows-v1"
+}

@@ -150,6 +150,30 @@ describe('progress reporter', () => {
     expect(events[events.length - 1]).toMatchObject({ event: 'finish', phase: 'doctor.jsonb_integrity' });
   });
 
+  test('json mode keeps the same events on a runtime without process.threadCpuUsage', () => {
+    // Bun before 1.4 has no process.threadCpuUsage; a reporter that calls it there throws on start,
+    // and every command that reports progress (repair visibility, doctor, sync) fails before any work.
+    const run = () => {
+      const { stream, read } = sink(false);
+      const p = createProgress({ mode: 'json', stream, minIntervalMs: 0, minItems: 1 });
+      p.start('repair.visibility', 2);
+      p.tick(1);
+      p.finish();
+      return parseJsonl(read()).map(e => ({ event: e.event, phase: e.phase, done: e.done, total: e.total, cpu_ms: typeof e.cpu_ms }));
+    };
+    const withThreadCpu = run();
+    const own = Object.getOwnPropertyDescriptor(process, 'threadCpuUsage');
+    Object.defineProperty(process, 'threadCpuUsage', { value: undefined, configurable: true, writable: true });
+    try {
+      expect(run()).toEqual(withThreadCpu);
+    } finally {
+      if (own) Object.defineProperty(process, 'threadCpuUsage', own);
+      else delete (process as { threadCpuUsage?: unknown }).threadCpuUsage;
+    }
+    expect(typeof process.threadCpuUsage).toBe('function');
+    expect(withThreadCpu.find(e => e.event === 'tick')?.cpu_ms).toBe('number');
+  });
+
   test('json tick cpu_ms counts CPU work since the phase started, not time spent waiting', () => {
     // The thread's CPU clock is the scheduler's runtime for it: whatever the guest clock advanced while the thread
     // was current. Under a hypervisor whose guest kernel lacks CONFIG_PARAVIRT_TIME_ACCOUNTING (Ubuntu's generic

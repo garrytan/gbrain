@@ -6,8 +6,8 @@
  * credential store or the checkout's git config change, so the refusal's "nothing ran" holds. The Rust arm stops on
  * that refusal (`requires: 'raw_sql'`), and the case rethrows it only after it checks that nothing was written.
  *
- * The claim is the internal `claimWorktree`, not the `writer claim` verb, which the Rust engine refuses
- * (persistence/claim-release-gate.ts). Each case runs under its own GBRAIN_HOME.
+ * The claim is the internal `claimWorktree`, so the case sets up ownership without the reviewed `writer claim` verb.
+ * Each case runs under its own GBRAIN_HOME.
  */
 import { chmodSync, existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

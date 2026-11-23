@@ -10,9 +10,8 @@
  * has (en_US.utf8 in CI); source ids `a-b` and `ab` sort differently there and in byte order, so the digest must not
  * depend on the server's collation to stay stable.
  *
- * The Rust engine refuses a real claim until it can release or activate one (persistence/claim-release-gate.ts), so
- * each case that claims declares `requires: 'raw_sql'` and its Rust arm must stop on that refusal; the last case pins
- * the refusal itself. When the gate is removed, drop the `requires` lines and the cases go back to equal.
+ * Every arm, the Rust engine included, applies a real claim: writer deactivate and writer activate release it there
+ * too (test/engine-parity/writer-release.test.ts), so no arm refuses the claim verb.
  */
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -25,7 +24,6 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { writerAdminState } from '../../src/core/persistence/admin-intent.ts';
 import { runPersistenceAdministration } from '../../src/core/persistence/administration.ts';
 import { localHostId } from '../../src/core/persistence/identity.ts';
-import { CLAIM_RELEASE_PATH_MEMBER } from '../../src/core/persistence/claim-release-gate.ts';
 import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 
@@ -61,7 +59,6 @@ const reviewed = async (engine: BrainEngine, operation: string) => ({ admin_inte
 describe('writer administration', () => {
   parityTest('a reviewed writer claim applies at the current state and refuses a state from before a topology change', {
     methods: ['readWriterAdminState', 'worktreeClaimStore', 'getConfig'],
-    requires: 'raw_sql',
   }, async (engine, backend) => withCheckout(engine, backend, async (root) => {
     const before = await writerAdminState(engine);
     const stable = before === await writerAdminState(engine);
@@ -83,7 +80,6 @@ describe('writer administration', () => {
 
   parityTest('writer lock refuses reviewed and internal claims until unlock, and lock and unlock are idempotent', {
     methods: ['writerAdminStore', 'readWriterAdminState', 'worktreeClaimStore', 'getConfig'],
-    requires: 'raw_sql',
   }, async (engine, backend) => withCheckout(engine, backend, async (root) => {
     const lock = () => runPersistenceAdministration(engine, 'writer_lock', {});
     const unlock = () => runPersistenceAdministration(engine, 'writer_unlock', {});
@@ -112,7 +108,6 @@ describe('writer administration', () => {
 
   parityTest('a reviewed transfer prepare drains the worktree, blocks the lock, and a reviewed cancel returns it to active', {
     methods: ['writerAdminStore', 'readWriterAdminState', 'worktreeClaimStore', 'getWorktreeBinding'],
-    requires: 'raw_sql',
   }, async (engine, backend) => withCheckout(engine, backend, async (root) => {
     await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'work', path: root, ...await reviewed(engine, 'writer_claim') });
     const host = localHostId();
@@ -146,7 +141,6 @@ describe('writer administration', () => {
 
   parityTest('a reviewed transfer accept moves the owner to the successor checkout, bumps the epoch and rebinds the content receipt', {
     methods: ['writerAdminStore', 'readWriterAdminState', 'worktreeClaimStore', 'getWorktreeBinding', 'readWorktreeManifest', 'setConfig', 'getConfig'],
-    requires: 'raw_sql',
   }, async (engine, backend) => withCheckout(engine, backend, async (root) => {
     await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'work', path: root, ...await reviewed(engine, 'writer_claim') });
     const host = localHostId();
@@ -206,25 +200,17 @@ describe('writer administration', () => {
     return answers;
   }));
 
-  parityTest('a real claim applies where the claim can be released and refuses before any write where it cannot; the dry run and the reviewed-state check still answer', {
+  parityTest('a real claim applies on every engine and binds the source; the dry run and the reviewed-state check still answer', {
     methods: ['readWriterAdminState', 'getWorktreeBinding'],
   }, async (engine, backend) => withCheckout(engine, backend, async (root) => {
     const dryRun = (await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'work', path: root, dry_run: true })).dry_run;
     const staleState = await writerAdminState(engine);
     await createSource(engine, backend, 'late', { kind: 'notes' });
     const stale = await refusal(runPersistenceAdministration(engine, 'writer_claim', { source_id: 'work', path: root, admin_intent: 'writer_claim', expected_state: staleState }));
-    const real = await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'work', path: root, ...await reviewed(engine, 'writer_claim') })
-      .then(result => ({ claimed: result.claimed === true }), (error: unknown) => {
-        const e = error as { code?: unknown; reason?: unknown; detail?: unknown; why?: unknown };
-        return { code: e.code, reason: e.reason, detail: e.detail, names_release_path: typeof e.why === 'string' && e.why.includes('deactivation.ts:224') && e.why.includes('activation.ts:112') };
-      });
+    const real = await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'work', path: root, ...await reviewed(engine, 'writer_claim') });
     const binding = await engine.getWorktreeBinding('work', localHostId());
-    // A SQL engine claims; the Rust engine refuses with the gate's named refusal and writes no binding.
-    const expected = backend === 'rust'
-      ? { code: 'engine_capability_missing', reason: 'raw_sql', detail: `member=${CLAIM_RELEASE_PATH_MEMBER} capability=raw_sql outcome=none written=nothing`, names_release_path: true }
-      : { claimed: true };
-    const answers = { dryRun, stale, real_as_engine_allows: JSON.stringify(real) === JSON.stringify(expected), bound: (binding !== null) === (backend !== 'rust') };
-    expect(answers).toEqual({ dryRun: true, stale: 'writer_admin_state_changed', real_as_engine_allows: true, bound: true });
+    const answers = { dryRun, stale, claimed: real.claimed === true, bound: binding?.state ?? null };
+    expect(answers).toEqual({ dryRun: true, stale: 'writer_admin_state_changed', claimed: true, bound: 'active' });
     return answers;
   }));
 });

@@ -127,10 +127,8 @@ export async function planManagedGeneration<C>(engine: BrainEngine, adapter: Gen
 
 /** Records an admitted activation and its members, in the admission transaction (before any member runs). */
 export async function recordActivation(tx: BrainEngine, intent: ActivationPlanIntent): Promise<void> {
-  await tx.executeRaw(`INSERT INTO derived_generation_activations (id, source_id, kind, owner_key, expected_generation, input_pin, item_set_hash, state, members)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8::text::jsonb) ON CONFLICT (id) DO NOTHING`,
-  [intent.activationId, intent.key.sourceId, intent.key.kind, intent.key.ownerKey, intent.expectedGeneration, intent.input?.pin ?? null, intent.setHash,
-    JSON.stringify(intent.members.map(member => ({ slug: member.slug, action: member.action, identity: member.identity, before: member.before })))]);
+  await tx.recordGenerationActivation(intent.key, { activationId: intent.activationId, expectedGeneration: intent.expectedGeneration,
+    inputPin: intent.input?.pin ?? null, setHash: intent.setHash, members: intent.members });
 }
 
 const memberFix = (sourceId: string, kind: string) => readFix('Lists pending generation members and orphan candidates, read-only.',
@@ -148,7 +146,7 @@ export async function prepareGenerationActivation(engine: BrainEngine, row: Writ
   const memberKeys = [...new Set([...p.members.map(member => member.slug), ...p.kept])];
   // A database-only kind journals its activation on the input page, bound to the revision it planned against.
   return { observedRevision: typeof p.expected_revision === 'string' ? p.expected_revision : null, noop: true, additionalPageKeys: adapter.lockKeys(p.key, memberKeys),
-    validate: async tx => { await tx.executeRaw('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', [generationKeyLock(p.key)]); },
+    validate: async tx => { await tx.lockGenerationKey(generationKeyLock(p.key)); },
     apply: async tx => {
       const live = await readLiveGeneration(tx, p.key);
       if ((live?.generation ?? 0) !== p.expectedGeneration) {
@@ -182,7 +180,7 @@ export async function prepareGenerationActivation(engine: BrainEngine, row: Writ
       const activated = await activateGeneration(tx, p.key, live, { operationId: p.operationId, runId: p.runId ?? undefined, input, setHash: p.setHash,
         completeness: { complete: !p.partial, proof: p.proof?.kind ?? null, managed: true, ...(p.approved ? { approved: p.retiredBy } : {}), ...p.note },
         activationId: p.activationId, locator: p.locator }, items);
-      await tx.executeRaw(`UPDATE derived_generation_activations SET state='activated', generation_id=$2, updated_at=now() WHERE id=$1`, [p.activationId, activated.id]);
+      await tx.markGenerationActivated(p.activationId, activated.id);
       const retires = p.members.filter(member => member.action === 'retire').length;
       if (retires) await bumpValve(tx, p.key, p.runId ?? undefined, retires);
       return { activation_id: p.activationId, generation: activated.generation, members: p.members.length, pending: items.filter(item => item.pending).length };
@@ -195,11 +193,7 @@ export async function prepareGenerationActivation(engine: BrainEngine, row: Writ
  */
 export async function assertMemberPending(db: BrainEngine, row: Pick<WriteRequest, 'request_id' | 'source_id' | 'slug'>, activationId: string, kind: string): Promise<void> {
   await faultPoint('generation:member', { sourceId: row.source_id, operation: kind });
-  const [state] = await db.executeRaw<{ state: string; generation_state: string | null; pending: boolean | null }>(
-    `SELECT a.state, g.state AS generation_state, i.pending FROM derived_generation_activations a
-       LEFT JOIN derived_generations g ON g.id=a.generation_id
-       LEFT JOIN derived_generation_items i ON i.generation_id=a.generation_id AND i.item_key=$2
-      WHERE a.id=$1 AND a.source_id=$3`, [activationId, row.slug, row.source_id]);
+  const state = await db.readGenerationActivationState(activationId, row.slug, row.source_id);
   const why = !state || state.state !== 'activated' ? 'its generation was never activated'
     : state.generation_state !== 'live' ? 'a later generation superseded it' : state.pending !== true ? 'the item is already settled' : null;
   if (!why) return;
@@ -210,19 +204,14 @@ export async function assertMemberPending(db: BrainEngine, row: Pick<WriteReques
 
 /** Clears an item's pending mark once its member request committed (in the member's publication transaction). */
 export async function settleMember(tx: BrainEngine, activationId: string, slug: string): Promise<void> {
-  await tx.executeRaw(`UPDATE derived_generation_items SET pending=false
-    WHERE generation_id=(SELECT generation_id FROM derived_generation_activations WHERE id=$1) AND item_key=$2`, [activationId, slug]);
+  await tx.settleGenerationMember(activationId, slug);
 }
 
 export interface PendingMember { source_id: string; kind: string; owner_key: string; generation_id: number; activation_id: string; slug: string; action: 'overwrite' | 'retire'; identity: string }
 
 /** Items live generations still wait on a member request for (retire_pending and pending overwrites). */
 export async function listPendingMembers(db: BrainEngine, sourceIds: readonly string[], kind?: string): Promise<PendingMember[]> {
-  const rows = await db.executeRaw<PendingMember & { item_action: string }>(
-    `SELECT g.source_id, g.kind, g.owner_key, g.id AS generation_id, g.activation_id, i.item_key AS slug, i.action AS item_action, i.identity_hash AS identity
-       FROM derived_generation_items i JOIN derived_generations g ON g.id=i.generation_id
-      WHERE i.pending AND g.state='live' AND g.source_id=ANY($1::text[]) AND ($2::text IS NULL OR g.kind=$2) ORDER BY g.source_id, g.kind, g.owner_key, i.item_key`,
-    [[...sourceIds], kind ?? null]);
+  const rows = await db.listPendingGenerationMembers(sourceIds, kind ?? null);
   return rows.map(row => ({ source_id: row.source_id, kind: row.kind, owner_key: row.owner_key, generation_id: Number(row.generation_id), activation_id: row.activation_id,
     slug: row.slug, action: row.item_action === 'retired' ? 'retire' as const : 'overwrite' as const, identity: row.identity }));
 }
@@ -234,14 +223,6 @@ export interface OrphanCandidate { source_id: string; kind: string; owner_key: s
  * never journaled) that no live generation owns. Listed for the operator; never retired automatically.
  */
 export async function listOrphanCandidates(db: BrainEngine, sourceIds: readonly string[], kind?: string): Promise<OrphanCandidate[]> {
-  const rows = await db.executeRaw<OrphanCandidate>(
-    `SELECT a.source_id, a.kind, a.owner_key, a.id AS activation_id, m->>'slug' AS slug, a.created_at::text AS created_at
-       FROM derived_generation_activations a CROSS JOIN LATERAL jsonb_array_elements(a.members) m
-      WHERE a.state='pending' AND a.source_id=ANY($1::text[]) AND ($2::text IS NULL OR a.kind=$2) AND m->>'action'='create'
-        AND NOT EXISTS (SELECT 1 FROM persistence_requests r WHERE r.request_id=a.id::uuid AND r.state IN ('queued','deferred','running','recovering'))
-        AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id=a.source_id AND p.slug=m->>'slug' AND p.deleted_at IS NULL)
-        AND NOT EXISTS (SELECT 1 FROM derived_generation_items i JOIN derived_generations g ON g.id=i.generation_id
-          WHERE g.source_id=a.source_id AND g.kind=a.kind AND g.state='live' AND i.item_key=m->>'slug' AND i.action<>'retired')
-      ORDER BY a.source_id, a.kind, a.owner_key, slug`, [[...sourceIds], kind ?? null]);
+  const rows = await db.listGenerationOrphanCandidates(sourceIds, kind ?? null);
   return rows;
 }

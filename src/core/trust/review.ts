@@ -389,6 +389,12 @@ async function proposalsFor(engine: BrainEngine, table: 'facts' | 'takes' | 'pag
 const originOf = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === 'object' ? value as Record<string, unknown> : typeof value === 'string' ? JSON.parse(value) as Record<string, unknown> : null;
 
+/** A take's trust row as the explanation reads it (`readTakeTrustRef`, typed so the Rust store serves it). */
+async function takeTrustRow(engine: BrainEngine, id: number): Promise<{ source_id: string; trust_tier: string; write_origin: unknown; text: string } | undefined> {
+  const take = await engine.readTakeTrustRef(id);
+  return take ? { source_id: take.source_id, trust_tier: take.trust_tier, write_origin: take.write_origin, text: take.claim } : undefined;
+}
+
 /** Explains one ref (or every page and fact matching a query). Read-only. */
 export async function explainTrust(engine: BrainEngine, refOrQuery: string, opts: { source?: string | null } = {}): Promise<TrustExplanation[]> {
   let ref;
@@ -397,10 +403,10 @@ export async function explainTrust(engine: BrainEngine, refOrQuery: string, opts
   switch (ref.kind) {
     case 'fact':
     case 'take': {
-      const sql = ref.kind === 'fact'
-        ? 'SELECT id, source_id, trust_tier, write_origin, fact AS text FROM facts WHERE id = $1'
-        : 'SELECT t.id, p.source_id, t.trust_tier, t.write_origin, t.claim AS text FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.id = $1';
-      const [row] = await engine.executeRaw<{ source_id: string; trust_tier: string; write_origin: unknown; text: string }>(sql, [ref.id]);
+      const row = ref.kind === 'fact'
+        ? (await engine.executeRaw<{ source_id: string; trust_tier: string; write_origin: unknown; text: string }>(
+          'SELECT id, source_id, trust_tier, write_origin, fact AS text FROM facts WHERE id = $1', [ref.id]))[0]
+        : await takeTrustRow(engine, ref.id);
       if (!row) throw opError('not_found', `No ${ref.kind} ${formatTrustRef(ref)}.`, 'Check the ref; gbrain trust review lists items.');
       const tier = storedTrustTier(row.trust_tier);
       const table = ref.kind === 'fact' ? 'facts' : 'takes';

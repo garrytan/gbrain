@@ -64,20 +64,21 @@ async function seedVisibleAndQuarantinedEntities(): Promise<void> {
 
 describe('onboard entity coverage invariants', () => {
   test('uses the actual Bernoulli sample size and never emits >100% or NaN', async () => {
-    const queries: string[] = [];
-    let call = 0;
+    const samples: Array<{ feature: string; samplePercent: number | undefined }> = [];
     const postgres = {
       kind: 'postgres',
       getConfig: async () => null,
-      async executeRaw(sql: string) {
-        if (sql.includes('FROM config c')) return [];
-        queries.push(sql);
-        call++;
-        if (call === 1) return [{ count: 100_000 }];
-        // The old implementation reads count=7,050 but divides by the
-        // estimated 5,000 rows, yielding "Coverage 141% ± NaN%". The actual
-        // sampled denominator is 10,000, so the truthful result is 71%.
-        return [{ count: 7_050, matched: 7_050, sample_size: 10_000 }];
+      executeRaw: async () => [],
+      countEntityPages: async (_filter: unknown, opts: { excludeQuarantined?: boolean }) => {
+        expect(opts).toEqual({ excludeQuarantined: true });
+        return 100_000;
+      },
+      // The old implementation read count=7,050 but divided by the estimated
+      // 5,000 rows, yielding "Coverage 141% ± NaN%". The actual sampled
+      // denominator is 10,000, so the truthful result is 71%.
+      entityFeatureCoverage: async (_filter: unknown, feature: string, opts?: { samplePercent?: number }) => {
+        samples.push({ feature, samplePercent: opts?.samplePercent });
+        return { matched: 7_050, sampleSize: 10_000 };
       },
     } as unknown as BrainEngine;
 
@@ -86,20 +87,17 @@ describe('onboard entity coverage invariants', () => {
     expect(result.check.message).toMatch(/^Coverage 71% ± \d+\.\d%/);
     expect(result.check.message).not.toMatch(/NaN|Infinity/);
     expect(result.check.message).not.toMatch(/Coverage 1\d\d%/);
-    expect(queries).toHaveLength(2);
+    // 5,000 / 100,000 rows = 5%: a Bernoulli sample above the 50k-entity line.
+    expect(samples).toEqual([{ feature: 'links', samplePercent: 5 }]);
   });
 
   test('defensively clamps malformed sampled counts to the 0-100% invariant', async () => {
-    let call = 0;
     const postgres = {
       kind: 'postgres',
       getConfig: async () => null,
-      async executeRaw(sql: string) {
-        if (sql.includes('FROM config c')) return [];
-        call++;
-        if (call === 1) return [{ count: 100_000 }];
-        return [{ matched: 12_000, sample_size: 10_000 }];
-      },
+      executeRaw: async () => [],
+      countEntityPages: async () => 100_000,
+      entityFeatureCoverage: async () => ({ matched: 12_000, sampleSize: 10_000 }),
     } as unknown as BrainEngine;
 
     const result = await checkEntityLinkCoverage(postgres);

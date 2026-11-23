@@ -56,7 +56,7 @@ const SPEND_LOG_MEMBERS = [
 const OAUTH_CLIENT_MEMBERS = ['readOauthClient', 'listOauthClients', 'patchOauthClient'] as const satisfies ReadonlyArray<keyof typeof oauthClients>;
 
 /** The `access_tokens` rows (engine-sql/access-tokens.ts), added the same way. */
-const ACCESS_TOKEN_MEMBERS = ['insertAccessToken', 'findActiveAccessTokens', 'setAccessTokenMinTrust'] as const satisfies ReadonlyArray<keyof typeof accessTokens>;
+const ACCESS_TOKEN_MEMBERS = ['insertAccessToken', 'findActiveAccessTokens', 'setAccessTokenMinTrust', 'readLiveAccessTokenScope'] as const satisfies ReadonlyArray<keyof typeof accessTokens>;
 
 /** `fake` with every queue member it lacks, each running the shared statement on `fake`. */
 export function withQueueMembers<T extends object>(fake: T): T {

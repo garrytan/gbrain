@@ -132,7 +132,7 @@ export async function liveSyncJob(engine: BrainEngine, sourceId: string, liveHol
   // The lease's beacon row (sync-lease.ts) is for older binaries; this build reads the lease holder above.
   const [row] = await engine.executeRaw<{ id: number | string }>(`SELECT id FROM minion_jobs WHERE name='sync' AND status='active' AND lock_until > now() AND queue <> 'gbrain-drain-lease'
     AND (COALESCE(data->>'sourceId', data->>'source_id')=$1 OR (COALESCE(data->>'sourceId', data->>'source_id') IS NULL
-      AND (data->>'repoPath' IS NULL AND $1='default' OR data->>'repoPath'=(SELECT local_path FROM sources WHERE id=$1)))) ORDER BY started_at LIMIT 1`, [sourceId]).catch(() => []);
+      AND (data->>'repoPath' IS NULL AND $1='default' OR data->>'repoPath'=(SELECT local_path FROM sources WHERE id=$1)))) ORDER BY started_at, id LIMIT 1`, [sourceId]).catch(() => []);
   return row ? Number(row.id) : null;
 }
 
@@ -140,9 +140,7 @@ export async function liveSyncJob(engine: BrainEngine, sourceId: string, liveHol
 export async function readSourceMovement(engine: BrainEngine, opts: { sourceIds?: string[]; now?: number } = {}): Promise<SourceMovement[]> {
   assertServesStatusRead(engine, UNTYPED_STATUS_READS.sourceMovement);
   const now = opts.now ?? Date.now();
-  const bindings = await engine.executeRaw<BindingRow>(`SELECT b.source_id, b.worktree_id::text AS worktree_id, b.source_incarnation::text AS source_incarnation, w.owner_host_id::text AS owner_host_id
-    FROM persistence_source_bindings b JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation
-    JOIN persistence_worktrees w ON w.id=b.worktree_id WHERE ($1::text[] IS NULL OR b.source_id=ANY($1::text[])) ORDER BY b.source_id`, [opts.sourceIds ?? null]);
+  const bindings = await engine.listSourceBindingsForMovement(opts.sourceIds ?? null);
   if (!bindings.length) return [];
   let unknown: MovementUnknown | null = null;
   let backlogRows: ManagedSyncBacklog[] = [];

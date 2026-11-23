@@ -1,15 +1,26 @@
 /**
- * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
- * purgeMemoryProposals, attachSourcePath, getWorktreeBinding and listAccessTokens; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts), and the folder access read beside the
- * access members (isFolderRestricted, listAppliedPolicyRevisions, readFolderAccess, readMayActFor, readAudiencePrincipals, readAccessMembers, readAccessCredentials, listAudienceAccessMembers and readLiveMember; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
- * gbrain-store `write_misc`, the binding reads by gbrain-store `persistence::worktrees`, the folder reads by gbrain-store `access_rules`; the rest answer for state the store does not keep. What each member answers and why:
- * rust/docs/store/write_misc.md.
+ * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState, the scope-source read readScopeSourceConfigs (SQL in engine-sql/access-credentials.ts) through
+ * purgeMemoryProposals, readMemoryProposal, readPendingProposalSummary, listMemoryProposalRows, listOwnerProposalRows, attachSourcePath and
+ * getWorktreeBinding; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts; readDrainHolderProgress, SQL in
+ * engine-sql/persistence-journal.ts), and the folder access read beside the
+ * access members (isFolderRestricted, listAppliedPolicyRevisions, readFolderAccess, readMayActFor, readJobPrincipal, readAccessCredentials, hasLabelledOnlyMember and listPagesNamingReader;
+ * SQL in engine-sql/access-control.ts and engine-sql/write-misc.ts; the member and group reads are in access-members.ts). The credential revokes and the token list are
+ * served by the jobs credential members (store-members/jobs-access-tokens.ts and jobs-oauth-clients.ts). The source read, the path attach and the pages naming a reader are served by
+ * gbrain-store `write_misc`, the folder reads by gbrain-store `access_rules`, the may_act_for and credential reads by the
+ * token and client records (gbrain-store `jobs::credential_binding`); the rest answer for state the store does not
+ * keep. What each member answers and why: rust/docs/store/write_misc.md.
  */
 import type {
-  AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
+  AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from '../../engine-sql/write-misc.ts';
-import type { AccessCredentialLookup, AccessCredentialRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AppliedPolicyRevision, FolderAccessRows, AudiencePrincipalRows, MayActForVia } from '../../engine-sql/access-control.ts';
+import type { AccessCredentialLookup, AccessCredentialRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AppliedPolicyRevision, FolderAccessRows, AudiencePrincipalRows, MayActForVia, JobPrincipalKind, PageNamingReaderRow } from '../../engine-sql/access-control.ts';
+import { readAccessMembers } from './access-members.ts';
+import { LIVE_PAGES_NAMING_READER_LIMIT, PAGES_NAMING_READER_LIMIT } from '../../engine-sql/access-control.ts';
+import type { ScopeSourceLock } from '../../engine-sql/access-credentials.ts';
+import type { DrainHolderProgressRow } from '../../engine-sql/persistence-journal.ts';
+import { readOauthClient } from './jobs-oauth-clients.ts';
 import { storeCall, type StoreMember } from './common.ts';
+import { uuidText } from '../store-codec.ts';
 
 /**
  * The source's incarnation, archived flag, local path and config, or null. `lock: 'share'` asks the SQL engines to hold
@@ -17,6 +28,20 @@ import { storeCall, type StoreMember } from './common.ts';
  */
 export const readSourceState: StoreMember<[sourceId: string, opts?: SourceStateOptions], SourceStateRow | null> = (brain, sourceId) =>
   storeCall({ member: 'readSourceState', sourceId }, () => brain.readSourceState(sourceId));
+
+/**
+ * The scope-source check's read (engine-sql/access-credentials.ts readScopeSourceConfigs): the id and config of each
+ * known source among `ids`, in id order, from the same source read. The store runs one write transaction at a time, so
+ * the lock changes nothing here.
+ */
+export const readScopeSourceConfigs: StoreMember<[ids: readonly string[], lock?: ScopeSourceLock], { id: string; config: unknown }[]> = async (brain, ids) => {
+  const rows: { id: string; config: unknown }[] = [];
+  for (const id of [...new Set(ids)].sort()) {
+    const row: SourceStateRow | null = await storeCall({ member: 'readScopeSourceConfigs', sourceId: id }, () => brain.readSourceState(id));
+    if (row) rows.push({ id, config: row.config });
+  }
+  return rows;
+};
 
 /** A config value as `config->>'key'` reads it: text as is, null for a missing key, JSON text otherwise. */
 function jsonText(value: unknown): string | null {
@@ -63,34 +88,45 @@ export const getWorktreeBinding: StoreMember<[sourceId: string, hostId: string |
 export const isSourceClaimed: StoreMember<[sourceId: string], boolean> = (brain, sourceId) =>
   storeCall({ member: 'isSourceClaimed', sourceId }, () => brain.isSourceClaimed(sourceId));
 
+/**
+ * A drain lease's holder has no progress row here: the store's worktree bindings do not record the managed-sync commits and saves
+ * the progress row sums, so the lease reading counts the holder as no commits and no save.
+ */
+export const readDrainHolderProgress: StoreMember<[sourceId: string, since: string], DrainHolderProgressRow | null> = async () => null;
+
 /** The store keeps no chronicle extraction state, so no page has events. */
 export const hasExtractedEvents: StoreMember<[sourceId: string, pageId: number], boolean> = async () => false;
 
+
 /**
- * The store keeps no access tokens: minting, revoking and the bearer check are raw SQL on `access_tokens`, which this
- * engine refuses, so no Rust brain holds a token and `auth list` lists none, as PGLite lists none on a brain with no
- * tokens.
+ * Whether any access member the store keeps, live or not, carries the labelled-only grant: the SQL engines read
+ * `SELECT 1 FROM access_members WHERE labelled_only LIMIT 1`, so a disabled or removed member counts too.
  */
-export const listAccessTokens: StoreMember<[], AccessTokenRow[]> = async () => [];
-
-/** The store keeps no access members, so none is active. */
-export const listActiveAccessMembers: StoreMember<[], string[]> = async () => [];
-
-/** The store keeps no access members, so none carries the labelled-only grant and a write skips the labelled-only checks. */
-export const hasLabelledOnlyMember: StoreMember<[], boolean> = async () => false;
+export const hasLabelledOnlyMember: StoreMember<[], boolean> = async (brain) =>
+  (await readAccessMembers(brain, { includeRemoved: true })).some(row => row.labelled_only === true);
 
 /**
  * The store's brain id and commit sequence (`readProjectionReadinessGeneration`). Every commit advances it, a page write
  * among them, so a memoized health answer is reused only while nothing was written since it was read.
  */
 export const readHealthMemoClock: StoreMember<[], string> = async (brain) =>
-  storeCall({ member: 'readHealthMemoClock' }, () => brain.readProjectionReadinessGeneration());
+  storeCall({ member: 'readHealthMemoClock' }, () => brain.readHealthMemoClock());
 
 /**
- * The store keeps no source contextual-retrieval mode (only `sources` admin raw SQL writes it, refused on this engine),
- * so no source selects the synopsis tier.
+ * The sources that are not archived and whose own contextual-retrieval mode (`sources set-cr-mode`, source_cr_mode.rs)
+ * is per_chunk_synopsis, by id in byte order: the source half of the synopsis tier read, with its page check skipped.
  */
-export const listSynopsisSourceIds: StoreMember<[], string[]> = async () => [];
+export const listSynopsisSourceIds: StoreMember<[], string[]> = async (brain) => {
+  const tier = await storeCall({ member: 'listSynopsisSourceIds' }, () => brain.readSynopsisTierSources({ skipFrontmatter: true }));
+  return (tier as { sourceIds: string[] }).sourceIds;
+};
+
+/**
+ * Whether a live markdown page of the `default` source, not archived, names the synopsis tier in its frontmatter. The
+ * store keeps no `trust_frontmatter_overrides`, so no other source trusts its pages' overrides.
+ */
+export const hasSynopsisFrontmatterOverride: StoreMember<[], boolean> = async (brain) =>
+  (await storeCall({ member: 'hasSynopsisFrontmatterOverride' }, () => brain.hasSynopsisFrontmatterOverride())) === true;
 
 /**
  * Folder rules and pending prefixes are gbrain-store `access_rules` records (rust/docs/store/access_rules.md). A slug
@@ -112,11 +148,34 @@ export const readFolderAccess: StoreMember<[readers: readonly string[]], FolderA
   storeCall({ member: 'readFolderAccess' }, () => brain.readFolderAccess([...readers]));
 
 /**
- * A stdio server's may_act_for is a config value, which the store keeps. The store keeps no access tokens and no OAuth
- * clients, so a token or a client has no live row and permits nothing, as a revoked token or a deleted client does.
+ * A stdio server's may_act_for is the config text as stored; a live token's (by id text) or client's is its list, null
+ * when the credential is revoked, deleted, absent or holds no list.
  */
-export const readMayActFor: StoreMember<[via: MayActForVia, key: string], string[] | string | null> = async (brain, via, key) =>
-  via === 'stdio_config' ? storeCall({ member: 'readMayActFor' }, () => brain.getConfig(key)) : null;
+export const readMayActFor: StoreMember<[via: MayActForVia, key: string], string[] | string | null> = async (brain, via, key) => {
+  if (via === 'stdio_config') return storeCall({ member: 'readMayActFor' }, () => brain.getConfig(key));
+  const live = await storeCall({ member: 'readMayActFor' }, () => brain.readLiveCredential(via, key)) as { may_act_for: unknown } | null;
+  return Array.isArray(live?.may_act_for) ? live!.may_act_for as string[] : null;
+};
+
+/**
+ * A queued remote job's principal, revoked and deleted rows included: an OAuth client's row is the store's client read
+ * (readOauthClient) cut to the columns JOB_PRINCIPAL_SQL names, a legacy token's the token the store keeps
+ * (`brain.readAccessToken`), with its times as Dates as PGLite and Postgres return them. The row leaves out `token_hash`.
+ * A token id that is not a uuid refuses as the SQL engines' `id = $1` does (uuidText).
+ */
+export const readJobPrincipal: StoreMember<[principal: { kind: JobPrincipalKind; id: string }], Record<string, unknown> | null> = async (brain, principal) => {
+  if (principal.kind === 'oauth_client') {
+    const row = await readOauthClient(brain, principal.id);
+    if (!row) return null;
+    const { client_id, deleted_at, scope, source_id, bound_slug_prefixes, surface, allowed_operations } = row;
+    return { client_id, deleted_at, scope, source_id, bound_slug_prefixes, surface, allowed_operations };
+  }
+  const id = uuidText(principal.id);
+  const raw = await storeCall({ member: 'readJobPrincipal' }, () => brain.readAccessToken(id)) as Record<string, unknown> | null;
+  if (!raw) return null;
+  const date = (v: unknown) => v == null ? null : new Date(String(v));
+  return { ...raw, created_at: date(raw.created_at), last_used_at: date(raw.last_used_at), revoked_at: date(raw.revoked_at) };
+};
 
 /** The store keeps no memory proposals, so upkeep expires nothing. */
 export const expireMemoryProposals: StoreMember<[reason: string], number> = async () => 0;
@@ -130,27 +189,6 @@ export const readMemoryProposal: StoreMember<[principalKind: string, principalId
 /** No memory proposals exist on this engine (see expireMemoryProposals), so upkeep purges nothing. */
 export const purgeMemoryProposals: StoreMember<[retentionDays: number], number> = async () => 0;
 
-/**
- * The store keeps no access members and no groups (see listActiveAccessMembers), so no audience entry names an enabled
- * member or an existing group: each reads as unknown, as on a brain with none.
- */
-export const readAudiencePrincipals: StoreMember<[memberIds: readonly string[], groupIds: readonly string[]], AudiencePrincipalRows> = async () => ({ members: [], groups: [] });
-
-/** The store keeps no access members (see listActiveAccessMembers), so no id names a member and the list is empty. */
-export const readAccessMembers: StoreMember<[by: AccessMemberLookup], AccessMemberRow[]> = async () => [];
-
-/** The store keeps no access tokens and no OAuth clients (see readMayActFor), so no name or member binding names a live credential. */
-export const readAccessCredentials: StoreMember<[by: AccessCredentialLookup], AccessCredentialRow[]> = async () => [];
-
-/** The store keeps no access members (see listActiveAccessMembers), so no member is of kind audience. */
-export const listAudienceAccessMembers: StoreMember<[], string[]> = async () => [];
-
-/**
- * The store keeps no access members (see listActiveAccessMembers), so no id, config key, token or client names a live
- * member: the identity is empty, as for an unbound caller on a brain with none.
- */
-export const readLiveMember: StoreMember<[via: LiveMemberVia, key: string], LiveMemberRow | null> = async () => null;
-
 /** No memory proposals exist on this engine (see expireMemoryProposals), so none is pending: count 0, no oldest age. */
 export const readPendingProposalSummary: StoreMember<[], PendingProposalRow | null> = async () => ({ n: 0, oldest: null });
 
@@ -159,3 +197,23 @@ export const listMemoryProposalRows: StoreMember<[query: ProposalListQuery], Arr
 
 /** No memory proposals exist on this engine, so no request id names one: show, approve and deny answer not_found. */
 export const listOwnerProposalRows: StoreMember<[requestId: string], Array<Record<string, unknown>>> = async () => [];
+
+/**
+ * The live credentials `by` names: the active tokens with exactly this name, oldest first, or the active tokens (by
+ * name, in byte order) and then the clients not deleted (by client id) bound to exactly this member.
+ */
+export const readAccessCredentials: StoreMember<[by: AccessCredentialLookup], AccessCredentialRow[]> = async (brain, by) =>
+  await storeCall({ member: 'readAccessCredentials' }, () => brain.readAccessCredentials(by)) as AccessCredentialRow[];
+
+
+/**
+ * The store keeps pages, so this is a real answer: gbrain-store `write_misc` reads every page (soft-deleted ones too, as
+ * the SQL does), keeps those whose normalized readers (`gbrain_access_readers`) name exactly the principal, and returns
+ * them by (source, slug), at most PAGES_NAMING_READER_LIMIT (the SQL's LIMIT 51). `live` leaves soft-deleted pages out
+ * and reads at most LIVE_PAGES_NAMING_READER_LIMIT (LIMIT 201).
+ */
+export const listPagesNamingReader: StoreMember<[principal: string, opts?: { live?: boolean }], PageNamingReaderRow[]> = async (brain, principal, opts = {}) => {
+  const limit = opts.live ? LIVE_PAGES_NAMING_READER_LIMIT : PAGES_NAMING_READER_LIMIT;
+  const rows = await storeCall({ member: 'listPagesNamingReader' }, () => brain.listPagesNamingReader(principal, limit, opts.live === true)) as PageNamingReaderRow[];
+  return rows.map(r => ({ slug: r.slug, source_id: r.source_id }));
+};

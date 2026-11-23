@@ -27,7 +27,7 @@ import { getWorktreeBinding } from '../../src/core/persistence/ownership.ts';
 import { maintenancePreflight } from '../../src/core/persistence/prepared-maintenance.ts';
 import { TRANSFER_STALE_MINUTES } from '../../src/core/persistence/owner-refusal.ts';
 import { parsePersistenceAdminArgs } from '../../src/commands/persistence-admin.ts';
-import { failTransactionAt } from '../helpers/fail-transaction.ts';
+import { failWriterAdminStoreAt } from '../helpers/fail-transaction.ts';
 import { reviewedWriterIntent } from '../helpers/writer-admin-intent.ts';
 import { expectItemFailure, expectOthersUnchanged, expectUnitNotAborted, managedBrain, pathologicalArms, runScopedErrors, snapshotItems } from './harness.ts';
 
@@ -137,7 +137,8 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         const prepared = await prepare(engine);
         const drained = await worktree(engine);
         const injected = error();
-        const restore = failTransactionAt(engine, /SET state='active'/, () => injected);
+        // The cancel's state write is the writer-admin store's reactivateWorktree (engine-sql/writer-admin.ts), a typed member.
+        const restore = failWriterAdminStoreAt(engine, 'reactivateWorktree', () => injected);
         try {
           await expect(runPersistenceAdministration(engine, 'writer_transfer_cancel', { source_id: SOURCE, expected_epoch: prepared.owner_epoch,
             ...await reviewedWriterIntent(engine, 'writer_transfer_cancel') })).rejects.toBe(injected);

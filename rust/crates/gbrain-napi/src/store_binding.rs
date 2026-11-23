@@ -67,6 +67,9 @@ pub struct BrainOpenOptions {
     pub embedding_dimensions: Option<u32>,
     /// What a fresh brain records as config `chunk_strategy`.
     pub chunk_strategy: Option<String>,
+    /// A fresh brain records the write gate's scan baseline under this detector version (the
+    /// TypeScript `WRITE_GATE_DETECTOR_VERSION`).
+    pub write_gate_detector_version: Option<u32>,
 }
 
 #[napi]
@@ -195,6 +198,7 @@ impl Brain {
                     opts.initial_config
                         .push(("chunk_strategy".into(), strategy));
                 }
+                opts.write_gate_detector_version = options.write_gate_detector_version;
             }
             // Holding the slot while opening makes a second `open` on this handle wait, then see
             // the brain open.
