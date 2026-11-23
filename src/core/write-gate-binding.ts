@@ -21,9 +21,34 @@ export function holdAppliesToPageSql(h: string, pageId: string, slug: string): s
   return `(${h}.page_id = ${pageId} OR (${h}.page_id IS NULL AND (${h}.slug = ${slug} OR ${pageId} = ANY(COALESCE(${h}.page_candidates, '{}'::bigint[])))))`;
 }
 
-/** The deletion half of the page lifecycle: the SQL predicate a purge uses for the holds of a deleted page `id` / `slug` (both SQL expressions). */
+/**
+ * The deletion half of the page lifecycle: SQL true for the holds a purge of page `pageId` deletes outright (`pageId`
+ * and `slug` are SQL expressions): holds bound to its id, and unbound holds at its slug that no upgrade marked with
+ * candidate pages. A candidate-marked hold is held for several pages; `dropPurgedCandidates` takes the purged page out
+ * of its list instead, and deletes it only when no candidate is left.
+ */
 export function holdOwnedByDeletedPageSql(h: string, pageId: string, slug: string): string {
-  return `((${pageId}::bigint IS NOT NULL AND ${h}.page_id = ${pageId}::bigint) OR (${h}.page_id IS NULL AND ${h}.slug = ${slug}))`;
+  return `((${pageId}::bigint IS NOT NULL AND ${h}.page_id = ${pageId}::bigint) OR (${h}.page_id IS NULL AND ${h}.page_candidates IS NULL AND ${h}.slug = ${slug}))`;
+}
+
+/** What a purge verifier counts as left behind: the holds the purge deletes outright, and any candidate-marked hold still naming the page. */
+export function holdResidueOfDeletedPageSql(h: string, pageId: string, slug: string): string {
+  return `(${holdOwnedByDeletedPageSql(h, pageId, slug)} OR (${h}.page_id IS NULL AND ${pageId}::bigint = ANY(COALESCE(${h}.page_candidates, '{}'::bigint[]))))`;
+}
+
+/**
+ * Takes each purged page (its id, and for a tombstone expiry the deletion time as text, so a hold last seen after the soft delete
+ * stays) out of the candidate list of the holds marked with candidates, and deletes the holds left with none. A hold that still
+ * names a surviving candidate stays, because it is held for that page. Returns the ids of the holds deleted.
+ */
+export async function dropPurgedCandidates(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, pages: ReadonlyArray<{ id?: number | null; deletedAt?: string | null }>): Promise<string[]> {
+  const gone = pages.filter(p => p.id !== undefined && p.id !== null);
+  if (!gone.length) return [];
+  await engine.executeRaw(`UPDATE write_gate_holds h SET page_candidates = ARRAY(SELECT c FROM unnest(h.page_candidates) AS c WHERE NOT EXISTS (
+        SELECT 1 FROM unnest($2::bigint[], $3::timestamptz[]) AS d(id, upto) WHERE d.id = c AND (d.upto IS NULL OR GREATEST(h.created_at, h.last_seen_at) <= d.upto)))
+      WHERE h.source_id = $1 AND h.page_id IS NULL AND h.page_candidates && $2::bigint[]`, [sourceId, gone.map(p => p.id), gone.map(p => p.deletedAt ?? null)]);
+  return (await engine.executeRaw<{ id: string }>(`DELETE FROM write_gate_holds WHERE source_id = $1 AND page_id IS NULL AND page_candidates IS NOT NULL
+      AND cardinality(page_candidates) = 0 RETURNING id::text AS id`, [sourceId])).map(h => h.id);
 }
 
 /**
