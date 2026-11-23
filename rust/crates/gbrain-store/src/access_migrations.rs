@@ -234,6 +234,12 @@ mod tests {
             .unwrap();
         let row = s.read_unfinished_access_migration("default").unwrap();
         assert_eq!(row.map(|r| r.id), Some("mig_y".to_string()));
+        // A switch keeps its receipts and stamps its own update time (parity reads this row on SQL only).
+        s.switch_access_migration("mig_y", &json!(1)).unwrap();
+        let r = find(&*s.read().unwrap(), "mig_y").unwrap().unwrap();
+        assert!(
+            r.phase == "switched" && r.receipts == json!(1) && r.updated_at_us > r.created_at_us
+        );
     }
 
     #[test]
@@ -256,6 +262,12 @@ mod tests {
             code(s.insert_access_migration("mig_a", "default", "to_database")),
             CONSTRAINT_VIOLATION
         );
+        // The id is unique across sources, as the table's primary key is.
+        s.upsert_source(&serde_json::from_value(json!({ "id": "work" })).unwrap())
+            .unwrap();
+        s.ensure_access_policy_state("work").unwrap();
+        let other = code(s.insert_access_migration("mig_a", "work", "to_git"));
+        assert_eq!(other, CONSTRAINT_VIOLATION);
         assert_eq!(
             code(s.record_access_migration_phase("mig_a", "bogus", &json!({ "x": 1 }))),
             invalid
