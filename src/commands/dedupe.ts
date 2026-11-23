@@ -301,7 +301,7 @@ async function runConfirm(engine: BrainEngine, args: string[]): Promise<void> {
       if (g.class === 'conflict') throw notConfirmable(g, 'conflict', 'is a conflict: an account or registry id disagrees, so it is never confirmed');
       if (g.kind === 'thin') throw notConfirmable(g, 'thin', 'is a thin page beside a fuller page; it is collapsed, not confirmed');
       if (g.kind !== 'cross_source') throw notConfirmable(g, 'in_source', 'has its pages in one source; same-source duplicates are collapsed, not linked');
-      if (sharesSource(g)) throw notConfirmable(g, 'same_source_members', 'holds two pages of one source; collapse those first (their in_source group), then confirm the group the next preview shows');
+      if (sharesSource(g)) throw notConfirmable(g, 'same_source_members', 'holds two pages of one source; collapse them if they are one page, or record them as different with gbrain dedupe reject <their in_source group id> if they are not, then confirm the group the next preview shows');
       if (!CONFIRMABLE.has(g.class)) throw notConfirmable(g, 'conflict', 'is not a confirmable class');
       if (contactOnly(g) && f.ids.length > 1) throw notConfirmable(g, 'contact_key_only_batch', 'shares only contact or handle keys, so it is confirmed on its own, after reading its hint line');
       if (confirmAlone(s, g) && f.ids.length > 1) throw notConfirmable(g, 'person_id_batch', 'is a person group that shares an account or registry id, so it is confirmed on its own, after reading its hint line');
