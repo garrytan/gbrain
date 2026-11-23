@@ -33,6 +33,7 @@ import { createRequireAdmin, mountAdminApi, mountAdminLogin } from './serve-http
 import { mountSpa } from './serve-http-spa.ts';
 import { mountMcp } from './serve-http-mcp.ts';
 import { createWebhookLimiters, mountWebhooks } from './serve-http-webhooks.ts';
+import { mountSlackInteractions } from './serve-http-slack.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, type Operation } from '../core/operations.ts';
 import {
@@ -840,6 +841,7 @@ export async function buildServeHttpApp(app: express.Express, engine: BrainEngin
   await mountSpa(app, ctx);
   mountMcp(app, ctx);
   mountWebhooks(app, ctx);
+  mountSlackInteractions(app, ctx);
 
   return { bind, config, sql, issuerUrl, skillStatus, bootstrapToken, bootstrapFromEnv, suppressBootstrapPrint };
 }
@@ -923,7 +925,11 @@ ${bootstrapFromEnv
     // #6858 ask 6: on-commit sync of this host's managed checkouts while `sync.on_commit` is on (serve-head-watcher.ts).
     const { startServeHeadWatcher } = await import('../core/serve-head-watcher.ts');
     const headWatcher = startServeHeadWatcher(engine, { log: (line) => console.error(line), resident: 'serve-http' });
+    // Outbound notification sinks (notify.sinks): delivers the outbox; idle while no sink is configured.
+    const { startNotificationDispatcher } = await import('../core/notifications/dispatcher.ts');
+    const notifier = startNotificationDispatcher(engine, { config: config as GBrainConfig, log: (line) => console.error(line) });
     const deregisterEngineCleanup = registerCleanup('pglite-engine-disconnect', async () => {
+      await notifier.stop();
       await headWatcher.stop();
       movementWatch.stop();
       await factsDrain.stop();
@@ -932,6 +938,7 @@ ${bootstrapFromEnv
     try {
       await waitForHttpServerLifecycle(httpServer);
     } finally {
+      await notifier.stop();
       await headWatcher.stop();
       movementWatch.stop();
       await factsDrain.stop();

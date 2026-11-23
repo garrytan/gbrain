@@ -2,7 +2,10 @@
  * Slack Web API client for the slack source kind: `auth.test`,
  * `conversations.info`, `conversations.history`, `conversations.replies`
  * and `users.list`, each a GET with the bot token as a bearer header (never
- * in a query string or a body). Slack answers application errors inside
+ * in a query string or a body). The notification sink (notifications/sinks/slack.ts)
+ * also posts and edits messages (`chat.postMessage`, `chat.update`,
+ * `chat.postEphemeral`, JSON POSTs) and resolves a clicker (`users.info`,
+ * `conversations.members`). Slack answers application errors inside
  * HTTP 200 bodies (`ok: false`); `classifySlackBody` turns them into the
  * connector client's typed errors. Requests are spaced for Slack's Tier 3
  * limits (about 50 a minute), and a 429 waits for its Retry-After.
@@ -96,7 +99,22 @@ export interface SlackApi {
   usersList(signal?: AbortSignal): Promise<Map<string, SlackUser>>;
   /** One users.list request: refuses as the full listing would (a missing users:read scope) without walking the workspace. */
   usersProbe(signal?: AbortSignal): Promise<void>;
+  /** chat.postMessage (chat:write): the posted message's channel and ts. */
+  postMessage(message: SlackOutboundMessage, signal?: AbortSignal): Promise<{ channel: string; ts: string }>;
+  /** chat.update (chat:write) of a message this app posted. */
+  updateMessage(channel: string, ts: string, message: Omit<SlackOutboundMessage, 'channel'>, signal?: AbortSignal): Promise<void>;
+  /** chat.postEphemeral (chat:write): a message only `user` sees, in `channel`. */
+  postEphemeral(channel: string, user: string, text: string, signal?: AbortSignal): Promise<void>;
+  /** users.info (users:read; the email needs users:read.email). */
+  userInfo(user: string, signal?: AbortSignal): Promise<SlackUserIdentity>;
+  /** Whether `user` is a member of `channel` (conversations.members: channels:read, groups:read for private). */
+  isChannelMember(channel: string, user: string, signal?: AbortSignal): Promise<boolean>;
 }
+
+/** An outbound message: plain `text` is the notification fallback; `blocks` is Block Kit. */
+export interface SlackOutboundMessage { channel: string; text: string; blocks?: unknown[] }
+
+export interface SlackUserIdentity { id: string; email: string | null; name: string; deleted: boolean; bot: boolean }
 
 export function slackApi(opts: SlackClientOpts): SlackApi {
   const now = opts.now ?? Date.now;
@@ -159,6 +177,33 @@ export function slackApi(opts: SlackClientOpts): SlackApi {
     },
     async usersProbe(signal) {
       await get('users.list', { limit: '1' }, signal);
+    },
+    async postMessage(message, signal) {
+      const body = await client.postJSON<{ channel?: unknown; ts?: unknown }>('/api/chat.postMessage',
+        { channel: message.channel, text: message.text, ...(message.blocks ? { blocks: message.blocks } : {}), unfurl_links: false, unfurl_media: false }, { signal });
+      const channel = str(body.channel);
+      const ts = str(body.ts);
+      if (!channel || !ts) throw new SlackShapeDriftError('chat.postMessage.ts');
+      return { channel, ts };
+    },
+    async updateMessage(channel, ts, message, signal) {
+      await client.postJSON('/api/chat.update', { channel, ts, text: message.text, ...(message.blocks ? { blocks: message.blocks } : {}) }, { signal });
+    },
+    async postEphemeral(channel, user, text, signal) {
+      await client.postJSON('/api/chat.postEphemeral', { channel, user, text }, { signal });
+    },
+    async userInfo(user, signal) {
+      const body = await get<{ user?: Record<string, unknown> }>('users.info', { user }, signal);
+      const raw = body.user;
+      const id = str(raw?.id);
+      if (!raw || !id) throw new SlackShapeDriftError('users.info.user.id');
+      const profile = (raw.profile ?? {}) as Record<string, unknown>;
+      return { id, email: str(profile.email), name: str(profile.display_name) ?? str(profile.real_name) ?? str(raw.name) ?? id,
+        deleted: raw.deleted === true, bot: raw.is_bot === true };
+    },
+    async isChannelMember(channel, user, signal) {
+      const members = await paged<string>('conversations.members', { channel }, 'members', signal);
+      return members.includes(user);
     },
     async usersList(signal) {
       const members = await paged<Record<string, unknown>>('users.list', {}, 'members', signal);

@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 307114,
-    "stdoutSha256": "bf5497a38e815f17d5a79608cc5a22ac88bc5c7470b1c077890bf6e110d31e94",
+    "stdoutBytes": 310014,
+    "stdoutSha256": "cb0a2f5c67f3d46990c96d4a02effaff29a8cb693c502bb53bab384067912a10",
     "toolNames": [
       "remember",
       "entity",
@@ -138,6 +138,10 @@
       "takes_proposal_get",
       "takes_proposal_accept",
       "takes_proposal_reject",
+      "notify_status",
+      "notify_backfill",
+      "notify_drain",
+      "notify_retry",
       "whoami",
       "sources_add",
       "sources_list",
@@ -6394,6 +6398,95 @@
           "type": "object"
         },
         "scope": "write"
+      },
+      {
+        "description": "Outbound notification sinks (notify.sinks / GBRAIN_NOTIFY_SINKS): each sink, whether this host can deliver it, and the delivery queue by sink, event and status. Local-only. CLI: `gbrain notify-status`.",
+        "idempotent": true,
+        "local_only": true,
+        "mutating": false,
+        "name": "notify_status",
+        "parameters": {},
+        "required_scopes": [],
+        "schema": {
+          "properties": {},
+          "required": [],
+          "type": "object"
+        },
+        "scope": "admin"
+      },
+      {
+        "description": "Queue take_proposal.created for proposals that are already pending, so the sinks post them (nothing posts the existing backlog on its own). Highest weight first, at most `limit` (default 20); each sink's filter applies and a proposal already queued for a sink is skipped. Local-only. CLI: `gbrain notify-backfill --limit 10 [--min-weight 0.7] [--sink <name>] [--id <proposal id>] [--dry-run]`.",
+        "idempotent": true,
+        "local_only": true,
+        "mutating": true,
+        "name": "notify_backfill",
+        "parameters": {
+          "id": "number?",
+          "limit": "number?",
+          "min_weight": "number?",
+          "sink": "string?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "id": {
+              "description": "Queue exactly this proposal (any status), e.g. to test a sink.",
+              "type": "number"
+            },
+            "limit": {
+              "description": "Most proposals to queue (default 20, cap 1000).",
+              "type": "number"
+            },
+            "min_weight": {
+              "description": "Only proposals with at least this weight.",
+              "type": "number"
+            },
+            "sink": {
+              "description": "Only this sink (default every sink that receives take_proposal.created).",
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "scope": "admin"
+      },
+      {
+        "description": "Deliver every due notification now, once (a running `gbrain serve --http` does this every 10 s). Local-only. CLI: `gbrain notify-drain`.",
+        "idempotent": true,
+        "local_only": true,
+        "mutating": true,
+        "name": "notify_drain",
+        "parameters": {},
+        "required_scopes": [],
+        "schema": {
+          "properties": {},
+          "required": [],
+          "type": "object"
+        },
+        "scope": "admin"
+      },
+      {
+        "description": "Put deliveries that gave up (status failed) back in the queue, e.g. after fixing a token or inviting the app to the channel. Local-only. CLI: `gbrain notify-retry [--sink <name>]`.",
+        "idempotent": true,
+        "local_only": true,
+        "mutating": true,
+        "name": "notify_retry",
+        "parameters": {
+          "sink": "string?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "sink": {
+              "description": "Only this sink.",
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "scope": "admin"
       },
       {
         "description": "Your identity: transport, scopes and, over OAuth, client, source_id and federated_read.",

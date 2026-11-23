@@ -129,3 +129,7 @@ For details on the shared infrastructure that all integrations build on
 
 For the philosophy behind thin harness + fat skills, see
 [Thin Harness, Fat Skills](../ethos/THIN_HARNESS_FAT_SKILLS.md).
+
+## Data out of your brain
+
+- [Notification sinks](notification-sinks.md): post take proposals to Slack with Accept / Reject buttons, or to any signed webhook, and add your own sink type.

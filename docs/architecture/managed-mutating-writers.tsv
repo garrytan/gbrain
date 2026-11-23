@@ -62,6 +62,9 @@ op	takes_update	coordinator	submitPageMutation takes intent.
 op	takes_resolve	coordinator	submitPageMutation takes intent.
 op	takes_proposal_accept	coordinator	Promotes the proposal through the coordinated takes_add submitPageMutation (take-proposals.ts); the queue row is DB-only state.
 op	takes_proposal_reject	no_canonical_write	Flips a take_proposals queue row to rejected; the queue is DB-only and no page or fence is written.
+op	notify_backfill	no_canonical_write	Queues rows in the DB-only notification_outbox; writes no page, fence or file.
+op	notify_drain	no_canonical_write	Delivers notification_outbox rows to outbound sinks; a Slack click it processes decides through takes_proposal_accept/reject, which go through the coordinator.
+op	notify_retry	no_canonical_write	Resets failed notification_outbox rows to pending; DB-only queue state.
 op	takes_remove	coordinator	submitPageMutation takes intent; local-only removal of one fence row and its takes row.
 op	takes_supersede	coordinator	submitPageMutation takes intent.
 op	takes_rebuild	coordinator	Local-only rebuild of one page's takes index from its fence (W9F item 8); on a managed brain reextractCoordinated publishes it inside a withCoordinatedWrite transaction (receipted takes intent: Lane R).

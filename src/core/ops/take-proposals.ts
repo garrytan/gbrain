@@ -8,7 +8,8 @@
  * takes-holder allow-list and whose page they may read; any other id presents as not_found. Accept promotes through
  * the same coordinated takes_add mutation as the CLI, run AS the caller, so the holder write fence applies and the
  * page version records the caller's agent label. acted_by records the caller's agent label (X-Gbrain-Agent-Label, else
- * `mcp:<client>`); acted_via records `mcp:<client>`.
+ * `mcp:<client>`); acted_via records `mcp:<client>`. Decisions emit
+ * take_proposal.accepted / .rejected to the configured notification sinks (notifications/emit.ts).
  *
  * Retry-safe: repeating a decision that already took effect returns the recorded outcome with
  * `already_decided: true`; the opposite decision on a decided row is refused (`proposal_already_decided`).

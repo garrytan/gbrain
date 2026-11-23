@@ -64,6 +64,7 @@ import type { OperationContext } from '../operations.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseStatus, CyclePhase } from '../cycle.ts';
 import { guestSourceExclusionSql } from '../guests/derived.ts';
+import { emitTakeProposalEvent } from '../notifications/emit.ts';
 
 /**
  * Bump when the extractor prompt or the JSON output shape changes. Old
@@ -1116,6 +1117,8 @@ class ProposeTakesPhase extends BaseCyclePhase {
           ],
         );
         result.proposals_inserted += inserted.length;
+        // Outbound sinks (notify.sinks) queue each new proposal; never throws, never blocks the cycle on delivery.
+        if (inserted.length) await emitTakeProposalEvent(engine, 'take_proposal.created', inserted.map(r => Number(r.id)));
       }
 
       // Memoize the empty case too. A page that extracted zero claims gets

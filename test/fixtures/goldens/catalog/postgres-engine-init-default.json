@@ -267,6 +267,8 @@
       "needs_rederive.needs_rederive_pkey": "p PRIMARY KEY (derived_table, derived_id)",
       "needs_rederive.needs_rederive_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "needs_rederive.trust_generation_insert": "t TRIGGER DEFERRABLE INITIALLY DEFERRED",
+      "notification_outbox.notification_outbox_pkey": "p PRIMARY KEY (id)",
+      "notification_outbox.notification_outbox_status_check": "c CHECK ((status = ANY (ARRAY['pending'::text, 'delivered'::text, 'skipped'::text, 'failed'::text])))",
       "oauth_clients.fk_oauth_clients_bound_source": "f FOREIGN KEY (bound_source_id) REFERENCES sources(id) ON DELETE SET NULL",
       "oauth_clients.oauth_clients_complete_agent_grant": "c CHECK (((NOT (COALESCE(scope, ''::text) ~ '(^|[[:space:]])agent([[:space:]]|$)'::text)) OR ((COALESCE(cardinality(bound_tools), 0) > 0) AND (source_id IS NOT NULL) AND (bound_source_id IS NOT NULL) AND (bound_source_id = source_id) AND COALESCE((source_id = ANY (federated_read)), false) AND (((delegated_namespace = 'job'::text) AND (delegated_slug_prefixes IS NULL)) OR ((delegated_namespace = 'prefixes'::text) AND (COALESCE(cardinality(delegated_slug_prefixes), 0) > 0))) AND (bound_max_concurrent > 0))))",
       "oauth_clients.oauth_clients_min_trust_check": "c CHECK (((min_trust IS NULL) OR (min_trust = ANY (ARRAY['user_confirmed'::text, 'operator_curated'::text, 'tool_observed'::text, 'agent_written'::text, 'unknown'::text, 'external_untrusted'::text]))))",
@@ -988,6 +990,9 @@
       "needs_rederive": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "notification_outbox": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "oauth_clients": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -1615,6 +1620,9 @@
       "minion_self_fix_log_pkey": "CREATE UNIQUE INDEX minion_self_fix_log_pkey ON public.minion_self_fix_log USING btree (id)",
       "minion_self_fix_log_recent_idx": "CREATE INDEX minion_self_fix_log_recent_idx ON public.minion_self_fix_log USING btree (occurred_at DESC)",
       "needs_rederive_pkey": "CREATE UNIQUE INDEX needs_rederive_pkey ON public.needs_rederive USING btree (derived_table, derived_id)",
+      "notification_outbox_due_idx": "CREATE INDEX notification_outbox_due_idx ON public.notification_outbox USING btree (next_attempt_at) WHERE (status = 'pending'::text)",
+      "notification_outbox_once_idx": "CREATE UNIQUE INDEX notification_outbox_once_idx ON public.notification_outbox USING btree (sink, event, subject)",
+      "notification_outbox_pkey": "CREATE UNIQUE INDEX notification_outbox_pkey ON public.notification_outbox USING btree (id)",
       "oauth_clients_pkey": "CREATE UNIQUE INDEX oauth_clients_pkey ON public.oauth_clients USING btree (client_id)",
       "oauth_codes_pkey": "CREATE UNIQUE INDEX oauth_codes_pkey ON public.oauth_codes USING btree (code_hash)",
       "oauth_grant_audit_pkey": "CREATE UNIQUE INDEX oauth_grant_audit_pkey ON public.oauth_grant_audit USING btree (id)",
@@ -1886,6 +1894,7 @@
       "minion_jobs_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=minion_jobs.id",
       "minion_lease_pressure_log_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=minion_lease_pressure_log.id",
       "minion_self_fix_log_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=minion_self_fix_log.id",
+      "notification_outbox_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=notification_outbox.id",
       "oauth_grant_audit_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=oauth_grant_audit.id",
       "open_loops_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=open_loops.id",
       "page_aliases_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=page_aliases.id",
@@ -3389,6 +3398,24 @@
           "4 request_id uuid/uuid NULL",
           "5 reason text/text NOT NULL",
           "6 marked_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "notification_outbox": {
+        "columns": [
+          "1 id bigint/int8 NOT NULL DEFAULT nextval('notification_outbox_id_seq'::regclass)",
+          "2 sink text/text NOT NULL",
+          "3 event text/text NOT NULL",
+          "4 subject text/text NOT NULL",
+          "5 payload jsonb/jsonb NOT NULL DEFAULT '{}'::jsonb",
+          "6 status text/text NOT NULL DEFAULT 'pending'::text",
+          "7 attempts integer/int4 NOT NULL DEFAULT 0",
+          "8 next_attempt_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "9 lease_until timestamp with time zone/timestamptz NULL",
+          "10 last_error text/text NULL",
+          "11 delivery jsonb/jsonb NULL",
+          "12 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "13 delivered_at timestamp with time zone/timestamptz NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

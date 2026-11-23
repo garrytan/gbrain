@@ -61,6 +61,7 @@ const OP_AREAS: Record<string, string> = {
   // admin + operations
   get_stats: 'admin', get_health: 'admin', run_doctor: 'admin', get_brain_health: 'admin', mute_notice: 'admin',
   get_status_snapshot: 'admin', run_onboard: 'admin', run_skillopt: 'admin',
+  notify_status: 'admin', notify_backfill: 'admin', notify_drain: 'admin', notify_retry: 'admin',
   migrate_embeddings: 'admin', code_traversal_cache_clear: 'admin', get_write_attribution: 'admin',
   // identity
   whoami: 'identity', get_brain_identity: 'identity',

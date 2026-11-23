@@ -33,6 +33,7 @@ import type { OperationContext } from './ops/contract.ts';
 import { submitPageMutation } from './persistence/page-mutations.ts';
 import { waitForWrite } from './persistence/service.ts';
 import type { WriteRequest } from './persistence/model.ts';
+import { emitTakeProposalEvent } from './notifications/emit.ts';
 
 export interface TakeProposalRow {
   id: number;
@@ -424,6 +425,8 @@ export async function acceptProposal(
     `UPDATE take_proposals SET promoted_row_num = $2 WHERE id = $1`,
     [id, rowNum],
   );
+  // Outbound sinks (notify.sinks) hear about the decision; never throws.
+  await emitTakeProposalEvent(engine, 'take_proposal.accepted', [id]);
   return { proposal, rowNum };
 }
 
@@ -450,5 +453,6 @@ export async function rejectProposal(
       `Proposal #${id} was acted on concurrently — only one accept/reject can win a pending row.`,
     );
   }
+  await emitTakeProposalEvent(engine, 'take_proposal.rejected', [id]);
   return proposal;
 }

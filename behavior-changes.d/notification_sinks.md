@@ -1,0 +1,4 @@
+---
+kind: add
+---
+Outbound notification sinks (notify.sinks / GBRAIN_NOTIFY_SINKS, off by default): take_proposal.created, .accepted and .rejected events go to a durable outbox and `gbrain serve --http` delivers them to configured sinks. The slack sink posts one message per proposal with Accept / Reject buttons and edits it when the proposal is decided anywhere; button clicks arrive at POST /integrations/slack/interactions (Slack-signature verified, 404 while no interactive sink has a signing secret) and decide through the takes_proposal_accept / takes_proposal_reject path with the clicker's email as the reviewer. The webhook sink POSTs signed JSON. New local-only ops: notify_status, notify_backfill, notify_drain, notify_retry. The propose_takes phase, accept and reject queue events but never fail on a queueing error.

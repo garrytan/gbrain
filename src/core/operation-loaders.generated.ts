@@ -31,6 +31,7 @@ const load_links = () => import('./ops/links.ts') as Promise<Record<string, unkn
 const load_loops = () => import('./ops/loops.ts') as Promise<Record<string, unknown>>;
 const load_memory_settings = () => import('./ops/memory-settings.ts') as Promise<Record<string, unknown>>;
 const load_notices = () => import('./ops/notices.ts') as Promise<Record<string, unknown>>;
+const load_notifications = () => import('./ops/notifications.ts') as Promise<Record<string, unknown>>;
 const load_orphans = () => import('./ops/orphans.ts') as Promise<Record<string, unknown>>;
 const load_page_append = () => import('./ops/page-append.ts') as Promise<Record<string, unknown>>;
 const load_page_batch = () => import('./ops/page-batch.ts') as Promise<Record<string, unknown>>;
@@ -198,6 +199,10 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "takes_proposal_get": [load_take_proposals, "takeProposalOperations"],
   "takes_proposal_accept": [load_take_proposals, "takeProposalOperations"],
   "takes_proposal_reject": [load_take_proposals, "takeProposalOperations"],
+  "notify_status": [load_notifications, "notificationsOperations"],
+  "notify_backfill": [load_notifications, "notificationsOperations"],
+  "notify_drain": [load_notifications, "notificationsOperations"],
+  "notify_retry": [load_notifications, "notificationsOperations"],
   "whoami": [load_sources, "sourcesOperations"],
   "sources_add": [load_sources, "sourcesOperations"],
   "sources_list": [load_sources, "sourcesOperations"],

@@ -603,6 +603,9 @@ src/core/mounts-cache.ts	fs_import	1	W7: filesystem boundary moves to the local 
 src/core/multi-source-drift.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/multi-source-drift.ts	process_env	1	W6: settings plane out of the core
 src/core/notice-ledger.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/notifications/config.ts	process_env	1	W6: settings plane out of the core (GBRAIN_NOTIFY_SINKS, the environment twin of notify.sinks)
+src/core/notifications/sinks/webhook.ts	process_env	2	W6: the webhook URL and signing secret come from the environment variables the sink config names (credentials never live in config)
+src/core/notifications/slack-interactions.ts	process_env	1	W6: the Slack signing secret comes from the environment variable the sink config names (credentials never live in config)
 src/core/notifier/detect.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/notifier/resident.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/notifier/resident.ts	process_env	5	W6: settings plane out of the core

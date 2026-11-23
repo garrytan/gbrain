@@ -647,6 +647,9 @@ src/core/minions/watchdog-attribution.ts	execute_raw	5
 src/core/minions/worker-shutdown.ts	execute_raw	1
 src/core/minions/worker.ts	execute_raw	7
 src/core/multi-source-drift.ts	execute_raw	1
+src/core/notifications/backfill.ts	execute_raw	1	notification sinks: the pending-proposal scan over take_proposals, which has no engine-sql domain yet
+src/core/notifications/emit.ts	execute_raw	1	notification sinks: the proposal snapshot read over take_proposals, which has no engine-sql domain yet
+src/core/notifications/outbox.ts	execute_raw	10	notification sinks: the outbox queue (claim with lease, mark, counts); a notifications engine-sql domain is the follow-up
 src/core/notifier/nudge.ts	execute_raw	1
 src/core/notifier/resident.ts	execute_raw	3
 src/core/notifier/status.ts	execute_raw	2
