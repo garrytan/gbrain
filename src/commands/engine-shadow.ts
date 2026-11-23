@@ -14,15 +14,17 @@ import { join } from 'node:path';
 import { loadConfig } from '../core/config.ts';
 import type { EngineConfig } from '../core/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
-import type { OperationError } from '../core/ops/contract.ts';
+import { OperationError } from '../core/ops/contract.ts';
 import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
+import { buildBenchStatus, renderBenchStatus } from '../shadow/bench.ts';
+import { BENCH_DOCS, importBenchReceipt, sanitizeText } from '../shadow/bench-receipt.ts';
 import { shadowStatusDocument } from '../shadow/status-document.ts';
 import { renderEvidenceStatus } from '../shadow/evidence.ts';
 import { renderFollowStatus } from '../shadow/follow-status.ts';
 import { readSeedRecord, runSeed, SeedBudgetError, writeSeedRecord, type SeedRecord, type SeedTarget } from '../shadow/seed.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown, writeProvisionalReport } from '../shadow/report.ts';
 import {
-  brainIdentity, DEFAULT_SHADOW_QUEUE_BOUND, DEFAULT_SHADOW_SAMPLE_RATE, readShadowState, shadowBrainKey, shadowDirFor,
+  brainIdentity, DEFAULT_SHADOW_QUEUE_BOUND, DEFAULT_SHADOW_SAMPLE_RATE, readShadowState, shadowBrainKey, shadowDirFor, shadowStatePath,
   SHADOW_STATE_VERSION, writeShadowState, type ShadowState,
 } from '../shadow/state.ts';
 
@@ -56,6 +58,7 @@ Usage:
   gbrain engine shadow report [--json]
   gbrain engine shadow seed [--json] [--reseed]
   gbrain engine shadow reconcile [--full] [--json]
+  gbrain engine shadow bench --import <receipt.json> [--json]
 
 Shadow mode is off by default. When on, a sample of reads this brain answers is sent, after the answer, to a
 supervised child process that runs the same read on the Rust engine and records match, diff or why it could not
@@ -176,6 +179,7 @@ export async function runEngineShadow(args: string[], deps: EngineShadowDeps = {
       });
       return await run(dir);
     }
+    if (sub === 'bench') return await bench(rest, deps, out, err, now);
     const brain = await resolveBrain(deps);
     if (sub === 'start') return await start(brain, parseStart(rest), deps, out, err, now);
     if (sub === 'status') return status(brain, flags(rest, ['--json'], 'status').has('--json'), out, now);
@@ -252,8 +256,71 @@ function status(brain: { key: string; dir: string }, json: boolean, out: (l: str
   const seeded = readSeedRecord(brain.dir);
   out(seeded ? `  seed ${seeded.seed_id} finished ${seeded.finished_at}; unseeded gap rows ${seeded.unseeded_gap_rows_total}` : '  seed: none (gbrain engine shadow seed)');
   if (seeded) for (const line of [...renderFollowStatus(doc), ...renderEvidenceStatus(doc)]) out(line);
+  for (const line of renderBenchStatus(doc.bench)) out(line);
   for (const f of faults) out(`  fault ${f.ts} ${f.kind}: ${f.detail}`);
   return 0;
+}
+
+const BENCH_IMPORT_FIX = 'gbrain engine shadow bench --import <receipt.json> [--json]';
+
+function benchRefusal(code: 'invalid_params' | 'not_found' | 'internal_error', message: string, fix: string): OperationError {
+  return new OperationError(code, message, fix, BENCH_DOCS);
+}
+
+/** The refusal of `bench`: stderr text with the safe fix, and with --json the error envelope on stdout; the exit code is the registered code's. */
+async function refuseBench(e: OperationError, json: boolean, out: (l: string) => void, err: (l: string) => void): Promise<number> {
+  const { renderCliError } = await import('../core/agent-output.ts');
+  const r = renderCliError(e, { json: true, command: 'engine shadow bench', tty: false });
+  if (json) out(r.stdout!.trimEnd());
+  err(`engine shadow bench: ${e.message} [${e.code}${e.docs ? `; ${e.docs}` : ''}]`);
+  if (e.suggestion) err(`Fix: ${e.suggestion}`);
+  return r.exitCode;
+}
+
+/**
+ * `bench --import <receipt>`: loads an engine-bench speed receipt into the shadow's swap-readiness evidence (criterion 8,
+ * reported and never gating). Replaying paired samples on this brain is not built, so plain `bench` refuses and says so.
+ * The import never starts a shadow and never opens the brain; with no shadow for this brain nothing is written.
+ */
+async function bench(args: string[], deps: EngineShadowDeps, out: (l: string) => void, err: (l: string) => void, now: () => Date): Promise<number> {
+  const json = args.includes('--json');
+  try {
+    let path: string | undefined;
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i]!;
+      if (a === '--json') continue;
+      if (a !== '--import') return await refuseBench(benchRefusal('invalid_params', `unknown argument for engine shadow bench: ${sanitizeText(a, 60)}`, BENCH_IMPORT_FIX), json, out, err);
+      path = args[i + 1];
+      if (!path || path.startsWith('--')) return await refuseBench(benchRefusal('invalid_params', '--import needs the path of an engine-bench speed receipt', BENCH_IMPORT_FIX), json, out, err);
+      i++;
+    }
+    if (!path) {
+      return await refuseBench(benchRefusal('invalid_params', 'nothing to import: the owner-brain bench (gbrain engine shadow bench replaying paired samples on this brain) is not built, and --import loads an engine-bench speed receipt', BENCH_IMPORT_FIX), json, out, err);
+    }
+    let brain: { key: string; dir: string; engine: string };
+    try {
+      brain = await resolveBrain(deps);
+    } catch (e) {
+      if (!(e instanceof UsageError)) throw e;
+      return await refuseBench(benchRefusal('invalid_params', `${sanitizeText(e.message, 300)} Nothing was written.`, 'Run it without --brain (and with GBRAIN_BRAIN_ID unset) on a host with a configured brain.'), json, out, err);
+    }
+    if (!existsSync(shadowStatePath(brain.dir))) {
+      return await refuseBench(benchRefusal('not_found', 'no shadow for this brain, so there is nowhere to keep bench evidence; nothing was written', 'Ask the brain owner whether to start a shadow (gbrain engine shadow start --plan shows the plan). A bench import never starts one; once the owner has one, rerun the same import.'), json, out, err);
+    }
+    const res = importBenchReceipt(brain.dir, path, { now: now() });
+    if (!res.ok) return await refuseBench(res.error, json, out, err);
+    const { bench: block } = buildBenchStatus({ dir: brain.dir, primaryEngine: readShadowState(brain.dir)?.primary_engine ?? null });
+    if (json) out(JSON.stringify(block, null, 2));
+    else {
+      out(`Imported ${res.summary.source_file} (receipt ${res.summary.receipt_sha256.slice(0, 12)}) as the bench corpus evidence for brain ${brain.key}. Nothing else was changed.`);
+      for (const line of renderBenchStatus(block)) out(line);
+    }
+    return 0;
+  } catch (e) {
+    if (e instanceof OperationError) return await refuseBench(e, json, out, err);
+    const name = e instanceof Error ? e.name : 'Error';
+    return await refuseBench(benchRefusal('internal_error', `unexpected ${name} while importing the receipt: ${sanitizeText(e instanceof Error ? e.message : e, 160)}; nothing else was changed`, 'Rerun the same command once with --json; if it fails again, report it with the command and this message.'), json, out, err);
+  }
 }
 
 const RESEED_STEP = 'A Rust store is seeded once. To seed again, start from a new shadow directory: '

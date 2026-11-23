@@ -5,6 +5,7 @@
  */
 import { existsSync } from 'node:fs';
 import type { EngineConfig } from '../core/types.ts';
+import { buildBenchStatus } from './bench.ts';
 import { buildEvidenceStatus } from './evidence.ts';
 import { buildFollowStatus } from './follow-status.ts';
 import { readFaults, readShadowSummary } from './ledger.ts';
@@ -27,6 +28,7 @@ export function shadowStatusDocument(brain: { key: string; dir: string }, now: D
     children: summary?.children ?? 0, recent_faults: faults,
     ...buildFollowStatus(brain.dir, state, now),
     ...buildEvidenceStatus({ dir: brain.dir, now }),
+    ...buildBenchStatus({ dir: brain.dir, primaryEngine: state?.primary_engine ?? null }),
   };
 }
 
