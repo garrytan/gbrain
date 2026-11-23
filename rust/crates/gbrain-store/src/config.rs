@@ -14,7 +14,7 @@ pub struct ConfigValueRow {
     pub value: String,
 }
 
-fn config_key(key: &str) -> Result<Vec<u8>> {
+pub(crate) fn config_key(key: &str) -> Result<Vec<u8>> {
     if key.contains('\0') {
         return Err(StoreError::invalid("a config key cannot contain NUL"));
     }

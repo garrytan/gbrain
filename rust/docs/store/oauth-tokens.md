@@ -88,6 +88,9 @@ transaction on `readOauthClientForUpdate`, `deleteOauthClientTokens`, `deleteOau
   (the row and its tokens); the returned row is dropped.
 - `setOauthClientRevision(clientId, revision, revoke)`: `grant_revision = $1`, and with `revoke` also
   `deleted_at = COALESCE(deleted_at, now())` (`set_oauth_client_revision`): a second revoke keeps the first time.
+- `setOauthClientReadSharedRevision(clientId, revision)`: `read_shared_revision = $2 WHERE client_id = $1`
+  (`set_oauth_client_read_shared_revision`); a null revision clears the read-shared switch. Its callers are the grant
+  writers (`stampReadShared`) and `invalidate-tokens`, which keeps a switched client switched at its new revision.
 - `insertOauthGrantAudit(row)`: one `oauth_grant_audit` row whose documents are JSON text (`insert_oauth_grant_audit`,
   the audit key space of `client_grants.rs`). It works for a client that is gone: a `delete` writes its tombstone after the row.
 - `countOauthAccessTokens(from, to)`: the number of `access` tokens whose `expires_at` is between `from` and `to` inclusive, or after

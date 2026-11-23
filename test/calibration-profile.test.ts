@@ -27,16 +27,13 @@ import { parseModelId } from '../src/core/ai/model-resolver.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import type { BrainEngine, TakesScorecard } from '../src/core/engine.ts';
 
-interface CapturedSql {
-  sql: string;
-  params: unknown[];
-}
+type InsertSpec = Parameters<BrainEngine['insertCalibrationProfile']>[0];
 
 function buildMockEngine(opts: { scorecard: TakesScorecard; userHolder?: string | null }): {
   engine: BrainEngine;
-  captured: CapturedSql[];
+  captured: InsertSpec[];
 } {
-  const captured: CapturedSql[] = [];
+  const captured: InsertSpec[] = [];
   const engine = {
     kind: 'pglite',
     async getScorecard() {
@@ -46,9 +43,12 @@ function buildMockEngine(opts: { scorecard: TakesScorecard; userHolder?: string 
       if (key === 'emotional_weight.user_holder') return opts.userHolder ?? null;
       return null;
     },
-    async executeRaw<T>(sql: string, params?: unknown[]): Promise<T[]> {
-      captured.push({ sql, params: params ?? [] });
-      return [];
+    // The typed members: the unchanged check never matches, and the insert is captured as the spec it was given.
+    async isCalibrationProfileUnchanged() {
+      return false;
+    },
+    async insertCalibrationProfile(spec: InsertSpec) {
+      captured.push(spec);
     },
   } as unknown as BrainEngine;
   return { engine, captured };
@@ -209,7 +209,7 @@ describe('runPhaseCalibrationProfile — phase integration', () => {
     expect(result.status).toBe('ok');
     expect((result.details as Record<string, unknown>).profile_written).toBe(false);
     expect((result.details as Record<string, unknown>).skipped).toBe('insufficient_data');
-    expect(captured.filter(c => c.sql.includes('INSERT INTO calibration_profiles'))).toHaveLength(0);
+    expect(captured).toHaveLength(0);
   });
 
   test('happy path: row written with passed voice gate', async () => {
@@ -232,17 +232,14 @@ describe('runPhaseCalibrationProfile — phase integration', () => {
     expect((details.pattern_statements as string[]).length).toBe(2);
     expect((details.active_bias_tags as string[])).toEqual(['over-confident-geography']);
 
-    const insert = captured.find(c => c.sql.includes('INSERT INTO calibration_profiles'));
+    const insert = captured[0];
     expect(insert).toBeDefined();
-    // Params: source_id, holder, total_resolved, brier, accuracy, partial_rate,
-    // grade_completion, domain_scorecards_json, patterns[], voice_passed, voice_attempts,
-    // bias_tags[], model_id
-    expect(insert!.params[0]).toBe('default'); // source_id
-    expect(insert!.params[1]).toBe('self'); // holder (resolved via resolveOwnerHolder, no override)
-    expect(insert!.params[2]).toBe(12); // total_resolved
-    expect(insert!.params[9]).toBe(true); // voice_gate_passed
-    expect(insert!.params[10]).toBe(1); // voice_gate_attempts
-    expect(insert!.params[11]).toEqual(['over-confident-geography']); // active_bias_tags
+    expect(insert!.sourceId).toBe('default'); // source_id
+    expect(insert!.holder).toBe('self'); // holder (resolved via resolveOwnerHolder, no override)
+    expect(insert!.totalResolved).toBe(12); // total_resolved
+    expect(insert!.voiceGatePassed).toBe(true); // voice_gate_passed
+    expect(insert!.voiceGateAttempts).toBe(1); // voice_gate_attempts
+    expect(insert!.activeBiasTags).toEqual(['over-confident-geography']); // active_bias_tags
   });
 
   test('default model is a provider-prefixed id, persisted to model_id (#2451)', async () => {
@@ -255,11 +252,11 @@ describe('runPhaseCalibrationProfile — phase integration', () => {
       biasTagsGenerator: async () => [],
       voiceGateJudge: passJudge,
     });
-    const insert = captured.find(c => c.sql.includes('INSERT INTO calibration_profiles'));
+    const insert = captured[0];
     expect(insert).toBeDefined();
     // Pre-fix this was a bare 'claude-sonnet-4-6' → gateway.chat() throws
     // "missing a provider prefix". The fix routes the default through TIER_DEFAULTS.
-    expect(insert!.params).toContain(TIER_DEFAULTS.reasoning);
+    expect(insert!.modelId).toBe(TIER_DEFAULTS.reasoning);
     expect(parseModelId(TIER_DEFAULTS.reasoning).providerId).toBe('anthropic');
   });
 
@@ -289,9 +286,9 @@ describe('runPhaseCalibrationProfile — phase integration', () => {
     expect(patterns.length).toBeGreaterThan(0);
     expect(patterns[0]).toContain('overall'); // template fallback contains "overall" domain
 
-    const insert = captured.find(c => c.sql.includes('INSERT INTO calibration_profiles'));
-    expect(insert!.params[9]).toBe(false); // voice_gate_passed=false
-    expect(insert!.params[10]).toBe(2); // voice_gate_attempts=2
+    const insert = captured[0];
+    expect(insert!.voiceGatePassed).toBe(false); // voice_gate_passed=false
+    expect(insert!.voiceGateAttempts).toBe(2); // voice_gate_attempts=2
   });
 
   test('grade_completion is plumbed through to the row', async () => {
@@ -302,8 +299,8 @@ describe('runPhaseCalibrationProfile — phase integration', () => {
       voiceGateJudge: passJudge,
       gradeCompletion: 0.6,
     });
-    const insert = captured.find(c => c.sql.includes('INSERT INTO calibration_profiles'));
-    expect(insert!.params[6]).toBe(0.6); // grade_completion
+    const insert = captured[0];
+    expect(insert!.gradeCompletion).toBe(0.6); // grade_completion
   });
 
   test('bias_tags_generator failure logs warning + phase continues', async () => {
@@ -323,7 +320,7 @@ describe('runPhaseCalibrationProfile — phase integration', () => {
     expect((details.warnings as string[])[0]).toContain('Haiku timed out');
   });
 
-  test('source_id from ctx scope reaches the INSERT params', async () => {
+  test('source_id from ctx scope reaches the insert', async () => {
     const { engine, captured } = buildMockEngine({ scorecard: ENOUGH_RESOLVED_SCORECARD });
     const patternsGenerator: PatternStatementsGenerator = async () => ['fine pattern'];
     const ctx = { ...buildCtx(engine), sourceId: 'tenant-b' };
@@ -331,8 +328,8 @@ describe('runPhaseCalibrationProfile — phase integration', () => {
       patternsGenerator,
       voiceGateJudge: passJudge,
     });
-    const insert = captured.find(c => c.sql.includes('INSERT INTO calibration_profiles'));
-    expect(insert!.params[0]).toBe('tenant-b');
+    const insert = captured[0];
+    expect(insert!.sourceId).toBe('tenant-b');
   });
 
   test('cold-brain summary uses resolved owner holder self when user_holder unset', async () => {
@@ -377,9 +374,9 @@ describe('generator model follows the gateway chat model', () => {
         voiceGateJudge: passJudge,
       });
       expect(hints).toEqual(['openai:gpt-5']);
-      const insert = captured.find(c => c.sql.includes('INSERT INTO calibration_profiles'));
+      const insert = captured[0];
       expect(insert).toBeDefined();
-      expect(insert!.params).toContain('openai:gpt-5'); // persisted model_id = full configured string
+      expect(insert!.modelId).toBe('openai:gpt-5'); // persisted model_id = full configured string
     } finally {
       resetGateway();
     }

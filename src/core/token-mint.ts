@@ -21,7 +21,7 @@ import { ALLOWED_SCOPES_LIST, assertAllowedScopes } from './scope.ts';
 import { forgetWakePrincipal } from './wakeshift/forget.ts';
 import { opError } from './ops/contract.ts';
 import { generateToken, hashToken, isUndefinedColumnError } from './utils.ts';
-import { permissionsMirror, privatePagesFromColumn, tokenGrantColumnArrays, tokenGrantFromPermissions, TOKEN_GRANT_COLUMNS, type GrantSources, type PrincipalGrant, type PrivatePagesGrant } from './grants/model.ts';
+import { GrantError, permissionsMirror, privatePagesFromColumn, tokenGrantColumnArrays, tokenGrantFromPermissions, TOKEN_GRANT_COLUMNS, type GrantSources, type PrincipalGrant, type PrivatePagesGrant } from './grants/model.ts';
 
 /** Canonical token-id shape — shared with the `auth revoke --id` CLI gate. */
 export const TOKEN_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -39,6 +39,8 @@ export interface MintLegacyTokenOpts {
    */
   sourceGrant?: string[];
   allowedOperations?: string[];
+  /** GST-2898: also read every shared source, now and later. Needs a non-empty sourceGrant. */
+  readShared?: boolean;
 }
 
 export interface MintedLegacyToken {
@@ -84,6 +86,7 @@ export async function mintLegacyToken(
   const rows = await insertUnifiedToken(engine, {
     name: opts.name, tokenHash: hashToken(token), scopes: opts.scopes,
     grant: { sources, takesHolders: opts.takesHolders, allowedOperations: opts.allowedOperations === undefined ? null : [...new Set(opts.allowedOperations)] },
+    readShared: opts.readShared === true,
   });
   const id = rows[0]?.id;
   if (!id) throw new Error('token insert returned no id');
@@ -103,12 +106,19 @@ export async function mintLegacyToken(
 export async function insertUnifiedToken(engine: BrainEngine, opts: {
   name: string; tokenHash: string; scopes?: string[];
   grant: Pick<PrincipalGrant, 'sources' | 'allowedOperations' | 'takesHolders'>;
+  /** GST-2898: born with the read-shared switch on (read_shared_revision = 1, the birth revision). */
+  readShared?: boolean;
 }): Promise<Array<{ id: string }>> {
+  if (opts.readShared && (opts.grant.sources.kind === 'none' || opts.grant.sources.kind === 'default')) {
+    throw new GrantError('invalid_grant', 'The read-shared switch needs a write source (a key with no source list already reads every shared source, and a --sources none key reads nothing). '
+      + 'Ask the user which source the key writes to, then mint it with --sources <write-source> --read-shared on.', ['read_shared_needs_source']);
+  }
   const { assertScopeSourceGrant, sourcesOf } = await import('./access/attest-sources.ts');
   const reads = sourcesOf(opts.grant.sources).reads;
   const insert = async (db: BrainEngine) => [await db.insertAccessToken({
     name: opts.name, token_hash: opts.tokenHash, scopes: opts.scopes === undefined ? null : [...opts.scopes],
     permissions: permissionsMirror(opts.grant, {}), ...tokenGrantColumnArrays(opts.grant),
+    ...(opts.readShared ? { read_shared: true } : {}),
   })];
   try {
     // GST-1113: a grant reading a named source checks it and inserts in one transaction, under the source row locks.
@@ -120,7 +130,7 @@ export async function insertUnifiedToken(engine: BrainEngine, opts: {
   } catch (e) {
     // isUndefinedColumnError also matches message-shaped variants: some
     // driver-wrapped errors drop the SQLSTATE code.
-    if (['scopes', 'permissions', 'grant_revision', ...TOKEN_GRANT_COLUMNS].some(column => isUndefinedColumnError(e, column))) {
+    if (['scopes', 'permissions', 'grant_revision', 'read_shared_revision', ...TOKEN_GRANT_COLUMNS].some(column => isUndefinedColumnError(e, column))) {
       throw opError('migrations_pending',
         'This brain is missing the access-token grant columns, so it cannot mint a token.',
         'Apply the pending schema migrations on the brain host, then mint the token again.',

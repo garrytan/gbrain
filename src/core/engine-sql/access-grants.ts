@@ -39,21 +39,27 @@ export async function readAccessTokenReceiptGrant(exec: LegacyUnscopedRead, toke
   return row;
 }
 
-/** A live OAuth client's membership grant, `FOR SHARE`; undefined for a missing or deleted client. */
-export async function readOAuthClientMemberGrant(exec: LegacyUnscopedRead, clientId: string): Promise<MemberClientGrant | undefined> {
-  const [row] = await exec.executeRaw<MemberClientGrant>(
-    'SELECT scope,source_id,federated_read,allowed_operations,grant_revision FROM oauth_clients WHERE client_id=$1 AND deleted_at IS NULL FOR SHARE', [clientId]);
+/**
+ * A live OAuth client's membership grant, `FOR SHARE` unless `lock` is false (a read-only catalog transaction, where
+ * Postgres refuses a row lock); undefined for a missing or deleted client.
+ */
+export async function readOAuthClientMemberGrant(exec: LegacyUnscopedRead, clientId: string, opts: { lock?: boolean } = {}): Promise<MemberClientGrant | undefined> {
+  const sql = opts.lock === false
+    ? 'SELECT scope,source_id,federated_read,allowed_operations,grant_revision FROM oauth_clients WHERE client_id=$1 AND deleted_at IS NULL'
+    : 'SELECT scope,source_id,federated_read,allowed_operations,grant_revision FROM oauth_clients WHERE client_id=$1 AND deleted_at IS NULL FOR SHARE';
+  const [row] = await exec.executeRaw<MemberClientGrant>(sql, [clientId]);
   return row;
 }
 
 /**
- * A live access token's membership grant, `FOR SHARE`; undefined for a missing or revoked token. The select list is
- * the grant columns this brain's access_tokens has (grants/model.ts tokenGrantRowSelect), read first.
+ * A live access token's membership grant, `FOR SHARE` unless `lock` is false; undefined for a missing or revoked
+ * token. The select list is the grant columns this brain's access_tokens has (grants/model.ts tokenGrantRowSelect),
+ * read first.
  */
-export async function readAccessTokenMemberGrant(exec: LegacyUnscopedRead, tokenId: string): Promise<MemberTokenGrant | undefined> {
+export async function readAccessTokenMemberGrant(exec: LegacyUnscopedRead, tokenId: string, opts: { lock?: boolean } = {}): Promise<MemberTokenGrant | undefined> {
   const present = new Set((await exec.executeRaw<{ attname: string }>(TOKEN_GRANT_COLUMNS_SQL)).map(c => c.attname));
   const { rows: [row] } = await exec.run<MemberTokenGrant>(
-    sqlFragment`SELECT ${trustedSql(tokenGrantColumnList(present))} FROM access_tokens WHERE id=${tokenId} AND revoked_at IS NULL FOR SHARE`);
+    sqlFragment`SELECT ${trustedSql(tokenGrantColumnList(present))} FROM access_tokens WHERE id=${tokenId} AND revoked_at IS NULL${lockSuffix(opts.lock !== false)}`);
   return row;
 }
 

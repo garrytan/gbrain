@@ -1,9 +1,13 @@
 //! Derived generations: the `derived_generations` and `derived_generation_items` tables of the
 //! PGLite engine, the generation ledger of `src/core/generations/publish.ts`.
 //!
-//! Members: readLiveGenerationRow, activateGenerationRows, recordHeldGenerationRow (the ledger
-//! statements of `engine-sql/derived-generations.ts`), listFenceHoldRows and clearFenceHoldRows
-//! (the held fence statements of `engine-sql/fence-holds.ts`).
+//! Members: readLiveGenerationRow, activateGenerationRows, recordHeldGenerationRow,
+//! heldGenerationRowsForInput, readHeldGenerationContext, liveGenerationForOperation,
+//! countGenerationAttempt, clearGenerationAttempts, readGenerationValve and bumpGenerationValve
+//! (the statements of `engine-sql/derived-generations.ts`), listFenceHoldRows and
+//! clearFenceHoldRows (the held fence statements of `engine-sql/fence-holds.ts`), and
+//! scrubGenerationPageRows and scrubGenerationTextRows (the purge scrub of
+//! `engine-sql/generation-ledger.ts`).
 //!
 //! Keys, all under `keys::DERIVED_GENERATION` (`h`):
 //! - `h 0x01 id(8) -> GenerationRecord`, one row of `derived_generations`. Ids come from the
@@ -13,23 +17,45 @@
 //!   No part may hold a NUL byte (Postgres `text` refuses one too), so the split is exact.
 //! - `h 0x03 id(8) item_key -> ItemRecord`, one row of `derived_generation_items`; the key is the
 //!   `(generation_id, item_key)` primary key.
+//! - `h 0x04 hold_id -> AttemptRecord`, one row of `derived_generation_attempts` (its primary key).
+//! - `h 0x05 source \0 kind \0 window_key -> ValveRecord`, one row of `derived_generation_valve`
+//!   (its primary key).
+//! - `h 0x06 operation_id \0 id(8) -> []` for each live row: the replay lookup
+//!   (`liveGenerationForOperation`) reads one prefix instead of every row.
+//! - `h 0x07 source \0 kind \0 owner_key \0 hold_id -> []` for each attempt row: the index
+//!   `derived_generation_attempts_key`, so an activation deletes its key's counters by prefix.
+//! - `h 0x08` and `h 0x09`: the managed activation rows of `derived_generation_activations` and
+//!   their generation index (`generations/activations.rs`, members recordGenerationActivation,
+//!   markGenerationActivated, readGenerationActivationState, settleGenerationMember,
+//!   listPendingGenerationMembers and listGenerationOrphanCandidates).
+//! - The reads of `gbrain repair generations` add no keys (`generations/repair.rs`, members
+//!   readGenerationItemsByIds, listUnmatchedGenerationRows, listRestorableGenerationRows,
+//!   listHeldGenerationRows and readHeldGenerationProposal).
+//! - The fence evidence reads of `generations/fence-evidence.ts` and the fence restore reads of
+//!   `generations/fence-restore.ts` add no keys (`generations/fence_evidence.rs`, members
+//!   listRecordedFenceItemKeys, hasBodylessPageVersion and listFenceVersionBodies;
+//!   `generations/fence_restore.rs`, members readGenerationFenceBlocks, listOwnedGenerationItems
+//!   and readLiveGenerationId).
 //!
 //! Time: `created_at` and `updated_at` are UTC microseconds from the store's clock; in a
 //! transaction that is the transaction's clock, as Postgres `now()` is the transaction's start.
 //!
 //! JSON columns (`completeness`, `held_context`, `proposal`, `preimage`) arrive as JSON text or
 //! values, are refused where Postgres `jsonb` refuses them, and are stored in Postgres `jsonb` key
-//! order (`dream::jsonb`).
+//! order (`jsonb::ordered`).
 //!
-//! The store keeps no `derived_generation_attempts` rows (`recordAttempt` still runs raw SQL, which
-//! this engine refuses), so the attempt counter delete of an activation has nothing to delete.
+//! A source delete removes the source's rows of all five tables (`remove_source_rows`); a deleted
+//! generation row sets its activations' `generation_id` to null.
 //!
 //! Every write goes through `Store::write`, so it runs on `access_flag::FlaggingWriter`. This
 //! family writes no page record, so it never sets the member-access flag itself; a page write in the
 //! same write closure still does.
 
-use crate::dream::{int4, jsonb, jsonb_check};
+use crate::cli_reads::pg_jsonb;
+use crate::cli_reads::pg_text::{jsonb_text as jsonb_text_of, pg_lower};
+use crate::dream::{int4, jsonb_check};
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, STORE_CORRUPT, StoreError};
+use crate::jsonb::ordered;
 use crate::kv::{KvRead, KvWrite, collect_prefix, scan_prefix};
 use crate::links::no_nul;
 use crate::{Store, get_json, keys, put_json};
@@ -37,9 +63,29 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
+mod activations;
+mod atom_reads;
+mod chronicle_events;
+mod fence_evidence;
+mod fence_restore;
+mod lost_fence;
+mod page_rows;
+mod repair;
+pub use activations::ActivationRecordInput;
+pub use chronicle_events::{
+    ChronicleSlugSpec, ChronicleSlugsSpec, OrphanedOwnersSpec, PageContentHashQuery,
+    RetiredItemKeysSpec,
+};
+pub use page_rows::GenerationPageRowsQuery;
+pub use repair::RepairFilter;
+
 const RECORD: u8 = 0x01;
 const POINTER: u8 = 0x02;
 const ITEM: u8 = 0x03;
+const ATTEMPT: u8 = 0x04;
+const VALVE: u8 = 0x05;
+const LIVE_OPERATION: u8 = 0x06;
+const ATTEMPT_BY_KEY: u8 = 0x07;
 
 /// The id counter (`pages::next_id`).
 const ID_COUNTER: &str = "next_derived_generation_id";
@@ -91,6 +137,17 @@ struct GenerationRecord {
     held_context: Option<Value>,
     #[serde(default)]
     proposal: Option<Value>,
+    /// `held_context::text`, `proposal::text` and `(completeness->'fence')::text` as Postgres
+    /// prints them, kept from the written JSON text (`pg_jsonb`): the digits of a number as
+    /// `numeric` keeps them, and a JSON `null` apart from SQL NULL (a stored `null` value reads
+    /// back as None, so `Some("null")` beside it is the JSON null). A record written before these
+    /// fields renders its text from the value (`JsonbColumn`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    held_context_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    proposal_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fence_text: Option<String>,
     #[serde(default)]
     proposal_bytes: Option<i32>,
     attempts: i32,
@@ -116,6 +173,24 @@ struct ItemRecord {
     #[serde(default)]
     preimage_bytes: Option<i32>,
     pending: bool,
+}
+
+/// One row of `derived_generation_attempts`; the key holds `hold_id`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AttemptRecord {
+    source_id: String,
+    kind: String,
+    owner_key: String,
+    attempts: i32,
+    codes: Vec<String>,
+    updated_at_us: i64,
+}
+
+/// One row of `derived_generation_valve`; the key holds `(source_id, kind, window_key)`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ValveRecord {
+    retired: i32,
+    updated_at_us: i64,
 }
 
 /// A generation key (`GenerationRowKey`, engine-sql/derived-generations.ts).
@@ -215,6 +290,78 @@ fn item_key(id: u64, item: &str) -> Vec<u8> {
     key
 }
 
+fn attempt_key(hold_id: &str) -> Vec<u8> {
+    let mut key = vec![keys::DERIVED_GENERATION, ATTEMPT];
+    key.extend_from_slice(hold_id.as_bytes());
+    key
+}
+
+fn attempt_index_prefix(parts: &[&str]) -> Vec<u8> {
+    let mut key = vec![keys::DERIVED_GENERATION, ATTEMPT_BY_KEY];
+    for part in parts {
+        key.extend_from_slice(part.as_bytes());
+        key.push(0);
+    }
+    key
+}
+
+fn attempt_index_key(record: &AttemptRecord, hold_id: &str) -> Vec<u8> {
+    let mut key = attempt_index_prefix(&[&record.source_id, &record.kind, &record.owner_key]);
+    key.extend_from_slice(hold_id.as_bytes());
+    key
+}
+
+fn valve_prefix(parts: &[&str]) -> Vec<u8> {
+    let mut key = vec![keys::DERIVED_GENERATION, VALVE];
+    for part in parts {
+        key.extend_from_slice(part.as_bytes());
+        key.push(0);
+    }
+    key
+}
+
+fn valve_key(source_id: &str, kind: &str, window_key: &str) -> Vec<u8> {
+    let mut key = valve_prefix(&[source_id, kind]);
+    key.extend_from_slice(window_key.as_bytes());
+    key
+}
+
+fn live_operation_prefix(operation_id: &str) -> Vec<u8> {
+    let mut key = vec![keys::DERIVED_GENERATION, LIVE_OPERATION];
+    key.extend_from_slice(operation_id.as_bytes());
+    key.push(0);
+    key
+}
+
+fn live_operation_key(record: &GenerationRecord) -> Vec<u8> {
+    let mut key = live_operation_prefix(&record.operation_id);
+    key.extend_from_slice(&record.id.to_be_bytes());
+    key
+}
+
+/// Deletes the attempt row `hold_id` with its index entry.
+fn delete_attempt(tx: &mut dyn KvWrite, hold_id: &str) -> Result<()> {
+    if let Some(record) = get_json::<AttemptRecord>(&*tx, &attempt_key(hold_id))? {
+        tx.delete(&attempt_index_key(&record, hold_id))?;
+        tx.delete(&attempt_key(hold_id))?;
+    }
+    Ok(())
+}
+
+/// Deletes the attempt rows whose index entries start with `prefix` (a key, or a source).
+fn delete_attempts_under(tx: &mut dyn KvWrite, prefix: &[u8]) -> Result<()> {
+    for (k, _) in collect_prefix(&*tx, prefix, false, usize::MAX)? {
+        let hold_id = k
+            .iter()
+            .rposition(|b| *b == 0)
+            .map(|at| String::from_utf8_lossy(&k[at + 1..]).into_owned())
+            .ok_or_else(|| corrupt("attempt index"))?;
+        tx.delete(&k)?;
+        tx.delete(&attempt_key(&hold_id))?;
+    }
+    Ok(())
+}
+
 fn corrupt(what: &str) -> StoreError {
     StoreError::new(STORE_CORRUPT, format!("derived_generations: bad {what}"))
 }
@@ -242,6 +389,15 @@ fn read_record(read: &dyn KvRead, id: u64) -> Result<Option<GenerationRecord>> {
     get_json(read, &record_key(id))
 }
 
+/// Whether the held row of `key` is held for `reason` (`state='held' AND held_reason=…`; the gate of
+/// `listHeldFenceTakeRows`).
+pub(crate) fn held_for(read: &dyn KvRead, key: &GenerationKey, reason: &str) -> Result<bool> {
+    Ok(
+        pointed_record(read, key, "held")?
+            .is_some_and(|r| r.held_reason.as_deref() == Some(reason)),
+    )
+}
+
 /// The record a pointer names; a pointer to no record is corrupt.
 fn pointed_record(
     read: &dyn KvRead,
@@ -266,6 +422,9 @@ fn record_generation_key(record: &GenerationRecord) -> GenerationKey {
 
 /// Deletes the row `id` with its pointer and its items (`ON DELETE CASCADE` of the items).
 fn delete_row(tx: &mut dyn KvWrite, record: &GenerationRecord) -> Result<()> {
+    if record.state == "live" {
+        tx.delete(&live_operation_key(record))?;
+    }
     if record.state == "live" || record.state == "held" {
         let key = record_generation_key(record);
         if pointed(&*tx, &key, &record.state)? == Some(record.id) {
@@ -275,6 +434,7 @@ fn delete_row(tx: &mut dyn KvWrite, record: &GenerationRecord) -> Result<()> {
     for (k, _) in collect_prefix(&*tx, &item_prefix(record.id), false, usize::MAX)? {
         tx.delete(&k)?;
     }
+    activations::unlink_generation(tx, record.id)?;
     tx.delete(&record_key(record.id))
 }
 
@@ -289,6 +449,75 @@ fn int8(op: &str, column: &str, value: f64) -> Result<i64> {
     Ok(value as i64)
 }
 
+/// `column::text` of JSON text bound to a `::text::jsonb` cast that `jsonb_text` took as `value`.
+fn kept_text(text: &str, value: &Value) -> String {
+    pg_jsonb::parse(text).map_or_else(|| jsonb_text_of(value), |parsed| parsed.text())
+}
+
+/// `(completeness->'fence')::text` of the completeness JSON text, or None without a `fence` key.
+fn fence_text(text: &str, completeness: &Value) -> Option<String> {
+    match pg_jsonb::parse(text) {
+        Some(parsed) => parsed.get("fence").map(pg_jsonb::Jsonb::text),
+        None => completeness.get("fence").map(jsonb_text_of),
+    }
+}
+
+/// A nullable jsonb column of a record: its value and its kept text.
+struct JsonbColumn<'a> {
+    value: &'a Option<Value>,
+    text: &'a Option<String>,
+}
+
+impl JsonbColumn<'_> {
+    /// The column's value: `Some(Value::Null)` for a JSON null, None for SQL NULL.
+    fn value(&self) -> Option<Value> {
+        match (self.value, self.text) {
+            (Some(value), _) => Some(value.clone()),
+            (None, Some(_)) => Some(Value::Null),
+            (None, None) => None,
+        }
+    }
+
+    /// `column::text`, or None for SQL NULL.
+    fn text(&self) -> Option<String> {
+        self.text
+            .clone()
+            .or_else(|| self.value.as_ref().map(jsonb_text_of))
+    }
+}
+
+impl GenerationRecord {
+    fn held_context_column(&self) -> JsonbColumn<'_> {
+        JsonbColumn {
+            value: &self.held_context,
+            text: &self.held_context_text,
+        }
+    }
+
+    fn proposal_column(&self) -> JsonbColumn<'_> {
+        JsonbColumn {
+            value: &self.proposal,
+            text: &self.proposal_text,
+        }
+    }
+
+    /// `(completeness->'fence')::text`, or None without a `fence` key.
+    fn fence_text(&self) -> Option<String> {
+        let fence = self.completeness.as_object()?.get("fence")?;
+        Some(
+            self.fence_text
+                .clone()
+                .unwrap_or_else(|| jsonb_text_of(fence)),
+        )
+    }
+
+    /// `SET proposal=NULL`.
+    fn null_proposal(&mut self) {
+        self.proposal = None;
+        self.proposal_text = None;
+    }
+}
+
 /// JSON text bound to a `::text::jsonb` cast: parsed, checked and in `jsonb` key order.
 fn jsonb_text(op: &str, column: &str, text: &str) -> Result<Value> {
     let value: Value = serde_json::from_str(text).map_err(|e| {
@@ -298,7 +527,7 @@ fn jsonb_text(op: &str, column: &str, text: &str) -> Result<Value> {
         )
     })?;
     jsonb_check(op, column, &value)?;
-    Ok(jsonb(&value))
+    Ok(ordered(&value))
 }
 
 fn check_violation(constraint: &str, table: &str) -> StoreError {
@@ -391,6 +620,7 @@ impl Store {
             .map(|v| int8(OP, "restore_of", v))
             .transpose()?;
         let completeness = jsonb_text(OP, "completeness", &row.completeness)?;
+        let completeness_fence = fence_text(&row.completeness, &completeness);
         let mut ledger = Vec::with_capacity(items.len());
         for item in items {
             no_nul(
@@ -411,7 +641,7 @@ impl Store {
                 None | Some(Value::Null) => None,
                 Some(value) => {
                     jsonb_check(OP, "preimage", value)?;
-                    Some(jsonb(value))
+                    Some(ordered(value))
                 }
             };
             let preimage_bytes = item
@@ -440,6 +670,7 @@ impl Store {
                 if pointed(&*tx, &live_key, "live")? == Some(id) {
                     tx.delete(&pointer_key(&live_key, "live"))?;
                 }
+                tx.delete(&live_operation_key(&live))?;
                 live.state = "superseded".into();
                 live.updated_at_us = now;
                 put_json(tx, &record_key(id), &live)?;
@@ -466,6 +697,9 @@ impl Store {
                 held_reason: None,
                 held_context: None,
                 proposal: None,
+                held_context_text: None,
+                proposal_text: None,
+                fence_text: completeness_fence.clone(),
                 proposal_bytes: None,
                 attempts: 0,
                 superseded_by: None,
@@ -477,6 +711,7 @@ impl Store {
             };
             put_json(tx, &record_key(id), &record)?;
             tx.put(&pointer_key(key, "live"), &id.to_be_bytes())?;
+            tx.put(&live_operation_key(&record), &[])?;
             // UPDATE derived_generations SET superseded_by=$1 WHERE id=$2
             if let Some(old) = live_id.and_then(|old| u64::try_from(old).ok())
                 && let Some(mut superseded) = read_record(&*tx, old)?
@@ -494,6 +729,11 @@ impl Store {
             if let Some(held) = pointed_record(&*tx, key, "held")? {
                 delete_row(tx, &held)?;
             }
+            // ... DELETE FROM derived_generation_attempts WHERE source_id=$1 AND kind=$2 AND owner_key=$3
+            delete_attempts_under(
+                tx,
+                &attempt_index_prefix(&[&key.source_id, &key.kind, &key.owner_key]),
+            )?;
             Ok(id)
         })
     }
@@ -533,11 +773,17 @@ impl Store {
                 ));
             }
             let held_context = jsonb_text(OP, "held_context", &row.context)?;
+            let held_context_text = kept_text(&row.context, &held_context);
             let proposal = row
                 .proposal
                 .as_deref()
                 .map(|text| jsonb_text(OP, "proposal", text))
                 .transpose()?;
+            let proposal_text = row
+                .proposal
+                .as_deref()
+                .zip(proposal.as_ref())
+                .map(|(text, value)| kept_text(text, value));
             crate::sources::require_source(&*tx, &key.source_id)?;
             let id = crate::pages::next_id(tx, ID_COUNTER)?;
             let record = GenerationRecord {
@@ -557,6 +803,9 @@ impl Store {
                 held_reason: Some(row.reason.clone()),
                 held_context: Some(held_context),
                 proposal,
+                held_context_text: Some(held_context_text),
+                proposal_text,
+                fence_text: None,
                 proposal_bytes: Some(proposal_bytes),
                 attempts: 1,
                 superseded_by: None,
@@ -658,19 +907,379 @@ impl Store {
             Ok(())
         })
     }
+
+    /// `readGenerationRestored(key)`: whether the key's live row is a restore (`restore_of` set);
+    /// false when the key has no live row.
+    pub fn read_generation_restored(&self, key: &GenerationKey) -> Result<bool> {
+        check_key("readGenerationRestored", key)?;
+        let read = self.read()?;
+        Ok(pointed_record(&*read, key, "live")?.is_some_and(|record| record.restore_of.is_some()))
+    }
+
+    /// `clearTieHeldGenerationRows(sourceId, kind, ownerPrefix)`: deletes the held rows of `kind`
+    /// in `source_id` held `tie` whose owner key starts with `owner_prefix`, with their items. The
+    /// prefix is compared as `left(owner_key, <UTF-16 length of the prefix>)`, as the caller sends
+    /// Postgres its JavaScript length.
+    pub fn clear_tie_held_generation_rows(
+        &self,
+        source_id: &str,
+        kind: &str,
+        owner_prefix: &str,
+    ) -> Result<()> {
+        no_nul(
+            "clearTieHeldGenerationRows",
+            &[
+                ("sourceId", source_id),
+                ("kind", kind),
+                ("ownerPrefix", owner_prefix),
+            ],
+        )?;
+        let width = owner_prefix.encode_utf16().count();
+        self.write(|tx| {
+            let mut held = Vec::new();
+            for (k, v) in
+                collect_prefix(&*tx, &pointer_prefix(&[source_id, kind]), false, usize::MAX)?
+            {
+                if k.ends_with(b"\0held") {
+                    held.push(keys::be8(&v).ok_or_else(|| corrupt("pointer"))?);
+                }
+            }
+            for id in held {
+                let record = read_record(&*tx, id)?.ok_or_else(|| corrupt("pointer target"))?;
+                if record.held_reason.as_deref() == Some("tie")
+                    && record.owner_key.chars().take(width).collect::<String>() == owner_prefix
+                {
+                    delete_row(tx, &record)?;
+                }
+            }
+            Ok(())
+        })
+    }
+
+    /// `heldGenerationRowsForInput(key, pin)`: the held rows of `key` whose `input_pin` is `pin`
+    /// (at most one: a key holds one held row).
+    pub fn held_generation_rows_for_input(&self, key: &GenerationKey, pin: &str) -> Result<Value> {
+        const OP: &str = "heldGenerationRowsForInput";
+        check_key(OP, key)?;
+        no_nul(OP, &[("input_pin", pin)])?;
+        let read = self.read()?;
+        let rows = match pointed_record(&*read, key, "held")? {
+            Some(held) if held.input_pin.as_deref() == Some(pin) => vec![json!({
+                "hold_id": held.hold_id,
+                "item_set_hash": held.item_set_hash,
+                "held_reason": held.held_reason,
+            })],
+            _ => Vec::new(),
+        };
+        Ok(Value::Array(rows))
+    }
+
+    /// `readHeldGenerationContext(key, holdId)`: `{ held_context }` of the key's held row when its
+    /// `hold_id` is `hold_id`, or null.
+    pub fn read_held_generation_context(
+        &self,
+        key: &GenerationKey,
+        hold_id: &str,
+    ) -> Result<Value> {
+        const OP: &str = "readHeldGenerationContext";
+        check_key(OP, key)?;
+        no_nul(OP, &[("hold_id", hold_id)])?;
+        let read = self.read()?;
+        Ok(match pointed_record(&*read, key, "held")? {
+            Some(held) if held.hold_id.as_deref() == Some(hold_id) => {
+                json!({ "held_context": held.held_context })
+            }
+            _ => Value::Null,
+        })
+    }
+
+    /// `liveGenerationForOperation(operationId)`: the `generation` of a live row whose
+    /// `operation_id` is `operation_id`, or null.
+    pub fn live_generation_for_operation(&self, operation_id: &str) -> Result<Value> {
+        const OP: &str = "liveGenerationForOperation";
+        no_nul(OP, &[("operation_id", operation_id)])?;
+        let read = self.read()?;
+        let prefix = live_operation_prefix(operation_id);
+        let Some((k, _)) = collect_prefix(&*read, &prefix, false, 1)?
+            .into_iter()
+            .next()
+        else {
+            return Ok(Value::Null);
+        };
+        let id = keys::be8(&k[prefix.len()..]).ok_or_else(|| corrupt("operation index"))?;
+        let record = read_record(&*read, id)?.ok_or_else(|| corrupt("operation index target"))?;
+        if record.state != "live" {
+            return Err(corrupt("operation index state"));
+        }
+        Ok(json!(record.generation))
+    }
+
+    /// `countGenerationAttempt(key, holdId, code)`: inserts the attempt row `hold_id` with one
+    /// attempt and `[code]`, or adds one attempt and appends `code`; resolves
+    /// `{ attempts, codes }`.
+    pub fn count_generation_attempt(
+        &self,
+        key: &GenerationKey,
+        hold_id: &str,
+        code: &str,
+    ) -> Result<Value> {
+        const OP: &str = "countGenerationAttempt";
+        check_key(OP, key)?;
+        no_nul(OP, &[("hold_id", hold_id), ("code", code)])?;
+        let now = self.env.now_micros();
+        self.write(|tx| {
+            let record = match get_json::<AttemptRecord>(&*tx, &attempt_key(hold_id))? {
+                // ON CONFLICT (hold_id) DO UPDATE: the row keeps its own key columns.
+                Some(mut existing) => {
+                    existing.attempts = existing.attempts.checked_add(1).ok_or_else(|| {
+                        StoreError::new(
+                            INVALID_ARGUMENT,
+                            format!("{OP}: integer out of range (attempts)"),
+                        )
+                    })?;
+                    existing.codes.push(code.to_owned());
+                    existing.updated_at_us = now;
+                    existing
+                }
+                None => {
+                    crate::sources::require_source(&*tx, &key.source_id)?;
+                    AttemptRecord {
+                        source_id: key.source_id.clone(),
+                        kind: key.kind.clone(),
+                        owner_key: key.owner_key.clone(),
+                        attempts: 1,
+                        codes: vec![code.to_owned()],
+                        updated_at_us: now,
+                    }
+                }
+            };
+            put_json(tx, &attempt_key(hold_id), &record)?;
+            tx.put(&attempt_index_key(&record, hold_id), &[])?;
+            Ok(json!({ "attempts": record.attempts, "codes": record.codes }))
+        })
+    }
+
+    /// `clearGenerationAttempts(holdId)`: deletes the attempt row `hold_id`.
+    pub fn clear_generation_attempts(&self, hold_id: &str) -> Result<()> {
+        no_nul("clearGenerationAttempts", &[("hold_id", hold_id)])?;
+        self.write(|tx| delete_attempt(tx, hold_id))
+    }
+
+    /// `readGenerationValve(key, windowKey)`: `{ retired, owned }`: the retirements of the
+    /// source and kind's valve window (null: no row), and the items the live generations of the
+    /// source and kind own.
+    pub fn read_generation_valve(&self, key: &GenerationKey, window_key: &str) -> Result<Value> {
+        const OP: &str = "readGenerationValve";
+        check_key(OP, key)?;
+        no_nul(OP, &[("window_key", window_key)])?;
+        let read = self.read()?;
+        let retired =
+            get_json::<ValveRecord>(&*read, &valve_key(&key.source_id, &key.kind, window_key))?
+                .map(|valve| valve.retired);
+        let mut live = Vec::new();
+        let prefix = pointer_prefix(&[&key.source_id, &key.kind]);
+        for (k, v) in collect_prefix(&*read, &prefix, false, usize::MAX)? {
+            if k.ends_with(b"\0live") {
+                live.push(keys::be8(&v).ok_or_else(|| corrupt("pointer"))?);
+            }
+        }
+        let mut owned: i64 = 0;
+        for id in live {
+            let mut failure = None;
+            scan_prefix(&*read, &item_prefix(id), false, &mut |_, v| {
+                match serde_json::from_slice::<ItemRecord>(v) {
+                    Ok(item) if OWNED_ACTIONS.contains(&item.action.as_str()) => owned += 1,
+                    Ok(_) => {}
+                    Err(e) => {
+                        failure = Some(StoreError::from(e));
+                        return false;
+                    }
+                }
+                true
+            })?;
+            if let Some(e) = failure {
+                return Err(e);
+            }
+        }
+        Ok(json!({ "retired": retired, "owned": owned }))
+    }
+
+    /// `bumpGenerationValve(key, windowKey, retired)`: adds `retired` to the valve window of the
+    /// key's source and kind (inserted at `retired`).
+    pub fn bump_generation_valve(
+        &self,
+        key: &GenerationKey,
+        window_key: &str,
+        retired: f64,
+    ) -> Result<()> {
+        const OP: &str = "bumpGenerationValve";
+        check_key(OP, key)?;
+        no_nul(OP, &[("window_key", window_key)])?;
+        let retired = int4(OP, "retired", retired)?;
+        let now = self.env.now_micros();
+        let at = valve_key(&key.source_id, &key.kind, window_key);
+        self.write(|tx| {
+            let total = match get_json::<ValveRecord>(&*tx, &at)? {
+                Some(valve) => valve.retired.checked_add(retired).ok_or_else(|| {
+                    StoreError::new(
+                        INVALID_ARGUMENT,
+                        format!("{OP}: integer out of range (retired)"),
+                    )
+                })?,
+                None => {
+                    crate::sources::require_source(&*tx, &key.source_id)?;
+                    retired
+                }
+            };
+            put_json(
+                tx,
+                &at,
+                &ValveRecord {
+                    retired: total,
+                    updated_at_us: now,
+                },
+            )
+        })
+    }
+
+    /// `scrubGenerationPageRows(sourceId, kinds, slug)`, the page purge scrub, in the order of
+    /// its four statements: deletes the held rows of `kinds` owned by `page:<slug>`; nulls the
+    /// preimage of the item `slug` in every generation of the source; nulls every proposal whose
+    /// owner key ends in `:<slug>` or that proposes an object with `"key": slug`; drops the
+    /// `fence` key of the completeness of every row owned by `page:<slug>`. Resolves
+    /// `{ derived_generation_items, derived_generations }`, each the rows its statements changed.
+    pub fn scrub_generation_page_rows(
+        &self,
+        source_id: &str,
+        kinds: &[String],
+        slug: &str,
+    ) -> Result<Value> {
+        const OP: &str = "scrubGenerationPageRows";
+        no_nul(OP, &[("source_id", source_id), ("slug", slug)])?;
+        for kind in kinds {
+            no_nul(OP, &[("kind", kind)])?;
+        }
+        let now = self.env.now_micros();
+        let owner = format!("page:{slug}");
+        let suffix = format!(":{slug}");
+        self.write(|tx| {
+            let (mut items, mut generations) = (0u64, 0u64);
+            let mut kept = Vec::new();
+            for record in source_records(&*tx, source_id)? {
+                if record.state == "held"
+                    && record.owner_key == owner
+                    && kinds.contains(&record.kind)
+                {
+                    delete_row(tx, &record)?;
+                    generations += 1;
+                } else {
+                    kept.push(record);
+                }
+            }
+            for record in &kept {
+                let at = item_key(record.id, slug);
+                if let Some(mut item) = get_json::<ItemRecord>(&*tx, &at)?
+                    && item.preimage.is_some()
+                {
+                    item.preimage = None;
+                    put_json(tx, &at, &item)?;
+                    items += 1;
+                }
+            }
+            for record in &mut kept {
+                let named = record.proposal_column().value().is_some_and(|proposal| {
+                    record.owner_key.ends_with(&suffix) || proposes_key(&proposal, slug)
+                });
+                if named {
+                    record.null_proposal();
+                    record.updated_at_us = now;
+                    put_json(tx, &record_key(record.id), &*record)?;
+                    generations += 1;
+                }
+            }
+            for record in &mut kept {
+                if record.owner_key == owner && drop_fence(record) {
+                    record.updated_at_us = now;
+                    put_json(tx, &record_key(record.id), &*record)?;
+                    generations += 1;
+                }
+            }
+            Ok(json!({ "derived_generation_items": items, "derived_generations": generations }))
+        })
+    }
+
+    /// `scrubGenerationTextRows(sourceId, needles)`, the fact purge scrub, in the order of its
+    /// three statements: nulls every item preimage of the source whose jsonb text, lowered,
+    /// contains a needle; nulls both the proposal and the held context of every row where either
+    /// does; drops the `fence` key of every completeness whose `fence` value does. The needles
+    /// arrive lowercase. Resolves `{ derived_generation_items, derived_generations }`.
+    pub fn scrub_generation_text_rows(&self, source_id: &str, needles: &[String]) -> Result<Value> {
+        const OP: &str = "scrubGenerationTextRows";
+        no_nul(OP, &[("source_id", source_id)])?;
+        for needle in needles {
+            no_nul(OP, &[("needle", needle)])?;
+        }
+        let carries_text = |text: &str| {
+            let text = pg_lower(text);
+            needles.iter().any(|needle| text.contains(needle.as_str()))
+        };
+        let carries = |value: &Value| carries_text(&jsonb_text_of(value));
+        let now = self.env.now_micros();
+        self.write(|tx| {
+            let (mut items, mut generations) = (0u64, 0u64);
+            let mut records = source_records(&*tx, source_id)?;
+            for record in &records {
+                for (k, v) in collect_prefix(&*tx, &item_prefix(record.id), false, usize::MAX)? {
+                    let mut item: ItemRecord = serde_json::from_slice(&v)?;
+                    if item.preimage.as_ref().is_some_and(&carries) {
+                        item.preimage = None;
+                        put_json(tx, &k, &item)?;
+                        items += 1;
+                    }
+                }
+            }
+            for record in &mut records {
+                if record
+                    .proposal_column()
+                    .text()
+                    .is_some_and(|t| carries_text(&t))
+                    || record
+                        .held_context_column()
+                        .text()
+                        .is_some_and(|t| carries_text(&t))
+                {
+                    record.null_proposal();
+                    record.held_context = None;
+                    record.held_context_text = None;
+                    record.updated_at_us = now;
+                    put_json(tx, &record_key(record.id), &*record)?;
+                    generations += 1;
+                }
+            }
+            for record in &mut records {
+                let fenced = record.fence_text().is_some_and(|t| carries_text(&t));
+                if fenced && drop_fence(record) {
+                    record.updated_at_us = now;
+                    put_json(tx, &record_key(record.id), &*record)?;
+                    generations += 1;
+                }
+            }
+            Ok(json!({ "derived_generation_items": items, "derived_generations": generations }))
+        })
+    }
 }
 
-/// `ON DELETE CASCADE` of `derived_generations.source_id` (and of the items with their row).
-pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
-    let mut doomed = Vec::new();
+/// The `derived_generations` rows of `source_id`, in id order (the records carry no source index).
+fn source_records(read: &dyn KvRead, source_id: &str) -> Result<Vec<GenerationRecord>> {
+    let mut rows = Vec::new();
     let mut failure = None;
     scan_prefix(
-        &*tx,
+        read,
         &[keys::DERIVED_GENERATION, RECORD],
         false,
         &mut |_, v| {
             match serde_json::from_slice::<GenerationRecord>(v) {
-                Ok(record) if record.source_id == source_id => doomed.push(record),
+                Ok(record) if record.source_id == source_id => rows.push(record),
                 Ok(_) => {}
                 Err(e) => {
                     failure = Some(StoreError::from(e));
@@ -680,11 +1289,90 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
             true
         },
     )?;
-    if let Some(e) = failure {
-        return Err(e);
+    match failure {
+        Some(e) => Err(e),
+        None => Ok(rows),
     }
+}
+
+/// One `derived_generations` row with its `derived_generation_items`, as other families read the
+/// ledger (`facts::generations`, `listUnwithdrawnFacts`).
+pub(crate) struct GenerationView {
+    pub id: u64,
+    pub owner_key: String,
+    pub generation: i32,
+    pub state: String,
+    pub created_at_us: i64,
+    pub items: Vec<GenerationItemView>,
+}
+
+/// One `derived_generation_items` row of a [`GenerationView`].
+pub(crate) struct GenerationItemView {
+    pub action: String,
+    pub preimage: Option<Value>,
+}
+
+/// The generation rows of `source_id` of `kind` with their items, in id order and item key
+/// order: the one read of this ledger outside this module.
+pub(crate) fn source_generation_views(
+    read: &dyn KvRead,
+    source_id: &str,
+    kind: &str,
+) -> Result<Vec<GenerationView>> {
+    let mut out = Vec::new();
+    for record in source_records(read, source_id)? {
+        if record.kind != kind {
+            continue;
+        }
+        let mut items = Vec::new();
+        for (_, v) in collect_prefix(read, &item_prefix(record.id), false, usize::MAX)? {
+            let item: ItemRecord = serde_json::from_slice(&v)?;
+            items.push(GenerationItemView {
+                action: item.action,
+                preimage: item.preimage,
+            });
+        }
+        out.push(GenerationView {
+            id: record.id,
+            owner_key: record.owner_key,
+            generation: record.generation,
+            state: record.state,
+            created_at_us: record.created_at_us,
+            items,
+        });
+    }
+    Ok(out)
+}
+
+/// `proposal @> jsonb_build_array(jsonb_build_object('key', slug))`: the proposal is an array
+/// with an object element whose `key` is the string `slug`.
+fn proposes_key(proposal: &Value, slug: &str) -> bool {
+    proposal.as_array().is_some_and(|items| {
+        items
+            .iter()
+            .any(|item| item.get("key").and_then(Value::as_str) == Some(slug))
+    })
+}
+
+/// `completeness - 'fence'` where `completeness->'fence' IS NOT NULL`: true when the key was there.
+fn drop_fence(record: &mut GenerationRecord) -> bool {
+    record.fence_text = None;
+    record
+        .completeness
+        .as_object_mut()
+        .is_some_and(|o| o.remove("fence").is_some())
+}
+
+/// `ON DELETE CASCADE` of `derived_generations.source_id` (and of the items with their row).
+pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
+    let doomed = source_records(&*tx, source_id)?;
     for record in &doomed {
         delete_row(tx, record)?;
+    }
+    activations::remove_source_activations(tx, source_id)?;
+    delete_attempts_under(tx, &attempt_index_prefix(&[source_id]))?;
+    for (k, _) in collect_prefix(&*tx, &valve_prefix(&[source_id]), false, usize::MAX)? {
+        tx.delete(&k)?;
     }
     Ok(())
 }
@@ -697,6 +1385,17 @@ mod tests {
     use super::*;
     use crate::access_flag::RESTRICTIONS_PRESENT_KEY as FLAG;
     use crate::test_support::store;
+
+    /// A stored page with no readers (a real `put_page`), so a raw write can name its readers.
+    fn put_open_page(store: &Store, slug: &str) {
+        let input: crate::pages::PageInput = serde_json::from_value(json!({
+            "type": "note", "title": slug, "compiled_truth": "body", "frontmatter": {"tags": ["a"]}
+        }))
+        .unwrap();
+        let opts: crate::pages::PutPageOptions =
+            serde_json::from_value(json!({"sourceId": "default"})).unwrap();
+        store.put_page(slug, &input, &opts).unwrap();
+    }
 
     fn key() -> GenerationKey {
         GenerationKey {
@@ -723,6 +1422,7 @@ mod tests {
     #[test]
     fn a_generation_write_and_a_reader_page_put_in_one_write_set_the_flag() {
         let store = store();
+        put_open_page(&store, "notes/closed");
         assert_eq!(store.get_config(FLAG).unwrap(), None);
         store
             .write(|tx| {
@@ -731,7 +1431,9 @@ mod tests {
                 tx.put(&pointer_key(&key(), "held"), &id.to_be_bytes())?;
                 tx.delete(&pointer_key(&key(), "held"))?;
                 let page = keys::page("default", "notes/closed");
-                let record = json!({"slug": "notes/closed", "frontmatter": {"readable_by": ["alice-example"]}});
+                let mut record: serde_json::Value =
+                    serde_json::from_slice(&tx.get(&page)?.unwrap())?;
+                record["frontmatter"]["readable_by"] = json!(["alice-example"]);
                 tx.put(&page, &serde_json::to_vec(&record)?)
             })
             .unwrap();
@@ -782,12 +1484,186 @@ mod tests {
         assert!(read_record(&*read, first.id).unwrap().is_none());
     }
 
+    fn activation(operation: &str, generation: f64) -> ActivationInput {
+        ActivationInput {
+            generation,
+            run_id: None,
+            operation_id: operation.into(),
+            input_pin: None,
+            input_size: None,
+            completeness: "{}".into(),
+            set_hash: "set".into(),
+            restore_of: None,
+            activation_id: None,
+            locator: None,
+        }
+    }
+
+    fn owned(item: &str) -> LedgerItemInput {
+        LedgerItemInput {
+            item_key: item.into(),
+            identity_hash: item.into(),
+            action: "published".into(),
+            preimage: None,
+            preimage_bytes: None,
+            pending: false,
+        }
+    }
+
+    #[test]
+    fn attempts_count_up_and_an_activation_deletes_its_keys_counters() {
+        let store = store();
+        let one = store
+            .count_generation_attempt(&key(), "a1", "boom")
+            .unwrap();
+        assert_eq!(one, json!({"attempts": 1, "codes": ["boom"]}));
+        let two = store
+            .count_generation_attempt(&key(), "a1", "bang")
+            .unwrap();
+        assert_eq!(two, json!({"attempts": 2, "codes": ["boom", "bang"]}));
+        store.clear_generation_attempts("a1").unwrap();
+        let again = store
+            .count_generation_attempt(&key(), "a1", "boom")
+            .unwrap();
+        assert_eq!(again["attempts"], json!(1));
+        store
+            .activate_generation_rows(&key(), None, &activation("op1", 1.0), &[owned("x")])
+            .unwrap();
+        let read = store.read().unwrap();
+        assert!(
+            collect_prefix(&*read, &[keys::DERIVED_GENERATION, ATTEMPT], false, 10)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn the_replay_lookup_finds_only_the_live_row_of_an_operation() {
+        let store = store();
+        assert_eq!(
+            store.live_generation_for_operation("op1").unwrap(),
+            Value::Null
+        );
+        let first = store
+            .activate_generation_rows(&key(), None, &activation("op1", 1.0), &[owned("x")])
+            .unwrap();
+        assert_eq!(
+            store.live_generation_for_operation("op1").unwrap(),
+            json!(1)
+        );
+        store
+            .activate_generation_rows(&key(), Some(first as f64), &activation("op2", 2.0), &[])
+            .unwrap();
+        assert_eq!(
+            store.live_generation_for_operation("op1").unwrap(),
+            Value::Null
+        );
+        assert_eq!(
+            store.live_generation_for_operation("op2").unwrap(),
+            json!(2)
+        );
+    }
+
+    #[test]
+    fn the_valve_adds_retirements_and_counts_live_owned_items() {
+        let store = store();
+        let empty = store
+            .read_generation_valve(&key(), "day:2026-11-19")
+            .unwrap();
+        assert_eq!(empty, json!({"retired": null, "owned": 0}));
+        store
+            .activate_generation_rows(
+                &key(),
+                None,
+                &activation("op1", 1.0),
+                &[owned("x"), owned("y")],
+            )
+            .unwrap();
+        store
+            .bump_generation_valve(&key(), "day:2026-11-19", 2.0)
+            .unwrap();
+        store
+            .bump_generation_valve(&key(), "day:2026-11-19", 3.0)
+            .unwrap();
+        let valve = store
+            .read_generation_valve(&key(), "day:2026-11-19")
+            .unwrap();
+        assert_eq!(valve, json!({"retired": 5, "owned": 2}));
+        let err = store
+            .bump_generation_valve(&key(), "day:x", 0.5)
+            .unwrap_err();
+        assert_eq!(err.code, INVALID_ARGUMENT);
+    }
+
+    #[test]
+    fn the_held_reads_match_the_held_row() {
+        let store = store();
+        let mut row = held("h1", "attempts_exhausted");
+        row.input_pin = Some("pin-1".into());
+        store.record_held_generation_row(&key(), &row).unwrap();
+        let rows = store
+            .held_generation_rows_for_input(&key(), "pin-1")
+            .unwrap();
+        assert_eq!(rows[0]["hold_id"], json!("h1"));
+        assert_eq!(
+            store
+                .held_generation_rows_for_input(&key(), "pin-2")
+                .unwrap(),
+            json!([])
+        );
+        let context = store.read_held_generation_context(&key(), "h1").unwrap();
+        assert_eq!(context["held_context"]["slug"], json!("notes/a"));
+        assert_eq!(
+            store.read_held_generation_context(&key(), "h2").unwrap(),
+            Value::Null
+        );
+    }
+
+    #[test]
+    fn an_attempt_and_a_reader_page_put_in_one_write_set_the_flag() {
+        let store = store();
+        put_open_page(&store, "notes/closed");
+        store
+            .write(|tx| {
+                let record = AttemptRecord {
+                    source_id: "default".into(),
+                    kind: "facts_fence".into(),
+                    owner_key: "page:notes/a".into(),
+                    attempts: 1,
+                    codes: vec!["boom".into()],
+                    updated_at_us: 0,
+                };
+                put_json(tx, &attempt_key("a1"), &record)?;
+                tx.put(&attempt_index_key(&record, "a1"), &[])?;
+                let page = keys::page("default", "notes/closed");
+                let mut page_record: serde_json::Value =
+                    serde_json::from_slice(&tx.get(&page)?.unwrap())?;
+                page_record["frontmatter"]["readable_by"] = json!(["alice-example"]);
+                tx.put(&page, &serde_json::to_vec(&page_record)?)
+            })
+            .unwrap();
+        assert_eq!(store.get_config(FLAG).unwrap().as_deref(), Some("1"));
+        let alone = crate::test_support::store();
+        alone
+            .count_generation_attempt(&key(), "a1", "boom")
+            .unwrap();
+        alone.bump_generation_valve(&key(), "day:x", 1.0).unwrap();
+        assert_eq!(alone.get_config(FLAG).unwrap(), None);
+    }
+
     #[test]
     fn a_source_delete_removes_its_rows() {
         let store = store();
         store
             .record_held_generation_row(&key(), &held("h1", "no_proof"))
             .unwrap();
+        store
+            .activate_generation_rows(&key(), None, &activation("op1", 1.0), &[owned("x")])
+            .unwrap();
+        store
+            .count_generation_attempt(&key(), "a1", "boom")
+            .unwrap();
+        store.bump_generation_valve(&key(), "day:x", 1.0).unwrap();
         store.write(|tx| remove_source_rows(tx, "default")).unwrap();
         let read = store.read().unwrap();
         assert!(
@@ -795,5 +1671,225 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    fn scrub_fixture(store: &Store) -> (GenerationKey, GenerationKey) {
+        store
+            .record_held_generation_row(&key(), &held("h1", "no_proof"))
+            .unwrap();
+        let live = GenerationKey {
+            kind: "other".into(),
+            ..key()
+        };
+        let mut row = activation("op1", 1.0);
+        row.completeness = r#"{"fence":{"text":"Hello World"},"complete":true}"#.into();
+        let mut a = owned("notes/a");
+        a.preimage = Some(json!({"body": "Hello World"}));
+        let mut b = owned("notes/b");
+        b.preimage = Some(json!({"body": "other"}));
+        store
+            .activate_generation_rows(&live, None, &row, &[a, b])
+            .unwrap();
+        let input = GenerationKey {
+            kind: "other".into(),
+            owner_key: "input:q".into(),
+            ..key()
+        };
+        let mut proposing = held("h2", "no_proof");
+        proposing.proposal = Some(r#"[{"key":"notes/a","n":1}]"#.into());
+        proposing.context = r#"{"note":"HELLO world"}"#.into();
+        store
+            .record_held_generation_row(&input, &proposing)
+            .unwrap();
+        (live, input)
+    }
+
+    fn row_of(store: &Store, key: &GenerationKey, state: &str) -> Option<GenerationRecord> {
+        pointed_record(&*store.read().unwrap(), key, state).unwrap()
+    }
+
+    fn preimage_of(store: &Store, id: u64, item: &str) -> Option<Value> {
+        get_json::<ItemRecord>(&*store.read().unwrap(), &item_key(id, item))
+            .unwrap()
+            .unwrap()
+            .preimage
+    }
+
+    #[test]
+    fn the_page_scrub_deletes_holds_and_clears_preimages_proposals_and_fences() {
+        let store = store();
+        let (live, input) = scrub_fixture(&store);
+        let kinds = vec!["facts_fence".to_string()];
+        let counts = store
+            .scrub_generation_page_rows("default", &kinds, "notes/a")
+            .unwrap();
+        assert_eq!(
+            counts,
+            json!({"derived_generation_items": 1, "derived_generations": 3})
+        );
+        assert!(row_of(&store, &key(), "held").is_none());
+        let live_row = row_of(&store, &live, "live").unwrap();
+        assert_eq!(live_row.completeness, json!({"complete": true}));
+        assert_eq!(preimage_of(&store, live_row.id, "notes/a"), None);
+        assert_eq!(
+            preimage_of(&store, live_row.id, "notes/b"),
+            Some(json!({"body": "other"}))
+        );
+        let input_row = row_of(&store, &input, "held").unwrap();
+        assert_eq!(input_row.proposal, None);
+        assert!(input_row.held_context.is_some());
+        // A second scrub finds nothing left to change.
+        let again = store
+            .scrub_generation_page_rows("default", &kinds, "notes/a")
+            .unwrap();
+        assert_eq!(
+            again,
+            json!({"derived_generation_items": 0, "derived_generations": 0})
+        );
+        // Another source is untouched.
+        let other = store
+            .scrub_generation_page_rows("elsewhere", &kinds, "notes/b")
+            .unwrap();
+        assert_eq!(
+            other,
+            json!({"derived_generation_items": 0, "derived_generations": 0})
+        );
+    }
+
+    #[test]
+    fn the_text_scrub_matches_the_lowered_jsonb_text() {
+        let store = store();
+        let (live, input) = scrub_fixture(&store);
+        let counts = store
+            .scrub_generation_text_rows("default", &["hello world".to_string()])
+            .unwrap();
+        // The preimage of notes/a, the held context of h2 and the fence of the live row.
+        assert_eq!(
+            counts,
+            json!({"derived_generation_items": 1, "derived_generations": 2})
+        );
+        let live_row = row_of(&store, &live, "live").unwrap();
+        assert_eq!(live_row.completeness, json!({"complete": true}));
+        assert_eq!(preimage_of(&store, live_row.id, "notes/a"), None);
+        let input_row = row_of(&store, &input, "held").unwrap();
+        assert_eq!((input_row.proposal, input_row.held_context), (None, None));
+        assert!(row_of(&store, &key(), "held").unwrap().proposal.is_some());
+        // The jsonb text separators count: `"body": "other"` matches, `"body":"other"` does not.
+        let spaced = store
+            .scrub_generation_text_rows("default", &["\"body\": \"other\"".to_string()])
+            .unwrap();
+        assert_eq!(spaced["derived_generation_items"], json!(1));
+        assert!(
+            store
+                .scrub_generation_text_rows("default", &["a\0b".to_string()])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn the_text_scrub_reads_the_digits_and_the_json_null_postgres_keeps() {
+        let store = store();
+        let scrub = |needle: &str| {
+            store
+                .scrub_generation_text_rows("default", &[needle.to_string()])
+                .unwrap()["derived_generations"]
+                .clone()
+        };
+        let mut numbers = held("h1", "no_proof");
+        numbers.context = r#"{"n":1.50,"m":-0.0}"#.into();
+        store.record_held_generation_row(&key(), &numbers).unwrap();
+        let fenced = GenerationKey {
+            kind: "other".into(),
+            ..key()
+        };
+        let mut row = activation("op1", 1.0);
+        row.completeness = r#"{"fence":{"n":100e-2}}"#.into();
+        store
+            .activate_generation_rows(&fenced, None, &row, &[owned("notes/a")])
+            .unwrap();
+        // `jsonb` keeps `1.50`, prints `-0.0` as `0.0` and `100e-2` as `1.00`.
+        assert_eq!(scrub(r#""n": 1.5}"#), json!(0));
+        assert_eq!(scrub("1.00}"), json!(1));
+        assert_eq!(scrub(r#""m": -0.0"#), json!(0));
+        assert_eq!(scrub(r#""m": 0.0"#), json!(1));
+        assert_eq!(row_of(&store, &key(), "held").unwrap().held_context, None);
+
+        // A JSON `null` context and proposal are values (`IS NOT NULL`) whose text is `null`.
+        let nulls = GenerationKey {
+            owner_key: "input:n".into(),
+            ..key()
+        };
+        let mut both = held("h2", "no_proof");
+        both.context = "null".into();
+        both.proposal = Some("null".into());
+        store.record_held_generation_row(&nulls, &both).unwrap();
+        let record = row_of(&store, &nulls, "held").unwrap();
+        assert_eq!(record.proposal_column().value(), Some(Value::Null));
+        assert_eq!(record.held_context_column().text().as_deref(), Some("null"));
+        assert_eq!(scrub("null"), json!(1));
+        let record = row_of(&store, &nulls, "held").unwrap();
+        assert_eq!(
+            (
+                record.proposal_column().value(),
+                record.held_context_column().text()
+            ),
+            (None, None)
+        );
+        assert_eq!(scrub("null"), json!(0));
+    }
+
+    fn consolidation(source: &str, kind: &str, owner: &str) -> GenerationKey {
+        GenerationKey {
+            source_id: source.into(),
+            kind: kind.into(),
+            owner_key: owner.into(),
+        }
+    }
+
+    #[test]
+    fn a_live_row_reads_restored_only_when_it_restores_another() {
+        let store = store();
+        let k = consolidation("default", "consolidation", "entity:a:cluster:1");
+        assert!(!store.read_generation_restored(&k).unwrap());
+        let first = store
+            .activate_generation_rows(&k, None, &activation("op-1", 1.0), &[])
+            .unwrap();
+        assert!(!store.read_generation_restored(&k).unwrap());
+        let mut again = activation("op-2", 2.0);
+        again.restore_of = Some(first as f64);
+        store
+            .activate_generation_rows(&k, Some(first as f64), &again, &[])
+            .unwrap();
+        assert!(store.read_generation_restored(&k).unwrap());
+    }
+
+    #[test]
+    fn clearing_ties_deletes_only_the_tie_holds_of_one_owner_prefix() {
+        let store = store();
+        let keys = [
+            consolidation("default", "consolidation", "entity:a:cluster:1"),
+            consolidation("default", "consolidation", "entity:a:cluster:2"),
+            consolidation("default", "consolidation", "entity:ab:cluster:1"),
+            consolidation("default", "facts_fence", "entity:a:cluster:3"),
+        ];
+        for (n, k) in keys.iter().enumerate() {
+            store
+                .record_held_generation_row(k, &held(&format!("h{n}"), "tie"))
+                .unwrap();
+        }
+        let proof = consolidation("default", "consolidation", "entity:a:cluster:4");
+        store
+            .record_held_generation_row(&proof, &held("h9", "no_proof"))
+            .unwrap();
+        store
+            .clear_tie_held_generation_rows("default", "consolidation", "entity:a:cluster:")
+            .unwrap();
+        let read = store.read().unwrap();
+        let kept = |k: &GenerationKey| pointed_record(&*read, k, "held").unwrap().is_some();
+        assert_eq!(
+            keys.iter().map(kept).collect::<Vec<_>>(),
+            vec![false, false, true, true]
+        );
+        assert!(kept(&proof));
     }
 }

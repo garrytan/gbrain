@@ -5,7 +5,7 @@ import { opError, OperationError, type AuthInfo } from '../ops/contract.ts';
 import { hasScope, operationScopesAllowed } from '../scope.ts';
 import { resolveSourceId } from '../source-resolver.ts';
 import { dispatchToolCall } from '../../mcp/dispatch.ts';
-import { registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
+import { readBrainIdentity, registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
 import { rustOwnerServesPersistence } from '../rust-engine/owner-ipc/client.ts';
 import { startPersistenceConsumer, assertPersistenceAccepting } from './service.ts';
 import { isWriteErrorCode, isWriteReceipt } from './types.ts';
@@ -13,6 +13,7 @@ import { LOCAL_CLI_OWNER_OPERATIONS, PERSISTENCE_ROOM_MARKED_KEY, restoreRecover
 import { currentCallerAccess } from '../search/private-visibility.ts';
 import { runPersistenceAdministration } from './administration.ts';
 import { boundedWriteWaitMs } from './write-wait.ts';
+import { sourceNamedByCheckout } from './unsourced-put-fork.ts';
 export { residentPersistenceConfig } from './local-client.ts';
 import { startProjectionStatusCache } from '../page-state/projection-status.ts';
 import { trustedCliRequired } from '../ops/op-fix.ts';
@@ -58,10 +59,8 @@ export async function registerServeLocalWriters(engine: BrainEngine): Promise<vo
 /** Resident lifecycle owns the consumer; each connection proves its own durable registration. */
 export async function createPersistenceIpcProvider(engine: BrainEngine, config: GBrainConfig): Promise<PersistenceIpcProvider> {
   await registerServeLocalWriters(engine);
-  const brainId = await engine.readPersistenceBrainId();
-  if (brainId === null) throw opError('writer_not_initialized', 'Persistence metadata has not been initialized.',
-    'This brain\'s database has no persistence metadata row, which the schema migrations create; run gbrain doctor --json on the brain host and bring the schema current with gbrain apply-migrations.');
-  const brain = { brain_id: brainId };
+  // A typed read, so an engine with no raw SQL (Rust) can serve the persistence socket.
+  const brain = { brain_id: await readBrainIdentity(engine) };
   startPersistenceConsumer(engine, config);
   const projectionStatus = startProjectionStatusCache(engine);
   return { brainId: brain.brain_id, projectionStatus: () => projectionStatus.read(), dispatch: request => withVerifiedLocalRegistration(engine, request.registration, async verified => {
@@ -107,13 +106,15 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
     }
     const localCliLocalOnly = !verified.remote && verified.principal.kind === 'local_cli' && LOCAL_CLI_LOCAL_ONLY_OPS.has(request.operation);
     const writeWaitMs = boundedWriteWaitMs(request.write_wait_ms);
+    const unsourcedLocal = request.routing.source === null && !verified.remote;
     const result = await dispatchToolCall(engine, request.operation, params, {
       // #6696 (A5): a verified local registration is the user's CLI or agent, as on the in-process entry points.
       admissionOrigin: 'interactive', pendingAsError: true,
       config, remote: verified.remote, transport: verified.remote || localSkillAdministration || localCliLocalOnly ? 'stdio' : undefined, sourceId, auth,
       ...(writeWaitMs !== undefined ? { writeWaitMs } : {}),
       ...(unrestricted ? {} : { localFederatedSourceIds: verified.grant.sourceIds }),
-      ...(request.routing.source === null && !verified.remote ? { localSourceImplicit: true } : {}),
+      ...(unsourcedLocal ? { localSourceImplicit: true } : {}),
+      ...(unsourcedLocal && await sourceNamedByCheckout(engine, request.operation, request.routing.cwd, sourceId) ? { localSourceFromCheckout: true } : {}),
     });
     const body = JSON.parse(result.content[0].text) as Record<string, unknown>;
     // GBRA-498: the trusted local CLI's --room is marked here, where the brain is; any other lane's answer goes back

@@ -5,7 +5,9 @@
 
 mod memory_env;
 
-use gbrain_store::jobs::{AdmitSpec, BindingWrite, ClientInsert, GrantPersist, RegisterAudit};
+use gbrain_store::jobs::{
+    AdmitSpec, ClientInsert, CredentialBinding, CredentialKind, GrantPersist, RegisterAudit,
+};
 use memory_env::{Brain, brain};
 use serde_json::{Map, Value, json};
 
@@ -195,13 +197,21 @@ fn a_client_binding_write_sets_the_binding_columns_and_the_unscoped_time_and_not
     let b = brain("grant-client-binding");
     sources(&b);
     client(&b, "c1");
-    let binding: BindingWrite = serde_json::from_value(json!({
-        "member": null, "may_act_for": ["person:a"], "attest_actor": "qm",
-        "attest_ops": ["memory_write"], "attest_sources": ["src-a"], "attest_read": "scope",
+    let binding: CredentialBinding = serde_json::from_value(json!({
+        "member": null, "mayActFor": ["person:a"], "attestActor": "qm",
+        "attestOps": ["memory_write"], "attestSources": ["src-a"], "attestRead": "scope",
     }))
     .unwrap();
-    assert!(!b.write_client_binding("missing", &binding).unwrap());
-    assert!(b.write_client_binding("c1", &binding).unwrap());
+    let client_kind = CredentialKind::Client;
+    b.write_credential_binding(client_kind, "missing", &binding)
+        .unwrap();
+    assert_eq!(
+        b.read_oauth_client("missing").unwrap(),
+        None,
+        "a missing client is not created"
+    );
+    b.write_credential_binding(client_kind, "c1", &binding)
+        .unwrap();
     let row = b.read_oauth_client("c1").unwrap().unwrap();
     assert_eq!(row["attest_actor"], "qm");
     assert_eq!(row["attest_sources"], json!(["src-a"]));
@@ -211,14 +221,18 @@ fn a_client_binding_write_sets_the_binding_columns_and_the_unscoped_time_and_not
     assert_eq!(row["grant_revision"], 1);
     assert_eq!(row["reads_unscoped"], Value::Null);
 
-    assert!(b.write_client_reads_unscoped("c1", true).unwrap());
+    b.write_credential_reads_unscoped(client_kind, "c1", true)
+        .unwrap();
     assert!(
         !b.read_oauth_client("c1").unwrap().unwrap()["reads_unscoped"].is_null(),
         "set to the write's time"
     );
-    assert!(b.write_client_reads_unscoped("c1", false).unwrap());
+    b.write_credential_reads_unscoped(client_kind, "c1", false)
+        .unwrap();
     let row = b.read_oauth_client("c1").unwrap().unwrap();
     assert_eq!(row["reads_unscoped"], Value::Null);
     assert_eq!(row["attest_actor"], "qm", "the binding is untouched");
-    assert!(!b.write_client_reads_unscoped("missing", true).unwrap());
+    b.write_credential_reads_unscoped(client_kind, "missing", true)
+        .unwrap();
+    assert_eq!(b.read_oauth_client("missing").unwrap(), None);
 }

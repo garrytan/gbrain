@@ -208,21 +208,15 @@ export async function checkBrainstormHealth(engine: BrainEngine, opts: { sourceI
   // (4) Calibration cold-start — empty active_bias_tags. Profiles are per
   // source; a remote caller's grant reads only its own sources' profiles.
   try {
-    const calibRows = await engine.executeRaw<{ active_bias_tags: string[] | null }>(
-      `SELECT active_bias_tags
-         FROM calibration_profiles${opts.sourceIds ? '\n         WHERE source_id = ANY($1::text[])' : ''}
-         ORDER BY generated_at DESC
-         LIMIT 1`,
-      opts.sourceIds ? [opts.sourceIds] : []
-    );
-    if (calibRows.length === 0) {
+    const calibRow = await engine.getLatestCalibrationProfile({ ...(opts.sourceIds ? { sourceIds: opts.sourceIds } : {}) });
+    if (!calibRow) {
       return {
         name: 'brainstorm_health',
         status: 'ok',
         message: `Migration v79 applied; tracking enabled. Calibration profile not yet generated — brainstorm/lsd will run unbiased until enough takes are resolved.`,
       };
     }
-    const tags = calibRows[0].active_bias_tags;
+    const tags: string[] | null = calibRow.active_bias_tags;
     if (!Array.isArray(tags) || tags.length === 0) {
       return {
         name: 'brainstorm_health',

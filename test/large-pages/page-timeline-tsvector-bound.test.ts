@@ -57,8 +57,8 @@ describe('page timeline tsvector bound (PGLite)', () => {
   }, 60_000);
 
   test('worst title + densest timeline + densest entries stay under the lexeme cap', async () => {
-    // The title btree (idx_pages_source_title_lower, 2,704-byte rows) caps a
-    // title near 2.7 KB; 200 CJK pairs are 2,400 bytes of the densest text.
+    // A long title of the densest text: 200 CJK pairs are 2,400 bytes. No index
+    // caps a title since #9779; transcript imports cap theirs at 200 characters.
     const title = hyphenPairs(0x4e00, 200);
     const timeline = hyphenPairs(0x20000, Math.ceil(PAGE_TIMELINE_FTS_MAX_CHARS / 10) + 500, 4);
     const page = await engine.putPage('large/worst', { type: 'note', title, compiled_truth: 'Body.', timeline: 'seed' });

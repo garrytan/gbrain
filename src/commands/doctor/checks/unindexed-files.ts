@@ -78,7 +78,7 @@ async function runUnindexedFiles(ctx: DoctorContext): Promise<Check[]> {
     const sources = await engine.executeRaw<{ id: string; incarnation: string }>(`SELECT s.id, s.incarnation::text AS incarnation FROM sources s
       WHERE s.archived IS NOT TRUE AND (s.config->>'kind') IS NULL AND s.config->'company_brain' IS NULL
         AND EXISTS (SELECT 1 FROM persistence_source_bindings b WHERE b.source_id=s.id AND b.source_incarnation=s.incarnation)
-        AND ($1::text[] IS NULL OR s.id=ANY($1::text[])) ORDER BY s.id`, [doctorSourceIds(ctx) ?? null]);
+        AND ($1::text[] IS NULL OR s.id=ANY($1::text[])) ORDER BY s.id COLLATE "C"`, [doctorSourceIds(ctx) ?? null]);
     if (!sources.length) {
       checks.push(infoCheck('unindexed_files', 'Not applicable: no managed Git source is bound to a checkout.', 'not_applicable', undefined, { docs: DOCS }));
       return checks;

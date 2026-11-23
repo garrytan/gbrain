@@ -196,7 +196,7 @@ pub(crate) fn pg_timestamptz_text(micros: i64) -> String {
     text
 }
 
-fn log_prefix() -> [u8; 2] {
+pub(crate) fn log_prefix() -> [u8; 2] {
     [keys::TELEMETRY, keys::TELEMETRY_MCP_REQUEST]
 }
 
@@ -228,6 +228,7 @@ pub(crate) struct LogRecord {
     pub latency_ms: Option<i32>,
     pub status: String,
     pub error_message: Option<String>,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub params: Option<Value>,
     pub created_us: i64,
 }
@@ -420,10 +421,10 @@ impl Store {
                     row
                 }
                 None => SearchRecord {
-                    date,
-                    mode,
-                    intent,
-                    counters: values,
+                    date: date.clone(),
+                    mode: mode.clone(),
+                    intent: intent.clone(),
+                    counters: values.clone(),
                     sum_rank1_score: score,
                     first_seen_us: now,
                     last_seen_us: now,
@@ -536,11 +537,11 @@ impl Store {
                 id,
                 token_name: input.token_name.clone(),
                 agent_name: input.agent_name.clone(),
-                operation,
+                operation: operation.clone(),
                 latency_ms,
-                status,
+                status: status.clone(),
                 error_message: input.error_message.clone(),
-                params,
+                params: params.clone(),
                 created_us,
             };
             put_json(tx, &log_key(created_us, id), &record)
@@ -909,6 +910,26 @@ impl Store {
             .max();
         Ok(json!({ "pruned_before": newest.map(iso), "now": iso(now) }))
     }
+}
+
+/// The `mcp_request_log` rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow};
+    Ok(read_log(read)?
+        .into_iter()
+        .map(|(_, r)| ProbeRow {
+            source_id: None,
+            cells: vec![
+                ("params", ProbeCell::opt_jsonb(r.params.as_ref())),
+                (
+                    "error_message",
+                    ProbeCell::opt_text(r.error_message.as_deref()),
+                ),
+            ],
+        })
+        .collect())
 }
 
 #[cfg(test)]

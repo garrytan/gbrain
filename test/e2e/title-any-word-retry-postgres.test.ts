@@ -20,7 +20,7 @@ import { __setTitleWholeVectorCandidatesForTests, buildSearchTitlesStatement, ti
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { requirePostgresTestDatabase } from '../helpers/test-backends.ts';
 
-const POSTGRES_DIALECT = { statementTimeout: `${KEYWORD_STATEMENT_TIMEOUT_DEFAULT_MS}ms`, relaxedPrefersIndex: true };
+const POSTGRES_DIALECT = { statementTimeout: `${KEYWORD_STATEMENT_TIMEOUT_DEFAULT_MS}ms`, relaxedPrefersIndex: true, staleProbe: false };
 const DEFAULT_CAP = titleWholeVectorCandidates();
 /** Pages whose timeline names each fixture word: 4 of 12,000 (rare) and 600 of 12,000 (5%). */
 const RARE = 4, FEW_PERCENT = 600;

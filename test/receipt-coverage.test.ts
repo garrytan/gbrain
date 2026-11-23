@@ -32,7 +32,7 @@ const RECEIPT_COVERAGE: Record<string, Coverage> = {
   'src/core/persistence/group-publish.ts': { sites: 1, receipted: 'the grouped publication of admitted requests; each member is the attributed actor' },
   'src/core/repair/segmented-mirror.ts': { sites: 1, receipted: 'repair segmented-mirror: admitWriteInTransaction admits each page\'s repair request and completeWrite records its terminal receipt in the same transaction' },
   'src/core/facts/purge.ts': { sites: 1, receipted: 'purge_fact: admitWriteInTransaction admits the request and completeWrite records its terminal receipt in the same transaction' },
-  'src/core/shared-skills/publication.ts': { sites: 1, receipted: 'shared-skill revision pruning inside an admitted skill publication' },
+  'src/core/shared-skills/publication.ts': { sites: 2, receipted: 'shared-skill revision pruning and the Rust store skill publication, each inside an admitted skill publication' },
   'src/core/persistence/source-lifecycle.ts': { sites: 2, receipted: 'source add/claim/remove under a persistence_topology_changes receipt; the remove/purge page batches (#7702/#8905) commit ahead of it under the same request_id, which a rerun resumes and the final transaction receipts' },
   'src/core/persistence/topology-recovery.ts': { sites: 1, receipted: 'topology recovery under its persistence_topology_changes receipt' },
   'src/core/page-state/materialize.ts': { sites: 1, tables: ['pages'], todo: 'TODO(receipts): derived page materialization should publish as a maintenance intent' },
@@ -48,7 +48,8 @@ const RECEIPT_COVERAGE: Record<string, Coverage> = {
   'src/core/trust/page-handlers.ts': { sites: 1, tables: ['pages', 'facts', 'takes', 'timeline_entries'], todo: 'TODO(receipts): owner tier decisions (confirm/lower) change only trust_tier/write_origin in withCoordinatedWrite as maintenance without a request; publish them as owner requests' },
   'src/core/trust/backfill.ts': { sites: 3, tables: ['pages', 'facts', 'takes', 'timeline_entries'], todo: 'TODO(receipts): gbrain trust backfill and claim-sources --relower (#6533) set legacy trust_tier/write_origin (no content column) as attributed coordinated maintenance without a request; publish each batch as a maintenance intent' },
   'src/core/repair/frontmatter-keys.ts': { sites: 1, tables: ['pages'], todo: 'TODO(receipts): gbrain repair frontmatter-keys (#6454) strips the four parser-reserved keys from pages.frontmatter (no content column) in withCoordinatedWrite batches as explicit-only maintenance without a request; publish each batch as a maintenance intent' },
-  'src/core/repair/secret-spans.ts': { sites: 1, tables: ['pages', 'facts', 'takes', 'timeline_entries'], todo: 'TODO(receipts): gbrain repair secret-spans (GST-327) replaces credential spans in preview-approved pages, their facts, takes and timeline rows in withCoordinatedWrite as explicit-only maintenance without a request, with its own per-page op_checkpoints receipt; publish each page as a maintenance intent' },
+  'src/core/repair/secret-spans.ts': { sites: 2, tables: ['pages', 'facts', 'takes', 'timeline_entries'], todo: 'TODO(receipts): gbrain repair secret-spans (GST-327) replaces credential spans in preview-approved pages, their facts, takes and timeline rows in withCoordinatedWrite as explicit-only maintenance without a request, with its own per-page op_checkpoints receipt, and a publish redaction (GST-2988 redactPageForPublish) gives a redacted file page the same markers; publish each page as a maintenance intent' },
+  'src/core/secret-store/restore.ts': { sites: 1, tables: ['pages', 'facts', 'takes', 'timeline_entries'], todo: 'TODO(receipts): gbrain secrets restore (GST-2988) puts a preview-approved false positive back at the places repair secret-spans recorded, in withCoordinatedWrite as explicit-only maintenance without a request; publish each page as a maintenance intent' },
   'src/core/repair/segmented-tiling.ts': { sites: 1, tables: ['pages'], todo: 'TODO(receipts): gbrain repair segmented-tiling (GST-1209) republishes the body of a preview-approved page from its file at HEAD in withCoordinatedWrite as explicit-only maintenance without a request, with its own per-page op_checkpoints receipt; publish each page as a maintenance intent' },
   'src/core/cycle/concept-publication.ts': { sites: 1, tables: [], other: 'concept provenance links (links is not a guarded table)' },
   'src/core/persistence/links-maintenance.ts': { sites: 1, tables: [], other: 'derived links and the pages attendance-blocked stamp (a physical column the guard exempts)' },
@@ -63,7 +64,7 @@ const RECEIPT_COVERAGE: Record<string, Coverage> = {
 };
 
 /** Facts/takes writers allowed without a receipt this wave, each with its TODO above. */
-const RECEIPT_EXCEPTIONS = new Set(['src/core/bootstrap/verify.ts', 'src/core/repair/secret-spans.ts', 'src/core/trust/backfill.ts', 'src/core/trust/held-removals.ts', 'src/core/trust/owner-actions.ts', 'src/core/trust/page-handlers.ts', 'src/core/trust/supersede-handlers.ts']);
+const RECEIPT_EXCEPTIONS = new Set(['src/core/bootstrap/verify.ts', 'src/core/repair/secret-spans.ts', 'src/core/secret-store/restore.ts', 'src/core/trust/backfill.ts', 'src/core/trust/held-removals.ts', 'src/core/trust/owner-actions.ts', 'src/core/trust/page-handlers.ts', 'src/core/trust/supersede-handlers.ts']);
 
 const ROOT = join(import.meta.dir, '..');
 

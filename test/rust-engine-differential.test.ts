@@ -247,8 +247,8 @@ const scenarios: Scenario[] = [
 
   // 7. federated chunk reads
   {
-    name: 'getChunks over two sources',
-    expect: 'refused',
+    name: 'getChunks over two sources returns the chunks of both, in PGLite\'s order',
+    expect: 'equal',
     run: async ({ engine }) => {
       await engine.putPage('fed/a', NOTE);
       await engine.putPage('fed/a', { ...NOTE, compiled_truth: 'work text' }, { sourceId: 'work' });
@@ -327,7 +327,7 @@ const scenarios: Scenario[] = [
 
   // 10. listColumnsOnly: the list projection, with content_hash and emotional_weight present and undefined as on PGLite.
   {
-    name: 'listPages with listColumnsOnly',
+    name: 'listPages with listColumnsOnly returns the list columns with a blank body, timeline and frontmatter',
     expect: 'equal',
     run: async ({ engine }) => {
       await engine.putPage('cols/page', NOTE);
@@ -489,4 +489,31 @@ describe('Rust engine against PGLite on raw values', () => {
       }
     }, 60_000);
   }
+});
+
+// Runs without the addon, so the file always executes a test (the stress gate fails a file that runs none).
+describe('the differential comparison itself', () => {
+  test('normalize replaces only the clock, UUIDs and row ids, and keeps every other key and value', async () => {
+    const at = new Date('2026-01-02T03:04:05.000Z');
+    const row = {
+      slug: 'notes/a', id: 7, page_id: 8, chunk_id: 9, count: 3, title: 'Created 2026-01-02',
+      created_at: at, updated_at: '2026-01-02T03:04:05Z', when: at, owner: '123e4567-e89b-12d3-a456-426614174000',
+      tags: ['x', 'y'], missing: undefined, empty: null,
+    };
+    expect(normalize(row)).toEqual({
+      chunk_id: '<id>', count: 3, created_at: '<timestamp>', empty: null, id: '<id>', missing: '<undefined>',
+      owner: '<uuid>', page_id: '<id>', slug: 'notes/a', tags: ['x', 'y'], title: 'Created 2026-01-02',
+      updated_at: '<timestamp>', when: '<Date 2026-01-02T03:04:05.000Z>',
+    });
+    expect(Object.keys(normalize({ b: 1, a: 2 }) as object)).toEqual(['a', 'b']);
+    expect(await outcomeOf(async () => { throw Object.assign(new Error('no'), { code: 'engine_capability_missing' }); }))
+      .toEqual({ threw: 'engine_capability_missing' });
+    expect(await outcomeOf(async () => ({ id: 1, slug: 's' }))).toEqual({ ok: { id: '<id>', slug: 's' } });
+  });
+
+  test('scenario names are unique, so each one is its own test', () => {
+    const names = scenarios.map((s) => s.name);
+    expect(names.length).toBeGreaterThan(0);
+    expect(new Set(names).size).toBe(names.length);
+  });
 });

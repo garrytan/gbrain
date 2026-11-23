@@ -2,36 +2,49 @@
  * The access-grant reads (engine-sql/access-grants.ts) and the request-id lookup of the receipt operations, on the
  * Rust store (rust/docs/store/persistence.md, "Access grants").
  *
- * The store keeps no OAuth clients and no access tokens, so their grant reads refuse with engine_capability_missing
- * rather than answer "no row": a caller never mistakes an engine that cannot read a grant for a grant that is gone.
+ * The OAuth client and access token grant reads answer from the store's client and token rows (oauth-clients.md,
+ * access-tokens.md): a receipt read returns the row deleted or revoked (the caller refuses it), a membership read none.
  * The local writer grant comes from the writer registration the store keeps; the store runs one write transaction at
- * a time, so the FOR SHARE the SQL engines take changes nothing here. The store keeps no shared-skill state table:
- * its serving epoch is a UUID derived from the brain id, fixed for the life of the brain (the store has no restore
- * that would rotate it), and null when the brain has no id, so membership denies. The trust generation read is
- * trust-withdrawals.ts's readTrustGeneration.
+ * a time, so the FOR SHARE the SQL engines take changes nothing here. The store's shared-skill state keeps only the
+ * catalog token secret (shared-skill-members.ts); its serving epoch is a UUID derived from the brain id, fixed for the
+ * life of the brain (the store has no restore that would rotate it), and null when the brain has no id, so membership
+ * denies. The trust generation read is trust-withdrawals.ts's readTrustGeneration.
  */
 import { createHash } from 'node:crypto';
 import type { MemberClientGrant, MemberLocalWriterGrant, MemberTokenGrant, ReceiptClientGrant, ReceiptTokenGrant } from '../../engine-sql/access-grants.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
 import { requestRow } from '../store-codec.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
-import { readLocalWriterRow } from './persistence.ts';
+import { TOKEN_GRANT_ROW_COLUMNS } from '../../grants/model.ts';
+import { storeCall, type StoreMember } from './common.ts';
+import { readOauthClient } from './jobs-oauth-clients.ts';
+import { readAccessTokenWriteGrant, readLocalWriterRow } from './persistence.ts';
 import { readPersistenceBrainId } from './persistence-identity.ts';
 
-const NO_CLIENTS = 'the store keeps no OAuth clients';
-const NO_TOKENS = 'the store keeps no access tokens';
+/** An OAuth client's receipt grant, deleted or not; `lock` changes nothing (one write transaction at a time). */
+export const readOAuthClientReceiptGrant: StoreMember<[clientId: string, opts?: { lock?: boolean }], ReceiptClientGrant | undefined> = async (brain, clientId) => {
+  const row = await readOauthClient(brain, clientId);
+  return row ? { scope: row.scope as string, deleted_at: row.deleted_at, allowed_operations: row.allowed_operations, source_id: row.source_id, bound_slug_prefixes: row.bound_slug_prefixes } : undefined;
+};
 
-export const readOAuthClientReceiptGrant: StoreMember<[clientId: string, opts?: { lock?: boolean }], ReceiptClientGrant | undefined> =
-  async () => refuseMember('readOAuthClientReceiptGrant', NO_CLIENTS);
+/** An access token's receipt grant, revoked or not. A token id that is not a UUID is refused as Postgres refuses it. */
+export const readAccessTokenReceiptGrant: StoreMember<[tokenId: string, opts?: { lock?: boolean }], ReceiptTokenGrant | undefined> = async (brain, tokenId) => {
+  const row = await readAccessTokenWriteGrant(brain, tokenId);
+  return row ? { scopes: row.scopes, revoked_at: row.revoked_at } : undefined;
+};
 
-export const readAccessTokenReceiptGrant: StoreMember<[tokenId: string, opts?: { lock?: boolean }], ReceiptTokenGrant | undefined> =
-  async () => refuseMember('readAccessTokenReceiptGrant', NO_TOKENS);
+/** A live OAuth client's membership grant; `lock` changes nothing (one write transaction at a time). Undefined for a missing or deleted client. */
+export const readOAuthClientMemberGrant: StoreMember<[clientId: string, opts?: { lock?: boolean }], MemberClientGrant | undefined> = async (brain, clientId) => {
+  const row = await readOauthClient(brain, clientId);
+  if (!row || row.deleted_at != null) return undefined;
+  return { scope: row.scope as string, source_id: row.source_id as string, federated_read: row.federated_read, allowed_operations: row.allowed_operations, grant_revision: row.grant_revision };
+};
 
-export const readOAuthClientMemberGrant: StoreMember<[clientId: string], MemberClientGrant | undefined> =
-  async () => refuseMember('readOAuthClientMemberGrant', NO_CLIENTS);
-
-export const readAccessTokenMemberGrant: StoreMember<[tokenId: string], MemberTokenGrant | undefined> =
-  async () => refuseMember('readAccessTokenMemberGrant', NO_TOKENS);
+/** A live access token's membership grant (the grant columns the store keeps: all of them); `lock` changes nothing (one write transaction at a time). Undefined for a missing or revoked token. */
+export const readAccessTokenMemberGrant: StoreMember<[tokenId: string, opts?: { lock?: boolean }], MemberTokenGrant | undefined> = async (brain, tokenId) => {
+  const row = await readAccessTokenWriteGrant(brain, tokenId);
+  if (!row || row.revoked_at != null) return undefined;
+  return Object.fromEntries(TOKEN_GRANT_ROW_COLUMNS.map(c => [c, (row as Record<string, unknown>)[c]])) as MemberTokenGrant;
+};
 
 /** The local writer's grant ceiling and revoked_at, revoked or not (the caller refuses a revoked writer). */
 export const readLocalWriterMemberGrant: StoreMember<[id: string], MemberLocalWriterGrant | undefined> = async (brain, id) => {

@@ -3,6 +3,7 @@
 //! journal column no typed member writes (a write request committed with a recovery record), and the
 //! places this store differs from Postgres on purpose.
 
+use gbrain_store::access_members::AccessMemberInsert;
 use gbrain_store::env::{Env, uuid_from_bytes};
 use gbrain_store::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT};
 use gbrain_store::jobs::{
@@ -536,7 +537,7 @@ fn the_due_batch_is_ordered_by_due_time_then_id() {
 }
 
 #[test]
-fn a_watch_ended_by_unwatch_loses_its_lease_and_a_forget_for_a_member_queues_here() {
+fn a_watch_ended_by_unwatch_loses_its_lease_and_a_forget_for_a_member_queues_once_it_is_removed() {
     let b = brain("forget");
     let id = open(&b, 1, json!({ "target": "99999" }));
     let lease = b.claim_wake_watch(id, 60).unwrap().unwrap()["lease"]
@@ -548,7 +549,18 @@ fn a_watch_ended_by_unwatch_loses_its_lease_and_a_forget_for_a_member_queues_her
         !b.settle_wake_watch(&settle(id, &lease, "delivered", json!({})))
             .unwrap()
     );
-    // This store keeps no access members, so the SQL's "no live member" test is true here.
+    // A member id queues only while no access member with that id is still there: a disabled
+    // member keeps its user, a removed one does not.
+    let spec: AccessMemberInsert = serde_json::from_value(json!({ "id": "m-1" })).unwrap();
+    b.insert_access_member(&spec).unwrap();
+    b.set_access_member_disabled("m-1", true).unwrap();
+    b.queue_wake_forget(&user(5), Some("m-1")).unwrap();
+    assert_eq!(b.count_pending_wake_forgets().unwrap(), 0);
+    assert_eq!(
+        code(b.queue_wake_forget(&user(5), Some("m\0")).unwrap_err()),
+        INVALID_ARGUMENT
+    );
+    b.tombstone_access_member("m-1").unwrap();
     b.queue_wake_forget(&user(5), Some("m-1")).unwrap();
     b.queue_wake_forget(&user(5), None).unwrap();
     assert_eq!(b.count_pending_wake_forgets().unwrap(), 1);

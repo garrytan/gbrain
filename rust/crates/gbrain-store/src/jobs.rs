@@ -23,7 +23,8 @@
 //! See docs/designs/RUST_ENGINE_INTERFACES.md ("jobs (core)") and rust/docs/store/jobs.md.
 //!
 //! Keys: every record of this family starts with `keys::JOBS` (`m`). The bytes after the tag:
-//! - `m 0x00 name -> i64`: the `minion_jobs` and `minion_inbox` id sequences (`job`, `inbox`).
+//! - `m 0x00 name -> i64`: the last id of each id sequence (`job`, `inbox`, ...) a kept write took.
+//!   The ids come from the allocator `M next_jobs_seq_<name>`, which never rolls back (`next_seq`).
 //! - `m 0x01 id -> JobRecord`: one job row.
 //! - `m 0x02 queue \0 priority created id`: the claim index, `waiting` rows only, in claim order
 //!   (priority ascending, then age, then id).
@@ -41,7 +42,8 @@
 //!   order and `0x26 job id` its job. The layout is in `spend.rs`; `0x27` indexes the open holds by owner, and
 //!   `0x28`/`0x29` (the spend ledger, `spend_log.rs`), `0x2A` (the whole client row, `oauth_clients.rs`), `0x2B` (the
 //!   token row, `access_tokens.rs`) and `0x2C` (an OAuth token by hash, `oauth_tokens.rs`) and `0x2D` (an OAuth code by hash,
-//!   `oauth_codes.rs`) follow.
+//!   `oauth_codes.rs`) follow. The credential binding reads and writes (`credential_binding.rs`) use the 0x2A and 0x2B
+//!   records and keep none of their own.
 //! - `m 0x18..=0x1C`: the subagent messages, tool rows and their three indexes (see `subagent.rs`).
 //!
 //! Integers are big-endian; a signed one has its sign bit flipped so byte order is numeric order.
@@ -49,8 +51,11 @@
 //! Time: every timestamp is UTC microseconds from the store's clock, read once per call, as one
 //! Postgres transaction reads one `now()`. A millisecond duration becomes `round(ms * 1000)` µs.
 //!
-//! The one write transaction is the lock: two claims never see the same `waiting` row, which is
-//! what `FOR UPDATE SKIP LOCKED` gives the SQL engines. `FOR KEY SHARE` on a lease (the fence) has
+//! Two claims never take the same `waiting` row, which is what `FOR UPDATE SKIP LOCKED` gives the
+//! SQL engines. With one writer, the write transaction is the lock. With concurrent writes on, a
+//! claim reads the claim index up to the row it takes; when another claim, completion or
+//! submission commits a change to that part of the index first, the claim conflicts and runs
+//! again on the new state, so it takes the next job. `FOR KEY SHARE` on a lease (the fence) has
 //! nothing to wait for here, so `assertCycleLease` is a read.
 //!
 //! Deleting a job does what the foreign keys do: its inbox rows go (`ON DELETE CASCADE`) and its
@@ -64,6 +69,9 @@ mod access_tokens;
 mod attachments;
 mod checks;
 mod client_grants;
+mod credential_binding;
+mod drain_lease;
+mod facts_extraction;
 mod health;
 mod inbox;
 mod insight;
@@ -85,15 +93,20 @@ mod wake;
 pub(crate) use access_tokens::bind_token_member;
 pub use access_tokens::{TokenGrantColumns, TokenInsert};
 pub use attachments::AttachmentInput;
+pub(crate) use attachments::purge_probe_attachment_rows;
 pub use checks::{
     BuildSkewSpec, DeadDreamSpec, DeathsSpec, KeyPrefixSpec, QueuedSpendSpec, StillDeadSpec,
 };
 pub use client_grants::{
-    BindingWrite, GrantAudit, GrantAuditInsert, GrantPersist, JobGrantSource, RegisterAudit,
+    GrantAudit, GrantAuditInsert, GrantPersist, JobGrantSource, RegisterAudit,
 };
+pub use credential_binding::{CredentialBinding, CredentialKind, CredentialLookup};
 pub use health::{DivergenceSpec, HealthSpec};
+pub(crate) use inbox::purge_probe_inbox_rows;
 pub use insight::InsightSpec;
+use mutations::add_token;
 pub use mutations::{DelayOpts, TokenDelta};
+pub(crate) use oauth_clients::remove_source_rows as remove_oauth_source_rows;
 pub use oauth_clients::{ClientInsert, ClientPatch, ClientPatchGuard};
 pub use oauth_codes::OauthCodeInsert;
 pub use oauth_tokens::OauthTokenInsert;
@@ -103,14 +116,15 @@ pub use spend::{ExpireScope, LeaseFilter, LeaseInsert, SpendInsert, SpendTreeSpe
 pub use spend_log::{ClientReserve, GroupReserve, LogInsert};
 pub use status::StatusFilter;
 pub use subagent::{FailureFallback, MessageInsert, ToolInsert, ToolStart, ToolTarget};
+pub(crate) use subagent::{purge_probe_message_rows, purge_probe_tool_rows};
 pub use sweeps::{CancelOpts, PruneOutcome, PruneSpec};
 pub use wake::{
     CronRunInput, EndSpec, ForgetClaimSpec, ForgetSettle, WatchFilter, WatchInsert, WatchSettle,
 };
 
-use crate::dream::jsonb;
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
+use crate::jsonb::ordered;
 use crate::keys;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::timeline_queries::jsonb_field_text;
@@ -258,15 +272,37 @@ fn lock_key(id: &str) -> Vec<u8> {
     k
 }
 
+/// The acquisition token of cycle lock `id` while its lease is live (`ttl_expires_at > now`), as
+/// `gbrain_cycle_locks.acquisition_token::text`: what `sync status`'s pinned-pass probe joins
+/// (persistence/sync-admission-sql.ts `effectProbes`).
+pub(crate) fn live_lock_token(read: &dyn KvRead, id: &str, now: i64) -> Result<Option<String>> {
+    Ok(get_json::<LockRecord>(read, &lock_key(id))?
+        .filter(|l| l.ttl_expires_at > now)
+        .map(|l| l.acquisition_token))
+}
+
 fn last_id(key: &[u8]) -> Option<i64> {
     let tail: [u8; 8] = key.get(key.len().checked_sub(8)?..)?.try_into().ok()?;
     Some((u64::from_be_bytes(tail) ^ (1 << 63)) as i64)
 }
 
+/// The next id of sequence `name`. The id comes from the store's allocator (`M next_jobs_seq_<name>`,
+/// `KvWrite::allocate`), which never rolls back: an id handed out inside a transaction or savepoint
+/// that rolls back is not handed out again, as with Postgres `nextval`. The allocator starts at the
+/// last id the JSON record (`m 0x00 name`) holds, so a brain written before it continues from there;
+/// the JSON record keeps the last id handed out in a kept write.
 fn next_seq(tx: &mut dyn KvWrite, name: &str) -> Result<i64> {
     let mut k = prefix(SEQ);
     k.extend_from_slice(name.as_bytes());
-    let next = get_json::<i64>(tx, &k)?.unwrap_or(0) + 1;
+    let floor = u64::try_from(get_json::<i64>(tx, &k)?.unwrap_or(0) + 1)
+        .map_err(|_| StoreError::new(crate::error::STORE_CORRUPT, "bad job id sequence"))?;
+    let counter = keys::meta(&format!("next_jobs_seq_{name}"));
+    let first = tx.allocate(&counter, 0)?;
+    if first < floor {
+        tx.allocate(&counter, floor - first)?;
+    }
+    let next = i64::try_from(tx.allocate(&counter, 1)?)
+        .map_err(|_| StoreError::new(crate::error::STORE_CORRUPT, "bad job id sequence"))?;
     put_json(tx, &k, &next)?;
     Ok(next)
 }
@@ -279,8 +315,10 @@ pub struct JobRecord {
     pub queue: String,
     pub status: String,
     pub priority: i32,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub submission_authority: Option<Value>,
     pub claim_generation: i64,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     pub data: Value,
     pub max_attempts: i32,
     pub attempts_made: i32,
@@ -298,9 +336,12 @@ pub struct JobRecord {
     pub tokens_input: i32,
     pub tokens_output: i32,
     pub tokens_cache_read: i32,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub result: Option<Value>,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub progress: Option<Value>,
     pub error_text: Option<String>,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub stacktrace: Option<Value>,
     pub depth: i32,
     pub max_children: Option<i32>,
@@ -317,11 +358,13 @@ pub struct JobRecord {
     pub started_at: Option<i64>,
     pub finished_at: Option<i64>,
     pub updated_at: i64,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub quiet_hours: Option<Value>,
     pub stagger_key: Option<String>,
     pub budget_remaining_cents: Option<i32>,
     pub budget_owner_job_id: Option<i64>,
     pub budget_root_owner_id: Option<i64>,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub spend_authorization: Option<Value>,
     pub spend_claim_token: Option<i64>,
 }
@@ -332,7 +375,7 @@ impl JobRecord {
     /// `jsonb` key order.
     pub fn to_json(&self) -> Value {
         let t = |v: Option<i64>| v.map(iso);
-        let j = |v: &Option<Value>| v.as_ref().map(jsonb);
+        let j = |v: &Option<Value>| v.as_ref().map(ordered);
         // `real` prints its shortest float4 form; read back as a double that is the same text.
         let jitter: f64 = format!("{}", self.backoff_jitter).parse().unwrap_or(0.0);
         let mut m = Map::new();
@@ -346,7 +389,7 @@ impl JobRecord {
         put("priority", json!(self.priority));
         put("submission_authority", json!(j(&self.submission_authority)));
         put("claim_generation", json!(self.claim_generation));
-        put("data", jsonb(&self.data));
+        put("data", ordered(&self.data));
         put("max_attempts", json!(self.max_attempts));
         put("attempts_made", json!(self.attempts_made));
         put("attempts_started", json!(self.attempts_started));
@@ -439,6 +482,7 @@ struct InboxRecord {
     id: i64,
     job_id: i64,
     sender: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     payload: Value,
     sent_at: i64,
     read_at: Option<i64>,
@@ -536,6 +580,11 @@ pub struct AdmitSpec {
     #[serde(default)]
     pub backpressure: Option<Backpressure>,
     pub max_spawn_depth: i64,
+    /// Stop after the idempotency and parameter coalesce and answer `capacity` with nothing written,
+    /// so a caller can run a delegated client's capacity check at the place the SQL engines run it
+    /// (after the coalesce, before the quota), then admit again in the same transaction.
+    #[serde(default)]
+    pub capacity_check: bool,
 }
 
 /// What `admit_job` did. `conflict` means an existing row is held under another submission
@@ -675,6 +724,24 @@ fn rows_with_status(read: &dyn KvRead, status: &str) -> Result<Vec<JobRecord>> {
         }
     }
     Ok(rows)
+}
+
+/// The `minion_jobs` rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_job_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow};
+    Ok(all_rows(read)?
+        .into_iter()
+        .map(|r| ProbeRow {
+            source_id: None,
+            cells: vec![
+                ("data", ProbeCell::jsonb(&r.data)),
+                ("result", ProbeCell::opt_jsonb(r.result.as_ref())),
+                ("error_text", ProbeCell::opt_text(r.error_text.as_deref())),
+            ],
+        })
+        .collect())
 }
 
 fn all_rows(read: &dyn KvRead) -> Result<Vec<JobRecord>> {
@@ -856,6 +923,10 @@ fn check_insert(v: &JobInsert) -> Result<()> {
             format!("minion_jobs check: {what}"),
         ))
     };
+    // A NUL byte is not valid text in Postgres, and the claim index uses it as the queue separator.
+    if v.queue.contains('\0') {
+        return bad("queue");
+    }
     if !["fixed", "exponential"].contains(&v.backoff_type.as_str()) {
         return bad("backoff_type");
     }
@@ -953,6 +1024,8 @@ fn decide(row: &JobRecord, caller: Option<&Value>) -> Decision {
 enum Step {
     Done(AdmitOutcome),
     Conflict(Value),
+    /// `capacity_check`: no coalesce answered, and the caller's capacity check runs next.
+    Capacity,
 }
 
 impl Store {
@@ -982,26 +1055,41 @@ impl Store {
             "admitJob private_queue_lease_until",
             &v.private_queue_lease_until,
         )?;
-        let mut tx = self.kv.begin_write()?;
-        let now = self.env.now_micros();
-        match admit_in(
-            &mut *tx,
-            spec,
-            authority.as_ref(),
-            spend,
-            (delay_until, lease_until),
-            now,
-        )? {
-            Step::Done(outcome) => {
-                tx.commit()?;
-                Ok(outcome)
-            }
-            // Nothing written is kept: a key released before the conflict stays held.
-            Step::Conflict(row) => Ok(AdmitOutcome {
-                outcome: "conflict",
-                row,
-                audit: None,
-            }),
+        // A conflict or a capacity stop keeps nothing: the statement is dropped (rolled back on its
+        // own, or a statement of the open transaction on a bound store), and the outcome is answered.
+        let mut undone: Option<AdmitOutcome> = None;
+        let result = self.write(|tx| {
+            let now = self.env.now_micros();
+            let stop = match admit_in(
+                tx,
+                spec,
+                authority.as_ref(),
+                spend.clone(),
+                (delay_until, lease_until),
+                now,
+            )? {
+                Step::Done(outcome) => return Ok(outcome),
+                // A key released before the conflict stays held.
+                Step::Conflict(row) => AdmitOutcome {
+                    outcome: "conflict",
+                    row,
+                    audit: None,
+                },
+                // The caller admits again after its check.
+                Step::Capacity => AdmitOutcome {
+                    outcome: "capacity",
+                    row: Value::Null,
+                    audit: None,
+                },
+            };
+            undone = Some(stop);
+            Err(StoreError::invalid(
+                "admitJob: the admission stopped and keeps nothing",
+            ))
+        });
+        match (result, undone) {
+            (Ok(outcome), _) | (Err(_), Some(outcome)) => Ok(outcome),
+            (Err(error), None) => Err(error),
         }
     }
 
@@ -1132,7 +1220,9 @@ impl Store {
             let mut picked = None;
             let mut first_overdue = None;
             for id in ids_under(tx, &claim_prefix(&spec.queue))? {
-                let Some(row) = load(tx, id)? else { continue };
+                let Some(row) = load(tx, id)?.filter(|r| r.queue == spec.queue) else {
+                    continue;
+                };
                 let eligible =
                     row.submission_authority.is_some() && names.contains(row.name.as_str());
                 if eligible && overdue(&row) {
@@ -1252,9 +1342,9 @@ impl Store {
                     && let Some(p_old) = load(tx, parent)?.filter(|p| !is_terminal(&p.status))
                 {
                     let mut p = p_old.clone();
-                    p.tokens_input += tokens[0];
-                    p.tokens_output += tokens[1];
-                    p.tokens_cache_read += tokens[2];
+                    p.tokens_input = add_token("input", p.tokens_input, tokens[0])?;
+                    p.tokens_output = add_token("output", p.tokens_output, tokens[1])?;
+                    p.tokens_cache_read = add_token("cache_read", p.tokens_cache_read, tokens[2])?;
                     p.updated_at = now;
                     save(tx, Some(&p_old), &p)?;
                 }
@@ -1683,7 +1773,7 @@ impl Store {
                     "acquired_at": iso(l.acquired_at),
                     "ttl_expires_at": iso(l.ttl_expires_at),
                     "last_refreshed_at": l.last_refreshed_at.map(iso),
-                    "acquisition_token": l.acquisition_token,
+                    "acquisition_token": l.acquisition_token.clone(),
                     "db_now": iso(now),
                 })
             })
@@ -1725,6 +1815,29 @@ fn held_by(read: &dyn KvRead, key: &[u8], opts: &LockHolder) -> Result<Option<Lo
     }))
 }
 
+/// `CLAIM_HEAD_LEASE_HELD`'s lock test: lock `id` is live (`ttl_expires_at>now()`) and held by a
+/// process other than `pid` on `host` (`holder_host IS NOT DISTINCT FROM host`).
+pub(crate) fn lock_held_by_other(
+    read: &dyn KvRead,
+    id: &str,
+    pid: i64,
+    host: &str,
+    now: i64,
+) -> Result<bool> {
+    Ok(
+        get_json::<LockRecord>(read, &lock_key(id))?.is_some_and(|l| {
+            l.ttl_expires_at > now
+                && !(l.holder_pid == pid && l.holder_host.as_deref() == Some(host))
+        }),
+    )
+}
+
+/// The ids of every `gbrain_cycle_locks` row, in key order (shared-skill activation's legacy
+/// writer check).
+pub(crate) fn cycle_lock_ids(read: &dyn KvRead) -> Result<Vec<String>> {
+    Ok(all_locks(read)?.into_iter().map(|(id, _)| id).collect())
+}
+
 fn all_locks(read: &dyn KvRead) -> Result<Vec<(String, LockRecord)>> {
     let mut out = Vec::new();
     let mut bad = None;
@@ -1746,6 +1859,46 @@ fn all_locks(read: &dyn KvRead) -> Result<Vec<(String, LockRecord)>> {
         return Err(e.into());
     }
     Ok(out)
+}
+
+/// The `legacy_locks` part of the writer admin state (`engine-sql/writer-admin.ts`): each cycle
+/// lock that is not a page embedding lease as `[id, holder_pid, holder_host, acquisition_token,
+/// acquired_at]`, by id in byte order. `acquired_at` has the jsonb `timestamptz` text.
+pub(crate) fn legacy_lock_rows(read: &dyn KvRead) -> Result<Vec<Value>> {
+    let mut rows: Vec<(String, LockRecord)> = all_locks(read)?
+        .into_iter()
+        .filter(|(id, _)| !id.starts_with(PAGE_EMBEDDING_LEASE_PREFIX))
+        .collect();
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(rows
+        .into_iter()
+        .map(|(id, l)| {
+            json!([
+                id,
+                l.holder_pid,
+                l.holder_host,
+                l.acquisition_token,
+                crate::facts::jsonb_time(l.acquired_at)
+            ])
+        })
+        .collect())
+}
+
+/// The live cycle locks writer activation and deactivation name (`engine-sql/writer-release.ts`
+/// `liveLeases`): each unexpired lock that is not a page embedding lease, by id in byte order, as
+/// `{ id, holder_host, holder_pid }`.
+pub(crate) fn release_lock_rows(read: &dyn KvRead, now_us: i64) -> Result<Vec<Value>> {
+    let mut rows: Vec<(String, LockRecord)> = all_locks(read)?
+        .into_iter()
+        .filter(|(id, l)| !id.starts_with(PAGE_EMBEDDING_LEASE_PREFIX) && l.ttl_expires_at > now_us)
+        .collect();
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(rows
+        .into_iter()
+        .map(
+            |(id, l)| json!({ "id": id, "holder_host": l.holder_host, "holder_pid": l.holder_pid }),
+        )
+        .collect())
 }
 
 /// `LEGACY_SPEND_PREDICATE_SQL`: the NULL-record rows of the consent-gated producers
@@ -1772,7 +1925,7 @@ fn legacy_spend_record(row: &JobRecord, spend: &LegacySpend, now: i64) -> Value 
     let at = iso(millis);
     // `YYYY-MM-DDTHH24:MI:SS.MSZ`: millisecond precision.
     let at = format!("{}Z", &at[..23]);
-    jsonb(&json!({
+    ordered(&json!({
         "version": 1,
         "kind": "legacy_default",
         "group_id": spend.group_id,
@@ -1856,6 +2009,9 @@ fn admit_in(
                 _ => Ok(Step::Conflict(m.to_json())),
             };
         }
+    }
+    if spec.capacity_check {
+        return Ok(Step::Capacity);
     }
     // Name quota (every queue).
     if let Some(max) = spec.quota_max_waiting {

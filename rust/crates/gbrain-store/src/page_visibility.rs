@@ -9,9 +9,9 @@
 //! `readCallerPageAccess` names it with `readable` false.
 //!
 //! `readWriteVisibilityProbe` is the one read a remote page write opens its visibility check with:
-//! whether any access member is labelled-only (never: the store keeps no access members), whether
-//! a reader identity could open the page the empty-identity policy hides (none when no row is
-//! hidden; else whether the row names readers, since the store keeps no folder rules), and whether
+//! whether any access member is labelled-only (never: no store member is created labelled-only),
+//! whether a reader identity could open the page the empty-identity policy hides (none when no row
+//! is hidden; else whether the row names readers or a folder rule is stamped on it), and whether
 //! the page's source or any source is owner-only (`config ->> 'kind'` is `imessage`, or
 //! `config ->> 'owner_only'` is `true`).
 //!
@@ -26,8 +26,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::facts::{PrivacyPolicy, page_hidden, stamped_rules};
 use crate::owner_only::{any_owner_only, source_owner_only};
+use crate::owner_only_marks::any_marked;
 use crate::pages::read_page;
 use crate::{Result, Store};
 
@@ -66,11 +67,14 @@ impl Store {
         policy: &PrivacyPolicy,
     ) -> Result<WriteVisibilityProbe> {
         let read = self.read()?;
-        let owner_only_any = any_owner_only(&*read)?;
+        // `gbrain_owner_only_lineage()` (v322): an owner-only source, or the one-way held flag a first mark sets.
+        let owner_only_any = any_owner_only(&*read)? || any_marked(&*read)?;
         let identity_may_open = match read_page(&*read, source_id, slug)? {
-            Some(page) if page_hidden(&*read, &page, policy)? => {
-                Some(page.frontmatter.contains_key("readable_by"))
-            }
+            // `page_readers IS NOT NULL OR folder_rule_ids IS NOT NULL`.
+            Some(page) if page_hidden(&*read, &page, policy)? => Some(
+                page.frontmatter.contains_key("readable_by")
+                    || !stamped_rules(&*read, &page)?.is_empty(),
+            ),
             _ => None,
         };
         let owner_only_source = source_owner_only(&*read, source_id)?;

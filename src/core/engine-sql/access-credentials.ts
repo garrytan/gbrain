@@ -12,6 +12,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { pgArray } from '../grants/encoding.ts';
+import { executeRawJsonb } from '../sql-query.ts';
 import { normalizeOauthClientRow, type OauthClientRow } from './oauth-clients.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
@@ -106,7 +107,9 @@ export const CREDENTIAL_SQL = {
       SELECT client_id, $30, 'register', $31, NULL, $32::text::jsonb FROM created
   `,
   clamped_clients: `SELECT DISTINCT client_id FROM oauth_grant_audit WHERE actor = 'migration' AND action IN ('clamp_token_ttl', 'shorten_access_tokens')`,
+  // The order never reaches output: it fixes the lock order, plain id like lockAllSourceRows, so every locker of these rows takes them the same way.
   scope_sources_update: 'SELECT id, config FROM sources WHERE id IN (SELECT jsonb_array_elements_text($1::text::jsonb)) ORDER BY id FOR UPDATE',
+  // The order never reaches output: it fixes the lock order (plain id, as in scope_sources_update), not a listing.
   scope_sources_share: 'SELECT id, config FROM sources WHERE id IN (SELECT jsonb_array_elements_text($1::text::jsonb)) ORDER BY id FOR SHARE',
   scope_sources: 'SELECT id, config FROM sources WHERE id IN (SELECT jsonb_array_elements_text($1::text::jsonb))',
 } as const;
@@ -132,6 +135,12 @@ export type AccessTokenListRow = {
   private_pages?: unknown;
   private_facts?: unknown;
   member_id: string | null;
+  /** GST-2898: the write source grant and read-shared switch, present when the column exists (`gbrain auth list` shows a switched key). */
+  source_grant?: unknown;
+  source_id?: unknown;
+  federated_read?: unknown;
+  grant_revision?: unknown;
+  read_shared_revision?: unknown;
 };
 
 const dateOrNull = (v: unknown): Date | null => (v == null ? null : v instanceof Date ? v : new Date(String(v)));
@@ -143,6 +152,7 @@ export function normalizeAccessTokenListRow(r: Record<string, unknown>): AccessT
     last_used_at: dateOrNull(r.last_used_at), revoked_at: dateOrNull(r.revoked_at),
     ...('private_pages' in r ? { private_pages: r.private_pages } : {}),
     ...('private_facts' in r ? { private_facts: r.private_facts } : {}),
+    ...Object.fromEntries(['source_grant', 'source_id', 'federated_read', 'grant_revision', 'read_shared_revision'].filter(key => key in r).map(key => [key, r[key]])),
     member_id: r.member_id == null ? null : String(r.member_id),
   };
 }
@@ -383,6 +393,22 @@ export function utcCurrentGrant(row: Record<string, unknown>): Record<string, un
   return { ...row, current_grant: next };
 }
 
+/** The statements `auth rescope` ran through executeRaw to lock the active tokens it names, by id or by exact name. */
+export const ACTIVE_TOKEN_LOCK_SQL = {
+  by_id: 'SELECT * FROM access_tokens WHERE id = $1::uuid AND revoked_at IS NULL FOR UPDATE',
+  by_name: 'SELECT * FROM access_tokens WHERE name = $1 AND revoked_at IS NULL FOR UPDATE',
+} as const;
+
+/** The active tokens a rescope names: one id (a UUID) or every token with an exact name. */
+export type ActiveTokenTarget = { id: string } | { name: string };
+
+/** The whole rows (`SELECT *`) of the active tokens `target` names, locked FOR UPDATE until the transaction ends. */
+export function lockActiveAccessTokens(tx: Raw, target: ActiveTokenTarget): Promise<Record<string, unknown>[]> {
+  return 'id' in target
+    ? tx.executeRaw<Record<string, unknown>>(ACTIVE_TOKEN_LOCK_SQL.by_id, [target.id])
+    : tx.executeRaw<Record<string, unknown>>(ACTIVE_TOKEN_LOCK_SQL.by_name, [target.name]);
+}
+
 /** The whole row (`SELECT *`, every schema generation) of the token not revoked with this hash, or null. */
 export async function readActiveAccessTokenByHash(tx: Raw, hash: string, caller: TokenByHashCaller): Promise<Record<string, unknown> | null> {
   const [row] = await tx.executeRaw<Record<string, unknown>>(caller === 'transport' ? BEARER_SQL.token_by_hash_transport : BEARER_SQL.token_by_hash_provider, [hash]);
@@ -552,6 +578,58 @@ export async function convertLegacyAccessTokenGrant(tx: Raw, id: string, columns
   const [row] = await tx.executeRaw<Record<string, unknown>>(LEGACY_TOKEN_CONVERT_SQL,
     [columns.source_grant, columns.source_id, lit(columns.federated_read), lit(columns.allowed_operations), lit(columns.takes_holders), id]);
   return row ?? null;
+}
+
+/**
+ * The statements `auth rescope` ran through executeRaw to write a token's grant (grants/legacy-token.ts writeTokenGrant,
+ * rescopeInTransaction and migrateLegacyTokens at 5a32485552), byte for byte.
+ */
+export const TOKEN_GRANT_WRITE_SQL = {
+  grant: `UPDATE access_tokens SET source_grant = $2, source_id = $3, federated_read = $4::text[], allowed_operations = $5::text[],
+       takes_holders = $6::text[], scopes = COALESCE($7::text[], scopes), grant_revision = grant_revision + 1, permissions = $8::jsonb
+     WHERE id = $1::uuid RETURNING grant_revision`,
+  private_pages: 'UPDATE access_tokens SET private_pages = $2 WHERE id = $1::uuid',
+  private_facts: 'UPDATE access_tokens SET private_facts = $2 WHERE id = $1::uuid',
+  read_shared: 'UPDATE access_tokens SET read_shared_revision = $2 WHERE id = $1::uuid',
+  lock_legacy: 'SELECT * FROM access_tokens WHERE revoked_at IS NULL AND source_grant IS NULL ORDER BY created_at, id FOR UPDATE',
+} as const;
+
+/** One grant write: the five grant columns, the scopes (null keeps them) and the `permissions` mirror. */
+export interface AccessTokenGrantWrite {
+  columns: LegacyTokenGrantColumns;
+  scopes: string[] | null;
+  permissions: Record<string, unknown>;
+}
+
+/** The private grant columns of a token: what `--private-pages` and `--private-facts` set. */
+export type AccessTokenPrivateAxis = 'private_pages' | 'private_facts';
+
+/**
+ * Write the grant columns, the scopes when given and the `permissions` mirror of token `id` (a UUID), one more grant
+ * revision; the new revision, or null when no token has the id. The arrays bind as the TEXT[] literals the caller bound.
+ */
+export async function writeAccessTokenGrant(tx: Raw, id: string, write: AccessTokenGrantWrite): Promise<number | null> {
+  const lit = (v: string[] | null) => (v === null ? null : pgArray(v));
+  const c = write.columns;
+  const [row] = await executeRawJsonb<{ grant_revision: number }>(tx, TOKEN_GRANT_WRITE_SQL.grant,
+    [id, c.source_grant, c.source_id, lit(c.federated_read), lit(c.allowed_operations), lit(c.takes_holders), write.scopes === null ? null : `{${write.scopes.join(',')}}`],
+    [write.permissions]);
+  return row ? Number(row.grant_revision) : null;
+}
+
+/** GST-2898: stamp token `id`'s (a UUID) read-shared switch at `revision`, or clear it with null (grants/legacy-token.ts rescope). */
+export async function setAccessTokenReadSharedRevision(tx: Raw, id: string, revision: number | null): Promise<void> {
+  await tx.executeRaw(TOKEN_GRANT_WRITE_SQL.read_shared, [id, revision]);
+}
+
+/** Set one private grant column of token `id` (a UUID) to `value` ('none' or 'granted_sources'; the table refuses others). */
+export async function writeAccessTokenPrivateGrant(tx: Raw, id: string, axis: AccessTokenPrivateAxis, value: string): Promise<void> {
+  await tx.executeRaw(axis === 'private_pages' ? TOKEN_GRANT_WRITE_SQL.private_pages : TOKEN_GRANT_WRITE_SQL.private_facts, [id, value]);
+}
+
+/** The whole rows of the active tokens still on the legacy shape (no `source_grant`), oldest first, locked FOR UPDATE. */
+export function lockLegacyAccessTokens(tx: Raw): Promise<Record<string, unknown>[]> {
+  return tx.executeRaw<Record<string, unknown>>(TOKEN_GRANT_WRITE_SQL.lock_legacy);
 }
 
 /**

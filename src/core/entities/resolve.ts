@@ -22,7 +22,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
-import type { RetirementPrivacy } from '../engine-sql/entity-reads.ts';
+import type { ResolverPrivacy, RetirementPrivacy } from '../engine-sql/entity-reads.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { foldNonDecomposingLatin } from '../latin-fold.ts';
 import { slugifySegment } from '../sync.ts';
@@ -31,8 +31,6 @@ import { slugifySegment } from '../sync.ts';
 const siblingCanonical: typeof import('../mentions/siblings.ts').siblingCanonical = async (...args) =>
   (await import('../mentions/siblings.ts')).siblingCanonical(...args);
 import { isMissingSchemaObject } from '../utils.ts';
-import { privatePagesFilterForCaller, remoteReadFloorSql } from '../search/private-visibility.ts';
-import { rankingLinkSql } from '../link-ranking-policy.ts';
 import { isHoldingSlug } from '../facts-fence.ts';
 import { BASENAME_DIRS, PREFIX_EXPANSION_DIRS } from './basename-dirs.ts';
 
@@ -159,9 +157,7 @@ function orgDirVariants(raw: string): string[] {
 async function tryOrgDirVariant(engine: BrainEngine, source_id: string, raw: string): Promise<string | null> {
   const variants = orgDirVariants(raw);
   if (!variants.length) return null;
-  const rows = await engine.executeRaw<{ slug: string }>(
-    'SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[])', [source_id, variants]);
-  const live = await canonicalPages(engine, source_id, rows.map(r => r.slug));
+  const live = await canonicalPages(engine, source_id, await engine.readLiveSlugs(source_id, variants));
   return live.length === 1 ? live[0].slug : null;
 }
 
@@ -355,18 +351,8 @@ async function findExactBasenameCandidates(
 ): Promise<Array<{ slug: string }>> {
   const token = slugify(raw);
   if (raw.includes('/') || !token.includes('-')) return [];
-  let rows: Array<{ slug: string }>;
-  try {
-    rows = await engine.executeRaw<{ slug: string }>(
-      `SELECT slug FROM pages
-        WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[])
-        LIMIT 2`,
-      [source_id, BASENAME_DIRS.map(dir => `${dir}/${token}`)],
-    );
-  } catch {
-    return [];
-  }
-  return canonicalPages(engine, source_id, rows.map(r => r.slug));
+  const slugs = await engine.findExactBasenameCandidates(source_id, BASENAME_DIRS.map(dir => `${dir}/${token}`));
+  return canonicalPages(engine, source_id, slugs);
 }
 
 /**
@@ -480,13 +466,8 @@ export async function resolveStrictEntityReference(
 ): Promise<StrictResolution> {
   const trimmed = raw.trim();
   if (!trimmed) return { slug: null, miss: 'no_page' };
-  const privacy = opts.excludePrivate ? `AND ${opts.forCaller ? privatePagesFilterForCaller('p') : remoteReadFloorSql('p')}` : '';
-  const retirementPrivacy: RetirementPrivacy = opts.excludePrivate ? (opts.forCaller ? 'caller' : 'floor') : 'none';
-  const live = async (slugs: string[]) => slugs.length === 0 ? [] : engine.executeRaw<{ slug: string; type: string | null }>(
-    `SELECT p.slug, p.type FROM pages p
-      WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.slug = ANY($2::text[]) ${privacy}`,
-    [source_id, [...new Set(slugs)]],
-  );
+  const retirementPrivacy: ResolverPrivacy = opts.excludePrivate ? (opts.forCaller ? 'caller' : 'floor') : 'none';
+  const live = async (slugs: string[]) => slugs.length === 0 ? [] : engine.readLivePageTypes(source_id, [...new Set(slugs)], retirementPrivacy);
   // The source pack's linkable entity types (accounts, CRM records, ...) are fact entities too.
   let linkable: Set<string> | null = null;
   const isEntity = async (r: { slug: string; type: string | null }) => {
@@ -525,14 +506,8 @@ export async function resolveStrictEntityReference(
   }
   if (opts.sameName && !isBareName(trimmed)) {
     try {
-      const rows = await engine.executeRaw<{ slug: string; title: string; type: string | null }>(
-        `SELECT p.slug, p.title, p.type FROM pages p
-          WHERE p.source_id = $1 AND p.deleted_at IS NULL ${privacy} AND NOT ${retiredPageSql('p')}
-            AND (lower(p.title) % $2 OR p.slug ILIKE '%' || $3 || '%')
-          ORDER BY GREATEST(similarity(lower(p.title), $2), similarity(p.slug, $3)) DESC, p.slug ASC
-          LIMIT 5`,
-        [source_id, trimmed.toLowerCase(), token],
-      );
+      const rows = await engine.readTrigramCandidates(source_id,
+        { arm: 'same_name', titleLc: trimmed.toLowerCase(), slugFragment: token, privacy: retirementPrivacy });
       const named = await pick(rows.filter(row => isFactEntityPage(row.slug, row.type) && sameEntityName(trimmed, row.title, row.slug)), 'same_name');
       if (named) return named;
     } catch (err) {
@@ -563,23 +538,14 @@ export async function entityReferenceCandidates(
   const trimmed = raw.trim();
   const token = slugify(trimmed);
   if (!token) return [];
-  const privacy = opts.excludePrivate ? `AND ${opts.forCaller ? privatePagesFilterForCaller('p') : remoteReadFloorSql('p')}` : '';
+  const resolverPrivacy: ResolverPrivacy = opts.excludePrivate ? (opts.forCaller ? 'caller' : 'floor') : 'none';
   const aliases = await aliasHitSlugs(engine, source_id, trimmed).catch(() => [] as string[]);
   const prefixed = (await findPrefixCandidates(engine, source_id, token)).map(c => c.slug);
-  const named = await engine.executeRaw<{ slug: string }>(
-    `SELECT p.slug FROM pages p
-      WHERE p.source_id = $1 AND p.deleted_at IS NULL AND NOT ${retiredPageSql('p')} AND p.slug = ANY($2::text[]) ${privacy}
-      ORDER BY p.slug LIMIT 5`,
-    [source_id, [...new Set([...BASENAME_DIRS.map(dir => `${dir}/${token}`), ...orgDirVariants(trimmed), ...aliases, ...prefixed])]],
-  );
-  if (named.length) return named.map(r => r.slug);
-  const near = await engine.executeRaw<{ slug: string; title: string; type: string | null }>(
-    `SELECT p.slug, p.title, p.type FROM pages p
-      WHERE p.source_id = $1 AND p.deleted_at IS NULL AND NOT ${retiredPageSql('p')} ${privacy}
-        AND (lower(p.title) % $2 OR p.slug ILIKE '%' || $3 || '%')
-      ORDER BY GREATEST(similarity(lower(p.title), $2), similarity(p.slug, $3)) DESC, p.slug ASC
-      LIMIT 20`,
-    [source_id, trimmed.toLowerCase(), token],
+  const named = await engine.readNamedEntitySlugs(source_id,
+    [...new Set([...BASENAME_DIRS.map(dir => `${dir}/${token}`), ...orgDirVariants(trimmed), ...aliases, ...prefixed])], resolverPrivacy);
+  if (named.length) return named;
+  const near = await engine.readTrigramCandidates(source_id,
+    { arm: 'near', titleLc: trimmed.toLowerCase(), slugFragment: token, privacy: resolverPrivacy },
   ).catch(err => { if (isMissingTrigramError(err)) return []; throw err; });
   const lead = token.split('-')[0]!;
   const sharesLead = (r: { slug: string; title: string }) => slugify(r.title).split('-')[0] === lead || (r.slug.split('/').pop() ?? '').split('-')[0] === lead;
@@ -690,25 +656,7 @@ export async function findPrefixCandidates(
     patterns.push(`${dir}/${token}-%`);
   }
   try {
-    const rows = await engine.executeRaw<{
-      slug: string;
-      connection_count: number;
-    }>(
-      `SELECT p.slug,
-              ((SELECT COUNT(*)::int FROM links l WHERE l.to_page_id = p.id AND ${rankingLinkSql('l')})
-               + (SELECT COUNT(*)::int FROM links l WHERE l.from_page_id = p.id AND ${rankingLinkSql('l')})
-               + (SELECT COUNT(*)::int FROM content_chunks WHERE page_id = p.id))
-                AS connection_count
-       FROM pages p
-       WHERE p.source_id = $1
-         AND p.deleted_at IS NULL
-         AND NOT ${retiredPageSql('p')}
-         AND p.slug LIKE ANY($2::text[])
-       ORDER BY connection_count DESC, p.slug ASC
-       LIMIT 10`,
-      [source_id, patterns],
-    );
-    return rows;
+    return await engine.readPrefixCandidates(source_id, { patterns });
   } catch {
     // Defensive: any SQL hiccup returns "no candidates" so the caller's
     // ambiguity gate doesn't crash the cycle. The downstream
@@ -736,20 +684,9 @@ async function tryUnambiguousPrefixExpansion(
   if (candidates.length === 0) return null;
   const patterns = PREFIX_EXPANSION_DIRS.flatMap(dir => [`${dir}/${token}`, `${dir}/${token}-%`]);
   try {
-    const dirs = await engine.executeRaw<{ dir: string }>(
-      `SELECT DISTINCT split_part(slug, '/', 1) AS dir FROM pages
-        WHERE source_id = $1 AND deleted_at IS NULL AND NOT ${retiredPageSql('pages')} AND slug LIKE ANY($2::text[])
-        LIMIT 2`,
-      [source_id, patterns],
-    );
+    const dirs = await engine.readPrefixDirs(source_id, patterns);
     if (dirs.length !== 1) return null;
-    const rows = await engine.executeRaw<{ slug: string; title: string | null }>(
-      `SELECT slug, title FROM pages
-        WHERE source_id = $1 AND deleted_at IS NULL AND NOT ${retiredPageSql('pages')}
-          AND slug LIKE ANY($2::text[]) AND lower(title) = lower($3)
-        LIMIT 3`,
-      [source_id, patterns, raw.trim()],
-    );
+    const rows = await engine.readPrefixTitleMatches(source_id, patterns, raw.trim());
     const exact = rows.filter(r => sameEntityName(raw, r.title, r.slug));
     return exact.length === 1 ? exact[0].slug : null;
   } catch {
@@ -773,41 +710,24 @@ async function tryPrefixExpansion(
   for (const dir of PREFIX_EXPANSION_DIRS) {
     const pattern = `${dir}/${token}-%`;
     try {
-      const rows = await engine.executeRaw<{
-        slug: string;
-        connection_count: number;
-      }>(
-        // Connection count is a simple proxy for canonicality:
-        // (incoming links) + (outgoing links) + (content chunks).
-        //
-        // SQL shape: correlated subqueries scoped to the slug-LIKE
-        // candidates. The pre-v0.34.5 version used derived-table JOINs
-        // (SELECT FROM links GROUP BY to_page_id, etc.) which forced the
-        // planner to aggregate the FULL links + content_chunks tables on
-        // every prefix-expansion call — O(N) per call where N is total
-        // links/chunks in the brain. On a 100K-link / 50K-chunk brain
-        // that's slow.
-        //
-        // The slug LIKE filter is already selective in practice (typical
-        // brain has 0-5 pages per prefix), so the correlated subqueries
-        // run N=3 times per matched row, hitting the indexes on
-        // links.to_page_id, links.from_page_id, and content_chunks.page_id
-        // directly. Even on a pathological prefix matching 1000+ pages,
-        // work is bounded per-candidate, not whole-table.
-        `SELECT p.slug,
-                ((SELECT COUNT(*)::int FROM links l WHERE l.to_page_id = p.id AND ${rankingLinkSql('l')})
-                 + (SELECT COUNT(*)::int FROM links l WHERE l.from_page_id = p.id AND ${rankingLinkSql('l')})
-                 + (SELECT COUNT(*)::int FROM content_chunks WHERE page_id = p.id))
-                  AS connection_count
-         FROM pages p
-         WHERE p.source_id = $1
-           AND p.deleted_at IS NULL
-           AND NOT ${retiredPageSql('p')}
-           AND p.slug LIKE $2
-         ORDER BY connection_count DESC, p.slug ASC
-         LIMIT 5`,
-        [source_id, pattern],
-      );
+      // Connection count is a simple proxy for canonicality:
+      // (incoming links) + (outgoing links) + (content chunks).
+      //
+      // SQL shape: correlated subqueries scoped to the slug-LIKE
+      // candidates. The pre-v0.34.5 version used derived-table JOINs
+      // (SELECT FROM links GROUP BY to_page_id, etc.) which forced the
+      // planner to aggregate the FULL links + content_chunks tables on
+      // every prefix-expansion call — O(N) per call where N is total
+      // links/chunks in the brain. On a 100K-link / 50K-chunk brain
+      // that's slow.
+      //
+      // The slug LIKE filter is already selective in practice (typical
+      // brain has 0-5 pages per prefix), so the correlated subqueries
+      // run N=3 times per matched row, hitting the indexes on
+      // links.to_page_id, links.from_page_id, and content_chunks.page_id
+      // directly. Even on a pathological prefix matching 1000+ pages,
+      // work is bounded per-candidate, not whole-table.
+      const rows = await engine.readPrefixCandidates(source_id, { pattern });
       if (rows.length === 0) continue;
       // Single unambiguous match: return it.
       if (rows.length === 1) return rows[0].slug;
@@ -861,24 +781,7 @@ async function tryFuzzyMatch(
   // tends to be display-name-shaped ("Alice Example" vs "alice-example"). Cap at
   // 3 candidates; pick the first deterministic one.
   try {
-    const rows = await engine.executeRaw<{ slug: string; title: string; type: string | null; score: number }>(
-      `SELECT slug, title, type,
-         GREATEST(
-           similarity(lower(title), $2),
-           similarity(slug, $3)
-         ) AS score
-       FROM pages
-       WHERE source_id = $1
-         AND deleted_at IS NULL
-         AND NOT ${retiredPageSql('pages')}
-         AND (
-           lower(title) % $2
-           OR slug ILIKE '%' || $3 || '%'
-         )
-       ORDER BY score DESC, slug ASC
-       LIMIT 5`,
-      [source_id, lc, fragment],
-    );
+    const rows = await engine.findFuzzyEntityCandidates(source_id, lc, fragment);
     // A trigram score alone attributes facts about "Alicia Example" to Alice,
     // and facts about a person with no page to a meeting page that carries
     // their name. Entity resolution takes a candidate only when it names the
@@ -891,7 +794,8 @@ async function tryFuzzyMatch(
       return named.length === 1 ? named[0].slug : null;
     }
     // Phantom canonicals: a clear winner only, with a margin over the runner-up.
-    if (rows.length > 0 && rows[0].score >= 0.7 && (rows.length === 1 || rows[0].score - rows[1].score >= 0.1)) return rows[0].slug;
+    const score = (i: number) => rows[i]?.score ?? 0;
+    if (rows.length > 0 && score(0) >= 0.7 && (rows.length === 1 || score(0) - score(1) >= 0.1)) return rows[0].slug;
   } catch (err) {
     // pg_trgm might not be installed on every engine config: that brain has
     // no fuzzy arm and falls through to slugify. Any other database error

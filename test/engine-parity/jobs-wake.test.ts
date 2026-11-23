@@ -629,6 +629,26 @@ describe('engine parity: wake watch and forget leases', () => {
       expect(doctor.dead_forgets).toBe(1);
       return answers;
     });
+  parityTest('queueWakeForget with a member id queues only when no live access member has that id: a live or disabled member keeps its user, a removed or unknown one does not',
+    { methods: ['queueWakeForget', 'countPendingWakeForgets', 'claimWakeForgets', 'insertAccessMember', 'setAccessMemberDisabled', 'tombstoneAccessMember'] }, async (engine) => {
+      const member = (id: string) => ({ id, displayName: null, email: null, kind: 'person' as const, groups: [], bindTokenId: null });
+      await engine.insertAccessMember(member('live-example'));
+      await engine.insertAccessMember(member('disabled-example'));
+      await engine.setAccessMemberDisabled('disabled-example', true);
+      await engine.insertAccessMember(member('removed-example'));
+      await engine.tombstoneAccessMember('removed-example');
+      await engine.queueWakeForget(user(1), 'live-example');
+      await engine.queueWakeForget(user(2), 'disabled-example');
+      // the id is compared exactly: a live member's id in another case is not that member
+      await engine.queueWakeForget(user(3), 'LIVE-EXAMPLE');
+      await engine.queueWakeForget(user(4), 'removed-example');
+      await engine.queueWakeForget(user(5), 'unknown-example');
+      const pending = await engine.countPendingWakeForgets();
+      const queued = (await engine.claimWakeForgets({ leaseSeconds: 60, limit: 10 })).map(c => c.wake_user).sort();
+      expect(queued).toEqual([user(3), user(4), user(5)]);
+      expect(pending).toBe(3);
+      return { pending, queued };
+    });
   parityTest('forgetWakeMember queues a forget of each user the removed member watched under, ends its open watches and drops only its own terms acceptances',
     { methods: ['forgetWakeMember', 'openWakeWatch', 'endWakeWatches', 'listWakeWatches', 'queueWakeForget', 'claimWakeForgets', 'countPendingWakeForgets', 'recordWakeTermsAcceptance', 'hasWakeTermsAcceptance'] }, async (engine) => {
       const m1 = { memberId: 'm-1' };

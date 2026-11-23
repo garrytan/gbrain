@@ -95,8 +95,7 @@ impl Store {
 
     /// `readLinkedMember(system, externalId)`: `{ id, groups }` of the member the link names when that member
     /// is neither disabled nor removed, its groups in byte order; None for no link or a member not enabled.
-    /// Mirrors the join in engine-sql/access-members.ts `readLinkedMember` (Postgres orders the groups in the
-    /// database collation).
+    /// Mirrors the join in engine-sql/access-members.ts `readLinkedMember`, whose groups sort with `COLLATE "C"`.
     pub fn read_linked_member(&self, system: &str, external_id: &str) -> Result<Option<Value>> {
         let read = self.read()?;
         let Some(link) = read_link(&*read, system, external_id)? else {

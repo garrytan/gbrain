@@ -1,8 +1,9 @@
 //! Access members and groups: the `access_members`, `access_groups` and `access_group_members`
 //! tables of the PGLite engine (schema migrations v282, v301, v305 and v308).
 //!
-//! Members: insertAccessMember, setAccessMemberDisabled, setAccessMemberEmail,
-//! setAccessMemberKind, tombstoneAccessMember, addAccessGroupMembers, removeAccessGroupMembers,
+//! Members: insertAccessMember (with the token it binds, written to the token record of
+//! `jobs/access_tokens.rs` in the same write), setAccessMemberDisabled, setAccessMemberEmail,
+//! setAccessMemberKind, setAccessMemberLabelledOnly, tombstoneAccessMember, addAccessGroupMembers, removeAccessGroupMembers,
 //! deleteAccessGroup, readAccessMembers, readAccessGroupIds, readAccessGroups, listActiveAccessMembers.
 //!
 //! Keys (every record starts with `keys::ACCESS_MEMBERS`, `x`):
@@ -103,7 +104,8 @@ pub(crate) struct GroupRecord {
     pub created_at_us: i64,
 }
 
-/// `insertAccessMember(spec)`: the member row, the groups it joins and the token it binds.
+/// `insertAccessMember(spec)`: the member row, the groups it joins and the token it binds (`bindTokenId`, the token
+/// whose id text is exactly that).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AccessMemberInsert {
@@ -112,7 +114,6 @@ pub struct AccessMemberInsert {
     pub email: Option<String>,
     pub kind: Option<String>,
     pub groups: Vec<String>,
-    /// The id of an access token to bind to the new member in the same write (`gbrain access member add --bind-token`).
     pub bind_token_id: Option<String>,
 }
 
@@ -210,6 +211,12 @@ pub(crate) fn read_member(read: &dyn KvRead, id: &str) -> Result<Option<MemberRe
     get_json(read, &member_key(id))
 }
 
+/// `EXISTS (SELECT 1 FROM access_members WHERE id = $1 AND tombstoned_at IS NULL)`: a member
+/// with exactly this id that is not removed (a disabled member counts).
+pub(crate) fn member_not_removed(read: &dyn KvRead, id: &str) -> Result<bool> {
+    Ok(read_member(read, id)?.is_some_and(|m| m.tombstoned_at_us.is_none()))
+}
+
 /// The member that declares `email`, other than `except`.
 fn email_owner(read: &dyn KvRead, email: &str, except: &str) -> Result<Option<String>> {
     Ok(all_members(read)?
@@ -242,7 +249,7 @@ fn mark_restricted(tx: &mut dyn KvWrite) -> Result<()> {
 
 /// `gbrain_access_refresh_serves()` (v309) at read committed: `access.serves_derived` is
 /// `several` while two or more members are enabled and `one` otherwise (written as `one` only when
-/// the key exists); `access.serves_since` is set once, when the explicit `access.serves` (`one` or
+/// the key exists); `access.serves_since` is set once (to the microsecond, v329), when the explicit `access.serves` (`one` or
 /// `several`, trimmed and lower-cased) or else the derived value is `several`.
 fn refresh_serves(tx: &mut dyn KvWrite, now_us: i64) -> Result<()> {
     let enabled = all_members(&*tx)?
@@ -262,9 +269,8 @@ fn refresh_serves(tx: &mut dyn KvWrite, now_us: i64) -> Result<()> {
     };
     let since_key = config_key(SERVES_SINCE_KEY);
     if serves == "several" && tx.get(&since_key)?.is_none() {
-        // to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'): whole seconds.
-        let text = iso(now_us);
-        tx.put(&since_key, format!("{}Z", &text[..19]).as_bytes())?;
+        // to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') (v329): microseconds.
+        tx.put(&since_key, iso(now_us).as_bytes())?;
     }
     Ok(())
 }
@@ -314,8 +320,9 @@ fn row_json(m: &MemberRecord, groups: Vec<String>) -> Value {
 
 impl Store {
     /// `insertAccessMember(spec)`: inserts the member (kind `person` when unset), creates the groups
-    /// it names that are missing and adds it to each, in one write. Resolves `{ groupsCreated }`,
-    /// the groups this call created, in the order named.
+    /// it names that are missing, adds it to each and binds the token `bindTokenId` names to it (no
+    /// token has the id: nothing is bound), in one write. Resolves `{ groupsCreated }`, the groups
+    /// this call created, in the order named.
     pub fn insert_access_member(&self, spec: &AccessMemberInsert) -> Result<Value> {
         let kind = spec.kind.as_deref().unwrap_or("person");
         check_id(&spec.id, "access_members")?;
@@ -356,8 +363,8 @@ impl Store {
             for group in &spec.groups {
                 add_group_member(tx, group, &spec.id)?;
             }
-            if let Some(token) = &spec.bind_token_id {
-                crate::jobs::bind_token_member(tx, token, &spec.id)?;
+            if let Some(token_id) = &spec.bind_token_id {
+                crate::jobs::bind_token_member(tx, token_id, &spec.id)?;
             }
             Ok(json!({ "groupsCreated": created }))
         })
@@ -406,6 +413,21 @@ impl Store {
                 return Ok(());
             };
             m.kind = kind.to_string();
+            m.updated_at_us = now(self);
+            put_json(tx, &member_key(id), &m)
+        })
+    }
+
+    /// `setAccessMemberLabelledOnly(id, labelled_only)`: sets or clears the labelled-only grant of
+    /// a member that is not removed. No serves key moves: the Postgres serves trigger fires only on
+    /// `disabled_at` and `tombstoned_at`.
+    pub fn set_access_member_labelled_only(&self, id: &str, labelled_only: bool) -> Result<()> {
+        self.write(|tx| {
+            let Some(mut m) = read_member(&*tx, id)?.filter(|m| m.tombstoned_at_us.is_none())
+            else {
+                return Ok(());
+            };
+            m.labelled_only = labelled_only;
             m.updated_at_us = now(self);
             put_json(tx, &member_key(id), &m)
         })

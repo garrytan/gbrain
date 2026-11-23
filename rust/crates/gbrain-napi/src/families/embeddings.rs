@@ -31,6 +31,20 @@ impl Brain {
         })
     }
 
+    /// `cosinesByChunkIds(ids, query)`: `[{ id, cosine }]` for the served chunks with a vector.
+    #[napi]
+    pub fn cosines_by_chunk_ids<'env>(
+        &self,
+        env: &'env Env,
+        ids: Value,
+        query: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let ids: Vec<u64> = required(ids, "cosinesByChunkIds ids")?;
+            s.cosines_by_chunk_ids(&ids, &query)
+        })
+    }
+
     /// `countStaleChunks({ sourceId?, signature?, includeNullSignature? }?)`.
     #[napi]
     pub fn count_stale_chunks<'env>(
@@ -41,6 +55,16 @@ impl Brain {
         self.run(env, move |s| {
             s.count_stale_chunks(&arg(options, "countStaleChunks options")?)
         })
+    }
+
+    /// `readUnembeddedPageSummary(sourceId)`: `{ pages, oldest, held }`.
+    #[napi]
+    pub fn read_unembedded_page_summary<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_unembedded_page_summary(&source_id))
     }
 
     /// `sumStaleChunkChars({ sourceId?, signature?, includeNullSignature? }?)`.

@@ -4,8 +4,12 @@
 mod common;
 
 use common::{TempDir, open};
+use gbrain_store::cli_reads::import::{PageTrustKey, PageTrustLookup};
 use gbrain_store::error::*;
-use gbrain_store::pages::{PageFilters, PageInput, PutPageOptions, ReadScope, VersionsOptions};
+use gbrain_store::pages::{
+    PageFilters, PageInput, PageTrustRestore, PutPageOptions, ReadScope, VersionReasonStamp,
+    VersionsOptions,
+};
 use gbrain_store::{Store, sources::SourceInput};
 use serde_json::{Value, json};
 
@@ -111,7 +115,12 @@ fn a_put_page_reads_back_with_the_page_shape() {
         .unwrap()
         .keys()
         .collect();
-    assert_eq!(keys, ["zebra", "alpha"], "frontmatter keeps its key order");
+    // jsonb keeps no insertion order: Postgres gives keys shorter first, then by bytes.
+    assert_eq!(
+        keys,
+        ["alpha", "zebra"],
+        "frontmatter reads in Postgres jsonb key order"
+    );
     // An upper-case read finds the page too.
     assert!(
         store
@@ -748,6 +757,164 @@ fn versions_are_snapshots_listed_newest_first() {
         )
         .unwrap();
     assert!(none.is_empty());
+}
+
+#[test]
+fn change_reasons_stamp_the_versions_after_a_mark() {
+    let dir = TempDir::new("pages-version-reasons");
+    let store = open(&dir);
+    let page_id = put(&store, "a", "one")["id"].as_i64().unwrap();
+    assert_eq!(store.read_latest_version_id(page_id).unwrap(), None);
+    let v1 = store.create_version("a", None).unwrap();
+    assert_eq!(
+        store.read_latest_version_id(page_id).unwrap(),
+        v1["id"].as_u64()
+    );
+    let stamp = |after: i64, reason: &str| {
+        store.stamp_version_change_reason(&VersionReasonStamp {
+            page_id,
+            after_version_id: after,
+            reason: reason.into(),
+        })
+    };
+    assert_eq!(stamp(0, "first").unwrap(), 1);
+    put(&store, "a", "two");
+    let v2 = store
+        .create_version_with("a", None, Some("imported"))
+        .unwrap();
+    assert_eq!(v2["change_reason"], "imported");
+    assert_eq!(stamp(v2["id"].as_i64().unwrap(), "late").unwrap(), 0);
+    assert_eq!(stamp(-1, "bad\0reason").unwrap_err().code, INVALID_ARGUMENT);
+    let reasons: Vec<Value> = store
+        .get_versions("a", &VersionsOptions::default())
+        .unwrap()
+        .iter()
+        .map(|v| v["replaced_because"].clone())
+        .collect();
+    assert_eq!(reasons, [json!("imported"), json!("first")]);
+}
+
+#[test]
+fn the_holding_prune_keeps_the_newest_five_versions_and_marks_the_gap() {
+    let dir = TempDir::new("pages-holding-prune");
+    let store = open(&dir);
+    let page_id = put(&store, "memory/unattributed", "held")["id"]
+        .as_i64()
+        .unwrap();
+    let ids: Vec<u64> = (0..8)
+        .map(|_| {
+            store.create_version("memory/unattributed", None).unwrap()["id"]
+                .as_u64()
+                .unwrap()
+        })
+        .collect();
+    let kept = || -> Vec<u64> {
+        store
+            .get_versions("memory/unattributed", &VersionsOptions::default())
+            .unwrap()
+            .iter()
+            .map(|v| v["id"].as_u64().unwrap())
+            .collect()
+    };
+    assert_eq!(store.prune_holding_page_versions(page_id).unwrap(), 3);
+    assert_eq!(kept(), ids[3..].iter().rev().copied().collect::<Vec<_>>());
+    assert_eq!(store.prune_holding_page_versions(page_id).unwrap(), 0);
+    assert_eq!(store.prune_holding_page_versions(987_654).unwrap(), 0);
+    assert_eq!(store.prune_holding_page_versions(-1).unwrap(), 0);
+}
+
+fn trust_of(store: &Store, slug: &str) -> (String, Option<Value>) {
+    let rows = store
+        .read_page_trust_rows(&PageTrustLookup {
+            keys: vec![PageTrustKey {
+                source_id: "default".into(),
+                slug: slug.into(),
+            }],
+            ..PageTrustLookup::default()
+        })
+        .unwrap();
+    (rows[0].trust_tier.clone(), rows[0].write_origin.clone())
+}
+
+fn restore(
+    store: &Store,
+    page_id: i64,
+    tier: &str,
+    origin: Option<&str>,
+) -> gbrain_store::Result<()> {
+    store.restore_page_trust(&PageTrustRestore {
+        page_id,
+        trust_tier: tier.into(),
+        write_origin: origin.map(String::from),
+    })
+}
+
+#[test]
+fn a_trust_restore_lowers_freely_and_raises_only_under_a_promotion() {
+    let dir = TempDir::new("pages-trust-restore");
+    let store = open(&dir);
+    let names = |n: &[&str]| n.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let owner = r#"{"channel":"owner"}"#;
+    let tx = store.begin_transaction(false).unwrap();
+    tx.apply_write_trust(
+        &names(&[
+            "gbrain.write_trust_tier",
+            "gbrain.write_trust_promotion",
+            "gbrain.write_origin",
+        ]),
+        &[
+            "operator_curated".into(),
+            "operator_curated".into(),
+            owner.into(),
+        ],
+    )
+    .unwrap();
+    let page_id = put(&tx, "a", "one")["id"].as_i64().unwrap();
+    tx.commit_transaction().unwrap();
+
+    // An agent rewrite lowers the page; the restore under the page's own promotion raises it back.
+    let tx = store.begin_transaction(false).unwrap();
+    let agent = names(&["gbrain.write_trust_tier", "gbrain.write_origin"]);
+    let agent_values = [
+        "agent_written".to_string(),
+        r#"{"channel":"agent"}"#.to_string(),
+    ];
+    tx.apply_write_trust(&agent, &agent_values).unwrap();
+    put(&tx, "a", "one, appended");
+    assert_eq!(trust_of(&tx, "a").0, "agent_written");
+    tx.apply_write_trust(
+        &names(&["gbrain.write_trust_promotion"]),
+        &["operator_curated".into()],
+    )
+    .unwrap();
+    restore(&tx, page_id, "operator_curated", Some(owner)).unwrap();
+    tx.commit_transaction().unwrap();
+    assert_eq!(
+        trust_of(&store, "a"),
+        (
+            "operator_curated".into(),
+            Some(json!({ "channel": "owner" }))
+        )
+    );
+
+    // A lower needs no promotion, and a null origin clears it.
+    let tx = store.begin_transaction(false).unwrap();
+    tx.apply_write_trust(&agent, &agent_values).unwrap();
+    restore(&tx, page_id, "external_untrusted", None).unwrap();
+    // A raise with no promotion keeps the stored tier; an unknown page writes nothing.
+    restore(&tx, page_id, "operator_curated", Some(owner)).unwrap();
+    restore(&tx, 987_654, "agent_written", None).unwrap();
+    tx.commit_transaction().unwrap();
+    assert_eq!(trust_of(&store, "a").0, "external_untrusted");
+
+    assert_eq!(
+        code(restore(&store, page_id, "root", None).unwrap_err()),
+        INVALID_ARGUMENT
+    );
+    assert_eq!(
+        code(restore(&store, page_id, "agent_written", Some("{not json")).unwrap_err()),
+        INVALID_ARGUMENT
+    );
 }
 
 #[test]

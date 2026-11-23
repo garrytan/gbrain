@@ -1,9 +1,9 @@
 //! Jobs: the `oauth_clients` table, every column of it, as the members of `src/core/engine-sql/oauth-clients.ts` and
 //! `spend-log.ts` run them (rust/docs/store/spend-log.md, rust/docs/store/oauth-clients.md).
 //!
-//! Members: insertOauthClient, updateOauthClientBudget, readClientBudgetUsd, readOauthClient, and the client reads the
-//! admission and the agent spend view make (`budget_cents`, `agent_clients`); and the credential members of
-//! `src/core/engine-sql/access-credentials.ts`: deleteOAuthClient, oauthClientLive and setOauthClientTokenTtl.
+//! Members: insertOauthClient, updateOauthClientBudget, readClientBudgetUsd, readOauthClient, listSourceOAuthClients,
+//! and the client reads the admission and the agent spend view make (`budget_cents`, `agent_clients`); and the credential
+//! members of `src/core/engine-sql/access-credentials.ts`: deleteOAuthClient, oauthClientLive and setOauthClientTokenTtl.
 //!
 //! Keys, all under `keys::JOBS` (`m`), sub-tag 0x2A (this file only):
 //! - `m 0x2A client_id -> ClientRecord`: one client, the full row (the 41 columns of the table after every migration,
@@ -13,10 +13,10 @@
 //! (`oauth_clients_complete_agent_grant`, src/core/grants/schema.ts), the five value lists and the `sources` foreign
 //! key. A refusal is `constraint_violation` with the Postgres message (`new row for relation "oauth_clients" violates
 //! check constraint "..."`); the TypeScript member gives it the SQLSTATE and constraint name PGLite and Postgres raise.
-//! Not kept: the `trust_generation_update` trigger, the secondary indexes (a read scans the table) and the
-//! `ON DELETE RESTRICT` of `sources` (deleting a source a client names is not refused here). The store keeps the
-//! client's `oauth_tokens` (`oauth_tokens.rs`) and removes them with the client, as the `ON DELETE CASCADE` does, and so it does
-//! the client's `oauth_codes` (`oauth_codes.rs`).
+//! Not kept: the `trust_generation_update` trigger and the secondary indexes (a read scans the table). A source
+//! delete runs [`remove_source_rows`]: the `ON DELETE RESTRICT` of `source_id` and the `ON DELETE SET NULL` of
+//! `bound_source_id`. The store keeps the client's `oauth_tokens` (`oauth_tokens.rs`) and removes them with the client, as
+//! the `ON DELETE CASCADE` does, and so it does the client's `oauth_codes` (`oauth_codes.rs`).
 
 use super::oauth_codes::delete_client_codes;
 use super::oauth_tokens::delete_client_tokens;
@@ -100,6 +100,9 @@ pub(super) struct ClientRecord {
     pub(super) grant_profile: Option<String>,
     #[serde(default)]
     pub(super) grant_revision: i32,
+    /// `read_shared_revision` (v323): the read-shared switch is on while it equals `grant_revision`.
+    #[serde(default)]
+    pub(super) read_shared_revision: Option<i32>,
     #[serde(default)]
     pub(super) grant_repair_reasons: Vec<String>,
     pub(super) created_at: i64,
@@ -229,7 +232,7 @@ impl ClientRecord {
     /// The row as `SELECT *` returns it on the SQL engines: times as ISO text, the cap as `NUMERIC` text.
     pub(super) fn to_row(&self) -> Value {
         let t = |m: Option<i64>| m.map(iso);
-        json!({
+        let mut row = json!({
             "client_id": self.client_id,
             "client_secret_hash": self.client_secret_hash,
             "client_name": self.client_name,
@@ -271,7 +274,10 @@ impl ClientRecord {
             "attest_read": self.attest_read,
             "reads_unscoped": t(self.reads_unscoped),
             "private_facts": self.private_facts,
-        })
+        });
+        // Added past the macro's recursion limit: the v323 read-shared switch, null on a row that never set it.
+        row["read_shared_revision"] = json!(self.read_shared_revision);
+        row
     }
 }
 
@@ -321,6 +327,31 @@ pub(super) fn load_client(read: &dyn KvRead, client_id: &str) -> Result<Option<C
 pub(super) fn put_client(tx: &mut dyn KvWrite, record: &ClientRecord) -> Result<()> {
     record.check(&*tx)?;
     put_json(tx, &client_key(&record.client_id), record)
+}
+
+/// The `sources` delete side of the client's foreign keys: refuses, as `ON DELETE RESTRICT` does, when a client's
+/// `source_id` names `source_id`, revoked clients included (the key is physical), with the error Postgres raises;
+/// else clears every `bound_source_id` that names it (`ON DELETE SET NULL`).
+pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
+    let clients = all_clients(&*tx)?;
+    if clients
+        .iter()
+        .any(|c| c.source_id.as_deref() == Some(source_id))
+    {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            format!(
+                "update or delete on table \"sources\" violates foreign key constraint \"oauth_clients_source_id_fkey\" on table \"{TABLE}\""
+            ),
+        ));
+    }
+    for mut client in clients {
+        if client.bound_source_id.as_deref() == Some(source_id) {
+            client.bound_source_id = None;
+            put_json(tx, &client_key(&client.client_id), &client)?;
+        }
+    }
+    Ok(())
 }
 
 /// Every client, by client id.
@@ -398,6 +429,8 @@ pub struct ClientInsert {
     pub grant_profile: Option<String>,
     #[serde(default)]
     pub grant_revision: i32,
+    #[serde(default)]
+    pub read_shared_revision: Option<i32>,
     #[serde(default)]
     pub grant_repair_reasons: Vec<String>,
     /// ISO text; left out, the store clock.
@@ -588,6 +621,7 @@ impl Store {
             delegated_namespace: row.delegated_namespace.clone(),
             grant_profile: row.grant_profile.clone(),
             grant_revision: row.grant_revision,
+            read_shared_revision: row.read_shared_revision,
             grant_repair_reasons: row.grant_repair_reasons.clone(),
             created_at: created_at.unwrap_or_else(|| self.env.now_micros()),
             source_grant: row.source_grant.clone(),
@@ -635,6 +669,22 @@ impl Store {
         Ok(load_client(&*read, client_id)?.map(|c| c.to_row()))
     }
 
+    /// `[{ id, name }]` (`client_id`, `client_name`) of the clients whose id is one of `ids`, by id; an id no client has is
+    /// left out. The names `get_write_attribution` shows for an OAuth client.
+    pub fn read_oauth_client_names(&self, ids: &[String]) -> Result<Value> {
+        let read = self.read()?;
+        let mut wanted: Vec<&String> = ids.iter().collect();
+        wanted.sort();
+        wanted.dedup();
+        let mut rows = Vec::new();
+        for id in wanted {
+            if let Some(c) = load_client(&*read, id)? {
+                rows.push(json!({ "id": c.client_id, "name": c.client_name }));
+            }
+        }
+        Ok(Value::Array(rows))
+    }
+
     /// `listOauthClients()`: every client's whole row (as `read_oauth_client` returns it), by name then id in byte
     /// order, as `ORDER BY client_name COLLATE "C", client_id COLLATE "C"` sorts.
     pub fn list_oauth_clients(&self) -> Result<Value> {
@@ -645,6 +695,30 @@ impl Store {
                 .cmp(&(b.client_name.as_bytes(), b.client_id.as_bytes()))
         });
         Ok(Value::Array(clients.iter().map(|c| c.to_row()).collect()))
+    }
+
+    /// `listSourceOAuthClients(sourceId)`: every client that names the source, revoked ones
+    /// included (`deleted` is whether `deleted_at` is set), by client id in byte order. These are
+    /// the clients whose `ON DELETE RESTRICT` blocks a source delete on the SQL engines.
+    pub fn list_source_oauth_clients(&self, source_id: &str) -> Result<Value> {
+        let read = self.read()?;
+        let mut clients: Vec<ClientRecord> = all_clients(&*read)?
+            .into_iter()
+            .filter(|c| c.source_id.as_deref() == Some(source_id))
+            .collect();
+        clients.sort_by(|a, b| a.client_id.as_bytes().cmp(b.client_id.as_bytes()));
+        Ok(Value::Array(
+            clients
+                .iter()
+                .map(|c| {
+                    serde_json::json!({
+                        "client_id": c.client_id,
+                        "client_name": c.client_name,
+                        "deleted": c.deleted_at.is_some(),
+                    })
+                })
+                .collect(),
+        ))
     }
 }
 
@@ -661,6 +735,19 @@ impl Store {
             delete_client_codes(tx, client_id)?;
             Ok(Some((record.client_id, record.client_name)))
         })
+    }
+
+    /// `listUnboundClientIds()`: the ids of the clients not deleted and bound to no member, in byte order
+    /// (`ORDER BY client_id COLLATE "C"`).
+    pub fn list_unbound_client_ids(&self) -> Result<Vec<String>> {
+        let read = self.read()?;
+        let mut ids: Vec<String> = all_clients(&*read)?
+            .into_iter()
+            .filter(|c| c.deleted_at.is_none() && c.member_id.is_none())
+            .map(|c| c.client_id)
+            .collect();
+        ids.sort();
+        Ok(ids)
     }
 
     /// `oauthClientLive(clientId)`: whether a client not deleted (`deleted_at IS NULL`) has this id.

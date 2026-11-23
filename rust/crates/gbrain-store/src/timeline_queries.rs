@@ -1,9 +1,11 @@
 //! Timeline reads by date (the Life Chronicle reads) and event projections.
 //!
 //! Members: getTimelineForDate, getSince, getOnThisDay, getLastSeen, upsertEventProjection,
-//! removeTimelineRows, updateTimelineDetails. All seven are served. The writes touch timeline
-//! entries only through the core helpers `timeline::{next_entry_id, read_entry, put_entry,
-//! remove_entry, recompute_latest}`.
+//! removeTimelineRows, updateTimelineDetails, insertCanonicalTimelineRows. All eight are served.
+//! The Life Chronicle projection row members (listEventProjectionRows, readEventProjectionId,
+//! deleteEventProjections, restoreEventProjection) are `timeline_queries/event_rows.rs`. The
+//! writes touch timeline entries only through the core helpers `timeline::{next_entry_id,
+//! read_entry, put_entry, insert_entry, remove_entry, recompute_latest}`.
 //!
 //! What the reads mirror (src/core/engine-sql/timeline.ts): every timeline entry joined to its
 //! page `p` (which must not be soft-deleted) and, when the entry is an event projection, LEFT
@@ -35,7 +37,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use crate::Store;
 use crate::env::{iso, parse_iso};
-use crate::error::{INVALID_ARGUMENT, Result, StoreError};
+use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
 use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::keys;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
@@ -44,13 +46,23 @@ use crate::pages::{PageRecord, read_page, read_page_by_id};
 use crate::sources::DEFAULT_SOURCE;
 use crate::takes::{int4, not_null};
 use crate::timeline::{
-    TimelineReceipt, TimelineRecord, TimelineTrust, next_entry_id, parse_date, put_entry,
-    read_entry, recompute_latest, remove_entry,
+    TimelineReceipt, TimelineRecord, TimelineTrust, insert_entry, next_entry_id, parse_date,
+    put_entry, read_entry, recompute_latest, remove_entry,
 };
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
+mod event_rows;
+mod repair_reads;
 mod site_reads;
+pub use event_rows::{
+    EventProjectionIdSpec, EventProjectionRestoreSpec, EventProjectionRowsSpec,
+    EventProjectionSlugsSpec,
+};
+pub use repair_reads::{
+    ConnectorFenceInput, TimelineHistoryInput, TimelineMarkupInput, TimelinePageScanInput,
+    TimelineRowRewrite,
+};
 pub use site_reads::{
     DeleteTimelineRowsInput, SegmentedTimelineInput, TimelineOrphanInput, TimelineRowDeletion,
 };
@@ -158,6 +170,16 @@ pub struct TimelineDetailRefresh {
     pub next: Option<String>,
 }
 
+/// One row of `insertCanonicalTimelineRows`: a timeline bullet of the page body.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct CanonicalTimelineRow {
+    pub date: Option<String>,
+    pub source: Option<String>,
+    pub summary: Option<String>,
+    pub detail: Option<String>,
+}
+
 /// The page's own (no event page) entries by id: the scan the id-keyed writes search.
 fn own_entries(read: &dyn KvRead, page_id: u64) -> Result<HashMap<u64, TimelineRecord>> {
     let mut raw = Vec::new();
@@ -242,7 +264,7 @@ impl Joined {
             "summary": self.entry.summary,
             "detail": self.entry.detail,
             "source": self.entry.source,
-            "trust_tier": "unknown",
+            "trust_tier": self.entry.trust.tier().as_str(),
             "page_id": self.entry.page_id,
             "page_slug": self.page_slug,
             "event_page_id": self.entry.event_page_id,
@@ -328,7 +350,7 @@ fn write_jsonb(value: &Value, out: &mut String) {
         }
         Value::Object(map) => {
             let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort_by(|a, b| (a.len(), a.as_bytes()).cmp(&(b.len(), b.as_bytes())));
+            keys.sort_by(|a, b| crate::jsonb::key_cmp(a, b));
             out.push('{');
             for (i, key) in keys.into_iter().enumerate() {
                 if i > 0 {
@@ -610,34 +632,17 @@ impl Store {
                 return Ok(json!({ "projected": false }));
             };
             let id = next_entry_id(tx)?;
-            let index = event_index_key(event.id, &date);
-            let old = match tx.get(&index)? {
-                Some(value) => indexed_entry(&*tx, &value, event.id, &date)?,
-                None => None,
-            };
-            let new = match &old {
-                Some(old) => TimelineRecord {
-                    page_id: depth.id,
-                    source: source.clone(),
-                    summary: input.summary.clone(),
-                    detail: detail.to_string(),
-                    ..old.clone()
-                },
-                None => TimelineRecord {
-                    id,
-                    page_id: depth.id,
-                    date: date.clone(),
-                    source: source.clone(),
-                    summary: input.summary.clone(),
-                    detail: detail.to_string(),
-                    event_page_id: Some(event.id),
-                    created_at_us: now,
-                    receipt: TimelineReceipt::default(),
-                    trust: TimelineTrust::default(),
-                },
-            };
-            put_entry(tx, old.as_ref(), &new)?;
-            tx.put(&index, &event_index_value(&new))?;
+            event_rows::put_event_projection(
+                tx,
+                depth.id,
+                event.id,
+                &date,
+                &source,
+                &input.summary,
+                detail,
+                id,
+                now,
+            )?;
             Ok(json!({ "projected": true }))
         })
     }
@@ -674,7 +679,7 @@ impl Store {
             let own = own_entries(&*tx, page_id)?;
             let mut gone = BTreeSet::new();
             let mut out = Vec::new();
-            for (id, date, row) in asked {
+            for (id, date, row) in asked.clone() {
                 let Some(entry) = id.and_then(|id| own.get(&id)) else {
                     continue;
                 };
@@ -727,7 +732,7 @@ impl Store {
         self.write(|tx| {
             let own = own_entries(&*tx, page_id)?;
             let mut done = BTreeSet::new();
-            for (id, row) in asked {
+            for (id, row) in asked.clone() {
                 let Some(entry) = id.and_then(|id| own.get(&id)) else {
                     continue;
                 };
@@ -742,6 +747,70 @@ impl Store {
                     ..entry.clone()
                 };
                 put_entry(tx, Some(entry), &new)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// `insertCanonicalTimelineRows(pageId, rows)`: inserts the rows as the page's own entries,
+    /// in order, as `INSERT .. ON CONFLICT (page_id, date, md5(summary), source) DO NOTHING`
+    /// does: a row equal to a stored entry of the page (or to an earlier row of the call) on date,
+    /// summary and source is skipped, and still takes an id. The page may be soft-deleted; a
+    /// missing page is `constraint_violation` (the foreign key). A null column is
+    /// `constraint_violation` (`NOT NULL`), a bad date `invalid_argument`; either writes nothing.
+    pub fn insert_canonical_timeline_rows(
+        &self,
+        page_id: i64,
+        rows: &[CanonicalTimelineRow],
+    ) -> Result<()> {
+        const OP: &str = "insertCanonicalTimelineRows";
+        let mut asked = Vec::with_capacity(rows.len());
+        for row in rows {
+            let column = |name: &str, value: &Option<String>| -> Result<String> {
+                let text = value
+                    .clone()
+                    .ok_or_else(|| not_null("timeline_entries", name))?;
+                no_nul(OP, &[(name, text.as_str())])?;
+                Ok(text)
+            };
+            let date = parse_date(&column("date", &row.date)?)?;
+            let (source, summary, detail) = (
+                column("source", &row.source)?,
+                column("summary", &row.summary)?,
+                column("detail", &row.detail)?,
+            );
+            asked.push((date, source, summary, detail));
+        }
+        if asked.is_empty() {
+            return Ok(());
+        }
+        self.write(|tx| {
+            let page = u64::try_from(page_id)
+                .ok()
+                .map(|id| read_page_by_id(&*tx, id))
+                .transpose()?
+                .flatten()
+                .ok_or_else(|| {
+                    StoreError::new(
+                        CONSTRAINT_VIOLATION,
+                        "insert or update on table \"timeline_entries\" violates foreign key constraint \"timeline_entries_page_id_fkey\"",
+                    )
+                })?;
+            let now = self.env.now_micros();
+            for (date, source, summary, detail) in asked.clone() {
+                let record = TimelineRecord {
+                    id: 0,
+                    page_id: page.id,
+                    date,
+                    source,
+                    summary,
+                    detail,
+                    event_page_id: None,
+                    created_at_us: now,
+                    receipt: TimelineReceipt::default(),
+                    trust: TimelineTrust::default(),
+                };
+                insert_entry(tx, record)?;
             }
             Ok(())
         })

@@ -422,3 +422,29 @@ fn a_ledger_amount_past_its_scale_is_refused_and_a_fraction_is_rounded_to_four_d
     assert_eq!(last["provider"], json!("prov"));
     assert_eq!(last["model"], json!("mod"));
 }
+
+/// Postgres refuses a NUL byte in text, and the owner index uses it as the owner separator: a client id
+/// `owner\0other` must not be recorded, or the sum for `owner` would count its spend.
+#[test]
+fn a_client_id_with_a_nul_byte_is_refused_and_never_counted_for_another_owner() {
+    let b = brain("sp-nul");
+    let row = |client: &str| LogInsert {
+        client_id: Some(client.into()),
+        token_name: None,
+        operation: "x".into(),
+        spend_cents: 100.0,
+        provider: None,
+        model: None,
+    };
+    assert_eq!(
+        code(b.insert_spend_log(&row("owner\u{0}other"))),
+        "constraint_violation"
+    );
+    assert!(log(&b).is_empty(), "the refused write left no ledger row");
+    b.insert_spend_log(&row("owner")).unwrap();
+    assert_eq!(
+        b.sum_client_spend_since("owner", &day_start(b.clock.now()))
+            .unwrap(),
+        100.0
+    );
+}

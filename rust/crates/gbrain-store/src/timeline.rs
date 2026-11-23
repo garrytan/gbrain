@@ -28,9 +28,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+mod held;
 mod receipt;
 mod tier;
 pub(crate) use crate::write_receipt::WriteReceipt as TimelineReceipt;
+pub use held::HeldTimelineSpec;
 pub(crate) use tier::TimelineTrust;
 
 const NEXT_TIMELINE_ID: &str = "next_timeline_id";
@@ -189,7 +191,7 @@ pub(crate) fn parse_date(text: &str) -> Result<String> {
 /// The id is taken before the dedup check, as `INSERT .. ON CONFLICT DO NOTHING` takes the
 /// serial's next value before it finds the conflict: a deduped add leaves the same gap in
 /// the ids PGLite leaves, so the ids `getTimeline` returns match.
-fn insert_entry(tx: &mut dyn KvWrite, mut record: TimelineRecord) -> Result<bool> {
+pub(crate) fn insert_entry(tx: &mut dyn KvWrite, mut record: TimelineRecord) -> Result<bool> {
     let dedup = record.dedup_key();
     record.id = next_id(tx, NEXT_TIMELINE_ID)?;
     if tx.get(&dedup)?.is_some() {
@@ -344,7 +346,7 @@ pub(crate) fn remove_page_timeline(tx: &mut dyn KvWrite, page_id: u64) -> Result
 /// `privateTimelineEventFilterForCaller(te)`: an entry with no event page passes. Otherwise its
 /// event page, read by id whatever its source or deleted state (the SQL is an `EXISTS` on the id
 /// alone), must exist and pass the page policy.
-fn event_visible(
+pub(crate) fn event_visible(
     read: &dyn KvRead,
     entry: &TimelineRecord,
     policy: &PrivacyPolicy,
@@ -429,7 +431,7 @@ impl Store {
                 }
                 return Err(missing("addTimelineEntry", "page", slug, source_id));
             };
-            let Some(date) = date else {
+            let Some(date) = date.clone() else {
                 return Err(not_null("date"));
             };
             let Some(summary) = entry.summary.as_deref() else {
@@ -451,6 +453,35 @@ impl Store {
                 },
             )
         })
+    }
+
+    /// `readNewestTimelineEntryId(sourceId, slug, date, summary)`: the id of the newest entry of the
+    /// page (deleted or not) on `date` whose summary is `summary`, event rows included; null when
+    /// the page or such an entry is missing. A bad date fails, as the `$3::date` cast does.
+    pub fn read_newest_timeline_entry_id(
+        &self,
+        source_id: &str,
+        slug: &str,
+        date: &str,
+        summary: &str,
+    ) -> Result<Option<u64>> {
+        no_nul(
+            "readNewestTimelineEntryId",
+            &[
+                ("sourceId", source_id),
+                ("slug", slug),
+                ("summary", summary),
+            ],
+        )?;
+        let date = parse_date(date)?;
+        let read = self.read()?;
+        let Some(page) = read_page(&*read, source_id, slug)? else {
+            return Ok(None);
+        };
+        let rows = page_entries(&*read, page.id, Some(&date), Some(&date), 1, &|row| {
+            Ok(row.summary == summary)
+        })?;
+        Ok(rows.first().map(|row| row.id))
     }
 
     /// `addTimelineEntriesBatch`: rows whose page is missing or soft-deleted are skipped. Returns
@@ -578,7 +609,7 @@ impl Store {
 /// soft-deleted page, or a page whose frontmatter has a `quarantine` key (any value), hides all of its
 /// rows. The third clause hides rows listed in `needs_rederive`, which only a raw-SQL purge writes;
 /// this engine has no such rows.
-fn eligible_page(page: &PageRecord) -> bool {
+pub(crate) fn eligible_page(page: &PageRecord) -> bool {
     page.deleted_at_us.is_none() && !page.frontmatter.contains_key("quarantine")
 }
 
@@ -861,7 +892,7 @@ mod tests {
                 .map(|row| row["summary"].clone())
                 .collect()
         };
-        let policy = json!({"honorAliases": true, "entityPrivacy": true});
+        let policy = json!({"honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn"});
         assert_eq!(summaries("people/a", json!({})).len(), 4);
         // The event page is judged by id: a read scoped to `default` still hides the private event
         // page in `alt`, and an entry whose event page is gone fails the EXISTS.

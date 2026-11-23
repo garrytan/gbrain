@@ -171,6 +171,28 @@ describe('engine parity: page write guards', () => {
     return answers;
   });
 
+  parityTest('readPageIndexingState reads the chunker version, corpus generation and page kind of a page, tombstones included', {
+    methods: ['putPage', 'getPage', 'softDeletePage', 'readPageIndexingState'],
+  }, async (engine) => {
+    await engine.putPage('notes/index-cr', NOTE, { contextualRetrieval: { mode: 'title', corpusGeneration: 'gen-1' } });
+    await engine.putPage('notes/index-plain', NOTE);
+    await engine.putPage('notes/index-gone', NOTE);
+    const goneId = await idOf(engine, 'notes/index-gone');
+    await engine.softDeletePage('notes/index-gone');
+    const answers = {
+      cr: await engine.readPageIndexingState(await idOf(engine, 'notes/index-cr')),
+      plain: await engine.readPageIndexingState(await idOf(engine, 'notes/index-plain')),
+      gone: await engine.readPageIndexingState(goneId),
+      missing: await engine.readPageIndexingState(987654321),
+    };
+    expect({
+      crGeneration: answers.cr?.corpus_generation, crKind: answers.cr?.page_kind,
+      plainGeneration: answers.plain?.corpus_generation, plainKind: answers.plain?.page_kind,
+      goneKind: answers.gone?.page_kind, missing: answers.missing,
+    }).toEqual({ crGeneration: 'gen-1', crKind: 'markdown', plainGeneration: null, plainKind: 'markdown', goneKind: 'markdown', missing: null });
+    return answers;
+  });
+
   parityTest('readInlinePageRegions reads a page\'s stored body columns by id, a tombstone included, and null otherwise', {
     methods: ['putPage', 'getPage', 'softDeletePage', 'readInlinePageRegions'],
   }, async (engine) => {
@@ -213,28 +235,6 @@ describe('engine parity: page write guards', () => {
       otherSource: await engine.readStoredPageTier('parity-missing', 'notes/tier'),
     };
     expect(answers).toEqual({ curated: 'operator_curated', plain: 'unknown', tombstone: 'unknown', missing: null, otherSource: null });
-    return answers;
-  });
-
-  parityTest('readPageIndexingState reads the chunker version, corpus generation and page kind of a page, tombstones included', {
-    methods: ['putPage', 'getPage', 'softDeletePage', 'readPageIndexingState'],
-  }, async (engine) => {
-    await engine.putPage('notes/index-cr', NOTE, { contextualRetrieval: { mode: 'title', corpusGeneration: 'gen-1' } });
-    await engine.putPage('notes/index-plain', NOTE);
-    await engine.putPage('notes/index-gone', NOTE);
-    const goneId = await idOf(engine, 'notes/index-gone');
-    await engine.softDeletePage('notes/index-gone');
-    const answers = {
-      cr: await engine.readPageIndexingState(await idOf(engine, 'notes/index-cr')),
-      plain: await engine.readPageIndexingState(await idOf(engine, 'notes/index-plain')),
-      gone: await engine.readPageIndexingState(goneId),
-      missing: await engine.readPageIndexingState(987654321),
-    };
-    expect({
-      crGeneration: answers.cr?.corpus_generation, crKind: answers.cr?.page_kind,
-      plainGeneration: answers.plain?.corpus_generation, plainKind: answers.plain?.page_kind,
-      goneKind: answers.gone?.page_kind, missing: answers.missing,
-    }).toEqual({ crGeneration: 'gen-1', crKind: 'markdown', plainGeneration: null, plainKind: 'markdown', goneKind: 'markdown', missing: null });
     return answers;
   });
 

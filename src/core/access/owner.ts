@@ -38,6 +38,16 @@ export async function ownerMemberId(engine: Pick<BrainEngine, 'getConfig'>): Pro
   }
 }
 
+/**
+ * GST-3058: the take holders an HTTP transport hands dispatch for a verified credential: its stored list when it has
+ * one, none (every holder, which readHolders confirms against the caller's audience) when it is bound to the brain
+ * owner, and ['world'] for every other credential.
+ */
+export async function credentialHolders(engine: Pick<BrainEngine, 'getConfig'>, stored: string[] | null | undefined, memberId: string | null | undefined): Promise<string[] | undefined> {
+  if (stored) return stored;
+  return memberId && memberId === await ownerMemberId(engine) ? undefined : ['world'];
+}
+
 /** The configured owner, whether it is live, and the credentials that read as it. */
 export async function ownerView(engine: BrainEngine): Promise<OwnerView> {
   const raw = (await engine.getConfig(OWNER_MEMBER_KEY))?.trim() ?? '';
@@ -141,7 +151,7 @@ export function labelledOnlyOwnerError(member: string, via: 'grant' | 'owner'): 
  */
 export async function setOwner(engine: BrainEngine, raw: unknown): Promise<OwnerView> {
   const { member } = await memberIdentity(engine, raw);
-  const [row] = await engine.executeRaw<{ labelled_only: boolean }>('SELECT labelled_only FROM access_members WHERE id = $1', [member]);
+  const [row] = await engine.readAccessMembers({ id: member });
   if (row?.labelled_only === true) throw labelledOnlyOwnerError(member, 'owner');
   await engine.setConfig(OWNER_MEMBER_KEY, member);
   return ownerView(engine);

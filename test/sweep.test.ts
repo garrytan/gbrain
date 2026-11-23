@@ -688,9 +688,9 @@ describe('runMaintenanceSweep — bounded link resolution (no listAllPageRefs)',
     // managed brain publishes per page through the coordinator) and the
     // maintenance principal's brain_id lookup the attributed timeline batch
     // makes (an installation with a CLI registration adds one query that
-    // verifies it, once per engine). The two persistence reads are typed
-    // engine methods; the rest are raw. No candidates ⇒ no ref-lookup query.
-    const reads = ['executeRaw', 'readManagedModeRows', 'readPersistenceBrainId'];
+    // verifies it, once per engine). Both scans and both persistence reads are
+    // typed engine methods. No candidates ⇒ no ref-lookup query.
+    const reads = ['executeRaw', 'listFactsFencePages', 'listSweepStalePages', 'readManagedModeRows', 'readPersistenceBrainId'];
     expect(log.filter((m) => reads.includes(m)).length).toBe(4);
   });
 });

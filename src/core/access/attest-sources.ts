@@ -114,12 +114,23 @@ async function credentialSources(db: Db): Promise<CredentialSources[]> {
 }
 
 /**
+ * The stored attest_sources of the credential being written. An engine caller (auth rescope --token) already holds the
+ * token's active row FOR UPDATE, so the typed binding read of that row answers what the live-credential scan found.
+ */
+async function selfAttest(db: Db, self: CredentialRef): Promise<string[]> {
+  if (typeof db !== 'function' && self.kind === 'token') {
+    return strings((await db.readCredentialBindingForUpdate({ kind: 'token', id: self.id }, { readsUnscoped: false }))?.attest_sources);
+  }
+  return (await credentialSources(db)).find(c => same(c.ref, self))?.attest ?? [];
+}
+
+/**
  * Refuses a grant whose read sources name a marked scope source this credential does not list. `self` is the credential
  * being written (null for one not inserted yet), whose stored attest_sources are honoured. `default` is never a scope
  * source (applyAttestSources refuses it), so a default-only grant reads nothing.
  */
 export async function assertScopeSourceGrant(db: Db, self: CredentialRef | null, reads: readonly string[], opts: { privatePages?: boolean; privateFacts?: boolean; writeSource?: string | null } = {}): Promise<void> {
-  const attest = self && (opts.privatePages || opts.privateFacts || opts.writeSource) ? (await credentialSources(db)).find(c => same(c.ref, self))?.attest ?? [] : [];
+  const attest = self && (opts.privatePages || opts.privateFacts || opts.writeSource) ? await selfAttest(db, self) : [];
   if (opts.privatePages && attest.length) {
     throw new GrantError('invalid_grant', 'This credential lists scope sources (--attest-sources), so it cannot hold the private-pages grant; nothing changed. '
       + 'A scope credential reads only shared memory: use a separate credential for private pages.');
@@ -136,7 +147,7 @@ export async function assertScopeSourceGrant(db: Db, self: CredentialRef | null,
   if (!candidates.length) return;
   const marked = await markedScopeSources(db, candidates, 'share');
   if (!marked.size) return;
-  const own = self ? (await credentialSources(db)).find(c => same(c.ref, self))?.attest ?? [] : [];
+  const own = self ? await selfAttest(db, self) : [];
   const reserved = [...marked].filter(s => !own.includes(s)).sort();
   if (!reserved.length) return;
   throw new GrantError('invalid_grant', `Source ${reserved.join(', ')} is a QM scope source, so only the scope credential may read it; nothing changed. `

@@ -19,7 +19,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { FOLDER_COVERAGE_SQL, liveMemberStatement } from '../src/core/engine-sql/access-control.ts';
+import { FOLDER_COVERAGE_SQL } from '../src/core/engine-sql/access-control.ts';
 import { boundedReads, PreparationDeadlineError } from '../src/core/persistence/bounded-reads.ts';
 import { startClaimPhase } from '../src/core/persistence/claim-phase.ts';
 import { makeFakeSql, type FakeSql } from './helpers/fake-postgres-sql.ts';
@@ -93,11 +93,9 @@ describe('caller access reads on PGLite match the raw statements: no preparation
   beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }, 120_000);
   afterAll(async () => { await engine.disconnect(); });
 
-  test('past the budget both typed reads and the raw statements they replaced still answer', async () => {
+  test('past the budget both typed reads and the folder statement they replaced still answer', async () => {
     const view = boundedReads(engine, startClaimPhase(Date.now() - 2_000, undefined, 1_000));
     expect(view).toBe(engine);
-    const { text, params } = liveMemberStatement('member', 'alice-example');
-    expect(await view.executeRaw(text, params)).toEqual([]);
     expect(await view.readLiveMember('member', 'alice-example')).toBeNull();
     const raw = await view.executeRaw(FOLDER_COVERAGE_SQL);
     expect(await view.readFolderAccess(['member:alice-example'])).toEqual({ rules: [], coverage: raw as never });

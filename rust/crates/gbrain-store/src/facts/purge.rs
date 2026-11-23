@@ -1,9 +1,9 @@
 //! Group 5 facts reads, purge, withdrawal, relink and fence repair (src/core/engine-sql/facts-purge.ts).
 //!
-//! Eleven of the thirteen members are served from the fact rows and the pages. Two answer nothing:
-//! `listFactsReconcileBacklog` reads `page_facts_reconcile`, a table the store does not have, and
-//! `listSingleFactMetadata` has no store read yet (the store keeps the `trust_tier` it reads;
-//! rust/docs/store/facts.md).
+//! Eleven of the thirteen members are served here from the fact rows and the pages.
+//! `listFactsReconcileBacklog` is served from the `page_facts_reconcile` watermark in
+//! `facts/reconcile.rs`, and `listSingleFactMetadata` from `facts/trust_reads.rs`
+//! (rust/docs/store/facts.md).
 //!
 //! Text comparisons are byte comparisons, as Postgres's deterministic collation makes them, and a
 //! NULL entity or slug never equals anything (`entity_slug = $4` is NULL for a row with no entity).
@@ -29,6 +29,7 @@ use crate::keys;
 use crate::kv::KvRead;
 use crate::links::no_nul;
 use crate::pages::read_page;
+use crate::trust::withdrawals::withdrawals_of;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
@@ -40,13 +41,13 @@ const MEMBER_PAGE_PREFIX: &str = "memory/members/";
 const SCOPE_PAGE_SLUG: &str = "memory/scope";
 
 /// `outcomeMarkerSql`.
-pub(super) fn outcome_marker(row: &FactRecord) -> bool {
+pub(crate) fn outcome_marker(row: &FactRecord) -> bool {
     AUDIT_ROW_SOURCES.contains(&row.source.as_str())
         && OUTCOME_MARKER_FACTS.contains(&row.fact.as_str())
 }
 
 /// `unbackedEntitySql`: `COALESCE(strpos(entity_slug, '/') = 0 AND NOT EXISTS (live page), false)`.
-pub(super) fn unbacked(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
+pub(crate) fn unbacked(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
     let Some(entity) = row.entity_slug.as_deref() else {
         return Ok(false);
     };
@@ -57,7 +58,7 @@ pub(super) fn unbacked(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
 }
 
 /// `ownedMemorySubjectSql`: the subject names a member page or the scope page.
-fn owned_memory_subject(subject: &str) -> bool {
+pub(crate) fn owned_memory_subject(subject: &str) -> bool {
     subject.starts_with(MEMBER_PAGE_PREFIX) || subject == SCOPE_PAGE_SLUG
 }
 
@@ -68,7 +69,7 @@ fn vector_text(vector: &[f32]) -> String {
 }
 
 /// The claim and attribution columns a fence row carries, `confidence` as the `REAL` it is.
-fn fence_columns(out: &mut Map<String, Value>, r: &FactRecord) {
+pub(super) fn fence_columns(out: &mut Map<String, Value>, r: &FactRecord) {
     out.insert("kind".into(), json!(r.kind));
     out.insert("visibility".into(), json!(r.visibility));
     out.insert("notability".into(), json!(r.notability));
@@ -88,7 +89,7 @@ fn fence_columns(out: &mut Map<String, Value>, r: &FactRecord) {
 /// times as ISO text, `embedding` as the vector's text, and the stamped `trust_tier` and
 /// `write_origin`, and the write receipt (`write_receipt.rs`). The store keeps no `source_window`:
 /// it is NULL, as `listFactsByEntity` answers.
-fn select_star(r: &FactRecord) -> Value {
+pub(crate) fn select_star(r: &FactRecord) -> Value {
     let time = |us: Option<i64>| us.map(iso);
     let mut out = Map::new();
     out.insert("id".into(), json!(r.id));
@@ -164,6 +165,22 @@ pub struct RelinkQuery {
     pub limit: f64,
 }
 
+/// One row a derivation walk starts from or reaches (`derivation_inputs.input_table`/`input_id`).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DerivationRef {
+    pub table: String,
+    pub id: String,
+}
+
+/// `listDerivedRows(frontier, limit)`'s arguments.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct DerivedRowsQuery {
+    pub frontier: Vec<DerivationRef>,
+    pub limit: i64,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct SourceArgs {
@@ -200,6 +217,8 @@ pub struct SingleFactQuery {
     pub page_slug: Option<String>,
     /// `remoteProvenanceFloorSql('facts')` when the caller passes `remoteFloor`.
     pub remote_floor: Option<PrivacyPolicy>,
+    /// The highest-id match instead of the lowest.
+    pub newest: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -238,6 +257,18 @@ impl Store {
             }
         }
         Ok(n)
+    }
+
+    /// `listDerivedRows(frontier, limit)`: the rows one hop of the derivation walk reaches from
+    /// the frontier (`derivation_inputs` rows whose input is a frontier row). The store keeps no
+    /// `derivation_inputs`: every SQL writer of it (`recordDerivationInputs`) goes through
+    /// `executeRaw`, which this engine refuses, so no row here has a recorded derivation and the walk
+    /// answers no rows. A NUL in a table or id is refused as a text column refuses it.
+    pub fn list_derived_rows(&self, q: &DerivedRowsQuery) -> Result<Vec<Value>> {
+        for r in &q.frontier {
+            no_nul("listDerivedRows", &[("table", &r.table), ("id", &r.id)])?;
+        }
+        Ok(Vec::new())
     }
 
     /// `loadPurgeTarget(id, sourceId)`: the fact row `id` of the source unless it is an outcome
@@ -428,7 +459,8 @@ impl Store {
     /// the lowest-id active row of the entity (NULL equals NULL) and visibility with the same
     /// fingerprint whose speaker slot fits (`attributedTo` unset, the row's unset, or equal) and
     /// that sits on `pageSlug` (a non-empty slug) or, with no `pageSlug`, on no owned memory page.
-    /// An empty `pageSlug` matches nothing. The row is `SELECT *`.
+    /// An empty `pageSlug` matches nothing. With `newest` it is the highest-id row instead. The row
+    /// is `SELECT *`.
     pub fn find_active_single_fact(&self, q: &SingleFactQuery) -> Result<Value> {
         const OP: &str = "findActiveSingleFact";
         no_nul(OP, &[("sourceId", &q.source_id), ("fact", &q.fact)])?;
@@ -451,7 +483,13 @@ impl Store {
                     .is_none_or(|who| row.attributed_to.as_ref().is_none_or(|a| a == who))
                 && fits_page
                 && fact_fingerprint(&row.fact) == hash
-                && found.as_ref().is_none_or(|best| row.id < best.id)
+                && found.as_ref().is_none_or(|best| {
+                    if q.newest {
+                        row.id > best.id
+                    } else {
+                        row.id < best.id
+                    }
+                })
                 && !hidden_by_policy(&*read, &row, &q.remote_floor)?
             {
                 found = Some(row);
@@ -600,9 +638,45 @@ impl Store {
     }
 }
 
+/// The earliest withdrawal `gbrain_preserve_fact_withdrawal` finds for `row`, as the time it was
+/// made: a withdrawal of the same source and visibility, with the claim's fingerprint (or its v1
+/// fingerprint), and a subject that reaches the row. A row on a member page (`memory/members/..`)
+/// matches only that page's own withdrawals (GST-2346); any other row matches subject `*`, its
+/// entity, or, on an unbacked name key, any subject but an owned memory page (GBRA-574).
+pub(crate) fn earliest_withdrawal(read: &dyn KvRead, row: &FactRecord) -> Result<Option<i64>> {
+    let ledger = withdrawals_of(read, &row.source_id, &row.visibility, &row.fact)?;
+    if ledger.is_empty() {
+        return Ok(None);
+    }
+    let member = row
+        .source_markdown_slug
+        .as_deref()
+        .filter(|s| s.starts_with(MEMBER_PAGE_PREFIX));
+    let unbacked = member.is_none() && unbacked(read, row)?;
+    let mut earliest: Option<i64> = None;
+    for (subject, at) in ledger {
+        let covers = match member {
+            Some(slug) => subject == slug,
+            None => {
+                subject == "*"
+                    || row.entity_slug.as_deref() == Some(subject.as_str())
+                    || (unbacked && !owned_memory_subject(&subject))
+            }
+        };
+        if covers {
+            earliest = Some(earliest.map_or(at, |e| e.min(at)));
+        }
+    }
+    Ok(earliest)
+}
+
 /// A withdrawal under `subject` reaches `row`: every subject, the row's entity, an unbacked name
 /// key (unless the subject is an owned memory page), or the owned memory page the row sits on.
-fn withdrawal_covers(read: &dyn KvRead, row: &FactRecord, subject: &str) -> Result<bool> {
+pub(super) fn withdrawal_covers(
+    read: &dyn KvRead,
+    row: &FactRecord,
+    subject: &str,
+) -> Result<bool> {
     Ok(subject == "*"
         || row.entity_slug.as_deref() == Some(subject)
         || (unbacked(read, row)? && !owned_memory_subject(subject))
@@ -617,6 +691,38 @@ mod tests {
     fn vector_text_writes_each_element_as_float4out() {
         assert_eq!(vector_text(&[1.0, 0.0, 0.5, -0.25]), "[1,0,0.5,-0.25]");
         assert_eq!(vector_text(&[]), "[]");
+    }
+
+    /// The store keeps no `derivation_inputs`, so the derivation walk from any stored row answers
+    /// no rows: a page and a fact derived in SQL from it would be linked only by that table.
+    #[test]
+    fn list_derived_rows_answers_no_rows_because_the_store_keeps_no_derivation_inputs() {
+        let store = crate::test_support::store();
+        let input: crate::pages::PageInput = serde_json::from_value(json!({
+            "type": "note", "title": "Input", "compiled_truth": "input body", "frontmatter": {},
+        }))
+        .unwrap();
+        let options: crate::pages::PutPageOptions =
+            serde_json::from_value(json!({ "sourceId": "default" })).unwrap();
+        let page = store.put_page("notes/input", &input, &options).unwrap();
+        let page_id = page["id"].to_string();
+        let q: DerivedRowsQuery = serde_json::from_value(json!({
+            "frontier": [{ "table": "pages", "id": page_id }, { "table": "facts", "id": "1" }],
+            "limit": 1001,
+        }))
+        .unwrap();
+        assert_eq!(store.list_derived_rows(&q).unwrap(), Vec::<Value>::new());
+        let empty: DerivedRowsQuery =
+            serde_json::from_value(json!({ "frontier": [], "limit": 1 })).unwrap();
+        assert_eq!(
+            store.list_derived_rows(&empty).unwrap(),
+            Vec::<Value>::new()
+        );
+        let nul: DerivedRowsQuery = serde_json::from_value(
+            json!({ "frontier": [{ "table": "pages", "id": "1\u{0}" }], "limit": 1 }),
+        )
+        .unwrap();
+        assert!(store.list_derived_rows(&nul).is_err());
     }
 
     #[test]

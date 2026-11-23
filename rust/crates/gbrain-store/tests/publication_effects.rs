@@ -353,3 +353,182 @@ fn a_receipt_reads_each_effect_state_in_kind_order_or_only_the_git_effect() {
         INVALID_ARGUMENT
     );
 }
+
+#[test]
+fn an_uppercase_request_id_names_the_same_effects_as_its_lowercase_spelling() {
+    let dir = TempDir::new("effects-case");
+    let store = open(&dir);
+    let id = admit(&store, REQ);
+    let upper = id.to_uppercase();
+    let first = store
+        .insert_publication_effects(&spec(
+            &store,
+            &upper,
+            json!([{ "kind": "embedding", "data": {} }]),
+        ))
+        .unwrap();
+    assert_eq!(first, ["embedding"]);
+    let again = store
+        .insert_publication_effects(&spec(
+            &store,
+            &id,
+            json!([{ "kind": "embedding", "data": {} }]),
+        ))
+        .unwrap();
+    assert!(
+        again.is_empty(),
+        "the lowercase spelling queued a second row"
+    );
+    let rows = store.read_request_effects(&id).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["request_id"], json!(id));
+    assert_eq!(store.read_request_effects(&upper).unwrap().len(), 1);
+}
+
+#[test]
+fn a_true_up_listing_counts_a_queued_effect_as_unfinished_work() {
+    let dir = TempDir::new("effects-true-up");
+    let store = open(&dir);
+    let id = admit(&store, REQ);
+    store
+        .insert_publication_effects(&spec(
+            &store,
+            &id,
+            json!([{ "kind": "embedding", "data": {} }]),
+        ))
+        .unwrap();
+    let completion: WriteCompletion = serde_json::from_value(json!({
+        "id": id, "state": "committed", "outcome": {}, "errorCode": null, "errorMessage": null,
+        "consumerVersion": "v-consumer", "consumerHostId": HOST, "errorDetail": null, "resultBytes": 100,
+        "counterKeys": KEYS, "intentBytes": 10, "retainedBytes": 0, "terminalReservation": 4096,
+        "probePurges": true,
+    }))
+    .unwrap();
+    store.complete_write_row(&completion).unwrap().unwrap();
+    let rows = store.list_true_up_requests(&[id]).unwrap();
+    assert_eq!(rows.len(), 1);
+    // `{}` (2) + "embedding" (9) + the 1024 every effect row carries
+    assert_eq!(rows[0]["effect_bytes"], json!("1035"), "{rows:?}");
+    assert_eq!(rows[0]["unfinished"], json!(true), "{rows:?}");
+}
+
+#[test]
+fn an_effect_naming_a_worktree_refuses_but_a_duplicate_or_gated_one_does_not() {
+    let dir = TempDir::new("effects-worktree");
+    let store = open(&dir);
+    let id = admit(&store, REQ);
+    let named = |effects: Value| {
+        let mut s = spec(&store, &id, effects);
+        s.worktree_id = Some("11111111-1111-4111-8111-111111111111".into());
+        s
+    };
+    let err = store
+        .insert_publication_effects(&named(json!([{ "kind": "embedding", "data": {} }])))
+        .unwrap_err();
+    assert!(
+        err.message.contains("persistence_effects_worktree_id_fkey"),
+        "{err:?}"
+    );
+    assert!(store.read_request_effects(&id).unwrap().is_empty());
+    // an effect already stored is skipped before the worktree matters
+    store
+        .insert_publication_effects(&spec(
+            &store,
+            &id,
+            json!([{ "kind": "embedding", "data": {} }]),
+        ))
+        .unwrap();
+    assert!(
+        store
+            .insert_publication_effects(&named(json!([{ "kind": "embedding", "data": {} }])))
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn a_completion_whose_bytes_overflow_is_refused_not_wrapped_into_a_fit() {
+    let dir = TempDir::new("effects-completion-overflow");
+    let store = open(&dir);
+    let id = admit(&store, REQ);
+    store
+        .insert_publication_effects(&spec(
+            &store,
+            &id,
+            json!([{ "kind": "embedding", "data": {} }]),
+        ))
+        .unwrap();
+    for (result, retained, reservation, intent) in [
+        (i64::MAX, 0, 4096, 10),
+        (100, 0, i64::MIN, 10),
+        // exactly i64::MIN once the reservation is subtracted: only the counter subtraction can refuse it
+        (100, 0, i64::MIN + 4096, 10),
+        (100, 0, 4096, i64::MIN),
+    ] {
+        let completion: WriteCompletion = serde_json::from_value(json!({
+            "id": id, "state": "committed", "consumerVersion": "v-consumer", "resultBytes": result,
+            "counterKeys": KEYS, "intentBytes": intent, "retainedBytes": retained,
+            "terminalReservation": reservation,
+        }))
+        .unwrap();
+        // refused (None) or an error, never a committed request
+        assert!(
+            !matches!(store.complete_write_row(&completion), Ok(Some(_))),
+            "{result} {retained} {reservation} {intent}"
+        );
+    }
+}
+
+#[test]
+fn a_repair_lists_a_requeued_or_failed_embedding_effect_of_a_committed_write_only() {
+    let dir = TempDir::new("effects-embedding-candidates");
+    let store = open(&dir);
+    let id = admit(&store, REQ);
+    let page = json!({ "slug": "notes/a", "page_id": 1, "repair_requeued_at": "now" });
+    store
+        .insert_publication_effects(&spec(
+            &store,
+            &id,
+            json!([{ "kind": "embedding", "data": page }, { "kind": "git", "data": { "relative_path": "notes/a.md" } }]),
+        ))
+        .unwrap();
+    let never = [
+        "targets_parked".to_string(),
+        "embedding_zero_norm".to_string(),
+    ];
+    let default = ["default".to_string()];
+    let list = |sources: &[String], codes: &[String]| {
+        store.list_embedding_candidates(sources, codes).unwrap()
+    };
+    // The write is still queued, so its effect is not a candidate yet.
+    assert!(list(&default, &never).is_empty());
+    let completion: WriteCompletion = serde_json::from_value(json!({
+        "id": id, "state": "committed", "outcome": {}, "errorCode": null, "errorMessage": null,
+        "consumerVersion": "v-consumer", "consumerHostId": HOST, "errorDetail": null, "resultBytes": 100,
+        "counterKeys": KEYS, "intentBytes": 10, "retainedBytes": 0, "terminalReservation": 4096,
+        "probePurges": true,
+    }))
+    .unwrap();
+    store.complete_write_row(&completion).unwrap().unwrap();
+    let rows = list(&default, &never);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["source_id"], "default");
+    assert_eq!(rows[0]["slug"], "notes/a");
+    assert_eq!(rows[0]["request_id"], REQ);
+    assert_eq!(rows[0]["state"], "queued");
+    assert_eq!(rows[0]["attempts"], 0);
+    // No page has id 1, so the retry would embed nothing.
+    assert_eq!(rows[0]["chars"], 0);
+    // A source the caller did not name, whose incarnation still matches, is out of scope.
+    assert!(list(&["other".to_string()], &never).is_empty());
+    // A claimed effect carries an execution token and is left to its claimant.
+    let claimed = claim(&store, &[], T1).unwrap();
+    assert_eq!(claimed["kind"], "embedding");
+    assert!(list(&default, &never).is_empty());
+    let mut fail = settle(&claimed["id"], T1);
+    fail.reason = Some("embedding_failed".into());
+    assert!(store.settle_effect(Settle::Fail, &fail).unwrap());
+    assert_eq!(list(&default, &never)[0]["state"], "failed");
+    // A failure whose code is never retried is left out.
+    assert!(list(&default, &["embedding_failed".to_string()]).is_empty());
+}

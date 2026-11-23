@@ -14,7 +14,8 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { catalogStatus } from '../../../core/skills/resolver/build.ts';
 import { logsDir } from '../../../core/skills/resolver/paths.ts';
-import { openclawSkillLibDir, openclawSkillPluginDir, openclawSkillPluginRegistered, readOpenclawSkillState } from '../../../core/setup/openclaw-skill-plugin.ts';
+import { openclawHostDrift, openclawSkillLibDir, openclawSkillPluginDir, openclawSkillPluginRegistered, readOpenclawSkillState } from '../../../core/setup/openclaw-skill-plugin.ts';
+import { catalogSkillIds } from '../../../core/setup/skill-pins.ts';
 
 const LOG_WINDOW_MS = 24 * 3600 * 1000;
 const LOG_READ_CAP = 4 * 1024 * 1024;
@@ -25,7 +26,7 @@ export interface OpenclawSkillView {
   plugin: 'installed' | 'files_only' | 'absent';
   library: 'ok' | 'missing' | 'mismatch' | 'none';
   gbrain_version: string | null;
-  agents: Array<{ id: string; mode: string; catalog: string; fresh: boolean | null; stale_reason: string | null; skills: number; pins: number }>;
+  agents: Array<{ id: string; mode: string; catalog: string; fresh: boolean | null; stale_reason: string | null; skills: number; pins: number; host?: { hidden: string[]; cut: string[] } | null }>;
   recent: { turns: number; outcomes: Record<string, number>; errors: Record<string, number>; deadline_misses: number; miss_rate: number | null; reads: number; reads_of_suggested: number };
 }
 
@@ -73,7 +74,9 @@ export async function openclawSkillView(home: string, now = Date.now()): Promise
   const agents: OpenclawSkillView['agents'] = [];
   for (const [id, a] of Object.entries(state?.agents ?? {})) {
     const s = existsSync(join(home, 'skill-index', a.catalog, 'receipt.json')) ? await catalogStatus(a.catalog, { home }) : null;
-    agents.push({ id, mode: a.mode, catalog: a.catalog, fresh: s ? s.fresh : null, stale_reason: s?.stale_reason ?? (s ? null : 'missing'), skills: s?.receipt?.skill_count ?? 0, pins: a.pinned_ids.length });
+    const ids = a.mode !== 'off' && s ? catalogSkillIds(home, a.catalog) : null;
+    const host = ids ? openclawHostDrift(id, [...ids], a.exclude_ids ?? []) : null;
+    agents.push({ id, mode: a.mode, catalog: a.catalog, fresh: s ? s.fresh : null, stale_reason: s?.stale_reason ?? (s ? null : 'missing'), skills: s?.receipt?.skill_count ?? 0, pins: a.pinned_ids.length, ...(ids ? { host } : {}) });
   }
   return { plugin: files ? (openclawSkillPluginRegistered(dir) ? 'installed' : 'files_only') : 'absent', library, gbrain_version: state?.gbrain_version ?? null, agents, recent: recentOpenclaw(home, now) };
 }
@@ -88,9 +91,17 @@ export function describeOpenclawSkill(v: OpenclawSkillView): { line: string; pro
   const errs = Object.entries(r.errors).map(([c, n]) => `${c} x${n}`).join(', ');
   const line = `openclaw plugin ${v.plugin}, library ${v.library}; ${agents || 'no agent'}${r.turns ? `; last 24h ${r.turns} turns${miss}${reads}${errs ? `, ${errs}` : ''}` : ''}`;
   let problem: { code: string; what: string } | null = null;
+  const drift = on.find((a) => a.host && (a.host.cut.length || a.host.hidden.length));
+  const names = (ids: string[]) => `${ids.slice(0, 5).join(', ')}${ids.length > 5 ? ` and ${ids.length - 5} more` : ''}`;
   if (on.length && v.plugin !== 'installed') problem = { code: 'skill_resolver_plugin_not_installed', what: v.plugin === 'absent' ? 'the plugin files are missing' : "OpenClaw's config does not load, enable and allow the plugin" };
   else if (on.length && v.library !== 'ok') problem = { code: v.library === 'mismatch' ? 'skill_resolver_library_mismatch' : 'skill_resolver_library_missing', what: `the library the state names is ${v.library}` };
   else if (on.some((a) => a.fresh === null)) problem = { code: 'skill_index_missing', what: 'an agent has no catalog' };
+  else if (drift?.host) {
+    const { cut, hidden } = drift.host;
+    problem = cut.length
+      ? { code: 'skill_resolver_host_load_cut', what: `agent ${drift.id}: OpenClaw no longer lists ${cut.length} skill(s) the plugin still suggests (dropped at load by skills.limits.maxCandidatesPerRoot or skills.limits.maxSkillsLoadedPerSource), so skills_read cannot open them: ${names(cut)}` }
+      : { code: 'skill_resolver_host_hidden', what: `agent ${drift.id}: OpenClaw now hides ${hidden.length} skill(s) the plugin still suggests from this agent's model (ineligible on this host, outside its skill filter, or model invocation off): ${names(hidden)}` };
+  }
   else if (r.miss_rate !== null && r.miss_rate > OPENCLAW_MISS_RATE_WARN && r.turns >= 20) problem = { code: 'skill_resolve_timeout', what: `${(r.miss_rate * 100).toFixed(1)}% of turns missed the 50 ms deadline and got no suggestions` };
   return { line, problem };
 }

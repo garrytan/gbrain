@@ -15,7 +15,7 @@ import type { Check } from '../../doctor.ts';
 import { checkError } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { claimSourcesFix, readUnclaimedLegacySources } from '../../../core/trust/claim.ts';
-import { TRUST_CLAIM_RESUME_COMMAND, claimedSourceSql, notConnectorSourceSql } from '../../../core/trust/claim-state.ts';
+import { TRUST_CLAIM_RESUME_COMMAND } from '../../../core/trust/claim-state.ts';
 import { relowerClaimedRows, TRUST_RELOWER_COMMAND, type TrustRelowerReport } from '../../../core/trust/backfill.ts';
 import { isMissingSchemaObject } from '../../../core/utils.ts';
 
@@ -35,8 +35,7 @@ async function runTrustSourcesUnclaimed(ctx: DoctorContext): Promise<Check[]> {
         message: `A claim did not finish lifting ${pending.join(', ')}. Run ${TRUST_CLAIM_RESUME_COMMAND.join(' ')} on the brain host; it continues the confirmed claim and asks nothing.`,
         fix: { argv: [...TRUST_CLAIM_RESUME_COMMAND], consent: [], actor: 'agent', requires_exclusive: false, verify: VERIFY,
           why: 'Finishes the backfill of sources the owner already claimed, in resumable batches; nothing goes above "your notes".' } });
-    } else if ((relower = await relowerClaimedRows(engine, { dryRun: true, sources: (owned = await engine.executeRaw<{ id: string; claimed: boolean }>(
-      `SELECT s.id, ${claimedSourceSql('s')} AS claimed FROM sources s WHERE ${notConnectorSourceSql('s')}`)).map(s => s.id) })).rows > 0) {
+    } else if ((relower = await relowerClaimedRows(engine, { dryRun: true, sources: (owned = await engine.listTrustClaimTargets('owned')).map(s => s.id) })).rows > 0) {
       const ended = relower.sources.filter(id => !owned.find(s => s.id === id)?.claimed);
       const named = ended.length ? relower.sources.flatMap(id => ['--source', id]) : [];
       checks.push({ name: 'trust_sources_unclaimed', status: 'warn', details: { ...details, relower: { rows: relower.rows, sources: relower.sources, sample: relower.sample.slice(0, 5) } },

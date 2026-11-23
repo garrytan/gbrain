@@ -44,6 +44,7 @@ import { getCliOptions, cliOptsToProgressOptions } from '../cli-options.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { atomicWriteFileSync, mkdirPrivate } from '../atomic-write.ts';
 import { importRendered, myAddressSet, type ActivePack, type GoogleSyncDeps, type GoogleSyncSummary } from './sweep-shared.ts';
+import { connectorSpeakerOwnerStamp } from '../identity/speaker-owner.ts';
 export { myAddressSet } from './sweep-shared.ts';
 import { sweepCalendar, sweepContacts } from './people-calendar-sweep.ts';
 import { applyLoopDetection, enqueueLoopsExtraction, resolveSweepExclusion } from './loops-enqueue.ts';
@@ -206,7 +207,8 @@ async function processThread(
       [deps.sourceId, slugifyPath(threadRelPath(thread))]);
     if (!page) return null;
   }
-  const rendered = renderThreadPage(thread);
+  const ownerStamp = await connectorSpeakerOwnerStamp(deps.engine, deps.sourceId);
+  const rendered = renderThreadPage(thread, ownerStamp ?? undefined);
   // Pure noise renders no page AND skips detection — an all-noise thread
   // produces an empty verdict anyway, so nothing opens and nothing closes.
   if (!rendered) return thread;
@@ -984,10 +986,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
     // frequent cron keep the gate green forever (red-team F2 bypass).
     if (gmailSweepOk && !managed) {
       try {
-        await engine.executeRaw(
-          `UPDATE sources SET last_sync_at = now(), newest_content_at = $1::timestamptz WHERE id = $2`,
-          [new Date(state.gmail_newest_ms ?? Date.now()).toISOString(), sourceId],
-        );
+        await engine.markSourceSynced(sourceId, { newestContentAt: new Date(state.gmail_newest_ms ?? Date.now()).toISOString() });
       } catch { /* best-effort */ }
     }
 

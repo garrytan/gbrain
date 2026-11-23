@@ -8,6 +8,7 @@
  * it. Each purge run tries the label again and drops the park once it lands; a park whose page was restored or purged is
  * pruned. Rows are exempt from the op_checkpoints TTL sweep. No engine-sql imports, so `engine-sql/pages.ts` may import it.
  */
+import type { BrainEngine } from '../engine.ts';
 import type { SqlEngine } from './model.ts';
 
 export const DERIVED_ORIGIN_PARK_OP = 'derived-origin-park';
@@ -78,6 +79,7 @@ export async function releaseStaleHolds(engine: SqlEngine): Promise<void> {
 
 /** Read-only: every owed purge whose tombstone still exists as recorded. */
 export async function readOwedPurges(engine: SqlEngine): Promise<OwedPurge[]> {
+  // The fingerprint order never reaches output: the owed purges become a Set of page ids, which has no order to show.
   const rows = await engine.executeRaw<{ owed: OwedPurge | string }>(`SELECT o.completed_keys->0 AS owed FROM op_checkpoints o WHERE o.op=$1 AND ${OWED_TOMBSTONE}
     ORDER BY o.fingerprint`, [OWED_PURGE_OP]);
   return rows.map(row => typeof row.owed === 'string' ? JSON.parse(row.owed) as OwedPurge : row.owed).map(owed => ({ ...owed, page_id: Number(owed.page_id) }));
@@ -99,7 +101,7 @@ export async function clearDerivedOriginParks(engine: SqlEngine, pageIds: readon
   await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint = ANY($2::text[])', [DERIVED_ORIGIN_PARK_OP, pageIds.map(String)]);
 }
 
-const TOMBSTONE = 'EXISTS (SELECT 1 FROM pages p WHERE p.id::text = o.fingerprint AND p.deleted_at IS NOT NULL)';
+export const TOMBSTONE = 'EXISTS (SELECT 1 FROM pages p WHERE p.id::text = o.fingerprint AND p.deleted_at IS NOT NULL)';
 
 /** Drops the parks of pages that were restored or purged. */
 export async function pruneDerivedOriginParks(engine: SqlEngine): Promise<void> {
@@ -107,8 +109,6 @@ export async function pruneDerivedOriginParks(engine: SqlEngine): Promise<void> 
 }
 
 /** Read-only: every park whose page is still a tombstone, oldest first. */
-export async function readDerivedOriginParks(engine: SqlEngine): Promise<DerivedOriginPark[]> {
-  const rows = await engine.executeRaw<{ park: DerivedOriginPark | string }>(
-    `SELECT o.completed_keys->0 AS park FROM op_checkpoints o WHERE o.op=$1 AND ${TOMBSTONE} ORDER BY o.updated_at, o.fingerprint`, [DERIVED_ORIGIN_PARK_OP]);
-  return rows.map(row => typeof row.park === 'string' ? JSON.parse(row.park) as DerivedOriginPark : row.park);
+export async function readDerivedOriginParks(engine: Pick<BrainEngine, 'listDerivedOriginParks'>): Promise<DerivedOriginPark[]> {
+  return engine.listDerivedOriginParks(DERIVED_ORIGIN_PARK_OP);
 }

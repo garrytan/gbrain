@@ -63,6 +63,11 @@ export async function setAccessMemberKind(exec: SqlExecutor, id: string, kind: A
   await exec.executeRaw('UPDATE access_members SET kind = $2, updated_at = now() WHERE id = $1 AND tombstoned_at IS NULL', [id, kind]);
 }
 
+/** Sets or clears the labelled-only grant of a member that is not removed. */
+export async function setAccessMemberLabelledOnly(exec: SqlExecutor, id: string, labelledOnly: boolean): Promise<void> {
+  await exec.executeRaw('UPDATE access_members SET labelled_only = $2, updated_at = now() WHERE id = $1 AND tombstoned_at IS NULL', [id, labelledOnly]);
+}
+
 /** Marks the member removed (and disabled), clears its email and drops its group memberships, in one transaction. */
 export async function tombstoneAccessMember(exec: SqlExecutor, id: string): Promise<void> {
   await exec.transaction(async tx => {
@@ -109,11 +114,11 @@ export async function deleteAccessMemberLink(exec: SqlExecutor, system: string, 
   await exec.executeRaw('DELETE FROM access_member_links WHERE system = $1 AND external_id = $2', [system, externalId]);
 }
 
-/** Every link, or one member's links, by member, system and external id. */
+/** Every link, or one member's links, by member, system and external id, each in byte order (COLLATE "C"), as PGLite and the Rust store sort them. */
 export async function listAccessMemberLinks(exec: SqlExecutor, memberId: string | null): Promise<AccessMemberLinkRow[]> {
   return memberId === null
-    ? exec.executeRaw<AccessMemberLinkRow>('SELECT system, external_id, member_id, created_at FROM access_member_links ORDER BY member_id, system, external_id')
-    : exec.executeRaw<AccessMemberLinkRow>('SELECT system, external_id, member_id, created_at FROM access_member_links WHERE member_id = $1 ORDER BY member_id, system, external_id', [memberId]);
+    ? exec.executeRaw<AccessMemberLinkRow>('SELECT system, external_id, member_id, created_at FROM access_member_links ORDER BY member_id COLLATE "C", system COLLATE "C", external_id COLLATE "C"')
+    : exec.executeRaw<AccessMemberLinkRow>('SELECT system, external_id, member_id, created_at FROM access_member_links WHERE member_id = $1 ORDER BY member_id COLLATE "C", system COLLATE "C", external_id COLLATE "C"', [memberId]);
 }
 
 // Each credential statement is spelled once per table (access_tokens keyed by id::text, oauth_clients by client_id):
@@ -156,7 +161,7 @@ export interface LinkedMemberRow { id: string; groups: string[] | null }
  */
 export async function readLinkedMember(exec: Pick<SqlExecutor, 'executeRaw'>, system: string, externalId: string): Promise<LinkedMemberRow | null> {
   const [row] = await exec.executeRaw<LinkedMemberRow>(
-      `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+      `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id COLLATE "C") FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
        FROM access_member_links l JOIN access_members m ON m.id = l.member_id LEFT JOIN access_group_members g ON g.member_id = m.id
        WHERE l.system = $1 AND l.external_id = $2 AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL GROUP BY m.id`, [system, externalId]);
   return row ?? null;

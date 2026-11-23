@@ -9,8 +9,8 @@ import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
-export const listFactProvenance: Member<'listFactProvenance'> = async (brain, opts) => {
-  if (opts.ids.some((id) => !Number.isSafeInteger(id))) refuseMember('listFactProvenance', 'an id that is not a safe integer');
-  const rows: Array<{ id: number | string; source: string }> = await storeCall({ member: 'listFactProvenance' }, () => brain.listFactProvenance({ sourceId: opts.sourceId, ids: [...opts.ids] }));
+export const listFactProvenance: Member<'listFactProvenance'> = async (brain, sourceId, ids) => {
+  if (ids.some((id) => !Number.isSafeInteger(id))) refuseMember('listFactProvenance', 'an id that is not a safe integer');
+  const rows: Array<{ id: number | string; source: string | null }> = await storeCall({ member: 'listFactProvenance' }, () => brain.listFactProvenance({ sourceId, ids: [...ids] }));
   return rows.map((r) => ({ id: Number(r.id), source: r.source }));
 };

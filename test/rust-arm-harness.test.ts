@@ -7,9 +7,10 @@ import { describe, expect, test } from 'bun:test';
 import { checkRustArm, type RustCase, type RustTally } from './engine-parity/harness.ts';
 import { DIVERGENCE_NORMALIZERS, readDivergences, rustMemberCapability, rustRefusal } from './engine-parity/rust-arm.ts';
 
-// A member the store serves, and one it does not (its capability is what a refusal must name).
+// A member the store serves, and one it never serves: the Rust store runs no SQL, so executeRaw always refuses
+// (its capability is what a refusal must name). A member a lane may type later would make this test go stale.
 const SERVED = 'getPage';
-const REFUSED = 'searchVector';
+const REFUSED = 'executeRaw';
 
 function refusal(capability: string): Error {
   return Object.assign(new Error(`refused: ${capability}`), { code: 'engine_capability_missing', reason: capability });
@@ -70,6 +71,33 @@ describe('the Rust arm check', () => {
       refusals: [refusal(capability)],
       run: async () => 'ok', reference: { backend: 'pglite', value: 'ok' },
     }), tally())).rejects.toThrow();
+  });
+
+  // A write the coordinator refuses inside the store returns write_pending; the case's own assertion then throws.
+  const pending = async () => { throw new Error('expected committed, received { code: "write_pending" }'); };
+  const preimage = Object.assign(refusal('page_versions'), { detail: 'member=createVersion (option preimage) capability=page_versions outcome=none' });
+  const pin = { capability: 'page_versions', member: 'createVersion (option preimage)', site: 's', owner: 'o', due: 'd' } as const;
+
+  test('a write_pending behind exactly the pinned refusal is counted refused', async () => {
+    const t = tally();
+    await checkRustArm(rustCase({ opts: { methods: [SERVED] as never, rustPendingStop: pin }, refusals: [preimage], run: pending }), t);
+    expect(t).toEqual({ compared: 0, refused: 1, diverged: 0 });
+  });
+
+  test('a write_pending with no pin still fails, even behind a typed refusal', async () => {
+    await expect(checkRustArm(rustCase({ refusals: [preimage], run: pending }), tally())).rejects.toThrow('write_pending');
+  });
+
+  test('a pin whose capability or member does not match the refusal fails and says to update it', async () => {
+    for (const wrong of [{ ...pin, capability: 'raw_sql' }, { ...pin, member: 'putPage' }]) {
+      await expect(checkRustArm(rustCase({ opts: { methods: [SERVED] as never, rustPendingStop: wrong }, refusals: [preimage], run: pending }),
+        tally())).rejects.toThrow('rustPendingStop');
+    }
+  });
+
+  test('a pinned case that no longer stops fails and says to remove the pin', async () => {
+    await expect(checkRustArm(rustCase({ opts: { methods: [SERVED] as never, rustPendingStop: pin }, run: async () => 'ok',
+      reference: { backend: 'pglite', value: 'ok' } }), tally())).rejects.toThrow('remove its rustPendingStop pin');
   });
 
   test('a divergence row passes only when both answers are equal after its normaliser, and they still differ raw', async () => {

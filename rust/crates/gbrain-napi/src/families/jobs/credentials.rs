@@ -28,6 +28,29 @@ impl Brain {
         self.run(env, move |s| s.read_active_access_token_grant(&id))
     }
 
+    /// `readJobPrincipal` for a legacy token: the token's whole row without its hash, revoked or not, or null.
+    #[napi]
+    pub fn read_access_token<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_access_token(&id))
+    }
+
+    /// `lockActiveAccessTokens({ id } | { name })`: the whole rows of the active tokens it names, without their hashes.
+    #[napi]
+    pub fn lock_active_access_tokens<'env>(
+        &self,
+        env: &'env Env,
+        id: Option<String>,
+        name: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.lock_active_access_tokens(id.as_deref(), name.as_deref())
+        })
+    }
+
     /// `readActiveAccessTokenByHash(hash)`: the active token's whole row without its hash, or null.
     #[napi]
     pub fn read_active_access_token_by_hash<'env>(
@@ -154,6 +177,55 @@ impl Brain {
         })
     }
 
+    /// `writeAccessTokenGrant(id, { columns, scopes, permissions })`: the token's new grant revision, or null.
+    #[napi]
+    pub fn write_access_token_grant<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+        columns: Value,
+        scopes: Option<Vec<String>>,
+        permissions: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let columns: TokenGrantColumns = required(columns, "writeAccessTokenGrant columns")?;
+            s.write_access_token_grant(&id, &columns, scopes, permissions)
+        })
+    }
+
+    /// `writeAccessTokenPrivateGrant(id, axis, value)`: sets `private_pages` or `private_facts` of one token.
+    #[napi]
+    pub fn write_access_token_private_grant<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+        axis: String,
+        value: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.write_access_token_private_grant(&id, &axis, &value)
+        })
+    }
+
+    /// `setAccessTokenReadSharedRevision(id, revision)`: stamps one token's read-shared switch; a null revision clears it.
+    #[napi]
+    pub fn set_access_token_read_shared_revision<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+        revision: Option<i32>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.set_access_token_read_shared_revision(&id, revision)
+        })
+    }
+
+    /// `lockLegacyAccessTokens()`: the whole rows of the active tokens with no source grant, oldest first, without hashes.
+    #[napi]
+    pub fn lock_legacy_access_tokens<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.lock_legacy_access_tokens())
+    }
+
     /// `countOauthAccessTokens(from, to)`: how many access tokens expire from `from` to `to` (epoch seconds, inclusive),
     /// or after `from` when `to` is null.
     #[napi]
@@ -174,6 +246,49 @@ impl Brain {
         now: i64,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.delete_expired_oauth_tokens(now))
+    }
+
+    /// `listUnboundTokenNames()`: the names of the live tokens bound to no member, in byte order.
+    #[napi]
+    pub fn list_unbound_token_names<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_unbound_token_names())
+    }
+
+    /// `listUnboundClientIds()`: the ids of the live OAuth clients bound to no member, in byte order.
+    #[napi]
+    pub fn list_unbound_client_ids<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_unbound_client_ids())
+    }
+
+    /// `readLiveAccessToken(name)`: the member-key setup's row of the live token with this name, or null.
+    #[napi]
+    pub fn read_live_access_token<'env>(
+        &self,
+        env: &'env Env,
+        name: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_live_access_token(&name))
+    }
+
+    /// `recordTokenSetupReads(name, reads)`: keeps `reads` as `setup_reads` in the live token's permissions.
+    #[napi]
+    pub fn record_token_setup_reads<'env>(
+        &self,
+        env: &'env Env,
+        name: String,
+        reads: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.record_token_setup_reads(&name, &reads))
+    }
+
+    /// `listKeysReadingSource(sourceId)`: the live member-bound keys whose read list holds another write source's id.
+    #[napi]
+    pub fn list_keys_reading_source<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_keys_reading_source(&source_id))
     }
 
     /// `issueOauthTokens(rows)`: null. The tokens of one grant in one write; a refused row leaves none.

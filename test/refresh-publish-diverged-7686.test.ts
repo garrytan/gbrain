@@ -24,6 +24,7 @@
  * a real bare remote, a pushing clone and the managed checkout.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { spawn } from 'node:child_process';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -35,8 +36,11 @@ import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import { REFRESH_PUBLISH_DIVERGED_KEY, refreshWorktree } from '../src/core/persistence/worktree-refresh.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
-import { withEnv } from './helpers/with-env.ts';
+import { withEnv, envForFile } from './helpers/with-env.ts';
 import { commitFile, git, page, withRefreshFixture, type RefreshFixture } from './helpers/worktree-refresh-fixture.ts';
+
+/** GST-2988: these tests pin the publish refusal, which secrets.on_push refuse keeps. */
+envForFile({ GBRAIN_SECRETS_ON_PUSH: 'refuse' });
 
 const backends = testBackends();
 const engines: BrainEngine[] = [];
@@ -117,6 +121,32 @@ test('setting on: the text result names the publish', () => each(async f => {
   try { await runSourcesRefresh(f.engine, [f.alpha]); } finally { console.log = log; _resetCliExitVerdictForTests(); process.exitCode = 0; }
   expect(out.join('\n')).toContain('Published 1 local commit(s) merged with 1 upstream commit(s) as ');
   expect(out.join('\n')).toContain('Refresh completed');
+}), 120_000);
+
+test.skipIf(!Bun.which('flock'))('GST-3497: a publish that finds the push lock held refuses refresh_diverged, retryable, naming the lock, and changes nothing', () => each(async f => {
+  const local = diverge(f);
+  const remote = remoteHead(f);
+  await f.engine.setConfig(REFRESH_PUBLISH_DIVERGED_KEY, 'true');
+  const lock = join(git(f.root, 'rev-parse', '--absolute-git-dir'), 'brain-publish.lock');
+  const holder = spawn('flock', ['-o', lock, 'sleep', '60'], { stdio: 'ignore' });
+  try {
+    for (let i = 0; i < 100 && Bun.spawnSync(['flock', '-n', lock, 'true']).exitCode === 0; i++) await new Promise(r => setTimeout(r, 50));
+    const error = await refusedWith(refreshWorktree(f.engine, f.alpha), 'refresh_diverged') as { message?: string; suggestion?: string; retryable?: boolean; reason?: string };
+    expect(error.retryable).toBe(true);
+    expect(error.reason).toBe('publish_lock_busy');
+    expect(error.message).toContain('holds this checkout\'s push lock (a process that did not record itself');
+    expect(error.suggestion).toContain(`Retry gbrain sources refresh ${f.alpha}`);
+    const out: string[] = [];
+    const log = console.log;
+    _resetCliExitVerdictForTests();
+    console.log = (line: string) => { out.push(line); };
+    try { await runSourcesRefresh(f.engine, [f.alpha, '--json']); } finally { console.log = log; _resetCliExitVerdictForTests(); process.exitCode = 0; }
+    expect(JSON.parse(out.join(''))).toMatchObject({ status: 'refused', code: 'refresh_diverged', reason: 'publish_lock_busy', retryable: true,
+      fix: { argv: ['gbrain', 'sources', 'refresh', f.alpha] } });
+    expect(remoteHead(f)).toBe(remote);
+    expect(f.head()).toBe(local);
+    expect(await f.refreshRows()).toEqual([]);
+  } finally { holder.kill('SIGKILL'); }
 }), 120_000);
 
 test('setting off (false, or unset while Git durability is not on): the refresh refuses refresh_diverged, pushes nothing and names the way to turn it on', () => each(async f => {
@@ -216,6 +246,22 @@ test('setting on: a refusal after the publish says the local commits were alread
     if (point === 'drained') git(f.root, 'commit', '-q', '--allow-empty', '-m', 'external');
   } } }), 'refresh_source_changed');
   expect(error.message).toContain(`already published the checkout's 1 local commit(s) merged with the upstream as ${remoteHead(f)}`);
+}), 120_000);
+
+test('setting on: a local commit that lands after the refresh published the first one is published on a retry, never refused as needing the user', () => each(async f => {
+  const first = diverge(f);
+  await f.engine.setConfig(REFRESH_PUBLISH_DIVERGED_KEY, 'true');
+  const committing = join(bin, `gbrain-commit-after-${f.engine.kind}`);
+  const marker = join(bin, `committed-after-${f.engine.kind}`);
+  writeFileSync(committing, `#!/bin/sh\n'${childCli}' "$@"; rc=$?\nif [ ! -e '${marker}' ]; then : > '${marker}'; printf '%s' '${page('Second', 'A second local commit made while the refresh ran.')}' > '${join(f.root, 'beta/second.md')}' && git -C '${f.root}' add beta/second.md && git -C '${f.root}' commit -qm 'second local commit' || exit 98; fi\nexit $rc\n`);
+  chmodSync(committing, 0o755);
+  const done = await withEnv({ GBRAIN_JOB_CHILD_CLI: committing }, () => refreshWorktree(f.engine, f.alpha));
+  expect(done).toMatchObject({ status: 'completed', published: { local_commits: 1 } });
+  expect(done.published!.sha).toBe(remoteHead(f));
+  expect(f.head()).toBe(remoteHead(f));
+  git(f.root, 'merge-base', '--is-ancestor', first, 'HEAD');
+  expect(readFileSync(join(f.root, 'beta/second.md'), 'utf8')).toContain('A second local commit made while the refresh ran.');
+  expect(git(f.root, 'ls-tree', '-r', '--name-only', remoteHead(f))).toContain('beta/second.md');
 }), 120_000);
 
 test('setting on: the publish runs in a child gbrain, never in this process, so an unusable child refuses and nothing is pushed or fenced', () => each(async f => {

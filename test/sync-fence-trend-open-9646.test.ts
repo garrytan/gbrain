@@ -44,7 +44,9 @@ async function history(engine: BrainEngine) {
 function recording(engine: BrainEngine) {
   const statements: Array<{ sql: string; params: unknown[] }> = [];
   const executeRaw = (sql: string, params: unknown[] = []) => { statements.push({ sql, params }); return engine.executeRaw(sql, params); };
-  return { engine: { executeRaw } as unknown as BrainEngine, statements };
+  const readManagedSyncPassRow = (...args: Parameters<BrainEngine['readManagedSyncPassRow']>) => engine.readManagedSyncPassRow(...args);
+  const listLiveManagedSyncPassRows = (...args: Parameters<BrainEngine['listLiveManagedSyncPassRows']>) => engine.listLiveManagedSyncPassRows(...args);
+  return { engine: { executeRaw, readManagedSyncPassRow, listLiveManagedSyncPassRows } as unknown as BrainEngine, statements };
 }
 
 test('#9646: an import open at the pre-read that commits before the stamp is counted once, and a stuck old import keeps the publication past the newest request', async () => {

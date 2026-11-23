@@ -15,7 +15,7 @@
  * `needs_rederive` (reason `input_lowered`) instead.
  */
 import type { BrainEngine } from '../engine.ts';
-import { derivedRowsFrom, type DerivationRef } from '../facts/derivation-inputs.ts';
+import { derivedRowsFrom, KEEP_HIDDEN_AT, type DerivationRef } from '../facts/derivation-inputs.ts';
 import { readManagedMode } from '../persistence/managed-mode.ts';
 import { appendRetierEvents, retierInputCauses } from '../belief/retier.ts';
 import { compareTrust, storedTrustTier, trustRankSql, trustTierFromRankSql, type TrustTier } from './tier.ts';
@@ -78,7 +78,7 @@ export async function propagateTierLowering(tx: BrainEngine, inputs: readonly De
   if (deferred.length) {
     await tx.executeRaw(`INSERT INTO needs_rederive(derived_table, derived_id, source_id, reason)
       SELECT d.derived_table, d.derived_id, d.source_id, 'input_lowered' FROM jsonb_to_recordset($1::text::jsonb) AS d(derived_table text, derived_id text, source_id text)
-      ON CONFLICT (derived_table, derived_id) DO UPDATE SET reason = EXCLUDED.reason, marked_at = now()`,
+      ON CONFLICT (derived_table, derived_id) DO UPDATE SET reason = EXCLUDED.reason, marked_at = ${KEEP_HIDDEN_AT}`,
     [JSON.stringify(deferred.map(d => ({ derived_table: d.table, derived_id: d.id, source_id: d.source_id })))]);
   }
   const { queueTierProjection } = await import('./page-write.ts');

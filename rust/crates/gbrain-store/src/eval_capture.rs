@@ -2,12 +2,20 @@
 //! `eval_capture_failures` tables of the PGLite engine.
 //!
 //! Members: logEvalCandidate, listEvalCandidates, deleteEvalCandidatesBefore,
-//! logEvalCaptureFailure, listEvalCaptureFailures.
+//! logEvalCaptureFailure, listEvalCaptureFailures. The decide proposal tables share this key tag:
+//! `decide_proposals.rs` (rust/docs/store/decide-proposals.md).
 //!
 //! Keys (every record starts with `keys::EVAL_CAPTURE`, `Z`):
 //! - `Z 0x01 <candidate id u64 BE>` -> `CandidateRecord` (JSON).
 //! - `Z 0x02 <failure id u64 BE>` -> `FailureRecord` (JSON).
 //! - Id counters: `M next_eval_candidate_id`, `M next_eval_failure_id`.
+//! - `Z 0x20` and `Z 0x21`: the `calibration_profiles` table, a child module
+//!   (`eval_capture/calibration_profiles.rs`, rust/docs/store/calibration-profiles.md).
+//! - `Z 0x30..=0x3F`: the decide proposal tables (`decide_proposals.rs`): sub-tags 0x30, 0x31, 0x32,
+//!   0x38, 0x39, 0x3C and 0x3D.
+//! - Sub-tags `0x10..=0x1F` belong to the decide store ([`decide_store`], rust/docs/store/decide-store.md):
+//!   `0x10` state, `0x11` spend, `0x12` spend time index, `0x13` receipts, `0x14` receipt time index,
+//!   `0x15` calibrations.
 //!
 //! Both tables are small logs read whole: the list members scan every record of their table,
 //! filter, and sort `created_at DESC, id DESC` (candidates) or `ts DESC, id DESC` (failures).
@@ -23,6 +31,9 @@
 //! superseded or consolidated fact, or one whose page is soft-deleted, still counts
 //! (`facts::fact_exists`).
 
+pub mod calibration_profiles;
+pub mod decide_store;
+
 use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
 use crate::facts::fact_exists;
@@ -32,6 +43,8 @@ use crate::pages::{next_id, read_page, scope_sources};
 use crate::{Store, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+pub mod decide_proposals;
 
 const NEXT_CANDIDATE_ID: &str = "next_eval_candidate_id";
 const NEXT_FAILURE_ID: &str = "next_eval_failure_id";
@@ -273,8 +286,6 @@ fn fact_slug_id(slug: &str) -> Option<u64> {
 /// candidate covers. Purged slugs leave the array; the rest keep their order. Returns the number
 /// of candidates updated. A candidate with no `source_ids` is never touched (as in PGLite, where
 /// `$1 = ANY('{}')` is false), even though its capture matched pages in every source.
-// page_ops (`deletePages`, `purgeDeletedPages`) is its caller; until that lands only tests call it.
-#[allow(dead_code)]
 pub(crate) fn remove_retrieved_slugs(
     tx: &mut dyn KvWrite,
     source_id: &str,
@@ -283,6 +294,23 @@ pub(crate) fn remove_retrieved_slugs(
     if slugs.is_empty() {
         return Ok(0);
     }
+    scrub_retrieved_slugs(tx, source_id, |slug| slugs.iter().any(|s| s == slug))
+}
+
+/// The `scrub_eval_candidates` step of a source delete (`removedSourceScrubCtes`,
+/// `src/core/engine-sql/source-archive.ts`), after the pages of `source_id` are gone: every
+/// retrieved slug of a candidate that covers `source_id` leaves the array unless a page by that
+/// name lives in another source the candidate covers, whatever source the slug came from.
+pub(crate) fn remove_source_retrieved_slugs(tx: &mut dyn KvWrite, source_id: &str) -> Result<u64> {
+    scrub_retrieved_slugs(tx, source_id, |_| true)
+}
+
+/// The shared scrub: `doomed` picks the slugs that leave unless another covered source has them.
+fn scrub_retrieved_slugs(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    doomed: impl Fn(&str) -> bool,
+) -> Result<u64> {
     let candidates: Vec<CandidateRecord> = read_all(&*tx, CANDIDATE)?;
     let mut updated = 0u64;
     for mut candidate in candidates {
@@ -302,7 +330,7 @@ pub(crate) fn remove_retrieved_slugs(
         let mut kept = Vec::with_capacity(candidate.retrieved_slugs.len());
         let mut changed = false;
         for slug in &candidate.retrieved_slugs {
-            let purged = slugs.iter().any(|s| s == slug) && {
+            let purged = doomed(slug) && {
                 let mut elsewhere = false;
                 for other in &others {
                     if read_page(&*tx, other, slug)?.is_some() {
@@ -443,11 +471,11 @@ impl Store {
             let id = next_id(tx, NEXT_CANDIDATE_ID)?;
             let record = CandidateRecord {
                 id,
-                tool_name,
-                query,
+                tool_name: tool_name.clone(),
+                query: query.clone(),
                 retrieved_slugs: retrieved,
-                retrieved_chunk_ids: chunk_ids,
-                source_ids,
+                retrieved_chunk_ids: chunk_ids.clone(),
+                source_ids: source_ids.clone(),
                 expand_enabled: input.expand_enabled,
                 detail: input.detail.clone(),
                 detail_resolved: input.detail_resolved.clone(),
@@ -548,6 +576,20 @@ impl Store {
         rows.sort_by_key(|r| std::cmp::Reverse((r.ts_us, r.id)));
         Ok(rows.iter().map(FailureRecord::to_json).collect())
     }
+}
+
+/// The rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow};
+    Ok(read_all::<CandidateRecord>(read, CANDIDATE)?
+        .into_iter()
+        .map(|r| ProbeRow {
+            source_id: None,
+            cells: vec![("query", ProbeCell::text(&r.query))],
+        })
+        .collect())
 }
 
 #[cfg(test)]
@@ -662,6 +704,31 @@ mod tests {
         .unwrap();
         let nulls = store.log_eval_candidate(&input).unwrap();
         assert!(slugs_of(&store, nulls).is_empty());
+    }
+
+    #[test]
+    fn a_source_delete_strips_every_slug_no_other_covered_source_holds() {
+        let (_dir, store) = open();
+        source(&store, "gone");
+        source(&store, "other");
+        for slug in ["a", "b"] {
+            put(&store, "gone", slug);
+        }
+        put(&store, "other", "b");
+        put(&store, "default", "c");
+        let both = log(&store, &["a", "b"], &["gone", "other"]);
+        let not_gone = log(&store, &["b", "c"], &["other", "default"]);
+        store
+            .write(|tx| {
+                for slug in ["a", "b"] {
+                    let page = crate::pages::read_page(&*tx, "gone", slug)?.unwrap();
+                    crate::pages::remove_page(tx, &page)?;
+                }
+                remove_source_retrieved_slugs(tx, "gone")
+            })
+            .unwrap();
+        assert_eq!(slugs_of(&store, both), vec!["b"]);
+        assert_eq!(slugs_of(&store, not_gone), vec!["b", "c"]);
     }
 
     #[test]

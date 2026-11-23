@@ -183,6 +183,66 @@ describe('engine parity: search reads', () => {
   );
 
   parityTest(
+    'resolveAliases: excludePrivate hides the aliases of private pages, as hybrid search passes it',
+    { methods: ['putPage', 'setPageAliases', 'resolveAliases'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      await put(engine, 'people/open', { title: 'Open One' });
+      await put(engine, 'people/hidden', { title: 'Hidden One', frontmatter: { visibility: 'private' } });
+      await put(engine, 'people/by-access', { title: 'Access One', frontmatter: { access: 'private' } });
+      await put(engine, 'people/elsewhere', { title: 'Elsewhere' }, { sourceId: 'other' });
+      await engine.setPageAliases('people/open', 'default', ['shared name', 'open alias']);
+      await engine.setPageAliases('people/hidden', 'default', ['shared name', 'hidden alias']);
+      await engine.setPageAliases('people/by-access', 'default', ['access alias']);
+      await engine.setPageAliases('people/elsewhere', 'other', ['shared name']);
+      const names = ['shared name', 'open alias', 'hidden alias', 'access alias'];
+      const flat = (m: Map<string, Array<{ slug: string; source_id: string }>>) => [...m].map(([k, v]) => `${k} -> ${v.map(r => `${r.source_id}:${r.slug}`).join(', ')}`);
+      const none = flat(await engine.resolveAliases(names));
+      const off = flat(await engine.resolveAliases(names, { excludePrivate: false }));
+      const hidden = flat(await engine.resolveAliases(names, { excludePrivate: true }));
+      // Hybrid search passes its source scope with excludePrivate, and a bag that may carry requireSafeChunks.
+      const scoped = flat(await engine.resolveAliases(names, { sourceId: 'default', excludePrivate: true, requireSafeChunks: true }));
+      const federated = flat(await engine.resolveAliases(names, { sourceIds: ['default', 'other'], excludePrivate: true }));
+      // The alias hop hands over its whole identity-tier bag: the slug excludes and the hop switches change nothing here.
+      const hop = flat(await engine.resolveAliases(names, { sourceId: 'default', excludePrivate: true, excludeSlugPrefixes: ['test/', 'attachments/'], excludeSlugs: ['people/open'], tokenHop: true, qualified: true } as never));
+      expect(off).toEqual(none);
+      expect(none).toEqual([
+        'access alias -> default:people/by-access',
+        'hidden alias -> default:people/hidden',
+        'open alias -> default:people/open',
+        'shared name -> default:people/hidden, default:people/open, other:people/elsewhere',
+      ]);
+      expect(hidden).toEqual(['open alias -> default:people/open', 'shared name -> default:people/open, other:people/elsewhere']);
+      expect(scoped).toEqual(['open alias -> default:people/open', 'shared name -> default:people/open']);
+      expect(federated).toEqual(hidden);
+      expect(hop).toEqual(scoped);
+      return { none, off, hidden, scoped, federated, hop };
+    },
+  );
+
+  // The Rust store has no writer for derived alias rows yet, so this case stops on that typed refusal there; the store's own
+  // test (rust/crates/gbrain-store/src/aliases.rs) covers the same shadow rule.
+  parityTest(
+    'resolveAliases: a private page titled like a derived alias shadows it only for a caller that may read the page',
+    { methods: ['putPage', 'replaceDerivedAliases', 'resolveAliases'] },
+    async (engine) => {
+      await put(engine, 'companies/acme', { title: 'Acme Co' });
+      await put(engine, 'companies/beta', { title: 'Beta Co' });
+      await put(engine, 'notes/acme-title', { title: 'Acme', frontmatter: { visibility: 'private' } });
+      await put(engine, 'notes/beta-title', { title: 'Beta' });
+      await engine.replaceDerivedAliases('companies/acme', 'default', [{ alias_norm: 'acme', origin: 'declared', case_sensitive: false, alias_text: 'Acme' }]);
+      await engine.replaceDerivedAliases('companies/beta', 'default', [{ alias_norm: 'beta', origin: 'declared', case_sensitive: false, alias_text: 'Beta' }]);
+      const flat = (m: Map<string, Array<{ slug: string; source_id: string }>>) => [...m].map(([k, v]) => `${k} -> ${v.map(r => `${r.source_id}:${r.slug}`).join(', ')}`);
+      const none = flat(await engine.resolveAliases(['acme', 'beta']));
+      const hidden = flat(await engine.resolveAliases(['acme', 'beta'], { excludePrivate: true }));
+      // Both derived aliases yield to a page titled with their name; the private "Acme" title is not visible under excludePrivate.
+      expect(none).toEqual([]);
+      expect(hidden).toEqual(['acme -> default:companies/acme']);
+      return { none, hidden };
+    },
+  );
+
+  parityTest(
     'pageCollapseFacts: every page row answers by id, any source or deletion, with text-cast frontmatter and code-point bounds',
     { methods: ['putPage', 'softDeletePage', 'pageCollapseFacts'] },
     async (engine, backend) => {

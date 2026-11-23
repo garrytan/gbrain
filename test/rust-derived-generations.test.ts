@@ -3,7 +3,7 @@
  * engine members, on PGLite, Postgres and a Rust brain.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Protects: the three functions send the statements they always sent, byte for byte, now that each is an engine
+ *  - Protects: the three functions send the statements they always sent, in byte order, now that each is an engine
  *    member (engine-sql/derived-generations.ts), and a Rust brain keeps the same ledger: a fence publish activates
  *    generation 1 and then 2, a result that may not publish keeps one held row (the same hold counts an attempt, another
  *    hold replaces it), and of two writers of one key only the first sees and clears the held row. A throw after the
@@ -16,8 +16,8 @@
  *  - Seam: the transaction engine's own executeRaw (PGLite) is wrapped to record each statement and restored with
  *    `delete`; nothing else is replaced. Postgres runs when DATABASE_URL is set (testBackends) and checks the database
  *    name first. The Rust half needs the addon: skipped without it unless GBRAIN_TEST_RUST_ADDON_REQUIRED=1.
- *  - Not covered: publishGeneration's attempt counter, replay select, valve and exhausted-hold reads, which still go
- *    through `executeRaw` (publish.ts), so the producer path of generations/publish.ts still stops on a Rust brain.
+ *  - Not covered: publishGeneration's attempt counter, replay select, valve and exhausted-hold reads, which
+ *    test/rust-generation-publish.test.ts pins.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
@@ -39,10 +39,10 @@ const postgresRun = testBackends().includes('postgres') ? test : test.skip;
 const SLUG = 'people/charlie-example';
 const KEY: { kind: FenceGenerationKind; sourceId: string; ownerKey: string } = { kind: FACT_FENCE_KIND, sourceId: 'default', ownerKey: fenceOwnerKey(SLUG) };
 
-/** The statements publish.ts has always sent through executeRaw (73d950614e), byte for byte. */
+/** The statements publish.ts has always sent through executeRaw (73d950614e), plus a byte-order ORDER BY. */
 const OLD = {
   liveRow: `SELECT id, generation, input_pin, input_size, locator FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='live'`,
-  liveItems: `SELECT item_key, identity_hash FROM derived_generation_items WHERE generation_id=$1 AND action IN ('published','kept','adopted','revived')`,
+  liveItems: `SELECT item_key, identity_hash FROM derived_generation_items WHERE generation_id=$1 AND action IN ('published','kept','adopted','revived') ORDER BY item_key COLLATE "C"`,
   supersede: `UPDATE derived_generations SET state='superseded', updated_at=now() WHERE id=$1 AND state='live'`,
   activate: `INSERT INTO derived_generations (source_id, kind, owner_key, generation, state, run_id, operation_id, input_pin, input_size, completeness, item_set_hash, restore_of,
        activation_id, locator)

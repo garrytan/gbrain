@@ -27,7 +27,7 @@ import {
 import { createProgress, type ProgressReporter } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { StaleChunkProgress } from '../core/embed-stale-progress.ts';
-import { assertEmbeddingEnabled } from '../core/embedding-dim-check.ts';
+import { assertBrainRowEmbeddingEnabled } from '../core/embedding-dim-check.ts';
 import { writeCliError } from '../cli/cli-error.ts';
 import { countRestampOnlyChunks, hasSignatureDrift, invalidateStaleSignatureEmbeddingsGuarded } from '../core/embedding-invalidation.ts';
 import { contentDriftSweepLine, runContentDriftSweep, type ContentDriftSweepStatus } from '../core/content-drift-sweep.ts';
@@ -452,7 +452,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
   // v0.37.10.0 T7 (D9): refuse cleanly when init persisted the deferred-setup
   // sentinel. Skipped in dryRun mode so plan-mode introspection still works.
   if (!opts.dryRun) {
-    assertEmbeddingEnabled(loadConfig());
+    await assertBrainRowEmbeddingEnabled(engine, loadConfig());
   }
 
   // v0.41.6.0 D1: preflight embedding credentials. Skipped in dryRun mode
@@ -907,7 +907,7 @@ export async function runEmbed(engine: BrainEngine, args: string[], selectedConf
   // result surface — do not invent one here).
   const keylessConfig = loadConfig();
   if (isKeylessStaleRefusal(args, keylessConfig?.embedding_disabled)) {
-    const enable = (await import('../core/readiness.ts')).embeddingEnablement(keylessConfig!).argv ?? ['gbrain', 'init', '--force', '--embedding-model', '<provider:model>'];
+    const enable = (await import('../core/readiness.ts')).embeddingEnablement(keylessConfig!).argv ?? ['gbrain', 'embeddings', 'enable', '--embedding-model', '<provider:model>'];
     process.stderr.write('[embed] Embeddings are disabled on this brain (keyless install), so there are no vectors to compute. Keyword search covers every chunked page; '
       + 'pages an older version skipped for size become keyword-searchable with gbrain reindex --oversized (free). '
       + `Turn on semantic search (pages and facts are kept): ${(await import('../core/agent-output.ts')).shellQuote(enable)}\n`);

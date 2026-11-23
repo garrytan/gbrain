@@ -3,27 +3,28 @@
  * housekeeping makes on each scan tick (listOverdueHeldWrites, lockOverdueHold, listOwnerRecoveryHeads,
  * listResumableRefreshes, listSourceLastCommits).
  *
- * Each scan joins a write request to a persistence worktree the host owns. The store keeps no worktree (a request row
- * here always has a null `worktree_id`, and an insert that names a refresh hold refuses), so each list answers no row
- * and no hold stands; it still refuses the arguments the Postgres casts refuse (an id that is not a uuid).
+ * Each scan joins a write request to a persistence worktree the host owns, read from the store's worktree rows. No
+ * caller here writes a refresh row, so no refresh is interrupted. Each member still refuses the arguments the Postgres
+ * casts refuse (an id that is not a uuid).
  *
  * What each member answers and why: rust/docs/store/persistence.md ("Owner scans").
  */
 import type { OverdueHold, OverdueHoldKind } from '../../engine-sql/persistence-owner-scans.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
-/** No write here waits behind a refresh or a worktree import, so none is overdue; the wait limit changes nothing. */
+/** The deferred writes on worktrees `hostId` owns whose `hold` is past `maxWaitMs`, in sequence order. */
 export const listOverdueHeldWrites: StoreMember<[hostId: string, maxWaitMs: number, hold: OverdueHoldKind, opts?: { signal?: AbortSignal }], Record<string, unknown>[]> =
-  (brain, hostId, _maxWaitMs, hold) => storeCall({ member: 'listOverdueHeldWrites' }, () => brain.listOverdueHeldWrites(hostId, hold));
+  (brain, hostId, maxWaitMs, hold) => storeCall({ member: 'listOverdueHeldWrites' }, () => brain.listOverdueHeldWrites(hostId, maxWaitMs, hold));
 
-/** No refresh row or worktree import hold exists here, so none still stands. */
+/** Whether the hold still stands: the refresh unreleased, or the write still deferred on a pending import past its limit. */
 export const lockOverdueHold: StoreMember<[hold: OverdueHold], boolean> =
-  (brain, hold) => storeCall({ member: 'lockOverdueHold' }, () =>
-    brain.lockOverdueHold(hold.kind, hold.kind === 'refresh' ? hold.refreshId : hold.id));
+  (brain, hold) => storeCall({ member: 'lockOverdueHold' }, () => hold.kind === 'refresh'
+    ? brain.lockOverdueHold(hold.kind, hold.refreshId, null, null)
+    : brain.lockOverdueHold(hold.kind, hold.id, hold.importFrom, hold.maxWaitMs));
 
-/** No write here carries a recovery record (those live only on worktree-owned writes), so there is no head; `excluded` changes nothing. */
+/** The oldest recovering write of each worktree `hostId` owns that is not in `excluded`, at most 16. */
 export const listOwnerRecoveryHeads: StoreMember<[hostId: string, excluded: readonly string[], opts?: { signal?: AbortSignal; direct?: boolean }], Record<string, unknown>[]> =
-  (brain, hostId) => storeCall({ member: 'listOwnerRecoveryHeads' }, () => brain.listOwnerRecoveryHeads(hostId));
+  (brain, hostId, excluded) => storeCall({ member: 'listOwnerRecoveryHeads' }, () => brain.listOwnerRecoveryHeads(hostId, [...excluded]));
 
 /** No refresh row exists here (refreshes live only on managed worktrees), so none is interrupted; the sync budget changes nothing. */
 export const listResumableRefreshes: StoreMember<[hostId: string, budgetMs: number], (Record<string, unknown> & { stale: boolean })[]> =

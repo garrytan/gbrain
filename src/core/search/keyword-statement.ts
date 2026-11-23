@@ -157,8 +157,7 @@ function pagesStatement(m: KeywordMatch | null, page: KeywordPageWindow, handles
       SELECT p.slug, p.id AS page_id, p.title, p.type, p.source_id, p.effective_date, p.effective_date_source,
         CASE WHEN ${messageId} THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id,
         CASE WHEN ${messageId} THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
-        cc.id AS chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, k.score,
-        CASE WHEN p.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id) THEN true ELSE false END AS stale
+        cc.id AS chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, k.score, false AS stale
       FROM kept k JOIN pages p ON p.id = k.page_id JOIN content_chunks cc ON cc.id = k.chunk_id -- chunk-visibility-ok: kept holds only chunks the matched arms passed through keywordFilters (buildVisibilityClause with the chunk alias)
       ORDER BY k.score DESC, k.page_id ASC`,
     params,

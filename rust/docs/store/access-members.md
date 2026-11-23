@@ -29,6 +29,7 @@ there is no reverse index.
 | `setAccessMemberDisabled(id, disabled)` | null | `UPDATE access_members SET disabled_at = COALESCE(disabled_at, now())` (or `NULL`), `updated_at = now()` |
 | `setAccessMemberEmail(id, email)` | true when a member that is not removed changed | `UPDATE ... SET email = $2 ... WHERE id = $1 AND tombstoned_at IS NULL RETURNING id` |
 | `setAccessMemberKind(id, kind)` | null | `UPDATE ... SET kind = $2 ... WHERE id = $1 AND tombstoned_at IS NULL` |
+| `setAccessMemberLabelledOnly(id, labelledOnly)` | null | `UPDATE ... SET labelled_only = $2 ... WHERE id = $1 AND tombstoned_at IS NULL`; no serves key moves |
 | `tombstoneAccessMember(id)` | null | the `removeMember` transaction: the tombstone `UPDATE` (email cleared, an earlier disable time kept) and `DELETE FROM access_group_members WHERE member_id = $1` |
 | `addAccessGroupMembers(groupId, memberIds)` | true when the group was created | the `addGroup` transaction |
 | `removeAccessGroupMembers(groupId, memberIds)` | null | `DELETE FROM access_group_members WHERE group_id = $1 AND member_id = $2` per member |
@@ -41,13 +42,14 @@ there is no reverse index.
 | `readLinkedMember(system, externalId)` | `{ id, groups }` of the member the link names when it is neither disabled nor removed, groups in byte order; null otherwise | `SELECT m.id, array_agg(g.group_id ORDER BY g.group_id) ... FROM access_member_links l JOIN access_members m ... LEFT JOIN access_group_members g ... WHERE l.system = $1 AND l.external_id = $2 AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL GROUP BY m.id` |
 | `insertAccessMemberLink(system, externalId, memberId)` | null | `INSERT INTO access_member_links (system, external_id, member_id) VALUES ($1, $2, $3)` |
 | `deleteAccessMemberLink(system, externalId)` | null; nothing for no such link | `DELETE FROM access_member_links WHERE system = $1 AND external_id = $2` |
-| `listAccessMemberLinks(memberId \| null)` | every link, or the links of exactly that member, by member id, system and external id | `SELECT ... ORDER BY member_id, system, external_id` (`gbrain access member links`) |
+| `listAccessMemberLinks(memberId \| null)` | every link, or the links of exactly that member, by member id, system and external id, each in byte order | `SELECT ... ORDER BY member_id COLLATE "C", system COLLATE "C", external_id COLLATE "C"` (`gbrain access member links`) |
 | `readAccessMemberSource(memberId, sourceId)` | `{ member_id, source_id, created_at }`, matched exactly, or null | `SELECT member_id, source_id, created_at FROM access_member_sources WHERE member_id = $1 AND source_id = $2` |
 | `insertAccessMemberSource(memberId, sourceId)` | null; nothing when the binding exists | `INSERT INTO access_member_sources (member_id, source_id) VALUES ($1, $2) ON CONFLICT DO NOTHING` |
 | `deleteAccessMemberSource(memberId, sourceId)` | null; nothing for no such binding | `DELETE FROM access_member_sources WHERE member_id = $1 AND source_id = $2` |
 | `listAccessMemberSources(memberId \| null)` | every binding, or the bindings of exactly that member, by member id and source id in byte order | `SELECT ... ORDER BY member_id COLLATE "C", source_id COLLATE "C"` |
 | `listAccessMemberSourceOwners(sourceId)` | the member ids bound to the source, by id in byte order; empty when the source is not personal | `SELECT member_id ... WHERE source_id = $1 ORDER BY member_id COLLATE "C"` |
 | `readMemberSourceBindings(sourceIds)` | `{ source_id, member_id }` of every binding of the named sources (the store answers by source id, then member id; the SQL has no order) | `SELECT source_id, member_id ... WHERE source_id = ANY($1::text[])` |
+| `readSharedSourceRows()` | every source not archived, in byte order of its id, as `{ id, config, guest, owners, owner_member }`: `guest` is `config->>'guest' = 'true'` (the store has no `guest_sources` table), `owners` is empty (it keeps no `access_member_sources` bindings), `owner_member` is the `access.owner_member` config value trimmed of spaces, or null (`read_shared.rs`) | `engine-sql/read-shared-sources.ts` `READ_SHARED_SOURCE_ROWS_SQL`, the shared set of the read-shared switch (`grants/read-shared.ts`) |
 
 Each write is one `Store::write`, so a refused statement leaves nothing of the call behind, as the Postgres transaction
 does.
@@ -57,7 +59,7 @@ does.
 | Postgres trigger | Store |
 | --- | --- |
 | `access_members_mark_restricted` (v282, after insert) | a member insert sets config `access.restrictions_present` to `'1'` unless it already is ([access-flag.md](access-flag.md)) |
-| `access_members_refresh_serves` (v309, per statement, after insert, delete or an update of `disabled_at` / `tombstoned_at`) | a member insert, a disable or enable and a tombstone run `gbrain_access_refresh_serves()` at read committed: `access.serves_derived` is `several` while two or more members are enabled, else `one` (written as `one` only when the key exists and differs); `access.serves_since` is set once, to the write's `now()` in whole UTC seconds (`YYYY-MM-DDTHH:MM:SSZ`), when the explicit `access.serves` (`one` or `several`, trimmed and lower-cased) or else the derived value is `several` |
+| `access_members_refresh_serves` (v309, per statement, after insert, delete or an update of `disabled_at` / `tombstoned_at`) | a member insert, a disable or enable and a tombstone run `gbrain_access_refresh_serves()` at read committed: `access.serves_derived` is `several` while two or more members are enabled, else `one` (written as `one` only when the key exists and differs); `access.serves_since` is set once, to the write's `now()` in UTC to the microsecond (`YYYY-MM-DDTHH:MM:SS.UUUUUUZ`, v329), when the explicit `access.serves` (`one` or `several`, trimmed and lower-cased) or else the derived value is `several` |
 | `ON DELETE CASCADE` on `access_group_members.group_id` | `deleteAccessGroup` deletes the group's member keys |
 
 The statement trigger also fires on an update that changes no row (an absent id), so the store refreshes on every
@@ -86,12 +88,11 @@ into the error Postgres throws: `code` `23505` (unique), `23514` (check) or `235
 
 ## What the store does not do
 
-- Credentials: the binding members (`readCredentialBindingForUpdate`, `writeCredentialBinding`,
-  `writeCredentialReadsUnscoped`, so `bindCredential` and `gbrain auth rescope --member`) run on an OAuth client, whose
-  binding is columns of its row ([oauth-clients.md](oauth-clients.md)), and on an access token
-  ([access-tokens.md](access-tokens.md)). `insertAccessMember` with a `bindTokenId` (`gbrain access member add
-  --bind-token`) binds that token in the member's own write; an id no token has binds nothing, as the `UPDATE` finding
-  no row does.
+- Credential binding lives on the token and client records, not here: `insertAccessMember` with a `bindTokenId`
+  (`gbrain access member add --bind-token`) writes the token's `member_id` in the member's write, and the binding
+  members (`readCredentialBindingForUpdate`, `writeCredentialBinding`, `writeCredentialReadsUnscoped`, so
+  `bindCredential` and `gbrain auth rescope --member`) and `readLiveMember` through a token or client are served there
+  ([access-tokens.md](access-tokens.md) "Member binding", [oauth-clients.md](oauth-clients.md)).
 - Link cascade: members are never deleted (a removal is a tombstone), so the `ON DELETE CASCADE` of
   `access_member_links.member_id` has nothing to do; a removed member keeps its links, as on Postgres. The attested
   read of a link (`linkedMember` in `src/core/access/actor.ts`) is `readLinkedMember`, which reads the link, the member
@@ -99,8 +100,8 @@ into the error Postgres throws: `code` `23505` (unique), `23514` (check) or `235
 - Personal-source cascade and source check: as for links, the `ON DELETE CASCADE` of `access_member_sources.member_id`
   has nothing to do, and `source_id` has no foreign key (on Postgres neither), so a binding outlives its source. The
   caller (`src/core/access/member-sources.ts`) checks the source is live with `readSourceRow` before it binds.
-- Order: ids sort in byte order. Postgres sorts `ORDER BY m.id` and `array_agg(... ORDER BY g.group_id)` in the
-  database collation, so ids with `.`, `_` or `-` can order differently from an `en_US` database.
+- Order: ids sort in byte order. The SQL sorts member ids, group ids and each member's groups with `COLLATE "C"`,
+  so an `en_US` Postgres gives the same order (`test/engine-parity/access-sort-order.test.ts`).
 
 ## Tests
 

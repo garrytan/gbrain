@@ -55,6 +55,9 @@ async function outcome(run: Promise<void>): Promise<unknown> {
     return 'allowed';
   } catch (error) {
     const e = error as { code?: string; fix?: { argv?: string[] } };
+    // A typed refusal is the engine's, not the check's: let the harness count it (the Rust store still refuses the raw
+    // folder-rule read of page-visibility.ts and labelledOnlyFor's raw read, a known gap).
+    if (e.code === 'engine_capability_missing') throw error;
     const argv = e.fix?.argv ?? [];
     return { refused: e.code ?? String(error), readers: argv.includes('--readers') ? argv[argv.indexOf('--readers') + 1] : null };
   }

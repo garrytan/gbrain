@@ -56,12 +56,12 @@ export interface GitDurabilityCatchUpEffect { id: string; request_id: string; re
  */
 export async function planGitDurabilityCatchUp(engine: SqlEngine, binding: Pick<WorktreeBinding, 'worktree_id' | 'source_id' | 'source_incarnation'>): Promise<GitDurabilityCatchUpEffect[]> {
   return engine.executeRaw<GitDurabilityCatchUpEffect>(`
-    SELECT DISTINCT ON (e.data->>'relative_path') e.id::text AS id,e.request_id::text AS request_id,e.data->>'relative_path' AS relative_path,e.data->>'slug' AS slug
+    SELECT DISTINCT ON ((e.data->>'relative_path') COLLATE "C") e.id::text AS id,e.request_id::text AS request_id,e.data->>'relative_path' AS relative_path,e.data->>'slug' AS slug
       FROM persistence_effects e
      WHERE e.worktree_id=$1::uuid AND e.source_id=$2 AND e.source_incarnation=$3::uuid AND e.kind='git' AND e.state='committed'
        AND e.outcome->>'reason'=$4 AND e.recovery IS NULL AND e.execution_token IS NULL
        AND COALESCE((e.data->>'source_scan')::boolean,false)=false AND e.data->>'relative_path' IS NOT NULL
-     ORDER BY e.data->>'relative_path',e.id DESC`, [binding.worktree_id, binding.source_id, binding.source_incarnation, DURABILITY_NOT_ENABLED_REASON]);
+     ORDER BY (e.data->>'relative_path') COLLATE "C",e.id DESC`, [binding.worktree_id, binding.source_id, binding.source_incarnation, DURABILITY_NOT_ENABLED_REASON]);
 }
 
 /**

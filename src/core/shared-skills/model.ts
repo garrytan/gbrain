@@ -110,3 +110,12 @@ export interface StoredSkillRevision {
 export const SHARED_SKILL_LIMITS = Object.freeze({ files: 64, packFiles: 128, fileBytes: 1024 * 1024,
   skillMdBytes: 256 * 1024, bundleBytes: 4 * 1024 * 1024, closureDepth: 12,
   pageSize: 100, catalogSkills: 10_000 });
+
+/**
+ * Revision retention limits. They live here, with no imports, so the Rust publication helpers that the persistence
+ * protocol loads can read them without loading retention.ts and its import path.
+ */
+export const SHARED_SKILL_RETENTION_LIMITS = Object.freeze({ recentPerSkill: 20, graceHours: 24,
+  sourceRevisions: 10_000, sourceBytes: 256 * 1024 * 1024, pruneBatch: 128,
+  brainRevisions: 100_000, brainBytes: 1024 * 1024 * 1024,
+  pinHours: 24, principalPins: 64, sourcePins: 256, brainPins: 4096 });

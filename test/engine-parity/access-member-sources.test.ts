@@ -22,6 +22,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { addMember, removeMember } from '../../src/core/access/members.ts';
 import { attestedReadScope, bindMemberSource, hiddenPersonalSources, listMemberSources, unbindMemberSource } from '../../src/core/access/member-sources.ts';
 import { OperationError } from '../../src/core/ops/contract.ts';
+import { currentReaders } from '../../src/core/access/handover.ts';
 import { archiveSource, createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -146,6 +147,32 @@ describe('engine parity: personal sources', () => {
         ownersDmx: ['a-x', 'ax'],
       };
       if (JSON.stringify(out) !== JSON.stringify(want)) throw new Error(`personal-source order: ${JSON.stringify(out)}`);
+      return out;
+    });
+});
+
+describe('engine parity: the reads that name a source\'s bound members', () => {
+  // Member ids sort the same in byte order and in an en_US collation here: these two SQL reads order member ids in the
+  // database collation (no COLLATE "C"), the Rust store in byte order.
+  parityTest('the member handover\'s binding readers, the Google source members and the read-shared owners come from the bindings',
+    { methods: ['readSourceRow', 'insertAccessMemberSource', 'listAccessMemberSourceOwners', 'listGoogleSourceMembers', 'readSharedSourceRows'],
+      timeout: 120_000 },
+    async (engine: BrainEngine, backend) => {
+      await createSource(engine, backend, 'dm-google', { kind: 'google', g_account: 'alice@example.com' });
+      await createSource(engine, backend, 'google-unbound', { kind: 'google', g_account: 'shared@example.com' });
+      await createSource(engine, backend, 'dm-plain');
+      for (const m of ['carol', 'dave']) await addMember(engine, m, { name: m });
+      await bindMemberSource(engine, 'dave', 'dm-google');
+      await bindMemberSource(engine, 'carol', 'dm-google');
+      await bindMemberSource(engine, 'carol', 'dm-plain');
+      const binding = (source: string) => currentReaders(engine, { kind: 'binding', group: 'source', source_id: source, from: 'carol', to: 'dave' });
+      const out = {
+        handover: { google: await binding('dm-google'), plain: await binding('dm-plain'), unbound: await binding('google-unbound') },
+        google: await engine.listGoogleSourceMembers(),
+        shared: (await engine.readSharedSourceRows()).map(r => ({ id: r.id, owners: r.owners })),
+      };
+      // Not vacuous: a bound source names its members, an unbound one names none.
+      if (JSON.stringify(out.handover.google) !== JSON.stringify(['carol', 'dave'])) throw new Error(`handover: ${JSON.stringify(out.handover)}`);
       return out;
     });
 });

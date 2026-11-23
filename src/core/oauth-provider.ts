@@ -45,6 +45,7 @@ import { grantValidationContext, insertClientGrant, type GrantClientMetadata } f
 import { manualClientGrant } from './grants/register-grant.ts';
 import type { ClientGrant, GrantValidationContext } from './grants/model.ts';
 import { resolveTokenGrant, touchTokenLastUsed } from './grants/legacy-token.ts';
+import { clientReadShared, tokenReadSources } from './grants/read-shared.ts';
 import { NO_SOURCES } from './source-id.ts';
 
 /**
@@ -975,6 +976,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         allowedSources = allowedSources.filter(id => (row.active_read_sources as string[]).includes(id));
         if (allowedSources.length === 0) effectiveScopes.length = 0;
       }
+      const shared = await clientReadShared(this.sql, currentGrant, allowedSources ?? [rowSourceId ?? 'default'], effectiveScopes.length > 0, async () => (await tokenMemberBinding(this.sql, currentGrant, currentGrant.client_id_issued_at, this.engine)).member?.id ?? null);
       // v0.42.72.0: slug-prefix write binding. Array (even empty — the
       // fence treats [] as deny-all, matching submit_agent's fail-closed
       // posture) when the client carries a binding; undefined when the
@@ -1009,7 +1011,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         token,
         clientId: row.client_id as string,
         principal: { kind: 'oauth_client', id: row.client_id as string },
-        ...withAttestRight(await tokenMemberBinding(this.sql, currentGrant, currentGrant.client_id_issued_at, this.engine), currentGrant, row.token_grant),
+        ...withAttestRight(await tokenMemberBinding(this.sql, currentGrant, currentGrant.client_id_issued_at, this.engine), currentGrant, row.token_grant), ...shared?.flags,
         clientName: (row.client_name as string | null) ?? undefined,
         scopes: effectiveScopes,
         issuedScopes,
@@ -1035,7 +1037,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         // v0.34.1 (#876): federated read scope. sourceScopeOpts in
         // operations.ts prefers this array over scalar sourceId when set
         // and non-empty.
-        allowedSources: sourcesNone ? [] : allowedSources,
+        allowedSources: sourcesNone ? [] : shared?.allowedSources ?? allowedSources,
         ...(sourcesNone ? { hasSourceGrant: true } : {}),
         // Per-client takes holders; undefined → the /mcp dispatch site's fail-closed ['world'].
         ...(clientHolders ? { takesHoldersAllowList: clientHolders } : {}),
@@ -1085,7 +1087,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         expiresAt: Math.floor(Date.now() / 1000) + 365 * 24 * 3600, // Legacy tokens never expire — set 1yr future
         // #3242 parity: hasSourceGrant=false only on the historical no-grant
         // floor, the one case that may widen unqualified reads.
-        ...authSourcesFromGrant(grant),
+        ...await tokenReadSources(this.sql, grant, async () => (await tokenMemberBinding(this.sql, legacyRows[0], legacyRows[0].created_at, this.engine)).member?.id ?? null, this.engine),
         takesHoldersAllowList: grant.takesHolders ?? undefined,
         ...(storedMinTrust(legacyRows[0].min_trust) ? { minTrust: storedMinTrust(legacyRows[0].min_trust) } : {}),
         ...privatePagesAuth(grant),

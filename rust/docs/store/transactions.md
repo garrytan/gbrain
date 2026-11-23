@@ -52,14 +52,28 @@ becomes visible to the brain in one commit, or not at all.
       settings and the three attribution settings (`gbrain.write_request`,
       `gbrain.write_principal_kind`, `gbrain.write_principal_id`) go to the write context on the
       transaction's handle ([`write_trust.md`](write_trust.md)). `gbrain.write_sources`,
+      `gbrain.git_protocol`, `gbrain.persistence_protocol` and `gbrain.writer_quiesced` stay on
+      the transaction in TypeScript (`RustTransactionScope.settings`).
       `gbrain.git_protocol` and `gbrain.persistence_protocol` stay on the transaction in
       TypeScript (`RustTransactionScope.settings`).
+    - Any other custom name Postgres accepts, `gbrain` and one or more simple identifiers
+      (`^gbrain(\.[a-z_][a-z0-9_]*)+$`), stays on the transaction too, unless schema SQL reads it.
+      The names the schema's triggers and functions read and no store writer reads yet
+      (`gbrain.materializing_revision`, `writer_quiesced`, `topology_change`, `refresh_barrier`,
+      `trust_generation_bumped`, `guest_note`, `graduation_run`) refuse, so a caller never sets
+      one that changes Postgres and nothing here.
+    - `plan_cache_mode` stays on the transaction too, for the belief batch probe
+      (`readLedgerSource` with `batch`). It reads `auto` when unset, inside a transaction or not,
+      and an apply takes `auto`, `force_generic_plan` or `force_custom_plan` (any case, kept in
+      lower case) or throws `invalid value for parameter "plan_cache_mode": "<value>"`. The store
+      has no planner, so the setting changes nothing else.
     - They end with the transaction. A savepoint rollback restores them; a release keeps them.
     - Outside a transaction an apply keeps nothing, as a lone `set_config(..., true)` on PGLite.
     - A name never set reads `null`. A name set before on the engine reads `''`, as Postgres
       keeps a placeholder for it on the connection.
     - A name outside `^[a-z_][a-z0-9_.]*$` throws `Invalid transaction setting name: <name>`, as
-      on PGLite. Any other name refuses with `engine_capability_missing`, reason `transactions`,
+      on PGLite. Any other name (`gbrain.`, `gbrain..x`, `gbrain.1x`, a name with no dot, a
+      schema-read name) refuses with `engine_capability_missing`, reason `transactions`,
       `detail: "member=<m> capability=transactions setting=<name> outcome=none written=nothing"`.
     - Two transactions never see each other's settings. The store admits one write transaction at
       a time: a second `begin_transaction` waits for the writer, and each transaction's handle has
@@ -78,10 +92,19 @@ becomes visible to the brain in one commit, or not at all.
 An `AbortSignal` in `opts` is honoured before the transaction starts and while it waits at the
 gate (`cancelled`); once `fn` runs the signal is ignored, as on PGLite.
 
-## Deliberate divergence: `readOnly`
+## Read-only transactions
 
-PGLite ignores `opts.readOnly`. The Rust engine refuses a write inside a `readOnly` transaction with
-`invalid_state` ("a read-only transaction refuses writes"). Reads inside it see a stable snapshot.
+A write inside a read-only transaction rejects `read_only_transaction` ("cannot execute a write in a
+read-only transaction"), and the statement leaves nothing. The TypeScript engine maps it to
+Postgres's refusal: code `25006` (`read_only_sql_transaction`), message `cannot execute <member> in a
+read-only transaction`. A transaction becomes read-only two ways:
+
+- `opts.readOnly` at `transaction(fn, opts)`, Postgres's `BEGIN READ ONLY`. PGLite ignores
+  `opts.readOnly`; this one is a deliberate divergence from it. Reads inside see a stable snapshot,
+  and the commit writes nothing.
+- `beginSnapshotRead({ readOnly: true })` inside the transaction, Postgres's `SET TRANSACTION READ
+  ONLY`. Writes made before it stay and commit; every write after it refuses. Postgres and PGLite
+  refuse the same writes (`test/engine-parity/transaction-settings.test.ts`).
 
 ## How it works
 
@@ -90,6 +113,7 @@ PGLite ignores `opts.readOnly`. The Rust engine refuses a write inside a `readOn
 | `txBrain.beginTransaction(brain, readOnly?)` | `null`; binds `txBrain` to a new transaction on `brain`'s store. `store_closed` when `brain` is closed; `invalid_state` when `txBrain` is already open | `BEGIN` |
 | `txBrain.savepoint()` | the new savepoint depth (1, 2, ...) | `SAVEPOINT` |
 | `txBrain.releaseSavepoint(depth)` / `rollbackSavepoint(depth)` | `null`; only the innermost savepoint can end, any other depth is `invalid_state` | `RELEASE` / `ROLLBACK TO` |
+| `txBrain.setTransactionReadOnly()` | `null`; every later write rejects `read_only_transaction`. `store_closed` once the transaction ended | `SET TRANSACTION READ ONLY` |
 | `txBrain.commitTransaction()` | the new commit version; releases the remaining savepoints | `COMMIT` |
 | `txBrain.rollbackTransaction()` | `null`; a no-op once the transaction ended | `ROLLBACK` |
 | `txBrain.holdPageKeys(keys, hinted)` | every held `[sourceId, slug]`, sorted | `pg_advisory_xact_lock` per key |

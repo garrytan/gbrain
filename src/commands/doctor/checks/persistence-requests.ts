@@ -75,21 +75,15 @@ export async function requestIndexesCheck(engine: BrainEngine): Promise<Check> {
 export async function requestGrowthCheck(engine: BrainEngine): Promise<Check> {
   const docs = 'docs/guides/repair.md#request-growth';
   try {
-    const [table] = engine.kind === 'postgres'
-      ? await engine.executeRaw<{ rows: string }>("SELECT GREATEST(reltuples, 0)::bigint::text AS rows FROM pg_class WHERE oid = to_regclass('persistence_requests')")
-      : await engine.executeRaw<{ rows: string }>('SELECT count(*)::text AS rows FROM persistence_requests');
-    const counters = await engine.executeRaw<{ key: string; lifetime_ids: string }>(
-      "SELECT key,lifetime_ids::text FROM persistence_counters WHERE key='brain' OR key LIKE 'principal:%' ORDER BY key");
+    const table = await engine.countPersistenceRequestRows(engine.kind === 'postgres');
+    const counters = await engine.listLifetimeCounters();
     const limits = await readJournalLimits(engine);
     const { warnDays } = await readCapacityThresholds(engine);
     const now = Date.now();
     const scopes = [];
     for (const counter of counters) {
       const principal = /^principal:([^:]+):(.+)$/.exec(counter.key);
-      const [sample] = await engine.executeRaw<{ admissions: number; oldest: string | null }>(`SELECT count(*)::int AS admissions, min(created_at)::text AS oldest
-        FROM (SELECT created_at FROM persistence_requests ${principal ? 'WHERE principal_kind=$1 AND principal_id=$2' : ''}
-          ORDER BY sequence DESC LIMIT ${SAMPLE}) recent
-        WHERE created_at >= now() - interval '${WINDOW_DAYS} days'`, principal ? [principal[1], principal[2]] : []);
+      const sample = await engine.readAdmissionSample(principal ? [principal[1], principal[2]] : null) as { admissions: number; oldest: string | null };
       const setting = principal ? 'principalLifetimeIds' : 'brainLifetimeIds';
       const used = Number(counter.lifetime_ids), limit = limits[setting];
       if (!Number.isFinite(limit)) continue;
@@ -150,16 +144,7 @@ export async function writeStallCheck(engine: BrainEngine): Promise<Check> {
   try {
     const maxClaimMs = await readMaxClaimMs(engine);
     const policy = await readPreparationPolicy(engine);
-    const rows = await engine.executeRaw<{ request_id: string; source_id: string; worktree_id: string | null; operation: string; intent_kind: string | null; state: string; claim_phase: unknown;
-      execution_token: string | null; claim_lapsed: boolean | null; publication_started: boolean; request_age_ms: string; no_root_progress: boolean; waiting: number }>(
-      `SELECT r.request_id::text,r.source_id,r.worktree_id::text,r.operation,r.intent->>'kind' AS intent_kind,r.state,r.claim_phase,r.execution_token::text,r.claim_expires_at<now() AS claim_lapsed,
-        r.publication_started,(EXTRACT(EPOCH FROM (now()-r.created_at))*1000)::bigint::text AS request_age_ms,
-        NOT EXISTS (SELECT 1 FROM persistence_requests q WHERE ((r.worktree_id IS NOT NULL AND q.worktree_id=r.worktree_id)
-          OR (r.worktree_id IS NULL AND q.worktree_id IS NULL AND q.source_id=r.source_id))
-          AND q.state IN ('committed','conflict','failed','cancelled') AND q.completed_at>=now()-($1::double precision*interval '1 millisecond')
-          AND q.recovery IS NULL AND NOT q.compacted) AS no_root_progress,
-        (SELECT count(*)::int FROM persistence_requests q WHERE q.worktree_id=r.worktree_id AND q.state='queued' AND q.sequence>r.sequence) AS waiting
-      FROM persistence_requests r WHERE r.state='running' ORDER BY r.sequence LIMIT 100`, [maxClaimMs]);
+    const rows = await engine.listRunningRequestStalls(maxClaimMs);
     const now = Date.now();
     const stalls = rows.flatMap(row => {
       const claim = claimStateOf(row, now);
@@ -303,7 +288,7 @@ function rankTerminalFailures(sources: TerminalSourceSummary[], remote: boolean,
     lines.push(`Blocking now (${blocking.length}): ${shown.join('; ')}${blocking.length > 5 ? `; +${blocking.length - 5} more in details.ranked.blocking` : ''}.`);
   }
   if (unresolved.rows) {
-    const shown = groups.slice(0, 3).map(g => `${g.category}/${g.code} ×${g.rows} on ${g.source_id}${g.defect ? ' (gbrain defect)' : g.needs_human ? ' (needs a person)' : ''}`);
+    const shown = groups.slice(0, 3).map(g => `${g.category}/${g.code} ×${g.rows} on ${g.source_id}${g.defect ? (g.category === 'needs_engine_upgrade' ? ' (needs an engine upgrade)' : ' (gbrain defect)') : g.needs_human ? ' (needs a person)' : ''}`);
     lines.push(`Unresolved, not blocking: ${unresolved.rows} row(s) on ${unresolved.pages} page(s) in ${groups.length} group(s): ${shown.join('; ')}${groups.length > 3 ? `; +${groups.length - 3} more group(s)` : ''}. `
       + `Group them: ${unresolved.group_by.slice(0, 2).map(argv => argv.join(' ')).join('; ')} (each group carries its fix and drill-down).`);
   }
@@ -367,7 +352,7 @@ export async function terminalFailuresCheck(engine: BrainEngine | null, sourceId
     if (defects.length) {
       const first = defects[0]!;
       return { name, status: 'warn', details, fix: remote ? hostFix : { ...first.action, verify: doctorVerify(name) },
-        message: `${defects.reduce((n, d) => n + d.rows, 0)} unresolved write receipt(s) in the last ${summary.window_days} d are a gbrain-defect class (${defects.slice(0, 3)
+        message: `${defects.reduce((n, d) => n + d.rows, 0)} unresolved write receipt(s) in the last ${summary.window_days} d ${defects.every(d => d.category === 'needs_engine_upgrade') ? 'need an engine upgrade' : 'are a gbrain-defect class'} (${defects.slice(0, 3)
           .map(d => `${d.category}/${d.code} ×${d.rows} on ${d.source_id}`).join('; ')}). ${counts} ${first.human_reason ?? (remote ? hostFix.why : first.action.why)}` };
     }
     const drill = (sourceId: string) => ['gbrain', 'sources', 'writer', 'failures', sourceId, '--group-by', 'category', '--json'];

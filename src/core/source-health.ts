@@ -381,14 +381,8 @@ export async function computeAllSourceMetrics(
 }
 
 async function pageCountsBySource(engine: BrainEngine): Promise<Map<string, number>> {
-  const rows = await engine.executeRaw<{ source_id: string; n: number }>(
-    `SELECT source_id, COUNT(*)::int AS n
-       FROM pages
-      WHERE deleted_at IS NULL
-      GROUP BY source_id`,
-  );
   const m = new Map<string, number>();
-  for (const r of rows) m.set(r.source_id, Number(r.n));
+  for (const r of await engine.countLivePagesBySource()) m.set(r.source_id, Number(r.n));
   return m;
 }
 
@@ -397,20 +391,10 @@ async function chunkCountsBySource(engine: BrainEngine): Promise<Map<string, { t
   // (search_embedding_column != 'embedding') writes vectors elsewhere, and
   // keying the literal legacy column here read 0% forever — a permanently-red
   // doctor check recommending no-op remediations. Fail open to legacy.
-  const { quoteIdentifier, resolveActiveEmbeddingColumnFromEngine } = await import('./search/embedding-column.ts');
+  const { resolveActiveEmbeddingColumnFromEngine } = await import('./search/embedding-column.ts');
   const active = await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true });
-  const col = quoteIdentifier(active.name);
-  const rows = await engine.executeRaw<{ source_id: string; total: number; embedded: number }>(
-    `SELECT p.source_id,
-            COUNT(*)::int AS total,
-            COUNT(*) FILTER (WHERE c.${col} IS NOT NULL)::int AS embedded
-       FROM content_chunks c
-       JOIN pages p ON p.id = c.page_id
-      WHERE p.deleted_at IS NULL
-      GROUP BY p.source_id`,
-  );
   const m = new Map<string, { total: number; embedded: number }>();
-  for (const r of rows) m.set(r.source_id, { total: Number(r.total), embedded: Number(r.embedded) });
+  for (const r of await engine.countChunksBySource(active.name)) m.set(r.source_id, { total: Number(r.total), embedded: Number(r.embedded) });
   return m;
 }
 
@@ -455,28 +439,6 @@ export async function loadSyncFreshnessSources(engine: BrainEngine, sourceIds?: 
     upstream_commit: string | null;
     upstream_behind: number | null;
   };
-  const columns = 'id, name, local_path, last_sync_at, last_commit, chunker_version, newest_content_at, config';
-  const scope = sourceIds ? ' AND id = ANY($1::text[])' : '';
-  const params = sourceIds ? [sourceIds] : undefined;
-  let sources: FreshnessSourceRow[];
-  try {
-    sources = await engine.executeRaw<FreshnessSourceRow>(
-      `SELECT ${columns}, upstream_checked_at, upstream_commit, upstream_behind FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE${scope}`,
-      params,
-    );
-  } catch {
-    const noUpstream = 'NULL AS upstream_checked_at, NULL AS upstream_commit, NULL AS upstream_behind';
-    try {
-      sources = await engine.executeRaw<FreshnessSourceRow>(
-        `SELECT ${columns}, ${noUpstream} FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE${scope}`,
-        params,
-      );
-    } catch {
-      sources = await engine.executeRaw<FreshnessSourceRow>(
-        `SELECT ${columns}, ${noUpstream} FROM sources WHERE local_path IS NOT NULL${scope}`,
-        params,
-      );
-    }
-  }
+  const sources: FreshnessSourceRow[] = await engine.readDoctorSources('freshness', { sourceIds });
   return sources.filter((source) => !isSyncDisabledConfig(source.config));
 }

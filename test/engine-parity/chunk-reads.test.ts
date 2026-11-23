@@ -466,7 +466,7 @@ describe('engine parity: chunk reads', () => {
         });
       }
       const hits = pages.map(([slug], ord) => ({ source_id: 'default', slug, chunk_id: 0, ord }));
-      // A safe-chunk read refuses on Rust (no chunker-version fence), so the scope turns it off.
+      // The scope turns the chunker-version fence off, so the case reads privacy alone.
       const scope = { excludePrivate: true, requireSafeChunks: false, sourceId: 'default' };
       const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access, async () => ({
         defs: sorted((await engine.findCodeDefinitions('run', scope)).map(r => r.slug)),
@@ -483,6 +483,41 @@ describe('engine parity: chunk reads', () => {
       expect(member.defs).toEqual(['src/open', 'src/readers', 'src/team']);
       expect(granted.frozen).toEqual(['src/open', 'src/private', 'src/readers']);
       return { member, granted, stranger };
+    },
+  );
+
+  parityTest(
+    'code reads, code readiness and frozen hits under a safe-chunk scope serve only pages at or above the chunker-version fence',
+    { methods: ['putPage', 'sealChunks', 'setChunkerVersion', 'findCodeDefinitions', 'listSymbolTypesForName', 'findCodeRefChunks', 'currentCodeChunksExist', 'resolveFrozenHits'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      await sealedCode(engine, 'src/fenced', [sym(0, 'function run() { /* fenced */ }', 'run', 'function')]);
+      // Sealed and served, but stamped short of the safe fence: only a safe-chunk read drops them.
+      await sealedCode(engine, 'src/old', [sym(0, 'class Run { /* old */ }', 'run', 'class')]);
+      await engine.setChunkerVersion('src/old', 3);
+      await sealedCode(engine, 'src/old-other', [sym(0, 'function run() { /* old other */ }', 'run', 'function')], 'other');
+      await engine.setChunkerVersion('src/old-other', 3, { sourceId: 'other' });
+      const hits = [['default', 'src/fenced'], ['default', 'src/old'], ['other', 'src/old-other']]
+        .map(([source_id, slug], ord) => ({ source_id, slug, chunk_id: 0, ord }));
+      const read = async (scope: { requireSafeChunks?: boolean; excludePrivate?: boolean }) => ({
+        defs: (await engine.findCodeDefinitions('run', { ...scope, allSources: true })).map(r => `${r.source_id}:${r.slug}`),
+        types: await engine.listSymbolTypesForName('run', { ...scope, allSources: true }),
+        refs: (await engine.findCodeRefChunks('run', { ...scope, allSources: true })).map(r => `${r.source_id}:${r.slug}`),
+        otherReady: await engine.currentCodeChunksExist({ ...scope, sourceId: 'other' }, 'with_symbol'),
+        frozen: sorted((await engine.resolveFrozenHits(hits, scope)).map(r => `${r.source_id}:${r.slug}`)),
+      });
+      const out = {
+        fenced: await read({ requireSafeChunks: true }),
+        // An excludePrivate read asks for safe chunks unless it says otherwise.
+        privateImplied: await read({ excludePrivate: true }),
+        privateOff: await read({ excludePrivate: true, requireSafeChunks: false }),
+        open: await read({}),
+      };
+      expect(out.fenced).toEqual({ defs: ['default:src/fenced'], types: ['function'], refs: ['default:src/fenced'], otherReady: false, frozen: ['default:src/fenced'] });
+      expect(out.privateImplied).toEqual(out.fenced);
+      expect(out.open.frozen).toEqual(['default:src/fenced', 'default:src/old', 'other:src/old-other']);
+      expect(out.privateOff).toEqual(out.open);
+      return out;
     },
   );
 });
@@ -574,7 +609,7 @@ describe('engine parity: owner-only sources on excludePrivate chunk and code rea
 
       const hits = ['default', 'chat', 'vault'].map((source_id, ord) => ({ source_id, slug: 'src/open', chunk_id: 0, ord }));
       const labels = (rows: Array<{ source_id?: string | null; slug: string }>) => sorted(rows.map((r) => `${r.source_id}:${r.slug}`));
-      // A safe-chunk read refuses on Rust (no chunker-version fence), so the scope turns it off.
+      // The scope turns the chunker-version fence off, so the case reads privacy alone.
       const scope = { excludePrivate: true, requireSafeChunks: false };
       const read = () => asNoneAndReader(async () => ({
         defs: labels(await engine.findCodeDefinitions('run', scope)),
@@ -602,6 +637,31 @@ describe('engine parity: owner-only sources on excludePrivate chunk and code rea
       expect(fn.none).toEqual(kept);
       expect(fn.reader).toEqual(kept);
       return { before, closed, fn };
+    },
+  );
+});
+
+describe('engine parity: the safe-chunk fence on getChunks', () => {
+  parityTest(
+    'getChunks with requireSafeChunks reads a page only when its chunker version meets the safe fence, as the import chunk reuse asks',
+    { methods: ['putPage', 'sealChunks', 'setChunkerVersion', 'getChunks'] },
+    async (engine) => {
+      // sealChunks stamps the current chunker version, so each page's version under test is stamped after the seal.
+      const versions: Array<[string, number]> = [['notes/fence-old', 3], ['notes/fence-safe', 4], ['notes/fence-high', 9], ['notes/fence-zero', 0]];
+      for (const [slug] of versions) {
+        await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `${slug} body`, timeline: '' });
+        await installChunks(engine, slug, [chunk(0, `${slug} first`), chunk(1, `${slug} second`)]);
+      }
+      for (const [slug, version] of versions) await engine.setChunkerVersion(slug, version, { sourceId: 'default' });
+      const read = async (slug: string, requireSafeChunks?: boolean) =>
+        (await engine.getChunks(slug, { sourceId: 'default', includeEmbedding: true, requireSafeChunks })).map(c => `${c.chunk_index}:${c.chunk_text}`);
+      const out: Record<string, unknown> = {};
+      for (const slug of ['notes/fence-old', 'notes/fence-safe', 'notes/fence-high', 'notes/fence-zero', 'notes/missing']) {
+        out[slug] = { safe: await read(slug, true), plain: await read(slug, false), unset: await read(slug) };
+      }
+      expect(out['notes/fence-old']).toEqual({ safe: [], plain: ['0:notes/fence-old first', '1:notes/fence-old second'], unset: ['0:notes/fence-old first', '1:notes/fence-old second'] });
+      expect((out['notes/fence-safe'] as { safe: string[] }).safe).toEqual(['0:notes/fence-safe first', '1:notes/fence-safe second']);
+      return out;
     },
   );
 });

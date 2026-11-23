@@ -6,6 +6,7 @@
 
 mod access_tokens;
 mod checks;
+mod credential_binding;
 mod credentials;
 mod grants;
 mod health;
@@ -49,6 +50,70 @@ impl Brain {
             let spec: AdmitSpec = required(spec, "admitJob spec")?;
             s.admit_job(&spec)
         })
+    }
+
+    /// `readLiveJobIds(ids)`: the given ids whose job is still live, ascending.
+    #[napi]
+    pub fn read_live_job_ids<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let ids = ids
+                .into_iter()
+                .map(|id| job_id(id, "readLiveJobIds"))
+                .collect::<Result<Vec<_>, _>>()?;
+            s.read_live_job_ids(&ids)
+        })
+    }
+
+    /// `readDrainLeaseBeacon(lockToken)`: the holder record's beacon, or null.
+    #[napi]
+    pub fn read_drain_lease_beacon<'env>(
+        &self,
+        env: &'env Env,
+        lock_token: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_drain_lease_beacon(&lock_token))
+    }
+
+    /// `writeDrainLeaseHolder(sourceId, lockToken, data, ttlMinutes)`: the new holder record's id.
+    #[napi]
+    pub fn write_drain_lease_holder<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        lock_token: String,
+        data: Value,
+        ttl_minutes: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.write_drain_lease_holder(&source_id, &lock_token, data, ttl_minutes)
+        })
+    }
+
+    /// `refreshDrainLeaseHolder(lockToken, ttlMinutes)`: how many holder records it renewed.
+    #[napi]
+    pub fn refresh_drain_lease_holder<'env>(
+        &self,
+        env: &'env Env,
+        lock_token: String,
+        ttl_minutes: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.refresh_drain_lease_holder(&lock_token, ttl_minutes)
+        })
+    }
+
+    /// `releaseDrainLeaseHolder(lockToken)`: how many holder records it deleted.
+    #[napi]
+    pub fn release_drain_lease_holder<'env>(
+        &self,
+        env: &'env Env,
+        lock_token: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.release_drain_lease_holder(&lock_token))
     }
 
     /// `getJob(id)`: the row, or null.

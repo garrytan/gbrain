@@ -1,7 +1,8 @@
 /**
- * BrainEngine parity: the `access_tokens` members the legacy-token mint and the read-floor command use
- * (engine-sql/access-tokens.ts): `insertAccessToken`, `findActiveAccessTokens`, `setAccessTokenMinTrust`, driven through
- * `mintLegacyToken` and `setMinTrust` (src/core/token-mint.ts, src/core/trust/min-trust.ts).
+ * BrainEngine parity: the `access_tokens` members the legacy-token mint, the read-floor command and the requester-scope
+ * gate use (engine-sql/access-tokens.ts): `insertAccessToken`, `findActiveAccessTokens`, `setAccessTokenMinTrust`,
+ * `readLiveAccessTokenScope`, driven through `mintLegacyToken`, `setMinTrust` and `credentialScopeFor`
+ * (src/core/token-mint.ts, src/core/trust/min-trust.ts, src/core/access/requester-scope.ts).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: `setMinTrust` on a name or id that is not an OAuth client finds the one ACTIVE token it names, changes its
@@ -10,7 +11,9 @@
  *    outside the six is refused 23514 (`access_tokens_min_trust_check`) with the floor unchanged. The mint inserts a token at
  *    grant revision 1 and returns its id; a repeated token hash is 23505 (`access_tokens_token_hash_key`) and a
  *    `source_grant` outside the list is 23514 (`access_tokens_source_grant_check`), each leaving no row. The same answers
- *    on every engine arm. The bearer check `serve --http` runs (oauth-provider.ts verifyAccessToken with an engine)
+ *    on every engine arm. `credentialScopeFor` on an agent job's legacy token reads the live token's creation time and its
+ *    opt-out (a minted token has none); a revoked token and an id no token has read as not opted out, creation unknown.
+ *    The bearer check `serve --http` runs (oauth-provider.ts verifyAccessToken with an engine)
  *    authenticates an active token with its scopes, source grant and read floor, and refuses a revoked or unknown token.
  *    The OAuth rung of that check reads the `oauth_tokens` rows the store keeps: a valid OAuth token authenticates with the
  *    same AuthInfo (grant, sources, surface, floor), an expired one, a refresh token, a token of a deleted client and a
@@ -19,15 +22,23 @@
  *    60 seconds), and the stamp leaves a row with no `source_grant` alone when it is the unified one. A token still on the
  *    legacy shape (no `source_grant`) authenticates with its permissions grant and its first check converts the row once,
  *    one more grant revision; a second conversion finds nothing.
+ *    `credentialScopeFor` on an agent job's legacy token reads the live token's creation time and its stored
+ *    `--reads-unscoped` opt-out (a minted token has none; an opted-out token reads unscoped, a cleared one does not); a
+ *    revoked token and an id no token has read as not opted out, creation unknown. `defaultSourceMemberWriter` reads a
+ *    bound token's stored member for its default-source page writes.
  *  - Regression: a store that finds a revoked token, ignores the id-or-name pair, matches a name partly, lets two tokens
  *    share a hash, takes a tier it should refuse, or returns the ambiguity as a pick of the first row: a floor set on the
- *    wrong credential, which widens or narrows what an agent can read.
+ *    wrong credential, which widens or narrows what an agent can read. A store whose scope read fails, which
+ *    credentialScopeFor swallows: a token minted after the brain began to serve several people reads as created at an
+ *    unknown time, so its unbound reads get the grace instead of the refusal.
  *  - Why existing coverage misses it: test/trust-*.test.ts and test/auth-mint*.test.ts run on PGLite with raw SQL.
  *  - Seam: none. Real engines, typed members only. Ids are generated per engine, so each is reported as the name of the
  *    row it belongs to.
  */
-import { describe } from 'bun:test';
+import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { credentialScopeFor } from '../../src/core/access/requester-scope.ts';
+import { defaultSourceMemberWriter } from '../../src/core/persistence/page-visibility.ts';
 import { setMinTrust } from '../../src/core/trust/min-trust.ts';
 import { mintLegacyToken, readActiveTokenPermissions, readActiveTokenPrivatePages, revokeLegacyTokenById } from '../../src/core/token-mint.ts';
 import { hashToken } from '../../src/core/utils.ts';
@@ -37,6 +48,7 @@ import { createHash } from 'node:crypto';
 import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
 import { addMember, bindCredential } from '../../src/core/access/members.ts';
 import { createSource, parityArms } from './harness.ts';
+import { migrateLegacyTokens, rescopeLegacyToken, type RescopeTokenArgs } from '../../src/core/grants/legacy-token.ts';
 import type { Server } from 'node:http';
 import express from 'express';
 import { buildServeHttpApp } from '../../src/commands/serve-http.ts';
@@ -133,6 +145,165 @@ describe('engine parity: access_tokens members', () => {
         notAnId: { privatePages: await readActiveTokenPrivatePages(engine, 'minted'), permissions: await readActiveTokenPermissions(engine, 'minted') },
         member: await engine.readActiveAccessTokenGrant(nobody, 'permissions'),
       };
+    });
+
+  // gbrain auth rescope locks the one active token it edits: by id (any case) or by exact name, revoked tokens left out.
+  // Postgres returns the rows in no set order, so the case sorts them by when they were made; the hash is never compared.
+  parityTest('lockActiveAccessTokens reads the active tokens with one id or one exact name, with the columns rescope reads',
+    { methods: ['insertAccessToken', 'lockActiveAccessTokens', 'revokeAccessToken'] }, async (engine) => {
+      const late = await insert(engine, 'twin', 'h-lk-late', { created_at: new Date('2026-02-02T00:00:00Z'), may_act_for: ['member:alice-example'] });
+      const early = await insert(engine, 'twin', 'h-lk-early', { created_at: new Date('2026-01-01T00:00:00Z'), scopes: ['read', 'write'] });
+      const solo = await insert(engine, 'solo', 'h-lk-solo', { created_at: new Date('2026-01-03T00:00:00Z'), min_trust: 'tool_observed' });
+      const gone = await insert(engine, 'solo-old', 'h-lk-gone', { created_at: new Date('2026-01-04T00:00:00Z') });
+      await engine.revokeAccessToken(gone.id);
+      const names = new Map([[late.id, 'twin-late'], [early.id, 'twin-early'], [solo.id, 'solo'], [gone.id, 'solo-old']]);
+      const KEYS = ['id', 'name', 'scopes', 'created_at', 'revoked_at', 'permissions', 'source_grant', 'source_id', 'federated_read',
+        'allowed_operations', 'takes_holders', 'grant_revision', 'min_trust', 'member_id', 'may_act_for', 'attest_actor', 'reads_unscoped'];
+      const shown = (rows: Record<string, unknown>[]) => [...rows]
+        .sort((a, b) => (a.created_at as Date).getTime() - (b.created_at as Date).getTime())
+        .map(r => ({
+          ...Object.fromEntries(KEYS.map(k => [k, r[k] ?? null])),
+          id: names.get(String(r.id)) ?? 'unknown',
+          created_at: (r.created_at as Date).toISOString(),
+          grant_revision: Number(r.grant_revision),
+        }));
+      const out = {
+        twin: shown(await engine.lockActiveAccessTokens({ name: 'twin' })),
+        solo: shown(await engine.lockActiveAccessTokens({ name: 'solo' })),
+        partial: (await engine.lockActiveAccessTokens({ name: 'sol' })).length,
+        otherCase: (await engine.lockActiveAccessTokens({ name: 'Solo' })).length,
+        revokedByName: (await engine.lockActiveAccessTokens({ name: 'solo-old' })).length,
+        byId: shown(await engine.lockActiveAccessTokens({ id: solo.id })),
+        byUpperId: shown(await engine.lockActiveAccessTokens({ id: solo.id.toUpperCase() })).map(r => r.id),
+        revokedById: (await engine.lockActiveAccessTokens({ id: gone.id })).length,
+        unknownId: (await engine.lockActiveAccessTokens({ id: '00000000-0000-4000-8000-0000000000e1' })).length,
+        inTransaction: (await engine.transaction(tx => tx.lockActiveAccessTokens({ name: 'twin' }))).length,
+      };
+      expect(out.twin.map(r => r.id)).toEqual(['twin-early', 'twin-late']);
+      expect(out.solo.map(r => r.id)).toEqual(['solo']);
+      expect([out.partial, out.otherCase, out.revokedByName, out.revokedById, out.unknownId, out.inTransaction]).toEqual([0, 0, 0, 0, 0, 2]);
+      expect(out.byUpperId).toEqual(['solo']);
+      return out;
+    });
+
+  // gbrain auth rescope writes a token's grant in one statement: the five grant columns, the scopes when the edit names
+  // them, the permissions mirror and one more grant revision, by id in any case. A bad source grant writes nothing.
+  parityTest('writeAccessTokenGrant writes the grant columns, the scopes when given, the permissions and one more revision; an unknown id writes nothing',
+    { methods: ['insertAccessToken', 'writeAccessTokenGrant', 'lockActiveAccessTokens'] }, async (engine) => {
+      const token = await insert(engine, 'grant', 'h-wg', { scopes: ['read', 'write'], permissions: { keep: 1 } });
+      const other = await insert(engine, 'bystander', 'h-wg-other');
+      const KEYS = ['scopes', 'permissions', 'source_grant', 'source_id', 'federated_read', 'allowed_operations', 'takes_holders', 'grant_revision'];
+      const read = async (id: string) => {
+        const [row] = await engine.lockActiveAccessTokens({ id });
+        return { ...Object.fromEntries(KEYS.map(k => [k, row[k] ?? null])), grant_revision: Number(row.grant_revision) };
+      };
+      const federated = { source_grant: 'federated', source_id: 'default', federated_read: ['default', 'work'], allowed_operations: ['get_page', 'search'], takes_holders: ['world', 'brain'] };
+      const out: Record<string, unknown> = {};
+      out.first = await engine.writeAccessTokenGrant(token.id, { columns: federated, scopes: null, permissions: { keep: 1, source_id: ['default', 'work'] } });
+      out.afterFirst = await read(token.id);
+      out.second = await engine.writeAccessTokenGrant(token.id.toUpperCase(), {
+        columns: { source_grant: 'none', source_id: null, federated_read: [], allowed_operations: [], takes_holders: null }, scopes: ['read'], permissions: {},
+      });
+      out.afterSecond = await read(token.id);
+      out.unknown = await engine.writeAccessTokenGrant('00000000-0000-4000-8000-0000000000e1', { columns: federated, scopes: null, permissions: {} });
+      out.badGrant = await refusal(() => engine.writeAccessTokenGrant(token.id, { columns: { ...federated, source_grant: 'everything' }, scopes: null, permissions: {} }));
+      out.afterBad = await read(token.id);
+      out.bystander = await read(other.id);
+      out.inTransaction = await engine.transaction(tx => tx.writeAccessTokenGrant(other.id, { columns: { ...GRANT, source_grant: 'scalar', source_id: 'default' }, scopes: null, permissions: { source_id: 'default' } }));
+      expect([out.first, out.second, out.unknown, out.inTransaction]).toEqual([2, 3, null, 2]);
+      expect(out.afterBad).toEqual(out.afterSecond);
+      return out;
+    });
+
+  // The private-pages and private-facts grants live in their own columns; every read of a token row shows what was set.
+  parityTest('writeAccessTokenPrivateGrant sets private_pages or private_facts, every token read shows it, and a value outside the two is refused',
+    { methods: ['insertAccessToken', 'writeAccessTokenPrivateGrant', 'listAccessTokens', 'readActiveAccessTokenGrant', 'readAccessTokenWriteGrant', 'lockActiveAccessTokens'] }, async (engine) => {
+      const token = await insert(engine, 'private', 'h-pv');
+      const reads = async () => {
+        const listed = (await engine.listAccessTokens()).find(r => r.id === token.id)!;
+        const [locked] = await engine.lockActiveAccessTokens({ id: token.id });
+        const write = await engine.readAccessTokenWriteGrant(token.id);
+        return {
+          listed: [listed.private_pages, listed.private_facts], locked: [locked.private_pages, locked.private_facts],
+          active: (await engine.readActiveAccessTokenGrant(token.id, 'private_pages'))?.value, write: [write?.private_pages, write?.private_facts],
+          revision: Number(locked.grant_revision),
+        };
+      };
+      const out: Record<string, unknown> = { fresh: await reads() };
+      await engine.writeAccessTokenPrivateGrant(token.id, 'private_pages', 'granted_sources');
+      out.pages = await reads();
+      await engine.writeAccessTokenPrivateGrant(token.id.toUpperCase(), 'private_facts', 'granted_sources');
+      out.facts = await reads();
+      await engine.writeAccessTokenPrivateGrant(token.id, 'private_pages', 'none');
+      out.pagesOff = await reads();
+      out.badPages = await refusal(() => engine.writeAccessTokenPrivateGrant(token.id, 'private_pages', 'everything'));
+      out.badFacts = await refusal(() => engine.writeAccessTokenPrivateGrant(token.id, 'private_facts', 'everything'));
+      out.afterBad = await reads();
+      await engine.writeAccessTokenPrivateGrant('00000000-0000-4000-8000-0000000000e1', 'private_pages', 'granted_sources');
+      expect(out.afterBad).toEqual(out.pagesOff);
+      return out;
+    });
+
+  // gbrain auth rescope --migrate-legacy locks every active token still on the legacy shape, oldest first.
+  parityTest('lockLegacyAccessTokens reads the active tokens with no source grant, oldest first, with the columns the migration reads',
+    { methods: ['insertAccessToken', 'lockLegacyAccessTokens', 'revokeAccessToken'] }, async (engine) => {
+      const legacy = { source_grant: null, permissions: { source_id: 'default', takes_holders: ['world'] } };
+      const late = await insert(engine, 'late', 'h-ll-late', { ...legacy, created_at: new Date('2026-02-02T00:00:00Z') });
+      const early = await insert(engine, 'early', 'h-ll-early', { ...legacy, created_at: new Date('2026-01-01T00:00:00Z'), scopes: ['read', 'write'] });
+      await insert(engine, 'unified', 'h-ll-unified', { created_at: new Date('2026-01-05T00:00:00Z') });
+      const gone = await insert(engine, 'gone', 'h-ll-gone', { ...legacy, created_at: new Date('2026-01-03T00:00:00Z') });
+      await engine.revokeAccessToken(gone.id);
+      const names = new Map([[late.id, 'late'], [early.id, 'early']]);
+      const KEYS = ['name', 'scopes', 'permissions', 'source_grant', 'source_id', 'federated_read', 'allowed_operations', 'takes_holders', 'grant_revision', 'private_pages', 'private_facts', 'revoked_at'];
+      const rows = (await engine.lockLegacyAccessTokens()).map(r => ({
+        ...Object.fromEntries(KEYS.map(k => [k, r[k] ?? null])), id: names.get(String(r.id)) ?? 'unknown',
+        created_at: (r.created_at as Date).toISOString(), grant_revision: Number(r.grant_revision),
+      }));
+      const inTransaction = (await engine.transaction(tx => tx.lockLegacyAccessTokens())).length;
+      expect(rows.map(r => r.id)).toEqual(['early', 'late']);
+      expect(inTransaction).toBe(2);
+      return { rows, inTransaction };
+    });
+
+  // The command end to end: rescopeLegacyToken (each grant axis, the private grants, the refusals) and the migration.
+  parityTest('rescopeLegacyToken edits each grant axis and the private grants, refuses an unknown source, and migrateLegacyTokens converts the legacy tokens',
+    { methods: ['insertAccessToken', 'lockActiveAccessTokens', 'filterUnarchivedSourceIds', 'writeAccessTokenGrant', 'writeAccessTokenPrivateGrant', 'lockLegacyAccessTokens', 'transaction'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'work');
+      const token = await insert(engine, 'edited', 'h-rs');
+      const base = { target: { name: 'edited' }, reset: [], refreshOperations: false, allNew: false, dryRun: false, json: false } as RescopeTokenArgs;
+      const run = async (args: Partial<RescopeTokenArgs>) => {
+        try {
+          const r = await rescopeLegacyToken(engine, { ...base, ...args });
+          return { ...r, id: r.id === token.id ? 'edited' : 'other' };
+        } catch (error) {
+          const e = error as { code?: unknown; message?: unknown };
+          if (e.code === 'engine_capability_missing') throw error;
+          return { code: e.code, message: String(e.message) };
+        }
+      };
+      const out: Record<string, unknown> = {};
+      out.sources = await run({ sources: ['default', 'work'] });
+      out.operations = await run({ operations: ['get_page', 'search'] });
+      out.holders = await run({ takesHolders: ['world', 'brain'] });
+      out.pages = await run({ privatePages: 'granted_sources' });
+      out.facts = await run({ privateFacts: 'granted_sources', scopes: ['read', 'write'] });
+      out.preview = await run({ privatePages: 'none', dryRun: true });
+      out.reset = await run({ reset: ['sources', 'takes-holders', 'operations'] });
+      out.unknownSource = await run({ sources: ['nosuch'] });
+      out.stale = await run({ sources: ['default'], expectedRevision: 1 });
+      out.show = await run({});
+      const legacy = { source_grant: null, permissions: { source_id: ['default', 'work'], takes_holders: ['world'] } };
+      await insert(engine, 'legacy-a', 'h-rs-a', { ...legacy, created_at: new Date('2026-01-01T00:00:00Z') });
+      await insert(engine, 'legacy-b', 'h-rs-b', { ...legacy, permissions: { allowed_operations: ['get_page'] }, created_at: new Date('2026-01-02T00:00:00Z') });
+      const shown = (r: Awaited<ReturnType<typeof migrateLegacyTokens>>) => ({ ...r,
+        migrated: r.migrated.map(m => ({ ...m, id: 'id' })), skipped: r.skipped.map(m => ({ ...m, id: 'id', fix: m.fix.replace(/--id \S+/, '--id <id>') })) });
+      out.migratePreview = shown(await migrateLegacyTokens(engine, { dryRun: true }));
+      out.migrate = shown(await migrateLegacyTokens(engine, { dryRun: false }));
+      out.migrateAgain = shown(await migrateLegacyTokens(engine, { dryRun: false }));
+      const [a] = await engine.lockActiveAccessTokens({ name: 'legacy-a' });
+      out.legacyA = { source_grant: a.source_grant, source_id: a.source_id, federated_read: a.federated_read, takes_holders: a.takes_holders, grant_revision: Number(a.grant_revision) };
+      return out;
     });
 
   parityTest('list: every token newest first, revoked ones included, with its grant columns and never its hash',
@@ -440,7 +611,9 @@ describe('engine parity: access_tokens members', () => {
       await token('qtok-never', 'oc-qa', 'access', null);
       const code = async (name: string, client: string) => (await engine.readOauthCodeForUpdate(hashToken(name), client))?.expires_at;
       const out: Record<string, unknown> = {};
-      out.before = { a: await code('qcode-a', 'oc-qa'), live: await engine.readOauthCodeChallenge(hashToken('qcode-a'), 'oc-qa', now) };
+      // Each arm reads its own clock, so a live expiry is compared as seconds from that arm's `now`, not as a time.
+      const liveA = await code('qcode-a', 'oc-qa');
+      out.before = { aFromNow: liveA == null ? liveA : Number(liveA) - now, live: await engine.readOauthCodeChallenge(hashToken('qcode-a'), 'oc-qa', now) };
       out.expired = await engine.expireAllOauthCredentials();
       out.after = {
         a: await code('qcode-a', 'oc-qa'), b: await code('qcode-b', 'oc-qb'),
@@ -450,7 +623,9 @@ describe('engine parity: access_tokens members', () => {
       out.swept = await engine.deleteExpiredOauthCredentials(now);
       out.again = await engine.expireAllOauthCredentials();
       // Not vacuous: each code and token is still there with expires_at 0, and one sweep then removes all five rows.
-      if (out.swept !== 5 || (out.after as { a: unknown }).a !== 0) throw new Error(`quarantine: ${JSON.stringify(out)}`);
+      if (out.swept !== 5 || (out.after as { a: unknown }).a !== 0 || (out.before as { aFromNow: unknown }).aFromNow !== 600) {
+        throw new Error(`quarantine: ${JSON.stringify(out)}`);
+      }
       return out;
     });
 
@@ -646,6 +821,64 @@ describe('engine parity: access_tokens members', () => {
       await engine.touchAccessTokenLastUsed(old.id, false);
       out.legacyStamps = state(await lastUsed(old.id));
       if (out.afterFirst !== 'set' || out.before !== 'null' || out.unchangedBySecond !== true) throw new Error(`last_used_at: ${JSON.stringify(out)}`);
+      return out;
+    });
+
+  parityTest('the requester-scope read of a legacy token reads a live token\'s creation time, and nothing for a revoked or missing one',
+    { methods: ['insertAccessToken', 'readLiveAccessTokenScope'] }, async (engine) => {
+      const before = Date.now() / 1000 - 5;
+      const live = await mintLegacyToken(engine, { name: 'scoped', scopes: ['read'], takesHolders: ['world'] });
+      const after = Date.now() / 1000 + 5;
+      const revoked = await insert(engine, 'scoped-revoked', 'h-scoped-revoked', { revoked_at: new Date('2026-01-01T00:00:00Z') });
+      const scope = async (id: string) => {
+        const auth = await credentialScopeFor(engine, { clientName: 'agent', scopes: ['read'], principal: { kind: 'legacy_token', id } } as never) as
+          { readsUnscoped: boolean; createdAt: number | null };
+        const at = auth.createdAt;
+        return { readsUnscoped: auth.readsUnscoped, createdAt: at === null ? null : at >= before && at <= after ? 'during the run' : at };
+      };
+      const row = await engine.readLiveAccessTokenScope(live.id);
+      const member = {
+        live: row === null ? null : { readsUnscoped: row.reads_unscoped, createdAtIsDate: row.created_at instanceof Date },
+        revoked: await engine.readLiveAccessTokenScope(revoked.id),
+      };
+      return { member, live: await scope(live.id), revoked: await scope(revoked.id), missing: await scope('00000000-0000-4000-8000-000000000000') };
+    });
+
+  // An agent job's legacy token that opted out with --reads-unscoped reads unscoped: the requester-scope gate lets its
+  // unbound reads through. A store that answers the opt-out as not kept refuses that token's reads.
+  parityTest('the requester-scope read of a legacy token that opted out with --reads-unscoped reads the stored opt-out, and a cleared one reads not opted out',
+    { methods: ['insertAccessToken', 'writeCredentialReadsUnscoped', 'readLiveAccessTokenScope'] }, async (engine) => {
+      const token = await mintLegacyToken(engine, { name: 'unscoped-agent', scopes: ['read'], takesHolders: ['world'] });
+      const target = { kind: 'token' as const, id: token.id };
+      const scope = async () => {
+        const auth = await credentialScopeFor(engine, { clientName: 'agent', scopes: ['read'], principal: { kind: 'legacy_token', id: token.id } } as never) as
+          { readsUnscoped: boolean; createdAt: number | null };
+        const row = await engine.readLiveAccessTokenScope(token.id);
+        return { readsUnscoped: auth.readsUnscoped, created: auth.createdAt !== null,
+          stored: row === null ? 'no row' : row.reads_unscoped instanceof Date ? 'a time' : row.reads_unscoped };
+      };
+      const minted = await scope();
+      await engine.writeCredentialReadsUnscoped(target, true);
+      const optedOut = await scope();
+      await engine.writeCredentialReadsUnscoped(target, false);
+      const cleared = await scope();
+      expect(minted).toEqual({ readsUnscoped: false, created: true, stored: null });
+      expect(optedOut).toEqual({ readsUnscoped: true, created: true, stored: 'a time' });
+      expect(cleared).toEqual(minted);
+      return { minted, optedOut, cleared };
+    });
+
+  // A remote page write in the default source by a legacy token bound to a member is that member's page (GST-2059); an
+  // unbound or missing token writes a shared page.
+  parityTest('the default-source member read of a legacy token\'s write answers the stored member, and no member for an unbound or missing token',
+    { methods: ['insertAccessToken', 'insertAccessMember', 'writeCredentialBinding', 'readCredentialMemberId'] }, async (engine) => {
+      await engine.insertAccessMember({ id: 'alice-example', displayName: null, email: null, kind: 'person', groups: [], bindTokenId: null });
+      const bound = await mintLegacyToken(engine, { name: 'bound-writer', scopes: ['read', 'write'], takesHolders: ['world'] });
+      const unbound = await mintLegacyToken(engine, { name: 'unbound-writer', scopes: ['read', 'write'], takesHolders: ['world'] });
+      await bindCredential(engine, { kind: 'token', id: bound.id }, { member: 'alice-example' });
+      const writer = (id: string) => defaultSourceMemberWriter(engine, { remote: true, principal: { kind: 'legacy_token', id }, sourceId: 'default' } as never);
+      const out = { bound: await writer(bound.id), unbound: await writer(unbound.id), missing: await writer('00000000-0000-4000-8000-000000000000') };
+      expect(out).toEqual({ bound: 'member:alice-example', unbound: null, missing: null });
       return out;
     });
 });

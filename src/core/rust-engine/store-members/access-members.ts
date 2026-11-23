@@ -11,10 +11,12 @@
  * listAudienceAccessMembers, readLiveMember, readAccessGroups) read the same records, so a member a write added is
  * visible to the next read.
  *
- * A credential's binding is columns of its row, a client's (rust/docs/store/oauth-clients.md) and a token's
- * (rust/docs/store/access-tokens.md): the three binding members run on either, insertAccessMember binds its token in the
- * same write, and readLiveMember finds the member a client not deleted or a token not revoked is bound to.
+ * A token bind on insert writes the token's member in the same store write. The credential binding members read and
+ * write the member, may_act_for, attest and reads_unscoped columns of the token and client records
+ * (rust/docs/store/access-tokens.md, oauth-clients.md); readLiveMember finds the member a live token or client names.
+ * A time crosses the binding as ISO text and leaves here as a `Date`.
  */
+import type { ReadSharedSourceRow } from '../../engine-sql/read-shared-sources.ts';
 import type { AccessGroupRow, AccessMemberLookup, AccessMemberRow, AudiencePrincipalRows, LiveMemberRow, MemberBindingVia } from '../../engine-sql/access-control.ts';
 import type { AccessMemberInsert, AccessMemberKind, AccessMemberLinkRow, CredentialBinding, CredentialBindingRow, CredentialTarget, LinkedMemberRow } from '../../engine-sql/access-members.ts';
 import type { AccessMemberSourceRow, MemberSourceBinding } from '../../engine-sql/access-member-sources.ts';
@@ -22,7 +24,6 @@ import { withDates } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeCall, type StoreMember } from './common.ts';
-import { readOauthClient } from './jobs-oauth-clients.ts';
 
 const PG_CODE: ReadonlyArray<[RegExp, string]> = [[/_(pkey|key)$/, '23505'], [/_check$/, '23514'], [/_fkey$/, '23503']];
 
@@ -59,6 +60,10 @@ export const setAccessMemberEmail: StoreMember<[id: string, email: string | null
 
 export const setAccessMemberKind: StoreMember<[id: string, kind: AccessMemberKind], void> = async (brain, id, kind) => {
   await write('setAccessMemberKind', () => brain.setAccessMemberKind(id, kind));
+};
+
+export const setAccessMemberLabelledOnly: StoreMember<[id: string, labelledOnly: boolean], void> = async (brain, id, labelledOnly) => {
+  await write('setAccessMemberLabelledOnly', () => brain.setAccessMemberLabelledOnly(id, labelledOnly));
 };
 
 export const tombstoneAccessMember: StoreMember<[id: string], void> = async (brain, id) => {
@@ -122,7 +127,7 @@ export const readMemberSourceBindings: StoreMember<[sourceIds: readonly string[]
   (await storeCall({ member: 'readMemberSourceBindings' }, () => brain.readMemberSourceBindings([...sourceIds])) as Record<string, unknown>[])
     .map(r => ({ source_id: String(r.source_id), member_id: String(r.member_id) }));
 
-/** The enabled member a link names, with its groups in byte order (Postgres orders them in the database collation). */
+/** The enabled member a link names, with its groups in byte order (the Postgres SQL sorts them with COLLATE "C"). */
 export const readLinkedMember: StoreMember<[system: string, externalId: string], LinkedMemberRow | null> = async (brain, system, externalId) =>
   await storeCall({ member: 'readLinkedMember' }, () => brain.readLinkedMember(system, externalId)) as LinkedMemberRow | null;
 
@@ -155,16 +160,14 @@ export const listAudienceAccessMembers: StoreMember<[], string[]> = async (brain
 
 /**
  * The enabled, untombstoned member `via` and `key` name, with its groups, or null: by its id, or by the member the
- * config key names (edge whitespace trimmed, as Postgres btrims it), or by the member an OAuth client not deleted is
- * bound to, or by the member an access token not revoked is bound to.
+ * config key names (edge whitespace trimmed, as Postgres btrims it), or by the member of the live token (its id text)
+ * or OAuth client the key names.
  */
 export const readLiveMember: StoreMember<[via: MemberBindingVia, key: string], LiveMemberRow | null> = async (brain, via, key) => {
   let id: string | null = key;
-  if (via === 'legacy_token') {
-    id = await storeCall({ member: 'readLiveMember' }, () => brain.readLiveTokenMember(key)) as string | null;
-  } else if (via === 'oauth_client') {
-    const client = await readOauthClient(brain, key);
-    id = client && client.deleted_at === null ? client.member_id : null;
+  if (via === 'legacy_token' || via === 'oauth_client') {
+    const live = await storeCall({ member: 'readLiveMember' }, () => brain.readLiveCredential(via, key)) as { member_id: string | null } | null;
+    id = live?.member_id ?? null;
   } else if (via === 'stdio_config') {
     const value = await storeCall({ member: 'readLiveMember' }, () => brain.getConfig(key)) as string | null;
     id = typeof value === 'string' ? value.trim() : null;
@@ -195,46 +198,31 @@ export const readAudiencePrincipals: StoreMember<[memberIds: readonly string[], 
   };
 
 /**
- * The credential's binding columns (a client's also its grant types and whether it holds a secret). The row is read
- * whole; the store has one writer. A token is matched by its exact id, revoked or not, as the locking read matches it.
+ * The binding columns of the token or client, or undefined when no row has the id. The row lock has nothing to wait
+ * for: the store runs one write at a time.
  */
 export const readCredentialBindingForUpdate: StoreMember<[target: CredentialTarget, opts: { readsUnscoped: boolean }], CredentialBindingRow | undefined> =
   async (brain, target, opts) => {
-    if (target.kind === 'token') {
-      const token = await storeCall({ member: 'readCredentialBindingForUpdate' }, () => brain.readAccessTokenBinding(target.id)) as Record<string, unknown> | null;
-      if (!token) return undefined;
-      const { reads_unscoped, ...columns } = token;
-      return { ...columns, ...(opts.readsUnscoped ? { reads_unscoped } : {}) } as unknown as CredentialBindingRow;
-    }
-    const row = await readOauthClient(brain, target.id);
-    if (!row) return undefined;
-    return {
-      member_id: row.member_id, may_act_for: row.may_act_for, attest_actor: row.attest_actor, attest_ops: row.attest_ops,
-      attest_sources: row.attest_sources, attest_read: row.attest_read as CredentialBindingRow['attest_read'],
-      grant_types: row.grant_types, confidential: row.client_secret_hash !== null,
-      ...(opts.readsUnscoped ? { reads_unscoped: row.reads_unscoped } : {}),
-    };
+    const row = await storeCall({ member: 'readCredentialBindingForUpdate' }, () =>
+      brain.readCredentialBinding(target.kind, target.id, opts.readsUnscoped)) as CredentialBindingRow | null;
+    return row ? withDates(row, ['reads_unscoped']) as CredentialBindingRow : undefined;
   };
 
-/** The binding reads readCredentialBindingForUpdate uses (a revoked token and a deleted client are read too). */
+/** The member of a token or client, from the same binding read as readCredentialBindingForUpdate (a revoked token and a deleted client are read too). */
 export const readCredentialMemberId: StoreMember<[target: CredentialTarget], string | null> = async (brain, target) => {
-  if (target.kind === 'token') {
-    const token = await storeCall({ member: 'readCredentialMemberId' }, () => brain.readAccessTokenBinding(target.id)) as { member_id?: string | null } | null;
-    return token?.member_id ?? null;
-  }
-  return (await readOauthClient(brain, target.id))?.member_id ?? null;
+  const row = await storeCall({ member: 'readCredentialMemberId' }, () =>
+    brain.readCredentialBinding(target.kind, target.id, false)) as { member_id?: string | null } | null;
+  return row?.member_id ?? null;
 };
 
 export const writeCredentialBinding: StoreMember<[target: CredentialTarget, binding: CredentialBinding], void> = async (brain, target, binding) => {
-  const wire = {
-    member: binding.member, may_act_for: binding.mayActFor, attest_actor: binding.attestActor, attest_ops: binding.attestOps,
-    attest_sources: binding.attestSources, attest_read: binding.attestRead,
-  };
-  await write('writeCredentialBinding', () => target.kind === 'token' ? brain.writeTokenBinding(target.id, wire) : brain.writeClientBinding(target.id, wire));
+  await write('writeCredentialBinding', () => brain.writeCredentialBinding(target.kind, target.id, binding));
 };
 
 export const writeCredentialReadsUnscoped: StoreMember<[target: CredentialTarget, readsUnscoped: boolean], void> = async (brain, target, readsUnscoped) => {
-  await write('writeCredentialReadsUnscoped', () => target.kind === 'token'
-    ? brain.writeTokenReadsUnscoped(target.id, readsUnscoped) : brain.writeClientReadsUnscoped(target.id, readsUnscoped));
+  await write('writeCredentialReadsUnscoped', () => brain.writeCredentialReadsUnscoped(target.kind, target.id, readsUnscoped));
 };
 
+/** GST-2898: the source rows of the read-shared switch's shared set (engine-sql/read-shared-sources.ts, rust read_shared.rs). */
+export const readSharedSourceRows: StoreMember<[], ReadSharedSourceRow[]> = async (brain) =>
+  storeCall({ member: 'readSharedSourceRows' }, () => brain.readSharedSourceRows());

@@ -13,8 +13,10 @@
 //! listLinkSources, getBacklinkCounts, rewriteLinks, relationalFanout, relationalChainHop,
 //! getAdjacencyBoosts, findOrphanPages, hasSupersedeEdges, supersedingPageSlugs, pagesLinkingTo;
 //! site_reads: inboundLinkCoverage, listJunkEntityHubs, countEntityPages, entityGraphCoverage,
+//! entityFeatureCoverage, countDatedMeetingPages,
 //! countForeignEdges, listLivePageSummaries, countInboundLinks, listLinkEndpointPages,
-//! listPagesTitledIn, wordLexemes.
+//! listPagesTitledIn, wordLexemes, probePageTypes; listAttendedOriginSlugs (the attendance origins a sync's link
+//! extraction reconciles).
 //!
 //! Reads and writes go through the core links helpers (`put_link`, `delete_link`, `out_links`,
 //! `in_links`) and the page and source readers.
@@ -27,14 +29,16 @@
 //!
 //! The read policy of `src/core/search/read-policy-sql.ts` (`pageReadFilter`) is modelled for the
 //! source filter and the live test (not soft-deleted, not quarantined, source not archived).
-//! Privacy, trust and safe-chunk filters are refused by the TypeScript members. The
-//! store keeps every chunk inline, so a page's canonical chunk is its lowest `chunk_index`
-//! chunk. See rust/docs/store/link_queries.md.
+//! `requireSafeChunks` is modelled on the relational walks (the canonical chunk's safe fence and the
+//! chain's evidence `textGate`). The privacy and trust filters ride in `GraphScope`
+//! (`exclude_private`, `min_trust`, `suppress_flagged`). A page's canonical chunk is its lowest
+//! `chunk_index` chunk among the chunks of its live body. See rust/docs/store/link_queries.md.
 
 use crate::Store;
-use crate::chunks::read_chunks;
-use crate::error::{INVALID_STATE, REVISION_CONFLICT, Result, StoreError};
-use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::chunks::{in_live_body, read_chunks, read_segment_view, segmented};
+use crate::env::iso;
+use crate::error::{INVALID_ARGUMENT, INVALID_STATE, REVISION_CONFLICT, Result, StoreError};
+use crate::facts::{OwnerOnlyCache, PrivacyPolicy, page_hidden};
 use crate::keys;
 use crate::kv::{KvRead, KvWrite, collect_prefix, scan_prefix};
 use crate::links::{LinkBatchInput, LinkRecord, delete_link, in_links, out_links, put_link};
@@ -49,23 +53,34 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
+mod edge_filter;
+use edge_filter::edge_passes;
+pub use edge_filter::{DuringWindow, EdgeTemporalPolicy};
 pub(crate) mod link_temporal;
 pub use link_temporal::{
     ApplyTemporalInput, ApplyTemporalResult, EdgeValidityCounts, EdgeValidityInput, EvidenceInput,
     InboundEdgeRow, KeysForOriginInput, KeysForPagesInput, KeysTouchingInput, ManualRelationship,
     ManualWriteInput, ManualWriteResult, NoteRow, NoteRowsInput, PageStatusInput, PageStatusRow,
-    RecordMetadataInput, RecordMetadataRows, RelationshipEvidence, RelationshipKey,
-    SearchVectorCounts, StaleKeysInput, StateWrite,
+    RecordMetadataInput, RecordMetadataRows, ReferrerGroupInput, ReferrerGroupRow,
+    ReferrerPageDetailRow, ReferrerPageDetailsInput, ReferrerRecordCandidateInput,
+    ReferrerRecordCandidateRow, ReferrerRecordPageRow, ReferrerRow, ReferrerRowInput,
+    ReferrerTargetCountInput, ReferrerTargetCountRow, ReferrerTargetSourcesInput, ReferrerTypeRow,
+    RelationshipEvidence, RelationshipKey, SearchVectorCounts, StaleKeysInput, StateWrite,
 };
-mod retrieval_coverage;
+mod atom_backlog;
+pub use atom_backlog::{AtomBacklogQuery, ConnectorExclusion};
+mod projection_backlog;
+pub use projection_backlog::ProjectionBacklogRow;
+pub(crate) mod retrieval_coverage;
 pub use retrieval_coverage::{
     CoverageRelevance, CoverageScope, PendingCount, PendingCountInput, ReadinessRow,
     RebuildProgress,
 };
 mod site_reads;
 pub use site_reads::{
-    EndpointsInput, EntityPagesInput, ForeignEdgesInput, InboundCountInput, InboundCoverageInput,
-    JunkHubsInput, LinkContextAsk, TitledInput,
+    EndpointsInput, EntityPagesInput, FeatureCoverageInput, ForeignEdgesInput, InboundCountInput,
+    InboundCoverageInput, JunkHubsInput, LinkContextAsk, LongPageSizeInput, TitledInput,
+    TypeProbeInput,
 };
 
 /// The frontmatter key that hides a page (`quarantineFilterFragment`).
@@ -200,6 +215,10 @@ pub struct FanoutOptions {
     pub depth: u32,
     pub include_mentions: bool,
     pub limit: usize,
+    /// `temporal` with the walk's `excludePrivate`: the relationship filter on every step edge.
+    pub temporal: Option<EdgeTemporalPolicy>,
+    /// `requiresSafeChunks(opts)`: a node's canonical chunk is read only from a page sealed at the safe fence.
+    pub require_safe_chunks: bool,
 }
 
 /// `ChainHopOpts`, the part the store reads. `neighborCap` arrives clamped to 1..=1000.
@@ -219,6 +238,15 @@ pub struct ChainHopOptions {
     pub object_types: Vec<String>,
     pub degree_link_types: Vec<String>,
     pub neighbor_cap: usize,
+    /// `temporal` with the hop's `excludePrivate`: the relationship filter on every step and
+    /// degree edge.
+    pub temporal: Option<EdgeTemporalPolicy>,
+    /// `requiresSafeChunks(opts)`: the next page's canonical chunk is read only from a page sealed at the safe fence.
+    pub require_safe_chunks: bool,
+    /// `textGate` of readChainHop, decided by the TypeScript member (it knows the caller): `body` returns an edge's
+    /// context only when the evidence page is sealed and holds no facts / takes fence, `takes` only when it is sealed
+    /// and holds no takes fence, and absent returns it whenever the evidence page is readable.
+    pub text_gate: Option<String>,
 }
 
 /// `DerivedLinkOrigin` without the refused `snapshot`.
@@ -272,6 +300,7 @@ struct Pages<'a> {
     read: &'a dyn KvRead,
     pages: HashMap<u64, Option<Rc<PageRecord>>>,
     sources: HashMap<String, bool>,
+    owner_only: OwnerOnlyCache,
 }
 
 impl<'a> Pages<'a> {
@@ -280,6 +309,7 @@ impl<'a> Pages<'a> {
             read,
             pages: HashMap::new(),
             sources: HashMap::new(),
+            owner_only: OwnerOnlyCache::default(),
         }
     }
 
@@ -308,7 +338,7 @@ impl<'a> Pages<'a> {
             return Ok(false);
         }
         if let Some(policy) = &scope.exclude_private
-            && page_hidden(self.read, page, policy)?
+            && self.owner_only.page_hidden(self.read, page, policy)?
         {
             return Ok(false);
         }
@@ -345,17 +375,62 @@ impl<'a> Pages<'a> {
         }
     }
 
-    /// The page's lowest-ordinal chunk id.
-    fn canonical_chunk(&self, page_id: u64) -> Result<Option<u64>> {
+    /// The page's lowest-ordinal chunk id among the chunks of its live body (`chunkGenerationProbe`: an inline chunk of
+    /// a page that is not segmented, or a segmented chunk at or below the page's generation whose occurrence has a live
+    /// manifest row). A staged chunk, one whose occurrence a deferred retire closed and an inline chunk left on a
+    /// segmented page are never named. With `require_safe` (`requiresSafeChunks`), only a page sealed at the safe
+    /// fence has one (`EXISTS (... safeChunksFilter('cp'))`).
+    fn canonical_chunk(&mut self, page_id: u64, require_safe: bool) -> Result<Option<u64>> {
+        let Some(page) = self.get(page_id)? else {
+            return Ok(None);
+        };
+        if require_safe && !sealed_safe(&page) {
+            return Ok(None);
+        }
+        let segmented_page = segmented(&page);
+        let view = read_segment_view(self.read, page_id)?;
         Ok(read_chunks(self.read, page_id)?
             .into_iter()
+            .filter(|c| in_live_body(c, segmented_page, &view))
             .min_by_key(|c| c.chunk_index)
             .map(|c| c.id))
     }
 }
 
+/// `safeChunksFilter`: `chunker_version >= 4`; a page that records no version is not safe (the comparison is NULL).
+fn sealed_safe(page: &PageRecord) -> bool {
+    page.chunker_version
+        .is_some_and(|v| v >= crate::chunks::SAFE_FENCE_CHUNKER_VERSION)
+}
+
+/// `PROTECTED_MARKER` of src/core/search/safe-chunks.ts: `<!--- gbrain:(facts|takes):(begin|end) -->`.
+fn has_marker(text: Option<&str>, kinds: &[&str]) -> bool {
+    let Some(text) = text else { return false };
+    kinds.iter().any(|kind| {
+        ["begin", "end"]
+            .iter()
+            .any(|edge| text.contains(&format!("<!--- gbrain:{kind}:{edge} -->")))
+    })
+}
+
+/// `protectedBodyFilter` (kinds facts and takes) or `protectedTakesFilter` (takes only). A segmented page has no body
+/// columns: its `body_flags.has_protected` decides, and a page without the flag counts as protected (fail closed:
+/// `body_flags->>'has_protected' IS DISTINCT FROM 'false'`).
+fn protected_body(read: &dyn KvRead, page: &PageRecord, kinds: &[&str]) -> Result<bool> {
+    if let Some(flags) = crate::page_body::segmented_body_flags(read, page.id)? {
+        let unprotected = match flags.as_ref().and_then(|f| f.get("has_protected")) {
+            Some(Value::Bool(false)) => true,
+            Some(Value::String(s)) => s == "false",
+            _ => false,
+        };
+        return Ok(!unprotected);
+    }
+    Ok(has_marker(page.compiled_truth.as_deref(), kinds)
+        || has_marker(page.timeline.as_deref(), kinds))
+}
+
 /// `rankingLinkSql`: the link may feed a ranking signal.
-fn ranks(link: &LinkRecord) -> bool {
+pub(crate) fn ranks(link: &LinkRecord) -> bool {
     !NON_RANKING_LINK_TYPES.contains(&link.link_type.as_str())
 }
 
@@ -389,7 +464,7 @@ fn all_links(read: &dyn KvRead) -> Result<Vec<LinkRecord>> {
 }
 
 /// The links a page authored (`origin_page_id = id`), in id order.
-fn origin_links(read: &dyn KvRead, origin_id: u64) -> Result<Vec<LinkRecord>> {
+pub(crate) fn origin_links(read: &dyn KvRead, origin_id: u64) -> Result<Vec<LinkRecord>> {
     let mut refs = Vec::new();
     scan_prefix(
         read,
@@ -817,6 +892,47 @@ struct FanoutNode {
 }
 
 impl Store {
+    /// `listAttendedOriginSlugs(sourceId, slugs?)`: the slugs of `source_id`'s pages (soft-deleted
+    /// ones too, as the SQL reads them; only those in `slugs` when given) that authored an
+    /// `attended` link to themselves from the `markdown`, `wikilink-resolved` or `frontmatter`
+    /// producer, in slug order. The SQL engines return them in no set order.
+    pub fn list_attended_origin_slugs(
+        &self,
+        source_id: &str,
+        slugs: Option<&[String]>,
+    ) -> Result<Vec<String>> {
+        let read = self.read()?;
+        let pages: Vec<PageRecord> = match slugs {
+            Some(slugs) => {
+                let wanted: BTreeSet<&str> = slugs.iter().map(String::as_str).collect();
+                let mut pages = Vec::new();
+                for slug in wanted {
+                    pages.extend(read_page(&*read, source_id, slug)?);
+                }
+                pages
+            }
+            None => all_pages(&*read)?
+                .into_iter()
+                .filter(|p| p.source_id == source_id)
+                .collect(),
+        };
+        let mut out = BTreeSet::new();
+        for page in pages {
+            let attended = origin_links(&*read, page.id)?.iter().any(|l| {
+                l.link_type == "attended"
+                    && l.to_page_id == page.id
+                    && matches!(
+                        l.link_source.as_deref(),
+                        Some("markdown" | "wikilink-resolved" | "frontmatter")
+                    )
+            });
+            if attended {
+                out.insert(page.slug);
+            }
+        }
+        Ok(out.into_iter().collect())
+    }
+
     /// `replaceDerivedLinks` and `replaceDerivedLinksBatch`: every origin in order, in one write
     /// transaction; any failure rolls every origin back. Returns `[{ created, removed }]`.
     pub fn replace_derived_links(&self, items: &[DerivedItem]) -> Result<Vec<Value>> {
@@ -1250,6 +1366,7 @@ impl Store {
                 edges: Vec::new(),
             });
         }
+        let today = iso(self.env.now_micros())[..10].to_string();
         let mut nodes: HashMap<u64, FanoutNode> = HashMap::new();
         let mut incident: HashMap<u64, Vec<LinkRecord>> = HashMap::new();
         while let Some(row) = stack.pop() {
@@ -1305,6 +1422,11 @@ impl Store {
                     || link_types
                         .as_ref()
                         .is_some_and(|t| !t.contains(link.link_type.as_str()))
+                {
+                    continue;
+                }
+                if let Some(temporal) = &options.temporal
+                    && !edge_passes(&*read, &link, temporal, &today)?
                 {
                     continue;
                 }
@@ -1368,7 +1490,7 @@ impl Store {
                 "via_link_types": node.types.into_iter().collect::<Vec<_>>(),
                 "path": split(&path),
                 "path_edges": split(&edges),
-                "canonical_chunk_id": pages.canonical_chunk(id)?,
+                "canonical_chunk_id": pages.canonical_chunk(id, options.require_safe_chunks)?,
             }));
         }
         Ok(out)
@@ -1394,6 +1516,13 @@ impl Store {
             suppress_flagged: options.suppress_flagged,
         };
         let cap = options.neighbor_cap.clamp(1, 1000);
+        let today = iso(self.env.now_micros())[..10].to_string();
+        let live = |link: &LinkRecord| -> Result<bool> {
+            match &options.temporal {
+                Some(temporal) => edge_passes(&*read, link, temporal, &today),
+                None => Ok(true),
+            }
+        };
         let has = |list: &[String], v: &str| list.iter().any(|x| x == v);
         let frontier: BTreeSet<u64> = frontier.iter().copied().collect();
         let toward_object = options.toward == "object";
@@ -1417,7 +1546,8 @@ impl Store {
                 ) else {
                     continue;
                 };
-                if lf.source_id != lt.source_id || !pages.origin_ok(&link, &scope)? {
+                if lf.source_id != lt.source_id || !pages.origin_ok(&link, &scope)? || !live(&link)?
+                {
                     continue;
                 }
                 let forward = has(&options.subject_types, &lf.page_type)
@@ -1509,6 +1639,7 @@ impl Store {
                     || !has(&options.degree_link_types, &link.link_type)
                     || !not_mentions(&link)
                     || !ranks(&link)
+                    || !live(&link)?
                 {
                     continue;
                 }
@@ -1541,9 +1672,25 @@ impl Store {
                     None => None,
                 };
                 let evidence_page = el.origin_page_id.unwrap_or(el.from_page_id);
-                let context = pages
-                    .readable(evidence_page, &scope, true)?
-                    .map(|_| el.context.clone());
+                let context = match pages.readable(evidence_page, &scope, true)? {
+                    None => None,
+                    Some(ev) => {
+                        let kinds: &[&str] = match options.text_gate.as_deref() {
+                            None => &[],
+                            Some("takes") => &["takes"],
+                            Some("body") => &["facts", "takes"],
+                            Some(other) => {
+                                return Err(StoreError::new(
+                                    INVALID_ARGUMENT,
+                                    format!("relationalChainHop: unknown textGate {other:?}"),
+                                ));
+                            }
+                        };
+                        let gated = !kinds.is_empty()
+                            && (!sealed_safe(&ev) || protected_body(&*read, &ev, kinds)?);
+                        (!gated).then(|| el.context.clone())
+                    }
+                };
                 g.link_ids.sort_unstable();
                 out.push(json!({
                     "from_page_id": f,
@@ -1559,7 +1706,7 @@ impl Store {
                     "context": context,
                     "origin_page_id": el.origin_page_id,
                     "origin_slug": origin_slug,
-                    "canonical_chunk_id": pages.canonical_chunk(g.next)?,
+                    "canonical_chunk_id": pages.canonical_chunk(g.next, options.require_safe_chunks)?,
                     "from_degree": degree,
                     "neighbor_cap_hit": per_frontier > cap,
                 }));

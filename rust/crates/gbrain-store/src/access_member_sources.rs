@@ -47,6 +47,22 @@ fn binding_json(member_id: &str, source_id: &str, b: &BindingRecord) -> Value {
 
 /// Every binding as (member id, source id, record), in byte order of the key, which is byte order
 /// of the member id and then the source id (NUL sorts first, and no id holds it).
+/// The member ids bound to each source (`access_member_sources`), by source id, each list in byte order
+/// (`readSharedSourceRows`' `owners`, `listGoogleSourceMembers`' `members`).
+pub(crate) fn owners_by_source(
+    read: &dyn KvRead,
+) -> Result<std::collections::BTreeMap<String, Vec<String>>> {
+    let mut out: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for (member, source, _) in all_bindings(read)? {
+        out.entry(source).or_default().push(member);
+    }
+    for members in out.values_mut() {
+        members.sort();
+    }
+    Ok(out)
+}
+
 fn all_bindings(read: &dyn KvRead) -> Result<Vec<(String, String, BindingRecord)>> {
     let mut rows = Vec::new();
     let mut bad = None;

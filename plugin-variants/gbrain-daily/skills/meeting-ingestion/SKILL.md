@@ -270,7 +270,8 @@ extractor from reading it as the attendance record, and a line wrapped onto a
 second line loses everyone after the break. Leave people who were only
 invited or mentioned off the line. The `attendees:` frontmatter lists
 exactly the same people by slug; extraction reads it as a second attendance
-record, so the two must agree.
+record, so the two must agree. Write no `readable_by` on a brain shared by
+several people; the admin decides who reads the page.
 
 The four required sections are Summary, Key Decisions, Action Items, and
 Notable Quotes — additional sections (Discussion Notes, a link to the

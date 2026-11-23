@@ -41,6 +41,24 @@ impl Store {
         })
     }
 
+    /// `setOauthClientReadSharedRevision(clientId, revision)`: `UPDATE oauth_clients SET read_shared_revision = $2
+    /// WHERE client_id = $1` (GST-2898: the read-shared switch is on while it equals `grant_revision`; `None` clears
+    /// it); whether a client has the id.
+    pub fn set_oauth_client_read_shared_revision(
+        &self,
+        client_id: &str,
+        revision: Option<i32>,
+    ) -> Result<bool> {
+        self.write(|tx| {
+            let Some(mut record) = load_client(tx, client_id)? else {
+                return Ok(false);
+            };
+            record.read_shared_revision = revision;
+            put_client(tx, &record)?;
+            Ok(true)
+        })
+    }
+
     /// `softDeleteOauthClient(clientId)`: `UPDATE oauth_clients SET deleted_at = now() WHERE client_id = $1`; whether
     /// the client exists. A client already soft-deleted takes the new time (the statement has no guard).
     pub fn soft_delete_oauth_client(&self, client_id: &str) -> Result<bool> {

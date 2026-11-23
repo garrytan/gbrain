@@ -38,6 +38,10 @@ A request id that is not a UUID refuses the write with `invalid_argument`, as th
   facts only. `excludePrivate` is the reader's private-provenance policy, which hides a fact whose provenance page is private.
 - A take must be on the page at the row number. `holders`, when present, admits only those holders; an empty list admits none.
 - A timeline entry must have the id and be on the page.
+- A take or timeline entry read under excludePrivate by a caller who is not the owner carries its own owner-only form
+  (`ownerOnly`). The closed form hides the row while the brain holds an owner-only source or a mark. The function form
+  hides a row only by its own lineage, and the store has none for these rows (no take or timeline marks, no
+  `derivation_inputs`). A target that names no form takes the closed form.
 
 A stored tier of none reads `unknown`: the column default of pages, facts, takes and timeline entries, and the tier a
 version snapshot copies from a page with no tier.
@@ -46,16 +50,14 @@ version snapshot copies from a page with no tier.
 
 | Member | Answer on this engine | Why |
 | --- | --- | --- |
-| `readWriteAttributionNames(ids)` | requests and writers from the two methods; `clients: []`, `tokens: []` | |
-| `readWriteAttributionNames` with an OAuth client id or a legacy token id | refuses with `engine_capability_missing` | The store keeps no `oauth_clients` or `access_tokens` table. An empty answer would say "no name" for a client that may exist on the brain the token came from. |
+| `readWriteAttributionNames(ids)` | requests and writers from the two methods; clients from `brain.readOauthClientNames` and legacy tokens from `brain.readAccessTokenNames` (a revoked token included) | The names come from the store's `oauth_clients` ([oauth-clients.md](oauth-clients.md)) and `access_tokens` ([access-tokens.md](access-tokens.md)) rows. |
+| `readWriteAttributionNames` with an OAuth client id or a legacy token id | refuses with `engine_capability_missing` | The store keeps OAuth clients and access tokens, but this read does not look their names up yet. An empty answer would say "no name" for a client that exists. |
 | `readPageRevisionAttribution`, `readOldestVersionAttribution` | the method | |
 | `readVersionAttributions(refs)` | the method, each version under its `page_id` | The store keys versions by page. |
 | `readRowAttribution(target)` | the method; the fact's `excludePrivate` becomes the store privacy policy | A policy the store cannot judge refuses (`storePrivacyPolicy`). |
 
 ## Known gaps
 
-- Takes keep no trust tier or write origin: a take reads `unknown` and `null`. PGLite reads `unknown` too for a take
-  that no trusted writer stamped.
 - PGLite's attribution trigger exempts a withdrawal stamp (`gbrain.fact_withdrawal_stamp`) from the content check.
   The store keeps no withdrawal ledger, so it does not model that exemption. It stamps `last_write_*` when the fact's
   content columns change (`WRITE_ATTRIBUTION_CONTENT_COLUMNS.facts`), and no parity case covers a withdrawal.

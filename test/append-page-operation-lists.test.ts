@@ -25,7 +25,7 @@ function list(file: string, anchor: string): string {
 
 describe('append_page in operation lists', () => {
   test.each([
-    ['src/core/repair/attribution-backfill.ts', 'const MUTATED_PAGE'],
+    ['src/core/engine-sql/repair-plan-scans.ts', 'const MUTATED_PAGE'],
     ['src/core/trust/backfill.ts', "${r}.intent IS NOT NULL AND ${kind} IS NULL AND"],
     ['src/core/write-gate-scan.ts', "WHEN ${pr}.operation IN ("],
     ['src/core/chronicle/ledger.ts', 'const DECIDING_OPERATIONS'],

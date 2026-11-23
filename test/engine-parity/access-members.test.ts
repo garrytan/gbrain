@@ -19,30 +19,42 @@
  *    the result shows it (a second member for the count, a removed member for the email and kind writes, a taken
  *    email, an unknown member id).
  *  - Why existing coverage misses it: test/access-members.test.ts runs the commands on PGLite only, and no parity
- *    case wrote a member. The end-to-end cases run the commands (addMember, disable, enable, set --email, kind) and
- *    read back through getMember, listMembers and readAudiencePrincipals on every arm.
+ *    case wrote a member. The end-to-end cases run the commands (addMember, disable, enable, set --email, kind,
+ *    labelled-only) and read back through getMember, listMembers and readAudiencePrincipals on every arm.
  *    The credential binding members (gbrain access member add --bind-token, gbrain auth rescope --member) lock and
- *    write access_tokens and oauth_clients rows. A client binding, with the attest-sources marks, runs on every arm
- *    (the last case), and so does a token binding (test/engine-parity/access-tokens.test.ts runs it through the
- *    bearer check).
- *  - Seam: none. Timestamps are reduced to their shape; the credential rows are written through the typed token and
- *    client members, and the sources through the harness helpers.
+ *    write access_tokens and oauth_clients rows; the Rust store keeps them on its token and client records, so every
+ *    arm compares the binding, the refusals and the reads back (readAccessCredentials, readLiveMember, readMayActFor).
+ *  - Seam: none. Timestamps are reduced to their shape; the credential rows are seeded through the typed
+ *    insertAccessToken and insertOauthClient. A client binding with the attest-sources marks runs on every arm too
+ *    (the last case), its sources written through the harness helpers.
  */
 import { describe, expect } from 'bun:test';
 import { archiveSource, createSource, parityArms, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { AccessMemberInsert, CredentialBindingRow } from '../../src/core/engine-sql/access-members.ts';
+import { setMemberLabelledOnly } from '../../src/core/access/labelled-only.ts';
+import type { AccessTokenInsert } from '../../src/core/engine-sql/access-tokens.ts';
 import { addMember, bindCredential, disableMember, enableMember, getMember, listMembers, memberByEmail, setMemberEmail, setMemberKind, type MemberRecord } from '../../src/core/access/members.ts';
 
 const { parityTest } = parityArms(testBackends());
 
-const SINCE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+const SINCE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
 
 const TOKEN_GRANT = { source_grant: 'default', source_id: null, federated_read: null, allowed_operations: null, takes_holders: null };
 
 function member(id: string, extra: Partial<AccessMemberInsert> = {}): AccessMemberInsert {
   return { id, displayName: null, email: null, kind: 'person', groups: [], bindTokenId: null, ...extra };
+}
+
+/** A read-scoped token row for insertAccessToken, with no other grant column. */
+function tokenRow(name: string): AccessTokenInsert {
+  return { name, token_hash: `hash-${name}`, scopes: ['read'], permissions: {}, source_grant: null, source_id: null, federated_read: null, allowed_operations: null, takes_holders: null };
+}
+
+/** The message a command refusal carries, or 'ok'. */
+async function opMessage(fn: () => Promise<unknown>): Promise<unknown> {
+  try { await fn(); return 'ok'; } catch (error) { return (error as Error).message; }
 }
 
 /** The Postgres error fields the member commands read, or 'ok'. */
@@ -202,11 +214,14 @@ describe('access member writes', () => {
   });
 
   parityTest('a credential binding locks the row, writes member and attest columns, and stamps reads_unscoped', {
-    methods: ['insertAccessMember', 'insertAccessToken', 'insertOauthClient', 'readCredentialBindingForUpdate', 'writeCredentialBinding', 'writeCredentialReadsUnscoped', 'transaction'],
+    methods: ['insertAccessMember', 'readCredentialBindingForUpdate', 'writeCredentialBinding', 'writeCredentialReadsUnscoped', 'transaction', 'insertAccessToken', 'insertOauthClient'],
   }, async (engine) => {
     await engine.insertAccessMember(member('alice-example'));
-    const { id: token } = await engine.insertAccessToken({ name: 'token-a', token_hash: 'hash-a', scopes: ['read'], permissions: {}, ...TOKEN_GRANT });
-    await engine.insertOauthClient({ client_id: 'client-a', client_name: 'client-a', grant_types: ['authorization_code'], scope: 'read', source_id: 'default' });
+    const { id: token } = await engine.insertAccessToken(tokenRow('token-a'));
+    await engine.insertOauthClient({
+      client_id: 'client-a', client_secret_hash: null, client_name: 'client-a', redirect_uris: [], grant_types: ['authorization_code'], scope: 'read',
+      token_endpoint_auth_method: 'none', client_id_issued_at: 0, source_id: 'default',
+    });
     const tokenTarget = { kind: 'token' as const, id: token };
     const clientTarget = { kind: 'client' as const, id: 'client-a' };
     const strip = (row: CredentialBindingRow | undefined) => row && { ...row, reads_unscoped: row.reads_unscoped == null ? null : 'set' };
@@ -235,6 +250,71 @@ describe('access member writes', () => {
       missingToken: undefined,
     });
     return out;
+  });
+
+  // gbrain access member add --bind-token and gbrain auth rescope --member/--may-act-for/--attest-actor, end to end.
+  // Leak case (access checks): the bind names only the one live token of that name; a client that is not a confidential
+  // client-credentials client cannot attest; an unknown credential refuses with the same text on every arm; and the
+  // binding then reads back through readAccessCredentials and readLiveMember for the bound member only.
+  parityTest('a member add binds the named token, and a rescope binds, attests and refuses the same way on every engine', {
+    methods: ['insertAccessMember', 'readAccessCredentials', 'readCredentialBindingForUpdate', 'writeCredentialBinding', 'writeCredentialReadsUnscoped',
+      'readLiveMember', 'readMayActFor', 'insertAccessToken', 'insertOauthClient', 'transaction'],
+  }, async (engine) => {
+    const { id: laptop } = await engine.insertAccessToken(tokenRow('laptop'));
+    const { id: phone } = await engine.insertAccessToken(tokenRow('phone'));
+    await engine.insertOauthClient({ client_id: 'client-public', client_name: 'public-app', grant_types: ['authorization_code'] });
+    await engine.insertOauthClient({ client_id: 'client-cc', client_name: 'cc-app', grant_types: ['client_credentials'], client_secret_hash: 'secret-hash' });
+    const added = await addMember(engine, 'alice-example', { groups: ['team-a'], bindToken: 'laptop' });
+    await addMember(engine, 'bob-example');
+    const unknownToken = 'c0000000-0000-4000-8000-0000000000ee';
+    const out = {
+      bound: added.bound && { kind: added.bound.kind, laptop: added.bound.id === laptop, name: added.bound.name },
+      noToken: await opMessage(() => addMember(engine, 'carol-example', { bindToken: 'tablet' })),
+      carolAfter: await getMember(engine, 'carol-example'),
+      rescope: await bindCredential(engine, { kind: 'token', id: phone }, { member: 'bob-example', mayActFor: ['group:team-a'], readsUnscoped: true }),
+      rescopeAgain: await bindCredential(engine, { kind: 'token', id: phone }, { readsUnscoped: true }),
+      unbind: await bindCredential(engine, { kind: 'token', id: laptop }, { member: null }),
+      attestToken: await bindCredential(engine, { kind: 'token', id: laptop }, { attestActor: 'qm', attestOps: ['query'] }),
+      attestPublic: await opMessage(() => bindCredential(engine, { kind: 'client', id: 'client-public' }, { attestActor: 'qm' })),
+      attestCc: await bindCredential(engine, { kind: 'client', id: 'client-cc' }, { attestActor: 'qm', attestRead: 'person' }),
+      clientMember: await bindCredential(engine, { kind: 'client', id: 'client-public' }, { member: 'alice-example', mayActFor: ['member:bob-example'] }),
+      missingToken: await opMessage(() => bindCredential(engine, { kind: 'token', id: unknownToken }, { member: 'alice-example' })),
+      missingClient: await opMessage(() => bindCredential(engine, { kind: 'client', id: 'client-none' }, { member: 'alice-example' })),
+      disabledMember: await opMessage(async () => { await disableMember(engine, 'bob-example'); await bindCredential(engine, { kind: 'token', id: laptop }, { member: 'bob-example' }); }),
+    };
+    const names = (rows: Awaited<ReturnType<BrainEngine['readAccessCredentials']>>) => rows.map(r => [r.kind, r.name]);
+    const reads = {
+      alice: names(await engine.readAccessCredentials({ memberId: 'alice-example' })),
+      bob: names(await engine.readAccessCredentials({ memberId: 'bob-example' })),
+      laptopMember: await engine.readLiveMember('legacy_token', laptop),
+      phoneMember: await engine.readLiveMember('legacy_token', phone),
+      clientLiveMember: await engine.readLiveMember('oauth_client', 'client-public'),
+      phoneMayActFor: await engine.readMayActFor('legacy_token', phone),
+      clientMayActFor: await engine.readMayActFor('oauth_client', 'client-public'),
+    };
+    expect({ ...out, ...reads }).toEqual({
+      bound: { kind: 'token', laptop: true, name: 'laptop' },
+      noToken: 'No active token named "tablet".',
+      carolAfter: null,
+      rescope: { member: 'bob-example', may_act_for: ['group:team-a'], reads_unscoped: true, changed: true },
+      rescopeAgain: { member: 'bob-example', may_act_for: ['group:team-a'], reads_unscoped: true, changed: false },
+      unbind: { member: null, may_act_for: null, changed: true },
+      attestToken: { member: null, may_act_for: null, attest_actor: 'qm', attest_ops: ['query'], attest_sources: null, attest_read: null, changed: true },
+      attestPublic: 'OAuth client client-public is not a confidential client-credentials client, so it cannot attest people.',
+      attestCc: { member: null, may_act_for: null, attest_actor: 'qm', attest_ops: null, attest_sources: null, attest_read: 'person', changed: true },
+      clientMember: { member: 'alice-example', may_act_for: ['member:bob-example'], changed: true },
+      missingToken: `No token "${unknownToken}" exists.`,
+      missingClient: 'No OAuth client "client-none" exists.',
+      disabledMember: 'Member "bob-example" is disabled.',
+      alice: [['client', 'public-app']],
+      bob: [['token', 'phone']],
+      laptopMember: null,
+      phoneMember: null,
+      clientLiveMember: { id: 'alice-example', groups: ['team-a'] },
+      phoneMayActFor: ['group:team-a'],
+      clientMayActFor: ['member:bob-example'],
+    });
+    return { ...out, ...reads };
   });
 
   parityTest('bind a client to a member and list scope sources (--attest-sources): the checks, the marks and the binding commit together, and a refusal or a dry run changes nothing', {
@@ -341,6 +421,38 @@ describe('access member commands, end to end', () => {
       kind: { changed: true, kind: 'audience' },
       unknown: null,
       list: [['alice-example', 'enabled', 'person', null, ['team-a']], ['bob-example', 'enabled', 'audience', null, ['team-a', 'team-b']]],
+    });
+    return out;
+  });
+
+  parityTest('gbrain access member labelled-only sets and clears the grant, and refuses the owner, a removed member and a remote caller', {
+    methods: ['insertAccessMember', 'readAccessMembers', 'setAccessMemberLabelledOnly', 'tombstoneAccessMember'],
+  }, async (engine) => {
+    await addMember(engine, 'alice-example');
+    await addMember(engine, 'bob-example');
+    await addMember(engine, 'carol-example');
+    await engine.tombstoneAccessMember('carol-example');
+    await engine.setConfig('access.owner_member', 'bob-example');
+    const flag = (r: { changed: boolean; member: MemberRecord }) => ({ changed: r.changed, labelled_only: r.member.labelled_only });
+    const out = {
+      remote: await opRefusal(() => setMemberLabelledOnly(engine, 'alice-example', true, { remote: true })),
+      on: flag(await setMemberLabelledOnly(engine, 'alice-example', true, { remote: false })),
+      again: flag(await setMemberLabelledOnly(engine, 'alice-example', true, { remote: false })),
+      owner: await opRefusal(() => setMemberLabelledOnly(engine, 'bob-example', true, { remote: false })),
+      removed: await opRefusal(() => setMemberLabelledOnly(engine, 'carol-example', true, { remote: false })),
+      afterOn: (await listMembers(engine)).map(m => [m.id, m.labelled_only]),
+      off: flag(await setMemberLabelledOnly(engine, 'alice-example', false, { remote: false })),
+      afterOff: (await listMembers(engine)).map(m => [m.id, m.labelled_only]),
+    };
+    expect(out).toEqual({
+      remote: { code: 'permission_denied', reason: null },
+      on: { changed: true, labelled_only: true },
+      again: { changed: false, labelled_only: true },
+      owner: { code: 'access_labelled_only_owner', reason: null },
+      removed: { code: 'access_member_id_retired', reason: null },
+      afterOn: [['alice-example', true], ['bob-example', false]],
+      off: { changed: true, labelled_only: false },
+      afterOff: [['alice-example', false], ['bob-example', false]],
     });
     return out;
   });

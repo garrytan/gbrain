@@ -194,7 +194,7 @@ async function previewRules(engine: BrainEngine, sourceId: string, store: Access
   const twins: OpenTwins = { count: 0, twins: [], commands: [] };
   const ruleOwner = (await readersOwner(engine)).owner;
   for (const rule of cls.changes.filter(c => c.narrowing).map(c => cls.target.find(r => r.id === c.rule)).filter(r => r !== undefined)) {
-    const covered = await engine.executeRaw<{ source_id: string; slug: string }>(`SELECT source_id, slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND ${ruleCoversSql('slug', '$2::text')} ORDER BY slug LIMIT ${OPEN_TWINS_PAGES}`, [sourceId, rule.prefix]);
+    const covered = await engine.executeRaw<{ source_id: string; slug: string }>(`SELECT source_id, slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND ${ruleCoversSql('slug', '$2::text')} ORDER BY slug COLLATE "C" LIMIT ${OPEN_TWINS_PAGES}`, [sourceId, rule.prefix]);
     const found = await openTwins(engine, covered, rule.readable_by,
       source => `gbrain access rule add ${rule.prefix.endsWith('/') ? '--prefix' : '--slug'} ${rule.prefix} --readers ${rule.readable_by.map(reader).join(',')}${ruleOwner && !rule.readable_by.includes(`member:${ruleOwner}`) ? ' --allow-without-owner' : ''} --source ${source}`);
     Object.assign(twins, { count: twins.count + found.count, twins: [...twins.twins, ...found.twins], commands: [...twins.commands, ...found.commands] });
@@ -338,6 +338,29 @@ export async function currentFolderRules(engine: BrainEngine, sourceId: string):
   return baseRules(engine, sourceId, store, root);
 }
 
+/**
+ * GBRA-582 item 9: writes a rulebook a caller already previewed and the operator approved as a whole (the member
+ * handover), approving the widening half in the same step. The caller refuses first when the source had a change held
+ * before, so the only held change approved here is its own.
+ */
+export async function writeApprovedRules(engine: BrainEngine, sourceId: string, desired: FolderRule[], message: string): Promise<{ result: EditResult; commits: string[] }> {
+  const result = await writeRules(engine, sourceId, desired, { message, json: true });
+  const commits = result.git?.commit ? [result.git.commit] : [];
+  if (!result.held.length) return { result, commits };
+  const plan = await previewApply(engine, sourceId);
+  if (!plan.plan_hash) return { result, commits };
+  const r = await applyApproved(engine, sourceId, { expect: plan.plan_hash });
+  if ((await readAccessStore(engine, sourceId)) === 'git') {
+    const root = await sourcePolicyRoot(engine, sourceId);
+    if (root && isGitWorkTree(root)) {
+      const git = await writeApprovedFile(root, (await getRevision(engine, sourceId, r.revision ?? undefined))?.rules ?? [], message + ' (approved)');
+      if (git.commit) commits.push(git.commit);
+      await syncGitPolicy(engine, sourceId, root);
+    }
+  }
+  return { result: { ...result, applied: true, held: r.held }, commits };
+}
+
 async function ruleCmd(engine: BrainEngine, sub: string | undefined, args: string[], json: boolean): Promise<void> {
   const sourceId = flag(args, '--source') ?? 'default';
   const yes = args.includes('--yes');
@@ -387,7 +410,12 @@ async function ruleCmd(engine: BrainEngine, sub: string | undefined, args: strin
       } else {
         const file = flag(args, '--file');
         if (!file) throw usageError('rule import needs --file <access.yml>.', 'gbrain access rule import --file access.yml --source <id>');
-        const parsed = parsePolicyYaml(readFileSync(file, 'utf8'));
+        let text: string;
+        try { text = readFileSync(file, 'utf8'); } catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+          throw usageError(`rule import: ${file} does not exist.`, 'Nothing was written. Pass --file the path of an existing access.yml (gbrain access rule export writes one).');
+        }
+        const parsed = parsePolicyYaml(text);
         if (!parsed.ok) throw opError('access_policy_invalid', `${file} does not validate: ${parsed.problems.map(p => `${p.line ? `line ${p.line}: ` : ''}${p.message}`).join('; ')}.`, 'Nothing was written. Fix the file and run the import again.');
         desired = parsed.rules;
         message = `access: import folder rules`;

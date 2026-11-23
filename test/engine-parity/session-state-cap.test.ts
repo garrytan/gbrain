@@ -5,17 +5,16 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: every engine arm keeps the same rows of each (source_id, client_id) lane at a small cap, including
- *    rows that tie on updated_at because one transaction wrote them. Pinned as it is on master: the database sort
- *    breaks a tie over the rows' heap order, so the kept rows of a one-transaction burst depend on insert order.
- *  - Regression: an engine that caps by another order, or breaks ties another way, drops sessions Postgres keeps, and
- *    a session whose cursor is dropped re-delivers its whole delta.
+ *    rows that tie on updated_at because one transaction wrote them. The rank is a total order, updated_at DESC
+ *    then session_id COLLATE "C" (bytes), so among tied rows the lowest session_id bytes are kept, whatever the
+ *    insert order, the rewrites or the heap state.
+ *  - Regression: an engine that caps by another order, or breaks ties another way (the heap order the sort used to
+ *    fall back on), drops sessions another arm keeps, and a session whose cursor is dropped re-delivers its delta.
  *  - Why existing coverage misses it: test/session-state-gc.test.ts runs on PGLite only, with distinct updated_at.
  *  - Seam: the members on the engine handle; rows written in one `engine.transaction` share one updated_at. No
  *    timestamp the engine generates is compared.
- *  - Own file: the heap keeps insert order only while no pruned line pointer is free for reuse. A reset deletes
- *    rows but keeps the table, and the in-place rewrites the other session-state cases make leave free line pointers
- *    that a later burst fills out of order. Each file gets a new PGLite brain and a new Postgres database, and these
- *    cases only insert until the last two, so the heap order stays the insert order.
+ *  - Heap state: the tie cases write in many insert orders, and one case rewrites rows and caps before a burst, so
+ *    the burst fills freed heap space out of insert order. The kept rows must not change with any of that.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -54,26 +53,27 @@ const twoLanes = (n: number) =>
   Array.from({ length: n }, (_, i) => [i % 2 ? 'c' : 'd', `m${String((i * 17) % n).padStart(2, '0')}`] as const);
 
 describe('engine parity: session state row cap', () => {
-  // Measured on PGLite and Postgres 17. The heap order is the insert order of the burst: see the header for why these
-  // cases have their own file.
+  // Tied rows rank by session_id bytes, so the insert order of the burst does not change which rows are kept.
   const ties: Array<[string, ReadonlyArray<readonly [string, string]>, number, string[]]> = [
     ['ascending', oneLane(['s1', 's2', 's3', 's4', 's5']), 2, ['c/s1', 'c/s2']],
-    ['descending', oneLane(['s5', 's4', 's3', 's2', 's1']), 2, ['c/s4', 'c/s5']],
-    ['scrambled', oneLane(['s3', 's1', 's5', 's2', 's4']), 2, ['c/s1', 'c/s3']],
+    ['descending', oneLane(['s5', 's4', 's3', 's2', 's1']), 2, ['c/s1', 'c/s2']],
+    ['scrambled', oneLane(['s3', 's1', 's5', 's2', 's4']), 2, ['c/s1', 'c/s2']],
     ['twelve rows', oneLane(['k07', 'k03', 'k11', 'k01', 'k09', 'k12', 'k05', 'k02', 'k10', 'k04', 'k08', 'k06']), 5,
-      ['c/k01', 'c/k03', 'c/k07', 'c/k09', 'c/k11']],
-    ['two lanes of 6', twoLanes(6), 1, ['c/m05', 'd/m00']],
-    ['two lanes of 7', twoLanes(7), 1, ['c/m02', 'd/m00']],
-    ['two lanes of 8', twoLanes(8), 2, ['c/m01', 'c/m05', 'd/m02', 'd/m04']],
-    ['two lanes of 10', twoLanes(10), 2, ['c/m03', 'c/m07', 'd/m02', 'd/m06']],
+      ['c/k01', 'c/k02', 'c/k03', 'c/k04', 'c/k05']],
+    ['two lanes of 6', twoLanes(6), 1, ['c/m01', 'd/m00']],
+    ['two lanes of 7', twoLanes(7), 1, ['c/m01', 'd/m00']],
+    ['two lanes of 8', twoLanes(8), 2, ['c/m01', 'c/m03', 'd/m00', 'd/m02']],
+    ['two lanes of 10', twoLanes(10), 2, ['c/m01', 'c/m03', 'd/m00', 'd/m02']],
     ['two lanes of 40', twoLanes(40), 10, [
-      'c/m05', 'c/m11', 'c/m13', 'c/m19', 'c/m21', 'c/m25', 'c/m27', 'c/m31', 'c/m37', 'c/m39',
-      'd/m04', 'd/m10', 'd/m16', 'd/m20', 'd/m22', 'd/m26', 'd/m28', 'd/m32', 'd/m34', 'd/m38',
+      'c/m01', 'c/m03', 'c/m05', 'c/m07', 'c/m09', 'c/m11', 'c/m13', 'c/m15', 'c/m17', 'c/m19',
+      'd/m00', 'd/m02', 'd/m04', 'd/m06', 'd/m08', 'd/m10', 'd/m12', 'd/m14', 'd/m16', 'd/m18',
     ]],
+    // Bytes, not a locale: 'S2' (0x53) sorts before 's1' (0x73), and a prefix before a longer id.
+    ['bytes, not a locale', oneLane(['s1', 'S2', 's', 's10']), 2, ['c/S2', 'c/s']],
   ];
   for (const [name, rows, cap, expected] of ties) {
     parityTest(
-      `capSessionStatePerClient breaks a tie on equal updated_at as the Postgres sort does: ${name}`,
+      `capSessionStatePerClient breaks a tie on equal updated_at by session_id bytes: ${name}`,
       { methods: ['upsertSessionState', 'transaction', 'capSessionStatePerClient', 'readSessionCursor'] },
       async (engine) => {
         await burst(engine, 'default', rows, cap);
@@ -85,13 +85,13 @@ describe('engine parity: session state row cap', () => {
   }
 
   parityTest(
-    'capSessionStatePerClient ranks rows rewritten in one transaction in the order of the rewrite',
+    'capSessionStatePerClient ranks rows rewritten in one transaction by session_id bytes, not rewrite order',
     { methods: ['upsertSessionState', 'transaction', 'capSessionStatePerClient', 'readSessionCursor'] },
     async (engine) => {
       await burst(engine, 'default', oneLane(['s1', 's2', 's3', 's4', 's5']), 5);
       await burst(engine, 'default', oneLane(['s5', 's3', 's1', 's4', 's2']), 2);
       const left = await kept(engine, 'default', oneLane(['s1', 's2', 's3', 's4', 's5']));
-      expect(left).toEqual(['c/s3', 'c/s5']);
+      expect(left).toEqual(['c/s1', 'c/s2']);
       return left;
     },
   );
@@ -119,6 +119,35 @@ describe('engine parity: session state row cap', () => {
       };
       expect(lanes).toEqual({ c: ['c/s1', 'c/s4'], d: ['d/s3', 'd/s4'], other: true });
       return lanes;
+    },
+  );
+
+  parityTest(
+    'capSessionStatePerClient breaks a tie by session_id bytes after rewrites and a cap free heap space',
+    { methods: ['upsertSessionState', 'transaction', 'capSessionStatePerClient', 'readSessionCursor'] },
+    async (engine) => {
+      // Rows of about 1.5 KB, so a few fill a heap page and the rewrites and the cap leave space a later burst reuses.
+      const big = (tag: string): SessionStateWrite => ({
+        ...KEEP, replaceStanding: true,
+        standingEntities: Array.from({ length: 60 }, (_, i) => `people/${tag}-${String(i).padStart(3, '0')}-example`),
+      });
+      await engine.transaction(async (tx) => {
+        for (const s of ['a1', 'a2', 'a3', 'a4', 'a5', 'a6']) await tx.upsertSessionState('default', 'c', s, big(s));
+      });
+      for (const s of ['a2', 'a4', 'a6']) {
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        await engine.transaction(async (tx) => { await tx.upsertSessionState('default', 'c', s, big(`${s}x`)); });
+      }
+      await engine.capSessionStatePerClient(3);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      const burst = ['b5', 'b3', 'b1', 'b4', 'b2'];
+      await engine.transaction(async (tx) => {
+        for (const s of burst) await tx.upsertSessionState('default', 'c', s, big(s));
+      });
+      await engine.capSessionStatePerClient(2);
+      const left = await kept(engine, 'default', oneLane(['a1', 'a2', 'a3', 'a4', 'a5', 'a6', ...burst]));
+      expect(left).toEqual(['c/b1', 'c/b2']);
+      return left;
     },
   );
 });

@@ -114,6 +114,19 @@ describe('classifyTerminal', () => {
     expect(classifyTerminal({ ...base, error_code: 'writer_coordinator_required', error_detail: { origin: 'database_guard', sqlstate: 'P0001' } }))
       .toMatchObject({ category: 'writer_guard', defect: true });
   });
+
+  // Ember ruling B: a capability refusal repeats on every attempt, so it is its own category (needs an engine upgrade),
+  // a config fault the user resolves, never a content refusal the caller can rewrite.
+  test('engine_capability_missing is needs_engine_upgrade: config, upgrade, needs a human, warns as an unresolved class', () => {
+    const verdict = classifyTerminal({ ...base, error_code: 'engine_capability_missing',
+      error_detail: { origin: 'engine_capability', capability: 'raw_sql', stage: 'publication' } })!;
+    expect(verdict).toMatchObject({ category: 'needs_engine_upgrade', code: 'engine_capability_missing', origin: 'engine_capability',
+      public_category: 'config', safe_actions: ['upgrade'], needs_human: true, defect: true });
+    expect(verdict.human_reason).toContain('raw_sql');
+    expect(verdict.action.user_message).toContain('pglite or postgres');
+    // A compacted receipt (detail gone) still routes on its code.
+    expect(classifyTerminal({ ...base, error_code: 'engine_capability_missing', compacted: true })!.category).toBe('needs_engine_upgrade');
+  });
 });
 
 const SOURCE = 'tf-a';
@@ -202,6 +215,19 @@ for (const kind of testBackends()) describe(`the aggregate, doctor and the drill
     const defect = (await terminalFailuresCheck(engine))!;
     expect(defect.status).toBe('warn');
     expect(defect.message).toContain('owner_exception/storage_error ×1');
+  });
+
+  test('ruling B: doctor warns on a write the engine refused for a missing capability and names needs_engine_upgrade', async () => {
+    await seed({ slug: 'notes/rust', state: 'failed', code: 'engine_capability_missing',
+      detail: { origin: 'engine_capability', capability: 'raw_sql', stage: 'publication' }, hoursAgo: 100 });
+    const check = (await terminalFailuresCheck(engine))!;
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain(`needs_engine_upgrade/engine_capability_missing ×1 on ${SOURCE}`);
+    // Not labelled a gbrain defect: the fix is the user's upgrade, named in the message.
+    expect(check.message).toContain('need an engine upgrade');
+    expect(check.message).toContain('(needs an engine upgrade)');
+    expect(check.message).not.toContain('gbrain defect');
+    expect(check.message).toContain("The brain's engine does not serve a capability this write needs");
   });
 
   test('#7146: doctor ranks the rows: blocking with what it blocks and its fix, then unresolved groups with drill-downs, then historical', async () => {
@@ -503,9 +529,8 @@ for (const kind of testBackends()) describe(`the aggregate, doctor and the drill
   test('a read past its statement deadline is unknown, and doctor says health is unknown', async () => {
     await seed({ slug: 'notes/x', state: 'failed', code: 'storage_error', compacted: true });
     const slow = new Proxy(engine, { get(target, key) {
-      if (key === 'executeRaw') return async (sql: string, params?: unknown[], opts?: unknown) => {
-        if (sql.includes('GROUPING SETS') || sql.includes('LEFT JOIN LATERAL')) throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
-        return target.executeRaw(sql, params, opts as never);
+      if (key === 'readTerminalFailureGroups' || key === 'listTerminalFailureBatch') return async () => {
+        throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
       };
       return Reflect.get(target, key);
     } }) as BrainEngine;

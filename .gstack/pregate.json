@@ -15,6 +15,9 @@
     "scripts/serial-files.tsv": [
       "test/scripts/serial-files.test.ts"
     ],
+    "test/engine-parity/rust-tally.tsv": [
+      "test/rust-parity-tally.test.ts"
+    ],
     "docs/contracts/qm-memory-provider/v1.json": [
       "test/qm-memory-contract.test.ts"
     ],
@@ -113,7 +116,12 @@
     "rust/deny.toml": ["rust/crates/gbrain-napi/src/pool.rs"],
     "rust/rust-toolchain.toml": ["rust/crates/gbrain-napi/src/pool.rs"],
     "rust/scripts/**": ["rust/smoke/smoke.test.ts"],
-    "rust/smoke/**": ["rust/smoke/smoke.test.ts"]
+    "rust/smoke/**": ["rust/smoke/smoke.test.ts"],
+    "rust/bench/baseline/**": ["rust/bench/baseline/baseline.test.ts"],
+    "rust/bench/corpus/**": ["rust/bench/baseline/baseline.test.ts"],
+    "rust/bench/Cargo.lock": ["rust/bench/tests/sim_kill.rs"],
+    "rust/bench/.gitignore": ["rust/bench/tests/sim_kill.rs"],
+    "rust/crates/gbrain-store/tests/fixtures/**": ["rust/crates/gbrain-store/tests/graph_parity.rs"]
   },
   "guards": [
     {
@@ -178,13 +186,15 @@
       "workflow": "test.yml",
       "events": ["workflow_dispatch", "push"],
       "jobs": ["full-suite"],
-      "artifact": "full-suite-tree"
+      "artifact": "full-suite-tree",
+      "os": "Linux"
     },
     "e2e": {
       "workflow": "e2e.yml",
       "events": ["workflow_dispatch", "push"],
       "jobs": ["e2e-full-suite"],
-      "artifact": "e2e-full-suite-tree"
+      "artifact": "e2e-full-suite-tree",
+      "os": "Linux"
     },
     "native-locks.yml/native": {
       "workflow": "test.yml",

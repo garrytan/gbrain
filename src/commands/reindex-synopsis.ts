@@ -129,7 +129,8 @@ export async function runReindexSynopsis(engine: BrainEngine, args: string[], op
     return emit({ mode: 'not_applicable', reason, plan });
   }
   const coverage = await readSynopsisCoverage(engine, { config: plan.config, ...(sourceId ? { sourceIds: [sourceId] } : {}) });
-  const tierSource = plan.config.global_tier === 'per_chunk_synopsis' ? 'search mode' : `source override (${plan.config.synopsis_sources.join(', ')})`;
+  const tierSource = plan.config.global_tier === 'per_chunk_synopsis' ? 'search mode'
+    : plan.config.synopsis_sources.length ? `source override (${plan.config.synopsis_sources.join(', ')})` : 'page frontmatter';
   say(`[reindex --synopsis] Configured tier: per_chunk_synopsis (${tierSource}).`);
   say(`  ${formatSynopsisCoverageLine(coverage)}`);
   if (plan.pages.length === 0) {

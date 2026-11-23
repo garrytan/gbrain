@@ -18,7 +18,7 @@ import { sharedTokenNotice } from '../src/core/grants/shared-exposure.ts';
 import { unscopedMultiUserTokenEntry } from '../src/commands/doctor/checks/unscoped-multi-user-token.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { runCli } from './helpers/cli-spawn.ts';
+import { runCli, envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
 
 const CODE = 'unscoped_multi_user_token';
@@ -128,7 +128,7 @@ describe('install routes on a one-person brain', () => {
     for (const [i, title] of ['#alpha-team, Jul 2', '#beta-team, Jul 3'].entries()) {
       const file = join(b.root, 'p' + i + '.md');
       writeFileSync(file, page(title));
-      const put = Bun.spawnSync(['sh', '-c', '\'' + b.bin + '\' put chats/p' + i + ' < \'' + file + '\''], { env: Object.fromEntries(Object.entries({ ...process.env, ...b.env }).filter(([, v]) => v !== undefined)) as Record<string, string> });
+      const put = Bun.spawnSync(['sh', '-c', '\'' + b.bin + '\' put chats/p' + i + ' < \'' + file + '\''], { env: Object.fromEntries(Object.entries({ ...envWithoutDatabaseUrl(), ...b.env }).filter(([, v]) => v !== undefined)) as Record<string, string> });
       expect(put.exitCode).toBe(0);
     }
     const token = await runCli(['auth', 'create', 'owner-bot'], { env: b.env, cwd: b.root });

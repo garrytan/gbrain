@@ -1,7 +1,7 @@
 //! Jobs: the grant members of `src/core/engine-sql/client-grants.ts` over `oauth_clients`, the grant audit and the
 //! source config (rust/docs/store/oauth-clients.md).
 
-use gbrain_store::jobs::{BindingWrite, ClientInsert, GrantPersist, RegisterAudit};
+use gbrain_store::jobs::{ClientInsert, GrantPersist, RegisterAudit};
 use napi::Env;
 use napi::bindgen_prelude::Object;
 use napi_derive::napi;
@@ -101,75 +101,5 @@ impl Brain {
             let config: Map<String, Value> = required(config, "replaceSourceConfig config")?;
             s.replace_source_config(&id, &config)
         })
-    }
-
-    /// `writeClientBinding(clientId, binding)`: whether the client exists.
-    #[napi]
-    pub fn write_client_binding<'env>(
-        &self,
-        env: &'env Env,
-        client_id: String,
-        binding: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let binding: BindingWrite = required(binding, "writeClientBinding binding")?;
-            s.write_client_binding(&client_id, &binding)
-        })
-    }
-
-    /// `writeClientReadsUnscoped(clientId, on)`: whether the client exists.
-    #[napi]
-    pub fn write_client_reads_unscoped<'env>(
-        &self,
-        env: &'env Env,
-        client_id: String,
-        on: bool,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.write_client_reads_unscoped(&client_id, on))
-    }
-
-    /// `readAccessTokenBinding(id)`: the token's binding columns, or null.
-    #[napi]
-    pub fn read_access_token_binding<'env>(
-        &self,
-        env: &'env Env,
-        id: String,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.read_access_token_binding(&id))
-    }
-
-    /// `writeTokenBinding(id, binding)`: whether the token exists.
-    #[napi]
-    pub fn write_token_binding<'env>(
-        &self,
-        env: &'env Env,
-        id: String,
-        binding: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let binding: BindingWrite = required(binding, "writeTokenBinding binding")?;
-            s.write_token_binding(&id, &binding)
-        })
-    }
-
-    /// `writeTokenReadsUnscoped(id, on)`: whether the token exists.
-    #[napi]
-    pub fn write_token_reads_unscoped<'env>(
-        &self,
-        env: &'env Env,
-        id: String,
-        on: bool,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.write_token_reads_unscoped(&id, on))
-    }
-
-    /// `readLiveTokenMember(id)`: the member a token not revoked is bound to, or null.
-    #[napi]
-    pub fn read_live_token_member<'env>(
-        &self,
-        env: &'env Env,
-        id: String,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.read_live_token_member(&id))
     }
 }

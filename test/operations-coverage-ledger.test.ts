@@ -42,6 +42,7 @@ const LEDGER: Record<string, string> = {
   storage_find: 'test/storage-manifest.test.ts',
   storage_get: 'test/storage-manifest.test.ts',
   storage_list: 'test/storage-manifest.test.ts',
+  reveal_secret: 'test/secret-store.test.ts',
   storage_register: 'test/storage-manifest.test.ts',
   storage_update: 'test/storage-manifest.test.ts',
   delete_page: 'test/pages-source-scoping-4329.test.ts',

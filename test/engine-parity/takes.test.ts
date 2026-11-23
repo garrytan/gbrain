@@ -614,6 +614,66 @@ describe('engine parity: takes', () => {
       return answers;
     },
   );
+
+  parityTest(
+    'a claim edited through the batch upsert drops out of a vector search that ran before the edit',
+    { methods: ['putPage', 'addTakesBatch', 'listTakes', 'updateTakeEmbeddings', 'searchTakesVector'] },
+    async (engine) => {
+      const a = await page(engine, 'people/alice-example');
+      await engine.addTakesBatch([
+        take(a.id, 1, 'axis zero take', { holder: 'garry', weight: 0.5 }),
+        take(a.id, 2, 'axis one take', { holder: 'alice', weight: 0.5 }),
+      ]);
+      const ids = await takeIds(engine, a.id);
+      expect(await engine.updateTakeEmbeddings([
+        { take_id: ids.get('axis zero take')!, embedding: basisEmbedding(0), claim: 'axis zero take', model: 'embed-m1' },
+        { take_id: ids.get('axis one take')!, embedding: basisEmbedding(1), claim: 'axis one take', model: 'embed-m1' },
+      ])).toBe(2);
+      const query = new Float32Array(1536);
+      query[0] = 1;
+      query[1] = 0.1;
+      const claims = async () => (await engine.searchTakesVector(query)).map((h) => h.claim);
+      // The first search warms whatever the engine keeps between reads.
+      const before = await claims();
+      // The claim changes; Postgres nulls the take's embedding in the same upsert, so the take has no vector to rank.
+      await engine.addTakesBatch([take(a.id, 1, 'axis zero take, reworded', { holder: 'garry', weight: 0.5 })]);
+      const after = await claims();
+      expect(before).toEqual(['axis zero take', 'axis one take']);
+      expect(after).toEqual(['axis one take']);
+      return { before, after };
+    },
+  );
+
+  parityTest(
+    'inside a transaction a take vector read answers, and a rolled-back nested transaction takes its vectors out of the search',
+    { methods: ['putPage', 'addTakesBatch', 'listTakes', 'updateTakeEmbeddings', 'searchTakesVector', 'hasStoredVectors', 'transaction'] },
+    async (engine) => {
+      const a = await page(engine, 'people/alice-example');
+      await engine.addTakesBatch([take(a.id, 1, 'one take', { holder: 'garry', weight: 0.5 })]);
+      const id = (await takeIds(engine, a.id)).get('one take')!;
+      const embed = (on: BrainEngine, axis: number) =>
+        on.updateTakeEmbeddings([{ take_id: id, embedding: basisEmbedding(axis), claim: 'one take', model: 'embed-m1' }]);
+      const best = async (on: BrainEngine, axis: number) => round((await on.searchTakesVector(basisEmbedding(axis)))[0]?.score);
+      await embed(engine, 2);
+      const result = await engine.transaction(async (tx) => {
+        // A read that scans the take vectors and reads each take, with one take vector stored.
+        const stored = await tx.hasStoredVectors('takes');
+        // A nested transaction (a savepoint) writes another vector, searches it, then rolls back.
+        let seenInside = null as number | null | undefined;
+        try {
+          await tx.transaction(async (sp) => {
+            await embed(sp, 0);
+            seenInside = await best(sp, 0);
+            throw new Error('roll the savepoint back');
+          });
+        } catch { /* the savepoint rolled back */ }
+        await embed(tx, 1);
+        return { stored, seenInside, afterRollback: await best(tx, 1), rolledBack: await best(tx, 0) };
+      });
+      expect(result).toEqual({ stored: true, seenInside: 1, afterRollback: 1, rolledBack: 0 });
+      return result;
+    },
+  );
 });
 
 describe('engine parity: contradiction probe runs and judge cache', () => {
@@ -799,6 +859,29 @@ describe('engine parity: takes reads (group D)', () => {
       expect(withTakes).toEqual([]);
       expect(unknown).toEqual([]);
       return { withTakes, unknown };
+    },
+  );
+
+  parityTest(
+    'listHeldFenceTakeRows returns the page takes by row number while its take fence generation is held fence_absent',
+    { methods: ['putPage', 'addTakesBatch', 'recordHeldGenerationRow', 'listHeldFenceTakeRows'] },
+    async (engine) => {
+      const a = await page(engine, 'notes/held-b');
+      await engine.addTakesBatch([take(a.id, 2, 'second', { active: false, weight: 0.25, since_date: '2026-01' }), take(a.id, 1, 'first', { source: 'a note' })]);
+      const spec = { sourceId: 'default', kind: 'take_fence', ownerKey: 'page:notes/held-b' };
+      const before = await engine.listHeldFenceTakeRows({ ...spec, pageId: a.id });
+      await engine.transaction(tx => tx.recordHeldGenerationRow(spec, { holdId: 'h-fence', runId: null, inputPin: 'h-fence', inputSize: 1, setHash: 'h',
+        reason: 'fence_absent', context: '{}', proposal: null, proposalBytes: 0 }));
+      const rows = await engine.listHeldFenceTakeRows({ ...spec, pageId: a.id });
+      const otherReason = { ...spec, ownerKey: 'page:notes/held-c' };
+      await engine.transaction(tx => tx.recordHeldGenerationRow(otherReason, { holdId: 'h-proof', runId: null, inputPin: 'h-proof', inputSize: 1, setHash: 'h',
+        reason: 'no_proof', context: '{}', proposal: null, proposalBytes: 0 }));
+      const noProof = await engine.listHeldFenceTakeRows({ ...otherReason, pageId: a.id });
+      const out = { before, rows: rows.map(r => ({ ...r, weight: Number(r.weight) })), noProof };
+      expect(out.before).toEqual([]);
+      expect(out.rows.map(r => [r.row_num, r.claim, r.active, r.weight, r.since_date, r.source])).toEqual([[1, 'first', true, 0.5, null, 'a note'], [2, 'second', false, 0.25, '2026-01', null]]);
+      expect(out.noProof).toEqual([]);
+      return out;
     },
   );
 

@@ -1,11 +1,10 @@
-//! The `access_tokens` members (`insertAccessToken`, `findActiveAccessTokens`, `setAccessTokenMinTrust`). What the parity
+//! The `access_tokens` members (`insertAccessToken`, `findActiveAccessTokens`, `setAccessTokenMinTrust`, `readLiveAccessTokenScope`). What the parity
 //! file cannot see lives here: the stored message of each refusal (the TypeScript member turns it into SQLSTATE 23514 /
 //! 23505 and the constraint name), that a refused write leaves the table as it was, and the generated ids.
 
 mod memory_env;
 
-use gbrain_store::access_members::AccessMemberInsert;
-use gbrain_store::jobs::{BindingWrite, TokenInsert};
+use gbrain_store::jobs::TokenInsert;
 use memory_env::{Brain, brain};
 use serde_json::{Value, json};
 
@@ -122,6 +121,32 @@ fn a_floor_is_set_cleared_and_refused_without_touching_the_row() {
             .unwrap()
     );
 }
+
+#[test]
+fn the_name_read_answers_each_asked_token_once_by_id_a_revoked_one_included() {
+    let b = brain("tokens-names");
+    let live = insert(&b, token("live", "h1", json!({}))).unwrap();
+    let gone = insert(
+        &b,
+        token(
+            "gone",
+            "h2",
+            json!({ "revoked_at": "2026-01-02T03:04:05Z" }),
+        ),
+    )
+    .unwrap();
+    insert(&b, token("unasked", "h3", json!({}))).unwrap();
+    let ids = [&live, &gone, &live, &"not-a-token".to_string()].map(|s| s.to_string());
+    let mut want = vec![
+        json!({ "id": live, "name": "live" }),
+        json!({ "id": gone, "name": "gone" }),
+    ];
+    want.sort_by(|a, c| a["id"].as_str().cmp(&c["id"].as_str()));
+    assert_eq!(b.read_access_token_names(&ids).unwrap(), Value::Array(want));
+    assert_eq!(b.read_access_token_names(&[]).unwrap(), json!([]));
+}
+
+const MINUTE_US: i64 = 60_000_000;
 
 #[test]
 fn the_list_is_newest_first_with_the_columns_not_kept_at_their_defaults_and_no_hash() {
@@ -283,7 +308,43 @@ fn the_bearer_read_finds_the_active_token_by_hash_without_the_hash_and_not_after
     );
 }
 
-const MINUTE_US: i64 = 60_000_000;
+#[test]
+fn the_job_principal_read_finds_the_token_by_id_in_any_case_revoked_or_not_without_the_hash() {
+    let b = brain("tokens-by-id");
+    let id = insert(
+        &b,
+        token(
+            "legacy",
+            "hash-l",
+            json!({ "scopes": ["admin"], "source_grant": null }),
+        ),
+    )
+    .unwrap();
+    insert(&b, token("other", "hash-o", json!({}))).unwrap();
+    let row = b
+        .read_access_token(&id.to_ascii_uppercase())
+        .unwrap()
+        .unwrap();
+    assert_eq!(row["id"], json!(id));
+    assert_eq!(row["name"], json!("legacy"));
+    assert_eq!(row["scopes"], json!(["admin"]));
+    assert_eq!(row["permissions"], json!({ "source_id": "wiki" }));
+    assert_eq!(row["source_grant"], Value::Null);
+    assert_eq!(row["revoked_at"], Value::Null);
+    assert!(row.get("token_hash").is_none());
+    assert_eq!(
+        b.read_access_token("00000000-0000-4000-8000-0000000000c9")
+            .unwrap(),
+        None
+    );
+    b.revoke_access_token(&id).unwrap();
+    let revoked = b.read_access_token(&id).unwrap().unwrap();
+    assert_eq!(revoked["name"], json!("legacy"));
+    assert!(
+        revoked["revoked_at"].is_string(),
+        "a revoked token is read with its revoked_at"
+    );
+}
 
 #[test]
 fn the_last_use_stamp_is_null_until_a_check_and_waits_a_minute_before_it_moves() {
@@ -397,125 +458,308 @@ fn a_legacy_token_converts_once_with_one_more_revision_and_a_bad_kind_leaves_it(
     );
 }
 
+fn locked(b: &Brain, id: Option<&str>, name: Option<&str>) -> Vec<Value> {
+    b.lock_active_access_tokens(id, name)
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .clone()
+}
+
 #[test]
-fn a_token_binding_is_kept_on_the_row_every_read_shows_it_and_a_revoke_ends_only_the_live_member_read()
+fn the_rescope_read_finds_active_tokens_by_id_in_any_case_or_exact_name_oldest_first_without_the_hash()
  {
-    let b = brain("tokens-binding");
-    let id = insert(&b, token("bound", "hash-b", json!({}))).unwrap();
-    let other = insert(&b, token("other", "hash-o", json!({}))).unwrap();
-    let before = b.read_access_token_binding(&id).unwrap().unwrap();
-    assert_eq!(before["member_id"], Value::Null);
-    assert_eq!(before["reads_unscoped"], Value::Null);
-    assert_eq!(b.read_access_token_binding("missing").unwrap(), None);
-
-    let binding: BindingWrite = serde_json::from_value(json!({
-        "member": "alice-example", "may_act_for": ["alice-example"], "attest_actor": "qm",
-        "attest_ops": ["memory_write"], "attest_sources": ["scope-a"], "attest_read": "scope",
-    }))
+    let b = brain("tokens-lock");
+    let late = insert(
+        &b,
+        token(
+            "twin",
+            "h-late",
+            json!({ "created_at": "2026-02-02T00:00:00Z" }),
+        ),
+    )
     .unwrap();
-    assert!(!b.write_token_binding("missing", &binding).unwrap());
-    assert!(b.write_token_binding(&id, &binding).unwrap());
-    let after = b.read_access_token_binding(&id).unwrap().unwrap();
-    assert_eq!(after["member_id"], "alice-example");
-    assert_eq!(after["may_act_for"], json!(["alice-example"]));
-    assert_eq!(after["attest_sources"], json!(["scope-a"]));
-    assert_eq!(after["attest_read"], "scope");
-    assert_eq!(
-        b.read_access_token_binding(&other).unwrap().unwrap()["member_id"],
-        Value::Null,
-        "another token is untouched"
-    );
-
-    let row = b
-        .read_active_access_token_by_hash("hash-b")
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        row["member_id"], "alice-example",
-        "the bearer read carries the member"
-    );
-    assert_eq!(row["attest_actor"], "qm");
-    let listed = b.list_access_tokens().unwrap();
-    let listed: Vec<_> = listed
-        .as_array()
-        .unwrap()
+    let early = insert(
+        &b,
+        token(
+            "twin",
+            "h-early",
+            json!({ "created_at": "2026-01-01T00:00:00Z" }),
+        ),
+    )
+    .unwrap();
+    let gone = insert(
+        &b,
+        token(
+            "solo",
+            "h-gone",
+            json!({ "revoked_at": "2026-01-02T03:04:05Z" }),
+        ),
+    )
+    .unwrap();
+    let ids: Vec<Value> = locked(&b, None, Some("twin"))
         .iter()
-        .filter(|r| r["id"] == id.as_str())
+        .map(|r| r["id"].clone())
         .collect();
-    assert_eq!(
-        listed[0]["member_id"], "alice-example",
-        "the listing carries the member"
-    );
-    let live = b.read_live_access_token_rows().unwrap();
-    let live = live
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|r| r["id"] == id.as_str())
-        .unwrap()
-        .clone();
-    assert_eq!(live["member_id"], "alice-example");
-    assert_eq!(live["may_act_for"], json!(["alice-example"]));
-
-    assert!(b.write_token_reads_unscoped(&id, true).unwrap());
-    assert!(!b.read_access_token_binding(&id).unwrap().unwrap()["reads_unscoped"].is_null());
-    assert!(b.write_token_reads_unscoped(&id, false).unwrap());
-    let cleared = b.read_access_token_binding(&id).unwrap().unwrap();
-    assert_eq!(cleared["reads_unscoped"], Value::Null);
-    assert_eq!(
-        cleared["member_id"], "alice-example",
-        "the binding is untouched"
-    );
-    assert!(!b.write_token_reads_unscoped("missing", true).unwrap());
-
-    assert_eq!(
-        b.read_live_token_member(&id).unwrap().as_deref(),
-        Some("alice-example")
-    );
-    assert_eq!(
-        b.read_live_token_member(&other).unwrap(),
-        None,
-        "an unbound token names no member"
-    );
-    assert_eq!(b.read_live_token_member("missing").unwrap(), None);
-    b.revoke_access_token(&id).unwrap();
-    assert_eq!(
-        b.read_live_token_member(&id).unwrap(),
-        None,
-        "a revoked token names no member"
+    assert_eq!(ids, vec![json!(early), json!(late)], "oldest first");
+    let by_id = locked(&b, Some(&late.to_ascii_uppercase()), None);
+    assert_eq!(by_id.len(), 1);
+    assert_eq!(by_id[0]["name"], json!("twin"));
+    assert_eq!(by_id[0]["private_pages"], json!("none"));
+    assert!(by_id[0].get("token_hash").is_none());
+    assert!(
+        locked(&b, None, Some("Twin")).is_empty(),
+        "the name is exact"
     );
     assert!(
-        b.read_access_token_binding(&id).unwrap().is_some(),
-        "the binding is still read under a lock after a revoke"
+        locked(&b, None, Some("solo")).is_empty(),
+        "a revoked token is left out"
+    );
+    assert!(locked(&b, Some(&gone), None).is_empty());
+    assert!(locked(&b, Some("00000000-0000-4000-8000-0000000000c9"), None).is_empty());
+    assert!(b.lock_active_access_tokens(None, None).is_err());
+    assert!(
+        b.lock_active_access_tokens(Some(&late), Some("twin"))
+            .is_err()
     );
 }
 
 #[test]
-fn a_member_insert_binds_its_token_in_the_same_write_and_a_refused_insert_binds_nothing() {
-    let b = brain("tokens-member-bind");
-    let id = insert(&b, token("bound", "hash-m", json!({}))).unwrap();
-    let spec = |member: &str, token: &str| -> AccessMemberInsert {
-        serde_json::from_value(json!({ "id": member, "groups": [], "bindTokenId": token })).unwrap()
+fn a_grant_write_sets_the_columns_scopes_and_permissions_with_one_more_revision_and_a_bad_kind_leaves_the_row()
+ {
+    use gbrain_store::jobs::TokenGrantColumns;
+    let b = brain("tokens-grant-write");
+    let id = insert(&b, token("laptop", "hash-g", json!({}))).unwrap();
+    let columns = |kind: &str| -> TokenGrantColumns {
+        serde_json::from_value(json!({
+            "source_grant": kind, "source_id": "default", "federated_read": ["default", "work"],
+            "allowed_operations": ["query"], "takes_holders": ["world"],
+        }))
+        .unwrap()
     };
-    b.insert_access_member(&spec("alice-example", &id)).unwrap();
-    assert_eq!(
-        b.read_live_token_member(&id).unwrap().as_deref(),
-        Some("alice-example")
-    );
-    b.insert_access_member(&spec("bob-example", "no-such-token"))
+    let before = b
+        .read_active_access_token_by_hash("hash-g")
+        .unwrap()
         .unwrap();
-    assert!(
-        b.insert_access_member(&spec("alice-example", &id)).is_err(),
-        "a duplicate member is refused"
-    );
-    let other = insert(&b, token("other", "hash-p", json!({}))).unwrap();
-    assert!(
-        b.insert_access_member(&spec("alice-example", &other))
-            .is_err()
+    let revision = before["grant_revision"].as_i64().unwrap();
+    let refused = b
+        .write_access_token_grant(&id, &columns("everything"), None, json!({ "x": 1 }))
+        .expect_err("a source grant outside the list");
+    assert_eq!(refused.code, "constraint_violation");
+    assert_eq!(
+        refused.message,
+        "new row for relation \"access_tokens\" violates check constraint \"access_tokens_source_grant_check\""
     );
     assert_eq!(
-        b.read_live_token_member(&other).unwrap(),
+        b.read_active_access_token_by_hash("hash-g")
+            .unwrap()
+            .unwrap(),
+        before,
+        "a refused write leaves the row"
+    );
+
+    let written = b
+        .write_access_token_grant(
+            &id.to_ascii_uppercase(),
+            &columns("federated"),
+            None,
+            json!({ "keep": 1 }),
+        )
+        .unwrap();
+    assert_eq!(written, Some(revision as i32 + 1));
+    let row = b
+        .read_active_access_token_by_hash("hash-g")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row["source_grant"], json!("federated"));
+    assert_eq!(row["federated_read"], json!(["default", "work"]));
+    assert_eq!(row["allowed_operations"], json!(["query"]));
+    assert_eq!(row["takes_holders"], json!(["world"]));
+    assert_eq!(row["scopes"], json!(["read"]), "no scopes keeps them");
+    assert_eq!(row["permissions"], json!({ "keep": 1 }));
+
+    let written = b
+        .write_access_token_grant(
+            &id,
+            &columns("scalar"),
+            Some(vec!["read".into(), "write".into()]),
+            json!({}),
+        )
+        .unwrap();
+    assert_eq!(written, Some(revision as i32 + 2));
+    let row = b
+        .read_active_access_token_by_hash("hash-g")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row["scopes"], json!(["read", "write"]));
+    assert_eq!(
+        b.write_access_token_grant(
+            "00000000-0000-4000-8000-00000000dead",
+            &columns("default"),
+            None,
+            json!({})
+        )
+        .unwrap(),
         None,
-        "the refused insert left the other token unbound"
+        "an id no token has writes nothing"
+    );
+}
+
+#[test]
+fn the_private_grants_are_kept_read_back_and_refused_outside_the_two_values() {
+    let b = brain("tokens-private-grants");
+    let id = insert(&b, token("laptop", "hash-p", json!({}))).unwrap();
+    let row = || {
+        b.read_active_access_token_by_hash("hash-p")
+            .unwrap()
+            .unwrap()
+    };
+    assert_eq!(
+        (
+            row()["private_pages"].clone(),
+            row()["private_facts"].clone()
+        ),
+        (json!("none"), json!("none"))
+    );
+    b.write_access_token_private_grant(
+        &id.to_ascii_uppercase(),
+        "private_pages",
+        "granted_sources",
+    )
+    .unwrap();
+    b.write_access_token_private_grant(&id, "private_facts", "granted_sources")
+        .unwrap();
+    assert_eq!(row()["private_pages"], json!("granted_sources"));
+    assert_eq!(row()["private_facts"], json!("granted_sources"));
+    let grant = b.read_access_token_write_grant(&id).unwrap().unwrap();
+    assert_eq!(grant["private_pages"], json!("granted_sources"));
+    assert_eq!(grant["private_facts"], json!("granted_sources"));
+    let listed = b.lock_active_access_tokens(Some(&id), None).unwrap();
+    assert_eq!(listed[0]["private_pages"], json!("granted_sources"));
+
+    for (axis, constraint) in [
+        ("private_pages", "access_tokens_private_pages_check"),
+        ("private_facts", "access_tokens_private_facts_check"),
+    ] {
+        let refused = b
+            .write_access_token_private_grant(&id, axis, "everything")
+            .expect_err("a value outside the two");
+        assert_eq!(refused.code, "constraint_violation");
+        assert_eq!(
+            refused.message,
+            format!(
+                "new row for relation \"access_tokens\" violates check constraint \"{constraint}\""
+            )
+        );
+    }
+    assert_eq!(
+        row()["private_pages"],
+        json!("granted_sources"),
+        "a refused write leaves the row"
+    );
+    let other = b
+        .write_access_token_private_grant(&id, "scopes", "none")
+        .expect_err("another axis");
+    assert_eq!(other.code, "invalid_argument");
+    b.write_access_token_private_grant(
+        "00000000-0000-4000-8000-00000000dead",
+        "private_pages",
+        "none",
+    )
+    .unwrap();
+
+    b.write_access_token_private_grant(&id, "private_pages", "none")
+        .unwrap();
+    assert_eq!(row()["private_pages"], json!("none"));
+    assert_eq!(row()["private_facts"], json!("granted_sources"));
+}
+
+#[test]
+fn the_migration_read_finds_the_active_tokens_with_no_source_grant_oldest_first_without_the_hash() {
+    let b = brain("tokens-lock-legacy");
+    let late = insert(
+        &b,
+        token(
+            "late",
+            "h-late",
+            json!({ "source_grant": null, "created_at": "2026-02-02T00:00:00Z" }),
+        ),
+    )
+    .unwrap();
+    let early = insert(
+        &b,
+        token(
+            "early",
+            "h-early",
+            json!({ "source_grant": null, "created_at": "2026-01-01T00:00:00Z" }),
+        ),
+    )
+    .unwrap();
+    insert(&b, token("unified", "h-unified", json!({}))).unwrap();
+    insert(
+        &b,
+        token(
+            "gone",
+            "h-gone",
+            json!({ "source_grant": null, "revoked_at": "2026-01-02T03:04:05Z" }),
+        ),
+    )
+    .unwrap();
+    let rows = b.lock_legacy_access_tokens().unwrap();
+    let rows = rows.as_array().unwrap();
+    let ids: Vec<Value> = rows.iter().map(|r| r["id"].clone()).collect();
+    assert_eq!(
+        ids,
+        vec![json!(early), json!(late)],
+        "oldest first, the unified and revoked tokens left out"
+    );
+    assert_eq!(rows[0]["name"], json!("early"));
+    assert_eq!(rows[0]["source_grant"], Value::Null);
+    assert_eq!(rows[0]["permissions"], json!({ "source_id": "wiki" }));
+    assert!(rows[0].get("token_hash").is_none());
+}
+
+#[test]
+fn the_scope_read_answers_a_live_tokens_stored_opt_out_and_creation_time_and_null_for_a_revoked_or_missing_token()
+ {
+    use gbrain_store::jobs::CredentialKind;
+    let b = brain("tokens-scope");
+    let live = insert(&b, token("live", "h1", json!({}))).unwrap();
+    let gone = insert(
+        &b,
+        token(
+            "gone",
+            "h2",
+            json!({ "revoked_at": "2026-01-02T03:04:05Z" }),
+        ),
+    )
+    .unwrap();
+    let scope = b.read_live_access_token_scope(&live).unwrap();
+    assert_eq!(
+        scope["reads_unscoped"],
+        Value::Null,
+        "a minted token has not opted out"
+    );
+    let created = scope["created_at"].as_str().unwrap();
+    assert!(created.ends_with('Z') && created.len() == 27, "{created}");
+    b.write_credential_reads_unscoped(CredentialKind::Token, &live, true)
+        .unwrap();
+    let opted = b.read_live_access_token_scope(&live).unwrap();
+    let stamp = opted["reads_unscoped"]
+        .as_str()
+        .expect("the stored opt-out time");
+    assert!(stamp.ends_with('Z') && stamp.len() == 27, "{stamp}");
+    b.write_credential_reads_unscoped(CredentialKind::Token, &live, false)
+        .unwrap();
+    assert_eq!(
+        b.read_live_access_token_scope(&live).unwrap()["reads_unscoped"],
+        Value::Null,
+        "a cleared opt-out reads null again"
+    );
+    assert_eq!(b.read_live_access_token_scope(&gone).unwrap(), Value::Null);
+    assert_eq!(
+        b.read_live_access_token_scope("00000000-0000-4000-8000-000000000000")
+            .unwrap(),
+        Value::Null
     );
 }

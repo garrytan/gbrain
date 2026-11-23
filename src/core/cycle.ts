@@ -55,7 +55,7 @@ import { timeContainedPhase } from './cycle/phase-containment.ts';
 import { isManagedBrain } from './cycle/phase-table.ts';
 import { packGateSkip, resolvePackPhaseGate } from './cycle/pack-phase-gate.ts';
 import { managedPullWarning, type UpstreamRefresh } from './sync-upstream.ts';
-import { assertValidSourceId } from './source-id.ts';
+import { assertValidSourceId } from './source-id.ts'; import { isSyncDisabledConfig } from './sync-policy.ts';
 import { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/phase-scope.ts';
 import { acquireLeaseSet, maintenanceLockBusySkip, MAINTENANCE_LEASE_ID } from './cycle/lock-set.ts';
 import { assertEmbedNotStalled } from './embed-stall.ts'; import { embedBackfillFix } from './embed-consent.ts';
@@ -1202,15 +1202,11 @@ export async function resolveSourceForDir(
     // lands and doctor's cycle_freshness stays red on a healthy install) and
     // order deterministically so a duplicate registration of the same path
     // can't shadow the active source on whichever row the engine scans first.
-    // Ordering matches listAllSources/sources-ops for operator-output parity.
-    const rows = await engine.executeRaw<{ id: string }>(
-      `SELECT id FROM sources
-        WHERE local_path = $1 AND archived = false
-        ORDER BY (id = 'default') DESC, id
-        LIMIT 1`,
-      [brainDir],
-    );
-    if (rows[0]) return rows[0].id;
+    // listAllSources hides archived rows and lists `default` first, then ids in byte order on every engine (a
+    // Postgres with a linguistic locale included), so two live sources on one path resolve the same everywhere.
+    const live = (await engine.listAllSources()).filter((row) => row.local_path !== null);
+    const exact = live.find((row) => row.local_path === brainDir);
+    if (exact) return exact.id;
 
     // #2540: the exact match above compares two path SPELLINGS. `--dir` is
     // resolved via `resolve()` and `sources.local_path` stores the spelling
@@ -1224,8 +1220,7 @@ export async function resolveSourceForDir(
     //
     // Retry canonicalized on BOTH sides, so the match is symmetric regardless
     // of which side holds the link. Kept strictly as a miss-path fallback: the
-    // exact match stays a single indexed lookup, and the scan only pays for
-    // itself when it would otherwise return nothing. Registered paths are
+    // realpath calls only run when the exact match found nothing. Registered paths are
     // canonicalized here rather than at registration because storing a
     // canonical column would be a schema + backfill change; that is the
     // durable fix and is left as a follow-up.
@@ -1239,15 +1234,10 @@ export async function resolveSourceForDir(
     // already refuses to stamp them (writing last_full_cycle_at to an
     // archived source masks staleness when it is later restored), so an
     // archived alias must not win a path match either.
-    const candidates = await engine.executeRaw<{ id: string; local_path: string }>(
-      `SELECT id, local_path FROM sources
-        WHERE local_path IS NOT NULL AND archived = false
-        ORDER BY (id = 'default') DESC, id`,
-    );
     const matched: string[] = [];
-    for (const row of candidates) {
+    for (const row of live) {
       try {
-        if (isAbsolute(row.local_path) && realpathSync(row.local_path) === realDir) matched.push(row.id);
+        if (isAbsolute(row.local_path!) && realpathSync(row.local_path!) === realDir) matched.push(row.id);
       } catch {
         // Stale/unreadable registered path — not a match, keep scanning.
       }
@@ -1309,6 +1299,9 @@ async function runPhaseSync(
     // instead of the global config key. The global key can drift out of
     // git history (force push, GC) causing a full reimport of all files.
     const sourceId = await resolveSourceForDir(engine, brainDir);
+    // GST-3337: config.syncEnabled=false keeps every unattended sync (dream, the autopilot cycle) off the source; only an explicit gbrain sync --source runs it.
+    if (sourceId && isSyncDisabledConfig((await engine.getSource(sourceId))?.config)) return { phase: 'sync', status: 'skipped', duration_ms: 0, details: { reason: 'sync_disabled', source_id: sourceId },
+      summary: `automatic sync is off for source ${sourceId} (config.syncEnabled=false); only an explicit gbrain sync --source ${sourceId} syncs it` };
     // #7630: with no matching source, a relative default local_path would leave this sync on the global anchors; refuse like sync does.
     if (!sourceId) await (await import('./sync-applicability.ts')).assertSyncAnchorAbsolute(engine, { sourceId: 'default' });
     // #5255: managed sync refuses `git pull`; a cycle syncs local HEAD and reports it (explicit sync keeps refusing).
@@ -1792,7 +1785,7 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
         details: { dry_run: true, purged_sources_count: 0, purged_pages_count: 0, purged_orphan_clones_count: 0 },
       };
     }
-    const [{ purgeExpiredSources }, { purgeDeletedPagesCoordinated, purgePhaseNote, purgePhaseStatus }, { readPurgeRetentionHours }] = await Promise.all([import('./destructive-guard.ts'), import('./persistence/purge-deleted.ts'), import('./sync-reconcile.ts')]);
+    const [{ purgeExpiredSources }, { purgeDeletedPagesCoordinated, purgePhaseNote, purgePhaseStatus }, { readPurgeRetentionHours }, { readHeldConcepts }, { isAvailable }] = await Promise.all([import('./destructive-guard.ts'), import('./persistence/purge-deleted.ts'), import('./sync-reconcile.ts'), import('./persistence/concept-rebuild.ts'), import('./ai/gateway.ts')]);
     // gbrain#4115: {purged, blocked} — a RESTRICT-FK-held source (revoked
     // oauth_client, v64) is reported and skipped instead of aborting the sweep.
     const purgeResult = await purgeExpiredSources(engine);
@@ -1801,6 +1794,7 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
     // #5405: coordinated on managed brains; #7130: `automatic` keeps managed sync tombstones with no live twin.
     const purgedPages = await purgeDeletedPagesCoordinated(engine, retentionHours, { automatic: true });
     const purgedClones = await purgeOrphanClones(retentionHours);
+    const rebuild = await readHeldConcepts(engine, isAvailable('chat')); // #9653: kept for the next concept synthesis
     // #6770: request-log rows past cycle.purge.mcp_request_log_retention_days, when set (logic in mcp-request-log-retention.ts).
     let purgedMcpLog = 0;
     try { purgedMcpLog = (await (await import('./mcp-request-log-retention.ts')).runMcpLogRetention(engine))?.deleted ?? 0; } catch (e) { console.warn(`[cycle] request-log retention skipped: ${e instanceof Error ? e.message : String(e)}`); }
@@ -1812,7 +1806,8 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
         `purged ${purgedSources.length} source(s)` +
         (purgeResult.blocked.length > 0 ? ` (${purgeResult.blocked.length} blocked, see details)` : '') +
         `, ${purgedPages.count} page(s)${purgePhaseNote(purgedPages)}, ` +
-        `and ${purgedClones.count} orphan clone temp dir(s)`,
+        `and ${purgedClones.count} orphan clone temp dir(s)` +
+        (rebuild.held.length ? `; ${rebuild.held.length} concept(s) hidden by an input purge kept for the next concept synthesis${rebuild.kept.length ? ` (${rebuild.kept.length} of them stay hidden, reasons in details)` : ''}` : ''),
       details: {
         purged_sources_count: purgedSources.length,
         purged_sources_blocked: purgeResult.blocked,
@@ -1821,6 +1816,7 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
         purged_orphan_clone_names: purgedClones.names,
         purged_sources: purgedSources,
         purged_page_slugs: purgedPages.slugs,
+        ...(rebuild.held.length ? { purged_pages_kept_for_rebuild: rebuild.held, kept_hidden: rebuild.kept } : {}),
         ...(purgedMcpLog > 0 ? { purged_mcp_request_log_count: purgedMcpLog } : {}),
       },
     };

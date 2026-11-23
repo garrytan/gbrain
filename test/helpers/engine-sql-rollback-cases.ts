@@ -39,6 +39,21 @@ async function seedPage(engine: BrainEngine): Promise<void> {
 
 export const ROLLBACK_CASES: RollbackCase[] = [
   {
+    domain: 'identity-decisions',
+    async seed(engine) {
+      await seedPage(engine);
+    },
+    async write(tx) {
+      const applied = await tx.applyIdentityDecisions({ upsert: [{ decision_id: '00000000000000aa', verdict: 'different',
+        members: [{ source_id: 'default', slug: SLUG }, { source_id: 'default', slug: LINK_TARGET }], group_id: null, entity_id: null, canonical: null,
+        decided_by: 'owner', origin: 'database', home_source_id: null, git_blob: null }] });
+      expect(applied.upserted).toBe(1);
+    },
+    async observe(engine) {
+      return (await engine.listIdentityDecisions()).decisions.length;
+    },
+  },
+  {
     domain: 'salience',
     async seed(engine) {
       await seedPage(engine);
@@ -75,6 +90,26 @@ export const ROLLBACK_CASES: RollbackCase[] = [
       return Number(rows[0]?.n ?? 0);
     },
   },
+  (() => {
+    let id = 0;
+    return {
+      domain: 'facts (expireFactSuperseded)',
+      async seed(engine: BrainEngine) {
+        id = (await engine.insertFact(
+          { fact: 'seeded expiry fact', source: 'test:rollback', entity_slug: 'people/alice-example' },
+          { source_id: 'default' },
+        )).id;
+      },
+      async write(tx: BrainEngine) {
+        await tx.expireFactSuperseded(id, new Date(Date.UTC(2026, 5, 1)).toISOString());
+      },
+      async observe(engine: BrainEngine) {
+        const rows = await engine.executeRaw<{ expired: boolean }>(
+          `SELECT expired_at IS NOT NULL AS expired FROM facts WHERE id = $1`, [id]);
+        return rows[0]?.expired ?? null;
+      },
+    };
+  })(),
   {
     domain: 'takes',
     async seed(engine) {

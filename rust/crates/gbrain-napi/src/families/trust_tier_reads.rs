@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
 use gbrain_store::trust::tier_reads::{
-    CorePageRowQuery, PageIdsQuery, TrustScanQuery, VersionIdsQuery,
+    CorePageRowQuery, PageIdsQuery, PageKeyRef, TrustScanQuery, VersionIdsQuery,
 };
 use gbrain_store::trust::valid_time::{
     AmendmentsQuery, CursorEditionQuery, ValidTimeIdentityQuery, ValidTimePickQuery,
@@ -101,6 +101,32 @@ impl Brain {
         })
     }
 
+    /// `listPageTrustTiersByKey(refs)`: the id and stored tier of each named page, deleted or not.
+    #[napi]
+    pub fn list_page_trust_tiers_by_key<'env>(
+        &self,
+        env: &'env Env,
+        refs: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let refs: Vec<PageKeyRef> = required(refs, "listPageTrustTiersByKey refs")?;
+            s.list_page_trust_tiers_by_key(&refs)
+        })
+    }
+
+    /// `lockLivePagesByKey(refs)`: the named pages that are live.
+    #[napi]
+    pub fn lock_live_pages_by_key<'env>(
+        &self,
+        env: &'env Env,
+        refs: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let refs: Vec<PageKeyRef> = required(refs, "lockLivePagesByKey refs")?;
+            s.lock_live_pages_by_key(&refs)
+        })
+    }
+
     /// `listValidTimeIdentities(spec)`: resolves the live pages with a slug a valid-time read may follow.
     #[napi]
     pub fn list_valid_time_identities<'env>(
@@ -114,7 +140,7 @@ impl Brain {
         })
     }
 
-    /// `pickValidTimeEdition(spec)`: resolves `{ row, history_unpruned }` for one page.
+    /// `pickValidTimeEdition(spec)`: resolves `{ row }` for one page.
     #[napi]
     pub fn pick_valid_time_edition<'env>(
         &self,

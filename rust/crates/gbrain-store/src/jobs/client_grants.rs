@@ -2,8 +2,8 @@
 //! `src/core/engine-sql/client-grants.ts` run them (rust/docs/store/oauth-clients.md).
 //!
 //! Members: persistOauthClientGrant, insertOauthClientGrant (the client and its register audit row), listOauthGrantAudit,
-//! readLatestCatalogProvenanceAudit, readLiveOauthClients, readSourceGrantState, replaceSourceConfig,
-//! writeCredentialBinding and writeCredentialReadsUnscoped (a client's binding columns).
+//! readLatestCatalogProvenanceAudit, readLiveOauthClients, readSourceGrantState and replaceSourceConfig. A client's binding
+//! columns are written by `credential_binding.rs`.
 //!
 //! Keys, all under `keys::JOBS` (`m`), sub-tag 0x2E (this file only):
 //! - `m 0x2E id -> AuditRecord`: one audit row (sequence `oauth_grant_audit`). The table is append-only and is read
@@ -16,6 +16,7 @@
 
 use super::oauth_clients::{ClientRecord, all_clients, budget_hundredths, load_client, put_client};
 use super::*;
+use crate::dream::jsonb;
 use crate::env::Env;
 use crate::sources::{read_source, source_key};
 
@@ -311,8 +312,8 @@ impl Store {
                 &input.client_id,
                 input.grant_revision,
                 (&input.audit.action, &input.audit.actor),
-                before_grant,
-                after_grant,
+                before_grant.clone(),
+                after_grant.clone(),
             )?;
             if input.private_pages.is_some() || input.private_facts.is_some() {
                 if let Some(pages) = &input.private_pages {
@@ -344,7 +345,7 @@ impl Store {
                 row.grant_revision,
                 ("register", &audit.actor),
                 None,
-                after_grant,
+                after_grant.clone(),
             )
         })
     }
@@ -365,8 +366,8 @@ impl Store {
                 &row.client_id,
                 row.revision,
                 (&row.action, &row.actor),
-                before_grant,
-                after_grant,
+                before_grant.clone(),
+                after_grant.clone(),
             )
         })
     }
@@ -424,51 +425,6 @@ impl Store {
             };
             record.config = config.clone();
             put_json(tx, &source_key(id), &record)?;
-            Ok(true)
-        })
-    }
-}
-
-/// The binding columns `writeCredentialBinding` sets on a client: the member, who it may act for and the attest
-/// right (`engine-sql/access-members.ts` `CredentialBinding`).
-#[derive(Debug, Clone, Deserialize)]
-pub struct BindingWrite {
-    pub member: Option<String>,
-    pub may_act_for: Option<Vec<String>>,
-    pub attest_actor: Option<String>,
-    pub attest_ops: Option<Vec<String>>,
-    pub attest_sources: Option<Vec<String>>,
-    pub attest_read: Option<String>,
-}
-
-impl Store {
-    /// `writeCredentialBinding(client, binding)`: sets the client's member, may_act_for and attest columns; whether the
-    /// client exists. The row is held to the table's constraints (`constraint_violation`), and then is untouched.
-    pub fn write_client_binding(&self, client_id: &str, binding: &BindingWrite) -> Result<bool> {
-        self.write(|tx| {
-            let Some(mut record) = load_client(tx, client_id)? else {
-                return Ok(false);
-            };
-            record.member_id = binding.member.clone();
-            record.may_act_for = binding.may_act_for.clone();
-            record.attest_actor = binding.attest_actor.clone();
-            record.attest_ops = binding.attest_ops.clone();
-            record.attest_sources = binding.attest_sources.clone();
-            record.attest_read = binding.attest_read.clone();
-            put_client(tx, &record)?;
-            Ok(true)
-        })
-    }
-
-    /// `writeCredentialReadsUnscoped(client, on)`: sets `reads_unscoped` to now (on) or clears it; whether the client
-    /// exists.
-    pub fn write_client_reads_unscoped(&self, client_id: &str, on: bool) -> Result<bool> {
-        self.write(|tx| {
-            let Some(mut record) = load_client(tx, client_id)? else {
-                return Ok(false);
-            };
-            record.reads_unscoped = on.then(|| self.env.now_micros());
-            put_client(tx, &record)?;
             Ok(true)
         })
     }

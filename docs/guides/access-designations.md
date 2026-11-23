@@ -41,6 +41,8 @@ Five kinds of caller read a brain:
 | fact `visibility: private` | reads | reads | hidden | hidden | hidden |
 | page or fact in an owner-only source (`imessage`, `owner_only: true`), or derived from one | reads | reads | hidden | hidden | hidden, under every relaxation |
 
+The key must be written exactly `readable_by` (lowercase, with an underscore). A page that spells it another way (`Readable_By`, `readable-by`, `readableBy`) would be read as having no restriction, so `put_page`, `edit_page` and `capture` refuse it with [`readers_noncanonical`](write-refusals.md#readers_noncanonical), and sync and import hold the file.
+
 "Hidden" means the same `not_found` a missing page gets, on every read path (get_page, search, query, recall, lists,
 links, timelines, versions). Designations govern readers, not processing: restricted pages are embedded
 with the brain's configured embedding provider like any other page. See
@@ -58,7 +60,8 @@ escape hatches `GBRAIN_REMOTE_PRIVATE_PAGES=1` / `gbrain config set search.remot
 remote caller). Neither relaxes `readable_by` or folder rules, and neither reaches a shared-room audience.
 Fact privacy has its own operator grant, `gbrain auth rescope --private-facts granted-sources`: that credential reads
 facts saved `private` in the sources its grant names, never one held on, provenanced from or about a private,
-`readable_by`, folder-ruled, quarantined or member page, nor one with no page to check, and never under an asserted
+`readable_by`, folder-ruled, quarantined or member page, nor one with no page to check, nor a held row (a private
+restatement waiting on a visibility proposal) unless it also reads every copy the proposals name, and never under an asserted
 audience or an attested call ([MCP administration](../mcp/ADMIN.md)).
 
 `gbrain access check --token <name>` reports whether a credential reads as the owner, and
@@ -248,15 +251,30 @@ stay kept to it.
 
 ### Owner-only sources (`owner_only`)
 
-An `imessage` source, and any source whose `sources.config` has `owner_only: true`, is read only by the local CLI and
-by the owner's own credentials speaking for themselves. Every other remote caller gets `not_found` for its pages
-(private or not), for its facts and timeline rows, and for pages and facts derived from them: a synthesized concept
-with an input page there, and any page or fact whose recorded derivation inputs reach a row there. None of the
+An `imessage` source, and any source whose `sources.config` has `owner_only: true` (an `apple-contacts` source is
+registered with it), is read only by the local CLI and by the owner's own credentials speaking for themselves. Every other remote caller gets `not_found` for its pages
+(private or not), for its facts and timeline rows, and for pages, facts, takes and timeline rows derived from them:
+a synthesized concept with an input page there, and any page, fact, take or timeline row whose recorded derivation
+inputs reach a row there, wherever its page is. A meeting in an owner-only source adds timeline rows only to pages in
+its own source, even with `link_resolution.cross_source` on, and a read that cannot learn the brain's schema version
+treats every row as owner-only once the brain has held owner-only data. None of the
 relaxations above widens it: `--private-pages granted-sources`, `--private-facts granted-sources`,
 `search.remote_private_pages`, `access.members_read_lineage`, `access.owner_reads_restricted` and
 `visibility.honor_aliases` leave it in place, and so do shared-room audiences, guests and attested calls. A remote
 write into an owner-only source from any credential but the owner's is refused the same way. The rule is worked out
-at read time from the source, so nothing is stored per page and a repo-less brain works the same.
+at read time from the source and works the same on a repo-less brain. Only a delete stores anything: when an owner-only
+source or one of its rows goes, a trigger records the rows derived from it in `owner_only_marks`, so they stay
+owner-only ([owner-only delete triggers](../ENGINES.md#owner-only-delete-triggers)).
+
+### Keys that read every shared source (`--read-shared on`)
+
+A member's key with a write source of its own reads only the sources its grant lists, unless the read-shared switch is
+on (`gbrain auth rescope --token <name> --read-shared on`, `--client <id>` for an OAuth client). Then it also reads
+`default` and every federated source, now and later, never a guest source or (unless it is the owner's key) another member's own source, and it
+still writes only to its write source. The switch widens which sources the key reaches, not what it reads inside them:
+`visibility: private` pages and private facts stay closed in every source it reaches only through the switch
+(`--private-pages granted-sources` and `--private-facts granted-sources` open only sources the grant lists by id), and
+`readable_by` and folder rules apply as before. `gbrain access check --token <name>` lists what the key reads now.
 
 ### Audience members (`gbrain access member kind`)
 
@@ -311,6 +329,15 @@ refused (`permission_denied`). `gbrain access member list` and `gbrain access ch
 which labelled-only members a page leaves out, and doctor's `access_labelled_only_members` lists them. An older gbrain
 binary sharing the same database ignores the grant, so upgrade every binary that serves the brain before turning it on.
 
+### When someone leaves (`gbrain access member handover`)
+
+A disabled or removed member's pages stay labelled with its id, so a page whose `readable_by` names only that member
+is read by no member remotely. `gbrain access member handover <id>` previews giving those pages, and folder rules naming
+only that member, to the owner; pages others read stay as they are, and nothing opens to every reader unless asked
+(`--set kept=everyone`). Apply with `--yes --expect <plan_hash>`; `--undo <handover id>` restores the recorded readers
+once the member is enabled again. Doctor's `access_pages_read_by_nobody` lists pages no enabled member reads. See
+[When someone leaves](member-handover.md).
+
 ### Pages every member's key can read
 
 On a brain that serves several people, a key bound to a member reads a page with no label like any other key: the
@@ -335,6 +362,26 @@ purpose. A count that fails prints "count unknown" with `gbrain doctor --only op
 setup carries on. A one-person brain, or one with `access.serves` set to `one`, runs no count, and
 `gbrain access serves --no-open-pages` skips it. `--labelled-only` is
 opt-in and never applies to the owner: with the owner in the roster the run is BLOCKED before anything is written.
+
+### Who read what (`gbrain access log`, `gbrain access who-read`)
+
+Reads a member or an audience makes are logged: a read through a credential or stdio server bound to a member that
+is not the owner, a read that asserts an audience (`on_behalf_of`), and every enforced member CLI read. A row holds the
+time, the member or audience, the operation, the transport (`http`, `stdio` or `cli`), the result code (`ok` or the
+refusal's code) and the ids of the pages the read returned (search, query, recall, `get_page` and `fetch` return
+pages, `get_page` with `as_of` included; other reads, `get_page` with `known_as_of` among them, log no ids). It never holds page text, query terms or any other argument. A call refused before it
+reaches the operation and a read made at an attested scope write no row. Search and recall ids are noted before the
+response is trimmed to fit, so a row can list a page the caller did not end up receiving.
+
+```bash
+gbrain access log --member alice-example --since 7d      # her reads, and the audiences that named her
+gbrain access who-read notes/renewal-notes --since 30d   # who read this page, how often and when
+```
+
+Owner reads and unbound reads are not logged, so a brain with no members writes nothing and the owner's reads cost
+nothing extra. The rows are written after the response, in batches; a failed write drops its rows with one warning and
+never fails the read, and a hard kill loses what was still buffered. The log keeps a year and at most a million rows,
+oldest first. It lives in the database (`access_read_log`), so it works the same on a repo-less brain.
 
 ## Related
 

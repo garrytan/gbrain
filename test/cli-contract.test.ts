@@ -189,8 +189,14 @@ describe('D5 json contract: one success and one failure per json-declared comman
           const lines = parsedShape(record.mode, ok.stdout).length;
           if (!row.okMayBeEmpty) expect(lines).toBeGreaterThan(0);
         }
-        const failHome = row.failOnBrain ? brainHome : emptyHome;
-        assertFailureShape(record.name, record.mode, await runCli(row.fail, { home: failHome, cwd: failHome, timeoutMs: 120_000 }));
+        // Each failing invocation gets its own empty folder, so a case that writes a brain cannot change the next one.
+        const failEmpty = row.failOnBrain ? null : mkdtempSync(join(tmpdir(), 'gbrain-cli-contract-fail-'));
+        try {
+          const failHome = failEmpty ?? brainHome;
+          assertFailureShape(record.name, record.mode, await runCli(row.fail, { home: failHome, cwd: failHome, timeoutMs: 120_000 }));
+        } finally {
+          if (failEmpty) rmSync(failEmpty, { recursive: true, force: true });
+        }
       } finally {
         rmSync(fresh, { recursive: true, force: true });
       }

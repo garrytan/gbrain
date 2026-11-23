@@ -158,12 +158,12 @@ export async function ageOutSessionState(exec: SessionStateExec, olderThanDays: 
   await exec.executeRaw(AGE_OUT_SESSION_STATE_SQL, [String(olderThanDays)]);
 }
 
-/** Per-client LRU cap: keep the newest `maxRowsPerClient` rows per lane. */
+/** Per-client LRU cap: keep the newest `maxRowsPerClient` rows per lane; tied rows rank by session_id bytes. */
 export const CAP_SESSION_STATE_SQL = `DELETE FROM session_context_state s
        USING (
          SELECT source_id, client_id, session_id,
                 row_number() OVER (
-                  PARTITION BY source_id, client_id ORDER BY updated_at DESC
+                  PARTITION BY source_id, client_id ORDER BY updated_at DESC, session_id COLLATE "C"
                 ) AS rn
          FROM session_context_state
        ) ranked
@@ -174,7 +174,8 @@ export const CAP_SESSION_STATE_SQL = `DELETE FROM session_context_state s
 
 /**
  * Keeps the newest `maxRowsPerClient` rows of each (source_id, client_id) and deletes the rest (the caller passes a
- * whole number >= 1). Rows with equal `updated_at` are ranked in the order the database sort leaves them.
+ * whole number >= 1). Rows with equal `updated_at` (one transaction's writes) rank by `session_id` bytes, lowest
+ * kept, so the kept rows never depend on heap order and every engine arm keeps the same rows.
  */
 export async function capSessionStatePerClient(exec: SessionStateExec, maxRowsPerClient: number): Promise<void> {
   await exec.executeRaw(CAP_SESSION_STATE_SQL, [String(maxRowsPerClient)]);

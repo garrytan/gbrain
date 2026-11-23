@@ -3,9 +3,10 @@
  * privacy labels and nothing else, so its canonical file keeps its own bytes: only the label lines are removed, replaced
  * or appended to the frontmatter block (page-prepare.ts labelEditFile). The edit names `set` (a key and its plain
  * scalar value, or for `readable_by` its readers as a one-line flow list, GST-2476) and `remove` (keys), both among
- * LABEL_KEYS and READERS_KEY. The editor reads no YAML: a label line it cannot edit as one line (a block or multi-line
- * value, a duplicate key, a value that needs quoting, no frontmatter block) returns null, and the write refuses instead
- * of re-rendering the file.
+ * LABEL_KEYS and READERS_KEY. The editor reads no YAML: a label line it cannot edit as one line (a block scalar or other
+ * multi-line value, a duplicate key, a value that needs quoting, no frontmatter block) returns null, and the write refuses
+ * instead of re-rendering the file. One multi-line form is edited (GBRA-582 item 9): a block list of plain items, the way
+ * put_page renders `readable_by`, is replaced together with its item lines.
  */
 import { opError } from '../ops/contract.ts';
 import { ACCESS_ID_RE } from '../access/principals.ts';
@@ -88,6 +89,8 @@ export function storedLabelsToKeep(stored: Record<string, unknown> | null | unde
 const listEntry = (entry: string) => (loadBoundedYaml(`[${entry}]`) as unknown[])[0] === entry ? entry : `'${entry}'`;
 const valueText = (value: string | string[]) => Array.isArray(value) ? `[${value.map(listEntry).join(', ')}]` : value;
 const keyLine = (key: string) => KEY_LINES[key] ?? /(?!)/;
+/** One plain scalar item of a block list (`  - alice-example`): a label written that way is edited as its key line plus these. */
+const BLOCK_ITEM = /^[ \t]+-[ \t]+[^\s|>&*!#\[{][^\n]*?\r?\n?$/;
 
 /**
  * text with the edit applied to its frontmatter lines, and the file's head through the closing --- line, or null when
@@ -100,14 +103,17 @@ export function spliceLabelLines(text: string, edit: LabelEdit): { text: string;
   const close = lines.findIndex((line, index) => index > 0 && /^---[ \t]*(?:\r?\n)?$/.test(line));
   if (close < 0) return null;
   const block = lines.slice(1, close);
+  const items = new Set<number>();
   for (const key of [...edit.remove, ...Object.keys(edit.set)]) {
     const at = block.flatMap((line, index) => keyLine(key).test(line) ? [index] : []);
     if (at.length > 1) return null;
     if (!at.length) continue;
     const value = block[at[0]!]!.slice(block[at[0]!]!.indexOf(':') + 1).trim();
-    if (!value || /^[|>&*!]/.test(value) || /^[ \t]+\S/.test(block[at[0]! + 1] ?? '')) return null;
+    let next = at[0]! + 1;
+    if (!value) while (BLOCK_ITEM.test(block[next] ?? '')) items.add(next++);
+    if ((!value && next === at[0]! + 1) || /^[|>&*!]/.test(value) || /^[ \t]+\S/.test(block[next] ?? '')) return null;
   }
-  const kept = block.filter(line => !edit.remove.some(key => keyLine(key).test(line)));
+  const kept = block.filter((line, index) => !items.has(index) && !edit.remove.some(key => keyLine(key).test(line)));
   const eol = lines[0]!.endsWith('\r\n') ? '\r\n' : '\n';
   for (const [key, value] of Object.entries(edit.set)) {
     const at = kept.findIndex(line => keyLine(key).test(line));

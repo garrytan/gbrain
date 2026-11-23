@@ -14,6 +14,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { commitAndPush, commitPathsLocked, pullShared, readPendingWriteThrough, readQuarantine } from '../src/core/git/commit-push.ts';
 import { renderCommitPushHelper } from '../src/core/brain-repo-durability.ts';
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 let root: string;
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
@@ -63,7 +64,7 @@ function copyUpstream(after: (b: string) => void): { bare: string; a: string; b:
 }
 
 function cli(cwd: string, args: string[], env: Record<string, string> = {}) {
-  return spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: 'utf8', env: { ...process.env, ...env } });
+  return spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: 'utf8', env: { ...envWithoutDatabaseUrl(), ...env } });
 }
 
 beforeAll(() => { process.env.GBRAIN_GIT_ALLOW_FILE_TRANSPORT = '1'; });

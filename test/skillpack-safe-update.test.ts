@@ -24,6 +24,7 @@ import {
   mergeSkillsLockHistory, parseSkillsLockHistory, renderSkillsLockHistory, renderSkillsManifest,
 } from '../src/core/skills-integrity.ts';
 import { runSkillpackUpdateChecks } from '../src/commands/doctor/checks/skillpack-update.ts';
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 const REPO = join(import.meta.dir, '..');
 const created: string[] = [];
@@ -457,7 +458,7 @@ for (let i = 0; i < 150; i++) await setSkillPinned(${JSON.stringify(b.skillsRoot
 
 describe('CLI contract', () => {
   const cli = (env: Env, args: string[]) => spawnSync('bun', [join(REPO, 'src/cli.ts'), 'skillpack', ...args], {
-    cwd: env.gbrainRoot, env: { ...process.env, GBRAIN_HOME: env.home }, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf-8', timeout: 60_000,
+    cwd: env.gbrainRoot, env: { ...envWithoutDatabaseUrl(), GBRAIN_HOME: env.home }, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf-8', timeout: 60_000,
   });
 
   test('exit 0 with skips, 1 only with --fail-on-skipped, 2 on failure; never prompts with stdin closed', () => {

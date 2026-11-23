@@ -206,7 +206,8 @@ function requestMemo<T>(engine: object, key: string, read: () => Promise<T>): Pr
 function brainIdentity(engine: LocalWriterEngine): Promise<string> {
   return requestMemo(engine, 'brain', () => readBrainIdentity(engine));
 }
-async function readBrainIdentity(engine: LocalWriterEngine): Promise<string> {
+/** The brain's persistence identity, through the typed member; a brain with no persistence row refuses writer_not_initialized. */
+export async function readBrainIdentity(engine: Pick<BrainEngine, 'readPersistenceBrainId'>): Promise<string> {
   const brainId = await engine.readPersistenceBrainId();
   if (brainId === null) throw opError('writer_not_initialized', 'Persistence metadata has not been initialized.',
     'This brain\'s database has no persistence metadata row, which the schema migrations create, so no local writer can be registered or verified; nothing changed. Run gbrain doctor --json on the brain host; if it reports pending migrations, bring the schema current with gbrain apply-migrations, then run the command again.',
@@ -401,6 +402,5 @@ function verifiedFromRow(local: LocalRegistration, row: LocalWriterRow | undefin
 }
 export async function revokeLocalWriter(engine: BrainEngine, id: string): Promise<boolean> {
   forgetRequestIdentity();
-  const rows = await engine.executeRaw('UPDATE persistence_local_writers SET revoked_at=COALESCE(revoked_at,now()) WHERE id=$1::uuid RETURNING id', [id]);
-  return rows.length === 1;
+  return engine.revokeLocalWriterRow(id);
 }

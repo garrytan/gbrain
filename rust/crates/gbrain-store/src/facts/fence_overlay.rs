@@ -5,12 +5,12 @@
 //! One answer row per incoming row, in incoming order: the live page's tier, the tier of the page's newest fact at the
 //! row number (expired facts count, as the SQL reads `facts` with no `expired_at` filter) and whether that fact is
 //! activation-suppressed, whether a held fact hold of the page carries the row's fingerprint, and, with `hideHeld`,
-//! whether the row is held from a world-only fact reader (`held_cells::held` for an uncut claim). `purged` is whether a
+//! whether the row is held from a world-only fact reader (`held_cells::held` with no row admitted, for an uncut claim). `purged` is whether a
 //! fact purge tombstone at the row's visibility names its fingerprint under subject `*` or the page
 //! (`purge_ledger::purged_claim`).
 //! See rust/docs/store/facts.md, "The fence overlay".
 
-use super::{FactRecord, held_cells, page_rows};
+use super::{held_cells, page_rows};
 use crate::Store;
 use crate::error::{INVALID_ARGUMENT, Result, StoreError};
 use crate::links::no_nul;
@@ -76,10 +76,14 @@ impl Store {
             .filter(|p| p.deleted_at_us.is_none())
             .map(|p| TrustTier::stored(p.trust_tier.as_deref()).as_str());
         let rows = page_rows(&*read, &input.source_id, &input.slug)?;
-        let live: Vec<FactRecord> = if input.hide_held {
+        // `heldRowSql` with both caller admissions `FALSE`: no live row is admitted.
+        let live: Vec<held_cells::LiveRow> = if input.hide_held {
             rows.iter()
                 .filter(|r| r.expired_at_us.is_none())
-                .cloned()
+                .map(|r| held_cells::LiveRow {
+                    row: r.clone(),
+                    admitted: false,
+                })
                 .collect()
         } else {
             Vec::new()

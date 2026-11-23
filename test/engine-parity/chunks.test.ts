@@ -96,6 +96,23 @@ describe('engine parity: chunks', () => {
   );
 
   parityTest(
+    'getChunks under requireSafeChunks reads a sealed page chunked below the safe fence as no chunks',
+    { methods: ['putPage', 'sealChunks', 'setChunkerVersion', 'getChunks'] },
+    async (engine) => {
+      await engine.putPage('notes/fenced', PAGE('Fenced', 'fenced body text.'));
+      await installChunks(engine, 'notes/fenced', [chunk(0, 'fenced body text.', { embedding: basisEmbedding(2) })]);
+      const read = async (requireSafeChunks: boolean) =>
+        (await engine.getChunks('notes/fenced', { includeEmbedding: true, requireSafeChunks })).map((c) => [c.chunk_index, c.embedding != null]);
+      const safe = { off: await read(false), on: await read(true) };
+      await engine.setChunkerVersion('notes/fenced', 3);
+      const short = { off: await read(false), on: await read(true) };
+      expect(safe).toEqual({ off: [[0, true]], on: [[0, true]] });
+      expect(short).toEqual({ off: [[0, true]], on: [] });
+      return { safe, short };
+    },
+  );
+
+  parityTest(
     'sealChunks replaces and seals chunks at the current revision; it refuses a stale revision, a deleted page and an unknown page',
     { methods: ['putPage', 'readPageSnapshot', 'sealChunks', 'getChunks', 'searchKeyword', 'softDeletePage'] },
     async (engine) => {
@@ -189,6 +206,48 @@ describe('engine parity: chunks', () => {
       ]);
       expect([page.total_chunks, page.max_chunk_index]).toEqual([2, 1]);
       return { before, afterView, pageTotal: page.total_chunks, pageMax: page.max_chunk_index };
+    },
+  );
+
+  // Review finding outside-voice#2: upsertChunks matches a stored chunk to the new set by its source and text, not its
+  // index (moveDisplacedChunksAndPrune), so a chunk inserted above an embedded one shifts it down with its id and vector.
+  parityTest(
+    'upsertChunks keeps the id and vector of an embedded chunk that a new chunk above it shifts down',
+    { methods: ['upsertChunks', 'getChunks'] },
+    async (engine) => {
+      await seedPage(engine, {
+        slug: 'notes/shift',
+        input: PAGE('Shift', 'kept passage. tail passage. swap a. swap b.'),
+        chunks: [
+          chunk(0, 'kept passage.', { embedding: basisEmbedding(3) }),
+          chunk(1, 'tail passage.', { embedding: basisEmbedding(4) }),
+          chunk(2, 'swap a.', { embedding: basisEmbedding(5) }),
+          chunk(3, 'swap b.', { embedding: basisEmbedding(6) }),
+          chunk(4, 'same text, other source', { embedding: basisEmbedding(7) }),
+        ],
+      });
+      const read = () => engine.getChunks('notes/shift', { includeUnsealed: true, includeEmbedding: true });
+      const before = await read();
+      const idOf = new Map(before.map((c) => [c.chunk_text, c.id]));
+      const embeddedAt = new Map(before.map((c) => [c.chunk_text, String(c.embedded_at)]));
+      // A new intro at 0 shifts the rest down; the last two swap; a timeline chunk repeats a compiled_truth chunk's text.
+      await engine.upsertChunks('notes/shift', [
+        chunk(0, 'a new intro.'),
+        chunk(1, 'kept passage.'),
+        chunk(2, 'tail passage.'),
+        chunk(3, 'swap b.'),
+        chunk(4, 'swap a.'),
+        { chunk_index: 5, chunk_text: 'same text, other source', chunk_source: 'timeline' },
+      ]);
+      const after = (await read()).map((c) => ({
+        chunk_index: c.chunk_index,
+        chunk_text: c.chunk_text,
+        chunk_source: c.chunk_source,
+        axis: axis(c.embedding),
+        sameId: idOf.get(c.chunk_text) === c.id,
+        sameEmbeddedAt: c.embedded_at !== null && embeddedAt.get(c.chunk_text) === String(c.embedded_at),
+      }));
+      return { after };
     },
   );
 
@@ -373,6 +432,53 @@ describe('engine parity: chunks', () => {
   );
 
   parityTest(
+    'turning a page from a contextual retrieval tier back to none drops its vectors and signature',
+    { methods: ['putPage', 'sealChunks', 'setPageEmbeddingSignature', 'updatePageContextualRetrievalState', 'getChunks', 'countStaleChunks', 'searchVector'] },
+    async (engine) => {
+      const NEW = 'model-new:1536';
+      const embedded = (text: string, axisIdx: number) => [chunk(0, text, { embedding: basisEmbedding(axisIdx) })];
+      // titled: title -> none, the tier's vectors go. plain: none with no tier before, nothing goes.
+      // skipped: an embed_skip page keeps its rows. resynopsis: per_chunk_synopsis -> none, like titled.
+      await seedPage(engine, { slug: 'notes/cr-titled', input: PAGE('Titled', 'x'), chunks: embedded('titled', 1) });
+      await seedPage(engine, { slug: 'notes/cr-plain', input: PAGE('Plain', 'x'), chunks: embedded('plain', 2) });
+      await seedPage(engine, { slug: 'notes/cr-skipped', input: { ...PAGE('Skipped', 'x'), frontmatter: { embed_skip: true } }, chunks: embedded('skipped', 3) });
+      await seedPage(engine, { slug: 'notes/cr-synopsis', input: PAGE('Synopsis', 'x'), chunks: embedded('synopsis', 4) });
+      for (const slug of ['notes/cr-titled', 'notes/cr-plain', 'notes/cr-skipped', 'notes/cr-synopsis']) {
+        await engine.setPageEmbeddingSignature(slug, { signature: NEW });
+      }
+      const query = basisEmbedding(1);
+      const hits = async () => sorted((await engine.searchVector(query, { limit: 10 })).map((r) => r.slug));
+      // The first search warms whatever the engine keeps between reads.
+      const searchBefore = await hits();
+      await engine.updatePageContextualRetrievalState('notes/cr-titled', 'default', 'title', 'gen-1');
+      await engine.updatePageContextualRetrievalState('notes/cr-skipped', 'default', 'title', 'gen-1');
+      await engine.updatePageContextualRetrievalState('notes/cr-synopsis', 'default', 'per_chunk_synopsis', 'gen-1');
+      const staleWhileTiered = await engine.countStaleChunks({ signature: NEW });
+      for (const slug of ['notes/cr-titled', 'notes/cr-plain', 'notes/cr-skipped', 'notes/cr-synopsis']) {
+        await engine.updatePageContextualRetrievalState(slug, 'default', 'none', null);
+      }
+      const vectorless = async (slug: string) => view(await engine.getChunks(slug)).map((c) => c.embedding_is_null);
+      const after = {
+        titled: await vectorless('notes/cr-titled'),
+        plain: await vectorless('notes/cr-plain'),
+        skipped: await vectorless('notes/cr-skipped'),
+        synopsis: await vectorless('notes/cr-synopsis'),
+        // a NULL signature is grandfathered unless asked for, so the reset pages count only with includeNullSignature
+        stale: await engine.countStaleChunks({ signature: NEW }),
+        staleWithNull: await engine.countStaleChunks({ signature: NEW, includeNullSignature: true }),
+        search: await hits(),
+      };
+      expect(staleWhileTiered).toBe(0);
+      expect(after.titled).toEqual([true]);
+      expect(after.synopsis).toEqual([true]);
+      expect(after.plain).toEqual([false]);
+      expect(after.stale).toBe(2);
+      expect(after.search).not.toContain('notes/cr-titled');
+      return { searchBefore, staleWhileTiered, after };
+    },
+  );
+
+  parityTest(
     'invalidateContentDriftEmbeddings leaves vectors whose text still matches their embed-time hash',
     { methods: ['invalidateContentDriftEmbeddings', 'countStaleChunks', 'upsertChunks'] },
     async (engine) => {
@@ -506,11 +612,12 @@ describe('engine parity: chunks', () => {
       const texts = async (opts?: { sourceId?: string; sourceIds?: string[] }) => (await engine.getChunks('notes/shared', opts)).map((c) => c.chunk_text);
       const implicitDefault = await texts();
       const work = await texts({ sourceId: 'work' });
-      const federated = sorted(await texts({ sourceIds: ['default', 'work'] }));
+      const federated = await texts({ sourceIds: ['default', 'work'] });
       const workPage = await engine.getChunkPage('notes/shared', { sourceId: 'work', fromIndex: 0, limit: 10 });
       expect(implicitDefault).toEqual(['default zero', 'default one']);
       expect(work).toEqual(['work zero']);
-      expect(federated).toEqual(['default one', 'default zero', 'work zero']);
+      // The two pages' chunk 0 tie on document order; the source id breaks the tie.
+      expect(federated).toEqual(['default zero', 'work zero', 'default one']);
       expect(workPage.total_chunks).toBe(1);
 
       const staleDefault = await engine.countStaleChunks({ sourceId: 'default' });
@@ -528,4 +635,80 @@ describe('engine parity: chunks', () => {
       return { implicitDefault, work, federated, staleDefault, staleWork, staleAll, staleRows, workAfter, defaultAfter, chunklessWork, chunklessDefault };
     },
   );
+
+  // MCP get_chunks under a token that reads several sources (getChunkPage), and getChunks over several sources, merge
+  // the pages in document order, and the source id breaks a tie in byte order whatever the database collation: en_US
+  // ignores the hyphen and puts `cob` before `co-op`, byte order puts `co-op` first.
+  parityTest(
+    'getChunks and getChunkPage over several sources break a document-order tie by source id in byte order',
+    { methods: ['getChunks', 'getChunkPage'] },
+    async (engine, backend) => {
+      for (const id of ['cob', 'co-op']) await createSource(engine, backend, id);
+      await seedPage(engine, { slug: 'notes/tie', input: PAGE('Tie cob', 'cob body'), chunks: [chunk(0, 'cob 0'), chunk(1, 'cob 1'), chunk(2, 'cob 2')] }, { sourceId: 'cob' });
+      await seedPage(engine, { slug: 'notes/tie', input: PAGE('Tie co-op', 'co-op body'), chunks: [chunk(0, 'co-op 0'), chunk(1, 'co-op 1')] }, { sourceId: 'co-op' });
+      const all = (await engine.getChunks('notes/tie', { sourceIds: ['cob', 'co-op'] })).map((c) => c.chunk_text);
+      expect(all).toEqual(['co-op 0', 'cob 0', 'co-op 1', 'cob 1', 'cob 2']);
+      const page = await engine.getChunkPage('notes/tie', { sourceIds: ['cob', 'co-op', 'cob'], fromIndex: 1, limit: 5 });
+      const paged = { texts: page.chunks.map((c) => c.chunk_text), total: page.total_chunks, max: page.max_chunk_index };
+      expect(paged).toEqual({ texts: ['co-op 1', 'cob 1', 'cob 2'], total: 5, max: 2 });
+      const one = (await engine.getChunkPage('notes/tie', { sourceIds: ['co-op', 'missing'], fromIndex: 0, limit: 1 })).chunks.map((c) => c.chunk_text);
+      expect(one).toEqual(['co-op 0']);
+      return { all, paged, one };
+    },
+  );
+
+  parityTest(
+    'getChunks with requireSafeChunks reads no chunks of a page chunked before the fence chunker version',
+    { methods: ['putPage', 'sealChunks', 'setChunkerVersion', 'getChunks'] },
+    async (engine) => {
+      for (const slug of ['notes/fence-safe', 'notes/fence-short']) {
+        await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'Body.', timeline: '' });
+        await installChunks(engine, slug, [chunk(0, `About ${slug}.`), chunk(1, 'Second.')]);
+      }
+      await engine.setChunkerVersion('notes/fence-short', 3);
+      const read = async (slug: string, requireSafeChunks?: boolean) =>
+        view(await engine.getChunks(slug, { sourceId: 'default', includeEmbedding: true, ...(requireSafeChunks === undefined ? {} : { requireSafeChunks }) }));
+      const out = {
+        safe: await read('notes/fence-safe', true),
+        short: await read('notes/fence-short', true),
+        shortOff: await read('notes/fence-short', false),
+        shortDefault: await read('notes/fence-short'),
+      };
+      expect(out.safe).toHaveLength(2);
+      expect(out.short).toEqual([]);
+      expect(out.shortOff).toHaveLength(2);
+      return out;
+    },
+  );
+
+  parityTest(
+    'getChunks under requireSafeChunks reads only a page whose chunks were cut at the safe fence chunker version',
+    { methods: ['getChunks', 'setChunkerVersion', 'upsertChunks', 'sealChunks'] },
+    async (engine) => {
+      await seedPage(engine, { slug: 'notes/safe', input: PAGE('Safe', 'safe zero. safe one.'), chunks: [chunk(0, 'safe zero.', { embedding: basisEmbedding(2) }), chunk(1, 'safe one.')] });
+      const texts = async (opts?: { includeUnsealed?: boolean; requireSafeChunks?: boolean; includeEmbedding?: boolean; sourceId?: string }) =>
+        (await engine.getChunks('notes/safe', opts)).map((c) => c.chunk_text);
+      // The read import-chunk-reuse.ts makes before it reuses stored vectors.
+      const reuse = (await engine.getChunks('notes/safe', { sourceId: 'default', includeEmbedding: true, requireSafeChunks: true }))
+        .map((c) => [c.chunk_text, axis(c.embedding)]);
+      const sealedSafe = await texts({ requireSafeChunks: true });
+      expect({ reuse, sealedSafe }).toEqual({ reuse: [['safe zero.', 2], ['safe one.', null]], sealedSafe: ['safe zero.', 'safe one.'] });
+
+      await engine.setChunkerVersion('notes/safe', 3);
+      const oldVersion = { safe: await texts({ requireSafeChunks: true }), unsealedSafe: await texts({ includeUnsealed: true, requireSafeChunks: true }), plain: await texts(), notRequired: await texts({ requireSafeChunks: false }) };
+      expect(oldVersion).toEqual({ safe: [], unsealedSafe: [], plain: ['safe zero.', 'safe one.'], notRequired: ['safe zero.', 'safe one.'] });
+
+      await engine.setChunkerVersion('notes/safe', 4);
+      const restored = await texts({ requireSafeChunks: true });
+      // An unsealed fragment write cannot certify the fence boundary, so the page reads as unsafe until the next seal.
+      await engine.upsertChunks('notes/safe', [chunk(0, 'a fragment.')]);
+      const fragment = { safe: await texts({ includeUnsealed: true, requireSafeChunks: true }), unsealed: await texts({ includeUnsealed: true }) };
+      await engine.sealChunks('notes/safe', [chunk(0, 'resealed.')]);
+      const resealed = await texts({ requireSafeChunks: true });
+      const missing = await engine.getChunks('notes/nobody', { requireSafeChunks: true });
+      expect({ restored, fragment, resealed, missing }).toEqual({ restored: ['safe zero.', 'safe one.'], fragment: { safe: [], unsealed: ['a fragment.'] }, resealed: ['resealed.'], missing: [] });
+      return { reuse, sealedSafe, oldVersion, restored, fragment, resealed, missing };
+    },
+  );
 });
+

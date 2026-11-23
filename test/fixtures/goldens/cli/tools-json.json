@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 300780,
-    "stdoutSha256": "8f97f2de38e80665f2b4290a0c7b3235c552b728d3957ed59861c8c0a49bbc96",
+    "stdoutBytes": 301654,
+    "stdoutSha256": "4e11c04295c4342ee025b97b9f4a90c8292ffc931ab024a3b4a88e71c74fd0c9",
     "toolNames": [
       "remember",
       "entity",
@@ -99,6 +99,7 @@
       "storage_list",
       "storage_register",
       "storage_update",
+      "reveal_secret",
       "submit_job",
       "get_job",
       "wait_job",
@@ -1922,7 +1923,7 @@
               "type": "boolean"
             },
             "autocut": {
-              "description": "Default on (never empty); false: full top-K for breadth.",
+              "description": "Off by default in every mode. true (or config search.autocut true) trims at the steepest score drop; can drop relevant hits on multi-part questions.",
               "type": "boolean"
             },
             "cross_modal": {
@@ -4282,7 +4283,7 @@
         "scope": "read"
       },
       {
-        "description": "Exact identity lookup: entity pages whose email, title or declared alias equals an email address or name, ignoring case, accents and quotes. Never fuzzy: empty matches means no exact match; ambiguous means several.",
+        "description": "Exact identity lookup: entity pages whose email, phone, title or declared alias equals an email address, phone number or name, ignoring case, accents and quotes; phones compare in one canonical form (+, country code, digits). Never fuzzy: empty matches means no exact match; ambiguous means several.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -4296,7 +4297,7 @@
         "schema": {
           "properties": {
             "query": {
-              "description": "Email address or name, e.g. 'alice@acme-example.com'.",
+              "description": "Email address, phone number or name, e.g. 'alice@acme-example.com' or '+1 555 555 0123'.",
               "type": "string"
             },
             "source_id": {
@@ -4758,6 +4759,30 @@
           "type": "object"
         },
         "scope": "write"
+      },
+      {
+        "description": "Return the original value behind a <REDACTED:rule:ss_...> marker. Needs a token whose operation list names reveal_secret and read access to a page holding the marker; every call is audited.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "reveal_secret",
+        "parameters": {
+          "id": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "id": {
+              "description": "Entry id from the marker (ss_ followed by 12 hex).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        },
+        "scope": "read"
       },
       {
         "description": "Submit a background job. Remote callers may submit sync, import, lint or lint-fix for their authenticated filesystem source. Other kinds require local CLI or a dedicated operation.",
@@ -6416,7 +6441,7 @@
         "scope": "read"
       },
       {
-        "description": "More tools and params: no arguments lists your catalog; {tools: [names]} returns full schemas, every optional param included; {surface} widens it (per client or stdio session).",
+        "description": "More tools and params: no arguments lists your catalog; {tools: [names]} returns schemas with every param you may pass; {surface} widens it (per client or stdio session).",
         "idempotent": false,
         "local_only": false,
         "mutating": true,

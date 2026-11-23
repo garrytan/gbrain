@@ -6,14 +6,15 @@
  * engine-sql/access-credentials.ts, and so are the bearer check reads and the OAuth token insert (the store keeps the table:
  * rust/docs/store/oauth-tokens.md); no store call returns a token hash.
  */
-import type { AccessTokenInsert, ActiveAccessTokenRow } from '../../engine-sql/access-tokens.ts';
-import { normalizeAccessTokenListRow, type AccessTokenListRow, type ActiveTokenGrantField, type LegacyTokenGrantColumns, normalizeOauthCodeRow, type OauthCodeInsert, type OauthCodeRow, type OauthTokenInsert, normalizeOauthTokenRow, type OauthTokenRow, type OauthTokenRung, type TokenByHashCaller } from '../../engine-sql/access-credentials.ts';
+import type { AccessTokenInsert, AccessTokenScopeRow, ActiveAccessTokenRow } from '../../engine-sql/access-tokens.ts';
+import { normalizeOauthClientRow, type OauthClientRow } from '../../engine-sql/oauth-clients.ts';
+import { normalizeAccessTokenListRow, type AccessTokenGrantWrite, type AccessTokenListRow, type AccessTokenPrivateAxis, type ActiveTokenGrantField, type LegacyTokenGrantColumns, type OauthTokenInsert, type OauthTokenRung, type TokenByHashCaller, type ActiveTokenTarget, normalizeOauthCodeRow, type OauthCodeInsert, type OauthCodeRow, normalizeOauthTokenRow, type OauthTokenRow } from '../../engine-sql/access-credentials.ts';
+import { withDates, uuidText } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { refusing } from './constraint-errors.ts';
-import { normalizeOauthClientRow, type OauthClientRow } from '../../engine-sql/oauth-clients.ts';
 
 export const insertAccessToken: StoreMember<[row: AccessTokenInsert], { id: string }> = (brain, row) =>
-  refusing('insertAccessToken', () => brain.insertAccessToken({ ...row, revoked_at: row.revoked_at?.toISOString() ?? null })) as Promise<{ id: string }>;
+  refusing('insertAccessToken', () => brain.insertAccessToken({ ...row, revoked_at: row.revoked_at?.toISOString() ?? null, created_at: row.created_at?.toISOString() ?? null })) as Promise<{ id: string }>;
 
 export const findActiveAccessTokens: StoreMember<[target: string], ActiveAccessTokenRow[]> = (brain, target) =>
   storeCall({ member: 'findActiveAccessTokens' }, () => brain.findActiveAccessTokens(target)) as Promise<ActiveAccessTokenRow[]>;
@@ -53,6 +54,17 @@ export const readOauthAccessTokenRows: StoreMember<[hash: string, rung: OauthTok
 export const readActiveAccessTokenByHash: StoreMember<[hash: string, caller: TokenByHashCaller], Record<string, unknown> | null> = async (brain, hash) => {
   const raw = await storeCall({ member: 'readActiveAccessTokenByHash' }, () => brain.readActiveAccessTokenByHash(hash)) as Record<string, unknown> | null;
   return raw ? { ...raw, token_hash: hash, created_at: new Date(String(raw.created_at)), last_used_at: raw.last_used_at == null ? null : new Date(String(raw.last_used_at)) } : null;
+};
+
+/**
+ * `auth rescope`'s rows: the stored columns of the active tokens one id or an exact name names, oldest first, the
+ * timestamps as Dates. The store runs one write at a time, so it takes no lock. An id that is not a UUID is refused
+ * with Postgres's text; the rows leave out the hash, as every store token row does.
+ */
+export const lockActiveAccessTokens: StoreMember<[target: ActiveTokenTarget], Record<string, unknown>[]> = async (brain, target) => {
+  const [id, name] = 'id' in target ? [uuidText(target.id), null] : [null, target.name];
+  const rows = await storeCall({ member: 'lockActiveAccessTokens' }, () => brain.lockActiveAccessTokens(id, name)) as Record<string, unknown>[];
+  return rows.map(row => withDates(row, ['created_at', 'last_used_at', 'revoked_at', 'reads_unscoped']));
 };
 
 /** The debounced `last_used_at` stamp (once per token per 60 s by the store clock; `unified` leaves a row with no `source_grant` alone). */
@@ -124,3 +136,41 @@ export const convertLegacyAccessTokenGrant: StoreMember<[id: string, columns: Le
     const raw = await storeCall({ member: 'convertLegacyAccessTokenGrant' }, () => brain.convertLegacyAccessTokenGrant(id, columns)) as Record<string, unknown> | null;
     return raw ? { ...raw, created_at: new Date(String(raw.created_at)) } : null;
   };
+
+/**
+ * `auth rescope`'s grant write: the five grant columns, the scopes when given, the `permissions` mirror and one more
+ * grant revision; the new revision, or null when no token has the id. A `source_grant` outside the list is refused as
+ * 23514 with the constraint name, and an id that is not a UUID with Postgres's text.
+ */
+export const writeAccessTokenGrant: StoreMember<[id: string, write: AccessTokenGrantWrite], number | null> = async (brain, id, write) => {
+  const uuid = uuidText(id);
+  const revision = await refusing('writeAccessTokenGrant', () => brain.writeAccessTokenGrant(uuid, write.columns, write.scopes, write.permissions)) as number | null;
+  return revision === null ? null : Number(revision);
+};
+
+/** One private grant column of a token; a value other than `none` and `granted_sources` is refused as 23514 with the constraint name. */
+export const writeAccessTokenPrivateGrant: StoreMember<[id: string, axis: AccessTokenPrivateAxis, value: string], void> = async (brain, id, axis, value) => {
+  const uuid = uuidText(id);
+  await refusing('writeAccessTokenPrivateGrant', () => brain.writeAccessTokenPrivateGrant(uuid, axis, value));
+};
+
+/** GST-2898: token `id`'s read-shared stamp (engine-sql/access-credentials.ts); a null revision clears the switch. */
+export const setAccessTokenReadSharedRevision: StoreMember<[id: string, revision: number | null], void> = async (brain, id, revision) => {
+  const uuid = uuidText(id);
+  await refusing('setAccessTokenReadSharedRevision', () => brain.setAccessTokenReadSharedRevision(uuid, revision));
+};
+
+/** The whole rows of the active tokens with no `source_grant`, oldest first, the times as Dates; the store takes no lock (one write at a time). */
+export const lockLegacyAccessTokens: StoreMember<[], Record<string, unknown>[]> = async (brain) => {
+  const rows = await storeCall({ member: 'lockLegacyAccessTokens' }, () => brain.lockLegacyAccessTokens()) as Record<string, unknown>[];
+  return rows.map(row => withDates(row, ['created_at', 'last_used_at', 'revoked_at', 'reads_unscoped']));
+};
+
+/**
+ * A live token's requester-scope fields: its `--reads-unscoped` opt-out and its creation time, both crossing as ISO text
+ * and returned as Dates (or null), as the SQL engines return the two timestamp columns; null for a revoked or missing token.
+ */
+export const readLiveAccessTokenScope: StoreMember<[id: string], AccessTokenScopeRow | null> = async (brain, id) => {
+  const row = await storeCall({ member: 'readLiveAccessTokenScope' }, () => brain.readLiveAccessTokenScope(id)) as AccessTokenScopeRow | null;
+  return row ? withDates(row, ['created_at', 'reads_unscoped']) : null;
+};

@@ -19,8 +19,10 @@
  *  - Seam: none. Real engines, typed methods only (no executeRaw: D18). A lease that has run out comes from a negative
  *    duration. A time window can only be told apart by letting time pass, so the window cases wait 0.8 s once and read a
  *    0.5 s window (the store's own clock is moved in rust/crates/gbrain-store/tests/jobs_status.rs, where whole
- *    minutes and hours can be crossed). Ids are compared relative to the case's first job and clock readings only as
- *    present, ordered, or equal to the job's own row. Submissions are 2 ms apart so created_at never ties.
+ *    minutes and hours can be crossed). The one age read (waiting queue depths) is a rounded wall-clock age, so it is
+ *    checked against bounds measured around the calls, not compared as a raw number across arms. Ids are compared
+ *    relative to the case's first job and clock readings only as present, ordered, or equal to the job's own row.
+ *    Submissions are 2 ms apart so created_at never ties.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -38,6 +40,10 @@ const DAY = 86_400;
 /** The wait before a window case reads a 0.5 s window: the jobs made before it are 0.8 s old, the ones after it are new. */
 const PAUSE_MS = 800;
 const WINDOW = 0.5;
+/** How old the oldest waiting job of a queue is by the clock before its age is read: past the 0.5 s rounding boundary, short of 1 s. */
+const AGE_TARGET_MS = 700;
+/** Date.now() reads whole milliseconds and the engine stamps its own clock: every measured bound is widened by this much. */
+const CLOCK_SLOP_MS = 2;
 
 function values(name: string, extra: Partial<JobInsertValues> = {}): JobInsertValues {
   return {
@@ -164,17 +170,38 @@ describe('engine parity: minion status reads', () => {
   parityTest('readWaitingQueueDepths lists the queues with waiting work, deepest first, with the oldest waiting age rounded to seconds',
     { methods: ['admitJob', 'claimNextJob', 'readWaitingQueueDepths'] }, async (engine) => {
       expect(await engine.readWaitingQueueDepths()).toEqual([]);
-      // Only queue alpha has work that is 0.8 s old: a half second rounds up to a whole one, so a truncating store reads 0.
-      await add(engine, 'work', { queue: 'alpha' });
-      await Bun.sleep(PAUSE_MS);
-      await add(engine, 'work', { queue: 'alpha' });
-      await add(engine, 'work', { queue: 'alpha' });
-      for (const queue of ['beta', 'beta', 'beta', 'gamma', 'epsilon', 'epsilon']) await add(engine, 'work', { queue });
+      // admitJob takes no created_at, so the age cannot be set; it is bounded by clock readings taken around the calls
+      // instead, which holds however slow the runner is. `first` holds, per queue, the readings around its oldest add.
+      const first = new Map<string, { before: number; after: number }>();
+      const addTo = async (queue: string) => {
+        const before = Date.now();
+        await add(engine, 'work', { queue });
+        if (!first.has(queue)) first.set(queue, { before, after: Date.now() });
+      };
+      for (const queue of ['alpha', 'alpha', 'alpha', 'beta', 'beta', 'beta', 'gamma', 'epsilon', 'epsilon']) await addTo(queue);
       // Not waiting: a queue with only active, delayed or paused work is absent.
       await active(engine, 'run', { queue: 'delta' });
       await add(engine, 'later', { queue: 'zeta', status: 'delayed', delay_until: FAR });
+      // Wait until queue alpha's oldest job is at least AGE_TARGET_MS old by the clock, so the setup above counts toward
+      // the wait and a slow runner waits less. The age is then 0.7 s plus the time of one read: a truncating store reads 0.
+      const alpha = first.get('alpha')!;
+      while (Date.now() - alpha.after < AGE_TARGET_MS) await Bun.sleep(5);
+      const readFrom = Date.now();
       const rows = await engine.readWaitingQueueDepths();
-      return rows.map(r => ({ queue: r.queue, depth: r.depth, age: r.oldest_waiting_age_seconds }));
+      const readTo = Date.now();
+      // A queue's true age at the read is in [readFrom - after, readTo - before]; a store that rounds returns a whole
+      // number of seconds within half a second of some age in that range. The slop covers whole-millisecond readings.
+      for (const row of rows) {
+        const born = first.get(row.queue)!;
+        const youngest = (readFrom - born.after - CLOCK_SLOP_MS) / 1000;
+        const oldest = (readTo - born.before + CLOCK_SLOP_MS) / 1000;
+        expect(row.oldest_waiting_age_seconds).toBeGreaterThanOrEqual(Math.ceil(youngest - 0.5));
+        expect(row.oldest_waiting_age_seconds).toBeLessThanOrEqual(Math.floor(oldest + 0.5));
+      }
+      // Whole seconds only, and alpha's age is past 0.5 s by construction, so it reads at least 1.
+      expect(rows.every(r => Number.isInteger(r.oldest_waiting_age_seconds))).toBe(true);
+      expect(rows.find(r => r.queue === 'alpha')!.oldest_waiting_age_seconds).toBeGreaterThanOrEqual(1);
+      return rows.map(r => ({ queue: r.queue, depth: r.depth }));
     });
 
   parityTest('readLastCompletedJobAt reads the freshest updated_at of a completed job, and nothing else moves it',

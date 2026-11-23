@@ -11,9 +11,9 @@
  *    generation is decimal text that moves with a trust change, null without its row; the request-id lookup returns
  *    at most two rows across principals, so the trusted local CLI reads a receipt another principal owns only when one
  *    row has the id. Every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm through
- *    test/engine-parity/harness.ts) gives the same answers; the Rust store keeps no OAuth clients or access tokens,
- *    so those four reads stop on the typed refusal there, and the cases that set state up through raw SQL (a deleted
- *    or revoked grant, a revoked writer, a missing singleton row) stop on raw SQL's refusal.
+ *    test/engine-parity/harness.ts) gives the same answers; the four OAuth client and access token reads run on the
+ *    Rust store's client and token rows, seeded through the typed inserts, and the cases that set state up through
+ *    raw SQL (a revoked writer, a missing singleton row) stop on raw SQL's refusal there.
  *  - Regression: these reads ran through executeRaw, so on a Rust brain get_write_request from the local CLI ended in
  *    engine_capability_missing at the request-id lookup, and leave_brain and sync_brain_skills ended at the local
  *    writer read, where PGLite answers not_found and membership_not_found. Each filter is an access cut: a case puts
@@ -91,24 +91,30 @@ async function admit(engine: BrainEngine, principalId: string, requestId: string
   });
 }
 
-/** Inserts a live and a deleted OAuth client, and a live and a revoked access token; returns the token ids. */
+/**
+ * Inserts a live and a deleted OAuth client, and a live and a revoked access token, through the typed inserts
+ * `gbrain auth register-client` and `gbrain auth create` use; returns the token ids.
+ */
 async function seedGrants(engine: BrainEngine): Promise<{ liveToken: string; revokedToken: string }> {
   for (const [id, deleted] of [['client-live', false], ['client-deleted', true]] as const) {
-    await engine.executeRaw(`INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris, grant_types, scope, token_endpoint_auth_method,
-      client_id_issued_at, source_id, allowed_operations, deleted_at) VALUES ($1, 'x', $1, '{}', '{client_credentials}', 'read write skills_member_self',
-      'client_secret_post', 0, 'default', ARRAY['leave_brain','get_write_request']::text[], ${deleted ? 'now()' : 'NULL'})`, [id]);
+    await engine.insertOauthClient({
+      client_id: id, client_secret_hash: 'x', client_name: id, redirect_uris: [], grant_types: ['client_credentials'],
+      scope: 'read write skills_member_self', token_endpoint_auth_method: 'client_secret_post', client_id_issued_at: 0,
+      source_id: 'default', allowed_operations: ['leave_brain', 'get_write_request'], deleted_at: deleted ? new Date() : null,
+    });
   }
-  const token = async (name: string, revoked: boolean) => (await engine.executeRaw<{ id: string }>(
-    `INSERT INTO access_tokens (name, token_hash, scopes, revoked_at) VALUES ($1, $2, ARRAY['read','write']::text[], ${revoked ? 'now()' : 'NULL'}) RETURNING id::text AS id`,
-    [name, `hash-${name}`]))[0]!.id;
+  const token = async (name: string, revoked: boolean) => (await engine.insertAccessToken({
+    name, token_hash: `hash-${name}`, scopes: ['read', 'write'], permissions: {}, source_grant: null, source_id: null,
+    federated_read: null, allowed_operations: null, takes_holders: null, revoked_at: revoked ? new Date() : null,
+  })).id;
   return { liveToken: await token('token-live', false), revokedToken: await token('token-revoked', true) };
 }
 
 describe('engine parity: access-grant reads', () => {
   parityTest('a receipt grant read returns a deleted client and a revoked token with their marks; a membership read returns neither', {
-    methods: ['readOAuthClientReceiptGrant', 'readAccessTokenReceiptGrant', 'readOAuthClientMemberGrant', 'readAccessTokenMemberGrant', 'transaction'],
+    methods: ['readOAuthClientReceiptGrant', 'readAccessTokenReceiptGrant', 'readOAuthClientMemberGrant', 'readAccessTokenMemberGrant', 'insertOauthClient', 'insertAccessToken', 'transaction'],
   }, async (engine) => {
-    // Nothing seeded: every read is empty. On the Rust arm the first read stops on the typed refusal.
+    // Nothing seeded: every read is empty.
     const empty = {
       client: await engine.readOAuthClientReceiptGrant('client-live'),
       token: await engine.readAccessTokenReceiptGrant(MISSING_TOKEN),
@@ -161,10 +167,12 @@ describe('engine parity: access-grant reads', () => {
   });
 
   parityTest('a revoked local writer member grant carries its revoked_at, so membership denies it', {
-    methods: ['insertLocalWriterRow', 'readLocalWriterMemberGrant'],
+    methods: ['insertLocalWriterRow', 'revokeLocalWriterRow', 'readLocalWriterMemberGrant'],
   }, async (engine) => {
     await engine.insertLocalWriterRow({ id: WRITER, lane: 'cli', credentialHash: 'e'.repeat(64), grant: GRANT });
-    await engine.executeRaw('UPDATE persistence_local_writers SET revoked_at=now() WHERE id=$1::uuid', [WRITER]);
+    // True when the registration exists, false for an id no writer holds.
+    expect({ revoked: await engine.revokeLocalWriterRow(WRITER), unknown: await engine.revokeLocalWriterRow(UNKNOWN) })
+      .toEqual({ revoked: true, unknown: false });
     const row = await engine.readLocalWriterMemberGrant(WRITER);
     // The read keeps the revoked row (the caller refuses it); a reader that dropped revoked_at would hide the mark.
     expect({ revoked: row?.revoked_at != null, ceiling: row?.grant_ceiling }).toEqual({ revoked: true, ceiling: GRANT });
@@ -195,6 +203,7 @@ describe('engine parity: access-grant reads', () => {
 
   // The member is trust-withdrawals.ts's readTrustGeneration (it throws on a missing row; the move on a trust config
   // write is pinned in trust-withdrawals.test.ts). This case pins that the cache identity read fails closed with it.
+  // Pinned Rust stop: Rust keeps no singleton row, by design (this case deletes one with raw SQL).
   parityTest('a brain with no trust_policy_state row fails the generation read, and the cache identity read fails closed', {
     methods: ['readTrustGeneration'],
   }, async (engine) => {
@@ -223,6 +232,7 @@ describe('engine parity: access-grant reads', () => {
     return result;
   }));
 
+  // Pinned Rust stop: Rust keeps no singleton row, by design (this case deletes one with raw SQL).
   parityTest('a brain with no shared_skill_state row reads a null serving epoch, and membership denies', {
     methods: ['readSharedSkillServingEpoch', 'readLocalWriterMemberGrant'],
   }, (engine) => inFreshHome(async () => {

@@ -18,11 +18,9 @@
 //!   filter (`suppressFlagged`) read the row's stamped `trust_tier` and its write-gate receipts
 //!   (`trust::TrustPolicy`).
 //!
-//! `matchSavedFacts` is served by `facts/saved_match.rs`.
-//!
-//! Refused (no store member): `readFactForOwnerAction`, `listStandingPreferences`,
-//! `listLexicalContestCandidates`, `listRestatedPrivateCopies` and `countDerivedFactTaint`. The store keeps the columns they read (`trust_tier`, `write_origin`,
-//! the write-gate receipts), but no store read for them is built yet. The `entity_ended` history
+//! `matchSavedFacts` is served by `facts/saved_match.rs`; `listLexicalContestCandidates` by `facts/contest.rs`.
+//! `listRestatedPrivateCopies` is served by `facts/trust_reads.rs`; `readFactForOwnerAction`, `listStandingPreferences`
+//! and `countDerivedFactTaint` by `facts/trust_owner.rs`. The `entity_ended` history
 //! arm reads the withdrawal ledger through `gbrain_fact_fingerprint`, which no store read joins yet.
 //!
 //! `similarity` is `1 - (embedding <=> query)` for a row whose embedding is comparable (a vector
@@ -114,16 +112,16 @@ pub struct UncomparableQuery {
 }
 
 /// `poolWhere` over one row, with the clock read once.
-struct Pool<'a> {
+pub(super) struct Pool<'a> {
     args: &'a PoolArgs,
     trust: TrustPolicy,
-    sources: BTreeSet<&'a str>,
+    pub(super) sources: BTreeSet<&'a str>,
     since: Option<i64>,
     now: i64,
 }
 
 impl<'a> Pool<'a> {
-    fn new(op: &str, args: &'a PoolArgs, now: i64) -> Result<Self> {
+    pub(super) fn new(op: &str, args: &'a PoolArgs, now: i64) -> Result<Self> {
         let mut texts: Vec<(&str, &str)> = args
             .source_ids
             .iter()
@@ -149,7 +147,7 @@ impl<'a> Pool<'a> {
     }
 
     /// The `WHERE` clauses of `poolWhere`, in the order the SQL states them.
-    fn admits(&self, read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
+    pub(super) fn admits(&self, read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
         let a = self.args;
         if !self.sources.contains(row.source_id.as_str()) {
             return Ok(false);
@@ -211,7 +209,7 @@ fn quarantined_provenance(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
 }
 
 /// `1 - (embedding <=> query)` of a comparable row, else NULL.
-fn similarity(row: &FactRecord, vector: &Option<(Vec<f32>, &VectorArg)>) -> Value {
+pub(super) fn similarity(row: &FactRecord, vector: &Option<(Vec<f32>, &VectorArg)>) -> Value {
     match vector {
         Some((target, arg)) if row.comparable(&arg.model, arg.dims) => {
             let distance = cosine_distance(row.embedding.as_deref().unwrap_or(&[]), target);
@@ -222,7 +220,7 @@ fn similarity(row: &FactRecord, vector: &Option<(Vec<f32>, &VectorArg)>) -> Valu
 }
 
 /// One pool row as the SQL returns it: the sixteen `FACT_POOL_COLUMNS`, then `similarity`.
-fn pool_row(row: &FactRecord, similarity: Value) -> Value {
+pub(super) fn pool_row(row: &FactRecord, similarity: Value) -> Value {
     json!({
         "id": row.id,
         "fact": row.fact,
@@ -272,7 +270,8 @@ impl Store {
     /// row's cosine to the query vector when it is comparable. The keyword arm keeps the rows
     /// whose `to_tsvector('english', fact || ' ' || entity name)` matches the OR of the terms'
     /// lexemes, best `ts_rank_cd` first, then `valid_from` and `id` descending; the entity arm
-    /// reads the named entity's rows, `valid_from` and `id` descending.
+    /// reads the named entity's rows newest first (a future-dated row as of its `created_at`),
+    /// then `id` descending.
     pub fn list_facts_for_relevance(&self, q: &RelevanceQuery) -> Result<Vec<Value>> {
         const OP: &str = "listFactsForRelevance";
         let keyword = match q.arm.as_str() {
@@ -340,9 +339,19 @@ impl Store {
             ranked.push((rank, row));
         }
         // Postgres sorts `real` with NaN above every number, as `total_cmp` does for a positive NaN.
+        // The keyword arm breaks ties on `valid_from`; the entity arm ranks a future-dated fact by
+        // when it was written.
+        let now = self.env.now_micros();
+        let time = |r: &FactRecord| {
+            if keyword {
+                r.valid_from_us
+            } else {
+                super::ranked_time(r, now)
+            }
+        };
         ranked.sort_by(|(sa, a), (sb, b)| {
             sb.total_cmp(sa)
-                .then(b.valid_from_us.cmp(&a.valid_from_us))
+                .then(time(b).cmp(&time(a)))
                 .then(b.id.cmp(&a.id))
         });
         Ok(ranked

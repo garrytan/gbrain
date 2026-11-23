@@ -62,6 +62,19 @@ impl Brain {
         self.run(env, move |s| s.set_access_member_kind(&id, &kind))
     }
 
+    /// `setAccessMemberLabelledOnly(id, labelledOnly)`: resolves null.
+    #[napi]
+    pub fn set_access_member_labelled_only<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+        labelled_only: bool,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.set_access_member_labelled_only(&id, labelled_only)
+        })
+    }
+
     /// `tombstoneAccessMember(id)`: resolves null.
     #[napi]
     pub fn tombstone_access_member<'env>(
@@ -280,5 +293,12 @@ impl Brain {
         source_ids: Vec<String>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_member_source_bindings(&source_ids))
+    }
+
+    /// `readSharedSourceRows()`: every live source with its config, guest flag, bound members and
+    /// the owner member, in byte order of the id.
+    #[napi]
+    pub fn read_shared_source_rows<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_shared_source_rows())
     }
 }

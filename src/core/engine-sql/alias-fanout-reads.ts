@@ -76,5 +76,17 @@ export interface EntityAliasRow { slug: string; alias_norm: string; origin: stri
  * `page_aliases` row of a listed slug in the source, by alias. The text is the card's statement, byte for byte.
  */
 export async function readEntityAliasRows(exec: LegacyUnscopedRead, sourceId: string, slugs: readonly string[]): Promise<EntityAliasRow[]> {
-  return rows<EntityAliasRow>(exec, sqlFragment`SELECT slug, alias_norm, origin, alias_text FROM page_aliases WHERE source_id = ${sourceId} AND slug = ANY(${[...slugs]}::text[]) ORDER BY alias_norm`);
+  return rows<EntityAliasRow>(exec, sqlFragment`SELECT slug, alias_norm, origin, alias_text FROM page_aliases WHERE source_id = ${sourceId} AND slug = ANY(${[...slugs]}::text[]) ORDER BY alias_norm COLLATE "C"`);
+}
+
+/** One `slug_aliases` row: an old slug and the slug it resolves to. */
+export interface SlugAliasRow { alias_slug: string; canonical_slug: string }
+
+/**
+ * Every `slug_aliases` row of the source (extract.ts `loadSlugAliasTargets`, which maps old slugs of renamed pages to
+ * their current slug so a link written before a rename still resolves). The text is the caller's statement, byte for
+ * byte; it has no order, as the caller builds a map. The caller keeps its missing-table fallback.
+ */
+export async function listSlugAliases(exec: LegacyUnscopedRead, sourceId: string): Promise<SlugAliasRow[]> {
+  return rows<SlugAliasRow>(exec, sqlFragment`SELECT alias_slug, canonical_slug FROM slug_aliases WHERE source_id = ${sourceId}`);
 }

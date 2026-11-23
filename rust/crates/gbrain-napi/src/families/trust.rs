@@ -136,6 +136,36 @@ impl Brain {
         })
     }
 
+    /// `readSourcePurgeFlags(sourceId)`: resolves `{ facts, takes }`.
+    #[napi]
+    pub fn read_source_purge_flags<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_source_purge_flags(&source_id)
+                .map(|(facts, takes)| serde_json::json!({ "facts": facts, "takes": takes }))
+        })
+    }
+
+    /// `listPurgedTakeRows(sourceId, [{ row_num, claim }], subject | null)`: resolves the matched
+    /// row numbers, ascending.
+    #[napi]
+    pub fn list_purged_take_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        takes: Value,
+        subject: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let takes: Vec<gbrain_store::facts::take_purges::TakeClaimRow> =
+                required(takes, "listPurgedTakeRows takes")?;
+            s.list_purged_take_rows(&source_id, &takes, subject.as_deref())
+        })
+    }
+
     /// `listFactWithdrawalKeys(sourceId, limit)`: resolves `[{ visibility, fact_hash, subject }]`.
     #[napi]
     pub fn list_fact_withdrawal_keys<'env>(

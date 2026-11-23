@@ -43,8 +43,9 @@ import { overdueDeferredWorkSql } from '../src/core/persistence/refresh-barrier.
 import { claimableWriteSql, foregroundPrioritySql } from '../src/core/persistence/journal.ts';
 import { PERSISTENCE_PROTOCOL_PREDICATE } from '../src/core/persistence/protocol.ts';
 import { EXPIRED_PREPARING_CHARGE_SQL } from '../src/core/persistence/claim-phase.ts';
-import { CAPACITY_PRINCIPAL_DAYS_SQL, CAPACITY_RECLAIM_SQL, COMPACTABLE_RECEIPTS_SQL, PROJECTION_RETRY_READY_TEXT, SEGMENTED_JOB_PROBES_SQL,
-  SEGMENTED_PROJECTION_CLAIMED_TEXT, TRUE_UP_REQUESTS_SQL, TRUE_UP_RESERVATIONS_SQL, projectionWindowFragment } from '../src/core/engine-sql/persistence-housekeeping.ts';
+import { CAPACITY_PRINCIPAL_DAYS_SQL, CAPACITY_RECLAIM_SQL, CLAIM_SEGMENTED_PROJECTION_SQL, COMPACTABLE_RECEIPTS_SQL, MARK_PROJECTION_REBUILD_FAILED_SQL,
+  PROJECTION_RETRY_READY_TEXT, RECEIPT_COMPACTION_CANDIDATES_SQL, SEGMENTED_JOB_PROBES_SQL, SEGMENTED_PROJECTION_CLAIMED_TEXT, TRUE_UP_REQUESTS_SQL, TRUE_UP_RESERVATIONS_SQL, projectionWindowFragment,
+} from '../src/core/engine-sql/persistence-housekeeping.ts';
 import { residentWindowCtes, type ProjectionScanCursor } from '../src/core/page-state/projection-window.ts';
 import { INSERT_TOPOLOGY_CHANGE_SQL, RELEASE_CLAIM_SQL, releaseUnpublishedClaim as releaseClaimStatement, TOPOLOGY_CHANGE_SQL } from '../src/core/engine-sql/persistence-claims.ts';
 import { NEWEST_SYNC_RECEIPT_EXCLUSION, OPEN_SYNC_CURSOR_EXCLUSION } from '../src/core/persistence/journal.ts';
@@ -57,7 +58,8 @@ import { CLAIM_ORDER, FOREGROUND_WAITING_ON } from '../src/core/persistence/jour
 import { DEAD_OWNER_EFFECT_SQL } from '../src/core/persistence/effect-journal.ts';
 import { refreshFenceClear } from '../src/core/persistence/worktree-refresh-schema.ts';
 import { quoteIdentifier } from '../src/core/search/embedding-column.ts';
-import { PROJECTION_RETRY_READY_SQL, SEGMENTED_JOB_PROBES, SEGMENTED_PROJECTION_CLAIMED_SQL } from '../src/core/page-state/projections.ts';
+import { PROJECTION_RETRY_READY_SQL, SEGMENTED_JOB_PROBES, SEGMENTED_PROJECTION_CLAIM, SEGMENTED_PROJECTION_CLAIMED_SQL, SEGMENTED_PROJECTION_LEASE_SECONDS,
+} from '../src/core/page-state/projections.ts';
 
 const completion = (purgeColumns: string) => `WITH effects AS (SELECT COALESCE(SUM(${EFFECT_BYTES_SQL}),0) AS bytes,
       COALESCE(bool_or(state<>'committed'),false) AS unfinished FROM persistence_effects WHERE request_id=$1::uuid),
@@ -125,6 +127,9 @@ describe('written-out write-journal statements', () => {
     ${OPEN_SYNC_CURSOR_EXCLUSION('r')}
     ${NEWEST_SYNC_RECEIPT_EXCLUSION('r')}
     ORDER BY sequence LIMIT 100`);
+    expect(RECEIPT_COMPACTION_CANDIDATES_SQL).toContain(`AND NOT EXISTS (SELECT 1 FROM persistence_effects e WHERE e.request_id=r.id AND e.state<>'committed')
+      ${OPEN_SYNC_CURSOR_EXCLUSION('r')}
+      AND r.id NOT IN`);
     expect(TRUE_UP_REQUESTS_SQL).toBe(`SELECT r.id,r.intent,r.authority,r.outcome,r.error_message,r.error_detail,r.client_request_id,
       r.terminal_reservation,r.principal_kind,r.principal_id,r.compacted,
       COALESCE((SELECT SUM(${EFFECT_BYTES_SQL}) FROM persistence_effects e WHERE e.request_id=r.id),0)::text AS effect_bytes,
@@ -150,6 +155,9 @@ describe('written-out write-journal statements', () => {
     expect(SEGMENTED_JOB_PROBES_SQL).toBe(SEGMENTED_JOB_PROBES);
     expect(SEGMENTED_PROJECTION_CLAIMED_TEXT).toBe(SEGMENTED_PROJECTION_CLAIMED_SQL);
     expect(PROJECTION_RETRY_READY_TEXT).toBe(PROJECTION_RETRY_READY_SQL);
+    // The projector's queue writes copy its claim name, lease and live-claim test.
+    expect(CLAIM_SEGMENTED_PROJECTION_SQL).toContain(`NOT (split_part(reason,':',1)='${SEGMENTED_PROJECTION_CLAIM}' AND updated_at>=now()-interval '${SEGMENTED_PROJECTION_LEASE_SECONDS} seconds')`);
+    expect(MARK_PROJECTION_REBUILD_FAILED_SQL).toContain(`AND NOT ${SEGMENTED_PROJECTION_CLAIMED_SQL}`);
   });
 
   test('the resident window copies residentWindowCtes, its row budgets and its parameter order', () => {

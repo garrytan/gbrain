@@ -18,7 +18,7 @@ import {
 // exclude resolver + LIKE escaper + visibility clause so the doctor count can't
 // drift from what search actually filters.
 import { resolveHardExcludes, DEFAULT_HARD_EXCLUDES } from '../../../core/search/source-boost.ts';
-import { escapeLikePattern, buildVisibilityClause } from '../../../core/search/sql-ranking.ts';
+import { escapeLikePattern } from '../../../core/search/sql-ranking.ts';
 import { safeChunksFilter } from '../../../core/search/safe-chunks.ts';
 import type { Check } from '../../doctor.ts';
 import { checkError, doctorVerify, withSkippedSegmented } from '../check-fix.ts';
@@ -170,27 +170,12 @@ export async function checkHiddenBySearchPolicy(engine: BrainEngine, opts: { sou
       return { name, status: 'ok', message: 'No search-exclude prefixes active.' };
     }
 
-    // ONE query: COUNT(DISTINCT p.id) per prefix in a single pass. Prefixes are
-    // bound params, LIKE-escaped (env-supplied prefixes may contain %/_/\) with
-    // an explicit ESCAPE clause. Candidate gate is EXISTS(content_chunks);
-    // buildVisibilityClause mirrors search's page-level visibility (soft-delete,
-    // archived source, quarantine) and REQUIRES the `sources s` join.
-    const visibility = buildVisibilityClause('p', 's');
-    const filters = prefixes
-      .map((_, i) => `COUNT(DISTINCT p.id) FILTER (WHERE p.slug LIKE $${i + 1} ESCAPE '\\')::int AS c${i}`)
-      .join(',\n         ');
-    const params: unknown[] = prefixes.map((pfx) => `${escapeLikePattern(pfx)}%`);
-    // A remote caller's grant confines the counts to its own sources.
-    if (opts.sourceIds) params.push(opts.sourceIds);
-    const sql =
-      `SELECT
-         ${filters}
-       FROM pages p
-       JOIN sources s ON s.id = p.source_id
-       WHERE EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id)
-         ${visibility}${opts.sourceIds ? `\n         AND p.source_id = ANY($${params.length}::text[])` : ''}`;
-    const rows = await engine.executeRaw<Record<string, number>>(sql, params);
-    const row = rows[0] ?? {};
+    // One count per prefix (PREFIXES are LIKE-escaped, env-supplied ones may contain %/_/\ , with an explicit ESCAPE
+    // clause in the statement). Candidate gate is EXISTS(content_chunks); the statement carries buildVisibilityClause's
+    // page-level visibility (soft-delete, archived source, quarantine). A remote caller's grant confines the counts to
+    // its own sources.
+    const hidden = await Promise.all(prefixes.map((pfx) => engine.countPagesHiddenByPrefix(`${escapeLikePattern(pfx)}%`, opts.sourceIds ?? null)));
+    const row: Record<string, number> = Object.fromEntries(hidden.map((n, i) => [`c${i}`, n]));
 
     const defaults = new Set(DEFAULT_HARD_EXCLUDES);
     const perPrefix = prefixes
@@ -258,8 +243,6 @@ export async function checkLinkResolutionOpportunity(
     } else {
       allSlugs = await engine.getAllSlugs();
     }
-    const scope = opts.sourceIds ? ' AND source_id = ANY($1::text[])' : '';
-    const scopeParams = opts.sourceIds ? [opts.sourceIds] : undefined;
     if (allSlugs.size === 0) {
       return { name, status: 'ok', message: 'Brain is empty — nothing to scan' };
     }
@@ -278,16 +261,10 @@ export async function checkLinkResolutionOpportunity(
     // full N-page walk hit the 60s budget every run on large brains and
     // returned a perpetual partial; this bounds the work to a fixed sample.
     const SAMPLE_LIMIT = 1000;
-    const sampled = await engine.executeRaw<{ compiled_truth: string | null; timeline: string | null }>(
-      `SELECT compiled_truth, timeline FROM pages WHERE deleted_at IS NULL${scope} ORDER BY id DESC LIMIT ${SAMPLE_LIMIT}`,
-      scopeParams,
-    );
+    const sampled = await engine.listRecentPageBodies(opts.sourceIds ?? null);
     // Decision #10: a segmented page's body columns are NULL, so the sample scans it as an empty body.
-    const [segmented] = await engine.executeRaw<{ n: number }>(
-      `SELECT COUNT(*)::int AS n FROM (SELECT body_storage FROM pages WHERE deleted_at IS NULL${scope} ORDER BY id DESC LIMIT ${SAMPLE_LIMIT}) s WHERE s.body_storage = 'segmented'`,
-      scopeParams,
-    ).catch(() => []);
-    const result = (check: Check) => withSkippedSegmented(check, Number(segmented?.n ?? 0));
+    const segmented = await engine.countSegmentedRecentPages(opts.sourceIds ?? null).catch(() => 0);
+    const result = (check: Check) => withSkippedSegmented(check, segmented);
     const totalPages = allSlugs.size;
     const sampledNote = totalPages > SAMPLE_LIMIT
       ? ` (scanned the ${SAMPLE_LIMIT} most-recent of ${totalPages} pages)`
@@ -416,11 +393,8 @@ export async function checkCalibrationFreshness(engine: BrainEngine, opts: { sou
       configValue: await engine.getConfig('emotional_weight.user_holder'),
     });
     // A remote caller's grant reads only its own sources' profiles.
-    const rows = await engine.executeRaw<{ generated_at: Date | null }>(
-      `SELECT MAX(generated_at) AS generated_at FROM calibration_profiles WHERE holder = $1${opts.sourceIds ? ' AND source_id = ANY($2::text[])' : ''}`,
-      opts.sourceIds ? [ownerHolder, opts.sourceIds] : [ownerHolder],
-    );
-    const generated = rows[0]?.generated_at;
+    const latest = await engine.getLatestCalibrationProfile({ holder: ownerHolder, ...(opts.sourceIds ? { sourceIds: opts.sourceIds } : {}) });
+    const generated = latest?.generated_at;
     if (!generated) {
       return {
         name: 'calibration_freshness',
@@ -563,15 +537,7 @@ export async function checkSubagentHealth(engine: BrainEngine): Promise<Check> {
 export async function checkVoiceGateHealth(engine: BrainEngine, opts: { sourceIds?: string[] } = {}): Promise<Check> {
   try {
     // A remote caller's grant reads only its own sources' profiles.
-    const rows = await engine.executeRaw<{ total: number; failures: number }>(
-      `SELECT COUNT(*)::int AS total,
-              COALESCE(SUM(CASE WHEN voice_gate_passed = false THEN 1 ELSE 0 END), 0)::int AS failures
-         FROM calibration_profiles
-         WHERE generated_at >= (now() - INTERVAL '7 days')${opts.sourceIds ? ' AND source_id = ANY($1::text[])' : ''}`,
-      opts.sourceIds ? [opts.sourceIds] : undefined,
-    );
-    const total = rows[0]?.total ?? 0;
-    const failures = rows[0]?.failures ?? 0;
+    const { total, failures } = await engine.readVoiceGateHealth({ sourceIds: opts.sourceIds });
     if (total === 0) {
       return {
         name: 'voice_gate_health',

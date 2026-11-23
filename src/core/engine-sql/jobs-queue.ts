@@ -524,6 +524,7 @@ export async function renewPrivateQueueLease(tx: Raw, queue: string, ownerToken:
  * Legacy queues without metadata never take a slot.
  */
 export async function listOwnedPrivateQueues(tx: Raw, maxQueues: number): Promise<string[]> {
+  // The queue order never reaches output: it only sets the order recovery judges queues in, and queue breaks a tie only on an equal min(created_at).
   const rows = await tx.executeRaw<{ queue: string }>(
     `SELECT queue
          FROM minion_jobs

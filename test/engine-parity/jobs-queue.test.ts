@@ -649,8 +649,7 @@ describe('engine parity: minion queue', () => {
       };
     });
 
-  // The retry policy runs on a handle that serves the job reads and the open-job count; any other read, like this
-  // listJobs, makes the Rust arm stop on the typed refusal before the store writes.
+  // The retry policy runs in the retry's transaction on every arm, so any engine read it makes (this listJobs) answers.
   parityTest('retryJob runs a delegated client\'s retry policy through the retry transaction',
     { methods: ['admitJob', 'claimNextJob', 'failJob', 'retryJob'] }, async (engine) => {
       const id = await finished(engine, 'failed', 'failed');
@@ -1045,8 +1044,8 @@ describe('engine parity: minion queue', () => {
       return { atLimit: await outcome(2), under: await outcome(3), unlimited: await outcome(null) };
     });
 
-  // PGLite and Postgres lock the client's oauth_clients row (none here, so nothing is locked); the Rust store keeps no
-  // OAuth rows and does not serve the member, so the Rust arm stops on the typed refusal.
+  // PGLite and Postgres lock the client's oauth_clients row (none here, so nothing is locked); the Rust store admits one
+  // write at a time, so the lock holds nothing more and the call resolves the same way.
   parityTest('lockOAuthClient resolves for a client with no OAuth row',
     { methods: ['lockOAuthClient'] }, async (engine) => ({ locked: (await engine.lockOAuthClient('nobody-example')) ?? null }));
 

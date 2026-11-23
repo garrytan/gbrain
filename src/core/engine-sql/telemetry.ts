@@ -317,7 +317,7 @@ export interface McpRequestLogPageRow {
 export interface McpRequestLogPage { rows: McpRequestLogPageRow[]; total: number }
 
 /**
- * The request list of `/admin/api/requests`, byte for byte as serve-http-admin-api.ts built it at 551fdcf393: each
+ * The request list of `/admin/api/requests`, byte for byte as serve-http-admin-api.ts built it at 0b8fde313c (newest first, the highest id first on a tie): each
  * filter present adds `AND <column> = $N` in the order token, operation, status, then the page's LIMIT and OFFSET.
  */
 export function mcpRequestLogPageSql(spec: McpRequestLogPageSpec): { list: string; count: string; params: string[] } {
@@ -331,7 +331,7 @@ export function mcpRequestLogPageSql(spec: McpRequestLogPageSpec): { list: strin
                 operation, latency_ms, status, params, error_message, created_at
          FROM mcp_request_log
          WHERE 1=1 ${filterSql}
-         ORDER BY created_at DESC LIMIT ${0} OFFSET ${0}`);
+         ORDER BY created_at DESC, id DESC LIMIT ${0} OFFSET ${0}`);
   const count = renderFragment(sqlFragment`SELECT count(*)::int as total FROM mcp_request_log
          WHERE 1=1 ${filterSql}`);
   return { list: list.text, count: count.text, params: count.params as string[] };

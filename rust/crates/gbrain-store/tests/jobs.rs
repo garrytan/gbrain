@@ -3,7 +3,7 @@
 mod memory_env;
 
 use gbrain_store::error::{ADMISSION_REFUSED, INVALID_STATE};
-use gbrain_store::jobs::{AdmitSpec, ClaimSpec, ListFilter};
+use gbrain_store::jobs::{AdmitSpec, ClaimSpec, ListFilter, TokenDelta};
 use memory_env::{Brain, brain};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -23,7 +23,10 @@ fn insert(name: &str, extra: Value) -> Value {
     base
 }
 
-fn admit(b: &Brain, spec: Value) -> gbrain_store::Result<gbrain_store::jobs::AdmitOutcome> {
+fn admit(
+    b: &gbrain_store::Store,
+    spec: Value,
+) -> gbrain_store::Result<gbrain_store::jobs::AdmitOutcome> {
     let mut spec = spec;
     if spec.get("maxSpawnDepth").is_none() {
         spec["maxSpawnDepth"] = json!(5);
@@ -32,7 +35,7 @@ fn admit(b: &Brain, spec: Value) -> gbrain_store::Result<gbrain_store::jobs::Adm
     b.admit_job(&spec)
 }
 
-fn add(b: &Brain, name: &str, extra: Value) -> i64 {
+fn add(b: &gbrain_store::Store, name: &str, extra: Value) -> i64 {
     let out = admit(b, json!({ "insert": insert(name, extra) })).unwrap();
     assert_eq!(out.outcome, "inserted");
     out.row["id"].as_i64().unwrap()
@@ -53,6 +56,92 @@ fn claim(b: &Brain, token: &str) -> Option<Value> {
 
 fn job(b: &Brain, id: i64) -> Value {
     b.get_job(id).unwrap().expect("job exists")
+}
+
+/// Workers claim and complete while a submitter keeps adding jobs. With concurrent writes on, a
+/// claim that loses a race to another claim, a completion or a submission runs again.
+#[test]
+fn many_workers_with_jobs_arriving_claim_and_complete_each_job_once() {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    for workers in [4usize, 16, 64] {
+        let b = brain("jobs-arrivals");
+        let first: Vec<i64> = (0..64)
+            .map(|i| add(&b, "work", json!({ "priority": i % 3 })))
+            .collect();
+        let arrived = Mutex::new(Vec::new());
+        let submitting = AtomicBool::new(true);
+        let claimed: Vec<Vec<i64>> = std::thread::scope(|s| {
+            s.spawn(|| {
+                for i in 0..64 {
+                    let id = add(&b, "work", json!({ "priority": i % 2 }));
+                    arrived.lock().unwrap().push(id);
+                }
+                submitting.store(false, Ordering::SeqCst);
+            });
+            let handles: Vec<_> = (0..workers)
+                .map(|w| {
+                    let (b, submitting) = (&b, &submitting);
+                    s.spawn(move || {
+                        let token = format!("worker-{w}:token");
+                        let spec = claim_spec(&token, &["work"]);
+                        let mut mine = Vec::new();
+                        loop {
+                            // Read the flag first: a None after the last submission means done.
+                            let more = submitting.load(Ordering::SeqCst);
+                            match b.claim_next_job(&spec).unwrap() {
+                                Some(row) => {
+                                    let id = row["id"].as_i64().unwrap();
+                                    let done = b.complete_job(id, &token, None).unwrap();
+                                    assert!(
+                                        done.is_some(),
+                                        "the claimer could not complete job {id}"
+                                    );
+                                    mine.push(id);
+                                }
+                                // An empty claim is a write: back off so the submitter gets in.
+                                None if more => {
+                                    std::thread::sleep(std::time::Duration::from_millis(2))
+                                }
+                                None => return mine,
+                            }
+                        }
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        let all: BTreeSet<i64> = first
+            .into_iter()
+            .chain(arrived.into_inner().unwrap())
+            .collect();
+        assert_eq!(all.len(), 128);
+        let mut union = BTreeSet::new();
+        for id in claimed.iter().flatten() {
+            assert!(
+                union.insert(*id),
+                "{workers} workers: job {id} was claimed twice"
+            );
+        }
+        assert_eq!(
+            union, all,
+            "{workers} workers: every job is claimed exactly once"
+        );
+        for id in &all {
+            let row = job(&b, *id);
+            assert_eq!(row["status"], "completed");
+            assert_eq!(row["claim_generation"], 1);
+            assert_eq!(row["attempts_started"], 1);
+        }
+        if let Some(stats) = b.occ_stats() {
+            eprintln!(
+                "{workers} workers: {} commits, {} conflicts, hot keys {:?}",
+                stats.commits,
+                stats.conflicts,
+                stats.hot_keys.iter().take(3).collect::<Vec<_>>()
+            );
+        }
+    }
 }
 
 #[test]
@@ -229,6 +318,71 @@ fn list_jobs_filters_and_orders_newest_first() {
 }
 
 #[test]
+fn a_capacity_probe_answers_a_coalesce_or_capacity_and_writes_nothing() {
+    let b = brain("jobs-capacity-probe");
+    let probe = |extra: Value, more: Value| {
+        let mut spec = json!({"insert": insert("work", extra), "capacityCheck": true});
+        for (k, v) in more.as_object().unwrap() {
+            spec[k] = v.clone();
+        }
+        admit(&b, spec).unwrap()
+    };
+    // No row yet: the probe stops where the capacity check runs, before the quota, and inserts nothing.
+    let fresh = probe(
+        json!({"idempotency_key": "k1"}),
+        json!({"quotaMaxWaiting": 0}),
+    );
+    assert_eq!(
+        (fresh.outcome, fresh.row.clone()),
+        ("capacity", Value::Null)
+    );
+    assert!(b.list_jobs(&ListFilter::default()).unwrap().is_empty());
+
+    // A live row under the key coalesces exactly as a full admission does.
+    let first = add(&b, "work", json!({"idempotency_key": "k1"}));
+    let again = probe(json!({"idempotency_key": "k1"}), json!({}));
+    assert_eq!(
+        (again.outcome, again.row["id"].as_i64()),
+        ("coalesced", Some(first))
+    );
+
+    // A dead holder is released by a full admission; the probe answers capacity and keeps no release.
+    claim(&b, "w:1").unwrap();
+    b.fail_job(first, "w:1", "boom", "dead", None, None)
+        .unwrap()
+        .unwrap();
+    let released = probe(json!({"idempotency_key": "k1"}), json!({}));
+    assert_eq!(released.outcome, "capacity");
+    assert_eq!(job(&b, first)["idempotency_key"], "k1");
+    assert_eq!(b.list_jobs(&ListFilter::default()).unwrap().len(), 1);
+}
+
+#[test]
+fn admit_job_runs_as_a_statement_of_an_open_transaction() {
+    let b = brain("jobs-admit-in-transaction");
+    let tx = b.begin_transaction(false).unwrap();
+    // The probe and the admission run on the bound store; the probe keeps nothing.
+    let probe = admit(
+        &tx,
+        json!({"insert": insert("work", json!({})), "capacityCheck": true}),
+    )
+    .unwrap();
+    assert_eq!(probe.outcome, "capacity");
+    let out = admit(&tx, json!({"insert": insert("work", json!({}))})).unwrap();
+    assert_eq!(out.outcome, "inserted");
+    let id = out.row["id"].as_i64().unwrap();
+    assert_eq!(tx.list_jobs(&ListFilter::default()).unwrap().len(), 1);
+    tx.commit_transaction().unwrap();
+    assert_eq!(job(&b, id)["status"], "waiting");
+
+    // A transaction that rolls back keeps no admitted job.
+    let tx = b.begin_transaction(false).unwrap();
+    add(&tx, "work", json!({}));
+    tx.rollback_transaction().unwrap();
+    assert_eq!(b.list_jobs(&ListFilter::default()).unwrap().len(), 1);
+}
+
+#[test]
 fn the_idempotency_key_step_alone_coalesces_frees_or_hands_back_a_conflict() {
     let b = brain("jobs-key-alone");
     let app = json!({"version": 1, "kind": "application"});
@@ -294,4 +448,87 @@ fn a_released_key_is_kept_in_non_object_data_as_jsonb_concatenation_keeps_it() {
         );
         assert_eq!(job(&b, id)["data"], want, "{key}");
     }
+}
+
+/// Postgres refuses a NUL byte in text, and the claim index uses it as the queue separator: a queue named
+/// `default\0private` must not be admitted, or a worker on `default` would claim its job.
+#[test]
+fn a_queue_name_with_a_nul_byte_is_refused_and_never_claimed_by_another_queue() {
+    let b = brain("jobs-queue-nul");
+    let err = admit(
+        &b,
+        json!({ "insert": insert("work", json!({ "queue": "default\u{0}private" })) }),
+    )
+    .expect_err("a NUL in the queue name refuses");
+    assert_eq!(err.code, "constraint_violation");
+    assert!(claim(&b, "w:1").is_none(), "nothing was admitted to claim");
+    let id = add(&b, "work", json!({}));
+    assert_eq!(claim(&b, "w:2").unwrap()["id"], id);
+}
+
+/// `tokens_input` is an `INTEGER`: a roll-up that overflows it fails the completion (as the SQL `+` does)
+/// rather than wrapping to a negative count in a release build.
+#[test]
+fn a_token_roll_up_that_overflows_an_integer_refuses_the_completion() {
+    let b = brain("jobs-token-overflow");
+    let parent = add(&b, "parent", json!({}));
+    let kids: Vec<i64> = (0..2)
+        .map(|_| add(&b, "work", json!({ "parent_job_id": parent })))
+        .collect();
+    for (n, kid) in kids.iter().enumerate() {
+        let token = format!("w:{n}");
+        assert!(claim(&b, &token).is_some());
+        let delta = TokenDelta {
+            input: 1_500_000_000,
+            output: 0,
+            cache_read: 0,
+        };
+        assert!(b.add_job_tokens(*kid, &token, &delta).unwrap());
+    }
+    assert!(b.complete_job(kids[0], "w:0", None).unwrap().is_some());
+    assert_eq!(job(&b, parent)["tokens_input"], 1_500_000_000);
+    let err = b
+        .complete_job(kids[1], "w:1", None)
+        .expect_err("the roll-up overflows");
+    assert_eq!(err.code, "invalid_argument");
+    assert_eq!(
+        job(&b, kids[1])["status"],
+        "active",
+        "the refused completion wrote nothing"
+    );
+    assert_eq!(job(&b, parent)["tokens_input"], 1_500_000_000);
+}
+
+/// A job admitted on a store bound to a transaction is one statement of it (the facts backstop
+/// effect queues its facts-absorb job inside the effect's transaction): it does not wait for a
+/// second writer, it is seen inside the transaction, and a rollback keeps no row.
+#[test]
+fn admit_inside_a_transaction_is_one_statement() {
+    let b = brain("jobs-in-tx");
+    let spec: AdmitSpec =
+        serde_json::from_value(json!({ "insert": insert("work", json!({})), "maxSpawnDepth": 5 }))
+            .unwrap();
+    let tx = b.begin_transaction(false).unwrap();
+    let out = tx.admit_job(&spec).unwrap();
+    assert_eq!(out.outcome, "inserted");
+    let id = out.row["id"].as_i64().unwrap();
+    assert!(tx.get_job(id).unwrap().is_some());
+    tx.rollback_transaction().unwrap();
+    assert!(b.get_job(id).unwrap().is_none());
+
+    let tx = b.begin_transaction(false).unwrap();
+    let kept = tx.admit_job(&spec).unwrap().row["id"].as_i64().unwrap();
+    // A rolled-back admission's id is not handed out again, as Postgres `nextval` never is.
+    assert_ne!(kept, id);
+    let depth = tx.savepoint().unwrap();
+    let dropped = tx.admit_job(&spec).unwrap().row["id"].as_i64().unwrap();
+    tx.rollback_savepoint(depth).unwrap();
+    assert!(tx.get_job(dropped).unwrap().is_none());
+    let after = tx.admit_job(&spec).unwrap().row["id"].as_i64().unwrap();
+    assert!(after > dropped, "{after} after the dropped {dropped}");
+    tx.commit_transaction().unwrap();
+    assert_eq!(job(&b, kept)["status"], "waiting");
+    assert_eq!(job(&b, after)["status"], "waiting");
+    // Outside a transaction the sequence continues past every id handed out.
+    assert!(add(&b, "work", json!({})) > after);
 }
