@@ -80,7 +80,9 @@ The cell must fail on a planted bug:
   `Durability::None`. CI builds a second Linux addon with the patch and runs
   `--seeds=101,202 --expect-caught`.
 
-`--expect-caught` exits 0 only when at least one run fails.
+`--expect-caught` exits 0 only when at least one run reopened the killed brain and found it wrong (it differs from every
+state the oracle allows, or the store refuses to open it). A worker that never started, a kill point that was never reached
+or a drain that timed out is a failed run that does not count as a catch.
 
 ## Options
 

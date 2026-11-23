@@ -160,9 +160,13 @@ impl CrashFile {
         let mut log = guard(&self.log);
         // A log that cannot be written cannot be checked either; the driver then sees no freeze line
         // and fails the run, so the error needs no other path.
-        let _ = writeln!(log, "{} {n}", event.name());
+        // Each line goes out in one `write` call: the log is opened for append, so a whole line then
+        // lands intact even while the driver's worker appends its own lines to the same file. `writeln!`
+        // would send the name, the space and the number as separate writes, and a line from the worker
+        // could land between them.
+        let _ = log.write_all(format!("{} {n}\n", event.name()).as_bytes());
         if self.at == Some((event, n)) {
-            let _ = writeln!(log, "freeze {} {n}", event.name());
+            let _ = log.write_all(format!("freeze {} {n}\n", event.name()).as_bytes());
             let _ = log.sync_data();
             drop(log);
             loop {

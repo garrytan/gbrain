@@ -20,7 +20,7 @@
  * the rest of the sequence runs on the reopened brain and the end must equal the oracle's end.
  *
  * `--engine=pglite` runs the workers on PGLite (the control arm; the store's crash points exist only on Rust).
- * Exit 0 when every run passed (with --expect-caught: when at least one failed); 1 otherwise; 2 on bad usage.
+ * Exit 0 when every run passed (with --expect-caught: when at least one reopened brain was wrong, see DETECTION); 1 otherwise; 2 on bad usage.
  */
 import { availableParallelism, tmpdir } from 'node:os';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -36,6 +36,12 @@ const JOBS = Number(args.get('jobs') ?? Math.max(1, Math.min(6, availableParalle
 const ENGINE = args.get('engine') ?? 'rust';
 const PLANT = args.get('plant');
 const EXPECT_CAUGHT = args.has('expect-caught');
+/**
+ * The failures that mean the killed brain was wrong, as opposed to the harness failing: the reopened brain differs from
+ * every state the oracle allows, or the store refuses to open it because its record file no longer matches its FORMAT
+ * (what a commit that never reached the disk leaves behind).
+ */
+const DETECTION = /^(acknowledged writes lost|the brain equals no oracle state|the \w+ in flight .* did not finish when run again|after the reopen the rest of the sequence diverged|.*FORMAT names a different brain than the record file)/;
 const KEEP = args.has('keep');
 if (SEEDS.some(s => !Number.isInteger(s)) || !Number.isInteger(COUNT) || COUNT < 4 || !(JOBS >= 1) || !['rust', 'pglite'].includes(ENGINE)) {
   console.error('usage: run.ts [--seeds=101,202] [--ops=24] [--jobs=4] [--engine=pglite] [--plant=early-ack] [--expect-caught] [--keep]');
@@ -122,6 +128,10 @@ function readLog(path: string): LogState {
   const state: LogState = { acked: -1, started: -1, freeze: null, error: null, done: false, open: false,
     events: { write: null, sync: null, synced: null }, seams: new Map() };
   for (const line of existsSync(path) ? readFileSync(path, 'utf8').split('\n') : []) {
+    if (line === '') continue;
+    // A log line is a whole record. One that is not (a torn write, a stray byte) is a harness failure, never skipped:
+    // a lost `ack` line would make an acknowledged write look still in flight.
+    if (!/^(open|done|(start|ack|write|sync|synced) \d+|seam \S+ \d+|freeze( \S+){2,3}|error .*)$/.test(line)) throw new Error(`the worker log holds a line that is not a record: ${line.slice(0, 80)}`);
     const [word, a, b] = line.split(' ');
     if (word === 'open') state.open = true;
     else if (word === 'start') state.started = Math.max(state.started, Number(a));
@@ -301,7 +311,12 @@ console.log(`\n${outcomes.length - failed.length}/${outcomes.length} runs passed
 if (KEEP) console.log(`kept ${scratch}`);
 else rmSync(scratch, { recursive: true, force: true });
 if (EXPECT_CAUGHT) {
-  console.log(failed.length > 0 ? `the planted bug was caught by ${failed.length} run(s)` : 'the planted bug was NOT caught');
-  process.exit(failed.length > 0 ? 0 : 1);
+  // A planted bug is caught only when a run reopened the killed brain and found it wrong (see DETECTION). A worker that never started,
+  // a kill point that was never reached or a drain that timed out says nothing about durability.
+  const detected = failed.filter(o => DETECTION.test(o.detail));
+  console.log(detected.length > 0
+    ? `the planted bug was caught by ${detected.length} run(s)${failed.length > detected.length ? ` (${failed.length - detected.length} other failed run(s) were not counted)` : ''}`
+    : `the planted bug was NOT caught (${failed.length} run(s) failed, none by a wrong or damaged brain after the kill)`);
+  process.exit(detected.length > 0 ? 0 : 1);
 }
 process.exit(failed.length === 0 ? 0 : 1);
