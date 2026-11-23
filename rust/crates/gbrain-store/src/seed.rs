@@ -26,6 +26,8 @@ mod privacy;
 mod spend;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod v0_60_766_tests;
 mod wake;
 
 pub use decode::SeedRow;
