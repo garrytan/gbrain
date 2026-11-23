@@ -63,6 +63,8 @@ export function brainIdentity(config: Pick<EngineConfig, 'engine' | 'database_pa
     case 'pglite':
       if (!config.database_path) return null;
       return { engine, identity: `pglite:${resolve(config.database_path)}` };
+    case 'rust':
+      return null; // shadow mode follows a PGLite or Postgres brain; a Rust brain has no primary to mirror
     default: {
       const unreachable: never = engine;
       return unreachable;

@@ -194,6 +194,7 @@ async function runInitBranches(args: string[]) {
     case undefined: break; // no config: the routing below is unchanged
     case 'pglite': if (!effectiveEnvDatabaseUrl()) keptPglitePath = keptCfg?.database_path ?? gbrainPath('brain.pglite'); break;
     case 'postgres': keptPostgresUrl = keptCfg?.database_url ?? null; break;
+    case 'rust': break; // the Rust engine keeps no PGLite path or Postgres URL: the routing below is unchanged
     default: { const unknownEngine: never = keptEngine; void unknownEngine; }
   }
 
