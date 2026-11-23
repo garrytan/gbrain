@@ -27,6 +27,8 @@ import { TOKENIZER_ID } from './tokenize.ts';
 import { BLOCK_TOKEN_CAP, BLOCK_TOKENIZER, HARNESSES } from './block.ts';
 import { readResolverSettings } from './config.ts';
 import { PICKER_DESCRIPTION_CHARS } from './router.ts';
+import { embedCatalog, vectorsIneligible, type VectorsReceipt } from './vectors.ts';
+import type { EmbedSkipCode } from './embed-http.ts';
 
 export const RECEIPT_SCHEMA_VERSION = 1;
 export const T_SHARE_ON = 0.25;
@@ -67,6 +69,8 @@ export interface BuildReceipt {
   ranker: { id: string; version: number; variant: Variant; params: (typeof VARIANT_PARAMS)[Variant]; calibration_split_sha256: string; tokenizer: string; k: number; hint_chars: number; trigger_share: number };
   index: { file: 'index.bin'; index_hash: string; size: number; n_terms: number; n_postings: number; truncated_skills: number };
   block: { token_cap: number; tokenizer: string };
+  /** The skill vectors beside the index (vectors.bin), or why the catalog has none. */
+  vectors: VectorsReceipt | { skipped: EmbedSkipCode };
   build: { args: string[]; rebuild_argv: string[] | null; ms: number; built_at: string; generation: number };
 }
 
@@ -194,7 +198,7 @@ async function prepare(input: BuildInput): Promise<Prepared> {
 
 const removedError = () => new ResolverError('skill_index_removed', 'The catalog was removed while this build ran, so nothing was published.', { suggestion: 'Run the build again if the catalog should exist.' });
 
-export async function buildSkillIndex(input: BuildInput, opts: { home?: string; now?: () => number } = {}): Promise<BuildReceipt> {
+export async function buildSkillIndex(input: BuildInput, opts: { home?: string; now?: () => number; env?: NodeJS.ProcessEnv } = {}): Promise<BuildReceipt> {
   const started = performance.now();
   validateBuild(input);
   const home = opts.home ?? resolverHome();
@@ -209,6 +213,7 @@ export async function buildSkillIndex(input: BuildInput, opts: { home?: string; 
     const { bytes, truncatedSkills } = encodeIndex(p.records, variant);
     const header = JSON.parse(new TextDecoder().decode(bytes.subarray(44, 44 + new DataView(bytes.buffer).getUint32(8, true))));
     const scope = input.scope ?? 'user';
+    const vectors = await embedCatalog(p.records, p.catalog_hash, vectorsIneligible(input.harness, scope), home, opts.env ?? process.env);
     const receipt: BuildReceipt = {
       schema_version: RECEIPT_SCHEMA_VERSION, gbrain_version: VERSION, gbrain_commit: gbrainCommit(),
       catalog: {
@@ -223,6 +228,7 @@ export async function buildSkillIndex(input: BuildInput, opts: { home?: string; 
       ranker: { id: RANKER_ID, version: RANKER_VERSION, variant, params: VARIANT_PARAMS[variant], calibration_split_sha256: CALIBRATION_SPLIT_SHA256, tokenizer: TOKENIZER_ID, k: 5, hint_chars: HINT_CHARS, trigger_share: share },
       index: { file: 'index.bin', index_hash: sha(bytes), size: bytes.length, n_terms: header.n_terms, n_postings: header.n_postings, truncated_skills: truncatedSkills },
       block: { token_cap: BLOCK_TOKEN_CAP, tokenizer: BLOCK_TOKENIZER },
+      vectors: 'bytes' in vectors ? vectors.receipt : vectors,
       build: { args, rebuild_argv: fix, ms: 0, built_at: new Date((opts.now ?? Date.now)()).toISOString(), generation: lease.record.generation },
     };
     if (!holdsLease(lease) || !existsSync(dir)) throw removedError();
@@ -230,6 +236,7 @@ export async function buildSkillIndex(input: BuildInput, opts: { home?: string; 
       if (p.source.kind === 'json') writeFileDurable(join(dir, 'source.json'), p.source.snapshot!);
       if (p.source.fingerprint) writeFileDurable(join(dir, 'fingerprint.json'), JSON.stringify({ fingerprint: p.source.fingerprint, routing: p.routing?.stat ?? null }));
       writeFileDurable(join(dir, 'index.bin'), bytes);
+      if ('bytes' in vectors) writeFileDurable(join(dir, 'vectors.bin'), vectors.bytes); else rmSync(join(dir, 'vectors.bin'), { force: true });
       writeFileDurable(join(dir, 'picker.json'), `${JSON.stringify({ v: 1, catalog_hash: p.catalog_hash, skills: p.records.map(s => [s.id, pickerDescription(s.description)]) })}\n`);
       receipt.build.ms = Math.round(performance.now() - started);
       writeFileDurable(join(dir, 'receipt.json'), `${JSON.stringify(receipt, null, 2)}\n`);

@@ -12,10 +12,14 @@ model.
   `gbrain setup <claude-code|codex|hermes> --skill-loading resolve` (OpenClaw and
   Pi: the plugin and extension below; Cursor: pinned skills only, below).
   Setup writes nothing for it otherwise.
-- **Local and deterministic.** Word matching (BM25F) over the catalog's names,
-  descriptions, triggers, routing rows and the first 4 KB of each body. No
-  network, no model, no clock, no randomness on the turn path, unless you turn
-  on the [model picker](#model-picker-opt-in).
+- **Words, plus meaning when the brain can embed.** Word matching (BM25F)
+  over the catalog's names, descriptions, triggers, routing rows and the first
+  4 KB of each body, done on the machine. When the brain has an embedding
+  model, Claude Code and Codex turns also rank by meaning with
+  [skill vectors](#skill-vectors), which sends each message to that
+  embedding provider. With no embedding model and the
+  [model picker](#model-picker-opt-in) off, nothing leaves the machine and
+  the same message always gets the same block.
 - **No brain needed.** It works on a keyless, repo-less or brainless install,
   on a thin client, and while `gbrain serve` holds the PGLite lock. It never
   reads or writes the brain.
@@ -412,6 +416,80 @@ off keeps them; an OpenClaw agent uses a change from its next turn, and Claude
 Code and Codex (`claude-code-user`, `codex-user`) from their next session
 start, through the [hook lane](#hook-lane-claude-code-and-codex).
 
+## Skill vectors
+
+Word matching misses a skill when the message shares no word with it
+("can we go live today?" against a skill described as "deploy the service to
+production"). Skill vectors find it by meaning: each build turns every
+skill's text into one vector with the brain's own embedding model, and each
+turn embeds the message with the same model and compares the two.
+
+- **When it is on.** Wherever the brain has an embedding model
+  (`embedding_model` in `~/.gbrain/config.json`, the one `gbrain init` set
+  for your pages) with its key, for catalogs built for Claude Code or Codex
+  (or with no `--harness`) in user scope. There is no separate setting.
+  OpenClaw, Pi, Hermes and project catalogs keep word matching only. A brain
+  with `embedding_disabled`, or with no embedding model, builds no vectors.
+- **What is sent, and to whom.** Each build sends every skill's name,
+  description, when-to-use text, triggers and the start of its body (up to
+  6,000 characters a skill) to the embedding provider once. Each turn sends
+  the user's message. The provider is the one the brain already uses for its
+  pages: Voyage, OpenAI or Google, over HTTPS with the brain's key
+  (`VOYAGE_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY` or
+  `GEMINI_API_KEY`, or the matching key in `config.json`);
+  `OPENAI_BASE_URL` and `GOOGLE_GENERATIVE_AI_BASE_URL` point it at a proxy.
+  `gbrain setup claude-code --skill-loading resolve` (and `codex`) says so
+  when vectors are on.
+- **How it ranks.** The skills whose cosine with the message reaches the
+  model's floor (below) join the word ranking, and the two lists are fused by
+  rank (reciprocal rank fusion, k = 60, the same fusion the brain's own search
+  uses). A skill found only by meaning shows with
+  `match_strength: "vector"` and a reason like `meaning: cosine 0.412`.
+- **The no-skill gate.** For a catalog with vectors, the floor replaces
+  [`top_gate`](#top_gate-the-no-skill-gate-on-by-default): the block is
+  empty (`weak_top_match`) unless some skill it would show reaches the floor.
+  A skill named in the turn still bypasses it.
+- **How long it waits.** At most 1 second for the message's vector with the
+  picker off; with the picker on, the picker's own wait covers both, and when
+  the picker answers the vector is not waited for. Claude Code's hook waits at
+  most 1.5 seconds in all, and every other harness 2 seconds.
+- **When it can't answer.** The turn is the word matcher's, byte for byte,
+  and `vectors.fallback.code` in the `--json` output says why (the hook lane
+  log has the same code). The codes: `missing_key`, `provider_error`,
+  `timeout`, `bad_reply`, `stale_vectors` (the brain's embedding model or
+  width changed since the build; the next build fixes it), and `not_needed`
+  (the picker answered). The build receipt's `vectors` field is either
+  `{model, dims, count}` or `{skipped: <code>}`, where the codes add
+  `no_embedder`, `embedding_disabled`, `unsupported_provider`,
+  `not_this_harness`, `project_scope`, `too_many_skills` (over 64 MB of
+  vectors) and `unmeasured_model`.
+
+**The floors.** A floor is a cosine below which a skill is not shown on
+meaning alone. It is set per model, since each model spreads cosines
+differently, and a model with no measured floor gets no vectors
+(`unmeasured_model`), so it can never make the no-skill rate worse than words
+alone. The floors were chosen on the development half of a private routing
+benchmark (590 requests that need a skill, 414 that need none; Claude Code
+catalog, top 5, `top_gate` 0.6 for words); its held-out half was not read. The
+rule: the most requests whose right skill is in the block, among floors that
+give no more no-skill requests a block than words alone.
+
+| Embedding model | Floor | Right skill in the block (of 590) | No-skill requests that get a block (of 414) |
+|---|---|---|---|
+| words only (no vectors) | | 283 (48.0%) | 184 (44.4%) |
+| `voyage:voyage-4` | 0.26 | 310 (52.5%) | 165 (39.9%) |
+| `voyage:voyage-4-large` | 0.22 | 309 (52.4%) | 148 (35.7%) |
+| `voyage:voyage-4-lite` | 0.26 | 311 (52.7%) | 147 (35.5%) |
+| `voyage:voyage-3.5` | 0.34 | 287 (48.6%) | 154 (37.2%) |
+| `openai:text-embedding-3-large` | 0.26 | 333 (56.4%) | 184 (44.4%) |
+| `openai:text-embedding-3-small` | 0.28 | 314 (53.2%) | 182 (44.0%) |
+| `google:gemini-embedding-001` | 0.60 | 350 (59.3%) | 75 (18.1%) |
+| `google:gemini-embedding-2` | 0.62 | 346 (58.6%) | 120 (29.0%) |
+
+Each floor was measured at the width that benchmark used; a different
+`embedding_dimensions` shifts cosines and has not been measured. Requests
+written as task lists stayed hard for every method (about 1 in 10 found).
+
 ## Model picker (opt-in)
 
 The word matcher finds a skill when the message uses the skill's own words
@@ -712,14 +790,16 @@ wins: nothing is published.
 
 ## Privacy and data flow
 
-With the model picker off (the default) nothing leaves the machine; see
-[Model picker](#model-picker-opt-in) for what it sends when on. Everything lives under `$GBRAIN_HOME/.gbrain/skill-index/`
+With no embedding model and the model picker off, nothing leaves the
+machine; see [Skill vectors](#skill-vectors) and
+[Model picker](#model-picker-opt-in) for what each sends. Everything lives under `$GBRAIN_HOME/.gbrain/skill-index/`
 (`~/.gbrain/skill-index/` by default):
 
 | Path | Holds |
 |---|---|
 | `<catalog>/index.bin`, `receipt.json` | the index and its receipt (receipt written last) |
 | `<catalog>/source.json` | the `--from-json` snapshot |
+| `<catalog>/vectors.bin` | one vector per skill from the brain's embedding model, with the model and width it was made with; written only when skill vectors are on |
 | `<catalog>/picker.json` | each skill's id and description (up to 400 characters), read only by the model picker |
 | `router-spend.json`, `router-spend.json.lock` | the model picker's spend today (UTC), in USD; no turn text |
 | `<catalog>/fingerprint.json`, `stat-check`, `stale.stamp`, `lock`, `build.log` | freshness, lease and the last build error |
@@ -749,6 +829,22 @@ slice) at p95 10 ms with 1,000 skills and 40 ms with 7,500 skills on 2 vCPUs.
 nine rounds of 100 turns, and judges the median round's p95, so one burst of host stalls on a shared
 runner does not decide it; the `Skill resolver bench` workflow enforces it on
 pull requests that touch the resolver.
+
+With [skill vectors](#skill-vectors) on, a turn also waits for the
+message's vector, so the provider's round trip dominates. Measured through
+real hook processes (gbrain's own 76 skills, 60 turns each, one cloud
+machine, November 2026):
+
+| Embedding model | Hook p50 | Hook p95 |
+|---|---|---|
+| none (words only) | 123 ms | 139 ms |
+| `voyage:voyage-4`, Claude Code | 284 ms | 328 ms |
+| `voyage:voyage-4`, Codex | 286 ms | 345 ms |
+| `google:gemini-embedding-001` | 337 ms | 380 ms |
+| `openai:text-embedding-3-large` | 795 ms | 904 ms |
+
+A slower provider costs at most the 1-second vector wait before the turn
+falls back to words.
 
 ## Library
 
