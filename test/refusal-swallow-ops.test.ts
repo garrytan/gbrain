@@ -80,7 +80,10 @@ describe('job operation refusal-swallow sites', () => {
       } finally { process.stderr.write = write; }
     };
     expect(await skipped(pg)).toEqual([{ id: queued.id, status: 'waiting' }]);
-    expect(await skipped(refusingEngine(pg, { needle: 'FROM minion_jobs\n          WHERE name = ANY' }))).toEqual([{ id: queued.id, status: 'waiting' }]);
+    expect(await skipped(refusingEngine(pg))).toEqual([{ id: queued.id, status: 'waiting' }]);
+    // A capability refusal from the typed read surfaces; any other read error still reports the skip, without the queued-job note.
+    await expect(skipped(refusingEngine(pg, { needle: null, members: ['listUnfinishedJobsByName'] }))).rejects.toMatchObject({ code: 'engine_capability_missing' });
+    expect(await skipped(refusingEngine(pg, { needle: null, members: ['listUnfinishedJobsByName'], error: () => new Error('connection reset') }))).toBeUndefined();
   });
 
   test('S13 over a page: 1,001 queued jobs of one manual-only name are all reported, by id, from one read', async () => {

@@ -62,9 +62,6 @@ function planJobSteps(planned: RemediationStep[], manifest: { job_ids: string[] 
   };
 }
 
-/** Every job status that is not terminal (completed, failed, dead, cancelled). */
-const UNFINISHED_JOB_STATUSES = ['waiting', 'active', 'delayed', 'waiting-children', 'paused'] as const;
-
 /**
  * Holds manual-only steps out of a run's job steps. `withoutManualOnly`
  * returns the other steps and records each remediable manual-only one once
@@ -77,19 +74,13 @@ function manualOnlySkips(engine: BrainEngine) {
     const manual = steps.filter((s) => isManualOnlyStep(s) && s.status === 'remediable' && !skipped.some((m) => m.id === s.id));
     if (manual.length) {
       const { cliRenderContext, renderAction } = await import('../agent-output.ts');
-      // The jobs of those names that have not finished, by id: one typed read per name and unfinished status (a manual-only
-      // job is rare, so one page of 1,000 per read lists every one of them).
-      const queued: Array<{ id: number | string; name: string; status: string }> = [];
+      // Every unfinished job of those names, by id, in one typed read (no page limit, one snapshot).
+      let queued: Array<{ id: number | string; name: string; status: string }> = [];
       try {
-        for (const name of new Set(manual.map((s) => s.job))) {
-          for (const status of UNFINISHED_JOB_STATUSES) {
-            for (const row of await engine.listJobs({ name, status, limit: 1000 })) queued.push({ id: row.id as number | string, name: row.name as string, status: row.status as string });
-          }
-        }
-        queued.sort((a, b) => Number(a.id) - Number(b.id));
+        queued = await engine.listUnfinishedJobsByName([...new Set(manual.map((s) => s.job))]);
       } catch (e) {
         rethrowCapabilityRefusal(e); // an engine that cannot list jobs refuses; it does not report "none queued"
-        queued.length = 0; // any other read error: the skip is still reported, without the queued-job note
+        // any other read error: the skip is still reported, without the queued-job note
       }
       for (const step of manual) {
         const jobs = queued.filter((q) => q.name === step.job).map((q) => ({ id: Number(q.id), status: q.status }));
