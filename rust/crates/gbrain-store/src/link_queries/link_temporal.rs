@@ -1,0 +1,1938 @@
+//! Link temporal state (temporal typed edges): the store's `link_transitions` and
+//! `link_relationships` rows and the members that read and write them. PGLite and Postgres run
+//! the SQL in `src/core/engine-sql/link-temporal.ts`; these answer the same members from the
+//! store's records (rust/docs/store/link_temporal.md).
+//!
+//! Members: readLinkRelationshipEvidence, writeLinkRelationshipState,
+//! linkRelationshipKeysForPages, staleLinkRelationshipKeys, linkRelationshipKeysForOrigin,
+//! linkRelationshipKeysTouching, applyLinkTemporalRows, writeManualLinkTransitions,
+//! removeManualLinkTransitions, listRelationshipNoteRows, readEntityInboundEdges, edgeValidityCounts,
+//! listPageStatusByRef, listRecordMetadataRows, countSearchVectorRows.
+//!
+//! The state itself (stints, status, evidence hash) is built by the pure TypeScript builder in
+//! `src/core/link-relationships.ts` on every engine; the store only keeps rows.
+//!
+//! Keys: both record kinds sit under the link_queries tag, keyed by the source of the
+//! relationship's from page, so a source delete through `link_queries::remove_source_rows`
+//! removes them:
+//!
+//! ```text
+//! q <source_id> \0 R <from BE8> <to BE8> <link_type> \0 <scope>      RelationshipRecord
+//! q <source_id> \0 T <from BE8> <to BE8> <link_type> \0 <id BE8>     TransitionRecord
+//! ```
+//!
+//! `M link_transition_id` is the transition id counter. A hard page delete removes the rows whose
+//! from, to or origin page it is (`remove_page_rows`; Postgres declares those foreign keys
+//! `ON DELETE CASCADE`). `valid_ranges` is kept in the canonical text form Postgres prints for a
+//! `datemultirange`.
+
+use super::site_reads::kept_inbound_links;
+use super::{InboundCountInput, Pages, QUARANTINE_KEY, origin_links};
+use crate::env::{iso, parse_iso};
+use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
+use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::kv::{KvRead, KvWrite, scan_prefix};
+use crate::links::{LinkRecord, in_links, out_links, put_link};
+use crate::pages::{PageRecord, all_pages, next_id, read_page, read_page_by_id};
+use crate::trust::valid_time::AmendmentsQuery;
+use crate::{Store, keys, put_json};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::{BTreeMap, BTreeSet};
+
+/// The sub-tag after `q <source> \0` that marks a relationship state row.
+const RELATIONSHIP: u8 = b'R';
+/// The sub-tag after `q <source> \0` that marks a transition row.
+const TRANSITION: u8 = b'T';
+const TRANSITION_ID: &str = "link_transition_id";
+const SCOPES: [&str; 2] = ["all", "world"];
+const SEMANTICS: [&str; 2] = ["state", "event"];
+const STATUSES: [&str; 6] = [
+    "live",
+    "ended",
+    "ended_unknown_date",
+    "not_started",
+    "disputed",
+    "event",
+];
+const KINDS: [&str; 2] = ["start", "end"];
+const PRECISIONS: [&str; 3] = ["day", "month", "year"];
+const PRODUCERS: [&str; 6] = [
+    "timeline",
+    "explicit",
+    "frontmatter",
+    "manual",
+    "inline",
+    "dream",
+];
+
+/// One `link_relationships` row.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct RelationshipRecord {
+    pub from_page_id: u64,
+    pub to_page_id: u64,
+    pub link_type: String,
+    pub scope: String,
+    pub source_id: String,
+    pub semantics: String,
+    /// Canonical `datemultirange` text: `{[2021-04-01,2025-03-01),[2026-01-01,)}`, `{}` when empty.
+    pub valid_ranges: String,
+    pub status_now: String,
+    pub first_start: Option<String>,
+    pub last_start: Option<String>,
+    pub last_end: Option<String>,
+    pub undated_present: i64,
+    pub undated_past: i64,
+    pub disputed: bool,
+    pub recorded_at_us: i64,
+    pub retired_at_us: Option<i64>,
+    pub evidence_hash: String,
+    pub refreshed_at_us: i64,
+}
+
+/// One `link_transitions` row.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct TransitionRecord {
+    pub id: u64,
+    pub source_id: String,
+    pub from_page_id: u64,
+    pub to_page_id: u64,
+    pub link_type: String,
+    pub kind: String,
+    pub occurred_on: String,
+    pub date_precision: String,
+    pub producer: String,
+    pub origin_page_id: Option<u64>,
+    pub line_hash: String,
+    pub link_source: Option<String>,
+    pub created_at_us: i64,
+}
+
+impl TransitionRecord {
+    /// The unique identity `(origin, from, to, link_type, link_source, kind, occurred_on,
+    /// producer) NULLS NOT DISTINCT`.
+    fn same_identity(&self, other: &TransitionRecord) -> bool {
+        self.origin_page_id == other.origin_page_id
+            && self.from_page_id == other.from_page_id
+            && self.to_page_id == other.to_page_id
+            && self.link_type == other.link_type
+            && self.link_source == other.link_source
+            && self.kind == other.kind
+            && self.occurred_on == other.occurred_on
+            && self.producer == other.producer
+    }
+
+    fn key(&self) -> RelationshipKey {
+        RelationshipKey::new(self.from_page_id, self.to_page_id, &self.link_type)
+    }
+}
+
+/// `RelationshipKey` of `src/core/link-relationships.ts`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RelationshipKey {
+    pub from_page_id: u64,
+    pub to_page_id: u64,
+    pub link_type: String,
+}
+
+impl RelationshipKey {
+    fn new(from: u64, to: u64, link_type: &str) -> Self {
+        RelationshipKey {
+            from_page_id: from,
+            to_page_id: to,
+            link_type: link_type.to_string(),
+        }
+    }
+
+    pub(crate) fn of_link(link: &LinkRecord) -> Self {
+        RelationshipKey::new(link.from_page_id, link.to_page_id, &link.link_type)
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Inputs and outputs
+// ---------------------------------------------------------------------------------------------
+
+/// `readLinkRelationshipEvidence`: the keys and the page policy of `privatePagesFilterFragment`
+/// (no caller) that decides whether an origin is public.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct EvidenceInput {
+    pub keys: Vec<RelationshipKey>,
+    /// Required.
+    pub origin_policy: Option<PrivacyPolicy>,
+}
+
+/// One assertion row (`links` evidence).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AssertionRow {
+    pub from_page_id: u64,
+    pub to_page_id: u64,
+    pub link_type: String,
+    pub origin_id: u64,
+    pub tense: String,
+    pub created_at: String,
+    pub source_id: String,
+    pub origin_public: bool,
+}
+
+/// One transition row (`link_transitions` evidence).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TransitionRow {
+    pub from_page_id: u64,
+    pub to_page_id: u64,
+    pub link_type: String,
+    pub origin_id: Option<u64>,
+    pub kind: String,
+    pub occurred_on: String,
+    pub producer: String,
+    pub created_at: String,
+    pub source_id: String,
+    pub origin_public: bool,
+}
+
+/// One existing state row.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ExistingRow {
+    pub from_page_id: u64,
+    pub to_page_id: u64,
+    pub link_type: String,
+    pub scope: String,
+    pub recorded_at: String,
+    pub retired_at: Option<String>,
+    pub evidence_hash: String,
+}
+
+/// What `readLinkRelationshipEvidence` returns.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RelationshipEvidence {
+    pub assertions: Vec<AssertionRow>,
+    pub transitions: Vec<TransitionRow>,
+    pub existing: Vec<ExistingRow>,
+}
+
+/// One upsert row of `writeLinkRelationshipState`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct RelationshipUpsert {
+    pub from_page_id: u64,
+    pub to_page_id: u64,
+    pub link_type: String,
+    pub scope: String,
+    pub source_id: String,
+    pub semantics: String,
+    pub valid_ranges: String,
+    pub status_now: String,
+    pub first_start: Option<String>,
+    pub last_start: Option<String>,
+    pub last_end: Option<String>,
+    pub undated_present: i64,
+    pub undated_past: i64,
+    pub disputed: bool,
+    pub recorded_at: String,
+    pub retired_at: Option<String>,
+    pub evidence_hash: String,
+}
+
+/// One removal of `writeLinkRelationshipState`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct RelationshipRemoval {
+    pub from_page_id: u64,
+    pub to_page_id: u64,
+    pub link_type: String,
+    pub scope: String,
+}
+
+/// `writeLinkRelationshipState`: the rows to write and remove, and how many of the upserts the
+/// builder counted as changed.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct StateWrite {
+    pub upserts: Vec<RelationshipUpsert>,
+    pub removals: Vec<RelationshipRemoval>,
+    pub changed: u64,
+}
+
+/// `linkRelationshipKeysForPages`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct KeysForPagesInput {
+    pub page_ids: Vec<u64>,
+    pub link_types: Vec<String>,
+}
+
+/// `staleLinkRelationshipKeys`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct StaleKeysInput {
+    pub limit: u64,
+    pub link_types: Vec<String>,
+}
+
+/// `linkRelationshipKeysForOrigin`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct KeysForOriginInput {
+    pub page_id: u64,
+    pub link_types: Vec<String>,
+}
+
+/// A page reference `{ slug, source_id }`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(default)]
+pub struct PageRef {
+    pub slug: String,
+    pub source_id: String,
+}
+
+/// One link endpoint pair of `linkRelationshipKeysTouching`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct EndpointPair {
+    pub from_slug: String,
+    pub from_source_id: String,
+    pub to_slug: String,
+    pub to_source_id: String,
+}
+
+/// `linkRelationshipKeysTouching`: the relationships a link delete can change, read before it.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct KeysTouchingInput {
+    pub pairs: Vec<EndpointPair>,
+    pub from_pages: Vec<PageRef>,
+    pub link_types: Vec<String>,
+}
+
+/// One tense row of `applyLinkTemporalRows`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct TenseRow {
+    pub from_slug: String,
+    pub to_slug: String,
+    pub link_type: String,
+    pub link_source: String,
+    pub from_source_id: String,
+    pub to_source_id: String,
+    pub tense: Option<String>,
+}
+
+/// One derived transition of `applyLinkTemporalRows`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct DerivedTransitionRow {
+    pub from_slug: String,
+    pub to_slug: String,
+    pub link_type: String,
+    pub kind: String,
+    pub occurred_on: String,
+    pub date_precision: String,
+    pub producer: String,
+    pub line_hash: String,
+}
+
+/// `applyLinkTemporalRows`: one origin page's temporal evidence.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ApplyTemporalInput {
+    pub page_id: u64,
+    pub source_id: String,
+    pub tense_rows: Vec<TenseRow>,
+    pub transitions: Vec<DerivedTransitionRow>,
+    pub explicit_targets: Vec<String>,
+    pub producers: Vec<String>,
+    pub link_types: Vec<String>,
+}
+
+/// What `applyLinkTemporalRows` returns.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyTemporalResult {
+    pub inserted: Vec<RelationshipKey>,
+    pub live_targets: Vec<String>,
+    pub keys_after: Vec<RelationshipKey>,
+}
+
+/// The relationship of a manual statement.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ManualRelationship {
+    pub from: String,
+    pub to: String,
+    pub link_type: Option<String>,
+    pub source_id: String,
+    pub database_only: bool,
+}
+
+/// One manual statement row `{ kind, occurred_on }`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ManualRow {
+    pub kind: String,
+    pub occurred_on: String,
+}
+
+/// `writeManualLinkTransitions`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ManualWriteInput {
+    pub rel: ManualRelationship,
+    pub rows: Vec<ManualRow>,
+}
+
+/// What `writeManualLinkTransitions` returns.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ManualWriteResult {
+    pub inserted: u64,
+    pub key: Option<RelationshipKey>,
+}
+
+/// `listRelationshipNoteRows`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct NoteRowsInput {
+    pub subjects: Vec<PageRef>,
+    /// The page policy of `privatePagesFilterForCaller`, or none for a trusted read.
+    pub exclude_private: Option<PrivacyPolicy>,
+}
+
+/// One relationship note row, with the temporal columns of `TEMPORAL_LINK_SELECT_SQL`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct NoteRow {
+    pub from_slug: String,
+    pub source_id: String,
+    pub to_slug: String,
+    pub to_title: String,
+    pub link_type: String,
+    pub last_end: Option<String>,
+    pub end_upper_bound: bool,
+    pub temporal_ranges: String,
+    pub temporal_semantics: String,
+    pub temporal_disputed: bool,
+    pub temporal_undated_past: i64,
+    pub temporal_first_start: Option<String>,
+    pub temporal_recorded_at: String,
+    pub temporal_retired_at: Option<String>,
+}
+
+/// One `readEntityInboundEdges` row: the referrer, the link, and the temporal columns of
+/// `TEMPORAL_LINK_SELECT_SQL`, all null when the link has no relationship row in the scope.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct InboundEdgeRow {
+    pub from_slug: String,
+    pub link_type: String,
+    pub context: String,
+    pub temporal_ranges: Option<String>,
+    pub temporal_semantics: Option<String>,
+    pub temporal_disputed: Option<bool>,
+    pub temporal_undated_past: Option<i64>,
+    pub temporal_first_start: Option<String>,
+    pub temporal_recorded_at: Option<String>,
+    pub temporal_retired_at: Option<String>,
+}
+
+/// `edgeValidityCounts`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct EdgeValidityInput {
+    pub source_ids: Option<Vec<String>>,
+    pub stale_limit: u64,
+}
+
+/// One status count.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct StatusCount {
+    pub status: String,
+    pub n: u64,
+}
+
+/// One page that still states a relationship its timeline ended.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct StaleAssertion {
+    pub slug: String,
+    pub target: String,
+    pub link_type: String,
+    pub ended: Option<String>,
+}
+
+/// Contradiction proposal counts. The store keeps no proposals, so they are zero.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ProposalCounts {
+    pub proposed: u64,
+    pub undated: u64,
+    pub applied: u64,
+}
+
+/// What `edgeValidityCounts` returns.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EdgeValidityCounts {
+    pub by_status: Vec<StatusCount>,
+    pub stale: Vec<StaleAssertion>,
+    pub proposals: ProposalCounts,
+}
+
+/// `listPageStatusByRef`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct PageStatusInput {
+    pub refs: Vec<PageRef>,
+    pub exclude_private: Option<PrivacyPolicy>,
+    pub include_quarantined: bool,
+}
+
+/// One `{ source_id, slug, status }` row.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PageStatusRow {
+    pub source_id: String,
+    pub slug: String,
+    pub status: Value,
+}
+
+/// `listRecordMetadataRows`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct RecordMetadataInput {
+    pub page_ids: Vec<u64>,
+    pub referrer_sources: Vec<String>,
+    pub exclude_private: Option<PrivacyPolicy>,
+    pub include_quarantined: bool,
+    /// The relationship scope `since` is read from: `world` or `all`.
+    pub scope: String,
+}
+
+/// One `{ id, status }` row.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct IdStatusRow {
+    pub id: u64,
+    pub status: Value,
+}
+
+/// One `amends` or `supersedes` link of a referring page.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+pub struct RecordLinkRow {
+    pub from_id: u64,
+    pub slug: String,
+    pub link_type: String,
+    pub since: Option<String>,
+}
+
+/// What `listRecordMetadataRows` returns.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RecordMetadataRows {
+    pub status: Vec<IdStatusRow>,
+    pub links: Vec<RecordLinkRow>,
+}
+
+/// What `countSearchVectorRows` returns.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SearchVectorCounts {
+    pub pages: u64,
+    pub chunks: u64,
+}
+
+// ---------------------------------------------------------------------------------------------
+// Keys and scans
+// ---------------------------------------------------------------------------------------------
+
+fn invalid(message: impl Into<String>) -> StoreError {
+    StoreError::new(INVALID_ARGUMENT, message)
+}
+
+fn family_prefix(source_id: &str, tag: u8) -> Vec<u8> {
+    let mut key = vec![keys::LINK_QUERIES];
+    key.extend_from_slice(source_id.as_bytes());
+    key.push(0);
+    key.push(tag);
+    key
+}
+
+fn pair_prefix(source_id: &str, tag: u8, key: &RelationshipKey) -> Vec<u8> {
+    let mut out = family_prefix(source_id, tag);
+    out.extend_from_slice(&key.from_page_id.to_be_bytes());
+    out.extend_from_slice(&key.to_page_id.to_be_bytes());
+    out.extend_from_slice(key.link_type.as_bytes());
+    out.push(0);
+    out
+}
+
+fn decode_all<T: DeserializeOwned>(raw: Vec<(Vec<u8>, Vec<u8>)>) -> Result<Vec<(Vec<u8>, T)>> {
+    raw.into_iter()
+        .map(|(k, v)| Ok((k, serde_json::from_slice(&v)?)))
+        .collect()
+}
+
+fn scan_under<T: DeserializeOwned>(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<(Vec<u8>, T)>> {
+    let mut raw = Vec::new();
+    scan_prefix(read, prefix, false, &mut |k, v| {
+        raw.push((k.to_vec(), v.to_vec()));
+        true
+    })?;
+    decode_all(raw)
+}
+
+/// Every record of the sub-tag, in every source.
+fn scan_tag<T: DeserializeOwned>(read: &dyn KvRead, tag: u8) -> Result<Vec<(Vec<u8>, T)>> {
+    let mut raw = Vec::new();
+    scan_prefix(read, &[keys::LINK_QUERIES], false, &mut |k, v| {
+        if let Some(nul) = k.iter().skip(1).position(|b| *b == 0)
+            && k.get(nul + 2) == Some(&tag)
+        {
+            raw.push((k.to_vec(), v.to_vec()));
+        }
+        true
+    })?;
+    decode_all(raw)
+}
+
+/// The source the relationship's rows are keyed by: its from page's source.
+fn key_source(read: &dyn KvRead, from_page_id: u64) -> Result<Option<String>> {
+    Ok(read_page_by_id(read, from_page_id)?.map(|p| p.source_id))
+}
+
+fn relationships_of(
+    read: &dyn KvRead,
+    key: &RelationshipKey,
+) -> Result<Vec<(Vec<u8>, RelationshipRecord)>> {
+    match key_source(read, key.from_page_id)? {
+        Some(source) => scan_under(read, &pair_prefix(&source, RELATIONSHIP, key)),
+        None => Ok(Vec::new()),
+    }
+}
+
+fn transitions_of(
+    read: &dyn KvRead,
+    key: &RelationshipKey,
+) -> Result<Vec<(Vec<u8>, TransitionRecord)>> {
+    match key_source(read, key.from_page_id)? {
+        Some(source) => scan_under(read, &pair_prefix(&source, TRANSITION, key)),
+        None => Ok(Vec::new()),
+    }
+}
+
+pub(crate) fn relationship(
+    read: &dyn KvRead,
+    key: &RelationshipKey,
+    scope: &str,
+) -> Result<Option<RelationshipRecord>> {
+    Ok(relationships_of(read, key)?
+        .into_iter()
+        .map(|(_, r)| r)
+        .find(|r| r.scope == scope))
+}
+
+fn links_of(read: &dyn KvRead, key: &RelationshipKey) -> Result<Vec<LinkRecord>> {
+    Ok(out_links(read, key.from_page_id)?
+        .into_iter()
+        .filter(|l| l.to_page_id == key.to_page_id && l.link_type == key.link_type)
+        .collect())
+}
+
+pub(crate) fn iso_ms(micros: i64) -> String {
+    let full = iso(micros);
+    format!("{}Z", &full[..full.len() - 4])
+}
+
+fn parse_time(field: &str, text: &str) -> Result<i64> {
+    parse_iso(text).ok_or_else(|| invalid(format!("{field} must be an ISO timestamp")))
+}
+
+fn days_in_month(year: i64, month: i64) -> i64 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        _ if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 => 29,
+        _ => 28,
+    }
+}
+
+/// Whether `text` is a calendar date `YYYY-MM-DD`.
+pub(crate) fn is_date(text: &str) -> bool {
+    let b = text.as_bytes();
+    if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
+        return false;
+    }
+    let num = |a: usize, z: usize| {
+        text.get(a..z)
+            .filter(|s| s.bytes().all(|c| c.is_ascii_digit()))
+            .and_then(|s| s.parse::<i64>().ok())
+    };
+    match (num(0, 4), num(5, 7), num(8, 10)) {
+        (Some(y), Some(m), Some(d)) => (1..=12).contains(&m) && d >= 1 && d <= days_in_month(y, m),
+        _ => false,
+    }
+}
+
+fn check_date(field: &str, text: &str) -> Result<()> {
+    if is_date(text) {
+        Ok(())
+    } else {
+        Err(invalid(format!(
+            "{field}: invalid input syntax for type date: \"{text}\""
+        )))
+    }
+}
+
+fn check_one_of(field: &str, value: &str, allowed: &[&str]) -> Result<()> {
+    if allowed.contains(&value) {
+        Ok(())
+    } else {
+        Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            format!("{field} must be one of {}", allowed.join(", ")),
+        ))
+    }
+}
+
+fn check_no_nul(field: &str, value: &str) -> Result<()> {
+    if value.contains('\0') {
+        Err(invalid(format!("{field} must not contain a NUL byte")))
+    } else {
+        Ok(())
+    }
+}
+
+pub(crate) fn today(now_us: i64) -> String {
+    iso(now_us)[..10].to_string()
+}
+
+// ---------------------------------------------------------------------------------------------
+// Multiranges
+// ---------------------------------------------------------------------------------------------
+
+type DateRange = (Option<String>, Option<String>);
+
+/// Parses a `datemultirange` literal of half-open ranges (`[a,b)`, `(,b)`, `[a,)`, `(,)`).
+fn parse_multirange(text: &str) -> Result<Vec<DateRange>> {
+    let bad = || invalid(format!("malformed multirange literal: \"{text}\""));
+    let inner = text
+        .trim()
+        .strip_prefix('{')
+        .and_then(|t| t.strip_suffix('}'))
+        .ok_or_else(bad)?;
+    let mut out = Vec::new();
+    let mut rest = inner.trim();
+    while !rest.is_empty() {
+        let close = rest.find(')').ok_or_else(bad)?;
+        let range = &rest[..close];
+        // An empty range (`{)}`) or one that opens with a multi-byte character has no one-byte bracket.
+        let open = range.get(..1).ok_or_else(bad)?;
+        let body = &range[1..];
+        let (lower, upper) = body.split_once(',').ok_or_else(bad)?;
+        let lower = match (open, lower) {
+            ("(", "") | ("[", "") => None,
+            ("[", d) if is_date(d) => Some(d.to_string()),
+            _ => return Err(bad()),
+        };
+        let upper = match upper {
+            "" => None,
+            d if is_date(d) => Some(d.to_string()),
+            _ => return Err(bad()),
+        };
+        out.push((lower, upper));
+        rest = rest[close + 1..].trim_start();
+        if let Some(after) = rest.strip_prefix(',') {
+            rest = after.trim_start();
+            if rest.is_empty() {
+                return Err(bad());
+            }
+        } else if !rest.is_empty() {
+            return Err(bad());
+        }
+    }
+    Ok(out)
+}
+
+/// Postgres's canonical form: empty ranges dropped, sorted by lower bound, overlapping and
+/// adjacent ranges merged.
+pub(crate) fn canonical_multirange(text: &str) -> Result<String> {
+    let mut ranges: Vec<DateRange> = parse_multirange(text)?
+        .into_iter()
+        .filter(|(lo, hi)| !matches!((lo, hi), (Some(a), Some(b)) if a >= b))
+        .collect();
+    ranges.sort_by(|a, b| match (&a.0, &b.0) {
+        (None, None) => std::cmp::Ordering::Equal,
+        (None, _) => std::cmp::Ordering::Less,
+        (_, None) => std::cmp::Ordering::Greater,
+        (Some(x), Some(y)) => x.cmp(y),
+    });
+    let mut merged: Vec<DateRange> = Vec::new();
+    for (lo, hi) in ranges {
+        if let Some(last) = merged.last_mut() {
+            let touches = match (&last.1, &lo) {
+                (None, _) => true,
+                (_, None) => true,
+                (Some(end), Some(start)) => start <= end,
+            };
+            if touches {
+                last.1 = match (&last.1, &hi) {
+                    (None, _) | (_, None) => None,
+                    (Some(a), Some(b)) => Some(a.max(b).clone()),
+                };
+                continue;
+            }
+        }
+        merged.push((lo, hi));
+    }
+    let parts: Vec<String> = merged
+        .iter()
+        .map(|(lo, hi)| match lo {
+            None => format!("(,{})", hi.as_deref().unwrap_or("")),
+            Some(d) => format!("[{d},{})", hi.as_deref().unwrap_or("")),
+        })
+        .collect();
+    Ok(format!("{{{}}}", parts.join(",")))
+}
+
+/// `valid_ranges && daterange(from, until)`: some range overlaps `[from, until)`. An empty
+/// multirange overlaps nothing.
+pub(crate) fn multirange_overlaps(text: &str, from: &str, until: &str) -> bool {
+    parse_multirange(text).is_ok_and(|ranges| {
+        ranges.iter().any(|(lo, hi)| {
+            lo.as_deref().is_none_or(|l| l < until) && hi.as_deref().is_none_or(|h| h > from)
+        })
+    })
+}
+
+/// `valid_ranges @> date`.
+pub(crate) fn multirange_contains(text: &str, date: &str) -> bool {
+    parse_multirange(text).is_ok_and(|ranges| {
+        ranges.iter().any(|(lo, hi)| {
+            lo.as_deref().is_none_or(|l| l <= date) && hi.as_deref().is_none_or(|h| date < h)
+        })
+    })
+}
+
+// ---------------------------------------------------------------------------------------------
+// Cascade
+// ---------------------------------------------------------------------------------------------
+
+/// Deletes the relationship and transition rows whose from, to or origin page is hard-deleted
+/// (`cascade::remove_page_rows`).
+pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()> {
+    let id = page.id;
+    let mut doomed = Vec::new();
+    for (key, r) in scan_tag::<RelationshipRecord>(&*tx, RELATIONSHIP)? {
+        if r.from_page_id == id || r.to_page_id == id {
+            doomed.push(key);
+        }
+    }
+    for (key, t) in scan_tag::<TransitionRecord>(&*tx, TRANSITION)? {
+        if t.from_page_id == id || t.to_page_id == id || t.origin_page_id == Some(id) {
+            doomed.push(key);
+        }
+    }
+    for key in doomed {
+        tx.delete(&key)?;
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------------------------
+// Helpers shared by the members
+// ---------------------------------------------------------------------------------------------
+
+fn live(page: &PageRecord) -> bool {
+    page.deleted_at_us.is_none()
+}
+
+fn live_page(read: &dyn KvRead, source_id: &str, slug: &str) -> Result<Option<PageRecord>> {
+    Ok(read_page(read, source_id, slug)?.filter(live))
+}
+
+fn sorted(keys: BTreeSet<RelationshipKey>) -> Vec<RelationshipKey> {
+    keys.into_iter().collect()
+}
+
+/// `privateLinkOriginFilterForCaller(l)`: no origin, or an origin page that the policy shows.
+fn link_origin_shown(
+    pages: &mut Pages<'_>,
+    link: &LinkRecord,
+    policy: &PrivacyPolicy,
+) -> Result<bool> {
+    match link.origin_page_id {
+        None => Ok(true),
+        Some(id) => match pages.get(id)? {
+            Some(origin) => Ok(!page_hidden(pages.read, &origin, policy)?),
+            None => Ok(false),
+        },
+    }
+}
+
+/// Links of `link_types` that touch the page as from, to or origin.
+fn links_touching_page(
+    read: &dyn KvRead,
+    page_id: u64,
+    link_types: &[String],
+    out: &mut BTreeSet<RelationshipKey>,
+) -> Result<()> {
+    let typed = |l: &LinkRecord| link_types.contains(&l.link_type);
+    for link in out_links(read, page_id)?
+        .into_iter()
+        .chain(in_links(read, page_id)?)
+        .chain(origin_links(read, page_id)?)
+    {
+        if typed(&link) {
+            out.insert(RelationshipKey::of_link(&link));
+        }
+    }
+    Ok(())
+}
+
+/// The keys `relationshipKeysForOrigin` reads, inside a read or a write.
+fn keys_for_origin(
+    read: &dyn KvRead,
+    page_id: u64,
+    link_types: &[String],
+) -> Result<Vec<RelationshipKey>> {
+    let mut keys = BTreeSet::new();
+    let typed = |l: &LinkRecord| link_types.contains(&l.link_type);
+    for link in out_links(read, page_id)? {
+        if link.origin_page_id.is_none() && typed(&link) {
+            keys.insert(RelationshipKey::of_link(&link));
+        }
+    }
+    for link in origin_links(read, page_id)? {
+        if typed(&link) {
+            keys.insert(RelationshipKey::of_link(&link));
+        }
+    }
+    for (_, t) in scan_tag::<TransitionRecord>(read, TRANSITION)? {
+        if t.origin_page_id == Some(page_id) {
+            keys.insert(t.key());
+        }
+    }
+    if let Some(source) = key_source(read, page_id)? {
+        let mut prefix = family_prefix(&source, RELATIONSHIP);
+        prefix.extend_from_slice(&page_id.to_be_bytes());
+        for (_, r) in scan_under::<RelationshipRecord>(read, &prefix)? {
+            if r.scope == "all" {
+                keys.insert(RelationshipKey::new(
+                    r.from_page_id,
+                    r.to_page_id,
+                    &r.link_type,
+                ));
+            }
+        }
+    }
+    Ok(sorted(keys))
+}
+
+/// Inserts a transition unless a row with the same identity exists (`ON CONFLICT DO NOTHING`).
+/// Returns whether it was inserted.
+fn insert_transition(tx: &mut dyn KvWrite, record: TransitionRecord) -> Result<bool> {
+    let key = record.key();
+    if transitions_of(&*tx, &key)?
+        .iter()
+        .any(|(_, t)| t.same_identity(&record))
+    {
+        return Ok(false);
+    }
+    let mut row_key = pair_prefix(&record.source_id, TRANSITION, &key);
+    let id = next_id(tx, TRANSITION_ID)?;
+    row_key.extend_from_slice(&id.to_be_bytes());
+    put_json(tx, &row_key, &TransitionRecord { id, ..record })?;
+    Ok(true)
+}
+
+fn check_transition(kind: &str, occurred_on: &str, precision: &str, producer: &str) -> Result<()> {
+    check_one_of("kind", kind, &KINDS)?;
+    check_date("occurred_on", occurred_on)?;
+    check_one_of("date_precision", precision, &PRECISIONS)?;
+    check_one_of("producer", producer, &PRODUCERS)
+}
+
+fn check_upsert(row: &RelationshipUpsert) -> Result<()> {
+    check_no_nul("link_type", &row.link_type)?;
+    check_one_of("scope", &row.scope, &SCOPES)?;
+    check_one_of("semantics", &row.semantics, &SEMANTICS)?;
+    check_one_of("status_now", &row.status_now, &STATUSES)?;
+    for (field, value) in [
+        ("first_start", &row.first_start),
+        ("last_start", &row.last_start),
+        ("last_end", &row.last_end),
+    ] {
+        if let Some(date) = value {
+            check_date(field, date)?;
+        }
+    }
+    Ok(())
+}
+
+fn status_value(page: &PageRecord) -> Value {
+    page.frontmatter
+        .get("status")
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
+impl Store {
+    /// `readLinkRelationshipEvidence`: the assertions, transitions and state rows of the keys.
+    pub fn read_link_relationship_evidence(
+        &self,
+        input: &EvidenceInput,
+    ) -> Result<RelationshipEvidence> {
+        let read = self.read()?;
+        let read = &*read;
+        let mut pages = Pages::new(read);
+        let policy = input
+            .origin_policy
+            .as_ref()
+            .ok_or_else(|| invalid("readLinkRelationshipEvidence needs originPolicy"))?;
+        let mut evidence = RelationshipEvidence {
+            assertions: Vec::new(),
+            transitions: Vec::new(),
+            existing: Vec::new(),
+        };
+        for key in &input.keys {
+            let from = pages.get(key.from_page_id)?.filter(|p| live(p));
+            let to = pages.get(key.to_page_id)?.filter(|p| live(p));
+            if let (Some(from), Some(_)) = (&from, &to) {
+                for link in links_of(read, key)? {
+                    let origin_id = link.origin_page_id.unwrap_or(link.from_page_id);
+                    let Some(origin) = pages.get(origin_id)? else {
+                        continue;
+                    };
+                    if !live(&origin) || origin.source_id != from.source_id {
+                        continue;
+                    }
+                    evidence.assertions.push(AssertionRow {
+                        from_page_id: key.from_page_id,
+                        to_page_id: key.to_page_id,
+                        link_type: key.link_type.clone(),
+                        origin_id,
+                        tense: link
+                            .assertion_tense
+                            .clone()
+                            .unwrap_or_else(|| "present".to_string()),
+                        created_at: iso_ms(link.created_at_us),
+                        source_id: from.source_id.clone(),
+                        origin_public: !page_hidden(read, &origin, policy)?,
+                    });
+                }
+                for (_, t) in transitions_of(read, key)? {
+                    let origin_public = match t.origin_page_id {
+                        None => true,
+                        Some(id) => match pages.get(id)? {
+                            Some(o) if live(&o) && o.source_id == from.source_id => {
+                                !page_hidden(read, &o, policy)?
+                            }
+                            _ => continue,
+                        },
+                    };
+                    evidence.transitions.push(TransitionRow {
+                        from_page_id: key.from_page_id,
+                        to_page_id: key.to_page_id,
+                        link_type: key.link_type.clone(),
+                        origin_id: t.origin_page_id,
+                        kind: t.kind,
+                        occurred_on: t.occurred_on,
+                        producer: t.producer,
+                        created_at: iso_ms(t.created_at_us),
+                        source_id: from.source_id.clone(),
+                        origin_public,
+                    });
+                }
+            }
+            for (_, r) in relationships_of(read, key)? {
+                evidence.existing.push(ExistingRow {
+                    from_page_id: r.from_page_id,
+                    to_page_id: r.to_page_id,
+                    link_type: r.link_type,
+                    scope: r.scope,
+                    recorded_at: iso_ms(r.recorded_at_us),
+                    retired_at: r.retired_at_us.map(iso_ms),
+                    evidence_hash: r.evidence_hash,
+                });
+            }
+        }
+        Ok(evidence)
+    }
+
+    /// `writeLinkRelationshipState`: upserts and removes state rows. Returns `changed` plus the
+    /// number of rows removed.
+    pub fn write_link_relationship_state(&self, input: &StateWrite) -> Result<u64> {
+        for row in &input.upserts {
+            check_upsert(row)?;
+        }
+        let now = self.env.now_micros();
+        self.write(|tx| {
+            for row in &input.upserts {
+                let key = RelationshipKey::new(row.from_page_id, row.to_page_id, &row.link_type);
+                let source = key_source(&*tx, key.from_page_id)?.ok_or_else(|| {
+                    StoreError::new(
+                        CONSTRAINT_VIOLATION,
+                        "link_relationships_from_page_id_fkey: the from page does not exist",
+                    )
+                })?;
+                if read_page_by_id(&*tx, key.to_page_id)?.is_none() {
+                    return Err(StoreError::new(
+                        CONSTRAINT_VIOLATION,
+                        "link_relationships_to_page_id_fkey: the to page does not exist",
+                    ));
+                }
+                let mut row_key = pair_prefix(&source, RELATIONSHIP, &key);
+                row_key.extend_from_slice(row.scope.as_bytes());
+                let recorded = parse_time("recorded_at", &row.recorded_at)?;
+                let prior: Option<RelationshipRecord> = crate::get_json(&*tx, &row_key)?;
+                let record = RelationshipRecord {
+                    from_page_id: row.from_page_id,
+                    to_page_id: row.to_page_id,
+                    link_type: row.link_type.clone(),
+                    scope: row.scope.clone(),
+                    source_id: row.source_id.clone(),
+                    semantics: row.semantics.clone(),
+                    valid_ranges: canonical_multirange(&row.valid_ranges)?,
+                    status_now: row.status_now.clone(),
+                    first_start: row.first_start.clone(),
+                    last_start: row.last_start.clone(),
+                    last_end: row.last_end.clone(),
+                    undated_present: row.undated_present,
+                    undated_past: row.undated_past,
+                    disputed: row.disputed,
+                    recorded_at_us: prior
+                        .as_ref()
+                        .map_or(recorded, |p| p.recorded_at_us.min(recorded)),
+                    retired_at_us: row
+                        .retired_at
+                        .as_deref()
+                        .map(|t| parse_time("retired_at", t))
+                        .transpose()?,
+                    evidence_hash: row.evidence_hash.clone(),
+                    refreshed_at_us: now,
+                };
+                put_json(tx, &row_key, &record)?;
+            }
+            let mut removed = 0;
+            for row in &input.removals {
+                let key = RelationshipKey::new(row.from_page_id, row.to_page_id, &row.link_type);
+                let Some(source) = key_source(&*tx, key.from_page_id)? else {
+                    continue;
+                };
+                let mut row_key = pair_prefix(&source, RELATIONSHIP, &key);
+                row_key.extend_from_slice(row.scope.as_bytes());
+                if tx.get(&row_key)?.is_some() {
+                    tx.delete(&row_key)?;
+                    removed += 1;
+                }
+            }
+            Ok(input.changed + removed)
+        })
+    }
+
+    /// `linkRelationshipKeysForPages`: keys with any evidence touching the pages.
+    pub fn link_relationship_keys_for_pages(
+        &self,
+        input: &KeysForPagesInput,
+    ) -> Result<Vec<RelationshipKey>> {
+        let read = self.read()?;
+        let read = &*read;
+        let ids: BTreeSet<u64> = input.page_ids.iter().copied().collect();
+        let mut keys = BTreeSet::new();
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        for id in &ids {
+            links_touching_page(read, *id, &input.link_types, &mut keys)?;
+        }
+        for (_, t) in scan_tag::<TransitionRecord>(read, TRANSITION)? {
+            if ids.contains(&t.from_page_id)
+                || ids.contains(&t.to_page_id)
+                || t.origin_page_id.is_some_and(|o| ids.contains(&o))
+            {
+                keys.insert(t.key());
+            }
+        }
+        for (_, r) in scan_tag::<RelationshipRecord>(read, RELATIONSHIP)? {
+            if ids.contains(&r.from_page_id) || ids.contains(&r.to_page_id) {
+                keys.insert(RelationshipKey::new(
+                    r.from_page_id,
+                    r.to_page_id,
+                    &r.link_type,
+                ));
+            }
+        }
+        Ok(sorted(keys))
+    }
+
+    /// `staleLinkRelationshipKeys`: keys whose state is missing, older than their newest
+    /// evidence, older than an origin page's change, or orphaned. Ties in age are ordered by key.
+    pub fn stale_link_relationship_keys(
+        &self,
+        input: &StaleKeysInput,
+    ) -> Result<Vec<RelationshipKey>> {
+        let read = self.read()?;
+        let read = &*read;
+        let limit = input.limit as usize;
+        let links = super::all_links(read)?;
+        let transitions: Vec<TransitionRecord> = scan_tag::<TransitionRecord>(read, TRANSITION)?
+            .into_iter()
+            .map(|(_, t)| t)
+            .collect();
+        let states: BTreeMap<RelationshipKey, RelationshipRecord> =
+            scan_tag::<RelationshipRecord>(read, RELATIONSHIP)?
+                .into_iter()
+                .filter(|(_, r)| r.scope == "all")
+                .map(|(_, r)| {
+                    (
+                        RelationshipKey::new(r.from_page_id, r.to_page_id, &r.link_type),
+                        r,
+                    )
+                })
+                .collect();
+        let mut link_newest: BTreeMap<RelationshipKey, i64> = BTreeMap::new();
+        for link in links
+            .iter()
+            .filter(|l| input.link_types.contains(&l.link_type))
+        {
+            let e = link_newest
+                .entry(RelationshipKey::of_link(link))
+                .or_insert(i64::MIN);
+            *e = (*e).max(link.created_at_us);
+        }
+        let mut transition_newest: BTreeMap<RelationshipKey, i64> = BTreeMap::new();
+        for t in &transitions {
+            let e = transition_newest.entry(t.key()).or_insert(i64::MIN);
+            *e = (*e).max(t.created_at_us);
+        }
+        let fresh = |key: &RelationshipKey, newest: i64| {
+            states.get(key).is_some_and(|r| r.refreshed_at_us >= newest)
+        };
+        let mut oldest: BTreeMap<RelationshipKey, i64> = BTreeMap::new();
+        for (key, newest) in link_newest.iter().chain(transition_newest.iter()) {
+            if !fresh(key, *newest) {
+                let e = oldest.entry(key.clone()).or_insert(i64::MAX);
+                *e = (*e).min(*newest);
+            }
+        }
+        let mut stale: Vec<(i64, RelationshipKey)> =
+            oldest.into_iter().map(|(k, at)| (at, k)).collect();
+        stale.sort();
+        let mut rows: Vec<RelationshipKey> =
+            stale.into_iter().take(limit).map(|(_, k)| k).collect();
+        if rows.len() < limit {
+            let mut pages = Pages::new(read);
+            let mut changed = BTreeSet::new();
+            for link in &links {
+                let key = RelationshipKey::of_link(link);
+                let Some(state) = states.get(&key) else {
+                    continue;
+                };
+                let origin = link.origin_page_id.unwrap_or(link.from_page_id);
+                if let Some(o) = pages.get(origin)? {
+                    let touched = o
+                        .updated_at_us
+                        .max(o.deleted_at_us.unwrap_or(o.updated_at_us));
+                    if touched > state.refreshed_at_us {
+                        changed.insert(key);
+                    }
+                }
+            }
+            let room = limit - rows.len();
+            let picked: Vec<RelationshipKey> = changed.into_iter().take(room).collect();
+            for key in picked {
+                if !rows.contains(&key) {
+                    rows.push(key);
+                }
+            }
+        }
+        if rows.len() < limit {
+            let room = limit - rows.len();
+            let linked: BTreeSet<RelationshipKey> =
+                links.iter().map(RelationshipKey::of_link).collect();
+            let orphans: Vec<RelationshipKey> = states
+                .keys()
+                .filter(|k| !linked.contains(*k) && !transition_newest.contains_key(*k))
+                .take(room)
+                .cloned()
+                .collect();
+            rows.extend(orphans);
+        }
+        Ok(rows)
+    }
+
+    /// `linkRelationshipKeysForOrigin`: keys whose evidence the origin page owns.
+    pub fn link_relationship_keys_for_origin(
+        &self,
+        input: &KeysForOriginInput,
+    ) -> Result<Vec<RelationshipKey>> {
+        let read = self.read()?;
+        keys_for_origin(&*read, input.page_id, &input.link_types)
+    }
+
+    /// `linkRelationshipKeysTouching`: the keys a link delete can change, read before it. Pages
+    /// are resolved in any deletion state; a pair yields its links of `link_types`, and its
+    /// transition and state rows; a from page yields every key it starts.
+    pub fn link_relationship_keys_touching(
+        &self,
+        input: &KeysTouchingInput,
+    ) -> Result<Vec<RelationshipKey>> {
+        let read = self.read()?;
+        let read = &*read;
+        let mut keys = BTreeSet::new();
+        let typed = |l: &LinkRecord| input.link_types.contains(&l.link_type);
+        for pair in &input.pairs {
+            let (Some(from), Some(to)) = (
+                read_page(read, &pair.from_source_id, &pair.from_slug)?,
+                read_page(read, &pair.to_source_id, &pair.to_slug)?,
+            ) else {
+                continue;
+            };
+            for link in out_links(read, from.id)? {
+                if link.to_page_id == to.id && typed(&link) {
+                    keys.insert(RelationshipKey::of_link(&link));
+                }
+            }
+            let mut prefix_t = family_prefix(&from.source_id, TRANSITION);
+            prefix_t.extend_from_slice(&from.id.to_be_bytes());
+            prefix_t.extend_from_slice(&to.id.to_be_bytes());
+            for (_, t) in scan_under::<TransitionRecord>(read, &prefix_t)? {
+                keys.insert(t.key());
+            }
+            let mut prefix_r = family_prefix(&from.source_id, RELATIONSHIP);
+            prefix_r.extend_from_slice(&from.id.to_be_bytes());
+            prefix_r.extend_from_slice(&to.id.to_be_bytes());
+            for (_, r) in scan_under::<RelationshipRecord>(read, &prefix_r)? {
+                keys.insert(RelationshipKey::new(
+                    r.from_page_id,
+                    r.to_page_id,
+                    &r.link_type,
+                ));
+            }
+        }
+        for page in &input.from_pages {
+            let Some(from) = read_page(read, &page.source_id, &page.slug)? else {
+                continue;
+            };
+            for link in out_links(read, from.id)? {
+                if typed(&link) {
+                    keys.insert(RelationshipKey::of_link(&link));
+                }
+            }
+            for tag in [TRANSITION, RELATIONSHIP] {
+                let mut prefix = family_prefix(&from.source_id, tag);
+                prefix.extend_from_slice(&from.id.to_be_bytes());
+                let mut raw = Vec::new();
+                scan_prefix(read, &prefix, false, &mut |k, _| {
+                    raw.push(k.to_vec());
+                    true
+                })?;
+                for k in raw {
+                    let rest = &k[prefix.len()..];
+                    if rest.len() < 9 {
+                        continue;
+                    }
+                    let to = keys::be8(&rest[..8]).unwrap_or_default();
+                    let tail = &rest[8..];
+                    let nul = tail.iter().position(|b| *b == 0).unwrap_or(tail.len());
+                    keys.insert(RelationshipKey::new(
+                        from.id,
+                        to,
+                        &String::from_utf8_lossy(&tail[..nul]),
+                    ));
+                }
+            }
+        }
+        Ok(sorted(keys))
+    }
+
+    /// `applyLinkTemporalRows`: stamps assertion tense on the links the page owns, replaces its
+    /// derived transitions, checks explicit targets and reads the keys it owns afterwards, in one
+    /// write.
+    pub fn apply_link_temporal_rows(
+        &self,
+        input: &ApplyTemporalInput,
+    ) -> Result<ApplyTemporalResult> {
+        for t in &input.transitions {
+            check_no_nul("link_type", &t.link_type)?;
+            check_transition(&t.kind, &t.occurred_on, &t.date_precision, &t.producer)?;
+        }
+        let now = self.env.now_micros();
+        let page_id = input.page_id;
+        self.write(|tx| {
+            for row in &input.tense_rows {
+                let (Some(from), Some(to)) = (
+                    read_page(&*tx, &row.from_source_id, &row.from_slug)?,
+                    read_page(&*tx, &row.to_source_id, &row.to_slug)?,
+                ) else {
+                    continue;
+                };
+                for mut link in out_links(&*tx, from.id)? {
+                    let owned = link.origin_page_id == Some(page_id)
+                        || (link.origin_page_id.is_none() && link.from_page_id == page_id);
+                    if link.to_page_id == to.id
+                        && link.link_type == row.link_type
+                        && link.link_source.as_deref() == Some(row.link_source.as_str())
+                        && owned
+                        && link.assertion_tense != row.tense
+                    {
+                        link.assertion_tense = row.tense.clone();
+                        put_link(tx, &link)?;
+                    }
+                }
+            }
+            let mut doomed = Vec::new();
+            for (key, t) in scan_tag::<TransitionRecord>(&*tx, TRANSITION)? {
+                if t.origin_page_id == Some(page_id) && input.producers.contains(&t.producer) {
+                    doomed.push(key);
+                }
+            }
+            for key in doomed {
+                tx.delete(&key)?;
+            }
+            let mut inserted = Vec::new();
+            // `origin_page_id REFERENCES pages(id)`: an inserted row needs its origin page to exist (in any deletion
+            // state), read once, when the first row reaches the insert.
+            let mut origin_exists = None;
+            for t in &input.transitions {
+                let (Some(from), Some(to)) = (
+                    live_page(&*tx, &input.source_id, &t.from_slug)?,
+                    live_page(&*tx, &input.source_id, &t.to_slug)?,
+                ) else {
+                    continue;
+                };
+                let exists = match origin_exists {
+                    Some(known) => known,
+                    None => *origin_exists.insert(read_page_by_id(&*tx, page_id)?.is_some()),
+                };
+                if !exists {
+                    return Err(crate::takes::fk_failed(
+                        "link_transitions",
+                        "link_transitions_origin_page_id_fkey",
+                    ));
+                }
+                let record = TransitionRecord {
+                    id: 0,
+                    source_id: input.source_id.clone(),
+                    from_page_id: from.id,
+                    to_page_id: to.id,
+                    link_type: t.link_type.clone(),
+                    kind: t.kind.clone(),
+                    occurred_on: t.occurred_on.clone(),
+                    date_precision: t.date_precision.clone(),
+                    producer: t.producer.clone(),
+                    origin_page_id: Some(page_id),
+                    line_hash: t.line_hash.clone(),
+                    link_source: None,
+                    created_at_us: now,
+                };
+                let key = record.key();
+                if insert_transition(tx, record)? {
+                    inserted.push(key);
+                }
+            }
+            let mut live_targets = Vec::new();
+            for slug in input.explicit_targets.iter().collect::<BTreeSet<_>>() {
+                if live_page(&*tx, &input.source_id, slug)?.is_some() {
+                    live_targets.push(slug.clone());
+                }
+            }
+            let keys_after = keys_for_origin(&*tx, page_id, &input.link_types)?;
+            Ok(ApplyTemporalResult {
+                inserted,
+                live_targets,
+                keys_after,
+            })
+        })
+    }
+
+    /// `writeManualLinkTransitions`: manual dated statements for one relationship. Returns the
+    /// rows written and the relationship's key (pages in any deletion state).
+    pub fn write_manual_link_transitions(
+        &self,
+        input: &ManualWriteInput,
+    ) -> Result<ManualWriteResult> {
+        let link_type = input.rel.link_type.clone().unwrap_or_default();
+        check_no_nul("link_type", &link_type)?;
+        for row in &input.rows {
+            check_transition(&row.kind, &row.occurred_on, "day", "manual")?;
+        }
+        let now = self.env.now_micros();
+        let rel = &input.rel;
+        self.write(|tx| {
+            let mut inserted = 0;
+            if let (Some(from), Some(to)) = (
+                live_page(&*tx, &rel.source_id, &rel.from)?,
+                live_page(&*tx, &rel.source_id, &rel.to)?,
+            ) {
+                for row in &input.rows {
+                    let record = TransitionRecord {
+                        id: 0,
+                        source_id: rel.source_id.clone(),
+                        from_page_id: from.id,
+                        to_page_id: to.id,
+                        link_type: link_type.clone(),
+                        kind: row.kind.clone(),
+                        occurred_on: row.occurred_on.clone(),
+                        date_precision: "day".to_string(),
+                        producer: "manual".to_string(),
+                        origin_page_id: None,
+                        line_hash: String::new(),
+                        link_source: None,
+                        created_at_us: now,
+                    };
+                    if insert_transition(tx, record)? {
+                        inserted += 1;
+                    }
+                }
+            }
+            let key = match (
+                read_page(&*tx, &rel.source_id, &rel.from)?,
+                read_page(&*tx, &rel.source_id, &rel.to)?,
+            ) {
+                (Some(f), Some(t)) => Some(RelationshipKey::new(f.id, t.id, &link_type)),
+                _ => None,
+            };
+            Ok(ManualWriteResult { inserted, key })
+        })
+    }
+
+    /// `removeManualLinkTransitions`: drops the manual statements of the relationship(s), one key
+    /// per row removed.
+    pub fn remove_manual_link_transitions(
+        &self,
+        rel: &ManualRelationship,
+    ) -> Result<Vec<RelationshipKey>> {
+        self.write(|tx| {
+            let (Some(from), Some(to)) = (
+                read_page(&*tx, &rel.source_id, &rel.from)?,
+                read_page(&*tx, &rel.source_id, &rel.to)?,
+            ) else {
+                return Ok(Vec::new());
+            };
+            let mut prefix = family_prefix(&from.source_id, TRANSITION);
+            prefix.extend_from_slice(&from.id.to_be_bytes());
+            prefix.extend_from_slice(&to.id.to_be_bytes());
+            let mut keys = Vec::new();
+            for (key, t) in scan_under::<TransitionRecord>(&*tx, &prefix)? {
+                if t.producer == "manual"
+                    && rel.link_type.as_ref().is_none_or(|lt| *lt == t.link_type)
+                    && (!rel.database_only || t.origin_page_id.is_none())
+                {
+                    tx.delete(&key)?;
+                    keys.push(t.key());
+                }
+            }
+            Ok(keys)
+        })
+    }
+
+    /// `listRelationshipNoteRows`: the state relationships the subjects start, with their
+    /// temporal columns, for the relationship note.
+    pub fn list_relationship_note_rows(&self, input: &NoteRowsInput) -> Result<Vec<NoteRow>> {
+        let read = self.read()?;
+        let read = &*read;
+        let mut pages = Pages::new(read);
+        let scope = if input.exclude_private.is_some() {
+            "world"
+        } else {
+            "all"
+        };
+        let subjects: BTreeSet<&PageRef> = input.subjects.iter().collect();
+        let mut out = Vec::new();
+        for subject in subjects {
+            let Some(from) = read_page(read, &subject.source_id, &subject.slug)? else {
+                continue;
+            };
+            for link in out_links(read, from.id)? {
+                let Some(to) = pages.get(link.to_page_id)?.filter(|p| live(p)) else {
+                    continue;
+                };
+                let key = RelationshipKey::of_link(&link);
+                let Some(state) = relationship(read, &key, scope)? else {
+                    continue;
+                };
+                if state.semantics != "state" {
+                    continue;
+                }
+                if let Some(policy) = &input.exclude_private
+                    && (page_hidden(read, &to, policy)?
+                        || !link_origin_shown(&mut pages, &link, policy)?)
+                {
+                    continue;
+                }
+                let mut dream = false;
+                let mut other = false;
+                if let Some(last_end) = &state.last_end {
+                    for (_, t) in transitions_of(read, &key)? {
+                        if t.kind != "end" || t.occurred_on != *last_end {
+                            continue;
+                        }
+                        let counts = match t.origin_page_id {
+                            None => true,
+                            Some(id) => match pages.get(id)? {
+                                Some(o) if live(&o) && o.source_id == from.source_id => {
+                                    match &input.exclude_private {
+                                        Some(policy) => !page_hidden(read, &o, policy)?,
+                                        None => true,
+                                    }
+                                }
+                                _ => false,
+                            },
+                        };
+                        if counts {
+                            if t.producer == "dream" {
+                                dream = true;
+                            } else {
+                                other = true;
+                            }
+                        }
+                    }
+                }
+                out.push(NoteRow {
+                    from_slug: from.slug.clone(),
+                    source_id: from.source_id.clone(),
+                    to_slug: to.slug.clone(),
+                    to_title: to.title.clone(),
+                    link_type: link.link_type.clone(),
+                    last_end: state.last_end.clone(),
+                    end_upper_bound: dream && !other,
+                    temporal_ranges: state.valid_ranges.clone(),
+                    temporal_semantics: state.semantics.clone(),
+                    temporal_disputed: state.disputed,
+                    temporal_undated_past: state.undated_past,
+                    temporal_first_start: state.first_start.clone(),
+                    temporal_recorded_at: iso_ms(state.recorded_at_us),
+                    temporal_retired_at: state.retired_at_us.map(iso_ms),
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    /// `readEntityInboundEdges`: the links `countInboundLinks` counts, in link id order, each with
+    /// its referrer's slug and the temporal columns of its relationship in the `world` scope under
+    /// the policy, else `all` (`temporalLinkJoinSql`).
+    pub fn read_entity_inbound_edges(
+        &self,
+        input: &InboundCountInput,
+    ) -> Result<Vec<InboundEdgeRow>> {
+        let read = self.read()?;
+        let read = &*read;
+        let scope = if input.exclude_private.is_some() {
+            "world"
+        } else {
+            "all"
+        };
+        let mut out = Vec::new();
+        for (link, from_slug) in kept_inbound_links(read, input)? {
+            let state = relationship(read, &RelationshipKey::of_link(&link), scope)?;
+            out.push(InboundEdgeRow {
+                from_slug,
+                link_type: link.link_type.clone(),
+                context: link.context.clone(),
+                temporal_ranges: state.as_ref().map(|r| r.valid_ranges.clone()),
+                temporal_semantics: state.as_ref().map(|r| r.semantics.clone()),
+                temporal_disputed: state.as_ref().map(|r| r.disputed),
+                temporal_undated_past: state.as_ref().map(|r| r.undated_past),
+                temporal_first_start: state.as_ref().and_then(|r| r.first_start.clone()),
+                temporal_recorded_at: state.as_ref().map(|r| iso_ms(r.recorded_at_us)),
+                temporal_retired_at: state.as_ref().and_then(|r| r.retired_at_us.map(iso_ms)),
+            });
+        }
+        Ok(out)
+    }
+
+    /// `edgeValidityCounts`: relationship counts by status and the pages that still state an
+    /// ended relationship, newest end first.
+    pub fn edge_validity_counts(&self, input: &EdgeValidityInput) -> Result<EdgeValidityCounts> {
+        let read = self.read()?;
+        let read = &*read;
+        let in_scope = |source: &str| {
+            input
+                .source_ids
+                .as_ref()
+                .is_none_or(|ids| ids.iter().any(|id| id == source))
+        };
+        let today = today(self.env.now_micros());
+        let states: Vec<RelationshipRecord> = scan_tag::<RelationshipRecord>(read, RELATIONSHIP)?
+            .into_iter()
+            .map(|(_, r)| r)
+            .filter(|r| r.scope == "all" && in_scope(&r.source_id))
+            .collect();
+        let mut counts: BTreeMap<String, u64> = BTreeMap::new();
+        for r in &states {
+            let status = if r.semantics == "event" {
+                "event".to_string()
+            } else if r.disputed {
+                "disputed".to_string()
+            } else {
+                r.status_now.clone()
+            };
+            *counts.entry(status).or_default() += 1;
+        }
+        let mut stale: Vec<(String, RelationshipKey, StaleAssertion)> = Vec::new();
+        for r in &states {
+            let Some(last_end) = &r.last_end else {
+                continue;
+            };
+            if r.semantics != "state"
+                || r.undated_present <= 0
+                || multirange_contains(&r.valid_ranges, &today)
+            {
+                continue;
+            }
+            let key = RelationshipKey::new(r.from_page_id, r.to_page_id, &r.link_type);
+            let asserted = links_of(read, &key)?.iter().any(|l| {
+                l.origin_page_id.unwrap_or(l.from_page_id) == r.from_page_id
+                    && l.assertion_tense.as_deref().unwrap_or("present") == "present"
+            });
+            if !asserted {
+                continue;
+            }
+            let (Some(f), Some(t)) = (
+                read_page_by_id(read, r.from_page_id)?,
+                read_page_by_id(read, r.to_page_id)?,
+            ) else {
+                continue;
+            };
+            stale.push((
+                last_end.clone(),
+                key,
+                StaleAssertion {
+                    slug: f.slug,
+                    target: t.slug,
+                    link_type: r.link_type.clone(),
+                    ended: Some(last_end.clone()),
+                },
+            ));
+        }
+        stale.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        Ok(EdgeValidityCounts {
+            by_status: counts
+                .into_iter()
+                .map(|(status, n)| StatusCount { status, n })
+                .collect(),
+            stale: stale
+                .into_iter()
+                .take(input.stale_limit as usize)
+                .map(|(_, _, s)| s)
+                .collect(),
+            proposals: ProposalCounts {
+                proposed: 0,
+                undated: 0,
+                applied: 0,
+            },
+        })
+    }
+
+    /// `listPageStatusByRef`: the frontmatter `status` of live pages by reference.
+    pub fn list_page_status_by_ref(&self, input: &PageStatusInput) -> Result<Vec<PageStatusRow>> {
+        let read = self.read()?;
+        let read = &*read;
+        let mut out = Vec::new();
+        for r in input.refs.iter().collect::<BTreeSet<_>>() {
+            let Some(page) = live_page(read, &r.source_id, &r.slug)? else {
+                continue;
+            };
+            let Some(status) = page.frontmatter.get("status") else {
+                continue;
+            };
+            if let Some(policy) = &input.exclude_private
+                && page_hidden(read, &page, policy)?
+            {
+                continue;
+            }
+            if !input.include_quarantined && page.frontmatter.contains_key(QUARANTINE_KEY) {
+                continue;
+            }
+            out.push(PageStatusRow {
+                source_id: page.source_id.clone(),
+                slug: page.slug.clone(),
+                status: status.clone(),
+            });
+        }
+        Ok(out)
+    }
+
+    /// `listRecordMetadataRows`: the status of each page and its `amends` and `supersedes` links
+    /// to pages the caller can see, with an amends link's `since` from the relationship state.
+    pub fn list_record_metadata_rows(
+        &self,
+        input: &RecordMetadataInput,
+    ) -> Result<RecordMetadataRows> {
+        let read = self.read()?;
+        let read = &*read;
+        let mut pages = Pages::new(read);
+        let ids: BTreeSet<u64> = input.page_ids.iter().copied().collect();
+        let mut status = Vec::new();
+        let mut links = BTreeSet::new();
+        for id in &ids {
+            let Some(page) = pages.get(*id)? else {
+                continue;
+            };
+            status.push(IdStatusRow {
+                id: *id,
+                status: status_value(&page),
+            });
+            for link in out_links(read, *id)? {
+                if link.link_type != "amends" && link.link_type != "supersedes" {
+                    continue;
+                }
+                let Some(target) = pages.get(link.to_page_id)?.filter(|p| live(p)) else {
+                    continue;
+                };
+                if !input.referrer_sources.contains(&target.source_id) {
+                    continue;
+                }
+                if let Some(policy) = &input.exclude_private
+                    && (page_hidden(read, &target, policy)?
+                        || !link_origin_shown(&mut pages, &link, policy)?)
+                {
+                    continue;
+                }
+                if !input.include_quarantined && target.frontmatter.contains_key(QUARANTINE_KEY) {
+                    continue;
+                }
+                let since = if link.link_type == "amends" {
+                    relationship(read, &RelationshipKey::of_link(&link), &input.scope)?
+                        .and_then(|r| r.first_start)
+                } else {
+                    None
+                };
+                links.insert(RecordLinkRow {
+                    from_id: *id,
+                    slug: target.slug.clone(),
+                    link_type: link.link_type.clone(),
+                    since,
+                });
+            }
+        }
+        Ok(RecordMetadataRows {
+            status,
+            links: links.into_iter().collect(),
+        })
+    }
+
+    /// `listAmendmentsNotApplied`: the live pages with an `amends` link to the page whose relationship
+    /// (scope `world` under a policy, else `all`) starts after the edition took effect and on or before the date,
+    /// or has no start; each once, with the earliest start, by slug then source bytewise, at most `limit`.
+    pub fn list_amendments_not_applied(&self, q: &AmendmentsQuery) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let read = &*read;
+        let Ok(page_id) = u64::try_from(q.page_id) else {
+            return Ok(Vec::new());
+        };
+        let scope = if q.exclude_private.is_some() {
+            "world"
+        } else {
+            "all"
+        };
+        let mut pages = Pages::new(read);
+        let mut found: BTreeMap<(String, String), Option<String>> = BTreeMap::new();
+        for link in in_links(read, page_id)? {
+            if link.link_type != "amends" {
+                continue;
+            }
+            let Some(from) = pages.get(link.from_page_id)?.filter(|p| live(p)) else {
+                continue;
+            };
+            if q.source_ids
+                .as_ref()
+                .is_some_and(|ids| !ids.contains(&from.source_id))
+            {
+                continue;
+            }
+            if let Some(policy) = &q.exclude_private
+                && (page_hidden(read, &from, policy)?
+                    || !link_origin_shown(&mut pages, &link, policy)?)
+            {
+                continue;
+            }
+            let start = relationship(read, &RelationshipKey::of_link(&link), scope)?
+                .and_then(|r| r.first_start);
+            if let Some(start) = &start
+                && !(start.as_str() > q.edition_from.as_str() && start.as_str() <= q.as_of.as_str())
+            {
+                continue;
+            }
+            let since = found
+                .entry((from.slug.clone(), from.source_id.clone()))
+                .or_insert(None);
+            if let Some(start) = start
+                && since.as_ref().is_none_or(|s| start < *s)
+            {
+                *since = Some(start);
+            }
+        }
+        Ok(found
+            .into_iter()
+            .take(usize::try_from(q.limit).unwrap_or(usize::MAX))
+            .map(|((slug, source_id), since)| serde_json::json!({ "slug": slug, "source_id": source_id, "since": since }))
+            .collect())
+    }
+
+    /// `countSearchVectorRows`: the pages and chunks a keyword reindex would touch.
+    pub fn count_search_vector_rows(&self) -> Result<SearchVectorCounts> {
+        let read = self.read()?;
+        let read = &*read;
+        Ok(SearchVectorCounts {
+            pages: all_pages(read)?.len() as u64,
+            chunks: crate::chunks::read_stats(read)?.chunks,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn multiranges_are_canonical() {
+        let c = |t: &str| canonical_multirange(t).unwrap();
+        assert_eq!(c("{}"), "{}");
+        assert_eq!(c("{[2021-04-01,2025-03-01)}"), "{[2021-04-01,2025-03-01)}");
+        assert_eq!(
+            c("{[2026-01-01,),[2021-04-01,2025-03-01)}"),
+            "{[2021-04-01,2025-03-01),[2026-01-01,)}"
+        );
+        assert_eq!(
+            c("{[2021-01-01,2022-01-01),[2022-01-01,2023-01-01)}"),
+            "{[2021-01-01,2023-01-01)}"
+        );
+        assert_eq!(c("{[2021-01-01,2021-01-01)}"), "{}");
+        assert_eq!(c("{(,2022-01-01),[2021-01-01,)}"), "{(,)}");
+        assert_eq!(
+            c("{[2021-01-01,2024-01-01),[2022-01-01,2023-01-01)}"),
+            "{[2021-01-01,2024-01-01)}"
+        );
+        assert!(canonical_multirange("{[2021-01-01,2022-01-01]}").is_err());
+        assert!(canonical_multirange("[2021-01-01,)").is_err());
+        assert!(canonical_multirange("{[2021-13-01,)}").is_err());
+    }
+
+    #[test]
+    fn a_malformed_multirange_is_refused_never_a_panic() {
+        // Postgres refuses each of these with `malformed multirange literal: "<text>"`.
+        for text in ["{)}", "{ )}", "{é)}", "{[)}", "{()}", "{,)}"] {
+            let err = canonical_multirange(text).unwrap_err();
+            assert_eq!(
+                err.message,
+                format!("malformed multirange literal: \"{text}\"")
+            );
+            assert!(!multirange_overlaps(text, "2020-01-01", "2021-01-01"));
+            assert!(!multirange_contains(text, "2020-01-01"));
+        }
+    }
+
+    #[test]
+    fn containment_is_half_open() {
+        let r = "{[2021-01-01,2022-01-01),[2026-01-01,)}";
+        assert!(multirange_contains(r, "2021-01-01"));
+        assert!(!multirange_contains(r, "2022-01-01"));
+        assert!(multirange_contains(r, "2030-05-05"));
+        assert!(!multirange_contains("{}", "2030-05-05"));
+        assert!(multirange_contains("{(,2022-01-01)}", "1999-01-01"));
+    }
+
+    #[test]
+    fn dates_are_checked() {
+        assert!(is_date("2024-02-29"));
+        assert!(!is_date("2023-02-29"));
+        assert!(!is_date("2023-2-01"));
+        assert!(!is_date("not-a-date"));
+    }
+}

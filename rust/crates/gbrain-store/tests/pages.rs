@@ -4,8 +4,12 @@
 mod common;
 
 use common::{TempDir, open};
+use gbrain_store::cli_reads::import::{PageTrustKey, PageTrustLookup};
 use gbrain_store::error::*;
-use gbrain_store::pages::{PageFilters, PageInput, PutPageOptions, ReadScope, VersionsOptions};
+use gbrain_store::pages::{
+    PageFilters, PageInput, PageTrustRestore, PutPageOptions, ReadScope, VersionReasonStamp,
+    VersionsOptions,
+};
 use gbrain_store::{Store, sources::SourceInput};
 use serde_json::{Value, json};
 
@@ -111,7 +115,12 @@ fn a_put_page_reads_back_with_the_page_shape() {
         .unwrap()
         .keys()
         .collect();
-    assert_eq!(keys, ["zebra", "alpha"], "frontmatter keeps its key order");
+    // jsonb keeps no insertion order: Postgres gives keys shorter first, then by bytes.
+    assert_eq!(
+        keys,
+        ["alpha", "zebra"],
+        "frontmatter reads in Postgres jsonb key order"
+    );
     // An upper-case read finds the page too.
     assert!(
         store
@@ -572,7 +581,7 @@ fn list_sorts_filters_and_pages() {
 }
 
 #[test]
-fn resolve_slugs_answers_only_the_exact_live_slug() {
+fn resolve_slugs_answers_the_exact_live_slug_then_the_fuzzy_half() {
     let dir = TempDir::new("pages-resolve");
     let store = open(&dir);
     for slug in ["people/ada", "people/adam", "notes/ada-diary"] {
@@ -580,10 +589,15 @@ fn resolve_slugs_answers_only_the_exact_live_slug() {
     }
     let resolve = |p: &str| store.resolve_slugs(p, &ReadScope::default()).unwrap();
     assert_eq!(resolve("people/ada"), ["people/ada"]);
-    // A partial name, a different case and a title are the trigram half of PGLite's answer, which
-    // this store does not have: the list is empty, and the TypeScript member refuses it.
-    assert!(resolve("ADA").is_empty());
-    assert!(resolve("people/ad").is_empty());
+    // No exact slug: the fuzzy half lists slugs containing the name (any case) or titles similar
+    // to it, best title similarity first (the titles are the slugs). Expected rows read from
+    // Postgres 16 with the same WHERE and ORDER BY.
+    assert_eq!(
+        resolve("ADA"),
+        ["people/ada", "notes/ada-diary", "people/adam"]
+    );
+    assert_eq!(resolve("people/ad"), ["people/ada", "people/adam"]);
+    assert!(resolve("zz").is_empty());
     store
         .upsert_source(&SourceInput {
             id: "work".into(),
@@ -595,9 +609,10 @@ fn resolve_slugs_answers_only_the_exact_live_slug() {
         .unwrap();
     assert!(in_work.is_empty());
     store.soft_delete_page("people/ada", None).unwrap();
-    assert!(
-        resolve("people/ada").is_empty(),
-        "a soft-deleted page is not resolved"
+    assert_eq!(
+        resolve("people/ada"),
+        ["people/adam"],
+        "a soft-deleted page is not resolved; the fuzzy half still finds the slug that contains it"
     );
 }
 
@@ -745,6 +760,164 @@ fn versions_are_snapshots_listed_newest_first() {
 }
 
 #[test]
+fn change_reasons_stamp_the_versions_after_a_mark() {
+    let dir = TempDir::new("pages-version-reasons");
+    let store = open(&dir);
+    let page_id = put(&store, "a", "one")["id"].as_i64().unwrap();
+    assert_eq!(store.read_latest_version_id(page_id).unwrap(), None);
+    let v1 = store.create_version("a", None).unwrap();
+    assert_eq!(
+        store.read_latest_version_id(page_id).unwrap(),
+        v1["id"].as_u64()
+    );
+    let stamp = |after: i64, reason: &str| {
+        store.stamp_version_change_reason(&VersionReasonStamp {
+            page_id,
+            after_version_id: after,
+            reason: reason.into(),
+        })
+    };
+    assert_eq!(stamp(0, "first").unwrap(), 1);
+    put(&store, "a", "two");
+    let v2 = store
+        .create_version_with("a", None, Some("imported"))
+        .unwrap();
+    assert_eq!(v2["change_reason"], "imported");
+    assert_eq!(stamp(v2["id"].as_i64().unwrap(), "late").unwrap(), 0);
+    assert_eq!(stamp(-1, "bad\0reason").unwrap_err().code, INVALID_ARGUMENT);
+    let reasons: Vec<Value> = store
+        .get_versions("a", &VersionsOptions::default())
+        .unwrap()
+        .iter()
+        .map(|v| v["replaced_because"].clone())
+        .collect();
+    assert_eq!(reasons, [json!("imported"), json!("first")]);
+}
+
+#[test]
+fn the_holding_prune_keeps_the_newest_five_versions_and_marks_the_gap() {
+    let dir = TempDir::new("pages-holding-prune");
+    let store = open(&dir);
+    let page_id = put(&store, "memory/unattributed", "held")["id"]
+        .as_i64()
+        .unwrap();
+    let ids: Vec<u64> = (0..8)
+        .map(|_| {
+            store.create_version("memory/unattributed", None).unwrap()["id"]
+                .as_u64()
+                .unwrap()
+        })
+        .collect();
+    let kept = || -> Vec<u64> {
+        store
+            .get_versions("memory/unattributed", &VersionsOptions::default())
+            .unwrap()
+            .iter()
+            .map(|v| v["id"].as_u64().unwrap())
+            .collect()
+    };
+    assert_eq!(store.prune_holding_page_versions(page_id).unwrap(), 3);
+    assert_eq!(kept(), ids[3..].iter().rev().copied().collect::<Vec<_>>());
+    assert_eq!(store.prune_holding_page_versions(page_id).unwrap(), 0);
+    assert_eq!(store.prune_holding_page_versions(987_654).unwrap(), 0);
+    assert_eq!(store.prune_holding_page_versions(-1).unwrap(), 0);
+}
+
+fn trust_of(store: &Store, slug: &str) -> (String, Option<Value>) {
+    let rows = store
+        .read_page_trust_rows(&PageTrustLookup {
+            keys: vec![PageTrustKey {
+                source_id: "default".into(),
+                slug: slug.into(),
+            }],
+            ..PageTrustLookup::default()
+        })
+        .unwrap();
+    (rows[0].trust_tier.clone(), rows[0].write_origin.clone())
+}
+
+fn restore(
+    store: &Store,
+    page_id: i64,
+    tier: &str,
+    origin: Option<&str>,
+) -> gbrain_store::Result<()> {
+    store.restore_page_trust(&PageTrustRestore {
+        page_id,
+        trust_tier: tier.into(),
+        write_origin: origin.map(String::from),
+    })
+}
+
+#[test]
+fn a_trust_restore_lowers_freely_and_raises_only_under_a_promotion() {
+    let dir = TempDir::new("pages-trust-restore");
+    let store = open(&dir);
+    let names = |n: &[&str]| n.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let owner = r#"{"channel":"owner"}"#;
+    let tx = store.begin_transaction(false).unwrap();
+    tx.apply_write_trust(
+        &names(&[
+            "gbrain.write_trust_tier",
+            "gbrain.write_trust_promotion",
+            "gbrain.write_origin",
+        ]),
+        &[
+            "operator_curated".into(),
+            "operator_curated".into(),
+            owner.into(),
+        ],
+    )
+    .unwrap();
+    let page_id = put(&tx, "a", "one")["id"].as_i64().unwrap();
+    tx.commit_transaction().unwrap();
+
+    // An agent rewrite lowers the page; the restore under the page's own promotion raises it back.
+    let tx = store.begin_transaction(false).unwrap();
+    let agent = names(&["gbrain.write_trust_tier", "gbrain.write_origin"]);
+    let agent_values = [
+        "agent_written".to_string(),
+        r#"{"channel":"agent"}"#.to_string(),
+    ];
+    tx.apply_write_trust(&agent, &agent_values).unwrap();
+    put(&tx, "a", "one, appended");
+    assert_eq!(trust_of(&tx, "a").0, "agent_written");
+    tx.apply_write_trust(
+        &names(&["gbrain.write_trust_promotion"]),
+        &["operator_curated".into()],
+    )
+    .unwrap();
+    restore(&tx, page_id, "operator_curated", Some(owner)).unwrap();
+    tx.commit_transaction().unwrap();
+    assert_eq!(
+        trust_of(&store, "a"),
+        (
+            "operator_curated".into(),
+            Some(json!({ "channel": "owner" }))
+        )
+    );
+
+    // A lower needs no promotion, and a null origin clears it.
+    let tx = store.begin_transaction(false).unwrap();
+    tx.apply_write_trust(&agent, &agent_values).unwrap();
+    restore(&tx, page_id, "external_untrusted", None).unwrap();
+    // A raise with no promotion keeps the stored tier; an unknown page writes nothing.
+    restore(&tx, page_id, "operator_curated", Some(owner)).unwrap();
+    restore(&tx, 987_654, "agent_written", None).unwrap();
+    tx.commit_transaction().unwrap();
+    assert_eq!(trust_of(&store, "a").0, "external_untrusted");
+
+    assert_eq!(
+        code(restore(&store, page_id, "root", None).unwrap_err()),
+        INVALID_ARGUMENT
+    );
+    assert_eq!(
+        code(restore(&store, page_id, "agent_written", Some("{not json")).unwrap_err()),
+        INVALID_ARGUMENT
+    );
+}
+
+#[test]
 fn lock_page_keys_checks_the_keys() {
     let dir = TempDir::new("pages-lock");
     let store = open(&dir);
@@ -789,4 +962,204 @@ fn pages_survive_a_reopen_and_ids_keep_counting() {
     );
     assert_eq!(put(&store, "b", "x")["id"], 2);
     assert_eq!(store.create_version("b", None).unwrap()["id"], 2);
+}
+
+#[test]
+fn put_page_writes_the_contextual_retrieval_stamp_it_is_given_and_none_keeps_the_stored_one() {
+    let dir = TempDir::new("pages-cr-stamp");
+    let store = open(&dir);
+    let mode = |store: &Store| {
+        let snapshot = store
+            .read_page_snapshot("notes/cr", &ReadScope::default())
+            .unwrap()
+            .unwrap();
+        snapshot["page"]["contextual_retrieval_mode"].clone()
+    };
+    let stamp =
+        |m: &str| opts(json!({"contextualRetrieval": {"mode": m, "corpusGeneration": "gen-1"}}));
+    store
+        .put_page("notes/cr", &input("CR", "One."), &stamp("title"))
+        .unwrap();
+    assert_eq!(mode(&store), json!("title"));
+    store
+        .put_page("notes/cr", &input("CR", "Two."), &PutPageOptions::default())
+        .unwrap();
+    assert_eq!(mode(&store), json!("title"));
+    store
+        .put_page("notes/cr", &input("CR", "Three."), &stamp("none"))
+        .unwrap();
+    assert_eq!(mode(&store), json!("title"));
+    store
+        .put_page(
+            "notes/cr",
+            &input("CR", "Four."),
+            &stamp("per_chunk_synopsis"),
+        )
+        .unwrap();
+    assert_eq!(mode(&store), json!("per_chunk_synopsis"));
+    // A stamp Postgres could not store refuses the whole write: neither the body nor the mode changes.
+    let err = store
+        .put_page("notes/cr", &input("CR", "Five."), &stamp("ti\0tle"))
+        .unwrap_err();
+    assert_eq!(code(err), INVALID_ARGUMENT);
+    assert_eq!(mode(&store), json!("per_chunk_synopsis"));
+    let body = store
+        .read_page_snapshot("notes/cr", &ReadScope::default())
+        .unwrap()
+        .unwrap();
+    assert_eq!(body["page"]["compiled_truth"], json!("Four."));
+}
+
+/// `excludePrivate` on the page reads: a hidden page reads as missing, a scope whose first source
+/// holds a hidden page answers the next source, and `resolveSlugs` never names a hidden page.
+#[test]
+fn exclude_private_hides_a_private_page_from_every_page_read() {
+    let dir = TempDir::new("pages-exclude-private");
+    let store = open(&dir);
+    store
+        .upsert_source(&SourceInput {
+            id: "alt".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    let private: PageInput = serde_json::from_value(json!({
+        "type": "person", "title": "Secret", "compiled_truth": "secret",
+        "frontmatter": { "visibility": "private" },
+    }))
+    .unwrap();
+    store
+        .put_page("people/secret", &private, &PutPageOptions::default())
+        .unwrap();
+    store
+        .put_page("people/ada", &private, &opts(json!({ "sourceId": "alt" })))
+        .unwrap();
+    put(&store, "people/ada", "public");
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true });
+    let hidden = scope(json!({ "excludePrivate": policy }));
+    assert!(
+        store
+            .read_page_snapshot("people/secret", &hidden)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .read_page_snapshot("people/secret", &ReadScope::default())
+            .unwrap()
+            .is_some()
+    );
+    let alt_first = scope(json!({ "excludePrivate": policy, "sourceIds": ["alt", "default"] }));
+    let snapshot = store
+        .read_page_snapshot("people/ada", &alt_first)
+        .unwrap()
+        .unwrap();
+    assert_eq!(snapshot["page"]["source_id"], "default");
+    // The hidden exact page is skipped; the fuzzy half then finds the public `people/ada`, whose
+    // title (`people/ada`) shares the `people` trigrams (7 of 18, over the 0.3 threshold).
+    assert_eq!(
+        store.resolve_slugs("people/secret", &hidden).unwrap(),
+        ["people/ada"]
+    );
+    assert_eq!(
+        store.resolve_slugs("people/ada", &alt_first).unwrap(),
+        vec!["people/ada".to_string()]
+    );
+    let listed = store
+        .list_pages(&filters(json!({ "excludePrivate": policy })))
+        .unwrap();
+    assert_eq!(slugs(&listed), vec!["people/ada"]);
+    assert_eq!(listed[0]["source_id"], "default");
+}
+
+#[test]
+fn resolve_alias_follows_a_rename_alias_and_require_unambiguous_refuses_two_candidates() {
+    let dir = TempDir::new("pages-resolve-alias");
+    let store = open(&dir);
+    store
+        .upsert_source(&SourceInput {
+            id: "alt".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    put(&store, "people/old-name", "body");
+    assert_eq!(
+        store
+            .update_slug("people/old-name", "people/new-name", None)
+            .unwrap(),
+        1
+    );
+    store
+        .put_page(
+            "people/old-name",
+            &input("alt", "alt body"),
+            &opts(json!({ "sourceId": "alt" })),
+        )
+        .unwrap();
+    let at = |v: Option<Value>| {
+        v.map(|s| {
+            format!(
+                "{}:{}",
+                s["page"]["source_id"].as_str().unwrap(),
+                s["page"]["slug"].as_str().unwrap()
+            )
+        })
+    };
+    // Without resolveAlias only the exact page in alt answers; with it the exact page still outranks the alias.
+    let read = |v: Value| store.read_page_snapshot("people/old-name", &scope(v));
+    assert_eq!(
+        at(read(json!({})).unwrap()).as_deref(),
+        Some("alt:people/old-name")
+    );
+    assert_eq!(
+        at(read(json!({ "resolveAlias": true })).unwrap()).as_deref(),
+        Some("alt:people/old-name")
+    );
+    assert_eq!(
+        at(read(json!({ "resolveAlias": true, "sourceId": "default" })).unwrap()).as_deref(),
+        Some("default:people/new-name")
+    );
+    assert_eq!(
+        code(read(json!({ "resolveAlias": true, "requireUnambiguous": true })).unwrap_err()),
+        PAGE_AMBIGUOUS
+    );
+    // preserveExactIdentity skips an alias of a source that has a page at the slug.
+    assert_eq!(
+        at(read(
+            json!({ "resolveAlias": true, "preserveExactIdentity": true, "sourceId": "default" })
+        )
+        .unwrap()),
+        Some("default:people/new-name".to_string())
+    );
+    put(&store, "people/old-name", "recreated");
+    store.soft_delete_page("people/old-name", None).unwrap();
+    assert!(
+        read(json!({ "resolveAlias": true, "preserveExactIdentity": true, "sourceId": "default" }))
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn an_alias_read_follows_a_rename_alias_and_an_exact_slug_wins() {
+    let dir = TempDir::new("pages-snapshot-alias");
+    let store = open(&dir);
+    put(&store, "notes/old", "Movable.");
+    store.update_slug("notes/old", "notes/new", None).unwrap();
+    let read = |slug: &str, v: Value| {
+        store
+            .read_page_snapshot(slug, &scope(v))
+            .unwrap()
+            .map(|s| s["page"]["slug"].as_str().unwrap().to_string())
+    };
+    assert_eq!(read("notes/old", json!({})), None);
+    assert_eq!(
+        read("notes/old", json!({"resolveAlias": true})).as_deref(),
+        Some("notes/new")
+    );
+    assert_eq!(read("notes/never", json!({"resolveAlias": true})), None);
+    put(&store, "notes/old", "Squatter.");
+    assert_eq!(
+        read("notes/old", json!({"resolveAlias": true})).as_deref(),
+        Some("notes/old")
+    );
 }

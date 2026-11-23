@@ -161,6 +161,8 @@ test/e2e/workspace-generic-compat.test.ts	generic agent-workspace compat (INSTAL
 test/embedding-dim-check-facts.test.ts	doctor checkFactsEmbeddingWidthConsistency wiring (T6)	4	doctor-source-helper
 test/embedding-dim-check-facts.test.ts	postgres-engine fact insert cast (T6, codex #20)	1	source-surface-helper
 test/enforced-member-classes.test.ts	enforced member allow-list	6	readFileSync
+test/engine-status-brain-ref-safety.test.ts	the PGLite lock is unchanged	3	readFileSync
+test/engine-status-brain-ref-safety.test.ts	the brain_ref write is best-effort and off the critical path	4	readFileSync
 test/env-trust-protected-keys.test.ts	CWD_DOTENV_PROTECTED_KEYS covers every suspicious GBRAIN_* env read in src/	3	readFileSync
 test/error-catalogue.test.ts	error code registry (agent contract v1)	5	readFileSync
 test/error-registry-6317-contract.test.ts	#6317 codes are registered with a full envelope	3	readFileSync
@@ -455,6 +457,9 @@ test/spec-refresh-barrier.test.ts	spec/tla/README.md documents the refresh-barri
 test/spec-refresh-barrier.test.ts	the TLA+ workflow runs when anything a refresh-barrier mutant names changes	1	readFileSync
 test/spend-off-switch.test.ts	reindex / onboard off-switch dispatch (regression guards)	3	bun-file
 test/spring-skill-index.test.ts	spring-loaded skill index	10	readFileSync
+test/st-write-move-parity.test.ts	moved writes before and after (${kind})	10	readFileSync
+test/st-write-move-parity.test.ts	the Postgres write members send master\'s statement text (no database)	3	readFileSync
+test/st-write-move-parity.test.ts	the strict call sites keep master\'s scope and order	3	readFileSync
 test/strict-source-unmanaged-import.test.ts	(file-level)	2	readFileSync
 test/supervisor.test.ts	recovery hook timeout bound (structural)	1	source-surface-helper
 test/sync-failures.test.ts	#4543 blocked output names failing files	4	doctor-source-helper,source-surface-helper

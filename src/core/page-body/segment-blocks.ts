@@ -163,8 +163,7 @@ function runKey(region: BodyRegion, stale: boolean, segments: ReadonlyArray<{ sh
 export async function* bodyBlocks(engine: BrainEngine, page: { id: number; slug: string; source_id?: string },
   opts: BodyBlockOptions = {}): AsyncIterable<BodyBlock> {
   const body = await openSegmentedBody(engine, { pageId: Number(page.id) });
-  const forced = new Set((await engine.executeRaw<{ seq: number }>(`SELECT seq FROM page_body_manifest WHERE page_id=$1 AND staging_id IS NULL
-      AND gen_from<=$2 AND (gen_to IS NULL OR gen_to>$2) AND cut_kind='forced'`, [body.pageId, body.generation])).map(row => Number(row.seq)));
+  const forced = new Set(await engine.listForcedCutSeqs(body.pageId, body.generation));
   const collect = readGarbageCollector();
   const runKeys = opts.runKeys && !ledgerApplies(body.ledger) ? opts.runKeys : undefined;
   let at = 0;
@@ -219,7 +218,7 @@ export const retainedGenerationWork = { bytes: 0, skipped: 0 };
  * key is in `seen` (a run of the live body read without an overlay, or of a generation read before) is skipped, and
  * each run read is added to it. `stop` is asked before each segment read, as in bodyBlocks.
  */
-export async function* retainedGenerationBlocks(engine: Pick<BrainEngine, 'executeRaw' | 'readManifest' | 'readSegmentTexts'>,
+export async function* retainedGenerationBlocks(engine: Pick<BrainEngine, 'executeRaw' | 'readManifest' | 'readSegmentTexts' | 'readSegmentedVersionBodyBytes'>,
   page: { id: number; slug: string; sourceId: string }, generation: number,
   opts: { seen?: Set<string>; stop?: () => boolean } = {}): AsyncIterable<string> {
   const rows = await engine.readManifest(page.id, { generation });
