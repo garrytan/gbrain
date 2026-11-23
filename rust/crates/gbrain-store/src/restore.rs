@@ -65,6 +65,9 @@ pub struct Authority {
 pub struct Blocker {
     pub reason: &'static str,
     pub count: u64,
+    /// What the blocker is, when it can be named (the unclassified records).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -237,6 +240,16 @@ fn next_bytes(read: &dyn KvRead, prefix: &[u8], first: u8) -> Result<Vec<u8>> {
     Ok(found)
 }
 
+/// A record kind this restore does not handle, named when a later lane's family is known to use it:
+/// `rust-engine/main` keeps the `access_tokens` table at `jobs 0x2B` (`jobs/access_tokens.rs`).
+/// This restore revokes no token; a record of that kind refuses.
+fn describe_unclassified(label: &str, byte: u8) -> String {
+    match (label, byte) {
+        ("jobs", 0x2B) => "access tokens (jobs 0x2b)".into(),
+        _ => format!("{label} 0x{byte:02x}"),
+    }
+}
+
 fn unclassified_state(read: &dyn KvRead) -> Result<Vec<String>> {
     let mut out = Vec::new();
     let checks: [(&[u8], &[u8], &str); 3] = [
@@ -248,7 +261,7 @@ fn unclassified_state(read: &dyn KvRead) -> Result<Vec<String>> {
         let first = if prefix.is_empty() { 1 } else { 0 };
         for byte in next_bytes(read, prefix, first)? {
             if !known.contains(&byte) {
-                out.push(format!("{label} 0x{byte:02x}"));
+                out.push(describe_unclassified(label, byte));
             }
         }
     }
@@ -368,7 +381,11 @@ fn census_in(read: &dyn KvRead, purge_ids: &[String], store: StoreIdentity) -> R
     ]
     .into_iter()
     .filter(|(_, count)| *count > 0)
-    .map(|(reason, count)| Blocker { reason, count })
+    .map(|(reason, count)| Blocker {
+        reason,
+        count,
+        detail: (reason == "unclassified_state").then(|| unclassified.join(", ")),
+    })
     .collect();
     Ok(Census {
         store,
@@ -503,7 +520,8 @@ impl Store {
             }
             let census = census_in(&*tx, &[], identity.clone())?;
             if let Some(b) = census.blockers.first() {
-                return Err(StoreError::new(RESTORE_REFUSED, format!("{}: {}", b.reason, b.count)));
+                let named = b.detail.as_ref().map_or(String::new(), |d| format!(" ({d})"));
+                return Err(StoreError::new(RESTORE_REFUSED, format!("{}: {}{named}", b.reason, b.count)));
             }
             let now = self.env.now_micros();
             let mut report = QuarantineReport {

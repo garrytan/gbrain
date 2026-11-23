@@ -38,7 +38,7 @@ export interface RestoreCensus {
   purges_missing: string[];
   /** Records of a kind this build's restore has not classified (for example `jobs 0x2b`). */
   unclassified: string[];
-  blockers: Array<{ reason: RestoreBlockerReason; count: number }>;
+  blockers: Array<{ reason: RestoreBlockerReason; count: number; /** What `unclassified_state` found, by name when known (for example `access tokens (jobs 0x2b)`). */ detail?: string }>;
 }
 
 export interface RestoreQuarantinePlan {

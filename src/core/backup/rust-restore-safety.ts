@@ -26,7 +26,7 @@ const NEW_BACKUP = ['gbrain', 'backup', 'create', '--output', '<NEW_ARCHIVE>'];
 const NEW_RESTORE = ['gbrain', 'backup', 'restore', '<ARCHIVE>', '--into', '<NEW_ABSENT_ROOT>'];
 const RESTORE_WITH_MIRROR = [...NEW_RESTORE, '--purge-mirror', '<MIRROR_COPY>'];
 
-interface RefusalText { what: (count: number) => string; why: string; remedy: string; argv: string[] }
+interface RefusalText { what: (count: number, detail?: string) => string; why: string; remedy: string; argv: string[] }
 
 const TEXT: Record<RestoreRefusalReason, RefusalText> = {
   pending_requests: {
@@ -54,7 +54,7 @@ const TEXT: Record<RestoreRefusalReason, RefusalText> = {
     argv: RESTORE_WITH_MIRROR,
   },
   unclassified_state: {
-    what: n => `The archive holds ${n} kind(s) of record this build's restore does not know how to make safe (shared-skill members and policies, or a newer record kind).`,
+    what: (n, detail) => `The archive holds ${n} kind(s) of record this build's restore does not know how to make safe${detail ? `: ${detail}` : ''} (access tokens and OAuth tokens are not revoked by this restore; shared-skill members and policies are not kept).`,
     why: 'Restore changes only state it knows; anything else could keep archived authority or work alive.',
     remedy: 'Restore with a newer gbrain build that supports those records, into a new absent --into.',
     argv: NEW_RESTORE,
@@ -79,11 +79,11 @@ function action(reason: RestoreRefusalReason): Action {
 }
 
 /** The refusal for `reason`, or what to say about it: stable code, one reason, what was not published, the fix. */
-export function restoreRefusal(reason: RestoreRefusalReason, count = 1, context: { store?: RestoreStoreIdentity; mode?: string } = {}): OperationError {
+export function restoreRefusal(reason: RestoreRefusalReason, count = 1, context: { store?: RestoreStoreIdentity; mode?: string; detail?: string } = {}): OperationError {
   const text = TEXT[reason];
   const store = context.store ? ` store_format=${context.store.engine_format_version} generation=${context.store.generation}` : '';
-  return opError('restore_step_unsupported', `${text.what(count)} ${NOT_PUBLISHED}`, text.remedy,
-    { reason, why: text.why, fix: action(reason), docs: RESTORE_REFUSAL_DOCS, detail: `reason=${reason} count=${count}${store}` });
+  return opError('restore_step_unsupported', `${text.what(count, context.detail)} ${NOT_PUBLISHED}`, text.remedy,
+    { reason, why: text.why, fix: action(reason), docs: RESTORE_REFUSAL_DOCS, detail: `reason=${reason} count=${count}${context.detail ? ` kinds=${context.detail}` : ''}${store}` });
 }
 
 /** The addon has the restore step (an addon built before it lacks both members). */
@@ -106,7 +106,7 @@ export function restoreRefusalFor(input: RestoreRefusalInput): OperationError | 
   if (mode === 'recovery') return restoreRefusal('recovery_mode', 1, context);
   if (mirror === 'corrupt') return restoreRefusal('purge_mirror_unreadable', 1, context);
   const first = census.blockers[0];
-  return first ? restoreRefusal(first.reason, first.count, context) : null;
+  return first ? restoreRefusal(first.reason, first.count, { ...context, detail: first.detail }) : null;
 }
 
 /**

@@ -236,7 +236,7 @@ fn a_record_of_a_kind_this_build_has_not_classified_fails_closed() {
     let store = store();
     store.write(|tx| tx.put(&[b'~', 1], b"x")).unwrap();
     store
-        .write(|tx| tx.put(&[keys::JOBS, 0x2B, 1], b"token"))
+        .write(|tx| tx.put(&[keys::JOBS, 0x2F, 1], b"token"))
         .unwrap();
     store
         .write(|tx| tx.put(&[keys::PERSISTENCE, 0x09], b"x"))
@@ -244,14 +244,14 @@ fn a_record_of_a_kind_this_build_has_not_classified_fails_closed() {
     let census = store.restore_census(&[]).unwrap();
     assert_eq!(
         census.unclassified,
-        ["tag 0x7e", "jobs 0x2b", "persistence 0x09"]
+        ["tag 0x7e", "jobs 0x2f", "persistence 0x09"]
     );
     assert_eq!(
         store
             .restore_quarantine(&default_only())
             .unwrap_err()
             .message,
-        "unclassified_state: 3"
+        "unclassified_state: 3 (tag 0x7e, jobs 0x2f, persistence 0x09)"
     );
 }
 
@@ -681,4 +681,37 @@ fn only_automation_and_path_rows_are_settings() {
     ] {
         assert_eq!(setting_kind(other), None, "{other}");
     }
+}
+
+/// `jobs 0x2B` is the `access_tokens` table of `rust-engine/main` (`jobs/access_tokens.rs`, absent from
+/// this base): `m 0x2B <token id> -> TokenRecord`. A restore does not revoke it here, so it must refuse and say what it is.
+#[test]
+fn archived_access_tokens_are_refused_by_name_and_never_counted_as_nothing() {
+    let store = store();
+    let token = [
+        &[keys::JOBS, 0x2B][..],
+        b"11111111-0000-4000-8000-000000000001",
+    ]
+    .concat();
+    store
+        .write(|tx| tx.put(&token, br#"{"name":"claude","revoked_at":null}"#))
+        .unwrap();
+    let census = store.restore_census(&[]).unwrap();
+    assert_eq!(census.unclassified, ["access tokens (jobs 0x2b)"]);
+    assert_eq!(
+        serde_json::to_value(&census.blockers).unwrap(),
+        json!([{ "reason": "unclassified_state", "count": 1, "detail": "access tokens (jobs 0x2b)" }])
+    );
+    let before = dump(&store);
+    let err = store.restore_quarantine(&default_only()).unwrap_err();
+    assert_eq!(err.code, "restore_refused");
+    assert_eq!(
+        err.message,
+        "unclassified_state: 1 (access tokens (jobs 0x2b))"
+    );
+    assert_eq!(
+        dump(&store),
+        before,
+        "the token row is left exactly as archived"
+    );
 }

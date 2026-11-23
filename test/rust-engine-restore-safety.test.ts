@@ -225,7 +225,10 @@ describe('refusals', () => {
     expect(restoreRefusalFor({ census: busy, mode: 'recovery', mirror: 'ok' })?.reason).toBe('recovery_mode');
     expect(restoreRefusalFor({ census: busy, mode: 'new_brain', mirror: 'corrupt' })?.reason).toBe('purge_mirror_unreadable');
     expect(restoreRefusalFor({ census: busy, mode: 'new_brain', mirror: 'ok' })?.reason).toBe('pending_requests');
-    expect(restoreRefusalFor({ census: census({ blockers: [{ reason: 'unclassified_state', count: 1 }] }), mode: 'new_brain', mirror: 'ok' })?.reason).toBe('unclassified_state');
+    const tokens = restoreRefusalFor({ census: census({ blockers: [{ reason: 'unclassified_state', count: 1, detail: 'access tokens (jobs 0x2b)' }] }), mode: 'new_brain', mirror: 'ok' });
+    expect(tokens?.reason).toBe('unclassified_state');
+    expect(tokens?.message).toContain('access tokens (jobs 0x2b)');
+    expect(tokens?.message).toContain('not revoked by this restore');
     expect(restoreRefusalFor({ census: census(), mode: 'new_brain', mirror: 'unavailable' })).toBeNull();
   });
 
