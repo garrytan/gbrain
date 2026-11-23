@@ -55,7 +55,7 @@ mod held_cells;
 pub mod holding_purges;
 pub mod loops;
 mod page_purges;
-pub(crate) use page_purges::seed_purge;
+pub(crate) use page_purges::{remove_purge, seed_purge};
 mod privacy;
 pub mod purge;
 pub mod purge_ledger;
@@ -703,6 +703,30 @@ pub(crate) fn delete_fact(
         }
     }
     Ok(())
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the fact `id`. With `clear_referrers`, a delete as
+/// [`delete_fact`] does it; without, only the row and its index entries go, for a fact that is
+/// replaced by a row of the same id (the rows that name it keep `superseded_by`). `false` when no
+/// such fact is stored.
+pub(crate) fn remove_fact(
+    tx: &mut dyn KvWrite,
+    trust: &WriteTrust,
+    id: u64,
+    clear_referrers: bool,
+) -> Result<bool> {
+    let Some(row) = read_fact(&*tx, id)? else {
+        return Ok(false);
+    };
+    if clear_referrers {
+        delete_fact(tx, trust, &row)?;
+    } else {
+        for (key, _) in index_keys(&row) {
+            tx.delete(&key)?;
+        }
+        tx.delete(&fact_key(row.id))?;
+    }
+    Ok(true)
 }
 
 /// The trailing 8-byte ids of the keys under `prefix`, in key order.

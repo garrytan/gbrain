@@ -18,7 +18,8 @@ import type { ColumnMeta } from '../core/persistence/engine-graduation.types.ts'
 import {
   DIGEST_SESSION_SETTINGS, digestQuery, quoteIdent, readKeysetRows, tableColumns, type DigestPlan,
 } from '../core/persistence/graduation-digest.ts';
-import type { SeedImportResult, SeedPlan, SeedRow } from '../core/rust-engine/store.ts';
+import type { SeedDigest, SeedImportResult, SeedPlan, SeedRow } from '../core/rust-engine/store.ts';
+import { rowDigest, sortKey, sortKeyUnsupported } from './follow-digest.ts';
 import type { ManagedStorageRecord } from './managed-gate.ts';
 import { countSeedGaps, primaryTables, type SeedQuery } from './seed-gaps.ts';
 
@@ -29,7 +30,7 @@ export const DEFAULT_SEED_BUDGET_MS = 30 * 60_000;
 /** The store calls the seed makes: `RustStore`'s seed methods. */
 export interface SeedTarget {
   seedPlan(): Promise<SeedPlan>;
-  importRelation(seedId: string, relation: string, rows: SeedRow[]): Promise<SeedImportResult>;
+  importRelation(seedId: string, relation: string, rows: SeedRow[], digests?: SeedDigest[]): Promise<SeedImportResult>;
 }
 
 export interface SeedRelationRecord {
@@ -68,7 +69,11 @@ export interface SeedRecord {
   non_terminal_jobs: number;
   /** Pages whose body is stored in segments: the seeded store reads them as shells, without their text. */
   segmented_pages: number;
+  /** The store holds a digest entry for every row it copied: the follower and reconcile need them. Absent in a seed written before follow. */
+  digests?: true;
 }
+
+export const RESEED_STEPS = 'gbrain engine shadow stop --delete (deletes the store, ledger and reports), then gbrain engine shadow seed, then gbrain engine shadow start to turn shadow mode on again';
 
 export interface SeedOptions {
   primaryEngine: string;
@@ -97,8 +102,11 @@ const PROJECTION_JOB_COLUMNS = [
 
 const TERMINAL_JOB_STATUSES = ['completed', 'failed', 'dead', 'cancelled'];
 
-/** The keyset read of one relation: every stored column as text, keyed by the plan's key columns. */
-async function relationRead(tx: BrainEngine, relation: string, keyNames: readonly string[]): Promise<DigestPlan> {
+/**
+ * The keyset read of one relation: every stored column as text, keyed by the plan's key columns. `extra` are further
+ * SELECT expressions (aliased by the caller) that ride along without being part of the row.
+ */
+export async function relationRead(tx: BrainEngine, relation: string, keyNames: readonly string[], extra: readonly string[] = []): Promise<DigestPlan> {
   const all = await tableColumns(tx, relation);
   // A generated column and a tsvector are derived by the store from kept columns; they are never sent.
   const columns: ColumnMeta[] = all.filter(c => !c.generated && c.type !== 'tsvector');
@@ -120,7 +128,7 @@ async function relationRead(tx: BrainEngine, relation: string, keyNames: readonl
     from += ' LEFT JOIN sources AS s ON s.id = t.source_id'
       + ' LEFT JOIN page_projection_jobs AS j ON j.source_incarnation = s.incarnation AND j.slug = t.slug';
   }
-  return { relation, columns, key, select: `SELECT ${list.join(', ')} FROM ${from}`, filter: '' };
+  return { relation, columns, key, select: `SELECT ${[...list, ...extra].join(', ')} FROM ${from}`, filter: '' };
 }
 
 async function countRows(query: SeedQuery, sql: string, params: unknown[] = []): Promise<number> {
@@ -155,12 +163,15 @@ export async function runSeed(primary: BrainEngine, target: SeedTarget, opts: Se
       if (!tables.has(relation)) { rec.absent = true; continue; }
       const read = await relationRead(tx, relation, key);
       const unmapped = new Set<string>();
+      const digested = sortKeyUnsupported(read.key) === null;
       let after: readonly string[] | null = null;
       for (;;) {
         if (now().getTime() - started.getTime() > budgetMs) throw new SeedBudgetError(relation, budgetMs);
         const rows = await readKeysetRows(tx, read, after, batchRows);
         if (!rows.length) break;
-        const result = await target.importRelation(seedId, relation, rows.map(r => r.values));
+        const result = await target.importRelation(seedId, relation, rows.map(r => r.values), digested
+          ? rows.map((r): SeedDigest => ({ sort: sortKey(read.key, r.key).toString('hex'), digest: rowDigest(r.values).toString('hex') }))
+          : undefined);
         rec.rows_read += rows.length;
         rec.imported += result.imported;
         rec.skipped += result.skipped;
@@ -201,6 +212,7 @@ export async function runSeed(primary: BrainEngine, target: SeedTarget, opts: Se
       unseeded_gap_rows_total: Object.values(gaps).reduce((a, b) => a + b, 0),
       non_terminal_jobs: nonTerminalJobs,
       segmented_pages: segmentedPages,
+      digests: true,
     };
   }, { readOnly: true });
 }
