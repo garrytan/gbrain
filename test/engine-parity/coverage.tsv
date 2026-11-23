@@ -153,7 +153,7 @@ applyIdentityDecisions	pages	yes	4	no	yes	yes	serves
 listAllPageRefs	pages	yes	4	yes	yes	yes	serves
 listAllSources	pages	yes	19	no	yes	yes	serves
 updateSourceConfig	pages	yes	18	no	yes	yes	serves
-getSource	pages	yes	28	no	yes	yes	serves
+getSource	pages	yes	29	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
 countRepoBoundSources	pages	yes	2	no	yes	yes	serves
 listNotifierHostSourceRows	pages	yes	3	no	yes	yes	serves
@@ -895,7 +895,7 @@ readNamedEntitySlugs	entity_reads	yes	2	no	yes	yes	serves
 findFuzzyEntityCandidates	entity_reads	yes	3	no	yes	yes	serves
 findExactBasenameCandidates	entity_reads	yes	2	no	yes	yes	serves
 readRetirementHop	entity_reads	yes	7	no	yes	yes	serves
-readEntityCardRows	entity_reads	yes	3	no	yes	yes	serves
+readEntityCardRows	entity_reads	yes	4	no	yes	yes	serves
 listUnretiredPagesBySlugPattern	entity_reads	yes	2	no	yes	yes	serves
 listNameVariantCandidates	entity_reads	yes	2	no	yes	yes	serves
 countDistinctInboundLinkers	entity_reads	yes	2	no	yes	yes	serves
@@ -1522,7 +1522,7 @@ listSegmentedPages	withdrawal_pages	yes	2	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	2	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	176	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	174	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	4	yes	yes	yes	serves
@@ -1622,7 +1622,7 @@ readAdmissionSource	write_misc	yes	2	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
 getWorktreeBinding	write_misc	yes	22	no	yes	yes	serves
-worktreeClaimStore	write_misc	yes	17	no	yes	yes	serves
+worktreeClaimStore	write_misc	yes	19	no	yes	yes	serves
 readWriterAdminState	write_misc	yes	9	no	yes	yes	serves
 readWorktreeManifest	write_misc	yes	1	no	yes	yes	serves
 writerAdminStore	write_misc	yes	3	no	yes	yes	serves
@@ -1640,15 +1640,15 @@ deleteOpCheckpointPaths	write_misc	yes	2	no	yes	yes	serves
 readOpCheckpointRecords	write_misc	yes	6	no	yes	yes	serves
 writeOpCheckpointRecords	write_misc	yes	7	no	yes	yes	serves
 readSyncImportPageRows	write_misc	yes	4	no	yes	yes	serves
-declareSyncImportPageCursor	write_misc	yes	1	no	yes	yes	refuses:raw_sql
-fetchSyncImportPageCursor	write_misc	yes	1	no	yes	yes	refuses:raw_sql
+declareSyncImportPageCursor	write_misc	yes	1	no	yes	yes	serves
+fetchSyncImportPageCursor	write_misc	yes	1	no	yes	yes	serves
 readAdmittedWriteRequests	write_misc	yes	2	no	yes	yes	serves
 readPageRevisionWriter	write_misc	yes	1	no	yes	yes	serves
 readRevisionWriterRequest	write_misc	yes	2	no	yes	yes	serves
 writeSyncAdmissionStamp	write_misc	yes	5	no	yes	yes	serves
 readSyncAdmissionEffects	write_misc	yes	6	no	yes	yes	serves
-readOpCheckpointRecord	write_misc	yes	15	no	yes	yes	serves
-writeOpCheckpointRecord	write_misc	yes	32	no	yes	yes	serves
+readOpCheckpointRecord	write_misc	yes	16	no	yes	yes	serves
+writeOpCheckpointRecord	write_misc	yes	33	no	yes	yes	serves
 purgeStaleCheckpoints	write_misc	yes	1	no	yes	yes	serves
 readHealthMemoClock	write_misc	yes	1	no	yes	yes	serves
 listSynopsisSourceIds	write_misc	yes	4	no	yes	yes	serves

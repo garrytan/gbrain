@@ -234,6 +234,7 @@ test/engine-parity/entity-card-option-reads.test.ts
 test/engine-parity/entity-card-timeline.test.ts
 test/engine-parity/entity-fuzzy.test.ts
 test/engine-parity/entity-identities.test.ts
+test/engine-parity/entity-names-siblings.test.ts
 test/engine-parity/entity-reads.test.ts
 test/engine-parity/export-bytes.test.ts
 test/engine-parity/extract-takes-reads.test.ts
@@ -418,6 +419,7 @@ test/engine-parity/source-last-commit.test.ts
 test/engine-parity/source-order-callers.test.ts
 test/engine-parity/source-resolver-reads.test.ts
 test/engine-parity/source-verify-reads.test.ts
+test/engine-parity/sources-add-json.test.ts
 test/engine-parity/spend-log.test.ts
 test/engine-parity/stats-vectors.test.ts
 test/engine-parity/stats.test.ts

@@ -773,7 +773,6 @@ src/core/url-source-origin.ts	execute_raw	1
 src/core/vector-index.ts	driver_call	2
 src/core/vector-index.ts	execute_raw	9
 src/core/vector-prewarm.ts	execute_raw	4
-src/core/verbs/entity-names.ts	execute_raw	1
 src/core/verbs/entity-references.ts	execute_raw	1
 src/core/verbs/entity-source.ts	execute_raw	1
 src/core/verbs/entity-variants.ts	execute_raw	4

@@ -42,7 +42,7 @@ test/engine-parity/collate-facts-home.test.ts	1	0
 test/engine-parity/collate-ontology-config.test.ts	5	1
 test/engine-parity/collate-outputs.test.ts	2	5
 test/engine-parity/collate-persistence-a.test.ts	0	20
-test/engine-parity/collate-persistence-b.test.ts	0	21
+test/engine-parity/collate-persistence-b.test.ts	1	20
 test/engine-parity/collate-referrer-ties.test.ts	3	0
 test/engine-parity/collate-repair-scans.test.ts	0	4
 test/engine-parity/collate-schema-pack-samples.test.ts	0	4
@@ -82,6 +82,7 @@ test/engine-parity/entity-card-option-reads.test.ts	6	0
 test/engine-parity/entity-card-timeline.test.ts	2	0
 test/engine-parity/entity-fuzzy.test.ts	3	0
 test/engine-parity/entity-identities.test.ts	9	4
+test/engine-parity/entity-names-siblings.test.ts	1	0
 test/engine-parity/entity-reads.test.ts	13	1
 test/engine-parity/export-bytes.test.ts	2	0
 test/engine-parity/extract-takes-reads.test.ts	9	0
@@ -266,6 +267,7 @@ test/engine-parity/source-last-commit.test.ts	1	0
 test/engine-parity/source-order-callers.test.ts	3	2
 test/engine-parity/source-resolver-reads.test.ts	27	0
 test/engine-parity/source-verify-reads.test.ts	2	0
+test/engine-parity/sources-add-json.test.ts	1	0
 test/engine-parity/spend-log.test.ts	11	0
 test/engine-parity/stats-vectors.test.ts	3	0
 test/engine-parity/stats.test.ts	9	0
@@ -275,12 +277,12 @@ test/engine-parity/sync-admission.test.ts	3	0
 test/engine-parity/sync-aliases.test.ts	11	0
 test/engine-parity/sync-checkpoint.test.ts	2	0
 test/engine-parity/sync-import-provenance.test.ts	4	0
-test/engine-parity/sync-pass-pages.test.ts	3	1
+test/engine-parity/sync-pass-pages.test.ts	4	0
 test/engine-parity/sync-requests.test.ts	3	0
 test/engine-parity/sync-route.test.ts	6	0
 test/engine-parity/sync-run-reads.test.ts	3	0
 test/engine-parity/sync-run.test.ts	1	0
-test/engine-parity/sync-status-reads.test.ts	4	2
+test/engine-parity/sync-status-reads.test.ts	6	0
 test/engine-parity/take-held-rows.test.ts	2	0
 test/engine-parity/take-purge-ledger.test.ts	4	0
 test/engine-parity/take-purge-overlay.test.ts	2	0
