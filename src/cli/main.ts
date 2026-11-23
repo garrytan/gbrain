@@ -1377,7 +1377,7 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
   // CLI ops don't take --source). Falls through to env/dotfile/path-match.
   // An op that owns `source` (opOwnsSource) receives it as its own param.
   const explicit = op && opOwnsSource(op) ? null : (params.source as string | undefined) ?? null;
-  const { resolveSourceWithTier, localFederatedSourceIds, SourceTargetError } = await import('../core/source-resolver.ts');
+  const { resolveSourceWithTier, localFederatedSourceIds, SourceTargetError, refusedSourceTarget } = await import('../core/source-resolver.ts');
   try {
     // GBRA-156: the source resolution reads config through the table the connect-time merge already read.
     const { commandStartupConfig, withRequestConfigSnapshot } = await import('../core/config-snapshot.ts');
@@ -1395,7 +1395,7 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
     // Ambient user-selected targets (GBRAIN_SOURCE / .gbrain-source /
     // sources.default) are just as authoritative as --source. Only structural
     // pre-init failures retain the legacy default fallback.
-    if (explicit || err instanceof SourceTargetError) throw err;
+    if (explicit || err instanceof SourceTargetError || await refusedSourceTarget(engine, err)) throw err;
     // Ambient resolution failed (e.g. sources table doesn't exist on a fresh
     // pre-init brain). Leave sourceId unset; engine read methods fall through
     // to the cross-source view (D16 back-compat path).
@@ -2761,15 +2761,15 @@ async function completeEngineStartup(engine: BrainEngine, opts: EngineConnectOpt
       : { status: 'not_needed' as const };
     if (result.status === 'persistent') {
       writeCliNotice(migrationsNotice('Schema migrations are pending: another process attempted them but they did not complete within the retry window (usually transient). If it persists, check `gbrain doctor` for stale advisory locks and `gbrain jobs supervisor status` for crashed migration workers.'));
-    } else if (result.status === 'error') {
+    } else if (result.status === 'error' && !(await import('../core/engine-capability-refusal.ts')).isEngineCapabilityRefusal(result.error)) {
       // Non-deadlock error during initSchema. Surface the message and continue;
-      // subsequent operations will resurface the real schema error in context.
+      // subsequent operations will resurface the real schema error in context. A capability refusal (no migrations to run) is no notice: reads refuse typed.
       writeCliNotice(migrationsNotice(`Schema probe failed: ${result.error.message}`));
     }
     // 'ok', 'not_needed', 'race_resolved' → silent (the common-case outcomes).
   } catch (err) {
     // Last-resort defense in case the helper itself throws unexpectedly.
-    writeCliNotice(migrationsNotice(`Schema probe failed (unexpected): ${(err as Error).message}`));
+    if (!(await import('../core/engine-capability-refusal.ts')).isEngineCapabilityRefusal(err)) writeCliNotice(migrationsNotice(`Schema probe failed (unexpected): ${(err as Error).message}`));
   }
 
   const pendingUpgrade = await pendingUpgradeMigrationsNotice(engine, dispatchedCommand, VERSION);
