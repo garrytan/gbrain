@@ -80,8 +80,11 @@ the shape `searchTakes` returns, with the cosine as `score`.
 - **`suppressFlagged`.** A page at or below `agent_written` with a `flag` receipt in an activation reason family
   drops per page before ranking (`activationSuppressedSql`, `trust::activation_suppressed`), so a limit counts only
   kept pages. A flag in another family, or on a page above `agent_written`, suppresses nothing.
-- **Refused options.** `searchTakesVector` refuses `excludePrivate`, `eligibility.floor` and
-  `eligibility.suppressFlagged` with `engine_capability_missing`, and nothing runs.
+- **`searchTakesVector` and `excludePrivate`.** A take whose page the page policy hides (`facts/privacy.rs`
+  `page_hidden`) takes no slot, as `searchTakes` reads it; the TypeScript member sends the caller's policy as
+  `exclude_private` (`callerReaders`, owner records included).
+- **Refused options.** `searchTakesVector` refuses `eligibility.floor` and `eligibility.suppressFlagged` with
+  `engine_capability_missing`, and nothing runs.
 - **One vector column.** The store keeps only the text column `embedding`, as the embedding members do.
   An `embeddingColumn` that names another column (`embedding_image`, a registered column), and a brain
   whose config sets `search_embedding_column` or `embedding_columns`, refuse with

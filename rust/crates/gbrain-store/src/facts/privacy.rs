@@ -112,6 +112,12 @@ pub struct PrivacyPolicy {
     /// holds is. An entry with an invalid source id or prefix hides every page.
     #[serde(default)]
     pub folder_coverage: Vec<FolderCoverage>,
+    /// The fact policy of a local owner reading with privacy off (`hidePrivate` false): its text
+    /// judges the provenance page by the member-access part only, with no privacy part. Only the
+    /// TypeScript member's exact owner-record match sets it; every other policy judges the
+    /// provenance page by the privacy part too.
+    #[serde(default)]
+    pub provenance_privacy_off: bool,
 }
 
 /// One entry of [`PrivacyPolicy::folder_coverage`]: `''` covers the whole source.
@@ -308,7 +314,8 @@ fn hidden_by_provenance_page_with(
             && stamped_rules(read, &page)?.is_empty()
             && !owner_only.page_hidden(read, &page, policy.owner_only)?
     };
-    Ok(!(access && privacy_allows(read, &page, policy.honor_aliases)?))
+    Ok(!(access
+        && (policy.provenance_privacy_off || privacy_allows(read, &page, policy.honor_aliases)?)))
 }
 
 /// The identity the provenance page at `slug` is judged by: the caller's on its own member page,

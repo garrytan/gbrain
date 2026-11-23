@@ -117,6 +117,9 @@ pub struct TakesVectorOptions {
     pub source_ids: Option<Vec<Option<String>>>,
     /// A read-eligibility policy was given: hide takes of soft-deleted and quarantined pages.
     pub eligible_only: bool,
+    /// `excludePrivate`: hide takes of pages the page policy hides (`facts/privacy.rs`
+    /// `page_hidden`), as `searchTakes` does.
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -682,6 +685,7 @@ fn search_takes(
     let mut takes: HashMap<u64, TakeRecord> =
         all_takes(read)?.into_iter().map(|t| (t.id, t)).collect();
     let mut pages: HashMap<u64, Option<PageRecord>> = HashMap::new();
+    let mut owner_only = OwnerOnlyCache::default();
     // (distance, take, page slug)
     let mut hits: Vec<(f64, TakeRecord, String)> = Vec::new();
     for stored in &index.takes {
@@ -703,6 +707,11 @@ fn search_takes(
         let eligible = page.deleted_at_us.is_none() && !page.frontmatter.contains_key("quarantine");
         if !take_in_scope(&options.source_ids, &page.source_id)
             || (options.eligible_only && !eligible)
+        {
+            continue;
+        }
+        if let Some(policy) = &options.exclude_private
+            && owner_only.page_hidden(read, page, policy)?
         {
             continue;
         }
