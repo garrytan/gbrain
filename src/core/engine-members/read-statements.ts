@@ -92,6 +92,8 @@ export interface ReadStatementMembers {
   listEmbeddingStores(): Promise<EmbeddingCatalogSql.EmbeddingStore[]>;
   /** Whether any row of `store` holds a vector. */
   hasStoredVectors(store: EmbeddingCatalogSql.EmbeddingStore): Promise<boolean>;
+  /** Whether any chunk holds an image vector (`embedding_image`): search's cross-modal image arm reads only that column. */
+  hasChunkImageVectors(): Promise<boolean>;
   /** Per source with chunks, the chunk count and how many hold a vector in a fixed column (`embedding_image`, `embedding_multimodal`), in source id order. */
   countChunkVectorCoverage(column: EmbeddingCatalogSql.FixedVectorColumn): Promise<EmbeddingCatalogSql.ChunkVectorCoverageRow[]>;
   /** doctor embedding_column_registry: the type of each named `content_chunks` column that exists (`vector(1024)`), in no set order. */

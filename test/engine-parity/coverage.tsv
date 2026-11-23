@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2006/2022
+# covered: 2008/2024
 # lifecycle: 9/9
 # pages: 81/82
 # search: 7/7
@@ -43,7 +43,8 @@
 # cli_reads_export: 14/14
 # cli_reads_ops: 14/14
 # facts_doctor: 14/14
-# embedding_catalog: 7/7
+# embedding_catalog: 8/8
+# query_cache: 1/1
 # fact_relink_attempts: 3/3
 # fact_relink_writes: 3/3
 # facts_cycle: 12/12
@@ -128,7 +129,7 @@ getPage	pages	yes	204	yes	yes	yes	serves
 readPageSnapshot	pages	yes	60	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
 lockPageKeys	pages	yes	14	no	yes	yes	serves
-putPage	pages	yes	1087	yes	yes	yes	serves
+putPage	pages	yes	1089	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	37	yes	yes	yes	serves
@@ -285,8 +286,8 @@ deleteChunksForPages	chunks	yes	3	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	6	no	yes	yes	serves
 upsertChunks	chunks	yes	56	yes	yes	yes	serves
-sealChunks	chunks	yes	84	no	yes	yes	serves
-getChunks	chunks	yes	58	yes	yes	yes	serves
+sealChunks	chunks	yes	86	no	yes	yes	serves
+getChunks	chunks	yes	59	yes	yes	yes	serves
 getChunkPage	chunks	yes	14	no	yes	yes	serves
 getChunkWindows	chunks	yes	13	no	yes	yes	serves
 countStaleChunks	chunks	yes	8	no	yes	yes	serves
@@ -1137,9 +1138,11 @@ readChunkVectorColumn	embedding_catalog	yes	2	no	yes	yes	serves
 readEmbeddingIdentity	embedding_catalog	yes	1	no	yes	yes	serves
 listEmbeddingStores	embedding_catalog	yes	1	no	yes	yes	serves
 hasStoredVectors	embedding_catalog	yes	2	no	yes	yes	serves
+hasChunkImageVectors	embedding_catalog	yes	1	no	yes	yes	serves
 countChunkVectorCoverage	embedding_catalog	yes	1	no	yes	yes	serves
 readChunkColumnTypes	embedding_catalog	yes	1	no	yes	yes	serves
 countChunkColumnCoverage	embedding_catalog	yes	1	no	yes	yes	serves
+clearQueryCache	query_cache	yes	1	no	yes	yes	serves
 upsertFactRelinkAttempt	fact_relink_attempts	yes	9	no	yes	yes	serves
 listFactRelinkOutcomes	fact_relink_attempts	yes	3	no	yes	yes	serves
 deleteFactRelinkMemos	fact_relink_attempts	yes	1	no	yes	yes	serves
@@ -1525,11 +1528,11 @@ runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 executeRaw	raw_sql	yes	176	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-addCodeEdges	code_edges	yes	4	yes	yes	yes	serves
+addCodeEdges	code_edges	yes	5	yes	yes	yes	serves
 deleteCodeEdgesForChunks	code_edges	yes	1	no	yes	yes	serves
 getCallersOf	code_edges	yes	3	no	yes	yes	serves
 getCalleesOf	code_edges	yes	2	yes	yes	yes	serves
-getEdgesByChunk	code_edges	yes	2	no	yes	yes	serves
+getEdgesByChunk	code_edges	yes	3	no	yes	yes	serves
 getCodeTraversalCache	code_edges	yes	7	no	yes	yes	serves
 putCodeTraversalCache	code_edges	yes	7	no	yes	yes	serves
 clearCodeTraversalCache	code_edges	yes	2	no	yes	yes	serves

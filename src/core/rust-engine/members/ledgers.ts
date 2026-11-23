@@ -82,6 +82,7 @@ export const LEDGER_MEMBERS = {
   getCodeTraversalCache: 'code_edges',
   putCodeTraversalCache: 'code_edges',
   clearCodeTraversalCache: 'code_edges',
+  clearQueryCache: 'embeddings',
 
   // Group D (trust tier reads)
   listCorePageRows: 'pages',

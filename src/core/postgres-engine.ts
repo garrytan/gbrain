@@ -128,6 +128,7 @@ import * as trustWriteGateImpl from './engine-sql/trust-write-gate.ts';
 import * as takesImpl from './engine-sql/takes.ts';
 import * as codeEdgesImpl from './engine-sql/code-edges.ts';
 import * as codeTraversalCache from './engine-sql/code-traversal-cache.ts';
+import * as queryCacheImpl from './engine-sql/query-cache.ts';
 import * as salienceImpl from './engine-sql/salience.ts';
 import * as pageLookupImpl from './engine-sql/page-lookup.ts';
 import type { FindPagesQuery, FoundPages } from './page-find.ts';
@@ -1371,6 +1372,7 @@ export class PostgresEngine implements BrainEngine {
   readEmbeddingIdentity() { return embeddingCatalogImpl.readEmbeddingIdentity(this.executeRaw.bind(this), () => this.getConfig('embedding_model')); }
   listEmbeddingStores() { return embeddingCatalogImpl.listEmbeddingStores(this.executeRaw.bind(this)); }
   hasStoredVectors(store: embeddingCatalogImpl.EmbeddingStore) { return embeddingCatalogImpl.hasStoredVectors(this.executeRaw.bind(this), store); }
+  hasChunkImageVectors() { return embeddingCatalogImpl.hasChunkImageVectors(this.executeRaw.bind(this)); }
   countChunkVectorCoverage(column: embeddingCatalogImpl.FixedVectorColumn) { return embeddingCatalogImpl.countChunkVectorCoverage(this.executeRaw.bind(this), column); }
   readChunkColumnTypes(columns: string[]) { return embeddingCatalogImpl.readChunkColumnTypes(this.executeRaw.bind(this), columns); }
   countChunkColumnCoverage(column: string) { return embeddingCatalogImpl.countChunkColumnCoverage(this.executeRaw.bind(this), column); }
@@ -5373,6 +5375,7 @@ export class PostgresEngine implements BrainEngine {
   async getCodeTraversalCache(key: codeTraversalCache.CodeTraversalCacheKey) { return codeTraversalCache.getCodeTraversalCache(this, key); }
   async putCodeTraversalCache(key: codeTraversalCache.CodeTraversalCacheKey, response: unknown, maxChunkUpdatedAt: string, xminMax: number) { return codeTraversalCache.putCodeTraversalCache(this, key, response, maxChunkUpdatedAt, xminMax); }
   async clearCodeTraversalCache(opts: codeTraversalCache.CodeTraversalCacheClear) { return codeTraversalCache.clearCodeTraversalCache(this, opts); }
+  clearQueryCache(sourceId?: string) { return queryCacheImpl.clearQueryCache(this, sourceId); }
 
   // Eval capture (v0.25.0). See BrainEngine interface docs.
   async logEvalCandidate(input: EvalCandidateInput): Promise<number> {

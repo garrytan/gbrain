@@ -4341,6 +4341,8 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   putCodeTraversalCache(key: CodeTraversalCacheKey, response: unknown, maxChunkUpdatedAt: string, xminMax: number): Promise<void>;
   /** Delete one source's cached traversals, or all of them; returns the number deleted. */
   clearCodeTraversalCache(opts: CodeTraversalCacheClear): Promise<number>;
+  /** Deletes every semantic query-cache row, or one source's; the number deleted (engine-sql/query-cache.ts). */
+  clearQueryCache(sourceId?: string): Promise<number>;
 
   /**
    * Chunk-grain keyword search. Ranks by content_chunks.search_vector

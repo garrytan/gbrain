@@ -69,7 +69,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'findOntologyTwin', 'findPagesByTitles', 'findPurgeBlockedPublication', 'findSameClaimFenceRow',
   'findSpentConversationRequest', 'findTakeId', 'findTopologyChanges', 'getFailedJobForRetry', 'getJob',
   'getJobAttachment', 'getLatestCalibrationProfile', 'getTrustProposal', 'getWorktreeBinding', 'getWriteGateHoldRow',
-  'hasClaimableWrite', 'hasCodeEdgesSymbol', 'hasCompanyBrainReceipt', 'hasCoveringFactWithdrawal',
+  'hasChunkImageVectors', 'hasClaimableWrite', 'hasCodeEdgesSymbol', 'hasCompanyBrainReceipt', 'hasCoveringFactWithdrawal',
   'hasExtractedEvents', 'hasFactWithdrawalForSubject', 'hasFileWithHash', 'hasGuestSource', 'hasHiddenFactCopy',
   'hasLabelledOnlyMember', 'hasLiveFileBackedPage', 'hasOverdueWatchdogSuspect', 'hasPersistenceTable',
   'hasRearmableTargets', 'hasSegmentStorage', 'hasStoredVectors', 'hasSubagentToolExecution', 'hasUnsealedPages',
@@ -377,6 +377,8 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   writeMentionIndexStatus: 'readMentionStatusStates and readMentionPolicyFingerprints for that source (a bumped generation shows in readMentionGenerations)',
   lockMentionSources: nothingLock,
   lockMentionEntries: nothingLock,
+  // The semantic query-cache clear (engine-sql/query-cache.ts). The rust store keeps no query cache, so it clears nothing.
+  clearQueryCache: 'nothing: a clear removes every cache row in its scope, so running it again removes nothing more',
   deleteSourceMentionLinks: 'listMentionLinkOrigins for that source (no plain mention link left on the origins it deleted)',
   clearMentionSourceIndex: 'listGazetteerEntryKeys and listDerivedAliasRows for that source (both empty)',
   deleteDerivedAliasesForSlugs: 'listDerivedAliasRows for those slugs',
