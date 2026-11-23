@@ -6077,7 +6077,13 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   ranking difference, because vector and default-ranker membership differences are legitimate (D17). A row the check cannot
   evaluate (no page identity, a page the primary lacks, a failed, skipped or moved check) is unchecked, and the diff counts. Accepted
   ranking differences are never dropped: the status and the report list them per member (`evidence.ranking_differences`) next to the
-  rule.
+  rule. The control channel carries no content: the serving process keeps a bounded registry of recent samples (arguments and the
+  caller's record) and the child asks about a sample by an opaque sample id, in answers a failure is an allowlisted code, and
+  an answer is bound to the asking child's session, so a restarted child never receives its predecessor's. An unresolved
+  comparison is written to the ledger (`rerun: pending`) before its rerun starts and settled by a completion row with the same
+  sample id; one never completed (a crash, a restart) counts as unexplained. A ranked diff is cleared only at row identity
+  (the same chunk id and text on the same page, judged by the primary) and only when nothing the policy reads changed since the
+  read, lineage origins included; the vector reference is the engine's own exact statement with no candidate window.
 - **Status fields.** `status --json` adds: `follower.state` (`not_seeded`, `stopped`, `invalid`, `behind`,
   `following`), `lag_ms`, `lag_ms_p99_24h` and `lag_ms_p99_epoch` (a power-of-two bucket upper bound, not an exact
   value), `queue_depth`, `applied_rows`, `coverage_watermark`; `reconcile.state` (`never_run`, `ok`, `repaired`,

@@ -10,13 +10,16 @@ import { callerAccessRecord, withCallerAccess } from '../../src/core/search/priv
 import { buildVectorSearchStatement } from '../../src/core/search/vector-statement.ts';
 import { makeAskHandler } from '../../src/shadow/checks.ts';
 import { openReadSource } from '../../src/shadow/read-pool.ts';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { SampleRegistry } from '../../src/shadow/samples.ts';
 import { encodeValue } from '../../src/shadow/codec.ts';
 import { ensureEpoch, readEpoch } from '../../src/shadow/evidence-epoch.ts';
 import { appendLedgerRows } from '../../src/shadow/ledger.ts';
 import { readEpochRecall, RECALL_REFERENCE_LIMIT, type RankedKey } from '../../src/shadow/recall.ts';
 import { evaluateReadiness } from '../../src/core/engine-swap/readiness.ts';
 import { buildEvidenceStatus } from '../../src/shadow/evidence.ts';
-import { batch, sample, sleep, startRig, until, type Rig, type RigOptions } from './shadow-stable-harness.ts';
+import { batch, gate, sample, sleep, startRig, until, type Rig, type RigOptions } from './shadow-stable-harness.ts';
 import { installFixtureChunks } from './page-projection.ts';
 
 export const ALICE = { identity: ['member:alice-example'], hidePrivate: true, restricted: true, applyRemoteReadPolicy: true };
@@ -236,25 +239,32 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
   });
 
   describe('ranked vector search under excludePrivate', () => {
-    /** One ranked searchVector read as ALICE under excludePrivate; Rust answers the primary's rows plus `extra`. Returns criterion 3, the counts and the ledger rows. */
-    async function ranked(extra: (ids: Record<string, number>) => Record<string, unknown>) {
+    type Rows = Array<Record<string, unknown>>;
+    /** One ranked searchVector read as ALICE under excludePrivate; Rust answers `answer(primary's rows, a real spare row, page ids)`. Returns criterion 3, the counts and the ledger rows. */
+    async function ranked(answer: (theirs: Rows, spare: Record<string, unknown>, ids: Record<string, number>) => Rows) {
       const primary = ctx.primary();
       const ids = await privacyFixture(primary);
       await vectorFixture(primary);
       const opts = { limit: 10, excludePrivate: true };
-      const theirs = await withCallerAccess(ALICE, () => primary.searchVector(vec(3), opts));
+      const theirs = await withCallerAccess(ALICE, () => primary.searchVector(vec(3), opts)) as unknown as Rows;
+      const spare = (await withCallerAccess(ALICE, () => primary.searchVector(vec(3), { ...opts, limit: 12 })) as unknown as Rows)[10]!; // a real chunk the caller may read, outside the top ten
       const rig = await start();
-      rig.rust.searchVector = async () => [...theirs, { ...theirs[0], chunk_id: 987_654, ...extra(ids) }];
+      rig.rust.searchVector = async () => answer(theirs, spare, ids);
       await withCallerAccess(ALICE, () => rig.engine.searchVector(vec(3), opts));
       const rows = await rig.finish();
       const { evidence, ...ev } = buildEvidenceStatus({ dir: rig.dir });
       const row3 = evaluateReadiness({ epoch_id: evidence?.epoch_id, epoch_started_at: evidence?.epoch_started_at, ...ev } as never, new Date()).criteria.find((c) => c.n === 3)!;
       return { rows, evidence: evidence!, reads: ev.reads!, row3, stopped: rig.stoppedBy };
     }
-    const named = (slug: string) => (ids: Record<string, number>) => ({ page_id: ids[slug], slug, source_id: 'default' });
+    const counts = (r: Awaited<ReturnType<typeof ranked>>) => {
+      expect(r.rows[0]).toMatchObject({ outcome: 'inconclusive', mismatch: 'diff', private_read: true });
+      expect(r.reads.diverged_unexplained_7d).toBe(1); // no completed rerun: unexplained
+      expect(r.evidence.ranking_differences).toEqual({});
+      expect(r.row3).toMatchObject({ state: 'fail' });
+    };
 
     test('every extra row passed the check: a reported ranking difference, counted per member, and out of diverged_unexplained_7d', async () => {
-      const r = await ranked(named('open/a'));
+      const r = await ranked((theirs, spare) => [...theirs, spare]);
       expect(r.rows[0]).toMatchObject({ op: 'searchVector', outcome: 'diff', reason: 'extra_rows_cleared', private_read: true });
       expect(r.reads.diverged_unexplained_7d).toBe(0);
       expect(r.evidence.ranking_differences).toEqual({ searchVector: 1 });
@@ -262,7 +272,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
     });
 
     test('one extra row the caller may not read pauses mirroring and makes criterion 3 NOT READY', async () => {
-      const r = await ranked(named('priv/a'));
+      const r = await ranked((theirs, _spare, ids) => [...theirs, { ...theirs[0], page_id: ids['priv/a'], slug: 'priv/a', source_id: 'default', chunk_id: 987_654 }]);
       expect(r.rows[0]).toMatchObject({ outcome: 'privacy_diverged' });
       expect(r.stopped).toBe('privacy_diverged');
       expect(r.reads.diverged_unexplained_7d).toBe(1);
@@ -271,13 +281,58 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
     });
 
     test('an extra row the check cannot evaluate (no page identity, or a page the primary does not have) counts', async () => {
-      for (const extra of [() => ({ page_id: undefined, slug: undefined, source_id: undefined }), () => ({ page_id: 99_999_999, slug: 'gone/page', source_id: 'default' })]) {
-        const r = await ranked(extra);
-        expect(r.rows[0]).toMatchObject({ outcome: 'inconclusive', mismatch: 'diff', private_read: true });
-        expect(r.reads.diverged_unexplained_7d).toBe(1); // no completed rerun: unexplained
-        expect(r.evidence.ranking_differences).toEqual({});
-        expect(r.row3).toMatchObject({ state: 'fail' });
-      }
+      counts(await ranked((theirs, spare) => [...theirs, { ...spare, page_id: undefined, slug: undefined, source_id: undefined }]));
+      counts(await ranked((theirs, spare) => [...theirs, { ...spare, page_id: 99_999_999, slug: 'gone/page', source_id: 'default', chunk_id: 987_654 }]));
+    });
+
+    test('a substituted chunk on an allowed page never gets the exemption: changed text, or another page\'s chunk', async () => {
+      const primary = ctx.primary();
+      await primary.putPage('priv/chunked', { type: 'note', title: 'priv/chunked', compiled_truth: 'PRIVATE-CHUNK-CANARY', timeline: '', frontmatter: { visibility: 'private' } });
+      await installFixtureChunks(primary, 'priv/chunked', [{ chunk_index: 0, chunk_text: 'PRIVATE-CHUNK-CANARY', chunk_source: 'compiled_truth', embedding: vec(500), model: 'openai:text-embedding-3-large', token_count: 3 }]);
+      const [secret] = await primary.executeRaw<{ id: number; chunk_text: string }>(`SELECT c.id, c.chunk_text FROM content_chunks c JOIN pages p ON p.id = c.page_id WHERE p.slug = 'priv/chunked'`);
+      // the same page and chunk id as the primary's tenth row, with other text
+      counts(await ranked((theirs) => [...theirs.slice(0, 9), { ...theirs[9], chunk_text: 'SUBSTITUTED TEXT' }]));
+      // the tenth row's page, with a chunk that belongs to a private page
+      counts(await ranked((theirs) => [...theirs.slice(0, 9), { ...theirs[9], chunk_id: Number(secret!.id), chunk_text: secret!.chunk_text }]));
+    });
+
+    test('a write this process published after the read, and before the check, leaves the sample unresolved', async () => {
+      const primary = ctx.primary();
+      const ids = await privacyFixture(primary);
+      const rig = await start();
+      const real = (rig.attached.supervisor as unknown as { o: { onAsk: (a: Record<string, unknown>) => Promise<unknown> } }).o.onAsk;
+      (rig.attached.supervisor as unknown as { o: { onAsk: (a: Record<string, unknown>) => Promise<unknown> } }).o.onAsk = async (ask) => {
+        if (ask.kind === 'privacy') rig.attached.follower!.publish(batch(1, [{ kind: 'relation', relation: 'config', reason: 'x' }]));
+        return real(ask);
+      };
+      rig.rust.getPage = async () => ({ id: ids['open/a'], slug: 'open/a', source_id: 'default', title: 'x', type: 'note' });
+      await withCallerAccess(ALICE, () => rig.engine.getPage('missing/page', { excludePrivate: true } as never));
+      expect((await rig.finish())[0]).toMatchObject({ outcome: 'inconclusive', reason: 'privacy_check_moved' });
+    });
+
+    test('a derivative of a private origin whose origin is widened before the check is not cleared', async () => {
+      const primary = ctx.primary();
+      const ids = await privacyFixture(primary);
+      await installFixtureChunks(primary, 'summary/x', [{ chunk_index: 0, chunk_text: 'a summary of the secret plan', chunk_source: 'compiled_truth', embedding: vec(501), model: 'openai:text-embedding-3-large', token_count: 3 }]);
+      await vectorFixture(primary);
+      const [chunk] = await primary.executeRaw<{ id: number; chunk_text: string }>(`SELECT c.id, c.chunk_text FROM content_chunks c WHERE c.page_id = $1`, [ids['summary/x']]);
+      const opts = { limit: 10, excludePrivate: true };
+      const theirs = await withCallerAccess(ALICE, () => primary.searchVector(vec(3), opts)) as unknown as Rows;
+      const rig = await start();
+      const supervisor = rig.attached.supervisor as unknown as { o: { onAsk: (a: Record<string, unknown>) => Promise<unknown> } };
+      const real = supervisor.o.onAsk;
+      // the derivative's origin is made world-readable between the read and the check: the policy is read now, the read was made under the old one
+      supervisor.o.onAsk = async (ask) => {
+        if (ask.kind === 'privacy') await primary.executeRaw(`UPDATE pages SET frontmatter = '{"visibility":"world"}'::jsonb, updated_at = now() + interval '1 second' WHERE slug = 'secrets/plan'`);
+        return real(ask);
+      };
+      rig.rust.searchVector = async () => [...theirs, { ...theirs[0], page_id: ids['summary/x'], slug: 'summary/x', source_id: 'default', chunk_id: Number(chunk!.id), chunk_text: chunk!.chunk_text }];
+      try {
+        await withCallerAccess(ALICE, () => rig.engine.searchVector(vec(3), opts));
+        const rows = await rig.finish();
+        expect(rows[0]).toMatchObject({ outcome: 'inconclusive', reason: 'privacy_check_moved' });
+        expect(buildEvidenceStatus({ dir: rig.dir }).evidence!.ranking_differences).toEqual({});
+      } finally { await primary.executeRaw(`UPDATE pages SET frontmatter = '{"visibility":"private"}'::jsonb, updated_at = now() - interval '1 hour' WHERE slug = 'secrets/plan'`); }
     });
   });
 
@@ -316,6 +371,95 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
     });
   });
 
+  describe('the control channel, unresolved samples and restarts', () => {
+    const onAsk = (rig: Rig) => (rig.attached.supervisor as unknown as { o: { onAsk: (a: Record<string, unknown>) => Promise<unknown> } }).o;
+    const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]));
+
+    test('no argument, identity, folder-rule or thrown-message canary reaches the control channel, an answer, or any shadow file', async () => {
+      const primary = ctx.primary();
+      const ids = await privacyFixture(primary);
+      const caller = { ...ALICE, identity: ['member:canary-identity-zzz'], satisfiedRuleIds: ['default:canary-rule-zzz'] };
+      const rig = await start();
+      rig.rust.getPage = async () => ({ id: ids['open/a'], slug: 'canary-args-slug-zzz', source_id: 'default', title: 'canary-title-zzz', type: 'note' });
+      const real = onAsk(rig).onAsk;
+      onAsk(rig).onAsk = async (ask) => { if (ask.kind === 'rerun') throw new Error('canary-thrown-message-zzz'); return real(ask); };
+      await withCallerAccess(caller, () => rig.engine.getPage('canary-args-slug-zzz', { excludePrivate: true } as never));
+      const rows = await rig.finish();
+      expect(rows[0]).toMatchObject({ outcome: 'inconclusive', rerun: 'skipped:failed' }); // the exception came back as a code
+      expect(rig.control.fromChild.some((l) => l.includes('"t":"ask"'))).toBe(true); // there was a conversation to leak into
+      const bytes = [rig.control.fromChild.join(''), rig.control.answers.join(''), ...walk(rig.dir).filter((f) => !f.endsWith('child.log')).map((f) => readFileSync(f, 'utf8'))].join('\n');
+      for (const canary of ['canary-args-slug-zzz', 'canary-identity-zzz', 'canary-rule-zzz', 'canary-thrown-message-zzz', 'canary-title-zzz']) expect([canary, bytes.includes(canary)]).toEqual([canary, false]);
+    });
+
+    test('an unresolved comparison is on disk and counted while its rerun waits, and settles when the completion row lands', async () => {
+      await privacyFixture(ctx.primary());
+      const rig = await mismatching('agrees');
+      await rig.settled();
+      const hold = gate();
+      const real = onAsk(rig).onAsk;
+      onAsk(rig).onAsk = async (ask) => { if (ask.kind === 'rerun') await hold.wait; return real(ask); };
+      await sample(rig);
+      await until(() => rig.pending().length === 1);
+      const during = (): { reads: NonNullable<ReturnType<typeof buildEvidenceStatus>['reads']>; row3: { state: string } } => {
+        const { evidence, ...ev } = buildEvidenceStatus({ dir: rig.dir });
+        return { reads: ev.reads!, row3: evaluateReadiness({ epoch_id: evidence?.epoch_id, epoch_started_at: evidence?.epoch_started_at, ...ev } as never, new Date()).criteria.find((c) => c.n === 3)! };
+      };
+      expect(rig.rows()).toHaveLength(0); // nothing completed
+      expect(during().reads.diverged_unexplained_7d).toBe(1); // yet the status does not read clean
+      expect(during().row3.state).toBe('fail');
+      hold.open();
+      expect((await rig.finish())[0]).toMatchObject({ outcome: 'inconclusive', rerun: 'matched' });
+      expect(during().reads.diverged_unexplained_7d).toBe(0); // the completion row with the same sample id settles it
+      expect(during().row3.state).toBe('pass');
+    });
+
+    test('a child killed while the rerun waits leaves its unresolved row unexplained, after the restart too', async () => {
+      await privacyFixture(ctx.primary());
+      const rig = await mismatching('agrees');
+      await rig.settled();
+      const hold = gate();
+      const real = onAsk(rig).onAsk;
+      onAsk(rig).onAsk = async (ask) => { if (ask.kind === 'rerun') await hold.wait; return real(ask); };
+      await sample(rig);
+      await until(() => rig.pending().length === 1);
+      rig.killChild();
+      expect(buildEvidenceStatus({ dir: rig.dir }).reads!.diverged_unexplained_7d).toBe(1);
+      await rig.settled(); // a new child starts
+      expect(buildEvidenceStatus({ dir: rig.dir }).reads!.diverged_unexplained_7d).toBe(1); // nobody completed it
+      hold.open();
+    });
+
+    test('an old child\'s late answer never resolves the restarted child\'s ask with the same id', async () => {
+      await privacyFixture(ctx.primary());
+      const primary = ctx.primary();
+      const rig = await start();
+      let calls = 0;
+      rig.rust.listPages = async () => (++calls <= 2 ? [] : primary.listPages({ limit: 100 })); // both samples mismatch; the rerun after them agrees
+      await rig.settled();
+      const gates = [gate(), gate()];
+      let asks = 0;
+      const real = onAsk(rig).onAsk;
+      onAsk(rig).onAsk = async (ask) => {
+        if (ask.kind !== 'rerun') return real(ask);
+        const mine = asks++;
+        await gates[mine]!.wait;
+        const out = await real(ask) as Record<string, unknown>;
+        return mine === 0 ? { ...out, epoch_id: 'from-the-old-child' } : out; // an answer B would reject as another epoch's, had it been delivered
+      };
+      await sample(rig); // child A asks (id 1) and waits
+      await until(() => asks === 1);
+      rig.killChild();
+      await rig.settled(); // child B
+      await sample(rig); // child B asks (id 1 again) and waits
+      await until(() => asks === 2);
+      gates[0]!.open(); // A's answer arrives late
+      await sleep(150);
+      expect(rig.rows()).toHaveLength(0); // B's ask was not resolved by it
+      gates[1]!.open();
+      expect((await rig.finish())[0]).toMatchObject({ outcome: 'inconclusive', rerun: 'matched' }); // B's own answer
+    });
+  });
+
   describe('vector recall', () => {
     const embedded = { embedding: vec(3) };
     test('the reference is the primary\'s own exact top ten with room for ties, and it is rate limited', async () => {
@@ -325,8 +469,9 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       const sql: string[] = []; // the statements the reference run sends through its read transaction
       const reads = { ...real, read: <T>(fn: Parameters<typeof real.read<T>>[0]) => real.read((tx, q) => fn(new Proxy(tx, { get: (t, p) => (p === 'executeRaw' ? (text: string, ...a: never[]) => { sql.push(text); return (t.executeRaw as Function).call(t, text, ...a); } : Reflect.get(t, p, t)) }) as BrainEngine, q)) };
       try {
-        const handler = makeAskHandler({ engine: primary, reads, dir: '/none', rpc: (async () => ({})) as never });
-        const ask = { id: 1, kind: 'vector', args: encodeValue([embedded.embedding, { limit: 10 }]), access: {} };
+        const samples = new SampleRegistry();
+        const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never });
+        const ask = { id: 1, kind: 'vector', sid: samples.add({ op: 'searchVector', args: encodeValue([embedded.embedding, { limit: 10, exclude_slugs: ['priv/chunked', 'summary/x'] }]), at: Date.now() }, 100) }; // the filters of the caller's own read apply
         const reference = await handler(ask) as RankedKey[];
         const cosine = (a: Float32Array, b: Float32Array): number => { let d = 0, x = 0, y = 0; for (let i = 0; i < a.length; i++) { d += a[i]! * b[i]!; x += a[i]! ** 2; y += b[i]! ** 2; } return d / Math.sqrt(x * y); };
         const exact = [...chunkOf.keys()].sort((p, q) => cosine(vec(3), vec(q)) - cosine(vec(3), vec(p))).map((i) => String(chunkOf.get(i)));
@@ -336,6 +481,33 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         await expect(handler(ask)).rejects.toMatchObject({ code: 'rate_limited' });
       } finally { await real.close(); }
     });
+
+    test('the reference has no candidate window: boosted true top results beyond the engine\'s window are found, and the windowed search misses them', async () => {
+      const primary = ctx.primary();
+      const unit = (v: Float32Array): Float32Array => { let n = 0; for (const x of v) n += x * x; return v.map((x) => x / Math.sqrt(n)); };
+      const mix = (a: number, seed: number): Float32Array => { const [u, r] = [unit(vec(3)), unit(vec(seed))]; return Float32Array.from(u, (x, i) => a * x + Math.sqrt(1 - a * a) * r[i]!); };
+      const add = async (slug: string, embedding: Float32Array): Promise<void> => {
+        await primary.putPage(slug, { type: 'note', title: slug, compiled_truth: `window ${slug}`, timeline: '' });
+        await installFixtureChunks(primary, slug, [{ chunk_index: 0, chunk_text: `window ${slug}`, chunk_source: 'compiled_truth', embedding, model: MODEL, token_count: 3 }]);
+      };
+      const reads = openReadSource(primary);
+      try {
+        // 262 pages the query resembles (cosine 0.9 down to 0.5) and 12 it barely resembles (0.3) that the source boost lifts to the top
+        for (let i = 0; i < 262; i++) await add(`win/n${i}`, mix(0.9 - i * 0.0015, 1000 + i));
+        for (let i = 0; i < 12; i++) await add(`boost/b${i}`, mix(0.3, 2000 + i));
+        const boosted = new Set((await primary.executeRaw<{ id: number }>(`SELECT c.id FROM content_chunks c JOIN pages p ON p.id = c.page_id WHERE p.slug LIKE 'boost/%'`)).map((r) => String(r.id)));
+        const opts = { limit: 10, source_boosts: { 'boost/': 5 } };
+        const samples = new SampleRegistry();
+        const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never });
+        const reference = await handler({ id: 1, kind: 'vector', sid: samples.add({ op: 'searchVector', args: encodeValue([vec(3), opts]), at: Date.now() }, 100) }) as RankedKey[];
+        expect(reference.slice(0, 10).filter((r) => boosted.has(r.k))).toHaveLength(10); // the true top ten, all beyond the raw-similarity window
+        const windowed = await primary.searchVector(vec(3), { ...opts, limit: 50 });
+        expect(windowed.slice(0, 10).filter((r) => boosted.has(String(r.chunk_id))).length).toBeLessThan(10); // the engine's candidate window never saw them
+      } finally {
+        await reads.close();
+        await primary.executeRaw(`DELETE FROM pages WHERE slug LIKE 'win/%' OR slug LIKE 'boost/%'`);
+      }
+    }, 180_000);
 
     test('with index and bitmap scans off the statements cannot use the HNSW index, and the settings survive a searchVector call in the same transaction', async () => {
       const primary = ctx.primary();

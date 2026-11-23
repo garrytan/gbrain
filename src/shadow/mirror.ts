@@ -11,6 +11,7 @@
  */
 import type { CallerAccess } from '../core/search/private-visibility.ts';
 import { CaptureTooLargeError } from './codec.ts';
+import type { SampleRegistry } from './samples.ts';
 
 /** One captured primary read, frozen at capture time: `args` and `result` are already `encodeValue` output. */
 export interface CapturedRead {
@@ -25,6 +26,8 @@ export interface CapturedRead {
   primary_ms: number;
   /** Epoch milliseconds when the primary call returned. */
   at: number;
+  /** The serving process's write generation when the read was captured (MirrorQueueOptions.generation). */
+  gen?: number;
 }
 
 /** Counters the serving process keeps; sent to the child in `stats` events. Cumulative for the process. */
@@ -107,6 +110,10 @@ export interface MirrorQueueOptions {
   statsEvery?: number;
   /** Scheduler seam for tests; default setImmediate. */
   schedule?: (fn: () => void) => void;
+  /** Where each delivered sample is kept under an opaque id, so the child asks about it by id (samples.ts). */
+  samples?: SampleRegistry;
+  /** The serving process's write generation, read the moment a read is captured (follower.published). */
+  generation?: () => number | undefined;
 }
 
 export const DEFAULT_MAX_LINE_BYTES = 1024 * 1024;
@@ -133,6 +140,8 @@ export class MirrorQueue {
   private readonly maxLineBytes: number;
   private readonly statsEvery: number;
   private readonly schedule: (fn: () => void) => void;
+  private readonly samples?: SampleRegistry;
+  private readonly generation?: () => number | undefined;
 
   constructor(opts: MirrorQueueOptions) {
     this.bound = Math.max(1, opts.bound);
@@ -140,6 +149,8 @@ export class MirrorQueue {
     this.maxLineBytes = opts.maxLineBytes ?? DEFAULT_MAX_LINE_BYTES;
     this.statsEvery = Math.max(1, opts.statsEvery ?? 50);
     this.schedule = opts.schedule ?? ((fn) => { setImmediate(fn); });
+    this.samples = opts.samples;
+    this.generation = opts.generation;
   }
 
   /** Queued, not yet delivered. */
@@ -166,6 +177,7 @@ export class MirrorQueue {
       if (op) this.meter.note(op, tooLarge ? 'shed' : 'unmirrorable');
       return;
     }
+    try { read.gen = this.generation?.(); } catch { /* a sample with no generation is unresolved, never cleared */ }
     this.items.push(read);
     this.kick();
   }
@@ -197,17 +209,22 @@ export class MirrorQueue {
     while (this.items.length > 0 && budget-- > 0) {
       const read = this.items.shift()!;
       let line: string;
+      let sid: string | undefined;
       try {
+        // The child names this sample by `sid` alone when it asks the serving process about it (samples.ts).
+        sid = this.samples?.add({ op: read.op, args: read.args, access: read.access, at: read.at, gen: read.gen }, JSON.stringify(read.args).length + 1024);
         line = JSON.stringify({
-          t: 'read', id: nextId++, at: read.at, op: read.op, primary_ms: read.primary_ms,
+          t: 'read', id: nextId++, sid, at: read.at, op: read.op, primary_ms: read.primary_ms,
           args: read.args, result: read.result, access: read.access,
         }) + '\n';
       } catch {
+        if (sid) this.samples?.drop(sid);
         this.counters.encode_error++;
         this.meter.note(read.op, 'unmirrorable');
         continue;
       }
       if (Buffer.byteLength(line) > this.maxLineBytes) {
+        if (sid) this.samples?.drop(sid);
         this.counters.shed_too_large++;
         this.meter.note(read.op, 'shed');
         continue;
@@ -215,7 +232,7 @@ export class MirrorQueue {
       let accepted = false;
       try { accepted = this.transport.send(line); } catch { accepted = false; }
       if (accepted) this.counters.sent++;
-      else { this.counters.shed_transport++; this.meter.note(read.op, 'shed'); }
+      else { if (sid) this.samples?.drop(sid); this.counters.shed_transport++; this.meter.note(read.op, 'shed'); }
       if (++this.sinceStats >= this.statsEvery) this.flushStats();
     }
     if (this.items.length > 0) this.kick();

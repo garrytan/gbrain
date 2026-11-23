@@ -72,6 +72,8 @@ export interface EvidenceStatus {
     usage: Record<string, OpUsage>;
     /** Vector recall samples scored in the epoch (the fields need `RECALL_MIN_SAMPLES`), and Rust's mean overlap with the primary's top ten (agreement, not recall). */
     recall_samples: number;
+    /** The score files cannot be read whole, or hold a record that is not a recall record: the recall fields stay absent. */
+    recall_unavailable: boolean;
     vector_overlap_with_primary?: number;
     /** What counts into `diverged_unexplained_7d`, with the one exception (exactness.ts); printed with the count. */
     unexplained_rule: string;
@@ -121,36 +123,47 @@ function foldLedger(dir: string, epoch: EpochManifest, now: number): ReadFold | 
   const firstDay = new Date(Date.parse(epoch.started_at) - DAY_MS).toISOString().slice(0, 10);
   let names: string[];
   try { names = readdirSync(root).filter((n) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(n) && n.slice(0, 10) >= firstDay).sort(); } catch { return null; } // silent-read-ok: null is the unreadable marker; reads stay absent, never zero
+  const pending = new Map<string, ShadowLedgerRow>();
+  const closed = new Set<string>();
+  const count = (r: ShadowLedgerRow): void => {
+    fold.ops.add(r.op);
+    const t = Date.parse(r.ts);
+    const recent = !(t < now - 7 * DAY_MS); // an unreadable time counts as recent: fail closed
+    const arm = exactnessArm(r.op);
+    const rerunDone = r.rerun === 'matched' || r.rerun === 'differed';
+    // A ranked vector search counts only for a read under excludePrivate, and not when every extra row passed the check (the one exception).
+    const accepted = arm === 'private_ranked' && r.outcome === 'diff' && r.reason === 'extra_rows_cleared';
+    const diffCounts = arm !== 'private_ranked' || (r.private_read === true && !accepted);
+    const unexplained = arm !== null && ((r.outcome === 'diff' && diffCounts) || (r.outcome === 'inconclusive' && r.rerun !== 'matched'));
+    const leak = r.outcome === 'privacy_diverged'; // a row the caller may not read is never explained: criterion 3 fails with criterion 6
+    if (accepted) fold.ranking_differences[r.op] = (fold.ranking_differences[r.op] ?? 0) + 1;
+    if (COMPARED.has(r.outcome)) fold.compared++;
+    if (r.outcome === 'privacy_diverged') fold.privacy_rows++;
+    if (recent && r.outcome === 'inconclusive' && !rerunDone && r.reason?.startsWith('privacy_check_')) fold.privacy_unsettled_7d++;
+    if (r.outcome === 'match' || r.outcome === 'collation_order') fold.matches.set(r.op, (fold.matches.get(r.op) ?? 0) + 1);
+    if (r.outcome === 'collation_order') fold.collation.set(r.op, (fold.collation.get(r.op) ?? 0) + 1);
+    if (recent && r.outcome === 'capability_missing') fold.capability_missing_7d++;
+    if (recent && RUST_ERRORS.has(r.outcome)) fold.rust_error_unresolved_7d++;
+    if (recent && (unexplained || leak)) fold.diverged_unexplained_7d++;
+    if ((arm === 'trigram' || arm === 'keyword_title') && COMPARED.has(r.outcome)) {
+      fold.arms[arm].compared++;
+      if (unexplained) fold.arms[arm].bad++;
+    }
+  };
   for (const name of names) {
     const rows = readJsonlStrict<ShadowLedgerRow>(join(root, name));
     if (rows === null) return null;
     for (const r of rows) {
       if (r?.epoch_id !== epoch.epoch_id || typeof r.op !== 'string') continue;
-      fold.ops.add(r.op);
-      const t = Date.parse(r.ts);
-      const recent = !(t < now - 7 * DAY_MS); // an unreadable time counts as recent: fail closed
-      const arm = exactnessArm(r.op);
-      const rerunDone = r.rerun === 'matched' || r.rerun === 'differed';
-      // A ranked vector search counts only for a read under excludePrivate, and not when every extra row passed the check (the one exception).
-      const accepted = arm === 'private_ranked' && r.outcome === 'diff' && r.reason === 'extra_rows_cleared';
-      const diffCounts = arm !== 'private_ranked' || (r.private_read === true && !accepted);
-      const unexplained = arm !== null && ((r.outcome === 'diff' && diffCounts) || (r.outcome === 'inconclusive' && r.rerun !== 'matched'));
-      const leak = r.outcome === 'privacy_diverged'; // a row the caller may not read is never explained: criterion 3 fails with criterion 6
-      if (accepted) fold.ranking_differences[r.op] = (fold.ranking_differences[r.op] ?? 0) + 1;
-      if (COMPARED.has(r.outcome)) fold.compared++;
-      if (r.outcome === 'privacy_diverged') fold.privacy_rows++;
-      if (recent && r.outcome === 'inconclusive' && !rerunDone && r.reason?.startsWith('privacy_check_')) fold.privacy_unsettled_7d++;
-      if (r.outcome === 'match' || r.outcome === 'collation_order') fold.matches.set(r.op, (fold.matches.get(r.op) ?? 0) + 1);
-      if (r.outcome === 'collation_order') fold.collation.set(r.op, (fold.collation.get(r.op) ?? 0) + 1);
-      if (recent && r.outcome === 'capability_missing') fold.capability_missing_7d++;
-      if (recent && RUST_ERRORS.has(r.outcome)) fold.rust_error_unresolved_7d++;
-      if (recent && (unexplained || leak)) fold.diverged_unexplained_7d++;
-      if ((arm === 'trigram' || arm === 'keyword_title') && COMPARED.has(r.outcome)) {
-        fold.arms[arm].compared++;
-        if (unexplained) fold.arms[arm].bad++;
-      }
+      // An unresolved row (`rerun: 'pending'`) is written before its rerun starts and is replaced by the completion row with the
+      // same sample id; one that never gets a completion (a crash, a restart) is counted as it stands: unexplained.
+      const sid = typeof r.sid === 'string' ? r.sid : null;
+      if (sid && r.rerun === 'pending') { if (!closed.has(sid)) pending.set(sid, r); continue; }
+      if (sid) { closed.add(sid); pending.delete(sid); }
+      count(r);
     }
   }
+  for (const r of pending.values()) count(r);
   return fold;
 }
 
@@ -221,7 +234,7 @@ export function buildEvidenceStatus(o: EvidenceOptions): EvidenceStatus {
     earliest_ready_at: new Date(started + days * DAY_MS).toISOString(), min_successful_per_op: MIN_SUCCESSFUL_PER_OP,
     rust_error_rule: RUST_ERROR_RULE, panics_label: PANICS_LABEL, ops_lacking_samples: lacking, usage, collation_order: collation,
     ...(epoch.build ? { build: epoch.build } : {}),
-    recall_samples: recall?.length ?? 0, ...(recall?.length ? { vector_overlap_with_primary: mean((l) => l.overlap) } : {}),
+    recall_samples: recall?.length ?? 0, recall_unavailable: recall === null, ...(recall?.length ? { vector_overlap_with_primary: mean((l) => l.overlap) } : {}),
     privacy_checks_unsettled_7d: fold?.privacy_unsettled_7d ?? 0,
     unexplained_rule: RANKED_PRIVATE_EXCEPTION, ranking_differences: fold?.ranking_differences ?? {},
   };
@@ -252,7 +265,7 @@ export function renderEvidenceStatus(s: EvidenceStatus): string[] {
     ? `  privacy: no evidence (nothing compared yet, or ${e.privacy_checks_unsettled_7d} privacy check(s) in the last 7 days could not be settled)`
     : `  privacy: ${s.privacy_diverged} divergence(s) (a Rust row the caller may not read, judged by the primary's read policy)`);
   const recall = (v: number | undefined): string => (v === undefined ? 'no evidence' : v.toFixed(3));
-  lines.push(`  vector recall@10 (exact reference on the primary): Rust ${recall(s.search?.vector_recall_at_10)}, primary ${recall(s.search?.primary_recall_at_10)}; ${e.recall_samples} scored sample(s) (needs ${RECALL_MIN_SAMPLES})${e.vector_overlap_with_primary === undefined ? '' : `; Rust's overlap with the primary ${e.vector_overlap_with_primary.toFixed(3)}`}`);
+  lines.push(e.recall_unavailable ? '  vector recall@10: unavailable (a score file cannot be read whole, or holds a record that is not a recall record)' : `  vector recall@10 (exact reference on the primary): Rust ${recall(s.search?.vector_recall_at_10)}, primary ${recall(s.search?.primary_recall_at_10)}; ${e.recall_samples} scored sample(s) (needs ${RECALL_MIN_SAMPLES})${e.vector_overlap_with_primary === undefined ? '' : `; Rust's overlap with the primary ${e.vector_overlap_with_primary.toFixed(3)}`}`);
   const collation = Object.entries(e.collation_order).map(([op, n]) => `${op} ${n}`);
   if (collation.length) lines.push(`  collation_order (explained and counted as successful: same rows, in the C byte order Rust follows; ICU and glibc hosts sort differently): ${collation.join(', ')}`);
   const arm = (name: string, v: number | undefined): string => `${name} ${v ?? 'no comparisons'}`;

@@ -50,7 +50,10 @@ async function runChild(dir: string, lines: string[], deps: Partial<ShadowChildD
 
 const ledgerRows = (dir: string): Array<Record<string, unknown>> => {
   try {
-    return readdirSync(join(dir, 'ledger')).sort().flatMap((n) => readFileSync(join(dir, 'ledger', n), 'utf8').trim().split('\n').map((l) => JSON.parse(l)));
+    const all = readdirSync(join(dir, 'ledger')).sort().flatMap((n) => readFileSync(join(dir, 'ledger', n), 'utf8').trim().split('\n').map((l) => JSON.parse(l)));
+    // An unresolved row is written before its rerun starts and is settled by a completion row with the same sample id (evidence.ts).
+    const done = new Set(all.filter((r) => r.sid && r.rerun !== 'pending').map((r) => r.sid));
+    return all.filter((r) => !(r.rerun === 'pending' && done.has(r.sid)));
   } catch { return []; }
 };
 const faults = (dir: string): Array<Record<string, unknown>> => {
@@ -217,7 +220,7 @@ describe('stale and inconclusive mismatches', () => {
     });
     const files = readdirSync(join(dir, 'ledger')).sort();
     expect(files).toEqual(['2026-11-22.jsonl', '2026-11-23.jsonl']);
-    const ops = (f: string) => readFileSync(join(dir, 'ledger', f), 'utf8').trim().split('\n').map((l) => `${JSON.parse(l).op}:${JSON.parse(l).ts.slice(11, 19)}`);
+    const ops = (f: string) => readFileSync(join(dir, 'ledger', f), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((r) => r.rerun !== 'pending').map((r) => `${r.op}:${r.ts.slice(11, 19)}`); // the unresolved rows are settled by these completion rows
     expect(ops(files[0]!)).toEqual(['getTags:23:59:30']);
     expect(ops(files[1]!)).toEqual(['getPage:00:00:30', 'getPage:00:00:40']); // arrival order within a day
   });

@@ -75,6 +75,9 @@ export class ShadowFollower implements InvalidationSink {
   /** Nothing published is still queued or being read and sent, and no lost send waits to be reported as an invalidation. */
   idle(): boolean { return this.queue.length === 0 && this.draining === null && this.pendingInvalid === null; }
 
+  /** Why `idle()` cannot become true by waiting: a lost send is waiting to be reported with the next batch, and none is queued. */
+  blocked(): string | null { return this.queue.length === 0 && this.draining === null ? this.pendingInvalid : null; }
+
   /** Resolves when everything published so far has been read and sent (or shed). */
   async settle(): Promise<void> {
     while (this.draining) await this.draining;

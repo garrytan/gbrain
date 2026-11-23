@@ -42,12 +42,8 @@ export function recallEligible(args: unknown[]): boolean {
   return Number(opts.offset ?? 0) === 0 && limit >= RECALL_TOP;
 }
 
-/** The reference's arguments: the caller's own, with room for ties past the cutoff. */
-export function referenceArgs(args: unknown[]): unknown[] {
-  return [args[0], { ...((args[1] ?? {}) as object), limit: RECALL_REFERENCE_LIMIT, offset: 0 }];
-}
-
-const hitsIn = (engine: RankedKey[], truth: Set<string>): number => engine.slice(0, RECALL_TOP).filter((r) => truth.has(r.k)).length;
+/** Distinct identities among an engine's own first ten rows that are true neighbours: a repeated row is one neighbour, never ten. */
+const hitsIn = (engine: RankedKey[], truth: Set<string>): number => new Set(engine.slice(0, RECALL_TOP).map((r) => r.k).filter((k) => truth.has(k))).size;
 
 /**
  * Scores the primary's and Rust's answers (encoded result arrays) against the reference rows. Null when the reference
@@ -55,17 +51,15 @@ const hitsIn = (engine: RankedKey[], truth: Set<string>): number => engine.slice
  */
 export function scoreRecall(reference: RankedKey[], primary: unknown, rust: unknown): RecallScore | null {
   if (reference.length === 0) return null;
-  const top = reference.slice(0, RECALL_TOP);
+  const top = reference.filter((r, i) => reference.findIndex((x) => x.k === r.k) === i).slice(0, RECALL_TOP); // distinct identities only
   const cutoff = top[top.length - 1]!.s;
   const truth = new Set(reference.filter((r, i) => i < RECALL_TOP || Math.abs(r.s - cutoff) <= 1e-9).map((r) => r.k));
   const p = rankedKeys(primary);
   const r = rankedKeys(rust);
   const share = (hits: number): number => Math.min(hits, top.length) / top.length;
   const both = new Set(p.slice(0, RECALL_TOP).map((x) => x.k));
-  return {
-    vector: share(hitsIn(r, truth)), primary: share(hitsIn(p, truth)), ref_size: top.length,
-    overlap: Math.min(RECALL_TOP, r.slice(0, RECALL_TOP).filter((x) => both.has(x.k)).length) / Math.max(1, Math.min(RECALL_TOP, p.length)),
-  };
+  const shared = new Set(r.slice(0, RECALL_TOP).map((x) => x.k).filter((k) => both.has(k))).size;
+  return { vector: share(hitsIn(r, truth)), primary: share(hitsIn(p, truth)), ref_size: top.length, overlap: shared / Math.max(1, both.size) };
 }
 
 /** At most one `take` per interval. */
@@ -87,15 +81,30 @@ export function appendRecall(dir: string, line: RecallLine): void {
   appendFileSync(join(recallDir(dir), `${line.ts.slice(0, 10)}.jsonl`), JSON.stringify(line) + '\n', { mode: 0o600 });
 }
 
-/** Every score line of `epochId`; [] when none were written, null when a file cannot be read whole. */
+const unit = (v: unknown): boolean => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1;
+/** The whole schema of one complete record: any other shape, or a score outside 0..1, is not a recall record. */
+export function validRecallLine(l: unknown): l is RecallLine {
+  const r = l as Record<string, unknown> | null;
+  return !!r && typeof r === 'object' && typeof r.ts === 'string' && Number.isFinite(Date.parse(r.ts)) && typeof r.epoch_id === 'string' && r.epoch_id !== ''
+    && unit(r.vector) && unit(r.primary) && unit(r.overlap) && Number.isInteger(r.ref_size) && (r.ref_size as number) >= 1 && (r.ref_size as number) <= RECALL_TOP;
+}
+
+/**
+ * Every score line of `epochId`; [] when none were written. Null (recall unavailable, the fields stay absent) when a file
+ * cannot be read whole, or when any complete record, of any epoch, does not match the schema: a bad record may be one of this
+ * epoch's, so it is never skipped and never trusted. A torn last line is the one thing skipped (readJsonlStrict).
+ */
 export function readEpochRecall(dir: string, epochId: string): RecallLine[] | null {
   if (!existsSync(recallDir(dir))) return [];
   const out: RecallLine[] = [];
   for (const name of readdirSync(recallDir(dir)).sort()) {
     if (!name.endsWith('.jsonl')) continue;
-    const lines = readJsonlStrict<RecallLine>(join(recallDir(dir), name));
+    const lines = readJsonlStrict<unknown>(join(recallDir(dir), name));
     if (lines === null) return null;
-    for (const l of lines) if (l?.epoch_id === epochId && [l.vector, l.primary, l.overlap].every(Number.isFinite)) out.push(l);
+    for (const l of lines) {
+      if (!validRecallLine(l)) return null;
+      if (l.epoch_id === epochId) out.push(l);
+    }
   }
   return out;
 }

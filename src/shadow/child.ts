@@ -25,7 +25,7 @@ import type { RustAddon } from '../core/rust-engine/addon-loader.ts';
 import { servedCapabilities } from '../core/rust-engine/store-capabilities.ts';
 import { loadRustEngineAddonOffline, type RustEngineAddonLoaderFn } from './addon.ts';
 import { RERUN_DEADLINE_MS } from './checks.ts';
-import { createAsker, createSerialQueue, policyApplies, privacyVerdict, RERUN_QUEUE_BOUND } from './child-checks.ts';
+import { createAsker, createSerialQueue, policyApplies, privacyVerdict, RERUN_QUEUE_BOUND, safeCode } from './child-checks.ts';
 import { classifyError, classifyResult, type Classification } from './classify.ts';
 import { decodeValue, encodeValue } from './codec.ts';
 import { adapterIdentity, capabilitySetHash, currentBuild, ensureEpoch, internalErrorRecorder, type EpochBuild, type EpochManifest } from './evidence-epoch.ts';
@@ -67,6 +67,8 @@ export interface ShadowChildDeps {
   adapterVersion?: number;
   /** The capability names the Rust engine reports; default `servedCapabilities()`. */
   capabilities?: () => Iterable<string>;
+  /** The session nonce the supervisor gave this child (GBRAIN_SHADOW_SESSION); asks and answers carry it. */
+  session?: string;
   /** Seam for tests: called with each ledger row as it is recorded, before it is flushed. */
   onRow?: (row: ShadowLedgerRow) => void;
 }
@@ -79,6 +81,9 @@ function addonFileSha256(addon: RustAddon): string | null {
 
 interface ReadEvent {
   t: 'read';
+  id?: number;
+  /** The opaque sample id (samples.ts): the serving process keeps the arguments and the caller record under it. */
+  sid?: string;
   op: string;
   at: number;
   primary_ms: number;
@@ -217,18 +222,21 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     const ts = new Date(event.at || now()).toISOString();
     summary.first_event_at ??= ts;
     summary.last_event_at = ts;
-    const counts = summary.by_op[event.op] ?? (summary.by_op[event.op] = {});
-    counts[c.outcome] = (counts[c.outcome] ?? 0) + 1;
+    if (rerun !== 'pending') { // an unresolved row is counted in the summary when its completion row is written
+      const counts = summary.by_op[event.op] ?? (summary.by_op[event.op] = {});
+      counts[c.outcome] = (counts[c.outcome] ?? 0) + 1;
+    }
     const row: ShadowLedgerRow = {
       ts, op: event.op, outcome: c.outcome, ...(c.reason ? { reason: c.reason } : {}), ...(c.mismatch ? { mismatch: c.mismatch } : {}),
-      ...(epochNow() ? { epoch_id: epochNow()!.epoch_id } : {}), ...(rerun ? { rerun } : {}), ...(policyApplies(event.args as unknown[]) ? { private_read: true } : {}),
+      ...(epochNow() ? { epoch_id: epochNow()!.epoch_id } : {}), ...(rerun ? { rerun, sid: sidOf(event) } : {}), ...(policyApplies(event.args as unknown[]) ? { private_read: true } : {}),
       primary_ms: Math.round(event.primary_ms * 1000) / 1000,
       rust_ms: rustMs === null ? null : Math.round(rustMs * 1000) / 1000,
       primary_rows: rowCount(event.result), rust_rows: rustRows,
     };
     rows.push(row);
     try { deps.onRow?.(row); } catch { /* a test seam */ }
-    handled++;
+    if (rerun !== 'pending') handled++;
+    if (rerun === 'pending') flush(true); // the unresolved row is on disk before anything else can happen to this child
     if (c.outcome === 'privacy_diverged' && !paused) {
       paused = true;
       try { appendFault(shadowDir, { ts, kind: 'privacy_pause', detail: `op=${event.op} reason=${c.reason ?? 'unknown'}`, ...(curEpoch() ? { epoch_id: curEpoch()! } : {}) }); } catch { /* disk */ }
@@ -237,10 +245,16 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     flush(false);
   };
 
-  const ask = createAsker(deps.writeControl);
+  const session = deps.session ?? process.env.GBRAIN_SHADOW_SESSION ?? '';
+  const ask = createAsker(deps.writeControl, session);
 
   /** A call that never returns keeps its slot: that is what bounds the pile. */
   const trackStall = (call: Promise<unknown>): void => { stalled.add(call); const settled = (): void => { stalled.delete(call); }; call.then(settled, settled); };
+
+  /** A row's sample id: the serving process's, else one of this child's own (a line from an older serving process has none). */
+  let localSid = 0;
+  const sids = new WeakMap<ReadEvent, string>();
+  const sidOf = (event: ReadEvent): string => event.sid ?? sids.get(event) ?? (sids.set(event, `${childId}.${event.id ?? ++localSid}`), sids.get(event)!);
 
   /** The Rust read of `op`, under the caller access the primary read ran under. */
   const callRust = (op: string, args: unknown[], access: CallerAccess | undefined, ms: number, onCall?: (call: Promise<unknown>) => void) => {
@@ -255,11 +269,11 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
    * Classifies one comparison, then asks the serving process about the Rust pages the primary's answer lacked (privacy). A
    * mismatch on an exactness comparison is qualified as stale or inconclusive (`lagged`); a rerun passes null and keeps the raw mismatch.
    */
-  const judge = async (op: string, encodedArgs: unknown[], primary: unknown, rust: unknown, access: CallerAccess | undefined, at: number, lagged: boolean | null): Promise<Classification> => {
+  const judge = async (op: string, encodedArgs: unknown[], primary: unknown, rust: unknown, sid: string | undefined, phase: 'sample' | 'rerun', at: number, lagged: boolean | null): Promise<Classification> => {
     const c = classifyResult(SHADOW_READ_MEMBERS[op as ShadowReadMember], encodedArgs, primary, rust, op);
     if (c.outcome === 'match' || c.outcome === 'privacy_diverged') return c;
     const args = decodeValue(encodedArgs) as unknown[];
-    const { verdict, complete } = await privacyVerdict(ask, args, primary, rust, access, at);
+    const { verdict, complete } = await privacyVerdict(ask, args, primary, rust, sid, phase, at);
     if (verdict === 'violation') return { outcome: 'privacy_diverged', reason: 'row_not_readable_by_caller' };
     if (verdict !== 'clean') return { outcome: 'inconclusive', reason: verdict, mismatch: c.outcome as 'diff' | 'order_diff' };
     if (exactnessArm(op) === 'private_ranked') {
@@ -275,13 +289,13 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     const skip = (why: string): void => record(event, c, rustMs, rows, `skipped:${why}`);
     const deadline = now() + RERUN_DEADLINE_MS;
     try {
-      const answer = await ask({ kind: 'rerun', op: event.op, args: event.args, access: event.access, epoch_id: curEpoch() }, RERUN_DEADLINE_MS) as { result: unknown; stamp: number; epoch_id: string };
+      const answer = await ask({ kind: 'rerun', sid: event.sid, epoch_id: curEpoch() }, RERUN_DEADLINE_MS) as { result: unknown; stamp: number; epoch_id: string };
       if (curEpoch() === null || answer.epoch_id !== curEpoch()) return skip('epoch_changed'); // an answer for another epoch is dropped, never restamped
       let call!: Promise<unknown>;
       const out = await follow.exclusive(answer.stamp, () => callRust(event.op, args, event.access, Math.max(1, Math.min(timeoutMs, deadline - now())), (p) => { call = p; }));
       if (out?.timedOut) trackStall(call);
       if (out === null || out.timedOut) return skip(out === null ? 'watermark_moved' : 'timeout');
-      const c2 = await judge(event.op, event.args, answer.result, encodeValue(out.value), event.access, now(), null);
+      const c2 = await judge(event.op, event.args, answer.result, encodeValue(out.value), event.sid, 'rerun', now(), null);
       if (c2.outcome === 'match') record(event, c, rustMs, rows, 'matched'); // closed as unsuccessful, never a match
       else if (c2.outcome === 'privacy_diverged') record(event, c2, rustMs, rows, 'differed');
       else if (c2.outcome === 'inconclusive') skip(c2.reason ?? 'privacy_check');
@@ -289,7 +303,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
       else record(event, { outcome: 'diff', reason: 'rerun_differs', mismatch: c.mismatch ?? (c2.outcome as 'diff' | 'order_diff') }, rustMs, rows, 'differed');
     } catch (error) {
       recordRustError('read', error);
-      skip(String((error as { code?: unknown })?.code ?? 'failed').slice(0, 40));
+      skip(safeCode((error as { code?: unknown })?.code));
     } finally { flush(true); } // a rerun is rare and slow: its row is written the moment it ends
   };
   const reruns = createSerialQueue<RerunTask>(RERUN_QUEUE_BOUND, rerunOne);
@@ -301,7 +315,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     if (event.op !== 'searchVector' || !curEpoch() || recalling || !recallEligible(args) || !recallGate.take()) return;
     recalling = (async () => {
       try {
-        const reference = await ask({ kind: 'vector', args: event.args, access: event.access }, RERUN_DEADLINE_MS) as RankedKey[];
+        const reference = await ask({ kind: 'vector', sid: event.sid }, RERUN_DEADLINE_MS) as RankedKey[];
         const score = scoreRecall(reference, event.result, rust);
         const epoch = curEpoch(); // a child that is no longer an owner names no epoch: the sample is dropped
         if (score && epoch) appendRecall(shadowDir, { ts: new Date(now()).toISOString(), epoch_id: epoch, ...score });
@@ -334,12 +348,15 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
       }
       const encoded = encodeValue(out.value);
       lagged ||= follow.pendingBefore(capturedAt);
-      const c = await judge(event.op, event.args, event.result, encoded, event.access, capturedAt, lagged);
+      const c = await judge(event.op, event.args, event.result, encoded, event.sid, 'sample', capturedAt, lagged);
       scoreRecallLater(event, args, encoded);
       const task: RerunTask = { event, args, c, rustMs, rows: rowCount(encoded) };
       if (c.outcome !== 'inconclusive') record(event, c, rustMs, task.rows);
       else if (!curEpoch()) record(event, c, rustMs, task.rows, 'skipped:no_epoch');
-      else if (!reruns.add(task)) record(event, c, rustMs, task.rows, 'skipped:queue_full');
+      else {
+        record(event, c, rustMs, task.rows, 'pending'); // unresolved is on disk first: status reads it as unexplained until its completion row, even if this child dies
+        if (!reruns.add(task)) record(event, c, rustMs, task.rows, 'skipped:queue_full');
+      }
     } catch (error) {
       recordRustError('read', error);
       record(event, classifyError(error), performance.now() - started, null);

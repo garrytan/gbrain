@@ -10,7 +10,7 @@
  * something was compared and while a privacy check is unsettled, and counts pauses.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { evaluateReadiness } from '../src/core/engine-swap/readiness.ts';
@@ -18,7 +18,7 @@ import { ensureEpoch } from '../src/shadow/evidence-epoch.ts';
 import { buildEvidenceStatus, renderEvidenceStatus } from '../src/shadow/evidence.ts';
 import { appendFault, appendLedgerRows, type ShadowLedgerRow } from '../src/shadow/ledger.ts';
 import { shadowStatusDocument } from '../src/shadow/status-document.ts';
-import { appendRecall, IntervalGate, recallEligible, scoreRecall, type RankedKey } from '../src/shadow/recall.ts';
+import { appendRecall, IntervalGate, readEpochRecall, recallEligible, scoreRecall, type RankedKey } from '../src/shadow/recall.ts';
 
 const dirs: string[] = [];
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
@@ -55,6 +55,11 @@ describe('scoring', () => {
     expect(scoreRecall(tied, rows(ids(0, 10)), rows([...ids(0, 9), 'c12']))).toMatchObject({ vector: 1 });
     expect(scoreRecall(tied, rows(ids(0, 10)), rows([...ids(0, 9), 'c13']))).toMatchObject({ vector: 0.9 });
   });
+  test('ten copies of one true neighbour are one neighbour, not ten', () => {
+    const copies = Array.from({ length: 10 }, () => ({ chunk_id: 'c0', score: 0.5 }));
+    expect(scoreRecall(ref(12), copies, copies)).toMatchObject({ vector: 0.1, primary: 0.1 });
+    expect(scoreRecall(ref(12), rows(ids(0, 10)), copies)!.overlap).toBe(0.1); // distinct identities on both sides
+  });
   test('overlap with the primary is its own number', () => {
     expect(scoreRecall(ref(12), rows(ids(0, 10)), rows([...ids(0, 9), 'c11']))!.overlap).toBe(0.9);
   });
@@ -79,6 +84,29 @@ describe('recall fields', () => {
     expect(status(dir).evidence).toMatchObject({ recall_samples: 30 });
     expect(status(dir).evidence!.vector_overlap_with_primary).toBeCloseTo(0.8, 9);
     expect(renderEvidenceStatus(status(dir)).join('\n')).toContain('vector recall@10');
+  });
+  test('a malformed or out-of-range record makes recall unavailable: a missing score, a score above 1, a bad size, another epoch\'s too', () => {
+    const good = { ts, epoch_id: 'E', vector: 0.5, primary: 0.5, overlap: 0.5, ref_size: 10 };
+    const cases: Array<[string, Record<string, unknown>]> = [
+      ['missing score', { ...good, vector: undefined }], ['score above 1', { ...good, primary: 1.5 }], ['negative score', { ...good, overlap: -0.1 }],
+      ['non-numeric score', { ...good, vector: '0.5' }], ['ref_size out of range', { ...good, ref_size: 0 }], ['no epoch', { ...good, epoch_id: undefined }], ['bad time', { ...good, ts: 'soon' }],
+    ];
+    for (const [name, bad] of cases) {
+      const { dir, epoch } = epochDir();
+      appendLedgerRows(dir, [row(epoch, 'findByTitleFuzzy', 'match')]);
+      line(dir, epoch, 30, 1);
+      expect([name, readEpochRecall(dir, epoch)!.length]).toEqual([name, 30]);
+      mkdirSync(join(dir, 'recall'), { recursive: true });
+      appendFileSync(join(dir, 'recall', `${ts.slice(0, 10)}.jsonl`), `${JSON.stringify(bad)}\n${JSON.stringify(good)}\n`);
+      expect([name, readEpochRecall(dir, epoch)]).toEqual([name, null]); // never skipped, never trusted
+      expect([name, status(dir).search?.vector_recall_at_10]).toEqual([name, undefined]);
+      expect([name, status(dir).evidence!.recall_unavailable]).toEqual([name, true]);
+      expect(renderEvidenceStatus(status(dir)).join('\n')).toContain('vector recall@10: unavailable');
+    }
+    const torn = epochDir(); // a torn last line is the one thing skipped
+    line(torn.dir, torn.epoch, 30, 1);
+    appendFileSync(join(torn.dir, 'recall', `${ts.slice(0, 10)}.jsonl`), '{"ts":"');
+    expect(readEpochRecall(torn.dir, torn.epoch)).toHaveLength(30);
   });
   test('an unreadable score file leaves the fields absent, and a degraded Rust answer fails criterion 4', () => {
     const { dir, epoch } = epochDir();

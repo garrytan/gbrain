@@ -17,6 +17,7 @@ import { makeAskHandler } from './checks.ts';
 import { epochWatch } from './evidence-epoch.ts';
 import { readSeedRecord } from './seed.ts';
 import { MirrorQueue, zeroUsage } from './mirror.ts';
+import { SampleRegistry } from './samples.ts';
 import type { ShadowState } from './state.ts';
 import { ShadowSupervisor, type ShadowSupervisorOptions } from './supervisor.ts';
 import { appendUsage } from './usage.ts';
@@ -58,7 +59,9 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
     dir, argv: shadowChildArgv(dir, deps.gbrainArgv), onDirty: (relation) => reconciler?.markDirty(relation),
     onAsk: (ask) => asks(ask), ...deps.supervisor,
   });
-  const queue = new MirrorQueue({ bound: state.queue_bound, transport: supervisor });
+  const samples = new SampleRegistry();
+  let generation: () => number | undefined = () => undefined; // the follower's write count, set once it exists
+  const queue = new MirrorQueue({ bound: state.queue_bound, transport: supervisor, samples, generation: () => generation() });
   const sink = {
     counters: queue.counters,
     offer: (capture: Parameters<MirrorQueue['offer']>[0], op?: string) => queue.offer(capture, op),
@@ -86,12 +89,13 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   // The child's questions (checks.ts) read the primary through a source of their own, opened on first use, on a brain that was never seeded.
   let own: ReadSource | undefined;
   const askReads: ReadSource = reads ?? { pauseMs: 0, read: (fn) => (own ??= openReadSource(engine)).read(fn), close: async () => { await own?.close(); } };
-  const asks = makeAskHandler({ engine, reads: askReads, dir, rpc, get follower() { return follower; } });
+  const asks = makeAskHandler({ engine, reads: askReads, dir, rpc, samples, get follower() { return follower; } });
   const follower = reads ? new ShadowFollower({
     reads, send: (line) => supervisor.send(line), rpc,
     onDirty: (relation) => reconciler?.markDirty(relation),
     onFirstBatch: () => { void reconciler?.probe().catch(() => undefined); },
   }) : undefined;
+  generation = () => follower?.published;
   const reconciler = reads ? new Reconciler({ dir, reads, rpc, follower }) : undefined;
   reconciler?.startNightly();
   engine.registerBeforeDisconnect(async () => {

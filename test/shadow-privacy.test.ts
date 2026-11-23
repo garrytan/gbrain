@@ -18,9 +18,9 @@ import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { withCallerAccess } from '../src/core/search/private-visibility.ts';
-import { missingPages, policyApplies } from '../src/shadow/child-checks.ts';
+import { createAsker, extraRows, missingPages, policyApplies, safeCode } from '../src/shadow/child-checks.ts';
 import { ALICE, defineCheckScenarios, privacyFixture } from './helpers/shadow-checks-scenarios.ts';
-import { startRig } from './helpers/shadow-stable-harness.ts';
+import { sleep, startRig } from './helpers/shadow-stable-harness.ts';
 
 let engine: PGLiteEngine;
 let dataDir: string;
@@ -64,9 +64,36 @@ describe('policy generation', () => {
 describe('page candidates', () => {
   test('are the Rust pages the primary did not show, by id or by source and slug; the policy is only asked for under excludePrivate', () => {
     const a = { page_id: 1, source_id: 's', slug: 'a' };
-    expect(missingPages([a], [a, { page_id: 2, source_id: 's', slug: 'b' }, { source_id: 's', slug: 'c' }])).toEqual({ ids: [2], keys: ['s\u001fb', 's\u001fc'] });
-    expect(missingPages(null, { id: 7, slug: 'p', source_id: 's' })).toEqual({ ids: [7], keys: ['s\u001fp'] });
-    expect(missingPages([a], [{ page_id: 1, source_id: 's', slug: 'renamed' }])).toEqual({ ids: [], keys: [] });
+    expect(missingPages([a], [a, { page_id: 2, source_id: 's', slug: 'b' }, { source_id: 's', slug: 'c' }])).toEqual({ ids: [2], keys: ['s\u001fc'], chunks: [] }); // a slug is sent only for a row with no page id
+    expect(missingPages(null, { id: 7, slug: 'p', source_id: 's' })).toEqual({ ids: [7], keys: [], chunks: [] });
+    expect(missingPages([a], [{ page_id: 1, source_id: 's', slug: 'renamed' }])).toEqual({ ids: [], keys: [], chunks: [] });
     expect([policyApplies([{ excludePrivate: true }]), policyApplies([{ remote: { excludePrivate: true } }]), policyApplies([{ untrusted: { excludePrivate: true } }]), policyApplies([{ limit: 1 }, 'x'])]).toEqual([true, true, true, false]);
+  });
+
+  test('a row is the primary\'s only at row identity: the same chunk id with other text, or another chunk of the same page, is extra', () => {
+    const own = { page_id: 1, source_id: 's', slug: 'a', chunk_id: 10, chunk_text: 'the primary text' };
+    expect(extraRows([own], [own]).rows).toEqual([]);
+    expect(extraRows([own], [{ ...own, score: 0.1 }]).rows).toEqual([]); // a score is not identity
+    expect(extraRows([own], [{ ...own, chunk_text: 'SUBSTITUTED' }]).rows).toHaveLength(1);
+    expect(extraRows([own], [{ ...own, chunk_id: 11, chunk_text: 'another chunk' }]).rows).toMatchObject([{ id: 1, chunk: { id: 11 } }]);
+    expect(missingPages([own], [{ ...own, chunk_id: 11, chunk_text: 'x' }])).toEqual({ ids: [1], keys: [], chunks: [11] });
+    expect(extraRows([own], [{ chunk_text: 'no page identity' }]).unidentified).toBe(1);
+  });
+
+  test('an answer is accepted only with the asking child\'s session nonce, and a failure code is a plain bounded token', async () => {
+    const sent: string[] = [];
+    const mine = createAsker((line) => { sent.push(line); }, 'session-B');
+    const pending = mine({ kind: 'rerun' }, 5_000);
+    const id = JSON.parse(sent[0]!).id as number;
+    expect(JSON.parse(sent[0]!)).toMatchObject({ t: 'ask', id, session: 'session-B' });
+    mine.answer({ id, session: 'session-A', ok: true, value: 'from the old child' }); // meant for another child: ignored
+    mine.answer({ id, ok: true, value: 'no session' });
+    let settled = false;
+    void pending.then(() => { settled = true; }, () => { settled = true; });
+    await sleep(20);
+    expect(settled).toBe(false);
+    mine.answer({ id, session: 'session-B', ok: true, value: 'mine' });
+    expect(await pending).toBe('mine');
+    expect([safeCode('watermark_invalid'), safeCode('A message with CANARY text'), safeCode('x'.repeat(80)), safeCode(undefined), safeCode('Upper')]).toEqual(['watermark_invalid', 'failed', 'failed', 'failed', 'failed']);
   });
 });

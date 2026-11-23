@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { makeAskHandler } from '../src/shadow/checks.ts';
 import { ensureEpoch } from '../src/shadow/evidence-epoch.ts';
+import { SampleRegistry } from '../src/shadow/samples.ts';
 import { FollowChild } from '../src/shadow/follow-child.ts';
 import { writeSeedRecord } from '../src/shadow/seed.ts';
 import { batch, gate, sample, SEED, sleep, startRig, until, type Rig, type RigOptions } from './helpers/shadow-stable-harness.ts';
@@ -103,13 +104,38 @@ describe('the barrier', () => {
   test('sustained writes end in busy, a child that is gone ends the rerun, and an old epoch is refused: all inconclusive', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-shadow-busy-'));
     const epoch = ensureEpoch(dir, { seed_id: 's', rust_addon_sha256: null, comparator_version: 2, adapter_version: 'a', capability_set_hash: null, readiness_policy_hash: 'p' });
-    const ask = { id: 1, kind: 'rerun', op: 'listPages', args: [], access: {}, epoch_id: epoch.epoch_id };
+    const samples = new SampleRegistry();
+    const ask = { id: 1, kind: 'rerun', sid: samples.add({ op: 'listPages', args: [], at: Date.now() }, 10), epoch_id: epoch.epoch_id };
     let clock = 0;
-    const handler = (idle: boolean, rpc: () => Promise<unknown>) => makeAskHandler({ engine, reads: {} as never, dir, rpc: rpc as never, now: () => (clock += 20_000),
-      follower: { idle: () => idle, settle: async () => {}, published: 0, lastInvalidatedAt: 0 } as never });
+    const handler = (idle: boolean, rpc: () => Promise<unknown>) => makeAskHandler({ engine, reads: {} as never, dir, rpc: rpc as never, samples, now: () => (clock += 20_000),
+      follower: { idle: () => idle, blocked: () => null, settle: async () => {}, published: 0, lastInvalidatedAt: 0 } as never });
     await expect(handler(false, async () => ({ stamp: 1 }))(ask)).rejects.toMatchObject({ code: 'busy' }); // writes never stop: the 30 s deadline passes
     await expect(handler(true, async () => { throw Object.assign(new Error('gone'), { code: 'child_unavailable' }); })(ask)).rejects.toMatchObject({ code: 'child_unavailable' });
     await expect(handler(true, async () => ({ stamp: 1 }))({ ...ask, epoch_id: 'old' })).rejects.toMatchObject({ code: 'epoch_changed' });
+    await expect(handler(true, async () => ({ stamp: 1 }))({ ...ask, sid: 'not-a-sample' })).rejects.toMatchObject({ code: 'sample_unknown' });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('an invalidation that cannot progress refuses at once, and the wait for a busy follower never starves the event loop', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-shadow-spin-'));
+    const epoch = ensureEpoch(dir, { seed_id: 's', rust_addon_sha256: null, comparator_version: 2, adapter_version: 'a', capability_set_hash: null, readiness_policy_hash: 'p' });
+    const samples = new SampleRegistry();
+    const ask = { id: 1, kind: 'rerun', sid: samples.add({ op: 'listPages', args: [], at: Date.now() }, 10), epoch_id: epoch.epoch_id };
+    const handler = (follower: Record<string, unknown>, deadlineMs?: number) => makeAskHandler({ engine, reads: {} as never, dir, samples, rpc: (async () => ({ stamp: 1 })) as never, deadlineMs, follower: { published: 0, lastInvalidatedAt: 0, ...follower } as never });
+    // pendingInvalid set, nothing queued: idle() stays false and settle() resolves at once
+    const started = Date.now();
+    await expect(handler({ idle: () => false, blocked: () => 'apply_shed', settle: async () => {} })(ask)).rejects.toMatchObject({ code: 'invalidation_pending' });
+    expect(Date.now() - started).toBeLessThan(100);
+    // busy but not blocked: a timer and an I/O callback must run during the 300 ms wait
+    let timers = 0;
+    let turns = 0;
+    const timer = setInterval(() => { timers++; }, 10);
+    const io = setInterval(() => setImmediate(() => { turns++; }), 1);
+    await expect(handler({ idle: () => false, blocked: () => null, settle: async () => {} }, 300)(ask)).rejects.toMatchObject({ code: 'busy' });
+    clearInterval(timer);
+    clearInterval(io);
+    expect(timers).toBeGreaterThan(5);
+    expect(turns).toBeGreaterThan(5);
     rmSync(dir, { recursive: true, force: true });
   });
 });

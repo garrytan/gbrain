@@ -35,6 +35,12 @@ export interface Rig {
   applied: Array<{ relation: string; keys: number }>;
   /** The rows the child has recorded so far (before they are flushed to the ledger). */
   rows(): Array<Record<string, unknown>>;
+  /** The unresolved rows (`rerun: 'pending'`) the child wrote before their reruns started. */
+  pending(): Array<Record<string, unknown>>;
+  /** Every control line the children wrote to the serving process, and every `answer` line the serving process wrote back. */
+  control: { fromChild: string[]; answers: string[] };
+  /** Ends the running child the way a crash does (no flush, no completion rows); the next send starts a new one. */
+  killChild(): void;
   /** Starts the child and makes its coverage watermark valid, as a finished reconcile pass would. */
   settled(): Promise<void>;
   /** Why mirroring had stopped when `finish` was called (the privacy pause), else null. */
@@ -69,25 +75,32 @@ export async function startRig(o: RigOptions): Promise<Rig> {
     get: (target, prop) => (typeof prop === 'string' && prop in rust ? rust[prop] : Reflect.get(target, prop)),
   });
   let childDone: Promise<number> | null = null;
-  const spawn = ((): ChildProcess => {
+  const control = { fromChild: [] as string[], answers: [] as string[] };
+  const procs: Array<EventEmitter & { stdin: PassThrough; stdout: PassThrough }> = [];
+  const spawn = ((_command: string, _args: string[], options: { env?: Record<string, string | undefined> }): ChildProcess => {
     const stdin = new PassThrough();
     const stdout = new PassThrough();
     const proc = Object.assign(new EventEmitter(), { stdin, stdout, stderr: null, pid: 4242, unref() {}, kill() {} });
+    procs.push(proc);
+    const write = stdin.write.bind(stdin) as (chunk: unknown, ...rest: unknown[]) => boolean;
+    (stdin as unknown as { write: typeof write }).write = (chunk: unknown, ...rest: unknown[]) => { if (String(chunk).startsWith('{"t":"answer"')) control.answers.push(String(chunk)); return write(chunk, ...rest); };
     childDone = withoutCallerAccess(() => runShadowChild(dir, {
-      input: stdin, writeControl: (line) => { stdout.write(line); }, heartbeatMs: 60_000, childId: 'rig',
+      input: stdin, writeControl: (line) => { control.fromChild.push(line); stdout.write(line); }, heartbeatMs: 60_000, childId: 'rig',
       loadAddon: async () => ({ ok: true as const, addon: { target: 'linux-x64-glibc', engineAbi: 1, engineBuild: 'b1', catalogVersion: 3 } as never }),
       addonSha256: () => 'a'.repeat(64), capabilities: () => ['pages'], readinessPolicyHash: () => 'p1',
-      openEngine: () => engine as never, onRow: (row) => { seen.push({ ...row }); }, ...o.child,
+      openEngine: () => engine as never, session: options.env?.GBRAIN_SHADOW_SESSION, onRow: (row) => { (row.rerun === 'pending' ? waiting : seen).push({ ...row }); }, ...o.child,
     })); // a real child is another process: it inherits no caller record from the writer's async context
     return proc as unknown as ChildProcess;
   }) as never;
   const state = { version: 1, enabled: true, started_at: 'x', sample_rate: 1, queue_bound: 64, plan_hash: 'h', brain: 'b', primary_engine: 'pglite' };
-  const attached = attachShadowParts(o.primary, dir, state as never, { gbrainArgv: ['never'], supervisor: { spawn: spawn as never, stillEnabled: () => true } });
+  const attached = attachShadowParts(o.primary, dir, state as never, { gbrainArgv: ['never'], supervisor: { spawn: spawn as never, stillEnabled: () => true, minBackoffMs: 0, maxBackoffMs: 0 } });
   const seen: Array<Record<string, unknown>> = [];
+  const waiting: Array<Record<string, unknown>> = [];
   const rows = (): Array<Record<string, unknown>> => seen;
   mkdirSync(join(dir, 'evidence'), { recursive: true });
   const rig: Rig = {
-    dir, attached, engine: attached.engine, rust, applied, rows, stoppedBy: null,
+    dir, attached, engine: attached.engine, rust, applied, rows, pending: () => waiting, control, stoppedBy: null,
+    killChild() { const p = procs[procs.length - 1]!; p.stdout.end(); p.emit('exit', 137, 'SIGKILL'); },
     async settled() {
       await attached.supervisor.request('state');
       await attached.supervisor.request('watermark', { since: Date.now() + 1 });

@@ -58,7 +58,11 @@ export interface FollowChildOptions {
   epochId?: () => string | null;
 }
 
-const errorCode = (error: unknown): string => (error as { code?: string })?.code ?? (error instanceof Error ? error.name : 'rpc_failed');
+/** A short code for a failure: the error's `code`, else its class name, and only when it is a plain token (never text that could hold content). */
+const errorCode = (error: unknown): string => {
+  const raw = (error as { code?: unknown } | null)?.code ?? (error instanceof Error ? error.name : 'rpc_failed');
+  return typeof raw === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(raw) ? raw : 'rpc_failed';
+};
 
 export class FollowChild {
   private readonly file: FollowerFile | null;
@@ -273,7 +277,7 @@ export class FollowChild {
     let line: Record<string, unknown>;
     try { line = { t: 'resp', id: e.id, ok: true, value: await this.call(e.method, e.args) }; } catch (error) {
       this.o.onRustError?.(e.method === 'probe' ? 'fingerprint' : 'reconcile', error);
-      line = { t: 'resp', id: e.id, ok: false, error: { code: errorCode(error), message: error instanceof Error ? error.message.slice(0, 300) : 'failed' } };
+      line = { t: 'resp', id: e.id, ok: false, error: { code: errorCode(error), message: errorCode(error) } }; // a code, never the exception's text: the control channel carries no content
     }
     try { this.o.writeControl(JSON.stringify(line) + '\n'); } catch { /* parent gone */ }
   }
