@@ -10,7 +10,7 @@ We learned that the TypeScript above the storage engine is not where gbrain spen
 every PGLite path we measured, the database itself took 63% to 81% of the CPU. On Postgres, the
 database server used more CPU than the gbrain process on sync (18.5 s against 13.4 s) and on the
 mention pass (22.5 s against 14.9 s). The Rust engine already targets that share. The one big cost
-outside the engine is not TypeScript logic either: the release binary spends about 0.5 s parsing
+outside the engine is not TypeScript logic either. The release binary spends about 0.5 s parsing
 its 41 MB JavaScript bundle before every command, and Bun's bytecode build flag removes it
 (`gbrain get` 0.65 s to 0.09 s on Postgres, same output byte for byte).
 
@@ -51,7 +51,7 @@ Top 5, ranked by measured win for the risk:
 
 The case the maintainer may not picture: **a Rust engine does not make the CLI start faster.** The
 engine loads inside the same Bun process, so the 0.5 s bundle parse stays until the build changes.
-And a Rust CLI would not just be a faster front door: the 236 CLI commands and 187 MCP tools listed in
+And a Rust CLI would not just be a faster front door. The 236 CLI commands and 187 MCP tools listed in
 `docs/contracts/public-surface.json` are generated from `src/core/operations.ts` and lean on npm packages a Rust binary cannot load (the AI
 SDK providers, the tree-sitter WASM grammars for code chunking, zod schemas that become the MCP
 tool schemas, the MCP SDK). A Rust CLI either rewrites that surface (about 175,000 lines of
@@ -88,7 +88,7 @@ Time share is the share of sampled CPU in the gbrain process for that path (Bun'
 Machine: one Vorflux cloud sandbox, Intel Xeon 6975P-C, 8 vCPUs, 31 GiB RAM, Linux 7.0 (AWS),
 network disk. Bun 1.4.5. Postgres 17.10 on the same machine (local socket over TCP, `shared_buffers`
 1 GB, `en_US.UTF-8`, pgvector). Build: master `13812b7780281f7bc27c8f62d9c594f69caac490`. The Rust
-engine was not built or measured here: the machine had no Rust toolchain, and Rust numbers below
+engine was not built or measured here, because the machine had no Rust toolchain, and Rust numbers below
 are reported from other runs.
 
 Corpus: 10,000 pages from the scale fixture (`scripts/scale/fixture.ts`, seed 1): 7,000 notes,
@@ -114,7 +114,7 @@ Three ways to run gbrain were compared:
 | `stats --json` | 0.91 | 0.35 | 0.58 | 0.65 | 0.11 | 0.31 |
 | `doctor --json` | 10.78 (6.30-11.40) | 5.21 | 6.15 | 5.21 | 4.60 | 5.46 |
 
-What the profile shows: in the release binary, 540 of 683 ms of a cold `get` is one anonymous
+What the profile shows. In the release binary, 540 of 683 ms of a cold `get` is one anonymous
 native frame, the parse and compile of the 41 MB `cli.js` bundle (5,169 modules, including the
 tree-sitter grammars' loaders). The bytecode build skips that step. Opening PGLite costs about
 0.16 s more than opening Postgres (0.25 s against 0.09 s with bytecode). In a source run the cost
@@ -210,10 +210,10 @@ the operation manifest) would cut part of it.
 
 A Rust front end would save at most the 60 ms per call that bytecode leaves, and it would have to
 reproduce 236 commands' text and JSON byte for byte or start Bun anyway for most of them. It would
-also cut gbrain off from packages it depends on: the AI SDK and provider SDKs (OpenAI, Anthropic,
+also cut gbrain off from the packages it depends on. They include the AI SDK and provider SDKs (OpenAI, Anthropic,
 Google), the MCP SDK, zod (which generates the MCP tool schemas), js-yaml (frontmatter),
-web-tree-sitter with its WASM grammars (code chunking), PGLite itself, and the `bun install -g
-github:` install path. Contributors would need Rust to change any command.
+web-tree-sitter with its WASM grammars (code chunking) and PGLite itself. It would also lose the
+`bun install -g github:` install path. Contributors would need Rust to change any command.
 
 ### The mention matcher fix
 
