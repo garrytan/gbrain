@@ -169,7 +169,7 @@ export function storePrivacyPolicy(
     const access = currentCallerAccess();
     const records: Array<Partial<CallerAccess>> = [{ ...readers, hidePrivate: true, restricted: !open }];
     if (access.owner) {
-      records.push({ ...readers, hidePrivate: access.hidePrivate, restricted: !open, owner: true, ...(access.ownerReads ? { ownerReads: true } : {}) });
+      records.push({ ...readers, hidePrivate: access.hidePrivate, restricted: !open, owner: true, ...(access.ownerReads ? { ownerReads: access.ownerReads } : {}) });
     }
     for (const record of records) {
       for (const form of FACT_FORMS) {
@@ -265,7 +265,7 @@ export function storePageTextPolicy(
     // the flags read off it (`owner_only` off, `entity_privacy` false) are what the text applies.
     if (opts.callerReaders && access.owner) {
       const owner = renderForStoreCaller({ ...readers, ...folders, hidePrivate: access.hidePrivate, restricted: !open, owner: true,
-        ...(access.ownerReads ? { ownerReads: true } : {}) }, () => privatePagesFilterForCaller('p'));
+        ...(access.ownerReads ? { ownerReads: access.ownerReads } : {}) }, () => privatePagesFilterForCaller('p'));
       if (text === normalizeConceptInputs(owner)) return { ...pagePolicyFlags(owner), ...readers, ...stored, ...openFlag };
     }
   }
