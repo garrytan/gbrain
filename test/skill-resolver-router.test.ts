@@ -174,7 +174,7 @@ describe('the picker in a turn', () => {
 
   test('a slow picker is cut off at router_timeout_ms and the words answer', async () => {
     const h = await home({ router: true, router_timeout_ms: 200 });
-    reply('{"needed": true, "skills": ["gbrain:people"]}', 2000);
+    reply('{"needed": true, "skills": ["gbrain:people"]}', 5000);
     const t0 = performance.now();
     const out = (await turn(h, 'write the weekly status reports')).output;
     expect(performance.now() - t0).toBeLessThan(1500);
@@ -184,7 +184,7 @@ describe('the picker in a turn', () => {
 
   test('a turn cut off after its call went out reports the reservation the ledger keeps', async () => {
     const h = await home({ router: true, router_timeout_ms: 200 });
-    reply('{"needed": true, "skills": ["gbrain:people"]}', 2000);
+    reply('{"needed": true, "skills": ["gbrain:people"]}', 5000);
     const out = (await turn(h, 'write the weekly status reports')).output;
     expect(out.router?.fallback).toEqual({ code: 'timeout' });
     expect(out.router!.est_usd).toBeGreaterThan(0);
