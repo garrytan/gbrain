@@ -13,16 +13,21 @@ import type { FollowOptions } from './follow.ts';
 import { ShadowFollower } from './follower.ts';
 import { openReadSource } from './read-pool.ts';
 import { Reconciler } from './reconcile.ts';
+import { epochWatch } from './evidence-epoch.ts';
 import { readSeedRecord } from './seed.ts';
-import { MirrorQueue } from './mirror.ts';
+import { MirrorQueue, zeroUsage } from './mirror.ts';
 import { readShadowState, type ShadowState } from './state.ts';
 import { ShadowSupervisor, type ShadowSupervisorOptions } from './supervisor.ts';
+import { appendUsage } from './usage.ts';
 import { wrapShadowEngine } from './wrapper.ts';
 import { WriterObserver, type WriterIdentity } from './writer-observations.ts';
 import { ensureWriterHooks, primaryTakesWriterHooks } from './writer-hooks.ts';
 import { claimOwner } from '../core/persistence/claim-phase.ts';
 import { hostIdFor } from '../core/persistence/identity.ts';
 import { VERSION } from '../version.ts';
+
+/** How often a long-running process appends its per-operation counts (and once more when its engine disconnects). */
+export const USAGE_FLUSH_MS = 60_000;
 
 export interface AttachShadowDeps {
   /** argv of the gbrain CLI to spawn; default the running gbrain, never a different one on PATH. */
@@ -59,9 +64,25 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   const queue = new MirrorQueue({ bound: state.queue_bound, transport: supervisor });
   const sink = {
     counters: queue.counters,
-    offer: (capture: Parameters<MirrorQueue['offer']>[0]) => queue.offer(capture),
+    offer: (capture: Parameters<MirrorQueue['offer']>[0], op?: string) => queue.offer(capture, op),
+    use: (op: string, field: Parameters<MirrorQueue['meter']['note']>[1]) => queue.meter.note(op, field),
     active: () => supervisor.active(),
   };
+  // Each call is noted under the epoch current when it happens, and the first call of a class is appended at once.
+  queue.meter.bind({
+    epoch: epochWatch(dir),
+    register: (epoch_id, op) => appendUsage(dir, { ts: new Date().toISOString(), epoch_id, ops: { [op]: zeroUsage() } }),
+  });
+  const flushUsage = (): void => {
+    const taken = queue.meter.take();
+    if (!taken) return;
+    const ts = new Date().toISOString();
+    for (const [i, bucket] of taken.entries()) {
+      try { appendUsage(dir, { ts, epoch_id: bucket.epoch_id, ops: bucket.ops }); } catch { queue.meter.restore(taken.slice(i)); return; }
+    }
+  };
+  const usageTimer = setInterval(flushUsage, USAGE_FLUSH_MS);
+  usageTimer.unref();
   const seeded = deps.follow === undefined && readSeedRecord(dir)?.digests === true;
   const rpc = <T>(method: string, args?: Record<string, unknown>, timeoutMs?: number): Promise<T> => supervisor.request<T>(method, args, timeoutMs);
   const reads = seeded ? openReadSource(engine) : undefined;
@@ -86,6 +107,8 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
       // Let the follower finish reading what was just committed; a slow read is shed rather than waited on.
       if (follower) await Promise.race([follower.settle(), new Promise((resolve) => { setTimeout(resolve, 2_000).unref?.(); })]);
     } finally {
+      clearInterval(usageTimer);
+      flushUsage();
       reconciler?.stop();
       supervisor.stop();
       await reads?.close().catch(() => undefined);

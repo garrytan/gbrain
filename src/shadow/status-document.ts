@@ -7,6 +7,7 @@ import { existsSync } from 'node:fs';
 import type { BrainEngine } from '../core/engine.ts';
 import type { EngineConfig } from '../core/types.ts';
 import { buildEligibilityStatus } from './eligibility.ts';
+import { buildEvidenceStatus } from './evidence.ts';
 import { buildFollowStatus } from './follow-status.ts';
 import { readFaults, readShadowSummary } from './ledger.ts';
 import { storageReport, type StorageReport } from './managed-gate.ts';
@@ -34,6 +35,7 @@ export async function shadowStatusDocument(brain: { key: string; dir: string }, 
     children: summary?.children ?? 0, recent_faults: faults, storage: storageReport(state?.storage),
     ...buildFollowStatus(brain.dir, state, now), seed: seedStatus(readSeedRecord(brain.dir)), // the seed block carries the recorded storage mode
     ...(await buildEligibilityStatus({ dir: brain.dir, state, engine, now, stateRequired: true })),
+    ...buildEvidenceStatus({ dir: brain.dir, now }),
   };
 }
 

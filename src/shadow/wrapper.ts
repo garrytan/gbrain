@@ -21,7 +21,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { registerEngineView } from '../core/persistence/switches.ts';
 import { CAPTURE_BUDGET_BYTES, CaptureTooLargeError, encodeArgs, encodeValue } from './codec.ts';
 import { followRaw, followScope, followWrite, type FollowContext, type FollowOptions, type Frame } from './follow.ts';
-import type { CapturedRead, MirrorCounters } from './mirror.ts';
+import type { CapturedRead, MirrorCounters, UsageField } from './mirror.ts';
 import { isShadowReadMember, SHADOW_TRANSACTION_MEMBERS } from './reads.ts';
 import { sqlWrites } from './sql-writes.ts';
 import { IGNORED_WRITE_MEMBERS, memberKind } from './write-map.ts';
@@ -29,7 +29,9 @@ import { IGNORED_WRITE_MEMBERS, memberKind } from './write-map.ts';
 export interface ShadowSink {
   readonly counters: MirrorCounters;
   /** Takes a capture function; the sink calls it synchronously when it accepts the read (mirror.ts). */
-  offer(capture: () => CapturedRead): void;
+  offer(capture: () => CapturedRead, op?: string): void;
+  /** Notes one call of an operation class on the per-operation meter (mirror.ts `UsageMeter`); a sink without one skips it. */
+  use?(op: string, field: UsageField): void;
   /** False once mirroring stopped in this process (state off, restart budget spent, privacy pause). */
   active(): boolean;
 }
@@ -104,25 +106,33 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
   // Bound functions cached per member, re-bound when the primary replaces a member (the factory wraps disconnect).
   const cache = new Map<PropertyKey, { original: Function; wrapped: Function }>();
 
+  const use = (op: string, field: UsageField): void => { try { sink.use?.(op, field); } catch { /* fail open */ } };
+
   const wrapRead = (op: string, fn: Function): Function => function shadowRead(this: unknown, ...args: unknown[]) {
+    if (!sink.active()) return fn.apply(engine, args);
+    use(op, 'offered');
     if (inTransaction) {
-      if (sink.active()) sink.counters.skipped_in_transaction++;
+      sink.counters.skipped_in_transaction++;
+      use(op, 'skipped_in_transaction');
       return fn.apply(engine, args);
     }
-    if (!sink.active()) return fn.apply(engine, args);
     if (sampleRate < 1 && random() >= sampleRate) {
       sink.counters.sampled_out++;
+      use(op, 'sampled_out');
       return fn.apply(engine, args);
     }
     if (hasFunctionArg(args)) {
       sink.counters.shed_unmirrorable++;
+      use(op, 'unmirrorable');
       return fn.apply(engine, args);
     }
     let encodedArgs: unknown;
     try {
       encodedArgs = encodeArgs(args, { left: CAPTURE_BUDGET_BYTES });
     } catch (error) {
-      try { sink.counters[error instanceof CaptureTooLargeError ? 'shed_too_large' : 'encode_error']++; } catch { /* fail open */ }
+      const tooLarge = error instanceof CaptureTooLargeError;
+      try { sink.counters[tooLarge ? 'shed_too_large' : 'encode_error']++; } catch { /* fail open */ }
+      use(op, tooLarge ? 'shed' : 'unmirrorable');
       return fn.apply(engine, args);
     }
     const started = now();
@@ -131,7 +141,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
     return out.then((result: unknown) => {
       const primaryMs = now() - started;
       try {
-        sink.offer(() => ({ op, args: encodedArgs, result: encodeValue(result, undefined, { left: CAPTURE_BUDGET_BYTES }), primary_ms: primaryMs, at: Date.now() }));
+        sink.offer(() => ({ op, args: encodedArgs, result: encodeValue(result, undefined, { left: CAPTURE_BUDGET_BYTES }), primary_ms: primaryMs, at: Date.now() }), op);
       } catch { /* the shadow never fails a call */ }
       return result;
     }, (error: unknown) => {

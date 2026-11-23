@@ -18,6 +18,7 @@ import { loadConfig } from '../core/config.ts';
 import type { EngineConfig } from '../core/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
+import { renderEvidenceStatus } from '../shadow/evidence.ts';
 import { renderFollowStatus } from '../shadow/follow-status.ts';
 import { readManagedStorage, storageLine, type ManagedStorageRecord } from '../shadow/managed-gate.ts';
 import { readSeedRecord, RESEED_STEPS, runSeed, SeedBudgetError, writeSeedRecord, type SeedRecord, type SeedTarget } from '../shadow/seed.ts';
@@ -376,7 +377,7 @@ async function status(brain: { key: string; dir: string }, json: boolean, out: (
   out(seeded ? `  seed ${seeded.seed_id} finished ${seeded.finished_at}; unseeded gap rows ${seeded.unseeded_gap_rows_total}` : '  seed: none (gbrain engine shadow seed)');
   const seedStorage = storageLine(seeded?.storage);
   if (seedStorage) out(`  storage: ${seedStorage}`);
-  if (seeded) for (const line of renderFollowStatus(doc)) out(line);
+  if (seeded) for (const line of [...renderFollowStatus(doc), ...renderEvidenceStatus(doc)]) out(line);
   for (const f of faults) out(`  fault ${f.ts} ${f.kind}: ${f.detail}`);
   return 0;
 }

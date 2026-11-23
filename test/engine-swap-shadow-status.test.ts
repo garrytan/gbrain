@@ -33,7 +33,7 @@ const STATE: ShadowState = { version: SHADOW_STATE_VERSION, enabled: true, start
 
 function follower(now: Date, probe: Record<string, unknown>): FollowerFile {
   return {
-    version: 1, epoch_id: SEED.seed_id, epoch_started_at: SEED.finished_at, updated_at: now.toISOString(), applied_rows: 40, queue_depth: 0, lag_ms: 0,
+    version: 1, epoch_id: SEED.seed_id, seed_id: SEED.seed_id, epoch_started_at: SEED.finished_at, updated_at: now.toISOString(), applied_rows: 40, queue_depth: 0, lag_ms: 0,
     last_seq: 7, watermark: { valid: true, through: now.toISOString(), invalidated_reason: null }, lag: { epoch: [5], hours: {} },
     fingerprints: { checked_rows: 900, mismatches: 0 }, probe: probe as unknown as FollowerFile['probe'], allocators: { verified: true, checked_at: now.toISOString() },
   };
