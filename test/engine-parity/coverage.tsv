@@ -131,7 +131,7 @@ getPage	pages	yes	205	yes	yes	yes	serves
 readPageSnapshot	pages	yes	60	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
 lockPageKeys	pages	yes	14	no	yes	yes	serves
-putPage	pages	yes	1109	yes	yes	yes	serves
+putPage	pages	yes	1110	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	39	yes	yes	yes	serves
@@ -593,7 +593,7 @@ countBrainLivePages	stats_ingest	yes	1	no	yes	yes	serves
 countLivePagesBySource	stats_ingest	yes	1	no	yes	yes	serves
 countChunksBySource	stats_ingest	yes	1	no	yes	yes	serves
 readBrainMaturity	stats_ingest	yes	3	no	yes	yes	serves
-getStats	stats_ingest	yes	6	yes	yes	yes	serves
+getStats	stats_ingest	yes	7	yes	yes	yes	serves
 getHealth	stats_ingest	yes	6	yes	yes	yes	serves
 pingStore	stats_ingest	yes	1	no	yes	yes	serves
 listVisiblePageSlugs	stats_ingest	yes	1	no	yes	yes	serves

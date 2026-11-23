@@ -270,7 +270,7 @@ test/engine-parity/source-resolver-reads.test.ts	27	0
 test/engine-parity/source-verify-reads.test.ts	2	0
 test/engine-parity/spend-log.test.ts	11	0
 test/engine-parity/stats-vectors.test.ts	3	0
-test/engine-parity/stats.test.ts	9	0
+test/engine-parity/stats.test.ts	10	0
 test/engine-parity/sweep-reads.test.ts	2	1
 test/engine-parity/sync-admission-effects.test.ts	7	0
 test/engine-parity/sync-admission.test.ts	3	0
