@@ -23,7 +23,6 @@ writes_pages: true
 writes_to:
   - projects/
   - sources/
-upstream: bulk-skillify+manifest-driven-ingestion@fc834ee
 when_to_use: "Use when the user asks: \"bulk ingest\", \"bulk import\", \"ingest all\", \"ingestion pipeline\", \"mass ingestion\"."
 ---
 
