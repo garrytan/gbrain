@@ -79,8 +79,8 @@ export function parseCodeLimit(args: string[], command: string, fallback: number
   if (raw === undefined) return fallback;
   const n = Number(raw);
   if (/^\d+$/.test(raw.trim()) && Number.isSafeInteger(n) && n > 0) return n;
-  const message = `${command}: --limit must be a whole number of 1 or more; got '${inertText(raw, 40)}'`;
-  exitUsage(jsonMode, errorFor({ class: 'UsageError', code: 'invalid_params', message, hint: `e.g. gbrain ${command} <symbol> --limit ${fallback}` }).envelope, message);
+  const message = `${command}: --limit must be a whole number of 1 or more (default ${fallback}); got '${inertText(raw, 40)}'`;
+  exitUsage(jsonMode, errorFor({ class: 'UsageError', code: 'invalid_params', message }).envelope, message);
 }
 
 /**

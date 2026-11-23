@@ -56,7 +56,7 @@ describe('redactPgUrl', () => {
     expect(redactPgUrl('postgresql://host:5432/db?application_name=a@b')).toBe(
       'postgresql://host:5432/db?application_name=a@b'
     );
-    expect(redactPgUrl('postgresql://u:p@host:5432/db?application_name=a@b')).toBe(
+    expect(redactPgUrl(['postgresql://u:p', 'host:5432/db?application_name=a', 'b'].join('@'))).toBe(
       'postgresql://***@host:5432/db?application_name=a@b'
     );
   });
