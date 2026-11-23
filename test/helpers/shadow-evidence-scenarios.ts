@@ -45,7 +45,7 @@ export function defineEvidenceScenarios(ctx: EvidenceScenarioContext): void {
         await attached.engine.listPages();
         await attached.follower!.settle();
         await new Promise((resolve) => setTimeout(resolve, 50)); // the queue drains on the next event-loop turn
-        expect(attached.queue.meter.take()).toMatchObject({ getPage: { offered: 4 }, searchKeyword: { offered: 1 }, listPages: { offered: 1 } });
+        expect(attached.queue.meter.take()![0]!.ops).toMatchObject({ getPage: { offered: 4 }, searchKeyword: { offered: 1 }, listPages: { offered: 1 } });
         attached.supervisor.stop(); // the child flushes its ledger and exits
         attached.reconciler!.stop();
         const rows = (): Array<Record<string, unknown>> => !existsSync(join(home, 'ledger')) ? [] : readdirSync(join(home, 'ledger'))
