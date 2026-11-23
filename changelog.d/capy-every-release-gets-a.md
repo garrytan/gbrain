@@ -1,0 +1,6 @@
+**Every release now gets a production-size soak on its own tag, and a release whose warm search is too slow never reaches the stable channel.**
+
+### Added
+- After each release is published, the release workflow starts the production soak on that tag. After the soak, a search speed gate measures warm search on the same 600,000-page brain with Postgres JIT on and off, with the upgrade rows an old brain keeps parked. A release fails the gate when p50 reaches 2 s or p95 reaches 3 s, when a search fails, or when p50 or p95 regresses against the last release that passed. A failing arm is measured once more on a fresh server, and the better reading is kept.
+- The daily stable check never promotes a release that failed the gate. The failure message names the arm, the numbers, the slowest timed part and the override. A run that cannot read the last release's result is held with the cause named, instead of silently skipping the regression check.
+- A known-noisy failure can be cleared by re-dispatching the soak on the tag with `search_gate_override` set to a reason. The reason and the person who set it are recorded, and an overridden run never becomes the next release's baseline. How it works, what it costs (about $6 of soak time per release) and how to clear a hold: docs/RELEASING.md, "Search speed gate".
