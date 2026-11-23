@@ -248,7 +248,7 @@ describe('fetchEvalGates (drill --evals)', () => {
   });
 
   test.each([
-    ['no pin on the release (404)', (r: Record<string, () => Response>) => { delete r[pinUrl]; }, 'eval_gates_fetch_http_404'],
+    ['no pin on the release (404): the release step that attaches it has not landed', (r: Record<string, () => Response>) => { delete r[pinUrl]; }, 'eval_gates_missing'],
     ['a redirect to a host that is not GitHub', (r: Record<string, () => Response>) => { r[pinUrl] = () => redirect('https://evil.example/pin.json'); }, 'eval_gates_fetch_redirect_refused'],
     ['a redirect to plain http', (r: Record<string, () => Response>) => { r[pinUrl] = () => redirect('http://objects.githubusercontent.com/x'); }, 'eval_gates_fetch_redirect_refused'],
     ['a pin over 64 KiB', (r: Record<string, () => Response>) => { r[pinUrl] = () => new Response('x'.repeat(65 * 1024)); }, 'eval_gates_fetch_too_large'],
@@ -295,7 +295,23 @@ describe('fetchEvalGates (drill --evals)', () => {
     delete routes[pinUrl];
     expect((await fetchEvalGates(dir, epoch, { fetch: fakeFetch(routes), hostTarget: TARGET })).cached).toBe(false);
     expect(readEvalGatesVerdict(dir, epoch, TARGET).passed).toBe(true);
-    expect(buildDrillStatus(dir, epoch, TARGET).drills.eval_gates_last_fetch?.reason).toBe('eval_gates_fetch_http_404');
+    expect(buildDrillStatus(dir, epoch, TARGET).drills.eval_gates_last_fetch?.reason).toBe('eval_gates_missing');
+  });
+
+  test('with no pin on the release yet, drill --evals ends eval_gates_missing, status says the same, and the swap row is NOT READY', async () => {
+    const { dir, epoch } = shadow();
+    const seen: string[] = [];
+    const result = await fetchEvalGates(dir, epoch, { fetch: fakeFetch({}, seen), hostTarget: TARGET });
+    expect(result).toEqual({ cached: false, reason: 'eval_gates_missing', passed: false });
+    expect(seen).toEqual([pinUrl]);
+    const status = buildDrillStatus(dir, epoch, TARGET).drills;
+    expect(status).toMatchObject({ eval_gates_e1_e3: false, eval_gates_reason: 'eval_gates_missing', eval_gates_last_fetch: { reason: 'eval_gates_missing' } });
+    const row = evaluateReadiness({ drills: { ...status, backup_restore_passed: true } } as ShadowStatus).criteria.find(c => c.n === 10)!;
+    expect(row.state).toBe('fail');
+    expect(row.detail).toContain('eval_gates_missing');
+    // A pin that exists but whose file is gone is a different fault: the pin names it, the fetch cannot find it.
+    const routes = { [pinUrl]: () => new Response(JSON.stringify(pinFor(JSON.stringify(gatesObject())))) };
+    expect((await fetchEvalGates(dir, epoch, { fetch: fakeFetch(routes), hostTarget: TARGET })).reason).toBe('eval_gates_fetch_http_404');
   });
 
   test('a fetch that throws (offline) and an epoch with no build both cache nothing', async () => {

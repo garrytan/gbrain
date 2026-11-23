@@ -2,16 +2,14 @@
  * The eval gates half of swap criterion 10 (docs/designs/RUST_ENGINE.md, "Eval gates"; plan c-ts). The release must carry
  * quality gates E1 to E3, measured by gbrain-evals on the exact build the shadow's evidence epoch started on.
  *
- * (No imports beyond node: the pin publisher script, scripts/eval-gates-pin.ts, runs it without installing dependencies.)
- *
  * Files, all under `<shadow dir>/drills/`: `eval-gates.json` (the published file, byte for byte), `eval-gates.pin.json`
  * (the pin that named it) and `eval-gates.fetch.json` (the last fetch attempt). Only `fetchEvalGates` (run by
  * `gbrain engine shadow drill --evals`) touches the network. `readEvalGatesVerdict` (status and the swap) reads the cache
  * and decides again every time, so a later epoch, a different addon or a cache that does not match fails closed, offline.
  *
- * The pin is the release's own asset `gbrain-eval-gates.pin.json`, attached by .github/workflows/eval-gates-pin.yml once
- * the FINAL file for that tag exists (`pinSource` below is the one function to replace if the pin moves to a committed
- * file). The pin names the exact file by commit-pinned URL and SHA-256, so the file is checked against what the release
+ * The pin is the release's own asset `gbrain-eval-gates.pin.json`, attached by a release step that lands separately once
+ * the FINAL file for that tag exists; until then there is no pin and `drill --evals` ends `eval_gates_missing`
+ * (`pinSource` below is the one function to replace if the pin moves to a committed file). The pin names the exact file by commit-pinned URL and SHA-256, so the file is checked against what the release
  * says, not against whatever the evals repository holds today.
  *
  * A pass needs: status FINAL (a non-rc release tag; PROVISIONAL never passes), E1, E2 and E3 all PASS, the file's
@@ -123,11 +121,6 @@ export function pinProblem(raw: string): { pin: EvalGatesPin } | { reason: strin
   for (const [field, ok] of checks) if (!ok) return { reason: `eval_gates_pin_invalid: ${field}` };
   const m = PIN_URL.exec(v.url as string);
   return m && m[1] === v.evals_ref && m[2] === v.gbrain_tag && m[3] === evals ? { pin: v as unknown as EvalGatesPin } : { reason: 'eval_gates_pin_invalid: url' };
-}
-
-export function parsePin(raw: string): EvalGatesPin | null {
-  const parsed = pinProblem(raw);
-  return 'pin' in parsed ? parsed.pin : null;
 }
 
 /** Why the eval half is not a pass, or null for a pass. Pure: every input is passed in. */
@@ -266,7 +259,10 @@ export async function fetchEvalGates(dir: string, epoch: EpochManifest | null, d
     if (!epoch || !build || !build.gbrain_commit) throw new FetchRefused('eval_gates_build_unknown');
     const tag = `v${build.gbrain_version}`;
     if (!FINAL_TAG.test(tag)) throw new FetchRefused('eval_gates_provisional');
-    const pinText = await pinSource(tag, deps);
+    // No pin on the release (the release step that attaches it has not run, or has not landed yet) is a missing file, not a fetch fault.
+    const pinText = await pinSource(tag, deps).catch((error: unknown) => {
+      throw error instanceof FetchRefused && error.message === 'eval_gates_fetch_http_404' ? new FetchRefused('eval_gates_missing') : error;
+    });
     const pinned = pinProblem(pinText);
     if ('reason' in pinned) throw new FetchRefused(pinned.reason);
     const pin = pinned.pin;

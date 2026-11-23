@@ -365,6 +365,9 @@ describe('gbrain engine shadow drill', () => {
     const both = await cli(['drill'], seeded, { drill: deps(fakeOwner()), fetchEvals: { fetch: fetcher, hostTarget: TARGET } });
     expect(both.code).toBe(0);
     expect(both.out).toContain('Eval gates E1 to E3: pass');
+    const noPin = await cli(['drill', '--evals'], seeded, { fetchEvals: { fetch: (async () => new Response('', { status: 404 })) as unknown as typeof fetch, hostTarget: TARGET } });
+    expect(noPin.code).toBe(1);
+    expect(noPin.out).toContain('eval_gates_missing');
     const offline = await cli(['drill', '--evals'], seeded, { fetchEvals: { fetch: (async () => { throw new Error('offline'); }) as unknown as typeof fetch, hostTarget: TARGET } });
     expect(offline.code).toBe(1);
     expect(offline.out).toContain('eval_gates_fetch_failed');
