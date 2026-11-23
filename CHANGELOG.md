@@ -10,6 +10,106 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.766.0] - 2026-11-23
+
+**Bundled skills now ask before they spend money, send a file or schedule a job, stop on a model refusal instead of offering another model, and use placeholder names in their examples.**
+
+### Changed
+- A model provider's refusal ends that step: book-mirror, cross-modal-review and the model-routing convention tell the agent to report it, naming the model, and not to rerun it on another model.
+- book-mirror works from a book the user owns, and its chapter summaries help the reader decide and remember rather than replace the book. Its EPUB snippet now runs as pasted and reads chapters in the book's own order.
+- cold-start and ask-user now offer the same three routes for Google data, gbrain's own connector (`gbrain google setup`), a Google Takeout export, or a credential gateway the host already has. Live sync and embedding are offered as their own yes/no, and the progress snippet writes the file the resume steps read.
+- perplexity-research sends only the topic and public facts by default and asks before sending page content; its example keeps the API key off the command line.
+- brain-pdf hands back the file and sends it elsewhere only to a recipient the user confirms.
+- meeting-ingestion, two-tier-extraction, research-compendium and company-brainify say what paid or scheduled work they start, and ask first.
+- Examples use placeholder names, paths and sizes, and leftover provenance tags and test-only notes are gone from skill files.
+
+<!-- behavior-change: refusal_stops_step_gst3583 -->
+
+**Gmail can now flow into your brain through a gbrain.io terminal, so gbrain stores no mail credential, and private and bulk mail stay out of model reads.**
+
+### Added
+- `gbrain sources add <id> --kind google --access gbrainio --account <address>` reads Gmail through the `gbrainio` command instead of a Google token. Each sync reads the last `--history-days` of mail (newest first, resuming where it stopped) and fetches a thread again only when it has a new message. `--gbrainio-command` sets the full path when `gbrainio` is not on `PATH`. Every mail answer must name the account the source was added for, and a gbrain.io usage limit is handled like a Google rate limit.
+- Threads on a gbrain.io source are sorted before anything is written: a normal page when you wrote in the thread, starred it or marked it important, or someone in it has a person page; a searchable record page that no model reads for other mail; no page for bulk mail; and an owner-only page for senders on a private list.
+- `--private-senders-file <path>` (one address or `@domain` per line) gives every thread with a listed sender an owner-only page that no model reads, on gbrain.io and token sources alike. A missing, unreadable or empty file stops the sync before it writes anything. When you add someone, the next syncs rewrite their existing pages as private, at most 200 threads per sync; a page whose thread is gone from Gmail is never deleted for that.
+
+### Changed
+- Email pages marked `extract_atoms: false` are no longer sent to the chat model by the open-loops catch-up or the loop extraction job.
+
+**The alias, export, belief-coverage, jobs-health, trust-tier and withdrawal-discovery reads now sit behind engine members, and the queue-health reads run on the opt-in Rust engine.**
+
+### Changed
+- The read queries behind alias lookup, the export commands, the belief coverage report, the search-vector reindex count, queue and job health, trust-tier version lookups and withdrawal discovery now live in `src/core/engine-sql/` and are called through new `BrainEngine` members on PGLite, Postgres and the opt-in Rust engine. The callers call the members instead of running the SQL themselves. PGLite and Postgres brains return the same rows as before; the callers moved to the members and the SQL text did not change.
+- On the Rust engine the eight queue-health members work. The other new members are held on the Rust engine until its store wiring lands, and they refuse there instead of guessing.
+- No write, schema, sync caller, access-token or member-binding read changed. The reads that carry a visibility filter, and the rest of the dynamic-SQL reads, stay where they are until a later slice.
+
+**The open-loop, timeline-read and write-side-read queries now sit behind engine members, and nothing changes for users.**
+
+### Changed
+- The queries behind open loops (upsert, close, list and the entity-card read), the timeline reads (the stored-row reads, the segmented-page and comment-markup counts, the orphan-page read and the effective-date samples) and the write-side reads (access tokens and members, memory proposals, source state, the health memo clock, op checkpoints, shared skill packs and similar) now live in `src/core/engine-sql/` and are defined as thirty-four new `BrainEngine` members on PGLite, Postgres and the opt-in Rust engine. PGLite and Postgres brains return the same results as before; the statements are the same text the callers ran.
+- Only read call sites changed in this step. The chronicle ledger's extracted-events check, the doctor timeline-history check, notifier status and the timeline repair reads now call the members. Most of the new members have no caller yet; the open-loop store, the sync callers and `gbrain auth list` still run their own statements, and they move in a later step.
+- Postgres open-loop and memory-proposal writes defined here (the loop upsert and close, proposal expiry and purge, and attaching a source path) retry once when a pooled connection starts read-only, as the statements they replace did.
+- On the Rust engine the four open-loop members work. The other thirty (nine timeline-read and twenty-one write-side members) have no native Rust method yet, so they refuse with `engine_capability_missing` until one lands, and `whoknows`, the schema-pack best-effort reads and the entity text mentions read let that refusal pass through instead of treating it as a database error. On Rust, `readEntityOpenLoops` reads at most 1,000 open loops whose counterparty page or email matches the slug, in any source, and keeps those on the requested page and source. It refuses, instead of answering with a short card, only when that read comes back full (1,000 rows) and fewer than the requested limit of them are on the page; otherwise it answers, even if more than 1,000 loops match. A limit that is not a positive integer also refuses. Nothing calls it yet. On Rust, an open-loop upsert whose offset time names a day the calendar lacks (such as `2026-02-30T12:00:00+02:00`) now refuses, as PGLite does, instead of reading it as March 2 and reopening a closed loop. Postgres still reads such a date as the next valid day, because the postgres.js driver rolls it over before the statement is sent; that gap is listed in TODOS.md.
+- On Postgres, the doctor's timeline-history and notifier-coverage reads still stop at the check's time budget when they are stuck behind a lock, instead of running past it, now that they run through members.
+- On Postgres, the new members refuse a request whose caller has already gone without sending a statement, as `executeRaw` and the decide reads do. Over the Rust owner socket, the new writes (the loop upsert and close, timeline row deletes, source path attach and proposal expiry and purge) now have a confirming read, so a retry after a cancelled call can tell whether the write committed.
+
+**The open-loop store, `gbrain auth list`, the sync source-row reads and the page-tag prune now call the engine members, and nothing changes for users.**
+
+### Changed
+- The open-loop store's upsert, close and list, the tag prune inside the streamed page import, `gbrain auth list`, the sync preflight and connector source-row reads, the write-through source-path read and the get_health memo's page clock now call `BrainEngine` members instead of running their own statements. PGLite and Postgres brains return the same rows and run each write in the same transaction scope and order as before; the loop upsert and close and the tag prune send the text they sent before.
+- The source-row reads now use the existing `getSource` member, which returns a wider row (the callers read only `local_path` and `config`). The get_health memo reads the config values and the page clock with two reads where it ran one.
+- On the Rust engine the loop upsert, close and list, and the tag prune, now work. `gbrain` startup no longer prints a schema-probe notice when a Rust brain refuses the probe with `engine_capability_missing`. The memo's page-clock read is not served by Rust yet, so the get_health memo stays off there.
+
+**Shadow mode now keeps the Rust engine's copy of your brain in step as the brain changes, and checks that the two still agree.**
+
+### Added
+- Follow: every committed write on the brain is applied to the Rust engine's own store in the background, with a generation rule so an older read never overwrites a newer one. A delete leaves a tombstone, and a row that takes another row's unique key moves the stale row aside. Shadow mode off costs nothing on the write path.
+- `gbrain engine shadow reconcile [--full]` and a nightly full pass compare the brain and the Rust store in 500-row intervals by digest and repair any interval that differs. Each pass is recorded in `reconcile/passes.jsonl`. Every full pass rewrites rows that were already correct, which costs time on a large brain.
+- A coverage watermark says whether the follower can vouch for every write up to a time. A restart, a write from another process, an unmapped write or a gap in the sequence marks it invalid until a full pass runs.
+- A fingerprint probe compares the brain's `lower()` and whitespace answers for every Unicode code point with PGLite's tables, and runs a corpus sample through `gbrain_fact_fingerprint` and its v1. It records the database's ctype, locale provider and locale, and counts the stored facts that hold a differing code point without reading any of them out. It fails only when code points differ and a stored fact holds one.
+- `gbrain engine shadow status --json` gains `epoch_id`, `epoch_started_at`, `follower`, `reconcile`, `write_comparisons`, `fingerprints`, `seed`, `allocators` and `primary_refreshes`, including an allocator check and the open primary refresh count.
+- A brain seeded before follow existed is not followed. `status` says so (`follower.state` is `needs_reseed`, and `follower.action` names the commands), and `reconcile` refuses it. To reseed, run `gbrain engine shadow stop --delete`, then `gbrain engine shadow seed`, then `gbrain engine shadow start`.
+
+**Rust engine shadow mode now runs on brains that use managed storage and reports that they cannot swap; a short-lived command now leaves shadow evidence.**
+
+### Changed
+- Shadow mode gathers evidence on managed brains too; only the swap refuses them (`engine_swap_refused`, reason `managed_storage`, exit 3, which `gbrain engine swap` still returns). `gbrain engine shadow start` (the preview, `--plan` and `--yes --expect <hash>`) no longer refuses a brain that uses managed storage. It prints `storage: this brain cannot swap while it uses managed storage` and records `storage: { managed: true, checked_at }` in the shadow state. An unmanaged brain records `managed: false`.
+- A brain whose storage mode cannot be read (the database is unreachable, another process holds a PGLite brain, a PGLite path holds no brain, or the mode row is missing or malformed) does not block `start`. It prints `could not read whether this brain uses managed storage; the swap will check it` and records `{ managed: null, checked_at, reason }` with the error's code as the reason. A PGLite path with no brain is still never created.
+- `gbrain engine shadow status --json` and the provisional report gain `storage: { managed, checked_at, note, reason? }` (`note` is `this brain cannot swap while it uses managed storage` for a managed brain, and null for an unmanaged one; `storage` is null for a state written before the field existed). `status` and `report` print the note as a line.
+- `start` opens the brain database once to read that one row, even with `--plan`, and writes no table row, source file, managed-root ownership marker or registry entry; it never writes a row to the primary database or writes its worktrees, write effects or writer coordination locks (a PGLite open holds the datastore's process lock and rewrites PGLite's own control and log files until `start` closes the brain). A PGLite brain opens without recording its managed roots (no ownership marker or registry entry is written) and without repairing a damaged log; a brain with an open repair episode is left unread (`repair_episode_open`) so its backups are not pruned.
+
+### Fixed
+- Shadow mode lost the evidence of short-lived commands (a CLI call or cron job that queued sampled reads and exited): the shadow child died of SIGPIPE on its first heartbeat, because the parent's pipe was already closed, before writing any ledger row. The child now ignores the closed pipe, stops heartbeats, records the reads it received, writes its ledger and summary, and exits (at most 30 seconds after its input ends, or 30 seconds into opening the Rust store if that never finishes, which also reaps a stuck child whose parent is gone; a store that opens after that is closed, and the child stops sending heartbeats so its parent restarts it). Finished comparisons are written every 2 seconds instead of waiting for the next read.
+- Shadow docs now match the code. Mirroring never fails a primary call but a sampled read pays a bounded copy; a privacy divergence means Rust returned a row whose `source_id` is outside the requested sources; the report totals the per-child summary files; and reads still queued when a process is killed are lost.
+
+**`gbrain engine shadow seed` copies your brain into the Rust engine's own store, so shadow mode compares real data, and it runs on brains that use managed storage.**
+
+### Added
+- `gbrain engine shadow seed` copies the primary brain into the Rust engine's store under `~/.gbrain/shadow/<brain>/store`, in one read-only snapshot of the primary (REPEATABLE READ on Postgres, one transaction on PGLite). It writes `seed.json` with the seed id, times, per-table row counts, what was not copied and each loss. It writes no table row, source file, managed-root ownership marker or registry entry of the brain. Opening a PGLite brain still takes the datastore's process lock until `seed` closes it, and PGLite rewrites its own control and log files (`global/pg_control`, `pg_wal/`), as any open of that brain does.
+- `gbrain engine shadow status` and `report` show the seed, with its age, the segmented pages, each gap table that holds rows and the total of unseeded gap rows. The swap check refuses while that total is above zero.
+- `rust/docs/store/seed.md` lists every primary table as seeded, left behind on purpose, or a gap, and every named loss.
+- Shadow mode gathers evidence on managed brains too; only the swap refuses them (`engine_swap_refused`, reason `managed_storage`, exit 3, which `gbrain engine swap` still returns). `seed` and `seed --json` run on a brain that uses managed storage. Right before its snapshot, `seed` reads whether the brain uses managed storage, prints `storage: this brain cannot swap while it uses managed storage` for a managed brain, and records `storage: { managed, checked_at, reason? }` in `seed.json`. `status --json` and the report carry it as `seed.storage`, with a `note`.
+- A storage mode that cannot be read (another process holds a PGLite brain, or the mode row is missing or malformed) does not stop the seed. It records `managed: null` with the error's code as the reason and prints that the swap will check it. A brain that cannot be opened at all makes `seed` exit 1 with `could not open the brain`, and a PGLite path with no brain in it is never created.
+- `seed` opens a PGLite brain without recording its managed roots and without repairing a damaged log, so it writes no ownership marker or registry entry and moves no datastore file aside. A brain with an open repair episode is not opened (`could not open the brain (repair_episode_open)`, exit 1), because a healthy open would close the episode and prune its repair backups. A repair episode recorded while `seed` waits for the datastore lock is left open too, and its backups stay.
+
+### Fixed
+- Shadow mode no longer pauses on a read with an empty `sourceIds` list. The primary and the Rust engine both read it as no scope, and tests on PGLite and Postgres check that the primary returns the same rows as the unscoped read. It still stops mirroring when a Rust row comes from a link end, positional fact scope or source the call did not allow (including the no-source sentinel `__none__`, which allows nothing), or when a page the call hid as private (including one marked only by an `access` or `confidentiality` alias) is returned.
+- The seed no longer stops on a code edge that names the highest retired or segmented chunk.
+- The seed now raises the Rust store's page id counter past every owner-only mark it copies. A mark outlives its deleted page, so without this a page written after the seed could take the deleted page's id and be hidden from non-owner reads.
+
+**You can turn on Rust engine shadow mode to compare a sample of your reads against the Rust engine in the background, without changing how your brain answers or writing anything to it.**
+
+### Added
+- `gbrain engine shadow start|status|stop|report`. Shadow mode is off by default. When on, the primary engine answers every call first; a sample of reads and searches is then replayed against the Rust engine in a supervised child process, and only content-free comparison rows are kept, in `~/.gbrain/shadow/<brain>/`. Nothing is written to the brain database, the config table or the brain repo. `start` previews a plan and its hash, and turning it on needs `--yes` with that hash as `--expect`. Plan: https://github.com/garrytan/gbrain/pull/9593, Phase S.
+- `gbrain engine shadow report` prints a provisional report whose verdict is always NOT READY, and writes `reports/provisional.{json,md}` only once the shadow directory exists. This phase compares reads only and the Rust store is not seeded yet.
+- `gbrain doctor` check `rust_engine_addon` reports whether the Rust addon is installed and loads, only when shadow mode is on. It never downloads anything.
+- `gbrain eval longmemeval` and `gbrain eval brainbench` take `--engine pglite|rust`. With `rust`, a missing or mismatched addon stops the run with its code and reason, and so does a Rust store that cannot yet reset its tables between fixtures. The Rust engine does not run raw SQL, which the benchmark needs to reset its tables, so the flag stops before any work for now.
+
+**More warnings on the terminal stop printing raw error text and search text.**
+
+### Fixed
+- Four more log lines used to print an error's own message or the user's search text. A database or provider error message can carry a connection string, a request URL or a key, so these lines now name only the failure class (`timeout` or `provider_error`; `structured_output_rejected` for the model-provider retry line): the entity-lookup warning, the transcript tombstone check in the atom extraction phase, and the warning when a model provider rejects a structured-output request and the call is retried without it. The fallback line when unified multimodal search returns no rows no longer prints the first 60 characters of the search; it prints no query text at all. Results and the `degraded` markers in responses are unchanged.
+- The `brain_missing` error entry (and `docs/guides/error-codes.md`) now describes what `gbrain doctor` does: it refuses before connecting, creates nothing in the folder, and exits 1, for the host brain and for a selected mount, whether the folder is absent or empty. It no longer suggests `gbrain init` as the way to recreate a mount's datastore; `init` rewrites the host brain's config.
+
 ## [0.60.765.0] - 2026-11-23
 
 **The backup check no longer reports a confident answer when it could not read something.**
