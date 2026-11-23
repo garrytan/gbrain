@@ -24,6 +24,7 @@ import { isSourceInCooldown, readRecentSourceFailures } from '../src/commands/au
 import { existsSync } from 'node:fs';
 import { openRustBrain, removeBrainDir, rustArmAddonPath } from './engine-parity/rust-arm.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { refusingEngine } from './helpers/refusing-engine.ts';
 import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
 import { autopilotUsesMinionsDispatch, probeNoWorkerPeer, type AutopilotDaemonState } from '../src/commands/autopilot-daemon.ts';
 
@@ -35,22 +36,6 @@ function stubEngine(executeRaw: () => Promise<unknown>, extra: Record<string, un
 
 function daemonState(): AutopilotDaemonState {
   return { noWorkerConsecutiveIdle: 0 } as AutopilotDaemonState;
-}
-
-/** A real engine whose `executeRaw` throws `error` for a statement containing `needle` (what a Rust brain does for every statement). */
-function refusingOn(engine: BrainEngine, needle: string, error: () => Error): BrainEngine {
-  return new Proxy(engine, {
-    get(target, property) {
-      if (property === 'executeRaw') {
-        return async (sql: string, ...rest: unknown[]) => {
-          if (sql.includes(needle)) throw error();
-          return (target.executeRaw as (...a: unknown[]) => Promise<unknown>).call(target, sql, ...rest);
-        };
-      }
-      const value = Reflect.get(target, property);
-      return typeof value === 'function' ? value.bind(target) : value;
-    },
-  });
 }
 
 let pg: PGLiteEngine;
@@ -93,8 +78,8 @@ describe('autopilot refusal-swallow sites', () => {
     await pg.setConfig('autopilot.auto_drain.threshold', '1');
     const queue = new MinionQueue(pg);
     const drain = (engine: BrainEngine) => withEnv({ GBRAIN_HOME: home }, () => submitAutoDrains(engine, queue, { timeoutMs: 60_000, jsonMode: true }));
-    await expect(drain(refusingOn(pg, 'idempotency_key = $1', REFUSAL))).rejects.toMatchObject({ code: 'engine_capability_missing' });
-    await drain(refusingOn(pg, 'idempotency_key = $1', () => new Error('connection reset')));
+    await expect(drain(refusingEngine(pg, { needle: 'idempotency_key = $1' }))).rejects.toMatchObject({ code: 'engine_capability_missing' });
+    await drain(refusingEngine(pg, { needle: 'idempotency_key = $1', error: () => new Error('connection reset') }));
     expect(await pg.executeRaw(`SELECT id FROM minion_jobs WHERE name = 'extract-atoms-drain'`)).toHaveLength(0);
   });
 
@@ -122,7 +107,7 @@ describe('autopilot refusal-swallow sites', () => {
     // The failure is recent, but a success after it ends the cooldown: PGLite answers false.
     expect(await isSourceInCooldown(pg, 's4')).toBe(false);
     // A brain whose raw SQL refuses the sources read must give the same answer, not "no success, so in cooldown".
-    expect(await isSourceInCooldown(refusingOn(pg, 'FROM sources', REFUSAL), 's4')).toBe(false);
+    expect(await isSourceInCooldown(refusingEngine(pg, { needle: 'FROM sources' }), 's4')).toBe(false);
   });
 
   test('S5 computeAutopilotIdle: the queue is counted through the typed countJobsByStatus; a capability refusal surfaces, any other error still reads "not idle"', async () => {
