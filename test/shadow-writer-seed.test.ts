@@ -5,7 +5,8 @@
  * Protects: a primary holding observation rows seeds with zero gap rows for that table. Regression it catches: a new
  * operational table the seed plan does not name, which would hold the swap at "unseeded gap rows" forever once shadow
  * mode writes its first observation. Needs the addon `bun run rust:build` writes; skips without it
- * (GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes a missing addon an error).
+ * (GBRAIN_TEST_REQUIRE_RUST_ADDON=1 or GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes a missing addon an error). The Rust
+ * engine workflow's rust-store lane owns it and fails when no test ran.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
@@ -19,8 +20,8 @@ import { fillSeedFixture, seedInto } from './helpers/shadow-seed-fixture.ts';
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
 const HAVE_ADDON = TARGET !== null && existsSync(BUILT);
-if (!HAVE_ADDON && process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1') {
-  throw new Error(`GBRAIN_TEST_RUST_ADDON_REQUIRED=1 but ${BUILT} does not exist; run bun run rust:build`);
+if (!HAVE_ADDON && (process.env.GBRAIN_TEST_REQUIRE_RUST_ADDON === '1' || process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1')) {
+  throw new Error(`a Rust addon is required here but ${BUILT} does not exist; run bun run rust:build`);
 }
 
 let primary: PGLiteEngine;
