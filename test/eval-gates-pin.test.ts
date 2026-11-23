@@ -23,13 +23,17 @@ const fileFor = (tag: string, patch: (f: Record<string, unknown>) => void = () =
   text: JSON.stringify(gatesObject(f => { f.gbrain_tag = tag; f.gbrain_commit = commitOf[tag]; f.evals_commit = evals; patch(f); })),
 });
 
-interface World { releases: ReleaseInfo[]; files: Record<string, Array<{ name: string; text: string }>>; tags?: Record<string, string | null>; assets?: Record<string, string>; calls?: string[] }
+interface World {
+  releases: ReleaseInfo[]; files: Record<string, Array<{ name: string; text: string }>>; tags?: Record<string, string | null>; assets?: Record<string, string>; calls?: string[];
+  /** The commit that landed each file, by file name; default EVALS_REF. */
+  landed?: Record<string, string | null>;
+}
 function world(w: World): PinSource {
   const calls = w.calls ?? [];
   return {
-    evalsMainCommit: async () => EVALS_REF,
     releases: async () => w.releases,
-    evalFiles: async (tag, ref) => { calls.push(`files ${tag} ${ref}`); return (w.files[tag] ?? []).map(f => f.name); },
+    evalFiles: async tag => { calls.push(`files ${tag}`); return (w.files[tag] ?? []).map(f => f.name); },
+    landingCommit: async path => { const name = path.split('/').pop()!; return w.landed && name in w.landed ? w.landed[name]! : EVALS_REF; },
     evalFileText: async (path, ref) => {
       calls.push(`text ${path} ${ref}`);
       const [, , , , tag, name] = path.split('/');
@@ -74,14 +78,30 @@ describe('planPins', () => {
     expect((await planPins(world({ releases: [release(A)], files: { [A]: [misnamed] } }))).publish).toEqual([]);
   });
 
-  test('the first FINAL file wins, a bad earlier file is skipped, and every read names one main commit', async () => {
+  test('evals_ref is the commit that landed the file, so a later run of the publisher gives the same pin', async () => {
+    const landed = '9'.repeat(40);
+    const first = await planPins(world({ releases: [release(A)], files: { [A]: [fileFor(A)] }, landed: { [fileFor(A).name]: landed } }));
+    expect(first.publish[0]!.pin.evals_ref).toBe(landed);
+    expect(first.publish[0]!.pin.url).toBe(`https://raw.githubusercontent.com/garrytan/gbrain-evals/${landed}/eval/results/engine-bench/eval-gates/${A}/${EVALS_COMMIT}.json`);
+    // Published; main then moves on. The same landing commit gives an identical pin: a no-op, not a conflict.
+    const url = `https://api.example.test/${A}`;
+    const again = await planPins(world({ releases: [release(A, true)], files: { [A]: [fileFor(A)] }, landed: { [fileFor(A).name]: landed }, assets: { [url]: JSON.stringify(first.publish[0]!.pin) } }));
+    expect(again).toMatchObject({ publish: [], unchanged: [A], conflicts: [] });
+  });
+
+  test('a file with no landing commit is not pinned', async () => {
+    const plan = await planPins(world({ releases: [release(A)], files: { [A]: [fileFor(A)] }, landed: { [fileFor(A).name]: null } }));
+    expect(plan.publish).toEqual([]);
+  });
+
+  test('the first FINAL file wins, a bad earlier file is skipped, and every file is read at its landing commit', async () => {
     const calls: string[] = [];
     const bad = fileFor(A, f => { f.status = 'PROVISIONAL'; f.generated_at = '2026-11-27T00:00:00Z'; }, '1'.repeat(40));
     const first = fileFor(A, f => { f.generated_at = '2026-11-28T00:00:00Z'; });
     const later = fileFor(A, f => { f.generated_at = '2026-11-29T00:00:00Z'; }, '2'.repeat(40));
     const plan = await planPins(world({ releases: [release(A)], files: { [A]: [later, first, bad] }, calls }));
     expect(plan.publish[0]!.pin.evals_commit).toBe(EVALS_COMMIT);
-    expect(calls.every(c => c.endsWith(EVALS_REF))).toBe(true);
+    expect(calls.filter(c => c.startsWith('text')).every(c => c.endsWith(EVALS_REF))).toBe(true);
   });
 
   test('an identical existing pin is a no-op; a different one is a conflict and nothing is replaced', async () => {
@@ -116,8 +136,16 @@ describe('githubSource', () => {
   test('a failed HTTP call throws instead of reading as "no file", and a missing directory is empty', async () => {
     const answer = (status: number): typeof fetch => (async () => new Response('{}', { status })) as unknown as typeof fetch;
     await expect(githubSource('t', answer(500)).releases()).rejects.toThrow('500');
-    expect(await githubSource('t', answer(404)).evalFiles('v1.0.0', EVALS_REF)).toEqual([]);
+    expect(await githubSource('t', answer(404)).evalFiles('v1.0.0')).toEqual([]);
     expect(await githubSource('t', answer(404)).tagCommit('v1.0.0')).toBeNull();
+  });
+
+  test('the landing commit is the oldest commit that touched the file', async () => {
+    const list = [{ sha: '2'.repeat(40) }, { sha: '1'.repeat(40) }];
+    const fetcher = (async (url: string) => new Response(JSON.stringify(url.includes('commits?') && url.includes('path=eval%2Fresults') ? list : []))) as unknown as typeof fetch;
+    expect(await githubSource('t', fetcher).landingCommit('eval/results/engine-bench/eval-gates/v1.0.0/x.json')).toBe('1'.repeat(40));
+    const none = (async () => new Response('[]')) as unknown as typeof fetch;
+    expect(await githubSource('t', none).landingCommit('eval/results/x.json')).toBeNull();
   });
 
   test('an annotated tag is followed to its commit', async () => {
