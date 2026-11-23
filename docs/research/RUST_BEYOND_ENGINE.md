@@ -250,9 +250,9 @@ are TypeScript changes for all engines and are not part of this research.
 ## Open gap
 
 A separate per-stage profile of `query` and `import` on the 10k brain on all three engines, run
-from gbrain-evals, is pending. This page does not repeat it. Its ranked list should settle marks 3,
-4 and 5 above (search fusion, chunking and embedding batches) and the Rust engine's own numbers on
-the same paths, which this page could not measure (no Rust toolchain on the machine).
+from gbrain-evals, is pending. This page does not repeat it. Its ranked list should settle mark 5 above
+(search fusion) and the table's pending chunking and embedding batch marks, and it should give the
+Rust engine's own numbers on the same paths, which this page could not measure (no Rust toolchain on the machine).
 
 ## Proposed edits to the plan of record
 
