@@ -6,7 +6,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import { currentCallerAccess, withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { callerAccessRecord, withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { buildVectorSearchStatement } from '../../src/core/search/vector-statement.ts';
 import { makeAskHandler } from '../../src/shadow/checks.ts';
 import { openReadSource } from '../../src/shadow/read-pool.ts';
@@ -71,11 +71,12 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
   const rows = (rig: Rig, n = 1) => rig.finish(n);
 
   /** Reads `listPages` as `caller` on the primary (it excludes what the caller may not read), while Rust answers `rustSlugs`. */
-  async function leak(caller: Record<string, unknown>, rustSlugs: string[], opts: Record<string, unknown> = { excludePrivate: true }, primary?: BrainEngine) {
+  async function leak(caller: Record<string, unknown> | null, rustSlugs: string[], opts: Record<string, unknown> = { excludePrivate: true }, primary?: BrainEngine) {
     const ids = await privacyFixture(ctx.primary());
     const rig = await start({ primary: primary ?? ctx.primary(), unseeded: true });
     rig.rust.listPages = async () => rustSlugs.map((slug) => ({ id: ids[slug], slug, source_id: 'default', title: slug, type: 'note' }));
-    await withCallerAccess(caller, () => rig.engine.listPages({ limit: 100, ...opts } as never));
+    const read = () => rig.engine.listPages({ limit: 100, ...opts } as never);
+    await (caller ? withCallerAccess(caller, read) : read());
     return { rig, rows: await rig.finish() };
   }
 
@@ -92,6 +93,14 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       });
     }
   
+    test('a read with no caller record that asked for the policy is judged under no record, and so is Rust', async () => {
+      await privacyFixture(ctx.primary());
+      const open = (await ctx.primary().listPages({ limit: 100, excludePrivate: true })).map((r) => r.slug);
+      expect(open).not.toContain('priv/a'); // the baseline policy hides it
+      const { rows } = await leak(null, [...open, 'priv/a']);
+      expect(rows[0]).toMatchObject({ outcome: 'privacy_diverged', reason: 'row_not_readable_by_caller' });
+    });
+
     test('an authorized page outside the primary\'s top k does not pause mirroring', async () => {
       await privacyFixture(ctx.primary());
       const top = await withCallerAccess(BOB, () => ctx.primary().listPages({ excludePrivate: true, limit: 1 }));
@@ -134,14 +143,14 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
   });
 
   describe('caller access capture', () => {
-    test('the wrapper captures the frozen record, the child runs Rust under it, and a read outside any record carries the default one', async () => {
+    test('the wrapper captures the frozen record, the child runs Rust under it, and a read outside any record runs Rust under none', async () => {
       const rig = await start({ unseeded: true });
-      const seen: Array<readonly string[]> = [];
-      rig.rust.getPage = async () => { seen.push(currentCallerAccess().identity); return null; };
+      const seen: Array<readonly string[] | string> = [];
+      rig.rust.getPage = async () => { seen.push(callerAccessRecord()?.identity ?? 'no record'); return null; };
       await withCallerAccess(ALICE, () => rig.engine.getPage('missing/one'));
       await rig.engine.getPage('missing/two');
       await rig.finish(2);
-      expect(seen).toEqual([['member:alice-example'], []]);
+      expect(seen).toEqual([['member:alice-example'], 'no record']); // a record, even an empty one, changes the page policy text the Rust adapter serves
     });
   });
 

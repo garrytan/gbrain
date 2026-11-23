@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess } from 'node:child_process';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { withoutCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { attachShadowParts, type AttachedShadow } from '../../src/shadow/attach.ts';
 import { runShadowChild, type ShadowChildDeps } from '../../src/shadow/child.ts';
 import type { FollowStore } from '../../src/shadow/follow-child.ts';
@@ -72,12 +73,12 @@ export async function startRig(o: RigOptions): Promise<Rig> {
     const stdin = new PassThrough();
     const stdout = new PassThrough();
     const proc = Object.assign(new EventEmitter(), { stdin, stdout, stderr: null, pid: 4242, unref() {}, kill() {} });
-    childDone = runShadowChild(dir, {
+    childDone = withoutCallerAccess(() => runShadowChild(dir, {
       input: stdin, writeControl: (line) => { stdout.write(line); }, heartbeatMs: 60_000, childId: 'rig',
       loadAddon: async () => ({ ok: true as const, addon: { target: 'linux-x64-glibc', engineAbi: 1, engineBuild: 'b1', catalogVersion: 3 } as never }),
       addonSha256: () => 'a'.repeat(64), capabilities: () => ['pages'], readinessPolicyHash: () => 'p1',
       openEngine: () => engine as never, onRow: (row) => { seen.push({ ...row }); }, ...o.child,
-    });
+    })); // a real child is another process: it inherits no caller record from the writer's async context
     return proc as unknown as ChildProcess;
   }) as never;
   const state = { version: 1, enabled: true, started_at: 'x', sample_rate: 1, queue_bound: 64, plan_hash: 'h', brain: 'b', primary_engine: 'pglite' };

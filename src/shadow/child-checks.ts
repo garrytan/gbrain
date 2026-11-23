@@ -60,7 +60,6 @@ export async function privacyVerdict(ask: Asker, args: unknown[], primary: unkno
   if (!policyApplies(args)) return 'clean';
   const candidates = missingPages(primary, rust);
   if (candidates.ids.length + candidates.keys.length === 0) return 'clean';
-  if (!access) return 'privacy_check_unavailable';
   try {
     const answer = await ask({ kind: 'privacy', access, at, candidates }, PRIVACY_ASK_TIMEOUT_MS) as PrivacyAnswer;
     if (answer.moved) return 'privacy_check_moved';

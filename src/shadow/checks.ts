@@ -16,7 +16,7 @@
  *   vector   The exact reference of a vector sample (recall.ts), at most one a minute.
  */
 import type { BrainEngine } from '../core/engine.ts';
-import { privatePagesFilterForCaller, withCallerAccess, type CallerAccess } from '../core/search/private-visibility.ts';
+import { privatePagesFilterForCaller, withCallerAccess, withoutCallerAccess, type CallerAccess } from '../core/search/private-visibility.ts';
 import { decodeValue, encodeValue } from './codec.ts';
 import { readEpoch } from './evidence-epoch.ts';
 import type { ShadowFollower } from './follower.ts';
@@ -31,6 +31,8 @@ export interface PageCandidates { ids: number[]; keys: string[] }
 export interface PrivacyAnswer { checked: number; violations: number; moved: boolean }
 export interface RerunAnswer { result: unknown; stamp: number; epoch_id: string }
 
+/** Runs `fn` as the captured caller, or outside any caller record when the read had none (a record changes the page policy text). */
+const asCaller = <T>(access: Partial<CallerAccess> | undefined, fn: () => T): T => (access ? withCallerAccess(access, fn) : withoutCallerAccess(fn));
 const coded = (code: string): Error => Object.assign(new Error(code), { code });
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => { setTimeout(resolve, ms).unref?.(); });
 
@@ -40,10 +42,10 @@ const POLICY_GENERATION_SQL = `SELECT concat_ws('|',
   (SELECT count(*) FROM access_rules), (SELECT count(*) FROM access_pending_coverage),
   (SELECT count(*) || ':' || COALESCE(max(updated_at)::text, '') FROM access_members), (SELECT count(*) FROM access_group_members)) AS generation`;
 
-export async function policyCheck(reads: ReadSource, access: Partial<CallerAccess>, cand: PageCandidates, at: number): Promise<PrivacyAnswer> {
+export async function policyCheck(reads: ReadSource, access: Partial<CallerAccess> | undefined, cand: PageCandidates, at: number): Promise<PrivacyAnswer> {
   const generation = (): Promise<string> => reads.read(async (tx) => String((await tx.executeRaw<{ generation: string }>(POLICY_GENERATION_SQL))[0]?.generation));
   const before = await generation();
-  const rows = await reads.read((tx) => withCallerAccess(access, () => tx.executeRaw<{ allowed: boolean; changed: boolean }>(
+  const rows = await reads.read((tx) => asCaller(access, () => tx.executeRaw<{ allowed: boolean; changed: boolean }>(
     `SELECT (${privatePagesFilterForCaller('p')}) AS allowed, p.updated_at > to_timestamp($3::double precision / 1000.0) AS changed FROM pages p
       WHERE p.id = ANY($1::bigint[]) OR (p.source_id || E'\\x1f' || p.slug) = ANY($2::text[])`, [cand.ids, cand.keys, at])));
   const moved = before !== await generation() || rows.some((r) => r.changed === true);
@@ -60,7 +62,7 @@ export interface AskDeps {
   now?: () => number;
 }
 
-async function stableRerun(d: AskDeps, ask: { op: string; args: unknown; access: Partial<CallerAccess>; epoch_id: string }): Promise<RerunAnswer> {
+async function stableRerun(d: AskDeps, ask: { op: string; args: unknown; access: Partial<CallerAccess> | undefined; epoch_id: string }): Promise<RerunAnswer> {
   const now = d.now ?? Date.now;
   const deadline = now() + RERUN_DEADLINE_MS;
   const left = (): number => Math.max(1, deadline - now());
@@ -77,19 +79,19 @@ async function stableRerun(d: AskDeps, ask: { op: string; args: unknown; access:
   const invalidated = f.lastInvalidatedAt;
   const ack = await d.rpc<{ stamp: number }>('barrier', {}, left());
   const args = decodeValue(ask.args) as unknown[];
-  const read = withCallerAccess(ask.access, () => (d.engine as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[ask.op]!(...args));
+  const read = asCaller(ask.access, () => (d.engine as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[ask.op]!(...args));
   const result = await Promise.race([read, sleep(left()).then(() => { throw coded('timeout'); })]);
   if (!f.idle() || f.published !== published || f.lastInvalidatedAt !== invalidated) throw coded('write_after_barrier');
   return { result: encodeValue(result), stamp: ack.stamp, epoch_id: epoch };
 }
 
 /** The primary's exact top rows for `args`: ids and scores only. */
-async function vectorReference(reads: ReadSource, args: unknown[], access: Partial<CallerAccess>): Promise<unknown> {
+async function vectorReference(reads: ReadSource, args: unknown[], access: Partial<CallerAccess> | undefined): Promise<unknown> {
   const [embedding, opts] = referenceArgs(args) as [Float32Array, object];
   const rows = await reads.read(async (tx) => {
     await tx.executeRaw('SET LOCAL enable_indexscan = off');
     await tx.executeRaw('SET LOCAL enable_bitmapscan = off');
-    return withCallerAccess(access, () => tx.searchVector(embedding, opts));
+    return asCaller(access, () => tx.searchVector(embedding, opts));
   });
   return rankedKeys(encodeValue(rows));
 }
@@ -97,7 +99,7 @@ async function vectorReference(reads: ReadSource, args: unknown[], access: Parti
 export function makeAskHandler(d: AskDeps): (ask: { id: number; kind: string; [key: string]: unknown }) => Promise<unknown> {
   const gate = new IntervalGate(RECALL_INTERVAL_MS, d.now);
   return async (ask) => {
-    const access = (ask.access ?? {}) as Partial<CallerAccess>;
+    const access = ask.access as Partial<CallerAccess> | undefined;
     switch (ask.kind) {
       case 'privacy': return policyCheck(d.reads, access, ask.candidates as PageCandidates, Number(ask.at));
       case 'rerun': return stableRerun(d, ask as never);

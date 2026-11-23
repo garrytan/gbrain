@@ -13,7 +13,7 @@ import type { CallerAccess } from '../core/search/private-visibility.ts';
 
 /** One captured primary read, frozen at capture time: `args` and `result` are already `encodeValue` output. */
 export interface CapturedRead {
-  /** The caller-access record the primary read ran under (private-visibility.ts, frozen); the child runs Rust under it and the policy check judges rows by it. Never written to the ledger. */
+  /** The caller-access record the primary read ran under (private-visibility.ts, frozen), absent when there was none; the child runs Rust under it and the policy check judges rows by it. Never written to the ledger. */
   access?: CallerAccess;
   op: string;
   /** Encoded call arguments (plain JSON). */

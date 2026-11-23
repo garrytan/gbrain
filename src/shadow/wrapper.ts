@@ -19,7 +19,7 @@
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { registerEngineView } from '../core/persistence/switches.ts';
-import { currentCallerAccess } from '../core/search/private-visibility.ts';
+import { callerAccessRecord } from '../core/search/private-visibility.ts';
 import { encodeValue } from './codec.ts';
 import { followRaw, followScope, followWrite, type FollowContext, type FollowOptions, type Frame } from './follow.ts';
 import type { CapturedRead, MirrorCounters, UsageField } from './mirror.ts';
@@ -106,7 +106,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
       use(op, 'unmirrorable');
       return fn.apply(engine, args);
     }
-    const access = currentCallerAccess(); // frozen: the child runs Rust under it and the policy check judges rows by it
+    const access = callerAccessRecord() ?? undefined; // frozen; none outside a caller's record, and then Rust runs under none (a record changes the page policy text Rust serves)
     const started = now();
     const out = fn.apply(engine, args);
     if (!isThenable(out)) return out;
