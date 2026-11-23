@@ -37,6 +37,9 @@ import { HOST_BRAIN_ID, loadMounts, type MountEntry } from '../core/brain-regist
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { connectWithRetry, resolvePoolSize, resolvePrepare } from '../core/db.ts';
 import { createEngine } from '../core/engine-factory.ts';
+import type { BrainEngine } from '../core/engine.ts';
+import { readBrainRef } from '../core/brain-ref.ts';
+import { readServeBrainRef, type ServeBrainRef } from './serve-brain-ref.ts';
 import {
   deriveDirectUrl,
   deriveSessionPoolerUrl,
@@ -85,7 +88,8 @@ Usage:
 
 Flags:
   --json         machine output (schema_version 1)
-  --probe        attempt ONE bounded connect + SELECT 1 (classified on failure)
+  --probe        attempt ONE bounded connect + SELECT 1 (classified on failure);
+                 also prints brain_ref, a one-way reference to the brain (never its id)
   --brain <id>   resolve a specific brain (default: --brain/GBRAIN_BRAIN_ID/.gbrain-mount chain)
 
 Works with the database down — that is the point. Pair with:
@@ -100,6 +104,28 @@ interface ProbeResult {
   mode?: unknown;
   pool_latency_ms?: { read: number | null; direct: number | null };
   diagnosis?: PgAccessDiagnosis;
+  /** The brain's one-way reference (src/core/brain-ref.ts); never its persistence identity. Null with a note when unread. */
+  brain_ref?: string | null;
+  brain_ref_note?: BrainRefNote;
+}
+
+type BrainRefNote = 'no_persistence_identity' | 'brain_ref_unreadable' | 'locked_by_other_process' | ServeBrainRefNote;
+type ServeBrainRefNote = Extract<ServeBrainRef, { brain_ref: null }>['note'];
+
+/** A probe result's brain_ref fields: the value, or null and why (the read's error text is never kept). */
+async function brainRefFields(engine: BrainEngine): Promise<Pick<ProbeResult, 'brain_ref' | 'brain_ref_note'>> {
+  try {
+    const brainRef = await readBrainRef(engine);
+    return brainRef ? { brain_ref: brainRef } : { brain_ref: null, brain_ref_note: 'no_persistence_identity' };
+  } catch {
+    return { brain_ref: null, brain_ref_note: 'brain_ref_unreadable' };
+  }
+}
+
+function lockedBrainRef(dataDir: string | null, serve: boolean | undefined): Pick<ProbeResult, 'brain_ref' | 'brain_ref_note'> {
+  if (!serve || !dataDir) return { brain_ref: null, brain_ref_note: 'locked_by_other_process' };
+  const read = readServeBrainRef(dataDir);
+  return read.brain_ref === null ? { brain_ref: null, brain_ref_note: read.note } : { brain_ref: read.brain_ref };
 }
 
 interface EngineStatusReport {
@@ -206,6 +232,7 @@ async function runProbe(
       return {
         ok: true,
         note: lock.serve ? 'locked_by_serve' : `locked_by_${lock.subcommand ?? 'live_process'}`,
+        ...lockedBrainRef(dataDir, lock.serve),
       };
     }
   }
@@ -217,7 +244,7 @@ async function runProbe(
     // 3-attempt backoff ladder or hold pooler slots while diagnosing.
     await connectWithRetry(engine, { ...engineConfig, poolSize: 1 }, { noRetry: true, log: () => {} });
     await engine.executeRaw('SELECT 1');
-    const result: ProbeResult = { ok: true, latency_ms: Date.now() - started };
+    const result: ProbeResult = { ok: true, latency_ms: Date.now() - started, ...(await brainRefFields(engine)) };
     if (engineKind === 'postgres') {
       // First real callers of the ConnectionManager introspection surface
       // (TODOS 1231): report routing mode + per-pool health latencies when
@@ -403,6 +430,7 @@ function printHuman(r: EngineStatusReport): void {
   if (r.probe) {
     if (r.probe.ok) {
       lines.push(`Probe:   ok${r.probe.note ? ` (${r.probe.note})` : ''}${r.probe.latency_ms !== undefined ? ` ${r.probe.latency_ms}ms` : ''}`);
+      if (r.probe.brain_ref !== undefined) lines.push(`Ref:     ${r.probe.brain_ref ?? `(none: ${r.probe.brain_ref_note})`}`);
     } else if (r.probe.diagnosis) {
       lines.push(`Probe:   FAIL ${r.probe.diagnosis.reason} — ${r.probe.diagnosis.remediation}`);
     } else {

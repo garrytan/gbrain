@@ -12,6 +12,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
+use super::cjk::CjkTerm;
 use super::tsearch::{TsVector, Weight, concat, fts_input, setweight, to_tsvector};
 use super::vector_cache::{VectorKind, cached};
 use crate::chunks::{ChunkRecord, SAFE_FENCE_CHUNKER_VERSION};
@@ -22,6 +23,7 @@ use crate::kv::KvRead;
 use crate::pages::PageRecord;
 use crate::sources::read_source;
 use crate::timeline_queries::jsonb_field_text;
+use crate::trust::{TrustTier, activation_suppressed};
 
 /// The `text_projection_revision` the v153 activation leaves on a page whose pre-upgrade index it
 /// keeps serving (`servedTextProjectionFilter`, search/safe-chunks.ts).
@@ -93,17 +95,64 @@ pub struct KeywordOptions {
     pub handles_only: bool,
     /// `searchKeyword`: the per-page candidates kept before the window (`LIMIT $2`, 3x the limit).
     pub inner_limit: Option<f64>,
-    /// `excludePrivate`: the page policy `buildVisibilityClause` adds (`privatePagesFilterForCaller('p')`), as
-    /// `facts/privacy.rs` `page_hidden` reads it. `None` hides nothing.
+    /// `excludePrivate`: the store page policy (`storePagePolicy`) that `privatePagesFilterForCaller(p)`
+    /// renders, applied by `facts/privacy.rs` `page_hidden`; `null` when the read does not ask for it.
     pub exclude_private: Option<PrivacyPolicy>,
-    /// `requiresSafeChunks(opts)` (`requireSafeChunks ?? excludePrivate`): only pages chunked by the safe fence chunker.
+    /// `requiresSafeChunks(opts)`: only pages past the chunker-version fence (`safeChunksFilter(p)`).
+    /// An `excludePrivate` read asks for it unless it says otherwise.
     pub require_safe_chunks: bool,
+    /// `minTrust`: the trust floor (`trustFloorSql(p)`), a page's stamped tier at or above it.
+    /// `null` or empty keeps every tier; a name that is no tier refuses.
+    pub min_trust: Option<String>,
+    /// `suppressFlagged`: drops a page `activationSuppressedSql('pages', p)` suppresses, a page at or
+    /// below `agent_written` that holds a `flag` receipt in an activation reason family.
+    pub suppress_flagged: bool,
+    /// `countKeywordPages` and `searchKeywordPages` on a CJK query: the match terms
+    /// (`cjkMatchTerms`), matched with `LIKE` / `ILIKE` in place of the text search, with no
+    /// handle arm (`keyword/cjk.rs`).
+    pub cjk_terms: Option<Vec<CjkTerm>>,
 }
 
 /// A parsed date bound.
 pub(super) struct Bound {
     micros: i64,
     inclusive: bool,
+}
+
+/// A read's parsed `afterDate` and `beforeDate`. A page is dated by its `effective_date`, else its
+/// `updated_at` (the SQL's `created_at` arm is never reached: a page row always has `updated_at`).
+pub(crate) struct DateWindow {
+    after: Option<Bound>,
+    before: Option<Bound>,
+}
+
+impl DateWindow {
+    pub(crate) fn parse(after: Option<&DateBound>, before: Option<&DateBound>) -> Result<Self> {
+        Ok(Self {
+            after: Bound::parse(after, "afterDate")?,
+            before: Bound::parse(before, "beforeDate")?,
+        })
+    }
+
+    /// `dateBound('>' | '>=', afterDate)` and `dateBound('<' | '<=', beforeDate)`.
+    pub(crate) fn admits(&self, page: &PageRecord) -> bool {
+        let dated = page.effective_date_us.unwrap_or(page.updated_at_us);
+        let after = self.after.as_ref().is_none_or(|b| {
+            if b.inclusive {
+                dated >= b.micros
+            } else {
+                dated > b.micros
+            }
+        });
+        let before = self.before.as_ref().is_none_or(|b| {
+            if b.inclusive {
+                dated <= b.micros
+            } else {
+                dated < b.micros
+            }
+        });
+        after && before
+    }
 }
 
 impl Bound {
@@ -122,11 +171,34 @@ impl Bound {
     }
 }
 
+/// `safeChunksFilter(p)`: `chunker_version >= SAFE_FENCE_CHUNKER_VERSION`. A page that records no
+/// version fails it, as NULL fails the SQL comparison.
+fn safe_chunks(page: &PageRecord) -> bool {
+    page.chunker_version
+        .is_some_and(|v| v >= SAFE_FENCE_CHUNKER_VERSION)
+}
+
+/// The read's trust floor (`trustFloorSql`): none when unset or empty, and a refusal for a name
+/// that is no tier.
+fn trust_floor(o: &KeywordOptions) -> Result<Option<TrustTier>> {
+    parse_trust_floor(o.min_trust.as_deref())
+}
+
+/// A `minTrust` name as a trust floor: none when unset or empty, and a refusal for a name that is
+/// no tier.
+pub(crate) fn parse_trust_floor(name: Option<&str>) -> Result<Option<TrustTier>> {
+    match name {
+        None | Some("") => Ok(None),
+        Some(name) => TrustTier::parse(name).map(Some).ok_or_else(|| {
+            StoreError::invalid(format!("minTrust: \"{name}\" names no trust tier"))
+        }),
+    }
+}
+
 /// The page-level predicates, with the source table read once per source.
 pub(super) struct PageFilter<'a> {
     options: &'a KeywordOptions,
-    after: Option<Bound>,
-    before: Option<Bound>,
+    dates: DateWindow,
     live_sources: HashMap<String, bool>,
     /// The owner-only sources, read on the first page `exclude_private` judges.
     owner_only: Option<OwnerOnlySources>,
@@ -136,8 +208,7 @@ impl<'a> PageFilter<'a> {
     pub(super) fn new(options: &'a KeywordOptions) -> Result<Self> {
         Ok(Self {
             options,
-            after: Bound::parse(options.after_date.as_ref(), "afterDate")?,
-            before: Bound::parse(options.before_date.as_ref(), "beforeDate")?,
+            dates: DateWindow::parse(options.after_date.as_ref(), options.before_date.as_ref())?,
             live_sources: HashMap::new(),
             owner_only: None,
         })
@@ -148,18 +219,10 @@ impl<'a> PageFilter<'a> {
         let o = self.options;
         if page.deleted_at_us.is_some()
             || !served(page)
+            || (o.require_safe_chunks && !safe_chunks(page))
             || HIDING_FRONTMATTER_KEYS
                 .iter()
                 .any(|key| page.frontmatter.contains_key(*key))
-        {
-            return Ok(false);
-        }
-        // `safeChunksFilter`: `chunker_version >= 4`. A page that records no version is not safe (the comparison is NULL), and
-        // the store stamps the version when it seals chunks and takes it below the fence when a write changes them.
-        if o.require_safe_chunks
-            && !page
-                .chunker_version
-                .is_some_and(|v| v >= SAFE_FENCE_CHUNKER_VERSION)
         {
             return Ok(false);
         }
@@ -191,20 +254,7 @@ impl<'a> PageFilter<'a> {
         {
             return Ok(false);
         }
-        let dated = page.effective_date_us.unwrap_or(page.updated_at_us);
-        if self.after.as_ref().is_some_and(|b| {
-            if b.inclusive {
-                dated < b.micros
-            } else {
-                dated <= b.micros
-            }
-        }) || self.before.as_ref().is_some_and(|b| {
-            if b.inclusive {
-                dated > b.micros
-            } else {
-                dated >= b.micros
-            }
-        }) {
+        if !self.dates.admits(page) {
             return Ok(false);
         }
         // `JOIN sources s ... AND NOT s.archived`: a page whose source row is gone drops too.
@@ -216,7 +266,17 @@ impl<'a> PageFilter<'a> {
                 live
             }
         };
-        Ok(live)
+        if !live {
+            return Ok(false);
+        }
+        // `pageEligibleSql(p)`: the trust floor, then the flagged-page filter.
+        let tier = TrustTier::stored(page.trust_tier.as_deref());
+        if let Some(floor) = trust_floor(o)?
+            && tier.rank() < floor.rank()
+        {
+            return Ok(false);
+        }
+        Ok(!(o.suppress_flagged && activation_suppressed(read, "pages", page.id, tier)?))
     }
 
     /// The chunk predicates: `detail` low, `language`, `symbolKind`.
@@ -255,7 +315,11 @@ fn jsonb_eq(a: &Value, b: &Value) -> bool {
 }
 
 /// `frontmatter @> {key: v} OR frontmatter @> {key: [v]}` for any `v` of `values`.
-fn frontmatter_holds(frontmatter: &Map<String, Value>, key: &str, values: &[Value]) -> bool {
+pub(crate) fn frontmatter_holds(
+    frontmatter: &Map<String, Value>,
+    key: &str,
+    values: &[Value],
+) -> bool {
     let Some(field) = frontmatter.get(key) else {
         return false;
     };

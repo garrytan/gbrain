@@ -1,7 +1,6 @@
 import type { BrainEngine } from './engine.ts';
 import { overlayWithdrawalBody } from './facts/withdrawal-overlay.ts';
 import type { PageWithdrawal } from './page-state/types.ts';
-import { rowToPage } from './utils.ts';
 import { EXPORT_PAYLOAD_LIMIT } from './export-stage.ts';
 import { isSegmentedPage } from './page-body/page-shape.ts';
 import { openSegmentedBody, readBodyRange, type BodyLedger } from './page-body/read-range.ts';
@@ -15,15 +14,9 @@ const EXPORT_COLLECT_BYTES = 1024 * 1024;
 export type ExportWithdrawal = PageWithdrawal & { subject: string };
 
 export async function readExportWithdrawals(tx: BrainEngine, sourceId: string): Promise<ExportWithdrawal[]> {
-  const [size] = await tx.executeRaw<{ bytes: number }>(`SELECT COALESCE(sum(octet_length(
-    jsonb_build_object('visibility',visibility,'fact_hash',fact_hash,'withdrawn_at',withdrawn_at,'subject',subject)::text)+1),0)+2 AS bytes
-    FROM fact_withdrawals WHERE source_id=$1`, [sourceId]);
-  if (Number(size.bytes) > EXPORT_PAYLOAD_LIMIT) throw new Error('Export withdrawal ledger capacity exceeded. No destination output was published.');
+  if (await tx.readExportWithdrawalLedgerBytes(sourceId) > EXPORT_PAYLOAD_LIMIT) throw new Error('Export withdrawal ledger capacity exceeded. No destination output was published.');
   // Purge tombstones ride the same overlay and drop their rows from the export.
-  return tx.executeRaw<ExportWithdrawal>(`SELECT visibility,fact_hash,withdrawn_at,subject,false AS purged
-    FROM fact_withdrawals WHERE source_id=$1
-    UNION ALL SELECT visibility,fact_hash,purged_at,subject,true FROM fact_purges WHERE source_id=$1
-    ORDER BY visibility,fact_hash,subject`, [sourceId]);
+  return await tx.listExportWithdrawals(sourceId) as unknown as ExportWithdrawal[];
 }
 
 export type ExportSnapshot = { page: Page; tags: string[] };
@@ -41,17 +34,12 @@ export async function readExportPage(tx: BrainEngine, key: { id: string; source_
  */
 export async function readExportPages(tx: BrainEngine, keys: ReadonlyArray<{ id: string; source_id: string; slug: string }>, withdrawals: ExportWithdrawal[]): Promise<ExportSnapshot[]> {
   if (!keys.length) return [];
-  const rows = await tx.executeRaw<Record<string, unknown>>(`WITH export_page AS MATERIALIZED (
-    SELECT * FROM pages WHERE id = ANY($1::bigint[])
-  ) SELECT p.*,
-    COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS export_tags
-    FROM export_page p WHERE p.deleted_at IS NULL`,
-  [keys.map(key => key.id)]);
-  const byId = new Map(rows.map(row => [String(row.id), row]));
+  const rows = await tx.readExportPageRows(keys.map(key => key.id));
+  const byId = new Map(rows.map(row => [String(row.page.id), row]));
   const snapshots = keys.map(key => {
     const row = byId.get(String(key.id));
-    if (!row || row.source_id !== key.source_id || row.slug !== key.slug) throw new Error('Export snapshot unexpectedly lost a selected page.');
-    return { page: rowToPage(row), tags: row.export_tags as string[] };
+    if (!row || row.page.source_id !== key.source_id || row.page.slug !== key.slug) throw new Error('Export snapshot unexpectedly lost a selected page.');
+    return { page: row.page, tags: row.tags };
   });
   const fenced = snapshots.flatMap(({ page }) => {
     if (isSegmentedPage(page) || !(page.compiled_truth.includes('gbrain:facts:begin') || page.timeline.includes('gbrain:facts:begin'))) return [];
@@ -59,13 +47,7 @@ export async function readExportPages(tx: BrainEngine, keys: ReadonlyArray<{ id:
     return applicable.length ? [{ page, applicable }] : [];
   });
   if (!fenced.length) return snapshots;
-  const normalized = await tx.executeRaw<{ i: number; body: string | null; timeline: string | null }>(`SELECT t.i::int AS i,
-    (SELECT string_agg(regexp_replace(lower(line),'[[:space:]]+',' ','g'),chr(10) ORDER BY ord)
-      FROM unnest(string_to_array(t.body,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS body,
-    (SELECT string_agg(regexp_replace(lower(line),'[[:space:]]+',' ','g'),chr(10) ORDER BY ord)
-      FROM unnest(string_to_array(t.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS timeline
-    FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS t(body, timeline, i)`,
-  [fenced.map(({ page }) => page.compiled_truth), fenced.map(({ page }) => page.timeline)]);
+  const normalized = await tx.normalizeFenceLines(fenced.map(({ page }) => page.compiled_truth), fenced.map(({ page }) => page.timeline));
   for (const row of normalized) {
     const { page, applicable } = fenced[Number(row.i) - 1]!;
     page.compiled_truth = overlayWithdrawalBody(page.compiled_truth, row.body ?? '', applicable);

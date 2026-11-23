@@ -121,18 +121,7 @@ a fresh directory. See docs/storage-tiering.md#safe-export.`);
       let cursor = '0';
       for (;;) {
         checkDeadline();
-        const batch = await tx.executeRaw<{ id: string; segmented: boolean; slug: string; source_id: string; source_path: string | null; source_path_bytes: number; raw_count: number; bytes: number }>(
-          `SELECT p.id::text, p.body_storage='segmented' AS segmented, left(p.slug,4097) AS slug, p.source_id, left(p.source_path,4097) AS source_path, octet_length(p.source_path) AS source_path_bytes,
-            (SELECT count(*) FROM raw_data r WHERE r.page_id=p.id) AS raw_count,
-            CASE WHEN p.body_storage='segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth)::bigint + octet_length(p.timeline) END
-              + octet_length(p.frontmatter::text)
-              + octet_length(p.title) + octet_length(p.slug) + COALESCE(octet_length(p.source_path),0)
-              + COALESCE((SELECT sum(octet_length(r.data::text)+octet_length(r.source)) FROM raw_data r WHERE r.page_id=p.id),0)
-              + COALESCE((SELECT sum(octet_length(t.tag)) FROM tags t WHERE t.page_id=p.id),0) AS bytes
-           FROM pages p WHERE p.id > $1::bigint AND p.deleted_at IS NULL
-             AND ($2::text IS NULL OR p.source_id=$2) AND ($3::text IS NULL OR p.type=$3)
-             AND ($4::text IS NULL OR starts_with(p.slug,$4)) ORDER BY p.id LIMIT 256`,
-          [cursor, source === ALL_SOURCES ? null : source ?? null, type ?? null, prefix ?? null]);
+        const batch = await tx.listExportPageKeys({ afterId: cursor, sourceId: source === ALL_SOURCES ? null : source ?? null, type: type ?? null, slugPrefix: prefix ?? null });
         if (!batch.length) break;
         for (const batchSource of new Set(batch.map(key => key.source_id))) {
           checkDeadline();

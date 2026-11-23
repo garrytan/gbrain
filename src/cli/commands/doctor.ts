@@ -38,6 +38,15 @@ export async function run(args: string[], ctx: CliDispatchContext): Promise<void
     return;
   }
 
+  // A configured PGLite brain (the host's, or the mounted one --brain / GBRAIN_BRAIN_ID selects) that is not
+  // there (unmounted drive, moved folder) or is an empty mount point is refused before any connect:
+  // connecting would create a new empty brain and report it healthy. Host probe is serve's status-only missing_brain. Runs that never connect (--fast, filesystem-only --only) keep running.
+  if (await doctorWillConnect(args)) {
+    const { missingBrainRefusal, refuseMissingBrain } = await import('../../commands/doctor/missing-brain.ts');
+    const refusal = missingBrainRefusal(dbMarkerBrainId() ?? 'host');
+    if (refusal) { await refuseMissingBrain(args, refusal); return; }
+  }
+
   // v0.36+ brain-health-100: --remediation-plan and --remediate go
   // through dedicated functions that compute from engine.getHealth()
   // (cheap path D7), NOT the full doctor walk.
@@ -114,6 +123,16 @@ export async function run(args: string[], ctx: CliDispatchContext): Promise<void
       if (eng) await finishCliTeardown({ engine: eng });
     }
   }
+}
+
+/** Whether this doctor invocation opens the brain engine (the connect paths below), so the missing-brain refusal applies. */
+async function doctorWillConnect(args: string[]): Promise<boolean> {
+  if (args.includes('--remediation-plan') || args.includes('--remediate')) return true;
+  const { parseOnlyChecks, doctorCheckNames, onlyNeedsEngine } = await import('../../commands/doctor/registry.ts');
+  const only = parseOnlyChecks(args);
+  if (!only) return !args.includes('--fast');
+  const known = doctorCheckNames();
+  return only.size > 0 && [...only].every((n) => known.has(n)) && onlyNeedsEngine(only);
 }
 
 /** A `--tier` / `--budget-ms` value doctor cannot use: the structured error, exit 2. */

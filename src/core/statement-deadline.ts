@@ -20,8 +20,9 @@
  *     the refusal before each statement, and a statement already running
  *     finishes;
  *   - on Postgres a typed read in BOUNDED_TYPED_READS (a member that replaced a
- *     statement the doctor bounded through `executeRaw`: the decide-store reads) runs
- *     under `withReadDeadline`, so the engine ends it at the deadline like a raw statement.
+ *     statement the doctor bounded through `executeRaw`: the decide-store, timeline,
+ *     notifier-coverage and writer-binding reads) runs under `withReadDeadline`, so the
+ *     engine ends it at the deadline like a raw statement.
  *
  * Without a scope (or with `deadlineAt: null`) the wrapper passes every call
  * through. Other engine methods with their own SQL (e.g. `getStats`) get only the
@@ -89,8 +90,15 @@ function refuse(scope: StatementDeadline): never {
   throw new StatementDeadlineError(Date.now() - scope.startedAt);
 }
 
-/** The typed reads (engine-sql/decide-store.ts) that replaced statements this wrapper bounded through executeRaw: decide_health. */
-export const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set(['readDecideState', 'decideSlotUsage', 'dailyDecideSpend', 'listDecideResolvedModels', 'listDecideMixedModelDecisions', 'listDecideReceiptStats', 'listDecideCalibrations']);
+/**
+ * The typed reads that replaced statements this wrapper bounded through executeRaw: decide_health (engine-sql/decide-store.ts),
+ * the queue-health reads (engine-sql/jobs-health.ts), the belief-coverage source read (engine-sql/belief.ts), the export withdrawal-ledger reads
+ * (engine-sql/export-reads.ts), the timeline_history and commit_notifier reads (engine-sql/timeline-reads.ts, write-misc.ts) and the writer-binding read
+ * (engine-sql/write-misc.ts `getWorktreeBinding`, slug_path_mismatch).
+ */
+export const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set(['readDecideState', 'decideSlotUsage', 'dailyDecideSpend', 'listDecideResolvedModels', 'listDecideMixedModelDecisions', 'listDecideReceiptStats', 'listDecideCalibrations',
+  'readQueueHealthSignals', 'listWaitingByQueue', 'readQueueDivergence', 'listQueueWedgeCounts', 'listPrivateQueueHealth', 'readWedgeSignals', 'readOldestWaitingAge', 'listStuckActiveJobsByName', 'listCoveredSources', 'listExportWithdrawals', 'readExportWithdrawalLedgerBytes',
+  'readMaxTimelineEntryId', 'storedTimelineRowsByPageIds', 'countSegmentedTimelinePages', 'notifierCoverageRecorded', 'getWorktreeBinding']);
 
 type RawCall = (sql: string, params?: unknown[], opts?: Record<string, unknown> & { signal?: AbortSignal; timeoutMs?: number }) => Promise<unknown[]>;
 

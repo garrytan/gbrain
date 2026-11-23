@@ -22,7 +22,6 @@ writes_pages: true
 writes_to:
   - people/
   - companies/
-upstream: resolve-before-asking@fc834ee
 when_to_use: "Use when the user asks: \"resolve before asking\", \"before asking the user\", \"unidentified contact\", \"unknown relationship\", \"should I ask who\"."
 ---
 
@@ -230,8 +229,7 @@ This skill guarantees:
   relationship/role fields are filled at write time.
 - Writes land only under the `writes_to:` directories, filed by primary
   subject per `_brain-filing-rules.md`.
-- Privacy contract preserved: no real names, no fork-specific filesystem path
-  literals, no upstream-fork references in examples.
+- Examples use placeholder names and paths.
 
 ## Output Format
 

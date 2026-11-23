@@ -17,7 +17,7 @@ import {
   isPersistenceIpcMutation, isPersistenceIpcOperation, isPersistenceIpcRegistration,
   persistenceSocketPathForConfig, requestPersistenceCapabilities, requestPersistenceOperation,
   PersistenceIpcTransportError, type PersistenceIpcCapabilities, type PersistenceIpcRegistration,
-  requestPersistenceAdministration, ownerAdministers, PERSISTENCE_ROOM_MARKED_KEY, PERSISTENCE_ROOM_MAX_CHARS,
+  requestPersistenceAdministration, ownerAdministers, PERSISTENCE_IPC_READ_EXTENSIONS, PERSISTENCE_META_KEY, PERSISTENCE_ROOM_MARKED_KEY, PERSISTENCE_ROOM_MAX_CHARS,
 } from './ipc.ts';
 import type { PersistenceAdminOperation } from './admin-contract.ts';
 import { currentCliWriteWait, replayWhilePending, writeExchangeBudget } from './write-wait.ts';
@@ -77,10 +77,20 @@ export function readPersistenceCliRegistration(brainId: string): PersistenceIpcR
   return value;
 }
 
-/** `room`: the owner's marks for the room the request named (GBRA-498); absent when the owner predates room marks. */
-export type LocalDelegationResult = { handled: false } | { handled: true; result: unknown; room?: { meta: unknown; notices: unknown[] } };
+/**
+ * `room`: the owner's marks for the room the request named (GBRA-498); absent when the owner predates room marks.
+ * `meta`: a read's degraded stamp and rendered notices (G8); absent when the owner predates them.
+ */
+export type LocalDelegationResult = { handled: false }
+  | { handled: true; result: unknown; room?: { meta: unknown; notices: unknown[] }; meta?: Record<string, unknown> };
 
-function delegatedResult(result: unknown, roomSent: boolean): LocalDelegationResult {
+function delegatedResult(result: unknown, roomSent: boolean, metaSent = false): LocalDelegationResult {
+  const withMeta = metaSent && result !== null && typeof result === 'object' && !Array.isArray(result)
+    ? (result as Record<string, unknown>)[PERSISTENCE_META_KEY] as { result?: unknown; meta?: unknown } | undefined : undefined;
+  if (withMeta && typeof withMeta === 'object') {
+    const meta = withMeta.meta && typeof withMeta.meta === 'object' && !Array.isArray(withMeta.meta) ? withMeta.meta as Record<string, unknown> : {};
+    return { handled: true, result: withMeta.result, meta };
+  }
   const marked = roomSent && result !== null && typeof result === 'object' && !Array.isArray(result)
     ? (result as Record<string, unknown>)[PERSISTENCE_ROOM_MARKED_KEY] as { result?: unknown; meta?: unknown; notices?: unknown } | undefined : undefined;
   if (!marked || typeof marked !== 'object') return { handled: true, result };
@@ -157,7 +167,12 @@ export async function maybeDelegateLocalOperation(
   }
   const cwd = options.cwd ?? process.cwd();
   const brainId = resolveBrainId(options.brain, cwd);
-  const config = persistenceConfigForBrain(hostConfig, brainId, brainId === 'host' ? [] : loadMounts());
+  let config: GBrainConfig | null;
+  try { config = persistenceConfigForBrain(hostConfig, brainId, brainId === 'host' ? [] : loadMounts()); }
+  catch (error) {
+    if (PERSISTENCE_IPC_READ_EXTENSIONS.includes(operation)) return { handled: false };
+    throw error;
+  }
   if (config?.engine !== 'pglite' || !config.database_path || config.database_url) return { handled: false };
   const holder = inspectLockHolder(config.database_path);
   if (!holder.held) return { handled: false };
@@ -182,15 +197,23 @@ export async function maybeDelegateLocalOperation(
     if (error instanceof PersistenceIpcTransportError && holder.serve === false) return { handled: false };
     throw error;
   }
-  if (!capability.operations.includes(operation)) {
+  if (!capability.operations.includes(operation) && !capability.read_extensions?.includes(operation)) {
     throw new OperationError('owner_unavailable', `The running persistence owner does not support '${operation}'.`,
       'Upgrade and restart the owner, then retry with the same request ID.');
+  }
+  // G8: a read whose answer depends on settings the serve does not share stays with the engine path, as the warm CLI socket refuses it.
+  if (capability.read_env && PERSISTENCE_IPC_READ_EXTENSIONS.includes(operation)) {
+    const { behaviorEnv, behaviorEnvMismatch } = await import('../cli-socket/identity.ts');
+    if (behaviorEnvMismatch(capability.read_env, behaviorEnv(process.env)) !== null) return { handled: false };
   }
   const registration = readPersistenceCliRegistration(capability.brain_id);
   const roomSent = options.room !== undefined && options.room.length <= PERSISTENCE_ROOM_MAX_CHARS && capability.room === true;
   const request = { version: 1 as const, kind: 'operation' as const, brain_id: capability.brain_id,
     operation, params: wireParams, registration, routing: { source, cwd }, ...(roomSent ? { room: options.room } : {}) };
-  if (!isPersistenceIpcMutation(operation)) return delegatedResult(await requestPersistenceOperation(socketPath, request, options.timeoutMs), roomSent);
+  if (!isPersistenceIpcMutation(operation)) {
+    const metaSent = !roomSent && capability.meta === true;
+    return delegatedResult(await requestPersistenceOperation(socketPath, metaSent ? { ...request, with_meta: true as const } : request, options.timeoutMs), roomSent, metaSent);
+  }
   // #5232: the owner waits the caller's wait within one transport deadline; an
   // owner without `write_wait` waits its own bound and the replay keeps the rest.
   const waitMs = options.writeWaitMs ?? currentCliWriteWait().waitMs;

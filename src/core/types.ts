@@ -2110,6 +2110,7 @@ export const DEGRADED_STAGES = [
   'rescore_skipped',
   'vector_arm_failed',
   'keyword_arm_failed',
+  'supersede_check_failed',
   'title_arm_failed',
   'entity_lookup_failed',
   'budget_dropped_all',

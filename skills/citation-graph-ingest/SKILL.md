@@ -23,7 +23,6 @@ requires:
   - source
 mutating: true
 writes_pages: false
-upstream: citation-graph-ingest@fc834ee
 ---
 
 # Citation Graph Ingest — Typed Reference Graph Over a Corpus

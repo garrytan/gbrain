@@ -460,6 +460,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'pglite_data_dir',
   // #6573: a local IPC socket path over the platform's AF_UNIX budget (doctor/checks/local-ipc.ts).
   'ipc_socket_path',
+  // Rust engine shadow mode's addon loads (doctor/checks/rust-engine-addon.ts); not_applicable unless shadow mode is on.
+  'rust_engine_addon',
   // db-availability loop: engine-fit + repair-recurrence signals.
   'pglite_scale',
   'db_repair_recurrence',

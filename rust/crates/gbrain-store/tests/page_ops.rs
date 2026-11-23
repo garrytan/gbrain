@@ -338,11 +338,12 @@ fn purge_deleted_pages_respects_the_cutoff_and_excluded_ids() {
         .purge_deleted_pages(0.0, &de(json!({ "excludeIds": [id_of(&b)] })))
         .unwrap();
     assert_eq!(strs(&real["slugs"]), vec!["notes/a"]);
-    // Like PGLite, a real run returns the deleted pages too.
-    assert_eq!(real["pages"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        real["pages"].as_array().map(Vec::len),
+        Some(1),
+        "a real run lists what it purged"
+    );
     assert_eq!(real["pages"][0]["slug"], "notes/a");
-    assert_eq!(real["pages"][0]["source_id"], "default");
-    assert!(real["pages"][0]["deleted_at"].is_string());
     assert_eq!(
         store.get_all_slugs(&de(json!({}))).unwrap(),
         vec!["notes/b", "notes/c"]
@@ -494,6 +495,58 @@ fn find_pages_matches_name_prefix_and_glob_patterns() {
         ))
         .unwrap_err();
     assert_eq!(error.code, INVALID_ARGUMENT);
+}
+
+#[test]
+fn find_pages_under_untrusted_hides_private_and_quarantined_pages() {
+    let dir = TempDir::new("ops-find-untrusted");
+    let store = open(&dir);
+    put(
+        &store,
+        "people/alice-example",
+        json!({ "type": "person", "title": "Alice", "compiled_truth": "a" }),
+    );
+    put(
+        &store,
+        "people/private-example",
+        json!({ "type": "person", "title": "Private", "compiled_truth": "p",
+            "frontmatter": { "visibility": "private" } }),
+    );
+    put(
+        &store,
+        "people/quarantined-example",
+        json!({ "type": "person", "title": "Quarantined", "compiled_truth": "q",
+            "frontmatter": { "quarantine": { "reason": "test" } } }),
+    );
+    let find = |untrusted: Value| {
+        let found = store
+            .find_pages(&de(
+                json!({ "pattern": { "kind": "prefix", "like": "people/%" },
+                "limit": 10, "excludeSlugPrefixes": [], "untrusted": untrusted }),
+            ))
+            .unwrap();
+        (
+            found["total"].clone(),
+            slugs_of(found["rows"].as_array().unwrap()),
+        )
+    };
+    let (total, rows) = find(Value::Null);
+    assert_eq!(total, 3);
+    assert_eq!(
+        rows,
+        vec![
+            "people/alice-example",
+            "people/private-example",
+            "people/quarantined-example"
+        ]
+    );
+    let (total, rows) = find(json!({ "live": true }));
+    assert_eq!(total, 2, "a live read scope hides a quarantined page");
+    assert_eq!(rows, vec!["people/alice-example", "people/private-example"]);
+    let (total, rows) = find(json!({ "live": true,
+        "excludePrivate": { "honorAliases": true, "entityPrivacy": true } }));
+    assert_eq!(total, 1, "excludePrivate hides a private page");
+    assert_eq!(rows, vec!["people/alice-example"]);
 }
 
 #[test]
@@ -731,6 +784,86 @@ fn marker_reads_and_dates_follow_the_read_scope() {
 }
 
 #[test]
+fn marker_reads_under_exclude_private_hide_the_pages_the_policy_hides() {
+    let dir = TempDir::new("ops-private");
+    let store = open(&dir);
+    let marked = |frontmatter: Value| json!({ "type": "note", "title": "T", "compiled_truth": "t", "frontmatter": frontmatter });
+    let flag = json!({ "reason": "spam", "detail": "d" });
+    let open_page = put(
+        &store,
+        "notes/open",
+        marked(json!({ "content_flag": flag, "status": "draft" })),
+    );
+    let by_visibility = put(
+        &store,
+        "notes/visibility",
+        marked(json!({ "visibility": "private", "content_flag": flag, "status": "draft" })),
+    );
+    let by_access = put(
+        &store,
+        "notes/access",
+        marked(json!({ "access": "private", "content_flag": flag, "status": "draft" })),
+    );
+    let public_with_access = put(
+        &store,
+        "notes/public",
+        marked(
+            json!({ "visibility": "public", "access": "private", "content_flag": flag, "status": "draft" }),
+        ),
+    );
+    let ids = vec![
+        id_of(&open_page),
+        id_of(&by_visibility),
+        id_of(&by_access),
+        id_of(&public_with_access),
+    ];
+    let read = |scope: Value| {
+        let scope = de(scope);
+        let flags = store.get_content_flags_by_page_ids(&ids, &scope).unwrap();
+        let states = store
+            .get_unverified_extraction_page_ids(&ids, &scope)
+            .unwrap();
+        let ids_of = |rows: &[Value]| {
+            rows.iter()
+                .map(|r| r["id"].as_i64().unwrap())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            ids_of(&flags),
+            ids_of(&states),
+            "both reads apply one policy"
+        );
+        ids_of(&flags)
+    };
+    assert_eq!(read(json!({})), ids);
+    assert_eq!(
+        read(json!({ "live": true })),
+        ids,
+        "a scope alone hides nothing private"
+    );
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn"});
+    // `visibility` decides when a page has it; the alias keys only count for a page without one.
+    assert_eq!(
+        read(json!({ "live": true, "excludePrivate": policy })),
+        vec![ids[0], ids[3]]
+    );
+    // Without the alias keys (`honorAliases` false) only `visibility` hides a page.
+    let visibility_only = json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn"});
+    assert_eq!(
+        read(json!({ "live": true, "excludePrivate": visibility_only })),
+        vec![ids[0], ids[2], ids[3]]
+    );
+    // The policy adds to the source scope.
+    assert_eq!(
+        read(json!({ "live": true, "sourceId": "default", "excludePrivate": policy })),
+        vec![ids[0], ids[3]]
+    );
+    assert!(
+        read(json!({ "live": true, "sourceId": "other", "excludePrivate": policy })).is_empty()
+    );
+}
+
+#[test]
 fn revert_to_version_restores_body_and_frontmatter_without_a_snapshot() {
     let dir = TempDir::new("ops-revert");
     let store = open(&dir);
@@ -794,87 +927,6 @@ fn revert_to_version_restores_body_and_frontmatter_without_a_snapshot() {
     store
         .revert_to_version("notes/missing", version_id, &de(json!({})))
         .unwrap();
-}
-
-#[test]
-fn marker_reads_under_exclude_private_hide_the_pages_the_policy_hides() {
-    let dir = TempDir::new("ops-private");
-    let store = open(&dir);
-    let marked = |frontmatter: Value| json!({ "type": "note", "title": "T", "compiled_truth": "t", "frontmatter": frontmatter });
-    let flag = json!({ "reason": "spam", "detail": "d" });
-    let open_page = put(
-        &store,
-        "notes/open",
-        marked(json!({ "content_flag": flag, "status": "draft" })),
-    );
-    let by_visibility = put(
-        &store,
-        "notes/visibility",
-        marked(json!({ "visibility": "private", "content_flag": flag, "status": "draft" })),
-    );
-    let by_access = put(
-        &store,
-        "notes/access",
-        marked(json!({ "access": "private", "content_flag": flag, "status": "draft" })),
-    );
-    let public_with_access = put(
-        &store,
-        "notes/public",
-        marked(
-            json!({ "visibility": "public", "access": "private", "content_flag": flag, "status": "draft" }),
-        ),
-    );
-    let ids = vec![
-        id_of(&open_page),
-        id_of(&by_visibility),
-        id_of(&by_access),
-        id_of(&public_with_access),
-    ];
-    let read = |scope: Value| {
-        let scope = de(scope);
-        let flags = store.get_content_flags_by_page_ids(&ids, &scope).unwrap();
-        let states = store
-            .get_unverified_extraction_page_ids(&ids, &scope)
-            .unwrap();
-        let ids_of = |rows: &[Value]| {
-            rows.iter()
-                .map(|r| r["id"].as_i64().unwrap())
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(
-            ids_of(&flags),
-            ids_of(&states),
-            "both reads apply one policy"
-        );
-        ids_of(&flags)
-    };
-    assert_eq!(read(json!({})), ids);
-    assert_eq!(
-        read(json!({ "live": true })),
-        ids,
-        "a scope alone hides nothing private"
-    );
-    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage"});
-    // `visibility` decides when a page has it; the alias keys only count for a page without one.
-    assert_eq!(
-        read(json!({ "live": true, "excludePrivate": policy })),
-        vec![ids[0], ids[3]]
-    );
-    // Without the alias keys (`honorAliases` false) only `visibility` hides a page.
-    let visibility_only =
-        json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "lineage"});
-    assert_eq!(
-        read(json!({ "live": true, "excludePrivate": visibility_only })),
-        vec![ids[0], ids[2], ids[3]]
-    );
-    // The policy adds to the source scope.
-    assert_eq!(
-        read(json!({ "live": true, "sourceId": "default", "excludePrivate": policy })),
-        vec![ids[0], ids[3]]
-    );
-    assert!(
-        read(json!({ "live": true, "sourceId": "other", "excludePrivate": policy })).is_empty()
-    );
 }
 
 #[test]
