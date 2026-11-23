@@ -12,7 +12,7 @@
  * triggered skill near the line does not reorder a live session.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { VERSION } from '../../../version.ts';
 import { ResolverError } from './errors.ts';
@@ -203,13 +203,19 @@ export async function buildSkillIndex(input: BuildInput, opts: { home?: string; 
   const home = opts.home ?? resolverHome();
   const dir = catalogDir(home, input.catalog);
   ensureDir(dir);
+  const dirId = (): string | null => { try { const s = statSync(dir, { bigint: true }); return `${s.dev}:${s.ino}`; } catch { return null; } };
+  let pin: number | null = null;
+  try { pin = openSync(dir, 'r'); } catch { /* a platform that cannot open a directory compares the path's identity alone */ }
+  const unpin = () => { if (pin !== null) { try { closeSync(pin); } catch { /* closed */ } pin = null; } };
+  const born = dirId();
   const previous = readReceipt(home, input.catalog);
   const scope = input.scope ?? 'user';
   const env = opts.env ?? process.env;
   const ineligible = vectorsIneligible(input.harness, scope);
   const early = ineligible === null && !('skip' in turnEmbedder(home, env)) ? await prepare(input).catch(() => null) : null;
   const earlyVectors = early ? await embedCatalog(early.records, early.catalog_hash, ineligible, home, env) : null;
-  const lease = await acquireLease(join(dir, 'lock'), { purpose: 'build', leaseMs: BUILD_LEASE_MS, generation: (previous?.build.generation ?? 0) + 1, retries: 3, waitMs: 250, now: opts.now });
+  const lease = await acquireLease(join(dir, 'lock'), { purpose: 'build', leaseMs: BUILD_LEASE_MS, generation: (previous?.build.generation ?? 0) + 1, retries: 3, waitMs: 250, now: opts.now })
+    .catch((e: unknown) => { unpin(); throw (e as NodeJS.ErrnoException)?.code === 'ENOENT' ? removedError() : e; });
   const { args, fix } = buildArgs(input);
   try {
     const p = await prepare(input);
@@ -234,7 +240,7 @@ export async function buildSkillIndex(input: BuildInput, opts: { home?: string; 
       vectors: 'bytes' in vectors ? vectors.receipt : VECTOR_RETRY_CODES.includes(vectors.skipped) ? { ...vectors, attempts: (previous?.vectors && 'skipped' in previous.vectors && VECTOR_RETRY_CODES.includes(previous.vectors.skipped) ? previous.vectors.attempts ?? 1 : 0) + 1 } : vectors,
       build: { args, rebuild_argv: fix, ms: 0, built_at: new Date((opts.now ?? Date.now)()).toISOString(), generation: lease.record.generation },
     };
-    if (!holdsLease(lease) || !existsSync(dir)) throw removedError();
+    if (!holdsLease(lease) || dirId() !== born) throw removedError();
     try {
       if (p.source.kind === 'json') writeFileDurable(join(dir, 'source.json'), p.source.snapshot!);
       if (p.source.fingerprint) writeFileDurable(join(dir, 'fingerprint.json'), JSON.stringify({ fingerprint: p.source.fingerprint, routing: p.routing?.stat ?? null }));
@@ -252,11 +258,12 @@ export async function buildSkillIndex(input: BuildInput, opts: { home?: string; 
     return receipt;
   } catch (e) {
     try {
-      if (existsSync(dir)) writeFileDurable(join(dir, 'build.log'), `${JSON.stringify({ at: new Date().toISOString(), code: e instanceof ResolverError ? e.code : 'skill_resolver_internal', message: e instanceof ResolverError ? e.message : (e as Error).name })}\n`);
+      if (dirId() === born) writeFileDurable(join(dir, 'build.log'), `${JSON.stringify({ at: new Date().toISOString(), code: e instanceof ResolverError ? e.code : 'skill_resolver_internal', message: e instanceof ResolverError ? e.message : (e as Error).name })}\n`);
     } catch { /* best effort */ }
     throw e;
   } finally {
     releaseLease(lease);
+    unpin();
   }
 }
 

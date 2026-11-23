@@ -462,13 +462,16 @@ turn embeds the message with the same model and compares the two.
 - **When it can't answer.** The turn is the word matcher's, byte for byte,
   and `vectors.fallback.code` in the `--json` output says why (the hook lane
   log has the same code). The codes: `missing_key`, `provider_error`,
-  `timeout`, `bad_reply`, `stale_vectors` (the brain's embedding model or
+  `timeout`, `bad_reply` (a reply of the wrong shape, or an all-zero
+  vector), `stale_vectors` (the brain's embedding model or
   width changed since the build), and `not_needed`
   (the picker answered). The build receipt's `vectors` field is either
   `{model, dims, count}` or `{skipped: <code>}`, where the codes add
   `no_embedder`, `embedding_disabled`, `unsupported_provider`,
-  `not_this_harness`, `project_scope`, `too_many_skills` (over 64 MB of
-  vectors) and `unmeasured_model`; `not_needed` there means the catalog has no
+  `not_this_harness`, `project_scope`, `too_many_skills` (the vectors file,
+  header included, would pass 64 MB; checked before any request when
+  `embedding_dimensions` is set, else after the first reply) and
+  `unmeasured_model`; `not_needed` there means the catalog has no
   skills. A build sends at most 60,000 characters per request.
 - **Keeping them current.** A turn marks the catalog stale (`meta.index_stale`)
   when its vectors no longer match the brain: the embedding model or width
@@ -962,7 +965,8 @@ catalog size with `gbrain skills index status`.
 
 ### skill_index_removed
 
-The catalog was removed while a build ran, so the build published nothing.
+The catalog was removed while a build ran, or removed and made again under
+the same name, so the build published nothing and left the new catalog alone.
 
 ### skill_catalog_too_large
 

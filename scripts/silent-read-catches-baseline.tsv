@@ -2001,7 +2001,6 @@ src/core/skillpack/rubric.ts#walkGlob>walk	catch_empty	1
 src/core/skillpack/scrub-legacy.ts#skillHasFrontmatterTriggers	catch_empty	1
 src/core/skillpack/shared-brain-bridge.ts#sharedBrainBridgePlan	capability_refusal_swallowed	1
 src/core/skillpack/update-journal.ts#listJournals	catch_empty	1
-src/core/skills/resolver/build.ts#buildSkillIndex	catch_empty	1
 src/core/skills/resolver/build.ts#catalogStatus	catch_empty	2
 src/core/skills/resolver/build.ts#gbrainCommit	catch_empty	1
 src/core/skills/resolver/catalog-files.ts#listCatalogs	catch_empty	1

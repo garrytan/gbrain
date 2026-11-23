@@ -75,18 +75,25 @@ export function skillVectorText(s: Pick<SkillRecord, 'name' | 'description' | 'w
   return [s.name, s.description, s.whenToUse ?? '', s.triggers.join('; '), s.body].map(x => x.split(/\s+/).filter(Boolean).join(' ')).filter(Boolean).join('\n').slice(0, VECTOR_TEXT_CHARS);
 }
 
+/** The vector scaled to unit length; a zero or non-finite reply is a bad_reply, never a row of zeros that ranks or gates. */
 function unit(v: readonly number[]): Float32Array {
   let n = 0;
   for (const x of v) n += x * x;
-  const s = n > 0 ? 1 / Math.sqrt(n) : 0;
+  if (!(n > 0) || !Number.isFinite(n)) throw new Error('bad_reply');
+  const s = 1 / Math.sqrt(n);
   return Float32Array.from(v, x => x * s);
+}
+
+function vectorsHeader(catalogHash: string, model: string, dims: number, ids: readonly string[]): { header: Buffer; start: number; size: number } {
+  const header = Buffer.from(JSON.stringify({ v: 1, catalog_hash: catalogHash, model, dims, text: VECTOR_TEXT_ID, ids }), 'utf8');
+  const start = Math.ceil((8 + header.length) / 4) * 4;
+  return { header, start, size: start + ids.length * dims * 4 };
 }
 
 /** Encode vectors.bin for `ids` (each vector already unit length, all of `dims`). */
 export function encodeVectors(catalogHash: string, model: string, dims: number, ids: readonly string[], vectors: readonly Float32Array[]): Uint8Array {
-  const header = Buffer.from(JSON.stringify({ v: 1, catalog_hash: catalogHash, model, dims, text: VECTOR_TEXT_ID, ids }), 'utf8');
-  const start = Math.ceil((8 + header.length) / 4) * 4;
-  const out = new Uint8Array(start + ids.length * dims * 4);
+  const { header, start, size } = vectorsHeader(catalogHash, model, dims, ids);
+  const out = new Uint8Array(size);
   out.set(Buffer.from(MAGIC, 'ascii'), 0);
   new DataView(out.buffer).setUint32(4, header.length, true);
   out.set(header, 8);
@@ -133,8 +140,12 @@ export async function embedCatalog(records: readonly SkillRecord[], catalogHash:
   const { embedder: e, key } = t;
   if (vectorFloor(e.model) === null) return { skipped: 'unmeasured_model' };
   if (records.length === 0) return { skipped: 'not_needed' };
+  const ids = records.map(r => r.id);
+  const tooBig = (dims: number) => vectorsHeader(catalogHash, e.model, dims, ids).size > VECTOR_FILE_CAP_BYTES;
+  if (e.dims !== null && tooBig(e.dims)) return { skipped: 'too_many_skills' };
   const abort = new AbortController();
   let timedOut = false;
+  let oversize = false, sized = false;
   const timer = setTimeout(() => { timedOut = true; abort.abort(); }, BUILD_EMBED_TIMEOUT_MS);
   try {
     const texts = records.map(skillVectorText);
@@ -153,15 +164,18 @@ export async function embedCatalog(records: readonly SkillRecord[], catalogHash:
         try {
           const got = await embedTexts({ provider: e.provider, id: e.id, dims: e.dims, texts: texts.slice(at, end), inputType: 'document', signal: abort.signal, baseUrl: e.baseUrl }, key);
           got.forEach((v, j) => { out[at + j] = unit(v); });
+          if (!sized && got[0]) { sized = true; if (tooBig(got[0].length)) { oversize = true; abort.abort(); return; } }
         } catch (err) { abort.abort(); throw err; }
       }
     }));
+    if (oversize) return { skipped: 'too_many_skills' };
+    if (abort.signal.aborted) return { skipped: timedOut ? 'timeout' : 'provider_error' };
     const dims = out[0]!.length;
     if (out.some(v => v.length !== dims)) return { skipped: 'bad_reply' };
-    if (8 + records.length * dims * 4 > VECTOR_FILE_CAP_BYTES) return { skipped: 'too_many_skills' };
-    return { bytes: encodeVectors(catalogHash, e.model, dims, records.map(r => r.id), out), receipt: { model: e.model, dims, count: records.length } };
+    if (tooBig(dims)) return { skipped: 'too_many_skills' };
+    return { bytes: encodeVectors(catalogHash, e.model, dims, ids, out), receipt: { model: e.model, dims, count: records.length } };
   } catch (err) {
-    return { skipped: timedOut ? 'timeout' : (err as Error)?.message === 'bad_reply' ? 'bad_reply' : 'provider_error' };
+    return { skipped: oversize ? 'too_many_skills' : timedOut ? 'timeout' : (err as Error)?.message === 'bad_reply' ? 'bad_reply' : 'provider_error' };
   } finally { clearTimeout(timer); }
 }
 
