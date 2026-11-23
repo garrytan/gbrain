@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2006/2022
+# covered: 2008/2024
 # lifecycle: 9/9
 # pages: 81/82
 # search: 7/7
@@ -75,7 +75,7 @@
 # cli_reads_import: 16/16
 # wanted_links: 2/2
 # write_misc: 92/95
-# repair_bookkeeping: 55/55
+# repair_bookkeeping: 57/57
 # write_attribution: 5/5
 # telemetry: 14/14
 # field_usage: 1/1
@@ -120,15 +120,15 @@ disconnect	lifecycle	yes	2	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	3	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	303	no	yes	yes	serves
+transaction	lifecycle	yes	302	no	yes	yes	serves
 transactionDirect	lifecycle	yes	14	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 getPage	pages	yes	204	yes	yes	yes	serves
-readPageSnapshot	pages	yes	60	no	yes	yes	serves
+readPageSnapshot	pages	yes	59	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
 lockPageKeys	pages	yes	14	no	yes	yes	serves
-putPage	pages	yes	1087	yes	yes	yes	serves
+putPage	pages	yes	1088	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	37	yes	yes	yes	serves
@@ -1522,7 +1522,7 @@ listSegmentedPages	withdrawal_pages	yes	2	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	2	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	174	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	168	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	4	yes	yes	yes	serves
@@ -1617,16 +1617,16 @@ filterPagesAtRevision	cli_reads_import	yes	1	no	yes	yes	serves
 lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	serves
 replaceWantedLinkRows	wanted_links	yes	9	no	yes	yes	serves
 isSourceClaimed	write_misc	yes	5	no	yes	yes	serves
-readSourceState	write_misc	yes	9	no	yes	yes	serves
+readSourceState	write_misc	yes	12	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	2	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
 getWorktreeBinding	write_misc	yes	22	no	yes	yes	serves
-worktreeClaimStore	write_misc	yes	19	no	yes	yes	serves
+worktreeClaimStore	write_misc	yes	24	no	yes	yes	serves
 readWriterAdminState	write_misc	yes	9	no	yes	yes	serves
 readWorktreeManifest	write_misc	yes	1	no	yes	yes	serves
 writerAdminStore	write_misc	yes	3	no	yes	yes	serves
-writerReleaseStore	write_misc	yes	4	no	yes	yes	serves
+writerReleaseStore	write_misc	yes	9	no	yes	yes	serves
 publicationJournalStore	write_misc	yes	1	no	yes	yes	serves
 hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves
 listActiveAccessMembers	write_misc	yes	6	no	yes	yes	serves
@@ -1648,7 +1648,7 @@ readRevisionWriterRequest	write_misc	yes	2	no	yes	yes	serves
 writeSyncAdmissionStamp	write_misc	yes	5	no	yes	yes	serves
 readSyncAdmissionEffects	write_misc	yes	6	no	yes	yes	serves
 readOpCheckpointRecord	write_misc	yes	16	no	yes	yes	serves
-writeOpCheckpointRecord	write_misc	yes	33	no	yes	yes	serves
+writeOpCheckpointRecord	write_misc	yes	36	no	yes	yes	serves
 purgeStaleCheckpoints	write_misc	yes	1	no	yes	yes	serves
 readHealthMemoClock	write_misc	yes	1	no	yes	yes	serves
 listSynopsisSourceIds	write_misc	yes	4	no	yes	yes	serves
@@ -1728,6 +1728,8 @@ retireManagedSyncPassSlugMode	repair_bookkeeping	yes	1	no	yes	yes	serves
 retireManagedSyncCursor	repair_bookkeeping	yes	2	no	yes	yes	serves
 deleteManagedSyncFailureRow	repair_bookkeeping	yes	2	no	yes	yes	serves
 deleteManagedSyncManifest	repair_bookkeeping	yes	2	no	yes	yes	serves
+listSourceManagedSyncFailures	repair_bookkeeping	yes	2	no	yes	yes	serves
+deleteManagedSyncFailureObservation	repair_bookkeeping	yes	1	no	yes	yes	serves
 listOwnedContentRows	repair_bookkeeping	yes	3	no	yes	yes	serves
 readContentReceiptBinding	repair_bookkeeping	yes	1	no	yes	yes	serves
 readConfigForUpdate	repair_bookkeeping	yes	1	no	yes	yes	serves
@@ -1744,7 +1746,7 @@ deleteOrphanedAliases	repair_bookkeeping	yes	1	no	yes	yes	serves
 listSafeChunksPending	repair_bookkeeping	yes	1	no	yes	yes	serves
 listOriginTwinGroups	repair_bookkeeping	yes	1	no	yes	yes	serves
 listLegacyOriginPairs	repair_bookkeeping	yes	1	no	yes	yes	serves
-listLiveOriginPages	repair_bookkeeping	yes	1	no	yes	yes	serves
+listLiveOriginPages	repair_bookkeeping	yes	2	no	yes	yes	serves
 countLiveFileBackedPages	repair_bookkeeping	yes	2	no	yes	yes	serves
 listRepairScanPages	repair_bookkeeping	yes	5	no	yes	yes	serves
 listFileTombstones	repair_bookkeeping	yes	1	no	yes	yes	serves

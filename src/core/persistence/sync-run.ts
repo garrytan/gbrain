@@ -79,6 +79,7 @@ import { runSyncPass } from './sync-pass-run.ts';
 import { serr } from '../console-prefix.ts';
 import { noteIdentityDowngrades } from '../sync-identity-downgrades.ts';
 import { isContentRefusal } from '../import-screen.ts';
+import { requireManagedPersistence } from '../rust-engine/errors.ts';
 
 export interface ManagedSyncWriteDiagnostic {
   source_id: string;
@@ -1275,6 +1276,7 @@ export interface RetryWait { request_id: string; kind: string | null; slug: stri
  * returns `sync_drain_lease_held` (resumable). A dry run takes no lease.
  */
 export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, slice?: { maxPages: number; maxMs: number }): Promise<SyncResult> {
+  requireManagedPersistence(engine, 'performManagedSync', 'a managed sync imports a managed worktree through the persistence coordinator');
   if (opts.dryRun) return performManagedPass(engine, opts, slice);
   // GBRA-218: every managed pass (sync, drain, sources refresh, git conversion, owner slice) applies the committed folder rules.
   return (await import('../access/policy-git.ts')).withCommittedPolicy(engine, opts.sourceId ?? 'default', opts.repoPath, () => performLeasedPass(engine, opts, slice));

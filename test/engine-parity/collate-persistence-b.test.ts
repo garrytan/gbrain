@@ -187,20 +187,21 @@ describe('persistence doctor groupings sort source ids and codes by byte', () =>
 });
 
 describe('moved-checkout members and topology refusals name sources by byte', () => {
+  // managed_persistence held for callers: a moved checkout is read through the managed worktree it belongs to, which a Rust brain refuses.
   parityTest('movedPhysicalRoot lists the members of a moved checkout by byte source id', {
-    methods: ['executeRaw'], requires: 'raw_sql',
-  }, async (engine) => inHome(async home => {
+    methods: ['writerReleaseStore', 'worktreeClaimStore'], requires: 'managed_persistence',
+  }, async (engine, backend) => inHome(async home => {
     const root = join(home, 'brains', 'old', 'root');
-    const members = ['ab', 'a-z', 'a.b'];
+    const members = [...SOURCE_IDS];
     for (const id of members) mkdirSync(join(root, id), { recursive: true });
     execFileSync('git', ['-C', root, 'init', '-q', '-b', 'main']);
     await withEnv({ GBRAIN_BRAIN_ID: 'host', GBRAIN_SOURCE: undefined }, async () => {
-      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+      await (await engine.writerReleaseStore()).setBrainEnabled(false);
       for (const id of members) {
-        await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [id, join(root, id)]);
+        await seedSource(engine, backend, id, join(root, id));
         await claimWorktree(engine, id, join(root, id));
       }
-      await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+      await (await engine.writerReleaseStore()).setBrainEnabled(true);
     });
     const moved = join(home, 'brains', 'moved-root');
     renameSync(root, moved);
@@ -502,6 +503,9 @@ describe('checkpoint and receipt listings sort their text keys by byte', () => {
   /** Inserts one op_checkpoints row. */
   const checkpoint = (engine: BrainEngine, op: string, fingerprint: string, record: Record<string, unknown>) =>
     engine.executeRaw('INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)', [op, fingerprint, JSON.stringify([record])]);
+  /** Writes the same one-record row through the typed checkpoint writer, so it lands on every engine. */
+  const typedCheckpoint = (engine: BrainEngine, op: string, fingerprint: string, record: Record<string, unknown>) =>
+    engine.writeOpCheckpointRecord(op, fingerprint, [record]);
 
   parityTest('readResolutions returns the finished resolutions of one preview hash in byte fingerprint order', {
     methods: ['executeRaw'], requires: 'raw_sql',
@@ -530,11 +534,11 @@ describe('checkpoint and receipt listings sort their text keys by byte', () => {
   });
 
   parityTest('acknowledgeManagedSyncFailures refuses every matching failure in byte fingerprint order', {
-    methods: ['executeRaw'], requires: 'raw_sql',
-  }, async (engine) => {
-    const incarnation = await addSource(engine, 'ab');
+    methods: ['readSourceState', 'writeOpCheckpointRecord', 'listSourceManagedSyncFailures'],
+  }, async (engine, backend) => {
+    const incarnation = await seedSource(engine, backend, 'ab');
     for (const fingerprint of MIXED_SLUGS) {
-      await checkpoint(engine, 'managed-sync-failure', fingerprint, {
+      await typedCheckpoint(engine, 'managed-sync-failure', fingerprint, {
         source_id: 'ab', source_incarnation: randomUUID(), path: 'shared.md', code: 'x', message: 'x', request_id: null, run_id: 'r', target: null,
         cursor_key: fingerprint, phase: 'discovery', state: 'failed', observation_id: fingerprint, first_seen: 'x', attempts: 1,
       });
@@ -547,13 +551,45 @@ describe('checkpoint and receipt listings sort their text keys by byte', () => {
     return refused;
   });
 
+  parityTest('acknowledgeManagedSyncFailures clears a failure the imported state settles and keeps one a live page still claims', {
+    methods: ['readSourceState', 'writeOpCheckpointRecord', 'putPage', 'listSourceManagedSyncFailures', 'listLiveOriginPages', 'deleteManagedSyncFailureObservation'],
+  }, async (engine, backend) => {
+    const incarnation = await seedSource(engine, backend, 'ab');
+    await engine.putPage('notes/claimed', { type: 'note', title: 'claimed', compiled_truth: 'claimed body', timeline: '', source_path: 'claimed.md' }, { sourceId: 'ab' });
+    const record = (path: string) => ({ source_id: 'ab', source_incarnation: incarnation, path, code: 'x', message: 'x', request_id: null, run_id: 'r', target: null,
+      cursor_key: path, phase: 'discovery', state: 'failed', observation_id: `o-${path}`, first_seen: 'x', attempts: 1 });
+    for (const path of ['gone.md', 'claimed.md']) await typedCheckpoint(engine, 'managed-sync-failure', path, record(path));
+    // The imported commit is empty, so it holds neither file: a file no live page claims is settled.
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-collate-ack-'));
+    try {
+      const git = (...args: string[]) => execFileSync('git', ['-C', root, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8' }).trim();
+      git('init', '-q');
+      git('commit', '-q', '--allow-empty', '-m', 'empty');
+      const run = { sourceId: 'ab', incarnation, root, gitRoot: root, target: git('rev-parse', 'HEAD') };
+      const gone = await acknowledgeManagedSyncFailures(engine, run, 'gone.md');
+      const claimed = await acknowledgeManagedSyncFailures(engine, run, 'claimed.md');
+      const again = await acknowledgeManagedSyncFailures(engine, run, 'gone.md');
+      const left = (await engine.listSourceManagedSyncFailures('ab')).map(row => (row.failure as { path: string }).path);
+      // A row that now records another observation is kept.
+      const kept = await engine.deleteManagedSyncFailureObservation('claimed.md', 'o-other');
+      expect(kept).toBe(false);
+      expect(gone.cleared.map(f => f.path)).toEqual(['gone.md']);
+      expect(claimed.refused.map(entry => entry.reason)).toEqual(['not_deleted']);
+      expect(again).toEqual({ cleared: [], refused: [] });
+      expect(left).toEqual(['claimed.md']);
+      return { gone: gone.cleared.map(f => f.path), claimed: claimed.refused.map(entry => entry.reason), again, left, kept };
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   parityTest('readGitHoldListing lists each source in byte id order and its holds in byte fingerprint order, within the limit', {
-    methods: ['executeRaw'], requires: 'raw_sql',
-  }, async (engine) => {
+    methods: ['readSourceState', 'writeOpCheckpointRecord'],
+  }, async (engine, backend) => {
     for (const id of ['ab', 'a-z']) {
-      const incarnation = await addSource(engine, id);
-      await checkpoint(engine, GIT_HOLD_SUMMARY_OP, `${id}:${incarnation}`, { count: MIXED_SLUGS.length });
-      for (const slug of MIXED_SLUGS) await checkpoint(engine, GIT_HOLD_OP, `${id}/${slug}`, { source_id: id, incarnation, code: 'x', path: slug });
+      const incarnation = await seedSource(engine, backend, id);
+      await typedCheckpoint(engine, GIT_HOLD_SUMMARY_OP, `${id}:${incarnation}`, { count: MIXED_SLUGS.length });
+      for (const slug of MIXED_SLUGS) await typedCheckpoint(engine, GIT_HOLD_OP, `${id}/${slug}`, { source_id: id, incarnation, code: 'x', path: slug });
     }
     const listing = await readGitHoldListing(engine, ['ab', 'a-z'], 3);
     expect(listing.map(entry => entry.sourceId)).toEqual(['a-z', 'ab']);
@@ -563,16 +599,16 @@ describe('checkpoint and receipt listings sort their text keys by byte', () => {
 });
 
 describe('a worktree refresh orders its member sources by byte', () => {
+  // managed_persistence held for callers: the refresh needs a managed sync of each member, which a Rust brain refuses.
   parityTest('refreshWorktree plans the members of one worktree in byte id order, so the topology fence accepts the plan and the refresh completes', {
-    methods: ['executeRaw', 'transaction'], requires: 'raw_sql',
-  }, async (engine) => {
-    await engine.executeRaw('SELECT 1');
+    methods: ['writerReleaseStore', 'worktreeClaimStore'], requires: 'managed_persistence',
+  }, async (engine, backend) => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-collate-refresh-'));
     try {
       return await withEnv({ GBRAIN_HOME: join(dir, 'home') }, async () => {
         try {
           const remote = join(dir, 'origin.git'), upstream = join(dir, 'upstream'), root = join(dir, 'brain');
-          const members = ['ab', 'a-z', 'a.b'];
+          const members = [...SOURCE_IDS];
           execFileSync('git', ['init', '-q', '--bare', '-b', 'main', remote]);
           execFileSync('git', ['clone', '-q', remote, upstream], { stdio: 'ignore' });
           git(upstream, 'checkout', '-q', '-b', 'main');
@@ -580,12 +616,12 @@ describe('a worktree refresh orders its member sources by byte', () => {
           git(upstream, 'push', '-q', 'origin', 'main');
           execFileSync('git', ['clone', '-q', remote, root], { stdio: 'ignore' });
           await registerLocalWriter(engine, 'cli');
-          await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+          await (await engine.writerReleaseStore()).setBrainEnabled(false);
           for (const id of members) {
-            await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$3::text::jsonb)', [id, join(root, id), JSON.stringify({ remote_url: remote })]);
+            await createSource(engine, backend, id, { remote_url: remote }, join(root, id));
             await claimWorktree(engine, id, join(root, id));
           }
-          await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+          await (await engine.writerReleaseStore()).setBrainEnabled(true);
           for (const id of members) await performManagedSync(engine, { sourceId: id, noPull: true, noEmbed: true });
           const dry = await refreshWorktree(engine, 'ab', { dryRun: true });
           expect(dry.status).toBe('dry_run');

@@ -25,6 +25,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parityArms } from './harness.ts';
+import { seedHostBinding, seedSource, seedSourceBinding, seedWorktree } from './persistence-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { BYTE_IDS, BYTE_SLUGS, MIXED_IDS, MIXED_SLUGS, byteOrder } from '../helpers/byte-order.ts';
 import { withEnv } from '../helpers/with-env.ts';
@@ -402,26 +403,39 @@ describe('topology status and blocker lists sort source ids by byte', () => {
     return found[0]!.source_ids;
   });
 
-  parityTest('physicalRootBlockers names owned checkouts by byte source id, and the deactivation preview lists a worktree\'s roots by byte path', {
-    methods: ['executeRaw'], requires: 'raw_sql',
-  }, async (engine) => inHome(async () => {
+  /** One worktree per MIXED_SRC id owned by this host, bound at a missing path, with further hosts bound to `ab`'s worktree, written through the typed claim store. */
+  async function seedOwnedCheckouts(engine: BrainEngine, backend: Parameters<typeof seedSource>[1]): Promise<Map<string, string>> {
     const host = localHostId();
     const worktrees = new Map<string, string>();
     for (const id of MIXED_SRC) {
-      const worktree = await addWorktree(engine, host);
+      const worktree = await seedWorktree(engine, host);
       worktrees.set(id, worktree);
-      await bind(engine, id, await addSource(engine, id), worktree);
-      await hostBind(engine, worktree, host, join(tmpdir(), 'gbrain-collate-pa-missing', id));
+      await seedSourceBinding(engine, id, await seedSource(engine, backend, id), worktree);
+      await seedHostBinding(engine, worktree, host, join(tmpdir(), 'gbrain-collate-pa-missing', id));
     }
     // Further hosts bound to one worktree, so its roots list more than one path.
-    for (const path of MIXED_IDS) await hostBind(engine, worktrees.get('ab')!, randomUUID(), `/collate/${path}`);
+    for (const path of MIXED_IDS) await seedHostBinding(engine, worktrees.get('ab')!, randomUUID(), `/collate/${path}`);
+    return worktrees;
+  }
+
+  parityTest('physicalRootBlockers names owned checkouts by byte source id', {
+    methods: ['worktreeClaimStore', 'writerReleaseStore'],
+  }, async (engine, backend) => inHome(async () => {
+    await seedOwnedCheckouts(engine, backend);
     const blockers = (await physicalRootBlockers(engine, 'managed')).map(blocker => blocker.source_id);
     expect(blockers).toEqual([...BYTE_SRC]);
-    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    return blockers;
+  }));
+
+  parityTest('the deactivation preview of a managed brain lists a worktree\'s roots by byte path', {
+    methods: ['worktreeClaimStore', 'writerReleaseStore'],
+  }, async (engine, backend) => inHome(async () => {
+    const worktrees = await seedOwnedCheckouts(engine, backend);
+    await (await engine.writerReleaseStore()).setBrainEnabled(true);
     const report = await deactivatePersistence(engine, { dryRun: true });
     const roots = report.retired_worktrees.find(entry => entry.id === worktrees.get('ab'))!.roots;
     expect(roots.filter(root => root.startsWith('/collate/'))).toEqual(BYTE_IDS.map(path => `/collate/${path}`));
-    return { blockers, roots: roots.length };
+    return { roots: roots.length };
   }));
 
   parityTest('activation lists database-only sources by byte source id, with the lock query left in plain id order', {
