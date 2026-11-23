@@ -2104,7 +2104,7 @@ Each page in the preview is one of:
   One race remains: a new hold recorded for the old spelling by a transaction that commits while the move runs can still
   name the old spelling after the move (the hold writer takes no page lock, and a row that does not exist yet has nothing
   to lock). Neither the doctor check `legacy_slug_spellings` nor a rerun of the preview detects such a hold, because the page is
-  no longer under an older spelling; the held row then no longer hides its content on the moved page until it is released or dropped.
+  no longer under an older spelling. The row stays held under the old spelling, so it no longer keeps its content out of delivered text on the moved page; `gbrain trust review` still lists it, and releasing or dropping it settles the record.
 - **rename_file_first** ([`rename_file_first`](error-codes.md#rename_file_first)): the page's file in the source's
   checkout is not at the path of the normal slug (or the recorded file is not in the checkout, the checkout is not on this host, or a file sits at the old spelling's path). Moving only
   the row would split the page from its file. `git mv` the file to the normal path, commit and sync; sync carries the page
