@@ -449,6 +449,7 @@
       "raw": 5,
       "tx": 1
     },
+    "renameSource#default": {},
     "replaceDerivedLinks#default": {
       "raw": 12,
       "tx": 1
@@ -457,6 +458,7 @@
       "raw": 12,
       "tx": 1
     },
+    "replaceSourceConfig#default": {},
     "resolveSlugWithAlias#default": {},
     "resolveSlugWithAliasDetailed#default": {},
     "resolveSlugWithAliasDetailed#excludePrivate": {},

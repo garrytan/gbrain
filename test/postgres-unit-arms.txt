@@ -384,6 +384,7 @@ test/engine-parity/purge-receipt-members.test.ts
 test/engine-parity/purge-slug-stores.test.ts
 test/engine-parity/purge-verify.test.ts
 test/engine-parity/purge-writes.test.ts
+test/engine-parity/put-page-missing-link.test.ts
 test/engine-parity/put-source-fork.test.ts
 test/engine-parity/raw-sql.test.ts
 test/engine-parity/read-shared-revision.test.ts
@@ -445,6 +446,7 @@ test/engine-parity/slot-ends-refusal.test.ts
 test/engine-parity/source-admin-writes.test.ts
 test/engine-parity/source-archive.test.ts
 test/engine-parity/source-delete.test.ts
+test/engine-parity/source-federate-writes.test.ts
 test/engine-parity/source-last-commit.test.ts
 test/engine-parity/source-order-callers.test.ts
 test/engine-parity/source-resolver-reads.test.ts

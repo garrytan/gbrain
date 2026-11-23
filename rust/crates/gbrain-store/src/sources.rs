@@ -360,6 +360,19 @@ impl Store {
         })
     }
 
+    /// `renameSource(id, name)`: sets the source's display name. Returns whether the source exists;
+    /// an unknown id changes nothing.
+    pub fn rename_source(&self, id: &str, name: &str) -> Result<bool> {
+        self.write(|tx| {
+            let Some(mut record) = read_source(&*tx, id)? else {
+                return Ok(false);
+            };
+            record.name = Some(name.to_string());
+            put_json(tx, &source_key(id), &record)?;
+            Ok(true)
+        })
+    }
+
     /// `advanceSourceCommit`: records that the source's git sync reached `commit` and stamps
     /// `last_sync_at` with the store clock. `newest_content_at` is left alone when `None`, cleared
     /// when `Some(None)` and set when `Some(Some(iso))`. An unknown id changes nothing, as the

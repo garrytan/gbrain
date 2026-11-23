@@ -83,6 +83,12 @@ export async function updateSourceConfig(exec: SqlExecutor, sourceId: string, pa
     return affectedRows > 0;
   }
 
+/** Sets the source's display `name` (`sources rename`). Returns whether the source exists; an unknown id changes nothing. */
+export async function renameSource(exec: SqlExecutor, sourceId: string, name: string): Promise<boolean> {
+  const { affectedRows } = await exec.run(sqlFragment`UPDATE sources SET name = ${name} WHERE id = ${sourceId}`);
+  return affectedRows > 0;
+}
+
 /** One source row with the columns a source check reads: its checkout path, raw config and archived flag. */
 export interface SourceCheckRow { id: string; local_path: string | null; config: unknown; archived: boolean }
 

@@ -54,8 +54,12 @@ import { ACTIVE_REFRESH_STATES_SQL } from '../src/core/persistence/worktree-refr
 import { APPLE_CONTACTS_PENDING_DELETES_OP, APPLE_CONTACTS_REVIEW_OP } from '../src/core/apple-contacts/review-status.ts';
 import { identityDowngradeOpen } from '../src/core/sync-identity-downgrades.ts';
 import { EFFECT_BYTES_SQL } from '../src/core/persistence/receipt-bytes.ts';
+<<<<<<< HEAD
 import { ruleCoversSql } from '../src/core/access/folder-rules.ts';
 import { exactIdentityStatement } from '../src/core/engine-sql/exact-identity.ts';
+=======
+import { callerAccessAllowedSql, privacyPartSql, privateLinkOriginFilterForCaller, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
+>>>>>>> 67355278245446e09957eadb2b4d4c26e8d0e229
 
 const memberSql = (member: string) => `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
   FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
@@ -2960,6 +2964,57 @@ const PINS: Pin[] = [
     from: 'src/commands/extract.ts:497 loadSlugAliasTargets (at a18d118d27)',
     case: { method: 'listSlugAliases', variant: 'default', run: e => e.listSlugAliases('default') },
     texts: ['SELECT alias_slug, canonical_slug FROM slug_aliases WHERE source_id = $1'],
+  },
+  {
+    from: 'src/core/persistence/links-preparation.ts:29 liveSlugAliases (at 0af1a6ecf0)',
+    case: { method: 'readLiveSlugAliases', variant: 'default', run: e => e.readLiveSlugAliases('default', ['a', 'b']) },
+    texts: [`SELECT a.alias_slug, a.canonical_slug FROM slug_aliases a
+      WHERE a.source_id=$1 AND a.alias_slug IN (SELECT unnest($2::text[]))
+        AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=a.source_id AND p.slug=a.alias_slug AND p.deleted_at IS NULL)
+        AND EXISTS (SELECT 1 FROM pages c WHERE c.source_id=a.source_id AND c.slug=a.canonical_slug AND c.deleted_at IS NULL)`],
+  },
+  {
+    // An equivalent statement: links-preparation.ts:46/55 (at 0af1a6ecf0) sent the fingerprint with the slugs above the
+    // known max id, or the fingerprint with every slug; this one statement answers both (afterId 0 lists every slug).
+    from: 'src/core/persistence/links-preparation.ts:46 refreshSourceSlugIndex (at 0af1a6ecf0)',
+    case: { method: 'readSourceSlugProbe', variant: 'default', run: e => e.readSourceSlugProbe('default', 0) },
+    texts: [`SELECT
+      count(*)::int AS n, coalesce(sum(hashtextextended(slug, 0)), 0)::text AS h, coalesce(max(id), 0)::int AS m,
+      coalesce(array_agg(slug) FILTER (WHERE id > $2), '{}') AS added,
+      coalesce(sum(hashtextextended(slug, 0)) FILTER (WHERE id > $2), 0)::text AS added_h
+      FROM pages WHERE source_id=$1`],
+  },
+  {
+    from: 'src/core/access/federation-exposure.ts:32 remotePagesFederationExposes, privacy part on (at 0af1a6ecf0)',
+    case: { method: 'readFederationExposedPages', variant: 'hidden', run: e => e.readFederationExposedPages('default', true) },
+    texts: () => { const hidden = ` AND ${privacyPartSql('p')}`; return [`WITH open AS (SELECT p.id, p.slug, p.revision_principal_kind, p.revision_principal_id FROM pages p
+       WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.page_readers IS NULL AND p.folder_rule_ids IS NULL${hidden}),
+     authored AS (
+       SELECT slug, revision_principal_kind AS kind, revision_principal_id AS pid FROM open
+       UNION ALL
+       SELECT o.slug, v.write_principal_kind, v.write_principal_id FROM open o JOIN page_versions v ON v.page_id = o.id)
+     SELECT a.slug, min(coalesce(t.member_id, c.member_id)) AS member, (count(*) OVER ())::int AS total
+       FROM authored a
+       LEFT JOIN access_tokens t ON a.kind = 'legacy_token' AND t.id::text = a.pid
+       LEFT JOIN oauth_clients c ON a.kind = 'oauth_client' AND c.client_id = a.pid
+      WHERE a.kind IN ('legacy_token', 'oauth_client')
+      GROUP BY a.slug ORDER BY a.slug LIMIT 5`]; },
+  },
+  {
+    from: 'src/core/access/federation-exposure.ts:32 remotePagesFederationExposes, privacy relaxed (at 0af1a6ecf0)',
+    case: { method: 'readFederationExposedPages', variant: 'relaxed', run: e => e.readFederationExposedPages('default', false) },
+    texts: () => { const hidden = ''; return [`WITH open AS (SELECT p.id, p.slug, p.revision_principal_kind, p.revision_principal_id FROM pages p
+       WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.page_readers IS NULL AND p.folder_rule_ids IS NULL${hidden}),
+     authored AS (
+       SELECT slug, revision_principal_kind AS kind, revision_principal_id AS pid FROM open
+       UNION ALL
+       SELECT o.slug, v.write_principal_kind, v.write_principal_id FROM open o JOIN page_versions v ON v.page_id = o.id)
+     SELECT a.slug, min(coalesce(t.member_id, c.member_id)) AS member, (count(*) OVER ())::int AS total
+       FROM authored a
+       LEFT JOIN access_tokens t ON a.kind = 'legacy_token' AND t.id::text = a.pid
+       LEFT JOIN oauth_clients c ON a.kind = 'oauth_client' AND c.client_id = a.pid
+      WHERE a.kind IN ('legacy_token', 'oauth_client')
+      GROUP BY a.slug ORDER BY a.slug LIMIT 5`]; },
   },
   {
     from: 'src/core/quarantine.ts:116 quarantinedSlugs (at 90ede8f55a)',

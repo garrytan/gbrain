@@ -256,6 +256,10 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readLiveIdentityHolders', 'readLivePageTypes', 'readLiveSlugs', 'readLiveSyncPassRows',
   'readManagedSyncCursorHeader', 'readManagedSyncFailureRows', 'readNamedEntitySlugs', 'readNotifierLease',
   'readNotifierSources', 'readNotifierStatusRows', 'readOpCheckpointRecords', 'readOrphanedManagedSyncFailureRows',
+  // Link preparation's slug reads (engine-sql/link-slug-reads.ts, link_slug_reads.rs): SELECTs and a store read only.
+  'readLiveSlugAliases', 'readSourceSlugProbe',
+  // The federation warning's exposed-pages read (engine-sql/federation-exposure.ts, federation_exposure.rs): a SELECT and a store read only.
+  'readFederationExposedPages',
   'readOwnedLinks', 'readOwnerHostBinding', 'readPageRevisionWriter', 'readPageSizeRows',
   'readPageSynopses', 'readPrefixCandidates', 'readPrefixDirs', 'readPrefixTitleMatches',
   'readReasonPurgeTombstones', 'readRefreshTiming', 'readRenameIdentityRows', 'readRetiredManagedSyncCursor',
@@ -595,6 +599,8 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   holdPageEmbedding: 'readPageEmbeddingBudget for that page',
   writeReasonPurgeTombstones: 'readReasonPurgeTombstones for that purge',
   markSourceSynced: 'getSource for that source id',
+  replaceSourceConfig: 'getSource for that source id',
+  renameSource: 'getSource for that source id',
   setSourceContextualMode: 'getSource for that source id',
   writeOpCheckpointRecords: 'readOpCheckpointRecords for those fingerprints',
   writeSyncAdmissionStamp: 'readOpCheckpointRecords for that fingerprint',
