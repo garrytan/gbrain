@@ -301,7 +301,6 @@ src/core/facts/held-fact-move.ts	execute_raw	1
 src/core/facts/purge-overlay.ts	execute_raw	1
 src/core/facts/purge-verify.ts	execute_raw	2
 src/core/facts/purge.ts	execute_raw	1	GBRA-574 F #9674 (opened before this ratchet): +1 the purge plan reads whether a fact sits on an unbacked name tag
-src/core/facts/writeback-audience.ts	execute_raw	1	reads access_tokens.member_id and oauth_clients.member_id to count people, not credentials, for the brain audience (GST-3180); no typed engine method exists yet
 src/core/feedback/store.ts	execute_raw	16
 src/core/fence-repair/attempts.ts	execute_raw	3
 src/core/fence-repair/census-store.ts	execute_raw	2
@@ -685,7 +684,7 @@ src/core/search-vector-backfill.ts	execute_raw	3
 src/core/search/dedup.ts	execute_raw	1
 src/core/search/entity-anchor.ts	execute_raw	1
 src/core/search/evidence-date.ts	execute_raw	3
-src/core/search/facts-arm.ts	execute_raw	3
+src/core/search/facts-arm.ts	execute_raw	2
 src/core/search/feedback-boost.ts	execute_raw	1
 src/core/search/frontmatter-where.ts	execute_raw	1
 src/core/search/image-vector-presence.ts	execute_raw	1

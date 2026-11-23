@@ -188,6 +188,29 @@ impl Store {
         }
     }
 
+    /// `listCredentialMemberBindings(names)` (the brain-audience heuristic): `[{ name, member_id }]` for every token not
+    /// revoked whose name is one of `names`, then every client not deleted whose client id is one of them. Tokens come
+    /// in key order, then clients in key order (the SQL `UNION ALL` has no set order). An empty list reads nothing.
+    pub fn list_credential_member_bindings(&self, names: &[String]) -> Result<Value> {
+        if names.is_empty() {
+            return Ok(Value::Array(Vec::new()));
+        }
+        let wanted: std::collections::BTreeSet<&str> = names.iter().map(String::as_str).collect();
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for t in all_tokens(&*read)? {
+            if t.revoked_at.is_none() && wanted.contains(t.name.as_str()) {
+                out.push(json!({ "name": t.name, "member_id": t.member_id }));
+            }
+        }
+        for c in all_clients(&*read)? {
+            if c.deleted_at.is_none() && wanted.contains(c.client_id.as_str()) {
+                out.push(json!({ "name": c.client_id, "member_id": c.member_id }));
+            }
+        }
+        Ok(Value::Array(out))
+    }
+
     /// `readAccessCredentials(by)`: `[{ kind, id, name }]`. By token name: the tokens not revoked with exactly that
     /// name, oldest first (a tie by id). By member: the tokens not revoked bound to exactly that member, by name in
     /// byte order (a tie by id), then the clients not deleted bound to it, by client id in byte order.

@@ -339,6 +339,7 @@ export const FACTS_MEMBERS = {
   swapFactsFtsIndex: 'facts',
   readFactsEmbeddingColumn: 'facts',
   listNearestFacts: 'facts',
+  listFactSourcePages: 'facts',
   listSlotRows: 'facts',
   listPoolUnbackedKeys: 'facts',
   listCallOffCueFacts: 'facts',

@@ -18,7 +18,7 @@
  */
 import type { ReadSharedSourceRow } from '../../engine-sql/read-shared-sources.ts';
 import type { AccessGroupRow, AccessMemberLookup, AccessMemberRow, AudiencePrincipalRows, LiveMemberRow, MemberBindingVia } from '../../engine-sql/access-control.ts';
-import type { AccessMemberInsert, AccessMemberKind, AccessMemberLinkRow, CredentialBinding, CredentialBindingRow, CredentialTarget, LinkedMemberRow } from '../../engine-sql/access-members.ts';
+import type { AccessMemberInsert, AccessMemberKind, AccessMemberLinkRow, CredentialBinding, CredentialBindingRow, CredentialMemberBinding, CredentialTarget, LinkedMemberRow } from '../../engine-sql/access-members.ts';
 import { withDates } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
@@ -181,6 +181,12 @@ export const readCredentialBindingForUpdate: StoreMember<[target: CredentialTarg
   };
 
 /** The member of a token or client, from the same binding read as readCredentialBindingForUpdate (a revoked token and a deleted client are read too). */
+/** The brain-audience heuristic's binding read (BrainEngine listCredentialMemberBindings): from the store's tokens and clients. */
+export const listCredentialMemberBindings: StoreMember<[names: readonly string[]], CredentialMemberBinding[]> = async (brain, names) => {
+  if (!names.length) return [];
+  return await storeCall({ member: 'listCredentialMemberBindings' }, () => brain.listCredentialMemberBindings([...names])) as CredentialMemberBinding[];
+};
+
 export const readCredentialMemberId: StoreMember<[target: CredentialTarget], string | null> = async (brain, target) => {
   const row = await storeCall({ member: 'readCredentialMemberId' }, () =>
     brain.readCredentialBinding(target.kind, target.id, false)) as { member_id?: string | null } | null;

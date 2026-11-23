@@ -364,6 +364,7 @@ test/engine-parity/reads-privacy.test.ts
 test/engine-parity/reason-tombstones.test.ts
 test/engine-parity/recall-members.test.ts
 test/engine-parity/referrer-reads.test.ts
+test/engine-parity/refusal-swallows-lane4.test.ts
 test/engine-parity/relational-reads.test.ts
 test/engine-parity/remember-members.test.ts
 test/engine-parity/remember-meta.test.ts

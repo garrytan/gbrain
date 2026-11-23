@@ -334,3 +334,39 @@ impl Store {
             .collect())
     }
 }
+
+impl Store {
+    /// `listFactSourcePages(ids)` (search/facts-arm.ts applyFactSourcePages): for each distinct id, the live page of the
+    /// fact's source whose slug is the fact's `source_markdown_slug`, when that slug is set and is not the fact's entity
+    /// (`IS DISTINCT FROM`), as `{ id, page_id, slug, title, type }`; facts of any source, in id order (the SQL sets no
+    /// order). A missing fact or page gives no row.
+    pub fn list_fact_source_pages(&self, ids: &[f64]) -> Result<Vec<Value>> {
+        let mut wanted = BTreeSet::new();
+        for id in ids {
+            if let Ok(id) = u64::try_from(super::bigint("listFactSourcePages", "ids", *id)?) {
+                wanted.insert(id);
+            }
+        }
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for id in wanted {
+            let Some(fact) = super::read_fact(&*read, id)? else {
+                continue;
+            };
+            let Some(holding) = fact.source_markdown_slug.as_deref() else {
+                continue;
+            };
+            if fact.entity_slug.as_deref() == Some(holding) {
+                continue;
+            }
+            let Some(page) = read_page(&*read, &fact.source_id, holding)? else {
+                continue;
+            };
+            if page.deleted_at_us.is_some() {
+                continue;
+            }
+            out.push(json!({ "id": fact.id, "page_id": page.id, "slug": page.slug, "title": page.title, "type": page.page_type }));
+        }
+        Ok(out)
+    }
+}

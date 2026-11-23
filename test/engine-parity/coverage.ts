@@ -333,7 +333,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     ],
 
   // facts_recall: the recall pool's candidate reads (nearest, slot, call-off, entity pairs, unbacked keys) and its final row read
-  facts_recall: ['readFactsEmbeddingColumn', 'listNearestFacts', 'listSlotRows', 'listPoolUnbackedKeys', 'listCallOffCueFacts', 'listPoolEntityPairs', 'listFactRowsByIds',
+  facts_recall: ['readFactsEmbeddingColumn', 'listNearestFacts', 'listFactSourcePages', 'listSlotRows', 'listPoolUnbackedKeys', 'listCallOffCueFacts', 'listPoolEntityPairs', 'listFactRowsByIds',
     'listReadablePageSlugs'],
 
   // facts_conversation: conversation fact publication and relink
@@ -466,7 +466,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   // engine_migration: the source-side reads of `gbrain migrate --to <engine>` (engine-sql/engine-migration.ts)
   engine_migration: ['readEngineMigrationHistory', 'readMigrationRows', 'readMigrationPageColumns', 'listManualLinkTransitions', 'countLiveTimelineEntries'],
   access_grants: ['readOAuthClientReceiptGrant', 'readAccessTokenReceiptGrant', 'readOAuthClientMemberGrant', 'readAccessTokenMemberGrant', 'readLocalWriterMemberGrant', 'readSharedSkillServingEpoch', 'revokeLocalWriterRow'],
-  access_members: ['insertAccessMember', 'setAccessMemberDisabled', 'setAccessMemberEmail', 'setAccessMemberKind', 'setAccessMemberLabelledOnly', 'tombstoneAccessMember', 'addAccessGroupMembers', 'removeAccessGroupMembers', 'deleteAccessGroup', 'readCredentialBindingForUpdate', 'writeCredentialBinding', 'writeCredentialReadsUnscoped', 'readCredentialMemberId', 'readLinkedMember', 'readAccessMemberLink', 'insertAccessMemberLink', 'deleteAccessMemberLink', 'listAccessMemberLinks'],
+  access_members: ['insertAccessMember', 'setAccessMemberDisabled', 'setAccessMemberEmail', 'setAccessMemberKind', 'setAccessMemberLabelledOnly', 'tombstoneAccessMember', 'addAccessGroupMembers', 'removeAccessGroupMembers', 'deleteAccessGroup', 'readCredentialBindingForUpdate', 'writeCredentialBinding', 'writeCredentialReadsUnscoped', 'readCredentialMemberId', 'listCredentialMemberBindings', 'readLinkedMember', 'readAccessMemberLink', 'insertAccessMemberLink', 'deleteAccessMemberLink', 'listAccessMemberLinks'],
   shared_skill_members: ['readSharedSkillCatalogIdentity', 'listSharedSkillCatalogHeads', 'readSharedSkillPolicyRow', 'listSharedSkillFollowSources', 'lockSharedSkillBrainId', 'readSharedSkillMember', 'countSharedSkillMembers', 'enrollSharedSkillMember', 'rebindSharedSkillMember', 'leaveSharedSkillMember', 'issueSharedSkillDeliveryBatch', 'readSharedSkillDeliveryBatch', 'acknowledgeSharedSkillDeliveryBatch', 'writeSharedSkillPolicy', 'writeSharedSkillRevision', 'readSharedSkillRevision'],
   brief_reads: ['readBriefMeetingPages', 'readBriefEmailAliasPages', 'readBriefWorldFacts', 'readBriefEditPage', 'readBriefTimelineEntry', 'readBriefPageVersions'],
   reflex_reads: ['readReflexLiveKeys', 'readReflexPages', 'readBriefEntityPages'],

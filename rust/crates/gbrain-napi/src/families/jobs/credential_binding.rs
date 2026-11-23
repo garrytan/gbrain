@@ -70,6 +70,16 @@ impl Brain {
         self.run(env, move |s| s.read_live_credential(&via, &key))
     }
 
+    /// `listCredentialMemberBindings(names)`: `[{ name, member_id }]` of the live tokens and clients named.
+    #[napi]
+    pub fn list_credential_member_bindings<'env>(
+        &self,
+        env: &'env Env,
+        names: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_credential_member_bindings(&names))
+    }
+
     /// `readAccessCredentials(by)`: `[{ kind, id, name }]`.
     #[napi]
     pub fn read_access_credentials<'env>(
