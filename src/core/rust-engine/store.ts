@@ -5,6 +5,7 @@
  */
 import { LATEST_SCHEMA_VERSION } from '../schema-migrations/latest.generated.ts';
 import { mapStoreError } from './store-errors.ts';
+import type { RestoreCensus, RestoreQuarantinePlan, RestoreQuarantineReport } from './restore-types.ts';
 
 /** Worker threads the store's pool runs its calls on. One write runs at a time; reads overlap. */
 const STORE_POOL_THREADS = 4;
@@ -72,6 +73,19 @@ export interface RustStore {
    * table is a gap (rust/docs/store/seed.md).
    */
   seedPlan(): Promise<SeedPlan>;
+  /**
+   * `gbrain backup restore` only (not a BrainEngine member): one read of what could still run in a restored store, the
+   * authority it holds and the settings a restore changes, with the named `blockers` that refuse a publish. An addon built
+   * before the restore step lacks it (`restoreAddonSupportsSafety`).
+   */
+  restoreCensus(purgeRequestIds: string[]): Promise<RestoreCensus>;
+  /**
+   * `gbrain backup restore` only: detaches sources, rebases managed paths and origins, turns off automation settings,
+   * cancels unfinished jobs and revokes archived local writers and OAuth clients, in one write transaction. Rejects
+   * `restore_refused` while a blocker stands, `invalid_argument` when the plan does not match the store and
+   * `invalid_state` for a restore id already applied; each leaves the store as it was.
+   */
+  restoreQuarantine(plan: RestoreQuarantinePlan): Promise<RestoreQuarantineReport>;
   close(): Promise<void>;
 }
 
@@ -209,6 +223,8 @@ export async function openRustStore(addon: object, databasePath: string): Promis
     allocatorCheck: (seedId, primaryMax) => call('allocatorCheck', () => brain.allocatorCheck(seedId, primaryMax)),
     factFingerprints: (texts) => call('factFingerprints', () => brain.factFingerprints(texts)),
     seedPlan: () => call('seedPlan', () => brain.seedPlan()),
+    restoreCensus: (purgeRequestIds) => call('restoreCensus', () => brain.restoreCensus(purgeRequestIds)),
+    restoreQuarantine: (plan) => call('restoreQuarantine', () => brain.restoreQuarantine(plan)),
     async close() {
       try { await brain.close(); } finally { await pool.shutdown(STORE_SHUTDOWN_WAIT_MS).catch(() => undefined); }
     },

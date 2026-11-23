@@ -290,7 +290,7 @@ jobs:
           GBRAIN_TEST_RUST_ARM: '1'
         run: |
           set -euo pipefail
-          bun test --timeout=60000 test/rust-engine-store.test.ts test/rust-engine-shell.test.ts test/rust-engine-differential.test.ts
+          bun test --timeout=60000 test/rust-engine-store.test.ts test/rust-engine-shell.test.ts test/rust-engine-differential.test.ts test/rust-engine-restore-safety.test.ts
           for file in test/engine-parity/*.test.ts; do
             bun test --timeout=60000 "$file"
           done
