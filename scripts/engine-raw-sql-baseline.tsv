@@ -6,6 +6,7 @@
 src/cli/enforced-commit-push.ts	execute_raw	1
 src/cli/enforced-member.ts	execute_raw	6
 src/commands/access-read-by-nobody.ts	execute_raw	2
+src/commands/access-read-log.ts	execute_raw	4	GST-2476 gap 1: the access read log readers (access log, who-read) over the new access_read_log table (v331); the access area is still raw SQL (access.ts, access-rules.ts) and converts with it
 src/commands/access-rules.ts	execute_raw	4
 src/commands/access-serves.ts	execute_raw	8	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/commands/access.ts	execute_raw	6
@@ -291,6 +292,7 @@ src/core/access/owner.ts	execute_raw	1
 src/core/access/policy-migrate.ts	execute_raw	4
 src/core/access/policy-transfer.ts	execute_raw	1
 src/core/access/policy.ts	execute_raw	31
+src/core/access/read-log.ts	execute_raw	3	GST-2476 gap 1: the access read log writer (batched insert, two retention deletes) over access_read_log (v331); the access area is still raw SQL (caller.ts, members.ts) and converts with it
 src/core/access/requester-scope.ts	execute_raw	4
 src/core/access/room.ts	execute_raw	2
 src/core/access/serves.ts	execute_raw	2
@@ -306,6 +308,7 @@ src/core/ai/decide/proposals-store.ts	execute_raw	6
 src/core/ai/decide/review-lane.ts	execute_raw	6
 src/core/analyze-lock.ts	execute_raw	1
 src/core/apple-contacts/apple-contacts-source.ts	execute_raw	5	GST-3256, pre-ratchet like imessage-source.ts (#9634): reads the source row, finds the page a contact id owns and the ids the source owns, rereads a contact page for its review, stamps sources.last_sync_at; no typed engine method exists yet
+src/core/apple-contacts/enrich.ts	execute_raw	7	GST-3278 PR 2, like the rest of apple-contacts (pre-ratchet, #9634): reads this source's contact pages, the one person page each is linked to through entity_identities, that page's facts (text, trust tier and origin), the Google Contacts pages and a matched person page's frontmatter, and reads/writes the enrichment op_checkpoints row; no typed engine method exists yet
 src/core/apple-contacts/identity-match.ts	execute_raw	5	GST-3256, pre-ratchet like imessage-source.ts (#9634): lists the candidate sources, runs the exactIdentityStatement candidate read (engine-sql/exact-identity.ts, the whois read), and reads/writes/clears the identity-review op_checkpoints row; no typed engine method exists yet
 src/core/apple-contacts/person-facts.ts	execute_raw	8	GST-3256, pre-ratchet like imessage-source.ts (#9634): fingerprints the wanted claims and reads the active facts on one person page (this source's rows and the claims already there, matched by fact fingerprint as remember does), and reads/writes/clears the person-facts ownership op_checkpoints row; no typed engine method exists yet; +3 follow-up: before a source removal, reads the source kind, counts its active person-page rows (and those no page write can retire) and groups them by page to retire them
 src/core/apple-contacts/review-status.ts	execute_raw	3	GST-3256, pre-ratchet like imessage-source.ts (#9634): reads, writes and clears the pending-deletions op_checkpoints row the incremental delete floor holds; no typed engine method exists yet
@@ -508,7 +511,7 @@ src/core/facts/similar-active.ts	execute_raw	2
 src/core/facts/single-prepare.ts	execute_raw	7
 src/core/facts/slot-tagging.ts	execute_raw	1	GBRA-574 #9668: the live person-page read that picks slot-tagging candidates, written before this ratchet landed; moves behind a typed facts engine method with its area
 src/core/facts/subject-infer.ts	execute_raw	1
-src/core/facts/unfenced-facts.ts	execute_raw	8
+src/core/facts/unfenced-facts.ts	execute_raw	9	GST-3490 #10005: the sweep's unfenced read counts unfenceable rows on the server before reading only fenceable ones; moves behind a typed facts engine method with its area
 src/core/facts/withdrawal-discovery.ts	execute_raw	9
 src/core/facts/withdrawal.ts	execute_raw	17
 src/core/facts/write-single.ts	execute_raw	3
@@ -632,6 +635,7 @@ src/core/minions/job-list-page.ts	execute_raw	1
 src/core/minions/lease-pressure-audit.ts	execute_raw	3
 src/core/minions/legacy-cancel.ts	execute_raw	4
 src/core/minions/legacy-selection.ts	execute_raw	2
+src/core/minions/no-worker.ts	execute_raw	1	minion_jobs reads stay raw until the minions area moves behind engine methods; the facts_drain no-worker warning (overtonxyz/gbrain#2772)
 src/core/minions/queue-families.ts	execute_raw	1
 src/core/minions/queue.ts	execute_raw	86
 src/core/minions/rate-leases.ts	execute_raw	6
@@ -861,6 +865,7 @@ src/core/persistence/page-visibility.ts	execute_raw	14
 src/core/persistence/parked-groups.ts	execute_raw	1
 src/core/persistence/pending-import.ts	execute_raw	1
 src/core/persistence/physical-root.ts	execute_raw	15
+src/core/persistence/plain-directory-drift.ts	execute_raw	2	#8079: reads and records whether a page revision was written with its file in step (journal receipt join plus agreement checkpoint); persistence protocol state, no typed checkpoint methods yet.
 src/core/persistence/pre-activation-release.ts	execute_raw	7
 src/core/persistence/preadmit-cache.ts	execute_raw	4
 src/core/persistence/preparation-budget.ts	execute_raw	1
@@ -934,7 +939,7 @@ src/core/persistence/sync-pass-readers.ts	execute_raw	1
 src/core/persistence/sync-pass-row.ts	execute_raw	4
 src/core/persistence/sync-pass-run.ts	execute_raw	14
 src/core/persistence/sync-pass-status.ts	execute_raw	3
-src/core/persistence/sync-pass.ts	execute_raw	14
+src/core/persistence/sync-pass.ts	execute_raw	15	readFileRemovingDeletes (audit LC-1, decision E1): one bounded read of the committed delete_page receipts whose write-through removed the file, so a restored file is held for repair file-drift; the managed-sync pass reads stay raw until the persistence area is typed
 src/core/persistence/sync-prepare.ts	execute_raw	17	#9646: the stamp fence-trend pre-read runs outside the 5 s publication (newest sequence, open-import probe); moves with the persistence engine-sql conversion
 src/core/persistence/sync-prescreen.ts	execute_raw	2
 src/core/persistence/sync-run.ts	execute_raw	28

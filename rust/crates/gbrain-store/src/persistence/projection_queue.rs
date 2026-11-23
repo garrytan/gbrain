@@ -3,30 +3,36 @@
 //! (`listPendingSegmentedProjections`, `selectProjectionWindowJobs` of
 //! `src/core/engine-sql/persistence-housekeeping.ts`).
 //!
-//! Key `d 0x04 <source incarnation> 0x00 <slug>`, JSON `JobRecord`. An incarnation is the 36-byte
-//! lower-case UUID text, so key order is `(source_incarnation, slug)` order: UUID text order is
-//! Postgres's UUID order, and the slug compares by bytes (the C collation).
+//! Key `d 0x04 <source incarnation> 0x00 <slug>`, value a `JobRecord` in the compact form of
+//! `encode_job` (store format 3; format 2 kept JSON, which `decode_job` still reads). An
+//! incarnation is the 36-byte lower-case UUID text, so key order is `(source_incarnation, slug)`
+//! order: UUID text order is Postgres's UUID order, and the slug compares by bytes (the C
+//! collation).
 //!
 //! `queue_page_projection` keeps the queue in step with every page write as PGLite's
-//! `gbrain_queue_page_projection` trigger does. It is the only writer here: the other writers of a
-//! job's `reason` (`segmented_projecting`, `rebuild_failed`, `chunk_replacement_continuing`) are
-//! raw SQL the Rust engine refuses, so every job here has reason `canonical_change`. The reads
-//! still apply the full reason filters. A source delete removes each page first
-//! (`cascade.rs`), and the hook removes the page's job, so no job outlives its source.
+//! `gbrain_queue_page_projection` trigger does. The segmented projector's queue writes
+//! (`claimSegmentedProjection`, `renewSegmentedProjectionClaim`, `releaseSegmentedProjectionClaim`,
+//! `deleteProjectionJob`, `markProjectionRebuildFailed` of `page-body/projection.ts`) are the
+//! other writers; each runs in one `Store::write`. `chunk_replacement_continuing` and
+//! `protocol_activation` still have no store writer, and the reads apply the full reason
+//! filters. A source delete removes each page first (`cascade.rs`), and the hook removes the
+//! page's job, so no job outlives its source.
 
 use super::{QUEUE, uuid_param};
 use crate::env::{Env, parse_iso, transaction_clock};
-use crate::error::{Result, StoreError};
+use crate::error::{Result, STORE_CORRUPT, StoreError};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::pages::{PageRecord, read_page};
 use crate::sources::{SourceRecord, all_sources, read_source};
-use crate::{Store, keys, put_json};
-use serde::{Deserialize, Serialize};
+use crate::{Store, keys};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
 /// The reason the trigger writes.
 const CANONICAL_CHANGE: &str = "canonical_change";
+/// The reason of the jobs an upgrade's activation queues (no store writer yet).
+const PROTOCOL_ACTIVATION: &str = "protocol_activation";
 /// `SEGMENTED_PROJECTION_CLAIMED`'s and `chunk_replacement_continuing`'s 60 seconds.
 const CLAIM_US: i64 = 60_000_000;
 /// `PROJECTION_RETRY_READY`'s `rebuild_failed` cooldown, 30 seconds.
@@ -38,11 +44,159 @@ const RECENT_LIMIT: usize = 100;
 const WINDOW_LIMIT: usize = 400;
 
 /// One `page_projection_jobs` row; the key holds `source_incarnation` and `slug`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub(crate) struct JobRecord {
     pub revision: String,
     pub reason: String,
     pub updated_at_us: i64,
+}
+
+/// The first byte of a compact job value. A JSON value starts with `{`.
+const COMPACT: u8 = 1;
+/// Flag: the revision is a lower-case UUID, stored as its 16 bytes.
+const PACKED_UUID: u8 = 1;
+/// Flag: the reason is `canonical_change`, stored as nothing.
+const CANONICAL: u8 = 2;
+
+/// The 16 bytes of `text` when it is a lower-case hyphenated UUID, the only form that prints back
+/// to the same text.
+fn pack_uuid(text: &str) -> Option<[u8; 16]> {
+    let bytes = text.as_bytes();
+    if bytes.len() != 36 {
+        return None;
+    }
+    let mut out = [0u8; 16];
+    let mut nibbles = 0;
+    for (at, b) in bytes.iter().enumerate() {
+        if matches!(at, 8 | 13 | 18 | 23) {
+            if *b != b'-' {
+                return None;
+            }
+            continue;
+        }
+        let v = match b {
+            b'0'..=b'9' => b - b'0',
+            b'a'..=b'f' => b - b'a' + 10,
+            _ => return None,
+        };
+        out[nibbles / 2] |= if nibbles % 2 == 0 { v << 4 } else { v };
+        nibbles += 1;
+    }
+    Some(out)
+}
+
+fn unpack_uuid(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(36);
+    for (at, b) in bytes.iter().enumerate() {
+        if matches!(at, 4 | 6 | 8 | 10) {
+            out.push('-');
+        }
+        out.push(HEX[usize::from(b >> 4)] as char);
+        out.push(HEX[usize::from(b & 0x0f)] as char);
+    }
+    out
+}
+
+/// A job's stored value: `COMPACT`, a flags byte, `updated_at_us` (8 bytes, big-endian), the
+/// revision (16 UUID bytes, or a 4-byte length and its text), then the reason text unless it is
+/// `canonical_change`. A trigger job is 26 bytes where its JSON is about 110; each page write
+/// puts one, so the queue's B-tree stays smaller and a write copies less of it.
+fn encode_job(job: &JobRecord) -> Result<Vec<u8>> {
+    let uuid = pack_uuid(&job.revision);
+    let canonical = job.reason == CANONICAL_CHANGE;
+    let mut out = Vec::with_capacity(26);
+    out.push(COMPACT);
+    let mut flags = 0;
+    if uuid.is_some() {
+        flags |= PACKED_UUID;
+    }
+    if canonical {
+        flags |= CANONICAL;
+    }
+    out.push(flags);
+    out.extend_from_slice(&job.updated_at_us.to_be_bytes());
+    match uuid {
+        Some(bytes) => out.extend_from_slice(&bytes),
+        None => {
+            let len = u32::try_from(job.revision.len())
+                .map_err(|_| StoreError::invalid("a projection job revision is too long"))?;
+            out.extend_from_slice(&len.to_be_bytes());
+            out.extend_from_slice(job.revision.as_bytes());
+        }
+    }
+    if !canonical {
+        out.extend_from_slice(job.reason.as_bytes());
+    }
+    Ok(out)
+}
+
+/// Reads a job value in either stored form.
+pub(crate) fn decode_job(value: &[u8]) -> Result<JobRecord> {
+    let malformed = || StoreError::new(STORE_CORRUPT, "a projection job record is malformed");
+    match value.first() {
+        Some(b'{') => return Ok(serde_json::from_slice(value)?),
+        Some(&COMPACT) => {}
+        _ => return Err(malformed()),
+    }
+    let flags = *value.get(1).ok_or_else(malformed)?;
+    let stamp: [u8; 8] = value
+        .get(2..10)
+        .and_then(|b| b.try_into().ok())
+        .ok_or_else(malformed)?;
+    let rest = &value[10..];
+    let (revision, rest) = if flags & PACKED_UUID != 0 {
+        (
+            unpack_uuid(rest.get(..16).ok_or_else(malformed)?),
+            &rest[16..],
+        )
+    } else {
+        let len: [u8; 4] = rest
+            .get(..4)
+            .and_then(|b| b.try_into().ok())
+            .ok_or_else(malformed)?;
+        let end = usize::try_from(u32::from_be_bytes(len))
+            .ok()
+            .and_then(|n| n.checked_add(4))
+            .ok_or_else(malformed)?;
+        let text = std::str::from_utf8(rest.get(4..end).ok_or_else(malformed)?)
+            .map_err(|_| malformed())?;
+        (text.to_owned(), &rest[end..])
+    };
+    let reason = if flags & CANONICAL != 0 {
+        if !rest.is_empty() {
+            return Err(malformed());
+        }
+        CANONICAL_CHANGE.to_owned()
+    } else {
+        std::str::from_utf8(rest)
+            .map_err(|_| malformed())?
+            .to_owned()
+    };
+    Ok(JobRecord {
+        revision,
+        reason,
+        updated_at_us: i64::from_be_bytes(stamp),
+    })
+}
+
+fn put_job(tx: &mut dyn KvWrite, key: &[u8], job: &JobRecord) -> Result<()> {
+    tx.put(key, &encode_job(job)?)
+}
+
+/// Store format 2 to 3: rewrites every JSON job in the compact form. The keys stay.
+pub(crate) fn compact_format_2_jobs(tx: &mut dyn KvWrite) -> Result<()> {
+    let mut json = Vec::new();
+    scan_prefix(&*tx, &prefix(), false, &mut |k, v| {
+        if v.first() == Some(&b'{') {
+            json.push((k.to_vec(), v.to_vec()));
+        }
+        true
+    })?;
+    for (key, value) in json {
+        put_job(tx, &key, &decode_job(&value)?)?;
+    }
+    Ok(())
 }
 
 /// A job with its key fields.
@@ -105,7 +259,7 @@ pub(crate) fn queue_page_projection(
             reason: CANONICAL_CHANGE.into(),
             updated_at_us: now,
         };
-        put_json(tx, &key, &job)?;
+        put_job(tx, &key, &job)?;
     }
     Ok(())
 }
@@ -118,18 +272,28 @@ fn all_jobs(read: &dyn KvRead) -> Result<Vec<Job>> {
     scan_prefix(read, &prefix(), false, &mut |k, v| {
         let rest = &k[start..];
         let split = rest.iter().position(|b| *b == 0);
-        match (split, serde_json::from_slice::<JobRecord>(v)) {
+        match (split, decode_job(v)) {
             (Some(at), Ok(record)) => out.push(Job {
                 incarnation: String::from_utf8_lossy(&rest[..at]).into_owned(),
                 slug: String::from_utf8_lossy(&rest[at + 1..]).into_owned(),
                 record,
             }),
             (None, _) => failure = Some(StoreError::invalid("a projection job key has no slug")),
-            (_, Err(e)) => failure = Some(StoreError::from(e)),
+            (_, Err(e)) => failure = Some(e),
         }
         failure.is_none()
     })?;
     failure.map_or(Ok(out), Err)
+}
+
+/// `min(updated_at)` over the jobs with reason `protocol_activation`: when an upgrade's index rebuild
+/// began, or none when no such job is queued (`projectionRebuildProgress`).
+pub(crate) fn activation_started_us(read: &dyn KvRead) -> Result<Option<i64>> {
+    Ok(all_jobs(read)?
+        .iter()
+        .filter(|job| job.record.reason == PROTOCOL_ACTIVATION)
+        .map(|job| job.record.updated_at_us)
+        .min())
 }
 
 /// True when the queue holds no job: one key read.
@@ -217,7 +381,7 @@ pub struct SegmentedProjectionFilter {
 }
 
 /// The sources by incarnation.
-fn sources_by_incarnation(read: &dyn KvRead) -> Result<HashMap<String, SourceRecord>> {
+pub(crate) fn sources_by_incarnation(read: &dyn KvRead) -> Result<HashMap<String, SourceRecord>> {
     Ok(all_sources(read)?
         .into_iter()
         .map(|s| (s.incarnation.clone(), s))
@@ -387,6 +551,143 @@ pub(crate) fn select_projection_window_jobs_in(
     Ok(rows)
 }
 
+/// The reason `markProjectionRebuildFailed` writes.
+const REBUILD_FAILED: &str = "rebuild_failed";
+
+/// The transaction's time: `now()` and, for the projector's writes, `clock_timestamp()` (one
+/// store write is one statement, so the two agree).
+fn write_now() -> Result<i64> {
+    transaction_clock::transaction_now().ok_or_else(|| {
+        StoreError::invalid("a projection queue write ran outside a store write transaction")
+    })
+}
+
+/// The key of the job of page `(source_id, slug)`, or none when the source does not exist (the
+/// statements' `(SELECT incarnation FROM sources WHERE id=$1)` is NULL and matches no row).
+fn page_job_key(read: &dyn KvRead, source_id: &str, slug: &str) -> Result<Option<Vec<u8>>> {
+    Ok(read_source(read, source_id)?.map(|s| job_key(&s.incarnation, slug)))
+}
+
+fn read_job(read: &dyn KvRead, key: &[u8]) -> Result<Option<JobRecord>> {
+    read.get(key)?.map(|v| decode_job(&v)).transpose()
+}
+
+/// `claimSegmentedProjection`: `claimed` when the page's job had no live claim and now carries
+/// `claim`, `held` when another live claim holds it, `absent` when the page has no job.
+pub(crate) fn claim_segmented_projection_in(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    slug: &str,
+    claim: &str,
+) -> Result<&'static str> {
+    let Some(key) = page_job_key(&*tx, source_id, slug)? else {
+        return Ok("absent");
+    };
+    let Some(mut job) = read_job(&*tx, &key)? else {
+        return Ok("absent");
+    };
+    let now = write_now()?;
+    if claimed(&job, now) {
+        return Ok("held");
+    }
+    job.reason = claim.to_owned();
+    job.updated_at_us = now;
+    put_job(tx, &key, &job)?;
+    Ok("claimed")
+}
+
+/// The page's job while its reason is `claim`, with its key.
+fn claimed_job(
+    read: &dyn KvRead,
+    source_id: &str,
+    slug: &str,
+    claim: &str,
+) -> Result<Option<(Vec<u8>, JobRecord)>> {
+    let Some(key) = page_job_key(read, source_id, slug)? else {
+        return Ok(None);
+    };
+    Ok(read_job(read, &key)?
+        .filter(|job| job.reason == claim)
+        .map(|job| (key, job)))
+}
+
+/// `renewSegmentedProjectionClaim`: true when the job still carried `claim` and its time moved to now.
+pub(crate) fn renew_segmented_projection_claim_in(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    slug: &str,
+    claim: &str,
+) -> Result<bool> {
+    let Some((key, mut job)) = claimed_job(&*tx, source_id, slug, claim)? else {
+        return Ok(false);
+    };
+    job.updated_at_us = write_now()?;
+    put_job(tx, &key, &job)?;
+    Ok(true)
+}
+
+/// `releaseSegmentedProjectionClaim`: a job that still carries `claim` goes back to `canonical_change`.
+pub(crate) fn release_segmented_projection_claim_in(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    slug: &str,
+    claim: &str,
+) -> Result<()> {
+    if let Some((key, mut job)) = claimed_job(&*tx, source_id, slug, claim)? {
+        job.reason = CANONICAL_CHANGE.into();
+        job.updated_at_us = write_now()?;
+        put_job(tx, &key, &job)?;
+    }
+    Ok(())
+}
+
+/// The job at `(source_incarnation, slug)` when it is still queued at `revision`.
+fn job_at_revision(
+    read: &dyn KvRead,
+    job: &ProjectionJobRef,
+) -> Result<Option<(Vec<u8>, JobRecord)>> {
+    let incarnation = uuid_param(&job.source_incarnation, "sourceIncarnation")?;
+    let revision = uuid_param(&job.revision, "revision")?;
+    let key = job_key(&incarnation, &job.slug);
+    Ok(read_job(read, &key)?
+        .filter(|record| record.revision.eq_ignore_ascii_case(&revision))
+        .map(|record| (key, record)))
+}
+
+/// `deleteProjectionJob`: the job goes when it is still queued at `revision`.
+pub(crate) fn delete_projection_job_in(tx: &mut dyn KvWrite, job: &ProjectionJobRef) -> Result<()> {
+    if let Some((key, _)) = job_at_revision(&*tx, job)? {
+        tx.delete(&key)?;
+    }
+    Ok(())
+}
+
+/// `markProjectionRebuildFailed`: a job still queued at `revision` that no live claim holds gets
+/// reason `rebuild_failed` at now, so the retry window starts.
+pub(crate) fn mark_projection_rebuild_failed_in(
+    tx: &mut dyn KvWrite,
+    job: &ProjectionJobRef,
+) -> Result<()> {
+    let now = write_now()?;
+    if let Some((key, mut record)) = job_at_revision(&*tx, job)?
+        && !claimed(&record, now)
+    {
+        record.reason = REBUILD_FAILED.into();
+        record.updated_at_us = now;
+        put_job(tx, &key, &record)?;
+    }
+    Ok(())
+}
+
+/// A queued job by its key and revision (`deleteProjectionJob`, `markProjectionRebuildFailed`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectionJobRef {
+    pub source_incarnation: String,
+    pub slug: String,
+    pub revision: String,
+}
+
 impl Store {
     /// `listPendingSegmentedProjections(filter)`.
     pub fn list_pending_segmented_projections(
@@ -403,6 +704,46 @@ impl Store {
         retry_cooldown: bool,
     ) -> Result<Vec<Value>> {
         select_projection_window_jobs_in(&*self.read()?, &*self.env, cursor, retry_cooldown)
+    }
+
+    /// `claimSegmentedProjection({ sourceId, slug }, claim)`: `claimed`, `held` or `absent`.
+    pub fn claim_segmented_projection(
+        &self,
+        source_id: &str,
+        slug: &str,
+        claim: &str,
+    ) -> Result<&'static str> {
+        self.write(|tx| claim_segmented_projection_in(tx, source_id, slug, claim))
+    }
+
+    /// `renewSegmentedProjectionClaim({ sourceId, slug }, claim)`.
+    pub fn renew_segmented_projection_claim(
+        &self,
+        source_id: &str,
+        slug: &str,
+        claim: &str,
+    ) -> Result<bool> {
+        self.write(|tx| renew_segmented_projection_claim_in(tx, source_id, slug, claim))
+    }
+
+    /// `releaseSegmentedProjectionClaim({ sourceId, slug }, claim)`.
+    pub fn release_segmented_projection_claim(
+        &self,
+        source_id: &str,
+        slug: &str,
+        claim: &str,
+    ) -> Result<()> {
+        self.write(|tx| release_segmented_projection_claim_in(tx, source_id, slug, claim))
+    }
+
+    /// `deleteProjectionJob(job)`.
+    pub fn delete_projection_job(&self, job: &ProjectionJobRef) -> Result<()> {
+        self.write(|tx| delete_projection_job_in(tx, job))
+    }
+
+    /// `markProjectionRebuildFailed(job)`.
+    pub fn mark_projection_rebuild_failed(&self, job: &ProjectionJobRef) -> Result<()> {
+        self.write(|tx| mark_projection_rebuild_failed_in(tx, job))
     }
 
     /// Whether the page projection queue holds no job.
@@ -444,15 +785,60 @@ mod tests {
             .unwrap();
     }
 
+    #[test]
+    fn a_job_reads_back_from_its_compact_form_and_from_json() {
+        let job = |revision: &str, reason: &str, at: i64| JobRecord {
+            revision: revision.into(),
+            reason: reason.into(),
+            updated_at_us: at,
+        };
+        let cases = [
+            job(
+                "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+                CANONICAL_CHANGE,
+                1_763_500_000_123_456,
+            ),
+            // Text that is not a lower-case UUID keeps its exact bytes.
+            job("0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0", CANONICAL_CHANGE, 0),
+            job("not-a-uuid", "rebuild_failed", -1),
+            job("", "", i64::MIN),
+            job("ünïcode revision", PROTOCOL_ACTIVATION, i64::MAX),
+        ];
+        for case in &cases {
+            let bytes = encode_job(case).unwrap();
+            assert_eq!(bytes[0], COMPACT);
+            assert_eq!(&decode_job(&bytes).unwrap(), case);
+            let json = serde_json::to_vec(&json!({
+                "revision": case.revision, "reason": case.reason,
+                "updated_at_us": case.updated_at_us,
+            }))
+            .unwrap();
+            assert_eq!(&decode_job(&json).unwrap(), case);
+        }
+        assert_eq!(encode_job(&cases[0]).unwrap().len(), 26);
+        for bad in [
+            &b""[..],
+            b"x",
+            &[COMPACT],
+            &[COMPACT, 3, 0, 0],
+            &[COMPACT, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+        ] {
+            assert_eq!(decode_job(bad).unwrap_err().code, STORE_CORRUPT);
+        }
+        let mut tail = encode_job(&cases[0]).unwrap();
+        tail.push(b'x');
+        assert!(decode_job(&tail).is_err(), "bytes after a canonical job");
+    }
+
     fn set_job(store: &Store, slug: &str, reason: &str, age_us: i64) {
         let now = store.env.now_micros();
         store
             .write(|tx| {
                 let key = job_key(&incarnation_of(&*tx, "default")?, slug);
-                let mut job: JobRecord = crate::get_json(&*tx, &key)?.unwrap();
+                let mut job = decode_job(&tx.get(&key)?.unwrap())?;
                 job.reason = reason.into();
                 job.updated_at_us = now - age_us;
-                put_json(tx, &key, &job)
+                put_job(tx, &key, &job)
             })
             .unwrap();
     }
@@ -465,6 +851,38 @@ mod tests {
             .iter()
             .map(|r| r["slug"].as_str().unwrap().to_owned())
             .collect()
+    }
+
+    /// `projectionRebuildProgress` reads the start of an activation's rebuild from the queue. No
+    /// store writer queues `protocol_activation` yet, so the test writes the job's reason itself.
+    #[test]
+    fn rebuild_progress_starts_at_the_oldest_activation_job() {
+        use crate::link_queries::CoverageScope;
+        let store = crate::test_support::store();
+        for slug in ["waiting", "sealed"] {
+            put(&store, slug);
+        }
+        store
+            .write(|tx| {
+                let mut page = read_page(&*tx, "default", "sealed")?.unwrap();
+                page.text_projection_revision = Some(page.knowledge_revision.clone());
+                crate::pages::write_page(tx, &page)
+            })
+            .unwrap();
+        let every = CoverageScope::default();
+        assert_eq!(store.projection_rebuild_progress(&every).unwrap(), None);
+        set_job(&store, "waiting", PROTOCOL_ACTIVATION, 10_000_000);
+        let progress = store.projection_rebuild_progress(&every).unwrap().unwrap();
+        assert_eq!((progress.done, progress.total), (1, 2));
+        let rate = progress.pages_per_second.unwrap();
+        assert!(rate > 0.05 && rate <= 0.1, "{rate}");
+        let elsewhere: CoverageScope =
+            serde_json::from_value(json!({ "sourceId": "elsewhere" })).unwrap();
+        let none = store
+            .projection_rebuild_progress(&elsewhere)
+            .unwrap()
+            .unwrap();
+        assert_eq!((none.done, none.total, none.pages_per_second), (0, 0, None));
     }
 
     #[test]
@@ -553,5 +971,98 @@ mod tests {
             })
             .unwrap();
         assert_eq!(transaction_clock::transaction_now(), None);
+    }
+
+    /// The projector's queue writes: one live claim at a time, renew and release only by the
+    /// holder, and the rebuilt and failed marks only at the queued revision.
+    #[test]
+    fn the_projector_claims_renews_releases_and_settles_a_job() {
+        let store = crate::test_support::store();
+        put(&store, "notes/a");
+        let job = |store: &Store| {
+            store
+                .read()
+                .and_then(|r| read_job(&*r, &job_key(&incarnation_of(&*r, "default")?, "notes/a")))
+                .unwrap()
+        };
+        let (a, b) = ("segmented_projecting:a", "segmented_projecting:b");
+        assert_eq!(
+            store
+                .claim_segmented_projection("default", "notes/none", a)
+                .unwrap(),
+            "absent"
+        );
+        assert_eq!(
+            store
+                .claim_segmented_projection("no-such-source", "notes/a", a)
+                .unwrap(),
+            "absent"
+        );
+        assert_eq!(
+            store
+                .claim_segmented_projection("default", "notes/a", a)
+                .unwrap(),
+            "claimed"
+        );
+        assert_eq!(job(&store).unwrap().reason, a);
+        assert_eq!(
+            store
+                .claim_segmented_projection("default", "notes/a", b)
+                .unwrap(),
+            "held"
+        );
+        assert!(
+            !store
+                .renew_segmented_projection_claim("default", "notes/a", b)
+                .unwrap()
+        );
+        assert!(
+            store
+                .renew_segmented_projection_claim("default", "notes/a", a)
+                .unwrap()
+        );
+        store
+            .release_segmented_projection_claim("default", "notes/a", b)
+            .unwrap();
+        assert_eq!(job(&store).unwrap().reason, a);
+        let revision = job(&store).unwrap().revision;
+        let incarnation = store
+            .read()
+            .and_then(|r| incarnation_of(&*r, "default"))
+            .unwrap();
+        let at = |revision: &str| ProjectionJobRef {
+            source_incarnation: incarnation.clone(),
+            slug: "notes/a".into(),
+            revision: revision.into(),
+        };
+        // A live claim keeps the failed mark off.
+        store
+            .mark_projection_rebuild_failed(&at(&revision))
+            .unwrap();
+        assert_eq!(job(&store).unwrap().reason, a);
+        store
+            .release_segmented_projection_claim("default", "notes/a", a)
+            .unwrap();
+        assert_eq!(job(&store).unwrap().reason, CANONICAL_CHANGE);
+        let other = "00000000-0000-4000-8000-000000000000";
+        store.mark_projection_rebuild_failed(&at(other)).unwrap();
+        assert_eq!(job(&store).unwrap().reason, CANONICAL_CHANGE);
+        store
+            .mark_projection_rebuild_failed(&at(&revision))
+            .unwrap();
+        assert_eq!(job(&store).unwrap().reason, REBUILD_FAILED);
+        store.delete_projection_job(&at(other)).unwrap();
+        assert!(job(&store).is_some());
+        store
+            .delete_projection_job(&at(&revision.to_uppercase()))
+            .unwrap();
+        assert!(job(&store).is_none());
+        assert_eq!(
+            store
+                .claim_segmented_projection("default", "notes/a", a)
+                .unwrap(),
+            "absent"
+        );
+        assert!(store.delete_projection_job(&at("not-a-uuid")).is_err());
     }
 }

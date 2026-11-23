@@ -27,6 +27,8 @@
 //! - `F 0x0D page_id`: the `page_facts_reconcile` watermark (`facts/reconcile.rs`), read only.
 //! - `F 0x0E generation_id`: the `derived_generations` ledger with its items
 //!   (`facts/generations.rs`), read only.
+//! - `F 0x0F source visibility subject fact_hash`: the `fact_purges` ledger
+//!   (`facts/purge_ledger.rs`).
 //! - meta `next_facts_id`: the id sequence. An insert that `ON CONFLICT DO NOTHING` skips still
 //!   takes an id, as `nextval` does.
 //!
@@ -40,28 +42,50 @@
 //! UTF-8 database); `ILIKE` and `LIKE` read `\` as the escape character.
 
 mod collapse;
+pub mod contest;
 pub mod cycle;
 pub mod doctor;
 mod embedding;
+pub mod extractor_classify;
 mod fence;
+mod fence_overlay;
 pub mod generations;
+mod held_cells;
+pub mod holding_purges;
 pub mod loops;
 mod page_purges;
 mod privacy;
 pub mod purge;
+pub mod purge_ledger;
+pub mod quote;
 pub mod reconcile;
 pub mod relink;
 pub mod relink_writes;
 pub mod repair;
+pub mod saved_match;
 pub mod trust;
+pub mod trust_owner;
 pub mod trust_reads;
+mod widen;
+pub mod withdrawal_discovery;
+pub mod withdrawal_fence;
+pub mod withdrawal_pages;
 
+pub use crate::owner_only::OwnerOnlyForm;
+pub(crate) use crate::owner_only::OwnerOnlySources;
+pub(crate) use fence::jsonb_time;
 pub use fence::{FenceContext, FenceTarget};
+pub use fence_overlay::{FenceOverlayIncomingRow, FenceOverlayInput};
+pub use held_cells::{HeldFenceCellKey, HeldFenceCellsInput, HeldFenceMember};
+pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
-pub use privacy::{OwnerOnly, PrivacyPolicy};
 pub(crate) use privacy::{
-    OwnerOnlyCache, OwnerOnlySources, page_hidden, page_hidden_with, version_hidden,
+    OwnerOnlyCache, access_readers, caller_version_hidden, concept_inputs,
+    hidden_by_provenance_page, page_hidden, page_hidden_with, successor_withholds_reason,
+    version_hidden,
 };
+pub use widen::VisibilityWidening;
+use widen::{visibility_admits, world_admits};
 
 use crate::chunks::embedding_dimensions;
 use crate::config::read_config;
@@ -77,6 +101,7 @@ use crate::pages::{next_id, read_page};
 use crate::sources::read_source;
 use crate::timeline_queries::timestamptz_text;
 use crate::trust::{OriginStamp, StampRow, TrustPolicy, TrustTable, TrustTier, WriteTrust, stamp};
+use crate::write_receipt::WriteReceipt;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -171,7 +196,12 @@ pub(crate) struct FactRecord {
     /// written before the store kept the column, reads as `unknown` ([`TrustTier::stored`]).
     pub trust_tier: String,
     /// `write_origin`: the provenance JSON of the write that stamped the row (NULL: none).
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub write_origin: Option<Value>,
+    /// The write receipt (`write_*`, `last_*`). Absent in a record stored before it, and omitted
+    /// while every column is null. [`write_fact`] stamps it.
+    #[serde(skip_serializing_if = "WriteReceipt::is_empty")]
+    pub receipt: WriteReceipt,
 }
 
 impl FactRecord {
@@ -183,6 +213,79 @@ impl FactRecord {
     /// Whether a [`TrustTable::Facts`] content column differs between `self` and `new` (the
     /// trigger's `IS DISTINCT FROM` chain): fact, entity_slug, kind, the four claim columns,
     /// value, event_type, dimension and context.
+    /// The content tuple the attribution trigger compares
+    /// (`WRITE_ATTRIBUTION_CONTENT_COLUMNS.facts`). The withdrawal-stamp exemption
+    /// (`gbrain.fact_withdrawal_stamp`) never applies: the store keeps no withdrawal ledger.
+    fn attribution_content_changed(&self, new: &FactRecord) -> bool {
+        use crate::write_receipt::float_distinct;
+        let a = self;
+        let b = new;
+        (
+            a.id,
+            &a.source_id,
+            &a.entity_slug,
+            &a.fact,
+            &a.kind,
+            &a.visibility,
+            &a.notability,
+            &a.context,
+        ) != (
+            b.id,
+            &b.source_id,
+            &b.entity_slug,
+            &b.fact,
+            &b.kind,
+            &b.visibility,
+            &b.notability,
+            &b.context,
+        ) || (
+            a.valid_from_us,
+            a.valid_until_us,
+            a.expired_at_us,
+            a.superseded_by,
+            a.consolidated_at_us,
+            a.consolidated_into,
+            &a.source,
+            &a.source_session,
+            a.created_at_us,
+            a.row_num,
+        ) != (
+            b.valid_from_us,
+            b.valid_until_us,
+            b.expired_at_us,
+            b.superseded_by,
+            b.consolidated_at_us,
+            b.consolidated_into,
+            &b.source,
+            &b.source_session,
+            b.created_at_us,
+            b.row_num,
+        ) || (
+            &a.source_markdown_slug,
+            &a.claim_metric,
+            &a.claim_unit,
+            &a.claim_period,
+            &a.event_type,
+            &a.dimension,
+            &a.value,
+            &a.value_hash,
+            &a.dim_status,
+            &a.attributed_to,
+        ) != (
+            &b.source_markdown_slug,
+            &b.claim_metric,
+            &b.claim_unit,
+            &b.claim_period,
+            &b.event_type,
+            &b.dimension,
+            &b.value,
+            &b.value_hash,
+            &b.dim_status,
+            &b.attributed_to,
+        ) || float_distinct(Some(a.confidence), Some(b.confidence))
+            || float_distinct(a.claim_value, b.claim_value)
+    }
+
     fn trust_content_changed(&self, new: &FactRecord) -> bool {
         let float = |a: Option<f64>, b: Option<f64>| match (a, b) {
             (Some(a), Some(b)) => !(a == b || (a.is_nan() && b.is_nan())),
@@ -224,7 +327,7 @@ impl FactRecord {
     }
 
     /// `onOwnedMemoryPageSql`: the row sits on a member page or the scope page.
-    fn on_owned_memory_page(&self) -> bool {
+    pub(crate) fn on_owned_memory_page(&self) -> bool {
         let slug = self.source_markdown_slug.as_deref().unwrap_or("");
         slug.starts_with(MEMBER_PAGE_PREFIX) || slug == SCOPE_PAGE_SLUG
     }
@@ -271,7 +374,10 @@ impl FactRecord {
             out.insert("attributed_to".into(), json!(who));
         }
         out.insert("trust_tier".into(), json!(self.tier().as_str()));
-        out.insert("write_origin".into(), json!(self.write_origin));
+        out.insert(
+            "write_origin".into(),
+            json!(self.write_origin.clone().map(crate::jsonb::order)),
+        );
         if let Some(m) = self.claim_metric.as_deref().filter(|s| !s.is_empty()) {
             out.insert("claim_metric".into(), json!(m));
         }
@@ -499,6 +605,12 @@ pub(crate) fn stamp_fact(
     };
     let stamped = stamp(trust, TrustTable::Facts, row)?;
     let mut out = new.clone();
+    out.receipt = WriteReceipt::stamp_as(
+        &trust.attribution,
+        old.map(|o| &o.receipt),
+        &new.receipt,
+        old.is_some_and(|o| o.attribution_content_changed(new)),
+    )?;
     out.trust_tier = stamped.tier.as_str().to_string();
     if let OriginStamp::Set(origin) = stamped.origin {
         out.write_origin = origin;
@@ -519,6 +631,7 @@ pub(crate) fn write_fact(
     let mut stamped = stamp_fact(trust, old, new)?;
     preserve_withdrawal(tx, old, &mut stamped)?;
     let new = &stamped;
+    purge_ledger::refuse_purged(tx, old, new)?;
     if let Some(old) = old {
         for (key, _) in index_keys(old) {
             tx.delete(&key)?;
@@ -661,7 +774,8 @@ pub(crate) fn fact_exists(read: &dyn KvRead, id: u64, source_ids: &[String]) -> 
 }
 
 /// Deletes this family's records keyed by a source that is deleted (`cascade::remove_source_rows`):
-/// every fact row of the source, as `facts_source_id_fkey ... ON DELETE CASCADE` does. A row of
+/// every fact row of the source, as `facts_source_id_fkey ... ON DELETE CASCADE` does, and its fact
+/// purge tombstones (`fact_purges_source_id_fkey`, [`purge_ledger::remove_source_rows`]). A row of
 /// another source that named one of them as its successor keeps its row with `superseded_by`
 /// cleared (`ON DELETE SET NULL`).
 ///
@@ -672,7 +786,7 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     for row in source_rows(tx, source_id)? {
         delete_fact(tx, trust, &row)?;
     }
-    Ok(())
+    purge_ledger::remove_source_rows(tx, source_id)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -955,7 +1069,9 @@ pub struct KeysetAfter {
 }
 
 /// The filters of the four list reads. The TypeScript member clamps `limit`, builds the `grep`
-/// pattern, and passes `visibility` as the plain list (`Some(empty)` matches nothing).
+/// pattern, and passes `visibility` as the plain list (`Some(empty)` matches nothing) with the
+/// caller's `widen` record when member pages or a private-facts grant widen it, and the
+/// read eligibility as `eligible`, `min_trust` and `suppress_flagged` (as `SupersessionQuery`).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct FactQuery {
@@ -967,6 +1083,8 @@ pub struct FactQuery {
     pub unconsolidated_only: bool,
     pub kinds: Option<Vec<String>>,
     pub visibility: Option<Vec<String>>,
+    /// What widens a `visibility` list without `private` for the caller (`facts/widen.rs`).
+    pub widen: Option<VisibilityWidening>,
     pub exclude_audit_rows: bool,
     pub grep: Option<String>,
     pub fingerprint: bool,
@@ -977,6 +1095,15 @@ pub struct FactQuery {
     pub after: Option<KeysetAfter>,
     /// `excludePrivate`: the private-provenance policy (`facts/privacy.rs`).
     pub exclude_private: Option<PrivacyPolicy>,
+    /// The caller passed a read eligibility (`eligibilityClause`, engine-sql/facts.ts):
+    /// `projectionEligibleSql('facts')` replaces the deleted-page clause, so a row whose live
+    /// provenance page is quarantined is hidden too. The store keeps no `needs_rederive` queue,
+    /// so that clause hides nothing.
+    pub eligible: bool,
+    /// `eligibility.floor`: `trustFloorSql` over the fact's stored tier; null sets none.
+    pub min_trust: Option<String>,
+    /// `eligibility.suppressFlagged`: drop a fact `activationSuppressedSql('facts')` flags.
+    pub suppress_flagged: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -986,6 +1113,8 @@ pub struct SupersessionQuery {
     pub since: Option<String>,
     pub limit: f64,
     pub visibility: Option<Vec<String>>,
+    /// What widens a `visibility` list without `private` for the caller (`facts/widen.rs`).
+    pub widen: Option<VisibilityWidening>,
     /// `excludePrivate`: the private-provenance policy (`facts/privacy.rs`).
     pub exclude_private: Option<PrivacyPolicy>,
     /// The caller passed a read eligibility: `projectionEligibleSql('facts')` replaces the
@@ -1039,6 +1168,9 @@ pub struct TrajectoryQuery {
     pub source_ids: Vec<String>,
     pub entity_slug: String,
     pub world_only: bool,
+    /// With `worldOnly`, the private rows the caller's member page or private-facts grant also admits
+    /// (`facts/widen.rs`).
+    pub widen: Option<VisibilityWidening>,
     pub metric: Option<String>,
     pub kind: Option<String>,
     pub since: Option<String>,
@@ -1347,7 +1479,13 @@ impl FactQuery {
         }
     }
 
-    fn admits(&self, read: &dyn KvRead, row: &FactRecord, now: i64) -> Result<bool> {
+    fn admits(
+        &self,
+        read: &dyn KvRead,
+        row: &FactRecord,
+        now: i64,
+        trust: &TrustPolicy,
+    ) -> Result<bool> {
         let eq = |want: &Option<String>, have: &Option<String>| want.is_none() || want == have;
         if !(eq(&self.entity_slug, &row.entity_slug)
             && eq(&self.source_markdown_slug, &row.source_markdown_slug)
@@ -1358,7 +1496,7 @@ impl FactQuery {
         if (self.active_only && !row.active(now))
             || (self.unconsolidated_only && row.consolidated_at_us.is_some())
             || !listed(&self.kinds, &row.kind)
-            || !listed(&self.visibility, &row.visibility)
+            || !visibility_admits(read, &self.visibility, &self.widen, row)?
             || (self.exclude_audit_rows && row.audit_row())
         {
             return Ok(false);
@@ -1369,7 +1507,9 @@ impl FactQuery {
             return Ok(false);
         }
         Ok(!hidden_by_deleted_page(read, row)?
-            && !hidden_by_policy(read, row, &self.exclude_private)?)
+            && !hidden_by_policy(read, row, &self.exclude_private)?
+            && !(self.eligible && hidden_by_quarantine(read, row)?)
+            && trust.admits(read, "facts", row.id, row.tier())?)
     }
 
     fn check(&self, op: &str) -> Result<()> {
@@ -1403,6 +1543,16 @@ fn page_of(
     rows.into_iter().skip(offset).take(limit).collect()
 }
 
+/// A fact's newest-first ranking time: its `valid_from`, or its `created_at` when it is dated
+/// after `now` (`CASE WHEN valid_from > now() THEN created_at ELSE valid_from END`).
+pub(crate) fn ranked_time(r: &FactRecord, now: i64) -> i64 {
+    if r.valid_from_us > now {
+        r.created_at_us
+    } else {
+        r.valid_from_us
+    }
+}
+
 impl Store {
     #[allow(clippy::too_many_arguments)]
     fn list_facts(
@@ -1417,11 +1567,12 @@ impl Store {
     ) -> Result<Vec<Value>> {
         q.check(op)?;
         let limit = count_arg(op, "limit", q.limit)?;
+        let trust = TrustPolicy::parse(q.min_trust.as_deref(), q.suppress_flagged)?;
         let read = self.read()?;
         let now = self.env.now_micros();
         let mut rows = Vec::new();
         for row in q.candidates(&*read)? {
-            if q.source_id == row.source_id && extra(&row) && q.admits(&*read, &row, now)? {
+            if q.source_id == row.source_id && extra(&row) && q.admits(&*read, &row, now, &trust)? {
                 rows.push(row);
             }
         }
@@ -1555,11 +1706,21 @@ impl Store {
         self.write(|tx| delete_for_page(tx, trust, "deleteFactsForPage", args))
     }
 
-    /// `listFactsByEntity`: `valid_from DESC, id DESC`.
+    /// `listFactsByEntity`: newest first by `valid_from`, except that a fact dated in the future
+    /// ranks by its `created_at` (as of when it was written), then `id DESC`.
     pub fn list_facts_by_entity(&self, q: &FactQuery) -> Result<Vec<Value>> {
         const OP: &str = "listFactsByEntity";
         let offset = count_arg(OP, "offset", q.offset)?;
-        self.list_facts(OP, q, |r| r.valid_from_us, true, offset, |_| true, false)
+        let now = self.env.now_micros();
+        self.list_facts(
+            OP,
+            q,
+            move |r| ranked_time(r, now),
+            true,
+            offset,
+            |_| true,
+            false,
+        )
     }
 
     /// `listFactsSince`: rows at or after `since` on `created_at` (or `valid_from` with
@@ -1620,7 +1781,7 @@ impl Store {
             let ended = row.expired_at_us.or(row.valid_until_us);
             if row.superseded_by.is_none()
                 || since.is_some_and(|s| ended.is_none_or(|e| e < s))
-                || !listed(&q.visibility, &row.visibility)
+                || !visibility_admits(&*read, &q.visibility, &q.widen, &row)?
                 || hidden_by_policy(&*read, &row, &q.exclude_private)?
                 || hidden_by_deleted_page(&*read, &row)?
                 || (q.eligible && hidden_by_quarantine(&*read, &row)?)
@@ -1813,7 +1974,7 @@ impl Store {
             }
             for row in entity_rows(&*read, source, &q.entity_slug)? {
                 if row.expired_at_us.is_some()
-                    || (q.world_only && row.visibility != "world")
+                    || (q.world_only && !world_admits(&*read, &q.widen, &row)?)
                     || q.metric
                         .as_ref()
                         .is_some_and(|m| row.claim_metric.as_ref() != Some(m))

@@ -844,6 +844,16 @@ More: [docs/guides/bootstrap.md#cleanup-pending](../../docs/guides/bootstrap.md#
 |---|---|---|---|---|---|---|
 | The bootstrapped benchmark awaits human review. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### brain_missing
+
+<a id="brain_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The configured PGLite brain is not at its datastore path (an unmounted drive or a moved folder?), so doctor did not connect and created nothing there. | A health check never creates the thing it checks: connecting to a missing PGLite path would build a new empty brain there, migrate it and report it healthy while the real notes sit elsewhere. Creating a new empty brain is `gbrain init`, a decision for the user. | Mount or reconnect the drive that holds the brain, move the folder back, or point `database_path` in the gbrain config at where the brain lives now; then run `gbrain doctor --only connection --json` again. | user | `gbrain doctor --json` | 1 | no |
+
+Reasons: `missing_brain`.
+
 ### bridge_ownership_conflict
 
 <a id="bridge_ownership_conflict"></a>
@@ -2085,6 +2095,40 @@ More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/
 | A setting passed to openEngine is missing or malformed (engine kind, database url or path, pool size, host or writer id, writer credential or lane, embedding identity), so nothing was opened or registered. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the setting the message names and call again. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
+
+### engine_swap_refused
+
+<a id="engine_swap_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The move to another engine (`gbrain engine swap`) was refused before anything changed; the current engine keeps authority. | A swap needs a settled, unmanaged brain and readiness evidence that cannot be waived: managed storage, unfinished worktree refreshes, failing readiness criteria, more than one writer host, a team brain, a lagging follower, differing digests or fingerprints, an engine-selecting override, or host access that would change. Each reason has one recovery row in docs/guides/engine-swap.md. | Correct the request using the message above, then retry. Run: gbrain engine swap --to rust --plan --json | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `refresh_unsettled`, `managed_storage`, `not_ready`, `multiple_writer_hosts`, `writer_coverage_unknown`, `team_brain`, `follower_behind`, `digest_mismatch`, `route_override`, `host_access_unbound`, `host_access_changed`, `fingerprint_semantics_differ`.
+
+Override: reason `refresh_unsettled`: retryable, exit 1, retryable.
+
+Override: reason `managed_storage`: consent, exit 3, not retryable.
+
+Override: reason `follower_behind`: retryable, exit 1, retryable.
+
+Override: reason `multiple_writer_hosts`: consent, exit 3, not retryable.
+
+Override: reason `writer_coverage_unknown`: consent, exit 3, not retryable.
+
+Override: reason `team_brain`: consent, exit 3, not retryable.
+
+Override: reason `route_override`: consent, exit 3, not retryable.
+
+Override: reason `host_access_unbound`: consent, exit 3, not retryable.
+
+Override: reason `host_access_changed`: consent, exit 3, not retryable.
+
+Override: reason `digest_mismatch`: unavailable, exit 1, not retryable.
+
+Override: reason `fingerprint_semantics_differ`: unavailable, exit 1, not retryable.
+
+More: [docs/guides/engine-swap.md#refusals](../../docs/guides/engine-swap.md#refusals)
 
 ### entity_types_unavailable
 
@@ -4032,7 +4076,7 @@ Reasons: `queue_full`, `inflight_bytes`, `connections`.
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A Rust brain's owner socket connected two processes of different OS users, or the socket itself was not private to this user, so the connection was refused and nothing ran. | The owner socket runs brain calls with the owner's full access, so only the same OS user may use it. The owner reads each connecting process's uid from the kernel (SO_PEERCRED or getpeereid) and refuses any other uid, or a uid it cannot read (`peer_uid`). A client checks the socket before it connects: it must be a socket owned by this user (`socket_owner`) with no group or other permission bits (`socket_mode`); after it connects it checks the owner's uid the same way (`peer_uid`). Where the platform cannot read peer uids, the private 0700 directory and 0600 socket are the only guard. | Run every gbrain process on the brain as the same OS user. For socket_owner or socket_mode, stop the process that made the socket, check that the brain directory belongs to you, and run the command again. Run: gbrain doctor --json | agent | `repeat the read that failed` | 1 | no |
+| A Rust brain's owner socket connected two processes of different OS users, or the socket itself was not private to this user, so the connection was refused and nothing ran. | The owner socket runs brain calls with the owner's full access, so only the same OS user may use it. The owner reads each connecting process's uid from the kernel (SO_PEERCRED or getpeereid) and refuses any other uid, or a uid it cannot read (`peer_uid`). A client checks the socket before it connects: it must be a socket owned by this user (`socket_owner`), and it may have group or other permission bits only inside a private directory (0700, owned by this user); otherwise it is refused (`socket_mode`). After it connects it checks the owner's uid the same way (`peer_uid`). Peer uids are read on Linux x64 and arm64 and on macOS. On other Unix systems and other Linux architectures the owner socket falls back to file modes alone (the private 0700 directory and the 0600 socket), and the warm CLI socket refuses there instead. A Windows named pipe gets neither check. | Run every gbrain process on the brain as the same OS user. For socket_owner or socket_mode, stop the process that made the socket, check that the brain directory belongs to you, and run the command again. Run: gbrain doctor --json | agent | `repeat the read that failed` | 1 | no |
 
 Reasons: `peer_uid`, `socket_owner`, `socket_mode`.
 
@@ -4062,7 +4106,7 @@ More: [docs/guides/write-refusals.md#owner_marker_missing](../../docs/guides/wri
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The source's canonical owner cannot run this write or maintenance step right now; `reason` says which condition. | A managed source publishes only through the host that owns its checkout. `host_mismatch`: another host id owns it (two GBRAIN_HOME identity files on one machine look the same; both ids are printed, and a retry on this host cannot help). `transfer_in_progress`: the worktree is draining for a writer transfer, which ends when the successor accepts it or the owner host runs `gbrain sources writer transfer cancel`; a drain prepared over 30 minutes ago asks the user which (`ask_user`) instead of waiting. `clone_in_progress`: a topology clone is recovering it and clears by itself. `binding_missing`, `incarnation_changed`, `local_path_missing` and `coordination_path_missing` name an incomplete or outdated registration. `not_sent` / `outcome_unknown`: the local owner's IPC lane did not take the write, or lost its acknowledgment. On a Rust brain the same two reasons come from the owner socket (`<database_path>/.gbrain-owner.sock`): `not_sent` means the call never reached the owner (no owner or client role within 5 seconds, or the owner had already exited), so a retry is safe; `outcome_unknown` means the call was sent and its answer never came back (the owner exited, the caller cancelled it, or its deadline passed), so a write may or may not have committed: the owner does not stop a call it started. The owner then holds back the read that confirms that write, and the write's own member on the same key, until the started call ends, so the confirming read answers only once the outcome is final; `earlier_call_running` means a call waited there past its own deadline and never ran, so it tells nothing yet and is not retryable as not_sent. The suggestion names the read that confirms that member's write (for insertFact, listFactsByEntity for that entity), and the error is retryable only for a member that only reads. A long-lived client runs the election again on its next call and becomes the owner or a client of the new one, so a retry works without a restart. `detail: unbound_source`: on Postgres the source has a checkout but no canonical owner, a configuration state rather than a transient one (not retryable); in classic mode the write path is the file, a commit and `gbrain sync`. | Read gbrain sources writer status --source <id> --json on the brain host. A transfer or clone in progress: wait and retry. host_mismatch: run the step on the owner host, or give the worker and the shell one GBRAIN_HOME; never copy or regenerate host.json. Nothing claims or transfers ownership to run maintenance. | agent | `repeat the read that failed` | 1 | yes |
+| The source's canonical owner cannot run this write or maintenance step right now; `reason` says which condition. | A managed source publishes only through the host that owns its checkout. `host_mismatch`: another host id owns it (two GBRAIN_HOME identity files on one machine look the same; both ids are printed, and a retry on this host cannot help). `transfer_in_progress`: the worktree is draining for a writer transfer, which ends when the successor accepts it or the owner host runs `gbrain sources writer transfer cancel`; a drain prepared over 30 minutes ago asks the user which (`ask_user`) instead of waiting. `clone_in_progress`: a topology clone is recovering it and clears by itself. `binding_missing`, `incarnation_changed`, `local_path_missing` and `coordination_path_missing` name an incomplete or outdated registration. `not_sent` / `outcome_unknown`: the local owner's IPC lane did not take the write, or lost its acknowledgment. On a Rust brain the same two reasons come from the owner socket (`<database_path>/.gbrain-owner.sock`): `not_sent` means the call never reached the owner (no owner or client role within 5 seconds, or the owner had already exited), so a retry is safe; `outcome_unknown` means the call was sent and its answer never came back (the owner exited, the caller cancelled it, or its deadline passed), so a write may or may not have committed: the owner does not stop a call it started. The owner then holds back every call to a member that would confirm that write (the members its confirming read names, or the write's own member when that read goes through it, as for executeRaw) until the started call ends, so the confirming read answers only once the outcome is final; the hold is by member, not by key, so an unrelated call to the same member waits too; `earlier_call_running` means a call waited there past its own deadline and never ran, so it tells nothing yet and is not retryable as not_sent. The suggestion names the read that confirms that member's write (for insertFact, listFactsByEntity for that entity), and the error is retryable only for a member that only reads. A long-lived client runs the election again on its next call and becomes the owner or a client of the new one, so a retry works without a restart. `detail: unbound_source`: on Postgres the source has a checkout but no canonical owner, a configuration state rather than a transient one (not retryable); in classic mode the write path is the file, a commit and `gbrain sync`. | Read gbrain sources writer status --source <id> --json on the brain host. A transfer or clone in progress: wait and retry. host_mismatch: run the step on the owner host, or give the worker and the shell one GBRAIN_HOME; never copy or regenerate host.json. Nothing claims or transfers ownership to run maintenance. | agent | `repeat the read that failed` | 1 | yes |
 
 Reasons: `host_mismatch`, `transfer_in_progress`, `clone_in_progress`, `binding_missing`, `incarnation_changed`, `coordination_path_missing`, `local_path_missing`, `not_sent`, `outcome_unknown`, `earlier_call_running`.
 

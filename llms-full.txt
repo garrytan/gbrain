@@ -323,7 +323,8 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   typed metric claims in its `## Facts` fence (`metric: mrr`, `value: 50000`,
   `unit: USD`, `period: monthly` columns), run
   `gbrain eval trajectory <entity-slug>` for the chronological history
-  with regressions auto-flagged, or `gbrain founder scorecard <entity-slug>`
+  with regressions auto-flagged (a 10% drop, or a 10% rise for a
+  lower-is-better metric such as burn, churn or cost, but not cost_savings), or `gbrain founder scorecard <entity-slug>`
   for a four-signal JSON rollup (claim_accuracy / consistency /
   growth_trajectory / red_flags). MCP op `find_trajectory` exposes the
   same data — read scope, visibility-filtered for remote callers.
@@ -1526,6 +1527,20 @@ not register Hermes's MCP server, run the command in
 [Register by hand](docs/mcp/HERMES.md#register-by-hand) and verify with
 `hermes mcp test gbrain`. Full reference: [docs/mcp/HERMES.md](docs/mcp/HERMES.md).
 
+**If you are OpenClaw:** register gbrain as your MCP server, then add the
+brain-first rule:
+
+```bash
+openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg starter --arg --advertise --arg verbs --env GBRAIN_HOME=$HOME
+gbrain setup openclaw
+```
+
+Run both lines. With only the first, the tools are registered but a new session
+answers from OpenClaw's own memory and chat history instead of gbrain. Once the
+gateway runs `gbrain serve`, use the MCP tools rather than the `gbrain` CLI on a
+PGLite brain (the CLI stops with `pglite_busy`). Full reference:
+[docs/mcp/OPENCLAW.md](docs/mcp/OPENCLAW.md).
+
 **If you are Grok Build** (xAI's `grok` CLI): register gbrain as your MCP server:
 
 ```bash
@@ -1931,7 +1946,7 @@ Since 16 November 2026, stable comes with a written promise about what a script 
 - Search ranking, speed and the exact results of model-backed features.
 - Very large brains during an upgrade. The upgrade tests build small brains, on PGLite and on Postgres, with and without a git repository. The two-hour load test runs a 600,000-page brain on the new release but does not upgrade one. Until [#9192](https://github.com/garrytan/gbrain/issues/9192) is fixed, a large brain on a remote Postgres database can return no search results for hours after an upgrade while it catches up.
 
-**How it is checked.** Every pull request runs a check (`bun run check:public-surface`) against a list of the commands, MCP tools and their parameters, config keys and exit codes, built from the code into [docs/contracts/public-surface.json](contracts/public-surface.json). The list has the flags of every command defined as an operation, and of the 8 CLI-only commands (out of 132) that have a curated help record; the flags of the other 124, `recall` and `forget` among them, are checked in review. The check refuses a pull request that:
+**How it is checked.** Every pull request runs a check (`bun run check:public-surface`) against a list of the commands, MCP tools and their parameters, config keys and exit codes, built from the code into [docs/contracts/public-surface.json](contracts/public-surface.json). The list has the flags of every command defined as an operation, and of the 8 CLI-only commands (out of 132) that have a curated help record; the flags of the other 124, `recall` and `forget` among them, are checked in review. It also has the skill resolver surface that outside skill sets build on: the `gbrain skills index`, `resolve`, `library` and `pin` subcommands with all their flags, `gbrain skillpack health` and `doctor`, `gbrain setup --skill-loading`, the `skills.resolver.*` config keys `top_k`, `top_gate`, `pinned`, `pins.<catalog>`, `session_token_budget` and `per_harness.<harness>.dirs`, and the `block`, `no_skill` and `suggestions[].id` fields of `gbrain skills resolve --json`. The check refuses a pull request that:
 
 - drops one of them, or changes an exit code, before a [deprecations.d/](../deprecations.d/README.md) record for it has reached its `remove_after` date, unless the pull request adds a behaviour-change row marked `exception: security` or `exception: data-loss`;
 - adds a deprecation record whose date is less than 14 days away, or changes what a merged record names, or moves its date earlier;
@@ -1940,7 +1955,7 @@ Since 16 November 2026, stable comes with a written promise about what a script 
 
 What never reached stable isn't covered. The check compares with the list at the current stable release (the `stable` tag), so something added since then can be removed with no record. When the clone lacks the tag, the check fetches it from GitHub. In CI a fetch that fails or takes more than 20 seconds fails the check and asks for a rerun, so a missing tag never waives the rule; a local run without the tag says so and counts everything as on stable. Until a stable release carries the list, the check says so and counts everything as on stable; a revert then marks its behaviour-change row `exception: revert` and names the pull request it reverts.
 
-The rest is checked when the pull request is reviewed: `--json` fields, the page format, wording, what a command does beyond its name, and the part of the deprecation rule that asks for two stable releases. If a stable release breaks one of these rules anyway, that is a regression, and it is handled like any other: fixed, with the fix sent to stable as an important fix.
+The rest is checked when the pull request is reviewed: other `--json` fields, the page format, wording, what a command does beyond its name, and the part of the deprecation rule that asks for two stable releases. If a stable release breaks one of these rules anyway, that is a regression, and it is handled like any other: fixed, with the fix sent to stable as an important fix.
 
 ## How a release becomes stable
 
@@ -3737,7 +3752,7 @@ chmod +x ~/.local/bin/gbrain
 ~/.local/bin/gbrain setup hermes
 ```
 
-Then start a new Hermes session. Setup registers the MCP server (`hermes mcp test gbrain` checks it) and adds the brain-first rule to `~/.hermes/SOUL.md` with a per-turn hook; nothing in Hermes's security settings changes. If setup prints a `hermes mcp add` command instead of registering, run that command as printed. To paste it to Hermes instead, use the prompt above. Details: [docs/mcp/HERMES.md](docs/mcp/HERMES.md).
+Then start a new Hermes session. Setup registers the MCP server (`hermes mcp test gbrain` checks it) and adds the brain-first rule to `~/.hermes/SOUL.md` with a per-turn hook. Hermes's approval and command-scanner settings stay as they are; setup only records the approval for its own per-turn hook. If setup prints a `hermes mcp add` command instead of registering, run that command as printed. To paste it to Hermes instead, use the prompt above. Details: [docs/mcp/HERMES.md](docs/mcp/HERMES.md).
 
 Postgres, thin clients, API keys and upgrades: [docs/INSTALL.md](docs/INSTALL.md). Agents: [INSTALL_FOR_AGENTS.md](INSTALL_FOR_AGENTS.md). Memory-only walkthrough: [give your coding agent a memory](docs/tutorials/connect-coding-agent.md).
 
@@ -4997,9 +5012,15 @@ means the unclean-shutdown genesis is still active — see the ladder's rung 4).
 
 One gbrain process opens a PGLite brain at a time. While `gbrain serve` (stdio
 or `--http`) holds it, page and fact writes from the CLI (`gbrain put`,
-`gbrain remember`) go through the running server and work. Commands that need
-the database to themselves, which includes the admin commands
-(`gbrain access …`, `gbrain sources …`, `gbrain auth …`) and most reads,
+`gbrain remember`) and everyday reads (`gbrain find`, `list`, `search`, `query`,
+`get`, `tags`, `links`, `backlinks`, `timeline`, `history`, `graph`, `whois`,
+`entity`, `search-exact` and `gbrain waiting`) go through the
+running server and print what they print with no server running. A read run
+with a read-affecting `GBRAIN_*` variable or provider key the server does not
+share stays with the refusal below. Edits to `config.json` reach the server's
+answers only after the server restarts. Commands
+that need the database to themselves, which includes the admin commands
+(`gbrain access …`, `gbrain sources …`, `gbrain auth …`) and the remaining reads,
 refuse with `pglite_busy` reason `live_serve`. The refusal names the server's
 PID, and its fix is two steps: stop that server, then run the command again.
 Never remove the lock of a server that is still running.
@@ -5233,6 +5254,17 @@ holding the single-writer data-dir lock reports `locked_by_serve`
 (healthy-with-note) instead of hanging ~30 seconds and misreporting a healthy
 brain as broken. A failed probe returns a classified diagnosis (reason +
 remediation), not a raw error.
+
+A probe that reaches the brain also prints `brain_ref` (JSON `probe.brain_ref`, human line `Ref:`): a 16-character
+one-way digest of the brain's persistence identity (`persistence_brain.brain_id`), which a reviewed policy uses to
+name one brain, such as the engine swap's dated readiness override. The digest cannot be turned back into the
+identity, and the command never prints the identity itself. While `gbrain serve` holds a PGLite brain, the probe
+reads the reference that serve recorded at start and after each reconnect (`<data dir>.gbrain-brain-ref.json`, 0600, holding the reference and
+a digest of the serve's lock token, never the identity); a file another lock holder wrote is refused
+(`brain_ref_note: serve_brain_ref_stale`). Other notes, with `brain_ref: null`: `no_persistence_identity`,
+`brain_ref_unreadable`, `locked_by_other_process`, `serve_brain_ref_missing` (a serve from before this field).
+
+**Say to your agent:** *"Give me my brain's brain_ref from gbrain engine status, not its id."*
 
 ### `gbrain db-repair [--yes] [--apply-rewrites] [--json] [--force] [--undo-last-rewrite] [--dry-run]`
 
@@ -6185,10 +6217,12 @@ Timing knobs the drain uses:
 
 A long-running process (the serve, `gbrain sync --watch`) keeps the tree
 listing of the commit its last pass read and lists only what changed since
-(`git diff-tree`), still judging every path. It also keeps its last synced
-pass's pages-and-import-records read (`I⋈P`) and re-reads in its own
-snapshot only rows changed since. Any doubt reads whole: a new
-process, another source, a failed or unsynced pass, a read older than 10
+(`git diff-tree`), still judging every path. It also keeps its last
+pass's pages-and-import-records read (`I⋈P`), when that pass synced or stopped
+resumable, and re-reads in its own snapshot only rows changed since; a round
+whose `HEAD` moved since the pass's previous round patches that round's read
+the same way. Any doubt reads whole: a new
+process, another source, a failed pass, a read older than 10
 minutes, a change over a quarter of the tree or source (and over 2,000), counts
 that do not add up, a wide transaction-id span, pathspec characters in scope,
 or any error. Holds, markers, open work and the Git level are read every round.
@@ -7915,7 +7949,21 @@ note/conversation containers;
 most-recently-touched breaks ties within the same match shape. A non-entity
 exact-title page remains a valid fallback. Multi-hit ⇒ best match's card +
 runners-up in `suggestions`. Miss ⇒ `found: false` + keyword near-misses with
-`create_safety` hints.
+`create_safety` hints. A miss is an answer only when every lookup read ran: when
+a page-lookup read fails (the alias, exact title / slug, alias-hydrate or name-variant read, or a name-variant
+candidate's retirement or redirect-target read),
+the call still answers (`found: false` with whatever the other reads found, or
+the best hit they found) and is marked degraded with the stage
+`entity_lookup_failed` (reason `timeout` or `provider_error`) in
+`_meta.retrieval.degraded`, so MCP carries `_meta.degraded` and the
+`[gbrain degraded: entity_lookup_failed]` text block and the CLI carries a
+`degraded` key (`--json`) or the same line on stderr. Exit code stays 0, as for
+every degraded result; `GBRAIN_FAIL_ON_EMPTY=1` does not turn a failed lookup
+into `no_results`, also under `GBRAIN_ENFORCED_MEMBER`. A failed lookup is never "the entity does not exist": retry
+or run `gbrain doctor`. A brain without the `page_aliases` table (before its
+migration) is not degraded: the alias arm is empty by design. An engine that
+refuses raw reads ends the call on its typed `engine_capability_missing`
+refusal instead.
 
 Response: `{ protocol_version, found, latency_ms, card?, suggestions? }`.
 Card: `{ entity{slug,title,type}, aka[], summary, last_touched{updated_at,

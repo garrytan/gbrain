@@ -48,8 +48,12 @@ One catalog per skill set. Names are 1-64 characters of `a-z`, `0-9`, `_` and
 | gbrain's own skills | `gbrain skills index build --catalog gbrain --bundled` | Rebuilt when the gbrain version changes. |
 
 - `--dir` is repeatable; earlier directories win duplicate ids (the loser is
-  listed in the receipt as `duplicate_id`). Symlinks that leave the root,
-  skills with `disable-model-invocation: true` and JSON entries with
+  listed in the receipt as `duplicate_id`). A symlink that leaves the root
+  is followed only when it points at a skill folder (a directory with a
+  `SKILL.md`) or at a `SKILL.md` file, the way gstack and other installers
+  link skills in from a checkout; the skill is indexed under the link's path.
+  Any other symlink that leaves the root (`symlink_outside_root`), skills
+  with `disable-model-invocation: true` and JSON entries with
   `eligible: false` are never indexed. Dot-entries (harness-owned state such
   as Codex's `.system/` or Hermes's `.usage.json`) and `node_modules` are
   never read, so a harness writing them does not make the index stale.
@@ -133,8 +137,13 @@ so it works with serve down and with no brain. Each block names the skill ids
 and gives the harness's own load line; Codex lines also carry the SKILL.md path.
 The lane always exits 0 and prints nothing when it cannot deliver:
 
-- **Deadline:** 50 ms from lane start. Ranking runs in a worker thread; at the
-  deadline the process prints nothing, exits and commits no session state.
+- **Deadline:** 50 ms for the turn, counted from the moment the ranking
+  worker thread has loaded, plus at most 250 ms for that worker to load. A
+  cold machine can take most of 50 ms just to load it (measured: up to about
+  50 ms on an idle 4-core machine with an empty file cache, and up to about
+  105 ms with the CPU oversubscribed), so the turn's own clock starts once it
+  is ready. At either limit the process prints nothing, exits and commits no
+  session state.
 - **Turn settings:** `skills.resolver.top_k` (1-8, default 5),
   `skills.resolver.min_match` (the weakest `match_strength` to suggest;
   default every match), `skills.resolver.top_gate` (0.6 unless set, 0 turns it off; see
@@ -151,6 +160,22 @@ The lane always exits 0 and prints nothing when it cannot deliver:
   plus every listed one that exists, records them in the catalog's rebuild
   command (so the auto-rebuild keeps them), and keeps them on every later
   setup run; unset the key and run setup again to drop them.
+- **Pins and a session-start note:** at every SessionStart that starts or
+  restores a context (`startup`, `resume`, `clear`, `compact`), the lane
+  prints the user catalog's [pins](#pinned-skills) (`--catalog
+  claude-code-user` or `codex-user`; Codex lines carry the SKILL.md path)
+  and then the text in
+  `skills.resolver.per_harness.<claude-code|codex>.session_start`, as the
+  hook's `additionalContext`. Set the text with `gbrain config set
+  skills.resolver.per_harness.claude-code.session_start "<text>"`: plain
+  text of at most 600 tokens (about 2,400 characters), no control characters
+  but newlines and tabs. Both live in `~/.gbrain/config.json`, so they work
+  with no brain and no brain repository. With neither set, SessionStart
+  prints nothing. Each part has its own cap, so the block is held to the
+  harness's 10,000-character hook output cap rather than
+  `lane_payload_chars`. An install from before the SessionStart entry
+  (doctor shows its hook `outdated`) needs one setup run first; `gbrain
+  skills pin` says so.
 - **Session cleanup:** after the dedupe commit the lane runs one session GC
   pass before it exits, at most 64 files and never past the deadline.
 - **Payload:** at most `skills.resolver.lane_payload_chars` characters of hook
@@ -173,12 +198,13 @@ The lane always exits 0 and prints nothing when it cannot deliver:
   once a minute; `skills.resolver.auto_rebuild false` or
   `GBRAIN_SKILLS_NO_AUTOREBUILD=1` stops both.
 - **Compaction:** a SessionStart with `source: compact` (Claude Code, and Codex
-  0.165 and later) resets the session, so skills can be offered again. A Codex
+  0.165 and later) resets the session, so skills can be offered again, and
+  prints the pins and session-start note again. A Codex
   install from before gets the SessionStart group on its next setup run.
   Hermes sends no compaction event; the lane resets a session when its history shrinks or on a first turn.
 
-Each turn appends one line (outcome, error code, duration, catalogs; never
-turn text) to `skill-index/logs/lane-<UTC date>.jsonl`, one file per day,
+Each turn appends one line (outcome, error code, duration, the worker's load
+time as `worker_ms`, catalogs; never turn text) to `skill-index/logs/lane-<UTC date>.jsonl`, one file per day,
 kept 14 days and capped at 2 MB a day. `gbrain doctor` (`skill_resolver`, and
 `harness_wiring`'s details) reports the hook, each catalog's freshness and
 the recent error codes; it says nothing while the resolver is off. A hook from
@@ -375,10 +401,13 @@ gbrain skills pin remove deploy-example --catalog openclaw-main
 
 A pin must name a skill in that catalog (`skill_resolver_pin_unknown`
 otherwise), its line is at most 100 characters with no `<` or `>`, a catalog
-holds at most 64 pins, and the rendered block is capped at 600 tokens (pins
-past it are listed as cut). A pinned skill is never also suggested. Pins live
+holds at most 64 pins, and the rendered block is capped at 600 tokens (a pin
+that doesn't fit is listed as cut, and the pins after it still render). A pinned skill is never also suggested, except on
+Claude Code and Codex, whose pins arrive at session start. Pins live
 in config.json under `skills.resolver.pins.<catalog>`, so turning the resolver
-off keeps them; an OpenClaw agent uses a change from its next turn.
+off keeps them; an OpenClaw agent uses a change from its next turn, and Claude
+Code and Codex (`claude-code-user`, `codex-user`) from their next session
+start, through the [hook lane](#hook-lane-claude-code-and-codex).
 
 ## The contract (schema_version 1)
 
@@ -686,8 +715,9 @@ The `--from-json` catalog or routing file is malformed or over its size bound
 
 `skills.resolver.session_token_budget` is not 0 or 100-50,000, a lane turn
 setting (`top_k`, `min_match`, `top_gate`, `pinned`, `per_harness`, including a
-`dirs` list that is not absolute paths or names a harness other than
-`claude-code` or `codex`) is out of range, or
+`dirs` list that is not absolute paths, or a `session_start` text that is
+empty, over 600 tokens or holds control characters, or either key on a
+harness other than `claude-code` or `codex`) is out of range, or
 GBRAIN_HOME is not an absolute path.
 
 ### skill_resolver_config_unreadable

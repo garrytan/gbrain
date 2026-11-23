@@ -134,6 +134,10 @@ export const SETUP_HELP = `gbrain setup <harness> — give an agent harness memo
 
 Usage: gbrain setup claude-code [flags]
        gbrain setup codex [flags]
+       gbrain setup hermes [flags]   (registers MCP through hermes mcp add, then the rule and hook)
+       gbrain setup openclaw|opencode|cursor [flags]   (after the harness's own
+         MCP registration: writes the brain-first rule and per-turn hook; without it
+         agents in a new session seldom call gbrain)
 
 Resolves the brain, source, transport, launcher and registration owner first and
 prints them; refuses before writing anything when another owner holds the target.
@@ -340,7 +344,7 @@ interface SetupFlags {
   team?: boolean;
 }
 
-const VALUE_FLAGS = new Set(['--shape', '--notes', '--docs', '--transcripts', '--surface', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--agent', '--live-fraction', '--pins-route', '--owner-sender', '--serves', '--members', '--members-file', '--stdio-member', '--owner']);
+export const VALUE_FLAGS = new Set(['--shape', '--notes', '--docs', '--transcripts', '--surface', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--agent', '--live-fraction', '--pins-route', '--owner-sender', '--serves', '--members', '--members-file', '--stdio-member', '--owner']);
 
 function parseFlags(args: string[]): SetupFlags | string {
   const value = (flag: string): string | undefined => {

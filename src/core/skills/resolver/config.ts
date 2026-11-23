@@ -28,6 +28,12 @@
  *     SKILL_DIRS_MAX); setup and the catalog's recorded rebuild keep them
  *   skills.resolver.pinned      skill ids the harness always loads itself,
  *     never suggested (at most 1,024)
+ *   skills.resolver.per_harness.<claude-code|codex>.session_start  plain text
+ *     the hook lane prints at every SessionStart that starts or restores
+ *     context (startup, resume, clear, compact), after that harness's pinned
+ *     block (skills.resolver.pins.<harness>-user); at most
+ *     SESSION_START_TOKEN_CAP tokens, no control characters but newlines and
+ *     tabs (laneSessionStart)
  *   skills.resolver.per_harness.hermes.owner_sender_ids  the senders whose
  *     turns get suggestions (Hermes's extra.sender_id); a turn from anyone
  *     else, or with no sender, gets none. Unset or empty: every turn. The
@@ -35,7 +41,7 @@
  */
 import { readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { HARNESSES } from './block.ts';
+import { estimateTokens, HARNESSES } from './block.ts';
 import { ResolverError } from './errors.ts';
 import { EXCLUDE_MAX, MATCH_STRENGTHS, type MatchStrength, TOP_GATE_DEFAULT, TOP_GATE_MAX, TOP_K_MAX } from './limits.ts';
 
@@ -44,7 +50,9 @@ export const MIN_SESSION_TOKEN_BUDGET = 100;
 export const MAX_SESSION_TOKEN_BUDGET = 50_000;
 const CONFIG_CAP = 1024 * 1024;
 export const SKILL_DIRS_MAX = 32;
-/** The harnesses whose user catalog setup builds, so the only ones a dirs key applies to. */
+/** The session_start text's cap, the same as the pinned block's (PIN_BLOCK_TOKEN_CAP). */
+export const SESSION_START_TOKEN_CAP = 600;
+/** The harnesses whose user catalog setup builds and whose hook lane has a SessionStart entry, so the only ones a dirs or session_start key applies to. */
 const DIRS_HARNESSES = ['claude-code', 'codex'];
 
 export interface ResolverSettings {
@@ -60,16 +68,21 @@ export function validateSessionTokenBudget(v: unknown, where: string): number {
     { suggestion: `Set ${where} to 0 or a value from ${MIN_SESSION_TOKEN_BUDGET} to ${MAX_SESSION_TOKEN_BUDGET} (default ${DEFAULT_SESSION_TOKEN_BUDGET}).` });
 }
 
-export function readResolverSettings(home: string, env: NodeJS.ProcessEnv = process.env): ResolverSettings {
-  let section: Record<string, unknown> = {};
+/** The skills.resolver object of <home>/config.json ({} when the file or the object is missing or unreadable). */
+export function readResolverSection(home: string): Record<string, unknown> {
   const path = join(home, 'config.json');
   try {
     if (statSync(path).size <= CONFIG_CAP) {
       const cfg = JSON.parse(readFileSync(path, 'utf8')) as { skills?: { resolver?: Record<string, unknown> } };
       const r = cfg?.skills?.resolver;
-      if (r && typeof r === 'object') section = r;
+      if (r && typeof r === 'object') return r;
     }
   } catch { /* no config or not JSON: defaults */ }
+  return {};
+}
+
+export function readResolverSettings(home: string, env: NodeJS.ProcessEnv = process.env): ResolverSettings {
+  const section = readResolverSection(home);
   const budget = section.session_token_budget === undefined ? DEFAULT_SESSION_TOKEN_BUDGET
     : validateSessionTokenBudget(section.session_token_budget, 'skills.resolver.session_token_budget');
   const autoRebuild = env.GBRAIN_SKILLS_NO_AUTOREBUILD === '1' ? false : section.auto_rebuild !== false;
@@ -142,11 +155,15 @@ export function laneTurnSettings(section: Record<string, unknown>, harness: stri
     const key = `${p}per_harness.${h}`;
     if (!(HARNESSES as readonly string[]).includes(h)) throw configInvalid(key, `names no harness (one of ${HARNESSES.join(', ')})`);
     if (!o || typeof o !== 'object' || Array.isArray(o)) continue;
-    if (Object.keys(o).some(k => k !== 'top_k' && k !== 'min_match' && k !== 'top_gate' && k !== 'dirs' && (k !== 'owner_sender_ids' || h !== 'hermes'))) throw configInvalid(key, `may hold only top_k, min_match, top_gate and dirs`);
+    if (Object.keys(o).some(k => k !== 'top_k' && k !== 'min_match' && k !== 'top_gate' && k !== 'dirs' && k !== 'session_start' && (k !== 'owner_sender_ids' || h !== 'hermes'))) throw configInvalid(key, `may hold only top_k, min_match, top_gate, dirs and session_start`);
     const r = o as Record<string, unknown>;
     if (r.dirs !== undefined) {
       if (!DIRS_HARNESSES.includes(h)) throw configInvalid(`${key}.dirs`, `applies only to ${DIRS_HARNESSES.join(' and ')}, whose user catalog setup builds`);
       validateSkillDirs(r.dirs, `${key}.dirs`);
+    }
+    if (r.session_start !== undefined) {
+      if (!DIRS_HARNESSES.includes(h)) throw configInvalid(`${key}.session_start`, `applies only to ${DIRS_HARNESSES.join(' and ')}, whose hook lane has a SessionStart entry`);
+      validateSessionStart(r.session_start, `${key}.session_start`);
     }
     const parsed: LaneTurnSettings = {
       ...(r.top_k !== undefined ? { top_k: validateTopK(r.top_k, `${key}.top_k`) } : {}),
@@ -157,6 +174,17 @@ export function laneTurnSettings(section: Record<string, unknown>, harness: stri
     if (h === harness) mine = parsed;
   }
   return { ...global, ...mine };
+}
+
+export function validateSessionStart(v: unknown, key: string): string {
+  if (typeof v === 'string' && v.trim() && estimateTokens(v) <= SESSION_START_TOKEN_CAP && !/[\u0000-\u0008\u000b-\u001f\u007f]/.test(v)) return v;
+  throw configInvalid(key, `must be plain text of at most ${SESSION_START_TOKEN_CAP} tokens (about ${SESSION_START_TOKEN_CAP * 4} characters) with no control characters but newlines and tabs`);
+}
+
+/** The session_start text for `harness` (Claude Code or Codex), or undefined when unset. Call after laneTurnSettings, which validates it. */
+export function laneSessionStart(section: Record<string, unknown>, harness: string): string | undefined {
+  const mine = (section.per_harness as Record<string, unknown> | undefined)?.[harness] as { session_start?: string } | null | undefined;
+  return DIRS_HARNESSES.includes(harness) && mine && typeof mine === 'object' ? mine.session_start : undefined;
 }
 
 export const OWNER_SENDERS_MAX = 64;

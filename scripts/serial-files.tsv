@@ -333,6 +333,7 @@ test/pglite-snapshot-schema-version.serial.test.ts	R1	R1: mutates process.env (G
 test/pglite-snapshot-timezone.serial.test.ts	R1	R1: mutates process.env (GBRAIN_PGLITE_SNAPSHOT)
 test/pglite-wal-repair.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect; patches process stdout/stderr/console
 test/physical-root-overlap-vanished-dir.serial.test.ts	R2	R2: mock.module(node:fs) makes readdirSync throw ENOENT for one path
+test/doctor-missing-brain-vanish.serial.test.ts	R2	R2: mock.module(node:fs) makes statSync throw ENOENT for one path
 test/projections-drain-cli.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll
 test/put-page-push-reporting.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/quarantine-override.serial.test.ts	global-state	global-state: replaces console.log, console.error and process.exit to capture the quarantine CLI, and patches a shared engine's readPageSnapshot for the revision race
@@ -482,3 +483,4 @@ test/wakeshift-emit-spool.serial.test.ts	global-state	global-state: resets the m
 test/push-secret-scan-gaps.serial.test.ts	global-state	global-state: sets GBRAIN_HOME, PATH (a git wrapper for the index race) and GBRAIN_GIT_ALLOW_FILE_TRANSPORT through withEnv for real commits and pushes to local bare remotes
 test/git-commit-push-credential-refused-gst2961.serial.test.ts	global-state	global-state: sets GBRAIN_HOME through the withEnv helper to read the push log a commit-push child wrote, spawns real gbrain CLI children, and runs a local git smart-HTTP stub server on a random port
 test/rust-engine-shadow.serial.test.ts	global-state	global-state: the supervisor spawns a real gbrain engine shadow __child process against an on-disk shadow directory; withEnv scopes GBRAIN_HOME, GBRAIN_SHADOW_CHILD and GBRAIN_RUST_ENGINE_ADDON around the CLI, engine factory and doctor check
+test/cli-reads-under-live-serve.serial.test.ts	global-state	global-state: starts a real gbrain serve that holds a PGLite brain's single-writer lock for the whole file and runs real CLI children against it

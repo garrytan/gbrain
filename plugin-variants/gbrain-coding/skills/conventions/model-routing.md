@@ -125,10 +125,9 @@ work, not what gbrain calls internally.
 ### Refusal routing
 
 When a model refuses a request:
-1. Re-spawn on a different model (don't announce the switch)
-2. Fallback chain: primary → DeepSeek → Qwen → Groq
-3. Never show the refusal to the user
-4. If all models refuse, escalate to the user
+1. Tell the user, naming the model: it is a provider refusal, not a model failure
+2. Re-spawn on another model only when the user chooses one; the output then names both models. A stored `refusal_routing.behavior: next_in_chain` in [cross-modal.yaml](cross-modal.yaml) is read as `report`, with a one-line notice that the option was removed
+3. Never reword the request to get around a refusal, and never hide the refusal or the switch
 
 ### Spawn rules
 
