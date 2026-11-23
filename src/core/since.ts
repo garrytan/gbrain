@@ -9,7 +9,7 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2
 const UNIT_MS: Record<string, number> = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
 
 /** Whether the leading `YYYY-MM-DD` is a real day: `new Date('2026-02-30')` rolls over to March 2 instead of failing. */
-function isCalendarDay(text: string): boolean {
+export function isCalendarDay(text: string): boolean {
   const [y, m, d] = text.slice(0, 10).split('-').map(Number) as [number, number, number];
   const day = new Date(Date.UTC(y, m - 1, d));
   return day.getUTCMonth() === m - 1 && day.getUTCDate() === d;

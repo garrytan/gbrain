@@ -72,7 +72,7 @@ const COMMANDS = [
 
 describe('code-* --limit validation', () => {
   for (const { name, fn, symbol, rows } of COMMANDS) {
-    for (const bad of ['abc', '5abc', '-5', '0', '1.5', '']) {
+    for (const bad of ['abc', '5abc', '-5', '0', '1.5', '', '99999999999999999999']) {
       test(`${name} --limit '${bad}' exits 2 with invalid_params naming the value`, async () => {
         const { out, exit } = await run(() => fn(engine, [symbol, '--all-sources', '--limit', bad, '--json']));
         expect(exit).toBe(2);
