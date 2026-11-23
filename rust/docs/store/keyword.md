@@ -341,8 +341,9 @@ term rarity with `rankOrFallbackByRarity`) and the store answers each statement:
   `ts_rank(vector, websearch_to_tsquery(rank))` × phrase factor × source factor, the best chunk per page, the
   `innerLimit` (`min(limit × 3, cap × 3)`) inner window, then `offset` and `limit`.
   `websearch_to_tsquery` separates words on ASCII whitespace and on the non-ASCII characters of PGLite's
-  `[[:space:]]` class (U+0085, U+2000-U+200A except U+2007, U+2028, U+2029, U+205F, U+3000), as PGLite does;
-  PostgreSQL 18 reads only ASCII whitespace there, so the PostgreSQL 18.6 goldens hold none of these characters.
+  `[[:space:]]` class (U+0085, U+2000-U+200A except U+2007, U+2028, U+2029, U+205F, U+3000), as the repository's
+  PGLite (0.4.3) does; PostgreSQL 18 reads only ASCII whitespace there, so the goldens taken from PGLite 0.5.16
+  (PostgreSQL 18.6) hold none of these characters.
 - `keywordRareTermPages(terms, cap)`: per term, the pages holding it, up to `RARE_TERM_CHUNK_CAP` chunks.
 - the slug handles go through `searchKeywordPages` with `handlesOnly`.
 
