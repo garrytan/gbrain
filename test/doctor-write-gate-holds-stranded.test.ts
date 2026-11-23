@@ -297,6 +297,127 @@ for (const backend of testBackends()) {
       });
     });
 
+    test('a source named constructor keeps its own per-source counts', async () => {
+      await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('constructor', 'constructor')");
+      await page('constructor', 'people/new');
+      await alias('constructor', 'people/old', 'people/new');
+      await hold('constructor', 'people/old');
+      await hold('constructor', 'people/never');
+      const check = await run({ engine });
+      expect(details(check).stranded).toEqual({ renamed: 1, page_deleted: 0, no_page: 1 });
+      expect(Object.hasOwn(details(check).by_source, 'constructor')).toBe(true);
+      expect(details(check).by_source.constructor).toEqual({ renamed: 1, page_deleted: 0, no_page: 1 });
+      expect(JSON.parse(JSON.stringify(details(check).by_source))).toEqual({ constructor: { renamed: 1, page_deleted: 0, no_page: 1 } });
+    });
+
+    test('the page lookup is probed by its (source_id, slug) index, and answers the same on a large source', async () => {
+      await engine.executeRaw(`INSERT INTO pages (source_id, slug, type, title, compiled_truth)
+        SELECT 's1', 'notes/unrelated-' || g::text, 'note', 'x', 'x' FROM generate_series(1, 20000) AS g`);
+      await page('s1', 'people/dest');
+      await page('s1', 'people/gone', true);
+      await alias('s1', 'people/moved', 'people/dest');
+      await history('s1', 'people/hist-only', 'people/dest');
+      await hold('s1', 'people/moved');
+      await hold('s1', 'people/hist-only');
+      await hold('s1', 'people/gone');
+      for (let i = 0; i < 100; i++) await hold('s1', `people/missing-${i}`);
+      await engine.executeRaw('ANALYZE pages');
+      let statement: { sql: string; params: unknown[] } | null = null;
+      const recording = { executeRaw: (sql: string, params?: unknown[]) => {
+        if (/unnest\(/i.test(sql) && /\bpages\b/.test(sql) && !/pg_policy/.test(sql)) statement ??= { sql, params: params ?? [] };
+        return engine.executeRaw(sql, params);
+      } };
+      const check = await run({ engine: recording });
+      expect(details(check).stranded).toEqual({ renamed: 2, page_deleted: 1, no_page: 100 });
+      expect(details(check).items.filter((i: { class: string }) => i.class === 'renamed').map((i: { slug: string }) => i.slug).sort()).toEqual(['people/hist-only', 'people/moved']);
+      expect(statement).not.toBeNull();
+      const [row] = await engine.executeRaw<Record<string, unknown>>(`EXPLAIN (FORMAT JSON) ${statement!.sql}`, statement!.params);
+      const raw = Object.values(row!)[0];
+      const plan = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      const pageNodes: Array<Record<string, unknown>> = [];
+      const walk = (n: any): void => { if (n && typeof n === 'object') { if (n['Relation Name'] === 'pages') pageNodes.push(n); for (const v of Object.values(n)) walk(v); } };
+      walk(plan);
+      expect(pageNodes.length).toBeGreaterThan(0);
+      for (const node of pageNodes) {
+        expect(node['Node Type']).not.toBe('Seq Scan');
+        expect(String(node['Index Name'] ?? '')).toBe('pages_source_slug_key');
+      }
+      expect(JSON.stringify(plan)).toMatch(/\(?slug\)?[^"]*=/);
+    }, 120_000);
+
+    if (backend === 'postgres') describe('a row-security role cannot see the evidence', () => {
+      const ROLE = `gb_stranded_probe_${Math.random().toString(16).slice(2, 10)}`;
+      const TABLES = ['write_gate_holds', 'slug_aliases', 'slug_rename_history', 'pages'];
+      const wasSecured = new Map<string, boolean>();
+
+      beforeAll(async () => {
+        for (const t of TABLES) {
+          const [r] = await engine.executeRaw<{ on: boolean }>('SELECT relrowsecurity AS on FROM pg_class WHERE oid = $1::regclass', [t]);
+          wasSecured.set(t, r!.on);
+          await engine.executeRaw(`ALTER TABLE ${t} ENABLE ROW LEVEL SECURITY`);
+        }
+        await engine.executeRaw(`CREATE ROLE ${ROLE} NOSUPERUSER NOBYPASSRLS NOINHERIT`);
+        await engine.executeRaw(`GRANT USAGE ON SCHEMA public TO ${ROLE}`);
+        await engine.executeRaw(`GRANT SELECT ON ${TABLES.join(', ')}, sources TO ${ROLE}`);
+      }, 60_000);
+
+      afterAll(async () => {
+        for (const t of TABLES) await engine.executeRaw(`DROP POLICY IF EXISTS ${ROLE}_p ON ${t}`);
+        await engine.executeRaw(`DROP OWNED BY ${ROLE}`);
+        await engine.executeRaw(`DROP ROLE IF EXISTS ${ROLE}`);
+        for (const t of TABLES) if (!wasSecured.get(t)) await engine.executeRaw(`ALTER TABLE ${t} DISABLE ROW LEVEL SECURITY`);
+      }, 60_000);
+
+      const readableBy = async (tables: string[]) => {
+        for (const t of TABLES) await engine.executeRaw(`DROP POLICY IF EXISTS ${ROLE}_p ON ${t}`);
+        for (const t of tables) await engine.executeRaw(`CREATE POLICY ${ROLE}_p ON ${t} FOR SELECT TO ${ROLE} USING (true)`);
+      };
+      const asRole = (): Promise<Check> => engine.transaction(async tx => {
+        await tx.executeRaw(`SET LOCAL ROLE ${ROLE}`);
+        return run({ engine: tx });
+      });
+      const seedRename = async () => {
+        await page('default', 'people/b');
+        await history('default', 'people/a', 'people/b');
+        await hold('default', 'people/a');
+      };
+
+      test('hidden holds are unknown, never an empty ok', async () => {
+        await seedRename();
+        await readableBy([]);
+        const check = await asRole();
+        expect(check.status).toBe('warn');
+        expect(details(check)).toMatchObject({ health: 'unknown', reason: 'row_level_security', count: 'unknown' });
+        expect(details(check).hidden_tables).toContain('write_gate_holds');
+        expect(check.message).toContain('write_gate_holds');
+        expect(check.message).not.toMatch(/no held write|nothing is leaking/i);
+      });
+
+      test('hidden rename history is unknown, never a history-only rename read as no page', async () => {
+        await seedRename();
+        await readableBy(['write_gate_holds', 'slug_aliases', 'pages']);
+        const check = await asRole();
+        expect(check.status).toBe('warn');
+        expect(details(check)).toMatchObject({ health: 'unknown', reason: 'row_level_security', hidden_tables: ['slug_rename_history'] });
+        expect(check.message).toContain('slug_rename_history');
+        expect(check.message).not.toMatch(/no held write|nothing is leaking/i);
+      });
+
+      test('hidden pages and hidden aliases are named too', async () => {
+        await seedRename();
+        await readableBy(['write_gate_holds', 'slug_rename_history']);
+        expect(details(await asRole()).hidden_tables).toEqual(['slug_aliases', 'pages']);
+      });
+
+      test('a role with a SELECT policy on every relation reads the evidence and gets the real verdict', async () => {
+        await seedRename();
+        await readableBy(TABLES);
+        const check = await asRole();
+        expect(check.status).toBe('warn');
+        expect(details(check)).toMatchObject({ complete: true, stranded: { renamed: 1 } });
+      });
+    });
+
     describe('unreadable evidence is unknown, never empty or ok', () => {
       const delegating = (fail: (sql: string) => unknown) => ({
         executeRaw: async (sql: string, params?: unknown[]) => { const e = fail(sql); if (e) throw e; return engine.executeRaw(sql, params); },
