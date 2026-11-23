@@ -25,15 +25,22 @@ export interface RankedKey { k: string; s: number }
 export interface RecallScore { vector: number; primary: number; overlap: number; ref_size: number }
 export interface RecallLine extends RecallScore { ts: string; epoch_id: string }
 
-/** The ranked key of a search result row: its chunk, else its page and chunk index. */
+const keyOf = (row: unknown): RankedKey | null => {
+  const r = row as Record<string, unknown> | null;
+  if (!r || typeof r !== 'object' || Array.isArray(r)) return null;
+  const k = r.chunk_id ?? `${String(r.page_id ?? r.slug)}#${String(r.chunk_index ?? '')}`;
+  return { k: String(k), s: Number(r.score) };
+};
+
+/** The ranked key of a search result row: its chunk, else its page and chunk index. Elements that are not rows are left out (the reference's own rows). */
 export function rankedKeys(encoded: unknown): RankedKey[] {
   if (!Array.isArray(encoded)) return [];
-  return encoded.flatMap((row): RankedKey[] => {
-    const r = row as Record<string, unknown> | null;
-    if (!r || typeof r !== 'object') return [];
-    const k = r.chunk_id ?? `${String(r.page_id ?? r.slug)}#${String(r.chunk_index ?? '')}`;
-    return [{ k: String(k), s: Number(r.score) }];
-  });
+  return encoded.flatMap((row): RankedKey[] => { const k = keyOf(row); return k ? [k] : []; });
+}
+
+/** An engine's own first ten POSITIONS: an element that is not a row takes its place and counts for nothing, so it can never move a later row into the top ten. A non-list answer has none. */
+function firstTen(encoded: unknown): Array<RankedKey | null> {
+  return Array.isArray(encoded) ? encoded.slice(0, RECALL_TOP).map(keyOf) : [];
 }
 
 /** Only an unpaged read of at least ten rows has a top ten to score. Unset limit is the engine default (20). */
@@ -61,15 +68,15 @@ export function scoreRecall(reference: RankedKey[], primary: unknown, rust: unkn
   const better = new Set(top.filter((r) => !tied(r)).map((r) => r.k));
   const ties = new Set(reference.filter(tied).map((r) => r.k));
   const slots = top.length - better.size; // top-ten places the tied rows fill
-  const hits = (answer: RankedKey[]): number => {
-    const first = new Set(answer.slice(0, RECALL_TOP).map((r) => r.k)); // a repeated row is one neighbour, never ten
+  const hits = (answer: Array<RankedKey | null>): number => {
+    const first = new Set(answer.flatMap((r) => (r ? [r.k] : []))); // a repeated row is one neighbour, never ten
     return [...first].filter((k) => better.has(k)).length + Math.min(slots, [...first].filter((k) => ties.has(k) && !better.has(k)).length);
   };
-  const p = rankedKeys(primary);
-  const r = rankedKeys(rust);
+  const p = firstTen(primary);
+  const r = firstTen(rust);
   const share = (n: number): number => Math.min(n, top.length) / top.length;
-  const both = new Set(p.slice(0, RECALL_TOP).map((x) => x.k));
-  const shared = new Set(r.slice(0, RECALL_TOP).map((x) => x.k).filter((k) => both.has(k))).size;
+  const both = new Set(p.flatMap((x) => (x ? [x.k] : [])));
+  const shared = new Set(r.flatMap((x) => (x && both.has(x.k) ? [x.k] : []))).size;
   return { vector: share(hits(r)), primary: share(hits(p)), ref_size: top.length, overlap: shared / Math.max(1, both.size) };
 }
 

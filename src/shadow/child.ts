@@ -274,7 +274,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     // answer, and for a ranked read its membership (rows without scores, in a fixed order). Only a leak, equality, or equal membership is decided here:
     // the same rows in another order or with other scores are an order_diff, as on a first read; anything else is a plain diff, and the privacy question compares rows there.
     const kind = SHADOW_READ_MEMBERS[op as ShadowReadMember];
-    const asked = primary as { digest?: string; members?: string };
+    const asked = primary as { digest?: string; members?: string; list?: boolean };
     const c = phase === 'rerun'
       ? ((leak) => (leak.outcome === 'privacy_diverged' ? leak
         : resultDigest(rust) === asked.digest ? { outcome: 'match' as const }
@@ -283,7 +283,9 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
       : classifyResult(kind, encodedArgs, primary, rust, op);
     if (c.outcome === 'match' || c.outcome === 'privacy_diverged') return c;
     const args = decodeValue(encodedArgs) as unknown[];
-    const { verdict, complete } = await privacyVerdict(ask, args, phase === 'rerun' ? undefined : primary, rust, sid, phase, at);
+    // A read that answers a list is one the primary answered with a list (the first answer, for a rerun) or a ranked read: its answer must be a list.
+    const expectList = kind === 'ranked' || (phase === 'rerun' ? asked.list === true : Array.isArray(primary));
+    const { verdict, complete } = await privacyVerdict(ask, args, phase === 'rerun' ? undefined : primary, rust, sid, phase, at, expectList);
     if (verdict === 'violation') return { outcome: 'privacy_diverged', reason: 'row_not_readable_by_caller' };
     if (verdict !== 'clean') return { outcome: 'inconclusive', reason: verdict, mismatch: c.outcome as 'diff' | 'order_diff' };
     if (exactnessArm(op) === 'private_ranked') {
@@ -305,7 +307,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
       const out = await follow.exclusive(answer.stamp, () => callRust(event.op, args, event.access, Math.max(1, Math.min(timeoutMs, deadline - now())), (p) => { call = p; }));
       if (out?.timedOut) trackStall(call);
       if (out === null || out.timedOut) return skip(out === null ? 'watermark_moved' : 'timeout');
-      const c2 = await judge(event.op, event.args, { digest: answer.digest, members: answer.members }, encodeValue(out.value), event.sid, 'rerun', now(), null);
+      const c2 = await judge(event.op, event.args, { digest: answer.digest, members: answer.members, list: Array.isArray(event.result) }, encodeValue(out.value), event.sid, 'rerun', now(), null);
       const orderOnly = c2.outcome === 'order_diff' && (exactnessArm(event.op) === 'membership' || exactnessArm(event.op) === 'private_ranked'); // these reads ignore order: the rows are the primary's
       if (c2.outcome === 'match' || orderOnly) record(event, c, rustMs, rows, 'matched'); // closed as unsuccessful, never a match
       else if (c2.outcome === 'privacy_diverged') record(event, c2, rustMs, rows, 'differed');

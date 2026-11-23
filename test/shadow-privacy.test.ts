@@ -102,6 +102,17 @@ describe('page candidates', () => {
     expect(await privacyVerdict(saysClean, args, [], [], 'sid', 'rerun', 0)).toEqual({ verdict: 'clean', complete: true }); // control: all rows well formed
   });
 
+  test('a read that answers a list is never complete when its answer is not a list: a null, an undefined or one row, on the sample and the rerun path', async () => {
+    const saysClean = Object.assign(async () => ({ verdict: 'clean', complete: true }), { answer() {}, closeAll() {} }) as never;
+    const args = [{ excludePrivate: true }];
+    const row = { page_id: 1, source_id: 's', slug: 'a', chunk_id: 10, chunk_text: 't', score: 0.5 };
+    for (const phase of ['sample', 'rerun'] as const) {
+      for (const answer of [null, undefined, row]) expect([phase, answer, await privacyVerdict(saysClean, args, [row], answer, 'sid', phase, 0, true)]).toEqual([phase, answer, { verdict: 'clean', complete: false }]);
+      expect(await privacyVerdict(saysClean, args, [row], [row], 'sid', phase, 0, true)).toEqual({ verdict: 'clean', complete: true }); // control: a list
+    }
+    expect(await privacyVerdict(saysClean, args, row, null, 'sid', 'sample', 0, false)).toEqual({ verdict: 'clean', complete: true }); // a read that answers one row, or none, may answer null
+  });
+
   test('an answer is accepted only with the asking child\'s session nonce, and a failure code is a plain bounded token', async () => {
     const sent: string[] = [];
     const mine = createAsker((line) => { sent.push(line); }, 'session-B');

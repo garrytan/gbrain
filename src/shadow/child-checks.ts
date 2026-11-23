@@ -53,10 +53,12 @@ function chunkOf(row: Row): ChunkIdentity | undefined {
 
 /** One result row reduced to identity: its page, its chunk and a digest of every field but the ranking ones. No content. */
 /**
- * True when `encoded` holds anything that is not a row where rows are expected: a list element that is not an object (a null,
- * a string, a number, a nested list). Such an element has no identity to judge, so a verdict over the answer is never complete.
+ * True when `encoded` is not a well-formed answer: for a read that answers a list (`list`), anything but a list; and in any
+ * answer, a list element that is not an object (a null, a string, a number, a nested list), or a scalar where rows are expected.
+ * Such an answer, or element, has no identity to judge, so a verdict over it is never complete.
  */
-export function hasMalformedElement(encoded: unknown): boolean {
+export function hasMalformedElement(encoded: unknown, list = false): boolean {
+  if (list && !Array.isArray(encoded)) return true; // a null, an undefined or a single row where the read answers a list
   if (Array.isArray(encoded)) return encoded.some((r) => !r || typeof r !== 'object' || Array.isArray(r));
   return encoded !== null && encoded !== undefined && typeof encoded !== 'object';
 }
@@ -129,10 +131,10 @@ export interface PrivacyResult { verdict: PrivacyVerdict; complete: boolean }
  * identity, a payload that differs from the primary's row of that page and chunk, a page or chunk the primary does not have,
  * a failed, skipped or moved check) leaves `complete` false.
  */
-export async function privacyVerdict(ask: Asker, args: unknown[], primary: unknown, rust: unknown, sid: string | undefined, phase: 'sample' | 'rerun', at: number): Promise<PrivacyResult> {
+export async function privacyVerdict(ask: Asker, args: unknown[], primary: unknown, rust: unknown, sid: string | undefined, phase: 'sample' | 'rerun', at: number, expectList = false): Promise<PrivacyResult> {
   if (!policyApplies(args)) return { verdict: 'clean', complete: false };
   const rows = rowIdentities(rust);
-  const whole = !hasMalformedElement(rust); // an element that is not a row has no identity to judge: the verdict is never complete
+  const whole = !hasMalformedElement(rust, expectList); // an answer that is not the list the read answers, or an element that is not a row, has no identity to judge: the verdict is never complete
   if (phase === 'sample') {
     const extra = extraIds(rowIdentities(primary), rows);
     if (extra.rows.length === 0) return { verdict: 'clean', complete: whole && extra.unidentified === 0 };

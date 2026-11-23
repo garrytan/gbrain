@@ -411,6 +411,12 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       counts(await ranked((theirs) => [...theirs.slice(0, 9), 7 as never, theirs[9]!]));
     });
 
+    test('a ranked search that answers null, undefined or a single row is unexplained, never complete: it is not an empty list', async () => {
+      counts(await ranked(() => null as never));
+      counts(await ranked(() => undefined as never));
+      counts(await ranked((theirs) => theirs[0] as never));
+    });
+
     test('the primary\'s own page and chunk with a substituted title or flag are unexplained, not a ranking difference', async () => {
       counts(await ranked((theirs) => [...theirs.slice(0, 9), { ...theirs[9], title: 'SUBSTITUTED TITLE' }]));
       counts(await ranked((theirs) => [...theirs.slice(0, 9), { ...theirs[9], stale: true }]));
