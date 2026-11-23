@@ -236,8 +236,8 @@ export interface SyncCheckpointAdvance {
   sourceId: string;
   /** The source incarnation the run started under; another incarnation changes nothing. */
   incarnation: string;
-  /** The commit the checkpoint moves to (`last_commit`). */
-  commit: string;
+  /** The commit the checkpoint moves to (`last_commit`); null re-stamps a checkpoint still at a null `from` (a first sync's unfinished slice). */
+  commit: string | null;
   /** The `last_commit` the run started from (null before the first sync). */
   from: string | null;
   /** Also accept a checkpoint already at `commit` (an overtaken run, and every pass stamp). */

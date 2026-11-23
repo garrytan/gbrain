@@ -659,7 +659,7 @@ export async function readFenceTrendPrefix(engine: Pick<BrainEngine, 'executeRaw
  */
 export async function advanceManagedCheckpoint(tx: BrainEngine, input: { sourceId: string; incarnation: string; commit: string | null;
   from: string | null; acceptAtCommit: boolean; slugMode: 'git-root' | 'source-root'; keepPinnedSlugMode: boolean }): Promise<{ advanced: boolean; pinnedSlugMode: string | null }> {
-  return tx.advanceSyncCheckpoint({ ...input, commit: input.commit as string });
+  return tx.advanceSyncCheckpoint(input);
 }
 
 /** The checkpoint request's publication: the whole run committed, so `last_commit` (and the slug-root pin) advance under the guard. */

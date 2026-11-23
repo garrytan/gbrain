@@ -152,8 +152,8 @@ listRestrictedIdentityMembers	pages	yes	1	no	yes	yes	serves
 applyIdentityDecisions	pages	yes	4	no	yes	yes	serves
 listAllPageRefs	pages	yes	4	yes	yes	yes	serves
 listAllSources	pages	yes	19	no	yes	yes	serves
-updateSourceConfig	pages	yes	18	no	yes	yes	serves
-getSource	pages	yes	28	no	yes	yes	serves
+updateSourceConfig	pages	yes	19	no	yes	yes	serves
+getSource	pages	yes	29	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
 countRepoBoundSources	pages	yes	2	no	yes	yes	serves
 listNotifierHostSourceRows	pages	yes	3	no	yes	yes	serves
@@ -772,7 +772,7 @@ compactTerminalIntent	persistence_journal	no	0	no	-	-	-
 cancelWriteRow	persistence_journal	yes	3	no	yes	yes	serves
 insertPublicationEffects	persistence_journal	yes	11	no	yes	yes	serves
 insertWithdrawalEffects	persistence_journal	yes	7	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	100	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	101	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	3	no	yes	yes	serves
 listTopologyRecoveries	persistence_journal	yes	5	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	3	no	yes	yes	serves
