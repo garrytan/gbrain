@@ -7,7 +7,7 @@
 import type { BrainEngine } from '../../engine.ts';
 import { AVAILABLE_CHRONICLE_LEDGER_STATS } from '../../engine-sql/doctor-acc.ts';
 import { withDates } from '../store-codec.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { listOauthClients } from './jobs-oauth-clients.ts';
 import { listOauthGrantAudit, readLiveAccessTokenRows } from './jobs-client-grants.ts';
 import { listAllSources } from './sources.ts';
@@ -59,8 +59,22 @@ export const listDanglingFederatedReads: Member<'listDanglingFederatedReads'> = 
     .sort((a, b) => byteCmp(a.client_id, b.client_id) || byteCmp(a.grant_id, b.grant_id));
 };
 
-/** The caller's POSIX `[[:space:]]` as the character class JavaScript spells it (the only class the doctor's pattern uses). */
-const posixSpace = (pattern: string): RegExp => new RegExp(pattern.replaceAll('[[:space:]]', '[ \\t\\n\\v\\f\\r]'));
+/** The one pattern shape the doctor sends: `(^|[[:space:]])(<scope>|<scope>...)([[:space:]]|$)` (routing-federation.ts). */
+const PRIVILEGED_SCOPE_PATTERN = /^\(\^\|\[\[:space:\]\]\)\(([A-Za-z0-9_:.|-]+)\)\(\[\[:space:\]\]\|\$\)$/;
+/** POSIX `[[:space:]]`: space, tab, newline, vertical tab, form feed, carriage return. */
+const POSIX_SPACE = /[ \t\n\v\f\r]+/;
+
+/**
+ * The scope test the SQL engines run as `scope ~ pattern`, without compiling the caller's text: the pattern must be the
+ * doctor's whitespace-delimited alternation of scope names, and a scope matches when one of its whitespace-separated
+ * tokens is one of those names (what that pattern matches). Any other pattern refuses.
+ */
+function scopeTokenTest(pattern: string): (scope: string) => boolean {
+  const names = PRIVILEGED_SCOPE_PATTERN.exec(pattern)?.[1]?.split('|');
+  if (!names || names.some(n => n === '')) refuseMember('listPrivilegedDcrClients', 'a scope pattern other than the doctor\'s scope-name alternation');
+  const wanted = new Set(names);
+  return (scope) => scope.split(POSIX_SPACE).some(token => wanted.has(token));
+}
 
 /**
  * Live clients whose scope matches `scopeRegex` with grant revision 0 and no `register` audit row (the anonymous
@@ -68,10 +82,10 @@ const posixSpace = (pattern: string): RegExp => new RegExp(pattern.replaceAll('[
  * signature can always be evaluated here.
  */
 export const listPrivilegedDcrClients: Member<'listPrivilegedDcrClients'> = async (brain, scopeRegex) => {
-  const scope = posixSpace(scopeRegex);
+  const scope = scopeTokenTest(scopeRegex);
   const found = [];
   for (const c of (await listOauthClients(brain)).sort((a, b) => byteCmp(a.client_id, b.client_id))) {
-    if (c.deleted_at != null || Number(c.grant_revision ?? 0) !== 0 || !scope.test(c.scope ?? '')) continue;
+    if (c.deleted_at != null || Number(c.grant_revision ?? 0) !== 0 || !scope(c.scope ?? '')) continue;
     if ((await listOauthGrantAudit(brain, c.client_id)).some(a => a.action === 'register')) continue;
     found.push({ client_id: c.client_id, client_name: c.client_name ?? null, scope: c.scope ?? '' });
   }
