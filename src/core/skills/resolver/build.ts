@@ -212,10 +212,18 @@ export async function buildSkillIndex(input: BuildInput, opts: { home?: string; 
   const scope = input.scope ?? 'user';
   const env = opts.env ?? process.env;
   const ineligible = vectorsIneligible(input.harness, scope);
-  const early = ineligible === null && !('skip' in turnEmbedder(home, env)) ? await prepare(input).catch(() => null) : null;
-  const earlyVectors = early ? await embedCatalog(early.records, early.catalog_hash, ineligible, home, env) : null;
-  const lease = await acquireLease(join(dir, 'lock'), { purpose: 'build', leaseMs: BUILD_LEASE_MS, generation: (previous?.build.generation ?? 0) + 1, retries: 3, waitMs: 250, now: opts.now })
-    .catch((e: unknown) => { unpin(); throw (e as NodeJS.ErrnoException)?.code === 'ENOENT' ? removedError() : e; });
+  let early: Prepared | null = null;
+  let earlyVectors: Awaited<ReturnType<typeof embedCatalog>> | null = null;
+  let lease: Awaited<ReturnType<typeof acquireLease>>;
+  try {
+    early = ineligible === null && !('skip' in turnEmbedder(home, env)) ? await prepare(input).catch(() => null) : null;
+    earlyVectors = early ? await embedCatalog(early.records, early.catalog_hash, ineligible, home, env) : null;
+    lease = await acquireLease(join(dir, 'lock'), { purpose: 'build', leaseMs: BUILD_LEASE_MS, generation: (previous?.build.generation ?? 0) + 1, retries: 3, waitMs: 250, now: opts.now });
+  } catch (e) {
+    unpin();
+    throw (e as NodeJS.ErrnoException)?.code === 'ENOENT' ? removedError() : e;
+  }
+  if (dirId() !== born) { releaseLease(lease); unpin(); throw removedError(); }
   const { args, fix } = buildArgs(input);
   try {
     const p = await prepare(input);
