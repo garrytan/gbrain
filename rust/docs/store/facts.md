@@ -338,8 +338,8 @@ plan row or leftover. An unbacked entity is an entity slug with no `/` and no li
 | `expireFactsByWithdrawal` | The write: stamps `expired_at` now and `valid_until` at the lesser of its value and now on the same rows (by the text's fingerprint) and answers `[{ id }]` in id order. Run it on the engine, outside a transaction. |
 
 `SELECT *` rows (`findActiveSingleFact`) carry the stored `trust_tier` and `write_origin`, and null for
-the columns the store has not got: `source_window`, `last_written_at` and the `write_*` and
-`last_write_*` columns.
+the one column the store has not got: `source_window`. The `write_*` and `last_write_*` columns and
+`last_written_at` carry the fact's write receipt (`write_receipt.rs`).
 
 `listFactsReconcileBacklog` is served from the `page_facts_reconcile` watermark (`facts/reconcile.rs`, key
 `F 0x0D page_id`): a live page is due when it has no watermark row or its `reconciled_revision` is not its
@@ -855,7 +855,8 @@ provenance page hides the row; then the entity, session, `since` (on `valid_from
 
 ## Open loops (`facts/loops.rs`)
 
-The `open_loops` table, for the three members loops-store.ts calls through the engine and the
+The `open_loops` table, for the four engine members (`upsertOpenLoop`, `closeOpenLoop`, `listOpenLoops` and the
+entity card read `readEntityOpenLoops`, a TypeScript shim over the list read) and the
 `loops_close` retry read `closedLoopWithActiveFact`, the retirement scan `loopFactDrift` (doctor
 `loop_facts_drift`, `gbrain repair loop-facts`) and the retirement's own read and expiry
 (`readLoopFactState`, `expireSourceFactNow`, `rust/docs/store/repair-bookkeeping.md`). Mutes and the
@@ -884,7 +885,9 @@ through `executeRaw`, so they refuse on this engine.
 - Times: the store reads `YYYY-MM-DDTHH:MM:SS[.ffffff]Z`. The member rewrites an ISO time with an
   offset and at most 3 fractional digits through `Date#toISOString`. It sends any other spelling (a
   bare date, a time with no zone) as written, and the store refuses it with `invalid_argument`, where
-  Postgres would read it in the session time zone.
+  Postgres would read it in the session time zone. A day the calendar lacks (such as `02-30`) is refused the
+  same way, as PGLite refuses it. Postgres reads it as the next valid day (`02-30` becomes `03-02`), because
+  postgres.js rolls the date over before the statement is sent, so the Rust engine is stricter than Postgres here.
 - Deleting a source removes its loops (`ON DELETE CASCADE`).
 
 ### Mutes and the thread verdict (`facts/loops/mutes.rs`)

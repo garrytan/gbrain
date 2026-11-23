@@ -591,11 +591,13 @@
             "params": [
               "string",
               "string",
+              "string",
+              "string",
               "number",
               "string"
             ],
-            "sql": "UPDATE sources SET upstream_checked_at=$1::timestamptz,upstream_commit=$2,upstream_behind=$3 WHERE id=$4",
-            "textSha256": "701c47b7784e866510f5478ccf327f8c3c7dc75a9f74cfd08ad51a96a0cea95b"
+            "sql": "UPDATE sources SET upstream_checked_at = CASE WHEN upstream_commit = $1 AND upstream_checked_at > $2::timestamptz THEN upstream_checked_at ELSE $3::timestamptz END, upstream_commit=$4,upstream_behind=$5 WHERE id=$6",
+            "textSha256": "f7b0f488f0c01e7618e9ed486a7c59dbd125e835280472bced7878352a91df43"
           }
         ]
       }

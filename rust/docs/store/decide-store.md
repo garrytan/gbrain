@@ -17,10 +17,10 @@ Timestamps cross the binding as ISO strings; the TypeScript members turn them in
 | Member | Table | Answers |
 | --- | --- | --- |
 | `readDecideState(key)`, `upsertDecideState(key, value)`, `deleteDecideState(key)`, `ensureDecideState(key, value)` | `decide_state` | the value or `null`; `ensure` inserts only when absent and answers the stored value |
-| `insertDecideSpend(rows)`, `dailyDecideSpend(since)`, `listDecideSpendBySlot()` | `decide_spend` | a request id keeps its first row; the daily total adds typesafe spend from `since` on (and the remote part); per-slot totals in byte order of the slot |
+| `insertDecideSpend(rows)`, `dailyDecideSpend(since)`, `listDecideSpendBySlot()` | `decide_spend` | a request id keeps its first row; the daily total adds typesafe spend from `since` on (and the remote part); per-slot totals: Rust lists slots in byte order; the SQL has no `ORDER BY`, so PGLite and Postgres answer in the plan's own order |
 | `insertDecideReceipts(rows)`, `pruneDecideReceipts(days)` | `decision_receipts` | the batch is all or nothing; a prune answers the number of receipts removed and keeps spend at least 31 days |
 | `listDecideReceiptStats`, `decideSlotUsage`, `decideConflictNoEntityCounts`, `listDecideReplayReceipts`, `listDecideResolvedModels`, `listDecideMixedModelDecisions` | `decision_receipts` | aggregates over a window of whole hours |
-| `insertDecideCalibration(row)`, `storeDecideQualification(id, q)`, `listDecideCalibrations({ slot?, includeRetired? })`, `getDecideCalibration(id)`, `setDecideCalibrationRetired(id, retired)` | `decide_calibrations` | the new id; nothing; rows ordered by slot (byte order), newest first, then id; the row or `null`; whether the row exists |
+| `insertDecideCalibration(row)`, `storeDecideQualification(id, q)`, `listDecideCalibrations({ slot?, includeRetired? })`, `getDecideCalibration(id)`, `setDecideCalibrationRetired(id, retired)` | `decide_calibrations` | the new id; nothing; rows ordered by slot, newest first, then id (Rust sorts slots by bytes; see Tightenings for the SQL engines); the row or `null`; whether the row exists |
 
 ## Keys and counters
 
@@ -46,9 +46,11 @@ number Postgres prints for it.
 - A window is a whole number of hours; a null or `NaN` window is refused and a non-whole one is `invalid_argument`. A window
   that reaches before 4713 BC or past 294276 AD is refused as Postgres's "timestamp out of range".
 - Days are 24 hours (no daylight-saving nuance).
-- Orderings that Postgres leaves to the database collation (the calibration list by `slot`, for one) use byte order
-  in Rust. The SQL engines use the database's collation, so rows whose keys compare differently by bytes and by
-  locale can come out in a different order.
+- The SQL does not pin text orderings to `COLLATE "C"` (the calibration list, the receipt stats and slot usage, and the
+  replay read order by `slot`, `decision_id` and similar text columns as written). PGLite and the Rust store sort text
+  by bytes, so they agree; Postgres sorts in the database's collation, so on an `en_US` database `a` comes before `A`
+  and its lists can differ from the other two for mixed-case or accented text. The parity test compares the engines
+  after one client-side byte order, so it does not catch this.
 - Replay ties break by insertion id.
 - A mean adds in insertion order, as a heap scan does.
 - A refused calibration insert uses no id on Rust; Postgres `BIGSERIAL` consumes one. Parity cases never assert an id after

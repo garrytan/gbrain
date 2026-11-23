@@ -28,6 +28,8 @@ import type { GoogleSourceConfig, GoogleSourceState } from './types.ts';
 import type { LoopsExclusionPolicy } from './loops-exclusion.ts';
 
 /** The "my addresses" identity set: account + Gmail sendAs aliases. */
+import type { PrivateSenders } from './ingest-tiers.ts';
+
 export function myAddressSet(entry: CredentialEntry): Set<string> {
   const out = new Set<string>();
   if (entry.meta.account) out.add(entry.meta.account.toLowerCase());
@@ -56,6 +58,8 @@ export interface GoogleSyncSummary {
   /** #5012: reply-owed loops the detector withheld this sweep, by reason (counts only). */
   loopsWithheld: Record<string, number>;
   failedFiles: number;
+  /** Threads per ingest tier, when the source sorts threads into tiers (ingest-tiers.ts). */
+  ingestTiers?: Record<string, number>;
 }
 
 export interface GoogleSyncDeps {
@@ -82,6 +86,8 @@ export interface GoogleSyncDeps {
   loopState?: GoogleSourceState;
   processedThreads: Set<string>;
   graceBackfillSeeded?: boolean;
+  /** The source's private-senders list, loaded once per run before any write (ingest-tiers.ts). */
+  privateSenders?: PrivateSenders | null;
 }
 
 export type ActivePack = { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> } | undefined;

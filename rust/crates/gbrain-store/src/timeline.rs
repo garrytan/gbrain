@@ -35,7 +35,7 @@ pub(crate) use crate::write_receipt::WriteReceipt as TimelineReceipt;
 pub use held::HeldTimelineSpec;
 pub(crate) use tier::TimelineTrust;
 
-const NEXT_TIMELINE_ID: &str = "next_timeline_id";
+pub(crate) const NEXT_TIMELINE_ID: &str = "next_timeline_id";
 
 /// What is stored for a timeline entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -219,6 +219,24 @@ fn raise_latest(tx: &mut dyn KvWrite, page_id: u64, created_at_us: i64) -> Resul
         tx.put(&latest, &created_at_us.to_be_bytes())?;
     }
     Ok(())
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the entry `id` of `page_id` on `date`, with its
+/// dedup key, and sets the page's newest `created_at` to what the remaining entries hold. `false`
+/// when there is no such entry.
+pub(crate) fn remove_entry_by_id(
+    tx: &mut dyn KvWrite,
+    page_id: u64,
+    date: &str,
+    id: u64,
+) -> Result<bool> {
+    let Some(old) = crate::get_json::<TimelineRecord>(&*tx, &keys::timeline(page_id, date, id))?
+    else {
+        return Ok(false);
+    };
+    remove_entry(tx, &old)?;
+    recompute_latest(tx, page_id)?;
+    Ok(true)
 }
 
 /// The next timeline entry id, from the same counter `addTimelineEntry` uses (the `serial`).

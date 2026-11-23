@@ -1,0 +1,237 @@
+/**
+ * Supervises the shadow child from the serving process (plan PR S1; decision D13 s3).
+ *
+ * The child is spawned lazily, on the first line to send, as `gbrain engine shadow __child <dir>`, with stdin as the
+ * NDJSON pipe and stdout as the control channel (heartbeats, pause). Every handle is unref'd, so the child never keeps
+ * a CLI process alive, and nothing here is awaited by a caller.
+ *
+ * Faults: a child exit is recorded and the next send respawns it after a backoff (1 s doubling to 60 s). A child with
+ * no heartbeat for `hangMs` is killed and counts as an exit. After `maxRestarts` exits within `restartWindowMs`
+ * mirroring stops for this process, and the reason is recorded in faults.jsonl. A `pause` from the child (a privacy
+ * divergence) stops mirroring the same way. The state file is re-read at most every `stateCheckMs`, so
+ * `gbrain engine shadow stop` reaches long-running processes too. `send` returns false whenever a line was not
+ * accepted (no child yet, backoff, pipe over its byte budget); the queue counts it as shed.
+ */
+import type { ChildProcess } from 'node:child_process';
+import { closeSync, openSync } from 'node:fs';
+import { join } from 'node:path';
+import { spawn as defaultSpawn } from '../core/spawn.ts';
+import { appendFault, type ShadowFault } from './ledger.ts';
+import type { MirrorTransport } from './mirror.ts';
+import { readShadowState } from './state.ts';
+
+export interface ShadowSupervisorOptions {
+  dir: string;
+  /** argv of the child: `[...gbrain argv, 'engine', 'shadow', '__child', dir]`. */
+  argv: string[];
+  spawn?: (command: string, args: string[], options: Record<string, unknown>) => ChildProcess;
+  now?: () => number;
+  minBackoffMs?: number;
+  maxBackoffMs?: number;
+  maxRestarts?: number;
+  restartWindowMs?: number;
+  hangMs?: number;
+  stateCheckMs?: number;
+  /** Bytes the child's stdin may buffer before sends are refused. */
+  maxBufferedBytes?: number;
+  /** Seam for tests; default appends to faults.jsonl. */
+  recordFault?: (fault: ShadowFault) => void;
+  /** Seam for tests; default re-reads state.json. */
+  stillEnabled?: () => boolean;
+  /** The child's store displaced rows while applying a relation: it is dirty and wants a reconcile pass. */
+  onDirty?: (relation: string) => void;
+}
+
+export class ShadowSupervisor implements MirrorTransport {
+  private child: ChildProcess | null = null;
+  private disabledReason: string | null = null;
+  private exits: number[] = [];
+  private backoffMs: number;
+  private nextSpawnAt = 0;
+  private lastHeartbeat = 0;
+  private lastStateCheck = 0;
+  private watchdog: ReturnType<typeof setInterval> | null = null;
+  private controlBuffer = '';
+  private nextRequestId = 0;
+  private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+  private readonly o: Required<Omit<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled' | 'onDirty'>> & Pick<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled' | 'onDirty'>;
+
+  constructor(opts: ShadowSupervisorOptions) {
+    this.o = {
+      now: Date.now, minBackoffMs: 1_000, maxBackoffMs: 60_000, maxRestarts: 5, restartWindowMs: 10 * 60_000,
+      hangMs: 60_000, stateCheckMs: 30_000, maxBufferedBytes: 8 * 1024 * 1024,
+      ...opts,
+    };
+    this.backoffMs = this.o.minBackoffMs;
+    this.lastStateCheck = this.o.now();
+  }
+
+  /** Mirroring continues in this process. */
+  active(): boolean { return this.disabledReason === null; }
+  get disabled(): string | null { return this.disabledReason; }
+  get childPid(): number | null { return this.child?.pid ?? null; }
+  get restarts(): number { return this.exits.length; }
+
+  send(line: string): boolean {
+    if (this.disabledReason) return false;
+    const now = this.o.now();
+    if (now - this.lastStateCheck >= this.o.stateCheckMs) {
+      this.lastStateCheck = now;
+      const enabled = this.o.stillEnabled ? this.o.stillEnabled() : readShadowState(this.o.dir)?.enabled === true;
+      if (!enabled) { this.disable('stopped', 'shadow mode was turned off (state.json)', false); return false; }
+    }
+    if (!this.child) {
+      if (now < this.nextSpawnAt) return false;
+      this.start();
+      if (!this.child) return false;
+    }
+    const stdin = this.child.stdin;
+    if (!stdin || stdin.destroyed || !stdin.writable) return false;
+    if (stdin.writableLength > this.o.maxBufferedBytes) return false;
+    try { stdin.write(line); } catch { return false; }
+    return true;
+  }
+
+  /**
+   * Calls a follow method in the child (`{t:'rpc'}` out, `{t:'resp'}` back). Rejects with the child's error code, or
+   * `child_unavailable` (not accepted, child exit) or `timeout`.
+   */
+  request<T = unknown>(method: string, args: Record<string, unknown> = {}, timeoutMs = 60_000): Promise<T> {
+    const id = ++this.nextRequestId;
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('timeout')); }, timeoutMs);
+      (timer as { unref?: () => void }).unref?.();
+      this.pending.set(id, { resolve: resolve as (value: unknown) => void, reject, timer });
+      if (!this.send(JSON.stringify({ t: 'rpc', id, method, args }) + '\n')) this.settleRequest(id, null, new Error('child_unavailable'));
+    });
+  }
+
+  private settleRequest(id: number, value: unknown, error?: Error): void {
+    const entry = this.pending.get(id);
+    if (!entry) return;
+    this.pending.delete(id);
+    clearTimeout(entry.timer);
+    if (error) entry.reject(error); else entry.resolve(value);
+  }
+
+  private rejectRequests(reason: string): void {
+    for (const id of [...this.pending.keys()]) this.settleRequest(id, null, new Error(reason));
+  }
+
+  /** Ends the child's stdin (it flushes and exits) without waiting. */
+  stop(): void {
+    this.disabledReason ??= 'stopped';
+    this.rejectRequests('child_unavailable');
+    this.clearWatchdog();
+    const child = this.child;
+    this.child = null;
+    if (child) {
+      child.removeAllListeners('exit');
+      try { child.stdin?.end(); } catch { /* already gone */ }
+      // A child stuck in native work never sees the end of its input: kill it after the hang window, not never.
+      const reaper = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already gone */ } }, this.o.hangMs);
+      (reaper as { unref?: () => void }).unref?.();
+      child.once('exit', () => clearTimeout(reaper));
+    }
+  }
+
+  private fault(kind: ShadowFault['kind'], detail: string): void {
+    const fault = { ts: new Date(this.o.now()).toISOString(), kind, detail };
+    try { (this.o.recordFault ?? ((f: ShadowFault) => appendFault(this.o.dir, f)))(fault); } catch { /* disk */ }
+  }
+
+  private disable(reason: string, detail: string, record = true): void {
+    if (this.disabledReason) return;
+    this.disabledReason = reason;
+    if (record) this.fault(reason === 'privacy_diverged' ? 'privacy_pause' : 'mirroring_disabled', `${reason}: ${detail}`);
+    this.stop();
+  }
+
+  private start(): void {
+    const [command, ...args] = this.o.argv;
+    let errFd: number | null = null;
+    try {
+      errFd = openSync(join(this.o.dir, 'child.log'), 'a', 0o600);
+      const child = (this.o.spawn ?? (defaultSpawn as unknown as NonNullable<ShadowSupervisorOptions['spawn']>))(command, args, {
+        stdio: ['pipe', 'pipe', errFd],
+        detached: false,
+        env: { ...process.env, GBRAIN_SHADOW_CHILD: '1' },
+      });
+      this.child = child;
+      this.lastHeartbeat = this.o.now();
+      child.unref();
+      const stdin = child.stdin as (NodeJS.WritableStream & { unref?: () => void }) | null;
+      stdin?.on('error', () => { /* EPIPE: the exit handler restarts */ });
+      (stdin as { unref?: () => void } | null)?.unref?.();
+      child.stdout?.setEncoding('utf8');
+      child.stdout?.on('data', (chunk: string) => this.onControl(chunk));
+      (child.stdout as { unref?: () => void } | null)?.unref?.();
+      child.on('error', (error) => { this.fault('spawn_failed', error instanceof Error ? error.name : 'unknown'); this.onExit(child, null, 'error'); });
+      child.on('exit', (code, signal) => this.onExit(child, code, signal));
+      this.armWatchdog();
+    } catch (error) {
+      this.child = null;
+      this.fault('spawn_failed', error instanceof Error ? error.name : 'unknown');
+      this.onExit(null, null, 'spawn_failed');
+    } finally {
+      if (errFd !== null) { try { closeSync(errFd); } catch { /* the child holds its own copy */ } }
+    }
+  }
+
+  private onControl(chunk: string): void {
+    this.controlBuffer += chunk;
+    let nl: number;
+    while ((nl = this.controlBuffer.indexOf('\n')) >= 0) {
+      const line = this.controlBuffer.slice(0, nl);
+      this.controlBuffer = this.controlBuffer.slice(nl + 1);
+      let msg: { t?: string; reason?: string; relation?: string; id?: number; ok?: boolean; value?: unknown; error?: { code?: string; message?: string } };
+      try { msg = JSON.parse(line); } catch { continue; }
+      if (msg.t === 'hb') this.lastHeartbeat = this.o.now();
+      else if (msg.t === 'resp' && typeof msg.id === 'number') {
+        const err = msg.ok ? undefined : new Error(msg.error?.message ?? 'rpc failed') as Error & { code?: string }; if (err) err.code = msg.error?.code ?? 'rpc_failed'; this.settleRequest(msg.id, msg.value, err);
+      }
+      else if (msg.t === 'dirty' && msg.relation) { try { this.o.onDirty?.(msg.relation); } catch { /* best effort */ } }
+      else if (msg.t === 'pause') this.disable('privacy_diverged', msg.reason ?? 'child requested a pause');
+    }
+    // A `resp` line can carry thousands of digest entries; only a runaway partial line is dropped.
+    if (this.controlBuffer.length > 16 * 1024 * 1024) this.controlBuffer = '';
+  }
+
+  private onExit(child: ChildProcess | null, code: number | null, signal: string | null): void {
+    if (child && this.child !== child) return;
+    this.child = null;
+    this.clearWatchdog();
+    this.rejectRequests('child_unavailable');
+    if (this.disabledReason) return;
+    const now = this.o.now();
+    this.fault('child_exit', `code=${code ?? 'none'} signal=${signal ?? 'none'}`);
+    this.exits = [...this.exits.filter((t) => now - t < this.o.restartWindowMs), now];
+    if (this.exits.length >= this.o.maxRestarts) {
+      this.disable('restart_budget_spent', `${this.exits.length} child exits within ${Math.round(this.o.restartWindowMs / 60_000)} minutes`);
+      return;
+    }
+    this.nextSpawnAt = now + this.backoffMs;
+    this.backoffMs = Math.min(this.o.maxBackoffMs, this.backoffMs * 2);
+  }
+
+  private armWatchdog(): void {
+    this.clearWatchdog();
+    const every = Math.max(250, Math.min(5_000, Math.floor(this.o.hangMs / 4)));
+    this.watchdog = setInterval(() => this.checkHang(), every);
+    (this.watchdog as { unref?: () => void }).unref?.();
+  }
+
+  /** Kills a child that sent no heartbeat within hangMs. Public for tests. */
+  checkHang(): void {
+    const child = this.child;
+    if (!child || this.o.now() - this.lastHeartbeat < this.o.hangMs) return;
+    this.fault('child_hung', `no heartbeat for ${Math.round((this.o.now() - this.lastHeartbeat) / 1000)}s`);
+    try { child.kill('SIGKILL'); } catch { /* already gone */ }
+    this.onExit(child, null, 'SIGKILL');
+  }
+
+  private clearWatchdog(): void {
+    if (this.watchdog) clearInterval(this.watchdog);
+    this.watchdog = null;
+  }
+}

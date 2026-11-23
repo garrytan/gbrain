@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
-const NEXT_CHUNK_ID: &str = "next_chunk_id";
+pub(crate) const NEXT_CHUNK_ID: &str = "next_chunk_id";
 const STATS: &str = "chunk_stats";
 const STATS_CHUNKS: &str = "chunk_stats/chunks";
 const STATS_LENGTH: &str = "chunk_stats/total_length";
@@ -325,6 +325,28 @@ pub(crate) fn clear_chunks(tx: &mut dyn KvWrite, page_id: u64) -> Result<()> {
     crate::cascade::remove_chunk_rows(tx, page_id, &removed)
 }
 
+/// The shadow follow (`seed/follow.rs`): removes the chunk of `page_id` at `chunk_index` with its
+/// postings and vector. `cascade` also calls the chunk-delete hook, which removes the code edges
+/// that end on the chunk; a chunk that is replaced by a row of the same index keeps them. `false`
+/// when there is no such chunk.
+pub(crate) fn remove_chunk(
+    tx: &mut dyn KvWrite,
+    page_id: u64,
+    chunk_index: u32,
+    cascade: bool,
+) -> Result<bool> {
+    let Some(chunk) = get_json::<ChunkRecord>(&*tx, &keys::chunk(page_id, chunk_index))? else {
+        return Ok(false);
+    };
+    let mut stats = StatsDelta::default();
+    remove_chunk_record(tx, &chunk, &mut stats)?;
+    add_stats(tx, &stats)?;
+    if cascade {
+        crate::cascade::remove_chunk_rows(tx, page_id, &[chunk.id])?;
+    }
+    Ok(true)
+}
+
 /// Removes every chunk of a page and its postings and updates the stats; returns what it removed.
 /// It does not call the chunk-delete hook: `replace_chunks` keeps some of these ids.
 fn drop_chunks(tx: &mut dyn KvWrite, page_id: u64) -> Result<Vec<ChunkRecord>> {
@@ -392,6 +414,33 @@ fn write_chunk(
     }
     stats.chunks += 1;
     stats.total_length += i64::from(record.length);
+    Ok(())
+}
+
+/// The shadow seed (`seed.rs`): stores `record`, a chunk copied from another engine with its own
+/// id, as [`write_chunk`] does (its postings when the page's segment view shows it, its share of
+/// the stats), then its vector when it has one (`model`, `embedded_at_us`, values). `length` is
+/// computed here. The caller checked the page and that the index is free.
+pub(crate) fn seed_chunk(
+    tx: &mut dyn KvWrite,
+    mut record: ChunkRecord,
+    vector: Option<(&str, i64, &[f32])>,
+) -> Result<()> {
+    record.length = term_frequencies(&record.chunk_text).1;
+    let view_generation = segment_view_generation(&*tx, record.page_id)?;
+    let mut stats = StatsDelta::default();
+    write_chunk(tx, &record, view_generation, &mut stats)?;
+    add_stats(tx, &stats)?;
+    if let Some((model, embedded_at_us, values)) = vector {
+        crate::embeddings::put_chunk_vector(
+            tx,
+            record.page_id,
+            record.chunk_index,
+            model,
+            embedded_at_us,
+            values,
+        )?;
+    }
     Ok(())
 }
 

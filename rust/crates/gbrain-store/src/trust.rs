@@ -58,6 +58,7 @@ mod eligibility;
 pub(crate) mod fingerprint;
 #[cfg(test)]
 mod fingerprint_corpus;
+pub(crate) use fingerprint::fact_fingerprint_v1;
 pub mod held_rows;
 pub mod label_guards;
 pub mod proposals;

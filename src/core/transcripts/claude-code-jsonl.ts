@@ -487,7 +487,19 @@ function isSkippedTurnEntry(e: Record<string, unknown>): boolean {
   return e.isSidechain === true || e.isMeta === true || e.isCompactSummary === true;
 }
 
+/** Claude Code's lead-in on a message another Claude session sent (#9768): an agent wrote it, not the owner. */
+const RELAYED_SESSION_MESSAGE_RE = /^\s*Another Claude session sent a message(?: while you were working)?:\s*<cross-session-message[\s>]/;
+
+function isRelayedSessionMessage(e: Record<string, unknown>): boolean {
+  const content = typeof e.message === 'object' && e.message !== null ? (e.message as Record<string, unknown>).content : undefined;
+  const first = Array.isArray(content)
+    ? (content.find(b => typeof b === 'object' && b !== null && (b as Record<string, unknown>).type === 'text') as Record<string, unknown> | undefined)?.text
+    : content;
+  return typeof first === 'string' && RELAYED_SESSION_MESSAGE_RE.test(first);
+}
+
 function hasNonHumanOrigin(e: Record<string, unknown>): boolean {
+  if (isRelayedSessionMessage(e)) return true;
   if (typeof e.origin !== 'object' || e.origin === null) return false;
   const kind = (e.origin as Record<string, unknown>).kind;
   return typeof kind === 'string' && kind.length > 0 && kind !== 'human';

@@ -652,16 +652,16 @@ describe('block', () => {
 });
 
 describe('catalog sources and bounds', () => {
-  test('dir: symlinks out of the root, non-invocable skills and duplicate ids are skipped with a reason', async () => {
+  test('dir: symlinks out of the root that are not skills, non-invocable skills and duplicate ids are skipped with a reason', async () => {
     const home = tmp();
     const outside = tmp('skres-out-');
-    skillDir(outside, 'leak', { name: 'leak', description: 'Outside the root' });
+    skillDir(outside, 'notes/leak', { name: 'leak', description: 'Outside the root' });
     const a = tmp('skres-a-');
     const b = tmp('skres-b-');
     skillDir(a, 'deploy', { name: 'deploy', description: 'First deploy' });
     skillDir(b, 'deploy', { name: 'deploy', description: 'Second deploy' });
     skillDir(a, 'hidden', { name: 'hidden', description: 'Not for the model', 'disable-model-invocation': true });
-    symlinkSync(join(outside, 'leak'), join(a, 'leak'));
+    symlinkSync(join(outside, 'notes'), join(a, 'leak'));
     const rec = await buildSkillIndex({ catalog: 'c', dirs: [a, b] }, { home });
     expect(rec.catalog.skill_count).toBe(1);
     const reasons = rec.catalog.skipped.map(s => s.reason).sort();
@@ -669,6 +669,32 @@ describe('catalog sources and bounds', () => {
     expect(rec.catalog.skipped.find(s => s.reason === 'duplicate_id')!.kept).toContain(a);
     const r = await resolveSkills({ message: 'deploy leak hidden' }, { home });
     expect(r.output.suggestions.map(s => s.summary)).toEqual(['First deploy']);
+  });
+
+  test('dir: skill folders and SKILL.md files symlinked in from outside the root are indexed under the link (gstack-style install)', async () => {
+    const home = tmp();
+    const checkout = tmp('skres-checkout-');
+    skillDir(checkout, 'plan-review', { name: 'plan-review', description: 'Review a plan before building it' });
+    skillDir(checkout, 'ship-it', { description: 'Ship a pull request' });
+    skillDir(checkout, 'loose', { name: 'qa-pass', description: 'Run a QA pass on the app' });
+    const root = tmp('skres-user-');
+    symlinkSync(join(checkout, 'plan-review'), join(root, 'plan-review'));
+    symlinkSync(join(checkout, 'ship-it'), join(root, 'shipper'));
+    mkdirSync(join(root, 'qa'), { recursive: true });
+    symlinkSync(join(checkout, 'loose', 'SKILL.md'), join(root, 'qa', 'SKILL.md'));
+    symlinkSync(checkout, join(root, 'whole-checkout'));
+    writeFileSync(join(checkout, 'secret.txt'), 'not a skill');
+    mkdirSync(join(root, 'notes'), { recursive: true });
+    symlinkSync(join(checkout, 'secret.txt'), join(root, 'notes', 'SKILL.md'));
+    const rec = await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
+    expect(rec.catalog.skill_count).toBe(3);
+    expect(rec.catalog.skipped).toEqual([
+      { reason: 'symlink_outside_root', path: join(root, 'whole-checkout') },
+      { reason: 'symlink_outside_root', path: join(root, 'notes', 'SKILL.md') },
+    ]);
+    const r = await resolveSkills({ message: 'review the plan, ship the pull request, run a qa pass', top_gate: 0 }, { home });
+    expect(r.output.suggestions.map(s => s.id).sort()).toEqual(['plan-review', 'qa-pass', 'shipper']);
+    expect(r.output.suggestions.find(s => s.id === 'shipper')!.path).toBe(join(root, 'shipper', 'SKILL.md'));
   });
 
   test('from-json: ineligible entries are skipped, malformed lists refuse, a stdin snapshot is kept', async () => {

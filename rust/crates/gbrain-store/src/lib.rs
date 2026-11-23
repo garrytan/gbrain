@@ -43,6 +43,7 @@ pub mod pages;
 pub mod read_shared;
 pub mod redb_kv;
 pub mod search;
+pub mod seed;
 pub mod shared_skill_catalog;
 pub mod shared_skill_members;
 pub mod shared_skill_publication;
@@ -543,11 +544,37 @@ impl Store {
     /// Either way `f` writes through the store's write handle chain ([`write_chain`]), made fresh
     /// for each run: a put of a page record that names readers sets the member-access flag in the
     /// same write (`access_flag::FlaggingWriter`).
-    pub(crate) fn write<T>(&self, mut f: impl FnMut(&mut dyn KvWrite) -> Result<T>) -> Result<T> {
+    pub(crate) fn write<T>(&self, f: impl FnMut(&mut dyn KvWrite) -> Result<T>) -> Result<T> {
+        self.write_under(None, f)
+    }
+
+    /// [`Store::write`] under the trust context `trust` instead of the handle's write settings. The
+    /// shadow seed (`seed.rs`) copies rows with the tiers another engine stored for them.
+    pub(crate) fn write_as<T>(
+        &self,
+        trust: crate::trust::WriteTrust,
+        f: impl FnMut(&mut dyn KvWrite) -> Result<T>,
+    ) -> Result<T> {
+        self.write_under(Some(trust), f)
+    }
+
+    /// The body of [`Store::write`] and [`Store::write_as`]: `trust` is the context to stamp under,
+    /// or `None` for the handle's write settings.
+    fn write_under<T>(
+        &self,
+        trust: Option<crate::trust::WriteTrust>,
+        mut f: impl FnMut(&mut dyn KvWrite) -> Result<T>,
+    ) -> Result<T> {
+        let stamp_trust = || -> Result<crate::trust::WriteTrust> {
+            match &trust {
+                Some(trust) => Ok(trust.clone()),
+                None => self.write_trust(),
+            }
+        };
         if let Some(tx) = &self.bound {
             // A bound store's env is the transaction's clock (`transactions.rs`, "Time").
             let _clock = crate::env::transaction_clock::open(self.env.clone());
-            let _trust = crate::write_trust::stamp_context::open(self.write_trust()?);
+            let _trust = crate::write_trust::stamp_context::open(stamp_trust()?);
             return tx.statement(|w| write_chain(w, &mut f));
         }
         let mut locked: std::collections::BTreeSet<Vec<u8>> = std::collections::BTreeSet::new();
@@ -560,7 +587,7 @@ impl Store {
             };
             let outcome = {
                 let _clock = crate::env::transaction_clock::open(self.env.clone());
-                let _trust = crate::write_trust::stamp_context::open(self.write_trust()?);
+                let _trust = crate::write_trust::stamp_context::open(stamp_trust()?);
                 match write_chain(&mut *tx, &mut f) {
                     Ok(value) => tx.commit().map(|_| value),
                     Err(e) => Err(e),
@@ -631,8 +658,9 @@ pub const DEFAULT_WRITE_GATE_DETECTOR_VERSION: u32 = 2;
 /// leaves either the old brain or the new one. Format 1 to 2 folds the JSON counter records into
 /// the per-counter records; 2 to 3 rewrites the projection jobs in their compact form
 /// (`format.rs`); an upgrade from format 3 or older starts an empty, incomplete keyword index
-/// (`keyword/index_build.rs`), and 4 to 5 rewrites nothing (a take stored before its trust tier
-/// reads `unknown`), so a format-4 brain keeps its postings. The format record is re-read inside the transaction:
+/// (`keyword/index_build.rs`), 4 to 5 rewrites nothing (a take stored before its trust tier
+/// reads `unknown`), so a format-4 brain keeps its postings, and 5 to 6 carries over the records
+/// the v0.60.766.0 addon's shadow seed kept in other shapes (`seed/format_5.rs`). The format record is re-read inside the transaction:
 /// another handle on the same records may have upgraded the brain first.
 fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     let mut tx = kv.begin_write_exclusive()?;
@@ -656,6 +684,21 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     // Format 5 stores a take's trust tier in its record. A take stored before reads `unknown`, the
     // column default, so the step rewrites nothing; the number keeps an older build from rewriting
     // a take without its tier.
+    // Format 6: the records the v0.60.766.0 addon's shadow seed wrote at format 5 in other shapes
+    // are carried over to this build's, or the brain is refused with the re-seed steps.
+    if stored.format_version <= 5 {
+        let from = stored.format_version;
+        seed::carry_over_format_5(&mut *tx).map_err(|e| {
+            StoreError::new(
+                error::SHADOW_RESEED_REQUIRED,
+                format!(
+                    "this brain was written by an older gbrain Rust addon (store format {from}) and holds a record this build cannot carry over: {}; nothing was changed. Re-seed the shadow store: {}",
+                    e.message,
+                    seed::RESEED_STEPS
+                ),
+            )
+        })?;
+    }
     stored.format_version = FORMAT_VERSION;
     put_json(&mut *tx, &keys::meta("format"), &stored)?;
     tx.commit()?;

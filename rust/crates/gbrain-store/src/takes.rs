@@ -72,7 +72,7 @@ pub use reads::{
     RevertResolutionsSpec, TakePreimageInput,
 };
 
-const NEXT_TAKE_ID: &str = "next_take_id";
+pub(crate) const NEXT_TAKE_ID: &str = "next_take_id";
 const TAKE: u8 = 0x01;
 const BY_ROW: u8 = 0x02;
 const EVIDENCE: u8 = 0x03;
@@ -659,8 +659,63 @@ fn insert_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
     tx.put(&row_key(take.page_id, take.row_num), &take.id.to_be_bytes())
 }
 
+/// The shadow seed (`seed.rs`): stores a take copied from another engine with its own id and row.
+/// `false` when the id already holds a take; a row held by another take is the unique
+/// `(page_id, row_num)` violation. The caller checked the page.
+pub(crate) fn seed_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<bool> {
+    if read_take(&*tx, take.id)?.is_some() {
+        return Ok(false);
+    }
+    if tx.get(&row_key(take.page_id, take.row_num))?.is_some() {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            "duplicate key value violates unique constraint on takes (page_id, row_num)",
+        ));
+    }
+    insert_take(tx, take)?;
+    Ok(true)
+}
+
+/// The shadow seed (`seed.rs`): stores the evidence row of `synthesis` citing the take
+/// `(take_page_id, take_row_num)`, copied from another engine with its own `created_at`, with its
+/// reverse index. `false` when the row is already stored; a take that is not stored is the foreign
+/// key violation. The caller checked the synthesis page.
+pub(crate) fn seed_evidence(
+    tx: &mut dyn KvWrite,
+    synthesis: &PageRecord,
+    take_page_id: u64,
+    take_row_num: i32,
+    citation_index: i32,
+    created_at_us: i64,
+) -> Result<bool> {
+    if tx.get(&row_key(take_page_id, take_row_num))?.is_none() {
+        return Err(fk_failed(
+            EVIDENCE_TABLE,
+            "synthesis_evidence_take_page_id_take_row_num_fkey",
+        ));
+    }
+    let key = evidence_key(synthesis.id, take_page_id, take_row_num);
+    if tx.get(&key)?.is_some() {
+        return Ok(false);
+    }
+    let record = EvidenceRecord {
+        citation_index,
+        created_at_us,
+        synthesis_source_id: synthesis.source_id.clone(),
+    };
+    put_json(tx, &key, &record)?;
+    tx.put(&cited_key(take_page_id, take_row_num, synthesis.id), &[])?;
+    Ok(true)
+}
+
 /// Deletes a take with its evidence rows and its horizon.
 fn delete_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
+    delete_take_evidence(tx, take)?;
+    delete_take_record(tx, take)
+}
+
+/// The evidence rows that cite `take`, with their reverse index rows.
+fn delete_take_evidence(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
     let mut synths = Vec::new();
     scan_prefix(
         &*tx,
@@ -677,6 +732,11 @@ fn delete_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
         tx.delete(&evidence_key(synth, take.page_id, take.row_num))?;
         tx.delete(&key)?;
     }
+    Ok(())
+}
+
+/// The take's own records: its row, its vector and its id key. Evidence that cites it stays.
+fn delete_take_record(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
     tx.delete(&row_key(take.page_id, take.row_num))?;
     // take_horizons_take_id_fkey ... ON DELETE CASCADE.
     tx.delete(&horizons::horizon_key(take.id))?;
@@ -695,6 +755,36 @@ pub(crate) fn delete_takes_by_id(tx: &mut dyn KvWrite, ids: &BTreeSet<u64>) -> R
         }
     }
     Ok(deleted)
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the take `id`. `keep_evidence` leaves the
+/// evidence rows that cite it, for a take that is replaced by a row of the same `(page_id,
+/// row_num)`. `false` when no such take is stored.
+pub(crate) fn remove_take(tx: &mut dyn KvWrite, id: u64, keep_evidence: bool) -> Result<bool> {
+    let Some(take) = read_take(&*tx, id)? else {
+        return Ok(false);
+    };
+    if !keep_evidence {
+        delete_take_evidence(tx, &take)?;
+    }
+    delete_take_record(tx, &take)?;
+    Ok(true)
+}
+
+/// The shadow follow: removes the evidence row of `synthesis` citing the take `(take_page_id,
+/// take_row_num)`. `false` when there is none.
+pub(crate) fn remove_evidence(
+    tx: &mut dyn KvWrite,
+    synthesis: u64,
+    take_page_id: u64,
+    take_row_num: i32,
+) -> Result<bool> {
+    let key = evidence_key(synthesis, take_page_id, take_row_num);
+    if tx.get(&key)?.is_none() {
+        return Ok(false);
+    }
+    delete_evidence(tx, &[key])?;
+    Ok(true)
 }
 
 /// Deletes evidence rows by their `A 0x03` keys, with their reverse index rows.
