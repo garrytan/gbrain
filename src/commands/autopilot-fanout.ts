@@ -36,6 +36,7 @@
  */
 
 import { existsSync } from 'fs';
+import { rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 import type { BrainEngine, SourceRow } from '../core/engine.ts';
 import type { MinionQueue } from '../core/minions/queue.ts';
 import { SOURCE_FRESHNESS_PHASES, MAINTENANCE_PHASES, LAST_GLOBAL_AT_KEY } from '../core/cycle.ts';
@@ -327,7 +328,9 @@ export async function readRecentSourceFailures(
       if (!Number.isFinite(last.getTime())) continue;
       map.set(r.source_id, { count: Number(r.fail_count) || 0, lastFailedAt: last });
     }
-  } catch {
+  } catch (e) {
+    // A capability refusal is not "no cooldown data": the engine cannot say which sources failed, so say so.
+    rethrowCapabilityRefusal(e);
     // Pre-migration / transient DB error → no cooldown data (fail open: dispatch).
   }
   return map;
@@ -348,11 +351,12 @@ export async function isSourceInCooldown(engine: BrainEngine, sourceId: string, 
   if (!failure) return false;
   let lastSuccessAt: Date | null = null;
   try {
-    const rows = await engine.executeRaw<{ config: Record<string, unknown> | null }>(
-      `SELECT config FROM sources WHERE id = $1`, [sourceId],
-    );
-    if (rows[0]) lastSuccessAt = readLastSuccessAt({ config: rows[0].config ?? {} } as SourceRow);
-  } catch { /* treat as no success */ }
+    const source = await engine.getSource(sourceId);
+    if (source) lastSuccessAt = readLastSuccessAt({ config: source.config ?? {} } as SourceRow);
+  } catch (e) {
+    rethrowCapabilityRefusal(e);
+    /* treat as no success */
+  }
   return isInFailureCooldown(failure, lastSuccessAt, now, opts);
 }
 
@@ -547,7 +551,8 @@ export async function dispatchPerSource(
     if (cooldownOpts.baseMin > 0) {
       recentFailures = await readRecentSourceFailures(engine, { sinceMin: cooldownOpts.capMin });
     }
-  } catch {
+  } catch (e) {
+    rethrowCapabilityRefusal(e); // an engine that cannot read job history refuses the dispatch; it does not run with no cooldown
     cooldownOpts = { baseMin: 0, capMin: FAILURE_COOLDOWN_CAP_MIN };
   }
 
