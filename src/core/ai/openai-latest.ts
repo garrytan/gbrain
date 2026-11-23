@@ -121,7 +121,7 @@ export function parseOpenAIChatId(id: string): ParsedOpenAIChatId | null {
  * repair default), but not eligible as a discovered tier default: one priced
  * member of a newer family would otherwise become every tier's default.
  */
-const METERED_ONLY: ReadonlySet<string> = new Set(['gpt-6.1-sol']);
+const METERED_ONLY: ReadonlySet<string> = new Set(['gpt-6.1-sol', 'gpt-6.2-sol', 'gpt-6-luna', 'gpt-6-astra', 'gpt-6.2-astra']);
 
 function familyCmp(a: [number, number], b: [number, number]): number {
   return a[0] !== b[0] ? a[0] - b[0] : a[1] - b[1];
@@ -139,16 +139,17 @@ function pickBySuffix(members: ParsedOpenAIChatId[], order: readonly string[]): 
  * Rank the account's model ids into per-tier defaults. Only ids with a
  * canonical pricing row are eligible (see module header); returns null when
  * nothing usable matched. `newestUnpriced` reports the newest in-grammar id
- * that lost eligibility to a missing pricing row.
+ * that lost eligibility to a missing pricing row; a METERED_ONLY id is priced,
+ * so it is neither eligible nor reported.
  */
 export function rankOpenAIChatModels(
   ids: string[],
-  priced: (id: string) => boolean = (id) => canonicalLookup(`openai:${id}`) !== undefined && !METERED_ONLY.has(id),
+  priced: (id: string) => boolean = (id) => canonicalLookup(`openai:${id}`) !== undefined,
 ): { tiers: OpenAITierPick | null; newestUnpriced?: string } {
   const parsed = ids.map(parseOpenAIChatId).filter((p): p is ParsedOpenAIChatId => p !== null);
   if (parsed.length === 0) return { tiers: null };
 
-  const eligible = parsed.filter((p) => priced(p.id));
+  const eligible = parsed.filter((p) => priced(p.id) && !METERED_ONLY.has(p.id));
   const skipped = parsed.filter((p) => !priced(p.id));
   const newestSkipped = skipped.sort((a, b) => familyCmp(b.family, a.family))[0];
 
