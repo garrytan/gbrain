@@ -331,10 +331,15 @@ export function withNormalizedSlugParams(op: Operation, handler: Operation['hand
       if ((err as { code?: unknown } | null)?.code !== 'page_not_found') throw err;
       // The probe found no page the handler could read (another source scope than the probe's): try the spellings the caller may have meant.
       const lowered = legacySpellingParams(op.name, params, chosen);
+      // When no spelling finds a page, the refusal names the id as the caller typed it (its message and the fix it
+      // prints), so an agent that re-runs the fix sends what it sent.
+      let asSent: unknown = err;
       for (const retry of [lowered, params].filter((v): v is Params => v !== null && JSON.stringify(v) !== JSON.stringify(chosen))) {
-        try { return await run(retry); } catch { /* keep the first error */ }
+        try { return await run(retry); } catch (again) {
+          if (retry === params && (again as { code?: unknown } | null)?.code === 'page_not_found') asSent = again;
+        }
       }
-      throw err;
+      throw asSent;
     }
   };
 }

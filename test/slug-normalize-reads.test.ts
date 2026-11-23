@@ -134,10 +134,10 @@ describe('slug reads use the stored form (pages-01)', () => {
     expect(timeline.length).toBeGreaterThan(0);
   });
 
-  test('a slug that names no page still answers page_not_found, naming the stored form', async () => {
+  test('a slug that names no page still answers page_not_found, naming the slug as typed (as master does)', async () => {
     const err = await errorOf('get_page', { slug: 'People/Nobody-Example' });
     expect(err?.code).toBe('page_not_found');
-    expect(err?.message).toBe('Page not found: people/nobody-example');
+    expect(err?.message).toBe('Page not found: People/Nobody-Example');
   });
 });
 
