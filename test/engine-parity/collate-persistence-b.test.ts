@@ -25,6 +25,12 @@ import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSource, enableBeliefCoverage, parityArms } from './harness.ts';
+import { seedHostBinding, seedSource, seedSourceBinding, seedWorktree } from './persistence-fixtures.ts';
+
+type Backend = Parameters<typeof createSource>[1];
+
+/** Source ids every engine accepts (the Rust store takes a-z, 0-9 and -) that a locale and a byte sort still order apart. */
+const SOURCE_IDS = ['ab', 'a-z', 'a-y'] as const;
 import { testBackends } from '../helpers/test-backends.ts';
 import { BYTE_IDS, BYTE_SLUGS, MIXED_IDS, MIXED_SLUGS, byteOrder } from '../helpers/byte-order.ts';
 import { withEnv } from '../helpers/with-env.ts';
@@ -84,6 +90,18 @@ async function hostBind(engine: BrainEngine, worktreeId: string, hostId: string,
     [worktreeId, hostId, localPath, `${localPath}.lock`]);
 }
 
+/** bindEach through the typed seeders (persistence-fixtures.ts), so the rows land on the Rust store too. */
+async function bindEachTyped(engine: BrainEngine, backend: Backend, ids: readonly string[], real: boolean): Promise<Map<string, { worktree: string; incarnation: string }>> {
+  const made = new Map<string, { worktree: string; incarnation: string }>();
+  for (const id of ids) {
+    const incarnation = real ? await seedSource(engine, backend, id) : randomUUID();
+    const worktree = await seedWorktree(engine);
+    await seedSourceBinding(engine, id, incarnation, worktree);
+    made.set(id, { worktree, incarnation });
+  }
+  return made;
+}
+
 /** One worktree per id, a binding for each, and (with `real`) a source row behind it. */
 async function bindEach(engine: BrainEngine, ids: readonly string[], real: boolean): Promise<Map<string, { worktree: string; incarnation: string }>> {
   const made = new Map<string, { worktree: string; incarnation: string }>();
@@ -98,32 +116,32 @@ async function bindEach(engine: BrainEngine, ids: readonly string[], real: boole
 
 describe('persistence binding listings sort source ids by byte', () => {
   parityTest('listOrphanBindings lists orphan bindings by byte source id, and its limit keeps the byte-first ones', {
-    methods: ['executeRaw'], requires: 'raw_sql',
-  }, async (engine) => {
-    await bindEach(engine, MIXED_IDS, false);
+    methods: ['worktreeClaimStore'],
+  }, async (engine, backend) => {
+    await bindEachTyped(engine, backend, SOURCE_IDS, false);
     const all = (await listOrphanBindings(engine)).map(row => row.source_id);
-    const limited = (await listOrphanBindings(engine, { limit: 3 })).map(row => row.source_id);
-    expect(all).toEqual([...BYTE_IDS]);
-    expect(limited).toEqual(BYTE_IDS.slice(0, 3));
+    const limited = (await listOrphanBindings(engine, { limit: 2 })).map(row => row.source_id);
+    expect(all).toEqual(byteOrder(SOURCE_IDS));
+    expect(limited).toEqual(byteOrder(SOURCE_IDS).slice(0, 2));
     return { all, limited };
   });
 
   parityTest('preActivationClaims, readSyncFreshness and readSourceMovement list bound sources by byte id, and a claim lists its roots by byte path', {
-    methods: ['executeRaw'], requires: 'raw_sql',
-  }, async (engine) => inHome(async () => {
-    const made = await bindEach(engine, MIXED_IDS, true);
+    methods: ['worktreeClaimStore'],
+  }, async (engine, backend) => inHome(async () => {
+    const made = await bindEachTyped(engine, backend, SOURCE_IDS, true);
     const host = localHostId();
     const other = randomUUID();
     const worktree = made.get('ab')!.worktree;
-    await hostBind(engine, worktree, host, '/collate/ab');
-    await hostBind(engine, worktree, other, '/collate/a-z');
+    await seedHostBinding(engine, worktree, host, '/collate/ab');
+    await seedHostBinding(engine, worktree, other, '/collate/a-z');
     const claims = await preActivationClaims(engine as never);
     const fresh = await readSyncFreshness(engine, { behind: async () => null, commitTimes: async () => new Map() });
     const moved = await readSourceMovement(engine);
-    expect(claims.map(claim => claim.source_id)).toEqual([...BYTE_IDS]);
+    expect(claims.map(claim => claim.source_id)).toEqual(byteOrder(SOURCE_IDS));
     expect(claims.find(claim => claim.source_id === 'ab')!.roots).toEqual(['/collate/a-z', '/collate/ab']);
-    expect(fresh.map(row => row.source_id)).toEqual([...BYTE_IDS]);
-    expect(moved.map(row => row.source_id)).toEqual([...BYTE_IDS]);
+    expect(fresh.map(row => row.source_id)).toEqual(byteOrder(SOURCE_IDS));
+    expect(moved.map(row => row.source_id)).toEqual(byteOrder(SOURCE_IDS));
     return { claims: claims.map(claim => ({ id: claim.source_id, roots: claim.roots })), fresh: fresh.map(row => row.source_id), moved: moved.map(row => row.source_id) };
   }));
 });

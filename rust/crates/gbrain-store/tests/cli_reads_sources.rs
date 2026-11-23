@@ -508,3 +508,60 @@ fn identity_reads_match_by_id_and_title_and_read_one_live_page() {
     assert_eq!(store.read_page_identity(gone).unwrap(), None);
     assert_eq!(store.read_page_identity(999_999).unwrap(), None);
 }
+
+#[test]
+fn an_orphan_source_binding_lists_by_source_id_and_deletes_once_orphaned() {
+    use gbrain_store::persistence::{SourceBindingInsert, WorktreeInsert};
+    let dir = TempDir::new("orphan-bindings");
+    let store = open(&dir);
+    let wt = "11111111-1111-4111-8111-111111111111";
+    store
+        .insert_worktree(
+            &serde_json::from_value::<WorktreeInsert>(json!({"id": wt, "ownerHostId": null}))
+                .unwrap(),
+        )
+        .unwrap();
+    source(&store, "live", None, json!({}));
+    let live_inc = store.get_source_by_id("live").unwrap().unwrap().incarnation;
+    for (id, inc) in [
+        ("ab", "22222222-2222-4222-8222-222222222222"),
+        ("a-z", "33333333-3333-4333-8333-333333333333"),
+        ("live", live_inc.as_str()),
+    ] {
+        store
+            .insert_source_binding(
+                &serde_json::from_value::<SourceBindingInsert>(json!({"sourceId": id, "incarnation": inc, "worktreeId": wt, "relativePath": ""}))
+                    .unwrap(),
+            )
+            .unwrap();
+    }
+    let ids = |rows: Vec<serde_json::Value>| {
+        rows.iter()
+            .map(|r| r["source_id"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        ids(store.list_orphan_bindings(None).unwrap()),
+        vec!["a-z", "ab"]
+    );
+    assert_eq!(
+        ids(store.list_orphan_bindings(Some(1)).unwrap()),
+        vec!["a-z"]
+    );
+    assert_eq!(
+        store.list_orphan_bindings(None).unwrap()[0]["reason"],
+        json!("source_removed")
+    );
+    assert!(!store.delete_orphan_binding("live", &live_inc).unwrap());
+    assert!(
+        !store
+            .delete_orphan_binding("ab", "44444444-4444-4444-8444-444444444444")
+            .unwrap()
+    );
+    assert!(
+        store
+            .delete_orphan_binding("ab", "22222222-2222-4222-8222-222222222222")
+            .unwrap()
+    );
+    assert_eq!(ids(store.list_orphan_bindings(None).unwrap()), vec!["a-z"]);
+}
