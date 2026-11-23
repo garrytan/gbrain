@@ -36,6 +36,12 @@ instructions and writes nothing. The build always goes to `rust/target/`: the co
 `--target-dir`, so `CARGO_TARGET_DIR` and a `build.target-dir` setting are ignored and it never
 packages an older library from another build directory.
 
+`bun run rust:build --crash-points` builds the crash cell's addon instead, with the store's `crash-points`
+cargo feature, into `rust/target/addon-crash-points/` (see [Real-process crash cell](#real-process-crash-cell) below). Only one
+`rust:build` runs at a time in a checkout: it holds the lock directory `rust/target/.rust-build.lock` (the holder's
+pid) from the cargo build through the copy, so two builds cannot swap their outputs. A second build waits for the
+first (up to an hour), and a lock left by a holder that died is taken over.
+
 ## Check it works under Bun
 
 ```sh

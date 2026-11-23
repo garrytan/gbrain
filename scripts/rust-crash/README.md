@@ -57,7 +57,8 @@ opens through redb's own backend, as always.
 
 Each kill class has a minimum: per seed, two mid-commit kills, one before and one
 after an fsync, three at the persistence boundaries, one between operations and
-one timed. A class below its minimum fails the cell. That includes a kill point
+one timed (on `--engine=pglite` there are no store kill points, so the three
+store classes have no minimum). A class below its minimum fails the cell. That includes a kill point
 that the counting pass never logged, so a class that stopped happening cannot
 pass as a smaller run.
 
