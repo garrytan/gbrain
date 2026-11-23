@@ -458,6 +458,7 @@ test/engine-parity/source-order-callers.test.ts
 test/engine-parity/source-resolver-reads.test.ts
 test/engine-parity/source-verify-reads.test.ts
 test/engine-parity/spend-log.test.ts
+test/engine-parity/stats-pages-by-type-ties.test.ts
 test/engine-parity/stats-vectors.test.ts
 test/engine-parity/stats.test.ts
 test/engine-parity/sweep-reads.test.ts
