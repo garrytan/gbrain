@@ -6050,7 +6050,8 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   `pg_wal/`), as any open of that brain does. `seed` opens a PGLite brain without recording its managed roots and without
   repairing a damaged log, so it moves no datastore file aside. A brain with an open repair episode is not opened
   (`seed` exits 1 with `could not open the brain (repair_episode_open)`), because a healthy open would close the episode
-  and prune its repair backups.
+  and prune its repair backups. A repair episode recorded while `seed` waits for the datastore lock is left open too, and
+  its backups stay.
 - **Provisional report.** The verdict is always `NOT READY`: this phase compares reads only, the seeded store does
   not follow later writes yet, and writes and the readiness decision come in later phases of the plan
   (`docs/designs/RUST_ENGINE.md`, Phase S). Until the Rust engine serves reads, comparisons record
