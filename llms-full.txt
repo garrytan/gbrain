@@ -6043,7 +6043,8 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   `rust/crates/gbrain-store/tests/fixtures/fact_fingerprints.json`. It also runs every hand row and every sixth seeded row of
   that corpus through `gbrain_fact_fingerprint` and `gbrain_fact_fingerprint_v1` (texts as bind parameters, never logged).
   If any code point differs it counts the stored `facts` rows whose claim holds one (a count, never the text). The query costs
-  about 0.5 s on Postgres 16 and 0.7 s on PGLite on a dev container (about 1.6 s on Postgres 17); it reads only. `probe` carries
+  about 0.5 s on Postgres 16 and 17 with a glibc database, 0.7 s with an ICU database and 0.7 s on PGLite, measured on a dev
+  container; it reads only. `probe` carries
   `state` (`pass`, `fail`, `not_run`), `checked_at`, `server_version`, `mismatches` (the fixed 20-claim corpus against Rust), the
   database's `collation`, `ctype`, `locale_provider` (`c` libc, `i` ICU, `b` builtin) and `locale` (`datlocale` on Postgres 17,
   `daticulocale` on 16, `null` where absent), `differing_code_points` (the first 50 as `U+XXXX`) with
