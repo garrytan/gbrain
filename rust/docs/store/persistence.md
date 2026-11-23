@@ -702,6 +702,13 @@ The status's queue and movement reads, three of them shared with the persistence
   completion first as `DESC` sorts it, and the queued or running managed-sync requests with the
   oldest), its head unfinished request (the running one first, then by sequence) and its git hold
   summary counters.
+- `countParkedEffects(sourceIds)` and `listParkedEffects(sourceIds)`: the unsettled effects that
+  recorded a parked target, counted, and the first 20 by id with their request row and whether the
+  binding they were parked under is gone.
+- `listGitPushHoldRows(codes, sourceIds)`: the held Git effects (queued, running or failed, no
+  recovery, not settled) whose code, or a parked effect's first parked target code, is one of
+  `codes`, per source and worktree: the worktree's first host path, whether the source is bound
+  elsewhere now, the retrying and parked counts, the codes and the oldest request.
 - `readLiveSyncJobId(sourceId)`: the active `sync` job, outside the drain lease queue, with a live
   lock that drains the source (by `sourceId`, `source_id`, or else `repoPath`), oldest started first.
 

@@ -117,4 +117,37 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.live_sync_job_id(&source_id))
     }
+
+    /// `countParkedEffects(sourceIds)`.
+    #[napi]
+    pub fn parked_effect_count<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Option<Vec<String>>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.parked_effect_count(source_ids.as_deref()))
+    }
+
+    /// `listParkedEffects(sourceIds)`.
+    #[napi]
+    pub fn parked_effect_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Option<Vec<String>>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.parked_effect_rows(source_ids.as_deref()))
+    }
+
+    /// `listGitPushHoldRows(codes, sourceIds)`.
+    #[napi]
+    pub fn git_push_hold_rows<'env>(
+        &self,
+        env: &'env Env,
+        codes: Vec<String>,
+        source_ids: Option<Vec<String>>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.git_push_hold_rows(&codes, source_ids.as_deref())
+        })
+    }
 }

@@ -1,7 +1,9 @@
 //! The three queue reads of `gbrain sources writer status` that the doctor checks share
 //! (`listStalledCatchupRows`, `listParkedGroupRows` and `listSourceBindingsForMovement` in
 //! `src/core/engine-sql/doctor-persistence.ts`), and the per-binding movement rows
-//! (`readSourceMovementRows`, `src/core/engine-sql/applied-watermark-reads.ts`);
+//! (`readSourceMovementRows`, `src/core/engine-sql/applied-watermark-reads.ts`), and the parked
+//! effect and Git push hold reads of the doctor's parked-effects check (`countParkedEffects`,
+//! `listParkedEffects`, `listGitPushHoldRows`);
 //! rust/docs/store/persistence.md, "Writer status".
 //!
 //! Each read answers what its statement answers on Postgres, from the effect, request, source
@@ -14,7 +16,8 @@
 use super::effects::{EffectRecord, all_effects};
 use super::projection_queue::parse_timestamptz;
 use super::worktrees::{
-    SOURCE_BINDING, SourceBindingRecord, WORKTREE, WorktreeRecord, scan_records,
+    HOST_BINDING, HostBindingRecord, SOURCE_BINDING, SourceBindingRecord, WORKTREE, WorktreeRecord,
+    scan_records,
 };
 use super::{
     RequestRecord, all_requests, extra_bool, extra_time, json_text, list_op_checkpoint_records_in,
@@ -451,6 +454,177 @@ pub(crate) fn live_sync_job_id_in(
     Ok(jobs.first().map(|j| j.id))
 }
 
+/// `e.data ? key`.
+fn data_has(e: &EffectRecord, key: &str) -> bool {
+    e.data.as_object().is_some_and(|d| d.contains_key(key))
+}
+
+/// `e.data ? 'parked' AND NOT (e.data ? 'settled')`, and in `source_ids` when given.
+fn parked_unsettled(e: &EffectRecord, source_ids: Option<&[String]>) -> bool {
+    data_has(e, "parked")
+        && !data_has(e, "settled")
+        && source_ids.is_none_or(|ids| in_scope(e.source_id.as_deref(), Some(ids)))
+}
+
+/// `countParkedEffects(sourceIds)`: the effects that recorded a parked target and are not settled.
+pub(crate) fn parked_effect_count_in(
+    read: &dyn KvRead,
+    source_ids: Option<&[String]>,
+) -> Result<i64> {
+    Ok(all_effects(read)?
+        .iter()
+        .filter(|e| parked_unsettled(e, source_ids))
+        .count() as i64)
+}
+
+/// `listParkedEffects(sourceIds)`: the first 20 of those effects by id, each with its request
+/// (`to_jsonb(r)`), source, kind, state, parked targets and whether the binding it was parked under
+/// is gone (`former_binding`, false for an effect on no worktree).
+pub(crate) fn parked_effect_rows_in(
+    read: &dyn KvRead,
+    source_ids: Option<&[String]>,
+) -> Result<Vec<Value>> {
+    let requests: BTreeMap<String, RequestRecord> = all_requests(read)?
+        .into_iter()
+        .map(|r| (r.id.clone(), r))
+        .collect();
+    let bindings: BTreeMap<String, SourceBindingRecord> =
+        scan_records::<SourceBindingRecord>(read, SOURCE_BINDING, "source binding")?
+            .into_iter()
+            .map(|b| (b.source_id.clone(), b))
+            .collect();
+    let mut effects = all_effects(read)?;
+    effects.sort_by_key(|e| e.id);
+    Ok(effects
+        .iter()
+        .filter(|e| parked_unsettled(e, source_ids))
+        .filter_map(|e| {
+            let r = requests.get(&e.request_id)?;
+            let held = match &e.worktree_id {
+                None => true,
+                Some(w) => e
+                    .source_id
+                    .as_ref()
+                    .and_then(|s| bindings.get(s))
+                    .is_some_and(|b| {
+                        b.worktree_id.eq_ignore_ascii_case(w)
+                            && e.source_incarnation
+                                .as_deref()
+                                .is_some_and(|i| b.source_incarnation.eq_ignore_ascii_case(i))
+                    }),
+            };
+            Some(json!({
+                "request": r.to_row(),
+                "source_id": e.source_id,
+                "kind": e.kind,
+                "state": e.state,
+                "parked": crate::jsonb::order(e.data.get("parked").cloned().unwrap_or(Value::Null)),
+                "former_binding": !held,
+            }))
+        })
+        .take(20)
+        .collect())
+}
+
+/// `listGitPushHoldRows(codes, sourceIds)`: the Git effects queued, running or failed, with no
+/// recovery and not settled, whose code is one of `codes` (a parked effect's code is its first
+/// parked target's code that is one of them), per source and worktree by source id in byte order:
+/// the worktree's first host path in byte order, whether the source is bound elsewhere now, how
+/// many retry and how many are parked, the codes in byte order and the oldest request.
+pub(crate) fn git_push_hold_rows_in(
+    read: &dyn KvRead,
+    codes: &[String],
+    source_ids: Option<&[String]>,
+) -> Result<Vec<Value>> {
+    let requests: BTreeMap<String, RequestRecord> = all_requests(read)?
+        .into_iter()
+        .map(|r| (r.id.clone(), r))
+        .collect();
+    let bindings = scan_records::<SourceBindingRecord>(read, SOURCE_BINDING, "source binding")?;
+    let hosts = scan_records::<HostBindingRecord>(read, HOST_BINDING, "host binding")?;
+    let listed = |c: &str| codes.iter().any(|x| x == c);
+    #[derive(Default)]
+    struct Hold {
+        retrying: i64,
+        parked: i64,
+        codes: BTreeSet<String>,
+        oldest: Option<i64>,
+    }
+    type Key = (Option<String>, Option<String>);
+    let mut groups: Vec<(Key, Hold)> = Vec::new();
+    for e in all_effects(read)? {
+        let held = e.kind == "git"
+            && matches!(e.state.as_str(), "queued" | "running" | "failed")
+            && e.recovery.is_none()
+            && !data_has(&e, "settled")
+            && in_scope(e.source_id.as_deref(), source_ids);
+        let Some(r) = requests.get(&e.request_id).filter(|_| held) else {
+            continue;
+        };
+        let code = if e.error_code.as_deref() == Some("targets_parked") {
+            match e.data.get("parked") {
+                Some(Value::Array(items)) => items
+                    .iter()
+                    .filter_map(|p| json_text(p.as_object().and_then(|o| o.get("error_code"))))
+                    .find(|c| listed(c)),
+                _ => None,
+            }
+        } else {
+            e.error_code.clone()
+        };
+        let Some(code) = code.filter(|c| listed(c)) else {
+            continue;
+        };
+        let key: Key = (
+            e.source_id.clone(),
+            e.worktree_id.as_ref().map(|w| w.to_lowercase()),
+        );
+        let at = match groups.iter().position(|(k, _)| *k == key) {
+            Some(at) => at,
+            None => {
+                groups.push((key, Hold::default()));
+                groups.len() - 1
+            }
+        };
+        let g = &mut groups[at].1;
+        if e.state == "failed" {
+            g.parked += 1;
+        } else {
+            g.retrying += 1;
+        }
+        g.codes.insert(code);
+        g.oldest = Some(g.oldest.map_or(r.created_at_us, |o| o.min(r.created_at_us)));
+    }
+    groups.sort_by(|(a, _), (b, _)| nulls_last(a.0.as_deref(), b.0.as_deref()));
+    Ok(groups
+        .into_iter()
+        .map(|((source_id, worktree), g)| {
+            let root = worktree.as_ref().and_then(|w| {
+                hosts
+                    .iter()
+                    .filter(|h| h.worktree_id.eq_ignore_ascii_case(w))
+                    .map(|h| h.local_path.clone())
+                    .min_by(|a, b| a.as_bytes().cmp(b.as_bytes()))
+            });
+            let bound = bindings.iter().any(|b| {
+                Some(b.source_id.as_str()) == source_id.as_deref()
+                    && worktree
+                        .as_deref()
+                        .is_some_and(|w| b.worktree_id.eq_ignore_ascii_case(w))
+            });
+            json!({
+                "source_id": source_id,
+                "root": root,
+                "former_worktree": !bound,
+                "retrying": g.retrying,
+                "parked": g.parked,
+                "codes": g.codes.into_iter().collect::<Vec<_>>(),
+                "oldest_at": g.oldest.map(iso),
+            })
+        })
+        .collect())
+}
+
 impl Store {
     /// `listStalledCatchupRows(sourceIds, stallMs)`.
     pub fn stalled_catchup_rows(
@@ -490,5 +664,24 @@ impl Store {
     /// `readLiveSyncJobId(sourceId)`.
     pub fn live_sync_job_id(&self, source_id: &str) -> Result<Option<i64>> {
         live_sync_job_id_in(&*self.read()?, self.env.now_micros(), source_id)
+    }
+
+    /// `countParkedEffects(sourceIds)`.
+    pub fn parked_effect_count(&self, source_ids: Option<&[String]>) -> Result<i64> {
+        parked_effect_count_in(&*self.read()?, source_ids)
+    }
+
+    /// `listParkedEffects(sourceIds)`.
+    pub fn parked_effect_rows(&self, source_ids: Option<&[String]>) -> Result<Vec<Value>> {
+        parked_effect_rows_in(&*self.read()?, source_ids)
+    }
+
+    /// `listGitPushHoldRows(codes, sourceIds)`.
+    pub fn git_push_hold_rows(
+        &self,
+        codes: &[String],
+        source_ids: Option<&[String]>,
+    ) -> Result<Vec<Value>> {
+        git_push_hold_rows_in(&*self.read()?, codes, source_ids)
     }
 }

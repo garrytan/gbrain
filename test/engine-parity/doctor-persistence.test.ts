@@ -152,6 +152,83 @@ describe('doctor persistence reads', () => {
   );
 
   parityTest(
+    'the parked-effects reads count and list seeded parked effects and group held Git pushes per source and worktree, in byte order',
+    { methods: ['countParkedEffects', 'listParkedEffects', 'listGitPushHoldRows', 'insertPublicationEffects', 'selectClaimableEffect',
+      'stampEffectClaim', 'parkEffectRow', 'failEffectRow', 'retryEffectRow', 'transactionDirect', 'declarePersistence', 'readSourceMembership',
+      'lockPersistenceCounters', 'insertWriteRequest'] },
+    async (engine, backend) => {
+      const home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-doctor-parked-')));
+      try {
+        return await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+          const root = join(home, 'checkout');
+          await Bun.write(join(root, 'example.md'), 'generic example');
+          await createSource(engine, backend, 'work', {}, root);
+          for (const id of ['ab', 'a-c']) await createSource(engine, backend, id, { kind: 'notes' });
+          let binding: Awaited<ReturnType<typeof claimWorktree>>;
+          try { binding = await claimWorktree(engine, 'work', root); } finally { await disposePersistenceConsumer(engine); }
+          // One Git effect per request. `how` is what the effect worker does with its claim.
+          const SEEDS = [
+            { n: 1, source: 'work', path: 'notes/pushed.md', worktree: true, how: 'park', data: { parked: [{ slug: 'notes/pushed', error_code: 'push_unconfirmed' }, { slug: 'notes/q', error_code: 'git_target_ignored', rule: 'r-1' }] } },
+            { n: 2, source: 'work', path: 'notes/failed.md', worktree: true, how: 'fail', reason: 'git_push_unavailable' },
+            { n: 3, source: 'work', path: 'notes/retry.md', worktree: true, how: 'retry', reason: 'integrate_conflict' },
+            { n: 4, source: 'work', path: 'notes/settled.md', worktree: true, how: 'park', data: { settled: { at: '2026-01-01' }, parked: [{ slug: 'notes/s', error_code: 'push_unconfirmed' }] } },
+            { n: 5, source: 'default', path: 'notes/moved.md', worktree: true, how: 'park', data: { parked: [{ slug: 'notes/m', error_code: 'held_by_rule' }] } },
+            { n: 6, source: 'ab', path: 'notes/ab.md', worktree: false, how: 'fail', reason: 'push_credential_refused' },
+            { n: 7, source: 'a-c', path: 'notes/ac.md', worktree: false, how: 'fail', reason: 'not_a_push_code' },
+          ] as const;
+          const requestOf = (n: number) => `b0000000-0000-4000-8000-0000000000d${n}`;
+          for (const seed of SEEDS) {
+            const incarnation = (await engine.readSourceMembership(seed.source))!.incarnation;
+            const id = (await admitRow(engine, requestOf(seed.n), seed.path.replace(/\.md$/, ''), 'put_page', {}, seed.source)).id;
+            await engine.transactionDirect(async tx => {
+              await tx.declarePersistence();
+              await tx.insertPublicationEffects({ requestId: id, revision: null, sourceId: seed.source, sourceIncarnation: incarnation,
+                worktreeId: seed.worktree ? binding.worktree_id : null, effects: [{ kind: 'git', data: { relative_path: seed.path } }] });
+            });
+          }
+          type Claimed = { id: string | number; execution_token: string; data: { relative_path?: string } };
+          for (let n = 1; n <= SEEDS.length; n++) {
+            const row = await engine.transactionDirect(async tx => {
+              await tx.declarePersistence();
+              const candidate = await tx.selectClaimableEffect<Claimed>(binding.owner_host_id!, []);
+              const token = `f0000000-0000-4000-8000-00000000001${n}`;
+              return tx.stampEffectClaim<Claimed>({ id: candidate!.id, token, ownerJson: JSON.stringify({ token }) });
+            });
+            const ref = { id: row!.id, token: row!.execution_token };
+            const seed = SEEDS.find(s => s.path === row!.data.relative_path)!;
+            if (seed.how === 'park') await engine.parkEffectRow({ ...ref, dataJson: JSON.stringify({ relative_path: seed.path, ...seed.data }) });
+            else if (seed.how === 'fail') await engine.failEffectRow({ ...ref, reason: seed.reason });
+            else await engine.retryEffectRow({ ...ref, reason: seed.reason, delayMs: 3_600_000 });
+          }
+          const codes = ['git_push_unavailable', 'push_unconfirmed', 'integrate_conflict', 'publish_secret_found', 'publish_scan_unreadable', 'push_credential_refused'];
+          const parked = (await engine.listParkedEffects(null)).map(({ request, ...row }) => ({ request: request.request_id, slug: request.slug, ...row }));
+          const holds = (await engine.listGitPushHoldRows(codes, null)).map(row => ({ ...row, root: row.root === null ? null : row.root.split(home).join('$HOME'),
+            oldest_at: new Date(row.oldest_at).getTime() > 0 }));
+          const answers = {
+            count: await engine.countParkedEffects(null), countScoped: await engine.countParkedEffects(['default', 'ab']),
+            parked, parkedScoped: (await engine.listParkedEffects(['default'])).map(r => r.request.request_id),
+            holds, holdsScoped: (await engine.listGitPushHoldRows(codes, ['ab'])).map(r => r.source_id),
+          };
+          expect(answers.count).toBe(2);
+          expect(answers.countScoped).toBe(1);
+          expect(answers.parked).toEqual([
+            { request: requestOf(1), slug: 'notes/pushed', source_id: 'work', kind: 'git', state: 'failed', former_binding: false,
+              parked: [{ slug: 'notes/pushed', error_code: 'push_unconfirmed' }, { slug: 'notes/q', error_code: 'git_target_ignored', rule: 'r-1' }] },
+            { request: requestOf(5), slug: 'notes/moved', source_id: 'default', kind: 'git', state: 'failed', former_binding: true,
+              parked: [{ slug: 'notes/m', error_code: 'held_by_rule' }] }]);
+          expect(answers.parkedScoped).toEqual([requestOf(5)]);
+          expect(answers.holds).toEqual([
+            { source_id: 'ab', root: null, former_worktree: true, retrying: 0, parked: 1, codes: ['push_credential_refused'], oldest_at: true },
+            { source_id: 'work', root: '$HOME/checkout', former_worktree: false, retrying: 1, parked: 2,
+              codes: ['git_push_unavailable', 'integrate_conflict', 'push_unconfirmed'], oldest_at: true }]);
+          expect(answers.holdsScoped).toEqual(['ab']);
+          return answers;
+        });
+      } finally { rmSync(home, { recursive: true, force: true }); }
+    },
+  );
+
+  parityTest(
     'every read answers its empty state on a brain with no request',
     { methods: [
       'listCapacityCounters', 'listLifetimeCounters', 'countPersistenceRequestRows', 'readAdmissionSample', 'listOutstandingHolders',

@@ -10,7 +10,7 @@
 import type { BrainEngine } from '../../engine.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { readPersistenceBrainId } from './persistence-identity.ts';
-import type { StalledCatchupRow } from '../../engine-sql/doctor-persistence.ts';
+import type { GitPushHoldRow, StalledCatchupRow } from '../../engine-sql/doctor-persistence.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -86,10 +86,17 @@ export const listManagedRoots: Member<'listManagedRoots'> = async brain => {
 
 /** No consumer heartbeat is recorded (persistence_consumers has no writer). */
 export const readLiveConsumerSummary: Member<'readLiveConsumerSummary'> = async () => ({ live: '0', oldest_hours: null });
-/** No effect is recorded here, so none is parked. */
-export const countParkedEffects: Member<'countParkedEffects'> = async () => 0;
-export const listParkedEffects: Member<'listParkedEffects'> = async () => [];
-export const listGitPushHoldRows: Member<'listGitPushHoldRows'> = async () => [];
+/** Served from the store's effect records (persistence/writer_status_queue.rs). */
+export const countParkedEffects: Member<'countParkedEffects'> = async (brain, sourceIds) =>
+  Number(await storeCall({ member: 'countParkedEffects' }, () => brain.parkedEffectCount(sourceIds)));
+/** Served from the store's effect, request and source binding records; `request` is the stored row, as `to_jsonb(r)` is. */
+export const listParkedEffects: Member<'listParkedEffects'> = async (brain, sourceIds) =>
+  await storeCall({ member: 'listParkedEffects' }, () => brain.parkedEffectRows(sourceIds)) as Awaited<ReturnType<BrainEngine['listParkedEffects']>>;
+/** Served from the store's effect, request, host binding and source binding records; `oldest_at` as a `Date`, as the SQL engines return it. */
+export const listGitPushHoldRows: Member<'listGitPushHoldRows'> = async (brain, codes, sourceIds) => {
+  const rows = await storeCall({ member: 'listGitPushHoldRows' }, () => brain.gitPushHoldRows([...codes], sourceIds)) as Array<Omit<GitPushHoldRow, 'oldest_at'> & { oldest_at: string }>;
+  return rows.map(row => ({ ...row, oldest_at: new Date(row.oldest_at) }));
+};
 /** Served from the store's effect records (persistence/writer_status_queue.rs); `since` as a `Date`, as the SQL engines return it. */
 export const listStalledCatchupRows: Member<'listStalledCatchupRows'> = async (brain, sourceIds, stallMs) => {
   const rows = await storeCall({ member: 'listStalledCatchupRows' }, () => brain.stalledCatchupRows(sourceIds, stallMs)) as Array<Omit<StalledCatchupRow, 'since'> & { since: string }>;
