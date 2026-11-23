@@ -201,9 +201,9 @@ describe('engine parity: the generation repair kinds of batch 7', () => {
     return { listed, preview: shape(previewed) };
   }));
 
-  parityTest('stale-atoms retires the approved atoms the same way, and the Rust engine refuses the retirement by name', {
-    methods: ['putPage', 'listStaleAtoms'],
-    requires: 'raw_sql', timeout: 60_000,
+  parityTest('stale-atoms retires the approved atoms the same way on every arm', {
+    methods: ['putPage', 'listStaleAtoms', 'readAtomGeneration', 'recordAtomGenerationBump'],
+    timeout: 60_000,
   }, async (engine, backend) => withHome(async () => {
     await seedStaleAtoms(engine);
     const previewed = await runKind(engine, 'stale-atoms', false);
@@ -214,7 +214,11 @@ describe('engine parity: the generation repair kinds of batch 7', () => {
       const changed = await engine.getPage('atoms/changed', { sourceId: 'default' });
       const kept = await engine.getPage('atoms/new', { sourceId: 'default' });
       expect([applied.applied, gone, changed, kept?.slug]).toEqual([2, null, null, 'atoms/new']);
-      return { applied: shape(applied), gone: gone === null, changed: changed === null, kept: kept?.slug ?? null };
+      // The retirement of the moved-origin atom bumps notes/origin's atom ledger: the kept content keeps generation 0,
+      // any other content keys on generation 1.
+      const origin = (await engine.getPage('notes/origin', { sourceId: 'default' }))!;
+      const generations = { kept: await engine.readAtomGeneration(origin.id, origin.content_hash!), other: await engine.readAtomGeneration(origin.id, 'other') };
+      return { applied: shape(applied), gone: gone === null, changed: changed === null, kept: kept?.slug ?? null, generations };
     } catch (err) {
       if (backend === 'rust') expect(refusalText(err)).toContain('repair stale-atoms retirement');
       throw err;

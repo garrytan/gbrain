@@ -68,6 +68,16 @@ export const writeOpCheckpointRecord: StoreMember<[op: string, fingerprint: stri
   async (brain, op, fingerprint, completedKeys) => {
     await storeCall({ member: 'writeOpCheckpointRecord' }, () => brain.writeOpCheckpointRecord(op, fingerprint, completedKeys));
   };
+/** The atom generation a page's content keys on (op_checkpoint.rs `read_atom_generation`). */
+export const readAtomGeneration: StoreMember<[pageId: number, contentHash: string], number> = (brain, pageId, contentHash) =>
+  storeCall({ member: 'readAtomGeneration' }, () => brain.readAtomGeneration(pageId, contentHash));
+
+/** A page's atom generation bump (op_checkpoint.rs `record_atom_generation_bump`); the store keeps no extract_atoms_page_state rows. */
+export const recordAtomGenerationBump: StoreMember<[sourceId: string, incarnation: string, pageId: number, keepContentHash: string | null, keepGeneration: number | null], void> =
+  async (brain, sourceId, incarnation, pageId, keepContentHash, keepGeneration) => {
+    await storeCall({ member: 'recordAtomGenerationBump' }, () =>
+      brain.recordAtomGenerationBump({ sourceId, incarnation, pageId, keepContentHash, keepGeneration }));
+  };
 /** The checkpoints stamped more than `ttlDays` days ago and not exempt deleted with their paths; how many. */
 export const purgeStaleCheckpoints: StoreMember<[ttlDays: number], number> = (brain, ttlDays) =>
   storeCall({ member: 'purgeStaleCheckpoints' }, () => brain.purgeStaleCheckpoints(ttlDays));

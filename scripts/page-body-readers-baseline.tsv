@@ -592,7 +592,6 @@ src/core/repair/contact-rows.ts	plannedChange	field	SEGW	SQL exclusion in scan: 
 src/core/repair/duplicate-facts.ts	strikeFencedCopies	call:serializePageToMarkdown	INLINE	inline pages only: a segmented page returns before the read, and its fenced copies stay active (listed as segmented_page)
 src/core/repair/duplicate-facts.ts	strikeFencedCopies	field	INLINE	inline pages only: a segmented page returns before the read, and its fenced copies stay active (listed as segmented_page)
 src/core/repair/extractor-facts.ts	restorePageFacts	field	STREAM	
-src/core/repair/extractor-facts.ts	restorePageFacts	sql	STREAM	
 src/core/repair/fact-claim-dates.ts	movePage	call:serializePageToMarkdown	SEGW	refuses a segmented page: the plan lists it segmented_page and movePage keeps one as changed_since_preview
 src/core/repair/fences.ts	afterBytes	field	STREAM	
 src/core/repair/fences.ts	fencesRepair	field	STREAM	
@@ -753,6 +752,8 @@ src/core/engine-sql/overwrite-reads.ts	listVersionsAfter	sql	STREAM	selects body
 src/core/engine-sql/overwrite-reads.ts	listOverwriteLivePages	sql	STREAM	selects body_storage beside the inline body columns; a segmented version or page has NULL bodies and its overwrite is reported unknown (reason segmented), never compared or restored
 src/core/engine-sql/overwrite-reads.ts	readVersionContent	sql	SEGW	selects body_storage; a segmented version answers version_changed
 src/core/engine-sql/persistence-effect-scans.ts	listEmbeddingCandidates	sql	META	moved from persistence/embedding-settlement.ts listEmbeddingCandidates
+src/core/engine-sql/repair-applies.ts	readFactRestorePage	field	STREAM	moved from src/core/repair/extractor-facts.ts restorePageFacts: the body passes through to the caller, which parses its fence
+src/core/engine-sql/repair-applies.ts	readFactRestorePage	sql	STREAM	moved from src/core/repair/extractor-facts.ts restorePageFacts, same statement
 src/core/engine-sql/repair-fence-scans.ts	listSplitFactsPages	sql	SEGW	SQL exclusion: a segmented page's NULL body never matches the fence LIKE; the plan lists such pages from their manifest facts regions
 src/core/engine-sql/repair-fence-scans.ts	listAtomFenceCandidates	sql	INLINE	inline source pages only: a segmented source page (compiled_truth NULL) is counted origin_unread and never read
 src/core/engine-sql/repair-fence-scans.ts	listPageTruths	sql	INLINE	a segmented page answers a NULL body, which atom-fence-rows counts origin_unread and never reads

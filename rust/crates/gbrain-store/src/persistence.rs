@@ -114,6 +114,7 @@ pub(crate) use notifier::remove_source_rows as remove_notifier_source_rows;
 pub use notifier::{
     NotifierCoverage, NotifierLeaseClaim, NotifierStateError, NotifierStatePatch, WantedMarkerInput,
 };
+pub use op_checkpoint::AtomGenerationBump;
 mod trust_scan_cursor;
 
 pub(crate) use op_checkpoint::{

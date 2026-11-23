@@ -430,7 +430,7 @@ src/core/page-window/segmented.ts	execute_raw	5
 src/core/pages-upsert-arbiter.ts	execute_raw	6
 src/core/persistence/admin-lock.ts	execute_raw	2
 src/core/persistence/administration.ts	execute_raw	5
-src/core/persistence/atom-maintenance.ts	execute_raw	20
+src/core/persistence/atom-maintenance.ts	execute_raw	16
 src/core/persistence/authority.ts	execute_raw	4
 src/core/persistence/bounded-reads.ts	execute_raw	10
 src/core/persistence/canonical-projections.ts	execute_raw	10
@@ -517,7 +517,7 @@ src/core/persistence/owner-activity.ts	execute_raw	1
 src/core/persistence/page-advisories.ts	execute_raw	1
 src/core/persistence/page-append.ts	execute_raw	2
 src/core/persistence/page-mutations.ts	execute_raw	5
-src/core/persistence/page-prepare.ts	execute_raw	9
+src/core/persistence/page-prepare.ts	execute_raw	8
 src/core/persistence/page-purge.ts	execute_raw	28
 src/core/persistence/page-upload.ts	execute_raw	16
 src/core/persistence/page-visibility.ts	execute_raw	7
@@ -619,10 +619,6 @@ src/core/questions/store.ts	execute_raw	7
 src/core/reindex-consent.ts	execute_raw	1
 src/core/remediation/run.ts	execute_raw	1
 src/core/repair/attribution-backfill.ts	execute_raw	5
-src/core/repair/consolidate-ties.ts	execute_raw	1
-src/core/repair/duplicate-facts.ts	execute_raw	3
-src/core/repair/extractor-facts.ts	execute_raw	5
-src/core/repair/fact-claim-dates.ts	execute_raw	1
 src/core/repair/failed-writes.ts	execute_raw	13
 src/core/repair/fences.ts	execute_raw	2
 src/core/repair/file-drift-class.ts	execute_raw	10	came from #9614 and #9615 (whole-class held file-drift preview and apply), opened before this ratchet: the preview reads the held file_drift checkpoints and the source incarnation, and the apply adds its lease, progress and manifest reads and writes; these move behind typed engine methods with the next change in the repair area
@@ -646,7 +642,6 @@ src/core/repair/segmented-tiling.ts	execute_raw	6
 src/core/repair/slug-autoheal.ts	execute_raw	1
 src/core/repair/slug-conflicts.ts	execute_raw	2
 src/core/repair/unwithdrawn-facts.ts	execute_raw	3
-src/core/repair/url-clone-fences.ts	execute_raw	2
 src/core/repair/visibility.ts	execute_raw	7
 src/core/schema-migrations/helpers.ts	execute_raw	12
 src/core/schema-migrations/v039-multimodal-dual-column-v0-27-1.ts	execute_raw	1
@@ -767,7 +762,6 @@ src/core/trust/refs.ts	execute_raw	1
 src/core/trust/release-publish.ts	execute_raw	2
 src/core/trust/review.ts	execute_raw	15
 src/core/trust/supersede-handlers.ts	execute_raw	10	GST-2897 B (#9670, opened before this ratchet): the held-share accept reads the fact's visibility and widens it; no typed engine method exists yet
-src/core/url-clone.ts	execute_raw	2
 src/core/url-source-origin.ts	execute_raw	1
 src/core/vector-index.ts	driver_call	2
 src/core/vector-index.ts	execute_raw	9
