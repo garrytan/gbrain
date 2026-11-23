@@ -307,24 +307,10 @@ export async function readRecentSourceFailures(
   const cutoff = new Date(Date.now() - sinceMin * 60_000).toISOString();
   const map = new Map<string, SourceFailure>();
   try {
-    const params: unknown[] = [cutoff];
-    let sql =
-      `SELECT data->>'source_id' AS source_id,
-              count(*)::int AS fail_count,
-              max(finished_at) AS last_failed_at
-         FROM minion_jobs
-        WHERE name = 'autopilot-cycle'
-          AND status IN ('dead','failed')
-          AND (result->>'job_outcome' IS NULL OR result->>'job_outcome' <> 'phase_failed')
-          AND data->>'source_id' IS NOT NULL
-          AND finished_at IS NOT NULL
-          AND finished_at > $1`;
-    if (opts.sourceId) { params.push(opts.sourceId); sql += ` AND data->>'source_id' = $${params.length}`; }
-    sql += ` GROUP BY data->>'source_id'`;
-    const rows = await engine.executeRaw<{ source_id: string | null; fail_count: number; last_failed_at: string | Date }>(sql, params);
+    const rows = await engine.listRecentSourceCycleFailures({ cutoff, ...(opts.sourceId ? { sourceId: opts.sourceId } : {}) });
     for (const r of rows) {
       if (!r.source_id) continue; // codex #6 null-source guard (defensive)
-      const last = r.last_failed_at instanceof Date ? r.last_failed_at : new Date(r.last_failed_at);
+      const last = r.last_failed_at;
       if (!Number.isFinite(last.getTime())) continue;
       map.set(r.source_id, { count: Number(r.fail_count) || 0, lastFailedAt: last });
     }

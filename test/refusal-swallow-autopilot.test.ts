@@ -83,16 +83,18 @@ describe('autopilot refusal-swallow sites', () => {
     expect(await pg.executeRaw(`SELECT id FROM minion_jobs WHERE name = 'extract-atoms-drain'`)).toHaveLength(0);
   });
 
-  test('S3 readRecentSourceFailures: a capability refusal surfaces (no cooldown data is not an answer); another error still fails open', async () => {
-    await expect(readRecentSourceFailures(stubEngine(async () => { throw REFUSAL(); }))).rejects.toMatchObject({ code: 'engine_capability_missing' });
-    expect((await readRecentSourceFailures(stubEngine(async () => { throw new Error('relation "minion_jobs" does not exist'); }))).size).toBe(0);
+  test('S3 readRecentSourceFailures: a capability refusal from the typed read surfaces (no cooldown data is not an answer); another error still fails open', async () => {
+    const engineWith = (error: () => Error) => ({ kind: 'rust', listRecentSourceCycleFailures: async () => { throw error(); } }) as unknown as BrainEngine;
+    await expect(readRecentSourceFailures(engineWith(REFUSAL))).rejects.toMatchObject({ code: 'engine_capability_missing' });
+    expect((await readRecentSourceFailures(engineWith(() => new Error('relation "minion_jobs" does not exist')))).size).toBe(0);
   });
 
   const rustRun = existsSync(rustArmAddonPath()) || process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1' ? test : test.skip;
-  rustRun('S3 on a Rust brain: the claim-time cooldown guard refuses instead of answering "not in cooldown"', async () => {
+  rustRun('S3 on a Rust brain: the claim-time cooldown guard answers from the typed reads (no failures recorded, so not in cooldown)', async () => {
     const { engine, dir } = await openRustBrain();
     try {
-      await expect(isSourceInCooldown(engine as unknown as BrainEngine, 'default')).rejects.toMatchObject({ code: 'engine_capability_missing' });
+      expect(await isSourceInCooldown(engine as unknown as BrainEngine, 'default')).toBe(false);
+      expect((await readRecentSourceFailures(engine as unknown as BrainEngine)).size).toBe(0);
     } finally {
       await engine.disconnect();
       removeBrainDir(dir);

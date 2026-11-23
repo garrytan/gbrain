@@ -17,7 +17,6 @@ src/commands/auth-read-shared.ts	execute_raw	2	reads sources (ids that exist and
 src/commands/auth.ts	sql_template	1
 src/commands/autopilot-daemon.ts	execute_raw	1
 src/commands/autopilot-dispatch.ts	execute_raw	4
-src/commands/autopilot-fanout.ts	execute_raw	1
 src/commands/autopilot-health.ts	execute_raw	1
 src/commands/autopilot-retry-global.ts	execute_raw	1
 src/commands/autopilot/install-repo.ts	execute_raw	1
