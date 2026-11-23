@@ -4079,8 +4079,8 @@ fn put_derivations(
         let built = match &found {
             Some((page_id, _)) => {
                 let key = derivation_key(*page_id, &row.kind, row.occurrence_id);
-                let created = get_json::<DerivationRecord>(&*tx, &key)?
-                    .map_or(now, |old| old.created_at_us);
+                let created =
+                    get_json::<DerivationRecord>(&*tx, &key)?.map_or(now, |old| old.created_at_us);
                 let record = DerivationRecord {
                     pipeline_version: row.version,
                     segment_sha256: segment.clone(),

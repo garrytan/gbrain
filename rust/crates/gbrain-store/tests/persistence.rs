@@ -1989,7 +1989,13 @@ fn requests_by_request_id_span_principals_and_stop_at_two() {
     assert_eq!(rows.len(), 2);
     assert!(rows.iter().all(|r| r["request_id"] == REQ_1));
     // The list read returns every row the principals admitted under the id.
-    assert_eq!(store.list_write_requests_by_request_id(REQ_1).unwrap().len(), 3);
+    assert_eq!(
+        store
+            .list_write_requests_by_request_id(REQ_1)
+            .unwrap()
+            .len(),
+        3
+    );
     assert!(
         store
             .read_write_requests_by_request_id(REQ_2)
