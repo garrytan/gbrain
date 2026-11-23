@@ -6,7 +6,8 @@
  *  - Contract: each member returns the same answer on every engine arm (PGLite always; Postgres with DATABASE_URL; the
  *    Rust arm through test/engine-parity/harness.ts), so each persistence doctor check reads the same finding on each.
  *    The members the Rust store has no writer for answer the empty state, which is what the other arms answer on a brain
- *    with no such row.
+ *    with no such row. The stalled catch-up, parked group and source movement reads are checked on seeded rows too (a
+ *    claimed checkout, busy and parked Git effects through the effect worker's members), since the Rust store keeps them.
  *  - Regression: an engine whose read drifts (or does not serve it) gives a different doctor status, message or count
  *    per backend: a capacity or stall finding the brain does not have, or one it does have that goes unreported.
  *  - Why existing coverage misses it: the doctor check tests run these reads on PGLite only and never compare arms.
@@ -17,6 +18,13 @@ import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { withEnv } from '../helpers/with-env.ts';
+import { createSource } from './harness.ts';
+import { claimWorktree } from '../../src/core/persistence/ownership.ts';
+import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -32,11 +40,11 @@ async function admit(engine: BrainEngine, requestId: string, slug: string, opera
   return (await admitRow(engine, requestId, slug, operation, intent)).id;
 }
 
-async function admitRow(engine: BrainEngine, requestId: string, slug: string, operation: string, intent: Record<string, unknown> = {}): Promise<{ id: string; sequence: string | number }> {
-  const source = await engine.readSourceMembership('default');
+async function admitRow(engine: BrainEngine, requestId: string, slug: string, operation: string, intent: Record<string, unknown> = {}, sourceId = 'default'): Promise<{ id: string; sequence: string | number }> {
+  const source = await engine.readSourceMembership(sourceId);
   await engine.lockPersistenceCounters(KEYS);
   const row = await engine.insertWriteRequest({
-    principalKind: PRINCIPAL[0], principalId: PRINCIPAL[1], requestId, operation, sourceId: 'default',
+    principalKind: PRINCIPAL[0], principalId: PRINCIPAL[1], requestId, operation, sourceId,
     sourceIncarnation: source!.incarnation, pageId: null, slug, worktreeId: null, topologyGeneration: null,
     digest: 'd'.repeat(64), intent, authority: {}, intentBytes: 10, terminalReservation: 4096, targetKind: 'page',
     protocolVersion: 1, admitterVersion: 'v-test', admitterHostId: null, counterKeys: KEYS, clientRequestId: null,
@@ -61,6 +69,88 @@ const nulls = ['default'];
 const OPS = ['put_page', 'remember'];
 
 describe('doctor persistence reads', () => {
+  parityTest(
+    'the writer status reads list seeded writer_busy catch-ups, parked Git targets by former binding and a claimed source binding, in byte order',
+    { methods: ['listStalledCatchupRows', 'listParkedGroupRows', 'listSourceBindingsForMovement', 'insertPublicationEffects',
+      'selectClaimableEffect', 'stampEffectClaim', 'retryBusyEffectRow', 'parkEffectRow', 'transactionDirect', 'declarePersistence',
+      'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest'] },
+    async (engine, backend) => {
+      const home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-doctor-seeded-')));
+      try {
+        return await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+          const root = join(home, 'checkout');
+          await Bun.write(join(root, 'example.md'), 'generic example');
+          await createSource(engine, backend, 'work', {}, root);
+          let binding: Awaited<ReturnType<typeof claimWorktree>>;
+          try { binding = await claimWorktree(engine, 'work', root); } finally { await disposePersistenceConsumer(engine); }
+          // Five Git effects, each under its own request: on the claimed checkout (one busy, one parked), on `default`
+          // under the claimed worktree it is not bound to (parked: its binding changed), and on `ab` and `a-c` with no
+          // worktree (busy). `ab` and `a-c` sort `a-c` first in byte order and `ab` first in en_US.
+          for (const id of ['ab', 'a-c']) await createSource(engine, backend, id, { kind: 'notes' });
+          const SEEDS = [
+            { request: REQ_1, source: 'work', path: 'notes/busy.md', worktree: true },
+            { request: REQ_2, source: 'work', path: 'notes/parked.md', worktree: true },
+            { request: 'b0000000-0000-4000-8000-0000000000b3', source: 'default', path: 'notes/moved.md', worktree: true },
+            { request: 'b0000000-0000-4000-8000-0000000000b4', source: 'ab', path: 'notes/later.md', worktree: false },
+            { request: 'b0000000-0000-4000-8000-0000000000b5', source: 'a-c', path: 'notes/older.md', worktree: false },
+          ] as const;
+          for (const seed of SEEDS) {
+            const incarnation = (await engine.readSourceMembership(seed.source))!.incarnation;
+            const id = (await admitRow(engine, seed.request, seed.path.replace(/\.md$/, ''), 'put_page', {}, seed.source)).id;
+            await engine.transactionDirect(async tx => {
+              await tx.declarePersistence();
+              await tx.insertPublicationEffects({ requestId: id, revision: null, sourceId: seed.source, sourceIncarnation: incarnation,
+                worktreeId: seed.worktree ? binding.worktree_id : null, effects: [{ kind: 'git', data: { relative_path: seed.path } }] });
+            });
+          }
+          const busy: Record<string, Record<string, unknown>> = {
+            'notes/busy.md': { busy_since: '2026-01-01T00:00:00.000Z', busy_retries: 3 },
+            'notes/later.md': { busy_since: '2999-01-01T00:00:00.000Z' },
+            'notes/older.md': { busy_since: '2026-02-01T00:00:00.000Z', busy_retries: 1 },
+          };
+          const parked: Record<string, unknown[]> = {
+            'notes/parked.md': [{ slug: 'notes/a', error_code: 'held_by_rule', rule: 'r-1' }, { slug: 'notes/b', error_code: 'held_by_rule', rule: 'r-0' }],
+            'notes/moved.md': [{ slug: 'notes/c', error_code: 'held_by_rule', rule: 'r-5' }, { slug: 'notes/d' }],
+          };
+          type Claimed = { id: string | number; execution_token: string; data: { relative_path?: string } };
+          for (let n = 1; n <= SEEDS.length; n++) {
+            const row = await engine.transactionDirect(async tx => {
+              await tx.declarePersistence();
+              const candidate = await tx.selectClaimableEffect<Claimed>(binding.owner_host_id!, []);
+              const token = `f0000000-0000-4000-8000-00000000000${n}`;
+              return tx.stampEffectClaim<Claimed>({ id: candidate!.id, token, ownerJson: JSON.stringify({ token }) });
+            });
+            const ref = { id: row!.id, token: row!.execution_token };
+            const path = row!.data.relative_path!;
+            if (busy[path]) await engine.retryBusyEffectRow({ ...ref, dataJson: JSON.stringify(busy[path]), delayMs: 3_600_000 });
+            else await engine.parkEffectRow({ ...ref, dataJson: JSON.stringify({ relative_path: path, parked: parked[path] }) });
+          }
+          const UUIDISH = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+          const catchups = (await engine.listStalledCatchupRows(null, 60_000))
+            .map(r => ({ ...r, since: new Date(r.since as string | Date).toISOString() }));
+          const groups = (await engine.listParkedGroupRows(null)).map(r => ({ ...r, worktree_ids: r.worktree_ids.map(w => w === binding.worktree_id ? '<claimed>' : w),
+            current_worktree_id: r.current_worktree_id === binding.worktree_id ? '<claimed>' : r.current_worktree_id }));
+          const movement = (await engine.listSourceBindingsForMovement(null)).map(r => ({ source_id: r.source_id,
+            worktree: UUIDISH.test(r.worktree_id), incarnation: UUIDISH.test(r.source_incarnation), owner: UUIDISH.test(String(r.owner_host_id)) }));
+          const answers = { catchups, scoped: await engine.listStalledCatchupRows(['ab', 'work'], 60_000), groups,
+            scopedGroups: (await engine.listParkedGroupRows(['default'])).map(r => r.source_id), movement };
+          const busyRow = (source_id: string, stalled: number, since: string, retries: number) => ({ source_id, stalled, busy: 1, since, retries });
+          expect(answers.catchups).toEqual([busyRow('a-c', 1, '2026-02-01T00:00:00.000Z', 1), busyRow('ab', 0, '2999-01-01T00:00:00.000Z', 0),
+            busyRow('work', 1, '2026-01-01T00:00:00.000Z', 3)]);
+          expect(answers.scoped.map(r => r.source_id)).toEqual(['ab', 'work']);
+          const moved = { source_id: 'default', former: 'binding_changed', effects: 1, targets: 1, worktree_ids: ['<claimed>'], current_worktree_id: null,
+            requests: ['b0000000-0000-4000-8000-0000000000b3'] };
+          expect(answers.groups).toEqual([{ ...moved, code: 'held_by_rule', rule: 'r-5' }, { ...moved, code: null, rule: null },
+            { source_id: 'work', code: 'held_by_rule', former: null, effects: 1, targets: 2, rule: 'r-0', worktree_ids: ['<claimed>'],
+              current_worktree_id: '<claimed>', requests: [REQ_2] }]);
+          expect(answers.scopedGroups).toEqual(['default', 'default']);
+          expect(answers.movement).toEqual([{ source_id: 'work', worktree: true, incarnation: true, owner: true }]);
+          return answers;
+        });
+      } finally { rmSync(home, { recursive: true, force: true }); }
+    },
+  );
+
   parityTest(
     'every read answers its empty state on a brain with no request',
     { methods: [

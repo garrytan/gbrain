@@ -60,4 +60,37 @@ impl Brain {
             s.blocking_effect_rows(source_id.as_deref(), limit as usize, recovering_only)
         })
     }
+
+    /// `listStalledCatchupRows(sourceIds, stallMs)`.
+    #[napi]
+    pub fn stalled_catchup_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Option<Vec<String>>,
+        stall_ms: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.stalled_catchup_rows(source_ids.as_deref(), stall_ms)
+        })
+    }
+
+    /// `listParkedGroupRows(sourceIds)`.
+    #[napi]
+    pub fn parked_group_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Option<Vec<String>>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.parked_group_rows(source_ids.as_deref()))
+    }
+
+    /// `listSourceBindingsForMovement(sourceIds)`.
+    #[napi]
+    pub fn movement_binding_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Option<Vec<String>>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.movement_binding_rows(source_ids.as_deref()))
+    }
 }

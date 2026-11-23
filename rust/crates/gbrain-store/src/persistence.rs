@@ -100,6 +100,7 @@ mod worktree_rows;
 mod worktrees;
 mod write_claim_terms;
 mod writer_status;
+mod writer_status_queue;
 mod writer_versions;
 pub use connector_orphans::OrphanBounds;
 pub use effect_worker::{EffectClaim, EffectSettle, LinksRearm, Settle};

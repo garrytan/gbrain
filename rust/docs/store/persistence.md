@@ -684,10 +684,22 @@ answered here by `persistence/writer_status.rs`:
 - `listActiveWorktreeRefreshRows(sourceId)`: the active worktree refreshes, oldest first, with
   their deferred request count and age.
 
+The status's three queue reads, shared with the persistence doctor checks
+(`src/core/engine-sql/doctor-persistence.ts`), are answered by `persistence/writer_status_queue.rs`:
+
+- `listStalledCatchupRows(sourceIds, stallMs)`: per source, the queued `writer_busy` effects that
+  carry `busy_since`, how many waited longer than `stallMs`, the oldest `busy_since` and the most
+  `busy_retries`. A `busy_since` that is not a time, or a `busy_retries` that is not an integer,
+  refuses as the SQL cast does.
+- `listParkedGroupRows(sourceIds)`: the parked targets of the unsettled `targets_parked` Git effects
+  per source, target error code and former binding (`binding_changed`, `source_replaced`, or null
+  while the effect's binding holds), with the counts, the least rule, the worktrees, the first five
+  request ids and the source's current worktree.
+- `listSourceBindingsForMovement(sourceIds)`: each source binding whose source still has the bound
+  incarnation, with its worktree's owner.
+
 Text keys sort in byte order on every engine (`COLLATE "C"` in the SQL). Ages are whole
-milliseconds, rounded as `EXTRACT(EPOCH ...)*1000` cast to bigint rounds. Three reads of the status
-(stalled catch-ups, parked groups and source movement) still read raw SQL: on this engine the
-first two refuse and source movement reports `not_read`.
+milliseconds, rounded as `EXTRACT(EPOCH ...)*1000` cast to bigint rounds.
 
 ## Writer release
 

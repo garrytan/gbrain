@@ -58,13 +58,16 @@ same read gives on a PGLite brain with none (the precedent is `store-members/con
 members" in [journal.md](journal.md)). Each is listed in `TODOS.md` under "Rust engine lane 14 follow-ups" for the day
 the store gains the writer.
 
+`listStalledCatchupRows()`, `listParkedGroupRows()` and `listSourceBindingsForMovement()` are served from the store's
+effect, request, binding, worktree and source records: see "Writer status" in [persistence.md](persistence.md).
+
 | JS | Answer | Why |
 | --- | --- | --- |
 | `readLiveConsumerSummary()` | `{ live: "0", oldest_hours: null }` | no consumer heartbeat is recorded |
 | `countParkedEffects()`, `listParkedEffects()` | 0, `[]` | no effect is recorded |
-| `listGitPushHoldRows()`, `listStalledCatchupRows()`, `listParkedGroupRows()` | `[]` | no effect or worktree is recorded |
+| `listGitPushHoldRows()` | `[]` | no effect or worktree is recorded |
 | `readStaleEmbeddingCounts()`, `listStaleEmbeddingEffects()` | zeros, `[]` | no embedding effect is recorded |
-| `listOrphanBindingRows()`, `listWorktreeIds()`, `listSourceBindingsForMovement()`, `listOwnerBindings()`, `listConsumerOwners()`, `listStuckWorktreeRefreshes()` | `[]` | the store records no worktree, host binding or consumer |
+| `listOrphanBindingRows()`, `listWorktreeIds()`, `listOwnerBindings()`, `listConsumerOwners()`, `listStuckWorktreeRefreshes()` | `[]` | the store records no worktree, host binding or consumer |
 | `listDerivationPurgeSweeps()` | `[]` | no derivation-result sweep of a fact purge is recorded |
 | `listUnboundSourcePages()` | `[]` | a page has no `database_only_reason` |
 | `listOverwriteCandidates()` | `[]` | page versions carry no link to the request that wrote them |
