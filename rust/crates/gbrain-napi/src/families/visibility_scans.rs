@@ -10,10 +10,37 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
+use gbrain_store::facts::open_facts_scans::OpenFactsArgs;
 use gbrain_store::facts::visibility_scans::{OpenTwinArgs, VisibilityScanArgs};
 
 #[napi]
 impl Brain {
+    /// `listOpenFactsWindow({ sourceId, createdBefore, ids, after, upper, classes, limit })`: the eligible facts of the window.
+    #[napi]
+    pub fn list_open_facts_window<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: OpenFactsArgs = required(args, "listOpenFactsWindow args")?;
+            s.list_open_facts_window(&a)
+        })
+    }
+
+    /// `countOpenFactReasons({ sourceId, createdBefore, ids })`: `[{ cls, reason, n }]`.
+    #[napi]
+    pub fn count_open_fact_reasons<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: OpenFactsArgs = required(args, "countOpenFactReasons args")?;
+            s.count_open_fact_reasons(&a)
+        })
+    }
+
     /// `listOpenTwinRows({ pages, outside, honorAliases })`: `[{ source_id, slug, twin_of, n }]`.
     #[napi]
     pub fn list_open_twin_rows<'env>(

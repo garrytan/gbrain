@@ -230,6 +230,8 @@ import * as factsRepairImpl from './engine-sql/facts-repair.ts';
 import * as repairAppliesImpl from './engine-sql/repair-applies.ts';
 import * as visibilityScansImpl from './engine-sql/visibility-scans.ts';
 import * as openTwinsImpl from './engine-sql/open-twins.ts';
+import * as openFactsScansImpl from './engine-sql/open-facts-scans.ts';
+import type * as OpenFactsScansSql from './engine-sql/open-facts-scans.ts';
 import type * as OpenTwinsSql from './engine-sql/open-twins.ts';
 import type * as RepairAppliesSql from './engine-sql/repair-applies.ts';
 import * as labelRepairImpl from './engine-sql/label-repair-reads.ts';
@@ -1813,6 +1815,9 @@ export class PostgresEngine implements BrainEngine {
   listPageAccessKeys(pageIds: readonly number[]) { return repairAppliesImpl.listPageAccessKeys(this.executeRaw.bind(this), pageIds); }
   listCheckoutFilePages(pageIds: readonly number[], timeoutMs: number) { return repairAppliesImpl.listCheckoutFilePages(this.executeRaw.bind(this), pageIds, timeoutMs); }
   listOpenTwinRows(pages: ReadonlyArray<{ source_id: string; slug: string }>, outside: readonly OpenTwinsSql.OpenTwinReader[]) { return openTwinsImpl.listOpenTwinRows(this.executeRaw.bind(this), pages, outside); }
+  listTypePageBodies(opts: { type: string; sourceId?: string; limit: number }) { return repairAppliesImpl.listTypePageBodies(this.executeRaw.bind(this), opts); }
+  listOpenFactsWindow(sel: OpenFactsScansSql.OpenFactsSelection, after: number, upper: number | null, classes: readonly string[], limit: number, timeoutMs: number) { return openFactsScansImpl.listOpenFactsWindow(this.executeRaw.bind(this), sel, after, upper, classes, limit, timeoutMs); }
+  countOpenFactReasons(sel: OpenFactsScansSql.OpenFactsSelection, timeoutMs: number) { return openFactsScansImpl.countOpenFactReasons(this.executeRaw.bind(this), sel, timeoutMs); }
   detachFenceRowFacts(sourceId: string, slug: string, rowNum: number) { return repairAppliesImpl.detachFenceRowFacts(this.executeRaw.bind(this), sourceId, slug, rowNum); }
   hasDatabaseOnlyClaim(sourceId: string, entitySlug: string, fact: string) { return repairAppliesImpl.hasDatabaseOnlyClaim(this.executeRaw.bind(this), sourceId, entitySlug, fact); }
   readSourceCloneRow(sourceId: string) { return repairAppliesImpl.readSourceCloneRow(this.executeRaw.bind(this), sourceId); }

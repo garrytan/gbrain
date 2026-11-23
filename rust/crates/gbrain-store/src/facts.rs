@@ -61,6 +61,7 @@ mod kept_rows;
 pub mod label_repair;
 pub mod loops;
 pub mod ontology_repair;
+pub mod open_facts_scans;
 pub mod page_purges;
 pub(crate) mod privacy;
 pub mod provenance;

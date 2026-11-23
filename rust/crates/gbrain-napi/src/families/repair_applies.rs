@@ -12,7 +12,7 @@ use serde_json::Value;
 use crate::store_binding::{Brain, required};
 use gbrain_store::facts::repair_applies::{
     AccessKeyArgs, ClaimDateArgs, CommittedRestoreArgs, DuplicateArgs, ExtractorRestoreArgs,
-    FenceRowArgs, TieArgs,
+    FenceRowArgs, TieArgs, TypePageQuery,
 };
 
 #[napi]
@@ -203,6 +203,19 @@ impl Brain {
         ids: Vec<f64>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_checkout_file_pages(&ids))
+    }
+
+    /// `listTypePageBodies({ type, sourceId, limit })`: resolves `[{ slug, compiled_truth, frontmatter }]`.
+    #[napi]
+    pub fn list_type_page_bodies<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: TypePageQuery = required(query, "listTypePageBodies query")?;
+            s.list_type_page_bodies(&q)
+        })
     }
 
     /// `readSourceCloneRow(sourceId)`: resolves `{ local_path, config }` or null.

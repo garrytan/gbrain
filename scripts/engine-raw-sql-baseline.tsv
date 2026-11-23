@@ -623,7 +623,7 @@ src/core/repair/file-drift-class.ts	execute_raw	10	came from #9614 and #9615 (wh
 src/core/repair/file-drift.ts	execute_raw	3
 src/core/repair/missing-tables.ts	execute_raw	2
 src/core/repair/moved-pages.ts	execute_raw	1
-src/core/repair/open-facts.ts	execute_raw	11
+src/core/repair/open-facts.ts	execute_raw	9
 src/core/repair/origin-carry.ts	execute_raw	4
 src/core/repair/origin-twins-heal.ts	execute_raw	4
 src/core/repair/origin-twins.ts	execute_raw	2
@@ -663,7 +663,6 @@ src/core/schema-pack/engine-resolution.ts	execute_raw	1
 src/core/schema-pack/entity-types.ts	execute_raw	1
 src/core/schema-pack/lint-rules.ts	execute_raw	3
 src/core/schema-pack/page-to-alias.ts	execute_raw	3
-src/core/schema-pack/page-to-link.ts	execute_raw	1
 src/core/schema-pack/query-cache-invalidator.ts	execute_raw	1
 src/core/schema-pack/retype.ts	execute_raw	3
 src/core/schema-pack/review.ts	execute_raw	2

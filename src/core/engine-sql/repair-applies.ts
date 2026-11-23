@@ -197,3 +197,21 @@ export async function readSourceCloneRow(raw: EngineRawRead, sourceId: string): 
   const [row] = await raw<{ local_path: string | null; config: unknown }>('SELECT local_path, config FROM sources WHERE id = $1', [sourceId]);
   return row ?? null;
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The page-to-link conversion's page read (src/core/schema-pack/page-to-link.ts runPageToLinkCore)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** A live page of one type with the fields the conversion resolves its slugs from. `compiled_truth` is null for a segmented page. */
+export interface TypePageBody { slug: string; compiled_truth: string | null; frontmatter: Record<string, unknown> | string | null }
+
+/** The live pages of `type` (in `sourceId` when given), by slug then id in byte order, up to `limit` (1 to 50000). */
+export async function listTypePageBodies(raw: EngineRawRead, opts: { type: string; sourceId?: string; limit: number }): Promise<TypePageBody[]> {
+  const limit = opts.limit;
+  if (!Number.isFinite(limit) || !Number.isSafeInteger(limit) || limit < 1) throw new Error(`listTypePageBodies: limit must be a whole number of at least 1, got ${limit}`);
+  const where = opts.sourceId
+    ? sqlFragment`WHERE deleted_at IS NULL AND type = ${opts.type} AND source_id = ${opts.sourceId}`
+    : sqlFragment`WHERE deleted_at IS NULL AND type = ${opts.type}`;
+  const { text, params } = renderFragment(sqlFragment`SELECT slug, compiled_truth, frontmatter FROM pages ${where} ORDER BY slug COLLATE "C", id LIMIT ${trustedSql(`${limit}`)}`);
+  return raw<TypePageBody>(text, params);
+}

@@ -55,3 +55,19 @@ export const listOpenTwinRows: Member<'listOpenTwinRows'> = (brain, pages, outsi
   return storeCall({ member: 'listOpenTwinRows' }, () =>
     brain.listOpenTwinRows({ pages: pages.map(({ source_id, slug }) => ({ source_id, slug })), outside: readers, honorAliases }));
 };
+
+/** Fact ids bind as `bigint[]`: an id that is not an integer refuses rather than guess at its cast. */
+function factIds(member: string, ids: readonly number[] | null): number[] | null {
+  for (const id of ids ?? []) if (!Number.isSafeInteger(id)) refuseMember(member, 'a fact id that is not an integer');
+  return ids === null ? null : [...ids];
+}
+
+/** `listOpenFactsWindow` (gbrain repair open-facts), served from facts/open_facts_scans.rs. */
+export const listOpenFactsWindow: Member<'listOpenFactsWindow'> = (brain, sel, after, upper, classes, limit) =>
+  storeCall({ member: 'listOpenFactsWindow' }, () => brain.listOpenFactsWindow({ sourceId: sel.sourceId, createdBefore: sel.createdBefore,
+    ids: factIds('listOpenFactsWindow', sel.ids), after, upper, classes: [...classes], limit }));
+
+/** `countOpenFactReasons` (gbrain repair open-facts), served from facts/open_facts_scans.rs. */
+export const countOpenFactReasons: Member<'countOpenFactReasons'> = (brain, sel) =>
+  storeCall({ member: 'countOpenFactReasons' }, () => brain.countOpenFactReasons({ sourceId: sel.sourceId, createdBefore: sel.createdBefore,
+    ids: factIds('countOpenFactReasons', sel.ids) }));

@@ -263,8 +263,8 @@ describe('engine parity: repair kind previews of batch 4.3a', () => {
     return shaped;
   }));
 
-  parityTest('open-facts lists the private facts a legacy default opened on the SQL arms, and the Rust engine stops at the privacy scan', {
-    methods: ['putPage', 'insertFacts', 'writeOpCheckpointRecord'], requires: 'raw_sql', timeout: 60_000,
+  parityTest('open-facts lists the private facts a legacy default opened the same way on every arm', {
+    methods: ['putPage', 'insertFacts', 'writeOpCheckpointRecord'], timeout: 60_000,
   }, async (engine, backend) => withHome(async home => {
     await engine.putPage('notes/open-holder', note('Holder'), { sourceId: 'default' });
     const ids = await insert(engine, [

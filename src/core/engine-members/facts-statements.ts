@@ -17,6 +17,7 @@ import type * as FactsRepairSql from '../engine-sql/facts-repair.ts';
 import type * as RepairAppliesSql from '../engine-sql/repair-applies.ts';
 import type * as VisibilityScansSql from '../engine-sql/visibility-scans.ts';
 import type * as OpenTwinsSql from '../engine-sql/open-twins.ts';
+import type * as OpenFactsScansSql from '../engine-sql/open-facts-scans.ts';
 import type * as FactsTrustSql from '../engine-sql/facts-trust.ts';
 import type { LocalWriterInsert, LocalWriterRow } from '../engine-sql/persistence-state.ts';
 import type { PageReadScope } from '../types.ts';
@@ -779,6 +780,12 @@ export interface FactsStatementMembers {
   listCheckoutFilePages(pageIds: readonly number[], timeoutMs: number): Promise<Array<{ id: number; source_id: string; source_path: string; local_path: string | null }>>;
   /** The open-twins scan: the twins of the changed pages some outside identity can read, by (source, slug), at most 50. Reads pages. */
   listOpenTwinRows(pages: ReadonlyArray<{ source_id: string; slug: string }>, outside: readonly OpenTwinsSql.OpenTwinReader[]): Promise<OpenTwinsSql.OpenTwinRow[]>;
+  /** page-to-link: the live pages of one type (in one source when given), by slug then id in byte order, up to `limit`. Reads pages. */
+  listTypePageBodies(opts: { type: string; sourceId?: string; limit: number }): Promise<RepairAppliesSql.TypePageBody[]>;
+  /** open-facts: one keyset window of eligible private facts of the selection, by id. Reads facts, pages, fact_withdrawals, fact_purges and trust_proposals. */
+  listOpenFactsWindow(sel: OpenFactsScansSql.OpenFactsSelection, after: number, upper: number | null, classes: readonly string[], limit: number, timeoutMs: number): Promise<OpenFactsScansSql.OpenFactsWindowRow[]>;
+  /** open-facts: the selection's private facts counted by class and by the reason they stay private. Reads the same tables. */
+  countOpenFactReasons(sel: OpenFactsScansSql.OpenFactsSelection, timeoutMs: number): Promise<Array<{ cls: string; reason: string; n: number }>>;
   /** url-clone-fences: makes the fact at a fence row of the page database-only; the ids it changed. Writes facts. */
   detachFenceRowFacts(sourceId: string, slug: string, rowNum: number): Promise<number[]>;
   /** url-clone-fences: whether the entity already holds a database-only fact with this claim text. Reads facts. */
