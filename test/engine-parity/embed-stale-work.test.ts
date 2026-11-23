@@ -23,6 +23,7 @@ import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../
 import { runEmbedCore } from '../../src/commands/embed.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { computeRecommendations } from '../../src/core/brain-score-recommendations.ts';
+import { checkEmbeddingWidthConsistency } from '../../src/commands/doctor/checks/graph-embedding.ts';
 import { installFixtureChunks } from '../helpers/page-projection.ts';
 import type { PendingProjectionScope } from '../../src/core/engine-sql/embed-stale-work.ts';
 
@@ -110,6 +111,34 @@ describe('embed --stale', () => {
         expect(lines).toContain('Recipe (run against your Postgres brain):');
       }
       return { name: error?.name, kind: error?.kind, head };
+    },
+  );
+
+  // Gap (b): doctor embedding_width_consistency refused on Rust (sqlEngineKind) instead of printing the recipe.
+  parityTest(
+    'doctor embedding_width_consistency warns with each engine\'s recipe on a width mismatch',
+    { methods: ['readChunkVectorColumn'] },
+    async (engine, backend) => {
+      const ok = await checkEmbeddingWidthConsistency(engine);
+      gateway(768);
+      let check;
+      try { check = await checkEmbeddingWidthConsistency(engine); } finally { gateway(DIMS); }
+      const lines = check.message.split('\n');
+      const head = lines.slice(0, 6);
+      expect({ ok: [ok.status, ok.message], status: check.status, head }).toEqual({
+        ok: ['ok', `Schema width (${DIMS}d) matches gateway embedding_dimensions`],
+        status: 'warn',
+        head: [`Schema width mismatch: content_chunks.embedding is vector(${DIMS}) but gateway resolved embedding_dimensions = 768.`, '',
+          'Embedding dimension mismatch detected.', '', `  Existing column: vector(${DIMS})`, `  Requested:       vector(768)  (${MODEL})`],
+      });
+      if (backend === 'rust') {
+        expect(lines.slice(6)).toEqual(['',
+          'Nothing was changed. A Rust brain\'s vector width is fixed when the brain is created, and no command changes it yet.',
+          `To embed now, set embedding_model and embedding_dimensions in your config back to a model at vector(${DIMS}).`]);
+      } else {
+        expect(lines.slice(6).join('\n')).toContain(backend === 'pglite' ? 'PGLite cannot ALTER vector column types in place' : 'Recipe (run against your Postgres brain):');
+      }
+      return { ok: [ok.status, ok.message], status: check.status, head };
     },
   );
 
@@ -229,6 +258,29 @@ describe('embed --stale members', () => {
         drifted: { drift: true, scopedDefault: false, scopedOther: true },
         provenance: { complete: true, otherModel: false, otherWidth: false, unknown: false },
       });
+      return out;
+    },
+  );
+
+  // Row 44b: a held or capped page leaves the embedding queue (`staleChunkWhere`/`listStaleChunks` add NOT budgetLimited).
+  // A conversation-archive hold applies at any page size. The Rust store counted and listed held pages' chunks.
+  parityTest(
+    'the stale-chunk count, char sum and list leave out a page with an applying embedding hold',
+    { methods: ['holdPageEmbedding', 'countStaleChunks', 'sumStaleChunkChars', 'listStaleChunks', 'invalidateContentDriftEmbeddings'] },
+    async (engine) => {
+      await stalePage(engine, 'a/free');
+      await stalePage(engine, 'a/held');
+      const before = { count: await engine.countStaleChunks(), chars: await engine.sumStaleChunkChars() };
+      const held = await engine.getPage('a/held');
+      await engine.holdPageEmbedding(Number(held!.id), 'archive_backfill');
+      const out = {
+        before,
+        count: await engine.countStaleChunks(),
+        chars: await engine.sumStaleChunkChars(),
+        listed: (await engine.listStaleChunks()).map((r) => r.slug),
+        drifted: await engine.invalidateContentDriftEmbeddings(),
+      };
+      expect(out).toEqual({ before: { count: 2, chars: 'a/free body text'.length + 'a/held body text'.length }, count: 1, chars: 'a/free body text'.length, listed: ['a/free'], drifted: 0 });
       return out;
     },
   );

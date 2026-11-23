@@ -68,11 +68,11 @@ and otherwise kept. `sealChunks` (replace) writes what it is given.
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.getEmbeddingsByChunkIds(ids)` | `[{ id, embedding }]` for visible chunks of sealed pages with a vector; the member builds the `Map` and checks the column name | `getEmbeddingsByChunkIds` |
-| `brain.countStaleChunks(opts)` / `brain.sumStaleChunkChars(opts)` | chunks (or their characters) with no vector, or with a vector on a page whose signature differs from `signature`, on live, non-`embed_skip` pages | `countStaleChunks`, `sumStaleChunkChars` |
-| `brain.listStaleChunks(opts)` | one keyset page of stale chunks, by page id and chunk index, or by `updated_desc` with its cursor; 2000 rows by default | `listStaleChunks` |
+| `brain.countStaleChunks(opts)` / `brain.sumStaleChunkChars(opts)` | chunks (or their characters) with no vector, or with a vector on a page whose signature differs from `signature`, on live, non-`embed_skip` pages without an applying embedding hold (`pageBudgetLimitedFilter`; see [embed-stale-work.md](embed-stale-work.md)) | `countStaleChunks`, `sumStaleChunkChars` |
+| `brain.listStaleChunks(opts)` | one keyset page of stale chunks (held pages left out, as above), by page id and chunk index, or by `updated_desc` with its cursor; 2000 rows by default | `listStaleChunks` |
 | `brain.setPageEmbeddingSignature(slug, { sourceId?, signature })` | writes the signature; a missing page is a no-op | `setPageEmbeddingSignature` |
 | `brain.invalidateStaleSignatureEmbeddings(opts)` | drops the vectors outside the target space (`currentSpaceChunkPredicate`) on pages whose signature differs; returns how many | `invalidateStaleSignatureEmbeddings` |
-| `brain.invalidateContentDriftEmbeddings(opts)` | drops the vectors whose text hash no longer matches the text; returns how many | `invalidateContentDriftEmbeddings` |
+| `brain.invalidateContentDriftEmbeddings(opts)` | drops the vectors whose text hash no longer matches the text, on pages without an applying embedding hold; returns how many | `invalidateContentDriftEmbeddings` |
 | `brain.readEmbeddingStateCounts(opts)` | the state counts in `ops` or `full` mode | `readEmbeddingStateCounts` |
 | `brain.listEmbeddingStateRows(opts)` | per-page state rows, ordered by state, source and slug, then limited | `listEmbeddingStateRows` |
 | `brain.getChunksWithEmbeddings(slug, opts)` | chunk rows with vectors, in every source unless `sourceId` names one; the member refuses a result that spans two pages | `getChunksWithEmbeddings` |
@@ -145,8 +145,6 @@ is still refused on write.
 
 ## Known edges
 
-- The stale queue keeps a held or capped page (`budgetLimited` is not kept). The plan then refuses the page
-  from its ledger row, so no money is spent on it, but each embedding run lists it again.
 - `reservePageSpend`'s embedding branch, `listBudgetLimitedPages`, `readPageSizeStates` and
   `holdPageEmbedding` are still raw SQL, so a Rust brain refuses them (`engine_capability_missing`).
 - The stale reads (`countStaleChunks`, `sumStaleChunkChars`, `listStaleChunks`), `readEmbeddingStateCounts`,

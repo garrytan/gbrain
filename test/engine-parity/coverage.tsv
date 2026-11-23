@@ -151,7 +151,7 @@ insertSource	pages	yes	10	no	yes	yes	serves
 deleteSourceRecord	pages	yes	6	no	yes	yes	serves
 readSourceDeleteImpact	pages	yes	2	no	yes	yes	serves
 readPageSizeRows	pages	yes	2	no	yes	yes	serves
-holdPageEmbedding	pages	yes	1	no	yes	yes	serves
+holdPageEmbedding	pages	yes	2	no	yes	yes	serves
 readReasonPurgeTombstones	pages	yes	4	no	yes	yes	serves
 writeReasonPurgeTombstones	pages	yes	4	no	yes	yes	serves
 listSourcePathPages	pages	yes	1	no	yes	yes	serves
@@ -247,13 +247,13 @@ sealChunks	chunks	yes	73	no	yes	yes	serves
 getChunks	chunks	yes	56	yes	yes	yes	serves
 getChunkPage	chunks	yes	14	no	yes	yes	serves
 getChunkWindows	chunks	yes	12	no	yes	yes	serves
-countStaleChunks	chunks	yes	8	no	yes	yes	serves
+countStaleChunks	chunks	yes	9	no	yes	yes	serves
 readPageProvenanceComplete	chunks	yes	2	no	yes	yes	serves
-sumStaleChunkChars	chunks	yes	3	no	yes	yes	serves
+sumStaleChunkChars	chunks	yes	4	no	yes	yes	serves
 setPageEmbeddingSignature	chunks	yes	5	no	yes	yes	serves
 invalidateStaleSignatureEmbeddings	chunks	yes	1	no	yes	yes	serves
-invalidateContentDriftEmbeddings	chunks	yes	1	no	yes	yes	serves
-listStaleChunks	chunks	yes	3	no	yes	yes	serves
+invalidateContentDriftEmbeddings	chunks	yes	2	no	yes	yes	serves
+listStaleChunks	chunks	yes	4	no	yes	yes	serves
 countChunklessPagesWithContent	chunks	yes	5	yes	yes	yes	serves
 listChunklessPagesWithContent	chunks	yes	3	yes	yes	yes	serves
 readEmbeddingStateCounts	chunks	yes	2	no	yes	yes	serves
@@ -1001,7 +1001,7 @@ countStaleFactEmbeddings	facts_doctor	yes	1	no	yes	yes	serves
 countSegmentedCensusPages	facts_doctor	yes	1	no	yes	yes	refuses:facts
 listFactsPageBodies	facts_doctor	yes	1	no	yes	yes	refuses:facts
 readFactTableCatalog	facts_doctor	yes	1	no	yes	yes	refuses:facts
-readChunkVectorColumn	embedding_catalog	yes	3	no	yes	yes	serves
+readChunkVectorColumn	embedding_catalog	yes	4	no	yes	yes	serves
 readEmbeddingIdentity	embedding_catalog	yes	1	no	yes	yes	serves
 listEmbeddingStores	embedding_catalog	yes	1	no	yes	yes	serves
 hasStoredVectors	embedding_catalog	yes	2	no	yes	yes	serves

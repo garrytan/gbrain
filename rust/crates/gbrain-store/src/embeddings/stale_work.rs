@@ -58,7 +58,7 @@ fn large_page(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
 /// `pageBudgetLimitedFilter`: the page has a held or capped budget row that still applies (large, or a reason that applies
 /// at any size). The store keeps that row in two families: the hold (`embedding_holds.rs`) and the paid-path ledger
 /// (`page_embedding_budget.rs`).
-fn budget_limited(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
+pub(super) fn budget_limited(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
     let mut rows = Vec::new();
     if let Some(hold) = crate::embedding_holds::read_hold(read, page.id)? {
         rows.push((hold.state, hold.reason));
