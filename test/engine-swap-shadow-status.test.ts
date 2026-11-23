@@ -99,6 +99,8 @@ describe('the engine swap reads the shadow status document', () => {
       expect(plan.shadow).toBe(false);
       expect(text).toContain('verdict: NOT READY (no_shadow)');
       expect(text).toContain('gbrain engine shadow start');
+      expect(text.indexOf('gbrain engine shadow seed')).toBeGreaterThan(-1);
+      expect(text.indexOf('gbrain engine shadow seed')).toBeLessThan(text.indexOf('gbrain engine shadow start')); // seed refuses while shadow mode is on
       expect(renderPlanText(plan)).toBe(text);
     });
   });
