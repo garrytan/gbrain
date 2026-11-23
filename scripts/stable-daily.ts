@@ -259,6 +259,7 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
   const oldestImportant = passing.reduce<string | null>((v, i) => (!v || compareVersions(i.version, v) < 0 ? i.version : v), null);
   let failedSoak: { version: string; run: SoakRunRow } | null = null;
   let canaryBlock: { version: string; state: 'failure' | 'untested'; why: string } | null = null;
+  let newestSoaked = false;
   for (const rel of releases) {
     if (!weekly && oldestImportant && compareVersions(rel.version, oldestImportant) < 0) break;
     const tree = await treeOf(deps, rel.commit);
@@ -272,6 +273,7 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
       deps.log(`[stable-daily] not promotable: v${rel.version} soak ${run.html_url}: ${failures.join(', ')}.`);
     }
     if (!chosen) { failedSoak ??= completed[0] ? { version: rel.version, run: completed[0] } : null; continue; }
+    if (rel === releases[0]) newestSoaked = true;
     const matrix = await matrixRunFor(rel.version);
     if (!matrix) {
       if (activeMatrix) return { action: 'waiting', why: `${reason}; v${rel.version} passed its soak and upgrade matrix run ${activeMatrix.html_url} is still running.`, version: rel.version };
@@ -294,7 +296,7 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
     const canary = judgeCanary(statuses, rel.version, deps.canaryPosters ?? parseCanaryPosters(undefined));
     if (canary.state !== 'success') {
       deps.log(`[stable-daily] skipping v${rel.version}: ${canary.why}.`);
-      canaryBlock ??= { version: rel.version, state: canary.state, why: canary.why };
+      if (!canaryBlock || (canaryBlock.state === 'failure' && canary.state === 'untested')) canaryBlock = { version: rel.version, state: canary.state, why: canary.why };
       continue;
     }
     deps.log(`[stable-daily] ${canary.why}.`);
@@ -307,24 +309,29 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
     return { action: 'promoted', why: reason, promotion };
   }
 
-  if (canaryBlock?.state === 'untested') return { action: 'waiting', why: `${reason}; ${canaryBlock.why}, and no older release qualifies, so stable waits for the install canary`, version: canaryBlock.version };
-  if (canaryBlock) {
+  if (canaryBlock && newestSoaked) {
+    if (canaryBlock.state === 'untested') {
+      const why = `${reason}; ${canaryBlock.why}, and no older release qualifies, so stable waits for the install canary`;
+      if (weekly) deps.log(`::warning::Daily stable check: stable v${current.version} is past the ${WEEKLY_FLOOR_DAYS}-day floor and ${why}. Docs: docs/RELEASING.md#daily-stable-check`);
+      return { action: 'waiting', why, version: canaryBlock.version };
+    }
     const why = `${reason}; ${canaryBlock.why}, and no older release qualifies, so stable holds and a maintainer decides`;
     deps.log(`::warning::Daily stable check: ${why}. Docs: docs/RELEASING.md#daily-stable-check`);
     return { action: 'held', why };
   }
+  const why = canaryBlock ? `${reason}; ${canaryBlock.why}` : reason;
   const newest = releases[0]!;
   const active = runs.find(r => r.status !== 'completed');
-  if (active) return { action: 'waiting', why: `${reason}; soak ${active.html_url} is still running.`, version: newest.version };
+  if (active) return { action: 'waiting', why: `${why}; soak ${active.html_url} is still running.`, version: newest.version };
   if (failedSoak) {
     if (weekly) deps.log(`::warning::Daily stable check: stable v${current.version} is past the ${WEEKLY_FLOOR_DAYS}-day floor and no soak qualifies; a maintainer decides. Docs: docs/RELEASING.md#daily-stable-check`);
-    return { action: 'waiting', why: `${reason}; v${failedSoak.version} already had a soak (${failedSoak.run.html_url}, ${failedSoak.run.conclusion}) that did not qualify, so no new soak is dispatched and a maintainer decides.`, version: newest.version };
+    return { action: 'waiting', why: `${why}; v${failedSoak.version} already had a soak (${failedSoak.run.html_url}, ${failedSoak.run.conclusion}) that did not qualify, so no new soak is dispatched and a maintainer decides.`, version: newest.version };
   }
   const matrixToo = !activeMatrix && !(await matrixRunFor(newest.version));
-  if (deps.dryRun) return { action: 'dry_run', why: reason, would: `dispatch the soak${matrixToo ? ' and the upgrade matrix' : ''} on v${newest.version}` };
+  if (deps.dryRun) return { action: 'dry_run', why, would: `dispatch the soak${matrixToo ? ' and the upgrade matrix' : ''} on v${newest.version}` };
   await deps.ghPost(`repos/${deps.repo}/actions/workflows/${soakPath.split('/').at(-1)}/dispatches`, { ref: `v${newest.version}` });
   if (matrixToo) await dispatchMatrix(newest.version);
-  return { action: 'soak_dispatched', why: reason, version: newest.version };
+  return { action: 'soak_dispatched', why, version: newest.version };
 }
 
 export function dailyDeps(env: NodeJS.ProcessEnv = process.env, cwd = process.cwd()): DailyDeps {

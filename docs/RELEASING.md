@@ -956,12 +956,14 @@ and keeps stable between one day and one week behind what matters:
 - **Install canary last.** The candidate also needs the install canary's pass
   on its release commit, checked as under "Install canary" above and again by
   `promote()`, and recorded as `install_canary`. A release the canary failed is
-  skipped, logged, and an older qualifying release is promoted instead. When no
-  release qualifies, a candidate the canary has not tested yet makes the run wait
-  (`waiting`, naming the version: "v<VERSION> is not tested yet") with nothing
-  dispatched or pushed, and a later run promotes once the canary passes it; a
-  candidate only the canary failed holds stable with a warning until a maintainer
-  fixes it or promotes by hand with `canary_waiver`.
+  skipped, logged, and an older qualifying release is promoted instead. When the
+  newest release has no soak yet, the soak is dispatched on it as usual. When it
+  has one and no release qualifies, a candidate the canary has not tested yet
+  makes the run wait (`waiting`, naming the version: "v<VERSION> is not tested
+  yet") with nothing dispatched or pushed, and a later run promotes once the
+  canary passes it; past the weekly floor that wait also raises a warning, so a
+  stopped canary is noticed. A candidate only the canary failed holds stable with
+  a warning until a maintainer fixes it or promotes by hand with `canary_waiver`.
 - **Upgrade breaks hold.** While the matrix's own break issue is open (the
   one the nightly run opens with the `<!-- gbrain-upgrade-matrix:nightly -->`
   marker; another issue with the `upgrade-break` label holds nothing), the
