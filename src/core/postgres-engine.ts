@@ -145,6 +145,7 @@ import * as timelineImpl from './engine-sql/timeline.ts';
 import * as sourcesImpl from './engine-sql/sources.ts';
 import * as notifierImpl from './engine-sql/notifier.ts';
 import * as cliReadsImpl from './engine-sql/cli-reads-import.ts';
+import * as listReadsImpl from './engine-sql/list-reads.ts';
 import * as writeMiscImpl from './engine-sql/write-misc.ts';
 import * as repairBookkeepingImpl from './engine-sql/repair-bookkeeping.ts';
 import * as managedSyncOrphansImpl from './engine-sql/managed-sync-orphans.ts';
@@ -2044,6 +2045,7 @@ export class PostgresEngine implements BrainEngine {
   insertWithdrawalEffects(spec: persistenceJournalImpl.WithdrawalEffectsSpec) { return persistenceJournalImpl.insertWithdrawalEffects(this.autocommitSql, spec); }
   readSourceMembership(sourceId: string, opts?: { lock?: boolean | 'update' }) { return this.preparationRead(exec => persistenceClaimsImpl.readSourceMembership(exec, sourceId, opts), !!opts?.lock); }
   findTopologyChanges(principalId: string, requestIds: string[]) { return persistenceClaimsImpl.findTopologyChanges(unscopedExecutor(this.engineSql, 'persistence: topology probe ran unscoped through the transaction executeRaw'), principalId, requestIds); }
+  readTopologyChangeDigest(requestId: string, sourceId: string) { return persistenceClaimsImpl.readTopologyChangeDigest(unscopedExecutor(this.engineSql, 'persistence: sources add replay read ran unscoped through executeRaw'), requestId, sourceId); }
   listTopologyRecoveries(hostId: string, after: string | null, limit: number) { return this.preparationRead(exec => persistenceClaimsImpl.listTopologyRecoveries(unscopedExecutor(exec, 'persistence: topology recovery scan ran unscoped through executeRaw'), hostId, after, limit)); }
   readTopologyChange(principalId: string, requestId: string) { return persistenceClaimsImpl.readTopologyChange(unscopedExecutor(this.engineSql, 'persistence: topology receipt read ran unscoped through the transaction executeRaw'), principalId, requestId); }
   insertTopologyChange(row: persistenceClaimsImpl.TopologyChangeInsert) { return persistenceClaimsImpl.insertTopologyChange(this.autocommitSql, row); }
@@ -2355,6 +2357,7 @@ export class PostgresEngine implements BrainEngine {
   readPageTitlesById(ids: readonly number[]) { return entityReadsImpl.readPageTitlesById(this, ids); }
   readTextMentionPages(sourceIds: readonly string[], slugs: readonly string[]) { return entityReadsImpl.readTextMentionPages(this, sourceIds, slugs); }
   listLocalPathSources() { return sourcesImpl.listLocalPathSources(unscopedExecutor(this.engineSql, 'sources: source resolution read it unscoped through executeRaw')); }
+  listSourcePathRows() { return sourcesImpl.listSourcePathRows(unscopedExecutor(this.engineSql, 'sources: sources add read it unscoped through executeRaw')); }
   readPlainSyncSource(sourceId: string) { return sourcesImpl.readPlainSyncSource(unscopedExecutor(this.engineSql, 'sources: plain-directory sync read it unscoped through executeRaw'), sourceId); }
   readOwnerOnlySourcesPresent() { return sourcesImpl.readOwnerOnlySourcesPresent(unscopedExecutor(this.engineSql, 'sources: the owner-only check read it unscoped through executeRaw'), ownerOnlyLineageReadable(this)); }
   readOwnerOnlySourceConfig(sourceId: string) { return sourcesImpl.readOwnerOnlySourceConfig(unscopedExecutor(this.engineSql, 'sources: the owner-only check read it unscoped through executeRaw'), sourceId); }
@@ -2491,6 +2494,12 @@ export class PostgresEngine implements BrainEngine {
   readSourceIncarnation(sourceId: string) { return this.engineSqlRead(exec => cliReadsImpl.readSourceIncarnation(unscopedExecutor(exec, 'cli reads: the import and extract paths ran these unscoped through executeRaw'), sourceId)); }
   readSyncDispatchRow(sourceId: string) { return syncDispatchImpl.readSyncDispatchRow(this, sourceId); }
   readRetainedSources(sourceIds: readonly string[]) { return this.engineSqlRead(exec => cliReadsImpl.readRetainedSources(unscopedExecutor(exec, 'cli reads: the import and extract paths ran these unscoped through executeRaw'), sourceIds)); }
+  listLiveSlugSourceIds(slug: string) { return listReadsImpl.listLiveSlugSourceIds(this.executeRaw.bind(this), slug); }
+  resolveChainAnchorRows(slug: string, policy: PageReadPolicy) { return listReadsImpl.resolveChainAnchorRows(this.executeRaw.bind(this), slug, policy); }
+  probeTargetRows(slug: string, policy: PageReadPolicy, chunkManifest?: boolean) { return listReadsImpl.probeTargetRows(this.executeRaw.bind(this), slug, policy, chunkManifest); }
+  readCompanyBrainEvidenceRows(sourceId: string) { return listReadsImpl.readCompanyBrainEvidenceRows(this.executeRaw.bind(this), sourceId); }
+  listCardRows(query: listReadsImpl.CardListQuery) { return listReadsImpl.listCardRows(this.executeRaw.bind(this), query); }
+  readShelfPageRows(sourceId: string) { return listReadsImpl.readShelfPageRows(this.executeRaw.bind(this), sourceId); }
   hasCompanyBrainReceipt(sourceId: string) { return cliReadsImpl.hasCompanyBrainReceipt(this.cliReads, sourceId); }
   readGuestSourceRow(sourceId: string) { return cliReadsImpl.readGuestSourceRow(this.cliReads, sourceId); }
   listGuestSourceIds(sourceIds: readonly string[]) { return this.preparationRead(exec => cliReadsImpl.listGuestSourceIds(unscopedExecutor(exec, 'cli reads: the import and extract paths ran these unscoped through executeRaw'), sourceIds)); }

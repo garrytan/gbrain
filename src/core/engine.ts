@@ -7,6 +7,7 @@ import type { DecideMembers } from './engine-members/decide.ts';
 import type { JobsMembers } from './engine-members/jobs.ts';
 import type { DoctorMembers } from './engine-members/doctor.ts';
 import type { MentionPassMembers } from './engine-members/mentions.ts';
+import type { ListReadMembers } from './engine-members/list-reads.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as AccessMembersSql from './engine-sql/access-members.ts';
 import type * as DreamCycleSql from './engine-sql/dream-cycle.ts';
@@ -49,7 +50,7 @@ import type { PageEmbeddingBudgetRow, PageEmbeddingReservation, PageEmbeddingRes
 import type { EmbeddingCompletionOpts, EmbeddingCompletionRow } from './engine-sql/embedding-install.ts';
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from './engine-sql/page-visibility.ts';
 import type { PageRefRow, RelationalPageRow } from './engine-sql/relational-reads.ts';
-import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PlainSyncSourceRow, RenameIdentityRow, SourceCheckRow, SourceInsert, SourceUpstreamObservation, PageIdentityRow, PageSizeRow, ReasonPurgeTombstone, SourcePathPageRow, SourceRoutingRow } from './engine-sql/sources.ts';
+import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, SourcePathRow, PlainSyncSourceRow, RenameIdentityRow, SourceCheckRow, SourceInsert, SourceUpstreamObservation, PageIdentityRow, PageSizeRow, ReasonPurgeTombstone, SourcePathPageRow, SourceRoutingRow } from './engine-sql/sources.ts';
 import type {
   Coverage as NotifierCoverage, MarkerIntent, NotifierHostSourceRow, NotifierLeaseClaim, NotifierLeaseClaimInput, NotifierLeaseHolder,
   NotifierSourceRow, NotifierStatusRow, PendingWantedMarker, StatePatch as NotifierStatePatch, WantedMarker, WantedMarkerInput, FirstDueRow,
@@ -1060,7 +1061,7 @@ export function clampSearchLimit(limit: number | undefined, defaultLimit = 20, c
   return Math.min(Math.floor(limit), cap);
 }
 
-export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers, PersistenceMembers, LedgerMembers, GovernanceMembers, DecideMembers, JobsMembers, DoctorMembers, MentionPassMembers {
+export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers, PersistenceMembers, LedgerMembers, GovernanceMembers, DecideMembers, JobsMembers, DoctorMembers, MentionPassMembers, ListReadMembers {
   /** Discriminator: lets migrations and other consumers branch on engine kind without instanceof + dynamic imports. */
   readonly kind: 'postgres' | 'pglite' | 'rust';
   readonly capabilities: EngineCapabilities; // what this engine can do, by name (engine-capabilities.ts); ask it instead of branching on kind
@@ -1510,6 +1511,8 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
 
   /** Source resolution reads (SQL and contracts in engine-sql/sources.ts): sources with a local path and `archived`; every source row with `default`'s emptiness flag; the default-write guard's page split. */
   listLocalPathSources(): Promise<LocalPathSourceRow[]>;
+  /** Every source with a local path as `{ id, local_path }` (the API-backed `sources add` overlap check). */
+  listSourcePathRows(): Promise<SourcePathRow[]>;
   /** The registered path, last commit and config of a source that is not archived, or null (plain-directory sync). */
   readPlainSyncSource(sourceId: string): Promise<PlainSyncSourceRow | null>;
   /** Owner-only reads (access/owner-only.ts): does any source carry the owner-only rule; one source's raw config, or null. */

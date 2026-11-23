@@ -139,6 +139,7 @@ export const PAGES_MEMBERS = {
   // The commit notifier's host source list (engine-sql/notifier.ts).
   listNotifierHostSourceRows: 'sources',
   listLocalPathSources: 'sources',
+  listSourcePathRows: 'sources',
   readPlainSyncSource: 'sources',
   readOwnerOnlySourcesPresent: 'sources',
   readOwnerOnlySourceConfig: 'sources',
@@ -174,7 +175,13 @@ export const PAGES_MEMBERS = {
   readSyncDispatchRow: 'sources',
   // #9968's retained read (connector-status.ts): no Rust store member yet, so it is refused like raw SQL and the caller
   // counts every source as retained (RUST_ENGINE.md loss row 37, lane 11). Remap when the store serves it.
-  readRetainedSources: 'raw_sql',
+  readRetainedSources: 'sources',
+  listLiveSlugSourceIds: 'pages',
+  resolveChainAnchorRows: 'pages',
+  probeTargetRows: 'pages',
+  readCompanyBrainEvidenceRows: 'pages',
+  listCardRows: 'pages',
+  readShelfPageRows: 'pages',
   hasCompanyBrainReceipt: 'sources',
   readGuestSourceRow: 'sources',
   listGuestSourceIds: 'sources',

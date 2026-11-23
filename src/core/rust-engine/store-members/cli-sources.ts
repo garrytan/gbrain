@@ -14,7 +14,7 @@
  * sources.rs).
  */
 import type { SourceRecordRow } from '../../engine.ts';
-import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PageIdentityRow, PageSizeRow, PlainSyncSourceRow, ReasonPurgeTombstone, RenameIdentityRow, SourceCheckRow, SourceDeleteImpact, SourceDeleteResult, SourceInsert, SourcePathPageRow, SourceRoutingRow, SourceUpstreamObservation } from '../../engine-sql/sources.ts';
+import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PageIdentityRow, PageSizeRow, PlainSyncSourceRow, ReasonPurgeTombstone, RenameIdentityRow, SourceCheckRow, SourceDeleteImpact, SourceDeleteResult, SourceInsert, SourcePathPageRow, SourcePathRow, SourceRoutingRow, SourceUpstreamObservation } from '../../engine-sql/sources.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { refusing } from './constraint-errors.ts';
@@ -38,6 +38,10 @@ export const readPlainSyncSource: StoreMember<[sourceId: string], PlainSyncSourc
 
 export const listLocalPathSources: StoreMember<[], LocalPathSourceRow[]> = async (brain) =>
   (await storeCall({ member: 'listLocalPathSources' }, () => brain.listLocalPathSources())) as LocalPathSourceRow[];
+
+/** Every source with a local path as `{ id, local_path }`: the store's local-path source rows without `archived`. */
+export const listSourcePathRows: StoreMember<[], SourcePathRow[]> = async (brain) =>
+  ((await storeCall({ member: 'listSourcePathRows' }, () => brain.listLocalPathSources())) as LocalPathSourceRow[]).map(({ id, local_path }) => ({ id, local_path }));
 
 export const listSourceRoutingRows: StoreMember<[], SourceRoutingRow[]> = async (brain) =>
   (await storeCall({ member: 'listSourceRoutingRows' }, () => brain.listSourceRoutingRows())) as SourceRoutingRow[];

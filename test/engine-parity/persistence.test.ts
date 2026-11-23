@@ -259,20 +259,15 @@ describe('engine parity: write journal', () => {
     return seen;
   });
 
-  // Leak case: one source's tombstones never answer for another, and a bumped epoch is read as stored. The Rust store
-  // purges nothing (0 and none above), so the tombstone write stops on the raw_sql refusal.
+  // Leak case: one source's tombstones never answer for another, and a bumped epoch is read as stored. The epoch moves
+  // through the purge's typed bump (three purges) and the tombstones through the typed write a purge makes.
   parityTest('readReasonPurgeTombstones reads only the named source; readSourcePurgeEpoch reads a bumped epoch', {
-    methods: ['readSourcePurgeEpoch', 'readReasonPurgeTombstones'],
+    methods: ['bumpSourcePurgeEpoch', 'insertReasonPurgeTombstones', 'readSourcePurgeEpoch', 'readReasonPurgeTombstones'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'purged');
-    const write = await engine.executeRaw("UPDATE sources SET purge_epoch = 3 WHERE id = 'purged'").then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
-      expect(String(await engine.readSourcePurgeEpoch('purged'))).toBe('0');
-      throw write;
-    }
-    await engine.executeRaw(`INSERT INTO reason_purge_tombstones (source_id, commit_sha, path) VALUES
-      ('purged', 'c1', 'notes/a.md'), ('purged', 'c2', 'notes/b.md'), ('default', 'c3', 'notes/c.md')`);
+    for (let i = 0; i < 3; i++) await engine.bumpSourcePurgeEpoch('purged');
+    await engine.insertReasonPurgeTombstones('purged', ['c1', 'c2'], ['notes/a.md', 'notes/b.md']);
+    await engine.insertReasonPurgeTombstones('default', ['c3'], ['notes/c.md']);
     const order = (rows: Array<{ commit_sha: string; path: string }>) => rows.map(r => ({ commit_sha: r.commit_sha, path: r.path })).sort((a, b) => a.commit_sha.localeCompare(b.commit_sha));
     const seen = {
       epoch: String(await engine.readSourcePurgeEpoch('purged')),
@@ -832,6 +827,23 @@ describe('engine parity: write journal', () => {
     expect(answers).toMatchObject({ before: null, sameRow: true, otherWriter: null, otherRequest: null, duplicate: 'refused' });
     expect(answers.read).toEqual(answers.inserted);
     expect(answers.inserted).toMatchObject({ idIsUuid: true, incarnation: true, state: 'recovering', recoveryBytes: 12, intentBytes: 34, terminalBytes: 4096 });
+    return answers;
+  });
+
+  parityTest('readTopologyChangeDigest reads the digest a request id recorded for a source, whichever writer recorded it', {
+    methods: ['readLedgerSource', 'insertTopologyChange', 'readTopologyChangeDigest'],
+  }, async (engine) => {
+    const before = await engine.readTopologyChangeDigest(REQUEST, 'default');
+    const source = await engine.readLedgerSource('default');
+    await engine.insertTopologyChange(lifecycleRow(source!.incarnation));
+    const answers = {
+      before,
+      stored: await engine.readTopologyChangeDigest(REQUEST, 'default'),
+      upperCase: await engine.readTopologyChangeDigest(REQUEST.toUpperCase(), 'default'),
+      otherSource: await engine.readTopologyChangeDigest(REQUEST, 'parity-no-such-source'),
+      otherRequest: await engine.readTopologyChangeDigest(OTHER_TOKEN, 'default'),
+    };
+    expect(answers).toEqual({ before: null, stored: 'e'.repeat(64), upperCase: 'e'.repeat(64), otherSource: null, otherRequest: null });
     return answers;
   });
 

@@ -57,6 +57,7 @@ import * as factsHeld from './facts-held.ts';
 import * as factsRest from './facts-rest.ts';
 import * as factsHoldingPurges from './facts-holding-purges.ts';
 import * as cliReadsImport from './cli-reads-import.ts';
+import * as listReads from './list-reads.ts';
 import * as cliReadsOps from './cli-reads-ops.ts';
 import * as cliReadsSearchPages from './cli-reads-search-pages.ts';
 import * as wantedLinks from './wanted-links.ts';
@@ -331,6 +332,8 @@ export const STORE_MEMBERS = {
   ...remoteLinks,
   // The facts backstop effect's two extraction reads (rust/docs/store/jobs.md, "Facts extraction reads").
   ...factsBackstop,
+  // The page-list, slug-source, access and connector-status reads (rust/docs/store/list-reads.md).
+  ...listReads,
   // The dream cycle's persistence journal reads (rust/docs/store/dream.md, "Dream cycle statements").
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 

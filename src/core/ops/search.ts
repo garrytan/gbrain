@@ -591,7 +591,7 @@ async function prepareExplainTarget(
   const retry = { tool, arguments: explainRetryArgs(p) };
   let probe;
   try {
-    probe = await probeTarget((sql, params) => ctx.engine.executeRaw(sql, params), slug,
+    probe = await probeTarget(ctx.engine, slug,
       { ...scope, excludePrivate, requireSafeChunks: ctx.remote !== false }, await chunkManifestReads(ctx.engine));
   } catch {
     return { trace: new TargetTrace({ slug, sourceId }) };

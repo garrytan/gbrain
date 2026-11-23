@@ -131,6 +131,7 @@ import * as timelineImpl from './engine-sql/timeline.ts';
 import * as sourcesImpl from './engine-sql/sources.ts';
 import * as notifierImpl from './engine-sql/notifier.ts';
 import * as cliReadsImpl from './engine-sql/cli-reads-import.ts';
+import * as listReadsImpl from './engine-sql/list-reads.ts';
 import * as writeMiscImpl from './engine-sql/write-misc.ts';
 import * as repairBookkeepingImpl from './engine-sql/repair-bookkeeping.ts';
 import * as managedSyncOrphansImpl from './engine-sql/managed-sync-orphans.ts';
@@ -2315,6 +2316,7 @@ export class PGLiteEngine implements BrainEngine {
   insertWithdrawalEffects(spec: persistenceJournalImpl.WithdrawalEffectsSpec) { return persistenceJournalImpl.insertWithdrawalEffects(this.engineSql, spec); }
   readSourceMembership(sourceId: string, opts?: { lock?: boolean | 'update' }) { return persistenceClaimsImpl.readSourceMembership(this.engineSql, sourceId, opts); }
   findTopologyChanges(principalId: string, requestIds: string[]) { return persistenceClaimsImpl.findTopologyChanges(unscopedExecutor(this.engineSql, 'persistence: topology probe ran unscoped through executeRaw'), principalId, requestIds); }
+  readTopologyChangeDigest(requestId: string, sourceId: string) { return persistenceClaimsImpl.readTopologyChangeDigest(unscopedExecutor(this.engineSql, 'persistence: sources add replay read ran unscoped through executeRaw'), requestId, sourceId); }
   listTopologyRecoveries(hostId: string, after: string | null, limit: number) { return persistenceClaimsImpl.listTopologyRecoveries(unscopedExecutor(this.engineSql, 'persistence: topology recovery scan ran unscoped through executeRaw'), hostId, after, limit); }
   readTopologyChange(principalId: string, requestId: string) { return persistenceClaimsImpl.readTopologyChange(unscopedExecutor(this.engineSql, 'persistence: topology receipt read ran unscoped through executeRaw'), principalId, requestId); }
   insertTopologyChange(row: persistenceClaimsImpl.TopologyChangeInsert) { return persistenceClaimsImpl.insertTopologyChange(this.engineSql, row); }
@@ -2620,6 +2622,7 @@ export class PGLiteEngine implements BrainEngine {
   readPageTitlesById(ids: readonly number[]) { return entityReadsImpl.readPageTitlesById(this.untimedRead, ids); }
   readTextMentionPages(sourceIds: readonly string[], slugs: readonly string[]) { return entityReadsImpl.readTextMentionPages(this.untimedRead, sourceIds, slugs); }
   listLocalPathSources() { return sourcesImpl.listLocalPathSources(unscopedExecutor(this.engineSql, 'sources: source resolution read it unscoped through executeRaw')); }
+  listSourcePathRows() { return sourcesImpl.listSourcePathRows(unscopedExecutor(this.engineSql, 'sources: sources add read it unscoped through executeRaw')); }
   readPlainSyncSource(sourceId: string) { return sourcesImpl.readPlainSyncSource(unscopedExecutor(this.engineSql, 'sources: plain-directory sync read it unscoped through executeRaw'), sourceId); }
   readOwnerOnlySourcesPresent() { return sourcesImpl.readOwnerOnlySourcesPresent(unscopedExecutor(this.engineSql, 'sources: the owner-only check read it unscoped through executeRaw'), ownerOnlyLineageReadable(this)); }
   readOwnerOnlySourceConfig(sourceId: string) { return sourcesImpl.readOwnerOnlySourceConfig(unscopedExecutor(this.engineSql, 'sources: the owner-only check read it unscoped through executeRaw'), sourceId); }
@@ -2756,6 +2759,12 @@ export class PGLiteEngine implements BrainEngine {
   readSourceIncarnation(sourceId: string) { return cliReadsImpl.readSourceIncarnation(this.cliReads, sourceId); }
   readSyncDispatchRow(sourceId: string) { return syncDispatchImpl.readSyncDispatchRow(this, sourceId); }
   readRetainedSources(sourceIds: readonly string[]) { return cliReadsImpl.readRetainedSources(this.cliReads, sourceIds); }
+  listLiveSlugSourceIds(slug: string) { return listReadsImpl.listLiveSlugSourceIds(this.rawRead, slug); }
+  resolveChainAnchorRows(slug: string, policy: PageReadPolicy) { return listReadsImpl.resolveChainAnchorRows(this.rawRead, slug, policy); }
+  probeTargetRows(slug: string, policy: PageReadPolicy, chunkManifest?: boolean) { return listReadsImpl.probeTargetRows(this.rawRead, slug, policy, chunkManifest); }
+  readCompanyBrainEvidenceRows(sourceId: string) { return listReadsImpl.readCompanyBrainEvidenceRows(this.rawRead, sourceId); }
+  listCardRows(query: listReadsImpl.CardListQuery) { return listReadsImpl.listCardRows(this.rawRead, query); }
+  readShelfPageRows(sourceId: string) { return listReadsImpl.readShelfPageRows(this.rawRead, sourceId); }
   hasCompanyBrainReceipt(sourceId: string) { return cliReadsImpl.hasCompanyBrainReceipt(this.cliReads, sourceId); }
   readGuestSourceRow(sourceId: string) { return cliReadsImpl.readGuestSourceRow(this.cliReads, sourceId); }
   listGuestSourceIds(sourceIds: readonly string[]) { return cliReadsImpl.listGuestSourceIds(this.cliReads, sourceIds); }

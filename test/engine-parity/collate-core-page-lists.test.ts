@@ -103,7 +103,7 @@ describe('core and company-brain lists', () => {
     return notices;
   });
 
-  parityTest('readCompanyBrainEvidence picks the first page, owner and decision by byte', { methods: ['putPage', 'addLinksBatch', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('readCompanyBrainEvidence picks the first page, owner and decision by byte', { methods: ['putPage', 'addLinksBatch', 'readCompanyBrainEvidenceRows'] }, async (engine, backend) => {
     await createSource(engine, backend, 'brain-example');
     const put = (slug: string, type: string) => engine.putPage(slug, { type, title: `Title ${slug}`, compiled_truth: `${slug} body`, timeline: '' } as never, { sourceId: 'brain-example' });
     const link = (from: string, to: string, link_type: string) => ({ from_slug: from, to_slug: to, link_type, context: '', link_source: 'markdown',
@@ -178,7 +178,7 @@ describe('storage shelf and fact pool lists', () => {
     }
   }
 
-  parityTest('listCards pages the shelf by slug byte with an offset, without a skip or a repeat', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('listCards pages the shelf by slug byte with an offset, without a skip or a repeat', { methods: ['putPage', 'listCardRows'] }, async (engine, backend) => {
     await seedShelf(engine, backend);
     const walked: string[] = [];
     for (let offset = 0; offset < MIXED_SLUGS.length; offset++) {
@@ -198,7 +198,7 @@ describe('storage shelf and fact pool lists', () => {
     return ids;
   });
 
-  parityTest('readShelfCards lists the shelf by slug byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('readShelfCards lists the shelf by slug byte', { methods: ['putPage', 'readShelfPageRows'] }, async (engine, backend) => {
     await seedShelf(engine, backend);
     const ids = (await readShelfCards(engine)).map(c => c.id);
     expect(ids).toEqual([...BYTE_SLUGS]);
@@ -265,7 +265,7 @@ describe('stale-mention scan', () => {
 
 describe('onboard page-type walk', () => {
   parityTest('type_proliferation walks the (source, type) pairs by byte: a tie names the byte-first pool, and the walk reaches every source',
-    { methods: ['putPage', 'setConfig', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+    { methods: ['putPage', 'setConfig'] }, async (engine, backend) => {
       // `a-z` is on one pack; `a0` and `ab` share another. Each pack is `warn` with six undeclared types over it, so the worst
       // pool on a tie is the first one read: bytes read `a-z` first, an en_US order reads `a0` first.
       const env = { GBRAIN_HOME: emptyHome(), GBRAIN_SCHEMA_PACK: undefined };
@@ -283,8 +283,6 @@ describe('onboard page-type walk', () => {
         for (let i = 0; i < await declared('gbrain-base-v2') + 6; i++) await add('a-z', typeName('custom-type', i), i);
         for (let i = 0; i < await declared('gbrain-everything') + 6; i++) await add('a0', typeName('custom-type', i), i);
         await add('ab', typeName('custom-type', 0), 0);
-        // The check reports a failed query as not verified, so read raw SQL once first: the Rust arm stops here on its refusal.
-        await engine.executeRaw('SELECT 1');
         const tie = (await checkTypeProliferation(engine)).check;
         expect(tie.status).toBe('warn');
         expect(tie.message).toContain('(source a-z, pack gbrain-base-v2;');

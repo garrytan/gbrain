@@ -218,6 +218,25 @@ fn sources_by_id(read: &dyn KvRead) -> Result<HashMap<String, SourceRecord>> {
         .collect())
 }
 
+/// The pages of `pages` that `pageReadFilter(alias, scope, params, live)` admits, in their order
+/// (the reads of `list_reads.rs` that take a caller's read policy).
+pub(crate) fn pages_in_read_scope(
+    read: &dyn KvRead,
+    pages: Vec<PageRecord>,
+    scope: &PageReadScope,
+) -> Result<Vec<PageRecord>> {
+    let sources = sources_by_id(read)?;
+    let trust = TrustPolicy::parse(scope.min_trust.as_deref(), scope.suppress_flagged)?;
+    let mut owner_only = OwnerOnlyCache::default();
+    let mut kept = Vec::with_capacity(pages.len());
+    for page in pages {
+        if passes_read_scope(read, &page, scope, &trust, &sources, &mut owner_only)? {
+            kept.push(page);
+        }
+    }
+    Ok(kept)
+}
+
 /// `pageReadFilter(alias, scope, params, live)`: the source clause, the page policy, the trust
 /// policy and, with `live`, the live filter.
 fn passes_read_scope(

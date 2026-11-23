@@ -426,7 +426,7 @@ async function insertApiSource(engine: BrainEngine, opts: AddSourceOpts, kind: '
   const request = kind === 'apple-contacts' ? opts.appleContacts! : kind === 'slack' ? opts.slack! : opts.meetings!;
   const choice = chooseMeetingsRecord(opts.id, request.record, request.dir, kind);
   if (choice.dir) {
-    const overlap = (await engine.executeRaw<{ id: string; local_path: string }>('SELECT id,local_path FROM sources WHERE local_path IS NOT NULL'))
+    const overlap = (await engine.listSourcePathRows())
       .find(row => isPathContained(choice.dir!, row.local_path) || isPathContained(row.local_path, choice.dir!));
     if (overlap) throw new SourceOpError('overlapping_path',
       `${choice.dir} overlaps source "${overlap.id}" at ${overlap.local_path}; its pages would be imported by both sources. Choose a directory no other source covers.`);

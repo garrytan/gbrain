@@ -32,6 +32,7 @@ export type W1Domain = typeof W1_DOMAINS[number];
  * `cjk-search` domain (cases tagged `#cjk`), the FTS branch is `search`.
  */
 const OOS = {
+  listReads: 'out-of-scope:list-reads (born in engine-sql/list-reads.ts; pinned by test/list-reads-sql-pin.test.ts and the engine-parity collate files)',
   lifecycle: 'out-of-scope:lifecycle (connection, pool, transaction, raw seams)',
   helper: 'out-of-scope:internal-helper (private; exercised through public callers)',
   search: 'out-of-scope:search (FTS/vector hot paths, dialect-specific, not a W1 domain)',
@@ -1261,7 +1262,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'releaseDrainLeaseHolder': OOS.cycleLocks,
   // sources
   'listAllSources': 'sources', 'listSourceLocalPaths': 'sources', 'countRepoBoundSources': 'sources', 'updateSourceConfig': 'sources', 'markSourceSynced': 'sources', 'advanceSyncCheckpoint': 'sources',
-  'listLocalPathSources': 'sources', 'readPlainSyncSource': OOS.callerRawSql, 'readOwnerOnlySourcesPresent': OOS.callerRawSql, 'readOwnerOnlySourceConfig': OOS.callerRawSql, 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'getSource': 'sources',
+  'listLiveSlugSourceIds': OOS.listReads, 'resolveChainAnchorRows': OOS.listReads, 'probeTargetRows': OOS.listReads, 'readCompanyBrainEvidenceRows': OOS.listReads, 'listCardRows': OOS.listReads, 'readShelfPageRows': OOS.listReads, 'listLocalPathSources': 'sources', 'listSourcePathRows': 'sources', 'readPlainSyncSource': OOS.callerRawSql, 'readOwnerOnlySourcesPresent': OOS.callerRawSql, 'readOwnerOnlySourceConfig': OOS.callerRawSql, 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'getSource': 'sources',
   'listStaleSyncSourceIds': 'sources', 'readSourceRow': 'sources', 'lockSourceRow': 'sources', 'readSourceChunkerVersion': 'sources',
   'setSourceChunkerVersion': 'sources', 'isSourceClaimed': 'sources',
   'countSourcePages': 'sources', 'insertSource': 'sources', 'readSourceDeleteImpact': 'sources', 'deleteSourceRecord': 'sources',
@@ -1584,7 +1585,7 @@ export const DOMAIN_OF: Record<string, string> = {
   // entity and mention reads the CLI made through executeRaw
   'readMentionLastPass': OOS.entityReads, 'countPagesDueForMentions': OOS.entityReads, 'readIdentitySiblingCandidates': OOS.entityReads,
   'findExactSlug': OOS.entityReads, 'readExtractionLagCounts': OOS.entityReads, 'readIgnoredPrivacyLabelPages': OOS.entityReads,
-  'readSourceMembership': OOS.journal, 'findTopologyChanges': OOS.journal, 'renewWriteClaim': OOS.journal, 'releaseUnpublishedClaim': OOS.journal, 'expireStaleWriteClaims': OOS.journal,
+  'readSourceMembership': OOS.journal, 'findTopologyChanges': OOS.journal, 'readTopologyChangeDigest': OOS.journal, 'renewWriteClaim': OOS.journal, 'releaseUnpublishedClaim': OOS.journal, 'expireStaleWriteClaims': OOS.journal,
   'readSegmentedPageSealed': OOS.callerRawSql, 'storeSegmentDerivationsIfLive': OOS.callerRawSql, 'listMentionSourceIds': OOS.callerRawSql, 'writeMentionIndexStatus': OOS.callerRawSql, 'lockMentionSources': OOS.callerRawSql, 'listMentionLinkOrigins': OOS.callerRawSql, 'deleteSourceMentionLinks': OOS.callerRawSql, 'clearMentionSourceIndex': OOS.callerRawSql, 'listStaleDerivedAliasSlugs': OOS.callerRawSql, 'deleteDerivedAliasesForSlugs': OOS.callerRawSql, 'listAliasDuePages': OOS.callerRawSql, 'listDerivedAliasRows': OOS.callerRawSql, 'readMentionPageRevisions': OOS.callerRawSql, 'insertDerivedAliasRows': OOS.callerRawSql, 'upsertPageAliasState': OOS.callerRawSql, 'listMentionCandidatePages': OOS.callerRawSql, 'listGazetteerEntryKeys': OOS.callerRawSql, 'listMentionLinkersOfTargets': OOS.callerRawSql, 'lockMentionEntries': OOS.callerRawSql, 'applyGazetteerEntryChanges': OOS.callerRawSql, 'resetMentionRevisions': OOS.callerRawSql, 'readMentionGenerations': OOS.callerRawSql, 'listMentionDuePages': OOS.callerRawSql, 'listPageOutLinks': OOS.callerRawSql, 'deleteLinksById': OOS.callerRawSql, 'upsertPageMentionState': OOS.callerRawSql, 'readMentionStatusStates': OOS.callerRawSql, 'readMentionPolicyFingerprints': OOS.callerRawSql, 'resetSourceMentionIndexRevisions': OOS.callerRawSql, 'listLivePageSourceIds': OOS.callerRawSql, 'listGazetteerPages': OOS.callerRawSql, 'listGazetteerAliases': OOS.callerRawSql, 'readPageStampTimes': OOS.callerRawSql, 'readPageRevisionForShare': OOS.callerRawSql, 'readExplainPage': OOS.callerRawSql, 'readExplainScanPage': OOS.callerRawSql, 'countMentionLinksTo': OOS.callerRawSql, 'readPageNameText': OOS.callerRawSql, 'listFrontmatterAliasNorms': OOS.callerRawSql, 'listRejectedDeclarationPages': OOS.callerRawSql,
   'readRetirementHop': OOS.callerRawSql, 'readEntityCardRows': OOS.callerRawSql,
   'readLiveSlugs': OOS.callerRawSql, 'readLivePageTypes': OOS.callerRawSql, 'readTrigramCandidates': OOS.callerRawSql, 'readPrefixCandidates': OOS.callerRawSql, 'readPrefixDirs': OOS.callerRawSql, 'readPrefixTitleMatches': OOS.callerRawSql, 'readNamedEntitySlugs': OOS.callerRawSql,
@@ -2085,6 +2086,7 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('listSourceLocalPaths', [['default', (e) => e.listSourceLocalPaths()]]),
   ...variants('countRepoBoundSources', [['default', (e) => e.countRepoBoundSources()]]),
   ...variants('listLocalPathSources', [['default', (e) => e.listLocalPathSources()]]),
+  ...variants('listSourcePathRows', [['default', (e) => e.listSourcePathRows()]]),
   ...variants('listSourceRoutingRows', [['default', (e) => e.listSourceRoutingRows()]]),
   ...variants('countDefaultSourceSplit', [['default', (e) => e.countDefaultSourceSplit()]]),
   ...variants('updateSourceConfig', [['default', (e) => e.updateSourceConfig(SRC, { federated: true })]]),
@@ -2800,6 +2802,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     ['lock', (e) => e.transaction((tx: any) => tx.readSourceMembership(SRC, { lock: true }))],
   ]),
   ...variants('findTopologyChanges', [['default', (e) => e.transaction((tx: any) => tx.findTopologyChanges(JOURNAL_REQUEST, [JOURNAL_REQUEST]))]]),
+  ...variants('readTopologyChangeDigest', [['default', (e) => e.readTopologyChangeDigest(JOURNAL_REQUEST, 'default')]]),
   ...variants('renewWriteClaim', [['default', (e) => e.renewWriteClaim({ id: JOURNAL_REQUEST, token: JOURNAL_REQUEST, leaseMs: 30_000, phaseJson: null })]]),
   ...variants('releaseUnpublishedClaim', [['default', (e) => e.releaseUnpublishedClaim({ id: JOURNAL_REQUEST, token: JOURNAL_REQUEST, reason: 'parity', charge: false })]]),
   ...variants('expireStaleWriteClaims', ([false, true] as const).map((direct) => [direct ? 'direct' : 'default',

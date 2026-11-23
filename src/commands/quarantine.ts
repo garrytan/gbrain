@@ -209,10 +209,7 @@ async function runClear(engine: BrainEngine, args: string[]): Promise<void> {
   // candidate sources explicitly; ambiguity is an error, not a coin flip.
   let sourceId = sourceIdFlag;
   if (!sourceId) {
-    const rows = await engine.executeRaw<{ source_id: string }>(
-      `SELECT source_id FROM pages WHERE slug = $1 AND deleted_at IS NULL ORDER BY source_id COLLATE "C"`,
-      [slug],
-    );
+    const rows = (await engine.listLiveSlugSourceIds(slug)).map(source_id => ({ source_id }));
     if (rows.length > 1) {
       console.error(
         `Slug "${slug}" exists in ${rows.length} sources: ${rows.map(r => r.source_id).join(', ')}.\n` +

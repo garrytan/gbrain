@@ -76,6 +76,7 @@ pub mod jobs;
 pub mod keyword;
 pub mod large_page;
 pub mod link_queries;
+pub mod list_reads;
 pub mod memory_mutation_reads;
 pub mod mention_state;
 pub mod moved_page_reads;
