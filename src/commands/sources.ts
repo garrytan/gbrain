@@ -60,6 +60,7 @@ import {
 } from '../core/sources-ops.ts';
 import { isValidRepoName } from '../core/github-source.ts';
 import { ALL_GOOGLE_SERVICES, DEFAULT_CALENDAR_ID } from '../core/google/types.ts';
+import { rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 import { defaultGoogleAddTuning, parseGoogleAddFlag } from './sources-google-flags.ts';
 import { noGrantFloorNext, reportAddOutcome } from './sources-add-next.ts';
 import {
@@ -138,6 +139,35 @@ async function fetchSource(engine: BrainEngine, id: string): Promise<SourceRow |
 
 
 // ── Subcommand: add ─────────────────────────────────────────
+
+/**
+ * The active source that already syncs `account` for an overlapping slice of `services` (and `overlap`, the shared
+ * services in order), or null. Two calendar sources pointing at DIFFERENT calendars never collide — one calendar per
+ * source is how secondary calendars are ingested. Read through the typed listAllSources, which every engine serves.
+ * @internal Exported for test/engine-parity/refusal-blocker-sites.test.ts.
+ */
+export async function findDuplicateGoogleSource(
+  engine: BrainEngine,
+  account: string,
+  services: readonly string[],
+  calendarId: string,
+): Promise<{ id: string; overlap: string } | null> {
+  for (const row of await engine.listAllSources()) {
+    const c = (row.config ?? {}) as Record<string, unknown>;
+    if (c.kind !== 'google' || c.g_account !== account) continue;
+    const existingServices =
+      typeof c.g_services === 'string'
+        ? c.g_services.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+        : ['gmail', 'calendar', 'contacts'];
+    let overlap = services.filter((s) => existingServices.includes(s));
+    const existingCal =
+      typeof c.g_calendar_id === 'string' && c.g_calendar_id.trim() ? c.g_calendar_id.trim() : DEFAULT_CALENDAR_ID;
+    if (existingCal !== calendarId) overlap = overlap.filter((s) => s !== 'calendar');
+    if (overlap.length === 0) continue;
+    return { id: row.id, overlap: overlap.join(', ') };
+  }
+  return null;
+}
 
 async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   const apiKind = args.includes('--kind') ? args[args.indexOf('--kind') + 1] : undefined;
@@ -303,34 +333,16 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     // via --calendar-id, or calendar-only next to gmail-only) is the
     // supported topology, not duplication.
     try {
-      const dupRows = await engine.executeRaw<{ id: string; config: unknown }>(
-        `SELECT id, config FROM sources WHERE archived IS NOT TRUE`,
-        [],
-      );
-      let overlapNote = '';
-      const dup = dupRows.find((r) => {
-        const c = typeof r.config === 'string' ? (JSON.parse(r.config) as Record<string, unknown>) : ((r.config ?? {}) as Record<string, unknown>);
-        if (c.kind !== 'google' || c.g_account !== gAccount) return false;
-        const existingServices =
-          typeof c.g_services === 'string'
-            ? c.g_services.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
-            : ['gmail', 'calendar', 'contacts'];
-        let overlap = gServices.filter((s) => existingServices.includes(s));
-        // Two calendar sources pointing at DIFFERENT calendars never collide —
-        // one calendar per source is how secondary calendars are ingested.
-        const existingCal =
-          typeof c.g_calendar_id === 'string' && c.g_calendar_id.trim() ? c.g_calendar_id.trim() : DEFAULT_CALENDAR_ID;
-        if (existingCal !== gTuning.calendarId) overlap = overlap.filter((s) => s !== 'calendar');
-        if (overlap.length === 0) return false;
-        overlapNote = overlap.join(', ');
-        return true;
-      });
+      const dup = await findDuplicateGoogleSource(engine, gAccount!, gServices, gTuning.calendarId);
       if (dup) {
         console.error(
-          `Warning: source "${dup.id}" already syncs ${gAccount} (${overlapNote}) — a second source for the same account and services duplicates its pages and loops in federated reads.`,
+          `Warning: source "${dup.id}" already syncs ${gAccount} (${dup.overlap}) — a second source for the same account and services duplicates its pages and loops in federated reads.`,
         );
       }
-    } catch { /* preflight is best-effort */ }
+    } catch (e) {
+      // A Rust brain's typed refusal is not "no duplicate": let it surface. Any other failure: the preflight is best-effort.
+      rethrowCapabilityRefusal(e);
+    }
     // Access-mode validation (default vault). command/env let a stack that
     // already holds Google access (gog, gcloud, a credential gateway) drive
     // this source without gbrain's OAuth flow; --account stays required as

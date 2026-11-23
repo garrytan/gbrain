@@ -9,9 +9,12 @@
  *    source is out of default search only when it holds live pages, its federated setting is unset and it was not added
  *    by a remote caller; a Rust brain gives the same answer. A committed managed `sources add` (addOutcome) reads the
  *    stored federated setting back when its result carries none, and reports what the add means for default search.
+ *    `gbrain sources add --kind google` (findDuplicateGoogleSource) warns about an active source that already syncs the
+ *    same account for an overlapping slice of services and calendar.
  *  - Regression: a caller that swallows the Rust refusal returns its quiet default (no rows, no notice), so the
  *    regression gate reports "skipped: 0 replay-eligible rows" for a brain that has them, a sync never mentions that
- *    a source's pages are out of default search and an add never says its source stays out of default search.
+ *    a source's pages are out of default search, an add never says its source stays out of default search and the
+ *    duplicate-Google-account warning is never given.
  *  - Why existing coverage misses it: the caller's catch turns the refusal into the default, which no engine-level case
  *    reads.
  *  - Seam: none. Rows come from logEvalCandidate, sources from createSource and pages from putPage; ids and timestamps
@@ -23,7 +26,9 @@ import { loadReplayRows } from '../../src/commands/eval-whoknows.ts';
 import { syncOutOfSearchNotice } from '../../src/commands/sources-add-next.ts';
 import { addOutcome } from '../../src/commands/sources-lifecycle.ts';
 import type { ParsedSourceLifecycle } from '../../src/commands/sources-lifecycle-args.ts';
-import { createSource, parityArms } from './harness.ts';
+import { findDuplicateGoogleSource } from '../../src/commands/sources.ts';
+import { DEFAULT_CALENDAR_ID } from '../../src/core/google/types.ts';
+import { archiveSource, createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -111,6 +116,33 @@ describe('engine parity: refusal-swallow sites', () => {
       }
       expect(outcome['unfed-src']).toEqual(['source_not_in_default_search']);
       return { outcome, said };
+    },
+  );
+
+  parityTest(
+    'the duplicate Google account preflight finds an active source with the same account and an overlapping service and calendar',
+    { methods: ['getSource'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'g-mail', { kind: 'google', g_account: 'ann@example.com', g_services: 'gmail' });
+      await createSource(engine, backend, 'g-work-cal', { kind: 'google', g_account: 'ann@example.com', g_services: 'calendar', g_calendar_id: 'work' });
+      await createSource(engine, backend, 'g-bob', { kind: 'google', g_account: 'bob@example.com' });
+      await createSource(engine, backend, 'g-old', { kind: 'google', g_account: 'cy@example.com' });
+      await archiveSource(engine, backend, 'g-old');
+      await createSource(engine, backend, 'plain', {});
+      expect((await engine.getSource('g-mail'))?.config.kind).toBe('google');
+      const find = (account: string, services: string[], calendar = DEFAULT_CALENDAR_ID) => findDuplicateGoogleSource(engine, account, services, calendar);
+      const found = {
+        gmail: await find('ann@example.com', ['gmail']),
+        calendarDefault: await find('ann@example.com', ['calendar']),
+        calendarWork: await find('ann@example.com', ['calendar'], 'work'),
+        contacts: await find('ann@example.com', ['contacts']),
+        allServices: await find('ann@example.com', ['gmail', 'calendar', 'contacts'], 'work'),
+        otherAccount: await find('bob@example.com', ['gmail']),
+        archived: await find('cy@example.com', ['gmail']),
+        nobody: await find('dee@example.com', ['gmail']),
+      };
+      expect(found.gmail).toEqual({ id: 'g-mail', overlap: 'gmail' });
+      return found;
     },
   );
 });
