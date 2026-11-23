@@ -67,6 +67,7 @@ use serde_json::{Map, Value, json};
 
 mod checkpoint_rows;
 mod connector_orphans;
+mod diagnostic_effects;
 mod dream_reads;
 mod effect_scans;
 mod effect_worker;

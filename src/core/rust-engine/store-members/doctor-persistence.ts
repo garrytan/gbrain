@@ -24,6 +24,18 @@ export const listCapacityCounters: Member<'listCapacityCounters'> = async brain 
 export const listLifetimeCounters: Member<'listLifetimeCounters'> = async brain =>
   await storeCall({ member: 'listLifetimeCounters' }, () => brain.listLifetimeCounters()) as Awaited<ReturnType<BrainEngine['listLifetimeCounters']>>;
 
+/** Queued `writer_busy` effects per source (rust/crates/gbrain-store/src/persistence/diagnostic_effects.rs). */
+export const listStalledCatchupRows: Member<'listStalledCatchupRows'> = async (brain, sourceIds, stallMs) =>
+  await storeCall({ member: 'listStalledCatchupRows' }, () => brain.listStalledCatchupRows(sourceIds ? [...sourceIds] : null, stallMs)) as Awaited<ReturnType<BrainEngine['listStalledCatchupRows']>>;
+
+/** Parked Git targets per source, code and former binding (persistence/diagnostic_effects.rs). */
+export const listParkedGroupRows: Member<'listParkedGroupRows'> = async (brain, sourceIds) =>
+  await storeCall({ member: 'listParkedGroupRows' }, () => brain.listParkedGroupRows(sourceIds ? [...sourceIds] : null)) as Awaited<ReturnType<BrainEngine['listParkedGroupRows']>>;
+
+/** Each binding of a live source incarnation with its worktree's owner host, by source id (persistence/diagnostic_effects.rs). */
+export const listSourceBindingsForMovement: Member<'listSourceBindingsForMovement'> = async (brain, sourceIds) =>
+  await storeCall({ member: 'listSourceBindingsForMovement' }, () => brain.listSourceBindingsForMovement(sourceIds ? [...sourceIds] : null)) as Awaited<ReturnType<BrainEngine['listSourceBindingsForMovement']>>;
+
 /** The store counts exactly; `estimate` (Postgres's planner row estimate) has nothing to be cheaper than. */
 export const countPersistenceRequestRows: Member<'countPersistenceRequestRows'> = async brain =>
   await storeCall({ member: 'countPersistenceRequestRows' }, () => brain.countPersistenceRequestRows()) as { rows: string };
@@ -89,14 +101,11 @@ export const readLiveConsumerSummary: Member<'readLiveConsumerSummary'> = async 
 export const countParkedEffects: Member<'countParkedEffects'> = async () => 0;
 export const listParkedEffects: Member<'listParkedEffects'> = async () => [];
 export const listGitPushHoldRows: Member<'listGitPushHoldRows'> = async () => [];
-export const listStalledCatchupRows: Member<'listStalledCatchupRows'> = async () => [];
-export const listParkedGroupRows: Member<'listParkedGroupRows'> = async () => [];
 export const readStaleEmbeddingCounts: Member<'readStaleEmbeddingCounts'> = async () => ({ count: 0, failed: 0, requeued: 0 });
 export const listStaleEmbeddingEffects: Member<'listStaleEmbeddingEffects'> = async () => [];
 /** No worktree or source binding row exists, so none is orphaned. */
 export const listOrphanBindingRows: Member<'listOrphanBindingRows'> = async () => [];
 export const listWorktreeIds: Member<'listWorktreeIds'> = async () => [];
-export const listSourceBindingsForMovement: Member<'listSourceBindingsForMovement'> = async () => [];
 export const listOwnerBindings: Member<'listOwnerBindings'> = async () => [];
 export const listConsumerOwners: Member<'listConsumerOwners'> = async () => [];
 export const listStuckWorktreeRefreshes: Member<'listStuckWorktreeRefreshes'> = async () => [];

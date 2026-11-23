@@ -181,4 +181,41 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_recent_writer_versions(days))
     }
+
+    /// `listStalledCatchupRows(sourceIds, stallMs)`: per source, the queued `writer_busy` effects.
+    #[napi]
+    pub fn list_stalled_catchup_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Option<Vec<String>>,
+        stall_ms: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_stalled_catchup_rows(source_ids.as_deref(), stall_ms)
+        })
+    }
+
+    /// `listParkedGroupRows(sourceIds)`: the parked Git targets per source, code and former binding.
+    #[napi]
+    pub fn list_parked_group_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Option<Vec<String>>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_parked_group_rows(source_ids.as_deref())
+        })
+    }
+
+    /// `listSourceBindingsForMovement(sourceIds)`: each live binding with its worktree's owner host.
+    #[napi]
+    pub fn list_source_bindings_for_movement<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Option<Vec<String>>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_source_bindings_for_movement(source_ids.as_deref())
+        })
+    }
 }
