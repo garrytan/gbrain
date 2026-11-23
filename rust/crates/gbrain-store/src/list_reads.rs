@@ -10,6 +10,9 @@ use crate::chunks::{keyed_chunks, segmented};
 use crate::cli_reads::pg_text::{fm_text, jsonb_value, timestamptz_text};
 use crate::aliases::all_alias_rows;
 use crate::error::Result;
+use crate::facts::PrivacyPolicy;
+use crate::facts::privacy::{page_access_allowed, page_folder_rules_allowed, stamped_rules};
+use crate::owner_only::{OwnerOnlyForm, OwnerOnlySources};
 use crate::keyword::sql_like;
 use crate::link_queries::all_links;
 use crate::page_ops::{PageReadScope, pages_in_read_scope};
@@ -353,6 +356,19 @@ fn title_channel(title: &str) -> Option<String> {
         .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
         .collect();
     (!name.is_empty()).then(|| name.to_ascii_lowercase())
+}
+
+/// One page `whoCanRead` reports on (src/commands/access.ts): its type, frontmatter, stamped
+/// folder rule ids (`source:rule`, null when none) and whether it is owner-only.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct WhoCanReadRow {
+    pub slug: String,
+    pub source_id: String,
+    #[serde(rename = "type")]
+    pub page_type: String,
+    pub frontmatter: Value,
+    pub folder_rule_ids: Option<Vec<String>>,
+    pub owner_only: bool,
 }
 
 /// The pages at `slug` that the read policy admits with its live filter on, by source id.
@@ -867,6 +883,90 @@ impl Store {
                 channels: channels.len() as u64,
             })
             .collect())
+    }
+
+    /// `readWhoCanReadRows(slug, sourceId, form)`: every page at `slug` (soft-deleted ones too), in
+    /// the source when given, by source id, with whether `ownerOnlyPageSql(form)` holds for it.
+    pub fn read_who_can_read_rows(
+        &self,
+        slug: &str,
+        source_id: Option<&str>,
+        form: OwnerOnlyForm,
+    ) -> Result<Vec<WhoCanReadRow>> {
+        let read = self.read()?;
+        let owner_only = OwnerOnlySources::read(&*read)?;
+        let mut pages: Vec<PageRecord> = all_pages(&*read)?
+            .into_iter()
+            .filter(|p| p.slug == slug && source_id.is_none_or(|s| s == p.source_id))
+            .collect();
+        pages.sort_by(|a, b| a.source_id.cmp(&b.source_id));
+        let mut rows = Vec::with_capacity(pages.len());
+        for p in pages {
+            let mut ids: Vec<String> = stamped_rules(&*read, &p)?
+                .into_iter()
+                .map(|r| format!("{}:{}", r.source_id, r.rule_id))
+                .collect();
+            ids.sort();
+            rows.push(WhoCanReadRow {
+                owner_only: owner_only.page_hidden(&*read, &p, form)?,
+                folder_rule_ids: (!ids.is_empty()).then_some(ids),
+                frontmatter: jsonb_value(&Value::Object(p.frontmatter)),
+                slug: p.slug,
+                source_id: p.source_id,
+                page_type: p.page_type,
+            });
+        }
+        Ok(rows)
+    }
+
+    /// `readPageAccessAllowed(sourceId, slug, identity, policy)`: whether the page (soft-deleted or
+    /// not) exists and `accessAllowedSql(identity)` admits it under the caller record's policy.
+    pub fn read_page_access_allowed(
+        &self,
+        source_id: &str,
+        slug: &str,
+        identity: &[String],
+        policy: &PrivacyPolicy,
+    ) -> Result<bool> {
+        let read = self.read()?;
+        match crate::pages::read_page(&*read, source_id, slug)? {
+            Some(page) => page_access_allowed(&*read, &page, identity, policy),
+            None => Ok(false),
+        }
+    }
+
+    /// `readPageFolderRulesAllowed(sourceId, slug, satisfied, policy)`: whether the page exists and
+    /// `folderRulesAllowedSql(satisfied)` admits it under the caller record's policy.
+    pub fn read_page_folder_rules_allowed(
+        &self,
+        source_id: &str,
+        slug: &str,
+        satisfied: &[String],
+        policy: &PrivacyPolicy,
+    ) -> Result<bool> {
+        let read = self.read()?;
+        match crate::pages::read_page(&*read, source_id, slug)? {
+            Some(page) => page_folder_rules_allowed(&*read, &page, satisfied, policy),
+            None => Ok(false),
+        }
+    }
+
+    /// `countLineageClosingRules(ruleIds, sourceId)`: how many of `rule_ids` are not
+    /// `<source>:<rule>` of a rule of the source that keeps only raw pages (`covers_derived` false).
+    pub fn count_lineage_closing_rules(&self, rule_ids: &[String], source_id: &str) -> Result<u64> {
+        let mut n = 0;
+        for id in rule_ids {
+            let raw_only = match id.strip_prefix(source_id).and_then(|r| r.strip_prefix(':')) {
+                Some(rule_id) => self
+                    .get_access_rule(source_id, rule_id)?
+                    .is_some_and(|r| !r.covers_derived),
+                None => false,
+            };
+            if !raw_only {
+                n += 1;
+            }
+        }
+        Ok(n)
     }
 
     /// `resolveChainAnchorRows(slug, policy)`: every live copy of `slug` the read policy admits, as

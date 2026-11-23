@@ -4,10 +4,12 @@
  * readRetainedSources is the connector status's "retained" flag (persistence/connector-status.ts).
  */
 import type { PageReadPolicy } from '../../types.ts';
-import type { AttendanceWindowRow, CardListQuery, ChatCensusRow, CardRow, CompanyBrainEvidenceRows, MentionScanLinkRow, MentionScanPageRow, PageBodyRow, PageSourceIdRow, RetypeProbeQuery, ShelfPageRow, SourceIdScope, TargetProbeSqlRow } from '../../engine-sql/list-reads.ts';
+import type { AttendanceWindowRow, CardListQuery, ChatCensusRow, WhoCanReadRow, CardRow, CompanyBrainEvidenceRows, MentionScanLinkRow, MentionScanPageRow, PageBodyRow, PageSourceIdRow, RetypeProbeQuery, ShelfPageRow, SourceIdScope, TargetProbeSqlRow } from '../../engine-sql/list-reads.ts';
 import { storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy, storePageTextPolicy } from './private-provenance.ts';
-import { privatePagesFilterFragment } from '../../search/private-visibility.ts';
+import { accessAllowedSql, currentCallerAccess, privatePagesFilterFragment } from '../../search/private-visibility.ts';
+import { ownerOnlyFormIn } from './private-provenance.ts';
+import type { OwnerOnlyForm } from '../../access/owner-only.ts';
 
 /**
  * A caller's read policy as the store's page read scope (`pageReadFilter` with its live filter, search/read-policy-sql.ts):
@@ -126,4 +128,45 @@ export const listEnabledLabelledOnlyMemberIds: StoreMember<[], string[]> = async
 export const readChatCensusRows: StoreMember<[sourceIds: readonly string[], chatTypes: readonly string[], dmTypes: readonly string[], hidePrivate: boolean], ChatCensusRow[]> = async (brain, sourceIds, chatTypes, dmTypes, hidePrivate) => {
   const excludePrivate = hidePrivate ? storePageTextPolicy('readChatCensusRows', () => privatePagesFilterFragment('p'), { noReaders: true }) : null;
   return (await storeCall({ member: 'readChatCensusRows' }, () => brain.readChatCensusRows({ sourceIds: [...sourceIds], chatTypes: [...chatTypes], dmTypes: [...dmTypes], excludePrivate }))) as ChatCensusRow[];
+};
+
+export const readWhoCanReadRows: StoreMember<[slug: string, sourceId: string | undefined, form: OwnerOnlyForm], WhoCanReadRow[]> = async (brain, slug, sourceId, form) =>
+  (await storeCall({ member: 'readWhoCanReadRows' }, () => brain.readWhoCanReadRows(slug, sourceId || null, form === 'closed' ? 'closed' : 'fn'))) as WhoCanReadRow[];
+
+/**
+ * The member-access and folder-rule tests (`accessAllowedSql`, `folderRulesAllowedSql`) run under the current caller
+ * record, which supplies only the folder coverage and the owner flag; the identity and satisfied set are the call's own.
+ * The store judges the member-access part alone (no privacy part) with that record: the identity, the satisfied rules,
+ * the coverage, and the owner-only test in the form the SQL renders (`ownerOnlyFormIn`; none for the owner).
+ */
+function memberAccessPolicy(identity: readonly string[], satisfied: readonly string[], rendered: string): Record<string, unknown> {
+  const access = currentCallerAccess();
+  return {
+    honorAliases: false, entityPrivacy: false, identity: [...identity], satisfiedRuleIds: [...satisfied],
+    folderCoverage: access.folderCoverage.map(c => ({ source_id: c.source_id, prefix: c.prefix })),
+    callerRecord: true, ownerOnly: ownerOnlyFormIn(rendered, 'pages', 'p'), open: access.restricted === false,
+  };
+}
+
+export const readPageAccessAllowed: StoreMember<[sourceId: string, slug: string, identity: readonly string[]], boolean> = async (brain, sourceId, slug, identity) => {
+  const access = currentCallerAccess();
+  const policy = memberAccessPolicy(identity, access.satisfiedRuleIds, accessAllowedSql('p', identity));
+  return (await storeCall({ member: 'readPageAccessAllowed' }, () => brain.readPageAccessAllowed(sourceId, slug, [...identity], policy))) === true;
+};
+
+export const readPageFolderRulesAllowed: StoreMember<[sourceId: string, slug: string, satisfied: readonly string[]], boolean> = async (brain, sourceId, slug, satisfied) => {
+  const policy = memberAccessPolicy([], satisfied, '');
+  return (await storeCall({ member: 'readPageFolderRulesAllowed' }, () => brain.readPageFolderRulesAllowed(sourceId, slug, [...satisfied], policy))) === true;
+};
+
+export const countLineageClosingRules: StoreMember<[ruleIds: readonly string[], sourceId: string], number> = async (brain, ruleIds, sourceId) =>
+  Number(await storeCall({ member: 'countLineageClosingRules' }, () => brain.countLineageClosingRules([...ruleIds], sourceId)));
+
+/**
+ * The store's op checkpoint record of (op, fingerprint) as its completed-keys array: `brain.readOpCheckpointRecords` reads
+ * the first completed key (`completed_keys->0`); the connector cursor rows hold exactly one, so the array is that key.
+ */
+export const readOpCheckpointCompletedKeys: StoreMember<[op: string, fingerprint: string], unknown[] | null> = async (brain, op, fingerprint) => {
+  const found = (await storeCall({ member: 'readOpCheckpointCompletedKeys' }, () => brain.readOpCheckpointRecords(op, [fingerprint]))) as unknown[];
+  return found.length ? (found[0] === null ? [] : [found[0]]) : null;
 };

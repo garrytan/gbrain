@@ -227,4 +227,60 @@ impl Brain {
     pub fn read_chat_census_rows<'env>(&self, env: &'env Env, query: Value) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_chat_census_rows(&required(query, "query")?))
     }
+
+    /// `readWhoCanReadRows(slug, sourceId, form)`: `[{ slug, source_id, type, frontmatter, folder_rule_ids, owner_only }]`.
+    #[napi]
+    pub fn read_who_can_read_rows<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        source_id: Option<String>,
+        form: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let form = required(Value::String(form), "form")?;
+            s.read_who_can_read_rows(&slug, source_id.as_deref(), form)
+        })
+    }
+
+    /// `readPageAccessAllowed(sourceId, slug, identity, policy)`: a boolean.
+    #[napi]
+    pub fn read_page_access_allowed<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+        identity: Vec<String>,
+        policy: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_page_access_allowed(&source_id, &slug, &identity, &required(policy, "policy")?)
+        })
+    }
+
+    /// `readPageFolderRulesAllowed(sourceId, slug, satisfied, policy)`: a boolean.
+    #[napi]
+    pub fn read_page_folder_rules_allowed<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+        satisfied: Vec<String>,
+        policy: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_page_folder_rules_allowed(&source_id, &slug, &satisfied, &required(policy, "policy")?)
+        })
+    }
+
+    /// `countLineageClosingRules(ruleIds, sourceId)`: a count.
+    #[napi]
+    pub fn count_lineage_closing_rules<'env>(
+        &self,
+        env: &'env Env,
+        rule_ids: Vec<String>,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_lineage_closing_rules(&rule_ids, &source_id))
+    }
 }

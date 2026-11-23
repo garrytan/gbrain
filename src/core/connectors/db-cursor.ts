@@ -27,9 +27,12 @@ export function connectorAccountPinKey(sourceId: string, incarnation: string, ki
   return connectorCheckpointKey(sourceId, incarnation, { kind, digest: 'account-pin' });
 }
 
-export async function readConnectorDbCursor(engine: Exec, key: string): Promise<{ state: Record<string, unknown> | null; lastRun: ConnectorRunReceipt | null }> {
-  const [row] = await engine.executeRaw<{ completed_keys: CursorRow[] }>('SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [CONNECTOR_DB_CURSOR_OP, key]);
-  const value = row?.completed_keys?.[0];
+export async function readConnectorDbCursor(engine: Exec | Pick<BrainEngine, 'readOpCheckpointCompletedKeys'>, key: string): Promise<{ state: Record<string, unknown> | null; lastRun: ConnectorRunReceipt | null }> {
+  // A handle without the typed member (a persistence view, a test double) runs the member's own statement.
+  const keys = 'readOpCheckpointCompletedKeys' in engine && typeof engine.readOpCheckpointCompletedKeys === 'function'
+    ? await engine.readOpCheckpointCompletedKeys(CONNECTOR_DB_CURSOR_OP, key)
+    : ((await (engine as Exec).executeRaw<{ completed_keys: CursorRow[] }>('SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [CONNECTOR_DB_CURSOR_OP, key]))[0]?.completed_keys ?? null);
+  const value = (keys as CursorRow[] | null)?.[0];
   return { state: value?.state ?? null, lastRun: value?.last_run ?? null };
 }
 

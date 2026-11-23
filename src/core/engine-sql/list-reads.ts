@@ -6,7 +6,8 @@
  */
 import type { PageReadPolicy, PageReadScope } from '../types.ts';
 import { pageReadFilter } from '../search/read-policy-sql.ts';
-import { privatePagesFilterFragmentFast } from '../search/private-visibility.ts';
+import { accessAllowedSql, folderRulesAllowedSql, privatePagesFilterFragmentFast } from '../search/private-visibility.ts';
+import { ownerOnlyPageSql, type OwnerOnlyForm } from '../access/owner-only.ts';
 import { chunkGenerationFilter } from '../search/safe-chunks.ts';
 import type { EngineRawRead } from './cli-reads-ops.ts';
 import { LIVE_STAGING_STATES } from './page-body.ts';
@@ -398,4 +399,46 @@ export async function readChatCensusRows(raw: EngineRawRead, sourceIds: readonly
       GROUP BY p.source_id ORDER BY p.source_id COLLATE "C"`,
     [[...chatTypes], [...sourceIds], [...dmTypes]],
   );
+}
+
+/** One page `whoCanRead` reports on (commands/access.ts). */
+export interface WhoCanReadRow { slug: string; source_id: string; type: string | null; frontmatter: unknown; folder_rule_ids: string[] | null; owner_only: boolean }
+
+/**
+ * Every page at `slug` (in `sourceId` when given), by source id in byte order, with whether it is in or derived from an
+ * owner-only source by the owner-only test of `form` (commands/access.ts whoCanRead).
+ */
+export async function readWhoCanReadRows(raw: EngineRawRead, slug: string, sourceId: string | undefined, form: OwnerOnlyForm): Promise<WhoCanReadRow[]> {
+  return raw<WhoCanReadRow>(
+    `SELECT p.slug, p.source_id, p.type, p.frontmatter, p.folder_rule_ids, ${ownerOnlyPageSql('p', form)} AS owner_only
+       FROM pages p WHERE p.slug = $1${sourceId ? ' AND p.source_id = $2' : ''} ORDER BY p.source_id COLLATE "C"`,
+    sourceId ? [slug, sourceId] : [slug]);
+}
+
+/** Whether the member-access rule for `identity` (`accessAllowedSql`, under the current caller record) admits the page (whoCanRead). */
+export async function readPageAccessAllowed(raw: EngineRawRead, sourceId: string, slug: string, identity: readonly string[]): Promise<boolean> {
+  const admitted = await raw(
+    `SELECT 1 FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND ${accessAllowedSql('p', identity)}`, [sourceId, slug]);
+  return admitted.length > 0;
+}
+
+/** Whether the folder rules of the page are all in `satisfied` (`folderRulesAllowedSql`, under the current caller record) (whoCanRead). */
+export async function readPageFolderRulesAllowed(raw: EngineRawRead, sourceId: string, slug: string, satisfied: readonly string[]): Promise<boolean> {
+  const admitted = await raw(
+    `SELECT 1 FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND ${folderRulesAllowedSql('p', satisfied)}`, [sourceId, slug]);
+  return admitted.length > 0;
+}
+
+/** How many of a page's folder rule ids are not a raw-only rule (covers_derived false) of the source (whoCanRead). */
+export async function countLineageClosingRules(raw: EngineRawRead, ruleIds: readonly string[], sourceId: string): Promise<number> {
+  const rows = await raw<{ n: number }>(
+    `SELECT count(*)::int AS n FROM unnest($1::text[]) AS x WHERE NOT EXISTS (SELECT 1 FROM access_rules r WHERE r.source_id = $2 AND x = $2 || ':' || r.rule_id AND NOT r.covers_derived)`,
+    [[...ruleIds], sourceId]);
+  return Number(rows[0]?.n ?? 0);
+}
+
+/** The completed keys of one op checkpoint row (the connector DB cursor of connectors/db-cursor.ts), or null when none. */
+export async function readOpCheckpointCompletedKeys(raw: EngineRawRead, op: string, fingerprint: string): Promise<unknown[] | null> {
+  const [row] = await raw<{ completed_keys: unknown[] }>('SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [op, fingerprint]);
+  return row ? row.completed_keys : null;
 }

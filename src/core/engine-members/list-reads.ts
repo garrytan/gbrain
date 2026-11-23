@@ -3,7 +3,8 @@
  * `BrainEngine` extends this interface.
  */
 import type { PageReadPolicy } from '../types.ts';
-import type { AttendanceWindowRow, CardListQuery, ChatCensusRow, CardRow, CompanyBrainEvidenceRows, MentionScanLinkRow, MentionScanPageRow, PageBodyRow, PageSourceIdRow, RetypeProbeQuery, ShelfPageRow, SourceIdScope, TargetProbeSqlRow } from '../engine-sql/list-reads.ts';
+import type { OwnerOnlyForm } from '../access/owner-only.ts';
+import type { AttendanceWindowRow, CardListQuery, ChatCensusRow, WhoCanReadRow, CardRow, CompanyBrainEvidenceRows, MentionScanLinkRow, MentionScanPageRow, PageBodyRow, PageSourceIdRow, RetypeProbeQuery, ShelfPageRow, SourceIdScope, TargetProbeSqlRow } from '../engine-sql/list-reads.ts';
 
 export interface ListReadMembers {
   /** The sources holding a live page at `slug`, by id in byte order (page-ref ambiguity, quarantine clear, --grammar). */
@@ -50,4 +51,13 @@ export interface ListReadMembers {
   listEnabledLabelledOnlyMemberIds(): Promise<string[]>;
   /** Per source, its live chat pages the private-page rule admits (when asked) and their distinct channels, by source id in byte order. */
   readChatCensusRows(sourceIds: readonly string[], chatTypes: readonly string[], dmTypes: readonly string[], hidePrivate: boolean): Promise<ChatCensusRow[]>;
+  /** The who-can-read report (commands/access.ts whoCanRead): the pages at a slug with their owner-only flag in the given form; */
+  readWhoCanReadRows(slug: string, sourceId: string | undefined, form: OwnerOnlyForm): Promise<WhoCanReadRow[]>;
+  /** whether the member-access rule for an identity, and the folder rules for a satisfied set, admit a page under the current caller record; */
+  readPageAccessAllowed(sourceId: string, slug: string, identity: readonly string[]): Promise<boolean>;
+  readPageFolderRulesAllowed(sourceId: string, slug: string, satisfied: readonly string[]): Promise<boolean>;
+  /** and how many of a page's folder rule ids are not raw-only rules of the source. */
+  countLineageClosingRules(ruleIds: readonly string[], sourceId: string): Promise<number>;
+  /** The completed keys of one op checkpoint row, or null (the connector DB cursor read). */
+  readOpCheckpointCompletedKeys(op: string, fingerprint: string): Promise<unknown[] | null>;
 }

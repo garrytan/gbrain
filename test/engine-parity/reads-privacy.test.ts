@@ -360,7 +360,7 @@ describe('who-can-read and the open-page count on a brain that has, or once had,
   // the case ends on the raw_sql refusal. When the store serves those reads it must give these same readers and counts.
   parityTest(
     'who-can-read names the members get_page serves, and the open count counts every open page, with an iMessage source and after its removal',
-    { methods: ['executeRaw', 'putPage', 'setConfig'], requires: 'raw_sql' },
+    { methods: ['putPage', 'setConfig', 'readWhoCanReadRows', 'readPageAccessAllowed'] },
     async (engine, backend) => {
       // A real brain records its schema version in config; the arm reset empties config.
       await engine.setConfig('version', String(LATEST_SCHEMA_VERSION));

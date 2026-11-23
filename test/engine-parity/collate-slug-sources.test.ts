@@ -78,7 +78,7 @@ async function cli(run: () => Promise<void>): Promise<string> {
 const named = (text: string) => MIXED_SOURCES.filter(id => text.includes(id)).sort((a, b) => text.indexOf(`${a}`) - text.indexOf(`${b}`));
 
 describe('a slug held in several sources lists those sources by byte', () => {
-  parityTest('whoCanRead lists the sources by byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('whoCanRead lists the sources by byte', { methods: ['putPage', 'readWhoCanReadRows'] }, async (engine, backend) => {
     await seed(engine, backend);
     const sources = (await whoCanRead(engine, SLUG)).map(e => e.source_id);
     expect(sources).toEqual(BYTE_SOURCES);
