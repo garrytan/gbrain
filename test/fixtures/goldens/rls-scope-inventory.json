@@ -9569,6 +9569,7 @@
         "listOpenJobIdsInQueue": "none",
         "listOpenLoops": "none",
         "listOpenPassCheckpointBlockers": "none",
+        "listOriginClaimants": "none",
         "listOriginClaims": "none",
         "listOriginTwinCounts": "none",
         "listOriginTwinGroups": "none",
