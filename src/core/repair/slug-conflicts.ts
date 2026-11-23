@@ -371,7 +371,7 @@ async function recordState(engine: BrainEngine, cand: Pick<Candidate, 'src' | 'p
   if (!cand.hold) return;
   const named = state.named ? await engine.getPage(state.named, { sourceId: cand.src.id }) : null;
   await recordContentHoldRepair(engine, { sourceId: cand.src.id, incarnation: cand.src.incarnation, path: cand.path, upstreamVersion: cand.hold.upstream_version,
-    state: { ...state, ...(named && named.source_path == null ? { named_db_only: true as const } : {}), lane_version: CONTENT_REPAIR_LANE_VERSION, at: new Date().toISOString() } }).catch(() => false);
+    state: { ...state, ...(named && named.source_path == null ? { named_db_only: true as const } : {}), lane_version: CONTENT_REPAIR_LANE_VERSION, at: new Date().toISOString() } });
 }
 
 function item(entry: ApprovedConflict, index: number, hash: string | null, last: boolean): ConflictItem {

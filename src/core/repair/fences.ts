@@ -179,7 +179,7 @@ async function recordHeld(engine: BrainEngine, src: FenceSource, cand: { path: s
   if (!cand.held || !cand.path || !(held.reason in FENCE_REASONS)) return;
   const reason = held.reason as FenceReason;
   await recordFenceHoldRepair(engine, { sourceId: src.id, incarnation: src.incarnation, path: cand.path, state: { reason, tier: heldTier(reason), at: new Date().toISOString(),
-    next_attempt_after: held.next ?? null, ...(held.gate ? { gate: held.gate } : {}), ...(held.rows?.length ? { rows: held.rows.slice(0, 50) } : {}) } }).catch(() => false);
+    next_attempt_after: held.next ?? null, ...(held.gate ? { gate: held.gate } : {}), ...(held.rows?.length ? { rows: held.rows.slice(0, 50) } : {}) } });
 }
 
 /** Candidates the selection names that the census has not judged yet: a file under a source root, or a stored page. */

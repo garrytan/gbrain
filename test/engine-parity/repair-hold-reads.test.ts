@@ -13,7 +13,11 @@
  *    which also hid the Rust engine's typed capability refusal (test/repair-refusal-swallow.test.ts).
  *  - Why existing coverage misses it: test/repair-fences*.test.ts and test/repair-slug-conflicts*.test.ts run on PGLite and
  *    Postgres only.
- *  - Seam: none. Typed members only; hold rows are written with `writeOpCheckpointRecord`.
+ *    The hold-repair records (`recordFenceHoldRepair`, `recordContentHoldRepair`) set their meta key on a hold of their
+ *    own code (the content record only while the hold holds the judged bytes), keep the rest of the row, and answer false
+ *    for a missing hold or another code, through the typed hold row members on every engine (before, raw SQL the Rust
+ *    engine refused, which the repairs swallowed).
+ *  - Seam: none. Typed members only; hold rows are written with `writeOpCheckpointRecord` and `writeGitHoldRow`.
  */
 import { describe, expect } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -25,6 +29,7 @@ import { withEnv } from '../helpers/with-env.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { resolveRepairScope, type RepairKind } from '../../src/core/repair/core.ts';
 import { repairRunner } from '../../src/core/repair/registry.ts';
+import { recordContentHoldRepair, recordFenceHoldRepair } from '../../src/core/persistence/sync-holds.ts';
 
 const { parityTest } = parityArms(testBackends());
 const quiet = { info() {}, warn() {}, error() {} } as never;
@@ -69,4 +74,34 @@ describe('engine parity: the reads behind the repair verification', () => {
     expect(answers).toEqual({ missing: null, elsewhere: null, present: { slug: 'people/named-example', source_path: null } });
     return answers;
   });
+
+  parityTest('the hold-repair records set their meta key on a hold of their code and answer false otherwise', {
+    methods: ['writeGitHoldRow', 'readGitHoldRow', 'replaceGitHoldRow'], timeout: 60_000,
+  }, async (engine) => {
+    const base = { version: 1, source_id: 'default', incarnation: '1', source_path: '', slug: null, page_id: null, message: 'held',
+      observed_at: '2026-11-20T10:00:00.000Z', held_at: '2026-11-20T10:00:00.000Z', updated_at: '2026-11-20T10:00:00.000Z', run_id: null, mode: 'legacy' };
+    const write = (path: string, code: string, upstream: string | null) =>
+      engine.writeGitHoldRow('default', '1', path, { ...base, path, source_path: path, code, upstream_version: upstream, meta: { keep: 1 } });
+    await write('fence.md', 'invalid_fence', 'u1');
+    await write('slug.md', 'frontmatter_slug_conflict', 'u2');
+    const fenceState = { reason: 'no_header', tier: 'tier1', at: '2026-11-21T10:00:00.000Z', next_attempt_after: null } as never;
+    const contentState = { action: 'needs_human', reason: 'two pages', at: '2026-11-21T10:00:00.000Z' } as never;
+    const ids = (path: string) => ({ sourceId: 'default', incarnation: '1', path });
+    const answers = {
+      fence: await recordFenceHoldRepair(engine, { ...ids('fence.md'), state: fenceState }),
+      fenceWrongCode: await recordFenceHoldRepair(engine, { ...ids('slug.md'), state: fenceState }),
+      fenceMissing: await recordFenceHoldRepair(engine, { ...ids('gone.md'), state: fenceState }),
+      content: await recordContentHoldRepair(engine, { ...ids('slug.md'), upstreamVersion: 'u2', state: contentState }),
+      contentOtherBytes: await recordContentHoldRepair(engine, { ...ids('slug.md'), upstreamVersion: 'u9', state: contentState }),
+      contentWrongCode: await recordContentHoldRepair(engine, { ...ids('fence.md'), upstreamVersion: 'u1', state: contentState }),
+      fenceMeta: ((await engine.readGitHoldRow('default', '1', 'fence.md')) as { meta: unknown } | null)?.meta,
+      slugMeta: ((await engine.readGitHoldRow('default', '1', 'slug.md')) as { meta: unknown } | null)?.meta,
+    };
+    expect(answers).toEqual({
+      fence: true, fenceWrongCode: false, fenceMissing: false, content: true, contentOtherBytes: false, contentWrongCode: false,
+      fenceMeta: { keep: 1, fence_repair: fenceState }, slugMeta: { keep: 1, content_repair: contentState },
+    });
+    return answers;
+  });
 });
+

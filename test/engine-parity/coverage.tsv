@@ -681,9 +681,9 @@ readGitHoldReportInputs	persistence_journal	yes	2	no	yes	yes	serves
 readSourcePurgeEpoch	persistence_journal	yes	4	no	yes	yes	serves
 lockGitHoldSummary	persistence_journal	yes	1	no	yes	yes	serves
 adjustGitHoldSummary	persistence_journal	yes	1	no	yes	yes	serves
-readGitHoldRow	persistence_journal	yes	1	no	yes	yes	serves
-writeGitHoldRow	persistence_journal	yes	3	no	yes	yes	serves
-replaceGitHoldRow	persistence_journal	yes	1	no	yes	yes	serves
+readGitHoldRow	persistence_journal	yes	2	no	yes	yes	serves
+writeGitHoldRow	persistence_journal	yes	4	no	yes	yes	serves
+replaceGitHoldRow	persistence_journal	yes	2	no	yes	yes	serves
 deleteGitHoldRow	persistence_journal	yes	1	no	yes	yes	serves
 countGitHolds	persistence_journal	yes	2	no	yes	yes	serves
 readGitHoldListingRows	persistence_journal	yes	1	no	yes	yes	serves
