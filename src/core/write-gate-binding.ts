@@ -15,10 +15,18 @@ import type { BrainEngine } from './engine.ts';
 
 /**
  * SQL true when hold `h` is held for the page whose id is `pageId` (an SQL expression, NULL when no page holds `slug`) and
- * whose slug is `slug` (an SQL expression). Callers add their own status, kind and source tests.
+ * whose slug is `slug` (an SQL expression). Callers add their own status, kind and source tests. An unbound hold also reaches
+ * a page the same source's rename record leads to from the hold's slug (`slug_aliases` and `slug_rename_history`, chains
+ * followed): a hold that committed after its page was first created is not bound by that creation, and the renames of a page
+ * are recorded under the page lock, so the record finds the page whatever it is called now. Under name reuse this may hide
+ * more than the hold covers, which is the safe side.
  */
 export function holdAppliesToPageSql(h: string, pageId: string, slug: string): string {
-  return `(${h}.page_id = ${pageId} OR (${h}.page_id IS NULL AND (${h}.slug = ${slug} OR ${pageId} = ANY(COALESCE(${h}.page_candidates, '{}'::bigint[])))))`;
+  const reached = `EXISTS (WITH RECURSIVE reach(s) AS (SELECT ${h}.slug UNION SELECT n.t FROM reach x JOIN LATERAL (
+      SELECT a.canonical_slug AS t FROM slug_aliases a WHERE a.source_id = ${h}.source_id AND a.alias_slug = x.s
+      UNION SELECT r.new_slug FROM slug_rename_history r WHERE r.source_id = ${h}.source_id AND r.old_slug = x.s) n ON true)
+    SELECT 1 FROM reach WHERE reach.s = ${slug})`;
+  return `(${h}.page_id = ${pageId} OR (${h}.page_id IS NULL AND (${h}.slug = ${slug} OR ${pageId} = ANY(COALESCE(${h}.page_candidates, '{}'::bigint[])) OR ${reached})))`;
 }
 
 /**
