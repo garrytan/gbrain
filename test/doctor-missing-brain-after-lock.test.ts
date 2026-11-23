@@ -12,11 +12,12 @@
  * doctor is parked on the lock (no observable signal exists without test-only product code), so there is none.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { guardMissingBrainAtLock, isMissingBrainRefusal } from '../src/commands/doctor/missing-brain.ts';
-import { installPgliteCreateGuard } from '../src/core/pglite-create-guard.ts';
+import { run as runDoctorCommand } from '../src/cli/commands/doctor.ts';
+import { installPgliteCreateGuard, runPgliteCreateGuard } from '../src/core/pglite-create-guard.ts';
 import { acquireKernelLockOnly, acquireLock, pgliteLockDirFor, releaseLock } from '../src/core/pglite-lock.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { runCli } from './helpers/cli-spawn.ts';
@@ -75,6 +76,96 @@ describe('the guard seam, with no timing involved', () => {
       } finally {
         remove();
         if (existsSync(moved)) { rmSync(store, { recursive: true, force: true }); renameSync(moved, store); }
+      }
+    });
+  });
+});
+
+describe('the guard judges the datastore this run was about to open, not whatever the config says later', () => {
+  const withHome = (fn: () => Promise<void>) => withEnv({ HOME: home, GBRAIN_HOME: home }, fn);
+  const configFile = () => join(home, '.gbrain', 'config.json');
+  /** Point `database_path` somewhere else (an operator editing the config while doctor waits); returns the undo. */
+  const repoint = (to: string) => {
+    const original = readFileSync(configFile(), 'utf8');
+    writeFileSync(configFile(), JSON.stringify({ ...JSON.parse(original), database_path: to }));
+    return () => writeFileSync(configFile(), original);
+  };
+
+  test('the folder moves and the config is repointed at its new home while a waiter waits: the waiter is still refused, the old path stays empty', async () => {
+    await withHome(async () => {
+      const moved = `${store}.relocated`;
+      const holder = await acquireLock(store);
+      const remove = guardMissingBrainAtLock('host');
+      let undo = () => {};
+      try {
+        const waiter = acquireLock(store, { timeoutMs: 20_000 });
+        renameSync(store, moved);
+        undo = repoint(moved); // the brain is fine at its new path, but this connect opens the old one
+        await releaseLock(holder);
+        const refusal = await waiter.then(async (h) => { await releaseLock(h); return null; }, (e: unknown) => e);
+        expect(isMissingBrainRefusal(refusal)).toBe(true);
+        expect(existsSync(store)).toBe(false);
+        await releaseLock(await acquireKernelLockOnly(store, { lockDir: pgliteLockDirFor(store), timeoutMs: 0 }));
+      } finally {
+        remove();
+        undo();
+        if (existsSync(moved)) { rmSync(store, { recursive: true, force: true }); renameSync(moved, store); }
+      }
+    });
+  });
+
+  test('database_path is a symlink into a drive that unmounts while a waiter waits: the waiter is refused, nothing is built at the old target', async () => {
+    await withHome(async () => {
+      const link = join(home, 'link.pglite');
+      const moved = `${store}.unmounted`;
+      symlinkSync(store, link);
+      const undo = repoint(link);
+      const holder = await acquireLock(link);
+      const remove = guardMissingBrainAtLock('host');
+      try {
+        const waiter = acquireLock(link, { timeoutMs: 20_000 });
+        renameSync(store, moved); // the link now dangles
+        await releaseLock(holder);
+        const refusal = await waiter.then(async (h) => { await releaseLock(h); return null; }, (e: unknown) => e);
+        expect(isMissingBrainRefusal(refusal)).toBe(true);
+        expect(existsSync(store)).toBe(false);
+        await releaseLock(await acquireKernelLockOnly(store, { lockDir: pgliteLockDirFor(store), timeoutMs: 0 }));
+      } finally {
+        remove();
+        undo();
+        rmSync(link, { force: true });
+        if (existsSync(moved)) { rmSync(store, { recursive: true, force: true }); renameSync(moved, store); }
+      }
+    });
+  });
+});
+
+describe('doctor.ts keeps the guard installed while a connect it abandoned at the budget is still waiting', () => {
+  test('--budget-ms expires on a pending connect: the guard outlives run() and goes only when that connect settles', async () => {
+    await withEnv({ HOME: home, GBRAIN_HOME: home }, async () => {
+      const moved = `${store}.budget`;
+      let settle: (e: unknown) => void = () => {};
+      const pending = new Promise<never>((_, reject) => { settle = reject; });
+      const ctx = {
+        connectEngine: () => { renameSync(store, moved); return pending; }, // the datastore goes away while the connect waits for the lock
+        dbMarkerBrainId: () => undefined,
+        SELECTED_CONFIG_BY_ENGINE: new WeakMap(),
+        cliModuleUrl: import.meta.url,
+      };
+      const out = console.log, err = console.error, wrote = process.stdout.write.bind(process.stdout), exitCode = process.exitCode;
+      console.log = () => {}; console.error = () => {}; process.stdout.write = (() => true) as typeof process.stdout.write;
+      try {
+        await runDoctorCommand(['--tier', 'ops', '--budget-ms', '200', '--json'], ctx as never);
+      } finally {
+        console.log = out; console.error = err; process.stdout.write = wrote; process.exitCode = exitCode;
+      }
+      try {
+        expect(() => runPgliteCreateGuard(store)).toThrow(/brain_missing|not at/); // still installed: a late lock holder cannot build an empty brain
+        settle(new Error('connect gave up'));
+        await new Promise((r) => setTimeout(r, 20));
+        expect(() => runPgliteCreateGuard(store)).not.toThrow(); // settled: the guard is gone
+      } finally {
+        if (existsSync(moved)) renameSync(moved, store);
       }
     });
   });
