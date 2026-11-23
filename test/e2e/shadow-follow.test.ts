@@ -14,6 +14,7 @@ import { loadRustAddon, type RustAddon } from '../../src/core/rust-engine/addon-
 import { detectAddonTarget } from '../../src/core/rust-engine/addon-target.ts';
 import { hasDatabase } from './helpers.ts';
 import { persistencePostgresTemplate } from '../helpers/persistence-postgres.ts';
+import { defineEvidenceScenarios } from '../helpers/shadow-evidence-scenarios.ts';
 import { defineFollowScenarios } from '../helpers/shadow-follow-scenarios.ts';
 
 const TARGET = detectAddonTarget();
@@ -45,4 +46,6 @@ const dirs: string[] = [];
     primary: () => engine, addon: () => addon, kind: 'postgres',
     tempDir: () => { const dir = mkdtempSync(join(tmpdir(), 'gbrain-shadow-follow-pg-')); dirs.push(dir); return dir; },
   });
+
+  defineEvidenceScenarios({ primary: () => engine, addon: () => addon, addonPath: BUILT, kind: 'postgres' });
 });

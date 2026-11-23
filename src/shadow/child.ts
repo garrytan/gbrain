@@ -11,17 +11,27 @@
  * The store is not seeded yet (seed and reconcile are plan PR S3), so once Rust implements a read, its answers
  * describe an empty store and mostly `diff`; the provisional report says so.
  */
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { join } from 'node:path';
+import { gbrainPath } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { openRustEngine, type RustEngineAddonHandle } from '../core/rust-engine.ts';
+import { policyHash, READINESS_POLICY } from '../core/engine-swap/policy.ts';
+import { RUST_ENGINE_ABI } from '../core/rust-engine/addon-manifest.ts';
+import type { RustAddon } from '../core/rust-engine/addon-loader.ts';
+import { servedCapabilities } from '../core/rust-engine/store-capabilities.ts';
 import { loadRustEngineAddonOffline, type RustEngineAddonLoaderFn } from './addon.ts';
 import { classifyError, classifyResult, type Classification } from './classify.ts';
 import { decodeValue, encodeValue } from './codec.ts';
+import { capabilitySetHash, currentBuild, ensureEpoch, internalErrorRecorder, type EpochBuild, type EpochManifest } from './evidence-epoch.ts';
+import { qualifyMismatch, SHADOW_COMPARATOR_VERSION } from './exactness.ts';
 import { FollowChild, type FollowEvent, type FollowStore } from './follow-child.ts';
 import { appendFault, appendLedgerRows, writeSummaryFile, type ShadowLedgerRow, type ShadowSummaryFile } from './ledger.ts';
 import { newMirrorCounters, type MirrorCounters } from './mirror.ts';
 import { isShadowReadMember, SHADOW_READ_MEMBERS } from './reads.ts';
+import { readSeedRecord } from './seed.ts';
 
 export const SHADOW_CHILD_CALL_TIMEOUT_MS = 10_000;
 export const SHADOW_CHILD_QUEUE_BOUND = 1024;
@@ -40,6 +50,20 @@ export interface ShadowChildDeps {
   heartbeatMs?: number;
   childId?: string;
   now?: () => number;
+  /** The approved readiness policy's hash, an evidence epoch input (evidence-epoch.ts); default `policyHash(READINESS_POLICY)` (engine-swap/policy.ts): the approved policy's hash, not an in-force one. */
+  readinessPolicyHash?: () => string;
+  /** SHA-256 of the loaded addon file, or null when it cannot be read; default hashes the file the loader opened. */
+  addonSha256?: (addon: RustAddon) => string | null;
+  /** The build recorded when a new epoch opens (not an epoch input); default `currentBuild()`. */
+  build?: () => EpochBuild;
+  /** The capability names the Rust engine reports; default `servedCapabilities()`. */
+  capabilities?: () => Iterable<string>;
+}
+
+/** SHA-256 of the addon file the loader opened: the development override, else the cached build (addon-loader.ts). */
+function addonFileSha256(addon: RustAddon): string | null {
+  const path = process.env.GBRAIN_RUST_ENGINE_ADDON?.trim() || join(gbrainPath('engines', 'rust'), String(addon.engineBuild), `${String(addon.target)}.node`);
+  try { return createHash('sha256').update(readFileSync(path)).digest('hex'); } catch { return null; } // silent-read-ok: null is the typed marker; the epoch records `unreadable`, never a digest
 }
 
 interface ReadEvent {
@@ -83,6 +107,24 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   } catch (error) {
     load = { ok: false, code: 'rust_engine_addon_missing', reason: `loader_error:${classifyError(error).reason ?? 'unknown'}`, message: 'loader threw' };
   }
+  // The evidence epoch this child session belongs to. Without a seed or a writable manifest there is no epoch: its rows
+  // carry none and count for nothing.
+  let epoch: EpochManifest | null = null;
+  const seed = readSeedRecord(shadowDir);
+  if (seed) {
+    try {
+      epoch = ensureEpoch(shadowDir, {
+        seed_id: seed.seed_id,
+        rust_addon_sha256: load.ok ? ((deps.addonSha256 ?? addonFileSha256)(load.addon) ?? 'unreadable') : null,
+        comparator_version: SHADOW_COMPARATOR_VERSION,
+        adapter_version: `abi${RUST_ENGINE_ABI}.catalog${load.ok ? String(load.addon.catalogVersion) : 'none'}`,
+        capability_set_hash: load.ok ? capabilitySetHash((deps.capabilities ?? servedCapabilities)()) : null,
+        readiness_policy_hash: (deps.readinessPolicyHash ?? (() => policyHash(READINESS_POLICY)))(),
+      }, now(), (deps.build ?? currentBuild)());
+    } catch { epoch = null; }
+  }
+  const epochId = epoch?.epoch_id ?? null;
+  const recordRustError = internalErrorRecorder(shadowDir, epochId, now);
   if (!load.ok) {
     unavailable = { outcome: 'addon_unavailable', reason: `${load.code}:${load.reason}` };
   } else {
@@ -92,6 +134,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
       engine = open(load.addon, storePath);
       await engine.connect({ database_path: storePath });
     } catch (error) {
+      recordRustError('open', error);
       engine = null;
       unavailable = { outcome: 'error', reason: `open_failed:${classifyError(error).reason ?? 'unknown'}` };
     }
@@ -101,8 +144,9 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   const rustEngine = engine as unknown as { storeFor?: (member: string) => Promise<FollowStore>; ownerRole?: string | null } | null;
   const follow = new FollowChild({
     dir: shadowDir, writeControl: deps.writeControl, now,
-    store: async () => { try { return (await rustEngine?.storeFor?.('follow')) ?? null; } catch { return null; } },
+    store: async () => { try { return (await rustEngine?.storeFor?.('follow')) ?? null; } catch (error) { recordRustError('open', error); return null; } },
     owner: () => rustEngine?.ownerRole !== 'client',
+    onRustError: recordRustError,
   });
   const heartbeat = setInterval(() => { follow.tick(); try { deps.writeControl('{"t":"hb"}\n'); } catch { /* parent gone */ } }, deps.heartbeatMs ?? SHADOW_HEARTBEAT_MS);
   try { deps.writeControl('{"t":"hb"}\n'); } catch { /* parent gone */ }
@@ -130,7 +174,8 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     const counts = summary.by_op[event.op] ?? (summary.by_op[event.op] = {});
     counts[c.outcome] = (counts[c.outcome] ?? 0) + 1;
     rows.push({
-      ts, op: event.op, outcome: c.outcome, ...(c.reason ? { reason: c.reason } : {}),
+      ts, op: event.op, outcome: c.outcome, ...(c.reason ? { reason: c.reason } : {}), ...(c.mismatch ? { mismatch: c.mismatch } : {}),
+      ...(epochId ? { epoch_id: epochId } : {}),
       primary_ms: Math.round(event.primary_ms * 1000) / 1000,
       rust_ms: rustMs === null ? null : Math.round(rustMs * 1000) / 1000,
       primary_rows: rowCount(event.result), rust_rows: rustRows,
@@ -152,13 +197,19 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     if (typeof fn !== 'function') { record(event, { outcome: 'capability_missing', reason: 'not_a_member' }, null, null); return; }
     const args = decodeValue(event.args) as unknown[];
     const started = performance.now();
+    // Stale needs evidence: committed work older than this read that the follower had not applied, when the read
+    // started or when it was compared.
+    const capturedAt = event.at || now();
+    let lagged = follow.pendingBefore(capturedAt);
     try {
       const out = await withTimeout(Promise.resolve((fn as (...a: unknown[]) => unknown).apply(engine, args)), timeoutMs);
       const rustMs = performance.now() - started;
       if (out.timedOut) { record(event, { outcome: 'timeout' }, rustMs, null); return; }
       const encoded = encodeValue(out.value);
-      record(event, classifyResult(SHADOW_READ_MEMBERS[event.op], event.args, event.result, encoded), rustMs, rowCount(encoded));
+      lagged ||= follow.pendingBefore(capturedAt);
+      record(event, qualifyMismatch(event.op, classifyResult(SHADOW_READ_MEMBERS[event.op], event.args, event.result, encoded), lagged, { args: event.args, primary: event.result, rust: encoded }), rustMs, rowCount(encoded));
     } catch (error) {
+      recordRustError('read', error);
       record(event, classifyError(error), performance.now() - started, null);
     }
   };

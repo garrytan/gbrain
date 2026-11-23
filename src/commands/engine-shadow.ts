@@ -15,8 +15,11 @@ import { loadConfig } from '../core/config.ts';
 import type { EngineConfig } from '../core/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
-import { readFaults, readShadowSummary } from '../shadow/ledger.ts';
-import { buildFollowStatus, renderFollowStatus } from '../shadow/follow-status.ts';
+import type { DrillDeps, DrillReason } from '../shadow/drill.ts';
+import type { FetchDeps } from '../shadow/eval-gates.ts';
+import { shadowStatusDocument } from '../shadow/status-document.ts';
+import { renderEvidenceStatus } from '../shadow/evidence.ts';
+import { renderFollowStatus } from '../shadow/follow-status.ts';
 import { readSeedRecord, runSeed, SeedBudgetError, writeSeedRecord, type SeedRecord, type SeedTarget } from '../shadow/seed.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown, writeProvisionalReport } from '../shadow/report.ts';
 import {
@@ -40,6 +43,9 @@ export interface EngineShadowDeps {
   reconcileSupervisor?: Partial<import('../shadow/supervisor.ts').ShadowSupervisorOptions>;
   /** Opens the Rust store `seed` writes; default openRustStore on the loaded addon at `<dir>/store`. */
   openStore?: (addon: object, storePath: string) => Promise<SeedTarget & { close(): Promise<void> }>;
+  /** Test seams for `drill`: the owner, verifier and clock of the restore drill, and the HTTP of the eval-gates fetch. */
+  drill?: DrillDeps;
+  fetchEvals?: Partial<FetchDeps>;
 }
 
 const HELP = `gbrain engine shadow — compare the Rust engine against this brain's reads, off the request path
@@ -52,6 +58,7 @@ Usage:
   gbrain engine shadow report [--json]
   gbrain engine shadow seed [--json] [--reseed]
   gbrain engine shadow reconcile [--full] [--json]
+  gbrain engine shadow drill [--backup] [--evals] [--json]
 
 Shadow mode is off by default. When on, a sample of reads this brain answers is sent, after the answer, to a
 supervised child process that runs the same read on the Rust engine and records match, diff or why it could not
@@ -66,6 +73,11 @@ compares the whole store with the brain (digests per 500-row interval) and repai
 store to be free, so run it when no serving process holds it. Plain reconcile and --full both run a full pass. status
 shows the follower's lag and coverage, the last pass, fingerprint checks and the allocator check; the fingerprint and
 comparison counts are totals for the current seed.
+
+drill copies the shadow's own Rust store at one moment through its owner, checks the copy without opening it normally, opens
+it once, deletes the copy and records the result (swap criterion 10, restore drill). It never pauses the shadow. --evals
+instead downloads the eval-gates file pinned to this shadow's release, checks its SHA-256 and keeps a copy; status and the
+swap only read that copy and never fetch. With neither flag both run.
 
 The report is provisional and always says NOT READY.`;
 
@@ -159,10 +171,11 @@ export async function runEngineShadow(args: string[], deps: EngineShadowDeps = {
     }
     const brain = resolveBrain(deps);
     if (sub === 'start') return await start(brain, parseStart(rest), deps, out, err, now);
-    if (sub === 'status') return status(brain, flags(rest, ['--json'], 'status').has('--json'), out);
+    if (sub === 'status') return status(brain, flags(rest, ['--json'], 'status').has('--json'), out, now);
     if (sub === 'stop') return stop(brain, flags(rest, ['--delete'], 'stop').has('--delete'), out, now);
     if (sub === 'report') return report(brain, flags(rest, ['--json'], 'report').has('--json'), out, now);
     if (sub === 'seed') return await seed(brain, flags(rest, ['--json', '--reseed'], 'seed'), deps, out, err, now);
+    if (sub === 'drill') return await drillCommand(brain, flags(rest, ['--json', '--backup', '--evals'], 'drill'), deps, out, err);
     if (sub === 'reconcile') return await reconcileCommand(brain, flags(rest, ['--json', '--full'], 'reconcile').has('--json'), deps, out, err);
     throw new UsageError(`Unknown engine shadow subcommand: ${sub}`);
   } catch (e) {
@@ -215,34 +228,24 @@ async function start(
   return 0;
 }
 
-function status(brain: { key: string; dir: string }, json: boolean, out: (l: string) => void): number {
-  const state = readShadowState(brain.dir);
-  const summary = existsSync(brain.dir) ? readShadowSummary(brain.dir) : null;
-  const faults = existsSync(brain.dir) ? readFaults(brain.dir, 5) : [];
-  const totals: Record<string, number> = {};
-  for (const counts of Object.values(summary?.by_op ?? {})) {
-    for (const [outcome, n] of Object.entries(counts)) totals[outcome] = (totals[outcome] ?? 0) + (n ?? 0);
-  }
+function status(brain: { key: string; dir: string }, json: boolean, out: (l: string) => void, now: () => Date): number {
+  const doc = shadowStatusDocument(brain, now());
   if (json) {
-    out(JSON.stringify({
-      schema_version: 1, brain: brain.key, enabled: state?.enabled === true, state, directory: brain.dir,
-      totals, by_op: summary?.by_op ?? {}, serving: summary?.primary ?? null, child_shed: summary?.child_shed ?? 0,
-      children: summary?.children ?? 0, recent_faults: faults,
-      ...buildFollowStatus(brain.dir, state),
-    }, null, 2));
+    out(JSON.stringify(doc, null, 2));
     return 0;
   }
+  const { state, totals, recent_faults: faults } = doc;
   out(`Shadow mode: ${state?.enabled ? 'on' : 'off'} (brain ${brain.key})`);
   if (state) out(`  started ${state.started_at}${state.stopped_at ? `, stopped ${state.stopped_at}` : ''}; sample rate ${state.sample_rate}`);
   const compared = Object.values(totals).reduce((a, b) => a + b, 0);
   out(`  comparisons: ${compared}${compared ? ` (${Object.entries(totals).map(([k, v]) => `${k} ${v}`).join(', ')})` : ''}`);
-  if (summary) {
-    const p = summary.primary;
+  if (doc.serving) {
+    const p = doc.serving;
     out(`  serving: offered ${p.offered}, sent ${p.sent}, sampled out ${p.sampled_out}, shed ${p.shed_queue_full + p.shed_too_large + p.shed_transport + p.shed_unmirrorable}, in transaction ${p.skipped_in_transaction}`);
   }
   const seeded = readSeedRecord(brain.dir);
   out(seeded ? `  seed ${seeded.seed_id} finished ${seeded.finished_at}; unseeded gap rows ${seeded.unseeded_gap_rows_total}` : '  seed: none (gbrain engine shadow seed)');
-  if (seeded) for (const line of renderFollowStatus(buildFollowStatus(brain.dir, state))) out(line);
+  if (seeded) for (const line of [...renderFollowStatus(doc), ...renderEvidenceStatus(doc)]) out(line);
   for (const f of faults) out(`  fault ${f.ts} ${f.kind}: ${f.detail}`);
   return 0;
 }
@@ -311,6 +314,54 @@ async function seed(
     await primary?.disconnect().catch(() => undefined);
     await store.close().catch(() => undefined);
   }
+}
+
+const DRILL_FIX: Partial<Record<DrillReason, string>> = {
+  no_seed: 'Run gbrain engine shadow seed first.',
+  no_epoch: 'Start shadow mode (gbrain engine shadow start) and let its child run once, so the evidence epoch exists.',
+  no_store: 'The shadow has no Rust store; run gbrain engine shadow seed.',
+  addon_unavailable: 'The Rust engine addon is not installed; run gbrain doctor.',
+  disk_space: 'Free disk space: the drill needs twice the store file plus 2 GiB.',
+  drill_running: 'Another drill is running; wait for it to end.',
+  cleanup_pending: 'A copy from an earlier drill is still ending; run the drill again in a minute.',
+};
+
+/** `drill`: the restore drill on the shadow store (`--backup`) and the eval-gates fetch (`--evals`); both without a flag. */
+async function drillCommand(
+  brain: { key: string; dir: string }, f: Set<string>, deps: EngineShadowDeps, out: (l: string) => void, err: (l: string) => void,
+): Promise<number> {
+  const [{ renderDrill, runBackupDrill }, { fetchEvalGates }, { readEpoch }] = await Promise.all([
+    import('../shadow/drill.ts'), import('../shadow/eval-gates.ts'), import('../shadow/evidence-epoch.ts'),
+  ]);
+  const json = f.has('--json');
+  const both = !f.has('--backup') && !f.has('--evals');
+  const result: Record<string, unknown> = {};
+  let ok = true;
+  if (both || f.has('--backup')) {
+    const abort = new AbortController();
+    const onSignal = (): void => abort.abort();
+    process.once('SIGINT', onSignal);
+    process.once('SIGTERM', onSignal);
+    try {
+      const record = await runBackupDrill(brain.dir, { signal: abort.signal, ...deps.drill });
+      result.backup = record;
+      ok = ok && record.pass;
+      if (record.op_id === null && record.reason) err(`engine shadow: shadow_drill_failed (${record.reason}): ${DRILL_FIX[record.reason] ?? 'see gbrain doctor'}`);
+      else if (!json) for (const line of renderDrill(record)) out(line);
+    } finally {
+      process.off('SIGINT', onSignal);
+      process.off('SIGTERM', onSignal);
+    }
+  }
+  if (both || f.has('--evals')) {
+    const { detectAddonTarget } = await import('../core/rust-engine/addon-target.ts');
+    const fetched = await fetchEvalGates(brain.dir, readEpoch(brain.dir), { hostTarget: detectAddonTarget(), ...deps.fetchEvals });
+    result.evals = fetched;
+    ok = ok && fetched.passed;
+    if (!json) out(fetched.passed ? 'Eval gates E1 to E3: pass (cached under drills/)' : `Eval gates E1 to E3: not a pass (${fetched.reason ?? 'unknown'})${fetched.cached ? '; the file was cached' : '; nothing was cached'}`);
+  }
+  if (json) out(JSON.stringify(result, null, 2));
+  return ok ? 0 : 1;
 }
 
 /** One full reconcile pass from the CLI, through a child that holds the Rust store. */

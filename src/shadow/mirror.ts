@@ -36,6 +36,36 @@ export interface MirrorCounters {
   encode_error: number;
 }
 
+/** `offered` is every call of the class the wrapper saw while mirroring was active (not mirror.ts's queue counter). */
+export interface OpUsage { offered: number; sampled_out: number; shed: number; skipped_in_transaction: number; unmirrorable: number }
+export type UsageField = keyof OpUsage;
+
+export const zeroUsage = (): OpUsage => ({ offered: 0, sampled_out: 0, shed: 0, skipped_in_transaction: 0, unmirrorable: 0 });
+
+export class UsageMeter {
+  private ops: Record<string, OpUsage> = {};
+
+  note(op: string, field: UsageField): void {
+    (this.ops[op] ??= zeroUsage())[field]++;
+  }
+
+  /** The counts since the last take, or null when there are none. */
+  take(): Record<string, OpUsage> | null {
+    if (Object.keys(this.ops).length === 0) return null;
+    const out = this.ops;
+    this.ops = {};
+    return out;
+  }
+
+  /** Puts counts back after a take whose write failed, so a full disk delays them and never drops a class. */
+  restore(taken: Record<string, OpUsage>): void {
+    for (const [op, u] of Object.entries(taken)) {
+      const into = (this.ops[op] ??= zeroUsage());
+      for (const key of Object.keys(u) as UsageField[]) into[key] += u[key];
+    }
+  }
+}
+
 /** Where encoded lines go. `send` returns false when the line was not accepted (no child, pipe backed up). */
 export interface MirrorTransport {
   send(line: string): boolean;
@@ -65,6 +95,8 @@ let nextId = 1;
 
 export class MirrorQueue {
   readonly counters: MirrorCounters = newMirrorCounters();
+  /** Per-operation call counts; the serving process flushes them to the usage files (usage.ts). */
+  readonly meter = new UsageMeter();
   private readonly items: CapturedRead[] = [];
   private scheduled = false;
   private sinceStats = 0;
@@ -90,11 +122,12 @@ export class MirrorQueue {
    * Accepts a read or sheds it. `capture` runs synchronously, only when the queue has room, and must return the read
    * already encoded; a throw counts as `encode_error`. Never throws, never awaits.
    */
-  offer(capture: () => CapturedRead): void {
+  offer(capture: () => CapturedRead, op?: string): void {
     if (this.stopped) return;
     this.counters.offered++;
     if (this.items.length >= this.bound) {
       this.counters.shed_queue_full++;
+      if (op) this.meter.note(op, 'shed');
       return;
     }
     let read: CapturedRead;
@@ -102,6 +135,7 @@ export class MirrorQueue {
       read = capture();
     } catch {
       this.counters.encode_error++;
+      if (op) this.meter.note(op, 'unmirrorable');
       return;
     }
     this.items.push(read);
@@ -142,16 +176,18 @@ export class MirrorQueue {
         }) + '\n';
       } catch {
         this.counters.encode_error++;
+        this.meter.note(read.op, 'unmirrorable');
         continue;
       }
       if (Buffer.byteLength(line) > this.maxLineBytes) {
         this.counters.shed_too_large++;
+        this.meter.note(read.op, 'shed');
         continue;
       }
       let accepted = false;
       try { accepted = this.transport.send(line); } catch { accepted = false; }
       if (accepted) this.counters.sent++;
-      else this.counters.shed_transport++;
+      else { this.counters.shed_transport++; this.meter.note(read.op, 'shed'); }
       if (++this.sinceStats >= this.statsEvery) this.flushStats();
     }
     if (this.items.length > 0) this.kick();

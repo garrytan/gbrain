@@ -49,6 +49,8 @@ export interface FollowChildOptions {
   owner: () => boolean;
   writeControl: (line: string) => void;
   now?: () => number;
+  /** Called with the boundary (`apply`, `fingerprint`, `reconcile`) and the error whenever a Rust call in the follower throws. */
+  onRustError?: (boundary: string, error: unknown) => void;
 }
 
 const errorCode = (error: unknown): string => (error as { code?: string })?.code ?? (error instanceof Error ? error.name : 'rpc_failed');
@@ -72,9 +74,9 @@ export class FollowChild {
     const seed = readSeedRecord(o.dir);
     if (!seed) { this.file = null; return; }
     const old = readFollowerFile(o.dir);
-    const keep = old && old.epoch_id === seed.seed_id ? old : null;
+    const keep = old && old.seed_id === seed.seed_id ? old : null;
     this.file = keep ?? {
-      version: 1, epoch_id: seed.seed_id, epoch_started_at: seed.finished_at, updated_at: new Date(this.now()).toISOString(), applied_rows: 0,
+      version: 1, epoch_id: seed.seed_id, seed_id: seed.seed_id, epoch_started_at: seed.finished_at, updated_at: new Date(this.now()).toISOString(), applied_rows: 0,
       queue_depth: 0, lag_ms: 0, last_seq: null, watermark: { valid: false, through: null, invalidated_reason: 'not_reconciled' },
       lag: { epoch: [], hours: {} }, fingerprints: { checked_rows: 0, mismatches: 0 }, probe: NOT_RUN_PROBE,
       allocators: { verified: false, checked_at: null },
@@ -93,6 +95,9 @@ export class FollowChild {
     if (apply) { this.depth++; this.servingQueued = event.queued ?? 0; this.waiting.push(event.committed_at); }
     this.chain = this.chain.then(() => this.run(event)).catch(() => { /* run never throws */ }).finally(() => { if (apply) this.depth--; });
   }
+
+  /** True while the follower holds committed work, older than `ms`, that it has not applied (evidence for a `stale` comparison). */
+  pendingBefore(ms: number): boolean { return this.waiting.some((committed) => committed < ms); }
 
   /** Flushes follower.json (called on the heartbeat). */
   tick(): void { this.readForeign(); this.write(true); }
@@ -182,8 +187,9 @@ export class FollowChild {
     const store = this.o.owner() ? await this.o.store() : null;
     const done = (): void => { const i = this.waiting.indexOf(e.committed_at); if (i >= 0) this.waiting.splice(i, 1); };
     if (!file || !store) { done(); this.invalidate(`apply_failed:${this.o.owner() ? 'addon_unavailable' : 'not_owner'}`); return; }
+    let boundary = 'apply';
     try {
-      const result = await store.replaceRelationRows(file.epoch_id, e.relation, e.generation, e.keys, e.rows, e.digests);
+      const result = await store.replaceRelationRows(file.seed_id, e.relation, e.generation, e.keys, e.rows, e.digests);
       file.applied_rows += result.upserted + result.deleted;
       file.last_seq = e.seq;
       if (result.displaced > 0) this.relationDisplaced(e.relation);
@@ -196,12 +202,14 @@ export class FollowChild {
       for (const h of Object.keys(file.lag.hours)) if (Number(h) < Number(hour) - 24) delete file.lag.hours[h];
       if (file.watermark.valid) file.watermark.through = new Date(e.committed_at).toISOString();
       if (e.fp) {
+        boundary = 'fingerprint';
         const rust = await store.factFingerprints(e.rows.map((r) => r.fact ?? ''));
         const pairs = e.fp.filter((p): p is FingerprintPair => p !== null);
         file.fingerprints.checked_rows += pairs.length;
         file.fingerprints.mismatches += countFingerprintMismatches(pairs, rust);
       }
     } catch (error) {
+      this.o.onRustError?.(boundary, error);
       this.invalidate(`apply_failed:${errorCode(error)}`);
     } finally { done(); }
   }
@@ -209,6 +217,7 @@ export class FollowChild {
   private async rpc(e: Extract<FollowEvent, { t: 'rpc' }>): Promise<void> {
     let line: Record<string, unknown>;
     try { line = { t: 'resp', id: e.id, ok: true, value: await this.call(e.method, e.args) }; } catch (error) {
+      this.o.onRustError?.(e.method === 'probe' ? 'fingerprint' : 'reconcile', error);
       line = { t: 'resp', id: e.id, ok: false, error: { code: errorCode(error), message: error instanceof Error ? error.message.slice(0, 300) : 'failed' } };
     }
     try { this.o.writeControl(JSON.stringify(line) + '\n'); } catch { /* parent gone */ }
@@ -220,7 +229,7 @@ export class FollowChild {
     if (!this.o.owner()) throw Object.assign(new Error('another process owns the Rust store'), { code: 'not_owner' });
     const store = await this.o.store();
     if (!store) throw Object.assign(new Error('the Rust addon is unavailable'), { code: 'addon_unavailable' });
-    const id = file.epoch_id;
+    const id = file.seed_id;
     const lo = (a.lo ?? null) as string | null;
     const hi = (a.hi ?? null) as string | null;
     switch (method) {

@@ -7,6 +7,7 @@
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { SHADOW_OUTCOMES, type ShadowOutcome } from './classify.ts';
+import { buildEvidenceStatus, renderEvidenceStatus, type EvidenceStatus } from './evidence.ts';
 import { readFaults, readShadowSummary, type ShadowFault, type ShadowSummary } from './ledger.ts';
 import type { ShadowState } from './state.ts';
 import { readSeedRecord, type SeedRecord } from './seed.ts';
@@ -31,6 +32,8 @@ export interface ProvisionalReport {
   recent_faults: ShadowFault[];
   /** The seed the Rust store holds (`seed.json`), or null before `gbrain engine shadow seed`. */
   seed: ReportSeed | null;
+  /** The swap-readiness evidence of the current epoch: reads, search arms, child health and the rules behind them (evidence.ts). */
+  evidence: EvidenceStatus;
 }
 
 export interface ReportSeed {
@@ -108,6 +111,7 @@ export function buildProvisionalReport(dir: string, brain: string, state: Shadow
     children: summary.children,
     recent_faults: readFaults(dir, 10),
     seed,
+    evidence: buildEvidenceStatus({ dir, now }),
   };
 }
 
@@ -118,7 +122,7 @@ export function renderProvisionalMarkdown(r: ProvisionalReport): string {
   for (const why of r.why_not_ready) lines.push(`- ${why}`);
   lines.push('', `Brain: ${r.brain}. Shadow mode: ${r.enabled ? 'on' : 'off'}. Generated ${r.generated_at}.`);
   lines.push(`Window: ${r.window.first_event_at ?? 'no comparisons yet'} to ${r.window.last_event_at ?? '-'}.`);
-  lines.push(renderSeedLine(r.seed), '');
+  lines.push(renderSeedLine(r.seed), '', ...renderEvidenceStatus(r.evidence), '');
   const cols: ShadowOutcome[] = [...SHADOW_OUTCOMES];
   lines.push(`| operation | total | ${cols.join(' | ')} |`);
   lines.push(`|---|---:|${cols.map(() => '---:').join('|')}|`);
