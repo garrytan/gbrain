@@ -1343,7 +1343,8 @@ function renderToday(rows: FactRow[]): string {
   if (rows.length === 0) {
     return '# Hot memory — today\n\nNo facts captured today yet.\n';
   }
-  const date = new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const byEntity = new Map<string, FactRow[]>();
   for (const r of rows) {
     const k = r.entity_slug ?? '(no entity)';
