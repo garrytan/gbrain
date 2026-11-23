@@ -1,5 +1,5 @@
 /**
- * write_gate_holds_stranded doctor check: a held write (a quarantined fact or take) remembers its page only by
+ * write_gate_holds_stranded doctor check: a held write (a quarantined fact or take) names its page only by
  * slug, so a rename or a delete can leave the hold naming a slug no live page has. When the old slug leads
  * (through the alias table or the rename history) to a live page, that page's held text is no longer hidden.
  * The check only reports; it changes nothing.

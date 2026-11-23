@@ -396,7 +396,7 @@ Claim your own sources first, so your notes are not treated as unverified.
   and edit the row or forget the fact if a field is wrong. The check is
   read-only and never lowers a tier.
 - `write_gate_holds_stranded` finds held writes (quarantined facts and takes)
-  whose page no longer has the name the hold remembers. A hold names its page
+  whose page no longer has the name the hold records. A hold names its page
   only by slug, so renaming a page (a sync Git rename, `gbrain repair
   rename-identity`) leaves the hold on the old name, and the page at the new
   name is no longer protected by it: its held text can reach readers. The

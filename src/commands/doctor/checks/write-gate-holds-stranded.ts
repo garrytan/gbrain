@@ -1,5 +1,5 @@
 /**
- * write_gate_holds_stranded: a held write (a fact or take the write gate quarantined) remembers its page only by
+ * write_gate_holds_stranded: a held write (a fact or take the write gate quarantined) names its page only by
  * slug. A rename (sync Git renames, `gbrain repair rename-identity`) or a delete leaves the hold naming a slug that no
  * live page has, and when the old slug now leads to a live page, that page's held text is no longer hidden by the
  * hold. This check only finds such holds. It does not fix the leak, and neither releasing nor dropping a hold
@@ -165,7 +165,7 @@ function report(scan: Scan): Omit<Check, 'name'> {
   if (counts.renamed > 0) {
     return { status: 'warn', details: { complete: true, ...base },
       message: `${counts.renamed} held write(s) name a page that was renamed (suspected: the rename record leads from the held name to a live page, and it can name more than one): `
-        + `${examples(ordered, 'renamed')}. A hold remembers its page only by name, so the page now at the new name is probably no longer protected by the hold and its held text may reach readers.${otherClasses(counts)} `
+        + `${examples(ordered, 'renamed')}. A hold names its page only by name, so the page now at the new name is probably no longer protected by the hold and its held text may reach readers.${otherClasses(counts)} `
         + NOT_A_FIX,
       fix: reviewFix() };
   }
