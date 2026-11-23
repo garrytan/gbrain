@@ -139,12 +139,12 @@ for (const [name, database, file] of [
   }), 180_000);
 }
 
-test('a live page\'s file_drift hold from an earlier screen version is screened once more, then not again', () => {
+test('a file_drift hold an earlier release wrote is screened again only when someone asks (a plain sync never imports over it, strict sources included)', () => {
   const hold = (drift_version: number, side?: string) => ({ code: 'file_drift', meta: { recovery_version: RECOVERY_VERSION, sides: side ?? 'database', ...(side ? { side } : {}), drift_version } }) as never;
-  expect(FILE_DRIFT_VERSION).toBe(4);
+  expect(FILE_DRIFT_VERSION).toBe(3);
   for (const side of [undefined, 'both', 'unknown']) {
-    expect(holdRescreenDue(hold(3, side), false)).toBe(true);
-    expect(holdRescreenDue(hold(FILE_DRIFT_VERSION, side), false)).toBe(false);
+    expect(holdRescreenDue(hold(3, side), false)).toBe(false);
+    expect(holdRescreenDue(hold(3, side), true)).toBe(true);
   }
 });
 
@@ -157,6 +157,10 @@ const setup = (content: string) => ({ root }: { root: string }) => {
   git(root, 'init', '-q'); git(root, 'config', 'user.name', 'Example'); git(root, 'config', 'user.email', 'example@example.invalid'); git(root, 'config', 'commit.gpgsign', 'false');
   mkdirSync(join(root, 'people'), { recursive: true }); writeFileSync(join(root, `${SLUG}.md`), content);
   git(root, 'add', '-A'); git(root, 'commit', '-qm', 'first');
+};
+const retry = async (engine: BrainEngine) => {
+  const [source] = await engine.executeRaw<{ i: string }>("SELECT incarnation::text AS i FROM sources WHERE id='default'");
+  await requestGitHoldRetry(engine, 'default', source!.i, [`${SLUG}.md`]);
 };
 const opts = (backend: string) => ({ ...(backend === 'postgres' ? { databaseUrl: process.env.DATABASE_URL } : {}), setup: setup(SOURCE) });
 
@@ -177,14 +181,13 @@ for (const backend of testBackends()) {
     expect(await holds(engine)).toEqual([{ path: `${SLUG}.md`, code: 'file_drift' }]);
 
     // The row now differs from the file only in the split, and the hold names the page's current revision (as on a brain
-    // whose page has not moved since its hold). A hold this screen version wrote is not screened again by a plain sync;
-    // one an earlier version wrote is, once, and the file imports.
+    // whose page has not moved since its hold). A plain sync leaves the hold; a retry (sources retry-held) re-screens it, and the file imports.
     const later = '- **2026-05-01** | call — A later file edit.';
     await raw(engine, "UPDATE pages SET compiled_truth=$1 WHERE source_id='default' AND slug=$2", [folded([...BULLETS, extra, later]), SLUG]);
     await raw(engine, "UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys, '{0,meta,page_revision}', to_jsonb((SELECT knowledge_revision::text FROM pages WHERE source_id='default' AND slug=$1))) WHERE op='sync-hold'", [SLUG]);
     await performManagedSync(engine, SYNC);
     expect(await holds(engine)).toEqual([{ path: `${SLUG}.md`, code: 'file_drift' }]);
-    await raw(engine, "UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys, '{0,meta,drift_version}', '3'::jsonb) WHERE op='sync-hold'");
+    await retry(engine);
     await performManagedSync(engine, SYNC);
     expect(await holds(engine)).toEqual([]);
     expect((await engine.readPageSnapshot(SLUG, { sourceId: 'default' }))!.page.timeline).toContain(later);
@@ -204,7 +207,7 @@ for (const backend of testBackends()) {
     const imported = await row();
     for (const line of [PROSE, fileLine, ...BULLETS]) expect(`${imported.compiled_truth}\n${imported.timeline}`).toContain(line);
 
-    // Both sides now hold a line the other lacks: held, and neither copy changes, before and after an earlier version's hold is checked again.
+    // Both sides now hold a line the other lacks: held, and neither copy changes, before and after a retry re-screens the hold.
     const dbLine = 'A paragraph only the database holds.';
     await raw(engine, "UPDATE pages SET compiled_truth=$1, timeline='', knowledge_revision=gen_random_uuid() WHERE source_id='default' AND slug=$2",
       [folded(BULLETS, `${PROSE}\n\n${fileLine}\n\n${dbLine}`), SLUG]);
@@ -213,7 +216,7 @@ for (const backend of testBackends()) {
     const before = { file: readFileSync(path, 'utf8'), row: await row() };
     await performManagedSync(engine, SYNC);
     expect(await holds(engine)).toEqual([{ path: `${SLUG}.md`, code: 'file_drift' }]);
-    await raw(engine, "UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys, '{0,meta,drift_version}', '3'::jsonb) WHERE op='sync-hold'");
+    await retry(engine);
     await performManagedSync(engine, SYNC);
     expect(await holds(engine)).toEqual([{ path: `${SLUG}.md`, code: 'file_drift' }]);
     expect({ file: readFileSync(path, 'utf8'), row: await row() }).toEqual(before);
@@ -252,8 +255,7 @@ for (const backend of testBackends()) {
     await performManagedSync(engine, SYNC);
     expect(await holds(engine)).toEqual([{ path: `${SLUG}.md`, code: 'file_drift' }]);
     // Asked to re-screen anyway (sources retry-held), its guarded import refuses: held again, neither copy changes.
-    const [source] = await engine.executeRaw<{ i: string }>("SELECT incarnation::text AS i FROM sources WHERE id='default'");
-    await requestGitHoldRetry(engine, 'default', source!.i, [`${SLUG}.md`]);
+    await retry(engine);
     await performManagedSync(engine, SYNC);
     expect(await holds(engine)).toEqual([{ path: `${SLUG}.md`, code: 'file_drift' }]);
     expect({ file: readFileSync(path, 'utf8'), row: await rowBody() }).toEqual(before);

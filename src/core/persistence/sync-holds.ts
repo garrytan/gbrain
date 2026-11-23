@@ -679,9 +679,9 @@ export async function holdBasisMoved(engine: Pick<BrainEngine, 'executeRaw'>, so
 /**
  * GBRA-133: the `file_drift` screen version; 1 is #7340's rule (a page with no import record compares its file at the baseline commit),
  * 2 adds the path's earlier committed versions (`driftHistory`), which landed after version 1 without re-screening its holds.
- * GST-2568: 3 reads a schema-pack retype's database-only stamp as the file's own type (align-stored.ts `keepRetypeStamp`); 4, a stored body split as today's parser splits it (`storedReadings`).
+ * GST-2568: 3 reads a schema-pack retype's database-only stamp as the file's own type (align-stored.ts `keepRetypeStamp`).
  */
-export const FILE_DRIFT_VERSION = 4;
+export const FILE_DRIFT_VERSION = 3;
 
 /** Hold codes every sync re-screens, whatever else changed (holdRescreenDue). GST-2843: re-holding one is never progress (sync-pass-status.ts passBanked). */
 export const EVERY_PASS_RESCREEN_CODES: readonly string[] = ['frontmatter_slug_conflict', 'rename_held', 'parser_regression', 'content_rejected', 'write_gate_rejected', 'purged_content', 'legacy_slug_conflict', 'origin_conflict', 'page_identity_changed', 'git_object_missing'];
@@ -697,8 +697,8 @@ export function holdRescreenDue(record: Pick<GitHoldRecord, 'code' | 'meta'>, re
     // GBRA-133: an unknown-side drift held before #7340's baseline rule (a Git edit to a page with no import record) imports
     // now when the page still holds its file at the baseline commit, so it is screened once more.
     || (record.code === 'file_drift' && fileDriftSide(record.meta) === 'unknown' && ((record.meta.drift_version ?? 0) < FILE_DRIFT_VERSION || record.meta.history_unread === true))
-    // GST-2568: a live page's drift held before version 3 (4) may differ from its file only by a retype's stamp (its timeline's split), so it is screened once more.
-    || (record.code === 'file_drift' && fileDriftSide(record.meta) !== 'deleted' && (record.meta.drift_version ?? 0) < FILE_DRIFT_VERSION)
+    // GST-2568: a live page's drift held before version 3 may differ from its file only by a schema-pack retype's stamp, so it is screened once more.
+    || (record.code === 'file_drift' && fileDriftSide(record.meta) !== 'deleted' && (record.meta.drift_version ?? 0) < 3)
     // #8007: a deletion held while gbrain.yml's storage section was invalid is decided again by every sync, so a fixed file settles it.
     || (record.code === 'file_drift' && record.meta.reason === 'storage_invalid')
     || (outOfAttemptsHold(record.code) && record.meta.stall?.gbrain_version !== VERSION)
