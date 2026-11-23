@@ -730,7 +730,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'replaceWantedLinkRows': OOS.wantedLinks,
   'searchRead': OOS.helper,
   'engineRead': OOS.helper,
-  'decideRead': OOS.helper,
+  'decideRead': OOS.helper, 'timelineBoundedRead': OOS.helper,
   'countOnboardSignal': OOS.stats,
   'countBrainLivePages': OOS.stats,
   'countLivePagesBySource': OOS.stats,
