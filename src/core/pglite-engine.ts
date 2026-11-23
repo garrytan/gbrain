@@ -141,6 +141,8 @@ import {
 } from './search/embedding-column.ts';
 import { hasCJK } from './cjk.ts';
 import * as factsImpl from './engine-sql/facts.ts';
+import * as embedStaleWorkImpl from './engine-sql/embed-stale-work.ts';
+import * as embeddingProvenanceImpl from './engine-sql/embedding-provenance.ts';
 import * as synopsisTierImpl from './engine-sql/synopsis-tier.ts';
 import * as sourceCrModeImpl from './engine-sql/source-cr-mode.ts';
 import * as syncReasonReadsImpl from './engine-sql/sync-reason-reads.ts';
@@ -3164,6 +3166,15 @@ export class PGLiteEngine implements BrainEngine {
     return quoteIdentifier(col.name);
   }
 
+  countArchivedEmbeddingWork(opts: embedStaleWorkImpl.ArchivedEmbeddingWorkOpts) { return embedStaleWorkImpl.countArchivedEmbeddingWork(this.rawRead, opts); }
+  countEmbedPendingProjections(scope: embedStaleWorkImpl.PendingProjectionScope) { return embedStaleWorkImpl.countEmbedPendingProjections(this.rawRead, scope); }
+  listEmbedPendingProjections(scope: embedStaleWorkImpl.PendingProjectionScope, limit: number) { return embedStaleWorkImpl.listEmbedPendingProjections(this.rawRead, scope, limit); }
+  listEmbedProjectionRepairPages(scope: embedStaleWorkImpl.PendingProjectionScope, afterPageId: number, limit: number) { return embedStaleWorkImpl.listEmbedProjectionRepairPages(this.rawRead, scope, afterPageId, limit); }
+  isSegmentedPage(pageId: number) { return embedStaleWorkImpl.isSegmentedPage(this.rawRead, pageId); }
+  hasEmbeddingSignatureDrift(opts: embedStaleWorkImpl.SignatureDriftOpts) { return embedStaleWorkImpl.hasEmbeddingSignatureDrift(this.rawRead, opts); }
+  readPageProvenanceComplete(slug: string, sourceId: string, model: string, dims: number | null, column: string) { return embeddingProvenanceImpl.readPageProvenanceComplete(this, slug, sourceId, model, dims, column); }
+  lockContentDriftState(key: string, initial: string) { return embedStaleWorkImpl.lockContentDriftState(this.rawRead, key, initial); }
+  invalidateContentDriftChunks(window: embedStaleWorkImpl.ContentDriftChunkWindow) { return embedStaleWorkImpl.invalidateContentDriftChunks(this.rawRead, window); }
   async countStaleChunks(opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean }): Promise<number> {
     const column = (await resolveActiveEmbeddingColumnFromEngine(this, { fallbackToLegacy: true })).name;
     return chunksImpl.countStaleChunks(scopedRead(this.engineSql), column, opts);

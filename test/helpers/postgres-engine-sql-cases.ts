@@ -139,6 +139,7 @@ const OOS = {
   repairTakesTimeline: 'out-of-scope:repair-takes-timeline (the take-supersession, timeline-family and conversation-labels repair reads, born in engine-sql/takes-reads.ts, engine-sql/timeline-repair-reads.ts and engine-sql/label-repair-reads.ts; pinned by test/engine-parity/repair-takes-timeline.test.ts)',
   repairHistoryKinds: 'out-of-scope:repair-history-kinds (the batch 6a history repair reads and writes, born in engine-sql/version-reasons.ts, overwrite-reads.ts, takes-reads.ts, fact-text-repair.ts, atom-restore-reads.ts and moved-page-reads.ts; pinned by test/engine-parity/repair-history-kinds.test.ts)',
   repairGenerationKinds: 'out-of-scope:repair-generation-kinds (the batch 7 generation repair reads, born in engine-sql/lost-fence-reads.ts and stale-atom-reads.ts; pinned by test/engine-parity/repair-generation-kinds.test.ts)',
+  embedStaleWork: 'out-of-scope:embed-stale-work (born in engine-sql/embed-stale-work.ts and engine-sql/embedding-provenance.ts; pinned by test/engine-parity/embed-stale-work.test.ts)',
   engineMigration: 'out-of-scope:engine-migration (the reads gbrain migrate --engine copies a brain with, born in engine-sql/engine-migration.ts; pinned by test/engine-parity/migrate-engine-source.test.ts)',
 } as const;
 
@@ -1332,6 +1333,15 @@ export const DOMAIN_OF: Record<string, string> = {
   'listCallOffCueFacts': OOS.factsRecallSites,
   'listPoolEntityPairs': OOS.factsRecallSites,
   'listFactRowsByIds': OOS.factsRecallSites,
+  'countArchivedEmbeddingWork': OOS.embedStaleWork,
+  'countEmbedPendingProjections': OOS.embedStaleWork,
+  'listEmbedPendingProjections': OOS.embedStaleWork,
+  'listEmbedProjectionRepairPages': OOS.embedStaleWork,
+  'isSegmentedPage': OOS.embedStaleWork,
+  'hasEmbeddingSignatureDrift': OOS.embedStaleWork,
+  'readPageProvenanceComplete': OOS.embedStaleWork,
+  'lockContentDriftState': OOS.embedStaleWork,
+  'invalidateContentDriftChunks': OOS.embedStaleWork,
 };
 
 /** Every own member of PostgresEngine.prototype (methods + accessors), sorted. */

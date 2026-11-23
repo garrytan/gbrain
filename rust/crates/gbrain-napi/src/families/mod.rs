@@ -15,6 +15,7 @@ mod cli_reads_search_pages;
 mod cli_sources;
 mod config;
 mod connector_orphans;
+mod embed_stale_work;
 mod engine_migration;
 mod fact_relink;
 mod fact_relink_writes;

@@ -74,7 +74,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   retrieval_coverage: ['countPendingProjectionPages', 'countEmbeddingHeldPages', 'projectionRebuildProgress',
     'readProjectionReadinessGeneration', 'readProjectionReadiness'],
   chunks: ['upsertChunks', 'sealChunks', 'getChunks', 'getChunkPage', 'getChunkWindows', 'countStaleChunks', 'sumStaleChunkChars',
-    'setPageEmbeddingSignature', 'invalidateStaleSignatureEmbeddings', 'invalidateContentDriftEmbeddings', 'listStaleChunks',
+    'setPageEmbeddingSignature', 'readPageProvenanceComplete', 'invalidateStaleSignatureEmbeddings', 'invalidateContentDriftEmbeddings', 'listStaleChunks',
     'readPageEmbeddingBudget', 'recordPageEmbeddingHold', 'openPageEmbeddingHold', 'reservePageEmbedding', 'settlePageEmbeddingReservation',
     'readEmbeddingCompletion', 'lockEffectClaimRow', 'lockEmbeddingSwitch', 'installChunkEmbeddings',
     'countChunklessPagesWithContent', 'listChunklessPagesWithContent', 'readEmbeddingStateCounts', 'listEmbeddingStateRows',
@@ -446,6 +446,9 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'claimWakeWatch', 'settleWakeWatch', 'queueWakeForget', 'claimWakeForgets', 'settleWakeForget',
   ],
   owner_only: ['ownerOnlyMarkTriggers'],
+  // embed_stale_work: the embed --stale reads and writes embedding-readiness.ts, embedding-invalidation.ts and content-drift-sweep.ts ran through executeRaw (engine-sql/embed-stale-work.ts)
+  embed_stale_work: ['countArchivedEmbeddingWork', 'countEmbedPendingProjections', 'listEmbedPendingProjections', 'listEmbedProjectionRepairPages',
+    'isSegmentedPage', 'hasEmbeddingSignatureDrift', 'lockContentDriftState', 'invalidateContentDriftChunks'],
   // engine_migration: the source-side reads of `gbrain migrate --to <engine>` (engine-sql/engine-migration.ts)
   engine_migration: ['readEngineMigrationHistory', 'readMigrationRows', 'readMigrationPageColumns', 'listManualLinkTransitions', 'countLiveTimelineEntries'],
 };

@@ -26,7 +26,7 @@ import { embedBatchWithBackoff, restampIfDemotedToTitleTier } from './embed-retr
 import { wrapChunkTextsForStoredMode } from './embedding-context.ts';
 import { healOversizedPageChunks, healedChunksToStaleRows } from './embed-oversize-heal.ts';
 import { healAndReportOverLength } from './embed-overlength-heal.ts';
-import { hasSignatureDrift, invalidateStaleSignatureEmbeddingsGuarded, splitEmbeddingSignature, currentSpaceChunkPredicate } from './embedding-invalidation.ts';
+import { hasSignatureDrift, invalidateStaleSignatureEmbeddingsGuarded, splitEmbeddingSignature } from './embedding-invalidation.ts';
 import {
   resolveActiveEmbeddingColumnFromEngine,
   quoteIdentifier,
@@ -38,7 +38,7 @@ import { AbortError } from './abort-check.ts';
 import { contentDriftSweepLine, runContentDriftSweep, type ContentDriftSweepStatus } from './content-drift-sweep.ts';
 import { meterPageBatch, spendGrant } from './page-embedding-budget.ts';
 import { acquirePageEmbeddingLease, stillPendingChunks } from './page-embedding-lease.ts';
-import { chunkGenerationFilter, chunkVisibleFilter, currentTextProjectionFilter } from './search/safe-chunks.ts';
+import { chunkGenerationFilter } from './search/safe-chunks.ts';
 import { embedSegmentedPage, embedSegmentedRows, readSegmentedEmbedPage, type SegmentedEmbedOpts } from './page-body/segmented-embedding.ts';
 
 /**
@@ -197,16 +197,7 @@ export async function stampIfPageProvenanceComplete(
     // Signature is `<provider:model>:<dims>`; the model part is what
     // upsertChunks records in content_chunks.model.
     const { model, dims } = splitEmbeddingSignature(signature);
-    const colId = quoteIdentifier(column);
-    const rows = await tx.executeRaw<{ complete: boolean }>(
-      `SELECT count(*) > 0
-              AND bool_and(${currentSpaceChunkPredicate(colId, 1, 4)}) AS complete
-         FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
-        WHERE p.slug = $2 AND p.source_id = $3 AND ${chunkVisibleFilter('p', 'cc', currentTextProjectionFilter)}
-          AND EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived)`,
-      [model, slug, sourceId, dims],
-    );
-    if (rows[0]?.complete !== true) return false;
+    if (!await tx.readPageProvenanceComplete(slug, sourceId, model, dims, column)) return false;
     await tx.setPageEmbeddingSignature(slug, { sourceId, signature });
     return true;
   });

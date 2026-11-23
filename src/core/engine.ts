@@ -1,6 +1,7 @@
 import type * as MentionPassSql from './engine-sql/mention-pass.ts';
 import type * as MentionReadsSql from './engine-sql/mention-reads.ts';
 import type * as SegmentDeriveStoreSql from './engine-sql/segment-derive-store.ts';
+import type * as EmbedStaleWork from './engine-sql/embed-stale-work.ts';
 import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead, BodyManifestRow, BodyManifestMeta, BodyManifestOutline } from './engine-sql/export-reads.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as DecideStoreSql from './engine-sql/decide-store.ts';
@@ -2187,6 +2188,26 @@ export interface BrainEngine {
    * aren't silently left in the old embedding space.
    */
   countStaleChunks(opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean }): Promise<number>;
+  // embed --stale reads and writes (SQL in engine-sql/embed-stale-work.ts): the statements embedding-readiness.ts, embedding-invalidation.ts,
+  // embed-stale.ts and content-drift-sweep.ts ran through executeRaw.
+  /** Live, non-embed_skip pages of archived sources with embedding work (embedding-readiness.ts countArchivedEmbeddingWork). */
+  countArchivedEmbeddingWork(opts: EmbedStaleWork.ArchivedEmbeddingWorkOpts): Promise<number>;
+  /** How many pages still wait for a text projection under `scope`. */
+  countEmbedPendingProjections(scope: EmbedStaleWork.PendingProjectionScope): Promise<number>;
+  /** The first `limit` pages of `scope` in active sources still waiting for a text projection, by page id. */
+  listEmbedPendingProjections(scope: EmbedStaleWork.PendingProjectionScope, limit: number): Promise<EmbedStaleWork.PendingProjectionPage[]>;
+  /** The next `limit` pages of `scope` in active sources after `afterPageId` that a projection rebuild can build, by page id. */
+  listEmbedProjectionRepairPages(scope: EmbedStaleWork.PendingProjectionScope, afterPageId: number, limit: number): Promise<EmbedStaleWork.ProjectionRepairPage[]>;
+  /** Whether the page with this id keeps its body in segments. */
+  isSegmentedPage(pageId: number): Promise<boolean>;
+  /** Whether an embedded chunk sits on a page whose signature drifted (embedding-invalidation.ts hasSignatureDrift). */
+  hasEmbeddingSignatureDrift(opts: EmbedStaleWork.SignatureDriftOpts): Promise<boolean>;
+  /** Whether every visible chunk of the page holds a vector in `column` that is current for `model` at `dims` wide (engine-sql/embedding-provenance.ts; the embedding signature stamp). */
+  readPageProvenanceComplete(slug: string, sourceId: string, model: string, dims: number | null, column: string): Promise<boolean>;
+  /** The content-drift sweep's cursor row, created with `initial` when absent and locked for the transaction; run it on the transaction handle. */
+  lockContentDriftState(key: string, initial: string): Promise<string | null>;
+  /** One content-drift batch: drop the vectors of the next chunk rows whose text changed since they were embedded; run it on the transaction handle. */
+  invalidateContentDriftChunks(window: EmbedStaleWork.ContentDriftChunkWindow): Promise<EmbedStaleWork.ContentDriftChunkResult>;
   /**
    * Sum of LENGTH(chunk_text) over stale chunks — the character-count
    * backlog the embed phase / embed-backfill will process. Sibling of

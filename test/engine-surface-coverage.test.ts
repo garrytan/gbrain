@@ -67,6 +67,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'readWedgeSignals', 'readOldestWaitingAge', 'countWaitingJobs', 'listStuckActiveJobsByName',
   // gbrain migrate --to <engine>: the source-side reads (engine-sql/engine-migration.ts)
   'readEngineMigrationHistory', 'readMigrationRows', 'readMigrationPageColumns', 'listManualLinkTransitions', 'countLiveTimelineEntries',
+  // embed --stale reads and writes (engine-sql/embed-stale-work.ts; covered by test/engine-parity/embed-stale-work.test.ts)
+  'countArchivedEmbeddingWork', 'countEmbedPendingProjections', 'listEmbedPendingProjections', 'listEmbedProjectionRepairPages', 'isSegmentedPage', 'hasEmbeddingSignatureDrift', 'lockContentDriftState', 'invalidateContentDriftChunks',
   // Minion job counts and last-run reads for the status surfaces, lane L5 group B (engine-sql/jobs-status.ts)
   'readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'countTtlCancelledByName',
   'readWaitingScopeState', 'countRecentCompletedJobs', 'listRecentFailedJobErrors', 'readQueuedPageChars', 'readSourceJobCounts',
@@ -314,7 +316,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Search
   'searchKeyword', 'countKeywordPages', 'searchKeywordPages', 'searchTitles', 'searchVector', 'getEmbeddingsByChunkIds',
   // Chunks
-  'upsertChunks', 'sealChunks', 'getChunks', 'getChunkPage', 'getChunkWindows', 'countStaleChunks', 'sumStaleChunkChars', 'setPageEmbeddingSignature',
+  'upsertChunks', 'sealChunks', 'getChunks', 'getChunkPage', 'getChunkWindows', 'countStaleChunks', 'sumStaleChunkChars', 'setPageEmbeddingSignature', 'readPageProvenanceComplete',
   'invalidateStaleSignatureEmbeddings', 'invalidateContentDriftEmbeddings', 'listStaleChunks',
   // The page embedding ledger (engine-sql/page-embedding-budget.ts).
   'readPageEmbeddingBudget', 'recordPageEmbeddingHold', 'openPageEmbeddingHold', 'reservePageEmbedding', 'settlePageEmbeddingReservation',

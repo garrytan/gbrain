@@ -81,6 +81,12 @@ export const invalidateStaleSignatureEmbeddings: StoreMember<[opts: { signature:
     return storeCall({ member: 'invalidateStaleSignatureEmbeddings' }, () => brain.invalidateStaleSignatureEmbeddings(options));
   };
 
+export const readPageProvenanceComplete: StoreMember<[slug: string, sourceId: string, model: string, dims: number | null, column: string], boolean> =
+  async (brain, slug, sourceId, model, dims, column) => {
+    if (column !== 'embedding') refuseMember('readPageProvenanceComplete', `column ${column}`);
+    return storeCall({ member: 'readPageProvenanceComplete', slug }, () => brain.readPageProvenanceComplete(slug, sourceId, model, dims)) as Promise<boolean>;
+  };
+
 export const invalidateContentDriftEmbeddings: StoreMember<[opts?: { sourceId?: string }], number> = async (brain, opts) => {
   const options = takeOptions('invalidateContentDriftEmbeddings', opts, ['sourceId']);
   await requireTextColumn(brain, 'invalidateContentDriftEmbeddings');

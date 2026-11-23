@@ -16,7 +16,6 @@ src/core/embedding-invalidation.ts	4
 src/core/embedding-migration-retention.ts	1
 src/core/embedding-migration-worst-case.ts	2
 src/core/embedding-migration.ts	8
-src/core/embedding-readiness.ts	3
 src/core/engine-sql/chunks.ts	6
 src/core/engine-sql/code-edges.ts	1
 src/core/engine-sql/entity-reads.ts	2

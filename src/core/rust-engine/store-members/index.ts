@@ -41,6 +41,7 @@ import * as keyword from './keyword.ts';
 import * as chunkQueries from './chunk-queries.ts';
 import * as vectors from './vectors.ts';
 import * as embeddings from './embeddings.ts';
+import * as embedStaleWork from './embed-stale-work.ts';
 import * as transactions from './transactions.ts';
 import * as relations from './relations.ts';
 import * as trustWithdrawals from './trust-withdrawals.ts';
@@ -147,7 +148,7 @@ export const STORE_MEMBERS = {
   // Planned families: a member is served once its family file exports it.
   ...pageOps, ...extraction, ...aliases, ...pageBody, ...facts, ...ontology, ...takes, ...contradictions, ...dream, ...dreamJournal,
   ...evalCapture, ...codeEdges, ...salience, ...stats, ...rawFiles, ...linkQueries, ...timelineQueries, ...timelineRepairReads, ...keyword,
-  ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...writeContext, ...relations, ...wantedLinks, ...trustWithdrawals, ...trustWriteGate, ...openLoops, ...loopMutes,
+  ...chunkQueries, ...vectors, ...embeddings, ...embedStaleWork, ...transactions, ...writeContext, ...relations, ...wantedLinks, ...trustWithdrawals, ...trustWriteGate, ...openLoops, ...loopMutes,
   ...sourceArchive,
   // The minion queue and its cycle locks (rust/crates/gbrain-store/src/jobs.rs).
   ...jobs,

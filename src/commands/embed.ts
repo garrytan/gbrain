@@ -1,4 +1,3 @@
-import { sqlEngineKind } from '../core/sql-engine-kind.ts';
 import { jsonRequested } from '../core/cli-force-exit.ts';
 import { prepareProseChunks } from '../core/markdown-chunks.ts';
 import type { FenceChunkOverlay } from '../core/eligibility/fence-overlay.ts';
@@ -442,7 +441,7 @@ async function preflightDimMismatch(engine: BrainEngine, dryRun: boolean): Promi
     requestedDims: resolvedDims,
     requestedModel: resolvedModel,
     source: 'embed',
-    engineKind: sqlEngineKind(engine.kind, 'gbrain embed'),
+    engineKind: engine.kind,
     databasePath,
   });
   throw new EmbeddingDimMismatchError(recipe);
@@ -2115,7 +2114,7 @@ async function embedAllStale(
           if (!prepared) {
             // #5804: a page edited, deleted or unsealed mid-run is a counted failure, not a silent
             // skip. An archived source is left to reportArchived, which already counts its pages.
-            const [source] = await observed(pacer, () => engine.executeRaw<{ archived: boolean }>('SELECT archived FROM sources WHERE id = $1', [keySourceId]));
+            const source = await observed(pacer, () => engine.readSourceRow(keySourceId));
             if (!source?.archived) { result.failures += stale.length; if (!blockedProjections.has(key)) unavailablePages.set(key, slug); }
             return;
           }

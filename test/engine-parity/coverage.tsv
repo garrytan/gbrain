@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1623/1633
+# covered: 1632/1642
 # lifecycle: 9/9
 # pages: 70/70
 # search: 7/7
@@ -15,7 +15,7 @@
 # link_temporal: 12/12
 # search_vector: 4/4
 # retrieval_coverage: 5/5
-# chunks: 47/48
+# chunks: 48/49
 # extraction: 7/7
 # links: 23/23
 # tags: 5/5
@@ -94,6 +94,7 @@
 # decide_store: 20/20
 # jobs_wake: 19/19
 # owner_only: 1/1
+# embed_stale_work: 8/8
 # engine_migration: 5/5
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	1	yes	yes	yes	serves
@@ -101,7 +102,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	213	no	yes	yes	serves
+transaction	lifecycle	yes	214	no	yes	yes	serves
 transactionDirect	lifecycle	yes	14	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -142,7 +143,7 @@ readOwnerOnlySourceConfig	pages	yes	1	no	yes	yes	serves
 listSourceRoutingRows	pages	yes	1	no	yes	yes	serves
 countDefaultSourceSplit	pages	yes	1	no	yes	yes	serves
 listStaleSyncSourceIds	pages	yes	1	no	yes	yes	serves
-readSourceRow	pages	yes	3	no	yes	yes	serves
+readSourceRow	pages	yes	4	no	yes	yes	serves
 lockSourceRow	pages	yes	5	no	yes	yes	serves
 markSourceSynced	pages	yes	3	no	yes	yes	serves
 countSourcePages	pages	yes	6	no	yes	yes	serves
@@ -247,8 +248,9 @@ getChunks	chunks	yes	56	yes	yes	yes	serves
 getChunkPage	chunks	yes	14	no	yes	yes	serves
 getChunkWindows	chunks	yes	12	no	yes	yes	serves
 countStaleChunks	chunks	yes	8	no	yes	yes	serves
+readPageProvenanceComplete	chunks	yes	2	no	yes	yes	serves
 sumStaleChunkChars	chunks	yes	3	no	yes	yes	serves
-setPageEmbeddingSignature	chunks	yes	4	no	yes	yes	serves
+setPageEmbeddingSignature	chunks	yes	5	no	yes	yes	serves
 invalidateStaleSignatureEmbeddings	chunks	yes	1	no	yes	yes	serves
 invalidateContentDriftEmbeddings	chunks	yes	1	no	yes	yes	serves
 listStaleChunks	chunks	yes	3	no	yes	yes	serves
@@ -534,7 +536,7 @@ countLivePagesBySource	stats_ingest	yes	1	no	yes	yes	serves
 countChunksBySource	stats_ingest	yes	1	no	yes	yes	serves
 readBrainMaturity	stats_ingest	yes	2	no	yes	yes	serves
 getStats	stats_ingest	yes	6	yes	yes	yes	serves
-getHealth	stats_ingest	yes	6	yes	yes	yes	serves
+getHealth	stats_ingest	yes	7	yes	yes	yes	serves
 listVisiblePageSlugs	stats_ingest	yes	1	no	yes	yes	refuses:pages
 readPagesForVersionHistory	stats_ingest	yes	1	no	yes	yes	refuses:pages
 logIngest	stats_ingest	yes	5	no	yes	yes	serves
@@ -999,7 +1001,7 @@ countStaleFactEmbeddings	facts_doctor	yes	1	no	yes	yes	serves
 countSegmentedCensusPages	facts_doctor	yes	1	no	yes	yes	refuses:facts
 listFactsPageBodies	facts_doctor	yes	1	no	yes	yes	refuses:facts
 readFactTableCatalog	facts_doctor	yes	1	no	yes	yes	refuses:facts
-readChunkVectorColumn	embedding_catalog	yes	2	no	yes	yes	serves
+readChunkVectorColumn	embedding_catalog	yes	3	no	yes	yes	serves
 readEmbeddingIdentity	embedding_catalog	yes	1	no	yes	yes	serves
 listEmbeddingStores	embedding_catalog	yes	1	no	yes	yes	serves
 hasStoredVectors	embedding_catalog	yes	2	no	yes	yes	serves
@@ -1724,6 +1726,14 @@ queueWakeForget	jobs_wake	yes	2	no	yes	yes	serves
 claimWakeForgets	jobs_wake	yes	2	no	yes	yes	serves
 settleWakeForget	jobs_wake	yes	2	no	yes	yes	serves
 ownerOnlyMarkTriggers	owner_only	yes	2	no	yes	yes	refuses:raw_sql
+countArchivedEmbeddingWork	embed_stale_work	yes	3	no	yes	yes	serves
+countEmbedPendingProjections	embed_stale_work	yes	3	no	yes	yes	serves
+listEmbedPendingProjections	embed_stale_work	yes	1	no	yes	yes	serves
+listEmbedProjectionRepairPages	embed_stale_work	yes	1	no	yes	yes	serves
+isSegmentedPage	embed_stale_work	yes	1	no	yes	yes	serves
+hasEmbeddingSignatureDrift	embed_stale_work	yes	2	no	yes	yes	serves
+lockContentDriftState	embed_stale_work	yes	2	no	yes	yes	serves
+invalidateContentDriftChunks	embed_stale_work	yes	2	no	yes	yes	serves
 readEngineMigrationHistory	engine_migration	yes	2	no	yes	yes	serves
 readMigrationRows	engine_migration	yes	4	no	yes	yes	serves
 readMigrationPageColumns	engine_migration	yes	2	no	yes	yes	serves

@@ -30,6 +30,7 @@ test/engine-parity/delegated-grant.test.ts	2	0
 test/engine-parity/dream-config-members.test.ts	5	0
 test/engine-parity/dream-cycle-sites.test.ts	3	7
 test/engine-parity/effect-scans.test.ts	3	0
+test/engine-parity/embed-stale-work.test.ts	7	0
 test/engine-parity/embedding-catalog.test.ts	7	0
 test/engine-parity/embedding-install.test.ts	3	0
 test/engine-parity/entity-anchor-reads.test.ts	2	0

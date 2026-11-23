@@ -278,6 +278,9 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readFenceOriginGone', 'readGenerationActivationState', 'readGenerationFenceBlocks', 'readGenerationItemsByIds',
   'readGenerationPageRows', 'readGenerationRestored', 'readGenerationValve', 'readHeldGenerationContext',
   'readHeldGenerationProposal', 'readLiveGenerationId', 'readLiveGenerationRow', 'readTakePreimages',
+  // embed --stale (engine-sql/embed-stale-work.ts, embedding-provenance.ts): counts, listings and probes over pages and chunks.
+  'countArchivedEmbeddingWork', 'countEmbedPendingProjections', 'hasEmbeddingSignatureDrift', 'isSegmentedPage',
+  'listEmbedPendingProjections', 'listEmbedProjectionRepairPages', 'readPageProvenanceComplete',
 ];
 
 const nothingSetting = 'nothing: the setting lasts only for the call, so running it again repeats no write';
@@ -289,6 +292,9 @@ const nothingLock = 'nothing: the lock is released when the call ends, so runnin
 
 /** Typed writes and the read that confirms each. */
 export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> = {
+  // embed --stale (engine-sql/embed-stale-work.ts): the content-drift sweep's cursor row and one drift batch.
+  lockContentDriftState: 'getConfig for that key (the row holds the initial state or a later one)',
+  invalidateContentDriftChunks: 'countStaleChunks for that source (each chunk it dropped a vector from counts as stale)',
   // The mention pass's writes (engine-sql/mention-pass.ts). The two advisory locks take nothing on the rust store.
   storeSegmentDerivationsIfLive: 'readSegmentDerivations for that page (the rows are there only when the page was live at that generation)',
   writeMentionIndexStatus: 'readMentionStatusStates and readMentionPolicyFingerprints for that source (a bumped generation shows in readMentionGenerations)',

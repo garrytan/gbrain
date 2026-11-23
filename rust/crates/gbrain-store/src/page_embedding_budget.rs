@@ -369,6 +369,14 @@ impl Store {
 }
 
 /// Deletes the page's ledger record (`embeddings::remove_page_rows`).
+/// The page's ledger `state` and `reason`, when it has a ledger row (`pageBudgetLimitedFilter` reads them).
+pub(crate) fn ledger_state(
+    read: &dyn KvRead,
+    page_id: u64,
+) -> Result<Option<(String, Option<String>)>> {
+    Ok(crate::get_json::<BudgetRecord>(read, &budget_key(page_id))?.map(|r| (r.state, r.reason)))
+}
+
 pub(crate) fn remove_page_budget(tx: &mut dyn KvWrite, page_id: u64) -> Result<()> {
     tx.delete(&budget_key(page_id))
 }

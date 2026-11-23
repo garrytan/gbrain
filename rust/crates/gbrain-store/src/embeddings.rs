@@ -40,6 +40,8 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+pub mod stale_work;
+
 const CHUNK_VECTOR: u8 = b'c';
 const TAKE_VECTOR: u8 = b't';
 const GENERATION: u8 = b'g';
@@ -889,6 +891,40 @@ impl Store {
             }
             Ok(())
         })
+    }
+
+    /// `readPageProvenanceComplete(slug, sourceId, model, dims, column)`: whether the page (in an
+    /// unarchived source) has at least one visible chunk of its current text projection and every
+    /// one holds a vector in the target space (`in_current_space`). A missing page, an archived or
+    /// missing source and an unsealed page answer false. The store keeps one vector column, so the
+    /// shell refuses any other `column` before this call.
+    pub fn read_page_provenance_complete(
+        &self,
+        slug: &str,
+        source_id: &str,
+        model: &str,
+        dims: Option<u32>,
+    ) -> Result<bool> {
+        let read = self.read()?;
+        let Some(page) = read_page(&*read, source_id, slug)? else {
+            return Ok(false);
+        };
+        if !read_source(&*read, source_id)?.is_some_and(|s| !s.archived) {
+            return Ok(false);
+        }
+        let chunks = read_chunks(&*read, page.id)?;
+        let view = read_segment_view(&*read, page.id)?;
+        let ctx = PageCtx {
+            signature: None,
+            page,
+            chunks,
+            view,
+        };
+        if !ctx.sealed() {
+            return Ok(false);
+        }
+        let mut visible = ctx.visible().peekable();
+        Ok(visible.peek().is_some() && visible.all(|c| in_current_space(c, model, dims)))
     }
 
     /// `invalidateStaleSignatureEmbeddings({ signature, sourceId?, includeNullSignature? })`: drops

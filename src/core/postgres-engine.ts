@@ -140,6 +140,8 @@ import { deadlineReadSettings, isPipelinableSearchRead, SEARCH_JIT_OFF, withSear
 import { loadKeywordStatementTimeout } from './postgres-engine/keyword-statement-timeout.ts';
 import { applyPostgresForwardReferenceBootstrap } from './engine-sql/bootstrap.ts';
 import * as factsImpl from './engine-sql/facts.ts';
+import * as embedStaleWorkImpl from './engine-sql/embed-stale-work.ts';
+import * as embeddingProvenanceImpl from './engine-sql/embedding-provenance.ts';
 import * as synopsisTierImpl from './engine-sql/synopsis-tier.ts';
 import * as sourceCrModeImpl from './engine-sql/source-cr-mode.ts';
 import * as syncReasonReadsImpl from './engine-sql/sync-reason-reads.ts';
@@ -3034,6 +3036,15 @@ export class PostgresEngine implements BrainEngine {
     return quoteIdentifier(col.name);
   }
 
+  countArchivedEmbeddingWork(opts: embedStaleWorkImpl.ArchivedEmbeddingWorkOpts) { return embedStaleWorkImpl.countArchivedEmbeddingWork(this.executeRaw.bind(this), opts); }
+  countEmbedPendingProjections(scope: embedStaleWorkImpl.PendingProjectionScope) { return embedStaleWorkImpl.countEmbedPendingProjections(this.executeRaw.bind(this), scope); }
+  listEmbedPendingProjections(scope: embedStaleWorkImpl.PendingProjectionScope, limit: number) { return embedStaleWorkImpl.listEmbedPendingProjections(this.executeRaw.bind(this), scope, limit); }
+  listEmbedProjectionRepairPages(scope: embedStaleWorkImpl.PendingProjectionScope, afterPageId: number, limit: number) { return embedStaleWorkImpl.listEmbedProjectionRepairPages(this.executeRaw.bind(this), scope, afterPageId, limit); }
+  isSegmentedPage(pageId: number) { return embedStaleWorkImpl.isSegmentedPage(this.executeRaw.bind(this), pageId); }
+  hasEmbeddingSignatureDrift(opts: embedStaleWorkImpl.SignatureDriftOpts) { return embedStaleWorkImpl.hasEmbeddingSignatureDrift(this.executeRaw.bind(this), opts); }
+  readPageProvenanceComplete(slug: string, sourceId: string, model: string, dims: number | null, column: string) { return embeddingProvenanceImpl.readPageProvenanceComplete(this, slug, sourceId, model, dims, column); }
+  lockContentDriftState(key: string, initial: string) { return embedStaleWorkImpl.lockContentDriftState(this.executeRaw.bind(this), key, initial); }
+  invalidateContentDriftChunks(window: embedStaleWorkImpl.ContentDriftChunkWindow) { return embedStaleWorkImpl.invalidateContentDriftChunks(this.executeRaw.bind(this), window); }
   async countStaleChunks(opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean }): Promise<number> {
     const column = (await resolveActiveEmbeddingColumnFromEngine(this, { fallbackToLegacy: true })).name;
     return this.withScopedReadTransaction(undefined, opts?.sourceId, tx => chunksImpl.countStaleChunks(scopedRead(this.engineSqlOn(tx)), column, opts));
