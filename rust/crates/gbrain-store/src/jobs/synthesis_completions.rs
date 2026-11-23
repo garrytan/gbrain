@@ -184,3 +184,18 @@ impl Store {
         Ok(out)
     }
 }
+
+/// The shadow follow (`seed/follow.rs`): removes the archive row `(source_id, idempotency_key)`.
+/// `false` when there is none.
+pub(crate) fn remove_completion(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    idempotency_key: &str,
+) -> Result<bool> {
+    let key = completion_key(source_id, idempotency_key);
+    if tx.get(&key)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&key)?;
+    Ok(true)
+}

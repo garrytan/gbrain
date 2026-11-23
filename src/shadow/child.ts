@@ -19,6 +19,7 @@ import { openRustEngine, type RustEngineAddonHandle } from '../core/rust-engine.
 import { loadRustEngineAddonOffline, type RustEngineAddonLoaderFn } from './addon.ts';
 import { classifyError, classifyResult, type Classification } from './classify.ts';
 import { decodeValue, encodeValue } from './codec.ts';
+import { FollowChild, type FollowEvent, type FollowStore } from './follow-child.ts';
 import { appendFault, appendLedgerRows, writeSummaryFile, type ShadowLedgerRow, type ShadowSummaryFile } from './ledger.ts';
 import { newMirrorCounters, type MirrorCounters } from './mirror.ts';
 import { isShadowReadMember, SHADOW_READ_MEMBERS } from './reads.ts';
@@ -137,9 +138,17 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     }
   }
 
+  // The follower (apply lines and reconcile calls) works on the same Rust store; it exists once the engine is open.
+  const rustEngine = engine as unknown as { storeFor?: (member: string) => Promise<FollowStore>; ownerRole?: string | null } | null;
+  const follow = new FollowChild({
+    dir: shadowDir, writeControl: deps.writeControl, now,
+    store: async () => { try { return (await rustEngine?.storeFor?.('follow')) ?? null; } catch { return null; } },
+    owner: () => rustEngine?.ownerRole !== 'client',
+  });
   const stalled = new Set<Promise<unknown>>();
   const heartbeat = setInterval(() => {
     if (openTimedOut || stalled.size >= SHADOW_CHILD_STALL_LIMIT) return; // wedged in native work: go quiet so the watchdog restarts this child
+    follow.tick();
     try { deps.writeControl('{"t":"hb"}\n'); } catch { /* parent gone */ }
   }, deps.heartbeatMs ?? SHADOW_HEARTBEAT_MS);
   if (!openTimedOut) try { deps.writeControl('{"t":"hb"}\n'); } catch { /* parent gone */ }
@@ -225,6 +234,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     if (!line) continue;
     let event: { t?: string; counters?: MirrorCounters; pid?: number };
     try { event = JSON.parse(line); } catch { continue; }
+    if (event.t === 'apply' || event.t === 'watermark' || event.t === 'depth' || event.t === 'rpc') { follow.handle(event as FollowEvent); continue; }
     if (event.t === 'stats' && event.counters) { summary.primary = { ...newMirrorCounters(), ...event.counters }; summary.primary_pid = event.pid; continue; }
     if (event.t !== 'read' || paused) continue;
     if (pending.length >= SHADOW_CHILD_QUEUE_BOUND) { summary.child_shed++; continue; }
@@ -236,6 +246,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     (timer as { unref?: () => void }).unref?.();
   }
   await drain();
+  await follow.close();
   clearInterval(heartbeat);
   clearInterval(flusher);
   flush(true);

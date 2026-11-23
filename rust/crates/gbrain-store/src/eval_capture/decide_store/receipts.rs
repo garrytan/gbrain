@@ -608,3 +608,15 @@ impl Store {
         ))
     }
 }
+
+/// The shadow follow (`seed/follow.rs`): removes the receipt `id` with its time-index entry.
+/// `false` when there is none.
+pub(crate) fn remove_receipt(tx: &mut dyn KvWrite, id: u64) -> Result<bool> {
+    let Some(bytes) = tx.get(&receipt_key(id))? else {
+        return Ok(false);
+    };
+    let record: ReceiptRecord = serde_json::from_slice(&bytes)?;
+    tx.delete(&time_key(record.created_at_us, id))?;
+    tx.delete(&receipt_key(id))?;
+    Ok(true)
+}

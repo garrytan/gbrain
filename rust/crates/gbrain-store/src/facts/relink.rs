@@ -411,6 +411,19 @@ impl Store {
     }
 }
 
+/// The shadow follow (`seed/follow.rs`): removes the attempt row `(source_id, fact_id)` with its
+/// memo index entry. `false` when there is none.
+pub(crate) fn remove_attempt(tx: &mut dyn KvWrite, source_id: &str, fact_id: i64) -> Result<bool> {
+    let Some(old) = read_attempt(&*tx, source_id, fact_id)? else {
+        return Ok(false);
+    };
+    if let Some(key) = target_key(source_id, &old) {
+        tx.delete(&key)?;
+    }
+    tx.delete(&row_key(source_id, fact_id))?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
