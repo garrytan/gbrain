@@ -69,7 +69,13 @@ never a pass. With no shadow running, every criterion is `missing`.
 8. Speed: paired bench samples. **Reported, not gating.** D23 (the maintainer's C1 ruling of 2026-11-19) makes the
    speed bar gate only turning Rust on by default, not this opt-in swap. The plan shows the numbers and any loss.
 9. Zero panics and zero child faults in the shadow.
-10. A passed backup and restore drill on the shadow store, and eval gates E1 to E3 in the release.
+10. A passed backup and restore drill on the shadow store, and eval gates E1 to E3 in the release. Run both from
+    the shadow's host with `gbrain engine shadow drill`: the drill copies the shadow's own store at one moment while
+    the shadow keeps following, checks the copy, opens it once and deletes it (a store over 8 GiB needs the separate
+    physical-copy proof); `--evals` downloads the final eval file pinned to the release the shadow's evidence started
+    on. `gbrain engine shadow status` and the swap read only what those commands kept, so a drill from an earlier
+    evidence epoch, a file for another platform or another build, and a provisional or unfinished eval file all stay
+    NOT READY, with the reason printed. **Say to your agent:** *"Run the shadow restore drill and fetch the eval gates."*
 11. Eligibility: exactly one observed writer host in the last 7 days with no unknown write path (zero observed hosts
     is no evidence, `writer_coverage_unknown`, never "one host"), a personal brain (not a mounted team brain), and a
     shadow host on a preview target.
