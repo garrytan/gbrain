@@ -17,6 +17,8 @@
  * in the invoking CLI and the resident owner re-runs the preview and checks
  * the binding before applying (DX-2).
  */
+import { nonUserSpeaker } from '../facts/attribution.ts';
+import { assertHeldRestatementCurrent } from './dated-restatement.ts';
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
@@ -232,7 +234,8 @@ function releasedFields(hold: HoldRow, cell: ParsedFact | null): string {
       ['valid until', cell.validUntil], ['metric', cell.claimMetric], ['value', cell.claimValue], ['unit', cell.claimUnit], ['period', cell.claimPeriod],
       ['attributed to', cell.attributedTo], ['source', cell.source], ['context', cell.context]]
     : [['kind', typeof p.kind === 'string' && p.kind ? p.kind : 'fact'], ['visibility', p.visibility === 'world' ? 'world' : 'private'], ['valid from', date(p.valid_from)],
-      ['valid until', date(p.valid_until)], ['source', p.source], ['context', p.context]];
+      ['valid until', date(p.valid_until)], ['attributed to', nonUserSpeaker(p.replacement_speaker)],
+      ['original fact retained on release', nonUserSpeaker(p.replacement_speaker) ? p.replaces : null], ['source', p.source], ['context', p.context]];
   const shown = entries.filter(([, v]) => v !== undefined && v !== null && v !== '')
     .map(([k, v]) => `${k} ${typeof v === 'number' && Number.isFinite(v) ? printable(v) : quoted(v)}`).join(', ');
   return cell ? ` with fence row ${cell.rowNum} as it stands: ${shown}` : ` with ${shown}`;
@@ -244,6 +247,7 @@ function releasedFields(hold: HoldRow, cell: ParsedFact | null): string {
  * through the door (`submitTrustRelease`, trust/release-publish.ts).
  */
 async function publishReleasedFact(tx: BrainEngine, hold: WriteGateHold): Promise<void> {
+  await assertHeldRestatementCurrent(tx, hold, true);
   const p = hold.payload;
   const str = (v: unknown) => (typeof v === 'string' && v ? v : null);
   const trust = { tier: 'user_confirmed' as const, origin: { channel: 'trust_release', request_id: hold.request_id ?? undefined } };
@@ -252,6 +256,7 @@ async function publishReleasedFact(tx: BrainEngine, hold: WriteGateHold): Promis
     slugs: str(p.entity_slug) ? [String(p.entity_slug)] : [], op: 'trust_release', remote: false, cause: { hold: `wh${hold.id}` } }, () => tx.insertFact({ // gbrain-allow-direct-insert: owner release of a held fact (CEO-9), inside the owner's coordinated transaction
     fact: String(p.fact ?? ''), kind: (str(p.kind) ?? 'fact') as never, entity_slug: str(p.entity_slug), visibility: (p.visibility === 'world' ? 'world' : 'private'),
     source: str(p.source) ?? `trust release h${hold.id}`, context: str(p.context), source_session: str(p.source_session), confidence: 1,
+    attributed_to: nonUserSpeaker(p.replacement_speaker),
     valid_from: str(p.valid_from) ? new Date(String(p.valid_from)) : new Date(), valid_until: str(p.valid_until) ? new Date(String(p.valid_until)) : null,
     embedding: null, embedding_model: null, ...claimColumns(p as never),
   }, { source_id: hold.source_id }))));
@@ -379,6 +384,7 @@ async function previewHold(engine: BrainEngine, id: number, action: 'release' | 
   if (!hold) throw notFound(label, 'held write');
   const text = hold.payload.fact ?? hold.payload.claim ?? '';
   const entity = hold.kind === 'fact' && typeof hold.payload.entity_slug === 'string' && hold.payload.entity_slug ? ` for ${quoted(`${hold.source_id}/${hold.payload.entity_slug}`)}` : '';
+  if (action === 'release') await assertHeldRestatementCurrent(engine, hold);
   const cell = action === 'release' ? await releaseCellOf(engine, hold) : null;
   return { action, ref: label, token: label, command: trustCommand(action, label), raises: action === 'release',
     binding: holdBinding(hold, cell?.fields ?? null), tier: hold.tier,

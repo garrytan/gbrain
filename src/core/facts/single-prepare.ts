@@ -222,6 +222,27 @@ export async function replacementVisibility(engine: BrainEngine, sourceId: strin
   return target?.visibility === 'private' ? 'private' : defaulted;
 }
 
+/** Read the named predecessor for a replacement or for owner review of the same replacement. */
+export async function readReplacementTarget(engine: BrainEngine, sourceId: string, targetId: number,
+  opts: { ownPage?: string | null; excludePrivate?: boolean; lock?: boolean; requiredValidUntil?: string | null }) {
+  const ownPage = opts.ownPage;
+  const params: (string | number | null)[] = opts.excludePrivate && ownPage ? [targetId, sourceId, ownPage] : [targetId, sourceId];
+  // Check the held end date in the database so sub-millisecond precision survives the round trip.
+  let heldInterval = '';
+  if (opts.requiredValidUntil !== undefined) {
+    params.push(opts.requiredValidUntil);
+    heldInterval = ` AND f.expired_at IS NULL AND f.superseded_by IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
+      AND f.valid_until IS NOT DISTINCT FROM $${params.length}::timestamptz`;
+  }
+  const [target] = await engine.executeRaw<FactCandidate & { withdrawn: boolean }>(`SELECT f.*,
+      EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
+        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
+        AND ${withdrawalCoversFactSql('w', 'f')}) AS withdrawn
+    FROM facts f WHERE f.id=$1 AND f.source_id=$2${!opts.excludePrivate ? '' : ownPage ? ` AND (f.source_markdown_slug = $3 OR ${remoteProvenanceFloorSql('f')})` : ` AND ${remoteProvenanceFloorSql('f')}`}${heldInterval}${opts.lock ? ' FOR UPDATE OF f' : ''}`,
+    params);
+  return target;
+}
+
 /**
  * `remember.replaces`: the caller names the fact the new one replaces. Checked,
  * zero-model: the target must be an active fact in this source with the same
@@ -234,12 +255,7 @@ export async function decideReplacement(engine: BrainEngine, sourceId: string, i
   const ownPage = input.page_slug && input.page_slug === opts.pageSlug ? input.page_slug : null;
   const notFound = () => verbError('not_found', `No fact with id "${targetId}" to replace.`,
     'Pass the fact_id of an active fact from recall (facts[].fact_id) about the same entity, or omit replaces to save a new fact.');
-  const [target] = await engine.executeRaw<FactCandidate & { withdrawn: boolean }>(`SELECT f.*,
-      EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
-        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
-        AND ${withdrawalCoversFactSql('w', 'f')}) AS withdrawn
-    FROM facts f WHERE f.id=$1 AND f.source_id=$2${!opts.excludePrivate ? '' : ownPage ? ` AND (f.source_markdown_slug = $3 OR ${remoteProvenanceFloorSql('f')})` : ` AND ${remoteProvenanceFloorSql('f')}`}${opts.lock ? ' FOR UPDATE OF f' : ''}`,
-    opts.excludePrivate && ownPage ? [targetId, sourceId, ownPage] : [targetId, sourceId]);
+  const target = await readReplacementTarget(engine, sourceId, targetId, { ownPage, excludePrivate: opts.excludePrivate, lock: opts.lock });
   if (!target || (opts.remote && target.visibility !== 'world' && !(ownPage && target.source_markdown_slug === ownPage))) throw notFound();
   // #5913 [R2]: a slug-bound writer learns nothing about a fact outside its prefixes; the answer is the missing-id one.
   if (opts.slugPrefixes && [target.entity_slug, target.source_markdown_slug].some(slug => slug && !slugUnderBoundPrefixes(opts.slugPrefixes!, slug))) throw notFound();
