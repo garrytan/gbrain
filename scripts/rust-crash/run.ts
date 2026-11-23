@@ -23,7 +23,7 @@
  * Exit 0 when every run passed (with --expect-caught: when at least one reopened brain was wrong, see DETECTION); 1 otherwise; 2 on bad usage.
  */
 import { availableParallelism, tmpdir } from 'node:os';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const args = new Map(process.argv.slice(2).map(a => {
@@ -70,6 +70,9 @@ const { openRustEngine } = await import('../../src/core/rust-engine.ts');
 const { PGLiteEngine } = await import('../../src/core/pglite-engine.ts');
 const { disposePersistenceConsumer, startPersistenceConsumer } = await import('../../src/core/persistence/service.ts');
 const { generate, initRepo, pendingWork, project, runOp, rng } = await import('./ops.ts');
+const { readLog } = await import('./log.ts');
+type LogState = import('./log.ts').LogState;
+type Range = import('./log.ts').Range;
 type CrashOp = ReturnType<typeof generate>[number];
 type BrainEngine = import('../../src/core/engine.ts').BrainEngine;
 
@@ -111,39 +114,6 @@ async function oracle(ops: CrashOp[], dir: string): Promise<string[]> {
   }
   await engine.disconnect();
   return states;
-}
-
-type Range = [number, number];
-interface LogState {
-  acked: number; started: number; freeze: string | null; error: string | null; done: boolean; open: boolean;
-  /** The store's crash event numbers seen after the first operation started, by kind. */
-  events: Record<'write' | 'sync' | 'synced', Range | null>;
-  /** The fault point occurrence numbers seen after the first operation started, by point. */
-  seams: Map<string, Range>;
-}
-
-const widen = (seen: Range | null | undefined, n: number): Range => (seen ? [seen[0], n] : [n, n]);
-
-function readLog(path: string): LogState {
-  const state: LogState = { acked: -1, started: -1, freeze: null, error: null, done: false, open: false,
-    events: { write: null, sync: null, synced: null }, seams: new Map() };
-  for (const line of existsSync(path) ? readFileSync(path, 'utf8').split('\n') : []) {
-    if (line === '') continue;
-    // A log line is a whole record. One that is not (a torn write, a stray byte) is a harness failure, never skipped:
-    // a lost `ack` line would make an acknowledged write look still in flight.
-    if (!/^(open|done|(start|ack|write|sync|synced) \d+|seam \S+ \d+|freeze( \S+){2,3}|error .*)$/.test(line)) throw new Error(`the worker log holds a line that is not a record: ${line.slice(0, 80)}`);
-    const [word, a, b] = line.split(' ');
-    if (word === 'open') state.open = true;
-    else if (word === 'start') state.started = Math.max(state.started, Number(a));
-    else if (word === 'ack') state.acked = Math.max(state.acked, Number(a));
-    else if (word === 'freeze') state.freeze = line;
-    else if (word === 'error') state.error = line;
-    else if (word === 'done') state.done = true;
-    else if (state.started < 0) continue;
-    else if (word === 'write' || word === 'sync' || word === 'synced') state.events[word] = widen(state.events[word], Number(a));
-    else if (word === 'seam') state.seams.set(a!, widen(state.seams.get(a!), Number(b)));
-  }
-  return state;
 }
 
 interface Run { brain: string; repo: string; log: string }

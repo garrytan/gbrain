@@ -386,7 +386,7 @@ jobs:
         run: |
           set -euo pipefail
           export GBRAIN_RUST_ENGINE_ADDON="$PWD/rust/target/addon/gbrain_engine.${{ matrix.target }}.node"
-          bun scripts/rust-crash/run.ts --seeds=101 --plant=early-ack --expect-caught
+          bun scripts/rust-crash/run.ts --seeds=101,202,303 --plant=early-ack --expect-caught
 
   # The crash cell's second fail-first check, Linux only: an addon built with Durability::None in the record store
   # (scripts/rust-crash/plants/durability-none.patch) loses acknowledged writes at a kill, and the cell must say so.

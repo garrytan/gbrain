@@ -75,7 +75,7 @@ cache, so they do not simulate power loss. `gbrain-sim`'s fake disk
 The cell must fail on a planted bug:
 
 - `--plant=early-ack --expect-caught`: the worker acknowledges each operation
-  before it runs it. CI runs this on both targets.
+  before it runs it. CI runs this on 3 seeds on both targets.
 - `plants/durability-none.patch`: the record store commits with
   `Durability::None`. CI builds a second Linux addon with the patch and runs
   `--seeds=101,202 --expect-caught`.
