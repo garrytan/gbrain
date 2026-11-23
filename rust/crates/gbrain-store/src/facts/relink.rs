@@ -122,21 +122,6 @@ fn write_attempt(tx: &mut dyn KvWrite, source_id: &str, r: &AttemptRecord) -> Re
     Ok(())
 }
 
-/// The shadow seed (`seed.rs`): stores `r`, an attempt copied from another engine with its own
-/// `attempted_at`, with its memo index entry, where `upsert_fact_relink_attempt` stores one.
-/// `false` when the `(source_id, fact_id)` row is already stored.
-pub(crate) fn seed_attempt(
-    tx: &mut dyn KvWrite,
-    source_id: &str,
-    r: &AttemptRecord,
-) -> Result<bool> {
-    if read_attempt(&*tx, source_id, r.fact_id)?.is_some() {
-        return Ok(false);
-    }
-    write_attempt(tx, source_id, r)?;
-    Ok(true)
-}
-
 /// Every attempt row of a source, by fact id.
 fn source_attempts(read: &dyn KvRead, source_id: &str) -> Result<Vec<AttemptRecord>> {
     let mut out = Vec::new();
@@ -409,6 +394,21 @@ impl Store {
             .map(|((outcome, _, tier), n)| json!({ "outcome": outcome, "tier": tier, "n": n }))
             .collect())
     }
+}
+
+/// The attempt rows of `source_id` a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_rows(
+    read: &dyn KvRead,
+    source_id: &str,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow};
+    Ok(source_attempts(read, source_id)?
+        .into_iter()
+        .map(|r| ProbeRow {
+            source_id: Some(source_id.to_string()),
+            cells: vec![("reason", ProbeCell::opt_text(r.reason.as_deref()))],
+        })
+        .collect())
 }
 
 #[cfg(test)]

@@ -32,8 +32,9 @@
 //! name that is no tier (PGLite raises `22023` in the stamp trigger, and the fence read ranks it 0),
 //! a `write_origin` that is not JSON (PGLite raises at `::jsonb` in the trigger), and a setting
 //! name outside the nine (the engine routes no other name here). TypeScript sets none of these. A
-//! `write_request` that is not a UUID is kept as set, as `set_config` keeps it; the timeline write
-//! refuses it, as the attribution trigger raises at its `::uuid` cast (`timeline::receipt`).
+//! `write_request` that is not a UUID is kept as set, as `set_config` keeps it; the page, version,
+//! fact, take and timeline writes refuse it, as the attribution triggers raise at their `::uuid`
+//! cast ([`WriteAttribution::refuse_request_not_uuid`]).
 //!
 //! Keys: none. The context is per open store, in memory, never written.
 
@@ -81,7 +82,8 @@ pub const WRITE_TRUST_SETTINGS: [&str; 9] = [
 
 /// The actor of one write, as the attribution trigger reads it: each setting with `''` read as
 /// unset (`NULLIF(current_setting(name, true), '')`). The request id is lower case, as a `uuid`
-/// reads back; the receipt writer refuses one that is not a UUID.
+/// reads back; every row writer the attribution triggers cover refuses one that is not a UUID
+/// ([`WriteAttribution::refuse_request_not_uuid`]).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WriteAttribution {
     /// `gbrain.write_request`: the persistence request, or `None` for a write with no journal request.
@@ -90,6 +92,22 @@ pub struct WriteAttribution {
     pub principal_kind: Option<String>,
     /// `gbrain.write_principal_id`.
     pub principal_id: Option<String>,
+}
+
+impl WriteAttribution {
+    /// `invalid_argument` when `gbrain.write_request` is set and is not a UUID. PGLite's three
+    /// attribution triggers (`gbrain_stamp_write_attribution`, `gbrain_stamp_revision_attribution`,
+    /// `gbrain_stamp_version_attribution`) cast it with `::uuid` before anything else, so every row
+    /// written to `pages`, `page_versions`, `facts`, `takes` and `timeline_entries` raises: the page,
+    /// version, fact, take and timeline writers call this first.
+    pub(crate) fn refuse_request_not_uuid(&self) -> Result<()> {
+        match self.request_id.as_deref() {
+            Some(request) if !crate::env::is_uuid(request) => Err(StoreError::invalid(format!(
+                "{WRITE_REQUEST} is not a UUID: {request}"
+            ))),
+            _ => Ok(()),
+        }
+    }
 }
 
 /// The settings text of one open store (`Store::write_context`).
@@ -280,6 +298,21 @@ mod tests {
     }
 
     #[test]
+    fn a_request_that_is_not_a_uuid_refuses_and_a_uuid_or_none_passes() {
+        let with = |request: Option<&str>| WriteAttribution {
+            request_id: request.map(str::to_string),
+            ..WriteAttribution::default()
+        };
+        let refused = with(Some("req-1")).refuse_request_not_uuid().unwrap_err();
+        assert_eq!(refused.code, INVALID_ARGUMENT);
+        assert_eq!(refused.message, "gbrain.write_request is not a UUID: req-1");
+        with(Some("7c1e2a9e-5b3f-4d0a-9e61-0000000000a1"))
+            .refuse_request_not_uuid()
+            .unwrap();
+        with(None).refuse_request_not_uuid().unwrap();
+    }
+
+    #[test]
     fn the_stamp_context_refuses_outside_a_write_and_restores_the_outer_scope() {
         let outside = stamp_context::current().unwrap_err();
         assert_eq!(outside.code, INVALID_ARGUMENT);
@@ -301,6 +334,54 @@ mod tests {
         assert_eq!(stamp_context::current().unwrap().writer, outer.writer);
         drop(scope);
         assert!(stamp_context::current().is_err());
+    }
+
+    #[test]
+    fn a_second_transaction_waits_for_the_writer_and_starts_with_an_empty_context() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let s = store();
+        let tier = strings(&[WRITE_TRUST_TIER]);
+        let tx1 = s.begin_transaction(false).unwrap();
+        tx1.apply_write_trust(&tier, &strings(&["agent_written"]))
+            .unwrap();
+        std::thread::scope(|scope| {
+            let (began, began_rx) = mpsc::channel();
+            let (go_on, go_on_rx) = mpsc::channel::<()>();
+            let (shared, names) = (&s, &tier);
+            let second = scope.spawn(move || {
+                let tx2 = shared.begin_transaction(false).unwrap();
+                began.send(tx2.read_write_trust(names).unwrap()).unwrap();
+                go_on_rx.recv().unwrap();
+                tx2.apply_write_trust(names, &strings(&["operator_curated"]))
+                    .unwrap();
+                let own = tx2.read_write_trust(names).unwrap();
+                tx2.commit_transaction().unwrap();
+                own
+            });
+            // The store has one writer: the second transaction cannot begin while the first is open.
+            assert!(
+                began_rx.recv_timeout(Duration::from_millis(200)).is_err(),
+                "a second write transaction began while the first was open"
+            );
+            assert_eq!(s.read_write_trust(&tier).unwrap(), vec![None]);
+            assert_eq!(
+                tx1.read_write_trust(&tier).unwrap(),
+                vec![Some("agent_written".to_string())]
+            );
+            tx1.commit_transaction().unwrap();
+            assert_eq!(
+                began_rx.recv_timeout(Duration::from_secs(10)).unwrap(),
+                vec![None]
+            );
+            go_on.send(()).unwrap();
+            assert_eq!(
+                second.join().unwrap(),
+                vec![Some("operator_curated".to_string())]
+            );
+        });
+        assert_eq!(s.read_write_trust(&tier).unwrap(), vec![None]);
     }
 
     #[test]

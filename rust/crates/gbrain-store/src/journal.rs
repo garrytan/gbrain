@@ -239,12 +239,13 @@ pub(crate) struct RequestRecord {
 
 /// The staging ids that outstanding (not terminal) requests name in `intent.body_ref.staging_id`:
 /// the journal arm of PGLite's `liveStagingIds` (`engine-sql/page-body.ts`), a root of the
-/// segment sweep. It scans every request, never trusting the journal's own outstanding counter:
-/// `insert_write_request` (`persistence.rs`) writes a queued request into this same family and
-/// charges only the persistence counters, so that counter can read zero while a request still
-/// names a staging.
+/// segment sweep. Reads no request when the brain counter says none is outstanding.
 pub(crate) fn request_held_staging_ids(read: &dyn KvRead) -> Result<HashSet<String>> {
+    let counters = read_counters(read)?;
     let mut out = HashSet::new();
+    if counters.brain == 0 {
+        return Ok(out);
+    }
     let mut failure = None;
     scan_prefix(read, &[keys::REQUEST], false, &mut |_, v| {
         match serde_json::from_slice::<RequestRecord>(v) {
@@ -565,6 +566,7 @@ fn finish_in(
             ),
         ));
     }
+    crate::persistence::guard_deferred_transition(&record.state, &finish.state)?;
     let now = env.now_micros();
     record.state = finish.state.clone();
     record.outcome = finish.outcome.clone();

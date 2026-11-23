@@ -35,6 +35,23 @@ fn client(b: &Brain, id: &str, name: &str, extra: Value) {
     b.insert_oauth_client(&row).unwrap();
 }
 
+/// What the table's agent-grant constraint asks of a client with the `agent` scope word.
+fn agent_grant() -> Value {
+    json!({
+        "bound_tools": ["search"], "source_id": "default", "bound_source_id": "default",
+        "federated_read": ["default"], "bound_max_concurrent": 1, "delegated_namespace": "job",
+    })
+}
+
+fn agent_scope(b: &Brain, id: &str, name: &str, scope: &str, extra: Value) {
+    let mut row = agent_grant();
+    row["scope"] = json!(scope);
+    for (k, v) in extra.as_object().unwrap() {
+        row[k] = v.clone();
+    }
+    client(b, id, name, row);
+}
+
 fn reserve(b: &Brain, n: u32, cid: &str, cents: f64, extra: Value) -> Value {
     let mut spec = json!({
         "reservation_id": uuid(n), "client_id": cid, "estimated_cents": cents,
@@ -124,15 +141,10 @@ fn the_day_sum_starts_at_the_utc_midnight_the_caller_names() {
 #[test]
 fn an_agent_scope_token_or_a_tool_binding_lists_the_client_and_a_deleted_one_never() {
     let b = brain("sp-agent");
-    client(&b, "a", "alpha", json!({ "scope": "read agent write" }));
+    agent_scope(&b, "a", "alpha", "read agent write", json!({}));
     client(&b, "b", "beta", json!({ "bound_tools": ["search"] }));
     client(&b, "c", "gamma", json!({ "scope": "read write" }));
-    client(
-        &b,
-        "d",
-        "delta",
-        json!({ "scope": "agent", "deleted_at": iso(T0) }),
-    );
+    agent_scope(&b, "d", "delta", "agent", json!({ "deleted_at": iso(T0) }));
     client(&b, "e", "agentless", json!({ "scope": "agents" }));
     let rows = b.read_agent_client_spend().unwrap();
     let ids: Vec<&str> = rows

@@ -80,6 +80,11 @@ impl Env for TransactionClock {
         self.started_us
     }
 
+    /// The moment of the call, never before the transaction's start.
+    fn clock_micros(&self) -> i64 {
+        self.inner.clock_micros().max(self.started_us)
+    }
+
     fn new_uuid(&self) -> String {
         self.inner.new_uuid()
     }
@@ -781,66 +786,67 @@ mod tests {
 
     #[test]
     fn the_merged_scan_interleaves_overlay_and_base_in_both_directions() {
+        // Tag `y` holds no record (keys.rs), so a fresh brain's seeded records stay out of the scan.
         let s = store();
         s.write(|tx| {
-            for k in [b"xa", b"xc", b"xe"] {
+            for k in [b"ya", b"yc", b"ye"] {
                 tx.put(k, b"base")?;
             }
             Ok(())
         })
         .unwrap();
         let t = s.begin_transaction(false).unwrap();
-        t.write(|tx| tx.put(b"xb", b"one")).unwrap();
+        t.write(|tx| tx.put(b"yb", b"one")).unwrap();
         let depth = t.savepoint().unwrap();
         t.write(|tx| {
-            tx.put(b"xd", b"two")?;
-            tx.delete(b"xc")?;
-            tx.put(b"xf", b"three")
+            tx.put(b"yd", b"two")?;
+            tx.delete(b"yc")?;
+            tx.put(b"yf", b"three")
         })
         .unwrap();
         let read = t.read().unwrap();
-        let forward = collect(&*read, b"x", b"y", false);
+        let forward = collect(&*read, b"y", b"z", false);
         assert_eq!(
             forward,
             vec![
-                b"xa".to_vec(),
-                b"xb".to_vec(),
-                b"xd".to_vec(),
-                b"xe".to_vec(),
-                b"xf".to_vec()
+                b"ya".to_vec(),
+                b"yb".to_vec(),
+                b"yd".to_vec(),
+                b"ye".to_vec(),
+                b"yf".to_vec()
             ]
         );
         let mut backward = forward.clone();
         backward.reverse();
-        assert_eq!(collect(&*read, b"x", b"y", true), backward);
+        assert_eq!(collect(&*read, b"y", b"z", true), backward);
         // Early stop is honored inside the overlay and inside the base.
         let mut first_two = Vec::new();
-        read.scan(b"x", b"y", false, &mut |k, _| {
+        read.scan(b"y", b"z", false, &mut |k, _| {
             first_two.push(k.to_vec());
             first_two.len() < 2
         })
         .unwrap();
-        assert_eq!(first_two, vec![b"xa".to_vec(), b"xb".to_vec()]);
+        assert_eq!(first_two, vec![b"ya".to_vec(), b"yb".to_vec()]);
         // A range cut excludes overlay keys outside it.
         assert_eq!(
-            collect(&*read, b"xc", b"xf", false),
-            vec![b"xd".to_vec(), b"xe".to_vec()]
+            collect(&*read, b"yc", b"yf", false),
+            vec![b"yd".to_vec(), b"ye".to_vec()]
         );
         t.rollback_savepoint(depth).unwrap();
         assert_eq!(
-            collect(&*t.read().unwrap(), b"x", b"y", false),
+            collect(&*t.read().unwrap(), b"y", b"z", false),
             vec![
-                b"xa".to_vec(),
-                b"xb".to_vec(),
-                b"xc".to_vec(),
-                b"xe".to_vec()
+                b"ya".to_vec(),
+                b"yb".to_vec(),
+                b"yc".to_vec(),
+                b"ye".to_vec()
             ]
         );
         // Nothing is visible outside before commit; everything after.
-        assert_eq!(s.read().unwrap().get(b"xb").unwrap(), None);
+        assert_eq!(s.read().unwrap().get(b"yb").unwrap(), None);
         t.commit_transaction().unwrap();
-        assert_eq!(s.read().unwrap().get(b"xb").unwrap(), Some(b"one".to_vec()));
-        assert_eq!(s.read().unwrap().get(b"xd").unwrap(), None);
+        assert_eq!(s.read().unwrap().get(b"yb").unwrap(), Some(b"one".to_vec()));
+        assert_eq!(s.read().unwrap().get(b"yd").unwrap(), None);
     }
 
     #[test]
@@ -953,7 +959,7 @@ mod tests {
     #[test]
     fn a_failed_commit_poisons_every_later_write_in_the_process() {
         let file = crate::test_support::FlakyFile::default();
-        let s = crate::test_support::store_on(&file);
+        let s = crate::test_support::store_on_file(&file);
         let t = s.begin_transaction(false).unwrap();
         t.put_page("notes/t", &note("t"), &Default::default())
             .unwrap();
@@ -974,7 +980,7 @@ mod tests {
     #[test]
     fn after_a_failed_commit_and_a_reopen_the_id_counter_matches_the_stored_rows() {
         let file = crate::test_support::FlakyFile::default();
-        let s = crate::test_support::store_on(&file);
+        let s = crate::test_support::store_on_file(&file);
         let t = s.begin_transaction(false).unwrap();
         let handed = t
             .put_page("notes/t", &note("t"), &Default::default())
@@ -986,7 +992,7 @@ mod tests {
         assert!(t.commit_transaction().is_err());
         drop(t);
         drop(s);
-        let s = crate::test_support::store_on(&file);
+        let s = crate::test_support::store_on_file(&file);
         let stored = s
             .read_page_snapshot("notes/t", &Default::default())
             .unwrap()

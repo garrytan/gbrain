@@ -83,15 +83,6 @@ pub(crate) fn signature_key(page_id: u64) -> Vec<u8> {
     key
 }
 
-/// The shadow seed (`seed.rs`): stores a page's `embedding_signature` as another engine holds it.
-pub(crate) fn seed_page_signature(
-    tx: &mut dyn KvWrite,
-    page_id: u64,
-    signature: &str,
-) -> Result<()> {
-    tx.put(&signature_key(page_id), signature.as_bytes())
-}
-
 fn take_state_key(take_id: u64) -> Vec<u8> {
     let mut key = vec![keys::EMBEDDING_STATE, TAKE_STATE];
     key.extend_from_slice(&take_id.to_be_bytes());
@@ -283,7 +274,10 @@ fn take_vector_rev(read: &dyn KvRead, take_id: u64) -> Result<Option<u64>> {
 }
 
 /// The take's vector when it was written for the take's current claim.
-fn current_take_vector(read: &dyn KvRead, take: &TakeRecord) -> Result<Option<StoredVector>> {
+pub(crate) fn current_take_vector(
+    read: &dyn KvRead,
+    take: &TakeRecord,
+) -> Result<Option<StoredVector>> {
     if take_vector_rev(read, take.id)? != Some(take.claim_rev) {
         return Ok(None);
     }
@@ -862,6 +856,26 @@ impl Store {
                 row
             })
             .collect())
+    }
+
+    /// `readUnembeddedPageSummary(sourceId, column)`: `{ pages, oldest, held }` over the live,
+    /// non-embed_skip pages of the source with a visible chunk that has no vector. This store keeps
+    /// no embedding budget rows, so `held` is 0.
+    pub fn read_unembedded_page_summary(&self, source_id: &str) -> Result<Value> {
+        let read = self.read()?;
+        let mut pages = 0u64;
+        let mut oldest: Option<i64> = None;
+        for ctx in page_contexts(&*read)? {
+            if !ctx.live() || ctx.embed_skip() || ctx.page.source_id != source_id {
+                continue;
+            }
+            if ctx.visible().any(|c| !c.embed.has_vector()) {
+                pages += 1;
+                let at = ctx.page.updated_at_us;
+                oldest = Some(oldest.map_or(at, |o| o.min(at)));
+            }
+        }
+        Ok(json!({ "pages": pages, "oldest": oldest.map(crate::env::iso), "held": 0 }))
     }
 
     /// `setPageEmbeddingSignature(slug, { signature, sourceId? })`: stamps the page (slug as
