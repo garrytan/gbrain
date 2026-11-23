@@ -49,6 +49,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use super::bm25::{DocKind, Ranker, Scorer, indexed_len, page_len_key};
 use super::filters::{KeywordOptions, PageFilter, row_count, source_factor};
 use super::index::{Postings, serves};
 use super::rank::ts_rank_cd;
@@ -343,10 +344,11 @@ impl Store {
         let mut filter = PageFilter::new(options)?;
         let queries: Vec<&TsQuery> = windows.iter().map(|(_, _, q)| q).collect();
         let mut candidates: Vec<Candidate> = Vec::new();
-        match indexed_pages(&*read, &queries)? {
+        let indexed = indexed_pages(&*read, &queries)?;
+        match &indexed {
             // The pages any attempt can match, ascending by id, each with its sparse vector.
             Some((postings, ids)) => {
-                for id in ids {
+                for &id in ids {
                     let Some(page) = read_page_by_id(&*read, id)? else {
                         continue;
                     };
@@ -376,10 +378,37 @@ impl Store {
                 }
             }
         }
+        // `search.keyword_ranker` (bm25.rs): unset or `ts_rank` keeps `ts_rank_cd`, and `bm25` is None.
+        let bm25 = match Ranker::read(&*read)? {
+            Ranker::Compat => None,
+            Ranker::Bm25(params) => {
+                let corpus = match &indexed {
+                    Some(_) => Some(self.bm25_indexed_corpus(&*read, DocKind::Page)?),
+                    None => None,
+                };
+                let mut lens = Vec::with_capacity(candidates.len());
+                for c in &candidates {
+                    lens.push(match &indexed {
+                        Some(_) => indexed_len(&*read, DocKind::Page, &page_len_key(c.page.id))?,
+                        None => c.whole.entries.len(),
+                    });
+                }
+                Some((params, corpus, lens))
+            }
+        };
         let mut factors: HashMap<usize, f64> = HashMap::new();
         let mut out = Vec::with_capacity(attempts.len());
         for (attempt, (limit, offset, query)) in attempts.iter().zip(windows) {
             let kind = attempt.kind;
+            let scorer = match &bm25 {
+                None => None,
+                Some((params, corpus, _)) => Some(match (&indexed, corpus) {
+                    (Some((postings, _)), Some(corpus)) => {
+                        Scorer::from_postings(*params, *corpus, &query, postings)
+                    }
+                    _ => Scorer::from_scan(*params, &*read, DocKind::Page, &query)?,
+                }),
+            };
             // One deep-stack thread per attempt when the query is deep, not one per candidate.
             let (cut, mut ranked) = with_query_stack(query.items.len(), || {
                 let matched: Vec<usize> = (0..candidates.len())
@@ -400,7 +429,13 @@ impl Store {
                         });
                         let c = &mut candidates[index];
                         let exact = exact_title_key(&c.page.title) == exact_key;
-                        let score = f64::from(ts_rank_cd(c.vector(kind), &query)) * factor;
+                        let rank = match (&scorer, &bm25) {
+                            (Some(scorer), Some((_, _, lens))) => {
+                                scorer.score(c.vector(kind), lens[index])
+                            }
+                            _ => f64::from(ts_rank_cd(c.vector(kind), &query)),
+                        };
+                        let score = rank * factor;
                         Ranked {
                             index,
                             exact,

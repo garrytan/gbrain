@@ -478,6 +478,18 @@ fn every_member_answers_as_the_scan_on_the_occ_store() {
     exercise(&indexed(occ_store()));
 }
 
+/// The opt-in BM25 rankers (`bm25.rs`) read the same corpus statistics from the postings as
+/// from the scan, so every member still answers as the scan, bit for bit.
+#[test]
+fn every_member_answers_as_the_scan_with_the_bm25_rankers() {
+    for ranker in ["bm25", "bm25_prox"] {
+        let s = indexed(store());
+        s.set_config(super::super::bm25::RANKER_KEY, ranker)
+            .unwrap();
+        exercise(&s);
+    }
+}
+
 /// A tree with no candidate bound scans; a bounded one reads the postings.
 #[test]
 fn a_query_without_a_candidate_bound_scans() {

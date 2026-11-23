@@ -28,6 +28,7 @@ use std::collections::BTreeSet;
 
 use serde_json::{Value, json};
 
+use super::bm25::{DocKind, Ranker, Scorer, chunk_len_key, indexed_len};
 use super::filters::{KeywordOptions, PageFilter, result_row, row_count, source_factor};
 use super::rank::ts_rank;
 use super::tsearch::{TsQuery, phraseto_tsquery, ts_matches, websearch_to_tsquery};
@@ -75,6 +76,20 @@ impl Store {
         let mut extra = vec![&ranker];
         extra.extend(phrase.as_ref());
         let source = ChunkSource::plan(&*read, &[&matcher], &extra, |_| Ok(Some(BTreeSet::new())))?;
+        // `search.keyword_ranker` (bm25.rs): unset or `ts_rank` keeps `ts_rank`, and `bm25` is None.
+        let bm25 = match Ranker::read(&*read)? {
+            Ranker::Compat => None,
+            Ranker::Bm25(params) => Some(match &source {
+                ChunkSource::Index { postings, .. } => Scorer::from_postings(
+                    params,
+                    self.bm25_indexed_corpus(&*read, DocKind::Chunk)?,
+                    &ranker,
+                    postings,
+                ),
+                ChunkSource::Scan => Scorer::from_scan(params, &*read, DocKind::Chunk, &ranker)?,
+            }),
+        };
+        let indexed = matches!(source, ChunkSource::Index { .. });
         let mut admit = Admit {
             filter: Some(&mut filter),
             text_only: true,
@@ -99,7 +114,19 @@ impl Store {
                         Some(p) if ts_matches(&vector, p) => KEYWORD_PHRASE_FACTOR,
                         _ => 1.0,
                     };
-                    let score = f64::from(ts_rank(&vector, &ranker)) * phrase * factor;
+                    let rank = match &bm25 {
+                        None => f64::from(ts_rank(&vector, &ranker)),
+                        Some(scorer) => {
+                            let dl = if indexed {
+                                let key = chunk_len_key(page.id, chunk.chunk_index);
+                                indexed_len(&*read, DocKind::Chunk, &key)?
+                            } else {
+                                vector.entries.len()
+                            };
+                            scorer.score(&vector, dl)
+                        }
+                    };
+                    let score = rank * phrase * factor;
                     let better = best
                         .as_ref()
                         .is_none_or(|(s, b)| score > *s || (score == *s && chunk.id < b.id));
@@ -234,6 +261,46 @@ mod tests {
             )
             .unwrap();
         assert_eq!(cut.len(), 1);
+    }
+
+    /// `search.keyword_ranker`: no entry and `ts_rank` give the same rows, scores included;
+    /// `bm25` ranks the same matches by BM25 (length-normalized: the short page leads).
+    #[test]
+    fn the_ranker_config_keeps_ts_rank_unless_it_names_bm25() {
+        let store = crate::test_support::store();
+        put(
+            &store,
+            "notes/a",
+            "quasar quasar quasar nebula nebula comet comet dust dust gas gas",
+        );
+        put(&store, "notes/b", "quasar once");
+        put(&store, "notes/c", "nebula nebula only");
+        let run = || {
+            store
+                .search_keyword_arm("quasar", "quasar", &opts(json!({})))
+                .unwrap()
+        };
+        let default = run();
+        assert_eq!(slugs(&default), ["notes/a", "notes/b"]);
+        store
+            .set_config(super::super::bm25::RANKER_KEY, "ts_rank")
+            .unwrap();
+        assert_eq!(run(), default);
+        store
+            .set_config(super::super::bm25::RANKER_KEY, "bm25")
+            .unwrap();
+        let bm25 = run();
+        assert_eq!(slugs(&bm25), ["notes/b", "notes/a"]);
+        assert_ne!(bm25[0]["score"], default[0]["score"]);
+        store
+            .set_config(super::super::bm25::RANKER_KEY, "nope")
+            .unwrap();
+        let err = store
+            .search_keyword_arm("quasar", "quasar", &opts(json!({})))
+            .unwrap_err();
+        assert_eq!(err.code, "invalid_argument");
+        store.unset_config(super::super::bm25::RANKER_KEY).unwrap();
+        assert_eq!(run(), default);
     }
 
     #[test]

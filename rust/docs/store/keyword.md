@@ -340,6 +340,19 @@ auto-extracted unverified page). A handle page (its slug basename is a handle) s
 and matches even without a text match. Pages take their best chunk (highest score, then the lower chunk id) and sort by
 score descending, then page id; chunks sort by score, page id and chunk id. `countKeywordPages` stops at 10,001.
 
+### The opt-in BM25 ranker (experiment)
+
+The config entry `search.keyword_ranker` picks the ranker of `searchKeyword` (the hybrid keyword arm) and
+`searchTitles` (the title arm). With no entry, or `ts_rank`, they rank with `ts_rank` / `ts_rank_cd` exactly as above.
+`bm25` ranks with Okapi BM25 (`search.bm25_k1`, default 1.2; `search.bm25_b`, default 0.75); `bm25_prox` adds a
+term-proximity bonus of `ln(0.3 + exp(-d)) - ln(0.3)` for the smallest distance `d` between two different query
+lexemes. Any other value refuses the search with `invalid_argument`. Term frequency sums one boost per position by its
+weight (A 2.5, B 1, C 0.5, D 0.25: the default weights relative to B). Document length is the number of distinct
+lexemes; `N`, the average length and `df` come from the keyword index (or from every vector when the scan serves the
+read), so the index and the scan give the same scores bit for bit. The phrase and source factors apply as with
+`ts_rank`. The other keyword members (`searchKeywordChunks`, `searchKeywordPages`, `countKeywordPages`) keep `ts_rank`.
+Code: `src/keyword/bm25.rs`. PGLite and Postgres ignore the entry.
+
 ## searchKeyword (the hybrid keyword arm)
 
 Hybrid's keyword arm (`search/hybrid/arms.ts`) calls `searchKeyword` with `keywordTimeoutCache`, and with

@@ -14,6 +14,8 @@
 //!
 //! This family also writes the `ts_rank` compatibility ranker (design D5) over the core keyword
 //! postings (`keys::POSTING`, `T`); the facts keyword arm reuses it.
+//! `keyword/bm25.rs` holds an opt-in BM25 ranker for searchKeyword and searchTitles, picked by the
+//! config entry `search.keyword_ranker` (an experiment; no entry keeps `ts_rank`).
 //!
 //! Built: the pg_trgm scorer (`keyword/trgm.rs`), for findByTitleFuzzy here and for other
 //! families (searchTakes). Its signatures and thresholds are stable:
@@ -49,6 +51,7 @@
 //! See docs/designs/RUST_ENGINE_INTERFACES.md.
 
 mod arm;
+mod bm25;
 mod chunk_search;
 mod cjk;
 mod entity_fuzzy;

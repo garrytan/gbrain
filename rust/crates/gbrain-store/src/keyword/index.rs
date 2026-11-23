@@ -395,6 +395,11 @@ impl Postings {
         Ok(Postings { lists })
     }
 
+    /// The number of documents holding `word` (its postings), for the BM25 ranker (`bm25.rs`).
+    pub(crate) fn doc_freq(&self, word: &str) -> usize {
+        self.lists.get(word).map_or(0, Vec::len)
+    }
+
     fn docs(&self, word: &str) -> Vec<Doc> {
         self.lists
             .get(word)
