@@ -349,6 +349,8 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'writeReasonPurgeTombstones', 'writeSharedSkillPolicy', 'writeSharedSkillRevision', 'writeSourceSyncHeartbeat',
   'writeSourceUpstreamObservation', 'writeSyncAdmissionStamp', 'writeSyncPassRow', 'writeTrustScanCursor',
   'writerAdminStore', 'writerReleaseStore',
+  // embed --stale writes (engine-sql/embed-stale-work.ts): the content-drift sweep's cursor row and one drift batch.
+  'invalidateContentDriftChunks', 'lockContentDriftState',
 ]);
 export type MemberKind = 'read_name' | 'raw' | 'reserved' | 'ignored' | 'schema' | 'mapped' | 'unmapped';
 
