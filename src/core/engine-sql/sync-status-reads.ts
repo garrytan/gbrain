@@ -111,6 +111,59 @@ export function readOrphanedManagedSyncFailureRows<F = Record<string, unknown>>(
       AND NOT EXISTS(SELECT 1 FROM op_checkpoints c WHERE c.op='managed-sync' AND c.fingerprint=f.fingerprint)`, [sourceIds ? [...sourceIds] : null]);
 }
 
+/**
+ * The commit targets of the freshness samples (persistence/sync-freshness.ts `SAMPLE_WHERE`, the same predicate text): a
+ * committed `managed_sync_import` receipt of worktree `$1`'s source incarnation `$2` that landed in the last `$3` hours,
+ * imported from a recorded commit and not a working-tree import; newest receipt first then byte target, at most `$4`.
+ */
+const FRESHNESS_TARGETS_SQL = `SELECT r.intent->>'target' AS target FROM persistence_requests r
+    WHERE r.worktree_id=$1::uuid AND r.source_incarnation=$2::uuid AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'
+    AND r.completed_at > now() - ($3::int * interval '1 hour') AND r.intent->>'kind'='managed_sync_import' AND r.intent->>'from' IS NOT NULL
+    AND COALESCE(r.intent->>'working','false') <> 'true'
+    GROUP BY 1 ORDER BY max(r.completed_at) DESC, (r.intent->>'target') COLLATE "C" LIMIT $4`;
+
+/** The commit targets of a worktree's freshness samples, newest receipt first then byte target, at most `limit`. */
+export async function listFreshnessTargets(exec: SyncStatusExec, worktreeId: string, incarnation: string, windowHours: number, limit: number): Promise<string[]> {
+  const rows = await exec.executeRaw<{ target: string }>(FRESHNESS_TARGETS_SQL, [worktreeId, incarnation, windowHours, Math.max(1, Math.floor(limit))]);
+  return rows.map(row => row.target);
+}
+
+/** $1 worktree, $2 source incarnation. The kind test matches the `persistence_requests_sync_watermark` predicate text, so the planner can prove the partial index applies. */
+export const MOVEMENT_WATERMARK_SQL = `SELECT
+        (SELECT r.completed_at FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state='committed' AND r.source_incarnation=$2::uuid
+           AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%' ORDER BY r.completed_at DESC LIMIT 1) AS last_commit_at,
+        (SELECT count(*) FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state IN ('queued','running') AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') AS admitted,
+        (SELECT min(r.created_at) FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state IN ('queued','running') AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') AS admitted_since`;
+
+/** A worktree's managed-sync movement marks: the newest committed managed-sync completion of the incarnation, and the queued or running ones with the oldest's creation. */
+export interface MovementWatermarkRow { last_commit_at: unknown; admitted: number | string; admitted_since?: unknown }
+/** The head unfinished request of a worktree (running first, then by sequence) with its claim columns. */
+export interface MovementHeadRow { request_id: string; state: string; claim_phase: unknown; execution_token: string | null; claim_lapsed: boolean | null; publication_started: boolean | null }
+/** A source incarnation's Git hold summary: its counts and when it last changed. */
+export interface MovementHoldRow { count: number | string | null; stalled: number | string | null; fences: number | string | null; concurrent: number | string | null; updated_at: unknown }
+
+/** The movement watermark of worktree `worktreeId` for incarnation `incarnation` (persistence/sync-movement.ts). */
+export async function readMovementWatermark(exec: SyncStatusExec, worktreeId: string, incarnation: string): Promise<MovementWatermarkRow | null> {
+  const [row] = await exec.executeRaw<MovementWatermarkRow>(MOVEMENT_WATERMARK_SQL, [worktreeId, incarnation]);
+  return row ?? null;
+}
+
+/** The head unfinished request of the worktree, or null. */
+export async function readMovementHead(exec: SyncStatusExec, worktreeId: string): Promise<MovementHeadRow | null> {
+  const [row] = await exec.executeRaw<MovementHeadRow>(`SELECT request_id::text AS request_id, state, claim_phase, execution_token::text AS execution_token,
+        (claim_expires_at IS NOT NULL AND claim_expires_at < now()) AS claim_lapsed, publication_started
+      FROM persistence_requests WHERE worktree_id=$1::uuid AND state IN ('queued','running','recovering') ORDER BY (state <> 'running'), sequence LIMIT 1`, [worktreeId]);
+  return row ?? null;
+}
+
+/** The Git hold summary of a source incarnation, or null. */
+export async function readMovementHoldSummary(exec: SyncStatusExec, sourceId: string, incarnation: string): Promise<MovementHoldRow | null> {
+  const [row] = await exec.executeRaw<MovementHoldRow>(`SELECT (completed_keys->0->>'count')::int AS count, (completed_keys->0->>'stalled')::int AS stalled,
+        (completed_keys->0->>'fences')::int AS fences, (completed_keys->0->>'concurrent')::int AS concurrent, updated_at
+      FROM op_checkpoints WHERE op='sync-hold-summary' AND completed_keys->0->>'source_id'=$1 AND completed_keys->0->>'incarnation'=$2 LIMIT 1`, [sourceId, incarnation]);
+  return row ?? null;
+}
+
 /** The head of a source binding's unfinished write requests (running first, then by sequence). */
 export interface SyncHeadRequestRow {
   head_state: string; head_claim_phase: unknown; head_token: string | null; head_lapsed: boolean | null; head_kind: string | null; head_request_id: string | null;

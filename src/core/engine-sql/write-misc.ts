@@ -202,6 +202,24 @@ export async function getWorktreeBinding(exec: LegacyUnscopedRead, sourceId: str
   return row ?? null;
 }
 
+/** One worktree host `hostId` binds, with its owner, epoch, state and topology generation: what the topology lock checks a new root against. */
+export interface HostTopologyRow {
+  worktree_id: string; owner_host_id: string | null; owner_epoch: string | number; state: WorktreeBinding['state'];
+  topology_generation: string | number; local_path: string; coordination_path: string;
+}
+
+/** Every worktree host `hostId` binds, with its owner, epoch, state and topology generation (persistence/topology-locks.ts), in no set order. */
+export function listHostTopologyRows(exec: LegacyUnscopedRead, hostId: string): Promise<HostTopologyRow[]> {
+  return exec.executeRaw<HostTopologyRow>(`SELECT w.id AS worktree_id,w.owner_host_id,w.owner_epoch,w.state,w.topology_generation,
+        h.local_path,h.coordination_path FROM persistence_host_bindings h JOIN persistence_worktrees w ON w.id=h.worktree_id WHERE h.host_id=$1::uuid`, [hostId]);
+}
+
+/** The source bindings of one worktree, by byte source id. */
+export function listWorktreeMembers(exec: LegacyUnscopedRead, worktreeId: string): Promise<Array<{ source_id: string; relative_path: string }>> {
+  return exec.executeRaw<{ source_id: string; relative_path: string }>(
+    'SELECT source_id,relative_path FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id COLLATE "C"', [worktreeId]);
+}
+
 /** Whether the page has an extracted chronicle generation with events. */
 export async function hasExtractedEvents(exec: LegacyUnscopedRead, sourceId: string, pageId: number): Promise<boolean> {
   const rows = await exec.executeRaw(

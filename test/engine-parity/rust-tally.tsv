@@ -42,7 +42,7 @@ test/engine-parity/collate-facts-home.test.ts	1	0
 test/engine-parity/collate-ontology-config.test.ts	5	1
 test/engine-parity/collate-outputs.test.ts	2	5
 test/engine-parity/collate-persistence-a.test.ts	2	19
-test/engine-parity/collate-persistence-b.test.ts	4	18
+test/engine-parity/collate-persistence-b.test.ts	6	16
 test/engine-parity/collate-referrer-ties.test.ts	3	0
 test/engine-parity/collate-repair-scans.test.ts	0	4
 test/engine-parity/collate-schema-pack-samples.test.ts	0	4
@@ -282,7 +282,8 @@ test/engine-parity/sync-requests.test.ts	3	0
 test/engine-parity/sync-route.test.ts	6	0
 test/engine-parity/sync-run-reads.test.ts	3	0
 test/engine-parity/sync-run.test.ts	1	0
-test/engine-parity/sync-status-reads.test.ts	6	0
+test/engine-parity/sync-status-reads.test.ts	7	0
+test/engine-parity/sync-swap-reads.test.ts	6	0
 test/engine-parity/take-held-rows.test.ts	2	0
 test/engine-parity/take-purge-ledger.test.ts	4	0
 test/engine-parity/take-purge-overlay.test.ts	2	0

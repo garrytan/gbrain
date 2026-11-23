@@ -69,6 +69,29 @@ impl Brain {
         self.run(env, move |s| s.list_running_request_stalls(max_claim_ms))
     }
 
+    /// `readMovementWatermark(worktreeId, incarnation)`: the worktree's managed-sync movement marks.
+    #[napi]
+    pub fn read_movement_watermark<'env>(
+        &self,
+        env: &'env Env,
+        worktree_id: String,
+        incarnation: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_movement_watermark(&worktree_id, &incarnation)
+        })
+    }
+
+    /// `readMovementHead(worktreeId)`: the worktree's head unfinished request, or null.
+    #[napi]
+    pub fn read_movement_head<'env>(
+        &self,
+        env: &'env Env,
+        worktree_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_movement_head(&worktree_id))
+    }
+
     /// `readMaxRequestSequence()`: the newest sequence as text, or null.
     #[napi]
     pub fn read_max_request_sequence<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {

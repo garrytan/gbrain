@@ -33,7 +33,7 @@ import type { WriteRequest } from '../persistence/model.ts';
 import type { CounterColumn } from '../engine-sql/writer-release.ts';
 import type { EmbeddingCandidate } from '../engine-sql/persistence-effect-scans.ts';
 import type { GitHoldListingRow } from '../engine-sql/sync-hold-store.ts';
-import type { ManagedSyncFailureRow, SyncHeadRequestRow, SyncRecoveryProbeRow, SyncStatusCommittedRow, SyncStatusProbeOptions, SyncStatusSourceRow } from '../engine-sql/sync-status-reads.ts';
+import type { ManagedSyncFailureRow, MovementHeadRow, MovementHoldRow, MovementWatermarkRow, SyncHeadRequestRow, SyncRecoveryProbeRow, SyncStatusCommittedRow, SyncStatusProbeOptions, SyncStatusSourceRow } from '../engine-sql/sync-status-reads.ts';
 import type { ReceiptCompactionCandidate, ReceiptCompactionWindow } from '../engine-sql/persistence-housekeeping.ts';
 import type { RefreshTiming, WorktreeAdmission, WorktreeAdmissionKey } from '../engine-sql/persistence-admission.ts';
 import type { SegmentedGateEvidenceRow } from '../engine-sql/writer-versions.ts';
@@ -105,6 +105,14 @@ export interface PersistenceMembers {
   readRetiredManagedSyncCursor(sourceId: string, incarnation: string): Promise<{ first_seen: string } | null>;
   /** The unfinished managed-sync cursors of the listed sources (null: every source) with their receipts, failures and paths. */
   readManagedSyncFailureRows<V = Record<string, unknown>, R = Record<string, unknown>, F = Record<string, unknown>>(sourceIds: readonly string[] | null): Promise<Array<ManagedSyncFailureRow<V, R, F>>>;
+  /** A worktree's managed-sync movement watermark for one incarnation (`sources writer movement`). */
+  readMovementWatermark(worktreeId: string, incarnation: string): Promise<MovementWatermarkRow | null>;
+  /** The head unfinished request of a worktree with its claim columns, or null. */
+  readMovementHead(worktreeId: string): Promise<MovementHeadRow | null>;
+  /** The Git hold summary of a source incarnation, or null. */
+  readMovementHoldSummary(sourceId: string, incarnation: string): Promise<MovementHoldRow | null>;
+  /** The commit targets of a worktree's freshness samples (committed managed-sync imports in the window), newest first, at most `limit`. */
+  listFreshnessTargets(worktreeId: string, incarnation: string, windowHours: number, limit: number): Promise<string[]>;
   /** The recorded managed-sync failures of the listed sources (null: every source) whose cursor row is gone. */
   readOrphanedManagedSyncFailureRows<F = Record<string, unknown>>(sourceIds: readonly string[] | null): Promise<Array<{ failure: F }>>;
   /** The drain's head probe: the source binding's head unfinished request, or null. */

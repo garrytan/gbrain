@@ -196,6 +196,62 @@ impl Store {
             .collect())
     }
 
+    /// `readMovementWatermark(worktreeId, incarnation)` (`MOVEMENT_WATERMARK_SQL`): the newest
+    /// committed managed-sync completion of the incarnation on the worktree, and the count and
+    /// oldest creation of the queued or running managed-sync requests on it.
+    pub fn read_movement_watermark(&self, worktree_id: &str, incarnation: &str) -> Result<Value> {
+        let mut last: Option<i64> = None;
+        let mut admitted = 0u64;
+        let mut since: Option<i64> = None;
+        for r in all_requests(&*self.read()?)? {
+            let on_worktree = worktree_of(&r).is_some_and(|w| w.eq_ignore_ascii_case(worktree_id));
+            if !on_worktree
+                || !sql_like(
+                    &json_text(r.intent.get("kind")).unwrap_or_default(),
+                    "managed_sync_%",
+                )
+            {
+                continue;
+            }
+            if let Some(at) = r.completed_at_us.filter(|_| {
+                r.state == "committed" && r.source_incarnation.eq_ignore_ascii_case(incarnation)
+            }) {
+                last = Some(last.map_or(at, |l| l.max(at)));
+            }
+            if r.state == "queued" || r.state == "running" {
+                admitted += 1;
+                since = Some(since.map_or(r.created_at_us, |s| s.min(r.created_at_us)));
+            }
+        }
+        Ok(
+            json!({ "last_commit_at": last.map(iso), "admitted": admitted, "admitted_since": since.map(iso) }),
+        )
+    }
+
+    /// `readMovementHead(worktreeId)`: the worktree's queued, running or recovering request,
+    /// running first, then by sequence, with its claim columns; null when none.
+    pub fn read_movement_head(&self, worktree_id: &str) -> Result<Value> {
+        let now = self.env.now_micros();
+        let mut open: Vec<Request> = all_requests(&*self.read()?)?
+            .into_iter()
+            .filter(|r| {
+                worktree_of(r).is_some_and(|w| w.eq_ignore_ascii_case(worktree_id))
+                    && matches!(r.state.as_str(), "queued" | "running" | "recovering")
+            })
+            .collect();
+        open.sort_by_key(|r| (r.state != "running", r.sequence));
+        Ok(open.first().map_or(Value::Null, |r| {
+            json!({
+                "request_id": r.request_id,
+                "state": r.state,
+                "claim_phase": r.extra.get("claim_phase").cloned().unwrap_or(Value::Null),
+                "execution_token": r.extra.get("execution_token").and_then(Value::as_str),
+                "claim_lapsed": claim_lapsed(r, now).unwrap_or(false),
+                "publication_started": extra_bool(r, "publication_started"),
+            })
+        }))
+    }
+
     /// `listRunningRequestStalls(maxClaimMs)`: the oldest 100 running requests with the claim state,
     /// the age, whether their root settled a request inside `max_claim_ms` and the queue behind them.
     pub fn list_running_request_stalls(&self, max_claim_ms: f64) -> Result<Vec<Value>> {

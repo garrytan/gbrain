@@ -137,12 +137,12 @@ describe('writer status', () => {
   }, async (engine, backend) => withClaimedCheckout(engine, backend, async (home) => {
     const status = await runPersistenceAdministration(engine, 'writer_status', {}) as Record<string, unknown>;
     expect(Object.keys(status)).toEqual(expect.arrayContaining(['stalled_catchups', 'parked_groups', 'movement', 'bindings', 'onboarding']));
-    // The catch-up and parked-group reads are typed members the store serves. The movement read lists the managed sources a
-    // persistence binding names; a Rust brain keeps no binding row (listSourceBindingsForMovement answers none), so its
-    // movement is empty where the SQL arms list the registered sources. Each arm is checked against its own answer and the
-    // rest of the status must be equal.
+    // The catch-up and parked-group reads are typed members the store serves. The movement read lists the sources a
+    // persistence binding names (the claim's binding, which a Rust brain keeps too); its sampled times differ between
+    // runs, so the movement is compared by source and state and the rest of the status must be equal.
     const { movement, ...rest } = status;
-    expect({ arm: backend, listed: Array.isArray(movement) ? movement.length : null }).toEqual({ arm: backend, listed: backend === 'rust' ? 0 : 1 });
-    return printed(rest, home);
+    const moved = Array.isArray(movement) ? (movement as Array<{ source_id: string; movement_state: string }>).map(m => [m.source_id, m.movement_state]) : null;
+    expect({ arm: backend, listed: moved?.length ?? null }).toEqual({ arm: backend, listed: 1 });
+    return { movement: moved, rest: printed(rest, home) };
   }));
 });

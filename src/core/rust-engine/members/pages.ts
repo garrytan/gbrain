@@ -291,6 +291,8 @@ export const PAGES_MEMBERS = {
   hasSynopsisFrontmatterOverride: 'sources',
   // The writer-binding read is a persistence table read (persistence_worktrees is persistence_journal's, catalog.ts).
   getWorktreeBinding: 'persistence_journal',
+  listHostTopologyRows: 'persistence_journal',
+  listWorktreeMembers: 'persistence_journal',
   isSourceClaimed: 'persistence_journal',
   worktreeClaimStore: 'persistence_journal',
   // Writer administration (the reviewed --expected-state digest, the operator lock, transfer prepare and cancel).

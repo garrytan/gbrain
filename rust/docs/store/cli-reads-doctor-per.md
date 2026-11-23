@@ -53,6 +53,10 @@ Where the statements differ from what Postgres does, the store follows the effec
 
 ## Answered in TypeScript with no store call
 
+`listSourceBindingsForMovement(sourceIds)` is served from the worktree records a writer claim writes
+(`persistence::worktrees` `list_source_bindings_for_movement`): each binding whose source holds the bound incarnation and
+whose worktree row exists, with the worktree's owner, by byte source id.
+
 The store has no writer for these relations, so they hold no row on a Rust brain and each answers the empty state the
 same read gives on a PGLite brain with none (the precedent is `store-members/connect-gate.ts` and "TypeScript journal
 members" in [journal.md](journal.md)). Each is listed in `TODOS.md` under "Rust engine lane 14 follow-ups" for the day
@@ -64,7 +68,7 @@ the store gains the writer.
 | `countParkedEffects()`, `listParkedEffects()` | 0, `[]` | no effect is recorded |
 | `listGitPushHoldRows()`, `listStalledCatchupRows()`, `listParkedGroupRows()` | `[]` | no effect or worktree is recorded |
 | `readStaleEmbeddingCounts()`, `listStaleEmbeddingEffects()` | zeros, `[]` | no embedding effect is recorded |
-| `listOrphanBindingRows()`, `listWorktreeIds()`, `listSourceBindingsForMovement()`, `listOwnerBindings()`, `listConsumerOwners()`, `listStuckWorktreeRefreshes()` | `[]` | the store records no worktree, host binding or consumer |
+| `listOrphanBindingRows()`, `listWorktreeIds()`, `listOwnerBindings()`, `listConsumerOwners()`, `listStuckWorktreeRefreshes()` | `[]` | the store records no worktree, host binding or consumer |
 | `listDerivationPurgeSweeps()` | `[]` | no derivation-result sweep of a fact purge is recorded |
 | `listUnboundSourcePages()` | `[]` | a page has no `database_only_reason` |
 | `listOverwriteCandidates()` | `[]` | page versions carry no link to the request that wrote them |

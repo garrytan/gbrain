@@ -11,7 +11,7 @@
  * keep. What each member answers and why: rust/docs/store/write_misc.md.
  */
 import type {
-  AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
+  AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding, HostTopologyRow,
 } from '../../engine-sql/write-misc.ts';
 import type { AccessCredentialLookup, AccessCredentialRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AppliedPolicyRevision, FolderAccessRows, AudiencePrincipalRows, MayActForVia, JobPrincipalKind, PageNamingReaderRow } from '../../engine-sql/access-control.ts';
 import { readAccessMembers } from './access-members.ts';
@@ -83,6 +83,14 @@ export const listSharedSkillPackRoots: StoreMember<[hostId: string], SharedSkill
  */
 export const getWorktreeBinding: StoreMember<[sourceId: string, hostId: string | null], WorktreeBinding | null> = (brain, sourceId, hostId) =>
   storeCall({ member: 'getWorktreeBinding', sourceId }, () => brain.getWorktreeBinding(sourceId, hostId));
+
+/** Each host binding of `hostId` with its worktree's owner, epoch, state and topology generation (gbrain-store `persistence::worktrees`). */
+export const listHostTopologyRows: StoreMember<[hostId: string], HostTopologyRow[]> = (brain, hostId) =>
+  storeCall({ member: 'listHostTopologyRows' }, () => brain.listHostTopologyRows(hostId));
+
+/** The source bindings of one worktree, by byte source id. */
+export const listWorktreeMembers: StoreMember<[worktreeId: string], Array<{ source_id: string; relative_path: string }>> = (brain, worktreeId) =>
+  storeCall({ member: 'listWorktreeMembers' }, () => brain.listWorktreeMembers(worktreeId));
 
 /** A binding names the source at its current incarnation (SOURCE_CLAIMED_SQL). */
 export const isSourceClaimed: StoreMember<[sourceId: string], boolean> = (brain, sourceId) =>

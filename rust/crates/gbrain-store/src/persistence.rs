@@ -72,6 +72,7 @@ mod effect_scans;
 mod effect_worker;
 mod effects;
 mod embedding_candidates;
+mod freshness;
 mod git_holds;
 mod housekeeping;
 mod idle_probe;

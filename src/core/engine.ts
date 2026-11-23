@@ -57,7 +57,7 @@ import type {
 } from './engine-sql/notifier.ts';
 import type {
   AdmissionSourceRow, AttachSourcePathOptions, OpCheckpointRecord, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions,
-  SourceStateRow, WorktreeBinding,
+  SourceStateRow, WorktreeBinding, HostTopologyRow,
 } from './engine-sql/write-misc.ts';
 import type { WorktreeClaimStore } from './engine-sql/worktree-claim.ts';
 import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/writer-admin.ts';
@@ -1615,6 +1615,10 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   listSharedSkillPackRoots(hostId: string): Promise<SharedSkillPackRoot[]>;
   /** The source's writer binding with host `hostId`'s paths (null host columns for a null or unbound host); null when unbound. */
   getWorktreeBinding(sourceId: string, hostId: string | null): Promise<WorktreeBinding | null>;
+  /** Every worktree host `hostId` binds, with its owner, epoch, state and topology generation, in no set order (the topology lock's local read). */
+  listHostTopologyRows(hostId: string): Promise<HostTopologyRow[]>;
+  /** The source bindings of one worktree, by byte source id. */
+  listWorktreeMembers(worktreeId: string): Promise<Array<{ source_id: string; relative_path: string }>>;
   /**
    * The unmanaged writer claim's store (engine-sql/worktree-claim.ts). Call it on a transaction engine: it turns on
    * durable commit, locks the brain row, and every store call runs in that transaction. `claimWorktreeBinding(engine,

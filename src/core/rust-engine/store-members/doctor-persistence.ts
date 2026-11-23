@@ -18,6 +18,10 @@ const principalArgs = (principal: readonly [kind: string, id: string] | null): [
 
 // ---- served from the store ----------------------------------------------------------------------------------------
 
+/** Each live source binding with its worktree's owner, by byte source id (the bindings a writer claim records). */
+export const listSourceBindingsForMovement: Member<'listSourceBindingsForMovement'> = async (brain, sourceIds) =>
+  await storeCall({ member: 'listSourceBindingsForMovement' }, () => brain.listSourceBindingsForMovement(sourceIds ?? null)) as Awaited<ReturnType<BrainEngine['listSourceBindingsForMovement']>>;
+
 export const listCapacityCounters: Member<'listCapacityCounters'> = async brain =>
   await storeCall({ member: 'listCapacityCounters' }, () => brain.listCapacityCounters()) as Awaited<ReturnType<BrainEngine['listCapacityCounters']>>;
 
@@ -96,7 +100,6 @@ export const listStaleEmbeddingEffects: Member<'listStaleEmbeddingEffects'> = as
 /** No worktree or source binding row exists, so none is orphaned. */
 export const listOrphanBindingRows: Member<'listOrphanBindingRows'> = async () => [];
 export const listWorktreeIds: Member<'listWorktreeIds'> = async () => [];
-export const listSourceBindingsForMovement: Member<'listSourceBindingsForMovement'> = async () => [];
 export const listOwnerBindings: Member<'listOwnerBindings'> = async () => [];
 export const listConsumerOwners: Member<'listConsumerOwners'> = async () => [];
 export const listStuckWorktreeRefreshes: Member<'listStuckWorktreeRefreshes'> = async () => [];

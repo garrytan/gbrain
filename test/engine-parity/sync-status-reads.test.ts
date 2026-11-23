@@ -29,6 +29,7 @@ import { readManagedSyncFailures } from '../../src/core/persistence/sync-failure
 import { listIdentityDowngrades } from '../../src/core/sync-identity-downgrades.ts';
 import { APPLE_CONTACTS_PENDING_DELETES_OP, APPLE_CONTACTS_REVIEW_OP } from '../../src/core/apple-contacts/review-status.ts';
 import { createSource, parityArms, writeCheckpointAt } from './harness.ts';
+import { seedHostBinding, seedSource, seedSourceBinding, seedWorktree } from './persistence-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -205,4 +206,42 @@ describe('engine parity: sync status reads', () => {
       expect(result as unknown).toEqual({ repo: { identity_reviews: review, held_deletes: held }, other: { identity_reviews: null, held_deletes: null } });
       return result;
     });
+
+  parityTest('the topology, freshness and movement reads answer a claimed binding the same when called directly', {
+    methods: ['worktreeClaimStore', 'writeOpCheckpointRecord', 'listHostTopologyRows', 'listWorktreeMembers', 'listFreshnessTargets',
+      'readMovementWatermark', 'readMovementHead', 'readMovementHoldSummary'],
+  }, async (engine, backend) => {
+    const host = randomUUID();
+    const worktree = await seedWorktree(engine, host);
+    const incarnations: Record<string, string> = {};
+    for (const id of ['mv-b', 'mv-a']) {
+      incarnations[id] = await seedSource(engine, backend, id);
+      await seedSourceBinding(engine, id, incarnations[id]!, worktree, id);
+    }
+    await seedHostBinding(engine, worktree, host, '/var/tmp/gbrain-parity-movement');
+    const inc = incarnations['mv-a']!;
+    await engine.writeOpCheckpointRecord('sync-hold-summary', `mv-a:${inc}`, [{ source_id: 'mv-a', incarnation: inc, count: 2, stalled: 1, fences: 0, concurrent: 0 }]);
+    const topology = (await engine.listHostTopologyRows(host)).map(row => ({ ...row, owner_epoch: String(row.owner_epoch), topology_generation: String(row.topology_generation) }));
+    const mark = await engine.readMovementWatermark(worktree, inc);
+    const hold = await engine.readMovementHoldSummary('mv-a', inc);
+    const result = {
+      topology: topology.map(row => ({ ...row, worktree_id: row.worktree_id === worktree, owner_host_id: row.owner_host_id === host })),
+      members: await engine.listWorktreeMembers(worktree),
+      targets: await engine.listFreshnessTargets(worktree, inc, 24, 10),
+      mark: mark && { last_commit_at: mark.last_commit_at ?? null, admitted: Number(mark.admitted), admitted_since: mark.admitted_since ?? null },
+      head: await engine.readMovementHead(worktree),
+      hold: hold && { count: hold.count, stalled: hold.stalled, fences: hold.fences, concurrent: hold.concurrent, stamped: hold.updated_at !== null },
+      noHold: await engine.readMovementHoldSummary('mv-b', incarnations['mv-b']!),
+    };
+    expect(result).toEqual({
+      topology: [{ worktree_id: true, owner_host_id: true, owner_epoch: '0', state: 'active', topology_generation: '1', local_path: '/var/tmp/gbrain-parity-movement', coordination_path: '/var/tmp/gbrain-parity-movement.lock' }],
+      members: [{ source_id: 'mv-a', relative_path: 'mv-a' }, { source_id: 'mv-b', relative_path: 'mv-b' }],
+      targets: [],
+      mark: { last_commit_at: null, admitted: 0, admitted_since: null },
+      head: null,
+      hold: { count: 2, stalled: 1, fences: 0, concurrent: 0, stamped: true },
+      noHold: null,
+    });
+    return result;
+  });
 });

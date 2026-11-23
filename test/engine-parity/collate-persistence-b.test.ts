@@ -213,17 +213,17 @@ describe('moved-checkout members and topology refusals name sources by byte', ()
   }));
 
   parityTest('a topology lock refusal names the byte-first member of the worktree that holds the root', {
-    methods: ['executeRaw'], requires: 'raw_sql',
-  }, async (engine) => inHome(async () => {
+    methods: ['worktreeClaimStore', 'readPersistenceBrainId', 'listHostTopologyRows', 'listWorktreeMembers'],
+  }, async (engine, backend) => inHome(async () => {
     const owner = randomUUID();
-    const worktree = await addWorktree(engine, owner);
-    for (const id of MIXED_IDS) await bind(engine, id, await addSource(engine, id), worktree);
-    await hostBind(engine, worktree, localHostId(), '/collate/root');
+    const worktree = await seedWorktree(engine, owner);
+    for (const id of SOURCE_IDS) await seedSourceBinding(engine, id, await seedSource(engine, backend, id), worktree);
+    await seedHostBinding(engine, worktree, localHostId(), '/collate/root');
     const refusal = await withTopologyLocks(engine, 'unbound', async () => 'locked', '/collate/root/inside', 0)
       .then(() => null, (error: Error) => error);
     expect(refusal).not.toBeNull();
     const named = /The worktree holding source (\S+) is owned/.exec((refusal as { suggestion?: string }).suggestion ?? '')?.[1];
-    expect(named).toBe(byteOrder(MIXED_IDS)[0]);
+    expect(named).toBe(byteOrder(SOURCE_IDS)[0]);
     return named;
   }));
 });

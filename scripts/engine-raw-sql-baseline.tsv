@@ -366,8 +366,7 @@ src/core/minions/handlers/embed-backfill.ts	execute_raw	2
 src/core/minions/handlers/facts-absorb.ts	execute_raw	1
 src/core/minions/handlers/ingest-capture.ts	execute_raw	3
 src/core/minions/handlers/subagent-oneshot.ts	execute_raw	2
-src/core/minions/handlers/sync-job-drain.ts	execute_raw	1
-src/core/minions/handlers/sync.ts	execute_raw	3
+src/core/minions/handlers/sync.ts	execute_raw	1
 src/core/minions/idempotency-coalesce.ts	execute_raw	1
 src/core/minions/job-context.ts	execute_raw	2
 src/core/minions/legacy-cancel.ts	execute_raw	4
@@ -558,7 +557,7 @@ src/core/persistence/sync-discovery.ts	execute_raw	6
 src/core/persistence/sync-drain.ts	execute_raw	2
 src/core/persistence/sync-dry-run-writer.ts	execute_raw	1
 src/core/persistence/sync-failures.ts	execute_raw	4
-src/core/persistence/sync-freshness.ts	execute_raw	3
+src/core/persistence/sync-freshness.ts	execute_raw	1
 src/core/persistence/sync-ghosts.ts	execute_raw	3
 src/core/persistence/sync-group.ts	execute_raw	1
 src/core/persistence/sync-held-deletions.ts	execute_raw	1
@@ -566,7 +565,6 @@ src/core/persistence/sync-holds.ts	execute_raw	10
 src/core/persistence/sync-idle-skips.ts	execute_raw	1
 src/core/persistence/sync-lanes.ts	execute_raw	1
 src/core/persistence/sync-markers.ts	execute_raw	9
-src/core/persistence/sync-movement.ts	execute_raw	4
 src/core/persistence/sync-origin.ts	execute_raw	1
 src/core/persistence/sync-page-fault.ts	execute_raw	9
 src/core/persistence/sync-pass-apply.ts	execute_raw	3
@@ -594,7 +592,7 @@ src/core/persistence/sync-waivers.ts	execute_raw	8
 src/core/persistence/sync-window.ts	execute_raw	2
 src/core/persistence/takes-prepare.ts	execute_raw	4
 src/core/persistence/topology-clone.ts	execute_raw	19
-src/core/persistence/topology-locks.ts	execute_raw	19
+src/core/persistence/topology-locks.ts	execute_raw	16
 src/core/persistence/topology-receipts.ts	execute_raw	9
 src/core/persistence/topology-recovery.ts	execute_raw	16
 src/core/persistence/topology-transaction.ts	execute_raw	1
@@ -699,7 +697,6 @@ src/core/search/two-pass.ts	execute_raw	5
 src/core/secret-store/restore.ts	execute_raw	3	secret restore reads the page revision and live knowledge_revision and flips secret_store.status; no typed engine method for the secret store exists yet
 src/core/secret-store/spool.ts	execute_raw	1	GST-2988 PR 2 spool: reads every allowed (restored) key_id and value_mac from secret_store to rebuild allowed.json; branched before the #9641 ratchet; no typed engine method for the secret store exists yet
 src/core/secret-store/store.ts	execute_raw	24	secret_store and secret_store_occurrence inserts and reads (dedupe by value_mac, entry, occurrences, list, key summary); GST-2988 PR 2 adds +5: drain inserts a spooled original by id (exists check, value_mac lookup, insert), the per-rule counts for secrets list, and the allowed value_macs one source restored; branched before the #9641 ratchet; no typed engine method for the secret store exists yet; GST-2988 PR 3 adds +3: backup export reads every entry and occurrence row in one statement (one snapshot) and restore inserts them in one transaction; GST-3074 adds +5: restore reads whether an entry it did not insert is the same one, so it adds that entry's missing occurrences; the purge cascade deletes a purged page's occurrences, locks the entries they pointed at, and deletes those nothing else references; doctor counts unreferenced originals; GST-3178 adds +2: restore reads which backed-up slugs name a page holding the marker, and takes back out an entry it wrote whose every place failed to land because its page was purged while the restore ran; all move behind typed engine methods with the rest after gbrain#9694
-src/core/serve-sync-runner.ts	execute_raw	1
 src/core/session-lane.ts	execute_raw	3
 src/core/shared-skills/adopted-packs.ts	execute_raw	1
 src/core/shared-skills/compatibility.ts	execute_raw	2
@@ -726,9 +723,7 @@ src/core/storage-manifest/find.ts	execute_raw	4
 src/core/storage-manifest/source.ts	execute_raw	4
 src/core/sync-anchor.ts	execute_raw	2
 src/core/sync-attempt.ts	execute_raw	1
-src/core/sync-cost-gate.ts	execute_raw	1
-src/core/sync-git.ts	execute_raw	3
-src/core/sync-identity-downgrades.ts	execute_raw	7
+src/core/sync-identity-downgrades.ts	execute_raw	6
 src/core/sync-pending.ts	execute_raw	1
 src/core/sync-policy.ts	execute_raw	1
 src/core/sync-status-report.ts	execute_raw	1
