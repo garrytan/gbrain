@@ -459,7 +459,9 @@ impl Store {
             // A check time never moves back for the same upstream commit (#9933): a failed fetch empties
             // FETCH_HEAD and the reflog can be older than the no-change fetch already recorded.
             let moves_back = record.upstream_commit.as_deref() == Some(commit)
-                && record.upstream_checked_at_us.is_some_and(|recorded| recorded > checked_us);
+                && record
+                    .upstream_checked_at_us
+                    .is_some_and(|recorded| recorded > checked_us);
             if !moves_back {
                 record.upstream_checked_at_us = Some(checked_us);
             }
@@ -657,6 +659,61 @@ mod tests {
             super::read_source(&*store.read().unwrap(), "missing")
                 .unwrap()
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn the_upstream_check_time_never_moves_back_for_the_same_commit() {
+        let store = crate::test_support::store();
+        let wiki = super::SourceInput {
+            id: "wiki".into(),
+            ..Default::default()
+        };
+        store.upsert_source(&wiki).unwrap();
+        let observe = |at: &str, commit: &str, behind: Option<i64>| {
+            store
+                .write_source_upstream_observation("wiki", at, commit, behind)
+                .unwrap();
+            let record = super::read_source(&*store.read().unwrap(), "wiki")
+                .unwrap()
+                .unwrap();
+            (
+                record.upstream_checked_at_us.map(crate::env::iso),
+                record.upstream_commit,
+                record.upstream_behind,
+            )
+        };
+        let at = |iso: &str| Some(iso.to_string());
+        assert_eq!(
+            observe("2026-01-03T03:04:05.000Z", "u1", Some(1)),
+            (
+                at("2026-01-03T03:04:05.000000Z"),
+                Some("u1".into()),
+                Some(1)
+            )
+        );
+        // An older time for the same commit keeps the recorded time and still records the count.
+        assert_eq!(
+            observe("2026-01-02T03:04:05.000Z", "u1", Some(2)),
+            (
+                at("2026-01-03T03:04:05.000000Z"),
+                Some("u1".into()),
+                Some(2)
+            )
+        );
+        // A newer time for the same commit moves forward.
+        assert_eq!(
+            observe("2026-01-04T03:04:05.000Z", "u1", Some(2)),
+            (
+                at("2026-01-04T03:04:05.000000Z"),
+                Some("u1".into()),
+                Some(2)
+            )
+        );
+        // A different commit takes its own time, older or not.
+        assert_eq!(
+            observe("2026-01-01T03:04:05.000Z", "u2", None),
+            (at("2026-01-01T03:04:05.000000Z"), Some("u2".into()), None)
         );
     }
 }
