@@ -960,7 +960,7 @@ writeAccessTokenGrant	minion_queue	yes	3	no	yes	yes	serves
 writeAccessTokenPrivateGrant	minion_queue	yes	2	no	yes	yes	serves
 setAccessTokenReadSharedRevision	minion_queue	no	0	no	-	-	-
 lockLegacyAccessTokens	minion_queue	yes	2	no	yes	yes	serves
-readActiveAccessTokenByHash	minion_queue	yes	6	no	yes	yes	serves
+readActiveAccessTokenByHash	minion_queue	yes	7	no	yes	yes	serves
 touchAccessTokenLastUsed	minion_queue	yes	2	no	yes	yes	serves
 deleteExpiredOauthCredentials	minion_queue	yes	3	no	yes	yes	serves
 expireAllOauthCredentials	minion_queue	yes	1	no	yes	yes	serves
