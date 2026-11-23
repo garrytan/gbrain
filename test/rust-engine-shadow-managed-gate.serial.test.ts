@@ -173,6 +173,25 @@ describe('engine shadow start on a managed-storage brain', () => {
     for (const p of [join(contentRoot, '.gbrain-managed'), join(config.database_path!, '.gbrain-managed')]) rmSync(p, { force: true });
   });
 
+  test('the preview and start leave an open repair episode and its backups alone, and record the mode as unread', async () => {
+    const dir = config.database_path!;
+    const sidecar = `${dir}.wal-repair-attempt.json`;
+    const backups = [1, 2, 3, 4].map((n) => `${dir}.wal-repair-backup-${1_700_000_000_000 + n}`);
+    for (const b of backups) { mkdirSync(join(b, 'pg_wal'), { recursive: true }); writeFileSync(join(b, 'pg_wal', 'x'), b); }
+    writeFileSync(sidecar, JSON.stringify({ episodeStartedAt: 1_700_000_000_000, episodeBackupPath: backups[0], attempts: [] }));
+    const watched = (): string[] => [readFileSync(sidecar, 'utf8'), ...backups.map((b) => String(existsSync(join(b, 'pg_wal', 'x'))))];
+    const before = watched();
+    for (const args of [['start', '--plan'], ['start'], ['start', '--yes', '--expect', planHash()]]) {
+      expect((await run(args)).err, args.join(' ')).toEqual([]);
+    }
+    expect(readShadowState(shadowDir())?.storage).toEqual({ managed: null, checked_at: NOW.toISOString(), reason: 'repair_episode_open' });
+    expect(watched()).toEqual(before);
+    expect(before.slice(1)).toEqual(['true', 'true', 'true', 'true']);
+    reset();
+    rmSync(sidecar, { force: true });
+    for (const b of backups) rmSync(b, { recursive: true, force: true });
+  });
+
   test('an unmanaged brain records managed: false and prints no storage line', async () => {
     await onBrain(UNMANAGED);
     const plan = await run(['start', '--plan']);

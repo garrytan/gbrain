@@ -194,6 +194,11 @@ async function openConfiguredPrimary(config: ResolvedBrain['config']): Promise<B
     await engine.connect(engineConfig);
     return engine;
   }
+  // A healthy open also closes an open repair episode and prunes older repair backups; a preview must not, so it leaves that brain unread.
+  const { readRepairSidecar } = await import('../core/pglite-repair.ts');
+  if (readRepairSidecar(engineConfig.database_path!).episodeStartedAt !== null) {
+    throw Object.assign(new Error('a repair episode is open on this brain; opening it would close the episode and prune its backups'), { code: 'repair_episode_open' });
+  }
   const savedRepair = process.env.GBRAIN_PGLITE_WAL_REPAIR;
   process.env.GBRAIN_PGLITE_WAL_REPAIR = 'off';
   try {

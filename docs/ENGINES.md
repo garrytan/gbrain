@@ -1902,7 +1902,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   refuses them (`engine_swap_refused`, reason `managed_storage`, which `gbrain engine swap` still returns and shadow
   mode never does). `start` (the preview, `--plan` and `--yes`) opens the brain database once, best-effort, and reads one
   row: `persistence_brain.enabled`. A PGLite brain opens without recording its managed roots and without repairing a
-  damaged log, so the open writes no marker file and renames nothing. A managed brain prints `storage: this brain cannot swap while it uses managed
+  damaged log, so the open writes no marker file and renames nothing. A brain with an open repair episode is left unread (`repair_episode_open`), because a healthy open would close the episode and prune its backups. A managed brain prints `storage: this brain cannot swap while it uses managed
   storage` in the plan and after `--yes`, and `state.json` records `storage: { managed: true, checked_at }` (`false` for
   an unmanaged brain). A brain whose mode cannot be read (the database is down, another process holds a PGLite brain, a
   PGLite path holds no brain which `start` never creates, or the row is missing or malformed) does not block `start`: it
