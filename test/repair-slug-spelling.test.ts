@@ -542,6 +542,24 @@ describe('doctor check legacy_slug_spellings', () => {
     expect((after.details!.by_source as Array<{ source_id: string }>).map(entry => entry.source_id)).not.toContain(s.id);
   }));
 
+  test('a scan that stopped at its candidate limit with no older spelling found is never reported ok', async () => {
+    const { legacySlugSpellingsEntry } = await import('../src/commands/doctor/checks/legacy-slug-spellings.ts');
+    const { SLUG_SPELLING_SCAN_LIMIT } = await import('../src/core/repair/slug-spelling.ts');
+    // Every candidate is a page already in normal form (a non-ASCII name), and there are more than the scan reads.
+    let served = 0;
+    const scanning = { executeRaw: async (sql: string, params?: unknown[]) => {
+      if (!/FROM pages/.test(sql)) return engine.executeRaw(sql, params as never);
+      const after = Number((params ?? [0])[0]);
+      const rows = [] as Array<{ id: number; source_id: string; slug: string }>;
+      for (let i = 1; i <= 5_000 && served < SLUG_SPELLING_SCAN_LIMIT + 10_000; i++, served++) rows.push({ id: after + i, source_id: 'default', slug: `notes/caf\u00e9-${after + i}` });
+      return rows;
+    } };
+    const [finding] = (await legacySlugSpellingsEntry.run({ engine: scanning } as unknown as DoctorContext)) as unknown as Array<{ status: string; message: string; details?: Record<string, any> }>;
+    expect(finding!.details!.truncated).toBe(true);
+    expect(finding!.status).not.toBe('ok');
+    expect(finding!.message).not.toContain('No page is stored under an older spelling');
+  });
+
   test('on a managed brain the fix is for a person and names no repair command', () => withEnv(env, async () => {
     const s = await newSource();
     await storeAs(s.id, 'Notes/Doctor-Managed');
