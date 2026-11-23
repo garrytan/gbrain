@@ -849,6 +849,7 @@ describe('promote: the install canary', () => {
     expect(judgeCanary(live, '0.60.765.0', parseCanaryPosters(undefined))).toMatchObject({ state: 'success', description: 'v0.60.765.0 run 20261123T025437Z-3567: pass' });
     expect(judgeCanary([{ ...live[0]!, state: 'failure', description: 'v0.60.761.0 run 20261123T025437Z-3567: fail openclaw/setup,hermes/setup' }], '0.60.761.0', ['capy-ai[bot]']).state).toBe('failure');
     expect(judgeCanary(live, '0.60.765.0', ['garrytan']).state).toBe('untested');
+    expect(judgeCanary([{ ...live[0]!, state: 'failure', description: 'v0.60.766.0 run 20261123T1200Z-9: fail incomplete' }], '0.60.766.0', ['capy-ai[bot]'])).toMatchObject({ state: 'failure', why: 'the install canary failed v0.60.766.0 (v0.60.766.0 run 20261123T1200Z-9: fail incomplete)' });
   });
 
   test('parseCanaryPosters defaults to the Capy bot the canary posts as, and lowercases a configured list', () => {
