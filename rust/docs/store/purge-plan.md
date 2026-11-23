@@ -26,7 +26,7 @@ A claim matches as the SQL does: `strpos(lower(text), needle) > 0`, with `lower`
 | `brain.listRequestsCarryingClaim({ sourceId, claimLower, claimJson, reason, limit })` | `[{ id, principal_kind, principal_id }]` by sequence, up to `limit`, whose intent, outcome or error text carries the claim | `listRequestsCarryingClaim` |
 | `brain.listRequestsHoldingStagings({ sourceId, stagingIds })` | the unfinished (`queued`, `deferred`, `running`, `recovering`) requests whose `intent.body_ref.staging_id` is one of the ids, by sequence | `listRequestsHoldingStagings` |
 | `brain.listSegmentedPurgeBodies({ sourceId, store, limit })` | the source's segmented live pages (`store: 'pages'`, by id) or page versions (`'page_versions'`, by version id) | `listSegmentedPageBodies`, `listSegmentedVersionBodies` |
-| `brain.countLegacyDerivedPages({ sourceId })` | the source's live `atom` and `dream_generated` pages (the store keeps no derivation edge, so every one counts) | `countLegacyDerivedPages` |
+| `brain.countLegacyDerivedPages({ sourceId })` | the source's live `atom` and `dream_generated` pages that no recorded derivation edge names as derived (`generations/derivation_inputs.rs`) | `countLegacyDerivedPages` |
 | `brain.listPageSourcePaths({ pageIds })` | the distinct relative `source_path` values of the pages and their versions, at most 64 | `listPageSourcePathsForPurge` |
 | `brain.listFactNeighbours({ embedding, sourceId, model, claim })` | the five same-model facts nearest the embedding (halfvec cosine), with `contains_claim` from the fact normalizer | `listNearestFactsForPurge` |
 | `brain.countPurgeProbe({ table, sourceId, columns, needles, rows })` | the rows of a probed table carrying a needle, at most `rows + 1` | `countPurgeProbe` |

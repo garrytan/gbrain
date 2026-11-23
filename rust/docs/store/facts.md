@@ -125,8 +125,8 @@ The owner-only rule rides on both policies as `ownerOnly`. The member reads it f
 (`ownerOnlyFormIn`): `fn` when the text holds the `gbrain_owner_only_lineage` call (a recorded schema version of
 at least `OWNER_ONLY_LINEAGE_SINCE` = 320, which the CLI's connect gate records on a Rust brain too), `closed` when it
 holds the closed `ANY_OWNER_ONLY_SQL` test, and `off` when it holds neither. A policy with no `ownerOnly` field
-takes `closed`, the form that hides the most. The store's `fn` form follows the source and the concept inputs only:
-`gbrain_owner_only_lineage` also walks `derivation_inputs`, which only raw SQL writes, so a Rust brain has none to walk.
+takes `closed`, the form that hides the most. The store's `fn` form follows the source, the concept inputs and the
+recorded `derivation_inputs`, transitively, as `gbrain_owner_only_lineage` does ("Derivation inputs" below).
 
 
 Aliases and renames: each origin slug of the origin rule (atom `source_slug`, concept input
@@ -333,7 +333,7 @@ plan row or leftover. An unbacked entity is an entity slug with no `/` and no li
 | `listUnfencedFactRows` | Active rows with no fence key and no `dimension`, of one source or all, by source, entity (bytewise, no entity last) and id, with `page_exists` (a live page of the entity). |
 | `listHeldFenceFactRows` | A page's active fence rows by `row_num` then id, less rows whose `source` starts with `cli:extract-conversation-facts`. |
 | `listWithdrawalSlugs` | Sorted distinct `COALESCE(source_markdown_slug, entity_slug)` of the active rows with the fingerprint and visibility that the subject covers: `*`, the subject's entity, an unbacked-entity row unless the subject is an owned memory page, or a row on that page. |
-| `listDerivedRows` | One hop of the derivation walk (`derivedRowsFrom`): the rows derived from a frontier of `{ table, id }` inputs. The store keeps no `derivation_inputs` (`recordDerivationInputs` writes through `executeRaw`, which this engine refuses), so it answers no rows; a NUL in a table or id is `invalid_argument`. |
+| `listDerivedRows` | One hop of the derivation walk (`derivedRowsFrom`): the rows derived from a frontier of `{ table, id }` inputs. It reads the store's `derivation_inputs` reverse index (["Derivation inputs"](#derivation-inputs-generationsderivation_inputsrs)): distinct, in `(derived_table, derived_id)` byte order, at most `limit`; a NUL in a table or id is `invalid_argument`. |
 | `expireFactsByWithdrawal` | The write: stamps `expired_at` now and `valid_until` at the lesser of its value and now on the same rows (by the text's fingerprint) and answers `[{ id }]` in id order. Run it on the engine, outside a transaction. |
 
 `SELECT *` rows (`findActiveSingleFact`) carry the stored `trust_tier` and `write_origin`, and null for
@@ -817,7 +817,7 @@ The TypeScript member resolves the privacy policy as the chunk reads do (a calle
 | `readFactForOwnerAction` | `trust/owner-actions.ts` | yes | Served by `facts/trust_owner.rs`: the 16 bound columns in the SELECT's order, the stored tier, null for no fact. |
 | `listStandingPreferences` | `trust/review.ts` | yes | Served by `facts/trust_owner.rs`: the `standing_instruction` flag receipts and the source's claim state, with the owner floor and connector kinds the member passes. |
 | `listLexicalContestCandidates` | `trust/supersede-handlers.ts` | yes (`facts/contest.rs`) | Active rows of the entity, kind and visibility whose stamped tier ranks above the writer's (a writer that names no tier ranks 0), on `pageSlug` or, without one, on no owned memory page. Highest id first, at most 200; each row is `{ id, fact, trust_tier }`. |
-| `listFactsFromQuotedPages` | `search/transcript-quote.ts` | yes (`facts/quote.rs`) | The ids whose holding page, or the page a backstop fact's `source_session` names, has a type in `pageTypes`; a soft-deleted page counts. The store keeps no `derivation_inputs`, so a derived fact is not traced to its inputs. Ascending, each id once. |
+| `listFactsFromQuotedPages` | `search/transcript-quote.ts` | yes (`facts/quote.rs`) | The ids whose holding page, or the page a backstop fact's `source_session` names, has a type in `pageTypes`; a soft-deleted page counts. A fact whose recorded input page (`derivation_inputs`, an input id of digits) has such a type counts too. Ascending, each id once. |
 | `listOwnerTierFacts` | `search/transcript-quote.ts` | yes (`facts/quote.rs`) | The ids whose stamped tier ranks at or above `floor`; a floor that names no tier answers nothing. Ascending, each id once. |
 | `listRestatedPrivateCopies` | `trust/supersede-handlers.ts` | yes | Served by `facts/trust_reads.rs`: the stored tier's rank against the writer's, the lowest id; any active world copy on the entity lifts it. |
 | `countDerivedFactTaint` | `trust/taint.ts` | yes | Served by `facts/trust_owner.rs`: `write_origin ? 'taint_inputs'` over every source. |
@@ -1414,6 +1414,27 @@ review and proposal rows, gate holds and receipts, open loops, core edit notices
 those members are compared on empty tables only; `insertTakePurge` is compared by its
 boolean (true, then false for the same key) and by the refusals its tombstones cause (take-purge-ledger.test.ts). `insertHoldingPagePurges` is compared by the claim checks that read its tombstones back
 (holding-page-purges.test.ts).
+
+## Derivation inputs (`generations/derivation_inputs.rs`)
+
+`recordDerivationEdges` (the store method is `recordDerivationInputs`) keeps each `derived <- input` edge once
+(`ON CONFLICT DO NOTHING`) under `h 0x0A` (by derived row), with its mirror under `h 0x0B` (by input row). A source
+delete removes that source's edges; an edge with no source stays. A `sourceId` the store does not hold refuses as
+`derivation_inputs_source_id_fkey` does (the engine member throws code 23503) and records nothing. `listDerivedRows`
+reads one hop from the input index: the distinct derived rows of the frontier, in byte order of (derived_table,
+derived_id), at most `limit`. A NUL in a table or id is `invalid_argument`, as is a negative limit. The SQL is in
+`src/core/engine-sql/facts-trust.ts`.
+
+The edges feed three reads besides the walk: `listFactsFromQuotedPages` counts a fact whose recorded input page has a
+quoted type (`facts/quote.rs`); the owner-only rule (`owner_only.rs`) hides a page, fact, take or timeline row whose
+inputs reach, transitively, a marked row or a row held in an owner-only source (`gbrain_owner_only_lineage_strict`,
+through `lineage_reaches`); and a page delete marks every row derived from the page, its takes and its timeline rows
+(`owner_only_marks.rs`, `gbrain_owner_only_mark_derived`, through `derived_closure`). `countLegacyDerivedPages`
+(`facts/purge_plan.rs`) counts the live atom and `dream_generated` pages of a source that no edge names as derived.
+
+The file is lane 7's `derivation_inputs.rs` (rust-engine/derivation-trust) less `lineage_owner_only` and
+`timeline_entry_page`, which read that branch's marks API; `owner_only.rs` runs the same walk over this line's marks.
+It holds every line of rust-5a's copy (`5801031e37`), so either merge keeps one store.
 
 ## Not modeled
 

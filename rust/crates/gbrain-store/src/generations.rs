@@ -67,6 +67,7 @@ use std::collections::BTreeSet;
 mod activations;
 mod atom_reads;
 mod chronicle_events;
+mod derivation_inputs;
 mod fence_evidence;
 mod fence_restore;
 mod lost_fence;
@@ -76,6 +77,10 @@ pub use activations::ActivationRecordInput;
 pub use chronicle_events::{
     ChronicleSlugSpec, ChronicleSlugsSpec, OrphanedOwnersSpec, PageContentHashQuery,
     RetiredItemKeysSpec,
+};
+pub use derivation_inputs::DerivationInputsArgs;
+pub(crate) use derivation_inputs::{
+    derived_closure, derived_from, has_inputs, hop_limit, inputs_of, lineage_reaches,
 };
 pub use page_rows::GenerationPageRowsQuery;
 pub use repair::RepairFilter;
@@ -1371,6 +1376,7 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
         delete_row(tx, record)?;
     }
     activations::remove_source_activations(tx, source_id)?;
+    derivation_inputs::remove_source_edges(tx, source_id)?;
     delete_attempts_under(tx, &attempt_index_prefix(&[source_id]))?;
     for (k, _) in collect_prefix(&*tx, &valve_prefix(&[source_id]), false, usize::MAX)? {
         tx.delete(&k)?;

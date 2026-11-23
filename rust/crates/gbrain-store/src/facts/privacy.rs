@@ -38,8 +38,7 @@
 //! is while the brain holds an owner-only source or has held owner-only data (`OwnerOnlyForm::Closed`). `owner_only_marks` (`owner_only_marks.rs`) keeps a
 //! page hidden after its owner-only input is deleted for good, as SQL's delete trigger does. A fact read applies the rule
 //! to the provenance page, the entity and holding pages, and the fact row itself (`ownerOnlyFactSql`: a fact of an
-//! owner-only source). The store keeps no `derivation_inputs`, so a row derived from an owner-only row by that table alone
-//! is not hidden here.
+//! owner-only source, marked, or derived from an owner-only row through `derivation_inputs`, `owner_only.rs`).
 //!
 //! The owner-only sources are read once per read, on the first page it judges ([`OwnerOnlyCache`]): the page reads
 //! (`searchVector`, the link, alias, salience and page-read members) each keep one, so a read of many pages does not
@@ -214,9 +213,9 @@ pub(crate) fn hidden_by_private_provenance(
 ) -> Result<bool> {
     let owner_only = &OwnerOnlySources::read(read)?;
     // `ownerOnlyFactSql(facts, form)` for a caller that is not the owner: a fact of an owner-only
-    // source (`Fn`; the store marks no fact rows), or any fact while the brain holds an
+    // source, marked, or derived from an owner-only row (`Fn`), or any fact while the brain holds an
     // owner-only source (`Closed`).
-    if owner_only.fact_hidden(policy.owner_only, &row.source_id) {
+    if owner_only.fact_hidden(read, policy.owner_only, row.id, &row.source_id)? {
         return Ok(true);
     }
     if hidden_by_provenance_page_with(read, row, policy, true, owner_only)? {

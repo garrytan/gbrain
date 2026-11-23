@@ -174,8 +174,8 @@ values. An optional source and an ISO `since` filter by the proposal.
 ## Derivation trust (`trust::derivation`)
 
 The derived-row trust writes and counts. They read and write the page, take, timeline and fact records and keep no
-key of their own. The `derivation_inputs` edges are not kept on this store line: `recordDerivationInputs` and
-`derivedRowsFrom` (src/core/facts/derivation-inputs.ts) still send raw SQL.
+key of their own. The `derivation_inputs` edges are kept by `generations/derivation_inputs.rs` (facts.md, "Derivation
+inputs"): `recordDerivationEdges` writes them and `listDerivedRows` reads one hop of `derivedRowsFrom`.
 
 | Member | Store method | PGLite statement (src/core/engine-sql/derivation-trust.ts) |
 | --- | --- | --- |
