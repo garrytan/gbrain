@@ -1,5 +1,5 @@
 /**
- * What `gbrain engine shadow start` records about managed storage (only `start` uses it so far; the seed command is to use it too).
+ * What `gbrain engine shadow start` and `gbrain engine shadow seed` record about managed storage (`start` keeps it in `state.json`, `seed` in `seed.json`).
  *
  * Shadow mode gathers evidence on managed brains too; only the swap refuses them (`engine_swap_refused` / `managed_storage`,
  * src/core/engine-swap/refusals.ts). Nothing here refuses: it reads the brain's mode once, best-effort, and returns a record
