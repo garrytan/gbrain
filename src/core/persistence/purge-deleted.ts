@@ -210,7 +210,7 @@ async function expireRecordedTombstones(engine: BrainEngine, olderThanHours: num
               await scrubPurgedSlugs(tx, row.source_id, [row.slug]);
               await scrubPurgedNameStores(tx, row.source_id, [row.slug]);
               await scrubPurgedSlugStores(tx, row.source_id, [row.slug], { secretOccurrences: secrets.map(o => o.id) });
-              await scrubPurgedSlugHolds(tx, row.source_id, [{ slug: row.slug, deletedAt: gone[0].deleted_at }]);
+              await scrubPurgedSlugHolds(tx, row.source_id, [{ slug: row.slug, id: row.id, deletedAt: gone[0].deleted_at }]);
               await redactExpiredPageJournal(tx, row.source_id, [row.slug]);
             }
             return gone.length > 0;

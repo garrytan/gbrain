@@ -31,6 +31,7 @@ import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, isMi
 import { DELETE_BATCH_SIZE } from '../engine-constants.ts';
 import { derivedOriginPurgeHold, OWED_PURGE_OP } from '../persistence/derived-origin-hold.ts';
 import { jsonbParam, type SqlExecutor } from './executor.ts';
+import { bindHoldsToNewPage, pageRowIsNew } from './hold-binding.ts';
 import type { LegacyUnscopedRead, ScopedRead } from './brands.ts';
 import type { ScopedReadRunner } from './cjk-search.ts';
 import { compileRowNormalizer } from './normalize.ts';
@@ -202,6 +203,8 @@ export async function putPage(
       if (reread) return reread;
       throw new Error(`putPage: RETURNING produced no row for ${sourceId}/${slug}`);
     }
+    // A page created here takes over the quarantine holds that were waiting for its slug (engine-sql/hold-binding.ts).
+    if (pageRowIsNew(rows[0])) await bindHoldsToNewPage(exec, Number(rows[0].id));
     return rowToPage(rows[0]);
   }
 
@@ -240,7 +243,7 @@ export async function deletePages(exec: SqlExecutor, slugs: string[], opts: { so
       await scrubPurgedSlugs(tx, opts.sourceId, deleted);
       await scrubPurgedNameStores(tx, opts.sourceId, deleted);
       await scrubPurgedSlugStores(tx, opts.sourceId, deleted, { secretOccurrences: secrets.filter(o => gone.has(Number(o.page_id))).map(o => o.id) });
-      await scrubPurgedSlugHolds(tx, opts.sourceId, deleted.map(slug => ({ slug })));
+      await scrubPurgedSlugHolds(tx, opts.sourceId, rows.map(r => ({ slug: r.slug, id: Number(r.id) })));
       return deleted;
     });
   }
@@ -403,8 +406,8 @@ export async function purgeDeletedPages(
         WHERE t.source_id = d.source_id AND t.sha256 = decode(d.sha, 'hex')
           AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id = t.source_id AND m.sha256 = t.sha256)
           AND NOT ${trustedSql(stagingNeedsTextSql('t'))}`);
-      const bySource = new Map<string, Array<{ slug: string; deletedAt: string }>>();
-      for (const r of rows) bySource.set(r.source_id, [...bySource.get(r.source_id) ?? [], { slug: r.slug, deletedAt: r.deleted_at }]);
+      const bySource = new Map<string, Array<{ slug: string; id: number; deletedAt: string }>>();
+      for (const r of rows) bySource.set(r.source_id, [...bySource.get(r.source_id) ?? [], { slug: r.slug, id: Number(r.id), deletedAt: r.deleted_at }]);
       for (const [sourceId, purged] of bySource) {
         const slugs = purged.map(p => p.slug);
         await scrubPurgedSlugs(tx, sourceId, slugs);

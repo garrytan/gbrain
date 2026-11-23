@@ -31,6 +31,7 @@ import { validateSlug } from '../utils.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { jsonbParam, type SqlExecutor } from './executor.ts';
+import { bindHoldsToNewPage } from './hold-binding.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { joinFragments, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import { compileRowNormalizer } from './normalize.ts';
@@ -281,6 +282,7 @@ export async function createSegmentedPageShell(exec: SqlExecutor, slug: string, 
       ${m.effectiveDateSource}, ${m.importFilename}, ${m.chunkerVersion ?? 0}::smallint, ${m.sourcePath}, ${m.sourceKind}, ${m.sourceUri},
       ${m.ingestedVia}, ${m.ingestedAt}, 'segmented', 0, 0)
     RETURNING id`);
+  await bindHoldsToNewPage(exec, Number(rows[0]!.id));
   return { id: Number(rows[0]!.id) };
 }
 

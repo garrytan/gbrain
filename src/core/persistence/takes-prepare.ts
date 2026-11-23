@@ -246,7 +246,7 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
   const republished = parseTakesFence(next);
   if (republished.warnings.length) throw takesRefusal('invalid_params',`The write would publish a takes fence the next write would refuse: ${republished.warnings[0]}`,row,
     'One of the values would not round-trip through the takes fence; correct it (holder, kind, claim and source are single-line fence cells).');
-  const gate = allocated !== undefined ? decideTakeWrite({ claim: String(p.claim), source: (p.source as string | undefined) ?? null }, { sourceId: row.source_id, slug: row.slug,
+  const gate = allocated !== undefined ? decideTakeWrite({ claim: String(p.claim), source: (p.source as string | undefined) ?? null }, { sourceId: row.source_id, slug: row.slug, pageId: snapshot.page.id,
     payload: { page_id: snapshot.page.id, claim: p.claim, kind: p.kind ?? null, holder: p.holder ?? null, weight: p.weight ?? null, source: p.source ?? null, since: p.since ?? null },
     input: gateInput(trust, row.id), cfg: await loadWriteGateConfig(engine) }) : null;
   if (gate?.action === 'reject') throw writeGateRejectedError(gate.assessment);
