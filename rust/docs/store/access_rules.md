@@ -176,7 +176,11 @@ a Postgres server whose collation is not `C` gives the byte order PGLite and the
   watermark moves when a rule or a pending prefix changes.
 - `crates/gbrain-store/src/access_migrations.rs` (unit tests): the unfinished migration is the newest that has not
   switched, and a migration write the table refuses (a source with no access state, a direction or phase it does not
-  allow, a used id) writes nothing.
+  allow, a used id) writes nothing; an id one source used is refused for another; a switch keeps its receipts and stamps
+  an update time after the creation time; and the newest is by creation time when ids are in reverse key order.
+- `test/engine-parity/access-migrate.test.ts`: on every arm, the whole `gbrain access rule migrate` flow: `--to database`
+  from no store, `--to git` with its files and commits, a resume after a stop, the refusal of the other way, and `resume`
+  in the preview.
 - `test/engine-parity/access-setup.test.ts`: on every arm, a brain with no access tokens has nothing unbound, no live
   key and no key reading a source, the unarchived source ids, the company and people-folder page counts, the sources
   with access state, and a policy-store migration from its start until it switches.

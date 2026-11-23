@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2006/2022
+# covered: 2007/2022
 # lifecycle: 9/9
 # pages: 81/82
 # search: 7/7
@@ -74,7 +74,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 16/16
 # wanted_links: 2/2
-# write_misc: 92/95
+# write_misc: 93/95
 # repair_bookkeeping: 55/55
 # write_attribution: 5/5
 # telemetry: 14/14
@@ -1671,7 +1671,7 @@ readMayActFor	write_misc	yes	4	no	yes	yes	serves
 readJobPrincipal	write_misc	yes	6	no	yes	yes	serves
 readAudiencePrincipals	write_misc	yes	4	no	yes	yes	serves
 readAccessStoreConfig	write_misc	no	0	no	-	-	-
-writeAccessStoreConfig	write_misc	no	0	no	-	-	-
+writeAccessStoreConfig	write_misc	yes	3	no	yes	yes	serves
 ensureAccessPolicyState	write_misc	yes	1	no	yes	yes	serves
 lockAccessPolicy	write_misc	yes	1	no	yes	yes	serves
 listAccessRules	write_misc	yes	3	no	yes	yes	serves
@@ -1696,10 +1696,10 @@ recordTokenSetupReads	write_misc	yes	2	no	yes	yes	serves
 listKeysReadingSource	write_misc	yes	2	no	yes	yes	serves
 countCompanyPages	write_misc	yes	1	no	yes	yes	serves
 revokeAccessTokenById	write_misc	yes	3	no	yes	yes	serves
-readUnfinishedAccessMigration	write_misc	yes	1	no	yes	yes	serves
-insertAccessMigration	write_misc	yes	1	no	yes	yes	serves
-recordAccessMigrationPhase	write_misc	yes	1	no	yes	yes	serves
-switchAccessMigration	write_misc	yes	1	no	yes	yes	serves
+readUnfinishedAccessMigration	write_misc	yes	4	no	yes	yes	serves
+insertAccessMigration	write_misc	yes	4	no	yes	yes	serves
+recordAccessMigrationPhase	write_misc	yes	4	no	yes	yes	serves
+switchAccessMigration	write_misc	yes	4	no	yes	yes	serves
 listAccessPolicySources	write_misc	yes	1	no	yes	yes	serves
 countPeopleFolderPages	write_misc	yes	1	no	yes	yes	serves
 countOpenPages	write_misc	yes	3	no	yes	yes	serves

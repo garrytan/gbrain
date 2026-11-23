@@ -183,8 +183,10 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
+    use super::{MigrationRecord, all_migrations};
     use crate::Store;
-    use crate::test_support::store;
+    use crate::error::CONSTRAINT_VIOLATION;
+    use crate::test_support::{store, store_on};
     use serde_json::json;
 
     fn with_state(store: &Store) {
@@ -286,5 +288,89 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!((row.id.as_str(), row.phase.as_str()), ("m1", "started"));
+    }
+
+    /// A clock that moves one second per call, so creation order and update order are visible.
+    struct Stepping(std::sync::atomic::AtomicI64);
+
+    impl crate::env::Env for Stepping {
+        fn now_micros(&self) -> i64 {
+            self.0
+                .fetch_add(1_000_000, std::sync::atomic::Ordering::SeqCst)
+        }
+        fn new_uuid(&self) -> String {
+            String::new()
+        }
+    }
+
+    fn record(store: &Store, id: &str) -> MigrationRecord {
+        let read = store.read().unwrap();
+        all_migrations(&*read)
+            .unwrap()
+            .into_iter()
+            .find(|r| r.id == id)
+            .unwrap()
+    }
+
+    #[test]
+    fn an_id_one_source_used_is_refused_for_another() {
+        let store = store();
+        with_state(&store);
+        store
+            .upsert_source(&serde_json::from_value(json!({ "id": "work" })).unwrap())
+            .unwrap();
+        store.ensure_access_policy_state("work").unwrap();
+        store
+            .insert_access_migration("m1", "default", "to_git")
+            .unwrap();
+        let refused = store.insert_access_migration("m1", "work", "to_git");
+        assert_eq!(refused.unwrap_err().code, CONSTRAINT_VIOLATION);
+        assert!(
+            store
+                .read_unfinished_access_migration("work")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_switch_keeps_its_receipts_and_stamps_its_update_time() {
+        let store = store_on(std::sync::Arc::new(Stepping(1.into())));
+        with_state(&store);
+        store
+            .insert_access_migration("m1", "default", "to_git")
+            .unwrap();
+        let receipts = json!({ "desired": "abc", "sync": "ok" });
+        store
+            .record_access_migration_phase("m1", "switched", &receipts)
+            .unwrap();
+        let r = record(&store, "m1");
+        assert_eq!((r.phase.as_str(), r.receipts), ("switched", receipts));
+        assert!(
+            r.updated_at_us > r.created_at_us,
+            "the switch is a later write"
+        );
+    }
+
+    #[test]
+    fn newest_is_by_creation_time_even_when_ids_are_in_reverse_key_order() {
+        let store = store_on(std::sync::Arc::new(Stepping(1.into())));
+        with_state(&store);
+        for id in ["mig_z", "mig_y"] {
+            store
+                .insert_access_migration(id, "default", "to_git")
+                .unwrap();
+        }
+        let created = record(&store, "mig_z").created_at_us;
+        store
+            .record_access_migration_phase("mig_z", "exported", &json!({}))
+            .unwrap();
+        assert_eq!(
+            record(&store, "mig_z").created_at_us,
+            created,
+            "an update keeps it"
+        );
+        let row = store.read_unfinished_access_migration("default").unwrap();
+        assert_eq!(row.map(|r| r.id), Some("mig_y".to_string()));
     }
 }
