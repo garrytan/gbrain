@@ -370,3 +370,10 @@ export async function readSourceIncarnationArchived(raw: EngineRawRead, sourceId
   const [source] = await raw<{ incarnation: string; archived: boolean }>('SELECT incarnation::text AS incarnation, archived FROM sources WHERE id=$1', [sourceId]);
   return source ?? null;
 }
+
+/** The enabled labelled-only members, by id in byte order (access/labelled-only.ts labelledOnlyMemberIds). */
+export async function listEnabledLabelledOnlyMemberIds(raw: EngineRawRead): Promise<string[]> {
+  const rows = await raw<{ id: string }>(
+    'SELECT id FROM access_members WHERE labelled_only AND disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id COLLATE "C"');
+  return rows.map(r => r.id);
+}

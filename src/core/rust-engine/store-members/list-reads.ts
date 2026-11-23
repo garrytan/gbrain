@@ -108,3 +108,11 @@ export const readSourceIncarnationArchived: StoreMember<[sourceId: string], { in
   const row = (await storeCall({ member: 'readSourceIncarnationArchived' }, () => brain.readSourceState(sourceId))) as { incarnation: string; archived: boolean } | null;
   return row ? { incarnation: row.incarnation, archived: row.archived } : null;
 };
+
+/** The store's member records (every member not removed, `brain.readAccessMembers`) that are labelled-only and enabled, by id in byte order. */
+export const listEnabledLabelledOnlyMemberIds: StoreMember<[], string[]> = async (brain) => {
+  const rows = (await storeCall({ member: 'listEnabledLabelledOnlyMemberIds' }, () => brain.readAccessMembers({}))) as
+    Array<{ id: string; labelled_only: boolean; disabled_at: unknown; tombstoned_at: unknown }>;
+  return rows.filter(r => r.labelled_only === true && r.disabled_at == null && r.tombstoned_at == null).map(r => r.id)
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+};

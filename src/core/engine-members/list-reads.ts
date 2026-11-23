@@ -46,4 +46,6 @@ export interface ListReadMembers {
   readUploadSessionByRequest(principalKind: string, principalId: string, clientRequestId: string): Promise<Record<string, unknown> | null>;
   /** and a source's incarnation as text with its archive flag, or null. */
   readSourceIncarnationArchived(sourceId: string): Promise<{ incarnation: string; archived: boolean } | null>;
+  /** The enabled labelled-only members, by id in byte order. */
+  listEnabledLabelledOnlyMemberIds(): Promise<string[]>;
 }

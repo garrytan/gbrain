@@ -26,11 +26,13 @@ and rows are visited in `created_at` order, so the scan stops at the first row i
 
 ## Answered in TypeScript
 
+`listAudienceMemberIds` and `listLabelledOnlyMemberIds` read the store's member records (`brain.readAccessMembers`): the enabled, unremoved members of kind `audience`, or with the labelled-only grant, by id in byte order.
+
 An answer the store cannot contradict, because it keeps no such state:
 
 | Members | Answer |
 | --- | --- |
-| `listPolicySourceIds`, `listRawOnlyRules`, `listAudienceMemberIds`, `listLabelledOnlyMemberIds`, `listAccessMemberRows`, `listAttestCredentialRows`, `listActiveAccessTokenRows`, `listActiveOauthClientRows`, `listOauthClientAuthShapes`, `listDanglingFederatedReads`, `listPrivilegedDcrClients`, `listBeliefCoveredSources`, `listVolunteerChannels` | no rows: no access state, tokens, OAuth clients, coverage events or volunteer events exist |
+| `listPolicySourceIds`, `listRawOnlyRules`, `listAccessMemberRows`, `listAttestCredentialRows`, `listActiveAccessTokenRows`, `listActiveOauthClientRows`, `listOauthClientAuthShapes`, `listDanglingFederatedReads`, `listPrivilegedDcrClients`, `listBeliefCoveredSources`, `listVolunteerChannels` | no rows: no access state, tokens, OAuth clients, coverage events or volunteer events exist |
 | `isAccessStateUnreadable` | false |
 | `readKnowledgeRevisionNotNull` | true: the revision is always set |
 | `readDriftSchema` | `current` |

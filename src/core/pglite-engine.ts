@@ -2781,6 +2781,7 @@ export class PGLiteEngine implements BrainEngine {
   listEmailAliasPages(aliasNorm: string, sourceId: string) { return listReadsImpl.listEmailAliasPages(this.rawRead, aliasNorm, sourceId); }
   readUploadSessionByRequest(principalKind: string, principalId: string, clientRequestId: string) { return listReadsImpl.readUploadSessionByRequest(this.rawRead, principalKind, principalId, clientRequestId); }
   readSourceIncarnationArchived(sourceId: string) { return listReadsImpl.readSourceIncarnationArchived(this.rawRead, sourceId); }
+  listEnabledLabelledOnlyMemberIds() { return listReadsImpl.listEnabledLabelledOnlyMemberIds(this.rawRead); }
   hasCompanyBrainReceipt(sourceId: string) { return cliReadsImpl.hasCompanyBrainReceipt(this.cliReads, sourceId); }
   readGuestSourceRow(sourceId: string) { return cliReadsImpl.readGuestSourceRow(this.cliReads, sourceId); }
   listGuestSourceIds(sourceIds: readonly string[]) { return cliReadsImpl.listGuestSourceIds(this.cliReads, sourceIds); }

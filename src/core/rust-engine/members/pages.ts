@@ -197,6 +197,7 @@ export const PAGES_MEMBERS = {
   listEmailAliasPages: 'pages',
   readUploadSessionByRequest: 'pages',
   readSourceIncarnationArchived: 'pages',
+  listEnabledLabelledOnlyMemberIds: 'access_control',
   hasCompanyBrainReceipt: 'sources',
   readGuestSourceRow: 'sources',
   listGuestSourceIds: 'sources',

@@ -2516,6 +2516,7 @@ export class PostgresEngine implements BrainEngine {
   listEmailAliasPages(aliasNorm: string, sourceId: string) { return listReadsImpl.listEmailAliasPages(this.executeRaw.bind(this), aliasNorm, sourceId); }
   readUploadSessionByRequest(principalKind: string, principalId: string, clientRequestId: string) { return listReadsImpl.readUploadSessionByRequest(this.executeRaw.bind(this), principalKind, principalId, clientRequestId); }
   readSourceIncarnationArchived(sourceId: string) { return listReadsImpl.readSourceIncarnationArchived(this.executeRaw.bind(this), sourceId); }
+  listEnabledLabelledOnlyMemberIds() { return listReadsImpl.listEnabledLabelledOnlyMemberIds(this.executeRaw.bind(this)); }
   hasCompanyBrainReceipt(sourceId: string) { return cliReadsImpl.hasCompanyBrainReceipt(this.cliReads, sourceId); }
   readGuestSourceRow(sourceId: string) { return cliReadsImpl.readGuestSourceRow(this.cliReads, sourceId); }
   listGuestSourceIds(sourceIds: readonly string[]) { return this.preparationRead(exec => cliReadsImpl.listGuestSourceIds(unscopedExecutor(exec, 'cli reads: the import and extract paths ran these unscoped through executeRaw'), sourceIds)); }

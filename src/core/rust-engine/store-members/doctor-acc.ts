@@ -10,11 +10,17 @@ import { storeCall, type StoreMember } from './common.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
-// Access state: no folder rule, member, token, OAuth client or grant exists on this engine.
+// Access state the rows below answer for (the member reads above read the store's member records).
 export const isAccessStateUnreadable: Member<'isAccessStateUnreadable'> = async () => false;
 export const listRawOnlyRules: Member<'listRawOnlyRules'> = async () => [];
-export const listAudienceMemberIds: Member<'listAudienceMemberIds'> = async () => [];
-export const listLabelledOnlyMemberIds: Member<'listLabelledOnlyMemberIds'> = async () => [];
+/** The store keeps access members (access_members.rs): the enabled, unremoved members of one kind or with one grant, by id in byte order. */
+async function liveMemberIds(brain: Parameters<StoreMember<[], string[]>>[0], member: string, keep: (row: { kind: string; labelled_only: boolean }) => boolean): Promise<string[]> {
+  const rows = (await storeCall({ member }, () => brain.readAccessMembers({}))) as
+    Array<{ id: string; kind: string; labelled_only: boolean; disabled_at: unknown; tombstoned_at: unknown }>;
+  return rows.filter(r => r.disabled_at == null && r.tombstoned_at == null && keep(r)).map(r => r.id).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+export const listAudienceMemberIds: Member<'listAudienceMemberIds'> = async (brain) => liveMemberIds(brain, 'listAudienceMemberIds', r => r.kind === 'audience');
+export const listLabelledOnlyMemberIds: Member<'listLabelledOnlyMemberIds'> = async (brain) => liveMemberIds(brain, 'listLabelledOnlyMemberIds', r => r.labelled_only === true);
 export const listAccessMemberRows: Member<'listAccessMemberRows'> = async () => [];
 export const listAttestCredentialRows: Member<'listAttestCredentialRows'> = async () => [];
 export const listActiveAccessTokenRows: Member<'listActiveAccessTokenRows'> = async () => [];
