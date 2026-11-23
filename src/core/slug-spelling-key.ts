@@ -8,6 +8,13 @@
  * and the two capitals whose lowercase holds ASCII (U+0130 lowers to `i` and a combining dot, U+212A to `k`); then it
  * composes the text. Every other letter keeps its case. A slug's other spellings are therefore found by the key of the
  * slug itself plus the keys of its capital forms (`spellingKeys`), and the caller still compares with `normalizeSlug`.
+ *
+ * Lowercasing and composing do not commute character by character (a stored capital iota with diaeresis, U+03AA, followed
+ * by a combining acute lowercases and composes to U+0390, for which no single capital exists), so the capital forms are
+ * enumerated over the slug's decomposed text (NFD), where each letter and each mark stands alone, and every candidate is
+ * composed by the same key function. That is complete because the stored spelling's NFD keeps each letter's mark
+ * sequence and differs from the slug's only by the case of its letters; the table build below checks that for every
+ * character, and a letter of a character that fails it makes `spellingKeys` answer null (the caller scans instead).
  */
 
 const ASCII_UPPER = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -31,9 +38,16 @@ export function spellingKey(slug: string): string {
 }
 
 let capitalsByLower: Map<string, string[]> | undefined;
+/** Letters of characters whose decomposed capital form is not the decomposed lowercase form with each letter in its own case; none today. */
+let irregular: Set<string> | undefined;
 
 /** The non-ASCII characters whose lowercase is `lower`, built once from the engine's own case mapping. */
 function capitalsOf(lower: string): readonly string[] {
+  ensureTables();
+  return capitalsByLower!.get(lower) ?? [];
+}
+
+function ensureTables(): void {
   if (!capitalsByLower) {
     capitalsByLower = new Map();
     for (let code = 0x80; code < 0x20000; code++) {
@@ -42,20 +56,29 @@ function capitalsOf(lower: string): readonly string[] {
       const low = ch.toLowerCase();
       if (low === ch || low === ch.toUpperCase()) continue;
       capitalsByLower.set(low, [...(capitalsByLower.get(low) ?? []), ch]);
+      // The decomposed capital and the decomposed lowercase must line up letter for letter, each capital letter lowering to its partner.
+      const capital = [...ch.normalize('NFD')], lower = [...low.normalize('NFD')];
+      if (capital.length !== lower.length || capital.some((c, i) => c !== lower[i] && c.toLowerCase() !== lower[i])) for (const c of lower) (irregular ??= new Set()).add(c);
     }
     // JavaScript lowers a capital sigma to the final form at the end of a word, so no single character maps to it.
     capitalsByLower.set('\u03C2', [...(capitalsByLower.get('\u03C2') ?? []), '\u03A3']);
+    irregular ??= new Set();
   }
-  return capitalsByLower.get(lower) ?? [];
 }
 
 /**
  * The keys of every stored spelling that reads as `normalized` (a slug already lowercased and composed): its own key and
- * the key with each cased non-ASCII letter in any of its capital forms. Null when that is more than
- * `MAX_SPELLING_VARIANTS` spellings, which the caller answers by scanning.
+ * the key with each cased non-ASCII letter of its decomposed text in any of its capital forms. Null when that is more
+ * than `MAX_SPELLING_VARIANTS` spellings, or the text holds a letter whose capital forms do not line up with its own
+ * (none today), which the caller answers by scanning.
  */
 export function spellingKeys(normalized: string): string[] | null {
-  const choices = [...normalized].map(ch => ch.codePointAt(0)! < 0x80 ? [ch] : [ch, ...capitalsOf(ch)]);
+  const letters = [...normalized.normalize('NFD')];
+  ensureTables();
+  if (letters.some(ch => irregular!.has(ch))) return null;
+  // An ASCII letter followed by a non-ASCII mark may be stored as part of a composed capital (`É` is `E` and an acute), which the key does not lower.
+  const choices = letters.map((ch, i) => ch.codePointAt(0)! >= 0x80 ? [ch, ...capitalsOf(ch)]
+    : ch !== ch.toUpperCase() && (letters[i + 1]?.codePointAt(0) ?? 0) >= 0x80 ? [ch, ch.toUpperCase()] : [ch]);
   let variants = 1;
   for (const options of choices) {
     variants *= options.length;
@@ -63,5 +86,6 @@ export function spellingKeys(normalized: string): string[] | null {
   }
   let spellings = [''];
   for (const options of choices) spellings = spellings.flatMap(prefix => options.map(option => prefix + option));
-  return [...new Set(spellings.map(spellingKey))];
+  // The key never holds an ASCII capital (it lowers those before composing), so a candidate that still has one stands for no stored spelling.
+  return [...new Set(spellings.map(spelling => spelling.normalize('NFC')).filter(key => !/[A-Z]/.test(key)))];
 }

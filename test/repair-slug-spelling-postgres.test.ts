@@ -90,4 +90,24 @@ run('postgres: the repair holds the stored spelling\'s page lock', () => {
     expect((await engine.executeRaw<{ slug: string; compiled_truth: string }>('SELECT slug, compiled_truth FROM pages WHERE source_id=$1', [sourceId])))
       .toEqual([{ slug: stored, compiled_truth: 'edited while the repair waited' }]);
   }), 60_000);
+
+  test('the purge tombstones and held writes of the stored spelling follow the page on Postgres too', () => withEnv(env, async () => {
+    _resetCliExitVerdictForTests();
+    const sourceId = `s${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+    await engine.executeRaw("INSERT INTO sources(id,name,config) VALUES($1,$1,'{}')", [sourceId]);
+    await engine.putPage('notes/seed-guards', { type: 'note', title: 'Guards', compiled_truth: 'before', timeline: '' }, { sourceId });
+    await engine.executeRaw('UPDATE pages SET slug=$1 WHERE slug=$2 AND source_id=$3', ['Notes/Guards-Move', 'notes/seed-guards', sourceId]);
+    const [page] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1', [sourceId]);
+    await engine.executeRaw("INSERT INTO fact_purges(source_id, visibility, subject, fact_hash) VALUES ($1,'world','Notes/Guards-Move',gbrain_fact_fingerprint('A purged claim'))", [sourceId]);
+    await engine.executeRaw("INSERT INTO take_purges(source_id, subject, claim_hash) VALUES ($1,'Notes/Guards-Move',gbrain_fact_fingerprint('A purged take'))", [sourceId]);
+    await engine.executeRaw(`INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, payload)
+      VALUES ('fact', $1, 'Notes/Guards-Move', 'fp-guards', 2, 'external_untrusted', $2::text::jsonb)`, [sourceId, JSON.stringify({ fact: 'x', entity_slug: 'Notes/Guards-Move', row_num: 1 })]);
+    const preview = await repairJson(['slug-spelling', '--source', sourceId]);
+    await repairJson(['slug-spelling', '--source', sourceId, '--apply', '--expect', preview.preview_hash, '--yes']);
+    const refused = (run: () => Promise<unknown>) => run().then(() => 'saved', e => (e as Error).message);
+    expect(await refused(() => engine.insertFact({ fact: 'A purged claim', entity_slug: 'notes/guards-move', visibility: 'world', source: 'synthetic' }, { source_id: sourceId }))).toContain('purged_content');
+    expect(await refused(() => engine.addTakesBatch([{ page_id: page!.id, row_num: 1, claim: 'A purged take', kind: 'take', holder: 'brain', weight: 0.5 }]))).toContain('purged_content');
+    const [hold] = await engine.executeRaw<{ slug: string; status: string; payload: { entity_slug: string } | string }>('SELECT slug, status, payload FROM write_gate_holds WHERE source_id=$1', [sourceId]);
+    expect({ slug: hold!.slug, status: hold!.status, entity: (typeof hold!.payload === 'string' ? JSON.parse(hold!.payload) : hold!.payload).entity_slug }).toEqual({ slug: 'notes/guards-move', status: 'held', entity: 'notes/guards-move' });
+  }), 60_000);
 });

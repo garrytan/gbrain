@@ -234,6 +234,19 @@ describe('the keys a lookup probes cover every stored spelling that reads as the
     expect(missed).toEqual([]);
   }, 120_000);
 
+  test('random mixes of capitals, lowercase letters and marks, composed or not, are probed or answered by the scan', () => {
+    const alphabet = ['A', 'e', 'E', 'i', 'I', 'ς', 'Σ', 'σ', '\u0391', '\u03B1', '\u0399', '\u03B9', '\u03AA', '\u03CA', '\u00C9', '\u00E9', '\u0130', '\u212A', '\u212B', '\u00C5', '\u01C5', '\u01C6', '\u1E9E', '\u00DF', '\u0415', '\u0435',
+      '\u0301', '\u0308', '\u0313', '\u0345', '\u0342', '\u0300', '\u030A', '\u0323', '-', '/', '1', '\u4E2D'];
+    let seed = 12345;
+    const next = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+    const missed: string[] = [];
+    for (let n = 0; n < 40_000; n++) {
+      const stored = Array.from({ length: 1 + Math.floor(next() * 7) }, () => alphabet[Math.floor(next() * alphabet.length)]).join('');
+      if (missing(stored)) missed.push(stored);
+    }
+    expect(missed).toEqual([]);
+  }, 60_000);
+
   test('the example of a capital iota with diaeresis and a combining acute is probed by its stored key', () => {
     const stored = 'notes/\u03AA\u0301';
     const keys = spellingKeys(normalizeSlug(stored));
