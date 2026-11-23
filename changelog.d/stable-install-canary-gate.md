@@ -1,0 +1,6 @@
+**Stable releases now wait until the install canary has installed each release into the supported agent harnesses and passed it.**
+
+### Changed
+- The daily stable check promotes a release only after the install canary has posted a pass for that exact tag (a `gbrain/install-canary` commit status). A release the canary failed is skipped, and an older release that passed is promoted instead. A release the canary has not tested yet (no status, or a newest status still `pending`) makes the check wait and name the version. It dispatches and pushes nothing. When the only candidate failed the canary, stable holds and a warning goes up.
+- A manual `promote-stable` run refuses a release the canary failed or has not tested yet unless a maintainer gives the new `canary_waiver` input. The stable record keeps that waiver as `install_canary: waived: <reason>`. A scheduled run never takes a waiver, and a rollback is not checked.
+- Only statuses posted by an account on the `STABLE_CANARY_POSTERS` repository variable count. The variable is a comma-separated list and defaults to the Capy GitHub App's bot. The status must also name the tag being promoted. If the statuses can't be read, both workflows refuse. `stable.json` and the stable tag now record `install_canary`.
