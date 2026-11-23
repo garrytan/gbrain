@@ -10,16 +10,16 @@ export const rawSqlRefusal = (): Error => capabilityMissing('raw_sql', 'executeR
 
 /**
  * `engine` whose `executeRaw` throws `error()` for a statement containing `needle` (every statement when `needle` is
- * empty), and whose members named in `members` throw it too. Members bind to the wrapped engine, so the typed members
+ * absent, none when it is null), and whose members named in `members` throw it too. Members bind to the wrapped engine, so the typed members
  * the wrapped engine runs on itself never meet the refusal.
  */
-export function refusingEngine(engine: BrainEngine, opts: { needle?: string; members?: readonly string[]; error?: () => Error } = {}): BrainEngine {
+export function refusingEngine(engine: BrainEngine, opts: { needle?: string | null; members?: readonly string[]; error?: () => Error } = {}): BrainEngine {
   const error = opts.error ?? rawSqlRefusal;
   return new Proxy(engine, {
     get(target, property) {
       if (property === 'executeRaw') {
         return async (sql: string, ...rest: unknown[]) => {
-          if (opts.needle === undefined || sql.includes(opts.needle)) throw error();
+          if (opts.needle === undefined || (opts.needle !== null && sql.includes(opts.needle))) throw error();
           return (target.executeRaw as (...a: unknown[]) => Promise<unknown>).call(target, sql, ...rest);
         };
       }
