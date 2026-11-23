@@ -694,6 +694,21 @@ fn delete_prefix(tx: &mut dyn KvWrite, prefix: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// The shadow seed (`seed.rs`): stores a page's body columns (`body_storage`, `body_generation`,
+/// `body_bytes`, `truth_bytes`, `body_lines`, `segment_count`, `segmenter_version`, `truth_lead`,
+/// `timeline_lead`, `body_flags`, `chunker_version`) as another engine holds them.
+pub(crate) fn seed_body_state(tx: &mut dyn KvWrite, page_id: u64, columns: Value) -> Result<()> {
+    let state: BodyState = serde_json::from_value(columns)
+        .map_err(|e| StoreError::invalid(format!("seed pages body columns: {e}")))?;
+    put_json(tx, &body_key(page_id), &state)
+}
+
+/// The shadow follow (`seed/follow.rs`): removes a page's body columns and nothing else: its
+/// manifest, derivations and stagings stay.
+pub(crate) fn clear_body_state(tx: &mut dyn KvWrite, page_id: u64) -> Result<()> {
+    tx.delete(&body_key(page_id))
+}
+
 pub(crate) fn read_body_state(read: &dyn KvRead, page_id: u64) -> Result<Option<BodyState>> {
     get_json(read, &body_key(page_id))
 }
@@ -3774,6 +3789,42 @@ mod segment_chunk_tests {
         // occurrence 3 stay, the chunk of occurrence 9 (no row) goes.
         assert_eq!(run(true), (swept(1, 0, 0, 1), 3));
         // Not held: both expire, and the staged row, both staged chunks and the staged text go.
+        assert_eq!(run(false), (swept(2, 1, 1, 2), 2));
+    }
+
+    #[test]
+    fn a_request_inserted_through_the_persistence_api_keeps_its_staging() {
+        // The persistence API (`insert_write_request`) writes a queued request into the same
+        // REQUEST family as `admit_write`, but charges only the persistence counters, never the
+        // journal's own. A request it inserted must still root its staging, so the sweep keeps
+        // the staged rows: dropping them would delete text the queued write still needs.
+        let run = |held: bool| {
+            let store = crate::test_support::store();
+            let id = published(&store);
+            second_generation(&store, id);
+            if held {
+                let insert: crate::persistence::WriteRequestInsert =
+                    serde_json::from_value(json!({
+                        "principalKind": "local_cli", "principalId": "cli",
+                        "requestId": "77777777-7777-4777-8777-777777777777",
+                        "operation": "put_page", "sourceId": "default",
+                        "sourceIncarnation": "88888888-8888-4888-8888-888888888888",
+                        "pageId": null, "slug": "notes/a", "worktreeId": null,
+                        "topologyGeneration": null, "digest": "digest",
+                        "intent": {"body_ref": {"staging_id": STAGING_2}},
+                        "authority": {}, "intentBytes": 10, "terminalReservation": 4096,
+                        "targetKind": "page", "protocolVersion": 1,
+                        "admitterVersion": "v-test", "admitterHostId": null,
+                        "counterKeys": [], "clientRequestId": null,
+                        "state": "queued", "deferredRefreshId": null,
+                    }))
+                    .unwrap();
+                store.insert_write_request(&insert).unwrap();
+            }
+            let result = sweep(&store, json!({"expireStagings": true, "now": LATER}));
+            (result, manifest_len(&store, id))
+        };
+        assert_eq!(run(true), (swept(1, 0, 0, 1), 3));
         assert_eq!(run(false), (swept(2, 1, 1, 2), 2));
     }
 

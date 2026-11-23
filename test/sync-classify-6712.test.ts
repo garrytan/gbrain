@@ -47,7 +47,10 @@ function referenceAfterHold(s: SyncPathState): SyncClass {
     if (s.level === null) return 'gone';
     if (state === 'tombstone' && s.page!.syncDeleted) return dirtyCommitted ? dirtyClass() : 'import';
     const markerHolds = s.marker?.kind === 'deleted' && s.marker.blobOids.includes(s.level);
-    if ((state === 'tombstone' && fileSame) || markerHolds) return 'deleted_same';
+    const sameBytes = (state === 'tombstone' && fileSame) || markerHolds;
+    // LC-1 (decision E1): the bytes back on disk after the delete removed them are a restore, held for the user's yes.
+    if (sameBytes && s.removedFile && (s.mode === 'working' || CLEAN.has(s.dirty) || s.dirty === 'unknown')) return 'deleted_edited';
+    if (sameBytes) return 'deleted_same';
     const deletedEvidence = state === 'tombstone' || s.marker?.kind === 'deleted';
     if (deletedEvidence && !s.published) return 'deleted_edited';
     if (s.marker?.kind === 'legacy' && s.marker.deletion && !s.fullObligation && s.marker.blobOids.includes(s.level)) return 'legacy_same';
@@ -93,6 +96,10 @@ describe('rows (v3.2 §2.3)', () => {
     ['7 gone', { mode: 'working', tree: 'A', level: null, present: false, dirty: null, page: null }, 'gone', true],
     ['8 deleted_same (tombstone)', { page: { live: false, revision: 'R1', originMatches: true } }, 'deleted_same', true],
     ['8 deleted_same (marker)', { page: null, record: null, marker: { kind: 'deleted', blobOids: ['A'] } }, 'deleted_same', true],
+    ['8 deleted_same (the delete removed the file, the removal not committed yet)', { dirty: 'deleted', removedFile: true, page: { live: false, revision: 'R1', originMatches: true } }, 'deleted_same', true],
+    ['9 deleted_edited (LC-1: tombstone, the file the delete removed restored)', { removedFile: true, page: { live: false, revision: 'R1', originMatches: true } }, 'deleted_edited', false],
+    ['9 deleted_edited (LC-1: a restored file whose dirtiness probe failed is held for consent, never settled as deleted_same)', { dirty: 'unknown', removedFile: true, page: { live: false, revision: 'R1', originMatches: true } }, 'deleted_edited', false],
+    ['9 deleted_edited (LC-1: marker, the file the purge removed restored)', { removedFile: true, page: null, record: null, marker: { kind: 'deleted', blobOids: ['A'] } }, 'deleted_edited', false],
     ['9 deleted_edited (tombstone)', { tree: 'B', level: 'B', page: { live: false, revision: 'R1', originMatches: true } }, 'deleted_edited', false],
     ['8 a sync-made tombstone whose file is back unchanged imports (a revert, a branch switch)', { page: { live: false, revision: 'R1', originMatches: true, syncDeleted: true } }, 'import', false],
     ['9 a sync-made tombstone whose file is back edited imports', { tree: 'B', level: 'B', page: { live: false, revision: 'R1', originMatches: true, syncDeleted: true } }, 'import', false],
@@ -179,12 +186,13 @@ const stateArb: fc.Arbitrary<SyncPathState> = fc.record({
   marker: fc.constantFrom<SyncPathState['marker']>(null, { kind: 'deleted', blobOids: ['A'] }, { kind: 'deleted', blobOids: [] }, { kind: 'legacy', blobOids: ['A'] }, { kind: 'legacy', blobOids: ['A'], deletion: 'req-1' }),
   baseline: fc.constantFrom<string | null>(null, 'A', 'B'),
   spelling: fc.boolean(), episodeUnsatisfied: fc.boolean(), fullObligation: fc.boolean(), keepDb: fc.boolean(), openWork: fc.boolean(),
-}).map(({ working, ...raw }) => {
+  removedFile: fc.constantFrom<true | undefined>(undefined, true),
+}).map(({ working, removedFile, ...raw }) => {
   // Consistency the pass guarantees: committed L = T[p] and Dp only for T paths; working L = the bytes, present ⇔ L.
   const level = raw.mode === 'committed' ? raw.tree : working;
   const present = raw.mode === 'committed' ? raw.present : level !== null;
   const dirty = raw.mode === 'committed' && raw.tree !== null ? raw.dirty : null;
-  return { ...raw, level, present, dirty, levelSha256: sha(level) };
+  return { ...raw, level, present, dirty, levelSha256: sha(level), ...(removedFile ? { removedFile } : {}) };
 });
 
 describe('P0 properties', () => {
@@ -209,10 +217,11 @@ describe('P0 properties', () => {
     for (const record of [null, { blobOids: ['A'], revision: null, parserSame: true }, { blobOids: ['A'], revision: 'R1', parserSame: true }, { blobOids: ['A'], revision: 'R1', parserSame: false }])
     for (const attested of [null, { hash: sha('A'), arm1: false }, { hash: null, arm1: true }])
     for (const marker of [null, { kind: 'deleted' as const, blobOids: ['A'] }, { kind: 'legacy' as const, blobOids: ['A'] }, { kind: 'legacy' as const, blobOids: ['A'], deletion: 'req-1' }])
-    for (const published of [false, true]) for (const baseline of [null, 'A']) for (const keepDb of [false, true]) for (const episodeUnsatisfied of [false, true]) for (const fullObligation of [false, true]) {
+    for (const published of [false, true]) for (const baseline of [null, 'A']) for (const keepDb of [false, true]) for (const episodeUnsatisfied of [false, true]) for (const fullObligation of [false, true])
+    for (const removedFile of page?.live === false || marker?.kind === 'deleted' ? [false, true] : [false]) {
       const level = mode === 'committed' ? tree : working;
       const s: SyncPathState = { mode, tree, level, present, dirty, diskOid: 'C', page, record, attested, levelSha256: sha(level), published, hold: null, marker, baseline,
-        spelling: false, episodeUnsatisfied, fullObligation, keepDb, openWork: false };
+        spelling: false, episodeUnsatisfied, fullObligation, keepDb, openWork: false, ...(removedFile ? { removedFile: true as const } : {}) };
       const got = classifySyncPath(s);
       if (got.cls !== reference(s)) throw new Error(`mismatch ${got.cls} vs ${reference(s)} for ${JSON.stringify(s)}`);
       n++;
@@ -259,7 +268,9 @@ describe('P0 properties', () => {
 
   test('GBRA-133 S-27/S-28: a committed path no file backs (deleted, skip-worktree, sparse) classifies at its committed level, as a clean one does, except for the DB-wins write', () => {
     fc.assert(fc.property(stateArb, s => {
-      if (s.mode !== 'committed' || s.tree === null || s.dirty !== 'deleted') return;
+      // LC-1: the deleted page's own removal not committed yet (`removedFile`) is the one exception: it keeps its deletion,
+      // while the same bytes clean on disk are a restore held for the user.
+      if (s.mode !== 'committed' || s.tree === null || s.dirty !== 'deleted' || s.removedFile) return;
       const got = classifySyncPath(s), clean = classifySyncPath({ ...s, dirty: 'clean' });
       expect(got.cls === 'keep_db' ? 'drift' : got.cls).toBe(clean.cls === 'keep_db' ? 'drift' : clean.cls);
       expect(got.action).not.toBe('keep_db');

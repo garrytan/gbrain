@@ -137,11 +137,14 @@ export async function writeSourceSyncHeartbeat(exec: SqlExecutor, sourceId: stri
 /** What sync observed of the checkout's Git upstream (`observeUpstream` in sync-upstream.ts). */
 export interface SourceUpstreamObservation { checkedAt: string; commit: string; behind: number | null }
 /** The statement `recordUpstreamObservation` (src/core/sync-upstream.ts) sends, verbatim. */
-export const SOURCE_UPSTREAM_OBSERVATION_SQL = 'UPDATE sources SET upstream_checked_at=$2::timestamptz,upstream_commit=$3,upstream_behind=$4 WHERE id=$1';
+export const SOURCE_UPSTREAM_OBSERVATION_SQL = `UPDATE sources SET upstream_checked_at = CASE WHEN upstream_commit = $3 AND upstream_checked_at > $2::timestamptz THEN upstream_checked_at ELSE $2::timestamptz END,
+  upstream_commit=$3,upstream_behind=$4 WHERE id=$1`;
 
 /**
  * The sync's upstream observation: sets `upstream_checked_at` (an ISO time), `upstream_commit` and `upstream_behind`
- * (null when the synced commit is unknown). An unknown source changes nothing.
+ * (null when the synced commit is unknown). A check time never moves back for the same upstream commit (#9933): a failed
+ * fetch empties FETCH_HEAD and the reflog can be older than the no-change fetch already recorded. An unknown source
+ * changes nothing.
  */
 export async function writeSourceUpstreamObservation(exec: SqlExecutor, sourceId: string, observed: SourceUpstreamObservation): Promise<void> {
   await exec.executeRaw(SOURCE_UPSTREAM_OBSERVATION_SQL, [sourceId, observed.checkedAt, observed.commit, observed.behind]);

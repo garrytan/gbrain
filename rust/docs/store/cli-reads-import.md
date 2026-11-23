@@ -3,7 +3,7 @@
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
 These are the reads that the CLI import and extract paths ran through `executeRaw`
-([docs/research/rust-cli-executeraw-map.md](../../../docs/research/rust-cli-executeraw-map.md)).
+(the `executeRaw` map in the Rust engine branch's research notes; it is not on master).
 PGLite and Postgres run the same SQL as before, now in `src/core/engine-sql/cli-reads-import.ts`.
 The store answers from its source, page and timeline records (`crates/gbrain-store/src/cli_reads/import.rs`)
 and has no keys of its own.

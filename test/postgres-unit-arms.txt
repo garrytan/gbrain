@@ -431,6 +431,7 @@ test/engine-parity/sync-checkpoint.test.ts
 test/engine-parity/sync-import-provenance.test.ts
 test/engine-parity/sync-pass-pages.test.ts
 test/engine-parity/sync-requests.test.ts
+test/engine-parity/sync-restored-file-holds.test.ts
 test/engine-parity/sync-route.test.ts
 test/engine-parity/sync-run-reads.test.ts
 test/engine-parity/sync-run.test.ts
@@ -492,6 +493,8 @@ test/engine-parity/writer-versions.test.ts
 test/engine-sql-fact-relink-attempts.test.ts
 test/engine-sql-fact-relink-writes.test.ts
 test/engine-sql-facts-keyset.test.ts
+test/engine-swap-managed-storage.test.ts
+test/engine-swap-refresh-drain.test.ts
 test/entity-company-auto-link.test.ts
 test/entity-dedupe-decisions.test.ts
 test/entity-dedupe-person-confirm.test.ts
@@ -512,6 +515,7 @@ test/extract-timeline-from-meetings-managed.test.ts
 test/extraction-watermark-atoms.test.ts
 test/fact-embedding-oversized-7211.test.ts
 test/fact-fence-adoption-exits.test.ts
+test/fact-fingerprint-corpus.test.ts
 test/fact-purge-lookup-timeout-6511.test.ts
 test/fact-reads-page-access.test.ts
 test/facts-absorb-stalled-receipt-7439.test.ts
@@ -729,6 +733,7 @@ test/links-attendance-blocked.test.ts
 test/links-extraction-yield.test.ts
 test/list-jobs-row-bound.test.ts
 test/list-pages-empty-type-notice-gbra449.test.ts
+test/loop-members-request-abort.test.ts
 test/lower-tier-label-hold.test.ts
 test/maintenance-idle-gbra438.test.ts
 test/maintenance-lowering-7917-7918.test.ts
@@ -777,9 +782,11 @@ test/migration-persistence-request-slug-index.test.ts
 test/mirror-keep-deleted.test.ts
 test/mirror-readonly-write-through-7098.test.ts
 test/moved-pages-gst2584.test.ts
+test/n3-sql-move-parity.test.ts
 test/notifier-passed-freshness-marker-7941.test.ts
 test/notifier-retry-unwatched-gst2515.test.ts
 test/notifier-sync-disabled-gst2515.test.ts
+test/ns-read-move-parity.test.ts
 test/on-commit-embedding.serial.test.ts
 test/oneshot-consumer-direct-route.test.ts
 test/oneshot-housekeeping-cli.test.ts
@@ -1102,6 +1109,7 @@ test/sources-resolve-path.test.ts
 test/speaker-owner-connectors.test.ts
 test/speaker-owner-transcripts.test.ts
 test/speaker-owner-trust.test.ts
+test/st-write-move-parity.test.ts
 test/stale-plan-heal.test.ts
 test/stats-health-source-scope.test.ts
 test/status-snapshot-source-scope.test.ts
@@ -1174,6 +1182,7 @@ test/sync-pass-stop-in-level-gbra133.test.ts
 test/sync-plain-directory-7973.test.ts
 test/sync-prescreen-both-delta-6712.test.ts
 test/sync-prescreen-drift-6712.test.ts
+test/sync-restored-deleted-file-lc1.test.ts
 test/sync-restored-file-purge.test.ts
 test/sync-sigterm-gst2869.test.ts
 test/sync-slug-root-mode-6694.test.ts

@@ -5,7 +5,8 @@ import type { EngineConnectOptions } from '../core/engine-connect.ts';
 import { OperationError } from '../core/ops/contract.ts';
 import { finishCliTeardown, noteRenderedErrorCode, setCliExitVerdict, writeStdoutFinal } from '../core/cli-force-exit.ts';
 import { maybeDelegateLocalOperation } from '../core/persistence/local-client.ts';
-import { PersistenceIpcTransportError } from '../core/persistence/ipc.ts';
+import { isPersistenceIpcMutation, PersistenceIpcTransportError } from '../core/persistence/ipc.ts';
+import { DEFAULT_READ_WALLCLOCK_MS } from '../core/cli-socket/protocol.ts';
 import { RemoteMcpError } from '../core/remote-mcp-error.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { PENDING_WRITE_EXIT_CODE } from '../core/exit-codes.ts';
@@ -56,16 +57,22 @@ export async function runDelegatedCliOperation(
   operation: string,
   params: Record<string, unknown>,
   config: GBrainConfig | null,
-  options: { brain?: string | null; timeoutMs?: number; room?: string },
+  options: { brain?: string | null; timeoutMs?: number; room?: string; emitResponseMeta?: (key: string, value: unknown) => void },
   render: (operation: string, result: unknown, params: Record<string, unknown>) => string,
 ): Promise<boolean> {
   try {
-    const delegated = await maybeDelegateLocalOperation(operation, params, config, options);
+    const delegated = await maybeDelegateLocalOperation(operation, params, config,
+      options.timeoutMs === undefined && !isPersistenceIpcMutation(operation) ? { ...options, timeoutMs: DEFAULT_READ_WALLCLOCK_MS } : options);
     if (!delegated.handled) return false;
     if (options.room !== undefined) return await printDelegatedRoom(operation, delegated, options.room, params, render);
-    const output = render(operation, delegated.result, params);
+    if (delegated.meta?.retrieval) options.emitResponseMeta?.('retrieval', delegated.meta.retrieval);
+    const { result, stderr } = delegated.meta
+      ? (await import('../cli/op-notices.ts')).withDelegatedMeta(operation, delegated.result, delegated.meta, params.json === true) : { result: delegated.result };
+    const output = (await import('../cli/guest-lines.ts')).withGuestLines(operation, result, params, render(operation, result, params));
     if (output) await writeStdoutFinal(output);
+    if (stderr) process.stderr.write(stderr);
     if ((delegated.result as { status?: unknown } | null)?.status === 'error') setCliExitVerdict(1);
+    if (operation === 'entity') (await import('../cli/entity-format.ts')).markEntityMiss(operation, delegated.result);
     return true;
   } catch (error) {
     if (await reportPersistenceCliError(error, params.json === true)) return true;
@@ -80,7 +87,7 @@ async function printDelegatedRoom(operation: string, delegated: { result: unknow
   const marked = await roomCli.delegatedRoom(operation, delegated, room);
   const { applyCliOpNotices } = await import('../cli/op-notices.ts');
   const { result, stderr } = applyCliOpNotices(roomCli.cliRoomResult(marked, params.json === true), params.json === true, { op: operation, retrieval: null });
-  const output = render(operation, result, params);
+  const output = (await import('../cli/guest-lines.ts')).withGuestLines(operation, result, params, render(operation, result, params));
   if (output) await writeStdoutFinal(output);
   if (stderr) process.stderr.write(stderr);
   if (params.json !== true) process.stderr.write(roomCli.roomSummaryLine(marked.meta));

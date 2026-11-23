@@ -120,11 +120,13 @@ mod trust_scan_cursor;
 pub(crate) use op_checkpoint::{
     delete_op_checkpoint_in, list_op_checkpoint_records_in, op_checkpoint_completed_keys,
 };
+#[cfg(test)]
+pub(crate) use projection_queue::{JobRecord, read_page_job};
 pub use projection_queue::{
     ProjectionJobRef, ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };
 pub(crate) use projection_queue::{
-    activation_started_us, parse_timestamptz, queue_page_projection, queued_jobs,
+    SeedJob, activation_started_us, parse_timestamptz, queue_page_projection, queued_jobs, seed_job,
 };
 pub use projection_rebuild::{
     ProjectionJobKey, ProjectionWindowCandidate, QueuedProjectionFilter, QueuedProjectionKey,
