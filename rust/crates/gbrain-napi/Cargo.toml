@@ -17,6 +17,10 @@ serde = "1"
 serde_json = "1"
 napi-derive = "3"
 
+[features]
+# Builds the crash cell's addon (`bun run rust:build --crash-points`); never the release addon.
+crash-points = ["gbrain-store/crash-points"]
+
 [build-dependencies]
 napi-build = "2"
 sha2 = "0.10"

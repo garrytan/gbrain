@@ -171,8 +171,9 @@ GBRAIN_SIM_SEED=1234 cargo test -p gbrain-store --test sim     # repeat one seed
 `scripts/rust-crash/` kills real writer processes on a real `records.redb` with SIGKILL, mid-commit,
 before and after an fsync, at the persistence boundaries, between operations and at a seeded time,
 then reopens the brain and compares it with a PGLite oracle. The store's test-only file backend
-(`crates/gbrain-store/src/crash_points.rs`) is off unless `GBRAIN_TEST_RUST_CRASH_LOG` is set when a
-brain opens. It covers process crashes, not power loss (the simulation above covers torn writes and
+(`crates/gbrain-store/src/crash_points.rs`) is compiled only with the `crash-points` cargo feature
+(`bun run rust:build --crash-points`). The release addon never has it, and even with it the backend is
+off unless `GBRAIN_TEST_RUST_CRASH_LOG` is set when a brain opens. It covers process crashes, not power loss (the simulation above covers torn writes and
 fsync lies). How to run it and what it checks: [scripts/rust-crash/README.md](../scripts/rust-crash/README.md).
 CI runs it in the `crash-cell` and `crash-cell-plant` jobs of `rust-engine.yml`.
 

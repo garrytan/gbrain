@@ -18,6 +18,7 @@ mod cascade;
 pub mod chunks;
 pub mod cli_reads;
 pub mod config;
+#[cfg(feature = "crash-points")]
 mod crash_points;
 pub mod env;
 pub mod error;
@@ -215,13 +216,17 @@ fn open_records(dir: &Path, concurrent: bool) -> Result<Arc<dyn Kv>> {
         });
     }
     let path = dir.join(format::RECORDS_FILE);
-    // The crash cell's test-only backend (`crash_points.rs`); off unless its log variable is set.
+    // The crash cell's test-only backend (`crash_points.rs`): only in a build with the `crash-points` feature, and
+    // there only when its log variable is set. The release addon has no such code and reads no such variable.
+    #[cfg(feature = "crash-points")]
     let kv = match crash_points::plan()? {
         Some(plan) => {
             redb_kv::RedbKv::open_backend(Box::new(crash_points::CrashFile::open(&path, plan)?))?
         }
         None => redb_kv::RedbKv::open_path(&path)?,
     };
+    #[cfg(not(feature = "crash-points"))]
+    let kv = redb_kv::RedbKv::open_path(&path)?;
     Ok(if concurrent {
         Arc::new(occ_kv::OccKv::new(kv)?)
     } else {

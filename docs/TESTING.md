@@ -642,6 +642,10 @@ nested transaction confinement and the Postgres resident-stop barrier.
 Persistence suites (native-matrix publication, managed writers, schedules, crash boundaries, runtime
 matrix, read latency, convergence) live in [scripts/persistence/README.md](../scripts/persistence/README.md#test-suites).
 
+| Suite | What it kills | Where it runs | Run it locally |
+| --- | --- | --- | --- |
+| Rust crash cell ([scripts/rust-crash/README.md](../scripts/rust-crash/README.md)) | Real writer processes on a real Rust `records.redb`, SIGKILLed mid-commit, before and after an fsync, at the persistence boundaries, between operations and at a seeded time (8 seeds, 72 kills, each class with a minimum), then reopened and compared with a PGLite oracle | `rust-engine.yml` `crash-cell` (linux-x64-glibc, darwin-arm64) and `crash-cell-plant` (fail-first); the `addon` job checks that the release addon ignores the cell's variables | `bun run rust:build --crash-points`, then `GBRAIN_RUST_ENGINE_ADDON=<path> bun scripts/rust-crash/run.ts` |
+
 ### Engine graduation
 
 Graduation fixtures and suites: [scripts/persistence/README.md](../scripts/persistence/README.md#engine-graduation-tests).

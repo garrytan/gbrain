@@ -18,6 +18,9 @@ fjall = { version = "3.1", optional = true }
 
 [features]
 fjall = ["dep:fjall"]
+# The crash cell's test-only record file backend (`src/crash_points.rs`, scripts/rust-crash/README.md). Off by default:
+# the release addon is built without it, so it cannot see the crash cell's environment variables.
+crash-points = []
 
 [dev-dependencies]
 gbrain-sim = { path = "../gbrain-sim" }

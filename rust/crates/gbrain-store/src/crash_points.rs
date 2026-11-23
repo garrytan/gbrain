@@ -1,6 +1,8 @@
 //! Test-only crash points for the real-process crash cell (`scripts/rust-crash/`).
 //!
-//! Off unless `GBRAIN_TEST_RUST_CRASH_LOG` names a file when a brain opens. Then the record file
+//! Compiled only with the `crash-points` feature, which the release addon never has (`bun run rust:build
+//! --crash-points` builds the crash cell's addon). Even then it is off unless `GBRAIN_TEST_RUST_CRASH_LOG` names a file
+//! when a brain opens. Then the record file
 //! opens through [`CrashFile`], a plain file backend that appends one line to that log for every
 //! page write, every fsync start and every fsync end (`write 12`, `sync 3`, `synced 3`). When the
 //! event that `GBRAIN_TEST_RUST_CRASH_AT` names (`<kind>:<n>`, the n-th event of that kind in this
@@ -11,8 +13,8 @@
 //! - `sync:<n>`: before an fsync, so the commit's pages are written and not yet flushed;
 //! - `synced:<n>`: after an fsync returned, so the commit is durable and its caller has no answer.
 //!
-//! Without the log variable the record file opens through redb's own file backend, as always, and
-//! nothing in this file runs.
+//! Without the feature, or without the log variable, the record file opens through redb's own file backend, as
+//! always, and nothing in this file runs.
 
 use crate::error::{Result, STORE_LOCKED, StoreError};
 use crate::kv::FileBackend;

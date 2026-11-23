@@ -2,10 +2,12 @@
 /**
  * Build the Rust engine addon and copy it to a predictable place.
  *
- *   bun run rust:build
+ *   bun run rust:build                  # the release addon
+ *   bun run rust:build --crash-points   # the crash cell's addon (scripts/rust-crash/README.md)
  *
- * Output: rust/target/addon/gbrain_engine.<target>.node, plus the line to export so the loader
- * (and rust/smoke/run.ts) can find it:
+ * Output: rust/target/addon/gbrain_engine.<target>.node (with --crash-points:
+ * rust/target/addon-crash-points/gbrain_engine.<target>.node, built with the `crash-points` feature, which the release
+ * addon never has), plus the line to export so the loader (and rust/smoke/run.ts) can find it:
  *
  *   GBRAIN_RUST_ENGINE_ADDON=/abs/path/to/gbrain_engine.<target>.node
  *
@@ -17,11 +19,14 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const rustDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const crashPoints = process.argv.slice(2).includes('--crash-points');
+const unknown = process.argv.slice(2).filter(a => a !== '--crash-points');
 
 function fail(message: string): never {
   console.error(`rust:build: ${message}`);
   process.exit(1);
 }
+if (unknown.length > 0) fail(`unknown argument ${unknown.join(' ')}; the only option is --crash-points`);
 
 /** Rust host triple -> the target names the engine reports (see `target()` in the crate). */
 const TARGETS: Record<string, { name: string; library: string }> = {
@@ -59,7 +64,8 @@ if (!target) {
 // CARGO_BUILD_TARGET or build.target setting cannot send the build elsewhere while the copy below
 // picks up an older library. With --target, cargo always writes to target/<host>/release.
 const build = Bun.spawnSync(
-  ['cargo', 'build', '--release', '-p', 'gbrain-napi', '--target', host, '--target-dir', join(rustDir, 'target')],
+  ['cargo', 'build', '--release', '-p', 'gbrain-napi', '--target', host, '--target-dir', join(rustDir, 'target'),
+    ...(crashPoints ? ['--features', 'crash-points'] : [])],
   {
     cwd: rustDir,
     stdout: 'inherit',
@@ -71,7 +77,7 @@ if (build.exitCode !== 0) fail(`cargo build failed (exit ${build.exitCode}). No 
 const built = join(rustDir, 'target', host, 'release', target.library);
 if (!existsSync(built)) fail(`cargo succeeded but ${built} does not exist.`);
 
-const outDir = join(rustDir, 'target', 'addon');
+const outDir = join(rustDir, 'target', crashPoints ? 'addon-crash-points' : 'addon');
 mkdirSync(outDir, { recursive: true });
 const finalPath = join(outDir, `gbrain_engine.${target.name}.node`);
 // Copy to a new file and rename over the old one. A new inode matters on macOS, where a

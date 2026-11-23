@@ -13,10 +13,12 @@ name: Rust engine
 #              (test/rust-cli-parity.serial.test.ts: each read command on a Rust brain is equal to
 #              PGLite, refused with a typed refusal, or has no Rust engine; only a diverged command
 #              fails), then uploads the .node file.
-#   crash-cell real writer processes on real redb files SIGKILLed at chosen points, reopened and
-#              compared with a PGLite oracle (scripts/rust-crash/README.md), on both addon targets,
-#              plus its fail-first check (a worker that acknowledges before it writes is caught).
-#   crash-cell-plant  Linux: an addon built with Durability::None must fail the crash cell.
+#              The addon job also checks that the release addon ignores the crash cell's variables.
+#   crash-cell builds a second addon with the crash-points feature, then runs real writer processes on
+#              real redb files SIGKILLed at chosen points, reopened and compared with a PGLite oracle
+#              (scripts/rust-crash/README.md), on both addon targets, plus its fail-first check (a
+#              worker that acknowledges before it writes is caught).
+#   crash-cell-plant  Linux: a crash-points addon built with Durability::None must fail the crash cell.
 #   without-rust  no Rust on PATH: bun install, bun run build, ./bin/gbrain --version.
 #   keyword-goldens  proves the generated and golden keyword-search files are what PostgreSQL 18.6
 #              says: parser/actions.rs and parser/charclass.rs are regenerated and compared, and the
@@ -202,6 +204,13 @@ jobs:
       - name: Unit tests
         working-directory: rust
         run: cargo test --locked
+      # The crash cell's test-only backend (gbrain-store's `crash-points` feature, off by default) is linted and tested
+      # with the feature on; the two steps above build the default feature set, which leaves it out.
+      - name: Clippy and unit tests of the crash-points feature
+        working-directory: rust
+        run: |
+          cargo clippy -p gbrain-store --all-targets --locked --features crash-points -- -D warnings
+          cargo test -p gbrain-store --lib --locked --features crash-points crash_points
       # A pinned prebuilt binary, checked against its SHA-256, so CI does not compile cargo-deny
       # and does not depend on a third-party action.
       - name: Install cargo-deny 0.21.0
@@ -293,6 +302,14 @@ jobs:
       - name: Install dependencies (bounded, retried once)
         timeout-minutes: 8
         run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
+      # The release addon is built without the `crash-points` feature, so the crash cell's variables do nothing in it:
+      # a page write with GBRAIN_TEST_RUST_CRASH_LOG set must finish and write no log (scripts/rust-crash/release-ignores.ts).
+      - name: The release addon ignores the crash cell's variables
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GBRAIN_RUST_ENGINE_ADDON="$PWD/rust/target/addon/gbrain_engine.${{ matrix.target }}.node"
+          bun scripts/rust-crash/release-ignores.ts
       # The engine on the real store: test/rust-engine-store.test.ts and the raw-value differential against
       # PGLite (test/rust-engine-differential.test.ts), then every parity file with the Rust
       # arm added (GBRAIN_TEST_RUST_ARM=1). The addon is required here, so a missing build fails the step
@@ -343,11 +360,12 @@ jobs:
   # Event parity (docs/TESTING.md#event-parity): the addon job's events and targets.
   crash-cell:
     name: Crash cell / ${{ matrix.target }}
-    needs: [scope, addon]
+    needs: scope
     if: github.event_name != 'schedule'
     runs-on: ${{ matrix.runner }}
-    # 72 kills; a kill inside a publication waits about 2 minutes for its claim lease. darwin-arm64 runs about 1.3x slower.
-    timeout-minutes: ${{ matrix.target == 'darwin-arm64' && 45 || 30 }}
+    # A second addon build (cached) plus 72 kills; a kill inside a publication waits about 2 minutes for its claim lease.
+    # darwin-arm64 runs about 1.3x slower: its cell took 25 minutes and its plant check 8.5 on the first green run.
+    timeout-minutes: ${{ matrix.target == 'darwin-arm64' && 75 || 45 }}
     strategy:
       fail-fast: false
       matrix:
@@ -371,21 +389,44 @@ jobs:
       - name: Install dependencies (bounded, retried once)
         timeout-minutes: 8
         run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+      - name: Install the pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v rustup >/dev/null 2>&1; then
+            echo "::error::rustup is not installed on this runner. Use a runner image that ships rustup."
+            exit 1
+          fi
+          channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$GITHUB_WORKSPACE/rust/rust-toolchain.toml")"
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal
+          rustup default "$channel"
+      - name: Name the cache from the lock file and toolchain
+        id: cachename
+        run: echo "value=rust-addon-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/Cargo.lock', 'rust/rust-toolchain.toml') }}" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
-          name: gbrain-engine-addon-${{ matrix.target }}
-          path: rust/target/addon
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ steps.cachename.outputs.value }}
+          restore-keys: |
+            rust-addon-${{ runner.os }}-${{ runner.arch }}-
+      # The crash cell's addon: the release addon's code plus the `crash-points` feature (never shipped).
+      - name: Build the crash cell's addon
+        run: bun run rust:build --crash-points
       - name: Crash cell (8 fixed seeds)
         shell: bash
         run: |
           set -euo pipefail
-          export GBRAIN_RUST_ENGINE_ADDON="$PWD/rust/target/addon/gbrain_engine.${{ matrix.target }}.node"
+          export GBRAIN_RUST_ENGINE_ADDON="$PWD/rust/target/addon-crash-points/gbrain_engine.${{ matrix.target }}.node"
           bun scripts/rust-crash/run.ts
       - name: The crash cell catches a worker that acknowledges before it writes
         shell: bash
         run: |
           set -euo pipefail
-          export GBRAIN_RUST_ENGINE_ADDON="$PWD/rust/target/addon/gbrain_engine.${{ matrix.target }}.node"
+          export GBRAIN_RUST_ENGINE_ADDON="$PWD/rust/target/addon-crash-points/gbrain_engine.${{ matrix.target }}.node"
           bun scripts/rust-crash/run.ts --seeds=101,202,303 --plant=early-ack --expect-caught
 
   # The crash cell's second fail-first check, Linux only: an addon built with Durability::None in the record store
@@ -442,7 +483,7 @@ jobs:
         run: |
           set -euo pipefail
           git apply scripts/rust-crash/plants/durability-none.patch
-          bun run rust:build
+          bun run rust:build --crash-points
       - name: Install dependencies (bounded, retried once)
         timeout-minutes: 8
         run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
@@ -450,7 +491,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          export GBRAIN_RUST_ENGINE_ADDON="$PWD/rust/target/addon/gbrain_engine.linux-x64-glibc.node"
+          export GBRAIN_RUST_ENGINE_ADDON="$PWD/rust/target/addon-crash-points/gbrain_engine.linux-x64-glibc.node"
           bun scripts/rust-crash/run.ts --seeds=101,202 --expect-caught
 
   # Event parity (docs/TESTING.md#event-parity): the schedule runs only `checks`.

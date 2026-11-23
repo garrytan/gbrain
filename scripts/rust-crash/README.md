@@ -5,12 +5,18 @@ redb file through the built addon. The cell SIGKILLs each writer at a chosen
 point, reopens the brain and compares it with a PGLite oracle.
 
 ```sh
-bun run rust:build
+bun run rust:build --crash-points
 GBRAIN_RUST_ENGINE_ADDON=<the path it prints> bun scripts/rust-crash/run.ts
 ```
 
+The cell needs an addon built with gbrain-store's `crash-points` cargo feature.
+`--crash-points` builds one under `rust/target/addon-crash-points/`. The release
+addon (`bun run rust:build`, under `rust/target/addon/`) is built without the
+feature and has no crash points. The cell fails against it, because the
+counting pass logs no page write or fsync events.
+
 `rust-engine.yml` runs it on linux-x64-glibc and darwin-arm64 (the `crash-cell`
-job) with the addon its `addon` job built.
+job), with a crash-points addon that the job builds.
 
 ## What it runs
 
@@ -41,12 +47,19 @@ three pages, then 24 seeded operations). Per seed:
 | timer | at a seeded time, 50 to 1550 ms after the brain opens |
 
 The first three are the store's crash points
-(`rust/crates/gbrain-store/src/crash_points.rs`). They are off unless
+(`rust/crates/gbrain-store/src/crash_points.rs`). They are compiled only with the
+`crash-points` feature, and even then they are off unless
 `GBRAIN_TEST_RUST_CRASH_LOG` is set when a brain opens. Then the record file opens
 through a plain file backend that logs every page write and fsync, and freezes
 at the event `GBRAIN_TEST_RUST_CRASH_AT` names. The driver sees the freeze line
-and SIGKILLs the worker. Without the variable the record file opens through
-redb's own backend, as always.
+and SIGKILLs the worker. Without the feature or the variable, the record file
+opens through redb's own backend, as always.
+
+Each kill class has a minimum: per seed, two mid-commit kills, one before and one
+after an fsync, three at the persistence boundaries, one between operations and
+one timed. A class below its minimum fails the cell. That includes a kill point
+that the counting pass never logged, so a class that stopped happening cannot
+pass as a smaller run.
 
 ## What it checks after a kill
 
@@ -80,13 +93,24 @@ The cell must fail on a planted bug:
   `Durability::None`. CI builds a second Linux addon with the patch and runs
   `--seeds=101,202 --expect-caught`.
 
+The `addon` job also runs `release-ignores.ts` against the release addon. It
+sets the cell's variables to freeze at the first page write, then writes a page
+in a child process. The write must finish and no log may appear. An addon with
+crash points fails that check.
+
 `--expect-caught` exits 0 only when at least one run reopened the killed brain and found it wrong (it differs from every
 state the oracle allows, or the store refuses to open it). A worker that never started, a kill point that was never reached
 or a drain that timed out is a failed run that does not count as a catch.
 
 ## Options
 
-`--seeds=101,202`, `--ops=24`, `--jobs=<n>` (kills run in parallel, default the
+`--seeds=101,202` (whole numbers of 1 or more; `--seeds=` is a usage error),
+`--ops=24`, `--jobs=<n>` (kills run in parallel, default the
 CPU count less one, at most 6), `--engine=pglite` (the control arm: the workers
 run on PGLite, without the store's own crash points), `--keep` (keep the scratch
 directory).
+
+Open notes:
+
+- A timer kill whose worker had already exited counts as a kill.
+- `log.ts` `readLog` has no unit test.

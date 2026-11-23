@@ -30,7 +30,9 @@ const args = new Map(process.argv.slice(2).map(a => {
   const [k, v] = a.replace(/^--/, '').split('=');
   return [k!, v ?? 'true'] as const;
 }));
-const SEEDS = (args.get('seeds') ?? '101,202,303,404,505,606,707,808').split(',').map(Number);
+const SEED_TEXT = (args.get('seeds') ?? '101,202,303,404,505,606,707,808').split(',');
+// Every seed is a whole number of 1 or more: `--seeds=` or `--seeds=1,,2` is a usage error, never seed 0.
+const SEEDS = SEED_TEXT.every(t => /^[1-9][0-9]*$/.test(t)) ? SEED_TEXT.map(Number) : [];
 const COUNT = Number(args.get('ops') ?? 24);
 const JOBS = Number(args.get('jobs') ?? Math.max(1, Math.min(6, availableParallelism() - 1)));
 const ENGINE = args.get('engine') ?? 'rust';
@@ -43,8 +45,9 @@ const EXPECT_CAUGHT = args.has('expect-caught');
  */
 const DETECTION = /^(acknowledged writes lost|the brain equals no oracle state|the \w+ in flight .* did not finish when run again|after the reopen the rest of the sequence diverged|.*FORMAT names a different brain than the record file)/;
 const KEEP = args.has('keep');
-if (SEEDS.some(s => !Number.isInteger(s)) || !Number.isInteger(COUNT) || COUNT < 4 || !(JOBS >= 1) || !['rust', 'pglite'].includes(ENGINE)) {
-  console.error('usage: run.ts [--seeds=101,202] [--ops=24] [--jobs=4] [--engine=pglite] [--plant=early-ack] [--expect-caught] [--keep]');
+if (SEEDS.length === 0 || !Number.isInteger(COUNT) || COUNT < 4 || !(JOBS >= 1) || !['rust', 'pglite'].includes(ENGINE)) {
+  console.error('usage: run.ts [--seeds=101,202] [--ops=24] [--jobs=4] [--engine=pglite] [--plant=early-ack] [--expect-caught] [--keep]\n' +
+    '  --seeds takes one or more whole numbers of 1 or more, separated by commas.');
   process.exit(2);
 }
 const addonPath = process.env.GBRAIN_RUST_ENGINE_ADDON;
@@ -239,13 +242,18 @@ for (const seed of SEEDS) {
   outcomes.push({ seed, point: 'no kill', ok: equal, detail: equal ? 'equal to the oracle' : firstDifference(end, states[ops.length]!) });
   const rand = rng(seed * 7919);
   const within = (range: Range | null | undefined) => (range ? range[0] + Math.floor(rand() * (range[1] - range[0] + 1)) : null);
+  // A kill point the counting pass never logged cannot be killed at. That is a failure, never a skip: on Rust it means
+  // the addon has no crash points (an addon built without `--crash-points`), and a missing boundary means the write
+  // paths changed under the cell.
   for (const kind of ENGINE === 'rust' ? ['write', 'write', 'sync', 'synced'] as const : []) {
     const n = within(pass.log.events[kind]);
     if (n !== null) jobs.push({ seed, label: `${kind}:${n}`, kind, kill: { at: `${kind}:${n}` }, ops, states });
+    else outcomes.push({ seed, point: `${kind} kill`, ok: false, detail: `the counting pass logged no ${kind} event, so nothing can be killed there: build the addon with bun run rust:build --crash-points` });
   }
   for (const point of SEAMS) {
     const n = within(pass.log.seams.get(point));
     if (n !== null) jobs.push({ seed, label: `${point}:${n}`, kind: 'seam', kill: { seam: `${point}:${n}` }, ops, states });
+    else outcomes.push({ seed, point: `${point} kill`, ok: false, detail: `the counting pass never reached the persistence boundary ${point}` });
   }
   const afterAck = Math.floor(rand() * (ops.length - 1));
   jobs.push({ seed, label: `after ack ${afterAck}`, kind: 'ack', kill: { afterAck }, ops, states });
@@ -270,8 +278,19 @@ await Promise.all(Array.from({ length: JOBS }, async () => {
   while (nextJob < jobs.length) await runJob(jobs[nextJob++]!);
 }));
 
+// The minimum SIGKILLs per kill class: what each seed plans (two mid-commit, one before and one after an fsync, three
+// persistence boundaries, one between operations, one timed), times the seeds. A class below it fails the cell, so a
+// kill class that stopped happening (no events, a point never reached) can never pass as a smaller run.
+const PER_SEED: Record<keyof typeof tally, number> = ENGINE === 'rust'
+  ? { write: 2, sync: 1, synced: 1, seam: SEAMS.length, ack: 1, timer: 1 }
+  : { write: 0, sync: 0, synced: 0, seam: SEAMS.length, ack: 1, timer: 1 };
+for (const [kind, per] of Object.entries(PER_SEED) as [keyof typeof tally, number][]) {
+  const minimum = per * SEEDS.length;
+  if (tally[kind] < minimum) outcomes.push({ seed: 0, point: `${kind} kills`, ok: false, detail: `${tally[kind]} SIGKILLs in this kill class, below its minimum of ${minimum} (${per} per seed)` });
+}
+
 outcomes.sort((a, b) => a.seed - b.seed);
-for (const o of outcomes) console.log(`  ${o.ok ? 'ok  ' : 'FAIL'}  seed ${o.seed}  ${o.point.padEnd(30)} ${o.detail}`);
+for (const o of outcomes) console.log(`  ${o.ok ? 'ok  ' : 'FAIL'}  ${o.seed ? `seed ${o.seed}` : 'all seeds'}  ${o.point.padEnd(30)} ${o.detail}`);
 const failed = outcomes.filter(o => !o.ok);
 const kills = Object.values(tally).reduce((a, b) => a + b, 0);
 console.log(`\n${outcomes.length - failed.length}/${outcomes.length} runs passed: ${SEEDS.length} seeds, ${kills} SIGKILLs ` +
