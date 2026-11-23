@@ -6,6 +6,7 @@
  * pg_read_all_stats TO <role>` for the connected role (`tell_user_to_run`: the host operator runs it). Not applicable on
  * PGLite or with no shadow on: it says nothing there. Read-only: one catalog query.
  */
+import { userInfo } from 'node:os';
 import { HOST_BRAIN_ID } from '../../../core/brain-registry.ts';
 import { brainRoutingArgs } from '../../../core/brain-resolver.ts';
 import { loadConfig } from '../../../core/config.ts';
@@ -38,10 +39,24 @@ export async function shadowFreshnessTokenCheck(config: EngineConfig | null, eng
   }
 }
 
-/** True when the engine is connected to the database `config` names (the config's database name against `current_database()`). */
+/**
+ * The database a Postgres URL connects to, read the way the driver reads it (vendor/postgres/src/index.js parseOptions): the URL
+ * path, else PGDATABASE, else the user name, which is the URL's user, else PGUSERNAME, PGUSER or the operating-system user.
+ */
+export function configuredDatabaseName(databaseUrl: string, env: NodeJS.ProcessEnv = process.env): string | null {
+  let url: URL;
+  try { url = new URL(databaseUrl.replace(/^postgres(ql)?:\/\//, 'http://')); } catch { return null; }
+  let user = url.username ? decodeURIComponent(url.username) : '';
+  if (!user) {
+    user = env.PGUSERNAME || env.PGUSER || '';
+    if (!user) { try { user = userInfo().username; } catch { user = env.USERNAME || env.USER || env.LOGNAME || ''; } }
+  }
+  return url.pathname.slice(1) || env.PGDATABASE || user || null;
+}
+
+/** True when the engine is connected to the database `config` names (that name against `current_database()`). */
 async function engineIsConfiguredDatabase(config: EngineConfig, engine: Pick<BrainEngine, 'executeRaw'>): Promise<boolean> {
-  let name = '';
-  try { name = decodeURIComponent(new URL(config.database_url ?? '').pathname.replace(/^\//, '')); } catch { return false; }
+  const name = config.database_url ? configuredDatabaseName(config.database_url) : null;
   if (!name) return false;
   const [row] = await engine.executeRaw<{ db: string }>('SELECT current_database() AS db');
   return row?.db === name;

@@ -211,6 +211,52 @@ describe.skipIf(!backends.includes('postgres'))('a Postgres role without pg_read
     }
   }, 60_000);
 
+  test('a host URL with no database path is read as the driver reads it: PGDATABASE first, then the login name', async () => {
+    const { engine, config } = await connectAs(PLAIN);
+    const dbName = decodeURIComponent(new URL(config.database_url).pathname.slice(1));
+    const pathless = (url: string, user?: string): { engine: 'postgres'; database_url: string } => {
+      const u = new URL(url); u.pathname = ''; if (user) u.username = user;
+      return { engine: 'postgres', database_url: u.toString().replace(/\/$/, '') };
+    };
+    // PGDATABASE names the database.
+    const viaEnv = pathless(config.database_url);
+    await withEnv({ PGDATABASE: dbName }, async () => withShadow(viaEnv, async () => {
+      const before = (await shadowFreshnessTokenCheck(viaEnv, engine))!;
+      expect(before).toMatchObject({ name: 'shadow_freshness_token', status: 'warn' });
+      await admin.unsafe(String(before.details!.sql));
+      try { expect(await shadowFreshnessTokenCheck(viaEnv, engine)).toMatchObject({ status: 'ok' }); } finally { await admin.unsafe(`REVOKE pg_read_all_stats FROM ${PLAIN}`); }
+      // A different PGDATABASE is another brain: silent.
+      await withEnv({ PGDATABASE: `${dbName}_other` }, async () => { expect(await shadowFreshnessTokenCheck(viaEnv, engine)).toBeNull(); });
+    }));
+  }, 60_000);
+
+  test('a host URL with no database path and no PGDATABASE names the login\'s database', async () => {
+    const { config } = await connectAs(PLAIN);
+    const pathless = (url: string, user?: string): { engine: 'postgres'; database_url: string } => {
+      const u = new URL(url); u.pathname = ''; if (user) u.username = user;
+      return { engine: 'postgres', database_url: u.toString().replace(/\/$/, '') };
+    };
+    const login = `gbrain_dbdef_${suffix}`;
+    await admin.unsafe(`CREATE ROLE ${login} LOGIN PASSWORD 'blind-example'`);
+    await admin.unsafe(`CREATE DATABASE ${login} OWNER ${login}`);
+    try {
+      const byLogin = pathless(config.database_url, login);
+      byLogin.database_url = byLogin.database_url.replace(/^(postgres(?:ql)?:\/\/)[^@]*@/, `$1${login}:blind-example@`);
+      const sql = postgres(byLogin.database_url, { max: 1, prepare: false });
+      logins.push(sql);
+      const loginEngine = { kind: 'postgres', capabilities: new Set(['postgres_admin']), executeRaw: async (query: string, params?: unknown[]) => [...(await sql.unsafe(query, params as never))], disconnect: async () => undefined } as unknown as BrainEngine;
+      await withEnv({ PGDATABASE: undefined, PGUSER: undefined, PGUSERNAME: undefined }, async () => withShadow(byLogin, async () => {
+        const before = (await shadowFreshnessTokenCheck(byLogin, loginEngine))!;
+        expect(before).toMatchObject({ name: 'shadow_freshness_token', status: 'warn' });
+        await admin.unsafe(String(before.details!.sql));
+        expect(await shadowFreshnessTokenCheck(byLogin, loginEngine)).toMatchObject({ status: 'ok' });
+      }));
+    } finally {
+      await admin.unsafe(`DROP DATABASE IF EXISTS ${login} WITH (FORCE)`).catch(() => undefined);
+      await admin.unsafe(`DROP ROLE IF EXISTS ${login}`).catch(() => undefined);
+    }
+  }, 60_000);
+
   test('a role name that needs quoting is written as the server quotes it', async () => {
     const { engine, config } = await connectAs(MIXED);
     await withShadow(config, async () => {
