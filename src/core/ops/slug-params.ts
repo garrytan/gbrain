@@ -22,6 +22,7 @@
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { normalizeSlug, withStoredSlug } from '../utils.ts';
+import { isEngineCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { storedWriteSlug } from '../persistence/legacy-slug-put.ts';
 import type { Page } from '../types.ts';
 import { opError, type Operation } from './contract.ts';
@@ -250,7 +251,11 @@ async function chooseSpelling(ctx: Ctx, op: string, params: Params, raw: string,
         if (readable(page) && (includeDeleted || !page!.deleted_at)) liveOthers.push(slug);
         if (liveOthers.length > 1) break;
       }
-    } catch { /* an engine without raw reads: no other spelling is known */ }
+    } catch (err) {
+      // An engine without raw reads (a typed capability refusal) knows no other spelling; any other failure is not
+      // "nothing found", so it reaches the fallback below, which answers the normal form.
+      if (!isEngineCapabilityRefusal(err)) throw err;
+    }
     if (liveOthers.length > 1) throw ambiguousSpelling(op, raw, liveOthers[0]!, liveOthers[1]!);
     if (liveOthers.length === 1) return { slug: liveOthers[0]!, slugs: [liveOthers[0]!] };
     const deleted = order.find(visible);

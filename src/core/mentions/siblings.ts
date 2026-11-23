@@ -18,6 +18,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { canonicalTypeOf, linkableTypesFor, loadSourcePack, readMentionPolicy, type MentionPolicy, type PackTypes } from './policy.ts';
 import { titleName } from './aliases.ts';
@@ -152,8 +153,12 @@ async function unheldFoldedSlug(engine: BrainEngine, sourceId: string, slug: str
   const { fallbackSlugify } = await import('../entities/resolve.ts');
   const folded = fallbackSlugify(slug);
   if (!folded || folded === slug) return null;
-  const held = await engine.getPage(folded, { sourceId }).catch(() => undefined);
-  return held === null ? folded : null;
+  try {
+    return (await engine.getPage(folded, { sourceId })) === null ? folded : null;
+  } catch (err) { // silent-read-ok: a folded slug whose holder cannot be read is not offered, so another entity's facts never show
+    rethrowCapabilityRefusal(err);
+    return null;
+  }
 }
 
 /** The page's bare basename, when no page sits at it or at the same basename under another entity directory. */
