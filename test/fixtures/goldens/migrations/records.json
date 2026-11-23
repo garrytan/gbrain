@@ -1,11 +1,16 @@
 {
   "golden": {
-    "count": 326,
+    "count": 327,
     "gaps": [
       17,
       18,
       19,
-      100
+      100,
+      332,
+      333,
+      334,
+      335,
+      336
     ],
     "helpers": {
       "ACTIVATION_SERVED_REVISION": "4ae2affe24656313c50011f09ed465dd8a9bc48b6d5af255ff39a06070d82e66",
@@ -108,7 +113,7 @@
       "widenIdentityIndex": "86a6176bd7637d964dbc1d3cd3b1bdfa3ca0161e1ee248c37d7380a1471282e6",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 331,
+    "latest": 337,
     "records": [
       {
         "handler": {
@@ -3487,8 +3492,8 @@
         "idempotent": true,
         "name": "write_gate",
         "sql": {
-          "length": 2797,
-          "sha256": "2a3434eded166927c0c55b55cb7465cb10494a55404fd6ad9b2b92c72b7f5d17"
+          "length": 3219,
+          "sha256": "684da647e5b6a855dcb21dde674d9f57baf52441031a45cd0c1f3ce44de0b02a"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -5408,6 +5413,19 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 331
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "hold_page_id",
+        "sql": {
+          "length": 4043,
+          "sha256": "3c6d3c854675981fc95dac27accbc87cd9f859f91540df5a753ac929ab14a590"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 337
       }
     ],
     "versions": [
@@ -5736,7 +5754,8 @@
       328,
       329,
       330,
-      331
+      331,
+      337
     ]
   },
   "normalizer": "migrations-record-v1"

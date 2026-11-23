@@ -2773,9 +2773,13 @@ CREATE TABLE IF NOT EXISTS write_gate_holds (
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
   last_seen_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   decided_at       TIMESTAMPTZ,
-  decided_by       TEXT
+  decided_by       TEXT,
+  page_id          BIGINT,
+  page_candidates  BIGINT[]
 );
-CREATE UNIQUE INDEX IF NOT EXISTS write_gate_holds_dedupe_idx ON write_gate_holds (source_id, slug, fingerprint, detector_version);
+CREATE UNIQUE INDEX IF NOT EXISTS write_gate_holds_bound_dedupe_idx ON write_gate_holds (source_id, page_id, fingerprint, detector_version) WHERE page_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS write_gate_holds_unbound_dedupe_idx ON write_gate_holds (source_id, slug, fingerprint, detector_version) WHERE page_id IS NULL AND page_candidates IS NULL;
+CREATE INDEX IF NOT EXISTS write_gate_holds_page_idx ON write_gate_holds (source_id, page_id) WHERE status = 'held' AND page_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS write_gate_holds_status_idx ON write_gate_holds (status, source_id, id);
 DO \$rls\$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
