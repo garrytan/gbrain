@@ -20,6 +20,11 @@ import { setOwner } from '../../src/core/access/owner.ts';
 import { proposeRevision } from '../../src/core/access/policy.ts';
 import { remoteCallerAccess } from '../../src/core/access/caller.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { bindCredential } from '../../src/core/access/members.ts';
+import { mintLegacyToken } from '../../src/core/token-mint.ts';
+import { GBrainOAuthProvider } from '../../src/core/oauth-provider.ts';
+import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
+import type { AuthInfo } from '../../src/core/ops/contract.ts';
 
 const { parityTest, arms } = parityArms(testBackends());
 const SRC = 'work';
@@ -38,11 +43,20 @@ async function seed(engine: BrainEngine, backend: ParityBackend): Promise<void> 
     { id: 'bob-diary', prefix: 'private/bob/', readable_by: ['member:bob-example'] }], { origin: 'cli', store: 'database' });
 }
 
-/** What a stdio server bound to `member` reads: the core page list and each page by slug. */
-async function readAs(engine: BrainEngine, member: string): Promise<unknown> {
-  await engine.setConfig('mcp.stdio_member', member);
+/**
+ * What `member` reads: the core page list and each page by slug, through a stdio server bound to it, or (`token`)
+ * through a legacy token bound to it that the serve --http bearer check verified.
+ */
+async function readAs(engine: BrainEngine, member: string, door: 'stdio' | 'token' = 'stdio'): Promise<unknown> {
+  await engine.setConfig('mcp.stdio_member', door === 'stdio' ? member : '');
   try {
-    const access = await remoteCallerAccess(engine, undefined, [], 'stdio');
+    let auth: AuthInfo | undefined;
+    if (door === 'token') {
+      const minted = await mintLegacyToken(engine, { name: `key-${member}`, scopes: ['read'], takesHolders: ['world'], sourceGrant: [SRC] });
+      await bindCredential(engine, { kind: 'token', id: minted.id }, { member });
+      auth = await new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), engine }).verifyAccessToken(minted.token) as unknown as AuthInfo;
+    }
+    const access = await remoteCallerAccess(engine, auth, [], door === 'stdio' ? 'stdio' : 'http');
     return await withCallerAccess(access, async () => ({
       core: (await engine.listCorePageRows({ excludePrivate: true, forCaller: true, limit: 50 })).map(r => r.slug).sort(),
       pages: (await Promise.all(SLUGS.map(async s => (await engine.getPage(s, { sourceId: SRC, excludePrivate: true })) ? s : null))).filter(Boolean),
@@ -54,10 +68,12 @@ async function readAs(engine: BrainEngine, member: string): Promise<unknown> {
 
 describe('engine parity: a plain member reads what it may', () => {
   parityTest('a plain member reads open pages, pages that name it and its folder, and none of another member\'s; labelledOnlyFor names only the grant', {
-    methods: ['putPage', 'listCorePageRows', 'getPage', 'readAccessMembers', 'getConfig', 'setAccessMemberLabelledOnly'],
+    methods: ['putPage', 'listCorePageRows', 'getPage', 'readAccessMembers', 'getConfig', 'setAccessMemberLabelledOnly', 'readActiveAccessTokenByHash'],
   }, async (engine, backend) => {
     await seed(engine, backend);
-    const out: Record<string, unknown> = { alice: await readAs(engine, 'alice-example'), bob: await readAs(engine, 'bob-example') };
+    const out: Record<string, unknown> = { alice: await readAs(engine, 'alice-example'), bob: await readAs(engine, 'bob-example'),
+      bobByToken: await readAs(engine, 'bob-example', 'token') };
+    expect(out.bobByToken).toEqual({ core: ['notes/bob-labelled', 'notes/open', 'private/bob/diary'], pages: ['notes/open', 'notes/bob-labelled', 'private/bob/diary'] });
     expect(out.alice).toEqual({ core: ['notes/alice-labelled', 'notes/open', 'private/alice/diary'], pages: ['notes/open', 'notes/alice-labelled', 'private/alice/diary'] });
     await setMemberLabelledOnly(engine, 'carol-example', true, { remote: false });
     await setOwner(engine, 'owner-example');
