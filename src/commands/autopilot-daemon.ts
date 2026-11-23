@@ -72,6 +72,15 @@ export interface AutopilotDaemonState {
   freshnessHeads: Map<string, string>;
 }
 
+/**
+ * Whether the daemon dispatches cycles as Minion jobs: the user has not turned minions off, the brain is Postgres (the
+ * only engine whose separate worker process can run them) and `--inline` is absent. A Rust or PGLite brain runs its
+ * steps inline, so the no-worker probe, the fan-out cooldown read and the auto-drain submit never run on one.
+ */
+export function autopilotUsesMinionsDispatch(mode: string, engineType: string, forceInline: boolean): boolean {
+  return mode !== 'off' && engineType === 'postgres' && !forceInline;
+}
+
 export async function runAutopilotDaemon(engine: BrainEngine, args: string[]): Promise<void> {
   const repoPath = parseArg(args, '--repo') || await engine.getConfig('sync.repo_path');
   // Same NaN guard as the status path: a typo'd interval would otherwise
@@ -122,7 +131,7 @@ export async function runAutopilotDaemon(engine: BrainEngine, args: string[]): P
   const mode = loadPreferences().minion_mode ?? 'pain_triggered';
   const cfg = loadConfig();
   const engineType = cfg?.engine ?? 'pglite';
-  const useMinionsDispatch = mode !== 'off' && engineType === 'postgres' && !forceInline;
+  const useMinionsDispatch = autopilotUsesMinionsDispatch(mode, engineType, forceInline);
   const spawnManagedWorker = useMinionsDispatch && !noWorker;
 
   // Engine identity at boot, re-checked every tick. A cross-engine migration
@@ -580,7 +589,7 @@ async function probeDatabaseOrReconnect(
 const NO_WORKER_WARN_TICKS = 3;
 
 /** --no-worker peer-liveness probe (v0.19.1); see NO_WORKER_WARN_TICKS. */
-async function probeNoWorkerPeer(engine: BrainEngine, state: AutopilotDaemonState, baseInterval: number): Promise<void> {
+export async function probeNoWorkerPeer(engine: BrainEngine, state: AutopilotDaemonState, baseInterval: number): Promise<void> {
     try {
       const rows = await (engine as any).executeRaw?.(
         `SELECT count(*)::int AS n FROM minion_jobs
