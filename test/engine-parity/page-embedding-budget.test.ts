@@ -44,6 +44,22 @@ function view(reservation: Awaited<ReturnType<BrainEngine['reservePageEmbedding'
   return { ...rest, window: window !== null };
 }
 
+/**
+ * What a refused hold was refused for, one name per arm's code: no such page is PGLite's foreign-key error (23503) and
+ * the Rust store's `page_not_found`; a NUL byte in the reason is PGLite's 22021 and the Rust store's `invalid_argument`.
+ */
+async function refusal(run: Promise<void>): Promise<string> {
+  try {
+    await run;
+    return 'stored';
+  } catch (error) {
+    const code = String((error as { code?: unknown }).code);
+    if (code === '23503' || code === 'page_not_found') return 'page_not_found';
+    if (code === '22021' || code === 'invalid_argument') return 'invalid_text';
+    return `other:${code}`;
+  }
+}
+
 const ROW = { marker: null, state: 'open', reason: null, embedding_signature: 'model-a:1536', spent_usd: 0, reserved_usd: 0, cap_usd: null, unpriced_calls: 0, window: false };
 
 describe('engine parity: page embedding ledger', () => {
@@ -145,6 +161,77 @@ describe('engine parity: page embedding ledger', () => {
       held: { kind: 'held', reason: 'markup_ratio' },
       row: { ...ROW, state: 'held', reason: 'markup_ratio', embedding_signature: null },
       stillHeld: { kind: 'held', reason: 'markup_ratio' },
+    });
+    return answers;
+  });
+
+  parityTest('holdPageEmbedding is an upsert: it holds a page with no row, replaces a held reason, re-holds an open row and keeps the spend columns', {
+    methods: ['putPage', 'getPage', 'holdPageEmbedding', 'recordPageEmbeddingHold', 'openPageEmbeddingHold', 'reservePageEmbedding', 'readPageEmbeddingBudget'],
+  }, async (engine) => {
+    for (const slug of ['notes/fresh', 'notes/held', 'notes/open', 'notes/spent']) await engine.putPage(slug, NOTE);
+    const fresh = await idOf(engine, 'notes/fresh');
+    const held = await idOf(engine, 'notes/held');
+    const open = await idOf(engine, 'notes/open');
+    const spent = await idOf(engine, 'notes/spent');
+    await engine.holdPageEmbedding(fresh, 'awaiting_approval');
+    const freshRow = await ledger(engine, fresh);
+    await engine.recordPageEmbeddingHold(held, 'call_import');
+    await engine.holdPageEmbedding(held, 'archive_backfill');
+    const heldRow = await ledger(engine, held);
+    await engine.recordPageEmbeddingHold(open, 'call_import');
+    await engine.openPageEmbeddingHold(open);
+    const openedRow = await ledger(engine, open);
+    await engine.holdPageEmbedding(open, 'archive_open_day');
+    const reheldRow = await ledger(engine, open);
+    await engine.reservePageEmbedding(spent, { ...OPEN, chunks: CHUNKS });
+    const reservedRow = await ledger(engine, spent);
+    await engine.holdPageEmbedding(spent, 'awaiting_approval');
+    const spentRow = await ledger(engine, spent);
+    const answers = { freshRow, heldRow, openedRow, reheldRow, reservedRow, spentRow };
+    expect(answers as unknown).toEqual({
+      freshRow: { ...ROW, state: 'held', reason: 'awaiting_approval', embedding_signature: null },
+      heldRow: { ...ROW, state: 'held', reason: 'archive_backfill', embedding_signature: null },
+      openedRow: { ...ROW, embedding_signature: null },
+      reheldRow: { ...ROW, state: 'held', reason: 'archive_open_day', embedding_signature: null },
+      reservedRow: { ...ROW, reserved_usd: 0.875, window: true },
+      spentRow: { ...ROW, state: 'held', reason: 'awaiting_approval', reserved_usd: 0.875, window: true },
+    });
+    return answers;
+  });
+
+  parityTest('holdPageEmbedding on an unknown page refuses as page_not_found and leaves no row', {
+    methods: ['putPage', 'getPage', 'holdPageEmbedding', 'readPageEmbeddingBudget'],
+  }, async (engine) => {
+    await engine.putPage('notes/known', NOTE);
+    const known = await idOf(engine, 'notes/known');
+    const refused = await refusal(engine.holdPageEmbedding(987654321, 'awaiting_approval'));
+    const missing = await engine.readPageEmbeddingBudget(987654321);
+    const knownRow = await ledger(engine, known);
+    const answers = { refused, missing, knownRow };
+    expect(answers as unknown).toEqual({
+      refused: 'page_not_found',
+      missing: { marker: null, state: null, reason: null, embedding_signature: null, spent_usd: null, reserved_usd: null, cap_usd: null, unpriced_calls: null, reservation_window: null },
+      knownRow: { ...ROW, state: null, embedding_signature: null, spent_usd: null, reserved_usd: null, unpriced_calls: null },
+    });
+    return answers;
+  });
+
+  parityTest('holdPageEmbedding refuses a reason with a NUL byte and keeps the row it had', {
+    methods: ['putPage', 'getPage', 'holdPageEmbedding', 'readPageEmbeddingBudget'],
+  }, async (engine) => {
+    await engine.putPage('notes/nul', NOTE);
+    const id = await idOf(engine, 'notes/nul');
+    const refusedFirst = await refusal(engine.holdPageEmbedding(id, 'bad\0reason'));
+    const none = await ledger(engine, id);
+    await engine.holdPageEmbedding(id, 'awaiting_approval');
+    const refusedAgain = await refusal(engine.holdPageEmbedding(id, 'worse\0reason'));
+    const kept = await ledger(engine, id);
+    const answers = { refusedFirst, none, refusedAgain, kept };
+    expect(answers as unknown).toEqual({
+      refusedFirst: 'invalid_text',
+      none: { ...ROW, state: null, embedding_signature: null, spent_usd: null, reserved_usd: null, unpriced_calls: null },
+      refusedAgain: 'invalid_text',
+      kept: { ...ROW, state: 'held', reason: 'awaiting_approval', embedding_signature: null },
     });
     return answers;
   });

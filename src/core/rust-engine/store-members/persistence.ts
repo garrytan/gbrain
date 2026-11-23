@@ -1,6 +1,6 @@
 /**
  * The write-journal members the Rust store answers: the state reads (readManagedModeRows, readLocalWriterRow,
- * insertLocalWriterRow, readJournalLimitRows; the held-file reads are in sync-hold-store.ts), the request rows the put path
+ * insertLocalWriterRow, revokeLocalWriterRow, readJournalLimitRows; the held-file reads are in sync-hold-store.ts), the request rows the put path
  * reads and writes (readWriteRequest, readWriteRequestById, listWriteRequestRows, readWriteRequestProgress, countOutstandingBySource, ownsSchemaTables, readOAuthClientWriteGrant, readAccessTokenWriteGrant, shareLockWriteCredential, readCounterRows, readAdmissionRate, lockPersistenceCounters, insertWriteRequest,
  * insertWriteRequestGroup, readWriteRequestsByRequestIds, readOwnerHostBinding,
  * stampWriteClaim, lockWriteRequest, completeWriteRow, cancelWriteRow), the claim upkeep (renewWriteClaim, expireStaleWriteClaims,
@@ -25,13 +25,15 @@ import type { SourceStateRow } from '../../engine-sql/write-misc.ts';
 import type { SourceCheckoutRoot, UnembeddedPageSummary, WriteWatermarkRow } from '../../engine-sql/applied-watermark-reads.ts';
 import type { SourceDetailRow } from '../../engine.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
+import type { DreamDeferralReceipt } from '../../engine-sql/dream-cycle.ts';
 import { PAGE_BODY_CONFIG_KEYS } from '../../page-body/limits.ts';
-import { requestRow, topologyRow } from '../store-codec.ts';
+import { requestRow, topologyRow, uuidText, withDates } from '../store-codec.ts';
 import { withdrawalEffectsData } from '../../engine-sql/persistence-journal.ts';
 import { requireTextColumn, storeCall, type StoreMember } from './common.ts';
-import { readBrainMode } from './writer-release.ts';
 import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
+import { readOauthClient } from './jobs-oauth-clients.ts';
+import { readBrainMode } from './writer-release.ts';
 // The managed-worktree admission members (managed_persistence), served beside the journal's.
 export * from './persistence-admission.ts';
 
@@ -57,6 +59,10 @@ export const insertLocalWriterRow: StoreMember<[row: LocalWriterInsert], boolean
   storeCall({ member: 'insertLocalWriterRow' }, () => brain.insertLocalWriterRow({
     id: row.id, lane: row.lane, credentialHash: row.credentialHash, grantCeiling: row.grant,
   }));
+
+/** Revokes a local writer, keeping an earlier revocation time; true when the store holds the registration. */
+export const revokeLocalWriterRow: StoreMember<[id: string], boolean> = (brain, id) =>
+  storeCall({ member: 'revokeLocalWriterRow' }, () => brain.revokeLocalWriter(id));
 
 /** `config` keys `LIKE 'persistence.limits.%'`: the prefix, then anything (no `_` in it, so no single-character wildcard). */
 const LIMITS_PREFIX = 'persistence.limits.';
@@ -143,12 +149,21 @@ export const countOutstandingBySource: StoreMember<[principalKind: string, princ
 export const ownsSchemaTables: StoreMember<[], boolean> = async () => true;
 
 /**
- * The Rust store keeps no OAuth clients or legacy access tokens (its writers are local_cli and local_stdio), so a
- * write owned by either finds no live grant row, as a Postgres or PGLite brain without that credential does.
+ * The grant row of the OAuth client or legacy access token that owns a write, deleted or revoked rows included (the
+ * caller reads `deleted_at` and `revoked_at`, as Dates), or null; gbrain-store `jobs::credential_binding`. `lock`
+ * changes nothing: the store runs one write transaction at a time, so no revocation can land between the read and the
+ * write.
  */
-export const readOAuthClientWriteGrant: StoreMember<[clientId: string, opts?: { lock?: boolean }], OAuthClientWriteGrant | null> = async () => null;
-export const readAccessTokenWriteGrant: StoreMember<[tokenId: string, opts?: { lock?: boolean }], AccessTokenWriteGrant | null> = async () => null;
-/** No credential row exists to hold, so the lock holds nothing (a missing row locks nothing on Postgres either). */
+export const readOAuthClientWriteGrant: StoreMember<[clientId: string, opts?: { lock?: boolean }], OAuthClientWriteGrant | null> = async (brain, clientId) => {
+  const row = await storeCall({ member: 'readOAuthClientWriteGrant' }, () => brain.readOauthClientWriteGrant(clientId)) as OAuthClientWriteGrant | null;
+  return row ? withDates(row, ['deleted_at']) : null;
+};
+export const readAccessTokenWriteGrant: StoreMember<[tokenId: string, opts?: { lock?: boolean }], AccessTokenWriteGrant | null> = async (brain, tokenId) => {
+  const id = uuidText(tokenId);
+  const row = await storeCall({ member: 'readAccessTokenWriteGrant' }, () => brain.readAccessTokenWriteGrant(id)) as AccessTokenWriteGrant | null;
+  return row ? withDates(row, ['revoked_at']) : null;
+};
+/** The store runs one write transaction at a time, so the share lock has nothing to hold off. */
 export const shareLockWriteCredential: StoreMember<[kind: 'oauth_client' | 'legacy_token', id: string], void> = async () => {};
 
 /** The existing counter rows of `keys` in key byte order (`COLLATE "C"`), unlocked; a missing key has no row. */
@@ -224,6 +239,12 @@ export const stampWriteClaim: StoreMember<[id: string, token: string, leaseMs: n
 export const completeWriteRow: StoreMember<[completion: WriteCompletion], CompletedWriteRow | null> = async (brain, completion) =>
   requestRow<CompletedWriteRow>(await storeCall({ member: 'completeWriteRow' }, () => brain.completeWriteRow(completion)));
 
+/** The cancellation in one store write: the read, the check and the completion; null when the row does not exist. */
+export const cancelWriteRow: StoreMember<[cancel: WriteCancellation], WriteCancelResult | null> = async (brain, cancel) => {
+  const result = await storeCall({ member: 'cancelWriteRow' }, () => brain.cancelWriteRow(cancel)) as { status: WriteCancelResult['status']; row: unknown } | null;
+  return result ? { status: result.status, row: requestRow<CompletedWriteRow>(result.row)! } as WriteCancelResult : null;
+};
+
 /**
  * The requests with these ids in id order (uuid order is the order of their lowercase text), each once; an unknown id reads
  * nothing. FOR UPDATE changes nothing in one store write (see the header).
@@ -264,12 +285,6 @@ export const insertPublicationEffects: StoreMember<[spec: PublicationEffectsSpec
 export const insertWithdrawalEffects: StoreMember<[spec: WithdrawalEffectsSpec], void> = async (brain, spec) => {
   await storeCall({ member: 'insertWithdrawalEffects' }, () => brain.insertWithdrawalEffects({ requestId: spec.requestId, sourceId: spec.sourceId,
     data: withdrawalEffectsData(spec) }));
-};
-
-/** The cancellation in one store write: the read, the check and the completion; null when the row does not exist. */
-export const cancelWriteRow: StoreMember<[cancel: WriteCancellation], WriteCancelResult | null> = async (brain, cancel) => {
-  const result = await storeCall({ member: 'cancelWriteRow' }, () => brain.cancelWriteRow(cancel)) as { status: WriteCancelResult['status']; row: unknown } | null;
-  return result ? { status: result.status, row: requestRow<CompletedWriteRow>(result.row)! } as WriteCancelResult : null;
 };
 
 /** Extends a claim's lease; true while request `id` is running under `token`. */
@@ -322,7 +337,7 @@ export const stampWorktreeHeartbeats: StoreMember<[hostId: string, opts?: { sign
 };
 
 /** A source's incarnation and archive flag, or null. FOR SHARE changes nothing in one store write. */
-export const readSourceMembership: StoreMember<[sourceId: string, opts?: { lock?: boolean }], SourceMembership | null> = (brain, sourceId) =>
+export const readSourceMembership: StoreMember<[sourceId: string, opts?: { lock?: boolean | 'update' }], SourceMembership | null> = (brain, sourceId) =>
   storeCall({ member: 'readSourceMembership' }, () => brain.readSourceMembership(sourceId));
 
 /** The first of `requestIds` a lifecycle change of local writer `principalId` used, as `[{ request_id }]`, or []. */
@@ -344,7 +359,7 @@ export const insertTopologyChange: StoreMember<[row: TopologyChangeInsert], Topo
 /**
  * The belief ledger's view of a source (trust/belief_history.rs): its incarnation, purge epoch and newest coverage
  * event, and whether a fact, take or page purge tombstone or a raised epoch makes a purge possible. A batch also
- * returns the brain row with its stored mode (writer-release.ts) and the plan-cache mode it replaced: inside a transaction with coverage active it
+ * returns the one unmanaged brain row and the plan-cache mode it replaced: inside a transaction with coverage active it
  * sets the transaction's `plan_cache_mode` to `force_generic_plan` (store-members/transactions.ts keeps it), as the SQL
  * batch does with `set_config`. The store has no planner, so the setting changes nothing else.
  */
@@ -355,7 +370,7 @@ export const readLedgerSource = async function readLedgerSource(this: RustEngine
   const scope = this._txScope && !this._txScope.ended ? this._txScope : null;
   const planModePrev = scope?.settings.get(PLAN_CACHE_SETTING) ?? PLAN_CACHE_MODE;
   if (scope && row.coverage !== null && row.coverage !== 'coverage.stopped') scope.settings.set(PLAN_CACHE_SETTING, 'force_generic_plan');
-  return { ...row, managedRows: [{ enabled: (await readBrainMode(brain, 'readLedgerSource')).enabled }], planModePrev };
+  return { ...row, managedRows: [{ enabled: false }], planModePrev };
 };
 
 /** The sources with a coverage event about the subject in their current incarnation, by id. */

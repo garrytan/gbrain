@@ -4,14 +4,15 @@
  *
  * 1. Protects: a probe failure other than a missing pages table is a warn through checkError.
  * 2. Fails when: either catch goes back to an unconditional status: 'ok'.
- * 3. Real seams: the quarantineEntry doctor runner with an engine whose executeRaw rejects.
+ * 3. Real seams: the quarantineEntry doctor runner with an engine whose probe (countMarkedPages, and executeRaw) rejects.
  */
 import { describe, expect, test } from 'bun:test';
 import { quarantineEntry } from '../src/commands/doctor/checks/content-quality.ts';
 import type { Check } from '../src/commands/doctor.ts';
 
 async function run(err: Error): Promise<Check[]> {
-  const engine = { kind: 'postgres', executeRaw: async () => { throw err; } };
+  // The probe is the typed countMarkedPages member (engine-sql/doctor-pages.ts); executeRaw rejects too, as before.
+  const engine = { kind: 'postgres', executeRaw: async () => { throw err; }, countMarkedPages: async () => { throw err; } };
   return await quarantineEntry.run({ engine, orphanRatioSourceId: undefined, progress: { heartbeat() {} } } as never) as Check[];
 }
 

@@ -504,7 +504,7 @@ export async function runAgentRegister(engine: BrainEngine | null, args: string[
     if (!federated.includes(preset.writeSource)) federated.push(preset.writeSource);
 
     // Column pre-flight: OUTSIDE the tx (25P02 — nothing inside may degrade).
-    const columns = await preflightOauthClientColumns(sql);
+    const columns = await preflightOauthClientColumns(engine);
     // Pre-v61 brains lack the scoped-client columns entirely; refuse BEFORE
     // the tx — registerClientManual's own 42703 retry ladder would die on
     // 25P02 inside our transaction.
@@ -564,6 +564,8 @@ export async function runAgentRegister(engine: BrainEngine | null, args: string[
         surface: preset.surface,
         surfaceSetBy: preset.surfaceSetBy,
         columns,
+        // The transaction's engine, so the client, its audit row and the surface write go through typed members.
+        engine: tx,
       });
     });
     registered.created.source = createdWorkspace;

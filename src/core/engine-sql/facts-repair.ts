@@ -59,7 +59,7 @@ export async function listSessionFactsForClassification(raw: EngineRawRead, sour
       FROM facts f
      WHERE f.source_id=ANY($1::text[]) AND f.source=ANY($2::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL
        AND (f.attributed_to IS NULL OR f.attributed_to='user') AND ($3::bigint[] IS NULL OR f.id=ANY($3::bigint[]))
-     ORDER BY f.source_id, f.id`, [sourceIds, lanes, ids]);
+     ORDER BY f.source_id COLLATE "C", f.id`, [sourceIds, lanes, ids]);
 }
 
 export interface SessionFactTwinRow { id: number | string; owner_twin: boolean; twin_sessions: Array<string | null> | null }
@@ -99,7 +99,7 @@ export async function listCapturedFactsForClassification(raw: EngineRawRead, sou
       FROM facts f
      WHERE f.source_id=ANY($1::text[]) AND f.source=ANY($2::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL
        AND ($3::bigint[] IS NULL OR f.id=ANY($3::bigint[]))
-     ORDER BY f.source_id, f.id`, [sourceIds, lanes, ids]);
+     ORDER BY f.source_id COLLATE "C", f.id`, [sourceIds, lanes, ids]);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -154,6 +154,7 @@ export interface ExtractorFactRow {
 
 /** Expired fenceless extractor facts of these sources (or of one page) with the page, withdrawal, duplicate, fence and receipt evidence, in (source, page, id) order. */
 export async function listExtractorFactsForClassification(raw: EngineRawRead, sourceIds: string[], slug: string | null): Promise<ExtractorFactRow[]> {
+  // The receipts CTE order never reaches output: DISTINCT ON picks by completed_at and sequence, and the outer ORDER BY below is what callers see.
   const { text, params } = renderFragment(sqlFragment`
     WITH cand AS (
       SELECT f.id, f.source_id, f.source_markdown_slug AS slug, f.fact, f.visibility, f.entity_slug, f.expired_at AS expired,
@@ -191,7 +192,7 @@ export async function listExtractorFactsForClassification(raw: EngineRawRead, so
       LEFT JOIN pages p ON p.source_id=c.source_id AND p.slug=c.slug
       LEFT JOIN receipts r ON r.source_id=c.source_id AND r.slug=c.slug AND r.completed_at=c.expired
       LEFT JOIN fenced ON fenced.source_id=c.source_id AND fenced.slug=c.slug
-     ORDER BY c.source_id, c.slug, c.id`);
+     ORDER BY c.source_id COLLATE "C", c.slug COLLATE "C", c.id`);
   return raw<ExtractorFactRow>(text, params);
 }
 
@@ -318,7 +319,7 @@ export async function listClosedConsolidationTies(raw: EngineRawRead, sourceIds:
       FROM facts f
      WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.claim_metric IS NOT NULL
        AND f.consolidated_into IS NOT NULL AND f.valid_until = f.valid_from AND f.entity_slug IS NOT NULL
-     ORDER BY f.source_id, f.id`, [sourceIds]);
+     ORDER BY f.source_id COLLATE "C", f.id`, [sourceIds]);
 }
 
 export interface PagelessEntityRow { source_id: string; slug: string; ids: Array<number | string> | null; fenced: number | string }
@@ -333,7 +334,7 @@ export async function listPagelessEntityFacts(raw: EngineRawRead, sourceIds: str
      WHERE f.source_id = ANY($1::text[]) AND f.entity_slug IS NOT NULL
        AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)
      GROUP BY f.source_id, f.entity_slug
-     ORDER BY f.source_id, f.entity_slug`, [sourceIds]);
+     ORDER BY f.source_id COLLATE "C", f.entity_slug COLLATE "C"`, [sourceIds]);
 }
 
 /** The expiry instant as UTC text with microseconds; a bound timestamp parameter can lose them. */
@@ -384,7 +385,7 @@ export async function listDuplicateFactRows(raw: EngineRawRead, sourceIds: strin
        WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
          AND f.superseded_by IS NULL AND COALESCE(f.source, '') <> ALL($2::text[])
     ) d WHERE d.n > 1
-    ORDER BY d.source_id, d.visibility, d.fp, d.speaker, d.fenced DESC, d.created_at, d.id`, [sourceIds, excludedSources]);
+    ORDER BY d.source_id COLLATE "C", d.visibility COLLATE "C", d.fp COLLATE "C", d.speaker COLLATE "C", d.fenced DESC, d.created_at, d.id`, [sourceIds, excludedSources]);
   return rows.map(r => ({ id: r.id, source_id: r.source_id, visibility: r.visibility, fp: r.fp, fact: r.fact, entity_slug: r.entity_slug, fenced: r.fenced,
     row_num: r.row_num, source_markdown_slug: r.source_markdown_slug, speaker: r.speaker }));
 }
@@ -446,7 +447,7 @@ export async function listFactsHomeCandidates(raw: EngineRawRead, sourceId: stri
   return raw<FactsHomeCandidateRow>(`SELECT f.id, f.source_id, f.entity_slug, f.fact, f.kind, f.visibility, f.notability, f.context, f.valid_from, f.valid_until, f.source,
   f.confidence, f.claim_metric, f.claim_value, f.claim_unit, f.claim_period, f.attributed_to, f.dimension, EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.entity_slug AND p.deleted_at IS NULL) AS page_exists,
     EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.entity_slug AND p.deleted_at IS NOT NULL) AS page_deleted FROM facts f
-    WHERE f.source_id=$1 AND f.row_num IS NULL AND f.expired_at IS NULL ORDER BY f.entity_slug NULLS FIRST, f.id`, [sourceId]);
+    WHERE f.source_id=$1 AND f.row_num IS NULL AND f.expired_at IS NULL ORDER BY f.entity_slug COLLATE "C" NULLS FIRST, f.id`, [sourceId]);
 }
 
 export type HeldHomeRow = UnfencedFactRow & { held_since: string; old: boolean; from_slug: string };
@@ -457,7 +458,7 @@ export async function listHeldHomeRows(raw: EngineRawRead, sourceId: string, day
   f.confidence, f.claim_metric, f.claim_value, f.claim_unit, f.claim_period, f.attributed_to, EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.entity_slug AND p.deleted_at IS NULL) AS page_exists, f.source_markdown_slug AS from_slug,
       to_char(f.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS held_since, f.created_at < now() - ($2 || ' days')::interval AS old
      FROM facts f WHERE f.source_id=$1 AND f.source_markdown_slug IN (SELECT hp.slug FROM pages hp WHERE hp.source_id = $1 AND (hp.slug = 'memory/unattributed' OR hp.slug LIKE '%/memory/unattributed')) AND f.row_num IS NOT NULL AND f.expired_at IS NULL AND f.dimension IS NULL
-      AND f.entity_slug IS NOT NULL AND NOT (f.entity_slug = 'memory/unattributed' OR f.entity_slug LIKE '%/memory/unattributed') ORDER BY f.entity_slug, f.id`, [sourceId, String(days)]);
+      AND f.entity_slug IS NOT NULL AND NOT (f.entity_slug = 'memory/unattributed' OR f.entity_slug LIKE '%/memory/unattributed') ORDER BY f.entity_slug COLLATE "C", f.id`, [sourceId, String(days)]);
 }
 
 /** The active fence rows of a source whose page is not live, with that page's slug, by id. */
@@ -539,7 +540,7 @@ export async function listNamedVisibilityRows(raw: EngineRawRead, sourceIds: str
 
 /** The ids of the sources that are not archived, in id order (the repair preview command names `--source` when more than one). */
 export async function listActiveSourceIds(raw: EngineRawRead): Promise<Array<{ id: string }>> {
-  return raw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id');
+  return raw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id COLLATE "C"');
 }
 
 /** The brain id a repair preview hashes, or null when the brain has no `persistence_brain` row (the callers fall back to `host`). */

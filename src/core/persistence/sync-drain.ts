@@ -1241,11 +1241,7 @@ export interface ManagedSyncBacklog {
  * a legacy cursor entry of the same source.
  */
 export async function readManagedSyncBacklog(engine: BrainEngine, sourceIds?: string[]): Promise<ManagedSyncBacklog[]> {
-  const rows = await engine.executeRaw<{ header: { sourceId: string; index: number; total: number; done?: boolean; discoveredAt?: string; progress?: { startedAt: number; startIndex: number; lastAt: number; lastIndex: number };
-    counts?: { held?: number }; processingOptions?: { noEmbed?: boolean; noExtract?: boolean; noSchemaPack?: boolean }; syncOptions?: Parameters<typeof managedSyncResumeArgs>[0]['syncOptions'] } }>(
-    `SELECT completed_keys->0 AS header FROM op_checkpoints WHERE op='managed-sync' AND COALESCE(completed_keys->0->>'done','false')<>'true'
-      AND EXISTS (SELECT 1 FROM sources s WHERE s.id = completed_keys->0->>'sourceId'
-        AND s.incarnation::text = COALESCE(completed_keys->0->>'incarnation', s.incarnation::text))`);
+  const rows = (await engine.listManagedSyncBacklogHeaders()).map(header => ({ header }));
   const { readPassReadings, passResumeArgs, passStuck, passStuckSince } = await import('./sync-pass-readers.ts');
   const passes: ManagedSyncBacklog[] = (await readPassReadings(engine, { sourceIds })).filter(r => !r.health.nothing_pending).map(({ source_id, row, head, health }) => {
     const t = row.value.telemetry, args = passResumeArgs(source_id, row), stuck = passStuck(health) ? health.reason as 'blocked' | 'not_converged' | 'settle_mismatch' : null;

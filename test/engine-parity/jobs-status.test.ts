@@ -326,6 +326,28 @@ describe('engine parity: minion status reads', () => {
       return { day: rel(await engine.listRecentFailedJobErrors(DAY)), recent: rel(await engine.listRecentFailedJobErrors(WINDOW)), zero: await engine.listRecentFailedJobErrors(0), late: late - first };
     });
 
+  // A pin, not a fix: no admit path writes the three budget columns on any engine (engine-sql/jobs.ts INSERT_COLUMNS
+  // names none of them; their only writer, minions/budget-tracker.ts, was removed in v0.59.20.0). The Rust store
+  // refuses listBudgetOwners by name if a row ever owns a budget, so the answer below is never a silent [].
+  parityTest('listBudgetOwners: a job admitted with budget-shaped data owns no budget, and its budget columns stay null',
+    { methods: ['admitJob', 'claimNextJob', 'getJob', 'listBudgetOwners'] }, async (engine) => {
+      const before = await engine.listBudgetOwners();
+      const budgetShaped = { budget_remaining_cents: 500, budget_owner_job_id: 1, budget_root_owner_id: 1 };
+      const waiting = await add(engine, 'work', { data: budgetShaped });
+      const running = await active(engine, 'budgeted', { data: budgetShaped });
+      const columns = async (id: number) => {
+        const row = await engine.getJob(id) as Record<string, unknown> | null;
+        // A column the row does not carry reads 'absent', so a missing column never passes as null.
+        const col = (k: string) => (row && k in row ? row[k] : 'absent');
+        return { budget_remaining_cents: col('budget_remaining_cents'), budget_owner_job_id: col('budget_owner_job_id'),
+          budget_root_owner_id: col('budget_root_owner_id'), status: row?.status };
+      };
+      const got = { before, after: await engine.listBudgetOwners(), waiting: await columns(waiting), running: await columns(running) };
+      const none = { budget_remaining_cents: null, budget_owner_job_id: null, budget_root_owner_id: null };
+      expect(got).toEqual({ before: [], after: [], waiting: { ...none, status: 'waiting' }, running: { ...none, status: 'active' } });
+      return got;
+    });
+
   parityTest('readQueuedPageChars averages the capped text length of the pages waiting or delayed drain jobs point at',
     { methods: ['admitJob', 'claimNextJob', 'putPage', 'softDeletePage', 'readQueuedPageChars'] }, async (engine) => {
       const page = (title: string, size: number): PageInput => ({ type: 'note', title, compiled_truth: 'a'.repeat(size), timeline: '' });

@@ -45,6 +45,14 @@ import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, sa
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
 import { requireRawSql } from '../rust-engine/errors.ts';
 
+/** The expiry instant as UTC text with microseconds; a bound timestamp parameter can lose them. */
+export const EXPIRY_TEXT = (column: string) => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+
+/** An observation with the same dedup key as `f` once its provenance is restored (the ontology unique index). */
+export const DUPLICATE_SQL = (f: string) => `EXISTS (SELECT 1 FROM facts d WHERE d.source_id=${f}.source_id AND d.entity_slug=${f}.entity_slug
+  AND d.dimension=${f}.dimension AND d.value_hash=${f}.value_hash AND d.source_markdown_slug=${f}.source
+  AND d.valid_from=${f}.valid_from AND d.id<>${f}.id)`;
+
 export interface OntologyFactCandidate {
   id: number;
   source_id: string;

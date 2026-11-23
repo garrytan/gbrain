@@ -30,8 +30,8 @@ import { redactRetrievalOutput } from './output-redaction.ts';
 import { buildSnippetMarker } from './snippet-cap.ts';
 import { deliveredQuoteText, deliveredQuoteTitle, fenceTranscriptRows, neutralizeTranscriptRows } from './transcript-quote.ts';
 import { stampPageTrust } from '../eligibility/stamp.ts';
-import { pageReadFilter } from './read-policy-sql.ts';
-import { safeChunksFilter, requiresSafeChunks, servedTextProjectionFilter } from './safe-chunks.ts';
+import { requiresSafeChunks } from './safe-chunks.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { resolveExcludePrivatePages, worldOnlyFacts } from './private-visibility.ts';
 import { safeSplitIndex } from '../text-safe.ts';
 import { loadFenceChunkOverlay, type FenceChunkOverlay } from '../eligibility/fence-overlay.ts';
@@ -410,16 +410,14 @@ export async function selectLongPages(engine: BrainEngine, plan: EvidencePlan | 
   const { unit, minChars } = plan.longPage;
   let sizes: Map<number, { chars: number; bytes: number }>;
   try {
-    const params: unknown[] = [ids];
-    const filter = pageReadFilter('p', scope, params, true);
-    const tl = scope.detail === 'low' ? null : `CASE WHEN COALESCE(p.timeline, '') !~ '\\S' THEN 0 ELSE ${TIMELINE_SEPARATOR.length} + `;
-    const rows = await withTimeout(engine.executeRaw<{ id: number; chars: number; bytes: number }>(
-      `SELECT p.id, char_length(COALESCE(p.compiled_truth, ''))${tl ? ` + ${tl}char_length(p.timeline) END` : ''} AS chars,
-              octet_length(COALESCE(p.compiled_truth, ''))${tl ? ` + ${tl}octet_length(p.timeline) END` : ''} AS bytes FROM pages p
-        WHERE p.id = ANY($1::int[]) AND ${filter} AND ${servedTextProjectionFilter('p')}${requiresSafeChunks(scope) ? ` AND ${safeChunksFilter('p')}` : ''}`,
-      params), LONG_PAGE_DEADLINE_MS);
+    const { detail, sourceId, sourceIds, excludePrivate, requireSafeChunks, minTrust, suppressFlagged } = scope;
+    // The size read takes the page read scope only; detail picks whether the timeline counts.
+    const rows = await withTimeout(engine.readLongPageSizes(ids, { sourceId, sourceIds, excludePrivate, requireSafeChunks, minTrust, suppressFlagged },
+      { includeTimeline: detail !== 'low' }), LONG_PAGE_DEADLINE_MS);
     sizes = new Map(rows.map(r => [Number(r.id), { chars: Number(r.chars), bytes: Number(r.bytes) }]));
   } catch (e) {
+    // A Rust brain's refusal is not a failed preflight: it surfaces instead of turning long pages off.
+    rethrowCapabilityRefusal(e);
     return { plan: base, ...(base ? { longPages: { unit, minChars, pages: new Set(), kept: new Map(), deadlineAt, fallbacks: [e instanceof EvidenceTimeout ? 'long_page_deadline' : 'long_page_preflight_failed'] } } : {}) };
   }
   const pages = new Set<number>();

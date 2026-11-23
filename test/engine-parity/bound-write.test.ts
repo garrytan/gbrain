@@ -143,8 +143,6 @@ describe('a write to a worktree-bound source', () => {
 
   parityTest('claim the checkout, put_page to the bound source: the page and its file are written', {
     methods: ['worktreeClaimStore'],
-    // Held: a bound write is admitted only through journal.ts prepareAdmission, which still refuses on Rust
-    // (managed_persistence). Remove this line when that admission is typed; the case then compares on Rust.
     requires: 'managed_persistence',
     timeout: 120_000,
   }, async (engine, backend) => withClaimedCheckout(engine, backend, async (root) => {
@@ -159,8 +157,6 @@ describe('a write to a worktree-bound source', () => {
 
   parityTest('a refusal at publication moves the request to recovering, then ends it failed: no page, no file', {
     methods: ['worktreeClaimStore'],
-    // Held: a bound write is admitted only through journal.ts prepareAdmission, which still refuses on Rust
-    // (managed_persistence). Remove this line when that admission is typed; the case then compares on Rust.
     requires: 'managed_persistence',
     timeout: 120_000,
   }, async (engine, backend) => withClaimedCheckout(engine, backend, async (root) => {

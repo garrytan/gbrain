@@ -61,6 +61,10 @@ test('doctor emits one command per brain-wide key with the largest value any pri
   engine.readCapacityForecastInputs = (opts?: { light?: boolean }) => readCapacityForecastInputs(engine as never, opts);
   const { readAdmissionRate } = await import('../src/core/engine-sql/persistence-journal.ts');
   engine.readAdmissionRate = (principal: { kind: string; id: string } | null, opts?: { sample?: boolean }) => readAdmissionRate(engine as never, principal, opts);
+  const dp = await import('../src/core/engine-sql/doctor-persistence.ts');
+  const raw = (async (sql: string, params?: unknown[]) => (engine.executeRaw as (s: string, p?: unknown[]) => Promise<never[]>)(sql, params)) as never;
+  engine.listCapacityCounters = () => dp.listCapacityCounters(raw);
+  engine.listOutstandingHolders = (principal: [string, string] | null) => dp.listOutstandingHolders(raw, principal);
   const check = await checkPersistenceCapacity(engine as never);
   expect(check.status).toBe('warn');
   expect((check.details as { commands: string[] }).commands).toEqual(['gbrain config set persistence.limits.principal_lifetime_ids 3650009']);

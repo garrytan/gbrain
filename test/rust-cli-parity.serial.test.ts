@@ -460,37 +460,67 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       warnLikePglite: sorted(checks.filter((c) => c.status !== 'ok' && !TYPED.test(c.message) && likePglite(c)).map((c) => c.name)),
       // Checks that report ok although a refused read stopped them: none. A refused check warns, health unknown.
       okWhileRefused: sorted(checks.filter((c) => c.status === 'ok' && TYPED.test(c.message)).map((c) => c.name)),
+      // Checks a refused read stopped (they warn with the typed refusal, health unknown).
+      typedRefusals: sorted(checks.filter((c) => TYPED.test(c.message)).map((c) => c.name)),
     }).toEqual({
       fail: [],
-      onlyPglite: ['default_source_local_path', 'frontmatter_repairable', 'image_assets', 'pglite_scale'],
+      // default_source_local_path, frontmatter_repairable and image_assets are gone from this list: the sources reads
+      // are typed members Rust serves, so those checks run on a Rust brain too.
+      // pglite_scale is gone from this list: a Rust brain is one local file too, so it reports the same page threshold.
+      onlyPglite: [],
       // multi_source_drift is gone from this list: it reads listSourceRecords, which Rust serves, so on this
       // one-source brain it skips exactly as PGLite does instead of warning with the executeRaw refusal.
-      // canonical_content_writes is gone from this list: the owned-content read is a typed member on Rust, and a Rust
-      // brain has no writer-owned source yet, so the check skips as it does on this PGLite brain.
-      // shared_skills_sources is gone from this list: the source view reads readSourceState, which Rust serves, so
-      // with no opted-out or parked source the check returns nothing, as it does on PGLite.
-      onlyRust: ['checkout_lagging', 'commits_outside_source_root', 'dirty_age', 'git_convergence',
-        'quarantined_changes', 'sync_failures', 'tracked_ownership_marker',
-        'transcript_secret_exposure'],
+      // The git and managed-sync checks (canonical_content_writes, checkout_lagging, commits_outside_source_root,
+      // dirty_age, git_convergence, quarantined_changes, shared_skills_sources, tracked_ownership_marker,
+      // transcript_secret_exposure) are gone from this list: the typed sources reads now show the brain has no git
+      // source root, so those checks emit nothing, as on PGLite.
+      // sync_failures is gone from this list: its reads are typed members Rust serves, so on this brain it emits nothing,
+      // as on PGLite.
+      onlyRust: [],
       // entity_link_coverage, graph_coverage, orphan_ratio and timeline_coverage are gone from this list: the entity
       // types resolve on a Rust brain (overrideSourcesFromKeys), so those checks pass as they do on PGLite.
-      // trust_scan counts the pages and facts on Rust, then warns with the refusal of the takes count, which names
-      // the table in the member's parenthesis ("the takes table, whose rows the store does not stamp").
+      // child_table_orphans is gone from this list: countPageChildOrphans counts the orphan rows in the store.
+      // canonical_content_writes and raw_provenance are gone too: the first no longer runs (no git source root) and
+      // readRawProvenanceGaps counts the gaps in the store.
+      // extract_atoms_backlog, retrieval_reflex_health and text_projection_readiness are gone from this list: the backlog,
+      // projection-queue and reflex reads are served, so those checks report what PGLite reports (doctor-search, slices
+      // 17, 20 and 21). sync_failures is gone as well: the managed-sync failure and orphan reads are served (doctor-sync,
+      // slice 22). trust_scan, trust_tiers and trust_sources_unclaimed are gone too: the takes count is served, and a
+      // fresh Rust brain marks the trust backfill done, as PGLite's migration does.
       // fact_take_vectors is gone from this list: a new Rust brain records its embedding model and width as PGLite
       // does, so the check reads the same model and passes with PGLite's message.
       // child_table_orphans is gone from this list: the page child counts are typed members on Rust
       // (engine-sql/repair-page-reads.ts), so the check passes with PGLite's message.
       // backup_coverage is gone from this list: a Rust brain counts its live pages and reads its maturity
-      // (countBrainLivePages, readBrainMaturity), so the check answers as it does on PGLite.
-      // entity_duplicates is gone from this list: a Rust brain serves listEntityKeyRows, so the check answers as it does
-      // on PGLite.
-      untypedWarnings: ['extract_atoms_backlog', 'raw_provenance', 'retrieval_reflex_health', 'sync_failures',
-        'text_projection_readiness', 'trust_scan'],
+      // (countLivePages, readBrainMaturity), so the check answers as it does on PGLite.
+      // provenance_stamp_drift is gone from this list: listDriftLiveRows reads the live pages and their versions from the store.
+      // trust_scan scans pages, facts, takes and timeline entries, and a new Rust brain records the write gate's
+      // scan baseline as v227 does, so it counts what PGLite counts.
+      untypedWarnings: [],
       // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack
       // reads are served, so the successor notice is the same. embeddings is not here: Rust cannot read the backlog
-      // age, so it warns with that typed refusal where PGLite reads the age and passes.
-      warnLikePglite: ['brain_score', 'embed_staleness', 'embedding_provider', 'pack_upgrade_available'],
+      // age, so it warns with that typed refusal where PGLite reads the age and passes. default_source_local_path
+      // warns on both engines: the fixture's pages are file-backed and the default source has no local path.
+      // timeline_coverage warns on both engines: the fixture's entity pages are 73% covered, which the store now counts.
+      // embedding_column_registry warns on both engines: the active column holds no vector, which the store now counts.
+      warnLikePglite: ['brain_score', 'default_source_local_path', 'embed_staleness', 'embedding_column_registry', 'embedding_provider',
+        'pack_upgrade_available', 'timeline_coverage'],
       okWhileRefused: [],
+      // credential_projection_pending is gone from this list: listCredentialResealHoldRows answers a Rust brain's holds
+      // (none: only the credential re-seal migration writes them, through executeRaw).
+      // person_title_duplicates is gone from this list: the stub, candidate, retirement and link-count reads are typed
+      // members the store answers, so it reports what PGLite reports.
+      // unwithdrawn_facts is gone from this list: listUnwithdrawnFacts reads the facts-fence generation ledger the store
+      // writes (facts/generations.rs), so the check runs on a Rust brain.
+      // synopsis_tier_coverage is not here: readSynopsisTierConfig reads the typed listSynopsisSourceIds and
+      // hasSynopsisFrontmatterOverride, which the store serves.
+      // access_pages_read_by_nobody, owner_identity and owner_only_marks_triggers are gone from this list: the doctor join
+      // checks read through typed members the store serves (engine-sql/doctor-join.ts, doctor-acc.ts), so they answer as they
+      // do on PGLite. entity_duplicates is gone too: the store serves listIdentityDecisions and the entity key rows.
+      // git_held_files warns with the typed refusal and says its health is unknown: its readers_noncanonical note reads the
+      // hold count and the stored pages through executeRaw (raw_sql, commands/doctor/checks/git-holds.ts
+      // readNoncanonicalReaders), which a Rust brain does not run. Loss row 44 in docs/designs/RUST_ENGINE.md.
+      typedRefusals: ['git_held_files'],
     });
     const count = (s: string) => checks.filter((c) => c.status === s).length;
     table.push({ command: 'doctor --json', state: 'runs', note: ` ${checks.length} checks, ${count('ok')} ok, ${count('warn')} warn, 0 fail; PGLite ${pgReport!.checks!.length}` });

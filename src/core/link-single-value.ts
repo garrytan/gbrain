@@ -79,7 +79,7 @@ export interface SingleValuePreviewGroup {
  */
 export async function previewSingleValue(engine: BrainEngine, sourceId?: string): Promise<{ declared: Record<string, string[]>; groups: SingleValuePreviewGroup[] }> {
   const sources = sourceId ? [sourceId]
-    : (await engine.executeRaw<{ id: string }>(`SELECT id FROM sources ORDER BY id`)).map(r => r.id);
+    : await engine.listSourceIds();
   const declared: Record<string, string[]> = {};
   const groups: SingleValuePreviewGroup[] = [];
   for (const source of sources) {
@@ -97,7 +97,7 @@ export async function previewSingleValue(engine: BrainEngine, sourceId?: string)
          FROM live l JOIN multi m USING (from_page_id, link_type)
          JOIN pages f ON f.id = l.from_page_id AND f.deleted_at IS NULL
          JOIN pages t ON t.id = l.to_page_id AND t.deleted_at IS NULL
-        ORDER BY f.slug, l.link_type, t.slug`,
+        ORDER BY f.slug COLLATE "C", l.link_type COLLATE "C", t.slug COLLATE "C"`,
       [source, types]);
     const bySubject = new Map<string, typeof rows>();
     for (const r of rows) {

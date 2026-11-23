@@ -39,6 +39,7 @@
  */
 
 import type { BrainEngine } from '../core/engine.ts';
+import { rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
 import { clusterErrors, type ErrorCluster } from '../core/minions/error-classify.ts';
 import { countRecentLeasePressure } from '../core/minions/lease-pressure-audit.ts';
@@ -142,43 +143,23 @@ export async function readSnapshot(engine: BrainEngine): Promise<WatchSnapshot> 
   // Top errors clustered. Best-effort.
   let top_errors: Array<{ cluster: ErrorCluster; count: number }> = [];
   try {
-    const errRows = await engine.executeRaw<{ id: number; last_error: string | null }>(
-      `SELECT id, error_text AS last_error FROM minion_jobs
-        WHERE status IN ('dead', 'failed')
-          AND updated_at > now() - interval '24 hours'`,
-    );
+    const errRows = await engine.listRecentFailedJobErrors(86_400);
     top_errors = clusterErrors(errRows).slice(0, 5).map(c => ({ cluster: c.cluster, count: c.count }));
-  } catch {
-    /* DB unavailable */
+  } catch (e) {
+    rethrowCapabilityRefusal(e); // DB unavailable is best-effort; an engine that cannot answer says so
   }
 
   // Budget owners with non-zero cents. Best-effort.
   let budget_owners: Array<{ owner_id: number; remaining_cents: number; total_spent_cents: number }> = [];
   try {
-    const ownerRows = await engine.executeRaw<{
-      owner_id: number;
-      remaining_cents: number;
-      total_spent_cents: number;
-    }>(
-      `SELECT
-         mj.id AS owner_id,
-         mj.budget_remaining_cents AS remaining_cents,
-         COALESCE((SELECT SUM(ABS(cents_delta)) FROM minion_budget_log
-                    WHERE owner_id = mj.id AND event_type = 'reserved'), 0) AS total_spent_cents
-       FROM minion_jobs mj
-       WHERE mj.budget_remaining_cents IS NOT NULL
-         AND mj.budget_owner_job_id = mj.id
-         AND mj.status NOT IN ('completed', 'failed', 'dead', 'cancelled')
-       ORDER BY mj.id DESC
-       LIMIT 5`,
-    );
+    const ownerRows = await engine.listBudgetOwners();
     budget_owners = ownerRows.map(r => ({
       owner_id: r.owner_id,
       remaining_cents: r.remaining_cents ?? 0,
       total_spent_cents: r.total_spent_cents ?? 0,
     }));
-  } catch {
-    /* pre-v93 brain */
+  } catch (e) {
+    rethrowCapabilityRefusal(e); // pre-v93 brain
   }
 
   return {

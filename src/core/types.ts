@@ -443,7 +443,7 @@ export const PAGE_SORT_SQL: Record<NonNullable<PageFilters['sort']>, string> = {
   // imports stamp one now() across a transaction) lists deterministically.
   // OFFSET over it is still unstable under timestamp-changing writes; walk
   // a source by `sort: 'slug'` + `slugAfter` when every page must be seen once.
-  updated_desc: 'p.updated_at DESC, p.slug DESC, p.source_id DESC, p.id DESC',
+  updated_desc: 'p.updated_at DESC, p.slug COLLATE "C" DESC, p.source_id COLLATE "C" DESC, p.id DESC',
   // v0.45.7: slug tiebreaker makes updated_asc a TOTAL order, so keyset
   // pagination (updatedAfterKeyset) can page deterministically through a
   // cluster of pages sharing one updated_at (bulk syncs stamp identical
@@ -453,12 +453,12 @@ export const PAGE_SORT_SQL: Record<NonNullable<PageFilters['sort']>, string> = {
   // resume from `Page.updated_at_iso`, never from a JS Date. Slug is unique
   // only per source, so a federated listing needs source_id + id behind it to
   // stay a total order (same tiebreakers as `slug` below).
-  updated_asc:  'p.updated_at ASC, p.slug ASC, p.source_id ASC, p.id ASC',
-  created_desc: 'p.created_at DESC',
+  updated_asc:  'p.updated_at ASC, p.slug COLLATE "C" ASC, p.source_id COLLATE "C" ASC, p.id ASC',
+  created_desc: 'p.created_at DESC, p.id DESC',
   // Slug uniqueness is per (source_id, slug), so a federated listing can hold
   // the same slug from several sources; source_id + id make slug+offset paging
   // a TOTAL order (same class as the updated_asc tiebreaker above).
-  slug:         'p.slug ASC, p.source_id ASC, p.id ASC',
+  slug:         'p.slug COLLATE "C" ASC, p.source_id COLLATE "C" ASC, p.id ASC',
 };
 
 /**
@@ -613,9 +613,9 @@ export interface EnrichCandidate {
  * tied scores produce a deterministic order across engines and runs.
  */
 export const ENRICH_ORDER_SQL: Record<EnrichCandidatesOpts['order'], string> = {
-  'inbound-links': 'inbound_count DESC, p.source_id ASC, p.slug ASC',
-  'updated':       'p.updated_at DESC, p.source_id ASC, p.slug ASC',
-  'salience':      'p.emotional_weight DESC, inbound_count DESC, p.source_id ASC, p.slug ASC',
+  'inbound-links': 'inbound_count DESC, p.source_id COLLATE "C" ASC, p.slug COLLATE "C" ASC',
+  'updated':       'p.updated_at DESC, p.source_id COLLATE "C" ASC, p.slug COLLATE "C" ASC',
+  'salience':      'p.emotional_weight DESC, inbound_count DESC, p.source_id COLLATE "C" ASC, p.slug COLLATE "C" ASC',
 };
 
 /**

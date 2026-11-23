@@ -124,7 +124,8 @@ test/detached-stderr.test.ts	jobs.ts detach branch (source pin, #4418)	2	source-
 test/divergence-safe-pull-5429.serial.test.ts	--no-autostash (#5429, bug fix)	4	readFileSync
 test/docs-mcp-deploy.test.ts	DEPLOY.md documents the owner magic-link flow (#5007)	1	readFileSync,source-surface-helper
 test/docs-navigation.test.ts	primary documentation navigation	2	readFileSync
-test/doctor-atom-provenance-drift.test.ts	computeAtomProvenanceDriftCheck	19	doctor-source-helper
+test/doctor-acc-sql.test.ts	doctor reads, second set: statement text	2	readFileSync
+test/doctor-atom-provenance-drift.test.ts	computeAtomProvenanceDriftCheck	19	readFileSync
 test/doctor-embedding-env-override.test.ts	cross-surface parity (source-grep regression guard)	1	doctor-source-helper
 test/doctor-fix.test.ts	gbrain doctor --fix CLI integration	3	readFileSync
 test/doctor-frontmatter-partial.test.ts	doctor frontmatter_integrity — load-bearing render strings	5	doctor-source-helper
@@ -139,17 +140,17 @@ test/doctor-volunteer-channels.test.ts	checkVolunteerChannels	9	doctor-source-he
 test/doctor-wedged-queue.test.ts	issue #1801 fix #3 — computeWedgedQueueCheck	14	doctor-source-helper
 test/doctor-wedged-queue.test.ts	issue #1801 fix #3 — remote queue_health state→status regression	1	doctor-source-helper
 test/doctor.test.ts	BUG 4 — in-progress sync via live lock, not stale freshness	8	doctor-source-helper
-test/doctor.test.ts	doctor command	35	doctor-source-helper
+test/doctor.test.ts	doctor command	35	doctor-source-helper,source-surface-helper
 test/doctor.test.ts	issue #972 — link_resolution_opportunity check	8	doctor-source-helper
 test/doctor.test.ts	stub_guard_24h check (v0.34.5)	5	doctor-source-helper
 test/doctor.test.ts	supervisor crash classifier wiring (v0.35.x)	4	doctor-source-helper,source-surface-helper
-test/doctor.test.ts	sync_freshness — clone-unavailable content-lag fallback	6	doctor-source-helper
+test/doctor.test.ts	sync_freshness — clone-unavailable content-lag fallback	6	doctor-source-helper,source-surface-helper
 test/doctor.test.ts	v0.31.8 — wedge migration force-retry hint (D19)	4	doctor-source-helper
-test/doctor.test.ts	v0.32.4 — sync_freshness check	13	doctor-source-helper
+test/doctor.test.ts	v0.32.4 — sync_freshness check	13	doctor-source-helper,source-surface-helper
 test/doctor.test.ts	v0.40.4 — graph_signals_coverage check	7	doctor-source-helper
-test/doctor.test.ts	v0.41.27.0 — sync_freshness git short-circuit	9	doctor-source-helper
-test/doctor.test.ts	v0.41.32.0 — commit-relative staleness	5	doctor-source-helper
-test/doctor.test.ts	v0.42 (#1699) — quarantined_pages + flagged_pages checks	1	doctor-source-helper
+test/doctor.test.ts	v0.41.27.0 — sync_freshness git short-circuit	9	doctor-source-helper,source-surface-helper
+test/doctor.test.ts	v0.41.32.0 — commit-relative staleness	5	doctor-source-helper,source-surface-helper
+test/doctor.test.ts	v0.42 (#1699) — quarantined_pages + flagged_pages checks	1	doctor-source-helper,readFileSync,source-surface-helper
 test/drain-lease-key-share-7442.test.ts	#7442: the drain-lease fence lets the renewal through and still holds off a takeover	5	readFileSync
 test/dry-fix.test.ts	autoFixDryViolations	12	readFileSync
 test/e2e/bootstrap-real-codex.serial.test.ts	bootstrap rendered protocol — ambient boundaries (always runs)	5	readFileSync

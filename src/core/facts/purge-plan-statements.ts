@@ -106,7 +106,7 @@ export function boundedCountSql(select: string, rows: number): string {
   return `SELECT count(*)::int AS n FROM (${select} LIMIT ${rows + 1}) bounded`;
 }
 
-/** The first 20 items a named probe lists. */
+/** The first 20 items a named probe lists, in byte order (the collation every engine agrees on). */
 export function probeItemsSql(select: string): string {
-  return `${select} ORDER BY 1 LIMIT 20`;
+  return `SELECT * FROM (${select}) q ORDER BY item COLLATE "C" LIMIT 20`;
 }

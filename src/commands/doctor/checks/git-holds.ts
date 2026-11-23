@@ -1,4 +1,5 @@
 import type { BrainEngine } from '../../../core/engine.ts';
+import type { ContentBlockedReceipt } from '../../../core/engine-sql/doctor-brain.ts';
 import type { Check } from '../../doctor.ts';
 import { GIT_HOLD_OP, gitHoldFix, holdRepairSteps, readGitHoldListing, readGitImageHoldCounts, readSyncHoldPolicy } from '../../../core/persistence/sync-holds.ts';
 import { coverageRoute, readHeldCoverage } from '../../../core/persistence/held-reads.ts';
@@ -128,16 +129,10 @@ export async function gitHeldFilesCheck(engine: BrainEngine, sourceIds?: string[
 /** #7848: `visibility_noncanonical` holds, and live stored pages `noncanonicalPrivateRequest` reads as asking for private (first five named). */
 async function readNoncanonicalPrivate(engine: BrainEngine, sourceIds?: string[]): Promise<{ held: number; stored: number; first: Array<{ source_id: string; slug: string }> }> {
   const ids = sourceIds ?? null;
-  const [heldRow] = await engine.executeRaw<{ n: number | string }>(`SELECT count(*)::int AS n FROM op_checkpoints x
-      JOIN sources s ON x.completed_keys->0->>'source_id'=s.id AND x.completed_keys->0->>'incarnation'=s.incarnation::text
-    WHERE x.op=$1 AND x.completed_keys->0->>'code'='visibility_noncanonical' AND s.archived IS NOT TRUE AND ($2::text[] IS NULL OR s.id=ANY($2::text[]))`, [GIT_HOLD_OP, ids]);
-  const candidates = await engine.executeRaw<{ source_id: string; slug: string; frontmatter: Record<string, unknown> | string | null }>(`SELECT p.source_id, p.slug, p.frontmatter
-    FROM pages p JOIN sources s ON s.id=p.source_id
-    WHERE p.deleted_at IS NULL AND s.archived IS NOT TRUE AND ($1::text[] IS NULL OR p.source_id=ANY($1::text[])) AND jsonb_typeof(p.frontmatter)='object'
-      AND EXISTS (SELECT 1 FROM jsonb_object_keys(p.frontmatter) k WHERE lower(k)='visibility') AND p.frontmatter->>'visibility' IS DISTINCT FROM 'private'
-    ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C"`, [ids]);
+  const held = await engine.countVisibilityNoncanonicalHolds(GIT_HOLD_OP, ids);
+  const candidates = await engine.listVisibilityCandidatePages(ids);
   const stored = candidates.filter(row => noncanonicalPrivateRequest('', typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) : row.frontmatter));
-  return { held: Number(heldRow?.n ?? 0), stored: stored.length, first: stored.slice(0, SAMPLE_PATHS).map(({ source_id, slug }) => ({ source_id, slug })) };
+  return { held, stored: stored.length, first: stored.slice(0, SAMPLE_PATHS).map(({ source_id, slug }) => ({ source_id, slug })) };
 }
 
 /** `readers_noncanonical` holds, and live stored pages whose frontmatter has a top-level readers key in a spelling page access does not read (first five named). Read-only. */
@@ -168,20 +163,13 @@ function fenceAutoSentence(auto: FenceAutoRepair | undefined): string {
  * `fence` marks a source whose refusal is a facts or takes fence (#6188); it is held and repaired by `gbrain repair fences`, not by frontmatter repair.
  */
 export async function contentBlockedSources(engine: BrainEngine): Promise<Array<{ source_id: string; fence: boolean }>> {
-  type Receipt = { source_id: string; error_code: string | null; error_message: string | null; error_detail: unknown };
-  const rows: Receipt[] = await engine.executeRaw<Receipt>(`SELECT c.completed_keys->0->>'sourceId' AS source_id,
-      r.error_code, r.error_message, r.error_detail FROM op_checkpoints c JOIN persistence_requests r ON r.request_id::text = c.completed_keys->0->'pending'->>'requestId'
-      AND r.source_id = c.completed_keys->0->>'sourceId'
-    WHERE c.op = 'managed-sync' AND COALESCE(c.completed_keys->0->>'done','false') <> 'true' AND r.state IN ('failed','conflict','cancelled')
-    ORDER BY 1`).catch(() => []);
+  const rows: ContentBlockedReceipt[] = await engine.listContentBlockedReceipts().catch(() => []);
   // #6712 PR 4b (design v3.2 §3.7): a non-company source has no cursor; it is blocked when its newest pass ended blocked on a
   // receipt that pass admitted (the receipt's intent carries the pass id).
   const { readPassReadings } = await import('../../../core/persistence/sync-pass-readers.ts');
   for (const { source_id, row, health } of await readPassReadings(engine, { head: false }).catch(() => [])) {
     if (health.reason !== 'blocked') continue;
-    rows.push(...await engine.executeRaw<Receipt>(`SELECT source_id,
-        error_code, error_message, error_detail FROM persistence_requests WHERE source_id=$1 AND intent->>'passId'=$2 AND state IN ('failed','conflict','cancelled')`,
-      [source_id, row.value.telemetry.pass_id]).catch(() => []));
+    rows.push(...await engine.listPassAdmittedReceipts(source_id, row.value.telemetry.pass_id).catch(() => []));
   }
   const out = new Map<string, boolean>();
   for (const row of rows) {

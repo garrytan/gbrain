@@ -160,6 +160,28 @@ pub(crate) fn refuse_purged_take(
     Ok(())
 }
 
+/// Adds to `out` the request id of every take tombstone purged after `since_us`, the `take_purges`
+/// arm of `listRecentPurgeRequests` (`request_id IS NOT NULL AND purged_at > now() - make_interval(...)`).
+pub(crate) fn recent_request_ids(
+    read: &dyn KvRead,
+    since_us: i64,
+    out: &mut BTreeSet<String>,
+) -> Result<()> {
+    let mut failure = None;
+    scan_prefix(read, &[keys::FACT, TAKE_PURGE], false, &mut |_, v| {
+        match serde_json::from_slice::<TakePurgeRecord>(v) {
+            Ok(r) => {
+                if let (Some(request), true) = (r.request_id, r.purged_at_us > since_us) {
+                    out.insert(request);
+                }
+            }
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    failure.map_or(Ok(()), Err)
+}
+
 /// Removes every take tombstone of a source, for the source delete.
 pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
     let mut doomed = Vec::new();

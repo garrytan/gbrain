@@ -4,12 +4,10 @@
  * values that differ by nature (ids each brain mints, clocks, this process) are replaced by placeholders.
  *
  * The status reads its row sets through typed BrainEngine members (engine-sql/writer-status.ts, and on the Rust engine
- * store-members/writer-status.ts). Three of its reads are not typed yet and stop on the Rust engine with a capability
- * refusal: the stalled catch-ups (effect-catchup.ts), the parked groups (parked-groups.ts) and the source movement
- * (sync-movement.ts). So:
+ * store-members/writer-status.ts); the stalled catch-ups, the parked groups and the source movement are typed too. So:
  *   - the first case composes the status from every read but those three, and the text must be equal on every arm;
- *   - the second case runs the whole status; it is equal on the SQL arms, and its Rust arm stops on the refusal
- *     (`requires: 'raw_sql'`). When those three reads are typed, drop the `requires` line and the case is equal there too.
+ *   - the second case runs the whole status; the text is equal on every arm apart from the movement list, which a Rust
+ *     brain leaves empty (it keeps no persistence binding row) and the SQL arms fill; each arm is checked against its own.
  *
  * The fixture claims a checkout with the internal claimWorktree (the automatic claim of a first write), takes the
  * operator lock, and registers sources `a-c` and `ab`, which sort
@@ -35,6 +33,7 @@ import { listBlockingEffects } from '../../src/core/persistence/blocking-effects
 import { listWriterVersions } from '../../src/core/persistence/writer-versions.ts';
 import { activeWorktreeRefreshes } from '../../src/core/persistence/worktree-refresh.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
+import { readTopologyRecoveryStops } from '../../src/core/persistence/topology-stop.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -91,7 +90,7 @@ async function withClaimedCheckout<T>(engine: BrainEngine, backend: ParityBacken
 describe('writer status', () => {
   parityTest('prints the same status on every engine from its typed reads', {
     methods: ['readWriterDiagnosticRows', 'readWriterStatusRows', 'listOnboardingSources', 'listBlockingEffectRows',
-      'listActiveWorktreeRefreshRows', 'readCycleLocks'],
+      'listActiveWorktreeRefreshRows', 'readCycleLocks', 'listTopologyRecoveries'],
   }, async (engine, backend) => withClaimedCheckout(engine, backend, async (home) => {
     const hostId = existingHostIdFor(engine);
     const { bindings, topology_requests } = await engine.readWriterStatusRows(hostId, null);
@@ -105,7 +104,9 @@ describe('writer status', () => {
       onboarding: await writerOnboardingPreflight(engine, undefined),
       shared_skills: await readSharedSkillsState(engine),
       worktree_refreshes: await activeWorktreeRefreshes(engine, undefined),
-      topology_requests };
+      topology_requests,
+      topology_recoveries: await readTopologyRecoveryStops(engine, hostId) };
+    expect(status.topology_recoveries).toEqual({ recovering: [], more: false, stop: null });
     expect(bindings.map(b => [b.source_id, b.local_path === null ? null : 'set', b.git_durability_state])).toEqual([['work', 'set', 'unknown']]);
     expect(adminLock.locked).toBe(true);
     const ids = status.onboarding.sources.map(s => s.source_id);
@@ -133,10 +134,15 @@ describe('writer status', () => {
 
   parityTest('prints the same whole status on every engine that reads it', {
     methods: ['readWriterDiagnosticRows', 'readWriterStatusRows'],
-    requires: 'raw_sql',
   }, async (engine, backend) => withClaimedCheckout(engine, backend, async (home) => {
     const status = await runPersistenceAdministration(engine, 'writer_status', {}) as Record<string, unknown>;
     expect(Object.keys(status)).toEqual(expect.arrayContaining(['stalled_catchups', 'parked_groups', 'movement', 'bindings', 'onboarding']));
-    return printed(status, home);
+    // The catch-up and parked-group reads are typed members the store serves. The movement read lists the managed sources a
+    // persistence binding names; a Rust brain keeps no binding row (listSourceBindingsForMovement answers none), so its
+    // movement is empty where the SQL arms list the registered sources. Each arm is checked against its own answer and the
+    // rest of the status must be equal.
+    const { movement, ...rest } = status;
+    expect({ arm: backend, listed: Array.isArray(movement) ? movement.length : null }).toEqual({ arm: backend, listed: backend === 'rust' ? 0 : 1 });
+    return printed(rest, home);
   }));
 });

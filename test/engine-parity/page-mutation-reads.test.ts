@@ -11,8 +11,8 @@
  *  - Contract: (1) the members: `readSourceLocalPath` answers a source's local path, null for a source without one or
  *    no such source; `readStoredPageHead` answers the stored type, tier, title and frontmatter of a page by source and
  *    slug, a soft-deleted one too, and null for no such page; `readVersionSourcePath` answers a version's file only
- *    for its own page; (2) a remote put_page of a page's own quoted read writes the body without the quote fence (on
- *    Rust it reads the head, then admission refuses the remote write permission_denied: a named stop, RUST_STOP_TOKEN_GRANT); (3) a
+ *    for its own page; (2) a remote put_page of a page's own quoted read writes the body without the quote fence, on
+ *    every arm (the legacy token write grant is served on Rust since batch 10); (3) a
  *    trusted `capture` of a local file outside any source root commits as `cli-file`; (4) a revert_version on an
  *    unclaimed rooted source whose current revision has no file is judged by the version's file: file-backed, it
  *    claims the source and commits on PGLite (Postgres refuses owner_unavailable until a writer claims it, as
@@ -65,16 +65,6 @@ const thrown = new WeakMap<object, unknown>();
 const preimageOnRust = (backend: string, out: { ok: boolean; code?: unknown; detail?: unknown }) => backend === 'rust' && out.ok === false
   && out.code === 'engine_capability_missing' && String(out.detail).startsWith('member=createVersion (option preimage)');
 const COMMITTED = { ok: true, state: 'committed', status: 'created_or_updated' };
-/**
- * The named Rust stop of the quoted put_page case (harness `rustStop`). Rust stop: the legacy token write grant is not
- * served on this base (store-members/persistence.ts readAccessTokenWriteGrant answers null). Owner: interfaces lane
- * rust-token-member-binding 5a32485552 + token-grant-gaps 6631e1bb57, in lane 2's rust-engine/cli-members-next. Unpin at
- * the join: mint the token on all 3 arms with mintLegacyToken and expect equal.
- */
-const RUST_STOP_TOKEN_GRANT = 'Rust stop: the legacy token write grant is not served on this base (store-members/persistence.ts '
-  + 'readAccessTokenWriteGrant answers null). Owner: interfaces lane rust-token-member-binding 5a32485552 + token-grant-gaps '
-  + '6631e1bb57, in lane 2\'s rust-engine/cli-members-next. Unpin at the join: mint the token on all 3 arms with mintLegacyToken '
-  + 'and expect equal.';
 const frontmatterOf = (value: unknown) => typeof value === 'string' ? JSON.parse(value) as unknown : value;
 
 describe('the reads a page write makes before admission', () => {
@@ -109,18 +99,16 @@ describe('the reads a page write makes before admission', () => {
 
   parityTest('a remote put_page of a page\'s own quoted read reads the stored head before admission', {
     methods: ['readStoredPageHead', 'getPage'],
-    rustStop: { code: 'permission_denied', pin: RUST_STOP_TOKEN_GRANT },
-  }, async (engine, backend) => {
+  }, async (engine) => {
     // Only a remote put_page is unquoted (page-mutations.ts unquotedPutContent), and it reads the stored head before
-    // admission. The SQL arms admit a legacy-token write and store the body without the fence. Before this change the
-    // Rust arm refused at the read itself (engine_capability_missing, member=executeRaw); it now reads the head and its
-    // admission refuses permission_denied, the named stop below.
+    // admission. Every arm admits a legacy-token write and stores the body without the fence. Before this change the
+    // Rust arm refused at the read itself (engine_capability_missing, member=executeRaw); since the legacy token write
+    // grant is served on Rust too (lane 2's token members, batch 10), the Rust arm commits like the SQL arms.
     try {
       const slug = 'notes/quoted-example';
       const head = '---\ntype: note\ntitle: Quoted example\n---\n\n';
       const created = await run(engine, 'put_page', { slug, content: `${head}The first body.\n` });
-      const minted = backend === 'rust' ? { id: 'parity-quoted-example' }
-        : await mintLegacyToken(engine, { name: `parity-${randomUUID()}`, scopes: ['read', 'write'], sourceGrant: ['default'], takesHolders: ['world'] });
+      const minted = await mintLegacyToken(engine, { name: `parity-${randomUUID()}`, scopes: ['read', 'write'], sourceGrant: ['default'], takesHolders: ['world'] });
       const current = await engine.readPageSnapshot(slug, { sourceId: 'default' });
       const opts = { remote: true, transport: 'http', sourceId: 'default', admissionOrigin: 'interactive', takesHoldersAllowList: ['world'],
         auth: { token: '', clientId: minted.id, principal: { kind: 'legacy_token', id: minted.id }, sourceId: 'default', allowedSources: ['default'], scopes: ['read', 'write'] } };
@@ -129,12 +117,6 @@ describe('the reads a page write makes before admission', () => {
       const reply = JSON.parse(result.content[0]?.text ?? 'null') as Record<string, unknown> | null;
       const page = await engine.getPage(slug, { sourceId: 'default' });
       const out = { created, isError: result.isError === true, error: reply?.error ?? null, body: page?.compiled_truth ?? null };
-      if (backend === 'rust') {
-        // The named stop: the head was read (the harness checks every member in `methods` was called before it counts
-        // the stop), then admission refused and nothing was written.
-        expect(out).toEqual({ created: COMMITTED, isError: true, error: 'permission_denied', body: 'The first body.' });
-        throw Object.assign(new Error(`put_page refused permission_denied: ${RUST_STOP_TOKEN_GRANT}`), { code: 'permission_denied' });
-      }
       expect(out).toEqual({ created: COMMITTED, isError: false, error: null, body: 'The second body.' });
       return out;
     } finally { await disposePersistenceConsumer(engine); }

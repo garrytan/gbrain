@@ -236,13 +236,14 @@ export async function listNotifierHostSourceRows(exec: LegacyUnscopedRead): Prom
        LEFT JOIN persistence_worktrees w ON w.id = b.worktree_id
        LEFT JOIN persistence_host_bindings h ON h.worktree_id = w.id AND h.host_id = w.owner_host_id
        LEFT JOIN sync_notifier_sources n ON n.source_id = s.id
-      WHERE NOT s.archived ORDER BY s.id`);
+      WHERE NOT s.archived ORDER BY s.id COLLATE "C"`);
   return rows.map(r => ({ id: String(r.id), local_path: optStr(r.local_path), last_commit: optStr(r.last_commit), bound: bool(r.bound),
     owner: optStr(r.owner), root: optStr(r.root), syncer: optStr(r.syncer), config: r.config }));
 }
 
 /** The `sync_notifier_sources` rows of `sourceIds` (every row when null), in source id order. */
 export async function readNotifierSources(exec: RawExec, sourceIds: string[] | null): Promise<NotifierSourceRow[]> {
+  // The source order never reaches output: the resident only looks each row up by source id (restoreStates).
   const rows = await exec.executeRaw<Record<string, unknown>>(
     'SELECT * FROM sync_notifier_sources WHERE ($1::text[] IS NULL OR source_id = ANY($1::text[])) ORDER BY source_id', [sourceIds]);
   return rows.map(toNotifierSourceRow);
@@ -301,7 +302,7 @@ export async function readNotifierStatusRows(exec: LegacyUnscopedRead, sourceIds
                AND (m.intent <> 'freshness' OR m.wanted_head IS NULL OR m.wanted_head IS DISTINCT FROM s.last_commit)) AS due_markers
        FROM sources s LEFT JOIN sync_notifier_sources n ON n.source_id = s.id
       WHERE NOT s.archived AND ($1::text[] IS NULL OR s.id = ANY($1::text[]))
-      ORDER BY s.id LIMIT 200`, [sourceIds]);
+      ORDER BY s.id COLLATE "C" LIMIT 200`, [sourceIds]);
   return rows.map(toNotifierStatusRow);
 }
 
@@ -335,6 +336,7 @@ export async function attachWantedMarkerJob(exec: RawExec, sourceId: string, int
 
 /** The markers of `sourceIds` (every marker when null), oldest first_due_at first, at most 1000. */
 export async function readWantedMarkers(exec: RawExec, sourceIds: string[] | null): Promise<WantedMarker[]> {
+  // The marker order never reaches output: nothing in src reads these rows to print them, and first_due_at sets the order before source_id breaks a tie.
   const rows = await exec.executeRaw<Record<string, unknown>>(
     'SELECT * FROM sync_wanted_markers WHERE ($1::text[] IS NULL OR source_id = ANY($1::text[])) ORDER BY first_due_at, source_id, intent LIMIT 1000', [sourceIds]);
   return rows.map(toWantedMarker);
@@ -345,6 +347,7 @@ export async function readWantedMarkers(exec: RawExec, sourceIds: string[] | nul
  * differs from the source's last_commit. Oldest first_due_at first, at most 1000.
  */
 export async function readDueWantedMarkers(exec: RawExec, sourceIds: string[] | null): Promise<WantedMarker[]> {
+  // The marker order never reaches output: the handoff drains these markers in turn, first_due_at sets the order, and source_id breaks a tie only on an equal timestamp.
   const rows = await exec.executeRaw<Record<string, unknown>>(
     `SELECT m.* FROM sync_wanted_markers m JOIN sources s ON s.id = m.source_id
       WHERE ($1::text[] IS NULL OR m.source_id = ANY($1::text[]))
@@ -400,6 +403,38 @@ export async function readFirstDue(exec: RawExec, sourceIds: string[]): Promise<
 /** The source's markers as the sync status notifier block lists them, oldest first_due_at first. */
 export async function listSourceWantedMarkers(exec: RawExec, sourceId: string): Promise<PendingWantedMarker[]> {
   const rows = await exec.executeRaw<Record<string, unknown>>(
-    'SELECT intent, wanted_head, first_due_at, requested_by FROM sync_wanted_markers WHERE source_id = $1 ORDER BY first_due_at, intent', [sourceId]);
+    'SELECT intent, wanted_head, first_due_at, requested_by FROM sync_wanted_markers WHERE source_id = $1 ORDER BY first_due_at, intent COLLATE "C"', [sourceId]);
   return rows.map(toPendingWantedMarker);
+}
+
+/** One source as a sync request sees it (readSourceSyncShape): its local path, the checkout root on the worktree's owner host, and whether it is bound to a managed worktree. */
+export interface SourceSyncShapeRow { local_path: string | null; root: string | null; bound: boolean }
+
+/** The shape of a source that exists and is not archived, or null. notifier/nudge.ts sourceSyncShape. */
+export async function readSourceSyncShape(exec: RawExec, sourceId: string): Promise<SourceSyncShapeRow | null> {
+  const [row] = await exec.executeRaw<{ local_path: string | null; root: string | null; bound: unknown }>(
+    `SELECT s.local_path, h.local_path AS root, (b.source_id IS NOT NULL) AS bound
+       FROM sources s
+       LEFT JOIN persistence_source_bindings b ON b.source_id = s.id AND b.source_incarnation = s.incarnation
+       LEFT JOIN persistence_worktrees w ON w.id = b.worktree_id
+       LEFT JOIN persistence_host_bindings h ON h.worktree_id = w.id AND h.host_id = w.owner_host_id
+      WHERE s.id = $1 AND NOT s.archived LIMIT 1`, [sourceId]);
+  if (!row) return null;
+  return { local_path: row.local_path ?? null, root: row.root ?? null, bound: row.bound === true || row.bound === 't' };
+}
+
+/** One source's persisted first-due clock (readNotifierFirstDue): the notifier row's observed head and the earlier of its first_due_at (state not idle) and the oldest due freshness marker, current incarnation only. */
+export interface NotifierFirstDueRow { source_id: string; observed_head: string | null; first_due_at: string | null }
+
+/** The first-due clock of each of `sourceIds` that exists (archived included), in no set order. sync-pending.ts readFirstDue. */
+export async function readNotifierFirstDue(exec: RawExec, sourceIds: string[]): Promise<NotifierFirstDueRow[]> {
+  const rows = await exec.executeRaw<{ source_id: string; first_due_at: unknown; observed_head: string | null }>(
+      `SELECT s.id AS source_id, n.observed_head,
+              LEAST(CASE WHEN n.state <> 'idle' THEN n.first_due_at END,
+                    (SELECT min(m.first_due_at) FROM sync_wanted_markers m WHERE m.source_id = s.id AND m.intent = 'freshness'
+                       AND m.source_incarnation IS NOT DISTINCT FROM s.incarnation::text
+                       AND (m.wanted_head IS NULL OR m.wanted_head IS DISTINCT FROM s.last_commit))) AS first_due_at
+         FROM sources s LEFT JOIN sync_notifier_sources n ON n.source_id = s.id AND n.source_incarnation IS NOT DISTINCT FROM s.incarnation::text
+        WHERE s.id = ANY($1::text[])`, [sourceIds]);
+  return rows.map(r => ({ source_id: String(r.source_id), observed_head: optStr(r.observed_head), first_due_at: iso(r.first_due_at) }));
 }

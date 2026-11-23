@@ -100,11 +100,7 @@ export async function checkManagedGuardSchemaDrift(engine: BrainEngine): Promise
 export async function checkPublicationRefusals(engine: BrainEngine): Promise<Check> {
   const name = 'publication_refusals';
   try {
-    const [row] = await engine.executeRaw<{ guard: number; trigger: number; opaque: number }>(
-      `SELECT COUNT(*) FILTER (WHERE error_code='writer_coordinator_required' AND error_detail->>'origin'='database_guard')::int AS guard,
-              COUNT(*) FILTER (WHERE error_detail->>'origin'='database_trigger')::int AS trigger,
-              COUNT(*) FILTER (WHERE error_detail IS NULL AND error_message LIKE 'Publication failed (P0001)%')::int AS opaque
-       FROM persistence_requests WHERE state IN ('failed','conflict','recovering') AND COALESCE(completed_at,updated_at) > now()-interval '7 days'`);
+    const row = await engine.readPublicationRefusals() as { guard: number; trigger: number; opaque: number };
     const details = { guard_refusals: row.guard, trigger_refusals: row.trigger, unclassified_p0001: row.opaque, window_days: 7, runbook: RUNBOOK };
     const total = row.guard + row.trigger + row.opaque;
     if (!total) return { name, status: 'ok', message: 'No write was refused by a database guard in the last 7 days.', details };

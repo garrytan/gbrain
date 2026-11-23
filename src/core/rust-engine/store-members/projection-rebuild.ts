@@ -4,16 +4,19 @@
  * member.
  *
  * The deferred chunk replacement's members (the row fingerprint, the unkept-row delete, the stale-vector list and
- * clear, the page head, the claim probe and renewal), the rebuild loop's queue stamps and the window probe are served too. The
+ * clear, the page head, the claim probe and renewal), the rebuild loop's queue stamps, the window probe, the queue insert and
+ * the drain's clock, work probe, backlog and preview are served too. The
  * fingerprint is the store's own opaque value: a caller only compares two of them.
  *
- * The store keeps one vector column, `embedding`, so the keep-plan and vector members refuse any other column. The drained probe
- * refuses `media`: the store does not decide which image pages are sealable. `setProjectionChunkerVersion` is the
+ * The store keeps one vector column, `embedding`, so the keep-plan and vector members refuse any other column. The store
+ * classes image pages as projectionClassSql does (sealable or reimport), so the drained and work probes serve `media` and
+ * the backlog and preview count image pages. The row estimate is the live page count (the store keeps no planner
+ * statistics; reltuples tracks the table's rows). `setProjectionChunkerVersion` is the
  * store's `setChunkerVersion`, which stamps the same column.
  */
 import type { BrainEngine } from '../../engine.ts';
 import type { KeepColumn, ProjectionJobKey } from '../../engine-sql/projection-rebuild.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -51,8 +54,7 @@ export const setProjectionChunkerVersion: Member<'setProjectionChunkerVersion'> 
 };
 
 export const hasDrainableProjectionJob: Member<'hasDrainableProjectionJob'> = (brain, opts) => {
-  if (opts?.media) refuseMember('hasDrainableProjectionJob', 'option media; the store does not decide which image pages are sealable');
-  return storeCall({ member: 'hasDrainableProjectionJob' }, () => brain.hasDrainableProjectionJob());
+  return storeCall({ member: 'hasDrainableProjectionJob' }, () => brain.hasDrainableProjectionJob(opts?.media === true));
 };
 
 export const readChunkRowsFingerprint: Member<'readChunkRowsFingerprint'> = (brain, pageId) =>
@@ -96,6 +98,29 @@ export const releaseDeferredReplacementClaim: Member<'releaseDeferredReplacement
   await storeCall({ member: 'releaseDeferredReplacementClaim', slug }, () => brain.releaseDeferredReplacementClaim(slug, claim));
 };
 
+export const listProjectionDrainPreview: Member<'listProjectionDrainPreview'> = async (brain, limit) => {
+  const member = 'listProjectionDrainPreview';
+  if (!Number.isSafeInteger(limit)) refuseMember(member, 'a limit that is not an integer');
+  return storeCall({ member }, () => brain.listProjectionDrainPreview(limit));
+};
+
+export const hasQueuedProjectionWork: Member<'hasQueuedProjectionWork'> = (brain, opts) =>
+  storeCall({ member: 'hasQueuedProjectionWork' }, () => brain.hasQueuedProjectionWork(opts?.media === true));
+
+/** The store keeps no planner statistics; the live page count stands in for the pages table's row estimate. */
+export const readPagesRowEstimate: Member<'readPagesRowEstimate'> = async (brain) =>
+  Number(await storeCall({ member: 'readPagesRowEstimate' }, () => brain.countBrainLivePages()) ?? 0);
+
+export const readDrainRunStart: Member<'readDrainRunStart'> = (brain) =>
+  storeCall({ member: 'readDrainRunStart' }, () => brain.readDrainRunStart());
+
+export const isDrainClockPast: Member<'isDrainClockPast'> = (brain, runStart) =>
+  storeCall({ member: 'isDrainClockPast' }, () => brain.isDrainClockPast(runStart));
+
+export const queuePageProjectionJob: Member<'queuePageProjectionJob'> = async (brain, sourceId, slug, reason) => {
+  await storeCall({ member: 'queuePageProjectionJob', slug, sourceId }, () => brain.queuePageProjectionJob(sourceId, slug, reason));
+};
+
 export const hasSegmentedPage: Member<'hasSegmentedPage'> = (brain, sourceId, slug) =>
   storeCall({ member: 'hasSegmentedPage', slug, sourceId }, () => brain.hasSegmentedPage(sourceId, slug));
 
@@ -118,3 +143,29 @@ export const deferProjectionJob: Member<'deferProjectionJob'> = (brain, job) =>
 function jobKey(job: ProjectionJobKey): ProjectionJobKey {
   return { sourceIncarnation: job.sourceIncarnation, slug: job.slug, revision: job.revision };
 }
+
+/*
+ * The image seal (page-state/image-seal.ts sealImageProjections), served from persistence/image_seal.rs. The store keeps
+ * no image vector, so a sealed page never has a visual one.
+ */
+export const listImageSealWindow: Member<'listImageSealWindow'> = (brain, after, limit, notAfter) => {
+  const member = 'listImageSealWindow';
+  if (!Number.isSafeInteger(limit)) refuseMember(member, 'a limit that is not an integer');
+  return storeCall({ member }, () => brain.listImageSealWindow(after.sourceIncarnation, after.slug, limit, notAfter ?? null));
+};
+
+export const readImageSealPages: Member<'readImageSealPages'> = (brain, rows) =>
+  storeCall({ member: 'readImageSealPages' }, () => brain.readImageSealPages(rows.map(({ source_id, slug, revision }) => ({ source_id, slug, revision }))));
+
+export const listImageSealChunks: Member<'listImageSealChunks'> = (brain, pageIds, column, provenanceModel) => {
+  keepColumn('listImageSealChunks', column);
+  return storeCall({ member: 'listImageSealChunks' }, () => brain.listImageSealChunks([...pageIds], provenanceModel));
+};
+
+export const clearImageSealVectors: Member<'clearImageSealVectors'> = async (brain, column, chunks) => {
+  keepColumn('clearImageSealVectors', column);
+  await storeCall({ member: 'clearImageSealVectors' }, () => brain.clearImageSealVectors(chunks.map(({ id, page_id }) => ({ id, page_id }))));
+};
+
+export const sealImagePages: Member<'sealImagePages'> = (brain, pages) =>
+  storeCall({ member: 'sealImagePages' }, () => brain.sealImagePages(pages.map(({ id, revision }) => ({ id, revision }))));

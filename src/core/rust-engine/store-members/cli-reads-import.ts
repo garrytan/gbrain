@@ -16,7 +16,7 @@ import { readBrainMode } from './writer-release.ts';
 
 export const listSourceRecords: StoreMember<[], SourceRecordRow[]> = async (brain) => {
   const rows: SourceRecordRow[] = await storeCall({ member: 'listSourceRecords' }, () => brain.listSourceRecords());
-  return rows.map(row => withDates(row, ['last_sync_at', 'created_at']));
+  return rows.map(row => withDates(row, ['last_sync_at', 'created_at', 'newest_content_at']));
 };
 
 export const readSourceIncarnation: StoreMember<[sourceId: string], SourceIncarnationRow | null> = (brain, sourceId) =>

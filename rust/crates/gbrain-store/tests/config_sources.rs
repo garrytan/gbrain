@@ -4,7 +4,9 @@ mod common;
 
 use common::{TempDir, open};
 use gbrain_store::error::INVALID_ARGUMENT;
-use gbrain_store::sources::{ListSourcesOptions, SourceInput, SourceSyncStampOptions};
+use gbrain_store::sources::{
+    ListSourcesOptions, SourceInput, SourceSyncStampOptions, SyncCheckpointAdvance,
+};
 use gbrain_store::{DEFAULT_SCHEMA_VERSION, OpenOptions, Store};
 use serde_json::json;
 
@@ -15,8 +17,18 @@ fn an_empty_brain_reports_the_schema_version_and_nothing_else() {
     assert_eq!(store.get_config("version").unwrap().as_deref(), Some("319"));
     assert_eq!(DEFAULT_SCHEMA_VERSION, 319);
     assert_eq!(store.info().schema_version, 319);
+    // A fresh brain also holds the two keys migrations v226 and v227 write on an empty PGLite or Postgres brain: the trust
+    // backfill is done and the write gate's scan baseline is at zero (rust/docs/store/cli-reads-doctor-facts-trust.md).
     let all = store.get_all_config().unwrap();
-    assert_eq!(all.len(), 1, "{all:?}");
+    assert_eq!(
+        all.keys().map(String::as_str).collect::<Vec<_>>(),
+        [
+            "trust.backfill_completed_at",
+            "version",
+            "write_gate.scan_baseline"
+        ],
+        "{all:?}"
+    );
     assert_eq!(store.get_config("missing").unwrap(), None);
     assert_eq!(store.unset_config("missing").unwrap(), 0);
     assert_eq!(
@@ -41,6 +53,50 @@ fn the_schema_version_comes_from_the_caller_on_a_fresh_brain_and_from_the_record
     let store = Store::open_dir(&path, OpenOptions::default()).unwrap();
     assert_eq!(store.info().schema_version, 401);
     assert_eq!(store.get_config("version").unwrap().as_deref(), Some("401"));
+}
+
+#[test]
+fn a_fresh_brain_records_the_write_gate_scan_baseline_under_the_callers_detector() {
+    let dir = TempDir::new("cfg-baseline");
+    let path = dir.path().join("brain");
+    let options = OpenOptions {
+        write_gate_detector_version: Some(2),
+        ..OpenOptions::default()
+    };
+    let store = Store::open_dir(&path, options).unwrap();
+    // The text Postgres prints for the jsonb migration v227 stores on an empty brain.
+    let baseline = r#"{"until": {"facts": 0, "pages": 0, "takes": 0, "timeline_entries": 0}, "detector_version": 2}"#;
+    assert_eq!(
+        store
+            .get_config("write_gate.scan_baseline")
+            .unwrap()
+            .as_deref(),
+        Some(baseline)
+    );
+    store.close();
+    // A later open with another detector does not rewrite it, and a brain opened without one records it under
+    // the default detector.
+    let options = OpenOptions {
+        write_gate_detector_version: Some(3),
+        ..OpenOptions::default()
+    };
+    let store = Store::open_dir(&path, options).unwrap();
+    assert_eq!(
+        store
+            .get_config("write_gate.scan_baseline")
+            .unwrap()
+            .as_deref(),
+        Some(baseline)
+    );
+    let plain = TempDir::new("cfg-default-baseline");
+    let other = open(&plain);
+    assert_eq!(
+        other
+            .get_config("write_gate.scan_baseline")
+            .unwrap()
+            .as_deref(),
+        Some(baseline)
+    );
 }
 
 #[test]
@@ -88,7 +144,7 @@ fn prefix_listing_is_literal_sorted_and_getall_has_everything() {
         "_ is not a wildcard"
     );
     let all = store.get_all_config().unwrap();
-    assert_eq!(all.len(), 6);
+    assert_eq!(all.len(), 8);
     assert_eq!(all["other"], "4");
     let keys: Vec<_> = all.keys().cloned().collect();
     let mut sorted = keys.clone();
@@ -280,6 +336,76 @@ fn sources_survive_a_reopen() {
 }
 
 #[test]
+fn the_sync_anchor_advances_one_source_and_survives_a_reopen() {
+    let dir = TempDir::new("src-anchor");
+    let store = open(&dir);
+    store.upsert_source(&input("wiki", None)).unwrap();
+    store.upsert_source(&input("other", None)).unwrap();
+    assert_eq!(store.get_source("wiki").unwrap().unwrap().last_commit, None);
+    store
+        .advance_source_commit("wiki", "c1", Some(Some("2026-01-02T03:04:05.000Z")))
+        .unwrap();
+    store.advance_source_commit("wiki", "c2", None).unwrap();
+    store
+        .attach_source_path("wiki", "/srv/wiki", None, None)
+        .unwrap();
+    // An unknown source changes nothing, as the UPDATE matches no row.
+    store.advance_source_commit("missing", "c9", None).unwrap();
+    store
+        .attach_source_path("missing", "/srv/missing", None, None)
+        .unwrap();
+    assert!(
+        store
+            .advance_source_commit("wiki", "c3", Some(Some("not a time")))
+            .is_err()
+    );
+    store.close();
+    let store = open(&dir);
+    let wiki = store.get_source("wiki").unwrap().unwrap();
+    assert_eq!(wiki.last_commit.as_deref(), Some("c2"));
+    assert!(wiki.last_sync_at.is_some());
+    assert_eq!(wiki.local_path.as_deref(), Some("/srv/wiki"));
+    let records = store.list_source_records().unwrap();
+    let newest = |id: &str| {
+        records
+            .iter()
+            .find(|r| r.id == id)
+            .and_then(|r| r.newest_content_at.clone())
+    };
+    assert_eq!(
+        newest("wiki").as_deref(),
+        Some("2026-01-02T03:04:05.000000Z")
+    );
+    store
+        .advance_source_commit("wiki", "c4", Some(None))
+        .unwrap();
+    assert_eq!(
+        store
+            .list_source_records()
+            .unwrap()
+            .iter()
+            .find(|r| r.id == "wiki")
+            .unwrap()
+            .newest_content_at,
+        None
+    );
+    assert_eq!(
+        store.get_source("other").unwrap().unwrap().last_commit,
+        None
+    );
+    assert_eq!(store.get_source("missing").unwrap(), None);
+    assert_eq!(
+        store
+            .read_plain_sync_source("wiki")
+            .unwrap()
+            .unwrap()
+            .last_commit
+            .as_deref(),
+        Some("c4")
+    );
+}
+
+#[test]
 fn mark_source_synced_sets_only_the_last_sync_time_and_an_unknown_source_is_false() {
     let dir = TempDir::new("src-synced");
     let store = open(&dir);
@@ -368,6 +494,25 @@ fn initial_config_refuses_the_version_key() {
 }
 
 #[test]
+fn the_purge_epoch_advances_one_source_and_survives_a_reopen() {
+    let dir = TempDir::new("src-purge-epoch");
+    let store = open(&dir);
+    store.upsert_source(&input("wiki", None)).unwrap();
+    assert_eq!(store.read_source_purge_epoch("wiki").unwrap(), Some(0));
+    assert_eq!(store.advance_source_purge_epoch("wiki").unwrap(), Some(1));
+    assert_eq!(store.advance_source_purge_epoch("wiki").unwrap(), Some(2));
+    // An unknown source changes nothing and returns no row, as the UPDATE ... RETURNING does.
+    assert_eq!(store.advance_source_purge_epoch("missing").unwrap(), None);
+    assert_eq!(store.read_source_purge_epoch("missing").unwrap(), None);
+    assert_eq!(store.read_source_purge_epoch("default").unwrap(), Some(0));
+    let before = store.get_source("wiki").unwrap();
+    drop(store);
+    let store = open(&dir);
+    assert_eq!(store.read_source_purge_epoch("wiki").unwrap(), Some(2));
+    assert_eq!(store.get_source("wiki").unwrap(), before);
+}
+
+#[test]
 fn mark_source_synced_with_an_incarnation_stamps_only_that_incarnation_and_refuses_a_malformed_id()
 {
     let dir = TempDir::new("src-synced-inc");
@@ -376,6 +521,7 @@ fn mark_source_synced_with_an_incarnation_stamps_only_that_incarnation_and_refus
     let incarnation = store.get_source_by_id("dept").unwrap().unwrap().incarnation;
     let with = |id: &str| SourceSyncStampOptions {
         incarnation: Some(id.to_string()),
+        newest_content_at: None,
     };
     assert!(
         !store
@@ -403,4 +549,110 @@ fn mark_source_synced_with_an_incarnation_stamps_only_that_incarnation_and_refus
         .mark_source_synced("dept", &with("not-a-uuid"))
         .unwrap_err();
     assert_eq!(err.code, INVALID_ARGUMENT);
+}
+
+#[test]
+fn mark_source_synced_with_a_newest_content_time_sets_it_and_null_keeps_it() {
+    let dir = TempDir::new("src-synced-newest");
+    let store = open(&dir);
+    store.upsert_source(&input("feed", Some("/f"))).unwrap();
+    let newest = |store: &Store| {
+        store
+            .list_source_records()
+            .unwrap()
+            .into_iter()
+            .find(|r| r.id == "feed")
+            .and_then(|r| r.newest_content_at)
+    };
+    let with = |at: Option<&str>| SourceSyncStampOptions {
+        incarnation: None,
+        newest_content_at: at.map(str::to_string),
+    };
+    assert!(
+        store
+            .mark_source_synced("feed", &with(Some("2026-03-04T05:06:07.000Z")))
+            .unwrap()
+    );
+    assert_eq!(
+        newest(&store).as_deref(),
+        Some("2026-03-04T05:06:07.000000Z")
+    );
+    assert!(store.mark_source_synced("feed", &with(None)).unwrap());
+    assert_eq!(
+        newest(&store).as_deref(),
+        Some("2026-03-04T05:06:07.000000Z")
+    );
+    assert!(
+        store
+            .mark_source_synced("feed", &with(Some("2026-05-06T09:08:09+02:00")))
+            .unwrap()
+    );
+    assert_eq!(
+        newest(&store).as_deref(),
+        Some("2026-05-06T07:08:09.000000Z")
+    );
+    let err = store
+        .mark_source_synced("feed", &with(Some("not a time")))
+        .unwrap_err();
+    assert_eq!(err.code, INVALID_ARGUMENT);
+    assert_eq!(
+        newest(&store).as_deref(),
+        Some("2026-05-06T07:08:09.000000Z")
+    );
+}
+
+#[test]
+fn the_sync_checkpoint_advances_only_from_its_commit_and_keeps_a_pinned_mode() {
+    let dir = TempDir::new("src-checkpoint");
+    let store = open(&dir);
+    store.upsert_source(&input("repo", Some("/r"))).unwrap();
+    let incarnation = store.get_source_by_id("repo").unwrap().unwrap().incarnation;
+    let run = |commit: &str, from: Option<&str>, accept: bool, mode: &str, keep: bool| {
+        store
+            .advance_sync_checkpoint(&SyncCheckpointAdvance {
+                source_id: "repo".into(),
+                incarnation: incarnation.clone(),
+                commit: commit.into(),
+                from: from.map(str::to_string),
+                accept_at_commit: accept,
+                slug_mode: mode.into(),
+                keep_pinned_slug_mode: keep,
+            })
+            .unwrap()
+    };
+    assert_eq!(run("c1", None, false, "git-root", false)["advanced"], true);
+    let source = store.get_source("repo").unwrap().unwrap();
+    assert_eq!(source.last_commit.as_deref(), Some("c1"));
+    assert_eq!(source.config["slug_root_mode"], "git-root");
+    // No live page: newest_content_at stays empty.
+    assert!(
+        store
+            .list_source_records()
+            .unwrap()
+            .iter()
+            .find(|r| r.id == "repo")
+            .unwrap()
+            .newest_content_at
+            .is_none()
+    );
+    // A moved checkpoint changes nothing.
+    assert_eq!(
+        run("c2", Some("c0"), false, "git-root", false)["advanced"],
+        false
+    );
+    assert_eq!(
+        run("c1", Some("c0"), true, "git-root", false)["advanced"],
+        true
+    );
+    // A pinned mode refuses another mode and names itself; an empty scope keeps it.
+    let refused = run("c3", Some("c1"), false, "source-root", false);
+    assert_eq!(refused["advanced"], false);
+    assert_eq!(refused["pinnedSlugMode"], "git-root");
+    assert_eq!(
+        run("c3", Some("c1"), false, "source-root", true)["advanced"],
+        true
+    );
+    let source = store.get_source("repo").unwrap().unwrap();
+    assert_eq!(source.last_commit.as_deref(), Some("c3"));
+    assert_eq!(source.config["slug_root_mode"], "git-root");
 }

@@ -26,8 +26,14 @@
 import type { BrainEngine } from '../engine.ts';
 import type { ProjectionReadinessScope } from './projection-readiness.ts';
 
-/** Counts stop here (one bounded scan per call); a capped count reports `capped`. */
+/**
+ * Each count stops here: min(every match in scope, cap), so the answer does not depend on the order an engine reads
+ * pages in. A capped count reports `capped`.
+ */
 export const COVERAGE_COUNT_CAP = 1000;
+
+/** A coverage count that runs longer is unknown (null), never zero: Postgres ends it on the server and the Rust store stops its walk. */
+export const COVERAGE_COUNT_TIMEOUT_MS = 2_000;
 
 export interface CoverageRelevance {
   all: boolean;

@@ -30,6 +30,7 @@ import type { TrustTier } from '../trust/tier.ts';
 import { conversationSignal } from './evidence-delivery.ts';
 import { factsFromQuotedPages } from './transcript-quote.ts';
 import { findTimeMentions } from '../temporal-grammar.ts';
+import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
 import { withDecideContested, type ContestedLookup } from '../facts/contested-claims.ts';
 import type { Contested } from '../eligibility/labels.ts';
 
@@ -223,10 +224,18 @@ export async function applyFactsArm(engine: BrainEngine, query: string, results:
     const merged = [...pages, ...rows];
     await stampSupersededClaims(engine, merged, facts).catch(() => undefined);
     return merged;
-  } catch {
+  } catch (e) {
+    // An engine that cannot serve a read refuses: the refusal is a typed stop, never a silently empty facts arm.
+    rethrowCapabilityMissing(e);
     return results;
   }
 }
+
+/**
+ * A fail-soft fallback for a read the answer depends on (the slot history, its windows, later retractions): a failed
+ * read degrades the block as before, but an engine capability refusal rethrows, so it never reads as "no history".
+ */
+const unlessRefused = <T>(fallback: () => T) => (e: unknown): T => { rethrowCapabilityMissing(e); return fallback(); };
 
 interface ReservePolicy {
   share: number;
@@ -286,7 +295,7 @@ async function applyFactReserve(engine: BrainEngine, query: string, results: Sea
     const readScope: PageReadScope = opts.readScope ?? { sourceId: opts.sourceId, sourceIds: opts.sourceIds, excludePrivate: scope.excludePrivate };
     // GBRA-574 F: a history question about one slot dimension of one named entity takes every value it has had, first in line (slot-history.ts).
     let historyUnavailable = false;
-    const history = policy.dated ? await readSlotHistory(engine, query, scope, readScope).catch(() => { historyUnavailable = true; return null; }) : null;
+    const history = policy.dated ? await readSlotHistory(engine, query, scope, readScope).catch(unlessRefused(() => { historyUnavailable = true; return null; })) : null;
     const pinned = new Set((history?.rows ?? []).map(c => Number(c.id)));
     const { candidates, stems } = await collectFactCandidates(engine, query, scope, opts.queryEmbedding,
       { depth: { keyword: 50, cosine: 50, entity: policy.maxRows }, cosineForAll: true, history: policy.dated && hasHistoryCue(query) });
@@ -301,7 +310,7 @@ async function applyFactReserve(engine: BrainEngine, query: string, results: Sea
     const collapsed = await collapseFactReads(engine, scored.map(c => ({ ...c, id: Number(c.id), created_at: c.created_at ?? c.valid_from, visibility: c.visibility ?? '', attributed_to: c.attributed_to ?? null })));
     const members = collapsed.map(r => (r.collapsed_ids ?? [r.id]).map(id => byId.get(id)!));
     // GBRA-574 B5: later facts that retract or call off a pooled fact, read under the same policy.
-    const answers = policy.dated ? await laterRetractions(engine, scope, members.flat()).catch(() => new Map<number, FactCandidate[]>()) : new Map<number, FactCandidate[]>();
+    const answers = policy.dated ? await laterRetractions(engine, scope, members.flat()).catch(unlessRefused(() => new Map<number, FactCandidate[]>())) : new Map<number, FactCandidate[]>();
     const retracting = [...new Map([...answers.values()].flat().filter(r => !byId.has(r.id)).map(r => [r.id, r])).values()];
     const { dates } = await observedDates(engine, [...members.flat(), ...retracting], opts.readScope);
     const said = (c: FactCandidate) => dates?.get(Number(c.id)) ?? day(c.created_at ?? c.valid_from) ?? '';
@@ -309,7 +318,7 @@ async function applyFactReserve(engine: BrainEngine, query: string, results: Sea
     const shown = groups.map(g => g[0]!);
     // GBRA-574 B2/G4 and F: a slot value's window ends at read time, from the rows the caller may read under every key of its entity (slot-history.ts).
     const ends = await slotWindows(engine, scope, readScope, shown, history?.keys ?? null)
-      .catch(() => { historyUnavailable ||= history !== null; return new Map<number, Date>(); });
+      .catch(unlessRefused(() => { historyUnavailable ||= history !== null; return new Map<number, Date>(); }));
     const pageSlugs = await readableEntityPages(engine, shown, opts.readScope).catch(() => new Set<string>());
     const fromQuoted = await factsFromQuotedPages(engine, [...shown, ...retracting].map(c => Number(c.id)));
     const asked = policy.dated ? questionDate(query) : null;
@@ -382,7 +391,9 @@ async function applyFactReserve(engine: BrainEngine, query: string, results: Sea
     const merged = policy.position === 'after' ? [...pages, ...rows] : [...rows, ...pages];
     await stampSupersededClaims(engine, merged, placed.map(x => x.c)).catch(() => undefined);
     return merged;
-  } catch {
+  } catch (e) {
+    // An engine that cannot serve a read refuses: the refusal is a typed stop, never a silently empty facts block.
+    rethrowCapabilityMissing(e);
     return results;
   }
 }

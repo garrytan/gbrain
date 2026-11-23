@@ -19,6 +19,7 @@ import { storePagePolicy } from './private-provenance.ts';
 import type { PageSnapshot } from '../../page-state/types.ts';
 import { isSegmentedPage } from '../../page-body/page-shape.ts';
 import type { PurgeVersionBodyQuery, PurgeVersionBodyRow } from '../../engine-sql/segmented-purge-writes.ts';
+import { storeErrorCode } from '../store-errors.ts';
 
 function requireInteger(member: string, name: string, value: number): void {
   if (!Number.isSafeInteger(value)) refuseMember(member, `a ${name} that is not an integer`);

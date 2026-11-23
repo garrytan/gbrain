@@ -190,6 +190,7 @@ pub(crate) struct PageRecord {
     pub write_origin: Option<Value>,
     /// When the page last lost version history (`pages.version_history_gap_at`): a version prune
     /// (`version_prune`) or `createVersion` with `historyGap`. `None` is NULL. Not part of `to_page`.
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version_history_gap_at_us: Option<i64>,
     /// The actor that wrote the live revision (`pages.revision_*`). Absent in a record stored
@@ -469,6 +470,7 @@ pub(crate) struct VersionRecord {
     /// reader is never shown this version's reason (`version_prune::mark_pruned_history`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub successor_pruned: bool,
+
     /// Who wrote the snapshotted revision and who archived it (`page_versions.write_*`,
     /// `archived_*`). Absent in a record stored before it. [`snapshot_in`] stamps it.
     #[serde(default, skip_serializing_if = "VersionReceipt::is_empty")]
@@ -483,6 +485,7 @@ impl VersionRecord {
         v["trust_tier"] =
             json!(crate::trust::TrustTier::stored(self.trust_tier.as_deref()).as_str());
         v["write_origin"] = json!(self.write_origin.clone().map(crate::jsonb::order));
+
         v["change_reason"] = json!(self.change_reason);
         v
     }
@@ -754,6 +757,8 @@ fn stamp_page_trust(
         OriginStamp, StampRow, TrustTable, TrustTier, page_frontmatter_content, stamp,
     };
     let context = crate::write_trust::stamp_context::current()?;
+    // `gbrain_stamp_revision_attribution` casts the request on every row written to `pages`.
+    context.attribution.refuse_request_not_uuid()?;
     let tier_of = |page: &PageRecord| TrustTier::stored(page.trust_tier.as_deref());
     let (row, stored_origin) = match before {
         None => (
@@ -2302,6 +2307,9 @@ pub(crate) fn snapshot_in(
     env: &dyn Env,
     page: &PageRecord,
 ) -> Result<VersionRecord> {
+    let context = crate::write_trust::stamp_context::current()?;
+    // `gbrain_stamp_version_attribution` casts the request on every row inserted into `page_versions`.
+    context.attribution.refuse_request_not_uuid()?;
     let id = next_id(tx, NEXT_VERSION_ID)?;
     let mut tags = page.tags.clone();
     tags.sort();
@@ -2309,7 +2317,7 @@ pub(crate) fn snapshot_in(
     // `snapshot_version_trust`: the snapshot copies the page's stamped tier and origin. No store
     // caller supplies its own, so the backfill branch never applies.
     let (tier, write_origin) = crate::trust::snapshot_version(
-        &crate::write_trust::stamp_context::current()?,
+        &context,
         crate::trust::TrustTier::stored(page.trust_tier.as_deref()),
         page.write_origin.as_ref(),
         None,
@@ -2335,6 +2343,7 @@ pub(crate) fn snapshot_in(
         write_origin,
         change_reason: None,
         successor_pruned: false,
+
         // `gbrain_stamp_version_attribution`: `page` is the snapshotted revision as stored.
         receipt: VersionReceipt::stamp(&page.revision_receipt)?,
     };
@@ -2462,6 +2471,110 @@ mod tests {
         read_page(&*store.read().unwrap(), DEFAULT_SOURCE, slug)
             .unwrap()
             .unwrap()
+    }
+
+    #[test]
+    fn create_version_stamps_the_git_reason_and_marks_a_history_gap() {
+        let store = crate::test_support::store();
+        put(&store, "a");
+        let reason = |reason: Option<&str>, history_gap: bool| CreateVersionOptions {
+            source_id: None,
+            reason: reason.map(str::to_owned),
+            history_gap: Some(history_gap),
+            reason_source: None,
+            preimage: None,
+        };
+        let v1 = store
+            .create_version_opts("a", &reason(Some("Fix the typo"), false))
+            .unwrap();
+        assert_eq!(v1["change_reason"], "Fix the typo");
+        let gap = |store: &Store| {
+            read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "a")
+                .unwrap()
+                .unwrap()
+                .version_history_gap_at_us
+        };
+        assert_eq!(gap(&store), None);
+        let v2 = store.create_version_opts("a", &reason(None, true)).unwrap();
+        assert_eq!(v2["change_reason"], Value::Null);
+        assert!(gap(&store).is_some());
+        let listed: Vec<Value> = store
+            .get_versions("a", &VersionsOptions::default())
+            .unwrap()
+            .into_iter()
+            .map(|v| v["replaced_because"].clone())
+            .collect();
+        assert_eq!(listed, [Value::Null, json!("Fix the typo")]);
+    }
+
+    #[test]
+    fn a_remote_reader_gets_the_reason_only_when_the_successor_is_visible() {
+        let store = crate::test_support::store();
+        let body = |text: &str, private: bool| {
+            let mut input = PageInput {
+                page_type: "note".into(),
+                title: "Why".into(),
+                compiled_truth: text.into(),
+                ..PageInput::default()
+            };
+            if private {
+                input.frontmatter = json!({ "visibility": "private" }).as_object().cloned();
+            }
+            store
+                .put_page("why", &input, &PutPageOptions::default())
+                .unwrap();
+        };
+        let reason = |reason: &str| CreateVersionOptions {
+            source_id: None,
+            reason: Some(reason.to_owned()),
+            history_gap: None,
+            reason_source: None,
+            preimage: None,
+        };
+        body("v1", false);
+        store.create_version_opts("why", &reason("one")).unwrap();
+        body("v2", true);
+        store.create_version_opts("why", &reason("two")).unwrap();
+        body("v3", false);
+        store.create_version_opts("why", &reason("three")).unwrap();
+        let read = |remote: bool| -> Vec<(String, Value)> {
+            let options = VersionsOptions {
+                exclude_private: remote.then(|| crate::facts::PrivacyPolicy {
+                    entity_privacy: true,
+                    ..crate::facts::PrivacyPolicy::default()
+                }),
+                ..VersionsOptions::default()
+            };
+            store
+                .get_versions("why", &options)
+                .unwrap()
+                .into_iter()
+                .map(|v| {
+                    (
+                        v["compiled_truth"].as_str().unwrap().to_owned(),
+                        v["replaced_because"].clone(),
+                    )
+                })
+                .collect()
+        };
+        // A trusted read shows every stored reason.
+        assert_eq!(
+            read(false),
+            [
+                ("v3".to_owned(), json!("three")),
+                ("v2".to_owned(), json!("two")),
+                ("v1".to_owned(), json!("one"))
+            ]
+        );
+        // A remote read drops the private snapshot, and the snapshot before it loses its reason
+        // because its successor is the one that is hidden.
+        assert_eq!(
+            read(true),
+            [
+                ("v3".to_owned(), json!("three")),
+                ("v1".to_owned(), Value::Null)
+            ]
+        );
     }
 
     /// Turns a stored page into a segmented shell the way PGLite's `createSegmentedPageShell` leaves it: NULL body

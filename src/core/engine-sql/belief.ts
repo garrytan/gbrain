@@ -51,6 +51,6 @@ export async function readLedgerSource(exec: LegacyUnscopedRead, sourceId: strin
  */
 export async function listCoveredSources(tx: Pick<BrainEngine, 'executeRaw'>, subjectKey: string): Promise<string[]> {
   const rows = await tx.executeRaw<{ id: string }>(`SELECT s.id FROM sources s WHERE EXISTS (SELECT 1 FROM belief_events e
-    WHERE e.source_id = s.id AND e.subject_kind = 'coverage' AND e.subject_key = $1 AND e.source_incarnation = s.incarnation) ORDER BY 1`, [subjectKey]);
+    WHERE e.source_id = s.id AND e.subject_kind = 'coverage' AND e.subject_key = $1 AND e.source_incarnation = s.incarnation) ORDER BY s.id COLLATE "C"`, [subjectKey]);
   return rows.map(r => r.id);
 }

@@ -13,8 +13,9 @@
 //! listLinkSources, getBacklinkCounts, rewriteLinks, relationalFanout, relationalChainHop,
 //! getAdjacencyBoosts, findOrphanPages, hasSupersedeEdges, supersedingPageSlugs, pagesLinkingTo;
 //! site_reads: inboundLinkCoverage, listJunkEntityHubs, countEntityPages, entityGraphCoverage,
+//! entityFeatureCoverage, countDatedMeetingPages,
 //! countForeignEdges, listLivePageSummaries, countInboundLinks, listLinkEndpointPages,
-//! listPagesTitledIn, wordLexemes; listAttendedOriginSlugs (the attendance origins a sync's link
+//! listPagesTitledIn, wordLexemes, probePageTypes; listAttendedOriginSlugs (the attendance origins a sync's link
 //! extraction reconciles).
 //!
 //! Reads and writes go through the core links helpers (`put_link`, `delete_link`, `out_links`,
@@ -60,18 +61,26 @@ pub use link_temporal::{
     ApplyTemporalInput, ApplyTemporalResult, EdgeValidityCounts, EdgeValidityInput, EvidenceInput,
     InboundEdgeRow, KeysForOriginInput, KeysForPagesInput, KeysTouchingInput, ManualRelationship,
     ManualWriteInput, ManualWriteResult, NoteRow, NoteRowsInput, PageStatusInput, PageStatusRow,
-    RecordMetadataInput, RecordMetadataRows, RelationshipEvidence, RelationshipKey,
-    SearchVectorCounts, StaleKeysInput, StateWrite,
+    RecordMetadataInput, RecordMetadataRows, ReferrerGroupInput, ReferrerGroupRow,
+    ReferrerPageDetailRow, ReferrerPageDetailsInput, ReferrerRecordCandidateInput,
+    ReferrerRecordCandidateRow, ReferrerRecordPageRow, ReferrerRow, ReferrerRowInput,
+    ReferrerTargetCountInput, ReferrerTargetCountRow, ReferrerTargetSourcesInput, ReferrerTypeRow,
+    RelationshipEvidence, RelationshipKey, SearchVectorCounts, StaleKeysInput, StateWrite,
 };
-mod retrieval_coverage;
+mod atom_backlog;
+pub use atom_backlog::{AtomBacklogQuery, ConnectorExclusion};
+mod projection_backlog;
+pub use projection_backlog::ProjectionBacklogRow;
+pub(crate) mod retrieval_coverage;
 pub use retrieval_coverage::{
     CoverageRelevance, CoverageScope, PendingCount, PendingCountInput, ReadinessRow,
     RebuildProgress,
 };
 mod site_reads;
 pub use site_reads::{
-    EndpointsInput, EntityPagesInput, ForeignEdgesInput, InboundCountInput, InboundCoverageInput,
-    JunkHubsInput, LinkContextAsk, TitledInput,
+    EndpointsInput, EntityPagesInput, FeatureCoverageInput, ForeignEdgesInput, InboundCountInput,
+    InboundCoverageInput, JunkHubsInput, LinkContextAsk, LongPageSizeInput, TitledInput,
+    TypeProbeInput,
 };
 
 /// The frontmatter key that hides a page (`quarantineFilterFragment`).

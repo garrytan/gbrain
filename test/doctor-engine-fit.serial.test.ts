@@ -146,6 +146,21 @@ describe('pgliteScaleCheck', () => {
     expect(check!.message).toContain('10 pages');
   });
 
+  test('rust at 10 pages → ok, the same threshold as PGLite', async () => {
+    const engine = { kind: 'rust', getStats: async () => ({ page_count: 10 }) } as unknown as BrainEngine;
+    const check = await pgliteScaleCheck(engine);
+    expect(check).toEqual({ name: 'pglite_scale', status: 'ok', message: `Rust at 10 pages — comfortable below the ${PGLITE_SCALE_PAGE_THRESHOLD}-page threshold` });
+  });
+
+  test('rust at 1500 pages → warn naming mcp expose and no graduation fix (the plan reads PGLite only)', async () => {
+    const engine = { kind: 'rust', getStats: async () => ({ page_count: 1500 }) } as unknown as BrainEngine;
+    const check = await pgliteScaleCheck(engine);
+    expect(check!.status).toBe('warn');
+    expect(check!.message).toContain('1500');
+    expect(check!.message).toContain('gbrain mcp expose');
+    expect(check!.fix).toBeUndefined();
+  });
+
   test('getStats throwing → null (other checks own that failure)', async () => {
     const engine = {
       kind: 'pglite',

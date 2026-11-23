@@ -23,6 +23,7 @@ import { createSource, pick, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { LATEST_VERSION } from '../../src/core/migrate.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -96,6 +97,37 @@ const CALLER_KEPT = {
 const ids = (rows: Array<{ source_id: string; slug: string }>) => sorted(rows.map((r) => `${r.source_id}:${r.slug}`));
 
 describe('engine parity: excludePrivate on page reads', () => {
+  parityTest(
+    'a remote read under the brain policy alone (serve --http, a token bound to nobody) reads the same pages as without it',
+    { methods: ['putPage', 'addLink', 'readPageSnapshot'] },
+    async (engine) => {
+      // The open member-access form holds only on a brain where no page names readers (access.restrictions_present
+      // unset), so this fixture leaves out the pages whose readers or origins name a member.
+      const named = new Set(['notes/readers', 'atoms/origin-readers', 'concepts/readers-input', 'notes/lineage-readers']);
+      const pages = PAGES.filter(([slug]) => !named.has(slug));
+      for (const [slug, type, frontmatter] of pages) {
+        await engine.putPage(slug, { type: type as never, title: slug, compiled_truth: `About ${slug}.`, timeline: '', frontmatter });
+      }
+      await engine.addLink('concepts/private-input', 'atoms/no-visibility', '', 'synthesized_from', 'concept-provenance');
+      await engine.addLink('concepts/open-input', 'notes/open', '', 'synthesized_from', 'concept-provenance');
+      // The access serve --http gives a token bound to nobody: no identity, the open member-access form, and the brain's
+      // remote policy, whose schema version (a current brain's, as serve --http reads it) picks the owner-only form.
+      const remote = {
+        identity: [], hidePrivate: true, restricted: false,
+        remotePolicy: { privacyRelaxed: false, restricted: false, ownerMember: null, ownerReadsRestricted: false, membersReadLineage: false,
+          schemaVersion: LATEST_VERSION },
+      };
+      const read = async (slug: string) => (await engine.readPageSnapshot(slug, { excludePrivate: true, sourceId: 'default' }))?.page.slug ?? null;
+      const slugs = pages.map(([slug]) => slug);
+      const local = await withCallerAccess({ identity: [], hidePrivate: true, restricted: false }, async () => Promise.all(slugs.map(read)));
+      const viaRemote = await withCallerAccess(remote, async () => Promise.all(slugs.map(read)));
+      expect(sorted(viaRemote.filter((s): s is string => s !== null))).toContain('notes/open');
+      expect(viaRemote).not.toContain('notes/private');
+      expect(viaRemote).toEqual(local);
+      return { kept: sorted(viaRemote.filter((s): s is string => s !== null)) };
+    },
+  );
+
   parityTest(
     'getRecentSalience under excludePrivate drops the pages the page policy hides before it ranks and limits',
     { methods: ['putPage', 'addLink', 'setEmotionalWeightBatch', 'getRecentSalience'] },
@@ -408,7 +440,7 @@ describe('engine parity: excludePrivate on tags and takes', () => {
   );
 
   /** One resolved bet per fixture page (claim `probe claim <slug>`), plus a private page's bet in `other`. */
-  async function withTakes(engine: BrainEngine, backend: Parameters<typeof createSource>[1]) {
+  async function withTakes(engine: BrainEngine, backend: Parameters<typeof createSource>[1], resolvedBy = 'garry') {
     await fixture(engine, backend);
     const slugOf = new Map<number, string>();
     let n = 0;
@@ -417,13 +449,13 @@ describe('engine parity: excludePrivate on tags and takes', () => {
       slugOf.set(id, slug);
       const weight = [0.15, 0.35, 0.55, 0.75, 0.95][n % 5]!;
       await engine.addTakesBatch([{ page_id: id, row_num: 1, claim: `probe claim ${slug}`, kind: 'bet', holder: 'garry', weight }]);
-      await engine.resolveTake(id, 1, { quality: n % 3 === 0 ? 'incorrect' : 'correct', resolvedBy: 'garry' });
+      await engine.resolveTake(id, 1, { quality: n % 3 === 0 ? 'incorrect' : 'correct', resolvedBy });
       n++;
     }
     const other = Number((await engine.getPage('notes/private', { sourceId: 'other' }))!.id);
     slugOf.set(other, 'other:notes/private');
     await engine.addTakesBatch([{ page_id: other, row_num: 1, claim: 'probe claim other private', kind: 'bet', holder: 'garry', weight: 0.9 }]);
-    await engine.resolveTake(other, 1, { quality: 'correct', resolvedBy: 'garry' });
+    await engine.resolveTake(other, 1, { quality: 'correct', resolvedBy });
     return slugOf;
   }
   type Reads = { list: string[]; search: string[]; card: unknown; curve: unknown };
@@ -499,6 +531,27 @@ describe('engine parity: excludePrivate on tags and takes', () => {
       expect(garry.brier).toBe(round(plain.brier));
       expect(nobody).toEqual({ bets: 0, brier: null, curve: [] });
       return { garry, nobody };
+    },
+  );
+
+  parityTest(
+    'countMcpResolvedTakes under excludePrivate applies a caller\'s reader identity and private-readable grant',
+    { methods: ['putPage', 'addLink', 'getPage', 'addTakesBatch', 'resolveTake', 'countMcpResolvedTakes'] },
+    async (engine, backend) => {
+      // takes_scorecard adds this count to its answer: a caller the scorecard serves must be served here too.
+      await withTakes(engine, backend, 'mcp:probe-client');
+      const count = (sourceIds: string[] | null, excludePrivate: boolean) =>
+        engine.countMcpResolvedTakes({ sourceIds, holders: ['garry'], excludePrivate });
+      const all = await count(null, false);
+      const plain = await count(['default'], true);
+      const caller = await asCaller(() => count(['default'], true));
+      const callerFederated = await asCaller(() => count(['default', 'other'], true));
+      expect(all).toBe(PAGES.length + 1);
+      expect(plain).toBe(KEPT.length);
+      expect(caller).toEqual({ member: CALLER_KEPT.member.length, granted: CALLER_KEPT.granted.length });
+      // The grant names `default` only: the private page's take in `other` stays out of the count.
+      expect(callerFederated).toEqual(caller);
+      return { all, plain, caller, callerFederated };
     },
   );
 });

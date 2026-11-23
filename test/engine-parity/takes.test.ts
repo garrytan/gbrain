@@ -1124,4 +1124,84 @@ describe('engine parity: takes reads (group D)', () => {
       return out;
     },
   );
+
+  parityTest(
+    'listTopResolvedTakesForHolder returns the holder\'s heaviest active resolved takes on any page, an undated take first within a weight',
+    { methods: ['putPage', 'softDeletePage', 'addTakesBatch', 'resolveTake', 'listTopResolvedTakesForHolder'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'top-other');
+      const a = await page(engine, 'notes/top-a');
+      const gone = await page(engine, 'notes/top-gone');
+      const o = await page(engine, 'notes/top-o', { sourceId: 'top-other' });
+      await engine.addTakesBatch([
+        take(a.id, 1, 'heavy dated', { holder: 'alice', weight: 0.9, since_date: '2024-03' }),
+        take(a.id, 2, 'heavy undated', { holder: 'alice', weight: 0.9 }),
+        take(a.id, 3, 'heavy newer', { holder: 'alice', weight: 0.9, since_date: '2025-06-01' }),
+        take(a.id, 4, 'lighter', { holder: 'alice', weight: 0.35 }),
+        take(a.id, 5, 'unresolved', { holder: 'alice', weight: 1 }),
+        take(a.id, 6, 'inactive', { holder: 'alice', weight: 1, active: false }),
+        take(a.id, 7, 'another holder', { holder: 'garry', weight: 1 }),
+      ]);
+      await engine.addTakesBatch([take(gone.id, 1, 'on a deleted page', { holder: 'alice', weight: 0.85 })]);
+      await engine.addTakesBatch([take(o.id, 1, 'in another source', { holder: 'alice', weight: 0.6 })]);
+      const done = { quality: 'correct' as const, resolvedBy: 'garry' };
+      for (const row of [1, 2, 3, 4, 6, 7]) await engine.resolveTake(a.id, row, row === 4 ? { ...done, quality: 'incorrect' } : done);
+      await engine.resolveTake(gone.id, 1, done);
+      await engine.resolveTake(o.id, 1, { ...done, quality: 'partial' });
+      await engine.softDeletePage('notes/top-gone');
+      const rows = await engine.listTopResolvedTakesForHolder('alice');
+      const ids = new Map<string, number>();
+      const out = {
+        alice: rows.map((r) => { ids.set(r.claim, Number(r.id)); return { ...r, id: typeof r.id }; }),
+        nobody: await engine.listTopResolvedTakesForHolder('nobody'),
+      };
+      expect(out.alice.map((r) => r.claim)).toEqual(['heavy undated', 'heavy newer', 'heavy dated', 'on a deleted page', 'in another source', 'lighter']);
+      expect(out.alice.map((r) => r.resolved_quality)).toEqual(['correct', 'correct', 'correct', 'correct', 'partial', 'incorrect']);
+      expect(ids.get('heavy undated')! > ids.get('heavy dated')!).toBe(true);
+      // The 25-row cap: 30 more resolved takes of one weight, each dated a day apart, keep the 25 newest.
+      const bulk = await page(engine, 'notes/top-bulk');
+      await engine.addTakesBatch(Array.from({ length: 30 }, (_, i) =>
+        take(bulk.id, i + 1, `bulk ${i + 1}`, { holder: 'bulk', weight: 0.5, since_date: `2024-01-${String(i + 1).padStart(2, '0')}` })));
+      for (let i = 1; i <= 30; i++) await engine.resolveTake(bulk.id, i, done);
+      const capped = (await engine.listTopResolvedTakesForHolder('bulk')).map((r) => r.claim);
+      expect(capped).toEqual(Array.from({ length: 25 }, (_, i) => `bulk ${30 - i}`));
+      return { ...out, capped };
+    },
+  );
+
+  parityTest(
+    'listAbandonedTakes returns the five oldest active unresolved unsuperseded takes of weight 0.7 or more dated over a year ago, on any page',
+    { methods: ['putPage', 'softDeletePage', 'addTakesBatch', 'resolveTake', 'listAbandonedTakes'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'abandon-other');
+      const a = await page(engine, 'notes/abandon-a');
+      const gone = await page(engine, 'notes/abandon-gone');
+      const o = await page(engine, 'notes/abandon-o', { sourceId: 'abandon-other' });
+      await engine.addTakesBatch([
+        take(a.id, 1, 'month precision', { weight: 0.75, since_date: '2020-01' }),
+        take(a.id, 2, 'day precision', { weight: 0.9, since_date: '2023-06-15' }),
+        take(a.id, 3, 'at the stored floor', { weight: 0.7, since_date: '2019-01' }),
+        take(a.id, 4, 'too light', { weight: 0.5, since_date: '2018-01' }),
+        take(a.id, 5, 'recent', { weight: 0.9, since_date: '2026-10' }),
+        take(a.id, 6, 'resolved', { weight: 0.9, since_date: '2018-02' }),
+        take(a.id, 7, 'superseded', { weight: 0.9, since_date: '2018-03', superseded_by: 1 }),
+        take(a.id, 8, 'inactive', { weight: 0.9, since_date: '2018-04', active: false }),
+        take(a.id, 9, 'undated', { weight: 0.9 }),
+      ]);
+      await engine.addTakesBatch([take(gone.id, 1, 'on a deleted page', { weight: 1, since_date: '2021-05' })]);
+      await engine.addTakesBatch([take(o.id, 1, 'in another source', { weight: 0.8, since_date: '2022-02-02' })]);
+      await engine.resolveTake(a.id, 6, { quality: 'correct', outcome: true, resolvedBy: 'garry' });
+      await engine.softDeletePage('notes/abandon-gone');
+      const shown = async () => (await engine.listAbandonedTakes()).map((r) => ({ ...r, id: typeof r.id }));
+      const first = await shown();
+      expect(first.map((r) => r.claim)).toEqual(['month precision', 'on a deleted page', 'in another source', 'day precision']);
+      await engine.addTakesBatch([
+        take(a.id, 10, 'oldest', { weight: 0.95, since_date: '2017-07' }),
+        take(a.id, 11, 'second oldest', { weight: 0.8, since_date: '2017-08-01' }),
+      ]);
+      const capped = await shown();
+      expect(capped.map((r) => r.since_date)).toEqual(['2017-07', '2017-08-01', '2020-01', '2021-05', '2022-02-02']);
+      return { first, capped };
+    },
+  );
 });

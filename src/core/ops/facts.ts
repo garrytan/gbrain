@@ -701,8 +701,9 @@ const dropAll = <T>(items: T[]) => ({ items: [] as T[], meta: { budget: 0, used:
  * wrote) of the facts a pack or delta delivers, in one batched read keyed by
  * the facts' own ids, so hot memory (and every MCP `_meta`) stays unchanged.
  * Fail-soft like the rest of the pack: a failed read leaves `provenance` null.
+ * Exported for test/engine-parity/fact-provenance.test.ts.
  */
-async function withProvenance<T extends { id: number }>(engine: BrainEngine, sourceId: string, facts: T[]): Promise<Array<T & { provenance: string | null }>> {
+export async function withProvenance<T extends { id: number }>(engine: BrainEngine, sourceId: string, facts: T[]): Promise<Array<T & { provenance: string | null }>> {
   if (facts.length === 0) return [];
   const rows = await engine.listFactProvenance(sourceId, facts.map((f) => f.id)).catch(() => []);
   const byId = new Map(rows.map((r) => [Number(r.id), r.source]));

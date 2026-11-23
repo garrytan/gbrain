@@ -225,10 +225,10 @@ function hiddenTargetRefusal(row: { request_id: string; slug: string }): Omit<Pa
  */
 export async function retryParkedPushes(engine: BrainEngine, worktreeId: string, dryRun: boolean, codes: readonly string[] = GIT_PUSH_CODES): Promise<ParkedPushRetry> {
   const rows = await engine.executeRaw<{ source_id: string; id: string; request_id: string; slug: string }>(`
-    SELECT DISTINCT e.source_id,r.id::text AS id,r.request_id::text AS request_id,r.slug FROM persistence_effects e
+    SELECT * FROM (SELECT DISTINCT e.source_id,r.id::text AS id,r.request_id::text AS request_id,r.slug FROM persistence_effects e
       JOIN persistence_requests r ON r.id=e.request_id
-     WHERE e.worktree_id=$1::uuid AND e.kind='git' AND e.state='failed' AND e.recovery IS NULL AND NOT (e.data ? 'settled') AND (${HELD_ON_CODES})
-     ORDER BY e.source_id,request_id,id`, [worktreeId, [...codes]]);
+     WHERE e.worktree_id=$1::uuid AND e.kind='git' AND e.state='failed' AND e.recovery IS NULL AND NOT (e.data ? 'settled') AND (${HELD_ON_CODES})) d
+     ORDER BY source_id COLLATE "C",request_id COLLATE "C",id COLLATE "C"`, [worktreeId, [...codes]]);
   let queued = 0, unchanged = 0;
   const refused: ParkedPushRefusal[] = [];
   for (const row of rows) {

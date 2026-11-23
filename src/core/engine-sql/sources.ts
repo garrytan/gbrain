@@ -20,7 +20,8 @@ export async function listAllSources(exec: LegacyUnscopedRead, opts?: {
     // v0.38: lean per-source enumeration for autopilot dispatch + doctor.
     // Filters at SQL so the autopilot tick stays one query regardless of
     // how many archived rows exist. ORDER BY (id='default') DESC, id
-    // matches sources-ops.listSources for operator-output stability.
+    // matches sources-ops.listSources for operator-output stability. COLLATE "C" on the id tie-break keeps a Postgres
+    // server with a linguistic locale (en_US.utf8) in the byte order PGLite and the Rust engine give.
     // localPathOnly skips pure-DB sources so autopilot fan-out doesn't
     // dispatch jobs that would fall back to the global sync.repo_path, and
     // the storage shelf, whose cycle is always skipped (GST-1943).
@@ -31,7 +32,7 @@ export async function listAllSources(exec: LegacyUnscopedRead, opts?: {
         FROM sources
        WHERE (${includeArchived} OR archived IS NOT TRUE)
          AND (${!localPathOnly} OR (local_path IS NOT NULL AND config->>'role' IS DISTINCT FROM 'storage_manifest'))
-       ORDER BY (id = 'default') DESC, id
+       ORDER BY (id = 'default') DESC, id COLLATE "C"
     `);
     return rows.map((r) => ({
       id: r.id as string,
@@ -122,8 +123,92 @@ export async function setSourceChunkerVersion(exec: SqlExecutor, sourceId: strin
   await exec.executeRaw('UPDATE sources SET chunker_version = $1 WHERE id = $2', [version, sourceId]);
 }
 
-/** `markSourceSynced` options: `incarnation` stamps only while the source is still that incarnation (a managed sync run's guard). */
-export interface SourceSyncStampOptions { incarnation?: string }
+/** The 0-change sync heartbeat statement (src/core/sync-upstream.ts), verbatim. */
+export const SOURCE_SYNC_HEARTBEAT_SQL = 'UPDATE sources SET last_sync_at = now() WHERE id = $1';
+
+/**
+ * The 0-change sync heartbeat: stamps `last_sync_at` with the database clock and leaves `last_commit` alone, so doctor's
+ * sync freshness sees a quiet source as synced. An unknown source changes nothing.
+ */
+export async function writeSourceSyncHeartbeat(exec: SqlExecutor, sourceId: string): Promise<void> {
+  await exec.executeRaw(SOURCE_SYNC_HEARTBEAT_SQL, [sourceId]);
+}
+
+/** What sync observed of the checkout's Git upstream (`observeUpstream` in sync-upstream.ts). */
+export interface SourceUpstreamObservation { checkedAt: string; commit: string; behind: number | null }
+/** The statement `recordUpstreamObservation` (src/core/sync-upstream.ts) sends, verbatim. */
+export const SOURCE_UPSTREAM_OBSERVATION_SQL = 'UPDATE sources SET upstream_checked_at=$2::timestamptz,upstream_commit=$3,upstream_behind=$4 WHERE id=$1';
+
+/**
+ * The sync's upstream observation: sets `upstream_checked_at` (an ISO time), `upstream_commit` and `upstream_behind`
+ * (null when the synced commit is unknown). An unknown source changes nothing.
+ */
+export async function writeSourceUpstreamObservation(exec: SqlExecutor, sourceId: string, observed: SourceUpstreamObservation): Promise<void> {
+  await exec.executeRaw(SOURCE_UPSTREAM_OBSERVATION_SQL, [sourceId, observed.checkedAt, observed.commit, observed.behind]);
+}
+
+/** The commit the source's last sync advanced to (`last_commit`), or null before the first sync and for an unknown source. */
+export async function readSourceLastCommit(exec: LegacyUnscopedRead, sourceId: string): Promise<string | null> {
+  const [row] = await exec.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id=$1', [sourceId]);
+  return row?.last_commit ?? null;
+}
+
+/**
+ * Advances the source's sync anchor: stamps last_commit and last_sync_at (the database clock), and newest_content_at
+ * too when `newestContentAt` is given (null clears it; undefined keeps it). An unknown source changes nothing.
+ */
+export async function advanceSourceCommit(exec: SqlExecutor, sourceId: string, commit: string, newestContentAt?: string | null): Promise<void> {
+  if (newestContentAt !== undefined) {
+    await exec.executeRaw(
+      `UPDATE sources SET last_commit = $1, last_sync_at = now(), newest_content_at = $3 WHERE id = $2`,
+      [commit, sourceId, newestContentAt],
+    );
+  } else {
+    await exec.executeRaw(
+      `UPDATE sources SET last_commit = $1, last_sync_at = now() WHERE id = $2`,
+      [commit, sourceId],
+    );
+  }
+}
+
+/**
+ * Every source id, archived sources included, in byte order of the id: the read scope of a caller with no source
+ * (ops/backlinks-paged.ts). `COLLATE "C"` keeps a Postgres server with a linguistic locale (en_US.utf8) in the order
+ * PGLite and the Rust engine give. Unscoped on master.
+ */
+export async function listSourceIds(exec: LegacyUnscopedRead): Promise<string[]> {
+  const rows = await exec.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id COLLATE "C"');
+  return rows.map(r => r.id);
+}
+
+/** The only source's id, or null when the brain has none or more than one (corpus-source.ts, sweep, doctor memory_writeback). Unscoped on master. */
+export async function readSoleSourceId(exec: LegacyUnscopedRead): Promise<string | null> {
+  // The order never reaches output: an id is returned only when exactly one row exists, so no order changes the result.
+  const rows = await exec.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id LIMIT 2');
+  return rows.length === 1 ? rows[0]!.id : null;
+}
+
+/** `default` when it exists, else the lowest id in byte order, else null (doctor origin_twins). Unscoped on master. */
+export async function readFirstSourceId(exec: LegacyUnscopedRead): Promise<string | null> {
+  const [row] = await exec.executeRaw<{ id: string }>(`SELECT id FROM sources ORDER BY (id = 'default') DESC, id COLLATE "C" LIMIT 1`);
+  return row?.id ?? null;
+}
+
+/**
+ * Locks every source row (`FOR UPDATE`, or `FOR SHARE`) until the caller's transaction ends (persistence deactivation,
+ * pre-activation release, skill activation).
+ */
+export async function lockAllSourceRows(exec: SqlExecutor, mode: 'update' | 'share'): Promise<void> {
+  // Plain ORDER BY id on purpose, not COLLATE "C": the same lock order as topology-locks.ts and core-guard.ts, so no deadlock.
+  await exec.executeRaw(mode === 'update' ? 'SELECT id FROM sources ORDER BY id FOR UPDATE' : 'SELECT id FROM sources ORDER BY id FOR SHARE');
+}
+
+/**
+ * `markSourceSynced` options. `incarnation` stamps only while the source is still that incarnation (a managed sync
+ * run's guard). `newestContentAt` (a timestamptz text) also sets `newest_content_at`; null keeps the stored value
+ * (`COALESCE`), as a connector run that saw nothing newer does.
+ */
+export interface SourceSyncStampOptions { incarnation?: string; newestContentAt?: string | null }
 
 /**
  * Sets the source's last sync time to the database clock (`now()`): the stamp a clean `gbrain import` of a folder
@@ -132,10 +217,59 @@ export interface SourceSyncStampOptions { incarnation?: string }
  * incarnation) changes nothing.
  */
 export async function markSourceSynced(exec: SqlExecutor, sourceId: string, opts: SourceSyncStampOptions = {}): Promise<boolean> {
-  const rows = opts.incarnation === undefined
-    ? await exec.executeRaw<{ id: string }>('UPDATE sources SET last_sync_at = now() WHERE id = $1 RETURNING id', [sourceId])
-    : await exec.executeRaw<{ id: string }>('UPDATE sources SET last_sync_at = now() WHERE id = $1 AND incarnation = $2::uuid RETURNING id', [sourceId, opts.incarnation]);
+  const newest = opts.newestContentAt;
+  let rows: Array<{ id: string }>;
+  if (newest === undefined) {
+    rows = opts.incarnation === undefined
+      ? await exec.executeRaw<{ id: string }>('UPDATE sources SET last_sync_at = now() WHERE id = $1 RETURNING id', [sourceId])
+      : await exec.executeRaw<{ id: string }>('UPDATE sources SET last_sync_at = now() WHERE id = $1 AND incarnation = $2::uuid RETURNING id', [sourceId, opts.incarnation]);
+  } else {
+    rows = opts.incarnation === undefined
+      ? await exec.executeRaw<{ id: string }>('UPDATE sources SET last_sync_at = now(), newest_content_at = COALESCE($2::timestamptz, newest_content_at) WHERE id = $1 RETURNING id', [sourceId, newest])
+      : await exec.executeRaw<{ id: string }>('UPDATE sources SET last_sync_at = now(), newest_content_at = COALESCE($3::timestamptz, newest_content_at) WHERE id = $1 AND incarnation = $2::uuid RETURNING id', [sourceId, opts.incarnation, newest]);
+  }
   return rows.length > 0;
+}
+
+/** `advanceSyncCheckpoint` input: the managed sync checkpoint of src/core/persistence/sync-prepare.ts. */
+export interface SyncCheckpointAdvance {
+  sourceId: string;
+  /** The source incarnation the run started under; another incarnation changes nothing. */
+  incarnation: string;
+  /** The commit the checkpoint moves to (`last_commit`). */
+  commit: string;
+  /** The `last_commit` the run started from (null before the first sync). */
+  from: string | null;
+  /** Also accept a checkpoint already at `commit` (an overtaken run, and every pass stamp). */
+  acceptAtCommit: boolean;
+  /** The slug mode the run used; written to `config.slug_root_mode`. */
+  slugMode: string;
+  /** An empty scope: both modes give the same slugs, so a pinned mode stays and never refuses. */
+  keepPinnedSlugMode: boolean;
+}
+
+/**
+ * The managed sync checkpoint: when the source is still `incarnation` and its `last_commit` is still `from` (or already
+ * `commit` with `acceptAtCommit`), and its pinned slug mode allows the run, sets `last_commit`, `last_sync_at` (the
+ * database clock), `newest_content_at` (the newest `updated_at` of the source's live pages, or null) and
+ * `config.slug_root_mode`. A refused checkpoint changes nothing; `pinnedSlugMode` then names a pinned mode that
+ * differs from the run's (not read when the run keeps the pinned mode), else null.
+ */
+export async function advanceSyncCheckpoint(exec: SqlExecutor, input: SyncCheckpointAdvance): Promise<{ advanced: boolean; pinnedSlugMode: string | null }> {
+  const { rows: changed } = await exec.run<{ id: string }>(sqlFragment`
+    UPDATE sources SET last_commit = ${input.commit}, last_sync_at = now(),
+      config = jsonb_set(${trustedSql(SOURCE_CONFIG_OBJECT_SQL)}, '{slug_root_mode}',
+        to_jsonb(CASE WHEN ${input.keepPinnedSlugMode}::boolean THEN COALESCE(config->>'slug_root_mode', ${input.slugMode}::text) ELSE ${input.slugMode}::text END)),
+      newest_content_at = (SELECT MAX(updated_at) FROM pages WHERE source_id = ${input.sourceId} AND deleted_at IS NULL)
+    WHERE id = ${input.sourceId} AND incarnation = ${input.incarnation}::uuid
+      AND (last_commit IS NOT DISTINCT FROM ${input.from}::text OR (${input.acceptAtCommit}::boolean AND last_commit = ${input.commit}))
+      AND (${input.keepPinnedSlugMode}::boolean OR config->>'slug_root_mode' IS NULL OR config->>'slug_root_mode' = ${input.slugMode})
+    RETURNING id`);
+  if (changed.length > 0) return { advanced: true, pinnedSlugMode: null };
+  if (input.keepPinnedSlugMode) return { advanced: false, pinnedSlugMode: null };
+  const [row] = await exec.executeRaw<{ mode: string | null }>(
+    "SELECT config->>'slug_root_mode' AS mode FROM sources WHERE id = $1 AND incarnation = $2::uuid", [input.sourceId, input.incarnation]);
+  return { advanced: false, pinnedSlugMode: row?.mode != null && row.mode !== input.slugMode ? row.mode : null };
 }
 
 /**
@@ -144,7 +278,7 @@ export async function markSourceSynced(exec: SqlExecutor, sourceId: string, opts
  */
 export async function listStaleSyncSourceIds(exec: LegacyUnscopedRead): Promise<string[]> {
   const rows = await exec.executeRaw<{ id: string }>(
-    `SELECT id FROM sources WHERE last_sync_at IS NOT NULL AND last_sync_at < now() - interval '7 days' AND NOT archived ORDER BY id`,
+    `SELECT id FROM sources WHERE last_sync_at IS NOT NULL AND last_sync_at < now() - interval '7 days' AND NOT archived ORDER BY id COLLATE "C"`,
   );
   return rows.map(r => r.id);
 }
@@ -231,7 +365,7 @@ export async function readPlainSyncSource(exec: LegacyUnscopedRead, sourceId: st
  */
 export async function listSourceRoutingRows(exec: LegacyUnscopedRead): Promise<SourceRoutingRow[]> {
   return exec.executeRaw<SourceRoutingRow>(
-    `SELECT id, local_path, archived, config, EXISTS (SELECT 1 FROM pages WHERE source_id = 'default' AND deleted_at IS NULL) AS default_has_pages FROM sources ORDER BY id`,
+    `SELECT id, local_path, archived, config, EXISTS (SELECT 1 FROM pages WHERE source_id = 'default' AND deleted_at IS NULL) AS default_has_pages FROM sources ORDER BY id COLLATE "C"`,
   );
 }
 
@@ -260,6 +394,17 @@ export async function countDefaultSourceSplit(exec: LegacyUnscopedRead): Promise
   };
 }
 
+/** The stored frontmatter id and title of one live page, by id. */
+export interface PageIdentityRow { fm_id: string | null; title: string | null }
+
+export const PAGE_IDENTITY_SQL = `SELECT frontmatter->>'id' AS fm_id, title FROM pages WHERE id = $1 AND deleted_at IS NULL`;
+
+/** The frontmatter id and title of live page `pageId`; null for a missing or soft-deleted page. Unscoped on master. */
+export async function readPageIdentity(exec: LegacyUnscopedRead, pageId: number): Promise<PageIdentityRow | null> {
+  const [row] = await exec.executeRaw<PageIdentityRow>(PAGE_IDENTITY_SQL, [pageId]);
+  return row ?? null;
+}
+
 /** Pages of one source (`SELECT COUNT(*)::int AS n FROM pages WHERE source_id=$1`); soft-deleted pages count only with `includeDeleted`. Unscoped on master. */
 export async function countSourcePages(exec: LegacyUnscopedRead, sourceId: string, opts?: { includeDeleted?: boolean }): Promise<number> {
   const sql = opts?.includeDeleted === true
@@ -269,40 +414,22 @@ export async function countSourcePages(exec: LegacyUnscopedRead, sourceId: strin
   return Number(row?.n ?? 0);
 }
 
-/**
- * Records that the source's git sync reached `commit` and stamps `last_sync_at` with the database clock, in one UPDATE.
- * `newestContentAt` (the HEAD committer time, ISO) is written in the same UPDATE when given; `null` clears it and
- * `undefined` leaves it alone. An unknown source changes nothing (sync-anchor.ts `writeSyncAnchor`).
- */
-export async function advanceSourceCommit(exec: SqlExecutor, sourceId: string, commit: string, newestContentAt?: string | null): Promise<void> {
-  if (newestContentAt !== undefined) {
-    await exec.executeRaw(
-      `UPDATE sources SET last_commit = $1, last_sync_at = now(), newest_content_at = $3 WHERE id = $2`,
-      [commit, sourceId, newestContentAt],
-    );
-    return;
-  }
-  await exec.executeRaw(
-    `UPDATE sources SET last_commit = $1, last_sync_at = now() WHERE id = $2`,
-    [commit, sourceId],
-  );
-}
-
 /** A stored page a sync size-state read reports (`readPageSizeRows`); `state`/`reason` are its page_embedding_budget row. */
 export interface PageSizeRow { slug: string; bytes: number | string | null; segmented: boolean; frontmatter: Record<string, unknown> | null; state: 'held' | 'capped' | null; reason: string | null }
 
 const PAGE_SIZE_ROWS_SQL = `SELECT p.slug, (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason
        FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id
       WHERE p.source_id = $1 AND p.deleted_at IS NULL
-        AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $2 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug`;
+        AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $2 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug COLLATE "C"`;
 const PAGE_SIZE_ROWS_FOR_SLUGS_SQL = `SELECT p.slug, (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason
        FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id
       WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.slug = ANY($3::text[])
-        AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $2 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug`;
+        AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $2 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug COLLATE "C"`;
 
 /**
  * The live pages of one source (only `slugs` when given) that carry embed_skip, have a body over `maxBytes`, are
- * segmented or have a page_embedding_budget row, by slug: the rows page-embedding-budget.ts readPageSizeStates maps.
+ * segmented or have a page_embedding_budget row, in slug byte order (COLLATE "C", so a Postgres brain on a locale
+ * collation answers in PGLite's order): the rows page-embedding-budget.ts readPageSizeStates maps.
  */
 export async function readPageSizeRows(exec: LegacyUnscopedRead, sourceId: string, maxBytes: number, slugs: readonly string[] | null): Promise<PageSizeRow[]> {
   return slugs
@@ -333,6 +460,16 @@ export async function writeReasonPurgeTombstones(exec: SqlExecutor, sourceId: st
   return (await exec.executeRaw(`INSERT INTO reason_purge_tombstones(source_id, commit_sha, path)
     SELECT $1, t.c, t.p FROM unnest($2::text[], $3::text[]) AS t(c, p) ON CONFLICT DO NOTHING RETURNING 1`,
   [sourceId, pairs.map(pair => pair.commit_sha), pairs.map(pair => pair.path)])).length;
+}
+
+/**
+ * Adds one to the source's purge epoch and returns the new value as stored, or null for an unknown source: the bump a
+ * fact, page or replayed purge makes in its transaction, so a request prepared under the old epoch is refused
+ * (belief/purge.ts `bumpPurgeEpoch`) and a cached sync reason scan is not reused (reason-trailers.ts).
+ */
+export async function advanceSourcePurgeEpoch(exec: SqlExecutor, sourceId: string): Promise<string | number | null> {
+  const [row] = await exec.executeRaw<{ purge_epoch: string | number }>('UPDATE sources SET purge_epoch = purge_epoch + 1 WHERE id = $1 RETURNING purge_epoch', [sourceId]);
+  return row?.purge_epoch ?? null;
 }
 
 /** Sets the page's embedding hold to `held` with `reason`, adding its page_embedding_budget row when it has none (page-embedding-budget.ts). */

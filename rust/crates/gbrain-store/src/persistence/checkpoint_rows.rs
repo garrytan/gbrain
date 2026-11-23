@@ -212,6 +212,31 @@ mod tests {
     }
 
     #[test]
+    fn page_revisions_answer_known_ids_once() {
+        use crate::pages::{PageInput, PutPageOptions};
+        let s = store();
+        assert!(s.read_page_revisions(&[1, -1, 99]).unwrap().is_empty());
+        let input = PageInput {
+            page_type: "note".into(),
+            title: "A".into(),
+            compiled_truth: "body".into(),
+            ..PageInput::default()
+        };
+        s.put_page("a", &input, &PutPageOptions::default()).unwrap();
+        let page = crate::pages::read_page(&*s.read().unwrap(), "default", "a")
+            .unwrap()
+            .unwrap();
+        let id = i64::try_from(page.id).unwrap();
+        let rows = s.read_page_revisions(&[id, id, -1, id + 1]).unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                json!({ "id": page.id, "slug": "a", "knowledge_revision": page.knowledge_revision })
+            ]
+        );
+    }
+
+    #[test]
     fn nul_keys_read_nothing_and_writes_refuse() {
         let s = store();
         assert_eq!(s.read_op_checkpoint_row("op", "a\0b").unwrap(), None);

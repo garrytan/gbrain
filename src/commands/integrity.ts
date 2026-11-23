@@ -366,6 +366,16 @@ export interface IntegrityScanResult {
   skipped: IntegritySkippedPage[];
 }
 
+const byteCompare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+/**
+ * Page refs by source id, then slug, each by code unit (byte order for ASCII keys): the order the batch scan reads
+ * (`ORDER BY source_id COLLATE "C", slug COLLATE "C"`), so a limit stops at the same page on either path.
+ */
+function byteRefOrder<T extends { slug: string; source_id: string }>(refs: T[]): T[] {
+  return refs.sort((a, b) => byteCompare(a.source_id, b.source_id) || byteCompare(a.slug, b.slug));
+}
+
 /**
  * Read-only integrity scan over the engine's pages. No network, no writes,
  * no resolver calls. Called by `gbrain integrity check` for the full report
@@ -402,9 +412,7 @@ export async function scanIntegrity(
   // v0.32.8: listAllPageRefs replaces getAllSlugs+getPage N+1 pattern that
   // silently defaulted to source_id='default' for non-default-source pages.
   // Now we enumerate (slug, source_id) pairs and thread sourceId to getPage.
-  const allRefs = (await engine.listAllPageRefs()).sort((a, b) =>
-    a.slug.localeCompare(b.slug) || a.source_id.localeCompare(b.source_id)
-  );
+  const allRefs = byteRefOrder(await engine.listAllPageRefs());
 
   const bareHits: BareTweetHit[] = [];
   const externalHits: ExternalLinkHit[] = [];
@@ -469,7 +477,7 @@ async function scanIntegrityBatch(
     SELECT id, source_id, slug, compiled_truth, body_storage
     FROM pages
     WHERE deleted_at IS NULL ${typeCondition} ${validateCondition}
-    ORDER BY source_id, slug
+    ORDER BY source_id COLLATE "C", slug COLLATE "C"
     LIMIT $1
   `, params);
 
@@ -566,9 +574,7 @@ async function cmdAuto(args: string[]): Promise<void> {
     // v0.32.8: listAllPageRefs enumerates (slug, source_id) pairs so we
     // can thread sourceId to getPage. Pre-fix this defaulted to 'default'
     // and silently skipped non-default-source pages.
-    const allRefs = (await engine.listAllPageRefs()).sort((a, b) =>
-      a.slug.localeCompare(b.slug) || a.source_id.localeCompare(b.source_id)
-    );
+    const allRefs = byteRefOrder(await engine.listAllPageRefs());
     const toScan = allRefs.filter(r => !seen.has(progressKey(r.source_id, r.slug)));
     progress.start('integrity.auto', toScan.length);
     for (const { slug, source_id } of allRefs) {

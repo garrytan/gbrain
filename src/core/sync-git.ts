@@ -143,7 +143,7 @@ export async function resolveSlugsForRemovedPaths(
         // holds several rows for the same source_path.
         const rows = await engine.executeRaw<{ slug: string }>(
           `SELECT slug FROM pages WHERE source_path = $1 AND deleted_at IS NULL
-            ORDER BY source_id, slug LIMIT 1`,
+            ORDER BY source_id COLLATE "C", slug COLLATE "C" LIMIT 1`,
           [p],
         );
         if (rows.length > 0 && rows[0].slug) exact.set(p, rows[0].slug);
@@ -157,7 +157,7 @@ export async function resolveSlugsForRemovedPaths(
   const unresolved = paths.filter(p => !exact.has(p));
   for (let i = 0; sourceId !== undefined && i < unresolved.length; i += DELETE_BATCH_SIZE) {
     try {
-      const rows = await engine.executeRaw<{ source_path: string; slugs: string[] }>(`SELECT source_path, array_agg(slug ORDER BY slug) AS slugs FROM pages
+      const rows = await engine.executeRaw<{ source_path: string; slugs: string[] }>(`SELECT source_path, array_agg(slug ORDER BY slug COLLATE "C") AS slugs FROM pages
         WHERE source_id = $1 AND deleted_at IS NULL AND source_path = ANY($2::text[]) GROUP BY source_path HAVING count(*) > 1`, [sourceId, unresolved.slice(i, i + DELETE_BATCH_SIZE)]);
       for (const row of rows) twins.set(row.source_path, row.slugs);
     } catch {
@@ -197,7 +197,7 @@ export async function resolveSlugsForRemovedPaths(
         where += ` AND source_id = $${params.length}`;
       }
       const rows = await engine.executeRaw<{ slug: string; source_path: string | null }>(
-        `SELECT slug, source_path FROM pages WHERE ${where} ORDER BY source_id, slug`,
+        `SELECT slug, source_path FROM pages WHERE ${where} ORDER BY source_id COLLATE "C", slug COLLATE "C"`,
         params,
       );
       for (const r of rows) {

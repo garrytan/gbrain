@@ -638,8 +638,8 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
     }
     const done = await publicationTransaction(engine, async tx => {
       await declarePublication(tx);
-      const liveBinding = await guardOwnership(tx, row, hostId);
       const journal = await tx.publicationJournalStore();
+      const liveBinding = await guardOwnership(tx, journal, row, hostId);
       if (prepared.sourceExclusive && !prepared.exclusiveSources?.length) await journal.lockSource(row.source_id);
       if (prepared.exclusiveSources?.length) await lockCoreSources(tx, prepared.sourceExclusive ? [row.source_id, ...prepared.exclusiveSources] : prepared.exclusiveSources);
       if (binding && String(liveBinding?.owner_epoch) !== String(binding.owner_epoch)) throw opError('owner_unavailable', 'Owner epoch changed before publication.',
@@ -837,7 +837,7 @@ export async function recoverPublication(engine: BrainEngine, id: string, hostId
       const records = recoveryFiles(current.recovery);
       let landed: string | null = null;
       if (isBundleRecovery(current.recovery)) {
-        const owner = await guardOwnership(tx, current, hostId);
+        const owner = await guardOwnership(tx, journal, current, hostId);
         if (!owner) throw opError('owner_unavailable', 'Skill recovery requires its canonical owner.',
           `This host no longer holds source ${current.source_id}'s current owner epoch, so shared-skill request ${current.request_id} stays recovering until its owner finishes it. Inspect the owner; its resident writer finishes the recovery.`,
           { fix: ownerStatusFix(current.source_id) });

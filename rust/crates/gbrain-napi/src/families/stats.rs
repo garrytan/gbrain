@@ -15,6 +15,12 @@ use crate::store_binding::{Brain, arg, required};
 
 #[napi]
 impl Brain {
+    /// `pingStore()`: resolves when the store opens a read snapshot (the liveness round trip).
+    #[napi]
+    pub fn ping_store<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, |s| s.ping_store())
+    }
+
     /// `getStats({ scope })`: resolves `BrainStats`.
     #[napi]
     pub fn get_stats<'env>(

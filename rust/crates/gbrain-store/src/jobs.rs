@@ -40,8 +40,10 @@
 //!   reservation_uuid` indexes it by job, `0x22 expires_at reservation_uuid` by expiry (pending only).
 //!   `0x24 id -> record` is one lease-pressure row (sequence `lease_pressure`), `0x25 bounced_at id` its time
 //!   order and `0x26 job id` its job. The layout is in `spend.rs`; `0x27` indexes the open holds by owner, and
-//!   `0x28`/`0x29` (the spend ledger, `spend_log.rs`), `0x2A` (the whole client row, `oauth_clients.rs`) and `0x2B` (the
-//!   token row, `access_tokens.rs`) follow.
+//!   `0x28`/`0x29` (the spend ledger, `spend_log.rs`), `0x2A` (the whole client row, `oauth_clients.rs`), `0x2B` (the
+//!   token row, `access_tokens.rs`) and `0x2C` (an OAuth token by hash, `oauth_tokens.rs`) and `0x2D` (an OAuth code by hash,
+//!   `oauth_codes.rs`) follow. The credential binding reads and writes (`credential_binding.rs`) use the 0x2A and 0x2B
+//!   records and keep none of their own.
 //! - `m 0x18..=0x1C`: the subagent messages, tool rows and their three indexes (see `subagent.rs`).
 //!
 //! Integers are big-endian; a signed one has its sign bit flipped so byte order is numeric order.
@@ -66,12 +68,18 @@
 mod access_tokens;
 mod attachments;
 mod checks;
+mod client_grants;
+mod credential_binding;
+mod drain_lease;
 mod facts_extraction;
 mod health;
 mod inbox;
 mod insight;
 mod mutations;
 mod oauth_clients;
+mod oauth_codes;
+mod oauth_revocation;
+mod oauth_tokens;
 mod private_queues;
 mod reads;
 mod spend;
@@ -82,12 +90,17 @@ mod sweeps;
 mod synthesis_completions;
 mod wake;
 
-pub use access_tokens::TokenInsert;
+pub(crate) use access_tokens::bind_token_member;
+pub use access_tokens::{TokenGrantColumns, TokenInsert};
 pub use attachments::AttachmentInput;
 pub(crate) use attachments::purge_probe_attachment_rows;
 pub use checks::{
     BuildSkewSpec, DeadDreamSpec, DeathsSpec, KeyPrefixSpec, QueuedSpendSpec, StillDeadSpec,
 };
+pub use client_grants::{
+    GrantAudit, GrantAuditInsert, GrantPersist, JobGrantSource, RegisterAudit,
+};
+pub use credential_binding::{CredentialBinding, CredentialKind, CredentialLookup};
 pub use health::{DivergenceSpec, HealthSpec};
 pub(crate) use inbox::purge_probe_inbox_rows;
 pub use insight::InsightSpec;
@@ -95,6 +108,8 @@ use mutations::add_token;
 pub use mutations::{DelayOpts, TokenDelta};
 pub(crate) use oauth_clients::remove_source_rows as remove_oauth_source_rows;
 pub use oauth_clients::{ClientInsert, ClientPatch, ClientPatchGuard};
+pub use oauth_codes::OauthCodeInsert;
+pub use oauth_tokens::OauthTokenInsert;
 pub use private_queues::PrivateQueueState;
 pub use reads::{JobPageCursor, JobPageSpec, OverdueSpec};
 pub use spend::{ExpireScope, LeaseFilter, LeaseInsert, SpendInsert, SpendTreeSpec};
@@ -565,6 +580,11 @@ pub struct AdmitSpec {
     #[serde(default)]
     pub backpressure: Option<Backpressure>,
     pub max_spawn_depth: i64,
+    /// Stop after the idempotency and parameter coalesce and answer `capacity` with nothing written,
+    /// so a caller can run a delegated client's capacity check at the place the SQL engines run it
+    /// (after the coalesce, before the quota), then admit again in the same transaction.
+    #[serde(default)]
+    pub capacity_check: bool,
 }
 
 /// What `admit_job` did. `conflict` means an existing row is held under another submission
@@ -948,6 +968,24 @@ fn parse_time(what: &str, text: &Option<String>) -> Result<Option<i64>> {
     }
 }
 
+/// `data || '{"__released_idempotency_key": key}'::jsonb` (engine-sql/jobs.ts `releaseIdempotencyKey`): an
+/// object gains the key; an array gains the object as its last element; any other value becomes a
+/// two-element array of the value and the object, as jsonb concatenation does.
+fn with_released_key(data: Value, key: &str) -> Value {
+    let marker = json!({ "__released_idempotency_key": key });
+    match data {
+        Value::Object(mut map) => {
+            map.insert("__released_idempotency_key".into(), json!(key));
+            Value::Object(map)
+        }
+        Value::Array(mut items) => {
+            items.push(marker);
+            Value::Array(items)
+        }
+        other => Value::Array(vec![other, marker]),
+    }
+}
+
 /// The coalesce rule (`coalesceDecision`) for a row stored here: a row under another submission
 /// authority is a conflict the caller refuses; a dead or cancelled row's key is released; any
 /// other row is returned. A row with a NULL authority (written before the authority cutover) is
@@ -986,6 +1024,8 @@ fn decide(row: &JobRecord, caller: Option<&Value>) -> Decision {
 enum Step {
     Done(AdmitOutcome),
     Conflict(Value),
+    /// `capacity_check`: no coalesce answered, and the caller's capacity check runs next.
+    Capacity,
 }
 
 impl Store {
@@ -1015,62 +1055,97 @@ impl Store {
             "admitJob private_queue_lease_until",
             &v.private_queue_lease_until,
         )?;
-        if self.bound.is_some() {
-            // A store bound to a transaction holds its exclusive writer, so the admission is one
-            // statement of it: opening a second writer here would wait for that transaction forever.
-            // A conflict keeps nothing the statement wrote (the statement rolls back on `Err`).
-            let mut conflict = None;
-            let done = self.write(|w| {
-                let now = self.env.now_micros();
-                match admit_in(
-                    w,
-                    spec,
-                    authority.as_ref(),
-                    spend.clone(),
-                    (delay_until, lease_until),
-                    now,
-                )? {
-                    Step::Done(outcome) => Ok(outcome),
-                    Step::Conflict(row) => {
-                        conflict = Some(row);
-                        Err(StoreError::invalid("admitJob conflict"))
-                    }
-                }
-            });
-            return match conflict {
-                Some(row) => Ok(AdmitOutcome {
+        // A conflict or a capacity stop keeps nothing: the statement is dropped (rolled back on its
+        // own, or a statement of the open transaction on a bound store), and the outcome is answered.
+        let mut undone: Option<AdmitOutcome> = None;
+        let result = self.write(|tx| {
+            let now = self.env.now_micros();
+            let stop = match admit_in(
+                tx,
+                spec,
+                authority.as_ref(),
+                spend.clone(),
+                (delay_until, lease_until),
+                now,
+            )? {
+                Step::Done(outcome) => return Ok(outcome),
+                // A key released before the conflict stays held.
+                Step::Conflict(row) => AdmitOutcome {
                     outcome: "conflict",
                     row,
                     audit: None,
-                }),
-                None => done,
+                },
+                // The caller admits again after its check.
+                Step::Capacity => AdmitOutcome {
+                    outcome: "capacity",
+                    row: Value::Null,
+                    audit: None,
+                },
             };
-        }
-        let mut tx = self.kv.begin_write()?;
-        let now = self.env.now_micros();
-        match admit_in(
-            &mut *tx,
-            spec,
-            authority.as_ref(),
-            spend,
-            (delay_until, lease_until),
-            now,
-        )? {
-            Step::Done(outcome) => {
-                tx.commit()?;
-                Ok(outcome)
-            }
-            // Nothing written is kept: a key released before the conflict stays held.
-            Step::Conflict(row) => Ok(AdmitOutcome {
-                outcome: "conflict",
-                row,
-                audit: None,
-            }),
+            undone = Some(stop);
+            Err(StoreError::invalid(
+                "admitJob: the admission stopped and keeps nothing",
+            ))
+        });
+        match (result, undone) {
+            (Ok(outcome), _) | (Err(_), Some(outcome)) => Ok(outcome),
+            (Err(error), None) => Err(error),
         }
     }
 
     pub fn get_job(&self, id: i64) -> Result<Option<Value>> {
         Ok(load(&*self.read()?, id)?.map(|r| r.to_json()))
+    }
+
+    /// `readJobDataByIdempotencyKey(key)`: `{ data }` of the row holding `key` (any status), or None. Mirrors
+    /// `SELECT data FROM minion_jobs WHERE idempotency_key = $1`; the key index names at most one row.
+    pub fn job_data_by_idempotency_key(&self, key: &str) -> Result<Option<Value>> {
+        let read = self.read()?;
+        let Some(id) = get_json::<i64>(&*read, &idem_key(key))? else {
+            return Ok(None);
+        };
+        Ok(load(&*read, id)?
+            .filter(|r| r.idempotency_key.as_deref() == Some(key))
+            .map(|r| json!({ "data": r.data })))
+    }
+
+    /// `coalesceOnIdempotencyKey(key, authority)`: the idempotency fast path of `admitJob` on its own, in one
+    /// write. `{ outcome: 'none' }` when no row holds `key`; `{ outcome: 'coalesced', row }` when the row is
+    /// returned; `{ outcome: 'released' }` after a dead or cancelled row's key was freed (kept in its data as
+    /// `__released_idempotency_key`); `{ outcome: 'conflict', row }` for a row the caller must refuse, with
+    /// nothing written. Mirrors engine-sql/jobs.ts `coalesceOnIdempotencyKey` under the rule of `decide`.
+    pub fn coalesce_on_idempotency_key(
+        &self,
+        key: &str,
+        authority: Option<&Value>,
+    ) -> Result<Value> {
+        let authority = authority.filter(|a| !a.is_null());
+        // `self.write`, not a write of its own: inside an engine transaction (POST /ingest runs this in one) the step
+        // is a statement of that transaction.
+        self.write(|tx| {
+            let existing = match get_json::<i64>(&*tx, &idem_key(key))? {
+                Some(id) => load(&*tx, id)?.filter(|r| r.idempotency_key.as_deref() == Some(key)),
+                None => None,
+            };
+            let Some(existing) = existing else {
+                return Ok(json!({ "outcome": "none" }));
+            };
+            match decide(&existing, authority) {
+                Decision::Coalesce => {
+                    Ok(json!({ "outcome": "coalesced", "row": existing.to_json() }))
+                }
+                Decision::Conflict => {
+                    Ok(json!({ "outcome": "conflict", "row": existing.to_json() }))
+                }
+                Decision::Release => {
+                    let mut new = existing.clone();
+                    new.idempotency_key = None;
+                    new.data = with_released_key(std::mem::take(&mut new.data), key);
+                    save(tx, Some(&existing), &new)?;
+                    Ok(json!({ "outcome": "released" }))
+                }
+            }
+        })
     }
 
     /// `listJobs`: every given (non-empty) filter, newest first (ties by id, newest first), 50 from 0
@@ -1757,6 +1832,12 @@ pub(crate) fn lock_held_by_other(
     )
 }
 
+/// The ids of every `gbrain_cycle_locks` row, in key order (shared-skill activation's legacy
+/// writer check).
+pub(crate) fn cycle_lock_ids(read: &dyn KvRead) -> Result<Vec<String>> {
+    Ok(all_locks(read)?.into_iter().map(|(id, _)| id).collect())
+}
+
 fn all_locks(read: &dyn KvRead) -> Result<Vec<(String, LockRecord)>> {
     let mut out = Vec::new();
     let mut bad = None;
@@ -1886,9 +1967,7 @@ fn admit_in(
             Decision::Release => {
                 let mut new = existing.clone();
                 new.idempotency_key = None;
-                if let Value::Object(data) = &mut new.data {
-                    data.insert("__released_idempotency_key".into(), json!(key));
-                }
+                new.data = with_released_key(std::mem::take(&mut new.data), key);
                 save(tx, Some(&existing), &new)?;
             }
         }
@@ -1930,6 +2009,9 @@ fn admit_in(
                 _ => Ok(Step::Conflict(m.to_json())),
             };
         }
+    }
+    if spec.capacity_check {
+        return Ok(Step::Capacity);
     }
     // Name quota (every queue).
     if let Some(max) = spec.quota_max_waiting {

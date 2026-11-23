@@ -5,7 +5,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { checkRustTally, parsePins, renderPins, RUST_TALLY_PATH } from './engine-parity/rust-tally.ts';
+import { checkRustTally, keepStopReasons, parsePins, renderPins, RUST_TALLY_PATH } from './engine-parity/rust-tally.ts';
 
 const FILE = 'test/engine-parity/search.test.ts';
 const pins = parsePins(renderPins([[FILE, { equal: 14, stopped: 2 }]]));
@@ -45,6 +45,15 @@ describe('Rust parity tally pin', () => {
   test('a Rust-arm file outside test/engine-parity/ (no parity file name) is not checked', () => {
     // doctor-catalog-probes.test.ts runs the parity harness from test/; the harness finds no parity file name for it.
     expect(outcome(() => checkRustTally('', tally(8, 0), 8, pins, {}))).toEqual({ value: null });
+  });
+
+  test('a stop reason round-trips, and a regenerate keeps it only while the file still has stopped cases', () => {
+    const earlier = parsePins(renderPins([[FILE, { equal: 14, stopped: 2, reason: 'by design' }], ['test/engine-parity/other.test.ts', { equal: 3, stopped: 1, reason: 'gone' }]]));
+    expect(earlier.get(FILE)).toEqual({ equal: 14, stopped: 2, reason: 'by design' });
+    const fresh = new Map([[FILE, { equal: 15, stopped: 1 }], ['test/engine-parity/other.test.ts', { equal: 4, stopped: 0 }]]);
+    expect(Object.fromEntries(keepStopReasons(fresh, earlier))).toEqual({
+      [FILE]: { equal: 15, stopped: 1, reason: 'by design' }, 'test/engine-parity/other.test.ts': { equal: 4, stopped: 0 },
+    });
   });
 
   test('the checked-in pin has one row per parity file and round-trips', () => {

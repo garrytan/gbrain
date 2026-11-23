@@ -57,6 +57,7 @@ pub(crate) mod fingerprint;
 pub mod held_rows;
 pub mod proposals;
 mod row_trust;
+pub mod scan_state;
 pub mod tier_reads;
 pub mod valid_time;
 pub mod withdrawal_commit;
@@ -64,7 +65,7 @@ pub mod withdrawals;
 pub mod write_gate;
 
 pub(crate) use eligibility::TrustPolicy;
-pub(crate) use row_trust::{RowTrust, stamp_row};
+pub(crate) use row_trust::{RowTrust, check_insert, stamp_row};
 pub(crate) use write_gate::activation_suppressed;
 
 pub(crate) use stamp::{

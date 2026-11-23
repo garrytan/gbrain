@@ -353,4 +353,34 @@ describe('engine parity: write attribution', () => {
       timeline: await call({ timeline: s.id('timeline:alice') }),
     };
   });
+
+  parityTest('readWriteAttributionNames for an OAuth client: no name on SQL engines; the Rust store has no client table', {
+    methods: ['readWriteAttributionNames'],
+  }, async (engine) => engine.readWriteAttributionNames({ requestIds: [], oauthClientIds: ['client-example'], legacyTokenIds: [], localWriterIds: [] }));
+
+  parityTest('readWriteAttributionNames for a legacy token: no name on SQL engines; the Rust store has no token table', {
+    methods: ['readWriteAttributionNames'],
+  }, async (engine) => engine.readWriteAttributionNames({ requestIds: [], oauthClientIds: [], legacyTokenIds: [REQ_UNKNOWN], localWriterIds: [] }));
+
+  parityTest('readPageRevisionAttribution, readVersionAttributions and readOldestVersionAttribution read the stamped page and version receipts', {
+    methods: ['readPageRevisionAttribution', 'readVersionAttributions', 'readOldestVersionAttribution', 'createVersion', 'applyTransactionSettings'],
+  }, async (engine, backend) => {
+    const s = await seed(engine, backend);
+    const revision = (row: Awaited<ReturnType<BrainEngine['readPageRevisionAttribution']>>) =>
+      row && { ...row, req: s.request(row.req), revision: typeof row.revision };
+    const live = revision(await engine.readPageRevisionAttribution(s.pageId));
+    expect(live).toMatchObject({ req: 'reqB', kind: 'local_cli', pid: OTHER });
+    const plain = revision(await engine.readPageRevisionAttribution(s.plainId));
+    const missing = await engine.readPageRevisionAttribution(s.plainId + 1000);
+    const versions = (await engine.readVersionAttributions([{ id: s.versionId, page_id: s.pageId }, { id: s.versionId + 1000, page_id: s.pageId }]))
+      .map(({ id, w_req, a_req, ...rest }) => ({ version: s.labels.get(`page_versions:${Number(id)}`), w_req: s.request(w_req), a_req: s.request(a_req), ...rest }));
+    // Version 1 snapshots the page reqA wrote; reqB archived it.
+    expect(versions).toEqual([expect.objectContaining({ version: 'version:1', w_req: 'reqA', w_id: WRITER, a_req: 'reqB', a_id: OTHER })]);
+    const noVersions = await engine.readVersionAttributions([]);
+    const oldestRow = await engine.readOldestVersionAttribution(s.pageId);
+    const oldest = oldestRow && { ...oldestRow, req: s.request(oldestRow.req) };
+    expect(oldest).toEqual({ req: 'reqA', kind: 'local_cli', pid: WRITER });
+    const noOldest = await engine.readOldestVersionAttribution(s.plainId);
+    return { live, plain, missing, versions, noVersions, oldest, noOldest };
+  });
 });

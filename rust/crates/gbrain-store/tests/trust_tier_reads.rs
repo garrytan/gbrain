@@ -6,6 +6,8 @@ mod memory_env;
 use gbrain_store::error::INVALID_ARGUMENT;
 use gbrain_store::facts::InsertFactsArgs;
 use gbrain_store::sources::SourceInput;
+use gbrain_store::takes::TakeInput;
+use gbrain_store::timeline::{AddTimelineOptions, TimelineInput};
 use gbrain_store::trust::tier_reads::{
     CorePageRowQuery, PageIdsQuery, PageKeyRef, TrustScanQuery, VersionIdsQuery,
 };
@@ -443,9 +445,108 @@ fn the_trust_scan_reads_facts_at_a_listed_tier() {
 }
 
 #[test]
+fn the_trust_scan_reads_takes_and_timeline_entries_with_their_pages_source() {
+    let b = brain("tier-reads-scan-takes-timeline");
+    other_source(&b);
+    let mut holders = Vec::new();
+    for (slug, source) in [("scan/holder", "default"), ("scan/other-holder", "other")] {
+        declared(&b, Some("operator_curated"), |tx| {
+            let input: gbrain_store::pages::PageInput =
+                args(json!({ "type": "note", "title": slug,
+                "compiled_truth": "h", "timeline": "" }));
+            let put = tx
+                .put_page(slug, &input, &args(json!({ "sourceId": source })))
+                .unwrap();
+            holders.push((slug, source, put["id"].as_i64().unwrap()));
+        });
+    }
+    for (i, (name, tier)) in [
+        ("one", Some("agent_written")),
+        ("two", Some("operator_curated")),
+        ("three", Some("external_untrusted")),
+        ("four", None),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        for &(slug, source, page_id) in &holders {
+            declared(&b, tier, |tx| {
+                let take: TakeInput = args(json!({ "page_id": page_id, "row_num": i + 1,
+                    "claim": format!("take {name}"), "kind": "take", "holder": "h", "weight": 0.5, "active": true }));
+                tx.add_takes_batch(&[take]).unwrap();
+                let entry: TimelineInput = args(json!({ "date": format!("2026-07-0{}", i + 1),
+                    "summary": format!("entry {name}"), "detail": format!("detail {name}"), "source": "cli" }));
+                tx.add_timeline_entry(
+                    slug,
+                    &entry,
+                    &AddTimelineOptions {
+                        source_id: Some(source.into()),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            });
+        }
+    }
+    let takes = scan(&b, "takes", 0, 50, &SCANNED);
+    let claims: Vec<&str> = takes.iter().map(|r| r["claim"].as_str().unwrap()).collect();
+    assert_eq!(
+        claims,
+        [
+            "take one",
+            "take one",
+            "take three",
+            "take three",
+            "take four",
+            "take four"
+        ]
+    );
+    assert_eq!(takes[0]["source_id"], json!("default"));
+    assert_eq!(takes[1]["source_id"], json!("other"));
+    assert_eq!(takes[0]["trust_tier"], json!("agent_written"));
+    assert_eq!(takes[0]["write_origin"]["channel"], json!("agent_written"));
+    assert_eq!(takes[4]["trust_tier"], json!("unknown"));
+    let entries = scan(&b, "timeline_entries", 0, 50, &SCANNED);
+    let summaries: Vec<&str> = entries
+        .iter()
+        .map(|r| r["summary"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        summaries,
+        [
+            "entry one",
+            "entry one",
+            "entry three",
+            "entry three",
+            "entry four",
+            "entry four"
+        ]
+    );
+    assert_eq!(entries[0]["detail"], json!("detail one"));
+    assert_eq!(entries[0]["source"], json!("cli"));
+    assert_eq!(scan(&b, "takes", 0, 3, &SCANNED).len(), 3);
+    let after = takes[1]["id"].as_i64().unwrap();
+    assert_eq!(scan(&b, "takes", after, 50, &SCANNED).len(), 4);
+    assert_eq!(count(&b, "takes", 0, None, &SCANNED), 6);
+    assert_eq!(count(&b, "takes", 0, Some(after), &SCANNED), 2);
+    assert_eq!(count(&b, "timeline_entries", 0, None, &SCANNED), 6);
+    assert_eq!(
+        count(
+            &b,
+            "timeline_entries",
+            entries[3]["id"].as_i64().unwrap(),
+            None,
+            &SCANNED
+        ),
+        2
+    );
+}
+
+#[test]
 fn the_trust_scan_refuses_a_table_it_does_not_model_and_a_nul_tier() {
     let b = brain("tier-reads-scan-refusals");
-    for table in ["takes", "timeline_entries", "links"] {
+    {
+        let table = "links";
         let err = b
             .list_trust_scan_rows(&args::<TrustScanQuery>(
                 json!({ "table": table, "afterId": 0, "limit": 1, "tiers": [] }),

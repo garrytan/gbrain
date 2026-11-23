@@ -160,9 +160,13 @@ export const UNRESOLVED_CONFIG_READS: readonly UnresolvedConfigRead[] = [
   { file: 'src/core/questions/auto-think-migration.ts', expr: 'key', why: P },
   { file: 'src/core/questions/phase.ts', expr: 'key', why: P },
   { file: 'src/core/reindex-consent.ts', expr: 'key', why: P },
+  // readLiveMember reads a stdio server's member binding under the config key its caller names.
+  { file: 'src/core/rust-engine/store-members/access-members.ts', expr: 'key', why: P },
   { file: 'src/core/rust-engine/store-members/config.ts', expr: 'key', why: P },
   // readStoredConfigValue reads the stored value through the same store call, so config.ts has a second parameter read.
   { file: 'src/core/rust-engine/store-members/config.ts', expr: 'key', why: P },
+  // readSyncAdmissionSettingRow reads the sync admission setting under the config key its doctor check names.
+  { file: 'src/core/rust-engine/store-members/doctor-checkpoints.ts', expr: 'key', why: P },
   // link-queries.ts reads the link extraction generation (a registered const key) and hands a `(key) => getConfig(brain,
   // key)` adapter to effectiveRangesEnabled; the scan reads `brain`, the store member's first argument.
   { file: 'src/core/rust-engine/store-members/link-queries.ts', expr: 'brain', why: P },
@@ -172,7 +176,7 @@ export const UNRESOLVED_CONFIG_READS: readonly UnresolvedConfigRead[] = [
   // loaders, whose getConfig reads (direct or in the helpers they call) carry the keys and are scanned there.
   { file: 'src/core/rust-engine/store-members/stats.ts', expr: 'brain', why: P },
   { file: 'src/core/rust-engine/store-members/stats.ts', expr: 'brain', why: P },
-  // readMayActFor's key is the stdio may_act_for config key its caller (access/caller.ts) names.
+  // readMayActFor reads a stdio server's may_act_for under the config key its caller names.
   { file: 'src/core/rust-engine/store-members/write-misc.ts', expr: 'key', why: P },
   { file: 'src/core/search/evidence-delivery.ts', expr: 'key', why: P },
   { file: 'src/core/search/evidence-delivery.ts', expr: 'input.configKey ?? RETURN_UNIT_CONFIG_KEY', why: 'per-op return-unit key option (search. prefix), else the registered default' },

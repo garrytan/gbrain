@@ -59,23 +59,34 @@ Differences from PGLite:
 
 ## Files commands and file operations (`src/core/engine-sql/files-ops.ts`)
 
-Nineteen members for the statements `gbrain files` (`src/commands/files.ts`) and the file operations (`src/core/ops/files.ts`)
-ran as raw SQL. None is served on Rust today: each is absent from `store-members/*`, so it refuses with
-`engine_capability_missing` naming the member (the capability in `members.ts` is `files`, or `sources` or `pages` for the
-three that read only those tables). The caller sees the refusal; no member changes behaviour. What the store would need to
-serve them:
+Twenty-one members for the statements `gbrain files` (`src/commands/files.ts`) and the file operations (`src/core/ops/files.ts`)
+ran as raw SQL. Rust serves all twenty-one: `sourceIdExists` and `readSourceLocalPathForVerify` from `files-sources.ts`, and
+the other nineteen from `store-members/files-ops.ts`, through `src/raw_files/ops.rs` and the napi family `files_ops.rs`.
+Each reads the typed arguments; the store never sees the statement.
 
-| Members | Reads or writes | The store would need |
-| --- | --- | --- |
-| `listFileRowsForVerify` | every `files` column, 1000 rows | a scan of the `r 0x02` records ordered by `storage_path`; `size_bytes` as a number, `metadata` as the object (`files list` is the served `listFiles`) |
-| `hasFileWithHash` | `files` by hash and path | the record at the path (the key) and a compare of its `content_hash` |
-| `readSourceLocalPathForVerify` | `sources.local_path` | the source record's checkout path, null when absent |
-| `upsertCliFileRow`, `upsertRawFileRow`, `upsertSyncFileRow` | insert, or on the path update `content_hash`, `size_bytes`, `mime_type` and merge `metadata` | `upsertFile`'s write plus the metadata merge: the new keys over the old object, a stored value that is not an object read as `{}`; the raw lane also sets `source_id`, the others take `default` |
-| `upsertOpFileRow` | the same, and on conflict `source_id` and `page_id` change only when the new row names a page | the same write with the page-keeps-source rule |
-| `registerFileRow` | insert, or update only when `page_slug`, `filename`, `source_id` and `page_id` all match (null equals null) | a conditional update and a written flag; false leaves the row alone |
-| `readFileOwner`, `claimFilePage`, `countFilesRegisteredElsewhere` | `source_id`, `page_id`, `content_hash` of the row at a path; a `source_id` and `page_id` update; a count of rows at the path whose identity differs | the record at the path and its page index entry (`r 0x03`) kept in step on a page change |
-| `sourceIdExists`, `readPageIdInSource` | `sources.id`, `pages.id` by slug and source | the source and page records, soft-deleted pages included, as the statements did not filter them |
-| `listReadableFileRows`, `readReadableFileForUrl`, `listReadableFilePaths`, `readReadableFileForVerify`, `countUnreadableFilesAt`, `readReadablePageId` | `files` and `pages`, with `excludePrivate` hiding a file whose page, by `page_id` or by `page_slug` in any source, the caller cannot read | the caller's page policy applied to a file's page by id and by slug (the member sends only the boolean; the policy text comes from `privatePagesFilterForCaller`) |
+| Members | Served as |
+| --- | --- |
+| `listFileRowsForSlug`, `listAllFileRows`, `listFileRowsForVerify` | a scan of the `r 0x02` records ordered by `filename`, by `page_slug` then `filename` (nulls last), and by `storage_path`; 100, 100 and 1000 rows; `size_bytes` as a number, `metadata` as the object |
+| `hasFileWithHash` | the record at the path and a compare of its `content_hash` |
+| `upsertCliFileRow`, `upsertRawFileRow`, `upsertSyncFileRow` | `upsertFile`'s write plus the metadata merge: the new keys over the old object (a stored value that is not an object reads as `{}`), then jsonb key order. The raw lane names `source_id`; the others take `default`. A repeat updates the hash, size and type only |
+| `upsertOpFileRow` | the same write; on a repeat the source and page change only when the new row names a page (`source_id` kept, `page_id` coalesced) |
+| `registerFileRow` | insert, or refresh only when `page_slug`, `filename`, `source_id` and `page_id` all match (null equals null); false leaves the row alone |
+| `readFileOwner`, `claimFilePage`, `countFilesRegisteredElsewhere` | the record at the path; a source and page update that keeps the `r 0x03` page index in step; a count of 0 or 1 (a null filename never differs) |
+| `readPageIdInSource` | the page record by slug and source, soft-deleted pages included, as the statement did not filter them |
+| `listReadableFileRows`, `readReadableFileForUrl`, `listReadableFilePaths`, `readReadableFileForVerify`, `countUnreadableFilesAt`, `readReadablePageId` | the caller's page policy (the member renders it as `storePagePolicy` does for the other served reads) applied to a file's page by id and by slug in every source; the filter runs before the limit of 100 |
+
+A write that names a source or a page that does not exist is a `constraint_violation` with nothing written, as the foreign keys
+refuse it on Postgres. `metadata` that is not an object, an `undefined` or object bind value and text with a NUL are refused by
+name, as the SQL engines' own binders refuse them.
+
+Differences from PGLite, all in order or ties and none in what a caller can see for ordinary names:
+
+- Text sorts by byte, as PGLite's does. A Postgres database with a locale collation orders some names differently (a hyphen,
+  a capital); the parity cases use names that agree.
+- Rows that tie on the sort key come back in storage-path order. The statements leave ties unordered, so PGLite and Postgres
+  return them in heap order.
+- A soft-deleted private page still hides its files, and a private page at the slug in any source hides a file that names only
+  the slug, because the statements test neither `deleted_at` nor the source.
 
 The hand-numbered placeholders of the readable statements (`$1` limit after a `$2` slug), the inlined metadata merge text
 and the four vetted builders are Postgres text only; the store reads the typed arguments, never the statement.

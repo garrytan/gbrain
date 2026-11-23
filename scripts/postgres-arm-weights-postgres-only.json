@@ -12,7 +12,7 @@
   "test/belief-ledger-privacy.test.ts": 15119,
   "test/belief-ledger-purge-review.test.ts": 109305,
   "test/belief-ledger-purge.test.ts": 112331,
-  "test/belief-ledger-restore.test.ts": 232765,
+  "test/belief-ledger-restore.serial.test.ts": 232765,
   "test/belief-ledger-touched.test.ts": 19190,
   "test/belief-ledger-trust.test.ts": 8141,
   "test/belief-ledger-w5-time-model.test.ts": 24011,

@@ -132,6 +132,25 @@ describe('engine parity: segmented page bodies', () => {
   );
 
   parityTest(
+    'a published segmented page with no chunks counts as chunkless with content; an empty shell does not',
+    { methods: ['createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts', 'stageManifestRows',
+      'flipBodyGeneration', 'setBodyStagingState', 'countChunklessPagesWithContent', 'listChunklessPagesWithContent', 'transaction'] },
+    async (engine) => {
+      await engine.createSegmentedPageShell('notes/shell', pageMeta('Shell'), { sourceId: 'default' });
+      const shellCount = await engine.countChunklessPagesWithContent();
+      await publish(engine);
+      const count = await engine.countChunklessPagesWithContent();
+      const rows = (await engine.listChunklessPagesWithContent()).map((r) => ({ slug: r.slug, source_id: r.source_id,
+        compiled_truth: r.compiled_truth, timeline: r.timeline }));
+      const scoped = await engine.countChunklessPagesWithContent({ sourceId: 'default' });
+      // The shell's body_bytes is 0; the published page's is the byte length of its segments.
+      expect([shellCount, count, scoped]).toEqual([0, 1, 1]);
+      expect(rows.map((r) => r.slug)).toEqual(['notes/big']);
+      return { shellCount, count, rows, scoped };
+    },
+  );
+
+  parityTest(
     'a replace flips to generation 2, closes retired rows and refuses a stale generation',
     { methods: ['flipBodyGeneration', 'readManifest', 'stageSegmentChunks', 'getChunks'] },
     async (engine) => {

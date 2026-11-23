@@ -16,7 +16,7 @@ export async function inspectSharedMemberMigration(engine: BrainEngine, sourceId
       m.desired_view,m.acknowledged_view,
       (SELECT b.evidence->>'stage' FROM shared_skill_delivery_batches b WHERE b.installation_id=m.installation_id
         AND b.epoch=m.epoch AND b.sequence=m.acknowledged_sequence AND b.acknowledged_at IS NOT NULL LIMIT 1) AS stage
-    FROM shared_skill_members m WHERE m.follow_policy->'sources' ? $1 ORDER BY m.adapter,m.installation_id LIMIT 4096`, [sourceId]);
+    FROM shared_skill_members m WHERE m.follow_policy->'sources' ? $1 ORDER BY m.adapter COLLATE "C",m.installation_id LIMIT 4096`, [sourceId]);
   return rows.map(row => {
     const state: SharedMemberMigration['state'] = !row.active ? 'left' : row.approved_incarnation !== incarnation ? 'source_changed'
       : row.desired_view !== row.acknowledged_view ? 'refresh_pending' : row.stage === 'installed' ? 'delivery_reported' : 'joined';

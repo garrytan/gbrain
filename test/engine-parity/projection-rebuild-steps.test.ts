@@ -20,15 +20,15 @@
  *    pass (runResidentProjectionInvocation) runs.
  *  - Why existing coverage misses it: test/timeline-chunk-reuse.test.ts runs the replacement on PGLite and Postgres
  *    only, and test/projection-rebuild-sql-pin.test.ts pins the Postgres text on a recording fake with no database.
- *  - Seam: the import queues a deferred job through queuePageProjection, which is still raw on Rust; these cases
- *    set the job's reason with renewDeferredReplacementClaim, the member the step itself uses to claim it. Ids and
+ *  - Seam: these cases set a deferred job's reason with renewDeferredReplacementClaim, the member the step itself uses
+ *    to claim it; queuePageProjection (the typed queuePageProjectionJob) has its own case. Ids and
  *    revisions differ between arms, so they are compared only as changed or equal.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { ProjectionJobKey } from '../../src/core/engine-sql/projection-rebuild.ts';
 import { continueDeferredProjection, continueDeferredProjectionStep, DEFERRED_CHUNK_CLAIM, DEFERRED_CHUNK_REPLACEMENT,
-  rebuildPendingPageProjections, resealSafeChunks } from '../../src/core/page-state/projections.ts';
+  queuePageProjection, rebuildPendingPageProjections, resealSafeChunks } from '../../src/core/page-state/projections.ts';
 import { newProjectionScanCursor } from '../../src/core/page-state/projection-window.ts';
 import { basisEmbedding, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
@@ -135,6 +135,37 @@ describe('engine parity: the rebuild loop on a deferred job', () => {
       const rebuild = await rebuildPendingPageProjections(engine, 10);
       const out = { rebuild, kept: (await engine.readProjectionJobReason(job)) === claim };
       expect(out).toEqual({ rebuild: { rebuilt: 0, superseded: 1 }, kept: true });
+      return out;
+    });
+});
+
+describe('engine parity: queuing a page projection', () => {
+  // queuePageProjection (a re-seal, a trust change, an embedding recovery, a deferred chunk replacement) queues the
+  // live page at its revision with its reason, or moves its queued row to that reason at now; a gone page queues nothing.
+  parityTest('queuePageProjection queues a live page with its reason, moves a queued row and skips a deleted page',
+    { methods: ['putPage', 'softDeletePage', 'listQueuedPageProjections', 'readProjectionJobReason', 'queuePageProjectionJob',
+      'deleteProjectionJob', 'readProjectionHead'] },
+    async (engine) => {
+      await engine.putPage('notes/queued', PAGE('Queued', 'a queued body.'));
+      await engine.putPage('notes/gone', PAGE('Gone', 'a gone body.'));
+      await engine.softDeletePage('notes/gone');
+      const first = await jobOf(engine, 'notes/queued');
+      await engine.deleteProjectionJob({ sourceIncarnation: first.sourceIncarnation, slug: first.slug, revision: first.revision });
+      const before = (await engine.listQueuedPageProjections({ limit: 10 })).map(j => j.slug);
+      await queuePageProjection(engine, 'default', 'notes/queued', 'safe_chunk_reseal');
+      await queuePageProjection(engine, 'default', 'notes/gone', 'safe_chunk_reseal');
+      await queuePageProjection(engine, 'default', 'notes/missing', 'safe_chunk_reseal');
+      const queued = await jobOf(engine, 'notes/queued');
+      const head = await engine.readProjectionHead('default', 'notes/queued');
+      const reason = await engine.readProjectionJobReason(queued);
+      await tick();
+      await queuePageProjection(engine, 'default', 'notes/queued', 'trust_tier_changed');
+      const out = {
+        before, atRevision: queued.revision === head?.revision, reason,
+        moved: await engine.readProjectionJobReason(queued),
+        slugs: (await engine.listQueuedPageProjections({ limit: 10 })).map(j => j.slug),
+      };
+      expect(out).toEqual({ before: [], atRevision: true, reason: 'safe_chunk_reseal', moved: 'trust_tier_changed', slugs: ['notes/queued'] });
       return out;
     });
 });

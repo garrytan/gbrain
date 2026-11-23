@@ -1,6 +1,6 @@
-/** Source members (BrainEngine listAllSources, updateSourceConfig, markSourceSynced, getSource, listSourceLocalPaths, countRepoBoundSources, getSourceStrictness). */
+/** Source members (BrainEngine listAllSources, updateSourceConfig, markSourceSynced, advanceSyncCheckpoint, getSource, listSourceLocalPaths, countRepoBoundSources, getSourceStrictness). */
 import type { SourceDetailRow, SourceRow } from '../../engine.ts';
-import type { SourceSyncStampOptions } from '../../engine-sql/sources.ts';
+import type { SourceSyncStampOptions, SyncCheckpointAdvance } from '../../engine-sql/sources.ts';
 import { toSource, withDates } from '../store-codec.ts';
 import { storeCall, takeOptions, type StoreMember } from './common.ts';
 
@@ -15,7 +15,14 @@ export const updateSourceConfig: StoreMember<[sourceId: string, patch: Record<st
 
 /** Sets the source's last sync time to the store clock; false for an unknown source (or another incarnation), which changes nothing. */
 export const markSourceSynced: StoreMember<[sourceId: string, opts?: SourceSyncStampOptions], boolean> = (brain, sourceId, opts) =>
-  storeCall({ member: 'markSourceSynced', sourceId }, () => brain.markSourceSynced(sourceId, takeOptions('markSourceSynced', opts, ['incarnation'])));
+  storeCall({ member: 'markSourceSynced', sourceId }, () => brain.markSourceSynced(sourceId, takeOptions('markSourceSynced', opts, ['incarnation', 'newestContentAt'])));
+
+/** The managed sync checkpoint; the store reads the source record and its live pages in one write transaction. */
+export const advanceSyncCheckpoint: StoreMember<[input: SyncCheckpointAdvance], { advanced: boolean; pinnedSlugMode: string | null }> = (brain, input) =>
+  storeCall({ member: 'advanceSyncCheckpoint', sourceId: input.sourceId }, () => brain.advanceSyncCheckpoint({
+    sourceId: input.sourceId, incarnation: input.incarnation, commit: input.commit, from: input.from,
+    acceptAtCommit: input.acceptAtCommit, slugMode: input.slugMode, keepPinnedSlugMode: input.keepPinnedSlugMode,
+  })) as Promise<{ advanced: boolean; pinnedSlugMode: string | null }>;
 
 /**
  * The row or null; `created_at` and `last_sync_at` come back as Dates, like the driver's. The store keeps the source's
