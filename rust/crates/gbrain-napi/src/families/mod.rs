@@ -15,6 +15,7 @@ mod pages;
 mod restore;
 mod search;
 mod seed;
+mod snapshot;
 mod sources;
 mod tags;
 mod timeline;
