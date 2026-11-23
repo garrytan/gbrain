@@ -32,3 +32,16 @@ export async function storeSegmentDerivationsIfLive(raw: MentionRaw, pageId: num
       RETURNING 1`, [pageId, generation, JSON.stringify(rows)]);
   return written.length;
 }
+
+/** The statement page-body/segment-derive.ts derivationNeedles ran through executeRaw (its fold is page-body/schema.ts foldSql). */
+export const DERIVATION_CLAIM_NEEDLES_SQL = `SELECT DISTINCT f COLLATE "C" AS f FROM (SELECT replace(translate(gbrain_fact_normalize(c), 'ς', 'σ'), 'i\u0307', 'i') AS f
+    FROM unnest($1::text[]) c) x WHERE f <> '' ORDER BY f`;
+
+/**
+ * Each claim normalized by the database (gbrain_fact_normalize, then the derivation fold), the empty ones dropped,
+ * distinct, by byte order. No claim, no statement. A failure is thrown unchanged.
+ */
+export async function normalizeDerivationClaims(exec: MentionRaw, claims: readonly string[]): Promise<string[]> {
+  if (!claims.length) return [];
+  return (await exec.executeRaw<{ f: string }>(DERIVATION_CLAIM_NEEDLES_SQL, [[...claims]])).map(r => r.f);
+}

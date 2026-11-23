@@ -127,6 +127,7 @@ export const JOBS_MEMBERS = {
   readAgentClientSpend: 'minion_queue',
   readOauthClient: 'minion_queue',
   listOauthClients: 'minion_queue',
+  listAdminClientRows: 'minion_queue',
   patchOauthClient: 'minion_queue',
   insertAccessToken: 'minion_queue',
   findActiveAccessTokens: 'minion_queue',

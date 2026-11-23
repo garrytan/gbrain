@@ -716,6 +716,19 @@ impl Store {
         Ok(slugs.into_iter().collect())
     }
 
+    /// `listMarkdownPageSlugs(sourceId)`: the slugs of the source's markdown pages, soft-deleted pages included, by
+    /// byte order (`ORDER BY slug COLLATE "C"`).
+    pub fn list_markdown_page_slugs(&self, source_id: &str) -> Result<Vec<String>> {
+        let read = self.read()?;
+        let mut slugs: Vec<String> = all_pages(&*read)?
+            .into_iter()
+            .filter(|p| p.source_id == source_id && p.page_kind == "markdown")
+            .map(|p| p.slug)
+            .collect();
+        slugs.sort();
+        Ok(slugs)
+    }
+
     /// `listAllPageRefs()`: `{ slug, source_id, updated_at }` for every live page, ordered by
     /// `(source_id, slug)`.
     pub fn list_all_page_refs(&self) -> Result<Vec<Value>> {

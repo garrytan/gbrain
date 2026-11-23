@@ -1374,6 +1374,8 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
    * instead of a getPage round-trip per page across the whole corpus.
    */
   listAllPageRefs(): Promise<Array<{ slug: string; source_id: string; updated_at: Date }>>;
+  /** The slugs of the source's markdown pages, soft-deleted pages included, by byte order (commands/reconcile-links.ts). */
+  listMarkdownPageSlugs(sourceId: string): Promise<string[]>;
 
   /**
    * v0.38 — lean per-source enumeration for hot-loop callers (autopilot
@@ -3654,6 +3656,8 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   // Per-segment derivation watermarks (Wave B PR 4; types in page-body/derivations.ts, SQL in engine-sql/page-body.ts).
   /** A page's rows (every kind, or `kind`; optionally only `occurrenceIds`), by kind then occurrence. */
   readSegmentDerivations(pageId: number, opts?: { kind?: SegmentDerivationKind; occurrenceIds?: readonly number[] }): Promise<SegmentDerivationRow[]>;
+  /** Claims normalized and folded as derivation needles (gbrain_fact_normalize, then the fold), non-empty, distinct, by byte order. */
+  normalizeDerivationClaims(claims: readonly string[]): Promise<string[]>;
   /** Insert or replace rows keyed (page, kind, occurrence) in bounded statements; a replaced row keeps created_at. */
   upsertSegmentDerivations(rows: readonly SegmentDerivationInput[]): Promise<void>;
   /** Delete a page's rows (every kind, or `kind`) whose occurrence is not in `liveOccurrenceIds`; returns the count. */

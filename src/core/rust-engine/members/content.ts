@@ -44,6 +44,7 @@ export const CONTENT_MEMBERS = {
   sweepSegments: 'page_body',
   hasSegmentStorage: 'page_body',
   readSegmentDerivations: 'page_body',
+  normalizeDerivationClaims: 'page_body',
   upsertSegmentDerivations: 'page_body',
   retireSegmentDerivations: 'page_body',
   lockBodyStagingState: 'page_body',

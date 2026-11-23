@@ -71,6 +71,7 @@ export const PAGES_MEMBERS = {
   resolveSlugs: 'pages',
   getAllSlugs: 'pages',
   listAllPageRefs: 'pages',
+  listMarkdownPageSlugs: 'pages',
   listEntityKeyRows: 'pages',
   listIdentityDecisions: 'pages',
   listRestrictedIdentityMembers: 'pages',

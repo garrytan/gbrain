@@ -21,6 +21,7 @@
  *    (receipts, weights, plain OAuth clients). Every reader goes through raw SQL, so the Rust arm stops on its
  *    raw_sql refusal.
  */
+import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -150,23 +151,26 @@ describe('store listings come out by byte', () => {
     expect((await listPins(engine)).map(p => p.source_id)).toEqual(BYTE_SOURCES);
   });
 
-  parityTest('ownerCredentials lists clients of one kind by byte of name and id', { methods: ['executeRaw', 'getConfig', 'setConfig', 'transaction'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('ownerCredentials lists clients of one kind by byte of name and id', { methods: ['insertOauthClient', 'getConfig', 'setConfig', 'transaction', 'listOwnerCredentialRows'] }, async (engine) => {
     await addMember(engine, 'owner-example');
     await setOwner(engine, 'owner-example');
-    for (const name of MIXED_SLUGS) {
-      const { clientId } = await provider(engine).registerClientManual(name, ['client_credentials'], 'read write', [], 'default', ['default']);
-      await bindCredential(engine, { kind: 'client', id: clientId }, { member: 'owner-example' });
+    for (const [i, name] of MIXED_SLUGS.entries()) {
+      await engine.insertOauthClient({ client_id: `client-${i}`, client_name: name, grant_types: ['client_credentials'], scope: 'read write', source_id: 'default', federated_read: ['default'] });
+      await bindCredential(engine, { kind: 'client', id: `client-${i}` }, { member: 'owner-example' });
     }
-    expect((await ownerCredentials(engine, 'guest-src')).credentials.map(c => c.name)).toEqual([...BYTE_SLUGS]);
+    const { credentials } = await ownerCredentials(engine, 'guest-src');
+    expect(credentials.map(c => c.name)).toEqual([...BYTE_SLUGS]);
+    // The whole listing (grants, read lists, commands) is compared across engines.
+    return credentials;
   });
 
-  parityTest('ownerCredentials lists clients with one name by byte of id', { methods: ['executeRaw', 'getConfig', 'setConfig'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('ownerCredentials lists clients with one name by byte of id', { methods: ['insertOauthClient', 'getConfig', 'setConfig', 'listOwnerCredentialRows'] }, async (engine) => {
     await addMember(engine, 'owner-example');
     await setOwner(engine, 'owner-example');
-    for (const id of MIXED_SLUGS) {
-      await engine.executeRaw(`INSERT INTO oauth_clients (client_id, client_name, member_id) VALUES ($1, 'same-name', 'owner-example')`, [id]);
-    }
-    expect((await ownerCredentials(engine, 'guest-src')).credentials.map(c => c.id)).toEqual([...BYTE_SLUGS]);
+    for (const id of MIXED_SLUGS) await engine.insertOauthClient({ client_id: id, client_name: 'same-name', member_id: 'owner-example' });
+    const { credentials } = await ownerCredentials(engine, 'guest-src');
+    expect(credentials.map(c => c.id)).toEqual([...BYTE_SLUGS]);
+    return credentials;
   });
 
   parityTest('readCandidateRecords lists candidates by byte of fingerprint', { methods: ['readSourceState', 'upsertFenceCandidatePart', 'listFenceCandidateRecords'] }, async (engine, backend) => {
@@ -222,9 +226,10 @@ describe('store listings come out by byte', () => {
     expect(Object.keys((await readChronicleLedgerStats(engine)).last7d.reasons)).toEqual([...BYTE_SLUGS]);
   });
 
-  parityTest('derivationNeedles lists claim needles by byte', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
-    const { needles } = await derivationNeedles(engine, ['ab', 'a b', 'a c']);
-    expect(needles).toEqual([' a b ', ' a c ', ' ab ']);
+  parityTest('derivationNeedles lists claim needles by byte', { methods: ['normalizeDerivationClaims'] }, async (engine) => {
+    const out = await derivationNeedles(engine, ['ab', 'a b', 'a c']);
+    expect(out.needles).toEqual([' a b ', ' a c ', ' ab ']);
+    return out;
   });
 
   parityTest('readMissingTables lists missing tables by byte', { methods: ['transaction', 'executeRaw', 'getConfig'], requires: 'raw_sql' }, async (engine) => {
@@ -269,11 +274,9 @@ describe('store listings come out by byte', () => {
     expect(bySource.map(s => s.source_id)).toEqual([...BYTE_IDS]);
   });
 
-  parityTest('inspectSharedMemberMigration lists installations by byte of adapter', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('inspectSharedMemberMigration lists installations by byte of adapter', { methods: ['enrollSharedSkillMember', 'listSharedMemberMigrationRows'] }, async (engine) => {
     for (const adapter of MIXED_SLUGS) {
-      await engine.executeRaw(
-        `INSERT INTO shared_skill_members (installation_id, principal_kind, principal_id, adapter, brain_id, follow_policy)
-         VALUES (gen_random_uuid(), 'client', 'c', $1, gen_random_uuid(), '{"sources": {"s": "1"}}'::jsonb)`, [adapter]);
+      await engine.enrollSharedSkillMember({ installationId: randomUUID(), principalKind: 'client', principalId: 'c', adapter, brainId: randomUUID(), followPolicy: { sources: { s: '1' } } });
     }
     expect((await inspectSharedMemberMigration(engine, 's', '1')).map(m => m.adapter)).toEqual([...BYTE_SLUGS]);
   });

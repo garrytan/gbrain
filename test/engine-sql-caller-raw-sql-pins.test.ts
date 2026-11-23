@@ -56,6 +56,9 @@ import { identityDowngradeOpen } from '../src/core/sync-identity-downgrades.ts';
 import { EFFECT_BYTES_SQL } from '../src/core/persistence/receipt-bytes.ts';
 import { ruleCoversSql } from '../src/core/access/folder-rules.ts';
 import { exactIdentityStatement } from '../src/core/engine-sql/exact-identity.ts';
+import { tokenGrantJsonSql } from '../src/core/guests/owner-credentials.ts';
+import { foldSql } from '../src/core/page-body/schema.ts';
+import { CLIENT_INSPECTION_COLUMNS } from '../src/core/harness/client-setup.ts';
 
 const memberSql = (member: string) => `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
   FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
@@ -2620,6 +2623,38 @@ const PINS: Pin[] = [
     case: { method: 'listUncommittedFenceRepairRows', variant: 'default', run: e => e.listUncommittedFenceRepairRows(['src']) },
     texts: [`SELECT fingerprint, completed_keys->0 AS record FROM op_checkpoints
     WHERE op=$1 AND ($2::text[] IS NULL OR completed_keys->0->>'source_id'=ANY($2::text[])) ORDER BY fingerprint COLLATE "C"`],
+  },
+  {
+    from: 'src/core/guests/owner-credentials.ts:73 ownerCredentials (at b7b18e5ab3; the token row is tokenGrantJsonSql(\'t\'))',
+    case: { method: 'listOwnerCredentialRows', variant: 'default', run: e => e.listOwnerCredentialRows('owner-example') },
+    texts: () => ["SELECT * FROM (SELECT 'token' AS kind, t.id::text AS id, t.name, " + tokenGrantJsonSql('t') + " AS row FROM access_tokens t WHERE t.member_id = $1 AND t.revoked_at IS NULL "
+      + "UNION ALL SELECT 'client' AS kind, c.client_id AS id, COALESCE(c.client_name, c.client_id) AS name, to_jsonb(c) - 'client_secret_hash' AS row "
+      + "FROM oauth_clients c WHERE c.member_id = $1 AND (to_jsonb(c)->>'deleted_at') IS NULL) q ORDER BY kind COLLATE \"C\", name COLLATE \"C\", id COLLATE \"C\""],
+  },
+  {
+    from: 'src/core/shared-skills/migration-members.ts:13 inspectSharedMemberMigration (at b7b18e5ab3)',
+    case: { method: 'listSharedMemberMigrationRows', variant: 'default', run: e => e.listSharedMemberMigrationRows('s') },
+    texts: [`SELECT m.installation_id,m.adapter,m.epoch,m.active,m.follow_policy->'sources'->>$1 AS approved_incarnation,
+      m.desired_view,m.acknowledged_view,
+      (SELECT b.evidence->>'stage' FROM shared_skill_delivery_batches b WHERE b.installation_id=m.installation_id
+        AND b.epoch=m.epoch AND b.sequence=m.acknowledged_sequence AND b.acknowledged_at IS NOT NULL LIMIT 1) AS stage
+    FROM shared_skill_members m WHERE m.follow_policy->'sources' ? $1 ORDER BY m.adapter COLLATE "C",m.installation_id LIMIT 4096`],
+  },
+  {
+    from: 'src/commands/reconcile-links.ts:120 runReconcileLinks (at b7b18e5ab3)',
+    case: { method: 'listMarkdownPageSlugs', variant: 'default', run: e => e.listMarkdownPageSlugs('work') },
+    texts: [`SELECT slug FROM pages WHERE page_kind = 'markdown' AND source_id = $1 ORDER BY slug COLLATE "C"`],
+  },
+  {
+    from: 'src/core/page-body/segment-derive.ts:350 derivationNeedles (at b7b18e5ab3; the fold is foldSql)',
+    case: { method: 'normalizeDerivationClaims', variant: 'default', run: e => e.normalizeDerivationClaims(['a b']) },
+    texts: () => [`SELECT DISTINCT f COLLATE "C" AS f FROM (SELECT ${foldSql('gbrain_fact_normalize(c)')} AS f
+    FROM unnest($1::text[]) c) x WHERE f <> '' ORDER BY f`],
+  },
+  {
+    from: 'src/commands/serve-http-clients.ts:21 mountAdminClients (at b7b18e5ab3)',
+    case: { method: 'listAdminClientRows', variant: 'default', run: e => e.listAdminClientRows() },
+    texts: () => [`SELECT ${CLIENT_INSPECTION_COLUMNS} FROM oauth_clients ORDER BY created_at DESC, client_id COLLATE "C"`],
   },
   {
     from: 'src/core/persistence/sync-admission.ts:34 readSyncAdmission',

@@ -145,7 +145,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'pageHasFrontmatterKey', 'pageHasTimelineEntries', 'pendingTrustProposalsFor', 'pickValidTimeEdition',
   'planFactPurgeIds', 'planFactPurgeTakes', 'probeIdleWork', 'probeLiveConsumerRows', 'probeNoopEmbeddingSettle',
   'probePurgeDerivations', 'projectionRebuildProgress', 'purgeSubjectPageLive', 'rankEntities',
-  'readAccessCredentials', 'readAccessMembers', 'readAccessTokenWriteGrant', 'readAdmissionRate',
+  'readAccessCredentials', 'listOwnerCredentialRows', 'listSharedMemberMigrationRows', 'listMarkdownPageSlugs', 'normalizeDerivationClaims', 'listAdminClientRows', 'readAccessMembers', 'readAccessTokenWriteGrant', 'readAdmissionRate',
   'readAdmissionSource', 'readAgentClientSpend', 'readAudiencePrincipals', 'readBeliefHistoryRows',
   'readBodyManifestMeta', 'readBodyManifestOutline', 'readBodyManifestRows', 'readCallerPageAccess',
   'readCanonicalTwin', 'readCapacityForecastInputs', 'readChatUsage', 'readChildCompletions',

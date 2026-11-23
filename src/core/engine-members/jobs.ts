@@ -280,6 +280,8 @@ export interface JobsMembers {
   readOauthClient(clientId: string): Promise<OauthClientRow | null>;
   /** Every client's whole row, by name then id in byte order (`gbrain auth clients`). */
   listOauthClients(): Promise<OauthClientRow[]>;
+  /** The inspection columns of every client, deleted ones included, newest first, then by byte order of client id (the admin clients list). */
+  listAdminClientRows(): Promise<Array<Record<string, unknown>>>;
   patchOauthClient(clientId: string, patch: OauthClientPatch, guard?: OauthClientPatchGuard): Promise<OauthClientPatched | null>;
   /** One `access_tokens` row at grant revision 1; its generated id. A repeated token hash is a constraint error (23505). */
   insertAccessToken(row: AccessTokenInsert): Promise<{ id: string }>;

@@ -67,7 +67,7 @@ describe('command listings sort text keys by byte', () => {
     expect(pages.map(p => [p.source_id, p.slug])).toEqual(BYTE_PAIRS);
   });
 
-  parityTest('runReconcileLinks walks a source\'s markdown pages by byte slug', { methods: ['executeRaw', 'getPage'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('runReconcileLinks walks a source\'s markdown pages by byte slug', { methods: ['listMarkdownPageSlugs', 'getPage'] }, async (engine, backend) => {
     await createSource(engine, backend, 'work');
     for (const slug of MIXED_SLUGS) await page(engine, 'work', slug);
     const walked: string[] = [];
@@ -113,9 +113,9 @@ describe('command listings sort text keys by byte', () => {
     expect(await read(true)).toEqual(expected);
   });
 
-  parityTest('the admin clients list breaks a created_at tie by byte client id', { methods: ['executeRaw', 'insertOauthClient'], requires: 'raw_sql' }, async (engine, backend) => {
-    for (const id of MIXED_IDS) await engine.insertOauthClient({ client_id: id, client_name: id });
-    await engine.executeRaw("UPDATE oauth_clients SET created_at = '2026-01-02T03:04:05Z'");
+  parityTest('the admin clients list breaks a created_at tie by byte client id', { methods: ['insertOauthClient', 'listAdminClientRows'] }, async (engine, backend) => {
+    const tie = new Date('2026-01-02T03:04:05Z');
+    for (const id of MIXED_IDS) await engine.insertOauthClient({ client_id: id, client_name: id, created_at: tie });
     const app = express();
     mountAdminClients(app, (_req, _res, next) => next(), engine, 'https://brain.example/mcp');
     const server = app.listen(0, '127.0.0.1');
@@ -125,6 +125,8 @@ describe('command listings sort text keys by byte', () => {
       expect(res.status).toBe(200);
       const body = await res.json() as { clients: Array<{ client_id: string }> };
       expect(body.clients.map(c => c.client_id)).toEqual([...BYTE_IDS]);
+      // The whole listing (metadata, grant, created_at, status) is compared across engines.
+      return body.clients;
     } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
   });
 

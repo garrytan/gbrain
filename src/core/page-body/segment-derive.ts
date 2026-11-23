@@ -345,10 +345,10 @@ export interface DerivationNeedles { needles: string[]; patterns: string[] }
  * The claims in the form the derivation predicates take, normalized by the database (gbrain_fact_normalize, then
  * foldSql), so the needle and the rows go through the same SQL. A claim that normalizes to nothing matches nothing.
  */
-export async function derivationNeedles(engine: Pick<BrainEngine, 'executeRaw'>, claims: readonly string[]): Promise<DerivationNeedles> {
+export async function derivationNeedles(engine: Pick<BrainEngine, 'normalizeDerivationClaims'>, claims: readonly string[]): Promise<DerivationNeedles> {
   const list = [...new Set(claims.filter(Boolean))];
-  const rows = list.length ? await engine.executeRaw<{ f: string }>(`SELECT DISTINCT f COLLATE "C" AS f FROM (SELECT ${foldSql('gbrain_fact_normalize(c)')} AS f
-    FROM unnest($1::text[]) c) x WHERE f <> '' ORDER BY f`, [list]) : [];
+  // The statement folds with foldSql('gbrain_fact_normalize(c)') (engine-sql/segment-derive-store.ts DERIVATION_CLAIM_NEEDLES_SQL).
+  const rows = (await engine.normalizeDerivationClaims(list)).map(f => ({ f }));
   // A word holding a control character is spelled \uXXXX in a row's JSON text, so it cannot prefilter.
   const pattern = (text: string) => ['', ...text.split(' ').filter(t => t && !/[\u0000-\u001f]/.test(t)).map(t => t.replace(/[\\%_]/g, '\\$&')), ''].join('%');
   return { needles: rows.map(row => ` ${row.f} `), patterns: rows.map(row => pattern(row.f)) };
@@ -417,7 +417,7 @@ export function recordDerivationStatement(entry: { phase: 'sweep' | 'verify' | '
  * page_segment_derivations refuses rows holding the claim on those pages (schema.ts), and continueDerivationPurges
  * deletes the rows already there. A claim that normalizes to nothing records nothing.
  */
-export async function recordDerivationPurge(engine: Pick<BrainEngine, 'executeRaw'>, requestId: string, sourceId: string, pageIds: readonly number[],
+export async function recordDerivationPurge(engine: Pick<BrainEngine, 'executeRaw' | 'normalizeDerivationClaims'>, requestId: string, sourceId: string, pageIds: readonly number[],
   claims: readonly string[]): Promise<void> {
   const { needles, patterns } = await derivationNeedles(engine, claims);
   if (!needles.length) return;

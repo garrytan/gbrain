@@ -3,7 +3,7 @@
  * Declarations moved verbatim out of engine.ts; `BrainEngine` extends this interface, so the member set is unchanged.
  */
 import type { AccessCoverageRow, AccessPolicyMarks, AccessRestampWindow, AccessRevisionInsert, AccessRevisionQuery, AccessRevisionRow, AccessRuleChanges, AccessRuleRow } from '../engine-sql/access-policy.ts';
-import type { AccessCredentialLookup, AccessCredentialRow, AccessGroupRow, AccessMemberLookup, AccessMemberRow, AppliedPolicyRevision, AudiencePrincipalRows, FolderAccessRows, JobPrincipalKind, LiveMemberRow, MayActForVia, MemberBindingVia, PageNamingReaderRow } from '../engine-sql/access-control.ts';
+import type { AccessCredentialLookup, AccessCredentialRow, AccessGroupRow, AccessMemberLookup, AccessMemberRow, AppliedPolicyRevision, AudiencePrincipalRows, FolderAccessRows, JobPrincipalKind, LiveMemberRow, MayActForVia, MemberBindingVia, OwnerCredentialRow, PageNamingReaderRow } from '../engine-sql/access-control.ts';
 import type { AccessMigrationRow, LiveAccessTokenRow, MemberKeyReadingRow, OpenPageCount, OpenPageExclusion, PeopleFolderCount } from '../engine-sql/access-setup.ts';
 import type { AccessTokenGrantWrite, AccessTokenListRow, AccessTokenPrivateAxis, ActiveTokenGrantField, ActiveTokenTarget, DeletedOAuthClient, LegacyTokenGrantColumns, OauthClientGrantInsert, OauthClientProbe, OauthCodeInsert, OauthCodeRow, OauthTokenInsert, OauthTokenRow, OauthTokenRung, ScopeSourceLock, TokenByHashCaller } from '../engine-sql/access-credentials.ts';
 import type * as BeliefLedgerSql from '../engine-sql/belief-ledger.ts';
@@ -184,6 +184,8 @@ export interface LedgerMembers {
 
   /** Live credentials (active legacy tokens, clients not deleted): the tokens with one exact name, or those bound to one member. */
   readAccessCredentials(by: AccessCredentialLookup): Promise<AccessCredentialRow[]>;
+  /** The live credentials bound to `memberId` with their grant rows, by byte order of kind, name and id (guests/owner-credentials.ts). */
+  listOwnerCredentialRows(memberId: string): Promise<OwnerCredentialRow[]>;
 
   /** Revoke every active access token with this exact name; the revoked ids (none on a store that keeps no credentials). */
   revokeAccessTokensNamed(name: string): Promise<string[]>;

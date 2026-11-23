@@ -36,6 +36,7 @@ export const PERSISTENCE_MEMBERS = {
   lockSharedSkillBrainId: 'persistence_journal',
   readSharedSkillMember: 'persistence_journal',
   countSharedSkillMembers: 'persistence_journal',
+  listSharedMemberMigrationRows: 'persistence_journal',
   enrollSharedSkillMember: 'persistence_journal',
   rebindSharedSkillMember: 'persistence_journal',
   leaveSharedSkillMember: 'persistence_journal',

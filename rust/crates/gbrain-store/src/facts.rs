@@ -966,6 +966,22 @@ pub(crate) fn like(text: &str, pattern: &str, fold: bool) -> Result<bool> {
 /// Characters `gbrain_fact_normalize` turns into a space (`FINGERPRINT_PUNCTUATION`).
 const FINGERPRINT_PUNCTUATION: &str = "!\"$%&'()*,-/:;<=>?@[\\]^_`{|}~\u{2018}\u{2019}\u{201a}\u{201c}\u{201d}\u{201e}\u{00ab}\u{00bb}\u{2039}\u{203a}\u{2013}\u{2014}\u{2015}\u{2026}\u{00b7}\u{2022}\u{00a1}\u{00bf}";
 
+/// `normalizeDerivationClaims(claims)`: each claim through `gbrain_fact_normalize` and the derivation fold
+/// (`replace(translate(x, 'ς', 'σ'), 'i\u{307}', 'i')`), the empty ones dropped, distinct, by byte order, as
+/// page-body/segment-derive.ts derivationNeedles selects them. Reads nothing from the store.
+pub fn normalize_derivation_claims(claims: &[String]) -> Vec<String> {
+    let folded: std::collections::BTreeSet<String> = claims
+        .iter()
+        .map(|c| {
+            fact_normalize(c)
+                .replace('\u{3c2}', "\u{3c3}")
+                .replace("i\u{307}", "i")
+        })
+        .filter(|f| !f.is_empty())
+        .collect();
+    folded.into_iter().collect()
+}
+
 /// `gbrain_fact_normalize(text)`: lower-case, punctuation and whitespace runs to one space, a
 /// sentence-ending dot dropped, trimmed.
 pub(crate) fn fact_normalize(text: &str) -> String {

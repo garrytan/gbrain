@@ -13,7 +13,7 @@
 import type {
   AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from '../../engine-sql/write-misc.ts';
-import type { AccessCredentialLookup, AccessCredentialRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AppliedPolicyRevision, FolderAccessRows, AudiencePrincipalRows, MayActForVia, JobPrincipalKind, PageNamingReaderRow } from '../../engine-sql/access-control.ts';
+import type { AccessCredentialLookup, AccessCredentialRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AppliedPolicyRevision, FolderAccessRows, AudiencePrincipalRows, MayActForVia, JobPrincipalKind, OwnerCredentialRow, PageNamingReaderRow } from '../../engine-sql/access-control.ts';
 import { readAccessMembers } from './access-members.ts';
 import { LIVE_PAGES_NAMING_READER_LIMIT, PAGES_NAMING_READER_LIMIT } from '../../engine-sql/access-control.ts';
 import type { ScopeSourceLock } from '../../engine-sql/access-credentials.ts';
@@ -204,6 +204,10 @@ export const listOwnerProposalRows: StoreMember<[requestId: string], Array<Recor
  */
 export const readAccessCredentials: StoreMember<[by: AccessCredentialLookup], AccessCredentialRow[]> = async (brain, by) =>
   await storeCall({ member: 'readAccessCredentials' }, () => brain.readAccessCredentials(by)) as AccessCredentialRow[];
+
+/** The member's live tokens (grant columns) and clients (the row less its secret hash), by byte order of kind, name and id. */
+export const listOwnerCredentialRows: StoreMember<[memberId: string], OwnerCredentialRow[]> = async (brain, memberId) =>
+  await storeCall({ member: 'listOwnerCredentialRows' }, () => brain.listOwnerCredentialRows(memberId)) as OwnerCredentialRow[];
 
 
 /**

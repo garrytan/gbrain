@@ -270,3 +270,7 @@ export const refreshPageBody: StoreMember<[slug: string, sourceId: string, compi
   async (brain, slug, sourceId, compiledTruth, timeline, contentHash) => {
     await storeCall({ member: 'refreshPageBody', slug, sourceId }, () => brain.refreshPageBody(slug, sourceId, compiledTruth, timeline, contentHash));
   };
+
+/** The claims normalized and folded as derivation needles, non-empty, distinct, by byte order; no claim, no store call. */
+export const normalizeDerivationClaims: StoreMember<[claims: readonly string[]], string[]> = async (brain, claims) =>
+  claims.length ? await storeCall({ member: 'normalizeDerivationClaims' }, () => brain.normalizeDerivationClaims([...claims])) as string[] : [];

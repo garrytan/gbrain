@@ -402,3 +402,7 @@ export const listStaleAtoms: StoreMember<[sourceIds: readonly string[], atomId: 
   const rows: StaleAtomRow[] = await storeCall({ member: 'listStaleAtoms' }, () => brain.listStaleAtoms([...sourceIds], atomId));
   return rows.map(row => ({ ...row, id: Number(row.id), origin_page_id: row.origin_page_id == null ? null : Number(row.origin_page_id), chars: Number(row.chars) }));
 };
+
+/** The slugs of the source's markdown pages, soft-deleted pages included, by byte order. */
+export const listMarkdownPageSlugs: StoreMember<[sourceId: string], string[]> = async (brain, sourceId) =>
+  await storeCall({ member: 'listMarkdownPageSlugs' }, () => brain.listMarkdownPageSlugs(sourceId)) as string[];

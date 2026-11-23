@@ -60,7 +60,7 @@ afterAll(async () => {
   await closePostgres?.(); resetGateway(); rmSync(dataDir, { recursive: true, force: true });
 });
 
-type Exec = Pick<BrainEngine, 'executeRaw'>;
+type Exec = Pick<BrainEngine, 'executeRaw' | 'normalizeDerivationClaims'>;
 interface Seed { pageId: number; claim: string; hash: string }
 /** A page in 'default', written as the owner and committed; each case gets its own claim. */
 async function seedPage(engine: BrainEngine): Promise<Seed> {
