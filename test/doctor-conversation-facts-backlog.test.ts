@@ -32,7 +32,7 @@ async function seedPage(slug: string, type: string): Promise<void> {
   await engine.putPage(slug, {
     type,
     title: slug,
-    compiled_truth: 'A page body long enough for the doctor backlog fixture.',
+    compiled_truth: '## User\n\nA question for the backlog fixture.\n\n## Assistant\n\nAn answer for the backlog fixture.',
     timeline: '',
     frontmatter: {},
   });
@@ -87,7 +87,7 @@ describe('conversation_facts_backlog durable outcomes', () => {
     await engine.putPage('meetings/growing', {
       type: 'meeting',
       title: 'meetings/growing',
-      compiled_truth: 'The meeting body changed after its durable outcome.',
+      compiled_truth: '## User\n\nThe meeting changed after its durable outcome.\n\n## Assistant\n\nAn updated reply.',
       timeline: '',
       frontmatter: {},
     });
