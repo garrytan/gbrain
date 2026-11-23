@@ -17,12 +17,12 @@ export interface Sample {
   at: number;
   /** The serving process's write generation (follower.published) when the read was captured; undefined without a follower. */
   gen?: number;
-  /** The policy fingerprint of the primary's data at capture (checks.ts `createPolicyWatch`): the latest the database held before the read returned; undefined when none was known yet, and then nothing is proven unchanged. */
-  fp?: string;
+  /** The primary's WAL position (pg_current_wal_lsn) known before the read started (checks.ts `createLsnWatch`); undefined when none was known yet, and then nothing is proven unchanged. */
+  lsn?: string;
   /** The primary's encoded answer; the serving process compares the child's rows with it, so it never goes back over the control channel. */
   result?: unknown;
-  /** Set when the stable rerun read the primary again: the time, generation and fingerprint of that read, and its encoded answer once it returned. */
-  rerun?: { at: number; gen?: number; fp?: string; result?: unknown };
+  /** Set when the stable rerun read the primary again: the time, generation and WAL position of that read, and its encoded answer once it returned. */
+  rerun?: { at: number; gen?: number; lsn?: string; result?: unknown };
 }
 
 export const SAMPLE_REGISTRY_MAX_ENTRIES = 1024;

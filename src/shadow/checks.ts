@@ -10,11 +10,11 @@
  *            policy fragment (private-visibility.ts `privatePagesFilterForCaller`) under the captured `CallerAccess`, the
  *            primary's safe-chunk fence when its read asked for it, and the chunk visibility the primary used. The answer is a
  *            verdict (`clean` with `complete`, `violation`, `moved`), never content. It is `moved` unless this process can PROVE
- *            nothing the policy reads changed since the read: its own write generation (follower.published, read live before
- *            and after the check) must equal the one captured with the sample, the policy fingerprint (a hash of every row of every
- *            table the predicates read, `FINGERPRINT_TABLES`; `createPolicyWatch`) must equal the one captured, before the
- *            primary read started, with the sample, no page or access row may carry a time later than the read, and the access tables' generation must hold
- *            across the check. Without proof the child calls the sample inconclusive, never clean.
+ *            nothing was written since the primary read started: the primary's WAL position (`pg_current_wal_lsn()`, `createLsnWatch`),
+ *            known before that read started, must be the same at the end of the check (any table, the catalog, or a change
+ *            undone again moves it); its own write generation (follower.published, read live before and after the check) must
+ *            equal the one captured with the sample, no page or access row may carry a time later than the read, and the access
+ *            tables' generation must hold across the check. The child then runs both engines again from a new position, up to 3 times. Without proof the child calls the sample inconclusive, never clean.
  *   rerun    The stable-generation barrier for a mismatch that nothing explains (plan decision 7). When everything published
  *            has been read and sent, a `barrier` call goes down the follow stream behind the last batch; the child acks
  *            only when it applied everything before it and its watermark is valid. The primary read runs next, and the
@@ -25,9 +25,9 @@
  *            of the primary's rerun answer (kept here for the privacy question), never the answer itself.
  *   vector   The exact reference of a vector sample (recall.ts), at most one a minute: the engine's own exact statement
  *            (`exactSql`: no candidate window, `ORDER BY (distance) + 0`) with its filters, scoring, per-page collapse and
- *            tie-break, run here on a reference-only path. The engine's search itself is not touched. The sample is dropped
- *            (`moved`) unless nothing the corpus or the policy reads changed between its capture and the end of the reference
- *            (the same generation and fingerprint proof as the privacy question).
+ *            tie-break, run here on a reference-only path. The engine's search itself is not touched. The reference is refused
+ *            (`moved`) unless the WAL position and the write generation are the ones the sample was held to, at the end of the run
+ *            (the same proof as the privacy question); the child then runs both engines and the reference again, up to 3 times.
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { hasCapability } from '../core/engine-capabilities.ts';
@@ -51,7 +51,7 @@ export interface PageCandidates { ids: number[]; keys: string[]; chunks: number[
 /** The serving process's verdict on a sample's Rust rows (never content). `complete`: every extra row was identified and judged. */
 export interface PrivacyAnswer { verdict: 'clean' | 'violation' | 'privacy_check_moved'; complete: boolean }
 /** `digest`: the whole answer; `members`: the same rows with scores and order taken out, for a ranked read (reads.ts), else absent. */
-export interface RerunAnswer { stamp: number; epoch_id: string; digest: string; members?: string }
+export interface RerunAnswer { stamp: number; epoch_id: string; digest: string; members?: string; /** A vector read's rerun answer as ranked keys (chunk ids and scores, no content), for the recall score of the rerun. */ keys?: RankedKey[] }
 
 /** Runs `fn` as the captured caller, or outside any caller record when the read had none (a record changes the page policy text). */
 const asCaller = <T>(access: Partial<CallerAccess> | undefined, fn: () => T): T => (access ? withCallerAccess(access, fn) : withoutCallerAccess(fn));
@@ -73,62 +73,29 @@ const CHANGED_AFTER_SQL = `SELECT (EXISTS (SELECT 1 FROM pages WHERE updated_at 
   OR EXISTS (SELECT 1 FROM access_pending_coverage WHERE created_at > to_timestamp($1::double precision / 1000.0))
   OR EXISTS (SELECT 1 FROM access_policy_revisions WHERE created_at > to_timestamp($1::double precision / 1000.0) OR applied_at > to_timestamp($1::double precision / 1000.0))) AS changed`;
 
-/**
- * The tables whose rows the read policy, the safe-chunk fence, the chunk visibility and the vector corpus filters read, the
- * lineage functions they call (privatePagesFilterForCaller, gbrain_owner_only_lineage_strict and every function those read) included,
- * and the access, source and config tables. The fingerprint hashes every row of every one of them whole: a change to a column no
- * predicate reads today moves it too, and so does a column a predicate starts to read. A guard test
- * (test/helpers/shadow-checks-scenarios.ts, "the freshness proof covers every table the predicates read") extracts the tables
- * those SQL builders and function bodies reference and fails when one is missing from this list.
- */
-export const FINGERPRINT_TABLES: readonly string[] = [
-  'access_group_members', 'access_members', 'access_pending_coverage', 'access_policy_revisions', 'access_policy_state', 'access_rules',
-  'config', 'content_chunks', 'derivation_inputs', 'facts', 'links', 'owner_only_marks', 'pages', 'slug_aliases', 'slug_rename_history',
-  'sources', 'takes', 'timeline_entries', 'write_gate_receipts',
-];
-const VECTOR_TYPES = ['vector', 'halfvec', 'sparsevec'];
+/** The primary's WAL position now: any committed change to any table, to the catalog (a policy altered in place) or a change that is undone again (A, then B, then A) moves it. */
+const LSN_SQL = `SELECT pg_current_wal_lsn()::text AS lsn`;
+const lsnOf = async (tx: BrainEngine): Promise<string> => String((await tx.executeRaw<{ lsn: string }>(LSN_SQL))[0]?.lsn);
 
 /**
- * The fingerprint statement for the columns the tables have now: per table, the row count and the sum of a 64-bit hash of each
- * whole row as jsonb text, with only a vector column's bytes replaced by whether it is set (a row's `embedded_text_hash` stays in
- * the row). Built from the catalog, so a column added later is covered without a change here. Another process's write to any
- * of these tables moves it; it does not tell which. Not covered, and so a known limit: a table no predicate reads today.
+ * The primary's WAL position, kept fresh off the request path. `current()` is synchronous (a read is captured on the request path):
+ * it returns the latest position a refresh completed BEFORE this moment, so it is never newer than the read it is stored with,
+ * and starts a refresh when the one it holds is older than `ttlMs`. A stale value only makes the proof fail, never pass: the
+ * position at the end of a check equals it only when nothing was written between. `undefined` until the first refresh
+ * completes, or when the engine has no WAL position (a sample captured then is never proven unchanged).
  */
-export function policyFingerprintSql(columns: Array<{ table_name: string; column_name: string; udt_name: string }>): string {
-  const parts = FINGERPRINT_TABLES.filter((t) => columns.some((c) => c.table_name === t)).map((t) => {
-    const vectors = columns.filter((c) => c.table_name === t && VECTOR_TYPES.includes(c.udt_name)).map((c) => c.column_name);
-    const row = vectors.length === 0 ? `to_jsonb(r)::text`
-      : `(to_jsonb(r) - ARRAY[${vectors.map((v) => `'${v}'`).join(',')}]::text[] || jsonb_build_object(${vectors.map((v) => `'${v}_set', r."${v}" IS NOT NULL`).join(', ')}))::text`;
-    return `(SELECT count(*) || ':' || COALESCE(sum(hashtextextended(${row}, 0)::numeric), 0) FROM "${t}" r)`;
-  });
-  return `SELECT concat_ws('|', ${parts.join(',\n  ')}) AS fp`;
-}
-
-const fingerprintOf = async (tx: BrainEngine): Promise<string> => {
-  const columns = await tx.executeRaw<{ table_name: string; column_name: string; udt_name: string }>(
-    `SELECT table_name, column_name, udt_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ANY($1::text[])`, [[...FINGERPRINT_TABLES]]);
-  return String((await tx.executeRaw<{ fp: string }>(policyFingerprintSql(columns)))[0]?.fp);
-};
-
-/**
- * The policy fingerprint, kept fresh off the request path. `current()` is synchronous (a read is captured on the request path):
- * it returns the latest fingerprint a refresh completed BEFORE this moment, so it is never newer than the read it is stored
- * with, and starts a refresh when the one it holds is older than `ttlMs`. Unchanged data compares equal later; changed data
- * does not, and neither does an older fingerprint than the change: a stale value only makes the proof fail, never pass.
- * `undefined` until the first refresh completes (a sample captured before then is never proven).
- */
-export interface PolicyWatch { current(): string | undefined; live(): Promise<string>; ready(): Promise<void> }
-export function createPolicyWatch(reads: ReadSource, now: () => number = Date.now, ttlMs = 5000): PolicyWatch {
+export interface LsnWatch { current(): string | undefined; live(): Promise<string>; ready(): Promise<void> }
+export function createLsnWatch(reads: ReadSource, now: () => number = Date.now, ttlMs = 200): LsnWatch {
   let value: string | undefined;
   let at = -Infinity;
   let inflight: Promise<void> | null = null;
   const refresh = (): Promise<void> => (inflight ??= (async () => {
-    try { const v = await reads.read(fingerprintOf); value = v; at = now(); } catch { /* the value stays older: the proof fails, never passes */ }
+    try { const v = await reads.read(lsnOf); value = v; at = now(); } catch { /* the value stays older: the proof fails, never passes */ }
     inflight = null;
   })());
   return {
     current: () => { if (now() - at >= ttlMs) void refresh(); return value; },
-    live: () => reads.read(fingerprintOf),
+    live: () => reads.read(lsnOf),
     ready: () => refresh(),
   };
 }
@@ -140,7 +107,7 @@ const safeFenceApplies = (args: unknown[]): boolean => args.some((a) => !!a && t
 /** The most Rust row identities one privacy question holds; a longer list is never complete. */
 export const IDENTITY_LIMIT = 2000;
 
-interface Base { at: number; gen?: number; fp?: string }
+interface Base { at: number; gen?: number; lsn?: string }
 
 /**
  * What the primary's policy says about the candidates, held to the generation of the read that produced the rows (`base`: the
@@ -151,7 +118,7 @@ async function policySnapshot(reads: ReadSource, access: Partial<CallerAccess> |
   const accessGeneration = (): Promise<string> => reads.read(async (tx) => String((await tx.executeRaw<{ generation: string }>(POLICY_GENERATION_SQL))[0]?.generation));
   const gen0 = generation();
   const before = await accessGeneration();
-  const { rows, chunks, changed, fp } = await reads.read(async (tx) => ({
+  const { rows, chunks, changed } = await reads.read(async (tx) => ({
     rows: await asCaller(access, () => tx.executeRaw<{ id: number | string; key: string; allowed: boolean }>(
       `SELECT p.id, p.source_id || E'\\x1f' || p.slug AS key, (${privatePagesFilterForCaller('p')}) AS allowed FROM pages p
         WHERE p.id = ANY($1::bigint[]) OR (p.source_id || E'\\x1f' || p.slug) = ANY($2::text[])`, [cand.ids, cand.keys])),
@@ -160,11 +127,12 @@ async function policySnapshot(reads: ReadSource, access: Partial<CallerAccess> |
         WHERE c.id = ANY($1::bigint[]) AND ${chunkVisibleFilter('p', 'c')}${safe ? ` AND ${safeChunksFilter('p')}` : ''}`, [cand.chunks]), // a staged, retired or unsealed chunk is not one the primary can return
     // 1 ms of slack: a write that finished before the read can carry a microsecond time past the read's millisecond.
     changed: base ? (await tx.executeRaw<{ changed: boolean }>(CHANGED_AFTER_SQL, [base.at + 1]))[0]?.changed === true : true,
-    fp: await fingerprintOf(tx),
   }));
   const gen1 = generation();
-  const unproven = !base || base.fp === undefined || (hasFollower && base.gen === undefined);
-  const moved = unproven || changed || fp !== base?.fp || (hasFollower && (gen0 !== base?.gen || gen1 !== base?.gen)) || before !== await accessGeneration();
+  // The proof: nothing was written between the position known before the primary read started and the end of this check (any table, the catalog, or a change undone again).
+  const lsn1 = await reads.read(lsnOf);
+  const unproven = !base || base.lsn === undefined || (hasFollower && base.gen === undefined);
+  const moved = unproven || lsn1 !== base?.lsn || changed || (hasFollower && (gen0 !== base?.gen || gen1 !== base?.gen)) || before !== await accessGeneration();
   return {
     moved, violations: rows.filter((r) => r.allowed !== true).length,
     pages: rows.map((r) => ({ id: Number(r.id), key: r.key })), chunks: chunks.map((c) => ({ id: Number(c.id), page_id: Number(c.page_id), sum: c.sum })),
@@ -181,7 +149,7 @@ const isRowIdentity = (v: unknown): v is RowIdentity => {
 /** The verdict on the child's Rust rows for `sample`: compared with the primary's own answer, the extra rows judged, nothing but a verdict going back. */
 async function privacyAnswer(d: AskDeps, sample: Sample, ask: { phase?: unknown; rows?: unknown }): Promise<PrivacyAnswer> {
   const rerun = ask.phase === 'rerun';
-  const base: Base | undefined = rerun ? sample.rerun : { at: sample.at, gen: sample.gen, fp: sample.fp };
+  const base: Base | undefined = rerun ? sample.rerun : { at: sample.at, gen: sample.gen, lsn: sample.lsn };
   const primary = rerun ? sample.rerun?.result : sample.result;
   if (primary === undefined) throw coded('failed'); // what the primary answered is not known: nothing can be held against it
   // Only a whole, valid list of at most IDENTITY_LIMIT rows can complete a check: a list that is cut or holds anything invalid is judged as far as it goes
@@ -219,11 +187,11 @@ export interface AskDeps {
   now?: () => number;
   /** Seam for tests; default `RERUN_DEADLINE_MS`. */
   deadlineMs?: number;
-  /** The policy fingerprint (`createPolicyWatch`); the same one the mirror queue captures with each sample. Default: one over `reads`. */
-  watch?: PolicyWatch;
+  /** The WAL position watch (`createLsnWatch`); the same one the mirror queue captures with each sample. Default: one over `reads`. */
+  watch?: LsnWatch;
 }
 
-async function stableRerun(d: AskDeps, watch: PolicyWatch, sid: string, sample: Sample, ask: { epoch_id: unknown }): Promise<RerunAnswer> {
+async function stableRerun(d: AskDeps, watch: LsnWatch, sid: string, sample: Sample, ask: { epoch_id: unknown }): Promise<RerunAnswer> {
   const now = d.now ?? Date.now;
   const deadline = now() + (d.deadlineMs ?? RERUN_DEADLINE_MS);
   const left = (): number => Math.max(1, deadline - now());
@@ -242,8 +210,8 @@ async function stableRerun(d: AskDeps, watch: PolicyWatch, sid: string, sample: 
   const invalidated = f.lastInvalidatedAt;
   const ack = await d.rpc<{ stamp: number }>('barrier', {}, left());
   const args = decodeValue(sample.args) as unknown[];
-  const fp = await watch.live().catch(() => undefined); // none known: the rerun's privacy check is unproven, never clean
-  sample.rerun = { at: now(), gen: published, fp }; // the privacy check of the rerun is held to this read
+  const lsn = await watch.live().catch(() => undefined); // none known: the rerun's privacy check is unproven, never clean; taken before the primary read below starts
+  sample.rerun = { at: now(), gen: published, lsn }; // the privacy check of the rerun is held to this read
   const read = asCaller(sample.access, () => (d.engine as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[sample.op]!(...args));
   const result = await Promise.race([read, sleep(left()).then(() => { throw coded('timeout'); })]);
   if (!f.idle() || f.published !== published || f.lastInvalidatedAt !== invalidated) throw coded('write_after_barrier');
@@ -251,50 +219,52 @@ async function stableRerun(d: AskDeps, watch: PolicyWatch, sid: string, sample: 
   sample.rerun.result = encoded; // kept here for the privacy question; only its digest goes back
   d.samples.charge(sid, JSON.stringify(encoded)?.length ?? 0);
   const members = SHADOW_READ_MEMBERS[sample.op as ShadowReadMember] === 'ranked' ? membersDigest(encoded) : undefined;
-  return { stamp: ack.stamp, epoch_id: epoch, digest: resultDigest(encoded), ...(members === undefined ? {} : { members }) };
+  return { stamp: ack.stamp, epoch_id: epoch, digest: resultDigest(encoded), ...(members === undefined ? {} : { members }), ...(sample.op === 'searchVector' ? { keys: rankedKeys(encoded) } : {}) };
 }
 
 /**
  * The primary's exact top rows for the sample's `searchVector`: ids and scores only. The engine's own exact statement
  * (`exactSql`, bound with no candidate window) keeps the caller's filters, the source boosts, the per-page collapse and the
  * tie-break; asked for `RECALL_REFERENCE_LIMIT` rows so a tie at the cutoff is visible. The answers the sample holds were
- * read at its capture; the reference is refused (`moved`) unless nothing the corpus reads changed since then: this process's
- * write generation and the policy fingerprint must equal the ones captured with the sample, before and after the statement.
+ * read from the position the sample (or, for `phase: 'rerun'`, its rerun) was held to: the reference is refused (`moved`) unless
+ * the primary's WAL position at the end of the run is that position, and this process's write generation is the one captured.
  */
-async function vectorReference(d: AskDeps, sample: Sample): Promise<RankedKey[]> {
+async function vectorReference(d: AskDeps, sample: Sample, phase: 'sample' | 'rerun'): Promise<RankedKey[]> {
   const [embedding, opts] = decodeValue(sample.args) as [Float32Array, SearchOpts | undefined];
   const dialect = hasCapability(d.engine, 'postgres_admin') ? 'postgres' : 'pglite';
   const hasFollower = d.follower !== undefined;
-  if (sample.fp === undefined || (hasFollower && sample.gen === undefined)) throw coded('moved'); // nothing was captured to hold the reference to
+  const base = phase === 'rerun' ? sample.rerun : { gen: sample.gen, lsn: sample.lsn };
+  if (!base || base.lsn === undefined || (hasFollower && base.gen === undefined)) throw coded('moved'); // nothing was captured to hold the reference to
   const gen0 = d.follower?.published;
-  const { rows, fpBefore, fpAfter } = await d.reads.read(async (tx) => {
+  const rows = await d.reads.read(async (tx) => {
     await tx.executeRaw('SET LOCAL enable_indexscan = off');
     await tx.executeRaw('SET LOCAL enable_bitmapscan = off');
-    const fpBefore = await fingerprintOf(tx);
-    const rows = await asCaller(sample.access, async () => {
+    return asCaller(sample.access, async () => {
       const stmt = buildVectorSearchStatement({ dialect, embedding, limit: RECALL_REFERENCE_LIMIT, offset: 0, opts: { ...opts, limit: RECALL_REFERENCE_LIMIT, offset: 0 } });
       const params = [...stmt.params];
       params[stmt.innerLimitIdx] = null; // no candidate window: every eligible chunk is scored
       return tx.executeRaw<Record<string, unknown>>(stmt.exactSql, params);
     });
-    return { rows, fpBefore, fpAfter: await fingerprintOf(tx) };
   });
-  if (fpBefore !== sample.fp || fpAfter !== sample.fp || (hasFollower && (gen0 !== sample.gen || d.follower?.published !== sample.gen))) throw coded('moved');
+  const lsn1 = await d.reads.read(lsnOf);
+  if (lsn1 !== base.lsn || (hasFollower && (gen0 !== base.gen || d.follower?.published !== base.gen))) throw coded('moved');
   return rankedKeys(encodeValue(rows.filter((r) => r.chunk_id !== null && r.chunk_id !== undefined)));
 }
 
 export function makeAskHandler(d: AskDeps): (ask: { id: number; kind: string; [key: string]: unknown }) => Promise<unknown> {
   const gate = new IntervalGate(RECALL_INTERVAL_MS, d.now);
-  const watch = d.watch ?? createPolicyWatch(d.reads, d.now);
+  const watch = d.watch ?? createLsnWatch(d.reads, d.now);
   return async (ask) => {
     const sample = d.samples.get(ask.sid);
     if (!sample) throw coded('sample_unknown'); // evicted, or from another process: the sample stays unresolved
     switch (ask.kind) {
       case 'privacy': return privacyAnswer(d, sample, ask as { phase?: unknown; rows?: unknown });
       case 'rerun': return stableRerun(d, watch, ask.sid as string, sample, { epoch_id: ask.epoch_id });
-      case 'vector':
-        if (!gate.take()) throw coded('rate_limited');
-        return vectorReference(d, sample);
+      case 'vector': {
+        const phase = ask.phase === 'rerun' ? 'rerun' : 'sample';
+        if (phase === 'sample' && !gate.take()) throw coded('rate_limited'); // a rerun of a sample that moved is the same reference run, asked again
+        return vectorReference(d, sample, phase);
+      }
       default: throw coded('unsupported');
     }
   };

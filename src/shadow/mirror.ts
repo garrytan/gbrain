@@ -28,8 +28,8 @@ export interface CapturedRead {
   at: number;
   /** The serving process's write generation before the primary read started (MirrorQueue.token). */
   gen?: number;
-  /** The policy fingerprint the serving process held before the primary read started (MirrorQueue.token). */
-  fp?: string;
+  /** The primary's WAL position (pg_current_wal_lsn) the serving process knew before the primary read started (MirrorQueue.token). */
+  lsn?: string;
 }
 
 /** Counters the serving process keeps; sent to the child in `stats` events. Cumulative for the process. */
@@ -116,8 +116,8 @@ export interface MirrorQueueOptions {
   samples?: SampleRegistry;
   /** The serving process's write generation, read the moment a read is captured (follower.published). */
   generation?: () => number | undefined;
-  /** The policy fingerprint of the primary's data, read the moment a read is captured: the latest known, never newer than the read (checks.ts `createPolicyWatch`). */
-  fingerprint?: () => string | undefined;
+  /** The primary's WAL position, as last read: never newer than the read it is taken for (checks.ts `createLsnWatch`). */
+  lsn?: () => string | undefined;
 }
 
 export const DEFAULT_MAX_LINE_BYTES = 1024 * 1024;
@@ -146,7 +146,7 @@ export class MirrorQueue {
   private readonly schedule: (fn: () => void) => void;
   private readonly samples?: SampleRegistry;
   private readonly generation?: () => number | undefined;
-  private readonly fingerprint?: () => string | undefined;
+  private readonly lsn?: () => string | undefined;
 
   constructor(opts: MirrorQueueOptions) {
     this.bound = Math.max(1, opts.bound);
@@ -156,18 +156,18 @@ export class MirrorQueue {
     this.schedule = opts.schedule ?? ((fn) => { setImmediate(fn); });
     this.samples = opts.samples;
     this.generation = opts.generation;
-    this.fingerprint = opts.fingerprint;
+    this.lsn = opts.lsn;
   }
 
   /**
-   * What the serving process knew BEFORE a primary read started (its write generation, the policy fingerprint): the wrapper takes it
+   * What the serving process knew BEFORE a primary read started (its write generation, the primary's WAL position): the wrapper takes it
    * ahead of the call and hands it back in the capture. It is never taken later: a token adopted after the read's snapshot could
    * name a newer corpus than the one the answer came from, and a sample without one is never proven unchanged.
    */
-  token(): { gen?: number; fp?: string } {
-    const out: { gen?: number; fp?: string } = {};
+  token(): { gen?: number; lsn?: string } {
+    const out: { gen?: number; lsn?: string } = {};
     try { out.gen = this.generation?.(); } catch { /* none: unresolved, never cleared */ }
-    try { out.fp = this.fingerprint?.(); } catch { /* none: unresolved, never cleared */ }
+    try { out.lsn = this.lsn?.(); } catch { /* none: unresolved, never cleared */ }
     return out;
   }
 
@@ -229,7 +229,7 @@ export class MirrorQueue {
       let sid: string | undefined;
       try {
         // The child names this sample by `sid` alone when it asks the serving process about it (samples.ts).
-        sid = this.samples?.add({ op: read.op, args: read.args, result: read.result, access: read.access, at: read.at, gen: read.gen, fp: read.fp }, 1024);
+        sid = this.samples?.add({ op: read.op, args: read.args, result: read.result, access: read.access, at: read.at, gen: read.gen, lsn: read.lsn }, 1024);
         line = JSON.stringify({
           t: 'read', id: nextId++, sid, at: read.at, op: read.op, primary_ms: read.primary_ms,
           args: read.args, result: read.result, access: read.access,

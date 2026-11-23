@@ -83,7 +83,7 @@ export function defineEvidenceScenarios(ctx: EvidenceScenarioContext): void {
       const state = { version: 1, enabled: true, started_at: 'x', sample_rate: 1, queue_bound: 64, plan_hash: 'h', brain: 'b', primary_engine: ctx.kind };
       await withEnv({ GBRAIN_RUST_ENGINE_ADDON: ctx.addonPath }, async () => {
         const attached = attachShadowParts(primary, home, state as never, { gbrainArgv: [process.execPath, join(import.meta.dir, '..', '..', 'src', 'cli.ts')] });
-        await attached.policyWatch.ready(); // the fingerprint the sample is held to is taken before the read starts
+        await attached.lsnWatch.ready(); // the WAL position the sample is held to is taken before the read starts
         await attached.engine.searchVector(vec(3), { limit: 10 });
         await attached.follower!.settle();
         const deadline = Date.now() + 60_000;

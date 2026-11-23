@@ -13,7 +13,7 @@ import type { FollowOptions } from './follow.ts';
 import { ShadowFollower } from './follower.ts';
 import { openReadSource, type ReadSource } from './read-pool.ts';
 import { Reconciler } from './reconcile.ts';
-import { createPolicyWatch, makeAskHandler, type PolicyWatch } from './checks.ts';
+import { createLsnWatch, makeAskHandler, type LsnWatch } from './checks.ts';
 import { epochWatch } from './evidence-epoch.ts';
 import { readSeedRecord } from './seed.ts';
 import { MirrorQueue, zeroUsage } from './mirror.ts';
@@ -46,8 +46,8 @@ export interface AttachedShadow<E extends BrainEngine> {
   /** Set when the brain is seeded and `follow` was left out. */
   follower?: ShadowFollower;
   reconciler?: Reconciler;
-  /** The policy fingerprint every sample is captured with (checks.ts `createPolicyWatch`). */
-  policyWatch: PolicyWatch;
+  /** The WAL position every sample is captured with (checks.ts `createLsnWatch`). */
+  lsnWatch: LsnWatch;
 }
 
 /** The child's argv for `dir`. */
@@ -63,8 +63,8 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   });
   const samples = new SampleRegistry();
   let generation: () => number | undefined = () => undefined; // the follower's write count, set once it exists
-  let watch: PolicyWatch | undefined; // the policy fingerprint, set once the child's read source exists
-  const queue = new MirrorQueue({ bound: state.queue_bound, transport: supervisor, samples, generation: () => generation(), fingerprint: () => watch?.current() });
+  let watch: LsnWatch | undefined; // the primary's WAL position, set once the child's read source exists
+  const queue = new MirrorQueue({ bound: state.queue_bound, transport: supervisor, samples, generation: () => generation(), lsn: () => watch?.current() });
   const sink = {
     counters: queue.counters,
     offer: (capture: Parameters<MirrorQueue['offer']>[0], op?: string) => queue.offer(capture, op),
@@ -93,8 +93,8 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   // The child's questions (checks.ts) read the primary through a source of their own, opened on first use, on a brain that was never seeded.
   let own: ReadSource | undefined;
   const askReads: ReadSource = reads ?? { pauseMs: 0, read: (fn) => (own ??= openReadSource(engine)).read(fn), close: async () => { await own?.close(); } };
-  watch = createPolicyWatch(askReads);
-  void watch.ready(); // the first fingerprint, so a sample captured a moment later has one to be held to
+  watch = createLsnWatch(askReads);
+  void watch.ready(); // the first WAL position, so a sample captured a moment later has one to be held to
   const asks = makeAskHandler({ engine, reads: askReads, dir, rpc, samples, watch, get follower() { return follower; } });
   const follower = reads ? new ShadowFollower({
     reads, send: (line) => supervisor.send(line), rpc,
@@ -120,7 +120,7 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
     }
   });
   const follow = follower ? { sink: follower } : deps.follow;
-  return { engine: wrapShadowEngine(engine, sink, { sampleRate: state.sample_rate, random: deps.random, follow }), queue, supervisor, follower, reconciler, policyWatch: watch };
+  return { engine: wrapShadowEngine(engine, sink, { sampleRate: state.sample_rate, random: deps.random, follow }), queue, supervisor, follower, reconciler, lsnWatch: watch };
 }
 
 /** The engine factory's entry point: the wrapped engine. */

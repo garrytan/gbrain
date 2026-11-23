@@ -6,12 +6,9 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import { callerAccessRecord, privatePagesFilterForCaller, withCallerAccess } from '../../src/core/search/private-visibility.ts';
-import { ownerOnlyPageSql } from '../../src/core/access/owner-only.ts';
-import { buildVisibilityClause } from '../../src/core/search/sql-ranking.ts';
-import { chunkVisibleFilter, safeChunksFilter } from '../../src/core/search/safe-chunks.ts';
+import { callerAccessRecord, withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { buildVectorSearchStatement } from '../../src/core/search/vector-statement.ts';
-import { createPolicyWatch, FINGERPRINT_TABLES, makeAskHandler } from '../../src/shadow/checks.ts';
+import { createLsnWatch, makeAskHandler } from '../../src/shadow/checks.ts';
 import { openReadSource } from '../../src/shadow/read-pool.ts';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -152,76 +149,6 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
     });
   });
 
-  describe('the freshness proof covers every table the predicates read', () => {
-    /** Every table the SQL the checks and the vector reference run references, through the builders and every `gbrain_*` function they reach (bodies read from the schema). */
-    async function predicateTables(engine: BrainEngine): Promise<string[]> {
-      const real = new Set((await engine.executeRaw<{ table_name: string }>(`SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()`)).map((r) => r.table_name));
-      const found = new Set<string>();
-      const funcs = new Set<string>();
-      const scan = (text: string): void => {
-        for (const m of text.matchAll(/\b(?:FROM|JOIN)\s+(?:ONLY\s+)?(?:"?[a-z_][a-z0-9_]*"?\.)?"?([a-z_][a-z0-9_]*)"?/gi)) if (real.has(m[1]!.toLowerCase())) found.add(m[1]!.toLowerCase());
-        for (const m of text.matchAll(/\b(gbrain_[a-z0-9_]+)\b/gi)) funcs.add(m[1]!.toLowerCase());
-      };
-      const caller = { identity: ['member:alice-example'], hidePrivate: true, restricted: true, applyRemoteReadPolicy: true, satisfiedRuleIds: ['default:r1'] };
-      for (const who of [null, caller, { ...caller, owner: true }, { ...caller, restricted: false }, { ...caller, privateReadableSources: ['default'], privateFactSources: ['default'] }]) {
-        const run = <T>(fn: () => T): T => (who ? withCallerAccess(who as never, fn) : fn());
-        scan(run(() => privatePagesFilterForCaller('p')));
-        for (const o of [{ excludePrivate: true, requireSafeChunks: true, chunkAlias: 'cc', suppressFlagged: true, minTrust: 'unverified' }, { excludePrivate: true }, {}]) scan(run(() => buildVisibilityClause('p', 's', o as never)));
-      }
-      for (const form of ['fn', 'mode', 'closed'] as const) scan(ownerOnlyPageSql('p', form));
-      scan(safeChunksFilter('p')); scan(chunkVisibleFilter('p', 'c'));
-      for (const dialect of ['pglite', 'postgres'] as const) for (const opts of [{ limit: 10 }, { limit: 10, excludePrivate: true }, { limit: 10, excludePrivate: true, types: ['note'], exclude_slugs: ['a'], afterDate: '2020-01-01', sourceIds: ['default'], source_boosts: { 'x/': 2 } }]) {
-        const stmt = buildVectorSearchStatement({ dialect, embedding: new Float32Array(DIMS), limit: 10, offset: 0, opts: opts as never });
-        scan(stmt.sql); scan(stmt.exactSql); if (stmt.indexWalkSql) scan(stmt.indexWalkSql);
-      }
-      // the functions the predicate modules name, whether or not a variant above reached them, and everything those read
-      for (const file of ['search/private-visibility.ts', 'access/owner-only.ts', 'search/safe-chunks.ts', 'search/sql-ranking.ts', 'search/vector-statement.ts']) scan(readFileSync(join(import.meta.dir, '..', '..', 'src', 'core', file), 'utf8').split('\n').filter((l) => !/^\s*(\*|\/\/|\/\*)/.test(l)).join('\n').replace(/\b(?:FROM|JOIN)\b/g, ' ')); // function names only: the source also holds SQL for other reads
-      const seen = new Set<string>();
-      for (let todo = [...funcs]; todo.length; todo = [...funcs].filter((f) => !seen.has(f))) {
-        for (const f of todo) {
-          seen.add(f);
-          for (const d of await engine.executeRaw<{ def: string }>(`SELECT pg_get_functiondef(p.oid) AS def FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE p.proname = $1 AND n.nspname = current_schema()`, [f])) scan(d.def);
-        }
-      }
-      return [...found].sort();
-    }
-
-    test('every table the visibility, fence and corpus predicates and their lineage functions read is in the fingerprint', async () => {
-      const read = await predicateTables(ctx.primary());
-      for (const t of ['pages', 'content_chunks', 'sources', 'config', 'derivation_inputs', 'owner_only_marks', 'access_rules', 'access_pending_coverage']) expect([t, read.includes(t)]).toEqual([t, true]); // the extractor finds the ones the reviews named
-      expect(read.filter((t) => !FINGERPRINT_TABLES.includes(t))).toEqual([]);
-      // the control: a list without one of them is caught
-      expect(read.filter((t) => !FINGERPRINT_TABLES.filter((x) => x !== 'owner_only_marks').includes(t))).toEqual(['owner_only_marks']);
-      // and every table on the list exists, so none is a typo that hashes nothing
-      const real = new Set((await ctx.primary().executeRaw<{ table_name: string }>(`SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()`)).map((r) => r.table_name));
-      expect(FINGERPRINT_TABLES.filter((t) => !real.has(t))).toEqual([]);
-    });
-
-    test('the fingerprint moves for a change to any column of a chunk (modality, model, embedded_text_hash, embedding presence), a lineage input or an owner-only mark', async () => {
-      const primary = ctx.primary();
-      await primary.putPage('fp2/page', { type: 'note', title: 'fp2/page', compiled_truth: 'fingerprint two text', timeline: '' });
-      await installFixtureChunks(primary, 'fp2/page', [{ chunk_index: 0, chunk_text: 'fingerprint two text', chunk_source: 'compiled_truth', embedding: vec(504), model: MODEL, token_count: 3 }]);
-      const reads = openReadSource(primary);
-      const watch = createPolicyWatch(reads);
-      const chunk = `page_id = (SELECT id FROM pages WHERE slug = 'fp2/page')`;
-      try {
-        const changes: Array<[string, string, string]> = [
-          ['modality', `UPDATE content_chunks SET modality = 'image' WHERE ${chunk}`, `UPDATE content_chunks SET modality = 'text' WHERE ${chunk}`],
-          ['model', `UPDATE content_chunks SET model = model || '-x' WHERE ${chunk}`, `UPDATE content_chunks SET model = left(model, length(model) - 2) WHERE ${chunk}`],
-          ['embedded_text_hash', `UPDATE content_chunks SET embedded_text_hash = 'stale' WHERE ${chunk}`, `UPDATE content_chunks SET embedded_text_hash = NULL WHERE ${chunk}`],
-          ['a lineage input', `INSERT INTO derivation_inputs (derived_table, derived_id, input_table, input_id) VALUES ('pages', '987654', 'pages', '987655')`, `DELETE FROM derivation_inputs WHERE derived_id = '987654'`],
-          ['an owner-only mark', `INSERT INTO owner_only_marks (row_table, row_id) VALUES ('pages', '987656')`, `SELECT 1`],
-        ];
-        for (const [name, change, undo] of changes) {
-          const before = await watch.live();
-          await primary.executeRaw(change);
-          expect([name, (await watch.live()) !== before]).toEqual([name, true]);
-          await primary.executeRaw(undo).catch(() => undefined);
-        }
-      } finally { await reads.close(); await primary.executeRaw(`DELETE FROM pages WHERE slug = 'fp2/page'`); await primary.executeRaw(`DELETE FROM owner_only_marks WHERE row_id = '987656'`).catch(() => undefined); }
-    });
-  });
-
   describe('caller access capture', () => {
     test('the wrapper captures the frozen record, the child runs Rust under it, and a read outside any record runs Rust under none', async () => {
       const rig = await start({ unseeded: true });
@@ -272,17 +199,22 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       expect((await rows(failed))[0]).toMatchObject({ outcome: 'inconclusive', rerun: 'skipped:watermark_invalid' });
     });
   
-    test('a write published after the primary read leaves it inconclusive', async () => {
-      const rig = await mismatching('agrees');
-      await rig.settled();
-      // The rerun's own primary read goes through the unwrapped engine: publish while it runs by delaying it.
-      const original = ctx.primary().listPages.bind(ctx.primary());
-      let reruns = 0;
-      (ctx.primary() as unknown as { listPages: unknown }).listPages = async (...a: never[]) => { const out = await (original as (...x: unknown[]) => unknown)(...a); if (++reruns === 2) rig.attached.follower!.publish(batch(1, [{ kind: 'rows', relation: 'config', selector: { key: 'late' }, before_keys: null }])); return out; };
-      try {
-        await sample(rig);
-        expect((await rows(rig))[0]).toMatchObject({ outcome: 'inconclusive', rerun: 'skipped:write_after_barrier' });
-      } finally { (ctx.primary() as unknown as { listPages: unknown }).listPages = original; }
+    test('a write published after the barrier is rerun from a new position: once it clears the sample, and if it lands on every run the sample stays unresolved', async () => {
+      for (const [name, lands, expected] of [
+        ['one write', (n: number) => n === 2, { outcome: 'inconclusive', rerun: 'matched' }],
+        ['a write on every run', (n: number) => n >= 2, { outcome: 'inconclusive', rerun: 'skipped:moved' }],
+      ] as const) {
+        const rig = await mismatching('agrees');
+        await rig.settled();
+        // The rerun's own primary read goes through the unwrapped engine: publish while it runs by delaying it.
+        const original = ctx.primary().listPages.bind(ctx.primary());
+        let reruns = 0;
+        (ctx.primary() as unknown as { listPages: unknown }).listPages = async (...a: never[]) => { const out = await (original as (...x: unknown[]) => unknown)(...a); if (lands(++reruns)) rig.attached.follower!.publish(batch(reruns, [{ kind: 'rows', relation: 'config', selector: { key: `late${reruns}` }, before_keys: null }])); return out; };
+        try {
+          await sample(rig);
+          expect([name, (await rows(rig))[0]]).toEqual([name, expect.objectContaining(expected)]);
+        } finally { (ctx.primary() as unknown as { listPages: unknown }).listPages = original; }
+      }
     });
   
     test('an answer for another epoch is dropped, never restamped', async () => {
@@ -335,7 +267,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
   describe('ranked vector search under excludePrivate', () => {
     type Rows = Array<Record<string, unknown>>;
     /** One ranked searchVector read as ALICE under excludePrivate; Rust answers `answer(primary's rows, a real spare row, page ids)`. Returns criterion 3, the counts and the ledger rows. */
-    async function ranked(answer: (theirs: Rows, spare: Record<string, unknown>, ids: Record<string, number>) => Rows) {
+    async function ranked(answer: (theirs: Rows, spare: Record<string, unknown>, ids: Record<string, number>) => Rows, o: { settle?: boolean; onPrivacyAsk?: (n: number) => Promise<void> } = {}) {
       const primary = ctx.primary();
       const ids = await privacyFixture(primary);
       await vectorFixture(primary);
@@ -343,6 +275,13 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       const theirs = await withCallerAccess(ALICE, () => primary.searchVector(vec(3), opts)) as unknown as Rows;
       const spare = (await withCallerAccess(ALICE, () => primary.searchVector(vec(3), { ...opts, limit: 12 })) as unknown as Rows)[10]!; // a real chunk the caller may read, outside the top ten
       const rig = await start();
+      if (o.onPrivacyAsk) { // the primary changes (or not) while the check runs: called with the number of this privacy ask
+        const sup = (rig.attached.supervisor as unknown as { o: { onAsk: (a: Record<string, unknown>) => Promise<unknown> } }).o;
+        const real = sup.onAsk;
+        let asks = 0;
+        sup.onAsk = async (ask) => { if (ask.kind === 'privacy') await o.onPrivacyAsk!(++asks); return real(ask); };
+      }
+      if (o.settle) await rig.settled(); // a rerun needs the child started and its watermark valid
       rig.rust.searchVector = async () => answer(theirs, spare, ids);
       await withCallerAccess(ALICE, () => rig.engine.searchVector(vec(3), opts));
       const rows = await rig.finish();
@@ -448,6 +387,54 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       }
     });
 
+    describe('the primary\'s WAL position over the check', () => {
+      const clearing = (theirs: Rows, spare: Record<string, unknown>): Rows => [...theirs, spare]; // an extra row the caller may read: cleared when nothing moved
+      const probe = 'a2_policy_probe';
+      const mutations: Array<[string, (n: number) => Promise<unknown>, () => Promise<unknown>]> = [
+        // a policy altered in place: a catalog change, no row of any table
+        ['ALTER POLICY', async (n) => { await ctx.primary().executeRaw(`ALTER POLICY ${probe}_p ON ${probe} USING (${n % 2 ? 'true' : 'false'})`); },
+          async () => { await ctx.primary().executeRaw(`DROP TABLE IF EXISTS ${probe}`); await ctx.primary().executeRaw(`CREATE TABLE ${probe} (x int)`); await ctx.primary().executeRaw(`ALTER TABLE ${probe} ENABLE ROW LEVEL SECURITY`); await ctx.primary().executeRaw(`CREATE POLICY ${probe}_p ON ${probe} USING (false)`); }],
+        // A, then B, then A: a link added and removed again leaves every table as it was
+        ['a change undone again (A, B, A)', async () => { const ids = await privacyFixture(ctx.primary()); await ctx.primary().executeRaw(`INSERT INTO links (from_page_id, to_page_id, link_type, link_source) VALUES ($1, $2, 'synthesized_from', 'concept-provenance')`, [ids['summary/x'], ids['secrets/plan']]); await ctx.primary().executeRaw(`DELETE FROM links WHERE from_page_id = $1 AND link_source = 'concept-provenance'`, [ids['summary/x']]); },
+          async () => undefined],
+      ];
+
+      for (const [name, mutate, setup] of mutations) {
+        test(`${name} between the read and the check: no clearance, three reruns, then the sample stays unresolved and counts as unexplained`, async () => {
+          await setup();
+          try {
+            const r = await ranked(clearing, { settle: true, onPrivacyAsk: async (n) => { await mutate(n); } }); // every check sees the position move
+            counts(r);
+            expect(r.rows[0]).toMatchObject({ outcome: 'inconclusive', rerun: 'skipped:moved' });
+            expect(r.stopped).toBeNull();
+          } finally { await ctx.primary().executeRaw(`DROP TABLE IF EXISTS ${probe}`); }
+        });
+      }
+
+      test('a rerun clears the sample once the position settles: the first check moved, the second did not', async () => {
+        await ctx.primary().executeRaw(`DROP TABLE IF EXISTS ${probe}`);
+        await ctx.primary().executeRaw(`CREATE TABLE ${probe} (x int)`);
+        try {
+          const r = await ranked(clearing, { settle: true, onPrivacyAsk: async (n) => { if (n === 1) await ctx.primary().executeRaw(`INSERT INTO ${probe} VALUES (1)`); } });
+          expect(r.rows[0]).toMatchObject({ op: 'searchVector', outcome: 'diff', reason: 'extra_rows_cleared', rerun: 'differed' }); // the rerun's own check held
+          expect(r.reads.diverged_unexplained_7d).toBe(0);
+          expect(r.evidence.ranking_differences).toEqual({ searchVector: 1 });
+          expect(r.row3.state).toBe('pass');
+        } finally { await ctx.primary().executeRaw(`DROP TABLE IF EXISTS ${probe}`); }
+      });
+
+      test('a sample whose position moved twice and then settled is cleared by the third run; one that moves on the first check and all three reruns is not', async () => {
+        await ctx.primary().executeRaw(`DROP TABLE IF EXISTS ${probe}`);
+        await ctx.primary().executeRaw(`CREATE TABLE ${probe} (x int)`);
+        try {
+          const r = await ranked(clearing, { settle: true, onPrivacyAsk: async (n) => { if (n <= 2) await ctx.primary().executeRaw(`INSERT INTO ${probe} VALUES (${n})`); } });
+          expect(r.rows[0]).toMatchObject({ outcome: 'diff', reason: 'extra_rows_cleared' }); // asks 1 and 2 moved, ask 3 held
+          const never = await ranked(clearing, { settle: true, onPrivacyAsk: async (n) => { if (n <= 4) await ctx.primary().executeRaw(`INSERT INTO ${probe} VALUES (${n})`); } });
+          expect(never.rows[0]).toMatchObject({ outcome: 'inconclusive', rerun: 'skipped:moved' }); // the first check and the three reruns moved: no clearance
+        } finally { await ctx.primary().executeRaw(`DROP TABLE IF EXISTS ${probe}`); }
+      });
+    });
+
     test('a write this process publishes DURING the check, not before it, leaves the sample unresolved', async () => {
       const primary = ctx.primary();
       const ids = await privacyFixture(primary);
@@ -473,7 +460,38 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       const reads = openReadSource(primary);
       try {
         const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never });
-        const sid = samples.add({ op: 'searchVector', args: encodeValue([vec(3), { limit: 10, excludePrivate: true }]), result: [], at: Date.now(), fp: 'x' }, 100);
+        const sid = samples.add({ op: 'searchVector', args: encodeValue([vec(3), { limit: 10, excludePrivate: true }]), result: [], at: Date.now(), lsn: 'x' }, 100);
+        for (const rows of ['not a list', [{ payload: 'p', id: 'seven' }], [null]]) expect(await handler({ id: 1, kind: 'privacy', sid, phase: 'sample', rows })).toEqual({ verdict: 'clean', complete: false });
+        expect(await handler({ id: 2, kind: 'privacy', sid, phase: 'sample', rows: [] })).toEqual({ verdict: 'clean', complete: true }); // control: nothing extra, nothing invalid
+      } finally { await reads.close(); }
+    });
+
+    test('a write this process publishes DURING the check, not before it, leaves the sample unresolved', async () => {
+      const primary = ctx.primary();
+      const ids = await privacyFixture(primary);
+      const rig = await start();
+      const supervisor = rig.attached.supervisor as unknown as { o: { onAsk: (a: Record<string, unknown>) => Promise<unknown> } };
+      const real = supervisor.o.onAsk;
+      supervisor.o.onAsk = (ask) => { // the check starts, then a write is published while its snapshots are awaited
+        const answer = real(ask);
+        if (ask.kind === 'privacy') rig.attached.follower!.publish(batch(1, [{ kind: 'relation', relation: 'config', reason: 'x' }]));
+        return answer;
+      };
+      rig.rust.getPage = async () => ({ id: ids['open/a'], slug: 'open/a', source_id: 'default', title: 'x', type: 'note' });
+      await withCallerAccess(ALICE, () => rig.engine.getPage('missing/page', { excludePrivate: true } as never));
+      expect((await rig.finish())[0]).toMatchObject({ outcome: 'inconclusive', reason: 'privacy_check_moved' });
+    });
+
+    test('a list of more than 2,000 row identities, or one holding anything invalid, is never complete: a forbidden row after the limit is not cleared by its absence', async () => {
+      const crowd = (theirs: Rows, ids: Record<string, number>): Rows => [...Array.from({ length: 2000 }, () => theirs[0]!), { ...theirs[0], page_id: ids['priv/a'], slug: 'priv/a', source_id: 'default', chunk_id: 987_654, chunk_text: 'beyond the limit' }];
+      counts(await ranked((theirs, _spare, ids) => crowd(theirs, ids)));
+      // the serving process, asked directly: a list that is not a list, or holds a malformed identity, answers incomplete (clean as far as it goes)
+      const primary = ctx.primary();
+      const samples = new SampleRegistry();
+      const reads = openReadSource(primary);
+      try {
+        const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never });
+        const sid = samples.add({ op: 'searchVector', args: encodeValue([vec(3), { limit: 10, excludePrivate: true }]), result: [], at: Date.now(), lsn: 'x' }, 100);
         for (const rows of ['not a list', [{ payload: 'p', id: 'seven' }], [null]]) expect(await handler({ id: 1, kind: 'privacy', sid, phase: 'sample', rows })).toEqual({ verdict: 'clean', complete: false });
         expect(await handler({ id: 2, kind: 'privacy', sid, phase: 'sample', rows: [] })).toEqual({ verdict: 'clean', complete: true }); // control: nothing extra, nothing invalid
       } finally { await reads.close(); }
@@ -485,7 +503,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       await installFixtureChunks(primary, 'fp/page', [{ chunk_index: 0, chunk_text: 'fingerprint chunk text', chunk_source: 'compiled_truth', embedding: vec(503), model: MODEL, token_count: 3 }]);
       await privacyFixture(primary);
       const reads = openReadSource(primary);
-      const watch = createPolicyWatch(reads);
+      const watch = createLsnWatch(reads);
       const page = (set: string, undo: string): [string, string] => [`UPDATE pages SET ${set} WHERE slug = 'fp/page'`, `UPDATE pages SET ${undo} WHERE slug = 'fp/page'`];
       try {
         const [orig] = await primary.executeRaw<{ cv: unknown; sealed: unknown }>(`SELECT chunker_version AS cv, text_projection_revision AS sealed FROM pages WHERE slug = 'fp/page'`);
@@ -535,7 +553,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
           rig.rust.listPages = async () => [{ id: ids['priv/a'], slug: 'priv/a', source_id: 'default', title: 'x', type: 'note' }];
           const read = withCallerAccess(ALICE, () => rig.engine.listPages({ limit: 100, excludePrivate: true }));
           await began; // the primary read has started: its token is already taken
-          if (during === 'a corpus change') { await primary.executeRaw(`DELETE FROM pages WHERE slug = 'slow/gone'`); await rig.attached.policyWatch.ready(); } // and a refresh now sees the newer corpus
+          if (during === 'a corpus change') { await primary.executeRaw(`DELETE FROM pages WHERE slug = 'slow/gone'`); await rig.attached.lsnWatch.ready(); } // and a refresh now sees the newer corpus
           else rig.attached.follower!.publish(batch(1, [{ kind: 'relation', relation: 'config', reason: 'x' }]));
           slow.open();
           await read;
@@ -733,7 +751,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       try {
         const samples = new SampleRegistry();
         const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never });
-        const ask = { id: 1, kind: 'vector', sid: samples.add({ op: 'searchVector', args: encodeValue([embedded.embedding, { limit: 10, exclude_slugs: ['priv/chunked', 'summary/x'] }]), at: Date.now(), fp: await createPolicyWatch(real).live() }, 100) }; // the filters of the caller's own read apply
+        const ask = { id: 1, kind: 'vector', sid: samples.add({ op: 'searchVector', args: encodeValue([embedded.embedding, { limit: 10, exclude_slugs: ['priv/chunked', 'summary/x'] }]), at: Date.now(), lsn: await createLsnWatch(real).live() }, 100) }; // the filters of the caller's own read apply
         const reference = await handler(ask) as RankedKey[];
         const cosine = (a: Float32Array, b: Float32Array): number => { let d = 0, x = 0, y = 0; for (let i = 0; i < a.length; i++) { d += a[i]! * b[i]!; x += a[i]! ** 2; y += b[i]! ** 2; } return d / Math.sqrt(x * y); };
         const exact = [...chunkOf.keys()].sort((p, q) => cosine(vec(3), vec(q)) - cosine(vec(3), vec(p))).map((i) => String(chunkOf.get(i)));
@@ -749,11 +767,11 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       await vectorFixture(primary);
       const reads = openReadSource(primary);
       try {
-        const watch = createPolicyWatch(reads);
+        const watch = createLsnWatch(reads);
         const args = encodeValue([vec(3), { limit: 10 }]);
         const samples = new SampleRegistry();
         const handler = (now: number) => makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never, watch, now: () => now });
-        const proven = samples.add({ op: 'searchVector', args, at: Date.now(), fp: await watch.live() }, 100);
+        const proven = samples.add({ op: 'searchVector', args, at: Date.now(), lsn: await watch.live() }, 100);
         const unproven = samples.add({ op: 'searchVector', args, at: Date.now() }, 100); // captured before any fingerprint was known
         await expect(handler(0)({ id: 1, kind: 'vector', sid: unproven })).rejects.toMatchObject({ code: 'moved' });
         // a nearer neighbour is added after the capture: the answers the sample holds cannot be scored against a corpus that has it
@@ -761,10 +779,10 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         await installFixtureChunks(primary, 'vec/late', [{ chunk_index: 0, chunk_text: 'late vec', chunk_source: 'compiled_truth', embedding: vec(3), model: MODEL, token_count: 3 }]);
         await expect(handler(120_000)({ id: 2, kind: 'vector', sid: proven })).rejects.toMatchObject({ code: 'moved' });
         // and a deletion, which no timestamp shows
-        const deleted = samples.add({ op: 'searchVector', args, at: Date.now(), fp: await watch.live() }, 100);
+        const deleted = samples.add({ op: 'searchVector', args, at: Date.now(), lsn: await watch.live() }, 100);
         await primary.executeRaw(`DELETE FROM pages WHERE slug = 'vec/late'`);
         await expect(handler(240_000)({ id: 3, kind: 'vector', sid: deleted })).rejects.toMatchObject({ code: 'moved' });
-        const still = samples.add({ op: 'searchVector', args, at: Date.now(), fp: await watch.live() }, 100);
+        const still = samples.add({ op: 'searchVector', args, at: Date.now(), lsn: await watch.live() }, 100);
         expect(await handler(360_000)({ id: 4, kind: 'vector', sid: still })).toBeInstanceOf(Array); // unchanged since the capture: scored as before
       } finally { await reads.close(); await primary.executeRaw(`DELETE FROM pages WHERE slug = 'vec/late'`); }
     });
@@ -775,34 +793,40 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       await vectorFixture(primary);
       const reads = openReadSource(primary);
       try {
-        const watch = createPolicyWatch(reads);
+        const watch = createLsnWatch(reads);
         const samples = new SampleRegistry();
         const args = encodeValue([vec(3), { limit: 10, excludePrivate: true }]);
         const handler = (now: number) => makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never, watch, now: () => now });
-        const captured = samples.add({ op: 'searchVector', args, at: Date.now(), fp: await watch.live() }, 100);
+        const captured = samples.add({ op: 'searchVector', args, at: Date.now(), lsn: await watch.live() }, 100);
         await primary.executeRaw(`UPDATE access_rules SET readable_by = ARRAY['member:carol-example'] WHERE rule_id = 'r1'`); // the policy moves; no page, chunk, link, source or config row does
         await expect(handler(0)({ id: 1, kind: 'vector', sid: captured })).rejects.toMatchObject({ code: 'moved' });
         await primary.executeRaw(`UPDATE access_rules SET readable_by = ARRAY['member:bob-example'] WHERE rule_id = 'r1'`);
-        const still = samples.add({ op: 'searchVector', args, at: Date.now(), fp: await watch.live() }, 100);
+        const still = samples.add({ op: 'searchVector', args, at: Date.now(), lsn: await watch.live() }, 100);
         expect(await handler(120_000)({ id: 2, kind: 'vector', sid: still })).toBeInstanceOf(Array); // control: unchanged since the capture
       } finally { await reads.close(); await primary.executeRaw(`UPDATE access_rules SET readable_by = ARRAY['member:bob-example'] WHERE rule_id = 'r1'`); }
     });
 
-    test('a reference is refused (moved) after a modality-only or embedding-hash-only change to a chunk, which no page timestamp shows', async () => {
+    test('a reference is refused (moved) after an embedding-only UPDATE, a modality-only change or an embedding-hash-only change to a chunk: no page timestamp, no metadata shows them', async () => {
       const primary = ctx.primary();
       const chunkOf = await vectorFixture(primary);
       const top = chunkOf.get(3)!;
       const reads = openReadSource(primary);
+      const literal = `[${Array.from(vec(77)).join(',')}]`; // another vector for the same chunk
       try {
-        const watch = createPolicyWatch(reads);
+        const watch = createLsnWatch(reads);
         const samples = new SampleRegistry();
         const args = encodeValue([vec(3), { limit: 10 }]);
         const handler = (now: number) => makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never, watch, now: () => now });
-        for (const [i, [change, undo]] of ([[`modality = 'image'`, `modality = 'text'`], [`embedded_text_hash = 'stale-hash'`, `embedded_text_hash = NULL`]] as const).entries()) {
-          const captured = samples.add({ op: 'searchVector', args, at: Date.now(), fp: await watch.live() }, 100);
-          await primary.executeRaw(`UPDATE content_chunks SET ${change} WHERE id = $1`, [top]);
+        const changes: Array<[string, unknown[], string, unknown[]]> = [
+          [`embedding = $2::vector`, [top, literal], `embedding = $2::vector`, [top, `[${Array.from(vec(3)).join(',')}]`]],
+          [`modality = 'image'`, [top], `modality = 'text'`, [top]],
+          [`embedded_text_hash = 'stale-hash'`, [top], `embedded_text_hash = NULL`, [top]],
+        ];
+        for (const [i, [change, params, undo, undoParams]] of changes.entries()) {
+          const captured = samples.add({ op: 'searchVector', args, at: Date.now(), lsn: await watch.live() }, 100);
+          await primary.executeRaw(`UPDATE content_chunks SET ${change} WHERE id = $1`, params);
           await expect(handler(i * 120_000)({ id: i + 1, kind: 'vector', sid: captured })).rejects.toMatchObject({ code: 'moved' });
-          await primary.executeRaw(`UPDATE content_chunks SET ${undo} WHERE id = $1`, [top]);
+          await primary.executeRaw(`UPDATE content_chunks SET ${undo} WHERE id = $1`, undoParams);
         }
       } finally { await reads.close(); await primary.executeRaw(`UPDATE content_chunks SET modality = 'text' WHERE modality <> 'text'`); }
     });
@@ -824,7 +848,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         const opts = { limit: 10, source_boosts: { 'boost/': 5 } };
         const samples = new SampleRegistry();
         const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never });
-        const reference = await handler({ id: 1, kind: 'vector', sid: samples.add({ op: 'searchVector', args: encodeValue([vec(3), opts]), at: Date.now(), fp: await createPolicyWatch(reads).live() }, 100) }) as RankedKey[];
+        const reference = await handler({ id: 1, kind: 'vector', sid: samples.add({ op: 'searchVector', args: encodeValue([vec(3), opts]), at: Date.now(), lsn: await createLsnWatch(reads).live() }, 100) }) as RankedKey[];
         expect(reference.slice(0, 10).filter((r) => boosted.has(r.k))).toHaveLength(10); // the true top ten, all beyond the raw-similarity window
         const windowed = await primary.searchVector(vec(3), { ...opts, limit: 50 });
         expect(windowed.slice(0, 10).filter((r) => boosted.has(String(r.chunk_id))).length).toBeLessThan(10); // the engine's candidate window never saw them

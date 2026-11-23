@@ -43,6 +43,9 @@ export const SHADOW_CHILD_QUEUE_BOUND = 1024;
 export const SHADOW_HEARTBEAT_MS = 5_000;
 /** Timed-out calls that may still be running at once; past it new reads are shed and the heartbeat stops, so the supervisor restarts the child. */
 export const SHADOW_CHILD_STALL_LIMIT = 4;
+/** Runs of one sample (the first check, then reruns from a new WAL position) before one that keeps moving stays unresolved. */
+export const RERUN_ATTEMPTS = 3;
+const MOVED_CODES: ReadonlySet<string> = new Set(['moved', 'write_after_barrier']); // a write landed after the barrier: the same thing for a rerun
 
 type ShadowEngine = Pick<BrainEngine, 'connect' | 'disconnect'> & Record<string, unknown>;
 
@@ -108,6 +111,62 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<{ timedOut: tr
     promise.then((value) => { clearTimeout(timer); resolve({ timedOut: false, value }); },
       (error) => { clearTimeout(timer); reject(error); });
   });
+}
+
+/**
+ * How a finished rerun closes its sample. The same rows in another order are the primary's rows on the reads that ignore order
+ * (membership, ranked private): closed as matched, never a match. A rerun that cleared the extra rows of a ranked read is a reported ranking difference.
+ */
+function settleRerun(closed: (why: string) => void, row: (c: Classification, why: string) => void, op: string, c: Classification, c2: Classification): void {
+  const orderOnly = c2.outcome === 'order_diff' && (exactnessArm(op) === 'membership' || exactnessArm(op) === 'private_ranked');
+  if (c2.outcome === 'match' || orderOnly) closed('matched'); // closed as unsuccessful, never a match
+  else if (c2.outcome === 'privacy_diverged') row(c2, 'differed');
+  else if (c2.outcome === 'inconclusive') closed(`skipped:${c2.reason ?? 'privacy_check'}`);
+  else if (c2.reason === 'extra_rows_cleared') row({ outcome: 'diff', reason: 'extra_rows_cleared', mismatch: c.mismatch ?? 'diff' }, 'differed');
+  else row({ outcome: 'diff', reason: 'rerun_differs', mismatch: c.mismatch ?? (c2.outcome as 'diff' | 'order_diff') }, 'differed');
+}
+
+/** What a recall score needs of the child: its asks, the follow lock and the Rust call (child.ts keeps their state). */
+interface RecallEnv {
+  ask: (payload: Record<string, unknown>, timeoutMs: number) => Promise<unknown>;
+  exclusive: (stamp: number, fn: () => Promise<unknown>) => Promise<{ value?: unknown; timedOut?: boolean } | null>;
+  callRust: (op: string, args: unknown[], access: ReadEvent['access'], ms: number) => Promise<{ value?: unknown; timedOut?: boolean }>;
+  curEpoch: () => string | null;
+  now: () => number;
+  timeoutMs: number;
+  write: (score: NonNullable<ReturnType<typeof scoreRecall>>, epoch: string) => void;
+}
+
+/**
+ * Scores one vector read against the exact reference (checks.ts `vectorReference`). When the corpus moved before the reference
+ * ended (`moved`), both engines and the reference are run again from a new position, up to RERUN_ATTEMPTS times in all; a
+ * sample that keeps moving is not scored. An unscored sample is skipped, never counted.
+ */
+async function scoreWithReruns(env: RecallEnv, event: ReadEvent, args: unknown[], rust: unknown): Promise<void> {
+  try {
+    const deadline = env.now() + RERUN_DEADLINE_MS * RERUN_ATTEMPTS;
+    let primary: unknown = event.result;
+    let theirs: unknown = rust;
+    let phase: 'sample' | 'rerun' = 'sample';
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const reference = await env.ask({ kind: 'vector', sid: event.sid, phase }, RERUN_DEADLINE_MS) as RankedKey[];
+        const score = scoreRecall(reference, primary, theirs);
+        const epoch = env.curEpoch(); // a child that is no longer an owner names no epoch: the sample is dropped
+        if (score && epoch) env.write(score, epoch);
+        return;
+      } catch (error) {
+        if (safeCode((error as { code?: unknown })?.code) !== 'moved' || attempt >= RERUN_ATTEMPTS || env.now() > deadline) return;
+        const answer = await env.ask({ kind: 'rerun', sid: event.sid, epoch_id: env.curEpoch() }, RERUN_DEADLINE_MS) as { stamp: number; epoch_id: string; keys?: RankedKey[] };
+        if (env.curEpoch() === null || answer.epoch_id !== env.curEpoch() || !answer.keys) return;
+        const out = await env.exclusive(answer.stamp, () => env.callRust(event.op, args, event.access, env.timeoutMs));
+        if (out === null || out.timedOut) return;
+        primary = answer.keys.map((k) => ({ chunk_id: k.k, score: k.s }));
+        theirs = encodeValue(out.value);
+        phase = 'rerun';
+      }
+    }
+  } catch { /* an unscored sample is skipped, never counted */ }
 }
 
 /** Runs the child loop until stdin closes. Resolves with the number of events handled. */
@@ -296,24 +355,32 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     return lagged === null ? c : qualifyMismatch(op, c, lagged, { args: encodedArgs, primary, rust });
   };
 
-  /** One stable rerun (checks.ts `stableRerun`): both engines read again at a generation the barrier proved quiet. */
+  /**
+   * One stable rerun (checks.ts `stableRerun`): both engines read again at a generation the barrier proved quiet. A rerun whose
+   * proof that nothing was written moved (the primary's WAL position changed before its check ended, or a write landed after
+   * the barrier) is run again, from a new position, up to RERUN_ATTEMPTS times; a sample still moving then stays unresolved
+   * (`skipped:moved`), which counts as unexplained.
+   */
   const rerunOne = async ({ event, args, c, rustMs, rows }: RerunTask): Promise<void> => {
     const skip = (why: string): void => record(event, c, rustMs, rows, `skipped:${why}`);
-    const deadline = now() + RERUN_DEADLINE_MS;
     try {
-      const answer = await ask({ kind: 'rerun', sid: event.sid, epoch_id: curEpoch() }, RERUN_DEADLINE_MS) as { digest: string; members?: string; stamp: number; epoch_id: string };
-      if (curEpoch() === null || answer.epoch_id !== curEpoch()) return skip('epoch_changed'); // an answer for another epoch is dropped, never restamped
-      let call!: Promise<unknown>;
-      const out = await follow.exclusive(answer.stamp, () => callRust(event.op, args, event.access, Math.max(1, Math.min(timeoutMs, deadline - now())), (p) => { call = p; }));
-      if (out?.timedOut) trackStall(call);
-      if (out === null || out.timedOut) return skip(out === null ? 'watermark_moved' : 'timeout');
-      const c2 = await judge(event.op, event.args, { digest: answer.digest, members: answer.members, list: Array.isArray(event.result) }, encodeValue(out.value), event.sid, 'rerun', now(), null);
-      const orderOnly = c2.outcome === 'order_diff' && (exactnessArm(event.op) === 'membership' || exactnessArm(event.op) === 'private_ranked'); // these reads ignore order: the rows are the primary's
-      if (c2.outcome === 'match' || orderOnly) record(event, c, rustMs, rows, 'matched'); // closed as unsuccessful, never a match
-      else if (c2.outcome === 'privacy_diverged') record(event, c2, rustMs, rows, 'differed');
-      else if (c2.outcome === 'inconclusive') skip(c2.reason ?? 'privacy_check');
-      else if (c2.reason === 'extra_rows_cleared') record(event, { outcome: 'diff', reason: 'extra_rows_cleared', mismatch: c.mismatch ?? 'diff' }, rustMs, rows, 'differed');
-      else record(event, { outcome: 'diff', reason: 'rerun_differs', mismatch: c.mismatch ?? (c2.outcome as 'diff' | 'order_diff') }, rustMs, rows, 'differed');
+      for (let attempt = 1; attempt <= RERUN_ATTEMPTS; attempt++) {
+        const retry = (): boolean => { const more = attempt < RERUN_ATTEMPTS; if (!more) skip('moved'); return more; };
+        const deadline = now() + RERUN_DEADLINE_MS; let answer: { digest: string; members?: string; stamp: number; epoch_id: string };
+        try { answer = await ask({ kind: 'rerun', sid: event.sid, epoch_id: curEpoch() }, RERUN_DEADLINE_MS) as typeof answer; } catch (error) {
+          if (!MOVED_CODES.has(safeCode((error as { code?: unknown })?.code))) throw error;
+          if (retry()) continue; return;
+        }
+        if (curEpoch() === null || answer.epoch_id !== curEpoch()) return skip('epoch_changed'); // an answer for another epoch is dropped, never restamped
+        let call!: Promise<unknown>;
+        const out = await follow.exclusive(answer.stamp, () => callRust(event.op, args, event.access, Math.max(1, Math.min(timeoutMs, deadline - now())), (p) => { call = p; }));
+        if (out?.timedOut) trackStall(call);
+        if (out === null || out.timedOut) return skip(out === null ? 'watermark_moved' : 'timeout');
+        const c2 = await judge(event.op, event.args, { digest: answer.digest, members: answer.members, list: Array.isArray(event.result) }, encodeValue(out.value), event.sid, 'rerun', now(), null);
+        if (c2.outcome === 'inconclusive' && c2.reason === 'privacy_check_moved') { if (retry()) continue; return; }
+        settleRerun((why) => record(event, c, rustMs, rows, why), (row, why) => record(event, row, rustMs, rows, why), event.op, c, c2);
+        return;
+      }
     } catch (error) {
       recordRustError('read', error);
       skip(safeCode((error as { code?: unknown })?.code));
@@ -324,17 +391,11 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   // Vector recall (recall.ts): at most one reference run a minute, asked of the serving process off the request path.
   const recallGate = new IntervalGate(RECALL_INTERVAL_MS, now);
   let recalling: Promise<void> | null = null;
+  const recallEnv: RecallEnv = { ask, now, timeoutMs, curEpoch, exclusive: (stamp, fn) => follow.exclusive(stamp, fn) as never, callRust: (op, a, access, ms) => callRust(op, a, access, ms) as never,
+    write: (score, epoch) => appendRecall(shadowDir, { ts: new Date(now()).toISOString(), epoch_id: epoch, ...score }) };
   const scoreRecallLater = (event: ReadEvent, args: unknown[], rust: unknown): void => {
     if (event.op !== 'searchVector' || !curEpoch() || recalling || !recallEligible(args) || !recallGate.take()) return;
-    recalling = (async () => {
-      try {
-        const reference = await ask({ kind: 'vector', sid: event.sid }, RERUN_DEADLINE_MS) as RankedKey[];
-        const score = scoreRecall(reference, event.result, rust);
-        const epoch = curEpoch(); // a child that is no longer an owner names no epoch: the sample is dropped
-        if (score && epoch) appendRecall(shadowDir, { ts: new Date(now()).toISOString(), epoch_id: epoch, ...score });
-      } catch { /* an unscored sample is skipped, never counted */ }
-      recalling = null;
-    })();
+    recalling = scoreWithReruns(recallEnv, event, args, rust).finally(() => { recalling = null; });
   };
 
   const handle = async (event: ReadEvent): Promise<void> => {
