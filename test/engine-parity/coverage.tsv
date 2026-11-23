@@ -1493,7 +1493,7 @@ listSourceChangedPagesAfter	cycle_reads	yes	2	no	yes	yes	serves
 readSoftDeletedPageAtOrigin	cycle_reads	yes	2	no	yes	yes	serves
 listLivePagesAtOrigin	cycle_reads	yes	2	no	yes	yes	serves
 countPageCarryRows	cycle_reads	yes	2	no	yes	yes	serves
-listStaleMentionPages	cycle_reads	yes	2	no	yes	yes	serves
+listStaleMentionPages	cycle_reads	yes	3	no	yes	yes	serves
 listStaleMentionLinks	cycle_reads	yes	2	no	yes	yes	serves
 listOrphanLifetimes	cycle_reads	yes	3	no	yes	yes	serves
 readSegmentedRewritePage	segmented_write_reads	yes	1	no	yes	yes	serves
@@ -1550,7 +1550,7 @@ listSegmentedPages	withdrawal_pages	yes	2	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	2	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	144	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	143	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	4	yes	yes	yes	serves
