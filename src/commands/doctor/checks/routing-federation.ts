@@ -29,7 +29,7 @@ export const DCR_PRIVILEGED_SCOPES: ReadonlyArray<string> = Object.freeze(
 async function archiveTargetSourceIds(engine: BrainEngine): Promise<Set<string>> {
   const { ARCHIVE_SOURCE_KEY, DEFAULT_ARCHIVE_SOURCE } = await import('../../../core/transcripts/archive.ts');
   let configured = DEFAULT_ARCHIVE_SOURCE;
-  try { configured = (await engine.getConfig(ARCHIVE_SOURCE_KEY))?.trim() || DEFAULT_ARCHIVE_SOURCE; } catch { /* default */ }
+  try { configured = (await engine.getConfig(ARCHIVE_SOURCE_KEY))?.trim() || DEFAULT_ARCHIVE_SOURCE; } catch { /* silent-read-ok: unreadable config falls back to the default archive source name; exemption only */ }
   return new Set([configured, configured + '-owner']);
 }
 
