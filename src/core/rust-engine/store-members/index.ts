@@ -39,6 +39,7 @@ import * as timelineRepairReads from './timeline-repair-reads.ts';
 import * as labelRepairReads from './label-repair-reads.ts';
 import * as factTextRepair from './fact-text-repair.ts';
 import * as lostFenceReads from './lost-fence-reads.ts';
+import * as fenceProjection from './fence-projection.ts';
 import * as keyword from './keyword.ts';
 import * as chunkQueries from './chunk-queries.ts';
 import * as vectors from './vectors.ts';
@@ -332,6 +333,8 @@ export const STORE_MEMBERS = {
   // The facts backstop effect's two extraction reads (rust/docs/store/jobs.md, "Facts extraction reads").
   ...factsBackstop,
   // The dream cycle's persistence journal reads (rust/docs/store/dream.md, "Dream cycle statements").
+  // A page publication's fence projection and fence guard statements, tier-only row changes and the unwithdrawn-facts restore (rust/docs/store/facts.md, "The fence projection's statements").
+  ...fenceProjection,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

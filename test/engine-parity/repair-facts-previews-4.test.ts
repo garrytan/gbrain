@@ -10,9 +10,9 @@
  *    "repair <kind> page write") before its first write. rename-identity's listing of a seeded source with no downgrade
  *    record is equal on every arm; with one record the SQL arms list the pair and the Rust engine stops at
  *    readIdentityDowngradeRows (lane 9's member; rust-engine/identity-restore-rust lifts the stop). unwithdrawn-facts
- *    lists a retired fact on the SQL arms; its seed (a facts-fence generation, lane 7's writer) stops on the Rust engine.
- *  - Named stops proven on a SQL engine without raw_sql: unwithdrawn-facts stops at "repair unwithdrawn-facts fence
- *    evidence" (preview) and "repair unwithdrawn-facts fact write" (apply).
+ *    lists a retired fact the same way on every arm (its classifier reads the page body through a typed member).
+ *  - Named stop proven on a SQL engine without raw_sql: the unwithdrawn-facts restore (managed publications only) stops
+ *    at "repair unwithdrawn-facts fact write".
  *  - Regression: each apply reached executeRaw with no stop, so a Rust brain failed on a generic executeRaw refusal that
  *    named no repair step.
  *  - Why existing coverage misses it: the parity previews never applied, and the repair tests seed with raw SQL on PGLite
@@ -33,7 +33,7 @@ import { publishSegmentedPage, segmentText } from '../helpers/page-body-fixtures
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { resolveRepairScope, type RepairKind, type RepairResult } from '../../src/core/repair/core.ts';
 import { repairRunner } from '../../src/core/repair/registry.ts';
-import { classifyUnwithdrawnFacts, unwithdrawnFactsRepair } from '../../src/core/repair/unwithdrawn-facts.ts';
+import { unwithdrawnFactsRepair } from '../../src/core/repair/unwithdrawn-facts.ts';
 import { IDENTITY_DOWNGRADE_OP, recordIdentityDowngrades } from '../../src/core/sync-identity-downgrades.ts';
 import { publishFenceGeneration, readFenceBlocks, FACT_FENCE_KIND } from '../../src/core/generations/fence.ts';
 import { factFenceItems, factPreimages, factRetireItem } from '../../src/core/generations/adapters/fact-rows.ts';
@@ -211,8 +211,8 @@ describe('engine parity: repair fact applies, rename-identity and unwithdrawn-fa
     }
   });
 
-  parityTest('unwithdrawn-facts lists a fact a facts-fence generation retired; the seed stops on the Rust engine (lane 7 writer)', {
-    methods: ['putPage', 'insertFacts', 'listUnwithdrawnFacts'], requires: 'raw_sql', timeout: 60_000,
+  parityTest('unwithdrawn-facts lists a fact a facts-fence generation retired the same way on every arm', {
+    methods: ['putPage', 'insertFacts', 'expireFenceFacts', 'listUnwithdrawnFacts', 'readPageInlineBody'], timeout: 60_000,
   }, async (engine) => {
     const slug = 'people/alice-example';
     // A facts fence the generation parses, holding row 1 only.
@@ -221,22 +221,22 @@ describe('engine parity: repair fact applies, rename-identity and unwithdrawn-fa
       '| 1 | Alice founded acme-example | fact | 1.0 | private | medium | 2020-01-01 |  | chat |  |', '<!--- gbrain:facts:end -->', ''].join('\n');
     await engine.putPage(slug, { ...note('Alice Example', 'person'), compiled_truth: `# Alice Example\n\n${fence}` }, { sourceId: 'default' });
     const ids = await insert(engine, [{ fact: 'Alice runs marathons', entity_slug: slug, source: 'mcp:put_page', row_num: 2, source_markdown_slug: slug }]);
-    // What the pre-fix projection did on a page's first fact generation: record it, retiring the row with its before-state, and expire it.
+    // What the pre-fix projection did on a page's first fact generation: record it, retiring the row with its before-state, and expire it
+    // (an empty incoming fence states no row, so the expiry detaches and expires the retired row).
     await engine.transaction(async tx => {
       const page = (await tx.readPageSnapshot(slug, { sourceId: 'default' }))!.page;
       await publishFenceGeneration(tx, { kind: FACT_FENCE_KIND, sourceId: 'default', slug, read: readFenceBlocks(page, 'facts'),
         items: factFenceItems([{ row_num: 1, fact: 'Alice founded acme-example', visibility: 'private' }]),
         retire: (await factPreimages(tx, 'default', ids)).map(factRetireItem), writer: 'projection' });
-      await tx.executeRaw('UPDATE facts SET expired_at=now(), row_num=NULL WHERE source_id=$1 AND id=ANY($2::bigint[])', ['default', ids]);
+      await tx.expireFenceFacts('default', slug, '[]', ids);
     });
+    // On this unmanaged brain the listing excludes the row (an extract_facts reconcile would retire it again), so the
+    // preview is the whole contract; the restore runs only inside a managed publication.
     const result = await withHome(() => runKind(engine, 'unwithdrawn-facts', false));
     expect(result.listing?.length ?? 0).toBeGreaterThan(0);
-    // The named stops, on this brain with raw_sql withheld as the Rust engine withholds it.
-    const bare = withoutRawSql(engine);
-    const stopOf = (p: Promise<unknown>) => p.then(() => 'no stop', refusalText);
-    expect(await stopOf(classifyUnwithdrawnFacts(bare, ['default']))).toContain('repair unwithdrawn-facts fence evidence');
-    expect(await stopOf(unwithdrawnFactsRepair.apply({ engine: bare } as never, { page: {}, hash: 'h', last: false } as never)))
-      .toContain('repair unwithdrawn-facts fact write');
+    // The restore's named stop, on this brain with raw_sql withheld as the Rust engine withholds it.
+    const stop = await unwithdrawnFactsRepair.apply({ engine: withoutRawSql(engine) } as never, { page: {}, hash: 'h', last: false } as never).then(() => 'no stop', refusalText);
+    expect(stop).toContain('repair unwithdrawn-facts fact write');
     return byOrder(shape(result), ids);
   });
 });

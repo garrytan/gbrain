@@ -112,6 +112,7 @@ mod facts_trust;
 mod facts_trust_owner;
 mod facts_trust_reads;
 mod facts_write_path;
+mod fence_projection;
 mod files_ops;
 mod jobs;
 mod keyword;

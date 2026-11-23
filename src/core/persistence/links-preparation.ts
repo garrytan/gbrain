@@ -26,10 +26,7 @@ const raced = (error: unknown): null => {
 async function liveSlugAliases(engine: BrainEngine, sourceId: string, targets: string[]): Promise<Map<string, string>> {
   if (!targets.length) return new Map();
   try {
-    const rows = await engine.executeRaw<{ alias_slug: string; canonical_slug: string }>(`SELECT a.alias_slug, a.canonical_slug FROM slug_aliases a
-      WHERE a.source_id=$1 AND a.alias_slug IN (SELECT unnest($2::text[]))
-        AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=a.source_id AND p.slug=a.alias_slug AND p.deleted_at IS NULL)
-        AND EXISTS (SELECT 1 FROM pages c WHERE c.source_id=a.source_id AND c.slug=a.canonical_slug AND c.deleted_at IS NULL)`, [sourceId, [...new Set(targets)]]);
+    const rows = await engine.listLiveSlugAliases(sourceId, [...new Set(targets)]);
     return new Map(rows.map(row => [row.alias_slug, row.canonical_slug]));
   } catch (error) {
     if (isMissingSchemaObject(error, 'table', 'slug_aliases')) return new Map();

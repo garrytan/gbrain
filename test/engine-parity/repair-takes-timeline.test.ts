@@ -5,8 +5,7 @@
  *  - Contract: on a brain seeded so each preview lists at least one item, the preview is equal on PGLite, Postgres
  *    (DATABASE_URL) and the Rust engine (GBRAIN_TEST_RUST_ARM=1). take-supersession: a page whose fence is already right
  *    but whose stored pointers were cleared is reprojected the same way on every arm; a broken chain is relinked through
- *    put_page on the SQL arms, and the Rust engine refuses that page write by name ("repair take-supersession page write",
- *    lane 7's writer) before it writes. timeline, timeline-comments, timeline-order and connector-fences list the same
+ *    put_page the same way on every arm (the page write's fence projection runs on typed members). timeline, timeline-comments, timeline-order and connector-fences list the same
  *    pages on every arm, and their apply rewrites the page on the SQL arms while the Rust engine refuses the page write
  *    by name ("repair <kind> page write"). conversation-labels lists the same label-line facts and retires them the same
  *    way on every arm (the retirement's fact writes are typed: engine-sql/fact-text-repair.ts). agent-session-facts
@@ -154,11 +153,11 @@ describe('engine parity: repair take and timeline kinds (batch 5)', () => {
     return { out, pointers, again: again.affected };
   });
 
-  parityTest('take-supersession relinks a broken chain on the SQL arms, and the Rust engine refuses the page write by name', {
-    methods: ['putPage', 'addTakesBatch', 'listTakeSupersessionCandidates', 'listTakePointers', 'listTakeSupersedeReceipts'], requires: 'raw_sql', timeout: 60_000,
+  parityTest('take-supersession relinks a broken chain the same way on every arm', {
+    methods: ['putPage', 'addTakesBatch', 'listTakeSupersessionCandidates', 'listTakePointers', 'listTakeSupersedeReceipts'], timeout: 60_000,
   }, async (engine, backend) => {
     await seedTakesPage(engine, 'notes/chain', CHAIN);
-    return previewThenApply(engine, backend, 'take-supersession', 'repair take-supersession page write');
+    return previewThenApply(engine, backend, 'take-supersession', 'no stop: the relink is served on every arm');
   });
 
   parityTest('setTakeSupersededBy sets and clears one take\'s pointer and nothing else', {

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2006/2022
+# covered: 2026/2042
 # lifecycle: 9/9
 # pages: 81/82
 # search: 7/7
@@ -25,7 +25,7 @@
 # takes: 41/41
 # dream: 37/37
 # contradictions: 22/22
-# facts: 23/23
+# facts: 43/43
 # segmented_body: 19/19
 # versions: 16/16
 # stats_ingest: 12/12
@@ -425,9 +425,9 @@ listReadableFilePaths	raw_files	yes	3	no	yes	yes	serves
 hasTakeClaim	takes	yes	1	no	yes	yes	serves
 listTakeRowNums	takes	yes	1	no	yes	yes	serves
 readTakeRowTierByClaim	takes	yes	1	no	yes	yes	serves
-addTakesBatch	takes	yes	94	yes	yes	yes	serves
+addTakesBatch	takes	yes	96	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	8	no	yes	yes	serves
-listTakes	takes	yes	50	no	yes	yes	serves
+listTakes	takes	yes	51	no	yes	yes	serves
 searchTakes	takes	yes	6	no	yes	yes	serves
 searchTakesVector	takes	yes	6	no	yes	yes	serves
 getTakeEmbeddings	takes	yes	1	no	yes	yes	serves
@@ -527,7 +527,7 @@ readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
 insertFact	facts	yes	160	yes	yes	yes	serves
-insertFacts	facts	yes	220	no	yes	yes	serves
+insertFacts	facts	yes	222	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	84	no	yes	yes	serves
 listFactsByEntity	facts	yes	52	yes	yes	yes	serves
@@ -537,14 +537,34 @@ listFactsBySession	facts	yes	13	yes	yes	yes	serves
 listSupersessions	facts	yes	7	yes	yes	yes	serves
 countUnconsolidatedFacts	facts	yes	2	yes	yes	yes	serves
 listFenceRetireCandidates	facts	yes	3	no	yes	yes	serves
-readFactPreimages	facts	yes	4	no	yes	yes	serves
+readFactPreimages	facts	yes	5	no	yes	yes	serves
 restoreFactPreimage	facts	yes	2	no	yes	yes	serves
-listFactIdsBySourcePrefix	facts	yes	1	no	yes	yes	serves
+listFactIdsBySourcePrefix	facts	yes	2	no	yes	yes	serves
 expireFactRows	facts	yes	1	no	yes	yes	serves
 findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
 consolidateFact	facts	yes	9	no	yes	yes	serves
 findTrajectory	facts	yes	6	yes	yes	yes	serves
 getFactsHealth	facts	yes	3	yes	yes	yes	serves
+listQuotedTakeRows	facts	yes	1	no	yes	yes	serves
+listPageFenceFactCells	facts	yes	2	no	yes	yes	serves
+hasPositionedPageFacts	facts	yes	1	no	yes	yes	serves
+hasFenceAbsentHold	facts	yes	1	no	yes	yes	serves
+listPageTakeRowNums	facts	yes	1	no	yes	yes	serves
+expireFenceFacts	facts	yes	2	no	yes	yes	serves
+refreshFenceFactFields	facts	yes	2	no	yes	yes	serves
+clearChangedTakeResolutions	facts	yes	2	no	yes	yes	serves
+writeFenceTakeResolutions	facts	yes	2	no	yes	yes	serves
+listLiveSlugAliases	facts	yes	1	no	yes	yes	serves
+detachFenceFactRows	facts	yes	1	no	yes	yes	serves
+listOccupiedFenceRowNums	facts	yes	2	no	yes	yes	serves
+moveGuardedFenceRows	facts	yes	1	no	yes	yes	serves
+listTrustedPrivateCopies	facts	yes	1	no	yes	yes	serves
+readLiveFenceFactAt	facts	yes	1	no	yes	yes	serves
+listFactsAboveWriter	facts	yes	2	no	yes	yes	serves
+readRowTrustTier	facts	yes	1	no	yes	yes	serves
+setRowTrustTier	facts	yes	1	no	yes	yes	serves
+readTierProjectionPage	facts	yes	1	no	yes	yes	serves
+readPageInlineBody	facts	yes	2	no	yes	yes	serves
 allocateBodyOccurrenceIds	segmented_body	yes	28	no	yes	yes	serves
 stageSegmentTexts	segmented_body	yes	27	no	yes	yes	serves
 readSegmentTexts	segmented_body	yes	8	no	yes	yes	serves
@@ -592,7 +612,7 @@ listVisiblePageSlugs	stats_ingest	yes	1	no	yes	yes	refuses:pages
 readPagesForVersionHistory	stats_ingest	yes	1	no	yes	yes	refuses:pages
 logIngest	stats_ingest	yes	9	no	yes	yes	serves
 getIngestLog	stats_ingest	yes	2	no	yes	yes	serves
-updateSlug	sync_aliases	yes	29	no	yes	yes	serves
+updateSlug	sync_aliases	yes	30	no	yes	yes	serves
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves

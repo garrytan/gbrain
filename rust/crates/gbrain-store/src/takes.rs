@@ -40,6 +40,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod extract;
+mod fence_projection;
 mod held;
 mod reads;
 

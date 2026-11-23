@@ -360,6 +360,11 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readSyncAdmissionSettingRow', 'readTakeRowTrust', 'readTakeTrustRef', 'readTerminalFailureGroups',
   'readTextMentionPages', 'readTokenLifetimeClampedClients', 'readTrustScanCeilings', 'readTrustScanCursor',
   'readWorktreeManifest', 'readWriteRequestsByRequestId', 'readWriterDiagnosticRows', 'readWriterStatusRows',
+  // A page publication's fence projection and fence guard reads, the tier-only change's reads and the unwithdrawn-facts
+  // page body read (engine-sql/fence-projection.ts, trust-fence.ts, row-tier.ts, unwithdrawn-restore.ts).
+  'listQuotedTakeRows', 'listPageFenceFactCells', 'hasPositionedPageFacts', 'hasFenceAbsentHold', 'listPageTakeRowNums',
+  'listLiveSlugAliases', 'listOccupiedFenceRowNums', 'listTrustedPrivateCopies', 'readLiveFenceFactAt', 'listFactsAboveWriter',
+  'readRowTrustTier', 'readTierProjectionPage', 'readPageInlineBody',
 ];
 
 const nothingSetting = 'nothing: the setting lasts only for the call, so running it again repeats no write';
@@ -782,5 +787,13 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   writeTrustScanCursor: 'readTrustScanCursor',
   writerReleaseStore: 'a SELECT of the rows the call writes',
   // It creates the catalog token secret once, in one write, when the brain has none (rust shared_skill_members.rs `shared_skill_token_secret`).
-  readSharedSkillCatalogIdentity: nothingSecret,
+  readSharedSkillCatalogIdentity: nothingSecret,  // A page publication's fence projection and fence guard writes (engine-sql/fence-projection.ts, trust-fence.ts).
+  expireFenceFacts: 'listPageFenceFactCells for that page (an expired row holds no row number)',
+  refreshFenceFactFields: 'readFactPreimages for the page\'s fact ids at those row numbers',
+  detachFenceFactRows: 'readFactPreimages for those fact ids (their row numbers)',
+  moveGuardedFenceRows: 'readFactPreimages for those fact ids (their row numbers and visibility)',
+  clearChangedTakeResolutions: 'listTakes for that page (the resolution columns)',
+  writeFenceTakeResolutions: 'listTakes for that page (the resolution columns)',
+  // A tier-only row change (engine-sql/row-tier.ts).
+  setRowTrustTier: 'readRowTrustTier for that row',
 };

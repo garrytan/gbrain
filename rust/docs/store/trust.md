@@ -424,3 +424,19 @@ The store serves the purge statements of src/core/engine-sql/belief-purge.ts
 - `readPurgeReplaySchema` makes no store call: the store always has the live schema, so it answers every listed store
   and every probed table and column as present.
 - Pinned by `test/engine-parity/belief-purge-probes.test.ts` on every arm and by the unit tests in each module.
+
+## Tier-only row changes (`trust::row_tier`)
+
+`setRowTier` (trust/page-handlers.ts) and `queueTierProjection` (trust/page-write.ts) through typed members
+(`src/core/engine-sql/row-tier.ts`), for a fact, a take or a page:
+
+- `readRowTrustTier(table, id)`: `{ trust_tier }`, or null for no row.
+- `setRowTrustTier(table, id, tier, decision)`: the tier by name, and `owner_decision` merged into `write_origin`
+  (`COALESCE(write_origin, '{}') || jsonb_build_object('owner_decision', decision)`); `[id]`, or `[]` for no row. The
+  stamp runs as an UPDATE that names both columns: a raise needs the promotion the caller opens, an undeclared writer's
+  raise is refused, a lowering is kept. A page goes through the page trust restore (`pages.rs`).
+- `readTierProjectionPage(table, id)`: `{ source_id, slug }` of a fact's markdown page (none without one), a take's page
+  or the page itself, in any state.
+
+The members add no keys.
+

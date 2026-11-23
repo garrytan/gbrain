@@ -101,3 +101,22 @@ Differences from PGLite:
 The eight single-purpose reads of doctor, onboarding, the fact purge, the fence import, the MCP scorecard and the take repair
 (`countTakes`, `countOffGridTakeWeights`, `planFactPurgeTakes`, `listTakeRowsForPage`, `countMcpResolvedTakes`,
 `listTakeSupersessionCandidates`) are in [takes-reads.md](takes-reads.md).
+
+## The fence projection's statements (`takes/fence_projection.rs`)
+
+The take statements of a page publication's fence projection (`src/core/engine-sql/fence-projection.ts`), each the
+statement the projection sent through `executeRaw`. The writes join the engine's transaction and change no
+`updated_at`, as the statements set none; the trust stamp keeps the tier (no claim, kind or holder changes).
+
+- `listQuotedTakeRows(pageId, rowNums)`: `{ row_num, claim }` of the page's takes at those numbers, by row number.
+- `listPageTakeRowNums(pageId)`: the page's take row numbers.
+- `clearChangedTakeResolutions(pageId, claims)`: a resolved take at a record's row number whose claim differs from the
+  record's loses its seven `resolved_*` columns.
+- `writeFenceTakeResolutions(pageId, resolutions)`: a take at a record's row number takes the record's resolution
+  cells when one differs. `resolved_at` is `text::timestamptz` under TimeZone UTC (a bare day is its midnight);
+  `takes_resolution_consistency` and then `takes_resolved_quality_values` refuse a bad pair or quality.
+
+`hasFenceAbsentHold(sourceId, kind, ownerKey)` (`generations.rs`) reads whether the key's held generation is held with
+`held_reason = 'fence_absent'`, and `listLiveSlugAliases(sourceId, slugs)` (`aliases.rs`, the link preparation) lists
+the aliases among `slugs` whose own page is not live and whose canonical page is, in alias byte order.
+

@@ -434,7 +434,6 @@ src/core/persistence/administration.ts	execute_raw	5
 src/core/persistence/atom-maintenance.ts	execute_raw	20
 src/core/persistence/authority.ts	execute_raw	4
 src/core/persistence/bounded-reads.ts	execute_raw	10
-src/core/persistence/canonical-projections.ts	execute_raw	10
 src/core/persistence/capacity-view.ts	execute_raw	1
 src/core/persistence/change-reason.ts	execute_raw	2
 src/core/persistence/checkpoint-validation.ts	execute_raw	5
@@ -500,7 +499,7 @@ src/core/persistence/landing-gaps.ts	execute_raw	3
 src/core/persistence/legacy-sync-failures.ts	execute_raw	1
 src/core/persistence/limits.ts	execute_raw	1
 src/core/persistence/links-extraction-holds.ts	execute_raw	2
-src/core/persistence/links-preparation.ts	execute_raw	3
+src/core/persistence/links-preparation.ts	execute_raw	2
 src/core/persistence/local-edit-adoption.ts	execute_raw	6
 src/core/persistence/connector-fact-retirement.ts	execute_raw	3	GST-3256, modeled on loop-fact-retirement.ts: reads (FOR UPDATE under publication) the facts rows a connector wrote, expires them, and reads the source row at admission; no typed engine method exists yet
 src/core/persistence/managed-mode.ts	execute_raw	4	the shared-skills columns writer status reports moved here from administration.ts (its row fell by 3), so a Rust brain answers them from its brain row; SQL engines keep the one statement (raised 3 -> 4 by unbound-claim-rust 58d310f948; its row was taken from the trunk in the batch 10 merge and is restored here)
@@ -646,7 +645,7 @@ src/core/repair/segmented-mirror.ts	execute_raw	2
 src/core/repair/segmented-tiling.ts	execute_raw	6
 src/core/repair/slug-autoheal.ts	execute_raw	1
 src/core/repair/slug-conflicts.ts	execute_raw	2
-src/core/repair/unwithdrawn-facts.ts	execute_raw	3
+src/core/repair/unwithdrawn-facts.ts	execute_raw	2
 src/core/repair/url-clone-fences.ts	execute_raw	2
 src/core/repair/visibility.ts	execute_raw	7
 src/core/schema-migrations/helpers.ts	execute_raw	12
@@ -756,13 +755,12 @@ src/core/trust/backfill.ts	execute_raw	10
 src/core/trust/channel.ts	execute_raw	1
 src/core/trust/claim.ts	execute_raw	7
 src/core/trust/derived-gate.ts	execute_raw	1
-src/core/trust/fence-guard.ts	execute_raw	6
 src/core/trust/held-removals.ts	execute_raw	4
 src/core/trust/label-lowerings.ts	execute_raw	1
 src/core/trust/marker-repair.ts	execute_raw	4
 src/core/trust/owner-actions.ts	execute_raw	6
-src/core/trust/page-handlers.ts	execute_raw	7
-src/core/trust/page-write.ts	execute_raw	5
+src/core/trust/page-handlers.ts	execute_raw	5
+src/core/trust/page-write.ts	execute_raw	4
 src/core/trust/propagation.ts	execute_raw	4
 src/core/trust/refs.ts	execute_raw	1
 src/core/trust/release-publish.ts	execute_raw	2
