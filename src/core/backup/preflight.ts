@@ -7,7 +7,7 @@
  * Both refusals name the same recovery: the quiesced physical-copy runbook.
  * Doctor's `pglite_data_dir` uses the same size estimate to warn early.
  */
-import { lstatSync, readdirSync, type Stats } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, type Stats } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import type { Action } from '../agent-output.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
@@ -51,14 +51,19 @@ export function estimatedTarBytes(dir: string): number {
 
 export type PgliteBackupLayout = 'managed' | 'flat' | 'symlinked';
 
-/** Where the configured data dir sits relative to the managed `<root>/.gbrain/brain.pglite`. */
-export function pgliteBackupLayout(root: string, dbPath: string): PgliteBackupLayout {
-  const managed = join(root, '.gbrain', 'brain.pglite');
+/** Where `dbPath` sits relative to the managed `<root>/.gbrain/<name>`: the name is `brain.pglite` or `brain.rust`. */
+export function managedLayout(root: string, dbPath: string, name: string): PgliteBackupLayout {
+  const managed = join(root, '.gbrain', name);
   if (resolve(dbPath) !== managed) return 'flat';
   for (let path = managed; path !== root && dirname(path) !== path; path = dirname(path)) {
     try { if (lstatSync(path).isSymbolicLink()) return 'symlinked'; } catch { /* missing: reported by the caller */ }
   }
   return 'managed';
+}
+
+/** Where the configured data dir sits relative to the managed `<root>/.gbrain/brain.pglite`. */
+export function pgliteBackupLayout(root: string, dbPath: string): PgliteBackupLayout {
+  return managedLayout(root, dbPath, 'brain.pglite');
 }
 
 const RUNBOOK_STEPS = 'Take a quiesced physical copy instead: stop every gbrain writer on this brain (gbrain serve, jobs and autopilot, agent sessions), ' +
@@ -128,4 +133,46 @@ export function pgliteBackupPreflight(root: string, dbPath: string, managedFileB
 
 export function formatGiB(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(2)} GiB`;
+}
+
+export const RUST_STORE_FILES = ['records.redb', 'FORMAT'] as const;
+/** SNAPSHOT.json (tag digests of the copy) is a few KiB; this is the room the size estimate leaves for it. */
+const SNAPSHOT_JSON_ROOM = 1024 * 1024;
+
+const RUST_RUNBOOK_STEPS = 'Take a quiesced physical copy instead: stop every gbrain writer on this brain (gbrain serve, jobs and autopilot, agent sessions), ' +
+  'copy FORMAT and records.redb of the brain directory (never .gbrain-owner.sock or the .lock file) and config.json into a new, isolated GBRAIN_HOME as ' +
+  `<new-home>/.gbrain/brain.rust, point that config's database_path at the copy, then run gbrain backup verify-store <new-home>/.gbrain/brain.rust --json before relying on it (runbook: ${PHYSICAL_COPY_RUNBOOK}).`;
+
+/** The Rust runbook's mandatory check: `verify-store` reads the copy without opening it, so it changes nothing. */
+export function rustPhysicalCopyFix(): Action {
+  return {
+    ask_user: true, argv: ['gbrain', 'backup', 'verify-store', '<COPY_DIR>', '--json'], consent: [], actor: 'agent', requires_exclusive: false, docs: PHYSICAL_COPY_RUNBOOK,
+    why: 'Read-only, after the user agrees to the physical copy: verify-store reads the copied records without opening them the normal way, so a copy that was not closed cleanly or is damaged shows here, and nothing in it changes.',
+    user_message: RUST_RUNBOOK_STEPS, verify: { argv: ['gbrain', 'backup', 'verify-store', '<COPY_DIR>', '--json'] },
+  };
+}
+
+/**
+ * `gbrain backup create` on a Rust brain, before the lock and the snapshot: the brain directory must be the managed
+ * `<root>/.gbrain/brain.rust` (no symlink on the way) and `records.redb` + `FORMAT` + the managed files must fit the
+ * 8 GiB cap. The live record file is at least as large as its snapshot (a snapshot has no free pages), so the check
+ * never refuses a brain the archive could hold by more than that slack. Both refusals name the Rust runbook.
+ */
+export function rustBackupPreflight(root: string, dbPath: string, managedFileBytes: () => number): OperationError | null {
+  const layout = managedLayout(root, dbPath, 'brain.rust');
+  if (layout !== 'managed') {
+    return opError('unmanaged_database_path',
+      layout === 'flat'
+        ? `This recovery format requires the brain directory at ${join(root, '.gbrain', 'brain.rust')}; this brain's database_path is ${dbPath}. Nothing was written.`
+        : `This recovery format requires a brain directory with no symlink on its path; ${join(root, '.gbrain', 'brain.rust')} reaches the data through a symlink. Nothing was written.`,
+      RUST_RUNBOOK_STEPS,
+      { why: 'The archive records the managed root it can restore and refuses to follow a symlink out of it.', fix: rustPhysicalCopyFix(), docs: PHYSICAL_COPY_RUNBOOK, detail: `layout=${layout}` });
+  }
+  const stored = RUST_STORE_FILES.reduce((sum, name) => sum + (existsSync(join(dbPath, name)) ? lstatSync(join(dbPath, name)).size : 0), 0);
+  const bytes = stored + SNAPSHOT_JSON_ROOM + managedFileBytes();
+  if (bytes <= BACKUP_ARCHIVE_MAX_BYTES) return null;
+  return opError('backup_too_large',
+    `This Rust brain needs about ${formatGiB(bytes)} in a backup archive (${bytes} bytes), over the archive's ${formatGiB(BACKUP_ARCHIVE_MAX_BYTES)} cap. Nothing was written.`,
+    RUST_RUNBOOK_STEPS,
+    { why: 'The archive format holds at most 8 GiB of payload; refusing before the snapshot avoids hours of copying and a partial archive.', fix: rustPhysicalCopyFix(), docs: PHYSICAL_COPY_RUNBOOK, detail: `bytes=${bytes} limit=${BACKUP_ARCHIVE_MAX_BYTES}` });
 }

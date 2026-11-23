@@ -54,7 +54,7 @@ export function sanitizedConfig(value: unknown, references: string[] = [], prefi
   return result;
 }
 
-function walkFiles(root: string, relativePath: string, excluded: string[] = []): string[] {
+export function walkFiles(root: string, relativePath: string, excluded: string[] = []): string[] {
   const path = confinedPath(root, relativePath);
   if (!existsSync(path)) throw new AgentInstallError('missing_managed_path', `Managed path is missing: ${relativePath}`);
   const stat = lstatSync(path);
@@ -75,7 +75,7 @@ function walkFiles(root: string, relativePath: string, excluded: string[] = []):
 }
 
 /** Persist restored file contents AND directory entries before the ready receipt. */
-function syncRestoredTree(path: string): void {
+export function syncRestoredTree(path: string): void {
   const stat = lstatSync(path);
   if (stat.isDirectory()) {
     for (const name of readdirSync(path)) syncRestoredTree(join(path, name));
