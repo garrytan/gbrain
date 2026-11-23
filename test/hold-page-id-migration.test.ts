@@ -151,27 +151,30 @@ for (const backend of backends) {
 
   // Pins decision K: a brain whose write_gate_holds predates the columns upgrades through initSchema (bootstrap, blob replay, migration).
   describe(`pre-column upgrade replay (${backend})`, () => {
-    test('initSchema on a brain at v336 adds the columns before the blob names them, then v337 runs', async () => {
-      let engine: BrainEngine, close: () => Promise<void>;
+    // Its own brain: the test takes it back to v336 and replays the schema over it.
+    let engine: BrainEngine, close: () => Promise<void>;
+    beforeAll(async () => {
       if (backend === 'pglite') { const e = new PGLiteEngine(); await e.connect({}); await e.initSchema(); engine = e; close = () => e.disconnect(); }
       else { const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!, 'instance', 4); engine = pg.engine; close = pg.close; }
-      try {
-        const sourceId = 'default';
-        await toV336(engine);
-        const [old] = await engine.executeRaw<{ id: string }>(
-          `INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, payload) VALUES ('fact', $1, 'notes/early', 'fp-early', 2, 'external_untrusted', '{"fact":"early"}'::jsonb) RETURNING id::text AS id`, [sourceId]);
-        expect((await engine.executeRaw("SELECT 1 FROM information_schema.columns WHERE table_name='write_gate_holds' AND column_name='page_id'")).length).toBe(0);
+    }, 180_000);
+    afterAll(async () => { await close(); });
 
-        await engine.initSchema();
+    test('initSchema on a brain at v336 adds the columns before the blob names them, then v337 runs', async () => {
+      const sourceId = 'default';
+      await toV336(engine);
+      const [old] = await engine.executeRaw<{ id: string }>(
+        `INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, payload) VALUES ('fact', $1, 'notes/early', 'fp-early', 2, 'external_untrusted', '{"fact":"early"}'::jsonb) RETURNING id::text AS id`, [sourceId]);
+      expect((await engine.executeRaw("SELECT 1 FROM information_schema.columns WHERE table_name='write_gate_holds' AND column_name='page_id'")).length).toBe(0);
 
-        const columns = (await engine.executeRaw<{ column_name: string }>("SELECT column_name FROM information_schema.columns WHERE table_name='write_gate_holds' AND column_name IN ('page_id','page_candidates') ORDER BY 1")).map(c => c.column_name);
-        expect(columns).toEqual(['page_candidates', 'page_id']);
-        expect(await engine.getConfig('version')).toBe('337');
-        expect((await holdStates(engine, sourceId)).find(s => s.id === Number(old!.id))).toMatchObject({ page_id: null, page_candidates: null, slug: 'notes/early' });
-        const indexes = (await engine.executeRaw<{ indexname: string }>("SELECT indexname FROM pg_indexes WHERE tablename='write_gate_holds'")).map(i => i.indexname);
-        expect(indexes).toContain('write_gate_holds_bound_dedupe_idx');
-        expect(indexes).not.toContain('write_gate_holds_dedupe_idx');
-      } finally { await close(); }
+      await engine.initSchema();
+
+      const columns = (await engine.executeRaw<{ column_name: string }>("SELECT column_name FROM information_schema.columns WHERE table_name='write_gate_holds' AND column_name IN ('page_id','page_candidates') ORDER BY 1")).map(c => c.column_name);
+      expect(columns).toEqual(['page_candidates', 'page_id']);
+      expect(await engine.getConfig('version')).toBe('337');
+      expect((await holdStates(engine, sourceId)).find(s => s.id === Number(old!.id))).toMatchObject({ page_id: null, page_candidates: null, slug: 'notes/early' });
+      const indexes = (await engine.executeRaw<{ indexname: string }>("SELECT indexname FROM pg_indexes WHERE tablename='write_gate_holds'")).map(i => i.indexname);
+      expect(indexes).toContain('write_gate_holds_bound_dedupe_idx');
+      expect(indexes).not.toContain('write_gate_holds_dedupe_idx');
     }, 240_000);
   });
 }

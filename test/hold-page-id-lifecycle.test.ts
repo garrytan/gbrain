@@ -231,6 +231,29 @@ describe('release and purge of holds that follow a page (PGLite, managed brain)'
     expect((await engine.executeRaw<{ compiled_truth: string }>("SELECT compiled_truth FROM pages WHERE source_id='default' AND slug=$1", [alpha]))[0]!.compiled_truth).not.toContain(CLAIM);
   }, { setup }), 240_000);
 
+  // Pins decision C/J: a hold the upgrade could not tie to one page is refused on release (it could belong to any candidate), stays
+  // held, and can still be dropped by the owner.
+  test('release of a candidate-marked hold is refused and the hold can still be dropped', () => managedBrain(async ({ engine, ctx }) => {
+    await submitPageMutation(ctx, { operation: 'put_page', params: { slug: alpha, request_id: randomUUID(), content: doc('Bea Example') } });
+    await settleManagedGitEffects(engine);
+    await enableTrustProtections(engine);
+    const ref = await heldRemember(ctx, alpha);
+    const holdId = Number(ref.slice(1));
+    const [page] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE source_id='default' AND slug=$1", [alpha]);
+    await engine.executeRaw('UPDATE write_gate_holds SET page_id = NULL, page_candidates = $2::bigint[] WHERE id=$1', [holdId, [Number(page!.id), 2_000_000_000]]);
+
+    const preview = await previewOwnerAction(engine, { action: 'release', ref });
+    const error = await applyOwnerAction(engine, { action: 'release', ref }, { binding: preview.binding, confirmation: { via: 'tty' }, by: owner })
+      .then(() => null, (e: { code?: string }) => e);
+    expect(error?.code).toBe('unavailable');
+    expect((await engine.executeRaw<{ status: string }>('SELECT status FROM write_gate_holds WHERE id=$1', [holdId]))[0]!.status).toBe('held');
+    expect(await engine.executeRaw("SELECT id FROM facts WHERE source_id='default' AND fact=$1", [CLAIM])).toEqual([]);
+
+    const dropPreview = await previewOwnerAction(engine, { action: 'drop', ref });
+    await applyOwnerAction(engine, { action: 'drop', ref }, { binding: dropPreview.binding, confirmation: { via: 'tty' }, by: owner });
+    expect((await engine.executeRaw<{ status: string }>('SELECT status FROM write_gate_holds WHERE id=$1', [holdId]))[0]!.status).toBe('dropped');
+  }, { setup }), 240_000);
+
   // Pins decision J (an append hold whose entity slug now names another page publishes to the bound, renamed page): the file is
   // renamed in Git and a different page takes the old name; the release lands on the renamed page, with the fact filed under its new name.
   test('release of an append hold follows the renamed page, not the page that took the old name', () => managedBrain(async ({ engine, ctx, root }) => {

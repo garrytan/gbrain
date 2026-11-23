@@ -10,6 +10,7 @@ import type { Check } from '../../doctor.ts';
 import { agentFix, checkError } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { isMissingSchemaObject } from '../../../core/utils.ts';
+import { rethrowCapabilityRefusal } from '../../../core/engine-capability-refusal.ts';
 
 const LIMIT = 50;
 
@@ -31,6 +32,7 @@ async function runWriteGateHoldAmbiguous(ctx: DoctorContext): Promise<Check[]> {
         + 'Each stays held for every candidate page, so nothing it quarantined is shown. Ask the user to review each one (gbrain trust review) and drop it (gbrain trust drop <ref>); a release is refused until the hold is tied to a page. Nothing was changed.',
       fix: agentFix(['gbrain', 'trust', 'review'], 'Lists the held writes for the owner to decide, read-only.', 'write_gate_hold_ambiguous') });
   } catch (error) {
+    rethrowCapabilityRefusal(error);
     if (isMissingSchemaObject(error, 'table', 'write_gate_holds') || isMissingSchemaObject(error, 'column', ['page_id', 'page_candidates'])) {
       checks.push({ name: 'write_gate_hold_ambiguous', status: 'ok', details: { schema: 'pre_hold_page_id' }, message: 'This schema predates held writes following their page.' });
     } else {
