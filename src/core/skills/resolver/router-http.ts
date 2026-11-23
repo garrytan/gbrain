@@ -56,10 +56,10 @@ function counts(input: unknown, output: unknown, cacheRead: unknown = 0, cacheWr
 
 /** Anthropic models that refuse thinking 'disabled' (Opus and Fable 5.x) get adaptive thinking at low effort; checked live on 2026-11-22. */
 const ANTHROPIC_ADAPTIVE = /^claude-(opus|fable)-5/;
-/** Sonnet 5.x refuses 'disabled' too; 'between_tools' is its off switch when no tools are offered (thinking-off.ts). */
-const ANTHROPIC_BETWEEN_TOOLS = /^claude-sonnet-5/;
+/** Sonnet 5.5 refuses 'disabled' too; 'between_tools' is its off switch when no tools are offered (thinking-off.ts). Sonnet 5 refuses 'between_tools' and keeps 'disabled'; checked live on 2026-11-23. */
+const ANTHROPIC_BETWEEN_TOOLS = /^claude-sonnet-5-5/;
 /** OpenAI models that refuse reasoning effort 'none' (the 6.x Astra models and every Sol after gpt-6-sol) get 'low'; checked live on 2026-11-22. */
-const OPENAI_EFFORT_LOW = /^(gpt-6(\.\d+)?-astra|gpt-6\.\d+-sol)(-\d{4}-\d{2}-\d{2})?$/;
+const OPENAI_EFFORT_LOW = /^gpt-6(\.\d+)?-astra$|^gpt-6\.\d+-sol$/;
 
 /** True when `model` (provider:id) reasons before it answers, so its reasoning tokens count against the output cap. */
 export function pickerReasons(model: string): boolean {

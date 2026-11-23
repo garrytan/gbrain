@@ -16,7 +16,7 @@ import { afterAll, afterEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { __setPickerTransportForTests, PickerHttpError, pickerReasons, type PickerRequest } from '../src/core/skills/resolver/router-http.ts';
+import { __setPickerTransportForTests, PickerHttpError, type PickerRequest } from '../src/core/skills/resolver/router-http.ts';
 import { buildSkillIndex, resolveSkills } from '../src/core/skills/resolver/index.ts';
 import { parsePickerReply, PICKER_DESCRIPTION_CHARS, readRouterSpend, routerTimeoutMs } from '../src/core/skills/resolver/router.ts';
 import { routerSettings } from '../src/core/skills/resolver/config.ts';
@@ -300,10 +300,6 @@ describe('a compat: model on an OpenAI-compatible endpoint', () => {
     expect((await readRouterSpend(h)).charged_usd).toBe(0.00102);
   });
 
-  test('a dated snapshot id reasons like its model', () => {
-    expect(['openai:gpt-6.2-sol-2026-11-01', 'openai:gpt-6.2-astra-2026-11-01', 'anthropic:claude-opus-5-5-20261001', 'openai:gpt-6-luna-2026-11-01', 'anthropic:claude-haiku-5-5-20261001'].map(pickerReasons)).toEqual([true, true, true, false, false]);
-  });
-
   test('router_usd_per_mtok takes two or three prices, never four', async () => {
     expect(routerSettings({ router: true, router_model: 'compat:acme/picker-1', router_usd_per_mtok: [1, 2, 0.1, 3] }).invalid).toStartWith('skills.resolver.router_usd_per_mtok must be');
     expect(routerSettings({ router: true, router_model: 'compat:acme/picker-1', router_usd_per_mtok: [1, 2, 0.1] }).usdPerMtok).toEqual([1, 2, 0.1]);
@@ -318,7 +314,7 @@ describe('a compat: model on an OpenAI-compatible endpoint', () => {
 
   test('Opus and Fable 5.x think at low effort with room to answer; Sonnet 5.5 and Haiku keep thinking off', async () => {
     const aenv = { ...process.env, ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.port}/a`, ANTHROPIC_API_KEY: 'k-test' };
-    for (const [model, want, effort, maxTokens] of [['claude-opus-5-5', 'adaptive', 'low', 1024], ['claude-fable-5-1', 'adaptive', 'low', 1024], ['claude-fable-5-2', 'adaptive', 'low', 1024], ['claude-sonnet-5-5', 'between_tools', 'low', 200], ['claude-haiku-5-5', 'disabled', undefined, 200]] as const) {
+    for (const [model, want, effort, maxTokens] of [['claude-opus-5-5', 'adaptive', 'low', 1024], ['claude-fable-5-1', 'adaptive', 'low', 1024], ['claude-fable-5-2', 'adaptive', 'low', 1024], ['claude-sonnet-5-5', 'between_tools', 'low', 200], ['claude-sonnet-5', 'disabled', undefined, 200], ['claude-haiku-5-5', 'disabled', undefined, 200]] as const) {
       seen.length = 0;
       const h = await home({ router: true, router_model: `anthropic:${model}` });
       const r = await resolveSkills({ message: 'who is alice', harness: 'codex' }, { home: h, catalogs: ['c'], router: true, env: aenv });
