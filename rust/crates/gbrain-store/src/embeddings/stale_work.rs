@@ -58,17 +58,15 @@ fn large_page(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
 /// `pageBudgetLimitedFilter`: the page has a held or capped budget row that still applies (large, or a reason that applies
 /// at any size). The store keeps that row in the page's ledger record (`page_embedding_budget.rs`).
 pub(super) fn budget_limited(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
-    if let Some((state, reason)) = crate::page_embedding_budget::read_state_reason(read, page.id)? {
-        if state != "open"
-            && (reason
-                .as_deref()
-                .is_some_and(|r| ANY_SIZE_HOLDS.contains(&r))
-                || large_page(read, page)?)
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    let Some((state, reason)) = crate::page_embedding_budget::read_state_reason(read, page.id)?
+    else {
+        return Ok(false);
+    };
+    Ok(state != "open"
+        && (reason
+            .as_deref()
+            .is_some_and(|r| ANY_SIZE_HOLDS.contains(&r))
+            || large_page(read, page)?))
 }
 
 /// The page's source record: `Some(archived)`, or `None` when the source row is gone (the SQL JOIN drops the page).
