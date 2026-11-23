@@ -115,7 +115,12 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
       const open = deps.openEngine ?? ((addon, store) => openRustEngine({ addon, databasePath: store }) as unknown as ShadowEngine);
       const storePath = join(shadowDir, 'store');
       engine = open(load.addon, storePath);
-      await engine.connect({ database_path: storePath });
+      // A connect that never returns would keep the exit deadline (armed after input ends) from ever starting; a child with a deadline gives up on it.
+      const connecting = engine.connect({ database_path: storePath });
+      if (deps.exit && (await withTimeout(connecting, deps.exitDeadlineMs ?? SHADOW_CHILD_EXIT_DEADLINE_MS)).timedOut) {
+        throw Object.assign(new Error('opening the Rust store timed out'), { code: 'open_timeout' });
+      }
+      await connecting;
       if (deleted()) {
         await engine.disconnect().catch(() => {});
         rmSync(shadowDir, { recursive: true, force: true });
@@ -222,7 +227,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     void drain();
   }
   if (deps.exit) {
-    const timer = setTimeout(() => { flush(true); deps.exit!(0); }, deps.exitDeadlineMs ?? SHADOW_CHILD_EXIT_DEADLINE_MS);
+    const timer = setTimeout(() => { summary.child_shed += pending.length; flush(true); deps.exit!(0); }, deps.exitDeadlineMs ?? SHADOW_CHILD_EXIT_DEADLINE_MS);
     (timer as { unref?: () => void }).unref?.();
   }
   await drain();

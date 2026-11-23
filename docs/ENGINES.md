@@ -1906,7 +1906,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   For a new brain, `gbrain init --db-only` creates one without managed storage. For an existing managed brain, `gbrain
   sources writer deactivate --dry-run` previews converting it back to classic mode; the real deactivate needs your
   consent. It refuses before the addon loads and before any shadow file is created. A brain whose mode cannot be read,
-  or that cannot be opened (for example the database is down), is refused the same way (exit 3, `managed_storage`) but
+  or that cannot be opened (for example the database is down, or a PGLite path holds no brain, which `start` never creates), is refused the same way (exit 3, `managed_storage`) but
   says so honestly: "gbrain could not confirm that this brain does not use managed storage", with the read or open
   error in the why. Only a mode read as managed says "this brain uses managed storage". When another gbrain holds a
   PGLite brain (`pglite_busy`, usually `gbrain serve`), the next step is to stop `gbrain serve` and anything else

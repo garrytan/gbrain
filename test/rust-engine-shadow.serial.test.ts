@@ -290,13 +290,14 @@ process.exit(0);
       await startShadow(config);
       const dir = shadowDirFor(shadowBrainKey(config)!);
       const never = new Promise<never>(() => {});
+      let calls = 0;
       let exitCode = null as number | null;
-      const input = Readable.from([readLine('getPage'), readLine('getPage')]);
+      const input = Readable.from([readLine('getPage'), readLine('getPage'), readLine('getPage')]);
       const done = runShadowChild(dir, {
         input,
         writeControl: () => {},
         loadAddon: async () => ({ ok: true as const, addon: {} as never }),
-        openEngine: () => ({ connect: async () => {}, disconnect: async () => {}, getPage: () => never }) as never,
+        openEngine: () => ({ connect: async () => {}, disconnect: async () => {}, getPage: () => (calls++ === 0 ? Promise.resolve({ slug: 'a' }) : never) }) as never,
         timeoutMs: 60_000,
         exitDeadlineMs: 300,
         exit: (code) => { exitCode = code; },
@@ -304,6 +305,29 @@ process.exit(0);
       const until = Date.now() + 10_000;
       while (exitCode === null && Date.now() < until) await new Promise((r) => setTimeout(r, 25));
       expect(exitCode).toBe(0);
+      expect(ledgerRows(dir)).toBe(1); // the finished comparison was flushed before the exit, not lost with the stuck one
+      expect(readShadowSummary(dir).child_shed).toBe(1); // the read still queued behind the stuck one is counted as dropped, not silently lost
+      void done;
+    });
+  }, 60_000);
+
+  test('a child whose Rust store never finishes opening still exits at the deadline, recording its reads as unavailable', async () => {
+    await inHome(async (_home, config) => {
+      await startShadow(config);
+      const dir = shadowDirFor(shadowBrainKey(config)!);
+      let exitCode = null as number | null;
+      const done = runShadowChild(dir, {
+        input: Readable.from([readLine('getPage')]),
+        writeControl: () => {},
+        loadAddon: async () => ({ ok: true as const, addon: {} as never }),
+        openEngine: () => ({ connect: () => new Promise<void>(() => {}), disconnect: async () => {} }) as never,
+        exitDeadlineMs: 300,
+        exit: (code) => { exitCode = code; },
+      });
+      const until = Date.now() + 10_000;
+      while (exitCode === null && Date.now() < until) await new Promise((r) => setTimeout(r, 25));
+      expect(exitCode).toBe(0);
+      expect(ledgerRows(dir)).toBe(1);
       void done;
     });
   }, 60_000);

@@ -10,6 +10,7 @@
  */
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { loadConfig } from '../core/config.ts';
 import type { EngineConfig } from '../core/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
@@ -179,6 +180,10 @@ export async function runEngineShadow(args: string[], deps: EngineShadowDeps = {
 async function openConfiguredPrimary(config: ResolvedBrain['config']): Promise<BrainEngine> {
   const { constructEngine } = await import('../core/engine-construct.ts');
   const engineConfig: EngineConfig = { engine: config.engine, database_path: config.database_path, database_url: config.database_url };
+  // PGLite runs initdb on a missing or uninitialized directory when it connects; a preview must not make a brain (engine swap refuses the same way).
+  if (!engineConfig.database_url && (!engineConfig.database_path || !existsSync(join(engineConfig.database_path, 'PG_VERSION')))) {
+    throw Object.assign(new Error(`no brain exists at ${engineConfig.database_path ?? '(no path configured)'}`), { code: 'no_brain' });
+  }
   const engine = await constructEngine(engineConfig);
   await engine.connect(engineConfig);
   return engine;

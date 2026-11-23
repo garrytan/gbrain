@@ -1,9 +1,9 @@
 /**
- * The managed-storage gate shared by `gbrain engine shadow start` and `seed`.
+ * The managed-storage gate `gbrain engine shadow start` runs (only `start` uses it so far; the seed command is to call it too).
  *
  * The Rust engine never holds managed storage (src/core/rust-engine/store-members/persistence.ts), so a brain with managed
- * storage can never swap to Rust and a shadow on it measures nothing it could use. Both commands refuse it before
- * they write anything. A brain whose mode cannot be read is refused too: an impossible read is not a mode.
+ * storage can never swap to Rust and a shadow on it measures nothing it could use. `start` refuses it before
+ * it writes anything. A brain whose mode cannot be read is refused too: an impossible read is not a mode.
  */
 import type { SqlEngine } from '../core/persistence/model.ts';
 import { readManagedMode } from '../core/persistence/managed-mode.ts';

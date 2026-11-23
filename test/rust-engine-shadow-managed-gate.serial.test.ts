@@ -117,6 +117,15 @@ describe('engine shadow start on a managed-storage brain', () => {
     expect(existsSync(shadowDir())).toBe(false);
   });
 
+  test('a configured PGLite path with no brain refuses and is never created', async () => {
+    const missing = join(home, 'no-such-brain');
+    const r = await run(['start', '--plan'], { config: () => ({ engine: 'pglite', database_path: missing }) });
+    expect(r.code).toBe(3);
+    expect(r.err[0]).toBe('engine shadow: engine_swap_refused (managed_storage): Shadow mode is refused: gbrain could not confirm that this brain does not use managed storage.');
+    expect(r.err.join('\n')).toContain(`no brain exists at ${missing}`);
+    expect(existsSync(missing)).toBe(false);
+  });
+
   test('an engine whose mode read throws refuses and is still disconnected', async () => {
     let disconnected = 0;
     const broken = { executeRaw: async () => { throw new Error('relation "persistence_brain" does not exist'); }, disconnect: async () => { disconnected++; } } as unknown as BrainEngine;
