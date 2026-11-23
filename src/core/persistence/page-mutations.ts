@@ -9,6 +9,7 @@ import { isHostAbsolutePath } from '../path-confine.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { OperationError } from '../ops/contract.ts';
 import { admitChangeReason, CHANGE_REASON_OPERATIONS } from './change-reason.ts';
+import { assertNoSecretInWrite } from '../write-secret-guard.ts';
 import { grantedWriteSource, readsButWritesOnly, writeGrantRefusal } from './write-grant.ts';
 import { VERSION } from '../../version.ts';
 import { ownerBuildMismatch } from './publication-failure.ts';
@@ -452,6 +453,8 @@ export async function preparePageAdmission(ctx: OperationContext,
     assertReplayIntent(prior, intentDigest({ operation: input.operation, sourceId, slug: prior.slug, callerIntent }));
     return { prior };
   }
+  // secrets.on_write: a remote write whose text holds a credential is refused before it is journaled (write-secret-guard.ts).
+  await assertNoSecretInWrite(ctx, input.operation, callerIntent);
   if (input.operation === 'delete_page') assertPurgeParams(p, ctx.remote);
   if (guest && input.operation === 'delete_page' && ctx.remote !== false && typeof p.slug === 'string') await refuseRemoteGuestDelete(ctx.engine, sourceId, p.slug.toLowerCase(), principal);
   if (!source || source.archived) {

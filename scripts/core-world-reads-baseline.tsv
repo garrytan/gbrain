@@ -1267,3 +1267,4 @@ src/core/owned-folder/paths.ts	fs_import	1	W7: filesystem boundary moves to the 
 src/core/owned-folder/remove.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-3022 owned folders: checks OWNER.json and prunes the directories a source removal leaves empty, never following a symlink
 src/core/owned-folder/writer.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-3022 owned folders: the one writer of the folder: OWNER.json, the README and the day files, with lstat symlink checks
 src/core/remote-caller.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context; marks an MCP handler's caller remote so the Rust owner client keeps its writes off the owner socket
+src/core/write-secret-guard.ts	process_env	1	W6: settings plane out of the core (GBRAIN_SECRETS_ON_WRITE, the environment twin of secrets.on_write; it can only tighten)

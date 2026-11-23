@@ -240,6 +240,28 @@ and `sync status` skip settled effects. `--unsettle` with the same selector
 previews, and with `--apply --expect` reverses, a settlement.
 
 <a id="held-files-and-content-refusals"></a>
+## Secrets in writes
+
+<a id="secret_in_write"></a>
+A brain served to a team can refuse remote page writes whose text looks like a
+credential: `gbrain config set secrets.on_write refuse` on the brain host (or
+`GBRAIN_SECRETS_ON_WRITE=refuse` in the server's environment). It is off by
+default. While on, every MCP page write (`put_page`, `put_pages`, `edit_page`,
+`append_page`, `capture`, `add_timeline_entry`, the `takes_*` writes) is
+scanned before it is admitted, and `commit_page_upload` scans the whole
+assembled upload, so a secret split across two `upload_page_part` calls is
+still found; a refused upload is aborted and no page is written. The refusal is
+`secret_in_write` with `reason` naming the pattern type (`slack_webhook`,
+`slack_token`, `sentry_dsn`, `sentry_auth_token`, `github_token`,
+`google_api_key`, `private_key`, `aws_access_key`, `jwt`,
+`database_uri_credentials`, `password_assignment`), never the value.
+Environment variable names, placeholders (`<redacted>`, `***`, `xoxb-...`) and
+code references (`password = settings.db_password`) pass. Local CLI writes,
+sync and imports are not scanned; `secrets.on_push` guards what reaches Git.
+
+**Say to your agent:** *"Write down how our alerting is wired, but leave the
+webhook URL out and name the secret that holds it."*
+
 ## Held files and content refusals
 
 Some content refuses deterministically: the same bytes refuse on every retry.

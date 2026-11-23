@@ -1324,6 +1324,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'push.allow_unverified_remote',
   'hooks.stop_push_debounce_min',
   'secrets.on_push', // GST-2988 file plane: redact (default) or refuse secrets in unpushed commits at publish (git/redact-unpushed.ts)
+  'secrets.on_write', // DB plane, default off: refuse remote page writes holding a credential (write-secret-guard.ts)
   // File-plane backup-check keys (routed to ~/.gbrain/config.json by `config
   // set` — the engine-free render sites read loadConfigFileOnly). Default ON /
   // 30 days; interval clamps to >=1 day at read time (backup/status-file.ts).

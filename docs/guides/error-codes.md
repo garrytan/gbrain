@@ -16,6 +16,7 @@ Under contract v1 an `error` value never changes. Where a surface sends a legacy
 | `error` (frozen) | `code` (canonical) | Meaning |
 |---|---|---|
 | `invalid_params` | `change_reason_rejected` | The write's reason was refused before anything was admitted: it is longer than 500 characters, or it looks like it holds a secret. |
+| `invalid_params` | `secret_in_write` | A remote page write was refused before anything was admitted because its text looks like it holds a credential, and the brain refuses secrets in writes (secrets.on_write refuse). `reason` names the pattern type, never the value; a refused page upload is aborted. |
 | `invalid_params` | `fact_withdrawn` | `remember`, or an owner `gbrain trust release` that writes a held fact into its entity page's `## Facts` table (a managed brain), refused a claim that was explicitly forgotten for this subject (wire `invalid_params`, message prefix `fact_withdrawn:`); nothing was saved, and a refused release leaves the fact held. |
 | `permission_denied` | `insufficient_scope` | The connection lacks the OAuth scope the operation requires. |
 | `invalid_params` | `invalid_fence` | A facts or takes fence in the page cannot be imported without dropping or guessing rows, so the page (or the file) was not written. |
@@ -5413,6 +5414,18 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | A search offset was over the 10,000 limit. | The request itself was wrong or no longer matches the brain; nothing was changed. | Page with match: "keyword" and the next object each response returns; a cursor has no depth limit. | agent | `repeat the read that failed` | 1 | no |
+
+### secret_in_write
+
+<a id="secret_in_write"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A remote page write was refused before anything was admitted because its text looks like it holds a credential, and the brain refuses secrets in writes (secrets.on_write refuse). `reason` names the pattern type, never the value; a refused page upload is aborted. | Pages are read by everyone the brain serves and sent to its model providers, so a credential stored in one is exposed to all of them. | Remove the secret (name the environment variable or secret-manager entry that holds it, or write <redacted>) and send the write again with a new request_id. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `slack_webhook`, `slack_token`, `sentry_dsn`, `sentry_auth_token`, `github_token`, `google_api_key`, `private_key`, `aws_access_key`, `jwt`, `database_uri_credentials`, `password_assignment`.
+
+More: [docs/guides/write-refusals.md#secret_in_write](../../docs/guides/write-refusals.md#secret_in_write)
 
 ### secret_reveal_forbidden
 
