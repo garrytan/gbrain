@@ -283,4 +283,31 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.count_lineage_closing_rules(&rule_ids, &source_id))
     }
+
+    /// `readForecastPredictions(query)`: the journal's predictions by (source, slug, row).
+    #[napi]
+    pub fn read_forecast_predictions<'env>(&self, env: &'env Env, query: Value) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_forecast_predictions(&required(query, "query")?))
+    }
+
+    /// `readPredictionLedgerEvents(sourceIds, slugs)`: `[{ source_id, slug, event_type, subject_key, at }]` by id.
+    #[napi]
+    pub fn read_prediction_ledger_events<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+        slugs: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_prediction_ledger_events(&source_ids, &slugs))
+    }
+
+    /// `readBeliefCoverageEvents(sourceId)`: the coverage events of the current incarnation by id.
+    #[napi]
+    pub fn read_belief_coverage_events<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_belief_coverage_events(&source_id))
+    }
 }

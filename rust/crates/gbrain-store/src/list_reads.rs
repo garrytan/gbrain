@@ -10,6 +10,12 @@ use crate::chunks::{keyed_chunks, segmented};
 use crate::cli_reads::pg_text::{fm_text, jsonb_value, timestamptz_text};
 use crate::aliases::all_alias_rows;
 use crate::error::Result;
+use crate::cli_reads::entities::arrow_text;
+use crate::env::iso;
+use crate::takes::{all_takes, real_out};
+use crate::trust::belief_events::{EVENT, EVENTS, EventRecord, part_key};
+use crate::trust::belief_lifetimes::{LIFETIMES, LifetimeRecord, RECORD};
+use crate::kv::scan_prefix;
 use crate::facts::PrivacyPolicy;
 use crate::facts::privacy::{page_access_allowed, page_folder_rules_allowed, stamped_rules};
 use crate::owner_only::{OwnerOnlyForm, OwnerOnlySources};
@@ -369,6 +375,45 @@ pub struct WhoCanReadRow {
     pub frontmatter: Value,
     pub folder_rule_ids: Option<Vec<String>>,
     pub owner_only: bool,
+}
+
+/// `readForecastPredictions(query)`: the journal's filters.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct PredictionQuery {
+    pub source_ids: Option<Vec<String>>,
+    pub holder: Option<String>,
+    pub about: Option<String>,
+    pub since: Option<String>,
+    pub until: Option<String>,
+}
+
+/// One prediction of the forecast journal (forecast-journal.ts `TakeRow`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PredictionRow {
+    pub id: u64,
+    pub source_id: String,
+    pub page_slug: String,
+    pub row_num: i32,
+    pub claim: String,
+    pub kind: String,
+    pub holder: String,
+    pub weight: f64,
+    pub since_date: Option<String>,
+    pub resolved_quality: Option<String>,
+    pub resolved_at: Option<String>,
+    pub resolved_by: Option<String>,
+    pub resolved_source: Option<String>,
+}
+
+/// A ledger event that dates a prediction (`readPredictionLedgerEvents`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PredictionLedgerEvent {
+    pub source_id: String,
+    pub slug: String,
+    pub event_type: String,
+    pub subject_key: Option<String>,
+    pub at: String,
 }
 
 /// The pages at `slug` that the read policy admits with its live filter on, by source id.
@@ -967,6 +1012,136 @@ impl Store {
             }
         }
         Ok(n)
+    }
+
+    /// `readForecastPredictions(query)`: the active takes that are not facts, on live pages, in the
+    /// named sources (all when none), of the holder, whose page slug starts with `about`, and whose
+    /// `since_date` lies in [since, until] (text order), by (source, slug) in byte order then row.
+    pub fn read_forecast_predictions(&self, q: &PredictionQuery) -> Result<Vec<PredictionRow>> {
+        let read = self.read()?;
+        let pages: HashMap<u64, PageRecord> = all_pages(&*read)?
+            .into_iter()
+            .filter(|p| p.deleted_at_us.is_none())
+            .map(|p| (p.id, p))
+            .collect();
+        let mut rows: Vec<PredictionRow> = Vec::new();
+        for t in all_takes(&*read)? {
+            let Some(p) = pages.get(&t.page_id) else { continue };
+            if !t.active || t.kind == "fact" {
+                continue;
+            }
+            if q.source_ids.as_ref().is_some_and(|ids| !ids.contains(&p.source_id))
+                || q.holder.as_ref().is_some_and(|h| *h != t.holder)
+                || q.about.as_ref().is_some_and(|a| !p.slug.starts_with(a.as_str()))
+            {
+                continue;
+            }
+            let since = t.since_date.as_deref();
+            if q.since.as_deref().is_some_and(|s| !since.is_some_and(|d| d >= s))
+                || q.until.as_deref().is_some_and(|u| !since.is_some_and(|d| d <= u))
+            {
+                continue;
+            }
+            rows.push(PredictionRow {
+                id: t.id,
+                source_id: p.source_id.clone(),
+                page_slug: p.slug.clone(),
+                row_num: t.row_num,
+                claim: t.claim,
+                kind: t.kind,
+                holder: t.holder,
+                weight: real_out(t.weight),
+                since_date: t.since_date,
+                resolved_quality: t.resolved_quality,
+                resolved_at: t.resolved_at_us.map(iso),
+                resolved_by: t.resolved_by,
+                resolved_source: t.resolved_source,
+            });
+        }
+        rows.sort_by(|a, b| {
+            (&a.source_id, &a.page_slug, a.row_num).cmp(&(&b.source_id, &b.page_slug, b.row_num))
+        });
+        Ok(rows)
+    }
+
+    /// `readPredictionLedgerEvents(sourceIds, slugs)`: the events of the open page lifetimes (of
+    /// the source's current incarnation) at the listed sources and slugs that date a prediction: a
+    /// take event, or a `page.published` with no `revision_before`; never a backfill. By event id.
+    pub fn read_prediction_ledger_events(
+        &self,
+        source_ids: &[String],
+        slugs: &[String],
+    ) -> Result<Vec<PredictionLedgerEvent>> {
+        let read = self.read()?;
+        let mut lifetimes: Vec<(String, LifetimeRecord)> = Vec::new();
+        let prefix = [crate::keys::TRUST, LIFETIMES, RECORD];
+        let mut bad = None;
+        scan_prefix(&*read, &prefix, false, &mut |k, v| {
+            match serde_json::from_slice::<LifetimeRecord>(v) {
+                Ok(r) => lifetimes.push((String::from_utf8_lossy(&k[prefix.len()..]).into_owned(), r)),
+                Err(e) => bad = Some(e),
+            }
+            bad.is_none()
+        })?;
+        if let Some(e) = bad {
+            return Err(e.into());
+        }
+        let mut out: Vec<(u64, PredictionLedgerEvent)> = Vec::new();
+        for (lifetime, l) in lifetimes {
+            if l.ended_at_us.is_some() || !source_ids.contains(&l.source_id) || !slugs.contains(&l.slug) {
+                continue;
+            }
+            if !crate::sources::read_source(&*read, &l.source_id)?
+                .is_some_and(|s| s.incarnation == l.source_incarnation)
+            {
+                continue;
+            }
+            let ev_prefix = part_key(
+                &[crate::keys::TRUST, EVENTS, EVENT],
+                &[&l.source_id, &l.source_incarnation],
+                None,
+            );
+            let mut events: Vec<EventRecord> = Vec::new();
+            let mut fail = None;
+            scan_prefix(&*read, &ev_prefix, false, &mut |_, v| {
+                match serde_json::from_slice::<EventRecord>(v) {
+                    Ok(e) => events.push(e),
+                    Err(e) => fail = Some(e),
+                }
+                fail.is_none()
+            })?;
+            if let Some(e) = fail {
+                return Err(e.into());
+            }
+            for e in events {
+                if e.page_lifetime.as_deref() != Some(lifetime.as_str()) || e.origin == "backfill" {
+                    continue;
+                }
+                let revision_before = e
+                    .value
+                    .as_ref()
+                    .and_then(|v| v.as_object())
+                    .and_then(|o| o.get("revision_before"))
+                    .and_then(arrow_text);
+                if !(e.subject_kind == "take"
+                    || (e.event_type == "page.published" && revision_before.is_none()))
+                {
+                    continue;
+                }
+                out.push((
+                    e.id,
+                    PredictionLedgerEvent {
+                        source_id: l.source_id.clone(),
+                        slug: l.slug.clone(),
+                        event_type: e.event_type,
+                        subject_key: Some(e.subject_key),
+                        at: iso(e.recorded_at_us),
+                    },
+                ));
+            }
+        }
+        out.sort_by_key(|(id, _)| *id);
+        Ok(out.into_iter().map(|(_, e)| e).collect())
     }
 
     /// `resolveChainAnchorRows(slug, policy)`: every live copy of `slug` the read policy admits, as

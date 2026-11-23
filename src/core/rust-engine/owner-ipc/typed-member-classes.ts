@@ -21,6 +21,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'probeRetypeRows', 'listAliasCandidatePages', 'listLinkCandidatePages', 'countLivePagesByType', 'listTypeOrphanRows', 'readStaleMentionScan',
   'readClockMillisText', 'listLiveSourceIncarnations', 'readAttendanceWindow', 'listEmailAliasPages', 'readUploadSessionByRequest', 'readSourceIncarnationArchived', 'listEnabledLabelledOnlyMemberIds', 'readChatCensusRows',
   'readWhoCanReadRows', 'readPageAccessAllowed', 'readPageFolderRulesAllowed', 'countLineageClosingRules', 'readOpCheckpointCompletedKeys',
+  'readForecastPredictions', 'readPredictionLedgerEvents', 'readTakeHorizonRows', 'readLatestTakeGrades', 'readBeliefCoverageEvents',
   // The mention pass's and the gazetteer, extract snapshot and explain reads (engine-sql/mention-pass.ts, mention-reads.ts).
   // readMentionPageRevisions and readMentionGenerations take row locks (FOR SHARE) only, so they stay reads.
   'readSegmentedPageSealed',

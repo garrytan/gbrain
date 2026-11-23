@@ -442,3 +442,66 @@ export async function readOpCheckpointCompletedKeys(raw: EngineRawRead, op: stri
   const [row] = await raw<{ completed_keys: unknown[] }>('SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [op, fingerprint]);
   return row ? row.completed_keys : null;
 }
+
+/** The forecast journal's filters (forecast-journal.ts readPredictions). */
+export interface PredictionQuery { sourceIds: string[] | null; holder: string | null; about: string | null; since: string | null; until: string | null }
+/** One prediction (forecast-journal.ts TakeRow). */
+export interface PredictionRow {
+  id: number | string; source_id: string; page_slug: string; row_num: number; claim: string; kind: string; holder: string; weight: number | string | null;
+  since_date: string | null; resolved_quality: string | null; resolved_at: string | Date | null; resolved_by: string | null; resolved_source: string | null;
+}
+
+/** The active non-fact takes on live pages the filters admit, by (source, slug) in byte order then row (forecast-journal.ts). */
+export async function readForecastPredictions(raw: EngineRawRead, q: PredictionQuery): Promise<PredictionRow[]> {
+  return raw<PredictionRow>(
+    `SELECT t.id, p.source_id, p.slug AS page_slug, t.row_num, t.claim, t.kind, t.holder, t.weight, t.since_date,
+            t.resolved_quality, t.resolved_at, t.resolved_by, t.resolved_source
+       FROM takes t JOIN pages p ON p.id = t.page_id
+      WHERE p.deleted_at IS NULL AND t.active AND t.kind <> 'fact'
+        AND ($1::text[] IS NULL OR p.source_id = ANY($1::text[]))
+        AND ($2::text IS NULL OR t.holder = $2)
+        AND ($3::text IS NULL OR left(p.slug, length($3)) = $3)
+        AND ($4::text IS NULL OR t.since_date >= $4)
+        AND ($5::text IS NULL OR t.since_date <= $5)
+      ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C", t.row_num`,
+    [q.sourceIds, q.holder, q.about, q.since, q.until]);
+}
+
+/** A ledger event that dates a prediction (forecast-journal.ts recordedPredictionTimes). */
+export interface PredictionLedgerEvent { source_id: string; slug: string; event_type: string; subject_key: string | null; at: string | Date }
+
+/** The take events and first publications of the open page lifetimes at these sources and slugs, by event id (forecast-journal.ts). */
+export async function readPredictionLedgerEvents(raw: EngineRawRead, sourceIds: readonly string[], slugs: readonly string[]): Promise<PredictionLedgerEvent[]> {
+  return raw<PredictionLedgerEvent>(
+    `SELECT l.source_id, l.slug, e.event_type, e.subject_key, e.recorded_at AS at
+       FROM belief_page_lifetimes l
+       JOIN sources s ON s.id = l.source_id AND s.incarnation = l.source_incarnation
+       JOIN belief_events e ON e.source_id = l.source_id AND e.source_incarnation = l.source_incarnation AND e.page_lifetime = l.page_lifetime
+      WHERE l.ended_at IS NULL AND l.source_id = ANY($1::text[]) AND l.slug = ANY($2::text[]) AND e.origin <> 'backfill'
+        AND (e.subject_kind = 'take' OR (e.event_type = 'page.published' AND e.value->>'revision_before' IS NULL))
+      ORDER BY e.id`,
+    [[...sourceIds], [...slugs]]);
+}
+
+/** One take horizon row (takes-horizon.ts readTakeHorizons). */
+export interface TakeHorizonRow { take_id: number | string; horizon_date: string; basis: string; set_at: string | Date; claim_sha256: string; claim: string }
+
+/** The horizons of the given takes (all when null), with the take's claim (takes-horizon.ts readTakeHorizons). */
+export async function readTakeHorizonRows(raw: EngineRawRead, takeIds: readonly number[] | null): Promise<TakeHorizonRow[]> {
+  return raw<TakeHorizonRow>(
+    `SELECT h.take_id, h.horizon_date::text AS horizon_date, h.basis, h.set_at, h.claim_sha256, t.claim
+       FROM take_horizons h JOIN takes t ON t.id = h.take_id
+      WHERE ($1::bigint[] IS NULL OR h.take_id = ANY($1::bigint[]))`,
+    [takeIds ? takeIds.map(Number) : null]);
+}
+
+/** The newest grade of each take (forecast-journal.ts readForecastJournal). */
+export interface TakeGradeRow { take_id: number | string; verdict: string; confidence: number | string; applied: boolean; judge_model_id: string; prompt_version: string; graded_at: string | Date }
+
+/** The newest cached grade of each of the given takes (forecast-journal.ts readForecastJournal). */
+export async function readLatestTakeGrades(raw: EngineRawRead, takeIds: readonly number[]): Promise<TakeGradeRow[]> {
+  return raw<TakeGradeRow>(
+    `SELECT DISTINCT ON (take_id) take_id, verdict, confidence, applied, judge_model_id, prompt_version, graded_at
+       FROM take_grade_cache WHERE take_id = ANY($1::bigint[]) ORDER BY take_id, graded_at DESC`,
+    [[...takeIds]]);
+}

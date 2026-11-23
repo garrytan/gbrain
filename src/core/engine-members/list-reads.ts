@@ -4,7 +4,8 @@
  */
 import type { PageReadPolicy } from '../types.ts';
 import type { OwnerOnlyForm } from '../access/owner-only.ts';
-import type { AttendanceWindowRow, CardListQuery, ChatCensusRow, WhoCanReadRow, CardRow, CompanyBrainEvidenceRows, MentionScanLinkRow, MentionScanPageRow, PageBodyRow, PageSourceIdRow, RetypeProbeQuery, ShelfPageRow, SourceIdScope, TargetProbeSqlRow } from '../engine-sql/list-reads.ts';
+import type { BeliefCoverageEventRow } from '../engine-sql/belief-ledger.ts';
+import type { AttendanceWindowRow, CardListQuery, ChatCensusRow, PredictionLedgerEvent, PredictionQuery, PredictionRow, TakeGradeRow, TakeHorizonRow, WhoCanReadRow, CardRow, CompanyBrainEvidenceRows, MentionScanLinkRow, MentionScanPageRow, PageBodyRow, PageSourceIdRow, RetypeProbeQuery, ShelfPageRow, SourceIdScope, TargetProbeSqlRow } from '../engine-sql/list-reads.ts';
 
 export interface ListReadMembers {
   /** The sources holding a live page at `slug`, by id in byte order (page-ref ambiguity, quarantine clear, --grammar). */
@@ -60,4 +61,13 @@ export interface ListReadMembers {
   countLineageClosingRules(ruleIds: readonly string[], sourceId: string): Promise<number>;
   /** The completed keys of one op checkpoint row, or null (the connector DB cursor read). */
   readOpCheckpointCompletedKeys(op: string, fingerprint: string): Promise<unknown[] | null>;
+  /** The forecast journal (forecast-journal.ts): the predictions the filters admit, by (source, slug, row); */
+  readForecastPredictions(q: PredictionQuery): Promise<PredictionRow[]>;
+  /** the ledger events that date them; */
+  readPredictionLedgerEvents(sourceIds: readonly string[], slugs: readonly string[]): Promise<PredictionLedgerEvent[]>;
+  /** the takes' horizons (all when null) and their newest grades; */
+  readTakeHorizonRows(takeIds: readonly number[] | null): Promise<TakeHorizonRow[]>;
+  readLatestTakeGrades(takeIds: readonly number[]): Promise<TakeGradeRow[]>;
+  /** and a source's belief-ledger coverage events of its current incarnation, by id (belief/coverage-report.ts). */
+  readBeliefCoverageEvents(sourceId: string): Promise<BeliefCoverageEventRow[]>;
 }

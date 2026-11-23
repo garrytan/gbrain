@@ -108,11 +108,7 @@ export async function clearTakeHorizon(engine: BrainEngine, takeId: number): Pro
 
 /** Horizons by take id (all, or only the given takes); `current` is false when the claim changed since the horizon was set. */
 export async function readTakeHorizons(engine: BrainEngine, takeIds?: readonly number[]): Promise<Map<number, TakeHorizon>> {
-  const rows = await engine.executeRaw<{ take_id: number | string; horizon_date: string; basis: HorizonBasis; set_at: string | Date; claim_sha256: string; claim: string }>(
-    `SELECT h.take_id, h.horizon_date::text AS horizon_date, h.basis, h.set_at, h.claim_sha256, t.claim
-       FROM take_horizons h JOIN takes t ON t.id = h.take_id
-      WHERE ($1::bigint[] IS NULL OR h.take_id = ANY($1::bigint[]))`,
-    [takeIds ? takeIds.map(Number) : null]);
+  const rows = (await engine.readTakeHorizonRows(takeIds ?? null)) as Array<{ take_id: number | string; horizon_date: string; basis: HorizonBasis; set_at: string | Date; claim_sha256: string; claim: string }>;
   return new Map(rows.map(r => [Number(r.take_id), {
     take_id: Number(r.take_id), horizon_date: r.horizon_date, basis: r.basis,
     set_at: r.set_at instanceof Date ? r.set_at.toISOString() : String(r.set_at), current: claimSha(r.claim) === r.claim_sha256,

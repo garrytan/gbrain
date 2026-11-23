@@ -4,12 +4,13 @@
  * readRetainedSources is the connector status's "retained" flag (persistence/connector-status.ts).
  */
 import type { PageReadPolicy } from '../../types.ts';
-import type { AttendanceWindowRow, CardListQuery, ChatCensusRow, WhoCanReadRow, CardRow, CompanyBrainEvidenceRows, MentionScanLinkRow, MentionScanPageRow, PageBodyRow, PageSourceIdRow, RetypeProbeQuery, ShelfPageRow, SourceIdScope, TargetProbeSqlRow } from '../../engine-sql/list-reads.ts';
+import type { AttendanceWindowRow, CardListQuery, ChatCensusRow, PredictionLedgerEvent, PredictionQuery, PredictionRow, TakeGradeRow, TakeHorizonRow, WhoCanReadRow, CardRow, CompanyBrainEvidenceRows, MentionScanLinkRow, MentionScanPageRow, PageBodyRow, PageSourceIdRow, RetypeProbeQuery, ShelfPageRow, SourceIdScope, TargetProbeSqlRow } from '../../engine-sql/list-reads.ts';
 import { storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy, storePageTextPolicy } from './private-provenance.ts';
 import { accessAllowedSql, currentCallerAccess, privatePagesFilterFragment } from '../../search/private-visibility.ts';
 import { ownerOnlyFormIn } from './private-provenance.ts';
 import type { OwnerOnlyForm } from '../../access/owner-only.ts';
+import type { BeliefCoverageEventRow } from '../../engine-sql/belief-ledger.ts';
 
 /**
  * A caller's read policy as the store's page read scope (`pageReadFilter` with its live filter, search/read-policy-sql.ts):
@@ -170,3 +171,22 @@ export const readOpCheckpointCompletedKeys: StoreMember<[op: string, fingerprint
   const found = (await storeCall({ member: 'readOpCheckpointCompletedKeys' }, () => brain.readOpCheckpointRecords(op, [fingerprint]))) as unknown[];
   return found.length ? (found[0] === null ? [] : [found[0]]) : null;
 };
+
+export const readForecastPredictions: StoreMember<[q: PredictionQuery], PredictionRow[]> = async (brain, q) => {
+  const { sourceIds, holder, about, since, until } = takeOptions('readForecastPredictions', q, ['sourceIds', 'holder', 'about', 'since', 'until']);
+  return (await storeCall({ member: 'readForecastPredictions' }, () => brain.readForecastPredictions({ sourceIds, holder, about, since, until }))) as PredictionRow[];
+};
+
+export const readPredictionLedgerEvents: StoreMember<[sourceIds: readonly string[], slugs: readonly string[]], PredictionLedgerEvent[]> = async (brain, sourceIds, slugs) =>
+  (await storeCall({ member: 'readPredictionLedgerEvents' }, () => brain.readPredictionLedgerEvents([...sourceIds], [...slugs]))) as PredictionLedgerEvent[];
+
+/**
+ * No horizons and no grades: the store keeps no `take_horizons` or `take_grade_cache` rows. Their writers
+ * (`gbrain takes horizon set|clear|scan --apply`, the grade_takes cycle phase, `gbrain calibration --undo-wave`) run raw
+ * SQL, which a Rust brain refuses with engine_capability_missing, so no such row can exist.
+ */
+export const readTakeHorizonRows: StoreMember<[takeIds: readonly number[] | null], TakeHorizonRow[]> = async () => [];
+export const readLatestTakeGrades: StoreMember<[takeIds: readonly number[]], TakeGradeRow[]> = async () => [];
+
+export const readBeliefCoverageEvents: StoreMember<[sourceId: string], BeliefCoverageEventRow[]> = async (brain, sourceId) =>
+  (await storeCall({ member: 'readBeliefCoverageEvents' }, () => brain.readBeliefCoverageEvents(sourceId))) as BeliefCoverageEventRow[];

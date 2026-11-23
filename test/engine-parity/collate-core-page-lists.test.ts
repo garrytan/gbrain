@@ -230,7 +230,7 @@ describe('storage shelf and fact pool lists', () => {
 });
 
 describe('forecast journal', () => {
-  parityTest('readForecastJournal lists predictions by (source, slug) byte order', { methods: ['putPage', 'getPage', 'addTakesBatch', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('readForecastJournal lists predictions by (source, slug) byte order', { methods: ['putPage', 'getPage', 'addTakesBatch', 'readForecastPredictions', 'readTakeHorizonRows', 'readPredictionLedgerEvents', 'readBeliefCoverageEvents', 'readLatestTakeGrades'] }, async (engine, backend) => {
     for (const id of MIXED_SOURCES) {
       await createSource(engine, backend, id);
       for (const slug of MIXED_SLUGS) {
