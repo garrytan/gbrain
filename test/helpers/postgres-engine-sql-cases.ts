@@ -356,6 +356,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listGitImageHoldCounts': OOS.doctorSearch,
   'readProjectionBacklog': OOS.doctorSearch,
   'countAtomExtractionBacklog': OOS.doctorSearch,
+  'listAtomBacklogSourceIds': OOS.doctorSearch,
 
   'isAccessStateUnreadable': OOS.doctorAcc,
   'listRawOnlyRules': OOS.doctorAcc,
@@ -416,6 +417,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'readOldestSourceCreatedAt': OOS.doctorBrain,
   'listVisibilityCandidatePages': OOS.doctorBrain,
   'countVisibilityNoncanonicalHolds': OOS.doctorBrain,
+  'countReadersNoncanonicalHolds': OOS.doctorBrain,
+  'listReaderCandidatePages': OOS.doctorBrain,
   'listContentBlockedReceipts': OOS.doctorBrain,
   'listPassAdmittedReceipts': OOS.doctorBrain,
   'listOrphanConnectorCheckpoints': OOS.doctorBrain,
@@ -903,6 +906,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'replaceDerivedAliases': OOS.importWrites,
   'refreshPageOrigin': OOS.importWrites,
   'readPageOrigin': OOS.writeGuards,
+  'listRevivalPages': OOS.writeGuards,
   'listOriginClaims': OOS.writeGuards,
   'bindPageOrigin': OOS.writeGuards,
   'stampPageIngest': OOS.writeGuards,
@@ -1563,7 +1567,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readRowAttribution': OOS.writeAttribution,
   'attributionReads': OOS.helper,
   // the write journal (typed admission, claim, completion, limit and hold reads)
-  'readJournalLimitRows': OOS.journal, 'readHeldPageRows': OOS.journal, 'readHeldCoverageRows': OOS.journal, 'listFenceHoldRows': OOS.journal,
+  'readJournalLimitRows': OOS.journal, 'readHeldPageRows': OOS.journal, 'readHeldHitRows': OOS.journal, 'readSourceRequestById': OOS.journal, 'listSourceRequestsByRequestId': OOS.journal, 'listRetryTrackedEffects': OOS.journal, 'lockEffectRow': OOS.journal, 'readHeldCoverageRows': OOS.journal, 'listFenceHoldRows': OOS.journal,
   'readWriteRequest': OOS.journal, 'readWriteRequestById': OOS.journal, 'readWriteRequestProgress': OOS.journal, 'countOutstandingBySource': OOS.journal, 'readWorktreeAdmission': OOS.journal, 'completeSyncedRefresh': OOS.journal,
   'hasDeferralRoom': OOS.journal, 'readRefreshTiming': OOS.journal, 'countHeldBehindImport': OOS.journal, 'ownsSchemaTables': OOS.journal, 'readCounterRows': OOS.journal, 'readAdmissionRate': OOS.journal,
   'lockPersistenceCounters': OOS.journal, 'readFenceOriginGone': OOS.journal, 'lockGenerationKey': OOS.journal, 'clearFenceHoldRows': OOS.journal, 'readFenceHoldFiles': OOS.journal, 'readLiveGenerationRow': OOS.journal,

@@ -198,3 +198,208 @@ fn content_blocked_receipts_name_the_failed_pending_request_of_each_unfinished_c
     );
     assert_eq!(rows[0]["error_code"], "invalid_frontmatter");
 }
+
+fn source(s: &Store, id: &str) -> String {
+    s.upsert_source(&SourceInput {
+        id: id.into(),
+        ..Default::default()
+    })
+    .unwrap();
+    s.read_source_membership(id).unwrap().unwrap()["incarnation"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+fn page_in(
+    s: &Store,
+    source: &str,
+    slug: &str,
+    kind: &str,
+    title: &str,
+    frontmatter: Value,
+) -> u64 {
+    let input: PageInput = serde_json::from_value(
+        json!({"type": kind, "title": title, "compiled_truth": "x", "frontmatter": frontmatter}),
+    )
+    .unwrap();
+    let opts: PutPageOptions = serde_json::from_value(json!({"sourceId": source})).unwrap();
+    s.put_page(slug, &input, &opts).unwrap()["id"]
+        .as_u64()
+        .unwrap()
+}
+
+#[test]
+fn noncanonical_holds_count_one_code_of_live_sources_at_their_incarnation() {
+    let (s, _) = brain("noncanonical");
+    let ab = source(&s, "ab");
+    let cd = source(&s, "cd");
+    let hold = |fp: &str, src: &str, inc: &str, code: &str| {
+        s.write_op_checkpoint_record(
+            "git-hold",
+            fp,
+            Some(&json!([{ "source_id": src, "incarnation": inc, "code": code, "path": fp }])),
+        )
+        .unwrap();
+    };
+    hold("a", "ab", &ab, "readers_noncanonical");
+    hold("b", "ab", &ab, "readers_noncanonical");
+    hold("c", "ab", "stale-incarnation", "readers_noncanonical");
+    hold("d", "cd", &cd, "readers_noncanonical");
+    hold("e", "ab", &ab, "visibility_noncanonical");
+    hold("f", "gone", &ab, "readers_noncanonical");
+    let count = |code: &str, ids: Option<&[String]>| {
+        s.count_noncanonical_holds("git-hold", code, ids).unwrap()
+    };
+    assert_eq!(count("readers_noncanonical", None), 3);
+    assert_eq!(count("readers_noncanonical", Some(&["ab".to_string()])), 2);
+    assert_eq!(count("visibility_noncanonical", None), 1);
+    assert_eq!(count("readers_noncanonical", Some(&[])), 0);
+}
+
+#[test]
+fn reader_candidate_pages_name_a_misspelled_readers_key_by_source_and_slug_bytes() {
+    let (s, _) = brain("readers");
+    source(&s, "a-z");
+    source(&s, "ab");
+    page_in(
+        &s,
+        "ab",
+        "notes/one",
+        "note",
+        "one",
+        json!({ "Readable-By": ["x"] }),
+    );
+    page_in(
+        &s,
+        "a-z",
+        "notes/bx",
+        "note",
+        "two",
+        json!({ "readable by": ["x"] }),
+    );
+    page_in(
+        &s,
+        "a-z",
+        "notes/b-x",
+        "note",
+        "One",
+        json!({ "READABLE_by": ["x"] }),
+    );
+    // The canonical key and an unrelated key are not candidates.
+    page_in(
+        &s,
+        "ab",
+        "notes/ok",
+        "note",
+        "ok",
+        json!({ "readable_by": ["x"] }),
+    );
+    page_in(
+        &s,
+        "ab",
+        "notes/other",
+        "note",
+        "other",
+        json!({ "readers": ["x"] }),
+    );
+    let rows = s.list_reader_candidate_pages(None).unwrap();
+    let got: Vec<String> = rows
+        .iter()
+        .map(|r| {
+            format!(
+                "{}:{}",
+                r["source_id"].as_str().unwrap(),
+                r["slug"].as_str().unwrap()
+            )
+        })
+        .collect();
+    assert_eq!(got, vec!["a-z:notes/b-x", "a-z:notes/bx", "ab:notes/one"]);
+    assert_eq!(
+        s.list_reader_candidate_pages(Some(&["ab".to_string()]))
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn held_hit_rows_stamp_the_hits_in_fingerprint_order_and_count_what_could_affect_the_read() {
+    let (s, _) = brain("held-hits");
+    let ab = source(&s, "ab");
+    let hit = page_in(&s, "ab", "notes/hit", "note", "Hit", json!({}));
+    let typed = page_in(&s, "ab", "notes/typed", "meeting", "Typed", json!({}));
+    let worded = page_in(
+        &s,
+        "ab",
+        "notes/worded",
+        "note",
+        "The Alpha plan",
+        json!({}),
+    );
+    let other = page_in(&s, "ab", "notes/other", "note", "Alphabet", json!({}));
+    let hold = |fp: &str, page: u64, held_at: &str| {
+        s.write_op_checkpoint_record(
+            "git-hold",
+            fp,
+            Some(&json!([{ "source_id": "ab", "incarnation": ab, "page_id": page, "path": format!("{fp}.md"), "held_at": held_at }])),
+        )
+        .unwrap();
+    };
+    hold("ab:z", hit, "2021");
+    hold("ab:a-z", hit, "2020");
+    hold("ab:t", typed, "2022");
+    hold("ab:w", worded, "2022");
+    hold("ab:o", other, "2022");
+    let query: gbrain_store::persistence::HeldHitQuery = serde_json::from_value(json!({
+        "holdOp": "git-hold", "pageIds": [hit.to_string()], "sourceIds": ["ab"], "types": ["meeting"],
+        "terms": ["alpha"], "cap": 100,
+    }))
+    .unwrap();
+    let rows = s.read_held_hit_rows(&query).unwrap();
+    let rows = rows.as_array().unwrap();
+    let stamped: Vec<&str> = rows[..rows.len() - 1]
+        .iter()
+        .map(|r| r["record"]["held_at"].as_str().unwrap())
+        .collect();
+    assert_eq!(stamped, vec!["2020", "2021"]);
+    assert!(rows[0]["revision"].is_string());
+    // The two holds of the hit, the meeting page and the whole word `alpha`; `Alphabet` is no match.
+    assert_eq!(rows[rows.len() - 1]["could_affect"], 4);
+    let capped: gbrain_store::persistence::HeldHitQuery = serde_json::from_value(json!({
+        "holdOp": "git-hold", "pageIds": [hit.to_string()], "sourceIds": ["ab"], "types": ["meeting"],
+        "terms": ["alpha"], "cap": 2,
+    }))
+    .unwrap();
+    let rows = s.read_held_hit_rows(&capped).unwrap();
+    assert_eq!(rows.as_array().unwrap().last().unwrap()["could_affect"], 2);
+}
+
+#[test]
+fn revival_pages_list_the_tombstones_of_a_slug_by_source_bytes() {
+    let (s, _) = brain("revival");
+    for id in ["ab", "a-z", "live"] {
+        source(&s, id);
+        page_in(&s, id, "notes/revived", "note", "r", json!({}));
+    }
+    s.soft_delete_page("notes/revived", Some("ab")).unwrap();
+    s.soft_delete_page("notes/revived", Some("a-z")).unwrap();
+    let got: Vec<String> = s
+        .list_revival_pages("notes/revived", None)
+        .unwrap()
+        .iter()
+        .map(|r| r["source_id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(got, vec!["a-z", "ab"]);
+    assert_eq!(
+        s.list_revival_pages("notes/revived", Some("ab"))
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(
+        s.list_revival_pages("notes/revived", Some("live"))
+            .unwrap()
+            .is_empty()
+    );
+}

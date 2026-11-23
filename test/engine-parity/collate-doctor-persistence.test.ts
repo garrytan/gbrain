@@ -218,10 +218,9 @@ describe('doctor persistence reads sort text keys by byte', () => {
   });
 
   parityTest('git_held_files names the stored pages asking for private, five at most, by byte source id then slug', {
-    methods: ['executeRaw', 'putPage'], requires: 'raw_sql',
+    methods: ['putPage', 'listVisibilityCandidatePages', 'countReadersNoncanonicalHolds', 'listReaderCandidatePages'],
   }, async (engine, backend) => {
     const { gitHeldFilesCheck } = await import('../../src/commands/doctor/checks/git-holds.ts');
-    await needRawSql(engine);
     const slugs = ['ab', 'a/z', 'a-z'];
     for (const id of SRC) {
       await createSource(engine, backend, id);
@@ -234,6 +233,46 @@ describe('doctor persistence reads sort text keys by byte', () => {
     const [source, slug] = pairs[0]!.split(':') as [string, string];
     expect(out).toEqual({ status: 'warn', stored: 9, message: true, fix: ['gbrain', 'get', '--source', source, '--', slug] });
     return out;
+  });
+
+  parityTest('git_held_files counts the visibility and readers spelling holds of live sources at their incarnation', {
+    methods: ['readSourceMembership', 'writeOpCheckpointRecord', 'countVisibilityNoncanonicalHolds', 'countReadersNoncanonicalHolds'],
+  }, async (engine, backend) => {
+    const { GIT_HOLD_OP } = await import('../../src/core/engine-sql/persistence-journal.ts');
+    for (const id of SRC) await createSource(engine, backend, id);
+    const hold = async (fingerprint: string, source: string, code: string, incarnation?: string) =>
+      engine.writeOpCheckpointRecord(GIT_HOLD_OP, fingerprint, [{ source_id: source, incarnation: incarnation ?? (await engine.readSourceMembership(source))!.incarnation, code, path: `${fingerprint}.md` }]);
+    for (const [n, id] of SRC.entries()) {
+      await hold(`v-${n}`, id, 'visibility_noncanonical');
+      await hold(`r-${n}`, id, 'readers_noncanonical');
+    }
+    // A hold recorded under another incarnation of its source no longer counts.
+    await hold('v-stale', SRC[0], 'visibility_noncanonical', randomUUID());
+    const out = {
+      visibility: await engine.countVisibilityNoncanonicalHolds(GIT_HOLD_OP, null),
+      readers: await engine.countReadersNoncanonicalHolds(GIT_HOLD_OP, null),
+      scoped: await engine.countReadersNoncanonicalHolds(GIT_HOLD_OP, [SRC[0]]),
+    };
+    expect(out).toEqual({ visibility: 3, readers: 3, scoped: 1 });
+    return out;
+  });
+
+  parityTest('listAtomBacklogSourceIds and listReaderCandidatePages list sources and pages by byte', {
+    methods: ['putPage', 'listAtomBacklogSourceIds', 'listReaderCandidatePages'],
+  }, async (engine, backend) => {
+    for (const id of SRC) {
+      await createSource(engine, backend, id);
+      for (const slug of ['ab', 'a/z', 'a-z']) {
+        await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'x', timeline: '', frontmatter: { 'Readable-By': ['member:x'] } }, { sourceId: id });
+      }
+    }
+    const sources = (await engine.listAtomBacklogSourceIds()).map(row => row.source_id).filter(id => (SRC as readonly string[]).includes(id));
+    const pages = (await engine.listReaderCandidatePages([...SRC])).map(row => `${row.source_id}:${row.slug}`);
+    expect(sources).toEqual(SRC_BYTES);
+    // The reader-candidate statement sorts by the database collation (no COLLATE "C"), so a non-C Postgres may list these
+    // in another order than PGLite and Rust; its rows are compared as a set, and the order goes in the swap report.
+    expect([...pages].sort()).toEqual(SRC.flatMap(id => ['ab', 'a/z', 'a-z'].map(slug => `${id}:${slug}`)).sort());
+    return { sources, count: pages.length };
   });
 
   parityTest('contentBlockedSources lists the sources a failed content refusal stops by byte id', {
@@ -267,10 +306,9 @@ describe('doctor persistence reads sort text keys by byte', () => {
   });
 
   parityTest('extract_atoms_backlog names the backlog sources by byte id in its drain hint', {
-    methods: ['executeRaw', 'putPage'], requires: 'raw_sql',
+    methods: ['putPage', 'countAtomExtractionBacklog', 'listAtomBacklogSourceIds'],
   }, async (engine, backend) => {
     const { computeExtractAtomsBacklogCheck } = await import('../../src/commands/doctor.ts');
-    await needRawSql(engine);
     const home = mkdtempSync(join(tmpdir(), 'gbrain-collate-atoms-home-'));
     try {
       for (const id of SRC) {

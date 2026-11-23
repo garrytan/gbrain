@@ -425,6 +425,21 @@ for type bigint`), a fractional limit with the same bigint syntax message and a 
 | `brain.selectClaimableEffect(hostId, deadOwners)` | the effect row the worker claims next, or `null` (see "Effect worker") | `selectClaimableEffect` |
 
 
+## Effect retry reads
+
+The reads `gbrain sources writer retry-effects` makes before it authorizes one more attempt
+(`engine-sql/effect-retry.ts`; store side `persistence/effect_retry_reads.rs`). Each returns the rows
+`SELECT *` returns (`RequestRecord::to_row`, `EffectRecord::to_row`). A request or row id that is not a
+UUID refuses, as the SQL's `::uuid` casts do; an effect id that is not a bigint refuses likewise. The
+retry's requeue still runs raw SQL, so on this engine only the preview (`--dry-run`) completes.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.readSourceRequestById(sourceId, id)` | the request row `id` of the source, or `null` | `readSourceRequestById` |
+| `brain.listSourceRequestsByRequestId(sourceId, requestId)` | at most two request rows of the source admitted under the client request id, by sequence (two mean the id is ambiguous) | `listSourceRequestsByRequestId` |
+| `brain.listRetryTrackedEffects(requestRowId, parkedOnly, failedCodes)` | the request's effects a retry tracks, by kind bytewise: a Git or withdrawal-mirror effect with `parked` or `retried` data; unless `parkedOnly`, a failed effect (an embedding effect only when it failed `source_changed`) and an embedding effect with `parked` data; a failed Git effect with a code in `failedCodes` | `listRetryTrackedEffects` |
+| `brain.lockEffectRow(id)` | effect row `id`, or `null`; the store write is already exclusive, so `FOR UPDATE` takes nothing | `lockEffectRow` |
+
 ## Publication effects
 
 `brain.insertPublicationEffects({ requestId, revision, sourceId, sourceIncarnation, worktreeId, effects })`

@@ -324,19 +324,37 @@ describe('origin reads sort source ids by byte', () => {
   });
 
   parityTest('assertRevivalUnclaimed checks the sources of a revived slug in byte id order, so the refusal names the byte-first source', {
-    methods: ['executeRaw', 'putPage', 'transaction'], requires: 'raw_sql',
+    methods: ['putPage', 'softDeletePage', 'transaction', 'listRevivalPages'],
   }, async (engine, backend) => {
+    // In each source the revived page is deleted first, so the holder that takes over its file is the only live page of that origin.
     for (const id of ['ab', 'a-z']) {
       await createSource(engine, backend, id);
-      await engine.putPage('notes/revived', page('revived'), { sourceId: id });
-      await engine.putPage('notes/holder', page('holder'), { sourceId: id });
+      await engine.putPage('notes/revived', { ...page('revived'), source_path: 'notes/revived.md' } as never, { sourceId: id });
+      await engine.softDeletePage('notes/revived', { sourceId: id });
+      await engine.putPage('notes/holder', { ...page('holder'), source_path: 'notes/revived.md' } as never, { sourceId: id });
     }
-    await engine.executeRaw("UPDATE pages SET source_path = 'notes/revived.md' WHERE slug = 'notes/holder'");
-    await engine.executeRaw("UPDATE pages SET source_path = 'notes/revived.md', deleted_at = now() WHERE slug = 'notes/revived'");
     const refusal = await engine.transaction(tx => assertRevivalUnclaimed(tx, 'notes/revived')).then(() => null, (error: Error) => error);
     expect(refusal).not.toBeNull();
     expect(refusal!.message).toContain('source a-z ');
     return refusal!.message;
+  });
+});
+
+describe('the revival read sorts sources by byte', () => {
+  parityTest('listRevivalPages lists the tombstones of a slug by byte source id, of one source when named', {
+    methods: ['putPage', 'softDeletePage', 'listRevivalPages'],
+  }, async (engine, backend) => {
+    for (const id of ['ab', 'a-z', 'live']) {
+      await createSource(engine, backend, id);
+      await engine.putPage('notes/revived', { type: 'note', title: 'revived', compiled_truth: 'x', timeline: '' }, { sourceId: id });
+      if (id !== 'live') await engine.softDeletePage('notes/revived', { sourceId: id });
+    }
+    const all = (await engine.listRevivalPages('notes/revived', null)).map(row => row.source_id);
+    const one = (await engine.listRevivalPages('notes/revived', 'ab')).map(row => row.source_id);
+    const live = await engine.listRevivalPages('notes/revived', 'live');
+    expect(all).toEqual(['a-z', 'ab']);
+    expect({ one, live: live.length }).toEqual({ one: ['ab'], live: 0 });
+    return { all, one, live: live.length };
   });
 });
 
@@ -348,8 +366,7 @@ describe('manual link reads sort text keys by byte', () => {
     await createSource(engine, backend, SRC);
     await engine.putPage('people/from', page('from'), { sourceId: SRC });
     for (const slug of targets) await engine.putPage(slug, page(slug), { sourceId: SRC });
-    const [from] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2', [SRC, 'people/from']);
-    return Number(from!.id);
+    return Number((await engine.readPageSnapshot('people/from', { sourceId: SRC }))!.page.id);
   }
   const request = (operation: string, pageId: number, intent: Record<string, unknown>) => ({
     request_id: randomUUID(), operation, slug: 'people/from', source_id: SRC, page_id: pageId, intent,

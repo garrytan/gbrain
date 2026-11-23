@@ -59,4 +59,17 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_derived_origin_parks(&op))
     }
+
+    /// `readHeldHitRows({ holdOp, pageIds, sourceIds, types, terms, cap })`: the hits' hold rows, then
+    /// `{ could_affect }`.
+    #[napi]
+    pub fn read_held_hit_rows<'env>(
+        &self,
+        env: &'env Env,
+        query: serde_json::Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_held_hit_rows(&required(query, "readHeldHitRows query")?)
+        })
+    }
 }

@@ -35,14 +35,14 @@ test/engine-parity/collate-belief-cycle-walks.test.ts	0	6
 test/engine-parity/collate-command-listings.test.ts	0	8
 test/engine-parity/collate-core-page-lists.test.ts	4	12
 test/engine-parity/collate-doctor-access.test.ts	0	11
-test/engine-parity/collate-doctor-persistence.test.ts	4	9
+test/engine-parity/collate-doctor-persistence.test.ts	8	7
 test/engine-parity/collate-doctor.test.ts	0	10
 test/engine-parity/collate-engine-sql.test.ts	28	7
 test/engine-parity/collate-facts-home.test.ts	1	0
 test/engine-parity/collate-ontology-config.test.ts	5	1
 test/engine-parity/collate-outputs.test.ts	2	5
-test/engine-parity/collate-persistence-a.test.ts	8	12
-test/engine-parity/collate-persistence-b.test.ts	4	17
+test/engine-parity/collate-persistence-a.test.ts	12	10
+test/engine-parity/collate-persistence-b.test.ts	6	16
 test/engine-parity/collate-referrer-ties.test.ts	3	0
 test/engine-parity/collate-repair-scans.test.ts	0	4
 test/engine-parity/collate-schema-pack-samples.test.ts	0	4

@@ -486,9 +486,7 @@ async function countExtractAtomsBacklogBySource(
     // unscoped local/host path.
     const sources = sourceIds
       ? [...sourceIds].sort().map((source_id) => ({ source_id }))
-      : await engine.executeRaw<{ source_id: string }>(
-        `SELECT source_id FROM pages WHERE deleted_at IS NULL GROUP BY source_id ORDER BY source_id COLLATE "C"`,
-      );
+      : await engine.listAtomBacklogSourceIds();
     const rows: Array<{ source_id: string; backlog: number }> = [];
     for (const src of sources) {
       const backlog = await countBacklog(engine, src.source_id);

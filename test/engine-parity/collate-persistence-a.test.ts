@@ -290,7 +290,7 @@ describe('drift, stalled-effect and retry listings sort by byte', () => {
   });
 
   parityTest('retryParkedEffects lists a request\'s tracked effects by byte kind', {
-    methods: ['insertWriteRequest', 'completeWriteRow', 'insertPublicationEffects', 'failEffectRow'],
+    methods: ['insertWriteRequest', 'completeWriteRow', 'insertPublicationEffects', 'failEffectRow', 'listSourceRequestsByRequestId', 'listRetryTrackedEffects', 'lockEffectRow'],
   }, async (engine, backend) => inHome(async () => {
     localHostId();
     await createSource(engine, backend, 'ab');
@@ -302,6 +302,56 @@ describe('drift, stalled-effect and retry listings sort by byte', () => {
     expect(kinds).toEqual([...BYTE_IDS]);
     return kinds;
   }));
+});
+
+describe('the typed retry and held-hit reads sort by byte', () => {
+  parityTest('the parked-effect retry reads find one source\'s request and list its tracked effects by byte kind', {
+    methods: ['insertWriteRequest', 'completeWriteRow', 'insertPublicationEffects', 'failEffectRow', 'readSourceRequestById',
+      'listSourceRequestsByRequestId', 'listRetryTrackedEffects', 'lockEffectRow', 'transaction'],
+  }, async (engine, backend) => {
+    for (const id of ['ab', 'a-z']) await createSource(engine, backend, id);
+    const request = await seedTypedRequest(engine, { source: 'ab', state: 'committed' });
+    await seedTypedEffects(engine, { ...request, source: 'ab' }, MIXED_IDS.map(kind => ({ kind })));
+    await settleTypedEffects(engine, () => ({ to: 'failed', reason: 'effect_failed' }));
+    const byRequestId = await engine.listSourceRequestsByRequestId<{ id: string }>('ab', request.requestId);
+    const otherSource = await engine.listSourceRequestsByRequestId('a-z', request.requestId);
+    const byId = await engine.readSourceRequestById('ab', request.id) as { request_id: string } | null;
+    const tracked = await engine.listRetryTrackedEffects<{ id: string | number; kind: string; state: string }>(request.id, false, []);
+    const parkedOnly = await engine.listRetryTrackedEffects(request.id, true, []);
+    const locked = await engine.transaction(tx => tx.lockEffectRow(tracked[0]!.id)) as { kind: string; error_code: string | null } | null;
+    const out = {
+      byRequestId: byRequestId.map(row => row.id === request.id), otherSource: otherSource.length, byId: byId?.request_id === request.requestId,
+      tracked: tracked.map(row => `${row.kind}:${row.state}`), parkedOnly: parkedOnly.length, locked: locked && `${locked.kind}:${locked.error_code}`,
+    };
+    expect(out).toEqual({ byRequestId: [true], otherSource: 0, byId: true, tracked: BYTE_IDS.map(kind => `${kind}:failed`), parkedOnly: 0, locked: `${BYTE_IDS[0]}:effect_failed` });
+    return out;
+  });
+
+  parityTest('readHeldHitRows lists a hit\'s holds by byte fingerprint and counts the holds that could affect the read', {
+    methods: ['putPage', 'readSourceMembership', 'writeOpCheckpointRecord', 'readHeldHitRows'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'ab');
+    const { incarnation } = (await engine.readSourceMembership('ab'))!;
+    const pageOf = async (slug: string, type: 'note' | 'meeting', title: string) => Number((await engine.putPage(slug, { type, title, compiled_truth: 'x', timeline: '' }, { sourceId: 'ab' })).id);
+    const hit = await pageOf('notes/hit', 'note', 'Hit');
+    const meeting = await pageOf('notes/meeting', 'meeting', 'Meeting');
+    const worded = await pageOf('notes/worded', 'note', 'The Alpha plan');
+    const other = await pageOf('notes/other', 'note', 'Alphabet');
+    const hold = (path: string, page: number) => engine.writeOpCheckpointRecord(GIT_HOLD_OP, `ab:${incarnation}:${path}`,
+      [{ version: 1, source_id: 'ab', incarnation, path, page_id: page, held_at: path, code: 'invalid_frontmatter' }]);
+    for (const path of MIXED_IDS) await hold(path, hit);
+    await hold('m', meeting);
+    await hold('w', worded);
+    await hold('o', other);
+    const rows = await engine.readHeldHitRows({ pageIds: [String(hit)], sourceIds: ['ab'], types: ['meeting'],
+      patterns: ['(^|[^[:alnum:]])alpha([^[:alnum:]]|$)'] }) as Array<{ record: { path: string } | null; revision: string | null; could_affect: number | string | null }>;
+    const holds = rows.filter(row => row.record);
+    const out = { paths: holds.map(row => row.record!.path), revisions: holds.every(row => typeof row.revision === 'string'),
+      couldAffect: Number(rows.at(-1)!.could_affect) };
+    // Every hold of the hit, the meeting page and the whole word `alpha`; `Alphabet` is no match.
+    expect(out).toEqual({ paths: [...BYTE_IDS], revisions: true, couldAffect: MIXED_IDS.length + 2 });
+    return out;
+  });
 });
 
 describe('git durability and push-hold readers sort by byte', () => {
@@ -474,16 +524,17 @@ describe('topology status and blocker lists sort source ids by byte', () => {
 
 describe('held-read and managed-sync orphan readers sort by byte', () => {
   parityTest('stampHeldHits stamps a page from its byte-first hold', {
-    methods: ['executeRaw', 'readHeldCoverageRows'], requires: 'raw_sql',
-  }, async (engine) => {
-    const incarnation = await addSource(engine, 'ab');
-    const [page] = await engine.executeRaw<{ id: number }>(`INSERT INTO pages(source_id,slug,type,title,compiled_truth) VALUES('ab','notes/held','note','held','x') RETURNING id`);
-    await checkpoint(engine, GIT_HOLD_SUMMARY_OP, `ab:${incarnation}`, [{ count: 2, stale: 2 }]);
+    methods: ['putPage', 'readSourceMembership', 'writeOpCheckpointRecord', 'readHeldCoverageRows', 'readHeldHitRows'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'ab');
+    const { incarnation } = (await engine.readSourceMembership('ab'))!;
+    const page = await engine.putPage('notes/held', { type: 'note', title: 'held', compiled_truth: 'x', timeline: '' }, { sourceId: 'ab' });
+    await engine.writeOpCheckpointRecord(GIT_HOLD_SUMMARY_OP, `ab:${incarnation}`, [{ count: 2, stale: 2 }]);
     // Two holds on one page: the first row read sets the stamp, and the byte-first fingerprint (`a-z`) is the 2020 hold.
     for (const [path, heldAt] of [['ab', '2021-01-01T00:00:00.000Z'], ['a-z', '2020-01-01T00:00:00.000Z']] as const) {
-      await checkpoint(engine, GIT_HOLD_OP, `ab:${incarnation}:${path}`, [{ version: 1, source_id: 'ab', incarnation, path, page_id: Number(page!.id), held_at: heldAt, code: 'invalid_frontmatter' }]);
+      await engine.writeOpCheckpointRecord(GIT_HOLD_OP, `ab:${incarnation}:${path}`, [{ version: 1, source_id: 'ab', incarnation, path, page_id: Number(page.id), held_at: heldAt, code: 'invalid_frontmatter' }]);
     }
-    const hits: Array<{ page_id: number; stale?: { held_since: string; last_indexed_revision: string | null } }> = [{ page_id: Number(page!.id) }];
+    const hits: Array<{ page_id: number; stale?: { held_since: string; last_indexed_revision: string | null } }> = [{ page_id: Number(page.id) }];
     await stampHeldHits(engine, hits, { sourceId: 'ab' }, { all: false, types: [], patterns: [], pageIds: [], exactTopPageId: null, imageArm: false });
     expect(hits[0]!.stale?.held_since).toBe('2020-01-01T00:00:00.000Z');
     return hits[0]!.stale?.held_since;

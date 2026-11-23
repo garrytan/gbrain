@@ -16,6 +16,7 @@ predicate are pinned by `test/doctor-checkpoints-sql.test.ts`). The TypeScript s
 | `brain.readLatestConnectorReceipt()` | the summary of the newest `source_type = 'connector'` row, or null | `readLatestConnectorReceipt` |
 | `brain.listFactsAbsorbFailureGroups()` | the last 24 hours of `facts:absorb` failures grouped by source and reason | `listFactsAbsorbFailureGroups` |
 | `brain.readSyncAdmissionSettingRow(key, op, fp)` | the config value, with no dating row | `readSyncAdmissionSettingRow` |
+| `brain.readHeldHitRows({ holdOp, pageIds, sourceIds, types, terms, cap })` | every `holdOp` record naming one of `pageIds` (of a source at the recorded incarnation) with its page's `knowledge_revision`, by fingerprint bytewise; then `{ could_affect }`: how many holds of unarchived sources in `sourceIds` (at most `cap`) name one of `pageIds`, a page of one of `types`, or hold one of `terms` as a whole word in `lower(path slug title)`. The TypeScript member passes each relevance pattern as its word and refuses any other pattern | `readHeldHitRows` |
 | `brain.listDerivedOriginParks(op)` | `[{park}]`: the first record of each `op` parent whose fingerprint is the decimal id of a soft-deleted page, oldest parent first, ties by fingerprint bytewise | `listDerivedOriginParks` |
 
 Last-known rows live in the housekeeping key space (`d 0x02 <op> 0x00 <fingerprint>`, a `HousekeepingRow`). The fingerprint is the

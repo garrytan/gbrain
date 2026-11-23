@@ -360,6 +360,10 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readSyncAdmissionSettingRow', 'readTakeRowTrust', 'readTakeTrustRef', 'readTerminalFailureGroups',
   'readTextMentionPages', 'readTokenLifetimeClampedClients', 'readTrustScanCeilings', 'readTrustScanCursor',
   'readWorktreeManifest', 'readWriteRequestsByRequestId', 'readWriterDiagnosticRows', 'readWriterStatusRows',
+  // The persistence diagnostic reads the byte-order lane typed: SELECTs only (lockEffectRow a row-lock read), as their
+  // engine-sql functions and the Rust store functions they call show (test/rust-owner-ipc-read-classes.test.ts scans both).
+  'countReadersNoncanonicalHolds', 'listAtomBacklogSourceIds', 'listReaderCandidatePages', 'listRetryTrackedEffects',
+  'listRevivalPages', 'listSourceRequestsByRequestId', 'lockEffectRow', 'readHeldHitRows', 'readSourceRequestById',
 ];
 
 const nothingSetting = 'nothing: the setting lasts only for the call, so running it again repeats no write';

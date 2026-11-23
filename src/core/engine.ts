@@ -44,7 +44,7 @@ import type { FenceFactRow, FenceRowsTarget, GuardedTakeRow, GuardedTakeRowsQuer
 import type { PageBodySizes } from './engine-sql/large-page.ts';
 import type { TrustTable } from './trust/schema.ts';
 import type { NewTrustProposal, PendingContradictionFilter, PendingContradictionRow, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
-import type { ImportedPageSeal, InlinePageRegionsRow, LivePageBodyRow, OriginClaimRow, PageIndexingState, PageIngestStamp, PageOriginRow, PageOriginTarget } from './engine-sql/write-guards.ts';
+import type { ImportedPageSeal, InlinePageRegionsRow, LivePageBodyRow, OriginClaimRow, PageIndexingState, PageIngestStamp, PageOriginRow, PageOriginTarget, RevivalPageRow } from './engine-sql/write-guards.ts';
 import type { PageEmbeddingBudgetRow, PageEmbeddingReservation, PageEmbeddingReserveInput } from './engine-sql/page-embedding-budget.ts';
 import type { EmbeddingCompletionOpts, EmbeddingCompletionRow } from './engine-sql/embedding-install.ts';
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from './engine-sql/page-visibility.ts';
@@ -3843,6 +3843,8 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   // Page write guards (engine-sql/write-guards.ts): the origin check and bind, the ingest stamp and the import seal.
   /** The page `target` names, live or a tombstone (by `pageId` within the source, else by `slug`), or null. */
   readPageOrigin(target: PageOriginTarget): Promise<PageOriginRow | null>;
+  /** The soft-deleted pages with `slug` (of `sourceId` only, when given) a restore revives, by source id in byte order. */
+  listRevivalPages(slug: string, sourceId: string | null): Promise<RevivalPageRow[]>;
   /** Locks each origin key (`opts.lockKeys`) until the transaction ends, then the live pages other than `excludePageId` recording one of `spellings`, by slug. */
   listOriginClaims(sourceId: string, spellings: readonly string[], opts: { lockKeys: readonly string[]; excludePageId?: number | null }): Promise<OriginClaimRow[]>;
   /** Records `sourcePath` as a page's origin (persistence/origin-guard.ts `bindOrigin` only); the number of pages whose origin changed. */
