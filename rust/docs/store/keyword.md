@@ -447,6 +447,6 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
 
 - `keyword-lexeme-index`: done. The store keeps a persisted positional lexeme index (above) and the members read it
   once it is complete; a member scans only while the index is incomplete, when `GBRAIN_RUST_KEYWORD_SCAN=1` is set,
-  or for a query with no candidate bound (a NOT-only query). A scan, and a cold vector cache after a start or after the
+  for a query with no candidate bound (a NOT-only query), or for the CJK substring members, which match chunk text and which the lexeme index cannot narrow (`keyword/cjk.rs`). A scan, and a cold vector cache after a start or after the
   text outgrows the 64 MiB cache, still rebuilds every vector it reads.
 - `fuzzy-title-unscoped-deleted`: the SQL unscoped arm returns soft-deleted pages.
