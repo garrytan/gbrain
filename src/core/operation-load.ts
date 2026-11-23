@@ -92,6 +92,7 @@ const OP_AREAS: Record<string, string> = {
   // takes + think
   takes_list: 'takes', takes_search: 'takes', think: 'takes',
   takes_scorecard: 'takes', takes_calibration: 'takes',
+  takes_proposals_list: 'takes', takes_proposal_get: 'takes', takes_proposal_accept: 'takes', takes_proposal_reject: 'takes',
   // hot memory (facts)
   extract_facts: 'memory', forget_fact: 'memory', confirm_memory: 'memory',
   memory_recall: 'memory', memory_write: 'memory', memory_propose: 'memory', // GST-359: QM's memory provider pair

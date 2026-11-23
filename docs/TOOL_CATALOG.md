@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 180 tools across 28 areas. **Starter** marks membership in the ~41-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 184 tools across 28 areas. **Starter** marks membership in the ~41-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
@@ -312,6 +312,10 @@ Every non-localOnly operation on the MCP surface: 180 tools across 28 areas. **S
 | `takes_add` | Record a take (typed claim) on a page: fact / take / bet / hunch, with a holder (who holds the belief: world, people/<slug>, companies/<slug>, or brain), weight 0..1, and optional source/since date. | write |  |  |
 | `takes_calibration` | Calibration curve: resolved correct/incorrect bets binned by stated weight; observed vs predicted per bucket. | read |  |  |
 | `takes_list` | List takes (typed/weighted/attributed claims) filtered by holder/kind/active/etc. | read |  |  |
+| `takes_proposal_accept` | Accept a pending take proposal: writes it as a take into the page's takes fence (markdown-canonical, the same write takes_add makes) and marks the proposal accepted. | write |  |  |
+| `takes_proposal_get` | Read one take proposal by id (any status): claim, kind, holder, weight, page, and the decision once made. | read |  |  |
+| `takes_proposal_reject` | Reject a pending take proposal (optional reason). | write |  |  |
+| `takes_proposals_list` | List take proposals: claims the dream cycle proposed from pages, waiting for review (accept with takes_proposal_accept, reject with takes_proposal_reject). | read |  |  |
 | `takes_resolve` | Resolve a take: quality correct / incorrect / partial / unresolvable, with optional evidence text and measured value/unit. | write |  |  |
 | `takes_scorecard` | Calibration scorecard for resolved bets: counts, accuracy, Brier (correct ∨ incorrect only), partial_rate. | read |  |  |
 | `takes_search` | Keyword search across takes (pg_trgm similarity over claim text) | read |  |  |

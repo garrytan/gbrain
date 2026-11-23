@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 301882,
-    "stdoutSha256": "efc88a5959bf2855fe9b39c41daf3e5be6d0f67e5b9370ab50c12e22cf26917d",
+    "stdoutBytes": 307114,
+    "stdoutSha256": "bf5497a38e815f17d5a79608cc5a22ac88bc5c7470b1c077890bf6e110d31e94",
     "toolNames": [
       "remember",
       "entity",
@@ -134,6 +134,10 @@
       "takes_supersede",
       "takes_remove",
       "takes_rebuild",
+      "takes_proposals_list",
+      "takes_proposal_get",
+      "takes_proposal_accept",
+      "takes_proposal_reject",
       "whoami",
       "sources_add",
       "sources_list",
@@ -6208,6 +6212,184 @@
           },
           "required": [
             "slug"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "List take proposals: claims the dream cycle proposed from pages, waiting for review (accept with takes_proposal_accept, reject with takes_proposal_reject). Default pending, newest first. Remote callers see proposals in their source grant, on pages they may read, whose holder is in their takes-holder allow-list.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "takes_proposals_list",
+        "parameters": {
+          "holder": "string?",
+          "kind": "string?",
+          "limit": "number?",
+          "min_weight": "number?",
+          "offset": "number?",
+          "page_slug": "string?",
+          "status": "string?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "holder": {
+              "description": "Only this holder.",
+              "type": "string"
+            },
+            "kind": {
+              "description": "Only this kind.",
+              "enum": [
+                "fact",
+                "take",
+                "bet",
+                "hunch"
+              ],
+              "type": "string"
+            },
+            "limit": {
+              "description": "Max rows (default 20, cap 200).",
+              "type": "number"
+            },
+            "min_weight": {
+              "description": "Only proposals with at least this weight (0..1).",
+              "type": "number"
+            },
+            "offset": {
+              "description": "Skip the first N rows.",
+              "type": "number"
+            },
+            "page_slug": {
+              "description": "Only proposals on this page.",
+              "type": "string"
+            },
+            "status": {
+              "description": "Status filter (default pending).",
+              "enum": [
+                "pending",
+                "accepted",
+                "rejected",
+                "superseded",
+                "all"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
+        "description": "Read one take proposal by id (any status): claim, kind, holder, weight, page, and the decision once made.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "takes_proposal_get",
+        "parameters": {
+          "id": "number"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "id": {
+              "description": "Proposal id (from takes_proposals_list).",
+              "type": "number"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
+        "description": "Accept a pending take proposal: writes it as a take into the page's takes fence (markdown-canonical, the same write takes_add makes) and marks the proposal accepted. Optional edits (claim, weight, kind, holder) replace the proposed values; the take's source then says \"(edited)\". Remote callers: the holder must be in their takes-holder allow-list. Repeating an accept that took effect returns it with already_decided: true.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": true,
+        "name": "takes_proposal_accept",
+        "parameters": {
+          "claim": "string?",
+          "holder": "string?",
+          "id": "number",
+          "kind": "string?",
+          "request_id": "string?",
+          "weight": "number?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "claim": {
+              "description": "Edited claim text (one line). Default: the proposed claim.",
+              "type": "string"
+            },
+            "holder": {
+              "description": "Edited holder (world | people/<slug> | companies/<slug> | brain). Default: the proposed holder.",
+              "type": "string"
+            },
+            "id": {
+              "description": "Proposal id (from takes_proposals_list).",
+              "type": "number"
+            },
+            "kind": {
+              "description": "Edited kind. Default: the proposed kind.",
+              "enum": [
+                "fact",
+                "take",
+                "bet",
+                "hunch"
+              ],
+              "type": "string"
+            },
+            "request_id": {
+              "description": "Reuse only to retry.",
+              "type": "string"
+            },
+            "weight": {
+              "description": "Edited confidence 0..1. Default: the proposed weight.",
+              "type": "number"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Reject a pending take proposal (optional reason). Writes no take. Repeating a reject that took effect returns it with already_decided: true.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": true,
+        "name": "takes_proposal_reject",
+        "parameters": {
+          "id": "number",
+          "reason": "string?",
+          "request_id": "string?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "id": {
+              "description": "Proposal id (from takes_proposals_list).",
+              "type": "number"
+            },
+            "reason": {
+              "description": "Why it was rejected (at most 500 characters).",
+              "type": "string"
+            },
+            "request_id": {
+              "description": "Reuse only to retry.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
           ],
           "type": "object"
         },

@@ -4735,9 +4735,11 @@
           "16 model_id text/text NOT NULL",
           "17 acted_at timestamp with time zone/timestamptz NULL",
           "18 acted_by text/text NULL",
-          "19 promoted_row_num integer/int4 NULL",
-          "20 predicted_brier real/float4 NULL",
-          "21 predicted_brier_bucket_n integer/int4 NULL"
+          "19 acted_via text/text NULL",
+          "20 decision_reason text/text NULL",
+          "21 promoted_row_num integer/int4 NULL",
+          "22 predicted_brier real/float4 NULL",
+          "23 predicted_brier_bucket_n integer/int4 NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

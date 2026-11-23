@@ -47,6 +47,13 @@ export interface TakeProposalRow {
   proposed_at: string | Date;
   model_id: string;
   promoted_row_num: number | null;
+  /** Who decided (a reviewer email, the owner holder, `cli`); null while pending. */
+  acted_by?: string | null;
+  acted_at?: string | Date | null;
+  /** The surface the decision came through: `cli`, `mcp:<client>`, `slack:<sink>`. */
+  acted_via?: string | null;
+  /** The reviewer's reason for a reject, when one was given. */
+  decision_reason?: string | null;
 }
 
 /** Normalize Postgres driver values to the public numeric row contract. */
@@ -84,7 +91,12 @@ export function coerceProposalKind(raw: string): TakeKind {
 }
 
 const PROPOSAL_COLUMNS =
-  'id, source_id, page_slug, claim_text, kind, holder, weight, domain, status, proposed_at, model_id, promoted_row_num';
+  'id, source_id, page_slug, claim_text, kind, holder, weight, domain, status, proposed_at, model_id, promoted_row_num, ' +
+  'acted_by, acted_at, acted_via, decision_reason';
+/** Longest reject reason stored; callers refuse a longer one. */
+export const DECISION_REASON_MAX_CHARS = 500;
+export const PROPOSAL_STATUSES = ['pending', 'accepted', 'rejected', 'superseded'] as const;
+export type ProposalStatus = typeof PROPOSAL_STATUSES[number];
 
 export interface ListPendingOpts {
   /** Scope to one source (the CLI always provides one). Omit = all sources (trusted local only). */
@@ -114,6 +126,80 @@ export async function listPendingProposals(
     params,
   );
   return rows.map(normalizeTakeProposalRow);
+}
+
+export interface ListProposalsOpts {
+  /** One source, or several (a federated grant). Omit both = every source (trusted local only). */
+  sourceId?: string;
+  sourceIds?: string[];
+  /** Default pending; 'all' lists every status. */
+  status?: ProposalStatus | 'all';
+  pageSlug?: string;
+  kind?: string;
+  holder?: string;
+  minWeight?: number;
+  /** Holder allow-list: a proposal outside it is never listed. undefined = every holder (trusted local). */
+  holders?: string[];
+  /** SQL predicate over the joined page alias `p` hiding pages the caller may not read; the page must then exist. */
+  pageFilterSql?: string;
+  limit?: number;
+  offset?: number;
+}
+
+function proposalWhere(opts: ListProposalsOpts, params: unknown[]): string[] {
+  const where: string[] = [];
+  const add = (sql: (n: number) => string, value: unknown) => { params.push(value); where.push(sql(params.length)); };
+  if (opts.status && opts.status !== 'all') add(n => `tp.status = $${n}`, opts.status);
+  if (opts.sourceIds && opts.sourceIds.length > 0) add(n => `tp.source_id = ANY($${n}::text[])`, opts.sourceIds);
+  else if (opts.sourceId) add(n => `tp.source_id = $${n}`, opts.sourceId);
+  if (opts.pageSlug) add(n => `tp.page_slug = $${n}`, opts.pageSlug);
+  if (opts.kind) add(n => `tp.kind = $${n}`, opts.kind);
+  if (opts.holder) add(n => `tp.holder = $${n}`, opts.holder);
+  if (opts.minWeight !== undefined) add(n => `tp.weight >= $${n}`, opts.minWeight);
+  if (opts.holders !== undefined) add(n => `tp.holder = ANY($${n}::text[])`, opts.holders);
+  if (opts.pageFilterSql) where.push(opts.pageFilterSql);
+  return where;
+}
+
+function proposalFrom(opts: Pick<ListProposalsOpts, 'pageFilterSql'>): string {
+  return opts.pageFilterSql
+    ? 'take_proposals tp JOIN pages p ON p.source_id = tp.source_id AND p.slug = tp.page_slug AND p.deleted_at IS NULL'
+    : 'take_proposals tp';
+}
+
+const PROPOSAL_SELECT = PROPOSAL_COLUMNS.split(',').map(column => `tp.${column.trim()}`).join(', ');
+
+/**
+ * Proposals with the review filters, newest first, and how many matched.
+ * Pending is the default; `status: 'all'` lists decided rows too.
+ */
+export async function listProposals(engine: BrainEngine, opts: ListProposalsOpts = {}): Promise<{ proposals: TakeProposalRow[]; total: number }> {
+  const limit = Math.max(1, Math.min(200, Math.floor(opts.limit ?? 20)));
+  const offset = Math.max(0, Math.floor(opts.offset ?? 0));
+  const params: unknown[] = [];
+  const where = proposalWhere({ status: 'pending', ...opts }, params);
+  const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const total = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM ${proposalFrom(opts)} ${clause}`, params);
+  const rows = await engine.executeRaw<TakeProposalRow>(
+    `SELECT ${PROPOSAL_SELECT} FROM ${proposalFrom(opts)} ${clause}
+      ORDER BY tp.proposed_at DESC, tp.id DESC
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+    [...params, limit, offset],
+  );
+  return { proposals: rows.map(normalizeTakeProposalRow), total: Number(total[0]?.n ?? 0) };
+}
+
+/** One proposal of any status inside the scope `listProposals` applies, or null. */
+export async function getProposal(
+  engine: BrainEngine,
+  id: number,
+  opts: Omit<ListProposalsOpts, 'status' | 'limit' | 'offset'> = {},
+): Promise<TakeProposalRow | null> {
+  const params: unknown[] = [id];
+  const where = ['tp.id = $1', ...proposalWhere(opts, params)];
+  const rows = await engine.executeRaw<TakeProposalRow>(
+    `SELECT ${PROPOSAL_SELECT} FROM ${proposalFrom(opts)} WHERE ${where.join(' AND ')}`, params);
+  return rows.length ? normalizeTakeProposalRow(rows[0]!) : null;
 }
 
 async function loadProposal(
@@ -169,6 +255,14 @@ export interface ProposalActionTarget {
   config: GBrainConfig;
   /** An explicit `--dir`: validated against the source's canonical root, as `takes add --dir` is. */
   localDir?: string;
+  /** Recorded in acted_via: the surface the decision came through (`cli` by default, `mcp:<client>`, `slack:<sink>`). */
+  actedVia?: string;
+  /**
+   * The caller's own operation context. When set, the promoting takes_add runs AS that caller (its remote flag,
+   * principal, holder allow-list, agent label and end user), so the write is fenced and attributed like a direct
+   * takes_add from it; unset keeps the trusted local context the CLI always used.
+   */
+  callerCtx?: OperationContext;
 }
 
 /** #5214: reviewer edits applied over the proposal at accept; the queue row keeps the original text. */
@@ -213,7 +307,7 @@ async function promoteProposalViaTakesAdd(
   requestId: string,
   edits: ProposalEdits,
 ): Promise<number> {
-  const ctx: OperationContext = {
+  const ctx: OperationContext = target.callerCtx ? { ...target.callerCtx, sourceId: proposal.source_id, dryRun: false } : {
     engine: target.engine,
     config: target.config,
     remote: false,
@@ -263,10 +357,10 @@ export async function acceptProposal(
       `SELECT id, acted_at FROM take_proposals WHERE id = $1 AND status = 'accepted' AND promoted_row_num IS NULL`, [id])
     : await engine.executeRaw<{ id: number; acted_at: unknown }>(
       `UPDATE take_proposals
-          SET status = 'accepted', acted_at = now(), acted_by = $2
+          SET status = 'accepted', acted_at = now(), acted_by = $2, acted_via = $3
         WHERE id = $1 AND status = 'pending'
         RETURNING id, acted_at`,
-      [id, target.actedBy ?? 'cli'],
+      [id, target.actedBy ?? 'cli', target.actedVia ?? 'cli'],
     );
   if (claimed.length === 0) {
     throw new TakeProposalError(
@@ -316,7 +410,7 @@ export async function acceptProposal(
         try {
           await engine.executeRaw(
             `UPDATE take_proposals
-                SET status = 'pending', acted_at = NULL, acted_by = NULL, promoted_row_num = NULL
+                SET status = 'pending', acted_at = NULL, acted_by = NULL, acted_via = NULL, promoted_row_num = NULL
               WHERE id = $1 AND status = 'accepted' AND promoted_row_num IS NULL
                 AND date_trunc('milliseconds', acted_at) IS NOT DISTINCT FROM $2::timestamptz`,
             [id, claimedAt],
@@ -337,17 +431,18 @@ export async function acceptProposal(
  * CHECKED — a reject that loses a race (row already accepted/rejected) now
  * reports the truth instead of claiming a rejection it never performed. */
 export async function rejectProposal(
-  target: Pick<ProposalActionTarget, 'engine' | 'sourceId' | 'actedBy'>,
+  target: Pick<ProposalActionTarget, 'engine' | 'sourceId' | 'actedBy' | 'actedVia'>,
   id: number,
+  reason?: string,
 ): Promise<TakeProposalRow> {
   const { engine } = target;
   const proposal = await loadProposal(engine, id, target.sourceId);
   const rejected = await engine.executeRaw<{ id: number }>(
     `UPDATE take_proposals
-        SET status = 'rejected', acted_at = now(), acted_by = $2
+        SET status = 'rejected', acted_at = now(), acted_by = $2, acted_via = $3, decision_reason = $4
       WHERE id = $1 AND status = 'pending'
       RETURNING id`,
-    [id, target.actedBy ?? 'cli'],
+    [id, target.actedBy ?? 'cli', target.actedVia ?? 'cli', reason?.trim() ? reason.trim().slice(0, DECISION_REASON_MAX_CHARS) : null],
   );
   if (rejected.length === 0) {
     throw new TakeProposalError(

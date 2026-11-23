@@ -5325,6 +5325,161 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "area": "takes"
   },
   {
+    "name": "takes_proposals_list",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "retrieval",
+    "description": "List take proposals: claims the dream cycle proposed from pages, waiting for review (accept with takes_proposal_accept, reject with takes_proposal_reject). Default pending, newest first. Remote callers see proposals in their source grant, on pages they may read, whose holder is in their takes-holder allow-list.",
+    "params": {
+      "status": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "accepted",
+          "rejected",
+          "superseded",
+          "all"
+        ],
+        "description": "Status filter (default pending)."
+      },
+      "page_slug": {
+        "type": "string",
+        "description": "Only proposals on this page."
+      },
+      "kind": {
+        "type": "string",
+        "enum": [
+          "fact",
+          "take",
+          "bet",
+          "hunch"
+        ],
+        "description": "Only this kind."
+      },
+      "holder": {
+        "type": "string",
+        "description": "Only this holder."
+      },
+      "min_weight": {
+        "type": "number",
+        "description": "Only proposals with at least this weight (0..1)."
+      },
+      "limit": {
+        "type": "number",
+        "description": "Max rows (default 20, cap 200)."
+      },
+      "offset": {
+        "type": "number",
+        "description": "Skip the first N rows."
+      }
+    },
+    "scope": "read",
+    "area": "takes",
+    "cliHints": {
+      "name": "takes-proposals-list"
+    }
+  },
+  {
+    "name": "takes_proposal_get",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "retrieval",
+    "description": "Read one take proposal by id (any status): claim, kind, holder, weight, page, and the decision once made.",
+    "params": {
+      "id": {
+        "type": "number",
+        "required": true,
+        "description": "Proposal id (from takes_proposals_list)."
+      }
+    },
+    "scope": "read",
+    "area": "takes",
+    "cliHints": {
+      "name": "takes-proposal-get",
+      "positional": [
+        "id"
+      ]
+    }
+  },
+  {
+    "name": "takes_proposal_accept",
+    "mutating": true,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Accept a pending take proposal: writes it as a take into the page's takes fence (markdown-canonical, the same write takes_add makes) and marks the proposal accepted. Optional edits (claim, weight, kind, holder) replace the proposed values; the take's source then says \"(edited)\". Remote callers: the holder must be in their takes-holder allow-list. Repeating an accept that took effect returns it with already_decided: true.",
+    "params": {
+      "request_id": {
+        "type": "string",
+        "description": "Reuse only to retry."
+      },
+      "id": {
+        "type": "number",
+        "required": true,
+        "description": "Proposal id (from takes_proposals_list)."
+      },
+      "claim": {
+        "type": "string",
+        "description": "Edited claim text (one line). Default: the proposed claim."
+      },
+      "weight": {
+        "type": "number",
+        "description": "Edited confidence 0..1. Default: the proposed weight."
+      },
+      "kind": {
+        "type": "string",
+        "enum": [
+          "fact",
+          "take",
+          "bet",
+          "hunch"
+        ],
+        "description": "Edited kind. Default: the proposed kind."
+      },
+      "holder": {
+        "type": "string",
+        "description": "Edited holder (world | people/<slug> | companies/<slug> | brain). Default: the proposed holder."
+      }
+    },
+    "scope": "write",
+    "area": "takes",
+    "cliHints": {
+      "name": "takes-proposal-accept",
+      "positional": [
+        "id"
+      ]
+    }
+  },
+  {
+    "name": "takes_proposal_reject",
+    "mutating": true,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Reject a pending take proposal (optional reason). Writes no take. Repeating a reject that took effect returns it with already_decided: true.",
+    "params": {
+      "request_id": {
+        "type": "string",
+        "description": "Reuse only to retry."
+      },
+      "id": {
+        "type": "number",
+        "required": true,
+        "description": "Proposal id (from takes_proposals_list)."
+      },
+      "reason": {
+        "type": "string",
+        "description": "Why it was rejected (at most 500 characters)."
+      }
+    },
+    "scope": "write",
+    "area": "takes",
+    "cliHints": {
+      "name": "takes-proposal-reject",
+      "positional": [
+        "id"
+      ]
+    }
+  },
+  {
     "name": "whoami",
     "mutating": false,
     "idempotent": true,

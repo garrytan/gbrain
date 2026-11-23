@@ -1708,6 +1708,8 @@ CREATE TABLE IF NOT EXISTS take_proposals (
   model_id                    TEXT         NOT NULL,
   acted_at                    TIMESTAMPTZ,
   acted_by                    TEXT,
+  acted_via                   TEXT,
+  decision_reason             TEXT,
   promoted_row_num            INTEGER,
   predicted_brier             REAL,
   predicted_brier_bucket_n    INTEGER

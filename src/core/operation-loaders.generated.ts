@@ -54,6 +54,7 @@ const load_sources = () => import('./ops/sources.ts') as Promise<Record<string, 
 const load_storage_manifest = () => import('./ops/storage-manifest.ts') as Promise<Record<string, unknown>>;
 const load_sync_status = () => import('./ops/sync-status.ts') as Promise<Record<string, unknown>>;
 const load_tags = () => import('./ops/tags.ts') as Promise<Record<string, unknown>>;
+const load_take_proposals = () => import('./ops/take-proposals.ts') as Promise<Record<string, unknown>>;
 const load_takes = () => import('./ops/takes.ts') as Promise<Record<string, unknown>>;
 const load_timeline = () => import('./ops/timeline.ts') as Promise<Record<string, unknown>>;
 const load_transcripts = () => import('./ops/transcripts.ts') as Promise<Record<string, unknown>>;
@@ -193,6 +194,10 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "takes_supersede": [load_takes, "takesOperations"],
   "takes_remove": [load_takes, "takesOperations"],
   "takes_rebuild": [load_takes, "takesOperations"],
+  "takes_proposals_list": [load_take_proposals, "takeProposalOperations"],
+  "takes_proposal_get": [load_take_proposals, "takeProposalOperations"],
+  "takes_proposal_accept": [load_take_proposals, "takeProposalOperations"],
+  "takes_proposal_reject": [load_take_proposals, "takeProposalOperations"],
   "whoami": [load_sources, "sourcesOperations"],
   "sources_add": [load_sources, "sourcesOperations"],
   "sources_list": [load_sources, "sourcesOperations"],

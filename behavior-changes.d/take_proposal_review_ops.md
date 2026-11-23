@@ -1,0 +1,4 @@
+---
+kind: add
+---
+Take proposals (the claims the dream cycle's propose_takes phase queues for review) can now be reviewed over MCP, not only with `gbrain takes propose` on the host: takes_proposals_list and takes_proposal_get (read scope) list and read the queue with status, page, kind, holder and weight filters; takes_proposal_accept and takes_proposal_reject (write scope) decide one proposal. Accept writes the take through the same coordinated takes_add path, run as the caller, so the caller's takes-holder allow-list applies and the page version records its agent label; reject keeps an optional reason. The queue records who decided (acted_by: the agent label, else mcp:<client>) and through which surface (acted_via). Repeating a decision returns already_decided; the opposite decision on a decided proposal is refused with proposal_already_decided.
