@@ -698,6 +698,20 @@ pub(crate) fn all_rows(read: &dyn KvRead, op: &str) -> Result<Vec<(u64, LoopReco
     Ok(rows)
 }
 
+/// The shadow follow (`seed/follow.rs`): removes the loop `id` with its dedup key. `false` when
+/// there is none.
+pub(crate) fn remove_open_loop(tx: &mut dyn KvWrite, id: u64) -> Result<bool> {
+    let Some(old) = read_row(&*tx, id)? else {
+        return Ok(false);
+    };
+    let dk = dedup_key(&old.source_id, &old.dedup_key);
+    if tx.get(&dk)?.is_some_and(|v| keys::be8(&v) == Some(id)) {
+        tx.delete(&dk)?;
+    }
+    tx.delete(&row_key(id))?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

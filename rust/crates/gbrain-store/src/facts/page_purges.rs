@@ -164,6 +164,24 @@ pub(crate) fn seed_purge(
     Ok(true)
 }
 
+/// The shadow follow (`seed/follow.rs`): removes the tombstone of `content_hash` in `source_id`.
+/// `false` when there is none.
+pub(crate) fn remove_purge(
+    tx: &mut dyn crate::kv::KvWrite,
+    source_id: &str,
+    content_hash: &str,
+) -> Result<bool> {
+    if source_id.contains('\0') || content_hash.contains('\0') {
+        return Ok(false);
+    }
+    let key = row_key(source_id, content_hash);
+    if tx.get(&key)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&key)?;
+    Ok(true)
+}
+
 /// Writes one row. Only the unit tests of the readers call it; the store-side writer is
 /// [`Store::record_page_purge`].
 #[cfg(test)]

@@ -1413,6 +1413,80 @@ pub(crate) fn seed_generation(
     Ok(true)
 }
 
+/// The shadow follow (`seed/follow.rs`): removes the generation `id` with its items, pointers and
+/// activation links. `false` when there is none.
+pub(crate) fn remove_generation(tx: &mut dyn KvWrite, id: u64) -> Result<bool> {
+    let Some(record) = read_record(&*tx, id)? else {
+        return Ok(false);
+    };
+    delete_row(tx, &record)?;
+    Ok(true)
+}
+
+/// The shadow follow: replaces the header of generation `id` and keeps its items and the columns
+/// the seed does not copy, as an `UPDATE` of the row does. Stores a new generation when there is
+/// none. A state change moves the key's `live` or `held` pointer with it.
+pub(crate) fn replace_generation(
+    tx: &mut dyn KvWrite,
+    id: u64,
+    seed: &SeedGeneration,
+) -> Result<()> {
+    let Some(old) = read_record(&*tx, id)? else {
+        seed_generation(tx, id, seed)?;
+        return Ok(());
+    };
+    // Release what the old header pointed at, then point the new one.
+    if old.state == "live" {
+        tx.delete(&live_operation_key(&old))?;
+    }
+    if old.state == "live" || old.state == "held" {
+        let old_key = record_generation_key(&old);
+        if pointed(&*tx, &old_key, &old.state)? == Some(id) {
+            tx.delete(&pointer_key(&old_key, &old.state))?;
+        }
+    }
+    let key = GenerationKey {
+        source_id: seed.source_id.clone(),
+        kind: seed.kind.clone(),
+        owner_key: seed.owner_key.clone(),
+    };
+    let pointed_state = matches!(seed.state.as_str(), "live" | "held");
+    if pointed_state && pointed(&*tx, &key, &seed.state)?.is_some_and(|other| other != id) {
+        return Err(unique_violation("derived_generations_one_live"));
+    }
+    crate::sources::require_source(&*tx, &seed.source_id)?;
+    let mut record = old;
+    record.source_id = seed.source_id.clone();
+    record.kind = seed.kind.clone();
+    record.owner_key = seed.owner_key.clone();
+    record.generation = seed.generation;
+    record.state = seed.state.clone();
+    record.created_at_us = seed.created_at_us;
+    put_json(tx, &record_key(id), &record)?;
+    if pointed_state {
+        tx.put(&pointer_key(&key, &seed.state), &id.to_be_bytes())?;
+    }
+    if record.state == "live" {
+        tx.put(&live_operation_key(&record), &[])?;
+    }
+    Ok(())
+}
+
+/// The shadow follow: removes the item `item_key_text` of generation `generation_id`. `false` when
+/// there is none.
+pub(crate) fn remove_item(
+    tx: &mut dyn KvWrite,
+    generation_id: u64,
+    item_key_text: &str,
+) -> Result<bool> {
+    let key = item_key(generation_id, item_key_text);
+    if tx.get(&key)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&key)?;
+    Ok(true)
+}
+
 /// The shadow seed: appends an item to its generation, where the items' foreign key keeps them. A
 /// generation that is not stored is the foreign key violation; `false` when it already holds the
 /// item key.

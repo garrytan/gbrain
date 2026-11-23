@@ -48,7 +48,7 @@ export const ATOM_BACKLOG_SCOPED_SQL = `SELECT COUNT(*) AS cnt FROM pages p
     AND scan.page_id=p.id AND scan.content_hash=p.content_hash
     AND (scan.tombstoned OR scan.partial_input_chars >= $4::integer)
 )
-           
+           AND COALESCE(p.frontmatter->>'extract_atoms', '') <> 'false'
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
              WHERE atom.type = 'atom' AND atom.source_id = $1
@@ -79,7 +79,7 @@ export const ATOM_BACKLOG_SCOPED_CONNECTORS_OUT_SQL = `SELECT COUNT(*) AS cnt FR
     AND scan.page_id=p.id AND scan.content_hash=p.content_hash
     AND (scan.tombstoned OR scan.partial_input_chars >= $4::integer)
 )
-           AND NOT (p.type = ANY($5::text[]) AND EXISTS (SELECT 1 FROM sources cs
+           AND COALESCE(p.frontmatter->>'extract_atoms', '') <> 'false' AND NOT (p.type = ANY($5::text[]) AND EXISTS (SELECT 1 FROM sources cs
         WHERE cs.id = p.source_id AND cs.config->>'kind' = ANY($6::text[])))
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
@@ -110,7 +110,7 @@ export const ATOM_BACKLOG_ALL_SQL = `SELECT COUNT(*) AS cnt FROM pages p
     AND scan.page_id=p.id AND scan.content_hash=p.content_hash
     AND (scan.tombstoned OR scan.partial_input_chars >= $3::integer)
 )
-           
+           AND COALESCE(p.frontmatter->>'extract_atoms', '') <> 'false'
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
              WHERE atom.type = 'atom' AND atom.source_id = p.source_id
@@ -140,7 +140,7 @@ export const ATOM_BACKLOG_ALL_CONNECTORS_OUT_SQL = `SELECT COUNT(*) AS cnt FROM 
     AND scan.page_id=p.id AND scan.content_hash=p.content_hash
     AND (scan.tombstoned OR scan.partial_input_chars >= $3::integer)
 )
-           AND NOT (p.type = ANY($4::text[]) AND EXISTS (SELECT 1 FROM sources cs
+           AND COALESCE(p.frontmatter->>'extract_atoms', '') <> 'false' AND NOT (p.type = ANY($4::text[]) AND EXISTS (SELECT 1 FROM sources cs
         WHERE cs.id = p.source_id AND cs.config->>'kind' = ANY($5::text[])))
            AND NOT EXISTS (
              SELECT 1 FROM pages atom

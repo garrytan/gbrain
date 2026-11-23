@@ -1292,3 +1292,58 @@ impl Store {
         })
     }
 }
+
+/// The shadow follow (`seed/follow.rs`): removes the `wake_crons` row `name`. `false` when there is
+/// none.
+pub(crate) fn remove_cron(tx: &mut dyn KvWrite, name: &str) -> Result<bool> {
+    if tx.get(&cron_key(name))?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&cron_key(name))?;
+    Ok(true)
+}
+
+/// The shadow follow: removes the run `id` of the cron `name`. `false` when there is none.
+pub(crate) fn remove_cron_run(tx: &mut dyn KvWrite, name: &str, id: i64) -> Result<bool> {
+    let mut doomed = None;
+    scan_prefix(&*tx, &run_prefix(name), false, &mut |k, v| {
+        if serde_json::from_slice::<CronRunRecord>(v).is_ok_and(|r| r.id == id) {
+            doomed = Some(k.to_vec());
+            return false;
+        }
+        true
+    })?;
+    let Some(key) = doomed else {
+        return Ok(false);
+    };
+    tx.delete(&key)?;
+    Ok(true)
+}
+
+/// The shadow follow: removes the forget row `id` with its pending index entry. `false` when
+/// there is none.
+pub(crate) fn remove_forget(tx: &mut dyn KvWrite, id: i64) -> Result<bool> {
+    let Some(old) = load_forget(&*tx, id)? else {
+        return Ok(false);
+    };
+    if old.state == "pending" {
+        tx.delete(&pending_key(&old.wake_user))?;
+    }
+    tx.delete(&forget_key(id))?;
+    Ok(true)
+}
+
+/// The shadow follow: removes the terms acceptance `(principal_key, version)`. `false` when there
+/// is none.
+pub(crate) fn remove_terms(
+    tx: &mut dyn KvWrite,
+    principal_key: &str,
+    version: &str,
+) -> Result<bool> {
+    let key = terms_key(principal_key, version);
+    if tx.get(&key)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&key)?;
+    Ok(true)
+}

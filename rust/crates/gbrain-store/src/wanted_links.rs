@@ -626,6 +626,24 @@ impl Store {
     }
 }
 
+/// The shadow follow (`seed/follow.rs`): removes the wanted record `id` of the origin page. `false`
+/// when there is none.
+pub(crate) fn remove_wanted(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    origin_page_id: u64,
+    id: u64,
+) -> Result<bool> {
+    let Some((key, _)) = page_records(&*tx, source_id, origin_page_id)?
+        .into_iter()
+        .find(|(_, r)| r.id == id)
+    else {
+        return Ok(false);
+    };
+    tx.delete(&key)?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

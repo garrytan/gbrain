@@ -949,7 +949,8 @@ src/core/github-source.ts#touchSourceRow	catch_empty	1
 src/core/google/counterparty.ts#emailAliasElsewhere	capability_refusal_swallowed	1
 src/core/google/file-modes.ts#scanGoogleFileModes	catch_empty	1
 src/core/google/google-clients.ts#GoogleApiClient.fetchJSON	promise_catch_empty	1
-src/core/google/google-source.ts#runGoogleSyncInner	catch_empty	3
+src/core/google/google-source.ts#runGoogleSyncInner	capability_refusal_swallowed	1
+src/core/google/google-source.ts#runGoogleSyncInner	catch_empty	2
 src/core/google/loop-catchup.ts#pendingLoopsExtractDepth	capability_refusal_swallowed	1
 src/core/google/loop-catchup.ts#pendingLoopsExtractDepth	catch_empty	1
 src/core/google/loop-detect.ts#upsertThreadLoop	catch_empty	1
@@ -1822,5 +1823,9 @@ src/mcp/source-preflight.ts#assertStdioSourceBindable	capability_refusal_swallow
 src/mcp/surface.ts#resolveAdvertisedSurface	catch_empty	1
 src/mcp/surface.ts#resolveDefaultClientSurface	catch_empty	1
 src/mcp/surface.ts#sessionWidenAllowed	catch_empty	1
+src/shadow/fingerprints.ts#probeOnPrimary	capability_refusal_swallowed	1	added on the shadow follow branch (rust-engine/shadow-follow) before it merged this guard; known debt, fix by a typed degraded marker
+src/shadow/fingerprints.ts#probeOnPrimary	promise_catch_empty	1	added on the shadow follow branch (rust-engine/shadow-follow) before it merged this guard; known debt, fix by a typed degraded marker
+src/shadow/follow-status.ts#readFollowerFile	catch_empty	1	added on the shadow follow branch (rust-engine/shadow-follow) before it merged this guard; known debt, fix by a typed degraded marker
+src/shadow/reconcile.ts#Reconciler.tick	catch_empty	1	added on the shadow follow branch (rust-engine/shadow-follow) before it merged this guard; known debt, fix by a typed degraded marker
 src/shadow/seed.ts#readSeedRecord	catch_empty	1	added on the shadow seed branch (rust-engine/shadow-s3) before it merged this guard; known debt, fix by a typed degraded marker
 src/shadow/state.ts#readShadowState	catch_empty	1	shadow mode code written before master added this guard; known debt, fix by a typed degraded marker

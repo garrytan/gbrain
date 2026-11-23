@@ -546,6 +546,16 @@ pub(crate) fn purge_probe_rows(
         .collect())
 }
 
+/// The shadow follow (`seed/follow.rs`): removes the profile `id` with its time-index entry.
+/// `false` when there is none.
+pub(crate) fn remove_profile(tx: &mut dyn KvWrite, id: u64) -> Result<bool> {
+    let Some(record) = read_record(&*tx, id)? else {
+        return Ok(false);
+    };
+    delete_record(tx, &record)?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     //! `remove_source_rows` is reached only through the whole source delete, and no member returns

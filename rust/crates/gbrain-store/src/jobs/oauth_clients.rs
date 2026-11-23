@@ -807,6 +807,15 @@ impl Store {
     }
 }
 
+/// The shadow follow (`seed/follow.rs`): removes the client `client_id`. `false` when there is none.
+pub(crate) fn remove_client(tx: &mut dyn KvWrite, client_id: &str) -> Result<bool> {
+    if client_id.contains('\0') || load_client(&*tx, client_id)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&client_key(client_id))?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

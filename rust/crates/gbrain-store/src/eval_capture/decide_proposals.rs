@@ -1377,3 +1377,83 @@ pub(crate) fn purge_decide_proposals(
     }
     Ok(deleted)
 }
+
+// ------------------------------------------------------------------ the shadow follow
+
+/// The shadow follow (`seed/follow.rs`): removes the supersede proposal `id` with its sweep-slot
+/// key and claim-pair key, each only when it names the proposal. `false` when there is none.
+pub(crate) fn remove_proposal(tx: &mut dyn KvWrite, id: u64) -> Result<bool> {
+    let Some(record) = get_json::<ProposalRecord>(&*tx, &id_key(PROPOSAL, id))? else {
+        return Ok(false);
+    };
+    let slot = sweep_slot_key(&record.sweep_id, record.pair_index);
+    let pair = claim_pair_key(&record.source_id, record.new_fact_id, record.old_fact_id);
+    for key in [slot, pair] {
+        if tx.get(&key)?.as_deref() == Some(&id.to_be_bytes()[..]) {
+            tx.delete(&key)?;
+        }
+    }
+    tx.delete(&id_key(PROPOSAL, id))?;
+    Ok(true)
+}
+
+/// The shadow follow: removes the review proposal `id` with its unique key. `false` when there is
+/// none.
+pub(crate) fn remove_review_proposal(tx: &mut dyn KvWrite, id: u64) -> Result<bool> {
+    let Some(record) = get_json::<ReviewProposalRecord>(&*tx, &id_key(REVIEW_PROPOSAL, id))? else {
+        return Ok(false);
+    };
+    let unique = review_key(
+        &record.kind,
+        &record.source_id,
+        &record.a_ref,
+        &record.b_ref,
+        &record.subject,
+    );
+    if tx.get(&unique)?.as_deref() == Some(&id.to_be_bytes()[..]) {
+        tx.delete(&unique)?;
+    }
+    tx.delete(&id_key(REVIEW_PROPOSAL, id))?;
+    Ok(true)
+}
+
+/// The shadow follow: removes the review-queue row of a pair. `false` when it is not queued.
+pub(crate) fn remove_review_queue(
+    tx: &mut dyn KvWrite,
+    kind: &str,
+    source_id: &str,
+    a_ref: &str,
+    b_ref: &str,
+) -> Result<bool> {
+    if [kind, source_id, a_ref, b_ref]
+        .iter()
+        .any(|t| t.contains('\0'))
+    {
+        return Ok(false);
+    }
+    let key = queue_key(kind, source_id, a_ref, b_ref);
+    if tx.get(&key)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&key)?;
+    Ok(true)
+}
+
+/// The shadow follow: removes the conflict-sweep retry row `(slot, source_id, fact_id)`. `false`
+/// when there is none.
+pub(crate) fn remove_sweep_deferred(
+    tx: &mut dyn KvWrite,
+    slot: &str,
+    source_id: &str,
+    fact_id: i64,
+) -> Result<bool> {
+    if slot.contains('\0') || source_id.contains('\0') {
+        return Ok(false);
+    }
+    let key = deferred_key(slot, source_id, fact_id);
+    if tx.get(&key)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&key)?;
+    Ok(true)
+}

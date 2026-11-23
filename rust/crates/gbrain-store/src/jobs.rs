@@ -107,16 +107,16 @@ pub use insight::InsightSpec;
 use mutations::add_token;
 pub use mutations::{DelayOpts, TokenDelta};
 pub(crate) use oauth_clients::remove_source_rows as remove_oauth_source_rows;
-pub(crate) use oauth_clients::seed_client;
 pub use oauth_clients::{ClientInsert, ClientPatch, ClientPatchGuard};
+pub(crate) use oauth_clients::{remove_client, seed_client};
 pub use oauth_codes::OauthCodeInsert;
 pub use oauth_tokens::OauthTokenInsert;
 pub use private_queues::PrivateQueueState;
 pub use reads::{JobPageCursor, JobPageSpec, OverdueSpec};
 pub use spend::{ExpireScope, LeaseFilter, LeaseInsert, SpendInsert, SpendTreeSpec};
-pub(crate) use spend::{SeedReservation, seed_reservation};
+pub(crate) use spend::{SeedReservation, remove_reservation, seed_reservation};
 pub use spend_log::{ClientReserve, GroupReserve, LogInsert};
-pub(crate) use spend_log::{SeedLog, seed_log};
+pub(crate) use spend_log::{SeedLog, remove_log, seed_log};
 pub use status::StatusFilter;
 pub use subagent::{FailureFallback, MessageInsert, ToolInsert, ToolStart, ToolTarget};
 pub(crate) use subagent::{purge_probe_message_rows, purge_probe_tool_rows};
@@ -319,6 +319,13 @@ pub(crate) fn raise_seq(tx: &mut dyn KvWrite, name: &str, id: i64) -> Result<()>
         put_json(tx, &k, &id)?;
     }
     Ok(())
+}
+
+/// The last value of the sequence `name` (0 when it has not been used), read only.
+pub(crate) fn read_seq(read: &dyn KvRead, name: &str) -> Result<i64> {
+    let mut k = prefix(SEQ);
+    k.extend_from_slice(name.as_bytes());
+    Ok(get_json::<i64>(read, &k)?.unwrap_or(0))
 }
 
 /// One `minion_jobs` row. Timestamps are µs; JSON columns are kept as given.

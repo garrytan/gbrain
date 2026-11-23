@@ -124,6 +124,17 @@ impl crate::Store {
     }
 }
 
+/// The shadow follow (`seed/follow.rs`): removes the mark of page `page_id`. `false` when the page
+/// is not marked.
+pub(crate) fn remove_mark(tx: &mut dyn KvWrite, page_id: u64) -> Result<bool> {
+    let key = mark_key(page_id);
+    if tx.get(&key)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&key)?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

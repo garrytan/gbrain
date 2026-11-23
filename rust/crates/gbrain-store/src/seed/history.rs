@@ -634,8 +634,21 @@ static DERIVED_GENERATIONS: Relation = Relation {
 };
 
 fn import_generation(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Outcome> {
+    let (id, record) = generation_record(&*tx, row)?;
+    Ok(if seed_generation(tx, id, &record)? {
+        Outcome::Imported
+    } else {
+        Outcome::Skipped
+    })
+}
+
+/// The generation a row describes, with no items: the items ride in their own relation.
+pub(super) fn generation_record(
+    read: &dyn crate::kv::KvRead,
+    row: &Row,
+) -> Result<(u64, SeedGeneration)> {
     let source_id = row.req("source_id")?;
-    require_source(&*tx, &source_id)?;
+    require_source(read, &source_id)?;
     let record = SeedGeneration {
         source_id,
         kind: row.req("kind")?,
@@ -644,11 +657,7 @@ fn import_generation(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<
         state: row.req("state")?,
         created_at_us: row.req_ts("created_at")?,
     };
-    Ok(if seed_generation(tx, row.req_id("id")?, &record)? {
-        Outcome::Imported
-    } else {
-        Outcome::Skipped
-    })
+    Ok((row.req_id("id")?, record))
 }
 
 /// The store keeps items inline in their generation, so an item row appends to it.

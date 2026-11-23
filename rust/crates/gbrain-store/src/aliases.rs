@@ -307,6 +307,51 @@ fn delete_page_alias(
     tx.delete(&key(PAGE_ALIAS_BY_SLUG, &[source, slug, alias, origin]))
 }
 
+/// The shadow follow (`seed/follow.rs`): removes the `slug_aliases` row of `alias` in `source`.
+/// `false` when there is none.
+pub(crate) fn remove_slug_alias(tx: &mut dyn KvWrite, source: &str, alias: &str) -> Result<bool> {
+    if read_slug_alias(&*tx, source, alias)?.is_none() {
+        return Ok(false);
+    }
+    delete_slug_alias(tx, source, alias)?;
+    Ok(true)
+}
+
+/// The shadow follow: removes the `page_aliases` row `(source, alias, slug, origin)`. `false` when
+/// there is none.
+pub(crate) fn remove_page_alias(
+    tx: &mut dyn KvWrite,
+    source: &str,
+    alias: &str,
+    slug: &str,
+    origin: &str,
+) -> Result<bool> {
+    if has_nul(&[source, alias, slug, origin])
+        || tx
+            .get(&key(PAGE_ALIAS, &[source, alias, slug, origin]))?
+            .is_none()
+    {
+        return Ok(false);
+    }
+    delete_page_alias(tx, source, alias, slug, origin)?;
+    Ok(true)
+}
+
+/// The shadow follow: removes the `slug_rename_history` row `(source, old, new)`. `false` when
+/// there is none.
+pub(crate) fn remove_rename(
+    tx: &mut dyn KvWrite,
+    source: &str,
+    old: &str,
+    new: &str,
+) -> Result<bool> {
+    if has_nul(&[source, old, new]) || tx.get(&rename_key(source, old, new))?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&rename_key(source, old, new))?;
+    Ok(true)
+}
+
 /// The shadow seed (`seed.rs`): stores a `slug_aliases` row copied from another engine. `false` when
 /// `(source, alias)` already holds one.
 pub(crate) fn seed_slug_alias(

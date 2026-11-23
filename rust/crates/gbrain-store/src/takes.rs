@@ -676,6 +676,12 @@ pub(crate) fn seed_evidence(
 
 /// Deletes a take with its evidence rows.
 fn delete_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
+    delete_take_evidence(tx, take)?;
+    delete_take_record(tx, take)
+}
+
+/// The evidence rows that cite `take`, with their reverse index rows.
+fn delete_take_evidence(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
     let mut synths = Vec::new();
     scan_prefix(
         &*tx,
@@ -692,6 +698,11 @@ fn delete_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
         tx.delete(&evidence_key(synth, take.page_id, take.row_num))?;
         tx.delete(&key)?;
     }
+    Ok(())
+}
+
+/// The take's own records: its row, its vector and its id key. Evidence that cites it stays.
+fn delete_take_record(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
     tx.delete(&row_key(take.page_id, take.row_num))?;
     crate::embeddings::remove_take_vector(tx, take.id)?;
     tx.delete(&take_key(take.id))
@@ -708,6 +719,36 @@ pub(crate) fn delete_takes_by_id(tx: &mut dyn KvWrite, ids: &BTreeSet<u64>) -> R
         }
     }
     Ok(deleted)
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the take `id`. `keep_evidence` leaves the
+/// evidence rows that cite it, for a take that is replaced by a row of the same `(page_id,
+/// row_num)`. `false` when no such take is stored.
+pub(crate) fn remove_take(tx: &mut dyn KvWrite, id: u64, keep_evidence: bool) -> Result<bool> {
+    let Some(take) = read_take(&*tx, id)? else {
+        return Ok(false);
+    };
+    if !keep_evidence {
+        delete_take_evidence(tx, &take)?;
+    }
+    delete_take_record(tx, &take)?;
+    Ok(true)
+}
+
+/// The shadow follow: removes the evidence row of `synthesis` citing the take `(take_page_id,
+/// take_row_num)`. `false` when there is none.
+pub(crate) fn remove_evidence(
+    tx: &mut dyn KvWrite,
+    synthesis: u64,
+    take_page_id: u64,
+    take_row_num: i32,
+) -> Result<bool> {
+    let key = evidence_key(synthesis, take_page_id, take_row_num);
+    if tx.get(&key)?.is_none() {
+        return Ok(false);
+    }
+    delete_evidence(tx, &[key])?;
+    Ok(true)
 }
 
 /// Deletes evidence rows by their `A 0x03` keys, with their reverse index rows.

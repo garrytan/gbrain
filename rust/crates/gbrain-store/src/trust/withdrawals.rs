@@ -742,6 +742,20 @@ pub(crate) fn move_subject_in(
     Ok(())
 }
 
+/// The shadow follow (`seed/follow.rs`): removes the withdrawal `parts` (`source_id`, `visibility`,
+/// `subject`, `fact_hash`). Facts that its seed expired stay expired. `false` when there is none.
+pub(crate) fn remove_withdrawal(tx: &mut dyn KvWrite, parts: [&str; 4]) -> Result<bool> {
+    if parts.iter().any(|p| p.contains('\0')) {
+        return Ok(false);
+    }
+    let k = key(&parts);
+    if tx.get(&k)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&k)?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

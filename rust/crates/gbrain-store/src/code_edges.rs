@@ -826,6 +826,16 @@ fn finish(
     Ok(out)
 }
 
+/// The shadow follow (`seed/follow.rs`): removes the row `id` of `table` with its unique and index
+/// keys. `false` when there is none.
+pub(crate) fn remove_edge(tx: &mut dyn KvWrite, table: Table, id: u64) -> Result<bool> {
+    let Some(edge) = read_edge(&*tx, table, id)? else {
+        return Ok(false);
+    };
+    delete_edge(tx, &edge)?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
