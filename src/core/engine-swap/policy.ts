@@ -10,6 +10,7 @@
  * are never part of a policy: `UNWAIVABLE` names them, and the evaluator applies them whatever the policy says.
  */
 import { createHash } from 'node:crypto';
+import { brainRefFor } from '../brain-ref.ts';
 
 /** The design's default: at least 14 days of shadowing in the epoch. */
 export const DEFAULT_SHADOW_MIN_DAYS = 14;
@@ -69,10 +70,8 @@ export const READINESS_POLICY: ReadinessPolicy = {
   }],
 };
 
-/** The brain reference an override binds: a one-way digest of `persistence_brain.brain_id`. */
-export function brainRefFor(brainId: string): string {
-  return createHash('sha256').update(`gbrain-engine-swap-brain-ref-v1\0${brainId}`).digest('hex').slice(0, 16);
-}
+/** The brain reference an override binds: a one-way digest of `persistence_brain.brain_id` (src/core/brain-ref.ts). */
+export { brainRefFor };
 
 export type OverrideMiss = 'another_brain' | 'expired' | 'unknown_brain' | 'unbound';
 
