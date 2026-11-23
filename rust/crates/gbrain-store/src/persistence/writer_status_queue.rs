@@ -233,13 +233,12 @@ pub(crate) fn parked_group_rows_in(
             let g = &mut groups[at].1;
             g.effects.insert(e.id);
             g.targets += 1;
-            if let Some(rule) = field("rule") {
-                if g.rule
+            if let Some(rule) = field("rule")
+                && g.rule
                     .as_ref()
                     .is_none_or(|least| rule.as_bytes() < least.as_bytes())
-                {
-                    g.rule = Some(rule);
-                }
+            {
+                g.rule = Some(rule);
             }
             g.worktrees
                 .insert(e.worktree_id.as_ref().map(|w| w.to_lowercase()));

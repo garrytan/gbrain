@@ -65,7 +65,7 @@ test/engine-parity/doctor-facts-trust.test.ts	6	0
 test/engine-parity/doctor-fence-census.test.ts	5	0
 test/engine-parity/doctor-join-checks.test.ts	3	0
 test/engine-parity/doctor-pages.test.ts	16	0
-test/engine-parity/doctor-persistence.test.ts	4	0
+test/engine-parity/doctor-persistence.test.ts	5	0
 test/engine-parity/doctor-reads.test.ts	1	0
 test/engine-parity/doctor-search.test.ts	10	0
 test/engine-parity/doctor-sources.test.ts	2	0
@@ -332,5 +332,5 @@ test/engine-parity/write-request-reads.test.ts	3	0
 test/engine-parity/writer-admin.test.ts	5	0
 test/engine-parity/writer-registration.test.ts	2	0
 test/engine-parity/writer-release.test.ts	4	0
-test/engine-parity/writer-status.test.ts	3	0
+test/engine-parity/writer-status.test.ts	4	0
 test/engine-parity/writer-versions.test.ts	4	0
