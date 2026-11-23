@@ -17,7 +17,7 @@
  * only id, kind, source and slug. The row budget counts held rows before any slug, page or rename filtering. When
  * the scan stops at the budget (an extra-row probe tells a full read from a cut one) or at its deadline, the check
  * warns that the count is unknown. An evidence table that cannot be read is unknown too, never an empty answer, and
- * so is one that row-level security hides from the role: it would read as zero rows, so each relation's visibility is
+ * so is any relation with row security active for the role (it would read as zero rows, and policies are not judged),
  * checked before anything is read. The page lookup probes `pages` by its `(source_id, slug)` key for a candidate slug
  * set resolved first (the hold's own slug, its alias targets and its history targets).
  *
@@ -80,7 +80,7 @@ function readVerdicts(engine: BrainEngine, rows: HoldRow[]): Promise<Verdict[]> 
             count(DISTINCT p.id) FILTER (WHERE NOT c.exact AND p.deleted_at IS NULL AND c.cand_slug <> h.slug)::int AS live_n,
             count(DISTINCT p.id) FILTER (WHERE NOT c.exact AND p.deleted_at IS NOT NULL AND c.cand_slug <> h.slug)::int AS deleted_n,
             COALESCE(bool_or(c.exact AND p.deleted_at IS NOT NULL), false) AS page_deleted,
-            min(c.cand_slug) FILTER (WHERE NOT c.exact AND p.deleted_at IS NULL AND c.cand_slug <> h.slug) AS current_slug
+            min(p.slug) FILTER (WHERE NOT c.exact AND p.id IS NOT NULL AND p.deleted_at IS NULL AND c.cand_slug <> h.slug) AS current_slug
        FROM cand c JOIN h ON h.id = c.id
        LEFT JOIN pages p ON p.source_id = c.source_id AND p.slug = c.cand_slug
       GROUP BY c.id
@@ -89,17 +89,16 @@ function readVerdicts(engine: BrainEngine, rows: HoldRow[]): Promise<Verdict[]> 
 }
 
 /**
- * The evidence relations this role cannot read in full. Row-level security gives a role without a policy zero rows,
- * not an error, so a clean read proves nothing: held rows, aliases, rename history or pages could all be hidden. The
- * test is the one the folder-access tables and the writer guards use (docs/ENGINES.md "Folder access tables"):
- * row security is active for the role on the relation and no permissive SELECT policy applies to it.
+ * The evidence relations whose rows this role may not see in full. Row-level security gives a role without a policy
+ * zero rows, not an error, and a policy can hide any subset, so a clean read proves nothing. This fails closed and
+ * judges no policy: a relation counts as hidden whenever row security is active for the running role on it (the table
+ * has row security on and the role is not its owner, not a superuser and has no BYPASSRLS). Only an exempt role, or a
+ * table without row security, is fully visible.
  */
 async function hiddenEvidence(engine: BrainEngine): Promise<string[]> {
   const rows = await engine.executeRaw<{ rel: string }>(
     `SELECT t.rel FROM unnest(ARRAY['write_gate_holds', 'slug_aliases', 'slug_rename_history', 'pages']) WITH ORDINALITY AS t(rel, n)
       WHERE pg_catalog.to_regclass(t.rel) IS NOT NULL AND pg_catalog.row_security_active(pg_catalog.to_regclass(t.rel))
-        AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = pg_catalog.to_regclass(t.rel)::pg_catalog.oid AND p.polpermissive AND p.polcmd::pg_catalog.text IN ('*', 'r')
-          AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::pg_catalog.oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END))
       ORDER BY t.n`);
   return rows.map(r => r.rel);
 }
@@ -180,7 +179,7 @@ function report(scan: Scan): Omit<Check, 'name'> {
     return { status: 'warn', details: { health: 'unknown', reason: 'row_level_security', count: 'unknown', complete: false, hidden_tables: scan.hidden },
       fix_unavailable_reason: 'operator_judgement',
       message: `gbrain could not check held writes for a renamed or removed page: row-level security hides ${scan.hidden.join(', ')} from this database role, so what it would read is incomplete and the count is unknown, not zero. `
-        + 'Run gbrain as the table owner, or give this role a SELECT policy on each (docs/ENGINES.md, "Folder access tables"). Nothing was read and nothing was changed.' };
+        + 'Row security is active for this role on them, and gbrain does not judge policies. Run gbrain as the table owner, or as a role that bypasses row security. Nothing was read and nothing was changed.' };
   }
   // Renamed holds first: they are the ones that may have let held text out.
   const ordered = [...scan.items].sort((a, b) => Number(b.class === 'renamed') - Number(a.class === 'renamed'));

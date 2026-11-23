@@ -337,7 +337,7 @@ for (const backend of testBackends()) {
       await engine.executeRaw('ANALYZE pages');
       let statement: { sql: string; params: unknown[] } | null = null;
       const recording = { executeRaw: (sql: string, params?: unknown[]) => {
-        if (/unnest\(/i.test(sql) && /\bpages\b/.test(sql) && !/pg_policy/.test(sql)) statement ??= { sql, params: params ?? [] };
+        if (/unnest\(/i.test(sql) && /\bpages\b/.test(sql) && !/row_security_active/.test(sql)) statement ??= { sql, params: params ?? [] };
         return engine.executeRaw(sql, params);
       } };
       const check = await run({ engine: recording });
