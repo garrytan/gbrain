@@ -32,6 +32,7 @@ mod page_projection;
 pub mod pages;
 pub mod redb_kv;
 pub mod search;
+pub mod seed;
 pub mod sources;
 #[cfg(test)]
 mod test_support;
@@ -490,11 +491,37 @@ impl Store {
     /// Either way `f` writes through the store's write handle chain ([`write_chain`]), made fresh
     /// for each run: a put of a page record that names readers sets the member-access flag in the
     /// same write (`access_flag::FlaggingWriter`).
-    pub(crate) fn write<T>(&self, mut f: impl FnMut(&mut dyn KvWrite) -> Result<T>) -> Result<T> {
+    pub(crate) fn write<T>(&self, f: impl FnMut(&mut dyn KvWrite) -> Result<T>) -> Result<T> {
+        self.write_under(None, f)
+    }
+
+    /// [`Store::write`] under the trust context `trust` instead of the handle's write settings. The
+    /// shadow seed (`seed.rs`) copies rows with the tiers another engine stored for them.
+    pub(crate) fn write_as<T>(
+        &self,
+        trust: crate::trust::WriteTrust,
+        f: impl FnMut(&mut dyn KvWrite) -> Result<T>,
+    ) -> Result<T> {
+        self.write_under(Some(trust), f)
+    }
+
+    /// The body of [`Store::write`] and [`Store::write_as`]: `trust` is the context to stamp under,
+    /// or `None` for the handle's write settings.
+    fn write_under<T>(
+        &self,
+        trust: Option<crate::trust::WriteTrust>,
+        mut f: impl FnMut(&mut dyn KvWrite) -> Result<T>,
+    ) -> Result<T> {
+        let stamp_trust = || -> Result<crate::trust::WriteTrust> {
+            match &trust {
+                Some(trust) => Ok(trust.clone()),
+                None => self.write_trust(),
+            }
+        };
         if let Some(tx) = &self.bound {
             // A bound store's env is the transaction's clock (`transactions.rs`, "Time").
             let _clock = crate::env::transaction_clock::open(self.env.clone());
-            let _trust = crate::write_trust::stamp_context::open(self.write_trust()?);
+            let _trust = crate::write_trust::stamp_context::open(stamp_trust()?);
             return tx.statement(|w| write_chain(w, &mut f));
         }
         let mut locked: std::collections::BTreeSet<Vec<u8>> = std::collections::BTreeSet::new();
@@ -507,7 +534,7 @@ impl Store {
             };
             let outcome = {
                 let _clock = crate::env::transaction_clock::open(self.env.clone());
-                let _trust = crate::write_trust::stamp_context::open(self.write_trust()?);
+                let _trust = crate::write_trust::stamp_context::open(stamp_trust()?);
                 match write_chain(&mut *tx, &mut f) {
                     Ok(value) => tx.commit().map(|_| value),
                     Err(e) => Err(e),

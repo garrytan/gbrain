@@ -33,7 +33,7 @@ mod tier;
 pub(crate) use crate::write_receipt::WriteReceipt as TimelineReceipt;
 pub(crate) use tier::TimelineTrust;
 
-const NEXT_TIMELINE_ID: &str = "next_timeline_id";
+pub(crate) const NEXT_TIMELINE_ID: &str = "next_timeline_id";
 
 /// What is stored for a timeline entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]

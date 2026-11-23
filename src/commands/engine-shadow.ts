@@ -1,18 +1,23 @@
 /**
- * `gbrain engine shadow start|status|stop|report` (plan PR S1 and the read half of S2).
+ * `gbrain engine shadow start|status|stop|report|seed` (plan PR S1, the read half of S2 and the seed of S3).
  *
  * Shadow mode mirrors a sample of the host brain's reads to the Rust engine in a supervised child process and
  * records whether the answers agree. It is off by default and writes nothing to the brain database, its config
  * table or the brain repo: every file lives in `<gbrain home>/shadow/<brain>/`. `start` previews a plan with a hash
  * and needs `--yes --expect <hash>`; the installed addon is loaded then, in the foreground. The
- * hidden `__child <dir>` is the child the serving process spawns.
+ * hidden `__child <dir>` is the child the serving process spawns. `seed` copies the brain into the Rust store
+ * once, in one read-only snapshot, and writes `seed.json` (src/shadow/seed.ts).
  */
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { loadConfig } from '../core/config.ts';
 import type { EngineConfig } from '../core/types.ts';
+import type { BrainEngine } from '../core/engine.ts';
 import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
 import { readFaults, readShadowSummary } from '../shadow/ledger.ts';
+import { readManagedStorage, storageLine, storageReport, type StorageReport } from '../shadow/managed-gate.ts';
+import { readSeedRecord, runSeed, SeedBudgetError, writeSeedRecord, type SeedRecord, type SeedTarget } from '../shadow/seed.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown, writeProvisionalReport } from '../shadow/report.ts';
 import {
   brainIdentity, DEFAULT_SHADOW_QUEUE_BOUND, DEFAULT_SHADOW_SAMPLE_RATE, readShadowState, shadowBrainKey, shadowDirFor,
@@ -31,6 +36,10 @@ export interface EngineShadowDeps {
   now?: () => Date;
   /** The `__child` loop; default runShadowChild on stdin/stdout. */
   runChild?: (dir: string) => Promise<number>;
+  /** The connected primary brain `seed` reads; default the configured brain, opened without shadow mode. */
+  openPrimary?: () => Promise<BrainEngine>;
+  /** Opens the Rust store `seed` writes; default openRustStore on the loaded addon at `<dir>/store`. */
+  openStore?: (addon: object, storePath: string) => Promise<SeedTarget & { close(): Promise<void> }>;
 }
 
 const HELP = `gbrain engine shadow — compare the Rust engine against this brain's reads, off the request path
@@ -41,13 +50,21 @@ Usage:
   gbrain engine shadow status [--json]
   gbrain engine shadow stop [--delete]
   gbrain engine shadow report [--json]
+  gbrain engine shadow seed [--json] [--reseed]
 
 Shadow mode is off by default. When on, a sample of reads this brain answers is sent, after the answer, to a
 supervised child process that runs the same read on the Rust engine and records match, diff or why it could not
 compare. The primary answer never waits for the child. It writes nothing to the brain database, its config or the
 brain repo; everything lives in <gbrain home>/shadow/<brain>/. stop --delete removes that directory.
 
-The report is provisional and always says NOT READY: the Rust store is not seeded until a later release.`;
+seed copies this brain into the Rust store once, in one read-only snapshot, before shadow mode compares answers.
+It writes no table row, source file, ownership marker or registry entry of the brain. Opening a PGLite brain still
+takes its process lock, and PGLite rewrites its own control and log files. A brain with an open repair episode is not
+opened. A store is seeded once: to seed again, delete the shadow directory first.
+seed runs on a brain that uses managed storage too; only the swap refuses such a brain. seed reads the brain's storage
+mode right before its snapshot and records it in seed.json; a mode it cannot read does not stop the seed.
+
+The report is provisional and always says NOT READY.`;
 
 class UsageError extends Error {}
 
@@ -155,6 +172,7 @@ export async function runEngineShadow(args: string[], deps: EngineShadowDeps = {
     if (sub === 'status') return status(brain, flags(rest, ['--json'], 'status').has('--json'), out);
     if (sub === 'stop') return stop(brain, flags(rest, ['--delete'], 'stop').has('--delete'), out, now);
     if (sub === 'report') return report(brain, flags(rest, ['--json'], 'report').has('--json'), out, now);
+    if (sub === 'seed') return await seed(brain, flags(rest, ['--json', '--reseed'], 'seed'), deps, out, err, now);
     throw new UsageError(`Unknown engine shadow subcommand: ${sub}`);
   } catch (e) {
     if (e instanceof UsageError) {
@@ -201,6 +219,7 @@ async function start(
   };
   writeShadowState(brain.dir, state);
   out(`Shadow mode is on for brain ${brain.key}. Processes that open this brain from now on mirror reads.`);
+  if (!readSeedRecord(brain.dir)) err('engine shadow: warning: the Rust store is not seeded, so most comparisons will differ. Stop shadow mode and run gbrain engine shadow seed first.');
   out('gbrain engine shadow status shows the counts; gbrain engine shadow stop turns it off.');
   return 0;
 }
@@ -217,7 +236,7 @@ function status(brain: { key: string; dir: string }, json: boolean, out: (l: str
     out(JSON.stringify({
       schema_version: 1, brain: brain.key, enabled: state?.enabled === true, state, directory: brain.dir,
       totals, by_op: summary?.by_op ?? {}, serving: summary?.primary ?? null, child_shed: summary?.child_shed ?? 0,
-      children: summary?.children ?? 0, recent_faults: faults,
+      children: summary?.children ?? 0, recent_faults: faults, seed: seedStatus(readSeedRecord(brain.dir)),
     }, null, 2));
     return 0;
   }
@@ -229,8 +248,161 @@ function status(brain: { key: string; dir: string }, json: boolean, out: (l: str
     const p = summary.primary;
     out(`  serving: offered ${p.offered}, sent ${p.sent}, sampled out ${p.sampled_out}, shed ${p.shed_queue_full + p.shed_too_large + p.shed_transport + p.shed_unmirrorable}, in transaction ${p.skipped_in_transaction}`);
   }
+  const seeded = readSeedRecord(brain.dir);
+  out(seeded ? `  seed ${seeded.seed_id} finished ${seeded.finished_at}; unseeded gap rows ${seeded.unseeded_gap_rows_total}` : '  seed: none (gbrain engine shadow seed)');
+  const seedStorage = storageLine(seeded?.storage);
+  if (seedStorage) out(`  storage: ${seedStorage}`);
   for (const f of faults) out(`  fault ${f.ts} ${f.kind}: ${f.detail}`);
   return 0;
+}
+
+/** The `seed` block of `status --json`: null fields until a seed finished. */
+export function seedStatus(record: SeedRecord | null): {
+  seed_id: string | null; finished_at: string | null; unseeded_gap_rows_total: number | null; storage: StorageReport | null;
+} {
+  return {
+    seed_id: record?.seed_id ?? null, finished_at: record?.finished_at ?? null, unseeded_gap_rows_total: record?.unseeded_gap_rows_total ?? null,
+    storage: storageReport(record?.storage),
+  };
+}
+
+const RESEED_STEP = 'A Rust store is seeded once. To seed again, start from a new shadow directory: '
+  + 'gbrain engine shadow stop --delete (deletes the store, ledger and reports), then gbrain engine shadow seed.';
+
+async function seed(
+  brain: { key: string; dir: string; engine: string }, f: Set<string>, deps: EngineShadowDeps,
+  out: (l: string) => void, err: (l: string) => void, now: () => Date,
+): Promise<number> {
+  const json = f.has('--json');
+  const existing = readSeedRecord(brain.dir);
+  if (f.has('--reseed') || existing) {
+    err(`engine shadow: ${existing ? `already seeded (${existing.seed_id}, finished ${existing.finished_at}). ` : ''}${RESEED_STEP}`);
+    return 1;
+  }
+  if (readShadowState(brain.dir)?.enabled) {
+    err('engine shadow: stop shadow mode first (gbrain engine shadow stop): its child holds the Rust store. Nothing was written.');
+    return 1;
+  }
+  // The brain must open to be read; a brain that cannot be opened is an error, not a mode (nothing is written, no store is opened).
+  let primary: BrainEngine;
+  try {
+    primary = await (deps.openPrimary ?? openConfiguredPrimary)();
+  } catch (e) {
+    const code = (e as { code?: unknown } | null)?.code;
+    err(`engine shadow: could not open the brain (${typeof code === 'string' && /^[a-z0-9_]{1,64}$/i.test(code) ? code : 'open_failed'}). ${code === 'pglite_busy' ? 'Stop `gbrain serve` and any other process holding this brain, then run the command again. ' : ''}Nothing was written.`);
+    return 1;
+  }
+  try {
+    return await seedFrom(primary, brain, json, deps, out, err, now);
+  } finally {
+    await primary.disconnect().catch(() => undefined);
+  }
+}
+
+/** The rest of `seed` once the primary is open: the addon, the shadow directory, the store, the storage mode, the snapshot. */
+async function seedFrom(
+  primary: BrainEngine, brain: { key: string; dir: string; engine: string }, json: boolean, deps: EngineShadowDeps,
+  out: (l: string) => void, err: (l: string) => void, now: () => Date,
+): Promise<number> {
+  const load = await (deps.loadAddon ?? (async () => {
+    const { loadRustEngineAddon } = await import('../core/rust-engine/addon-loader.ts');
+    return loadRustEngineAddon();
+  }))();
+  if (!load.ok) {
+    err(`engine shadow: ${load.code} (${load.reason}): ${load.message}`);
+    return 1;
+  }
+  mkdirSync(brain.dir, { recursive: true, mode: 0o700 });
+  let store: SeedTarget & { close(): Promise<void> };
+  try {
+    store = await (deps.openStore ?? (async (addon, path) => {
+      const { openRustStore } = await import('../core/rust-engine/store.ts');
+      return openRustStore(addon, path);
+    }))(load.addon, join(brain.dir, 'store'));
+  } catch (e) {
+    if ((e as { code?: unknown }).code === 'rust_store_locked') {
+      err('engine shadow: stop shadow mode first (gbrain engine shadow stop, then wait 30 seconds): another process holds the Rust store. Nothing was written.');
+      return 1;
+    }
+    throw e;
+  }
+  try {
+    // Read right before the snapshot, outside its transaction: a failed read there would abort the snapshot. Never throws.
+    const storage = await readManagedStorage(primary, now());
+    const record = await runSeed(primary, store, {
+      primaryEngine: brain.engine, now, storage,
+      onBatch: json ? undefined : (relation, rows) => err(`  seeding ${relation}: ${rows} rows`),
+    });
+    const path = writeSeedRecord(brain.dir, record);
+    if (json) out(JSON.stringify(record, null, 2));
+    else renderSeed(record, path, out);
+    return 0;
+  } catch (e) {
+    if (e instanceof SeedBudgetError) {
+      err(`engine shadow: ${e.message}. The store holds a partial seed. ${RESEED_STEP}`);
+      return 1;
+    }
+    if (e instanceof Error && /^shadow_seed: the store (holds seed|is not empty)/.test(e.message)) {
+      err(`engine shadow: the Rust store already holds data (${e.message}). ${RESEED_STEP}`);
+      return 1;
+    }
+    throw e;
+  } finally {
+    await store.close().catch(() => undefined);
+  }
+}
+
+async function openConfiguredPrimary(): Promise<BrainEngine> {
+  const { toEngineConfig } = await import('../core/config.ts');
+  const { constructEngine } = await import('../core/engine-construct.ts');
+  const cfg = loadConfig();
+  if (!cfg) throw new UsageError('No brain is configured here.');
+  const config = toEngineConfig(cfg);
+  // PGLite runs initdb on a missing or uninitialized directory when it connects; a seed must not make a brain.
+  if (!config.database_url && (!config.database_path || !existsSync(join(config.database_path, 'PG_VERSION')))) {
+    throw Object.assign(new Error(`no brain exists at ${config.database_path ?? '(no path configured)'}`), { code: 'no_brain' });
+  }
+  const engine = await constructEngine(config);
+  // Only a local brain (PGLite) has this open: no recording of its managed roots (that writes ownership markers into the
+  // datastore and source checkouts) and, with repair off, no repair of a damaged log (that renames the primary's files).
+  const quiet = (engine as unknown as { connectForRestore?: (c: EngineConfig, o?: { keepRepairEpisode?: boolean }) => Promise<void> }).connectForRestore?.bind(engine);
+  if (!quiet) {
+    await engine.connect(config);
+    return engine;
+  }
+  // A healthy open also closes an open repair episode and prunes older repair backups; a seed must not, so it leaves that brain unopened.
+  const { readRepairSidecar } = await import('../core/pglite-repair.ts');
+  if (readRepairSidecar(config.database_path!).episodeStartedAt !== null) {
+    throw Object.assign(new Error('a repair episode is open on this brain; opening it would close the episode and prune its backups'), { code: 'repair_episode_open' });
+  }
+  const savedRepair = process.env.GBRAIN_PGLITE_WAL_REPAIR;
+  process.env.GBRAIN_PGLITE_WAL_REPAIR = 'off';
+  try {
+    // The check above runs before the open takes the datastore lock; an episode recorded while it waits is still kept.
+    await quiet(config, { keepRepairEpisode: true });
+  } finally {
+    if (savedRepair === undefined) delete process.env.GBRAIN_PGLITE_WAL_REPAIR;
+    else process.env.GBRAIN_PGLITE_WAL_REPAIR = savedRepair;
+  }
+  return engine;
+}
+
+function renderSeed(r: SeedRecord, path: string, out: (l: string) => void): void {
+  const rows = Object.values(r.relations).reduce((a, x) => a + x.imported, 0);
+  out(`Seeded the Rust store from brain ${r.primary_engine} (${r.seed_id}): ${rows} rows in ${Object.keys(r.relations).length} relations.`);
+  out(`  finished ${r.finished_at}; wrote ${path}`);
+  const storage = storageLine(r.storage);
+  if (storage) out(`  storage: ${storage}`);
+  const values = Object.entries(r.losses.values);
+  if (values.length) out(`  values not kept: ${values.map(([k, n]) => `${k} ${n}`).join(', ')}`);
+  for (const [rel, x] of Object.entries(r.relations)) if (x.unmapped_columns.length) out(`  ${rel}: columns not kept: ${x.unmapped_columns.join(', ')}`);
+  const lost = r.losses.not_copied.filter(n => n.rows > 0);
+  for (const n of lost) out(`  not copied (${n.kind}): ${n.table} ${n.rows} rows; ${n.read}`);
+  out(`  unfinished jobs not copied: ${r.non_terminal_jobs}; segmented pages read as shells: ${r.segmented_pages}`);
+  const gaps = Object.entries(r.unseeded_gap_rows).filter(([, n]) => n > 0);
+  out(gaps.length
+    ? `  unseeded gap rows: ${r.unseeded_gap_rows_total} (${gaps.map(([g, n]) => `${g} ${n}`).join(', ')}); a swap is refused while any remain`
+    : '  unseeded gap rows: 0');
 }
 
 function stop(brain: { key: string; dir: string }, del: boolean, out: (l: string) => void, now: () => Date): number {

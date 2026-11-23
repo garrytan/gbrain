@@ -49,6 +49,15 @@ fn record_key(page_id: u64) -> Vec<u8> {
     keys::id_key(keys::EXTRACTION, &[page_id])
 }
 
+/// The shadow seed (`seed.rs`): stores a page's extraction columns as another engine holds them.
+pub(crate) fn seed_record(
+    tx: &mut dyn KvWrite,
+    page_id: u64,
+    record: &ExtractionRecord,
+) -> Result<()> {
+    write_record(tx, page_id, record)
+}
+
 fn read_record(read: &dyn KvRead, page_id: u64) -> Result<ExtractionRecord> {
     Ok(get_json(read, &record_key(page_id))?.unwrap_or_default())
 }

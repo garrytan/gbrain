@@ -264,6 +264,59 @@ pub(crate) fn queue_page_projection(
     Ok(())
 }
 
+/// The shadow seed's job columns of one page (`page_projection_jobs` joined on the page's source
+/// incarnation and slug): each null when the primary queued no job.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SeedJob {
+    pub revision: Option<String>,
+    pub reason: Option<String>,
+    pub updated_at_us: Option<i64>,
+}
+
+/// Stores the primary's projection job of `page` after the seed wrote the page. A job row keeps
+/// its revision, reason and time as the primary stored them. Returns false when the stored job
+/// has the seed transaction's time instead of the primary's: the primary row gave no time (no
+/// job row, or a job row without `updated_at`) while the page write queued a job.
+pub(crate) fn seed_job(tx: &mut dyn KvWrite, page: &PageRecord, primary: SeedJob) -> Result<bool> {
+    let key = job_key(&incarnation_of(&*tx, &page.source_id)?, &page.slug);
+    let stored = read_job(&*tx, &key)?;
+    if primary.revision.is_none() && primary.reason.is_none() && primary.updated_at_us.is_none() {
+        return Ok(stored.is_none());
+    }
+    let has_time = primary.updated_at_us.is_some();
+    let updated_at_us = match (primary.updated_at_us, &stored) {
+        (Some(time), _) => time,
+        (None, Some(job)) => job.updated_at_us,
+        (None, None) => transaction_clock::transaction_now().ok_or_else(|| {
+            StoreError::invalid("a seed job write ran outside a store write transaction")
+        })?,
+    };
+    let job = JobRecord {
+        revision: primary
+            .revision
+            .or_else(|| stored.as_ref().map(|j| j.revision.clone()))
+            .unwrap_or_else(|| page.knowledge_revision.clone()),
+        reason: primary
+            .reason
+            .or_else(|| stored.as_ref().map(|j| j.reason.clone()))
+            .unwrap_or_else(|| CANONICAL_CHANGE.into()),
+        updated_at_us,
+    };
+    put_job(tx, &key, &job)?;
+    Ok(has_time)
+}
+
+/// The job of `(source_id, slug)`, if the queue holds one.
+#[cfg(test)]
+pub(crate) fn read_page_job(
+    read: &dyn KvRead,
+    source_id: &str,
+    slug: &str,
+) -> Result<Option<JobRecord>> {
+    let key = job_key(&incarnation_of(read, source_id)?, slug);
+    read_job(read, &key)
+}
+
 /// Every job, in key order.
 fn all_jobs(read: &dyn KvRead) -> Result<Vec<Job>> {
     let mut out = Vec::new();

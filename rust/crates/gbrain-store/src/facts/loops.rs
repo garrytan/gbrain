@@ -30,7 +30,7 @@ use serde_json::{Map, Value, json};
 const ROW: u8 = 0x08;
 /// The byte after `keys::FACT` that marks the `(source_id, dedup_key)` unique key.
 const DEDUP: u8 = 0x09;
-const COUNTER: &str = "next_open_loops_id";
+pub(crate) const COUNTER: &str = "next_open_loops_id";
 
 /// The table's CHECK lists.
 const LOOP_TYPES: [&str; 5] = [
@@ -49,29 +49,29 @@ const MUTE_RECHECK: &str = "mute_recheck";
 
 /// What is stored for a loop.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct LoopRecord {
-    source_id: String,
-    dedup_key: String,
-    loop_type: String,
-    counterparty_slug: Option<String>,
-    counterparty_source_id: Option<String>,
-    counterparty_email: Option<String>,
-    summary: String,
+pub(crate) struct LoopRecord {
+    pub(crate) source_id: String,
+    pub(crate) dedup_key: String,
+    pub(crate) loop_type: String,
+    pub(crate) counterparty_slug: Option<String>,
+    pub(crate) counterparty_source_id: Option<String>,
+    pub(crate) counterparty_email: Option<String>,
+    pub(crate) summary: String,
     #[serde(deserialize_with = "crate::jsonb::de_value")]
-    evidence: Value,
-    thread_id: Option<String>,
-    page_slug: Option<String>,
-    due_at_us: Option<i64>,
-    status: String,
-    detector: String,
-    confidence: f32,
-    fact_id: Option<i64>,
-    opened_at_us: i64,
-    last_activity_at_us: i64,
-    closed_at_us: Option<i64>,
-    closed_by: Option<String>,
-    created_at_us: i64,
-    updated_at_us: i64,
+    pub(crate) evidence: Value,
+    pub(crate) thread_id: Option<String>,
+    pub(crate) page_slug: Option<String>,
+    pub(crate) due_at_us: Option<i64>,
+    pub(crate) status: String,
+    pub(crate) detector: String,
+    pub(crate) confidence: f32,
+    pub(crate) fact_id: Option<i64>,
+    pub(crate) opened_at_us: i64,
+    pub(crate) last_activity_at_us: i64,
+    pub(crate) closed_at_us: Option<i64>,
+    pub(crate) closed_by: Option<String>,
+    pub(crate) created_at_us: i64,
+    pub(crate) updated_at_us: i64,
 }
 
 /// The input of `upsertOpenLoop`. `counterpartySourceId` is already NULL when the slug is empty
@@ -202,6 +202,30 @@ fn row_json(id: u64, r: &LoopRecord) -> Value {
 
 fn read_row(read: &dyn KvRead, id: u64) -> Result<Option<LoopRecord>> {
     get_json::<LoopRecord>(read, &row_key(id))
+}
+
+/// The shadow seed (`seed.rs`): stores `record`, a loop copied from another engine with its own id,
+/// times and status, with its `(source_id, dedup_key)` unique key, where `upsert_open_loop` stores
+/// a new one. `false` when the id already holds a loop; the dedup key held by another id is the
+/// `open_loops_dedup` violation.
+pub(crate) fn seed_open_loop(tx: &mut dyn KvWrite, id: u64, record: &LoopRecord) -> Result<bool> {
+    if read_row(&*tx, id)?.is_some() {
+        return Ok(false);
+    }
+    check("loop_type", &record.loop_type, &LOOP_TYPES)?;
+    check("status", &record.status, &STATUSES)?;
+    check("detector", &record.detector, &DETECTORS)?;
+    require_source(tx, &record.source_id)?;
+    let dk = dedup_key(&record.source_id, &record.dedup_key);
+    if tx.get(&dk)?.is_some() {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            "duplicate key value violates unique constraint \"open_loops_dedup\"",
+        ));
+    }
+    put_json(tx, &row_key(id), record)?;
+    tx.put(&dk, &id.to_be_bytes())?;
+    Ok(true)
 }
 
 /// Removes every loop of a source, for the source delete.

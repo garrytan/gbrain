@@ -70,10 +70,14 @@ pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn, TrueUpReservation};
 pub use idle_probe::IdleProbeSpec;
 pub use noop_settle::NoopSettleCandidateSpec;
+#[cfg(test)]
+pub(crate) use projection_queue::{JobRecord, read_page_job};
 pub use projection_queue::{
     ProjectionJobRef, ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };
-pub(crate) use projection_queue::{activation_started_us, queue_page_projection};
+pub(crate) use projection_queue::{
+    SeedJob, activation_started_us, queue_page_projection, seed_job,
+};
 pub use receipt_list::WriteRequestListFilter;
 pub use topology::TopologyChangeInsert;
 

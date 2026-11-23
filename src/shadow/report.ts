@@ -1,13 +1,16 @@
 /**
- * The provisional shadow report (plan PR S1/S2 read half). Its verdict is always NOT READY: the Rust store is not
- * seeded until S3, writes are not compared until S3, and the full report with readiness rules is S4. It counts
- * comparisons per operation and outcome, and says why nothing here can be read as readiness.
+ * The provisional shadow report (plan PR S1/S2 read half, plus the S3 seed). Its verdict is always NOT READY:
+ * the seeded store does not follow later writes yet, writes are not compared yet, and the full report with
+ * readiness rules is S4. It counts comparisons per operation and outcome, names the seed (its age, segmented
+ * pages and unseeded gap rows), and says why nothing here can be read as readiness.
  */
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { SHADOW_OUTCOMES, type ShadowOutcome } from './classify.ts';
 import { readFaults, readShadowSummary, type ShadowFault, type ShadowSummary } from './ledger.ts';
 import type { ShadowState } from './state.ts';
+import { readSeedRecord, type SeedRecord } from './seed.ts';
+import { storageLine, storageReport, type StorageReport } from './managed-gate.ts';
 
 export const PROVISIONAL_VERDICT = 'NOT READY' as const;
 
@@ -27,13 +30,51 @@ export interface ProvisionalReport {
   child_shed: number;
   children: number;
   recent_faults: ShadowFault[];
+  /** The seed the Rust store holds (`seed.json`), or null before `gbrain engine shadow seed`. */
+  seed: ReportSeed | null;
 }
 
-const WHY_NOT_READY = [
-  'Provisional report: shadow mode compares reads only (plan S1 and the read half of S2).',
-  'The Rust store is not seeded from the brain until S3, so most Rust reads differ or miss; a diff here is expected.',
-  'Writes are not compared until S3, and readiness rules arrive with the full report in S4.',
-];
+export interface ReportSeed {
+  seed_id: string;
+  finished_at: string;
+  age_hours: number;
+  segmented_pages: number;
+  non_terminal_jobs: number;
+  /** The storage mode the seed recorded, null for a seed written before it was recorded. */
+  storage: StorageReport | null;
+  unseeded_gap_rows_total: number;
+  /** Only the gap tables and columns that hold rows. */
+  unseeded_gap_rows: Record<string, number>;
+}
+
+function reportSeed(record: SeedRecord | null, now: Date): ReportSeed | null {
+  if (!record) return null;
+  const age = (now.getTime() - Date.parse(record.finished_at)) / 3_600_000;
+  return {
+    seed_id: record.seed_id,
+    finished_at: record.finished_at,
+    age_hours: Number.isFinite(age) ? Math.max(0, Math.round(age * 10) / 10) : 0,
+    segmented_pages: record.segmented_pages,
+    non_terminal_jobs: record.non_terminal_jobs,
+    storage: storageReport(record.storage),
+    unseeded_gap_rows_total: record.unseeded_gap_rows_total,
+    unseeded_gap_rows: Object.fromEntries(Object.entries(record.unseeded_gap_rows).filter(([, n]) => n > 0)),
+  };
+}
+
+function whyNotReady(seed: ReportSeed | null): string[] {
+  const why = ['Provisional report: shadow mode compares reads only (plan S1 and the read half of S2).'];
+  if (!seed) {
+    why.push('The Rust store is not seeded: run gbrain engine shadow seed. Until then most Rust reads differ or miss; a diff here is expected.');
+  } else {
+    why.push(`The Rust store holds the seed of ${seed.finished_at} and does not follow later writes yet, so reads of anything written since differ.`);
+    if (seed.unseeded_gap_rows_total > 0) {
+      why.push(`${seed.unseeded_gap_rows_total} rows of the brain have no Rust home yet (unseeded gap rows); reads that touch them can differ, and a swap is refused while any remain.`);
+    }
+  }
+  why.push('Writes are not compared yet, and readiness rules arrive with the full report in S4.');
+  return why;
+}
 
 function zeroOutcomes(): Record<ShadowOutcome, number> {
   return Object.fromEntries(SHADOW_OUTCOMES.map((o) => [o, 0])) as Record<ShadowOutcome, number>;
@@ -53,11 +94,12 @@ export function buildProvisionalReport(dir: string, brain: string, state: Shadow
     }
     return row;
   });
+  const seed = reportSeed(readSeedRecord(dir), now);
   return {
     schema_version: 1,
     kind: 'provisional',
     verdict: PROVISIONAL_VERDICT,
-    why_not_ready: WHY_NOT_READY,
+    why_not_ready: whyNotReady(seed),
     generated_at: now.toISOString(),
     brain,
     enabled: state?.enabled === true,
@@ -69,6 +111,7 @@ export function buildProvisionalReport(dir: string, brain: string, state: Shadow
     child_shed: summary.child_shed,
     children: summary.children,
     recent_faults: readFaults(dir, 10),
+    seed,
   };
 }
 
@@ -78,7 +121,8 @@ export function renderProvisionalMarkdown(r: ProvisionalReport): string {
   lines.push(`Verdict: **${r.verdict}**`, '');
   for (const why of r.why_not_ready) lines.push(`- ${why}`);
   lines.push('', `Brain: ${r.brain}. Shadow mode: ${r.enabled ? 'on' : 'off'}. Generated ${r.generated_at}.`);
-  lines.push(`Window: ${r.window.first_event_at ?? 'no comparisons yet'} to ${r.window.last_event_at ?? '-'}.`, '');
+  lines.push(`Window: ${r.window.first_event_at ?? 'no comparisons yet'} to ${r.window.last_event_at ?? '-'}.`);
+  lines.push(renderSeedLine(r.seed), '');
   const cols: ShadowOutcome[] = [...SHADOW_OUTCOMES];
   lines.push(`| operation | total | ${cols.join(' | ')} |`);
   lines.push(`|---|---:|${cols.map(() => '---:').join('|')}|`);
@@ -93,6 +137,15 @@ export function renderProvisionalMarkdown(r: ProvisionalReport): string {
     for (const f of r.recent_faults) lines.push(`- ${f.ts} ${f.kind}: ${f.detail}`);
   }
   return lines.join('\n') + '\n';
+}
+
+function renderSeedLine(seed: ReportSeed | null): string {
+  if (!seed) return 'Seed: none (run gbrain engine shadow seed).';
+  const gaps = Object.entries(seed.unseeded_gap_rows).sort(([a], [b]) => a.localeCompare(b)).map(([k, n]) => `${k} ${n}`);
+  return `Seed: ${seed.seed_id}, finished ${seed.finished_at} (${seed.age_hours} hours ago). `
+    + `Segmented pages read as shells: ${seed.segmented_pages}. Unfinished jobs not copied: ${seed.non_terminal_jobs}. `
+    + `Unseeded gap rows: ${seed.unseeded_gap_rows_total}${gaps.length ? ` (${gaps.join(', ')})` : ''}.`
+    + (storageLine(seed.storage) ? ` Storage: ${storageLine(seed.storage)}.` : '');
 }
 
 /** Writes `reports/provisional.json` and `.md` (0600) and returns their paths. */
