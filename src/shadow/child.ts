@@ -8,8 +8,9 @@
  * serving process. When the addon is missing or mismatched, every event is recorded `addon_unavailable` with the
  * loader's code, so the evidence shows why nothing was compared. Stdin closing ends the child.
  *
- * The store is not seeded yet (seed and reconcile are plan PR S3), so once Rust implements a read, its answers
- * describe an empty store and mostly `diff`; the provisional report says so.
+ * The store is the one `gbrain engine shadow seed` filled from the brain, and the follower (follow-child.ts) keeps it level
+ * with the brain's writes, so a read's answer comes from the brain's own data. A brain that was never seeded, or whose
+ * seed is not followed, has an empty or stale store; reads against it mostly `diff`, and `status` says the brain needs a seed or a reseed.
  */
 import { existsSync, rmSync } from 'node:fs';
 import { createInterface } from 'node:readline';

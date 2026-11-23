@@ -73,7 +73,7 @@ export interface SeedRecord {
   digests?: true;
 }
 
-export const RESEED_STEPS = 'gbrain engine shadow stop --delete (deletes the store, ledger and reports), then gbrain engine shadow seed, then gbrain engine shadow start to turn shadow mode on again';
+export const RESEED_STEPS = 'gbrain engine shadow stop --delete (deletes the store, ledger and reports), then gbrain engine shadow seed, then gbrain engine shadow start --plan, then gbrain engine shadow start --yes --expect <plan_hash> to turn shadow mode on again';
 
 export interface SeedOptions {
   primaryEngine: string;
