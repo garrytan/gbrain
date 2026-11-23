@@ -2023,12 +2023,13 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   a statement of its own so a failed read cannot abort the snapshot, `seed` reads one row, `persistence_brain.enabled`,
   and records `storage: { managed, checked_at, reason? }` in `seed.json`. A managed brain prints `storage: this brain
   cannot swap while it uses managed storage`; `managed` is `false` for an unmanaged brain (no line). A mode that cannot be
-  read (another process holds a PGLite brain, or the row is missing or malformed) does not stop the seed: it prints
+  read once the brain is open (the row is missing or malformed) does not stop the seed: it prints
   `storage: could not read whether this brain uses managed storage; the swap will check it (<reason>)` and records
-  `managed: null` with the error's code (`pglite_busy`, `storage_error`) or `read_failed`, never free-form error text. A
+  `managed: null` with the error's code (`storage_error`) or `read_failed`, never free-form error text. A
   brain that cannot be opened at all cannot be read, so that is an error, not a mode: `seed` exits 1 with `could not open
-  the brain (<code>)` before it loads the addon or creates anything, and a PGLite path that holds no brain is never
-  created. `status --json` carries the record as `seed.storage: { managed, checked_at, note, reason? }` (null before a
+  the brain (<code>)` before it loads the addon or creates anything. This includes a PGLite brain that another process holds
+  (`gbrain serve` or any other open): the seed exits 1 with `could not open the brain (pglite_busy)` and asks you to stop
+  that process and run it again. A PGLite path that holds no brain is never created. `status --json` carries the record as `seed.storage: { managed, checked_at, note, reason? }` (null before a
   seed, or for a seed written before the field existed), where `note` is `this brain cannot swap while it uses managed
   storage` for a managed brain, `could not read whether this brain uses managed storage; the swap will check it` when
   `managed` is null, and null for an unmanaged brain. `status` and the report print the note; the report's `seed.storage`
@@ -2068,7 +2069,8 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   overwriting what the pass verified; every full pass therefore rewrites rows that were already correct.
   **A seed written before follow existed has no digest entries**, so nothing is followed and `reconcile` refuses it:
   `status` says the brain needs a reseed (`follower.state` is `needs_reseed`, with the steps in `follower.action`).
-  Reseed with `gbrain engine shadow stop --delete`, then `gbrain engine shadow seed`, then `gbrain engine shadow start`.
+  Reseed with `gbrain engine shadow stop --delete`, then `gbrain engine shadow seed`, then `gbrain engine shadow start --plan`,
+  then `gbrain engine shadow start --yes --expect <plan_hash>` (a bare `start` only prints the plan).
 - **Status fields.** `status --json` adds: `follower.state` (`not_seeded`, `needs_reseed`, `stopped`, `invalid`, `behind`,
   `following`), `follower.action` (the reseed steps, or `null`), `lag_ms`, `lag_ms_p99_24h` and `lag_ms_p99_epoch` (a power-of-two bucket upper bound, not an exact
   value), `queue_depth`, `applied_rows`, `coverage_watermark`; `reconcile.state` (`never_run`, `ok`, `repaired`,
