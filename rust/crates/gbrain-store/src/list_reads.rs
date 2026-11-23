@@ -9,6 +9,7 @@ use crate::Store;
 use crate::chunks::{keyed_chunks, segmented};
 use crate::cli_reads::pg_text::{fm_text, jsonb_value, timestamptz_text};
 use crate::error::Result;
+use crate::keyword::sql_like;
 use crate::link_queries::all_links;
 use crate::page_ops::{PageReadScope, pages_in_read_scope};
 use crate::pages::{PageRecord, all_pages};
@@ -184,6 +185,120 @@ fn card_passes(page: &PageRecord, filters: &CardFilters) -> bool {
     true
 }
 
+/// A file path that several live pages of one source record (`listPathTwinSlugs`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PathTwins {
+    pub source_path: String,
+    pub slugs: Vec<String>,
+}
+
+/// A live page's slug and the file it records (`listLiveSlugOrigins`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SlugOrigin {
+    pub slug: String,
+    pub source_path: Option<String>,
+}
+
+/// `probeRetypeRows`: how many live pages a retype rule matches and the first ten slugs by byte.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RetypeProbe {
+    pub count: u64,
+    pub sample: Vec<String>,
+}
+
+/// One retype-rule probe: the live pages of `fromType` whose file path and slug match the `LIKE`
+/// patterns given, in the source when given.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct RetypeProbeQuery {
+    pub from_type: String,
+    pub path_filter: Option<String>,
+    pub slug_filter: Option<String>,
+    pub source_id: Option<String>,
+}
+
+/// A page's slug, body and frontmatter as the schema-pack page rules read it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PageBodyRow {
+    pub slug: String,
+    pub compiled_truth: Option<String>,
+    pub frontmatter: Value,
+}
+
+/// A source scope: `sourceIds` when not empty, else a non-empty `sourceId`, else every source.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct SourceScope {
+    pub source_id: Option<String>,
+    pub source_ids: Option<Vec<String>>,
+}
+
+impl SourceScope {
+    fn admits(&self, source_id: &str) -> bool {
+        if let Some(ids) = self.source_ids.as_ref().filter(|ids| !ids.is_empty()) {
+            ids.iter().any(|id| id == source_id)
+        } else if let Some(id) = self.source_id.as_ref().filter(|id| !id.is_empty()) {
+            id == source_id
+        } else {
+            true
+        }
+    }
+}
+
+/// A stored page type and how many live pages carry it (`countLivePagesByType`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TypeCount {
+    #[serde(rename = "type")]
+    pub page_type: String,
+    pub n: String,
+}
+
+/// A page with no type or a type the pack does not declare (`listTypeOrphanRows`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TypeOrphanRow {
+    pub slug: String,
+    pub source_id: String,
+    #[serde(rename = "type")]
+    pub page_type: String,
+}
+
+fn body_row(p: PageRecord) -> PageBodyRow {
+    PageBodyRow {
+        compiled_truth: p.compiled_truth.as_deref().map(str::to_owned),
+        frontmatter: jsonb_value(&Value::Object(p.frontmatter)),
+        slug: p.slug,
+    }
+}
+
+/// A scanned page of the stale-mention scan, its text joined as the SQL joins it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MentionScanPage {
+    pub id: u64,
+    pub slug: String,
+    pub source_id: String,
+    pub title: String,
+    pub body_storage: String,
+    pub body: String,
+}
+
+/// A mention link from a scanned page (`StaleMentionScan`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MentionScanLink {
+    pub from_id: u64,
+    pub from_slug: String,
+    pub to_slug: String,
+    pub to_source_id: String,
+    pub link_kind: Option<String>,
+    pub link_type: String,
+}
+
+/// `readStaleMentionScan(limit)`: the scanned pages and their mention links.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct StaleMentionScan {
+    pub pages: Vec<MentionScanPage>,
+    pub links: Vec<MentionScanLink>,
+}
+
 /// The pages at `slug` that the read policy admits with its live filter on, by source id.
 fn readable_copies(store: &Store, slug: &str, scope: &PageReadScope) -> Result<Vec<PageRecord>> {
     let read = store.read()?;
@@ -328,6 +443,243 @@ impl Store {
                 page_type: p.page_type,
             })
             .collect())
+    }
+
+    /// `readFirstLiveSlugAtPath(path)`: the slug of the first live page, in (source, slug) byte order,
+    /// that records `path` as its file, or `None` (sync-git.ts, the unscoped removed-path lane).
+    pub fn read_first_live_slug_at_path(&self, path: &str) -> Result<Option<String>> {
+        let read = self.read()?;
+        Ok(all_pages(&*read)?
+            .into_iter()
+            .filter(|p| p.deleted_at_us.is_none() && p.source_path.as_deref() == Some(path))
+            .min_by(|a, b| (&a.source_id, &a.slug).cmp(&(&b.source_id, &b.slug)))
+            .map(|p| p.slug))
+    }
+
+    /// `listPathTwinSlugs(sourceId, paths)`: each of `paths` that more than one live page of the
+    /// source records, with those pages' slugs in byte order. The order of the rows is not set (the
+    /// SQL has no ORDER BY); this gives them by path.
+    pub fn list_path_twin_slugs(&self, source_id: &str, paths: &[String]) -> Result<Vec<PathTwins>> {
+        let read = self.read()?;
+        let mut by_path: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+        for p in all_pages(&*read)? {
+            if p.source_id != source_id || p.deleted_at_us.is_some() {
+                continue;
+            }
+            if let Some(path) = p.source_path.filter(|path| paths.contains(path)) {
+                by_path.entry(path).or_default().push(p.slug);
+            }
+        }
+        Ok(by_path
+            .into_iter()
+            .filter(|(_, slugs)| slugs.len() > 1)
+            .map(|(source_path, mut slugs)| {
+                slugs.sort();
+                PathTwins { source_path, slugs }
+            })
+            .collect())
+    }
+
+    /// `listLiveSlugOrigins(slugs, sourceId)`: every live page at one of `slugs` (in the source when
+    /// one is given) with the file it records, in (source, slug) byte order.
+    pub fn list_live_slug_origins(
+        &self,
+        slugs: &[String],
+        source_id: Option<&str>,
+    ) -> Result<Vec<SlugOrigin>> {
+        let read = self.read()?;
+        let mut pages: Vec<PageRecord> = all_pages(&*read)?
+            .into_iter()
+            .filter(|p| {
+                p.deleted_at_us.is_none()
+                    && slugs.contains(&p.slug)
+                    && source_id.is_none_or(|s| s == p.source_id)
+            })
+            .collect();
+        pages.sort_by(|a, b| (&a.source_id, &a.slug).cmp(&(&b.source_id, &b.slug)));
+        Ok(pages
+            .into_iter()
+            .map(|p| SlugOrigin {
+                slug: p.slug,
+                source_path: p.source_path,
+            })
+            .collect())
+    }
+
+    /// `probeRetypeRows(query)`: the count of live pages of `fromType` matching the path and slug
+    /// patterns (`LIKE`, `\` escapes) in the source when given, and the first ten slugs by byte (none
+    /// when the count is zero).
+    pub fn probe_retype_rows(&self, query: &RetypeProbeQuery) -> Result<RetypeProbe> {
+        let read = self.read()?;
+        let mut slugs: Vec<String> = all_pages(&*read)?
+            .into_iter()
+            .filter(|p| p.deleted_at_us.is_none() && p.page_type == query.from_type)
+            .filter(|p| {
+                query.path_filter.as_deref().is_none_or(|pattern| {
+                    p.source_path.as_deref().is_some_and(|path| sql_like(path, pattern))
+                })
+            })
+            .filter(|p| query.slug_filter.as_deref().is_none_or(|pattern| sql_like(&p.slug, pattern)))
+            .filter(|p| query.source_id.as_deref().is_none_or(|s| s == p.source_id))
+            .map(|p| p.slug)
+            .collect();
+        let count = slugs.len() as u64;
+        slugs.sort();
+        slugs.truncate(10);
+        Ok(RetypeProbe {
+            count,
+            sample: if count == 0 { Vec::new() } else { slugs },
+        })
+    }
+
+    /// `listAliasCandidatePages(type, sourceId, limit)`: the live pages of `type` in the source, by
+    /// slug in byte order, at most `limit` (the page-to-alias preview).
+    pub fn list_alias_candidate_pages(
+        &self,
+        page_type: &str,
+        source_id: &str,
+        limit: u32,
+    ) -> Result<Vec<PageBodyRow>> {
+        let read = self.read()?;
+        let mut pages: Vec<PageRecord> = all_pages(&*read)?
+            .into_iter()
+            .filter(|p| p.deleted_at_us.is_none() && p.page_type == page_type && p.source_id == source_id)
+            .collect();
+        pages.sort_by(|a, b| a.slug.cmp(&b.slug));
+        Ok(pages.into_iter().take(limit as usize).map(body_row).collect())
+    }
+
+    /// `listLinkCandidatePages(type, sourceId, limit)`: the live pages of `type`, in the source when
+    /// given, by slug in byte order and then id, at most `limit` (the page-to-link preview).
+    pub fn list_link_candidate_pages(
+        &self,
+        page_type: &str,
+        source_id: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<PageBodyRow>> {
+        let read = self.read()?;
+        let mut pages: Vec<PageRecord> = all_pages(&*read)?
+            .into_iter()
+            .filter(|p| {
+                p.deleted_at_us.is_none()
+                    && p.page_type == page_type
+                    && source_id.is_none_or(|s| s == p.source_id)
+            })
+            .collect();
+        pages.sort_by(|a, b| (&a.slug, a.id).cmp(&(&b.slug, b.id)));
+        Ok(pages.into_iter().take(limit as usize).map(body_row).collect())
+    }
+
+    /// `countLivePagesByType(scope)`: each stored type of the live pages in scope with its count as
+    /// text, by type (the SQL `GROUP BY` sets no order).
+    pub fn count_live_pages_by_type(&self, scope: &SourceScope) -> Result<Vec<TypeCount>> {
+        let read = self.read()?;
+        let mut counts: std::collections::BTreeMap<String, u64> = Default::default();
+        for p in all_pages(&*read)? {
+            if p.deleted_at_us.is_none() && scope.admits(&p.source_id) {
+                *counts.entry(p.page_type).or_default() += 1;
+            }
+        }
+        Ok(counts
+            .into_iter()
+            .map(|(page_type, n)| TypeCount {
+                page_type,
+                n: n.to_string(),
+            })
+            .collect())
+    }
+
+    /// `listTypeOrphanRows(scope, undeclared, limit)`: the live pages in scope with an empty type or
+    /// one of `undeclared`, by (source, slug) in byte order, at most `limit`.
+    pub fn list_type_orphan_rows(
+        &self,
+        scope: &SourceScope,
+        undeclared: &[String],
+        limit: u32,
+    ) -> Result<Vec<TypeOrphanRow>> {
+        let read = self.read()?;
+        let mut pages: Vec<PageRecord> = all_pages(&*read)?
+            .into_iter()
+            .filter(|p| {
+                p.deleted_at_us.is_none()
+                    && scope.admits(&p.source_id)
+                    && (p.page_type.is_empty() || undeclared.contains(&p.page_type))
+            })
+            .collect();
+        pages.sort_by(|a, b| (&a.source_id, &a.slug).cmp(&(&b.source_id, &b.slug)));
+        Ok(pages
+            .into_iter()
+            .take(limit as usize)
+            .map(|p| TypeOrphanRow {
+                slug: p.slug,
+                source_id: p.source_id,
+                page_type: p.page_type,
+            })
+            .collect())
+    }
+
+    /// `readStaleMentionScan(limit)`: the first `limit` live pages, by (slug in byte order, id), that
+    /// hold a `mentions` link, each with `title \n\n compiled_truth \n\n timeline` (a NULL part as
+    /// empty), and every `mentions` link from those pages by (from slug, to slug) in byte order (ties
+    /// by link id; the SQL leaves their order unset).
+    pub fn read_stale_mention_scan(&self, limit: u32) -> Result<StaleMentionScan> {
+        let read = self.read()?;
+        let links: Vec<_> = all_links(&*read)?
+            .into_iter()
+            .filter(|l| l.link_source.as_deref() == Some("mentions"))
+            .collect();
+        let from_ids: std::collections::HashSet<u64> = links.iter().map(|l| l.from_page_id).collect();
+        let all: HashMap<u64, PageRecord> = all_pages(&*read)?.into_iter().map(|p| (p.id, p)).collect();
+        let mut scanned: Vec<&PageRecord> = all
+            .values()
+            .filter(|p| p.deleted_at_us.is_none() && from_ids.contains(&p.id))
+            .collect();
+        scanned.sort_by(|a, b| (&a.slug, a.id).cmp(&(&b.slug, b.id)));
+        scanned.truncate(limit as usize);
+        let in_scan: std::collections::HashSet<u64> = scanned.iter().map(|p| p.id).collect();
+        let pages = scanned
+            .iter()
+            .map(|p| MentionScanPage {
+                id: p.id,
+                slug: p.slug.clone(),
+                source_id: p.source_id.clone(),
+                title: p.title.clone(),
+                body_storage: if segmented(p) { "segmented" } else { "inline" }.to_owned(),
+                body: format!(
+                    "{}\n\n{}\n\n{}",
+                    p.title,
+                    p.compiled_truth.as_deref().unwrap_or(""),
+                    p.timeline.as_deref().unwrap_or("")
+                ),
+            })
+            .collect();
+        let mut found: Vec<(&String, &String, u64, MentionScanLink)> = Vec::new();
+        for l in &links {
+            if !in_scan.contains(&l.from_page_id) {
+                continue;
+            }
+            let (Some(f), Some(t)) = (all.get(&l.from_page_id), all.get(&l.to_page_id)) else {
+                continue;
+            };
+            found.push((
+                &f.slug,
+                &t.slug,
+                l.id,
+                MentionScanLink {
+                    from_id: f.id,
+                    from_slug: f.slug.clone(),
+                    to_slug: t.slug.clone(),
+                    to_source_id: t.source_id.clone(),
+                    link_kind: l.link_kind.clone(),
+                    link_type: l.link_type.clone(),
+                },
+            ));
+        }
+        found.sort_by(|a, b| (a.0, a.1, a.2).cmp(&(b.0, b.1, b.2)));
+        Ok(StaleMentionScan {
+            pages,
+            links: found.into_iter().map(|(_, _, _, l)| l).collect(),
+        })
     }
 
     /// `resolveChainAnchorRows(slug, policy)`: every live copy of `slug` the read policy admits, as

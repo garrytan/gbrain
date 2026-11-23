@@ -4,7 +4,7 @@
  * readRetainedSources is the connector status's "retained" flag (persistence/connector-status.ts).
  */
 import type { PageReadPolicy } from '../../types.ts';
-import type { CardListQuery, CardRow, CompanyBrainEvidenceRows, PageSourceIdRow, ShelfPageRow, TargetProbeSqlRow } from '../../engine-sql/list-reads.ts';
+import type { CardListQuery, CardRow, CompanyBrainEvidenceRows, MentionScanLinkRow, MentionScanPageRow, PageBodyRow, PageSourceIdRow, RetypeProbeQuery, ShelfPageRow, SourceIdScope, TargetProbeSqlRow } from '../../engine-sql/list-reads.ts';
 import { storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
 
@@ -53,3 +53,35 @@ export const listCardRows: StoreMember<[query: CardListQuery], { total: number; 
 
 export const readShelfPageRows: StoreMember<[sourceId: string], ShelfPageRow[]> = async (brain, sourceId) =>
   (await storeCall({ member: 'readShelfPageRows' }, () => brain.readShelfPageRows(sourceId))) as ShelfPageRow[];
+
+export const readFirstLiveSlugAtPath: StoreMember<[path: string], string | null> = async (brain, path) =>
+  ((await storeCall({ member: 'readFirstLiveSlugAtPath' }, () => brain.readFirstLiveSlugAtPath(path))) as string | null) || null;
+
+export const listPathTwinSlugs: StoreMember<[sourceId: string, paths: readonly string[]], Array<{ source_path: string; slugs: string[] }>> = async (brain, sourceId, paths) =>
+  (await storeCall({ member: 'listPathTwinSlugs' }, () => brain.listPathTwinSlugs(sourceId, [...paths]))) as Array<{ source_path: string; slugs: string[] }>;
+
+export const listLiveSlugOrigins: StoreMember<[slugs: readonly string[], sourceId?: string], Array<{ slug: string; source_path: string | null }>> = async (brain, slugs, sourceId) =>
+  (await storeCall({ member: 'listLiveSlugOrigins' }, () => brain.listLiveSlugOrigins([...slugs], sourceId ?? null))) as Array<{ slug: string; source_path: string | null }>;
+
+export const probeRetypeRows: StoreMember<[query: RetypeProbeQuery], { count: number; sample: string[] }> = async (brain, query) => {
+  const taken = takeOptions('probeRetypeRows', query, ['fromType', 'pathFilter', 'slugFilter', 'sourceId']);
+  // The SQL skips a filter whose value is empty, so an empty pattern or source filters nothing.
+  const probe = (await storeCall({ member: 'probeRetypeRows' }, () => brain.probeRetypeRows({ fromType: taken.fromType,
+    pathFilter: taken.pathFilter || null, slugFilter: taken.slugFilter || null, sourceId: taken.sourceId || null }))) as { count: number; sample: string[] };
+  return { count: Number(probe.count), sample: probe.sample };
+};
+
+export const listAliasCandidatePages: StoreMember<[type: string, sourceId: string, limit: number], PageBodyRow[]> = async (brain, type, sourceId, limit) =>
+  (await storeCall({ member: 'listAliasCandidatePages' }, () => brain.listAliasCandidatePages(type, sourceId, limit))) as PageBodyRow[];
+
+export const listLinkCandidatePages: StoreMember<[type: string, sourceId: string | undefined, limit: number], PageBodyRow[]> = async (brain, type, sourceId, limit) =>
+  (await storeCall({ member: 'listLinkCandidatePages' }, () => brain.listLinkCandidatePages(type, sourceId || null, limit))) as PageBodyRow[];
+
+export const countLivePagesByType: StoreMember<[scope: SourceIdScope], Array<{ type: string | null; n: string }>> = async (brain, scope) =>
+  (await storeCall({ member: 'countLivePagesByType' }, () => brain.countLivePagesByType(takeOptions('countLivePagesByType', scope, ['sourceId', 'sourceIds'])))) as Array<{ type: string | null; n: string }>;
+
+export const listTypeOrphanRows: StoreMember<[scope: SourceIdScope, undeclared: readonly string[], limit: number], Array<{ slug: string; source_id: string; type: string | null }>> = async (brain, scope, undeclared, limit) =>
+  (await storeCall({ member: 'listTypeOrphanRows' }, () => brain.listTypeOrphanRows(takeOptions('listTypeOrphanRows', scope, ['sourceId', 'sourceIds']), [...undeclared], limit))) as Array<{ slug: string; source_id: string; type: string | null }>;
+
+export const readStaleMentionScan: StoreMember<[limit: number], { pages: MentionScanPageRow[]; links: MentionScanLinkRow[] }> = async (brain, limit) =>
+  (await storeCall({ member: 'readStaleMentionScan' }, () => brain.readStaleMentionScan(limit))) as { pages: MentionScanPageRow[]; links: MentionScanLinkRow[] };

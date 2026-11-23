@@ -39,6 +39,18 @@ export interface EvidenceLinkRow { from_slug: string; from_title: string; to_slu
 /** The three picks of the company-brain evidence read, each a row or null. */
 export interface CompanyBrainEvidenceRows { owner: EvidenceLinkRow | null; decision: EvidenceLinkRow | null; page: { slug: string; title: string } | null }
 
+/** One retype-rule probe (schema-pack/retype.ts probeRule): the rule's type, its optional `LIKE` filters and source. */
+export interface RetypeProbeQuery { fromType: string; pathFilter?: string; slugFilter?: string; sourceId?: string }
+/** A page's slug, body and frontmatter as the schema-pack page rules read them. */
+export interface PageBodyRow { slug: string; compiled_truth: string; frontmatter: Record<string, unknown> | string | null }
+/** A source scope: `sourceIds` when not empty, else `sourceId`, else every source. */
+export interface SourceIdScope { sourceId?: string; sourceIds?: string[] }
+
+/** A scanned page of the stale-mention scan (by-mention.ts scanStaleMentions). */
+export interface MentionScanPageRow { id: number; slug: string; source_id: string | null; body: string; title: string | null; body_storage: string | null }
+/** A mention link from a scanned page. */
+export interface MentionScanLinkRow { from_id: number; from_slug: string; to_slug: string; to_source_id: string | null; link_kind: string | null; link_type: string }
+
 /** A page id and its source (`resolveChainAnchorRows`). */
 export interface PageSourceIdRow { id: number; source_id: string }
 
@@ -118,4 +130,174 @@ export async function listCardRows(raw: EngineRawRead, query: CardListQuery): Pr
 export async function readShelfPageRows(raw: EngineRawRead, sourceId: string): Promise<ShelfPageRow[]> {
   return raw<ShelfPageRow>(
     'SELECT p.slug, p.title, p.type, p.frontmatter FROM pages p WHERE p.source_id = $1 AND p.deleted_at IS NULL ORDER BY p.slug COLLATE "C"', [sourceId]);
+}
+
+/** The slug of the first live page, by (source, slug) in byte order, that records `path` as its file (sync-git.ts). */
+export async function readFirstLiveSlugAtPath(raw: EngineRawRead, path: string): Promise<string | null> {
+  const rows = await raw<{ slug: string }>(
+    `SELECT slug FROM pages WHERE source_path = $1 AND deleted_at IS NULL
+            ORDER BY source_id COLLATE "C", slug COLLATE "C" LIMIT 1`,
+    [path],
+  );
+  return rows.length > 0 && rows[0]!.slug ? rows[0]!.slug : null;
+}
+
+/** Each of `paths` more than one live page of the source records, with their slugs in byte order (sync-git.ts). */
+export async function listPathTwinSlugs(raw: EngineRawRead, sourceId: string, paths: readonly string[]): Promise<Array<{ source_path: string; slugs: string[] }>> {
+  return raw<{ source_path: string; slugs: string[] }>(`SELECT source_path, array_agg(slug ORDER BY slug COLLATE "C") AS slugs FROM pages
+        WHERE source_id = $1 AND deleted_at IS NULL AND source_path = ANY($2::text[]) GROUP BY source_path HAVING count(*) > 1`, [sourceId, [...paths]]);
+}
+
+/** Every live page at one of `slugs` (in the source when given) with its recorded file, by (source, slug) in byte order (sync-git.ts). */
+export async function listLiveSlugOrigins(raw: EngineRawRead, slugs: readonly string[], sourceId?: string): Promise<Array<{ slug: string; source_path: string | null }>> {
+  const params: unknown[] = [...slugs];
+  const placeholders = slugs.map((_, j) => `$${j + 1}`).join(', ');
+  let where = `slug IN (${placeholders}) AND deleted_at IS NULL`;
+  if (sourceId !== undefined) {
+    params.push(sourceId);
+    where += ` AND source_id = $${params.length}`;
+  }
+  return raw<{ slug: string; source_path: string | null }>(
+    `SELECT slug, source_path FROM pages WHERE ${where} ORDER BY source_id COLLATE "C", slug COLLATE "C"`,
+    params,
+  );
+}
+
+/** How many live pages a retype rule matches and its first ten slugs by byte, none when it matches nothing (schema-pack/retype.ts). */
+export async function probeRetypeRows(raw: EngineRawRead, query: RetypeProbeQuery): Promise<{ count: number; sample: string[] }> {
+  const { fromType, pathFilter, slugFilter, sourceId } = query;
+  let where = `WHERE deleted_at IS NULL AND type = $1`;
+  const params: unknown[] = [fromType];
+  if (pathFilter) {
+    where += ` AND source_path LIKE $${params.length + 1}`;
+    params.push(pathFilter);
+  }
+  if (slugFilter) {
+    where += ` AND slug LIKE $${params.length + 1}`;
+    params.push(slugFilter);
+  }
+  if (sourceId) {
+    where += ` AND source_id = $${params.length + 1}`;
+    params.push(sourceId);
+  }
+  const cntRows = await raw<{ cnt: string }>(
+    `SELECT COUNT(*)::text AS cnt FROM pages ${where}`,
+    params,
+  );
+  const count = parseInt(cntRows[0]?.cnt ?? '0', 10) || 0;
+  if (count === 0) return { count: 0, sample: [] };
+  const sampleRows = await raw<{ slug: string }>(
+    `SELECT slug FROM pages ${where} ORDER BY slug COLLATE "C" LIMIT 10`,
+    params,
+  );
+  return { count, sample: sampleRows.map((r) => r.slug) };
+}
+
+/** The live pages of a type in a source, by slug in byte order, at most `limit` (schema-pack/page-to-alias.ts). */
+export async function listAliasCandidatePages(raw: EngineRawRead, type: string, sourceId: string, limit: number): Promise<PageBodyRow[]> {
+  const where = `WHERE deleted_at IS NULL AND type = $1 AND source_id = $2`;
+  return raw<PageBodyRow>(
+    `SELECT slug, compiled_truth, frontmatter FROM pages ${where} ORDER BY slug COLLATE "C" LIMIT ${limitText(limit)}`,
+    [type, sourceId],
+  );
+}
+
+/** The live pages of a type (in the source when given), by slug in byte order then id, at most `limit` (schema-pack/page-to-link.ts). */
+export async function listLinkCandidatePages(raw: EngineRawRead, type: string, sourceId: string | undefined, limit: number): Promise<PageBodyRow[]> {
+  const where = sourceId
+    ? `WHERE deleted_at IS NULL AND type = $1 AND source_id = $2`
+    : `WHERE deleted_at IS NULL AND type = $1`;
+  const params: unknown[] = [type];
+  if (sourceId) params.push(sourceId);
+  return raw<PageBodyRow>(
+    `SELECT slug, compiled_truth, frontmatter FROM pages ${where} ORDER BY slug COLLATE "C", id LIMIT ${limitText(limit)}`,
+    params,
+  );
+}
+
+/** A row limit spliced into a statement: a whole number only. */
+function limitText(limit: number): number {
+  if (!Number.isSafeInteger(limit) || limit < 0) throw new Error(`list reads: bad row limit ${limit}`);
+  return limit;
+}
+
+/** The `WHERE` of the type-orphan reads (schema-pack/review.ts findTypeOrphans): live pages in the source scope. */
+function orphanWhere(scope: SourceIdScope, params: unknown[]): string {
+  let where = 'deleted_at IS NULL';
+  if (scope.sourceIds && scope.sourceIds.length > 0) {
+    params.push(scope.sourceIds);
+    where += ` AND source_id = ANY($${params.length}::text[])`;
+  } else if (scope.sourceId) {
+    params.push(scope.sourceId);
+    where += ` AND source_id = $${params.length}`;
+  }
+  return where;
+}
+
+/** Each stored type of the live pages in scope with its count as text (schema-pack/review.ts findTypeOrphans). */
+export async function countLivePagesByType(raw: EngineRawRead, scope: SourceIdScope): Promise<Array<{ type: string | null; n: string }>> {
+  const params: unknown[] = [];
+  const where = orphanWhere(scope, params);
+  return raw<{ type: string | null; n: string }>(
+    `SELECT type, count(*)::text AS n FROM pages WHERE ${where} GROUP BY type`,
+    params,
+  );
+}
+
+/** The live pages in scope with no type or an undeclared one, by (source, slug) in byte order, at most `limit` (findTypeOrphans). */
+export async function listTypeOrphanRows(raw: EngineRawRead, scope: SourceIdScope, undeclared: readonly string[], limit: number): Promise<Array<{ slug: string; source_id: string; type: string | null }>> {
+  const params: unknown[] = [];
+  const where = orphanWhere(scope, params);
+  return raw<{ slug: string; source_id: string; type: string | null }>(
+    `SELECT slug, COALESCE(source_id, 'default') AS source_id, type FROM pages
+      WHERE ${where} AND (type IS NULL OR type = '' OR type = ANY($${params.length + 1}::text[]))
+      ORDER BY source_id COLLATE "C", slug COLLATE "C"
+      LIMIT ${limitText(limit)}`,
+    [...params, [...undeclared]],
+  );
+}
+
+/**
+ * The stale-mention scan's two reads over one bounded page set (by-mention.ts scanStaleMentions): the first `limit` live
+ * pages holding a mention link, by slug in byte order then id, with their joined text, and every mention link from them.
+ */
+export async function readStaleMentionScan(raw: EngineRawRead, limit: number): Promise<{ pages: MentionScanPageRow[]; links: MentionScanLinkRow[] }> {
+  // Same bounded page set for both queries so the link rows and the bodies
+  // can never describe different pages.
+  const scannedCte =
+    `WITH scanned AS (
+       SELECT p.id
+         FROM pages p
+        WHERE p.deleted_at IS NULL
+          AND EXISTS (
+            SELECT 1 FROM links l
+             WHERE l.from_page_id = p.id AND l.link_source = 'mentions'
+          )
+        ORDER BY p.slug COLLATE "C", p.id
+        LIMIT $1
+     )`;
+
+  const pages = await raw<MentionScanPageRow>(
+    `${scannedCte}
+     SELECT p.id, p.slug, p.source_id, p.title, p.body_storage,
+            COALESCE(p.title, '') || E'\n\n' || COALESCE(p.compiled_truth, '') || E'\n\n' || COALESCE(p.timeline, '') AS body
+       FROM pages p
+       JOIN scanned s ON s.id = p.id
+      ORDER BY p.slug COLLATE "C", p.id`,
+    [limit],
+  );
+
+  const links = await raw<MentionScanLinkRow>(
+    `${scannedCte}
+     SELECT l.from_page_id AS from_id, f.slug AS from_slug,
+            t.slug AS to_slug, t.source_id AS to_source_id, l.link_kind, l.link_type
+       FROM links l
+       JOIN scanned s ON s.id = l.from_page_id
+       JOIN pages f ON f.id = l.from_page_id
+       JOIN pages t ON t.id = l.to_page_id
+      WHERE l.link_source = 'mentions'
+      ORDER BY f.slug COLLATE "C", t.slug COLLATE "C"`,
+    [limit],
+  );
+  return { pages, links };
 }

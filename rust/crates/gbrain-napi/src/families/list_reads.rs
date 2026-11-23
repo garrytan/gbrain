@@ -88,4 +88,98 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_shelf_page_rows(&source_id))
     }
+
+    /// `readFirstLiveSlugAtPath(path)`: the slug, or `null`.
+    #[napi]
+    pub fn read_first_live_slug_at_path<'env>(
+        &self,
+        env: &'env Env,
+        path: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_first_live_slug_at_path(&path))
+    }
+
+    /// `listPathTwinSlugs(sourceId, paths)`: `[{ source_path, slugs }]`.
+    #[napi]
+    pub fn list_path_twin_slugs<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        paths: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_path_twin_slugs(&source_id, &paths))
+    }
+
+    /// `listLiveSlugOrigins(slugs, sourceId)`: `[{ slug, source_path }]` by (source, slug).
+    #[napi]
+    pub fn list_live_slug_origins<'env>(
+        &self,
+        env: &'env Env,
+        slugs: Vec<String>,
+        source_id: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_live_slug_origins(&slugs, source_id.as_deref()))
+    }
+
+    /// `probeRetypeRows(query)`: `{ count, sample }`.
+    #[napi]
+    pub fn probe_retype_rows<'env>(&self, env: &'env Env, query: Value) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.probe_retype_rows(&required(query, "query")?))
+    }
+
+    /// `listAliasCandidatePages(type, sourceId, limit)`: `[{ slug, compiled_truth, frontmatter }]`.
+    #[napi]
+    pub fn list_alias_candidate_pages<'env>(
+        &self,
+        env: &'env Env,
+        page_type: String,
+        source_id: String,
+        limit: u32,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_alias_candidate_pages(&page_type, &source_id, limit))
+    }
+
+    /// `listLinkCandidatePages(type, sourceId, limit)`: `[{ slug, compiled_truth, frontmatter }]`.
+    #[napi]
+    pub fn list_link_candidate_pages<'env>(
+        &self,
+        env: &'env Env,
+        page_type: String,
+        source_id: Option<String>,
+        limit: u32,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_link_candidate_pages(&page_type, source_id.as_deref(), limit)
+        })
+    }
+
+    /// `countLivePagesByType(scope)`: `[{ type, n }]`.
+    #[napi]
+    pub fn count_live_pages_by_type<'env>(
+        &self,
+        env: &'env Env,
+        scope: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_live_pages_by_type(&arg(scope, "scope")?))
+    }
+
+    /// `listTypeOrphanRows(scope, undeclared, limit)`: `[{ slug, source_id, type }]`.
+    #[napi]
+    pub fn list_type_orphan_rows<'env>(
+        &self,
+        env: &'env Env,
+        scope: Option<Value>,
+        undeclared: Vec<String>,
+        limit: u32,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_type_orphan_rows(&arg(scope, "scope")?, &undeclared, limit)
+        })
+    }
+
+    /// `readStaleMentionScan(limit)`: `{ pages, links }`.
+    #[napi]
+    pub fn read_stale_mention_scan<'env>(&self, env: &'env Env, limit: u32) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_stale_mention_scan(limit))
+    }
 }
