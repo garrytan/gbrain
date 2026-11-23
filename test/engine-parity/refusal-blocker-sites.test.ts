@@ -5,16 +5,22 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: `gbrain eval whoknows` loads its replay rows (loadReplayRows) as the newest 200 captured `query` calls,
- *    newest first, and a Rust brain returns the same rows.
- *  - Regression: a caller that swallows the Rust refusal returns no rows, so the regression gate reports "skipped:
- *    0 replay-eligible rows" for a brain that has them.
- *  - Why existing coverage misses it: the caller's catch turns the refusal into `[]`, which no engine-level case reads.
- *  - Seam: none. Rows come from logEvalCandidate; ids and timestamps are never returned.
+ *    newest first, and a Rust brain returns the same rows. `gbrain sync --source <id>` (syncOutOfSearchNotice) says the
+ *    source is out of default search only when it holds live pages, its federated setting is unset and it was not added
+ *    by a remote caller; a Rust brain gives the same answer.
+ *  - Regression: a caller that swallows the Rust refusal returns its quiet default (no rows, no notice), so the
+ *    regression gate reports "skipped: 0 replay-eligible rows" for a brain that has them and a sync never mentions that
+ *    a source's pages are out of default search.
+ *  - Why existing coverage misses it: the caller's catch turns the refusal into the default, which no engine-level case
+ *    reads.
+ *  - Seam: none. Rows come from logEvalCandidate, sources from createSource and pages from putPage; ids and timestamps
+ *    are never returned.
  */
 import { describe, expect } from 'bun:test';
 import type { EvalCandidateInput } from '../../src/core/types.ts';
 import { loadReplayRows } from '../../src/commands/eval-whoknows.ts';
-import { parityArms } from './harness.ts';
+import { syncOutOfSearchNotice } from '../../src/commands/sources-add-next.ts';
+import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -39,7 +45,7 @@ const CANDIDATE: EvalCandidateInput = {
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-describe('engine parity: refusal-swallow sites (eval whoknows replay)', () => {
+describe('engine parity: refusal-swallow sites', () => {
   parityTest(
     'eval whoknows replay rows are the newest captured query calls, a search call is not replayed',
     { methods: ['logEvalCandidate'] },
@@ -52,6 +58,26 @@ describe('engine parity: refusal-swallow sites (eval whoknows replay)', () => {
       const rows = await loadReplayRows(engine);
       expect(rows.map((r) => r.query)).toEqual(['second query', 'first query']);
       return rows;
+    },
+  );
+
+  parityTest(
+    'sync names a source with live pages and no federated setting as out of default search; an empty, federated, opted-out or remote-added source gets no notice',
+    { methods: ['putPage'] },
+    async (engine, backend) => {
+      const page = { type: 'note' as never, title: 'A page', compiled_truth: 'Body text.', timeline: '', frontmatter: {} };
+      await createSource(engine, backend, 'notes');
+      await createSource(engine, backend, 'empty');
+      await createSource(engine, backend, 'shared', { federated: true });
+      await createSource(engine, backend, 'opted-out', { federated: false });
+      await createSource(engine, backend, 'remote-added', { added_by_remote_caller: true });
+      for (const id of ['notes', 'shared', 'opted-out', 'remote-added']) await engine.putPage('notes/a-page', page, { sourceId: id });
+      const codes: Record<string, string | null> = {};
+      for (const id of ['notes', 'empty', 'shared', 'opted-out', 'remote-added', 'unknown']) {
+        codes[id] = (await syncOutOfSearchNotice(engine, ['--source', id]))?.code ?? null;
+      }
+      expect(codes.notes).toBe('source_not_in_default_search');
+      return codes;
     },
   );
 });
