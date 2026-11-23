@@ -274,7 +274,6 @@ export interface RustStoreEntry {
 type RustRow = [tag: string, kind: number | null, name: string, tables: string, index?: 'index', none?: [OutOfScopeReason, string]];
 const RUST_ROWS: readonly RustRow[] = [
   ['1', null, 'reason_tombstones', 'reason_purge_tombstones'],
-  ['2', null, 'embedding_holds', 'page_embedding_budget'],
   ['A', 0x01, 'take', 'takes'],
   ['A', 0x02, 'take_by_row', 'takes', 'index'],
   ['A', 0x03, 'take_evidence', '', undefined, ['no_memory_text', 'synthesis_evidence rows: page ids, take row numbers and a citation index; the SQL table has no text-bearing column, so it has no row above']],
