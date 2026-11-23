@@ -96,7 +96,7 @@ describe('worker refusal-swallow sites', () => {
       expect(refusal).toBeInstanceOf(SpendGroupRefusedError);
     } finally { err.mockRestore(); }
     expect(lines.join('\n')).toContain('cannot record the spend refusal');
-    expect(lines.join('\n')).toContain('engine_capability_missing');
+    expect(lines.join('\n')).toContain('does not support executeRaw');
   });
 
   /** A claimed `noop` job on `engine`, and a worker over `workerEngine` to call its private release paths on. */
