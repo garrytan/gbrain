@@ -41,6 +41,7 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('access_policy_migrations', 'operational', 'In-flight folder-policy store switches (git and database) and their receipts.'),
     carry('access_policy_revisions', 'security', 'Folder-policy revision history: desired rules, change class, proposer and approver.'),
     carry('access_policy_state', 'security', 'One row per source with a folder policy; the lock row access_rules and its history hang off.'),
+    carry('access_read_log', 'operational', 'Member and audience read audit (who read which page ids, kept a year); dropping it would lose the record of who read what.'),
     carry('access_rules', 'security', 'Applied folder rules that pages.folder_rule_ids names; on a repo-less source they are the record.'),
     carry('access_tokens', 'security', 'Legacy bearer tokens and their unified grant columns; token hashes keep authorizing on the target.'),
     carry('belief_commit_marks', 'user_data', 'Belief ledger post-commit observations; without them carried events would read as unproven (W2 visibility).'),

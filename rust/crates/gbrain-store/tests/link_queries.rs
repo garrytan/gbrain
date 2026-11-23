@@ -545,9 +545,9 @@ fn ranking_reads_under_exclude_private_hide_private_targets_linkers_and_origins(
     let scope = |policy: Value| -> GraphScope {
         serde_json::from_value(json!({"scoped": true, "excludePrivate": policy})).unwrap()
     };
-    let all = scope(json!({"honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage"}));
+    let all = scope(json!({"honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn"}));
     let visibility_only =
-        scope(json!({"honorAliases": false, "entityPrivacy": true, "ownerOnly": "lineage"}));
+        scope(json!({"honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn"}));
     let unpoliced = scope(Value::Null);
 
     // getBacklinkCounts: a private target is dropped, a private linker or a private origin does
@@ -627,7 +627,7 @@ fn ranking_reads_under_exclude_private_hide_private_targets_linkers_and_origins(
     assert_eq!(slugs(&all), vec!["open-from"]);
     assert_eq!(slugs(&visibility_only), vec!["open-from", "alias-from"]);
     let private_target: GraphScope = serde_json::from_value(
-        json!({"scoped": true, "excludePrivate": {"honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage"}}),
+        json!({"scoped": true, "excludePrivate": {"honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn"}}),
     )
     .unwrap();
     assert!(
@@ -664,4 +664,35 @@ fn search_reads_pages_linking_to() {
         b.store.pages_linking_to(&[], &[target]).unwrap(),
         Vec::<u64>::new()
     );
+}
+
+#[test]
+fn projection_readiness_generation_moves_only_on_a_commit() {
+    let brain = Brain::new("readiness-generation");
+    brain.source("default");
+    let before = brain.store.projection_readiness_generation().unwrap();
+    assert!(before.is_some());
+    assert_eq!(
+        before,
+        brain.store.projection_readiness_generation().unwrap()
+    );
+    brain.page("notes/a", "default", "note");
+    let after = brain
+        .store
+        .projection_readiness_generation()
+        .unwrap()
+        .unwrap();
+    assert_ne!(before.as_deref(), Some(after.as_str()));
+    assert!(after.starts_with(&format!("{}/", brain.store.brain_id())));
+    assert_eq!(after, brain.store.health_memo_clock().unwrap());
+}
+
+#[test]
+fn projection_readiness_generation_is_null_inside_a_transaction() {
+    let brain = Brain::new("readiness-generation-tx");
+    brain.source("default");
+    let tx = brain.store.begin_transaction(false).unwrap();
+    // The transaction reads its own writes, which the commit sequence does not count yet.
+    assert_eq!(tx.projection_readiness_generation().unwrap(), None);
+    tx.rollback_transaction().unwrap();
 }

@@ -165,6 +165,22 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
   addCodeEdges: { tables: ['code_edges_chunk', 'code_edges_symbol'] },
   deleteCodeEdgesForChunks: { tables: ['code_edges_chunk', 'code_edges_symbol'] },
   ownerOnlyMarkTriggers: { tables: ['owner_only_marks'], plan: (a) => (a[0]?.ensure ? null : []) },
+  // The decide store (engine-sql/decide-store.ts, decide-proposals.ts): each member writes one table and names no stable selector.
+  upsertDecideState: { tables: ['decide_state'] },
+  deleteDecideState: { tables: ['decide_state'] },
+  ensureDecideState: { tables: ['decide_state'] },
+  insertDecideSpend: { tables: ['decide_spend'] },
+  insertDecideReceipts: { tables: ['decision_receipts'] },
+  pruneDecideReceipts: { tables: ['decision_receipts', 'decide_spend'] },
+  insertDecideCalibration: { tables: ['decide_calibrations'] },
+  storeDecideQualification: { tables: ['decide_calibrations'] },
+  setDecideCalibrationRetired: { tables: ['decide_calibrations'] },
+  insertDecideProposal: { tables: ['decide_proposals'] },
+  transitionDecideProposal: { tables: ['decide_proposals'] },
+  insertDecideReviewProposal: { tables: ['decide_review_proposals'] },
+  transitionDecideReviewProposal: { tables: ['decide_review_proposals'] },
+  applyDecideReviewQueue: { tables: ['decide_review_queue'] },
+  applyDecideSweepDeferred: { tables: ['decide_sweep_deferred'] },
 };
 
 /** A schema change: the copied tables may no longer match what the follower expects. */
@@ -195,6 +211,7 @@ const READ_PREFIX = /^(get|list|count|find|search|read|resolve|has|is|sum|cosine
 export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
   'activeEmbeddingColId', 'aliasCanonicalRefs', 'generatedPagesIn', 'livePageIdsAt', 'pageCollapseFacts', 'pagesLinkingTo',
   'slugsEndingIn', 'supersedingPageSlugs',
+  'dailyDecideSpend', 'decideConflictNoEntityCounts', 'decideSlotUsage',
 ]);
 export type MemberKind = 'read_name' | 'raw' | 'reserved' | 'ignored' | 'schema' | 'mapped' | 'unmapped';
 

@@ -15,9 +15,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { runEngineShadow } from '../src/commands/engine-shadow.ts';
-import { countFingerprintMismatches, probeRecord, PROBE_CORPUS } from '../src/shadow/fingerprints.ts';
+import { countFingerprintMismatches, differingCodePoints, probeRecord, PROBE_CORPUS, type CharRow } from '../src/shadow/fingerprints.ts';
 import { FollowChild, type FollowStore } from '../src/shadow/follow-child.ts';
-import { appendPass, buildFollowStatus, lagBucket, lagP99, readFollowerFile, type FollowStatus } from '../src/shadow/follow-status.ts';
+import { appendPass, buildFollowStatus, lagBucket, lagP99, NOT_RUN_PROBE, readFollowerFile, type FollowStatus } from '../src/shadow/follow-status.ts';
 import { openReadSource } from '../src/shadow/read-pool.ts';
 import { Reconciler } from '../src/shadow/reconcile.ts';
 import { writeSeedRecord, type SeedRecord } from '../src/shadow/seed.ts';
@@ -255,6 +255,38 @@ describe('probe record', () => {
   });
 });
 
+describe('fingerprint probe v2: per-code-point answers', () => {
+  const ref = { lower: [[65, 97], [0x130, 0x69]] as Array<[number, number]>, space: [32, 0x85] };
+  const same: CharRow[] = [{ cp: 65, l: 97, n: 1, sp: false }, { cp: 0x130, l: 0x69, n: 1, sp: false }, { cp: 32, l: 32, n: 1, sp: true }, { cp: 0x85, l: 0x85, n: 1, sp: true }];
+  const record = (meta: Parameters<typeof probeRecord>[2]) => probeRecord(
+    PROBE_CORPUS.map((): [string, string] => ['a', 'b']), PROBE_CORPUS.map(() => ({ fingerprint: 'a', fingerprint_v1: 'b' })), meta, new Date(0));
+
+  test('a host that answers like PGLite has no differing code points', () => {
+    expect(differingCodePoints(same, ref)).toEqual([]);
+  });
+
+  test('names a changed lower() answer, a missing one, a multi-character one, the sigma rule and both space differences', () => {
+    const rows = same.filter((r) => r.cp !== 0x85).map((r) => (r.cp === 65 ? { ...r, l: 98 } : r)); // U+0085 gone from the class
+    expect(differingCodePoints(rows, ref)).toEqual([65, 0x85]);
+    expect(differingCodePoints(same.slice(1), ref)).toEqual([65]); // the host does not lower A at all
+    expect(differingCodePoints([...same, { cp: 0x130, l: 0x69, n: 2, sp: false }], ref)).toEqual([0x130]); // ICU: two code points
+    expect(differingCodePoints([...same, { cp: 0x3a3, l: 0, n: -1, sp: false }], ref)).toEqual([0x3a3]); // word-final sigma
+    expect(differingCodePoints([...same, { cp: 0x1680, l: 0x1680, n: 1, sp: true }], ref)).toEqual([0x1680]); // extra space (glibc)
+  });
+
+  test('a stored fact holding a differing code point fails the probe; without one the probe passes and names the code points', () => {
+    const meta = { differing_code_points: ['U+1680'], differing_code_points_total: 1 };
+    expect(record({ ...meta, facts_with_differing_code_points: 1 })).toMatchObject({ state: 'fail', facts_with_differing_code_points: 1 });
+    expect(record({ ...meta, facts_with_differing_code_points: 0 })).toMatchObject({ state: 'pass', differing_code_points: ['U+1680'], differing_code_points_total: 1 });
+    expect(record({})).toMatchObject({ state: 'pass', differing_code_points: [], differing_code_points_total: 0 });
+  });
+
+  test('a corpus row that differs with no differing code point to explain it still fails', () => {
+    expect(record({ corpus_mismatches: 2, corpus_mismatch_rows: ['seeded 0001'] })).toMatchObject({ state: 'fail', corpus_mismatches: 2 });
+    expect(record({ corpus_mismatches: 2, differing_code_points_total: 3, facts_with_differing_code_points: 0 })).toMatchObject({ state: 'pass' });
+  });
+});
+
 describe('follow status', () => {
   const NOW = new Date('2026-01-02T00:00:00.000Z');
   function withFile(dir: string, over: Record<string, unknown>) {
@@ -262,7 +294,7 @@ describe('follow status', () => {
     const file = {
       version: 1, epoch_id: 'seed-1', epoch_started_at: SEED.finished_at, updated_at: NOW.toISOString(), applied_rows: 3, queue_depth: 0, lag_ms: 0, last_seq: 1,
       watermark: { valid: true, through: NOW.toISOString(), invalidated_reason: null }, lag: { epoch: [], hours: {} },
-      fingerprints: { checked_rows: 0, mismatches: 0 }, probe: { state: 'not_run', checked_at: null, server_version: null, collation: null, mismatches: 0 },
+      fingerprints: { checked_rows: 0, mismatches: 0 }, probe: NOT_RUN_PROBE,
       allocators: { verified: false, checked_at: null }, ...over,
     };
     writeFileSync(join(dir, 'follower.json'), JSON.stringify(file));
@@ -343,7 +375,10 @@ describe('status --json', () => {
     });
     expect(json.reconcile.state).toBe('never_run');
     expect(json.write_comparisons).toEqual({ state: 'capability_missing', sample_rate: 0.1, comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 });
-    expect(json.fingerprints).toEqual({ checked_rows: 0, mismatches: 0, probe: { state: 'not_run', checked_at: null, server_version: null, collation: null, mismatches: 0 } });
+    expect(json.fingerprints).toEqual({ checked_rows: 0, mismatches: 0, probe: {
+      state: 'not_run', checked_at: null, server_version: null, collation: null, mismatches: 0, ctype: null, locale_provider: null, locale: null,
+      differing_code_points: [], differing_code_points_total: 0, corpus_mismatches: 0, corpus_mismatch_rows: [], facts_with_differing_code_points: 0,
+    } });
     expect(json.seed).toEqual({ seed_id: 'seed-1', finished_at: SEED.finished_at, unseeded_gap_rows_total: 0 });
     expect(json.allocators).toEqual({ verified: false, checked_at: null });
     expect(json.primary_refreshes).toEqual({ nonterminal_rows: null, checked_at: null });
@@ -373,7 +408,7 @@ describe('shadowReadiness (the S5a reading rules)', () => {
     follower: { state: 'following', lag_ms: 0, lag_ms_p99_24h: 4, lag_ms_p99_epoch: 4, queue_depth: 0, applied_rows: 1, coverage_watermark: { valid: true, through: 't', invalidated_reason: null } },
     reconcile: { state: 'ok', last_pass: null, consecutive_clean_full_passes: 1, next_full_pass_due: null },
     write_comparisons: { state: 'capability_missing', sample_rate: 1, comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 },
-    fingerprints: { checked_rows: 1, mismatches: 0, probe: { state: 'pass', checked_at: 't', server_version: '17', collation: 'C', mismatches: 0 } },
+    fingerprints: { checked_rows: 1, mismatches: 0, probe: { ...NOT_RUN_PROBE, state: 'pass', checked_at: 't', server_version: '17', collation: 'C' } },
     seed: { seed_id: 'e', finished_at: 't', unseeded_gap_rows_total: 0 }, allocators: { verified: true, checked_at: 't' },
     primary_refreshes: { nonterminal_rows: 0, checked_at: 't' },
   });

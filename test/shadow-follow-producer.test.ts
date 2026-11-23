@@ -364,6 +364,16 @@ describe('members that write more than their arguments name', () => {
     expect(await engine.getPage('people/rena-new')).not.toBeNull();
   });
 
+  test('the decide store members report the relation each one writes', async () => {
+    const h = followHarness(engine);
+    await h.engine.upsertDecideState('follow_key', 'v');
+    await h.engine.ensureDecideState('follow_key_2', 'v');
+    await h.engine.deleteDecideState('follow_key');
+    await h.engine.pruneDecideReceipts(30);
+    const items = h.batches.flatMap((b) => b.items) as Array<{ relation?: string }>;
+    expect(relations(items).sort()).toEqual(['decide_spend', 'decide_state', 'decision_receipts']);
+  });
+
   test('deleting pages also reports the owner marks and the slug stores it scrubs', async () => {
     await engine.putPage('people/sven', PAGE('Sven'));
     const h = followHarness(engine);

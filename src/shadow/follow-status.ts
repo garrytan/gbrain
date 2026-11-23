@@ -15,7 +15,14 @@ import { join } from 'node:path';
 import { readSeedRecord } from './seed.ts';
 import type { ShadowState } from './state.ts';
 
-export interface ProbeRecord { state: 'pass' | 'fail' | 'not_run'; checked_at: string | null; server_version: string | null; collation: string | null; mismatches: number }
+export interface ProbeRecord {
+  state: 'pass' | 'fail' | 'not_run'; checked_at: string | null; server_version: string | null; collation: string | null; mismatches: number;
+  ctype: string | null; locale_provider: string | null; locale: string | null;
+  /** Where the primary's lower() or [[:space:]] differs from PGLite's: first 50 as 'U+XXXX', and the total. */
+  differing_code_points: string[]; differing_code_points_total: number;
+  /** Corpus sample rows fingerprinting differently from PGLite (first names, never text); stored facts holding a differing code point. */
+  corpus_mismatches: number; corpus_mismatch_rows: string[]; facts_with_differing_code_points: number;
+}
 export interface Watermark { valid: boolean; through: string | null; invalidated_reason: string | null }
 export interface FollowerFile {
   version: 1;
@@ -50,7 +57,10 @@ export interface PassRecord {
 
 export const FRESH_FOLLOWER_MS = 60_000;
 export const NIGHTLY_MS = 24 * 3_600_000;
-export const NOT_RUN_PROBE: ProbeRecord = { state: 'not_run', checked_at: null, server_version: null, collation: null, mismatches: 0 };
+export const NOT_RUN_PROBE: ProbeRecord = {
+  state: 'not_run', checked_at: null, server_version: null, collation: null, mismatches: 0, ctype: null, locale_provider: null, locale: null,
+  differing_code_points: [], differing_code_points_total: 0, corpus_mismatches: 0, corpus_mismatch_rows: [], facts_with_differing_code_points: 0,
+};
 
 export const lagBucket = (ms: number): number => (ms < 1 ? 0 : Math.min(30, Math.floor(Math.log2(ms)) + 1));
 

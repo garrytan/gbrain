@@ -155,7 +155,9 @@ struct HoldRecord {
     reason_families: Vec<String>,
     reasons: Vec<String>,
     detector_error: bool,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     payload: Value,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     write_origin: Option<Value>,
     request_id: Option<String>,
     status: String,
@@ -178,8 +180,8 @@ impl HoldRecord {
             "detector_error": self.detector_error,
             "reason_families": self.reason_families,
             "reasons": self.reasons,
-            "payload": self.payload,
-            "write_origin": self.write_origin,
+            "payload": crate::jsonb::order(self.payload.clone()),
+            "write_origin": self.write_origin.clone().map(crate::jsonb::order),
             "request_id": self.request_id,
             "status": self.status,
             "seen_count": self.seen_count,
@@ -400,6 +402,19 @@ pub(crate) fn activation_suppressed(
         }))
 }
 
+/// Whether target (`target_table`, `target_id`) holds a `flag` receipt naming `family` in its
+/// reason families (`r.verdict = 'flag' AND family = ANY(r.reason_families)`).
+pub(crate) fn flagged_for(
+    read: &dyn KvRead,
+    target_table: &str,
+    target_id: u64,
+    family: &str,
+) -> Result<bool> {
+    Ok(receipts_of(read, target_table, &target_id.to_string())?
+        .iter()
+        .any(|r| r.verdict == "flag" && r.reason_families.iter().any(|f| f == family)))
+}
+
 fn receipts_of(
     read: &dyn KvRead,
     target_table: &str,
@@ -444,6 +459,23 @@ fn all_holds(read: &dyn KvRead) -> Result<Vec<HoldRecord>> {
         failure.is_none()
     })?;
     failure.map_or(Ok(out), Err)
+}
+
+/// The fingerprints of the holds with `kind = 'fact'` and `status = 'held'` on page (`source_id`,
+/// `slug`), as the fence overlay (`engine-sql/cli-reads-ops.ts` `readFenceOverlayRows`) matches a
+/// fence row's fingerprint against them.
+pub(crate) fn held_fact_fingerprints(
+    read: &dyn KvRead,
+    source_id: &str,
+    slug: &str,
+) -> Result<std::collections::HashSet<String>> {
+    Ok(all_holds(read)?
+        .into_iter()
+        .filter(|h| {
+            h.kind == "fact" && h.status == "held" && h.source_id == source_id && h.slug == slug
+        })
+        .map(|h| h.fingerprint)
+        .collect())
 }
 
 /// A released fact hold, as `listUnpreviewedTrustFacts` (src/core/engine-sql/facts-doctor.ts) joins

@@ -52,6 +52,7 @@ import type { BrainEngine } from './engine.ts';
 import { isMissingSchemaObject } from './utils.ts';
 import { deferUntilResponse, registerBackgroundWorkDrainer } from './background-work.ts';
 import { engineKey } from './engine-key.ts';
+import { noteReturnedPages } from './access/read-log.ts';
 
 /** Per engine, so each mounted brain honors its own setting. */
 let _trackRetrievalCache = new WeakMap<object, { ts: number; enabled: boolean }>();
@@ -204,6 +205,7 @@ export const BUMP_LAST_RETRIEVED_SQL = `INSERT INTO page_retrievals (page_id, la
  */
 export function bumpLastRetrievedAt(engine: BrainEngine, pageIds: number[]): void {
   if (pageIds.length === 0) return;
+  noteReturnedPages(pageIds);
   deferUntilResponse(() => startBump(engine, pageIds));
 }
 

@@ -217,7 +217,7 @@ fn resolve_aliases_under_exclude_private_hides_the_aliases_of_private_pages() {
         ),
     ];
     assert_eq!(resolve(&store, &names, json!({})), everything);
-    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage"});
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn"});
     assert_eq!(
         resolve(&store, &names, json!({ "excludePrivate": policy })),
         vec![
@@ -226,8 +226,7 @@ fn resolve_aliases_under_exclude_private_hides_the_aliases_of_private_pages() {
         ]
     );
     // Without the alias-key test (`honorAliases` false) only `visibility` hides a page.
-    let visibility_only =
-        json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "lineage"});
+    let visibility_only = json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn"});
     assert_eq!(
         resolve(&store, &names, json!({ "excludePrivate": visibility_only })),
         vec![
@@ -560,7 +559,7 @@ fn alias_canonical_refs_reads_live_and_private_pages_by_policy() {
         canonical_refs(&store, &refs, json!({ "live": true })),
         strings(&["default/c/open", "default/c/private", "other/c/away"])
     );
-    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage"});
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" });
     assert_eq!(
         canonical_refs(
             &store,
@@ -579,4 +578,179 @@ fn alias_canonical_refs_reads_live_and_private_pages_by_policy() {
         strings(&["default/c/open", "default/c/private"])
     );
     assert!(canonical_refs(&store, &[], json!({ "live": true })).is_empty());
+}
+
+/// [`put_in`] in a transaction that declares `tier` as the writer's trust tier.
+fn put_at(store: &Store, tier: &str, slug: &str, title: &str) {
+    let tx = store.begin_transaction(false).unwrap();
+    let names = ["gbrain.write_trust_tier", "gbrain.write_origin"].map(String::from);
+    tx.apply_write_trust(
+        &names,
+        &[tier.to_string(), r#"{"channel":"test"}"#.to_string()],
+    )
+    .unwrap();
+    put_in(&tx, slug, title, json!({}), None);
+    tx.commit_transaction().unwrap();
+}
+
+/// A `flag` write-gate receipt on the page, in `families`.
+fn flag(store: &Store, slug: &str, families: &[&str]) {
+    let families: Vec<String> = families.iter().map(|f| f.to_string()).collect();
+    let fields = gbrain_store::trust::write_gate::ReceiptFields {
+        content_hash: "h1".into(),
+        tier: "agent_written".into(),
+        detector_version: 1,
+        verdict: "flag".into(),
+        reason_families: families.clone(),
+        reasons: families,
+        detector_error: false,
+        request_id: None,
+    };
+    assert!(
+        store
+            .upsert_page_write_gate_receipt("default", slug, fields)
+            .unwrap()
+            .is_some()
+    );
+}
+
+fn declare(store: &Store, slug: &str, alias: &str) {
+    let row: DerivedAliasRow =
+        serde_json::from_value(json!({ "alias_norm": alias, "origin": "declared" })).unwrap();
+    store
+        .replace_derived_aliases(slug, "default", &[row])
+        .unwrap();
+}
+
+#[test]
+fn resolve_aliases_applies_the_trust_floor_and_the_flag_filter_to_aliases_and_title_shadows() {
+    let dir = TempDir::new("aliases-trust");
+    let store = open(&dir);
+    put_at(&store, "operator_curated", "c/curated", "Curated");
+    put_at(&store, "agent_written", "c/agent", "Agent");
+    put_at(&store, "agent_written", "c/flagged", "Flagged");
+    flag(&store, "c/flagged", &["override"]);
+    put_at(&store, "external_untrusted", "c/outside", "Outside");
+    put_at(&store, "operator_curated", "c/fallback", "Fallback");
+    put_at(&store, "operator_curated", "c/target", "Target");
+    put_at(&store, "external_untrusted", "n/shadow", "Low Shadow");
+    for (slug, alias) in [
+        ("c/curated", "curated"),
+        ("c/agent", "agent"),
+        ("c/flagged", "flagged"),
+        ("c/outside", "shared"),
+    ] {
+        set(&store, slug, "default", &[alias]).unwrap();
+    }
+    declare(&store, "c/fallback", "shared");
+    declare(&store, "c/target", "low shadow");
+    let names = ["agent", "curated", "flagged", "low shadow", "shared"];
+    assert_eq!(
+        resolve(&store, &names, json!({})),
+        vec![
+            pair("agent", &["default/c/agent"]),
+            pair("curated", &["default/c/curated"]),
+            pair("flagged", &["default/c/flagged"]),
+            pair("shared", &["default/c/outside"]),
+        ]
+    );
+    assert_eq!(
+        resolve(&store, &names, json!({ "minTrust": "agent_written" })),
+        vec![
+            pair("agent", &["default/c/agent"]),
+            pair("curated", &["default/c/curated"]),
+            pair("flagged", &["default/c/flagged"]),
+            pair("low shadow", &["default/c/target"]),
+            pair("shared", &["default/c/fallback"]),
+        ]
+    );
+    assert_eq!(
+        resolve(&store, &names, json!({ "minTrust": "operator_curated" })),
+        vec![
+            pair("curated", &["default/c/curated"]),
+            pair("low shadow", &["default/c/target"]),
+            pair("shared", &["default/c/fallback"]),
+        ]
+    );
+    assert_eq!(
+        resolve(&store, &names, json!({ "suppressFlagged": true })),
+        vec![
+            pair("agent", &["default/c/agent"]),
+            pair("curated", &["default/c/curated"]),
+            pair("shared", &["default/c/outside"]),
+        ]
+    );
+    let scope: AliasScope = serde_json::from_value(json!({ "minTrust": "trusted" })).unwrap();
+    let err = store
+        .resolve_aliases(&strings(&["agent"]), &scope)
+        .unwrap_err();
+    assert_eq!(err.code, INVALID_ARGUMENT);
+}
+
+#[test]
+fn resolve_aliases_applies_the_page_policy_to_aliases_and_title_shadows() {
+    let dir = TempDir::new("aliases-private");
+    let store = open(&dir);
+    put(&store, "c/open");
+    put_in(
+        &store,
+        "c/private",
+        "p",
+        json!({ "visibility": "private" }),
+        None,
+    );
+    put_in(
+        &store,
+        "c/readers",
+        "r",
+        json!({ "readable_by": ["alice-example"] }),
+        None,
+    );
+    put_in(
+        &store,
+        "c/restricted",
+        "x",
+        json!({ "access": "Restricted" }),
+        None,
+    );
+    put(&store, "c/target");
+    put_in(
+        &store,
+        "n/crm",
+        "Acme Example",
+        json!({ "visibility": "private" }),
+        None,
+    );
+    set(&store, "c/open", "default", &["open"]).unwrap();
+    set(&store, "c/private", "default", &["private"]).unwrap();
+    set(&store, "c/readers", "default", &["readers"]).unwrap();
+    set(&store, "c/restricted", "default", &["restricted"]).unwrap();
+    declare(&store, "c/target", "acme example");
+    let names = ["acme example", "open", "private", "readers", "restricted"];
+    assert_eq!(
+        resolve(&store, &names, json!({})),
+        vec![
+            pair("open", &["default/c/open"]),
+            pair("private", &["default/c/private"]),
+            pair("readers", &["default/c/readers"]),
+            pair("restricted", &["default/c/restricted"]),
+        ]
+    );
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" });
+    assert_eq!(
+        resolve(&store, &names, json!({ "excludePrivate": policy })),
+        vec![
+            pair("acme example", &["default/c/target"]),
+            pair("open", &["default/c/open"]),
+        ]
+    );
+    let no_aliases = json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn" });
+    assert_eq!(
+        resolve(&store, &names, json!({ "excludePrivate": no_aliases })),
+        vec![
+            pair("acme example", &["default/c/target"]),
+            pair("open", &["default/c/open"]),
+            pair("restricted", &["default/c/restricted"]),
+        ]
+    );
 }

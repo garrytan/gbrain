@@ -45,6 +45,7 @@ const ROWS: readonly Row[] = [
   ['access_policy_migrations', 'out_of_scope', 'no_memory_text', 'id source_id direction phase receipts'],
   ['access_policy_revisions', 'out_of_scope', 'no_memory_text', 'source_id rules digest origin proposed_by approved_by change_kind operation_id'],
   ['access_policy_state', 'out_of_scope', 'no_memory_text', 'source_id'],
+  ['access_read_log', 'out_of_scope', 'no_memory_text', 'member audience operation transport result_code'],
   ['access_rules', 'out_of_scope', 'no_memory_text', 'source_id rule_id prefix readable_by created_by'],
   ['access_tokens', 'out_of_scope', 'secret_material', 'name token_hash scopes permissions source_grant source_id federated_read allowed_operations takes_holders min_trust private_pages private_facts member_id may_act_for attest_actor attest_ops attest_read attest_sources'],
   ['belief_events', 'swept', 'belief_ledger', 'event_key source_id slug subject_kind subject_key event_type origin trust_tier writer_tier tier_basis visibility value value_hash prior_hash state_hash cause claim_fp redacted_fields'],

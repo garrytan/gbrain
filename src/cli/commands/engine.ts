@@ -13,6 +13,12 @@ export async function run(args: string[]): Promise<void> {
     setCliExitVerdict(await runEngineShadow(args.slice(1)));
     return;
   }
+  if (args[0] === 'swap') {
+    // The read-only swap plan opens the brain itself (no migration) and writes nothing (S5a).
+    const { runEngineSwap } = await import('../../commands/engine-swap.ts');
+    setCliExitVerdict(await runEngineSwap(args.slice(1)));
+    return;
+  }
   const { runEngineStatus } = await import('../../commands/engine-status.ts');
   setCliExitVerdict(await runEngineStatus(args));
 }

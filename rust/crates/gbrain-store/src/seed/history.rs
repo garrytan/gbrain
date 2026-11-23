@@ -17,12 +17,11 @@ use crate::facts::relink::{AttemptRecord, seed_attempt};
 use crate::keys;
 use crate::kv::KvWrite;
 use crate::pages::{NEXT_VERSION_ID, PageText, VersionRecord, seed_version};
-use crate::raw_files::{
-    FileRecord, NEXT_FILE_ID, RawRecord, jsonb_order, seed_file, seed_raw_data,
-};
+use crate::raw_files::{FileRecord, NEXT_FILE_ID, RawRecord, seed_file, seed_raw_data};
 use crate::takes::{fk_failed, seed_evidence};
 use crate::trust::proposals::{ProposalRecord, seed_proposal};
 use crate::wanted_links::{ID_COUNTER as NEXT_WANTED_LINK_ID, WantedRecord, seed_wanted};
+use crate::write_receipt::VersionReceipt;
 use serde_json::{Value, json};
 
 /// In import order.
@@ -72,12 +71,12 @@ static PAGE_VERSIONS: Relation = Relation {
         ("body_storage", Kept),
         ("body_generation", Kept),
         ("body_bytes", Kept),
-        ("write_request_id", Unmapped(None)),
-        ("write_principal_kind", Unmapped(None)),
-        ("write_principal_id", Unmapped(None)),
-        ("archived_write_request_id", Unmapped(None)),
-        ("archived_principal_kind", Unmapped(None)),
-        ("archived_principal_id", Unmapped(None)),
+        ("write_request_id", Kept),
+        ("write_principal_kind", Kept),
+        ("write_principal_id", Kept),
+        ("archived_write_request_id", Kept),
+        ("archived_principal_kind", Kept),
+        ("archived_principal_id", Kept),
     ],
     import: import_version,
 };
@@ -131,6 +130,18 @@ fn import_version(tx: &mut dyn KvWrite, row: &Row, losses: &mut Losses) -> Resul
         write_origin: row.json("write_origin")?,
         change_reason: row.text("change_reason"),
         successor_pruned: row.bool("successor_pruned")?.unwrap_or(false),
+        receipt: VersionReceipt {
+            written: row.actor(
+                "write_request_id",
+                "write_principal_kind",
+                "write_principal_id",
+            ),
+            archived: row.actor(
+                "archived_write_request_id",
+                "archived_principal_kind",
+                "archived_principal_id",
+            ),
+        },
     };
     if !seed_version(tx, &record)? {
         return Ok(Outcome::Skipped);
@@ -176,7 +187,7 @@ fn import_file(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Outcom
         mime_type: row.text("mime_type"),
         size_bytes: row.i64("size_bytes")?,
         content_hash: row.req("content_hash")?,
-        metadata: jsonb_order(row.json("metadata")?.unwrap_or_else(|| json!({}))),
+        metadata: crate::jsonb::order(row.json("metadata")?.unwrap_or_else(|| json!({}))),
         created_at_us: row.req_ts("created_at")?,
     };
     if !seed_file(tx, &record)? {
@@ -207,7 +218,7 @@ fn import_raw_data(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Ou
     let record = RawRecord {
         page_id,
         source: row.req("source")?,
-        data: jsonb_order(need(row.json("data")?, "raw_data.data")?),
+        data: crate::jsonb::order(need(row.json("data")?, "raw_data.data")?),
         fetched_at_us: row.req_ts("fetched_at")?,
     };
     Ok(if seed_raw_data(tx, &record)? {
@@ -353,7 +364,7 @@ fn import_open_loop(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<O
         counterparty_source_id: row.text("counterparty_source_id"),
         counterparty_email: row.text("counterparty_email"),
         summary: row.req("summary")?,
-        evidence: jsonb_order(row.json("evidence")?.unwrap_or_else(|| json!([]))),
+        evidence: crate::jsonb::order(row.json("evidence")?.unwrap_or_else(|| json!([]))),
         thread_id: row.text("thread_id"),
         page_slug: row.text("page_slug"),
         due_at_us: row.ts("due_at")?,

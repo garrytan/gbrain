@@ -8,7 +8,10 @@
 
 Every eligible page write (`put_page`, capture, sync) queues one `facts-absorb`
 job that extracts the page's facts with a chat model. A Postgres brain runs
-those jobs on its job worker (`gbrain jobs supervisor`). A PGLite brain has no
+those jobs on its job worker (`gbrain jobs supervisor`). If no worker runs them
+there, `gbrain dream` warns in its `facts_drain` line once a job has waited
+longer than `GBRAIN_QUEUE_NO_WORKER_WARN_HOURS` (default 1) with no job started
+in that time, and names the fix: `gbrain jobs supervisor start`. A PGLite brain has no
 background worker, so gbrain runs them inside the processes that already own
 the brain:
 

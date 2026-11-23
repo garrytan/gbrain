@@ -306,6 +306,27 @@ describe('engine parity: pages', () => {
     };
   });
 
+  // #9823 post-land finding 1: on the Rust engine an age of NaN read as 0 hours and hard-deleted every tombstone, and the
+  // SQL engines clamped a negative age to 0 the same way. Every engine now refuses an age that is NaN, negative or not
+  // finite with the same typed error (PurgeAgeError, code invalid_argument), before it previews or deletes anything.
+  parityTest('purgeDeletedPages refuses an age that is NaN, negative or not finite, and deletes nothing', { methods: ['purgeDeletedPages', 'softDeletePage'] }, async (engine) => {
+    await seed(engine, [['notes/a', NOTE], ['notes/b', NOTE]]);
+    await engine.softDeletePage('notes/a');
+    await engine.softDeletePage('notes/b');
+    const refusals: Array<{ hours: string; dryRun: boolean; name: string; code: unknown }> = [];
+    for (const hours of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, -1, -72, -0.5]) {
+      for (const dryRun of [false, true]) {
+        const error = await engine.purgeDeletedPages(hours, { dryRun }).then(() => null, (e: unknown) => e as Error & { code?: unknown });
+        expect(error).not.toBeNull();
+        refusals.push({ hours: String(hours), dryRun, name: error!.name, code: error!.code });
+      }
+    }
+    expect(refusals.every((r) => r.name === 'PurgeAgeError' && r.code === 'invalid_argument')).toBe(true);
+    const tombstones = await Promise.all(['notes/a', 'notes/b'].map(async (slug) => (await engine.getPage(slug, { includeDeleted: true }))?.slug ?? null));
+    expect(tombstones).toEqual(['notes/a', 'notes/b']);
+    return { refusals, tombstones };
+  });
+
   // `purgeDeletedPages(0)` takes tombstones strictly older than the statement clock, and PGLite's clock can stamp the
   // last soft delete with the same instant as the next statement. Waiting a few milliseconds moves the clock past it.
   const tombstonesSettle = () => new Promise((resolve) => setTimeout(resolve, 5));
