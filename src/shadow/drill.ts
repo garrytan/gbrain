@@ -129,22 +129,27 @@ export function readPending(dir: string): Pending | null {
 
 const pidAlive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; } };
 
-/** Takes `drills/drill.lock` (O_EXCL). A lock whose process is gone is taken over once. */
-function takeLock(dir: string, now: number): (() => void) | null {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const fd = openSync(lockPath(dir), 'wx', 0o600);
-      try { writeSync(fd, JSON.stringify({ pid: process.pid, at: now })); } finally { closeSync(fd); }
-      return () => { try { unlinkSync(lockPath(dir)); } catch { /* already gone */ } };
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
-      let pid = NaN;
-      try { pid = (JSON.parse(readFileSync(lockPath(dir), 'utf8')) as { pid?: number }).pid ?? NaN; } catch { /* unreadable lock: treated as stale below */ } // silent-read-ok: an unreadable lock is stale
-      if (Number.isInteger(pid) && pidAlive(pid)) return null;
-      try { unlinkSync(lockPath(dir)); } catch { /* a racing drill removed it */ }
-    }
+/** Creates `drills/drill.lock` exclusively; false when it exists. */
+function createLock(dir: string, now: number): boolean {
+  try {
+    const fd = openSync(lockPath(dir), 'wx', 0o600);
+    try { writeSync(fd, JSON.stringify({ pid: process.pid, at: now })); } finally { closeSync(fd); }
+    return true;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    throw e;
   }
-  return null;
+}
+
+/** Takes the drill lock. A lock whose process is gone is taken over once; one held by a live process is not. */
+function takeLock(dir: string, now: number): (() => void) | null {
+  const release = (): void => { try { unlinkSync(lockPath(dir)); } catch { /* already gone */ } };
+  if (createLock(dir, now)) return release;
+  let pid = NaN;
+  try { pid = (JSON.parse(readFileSync(lockPath(dir), 'utf8')) as { pid?: number }).pid ?? NaN; } catch { /* unreadable lock: treated as stale below */ } // silent-read-ok: an unreadable lock is stale
+  if (Number.isInteger(pid) && pidAlive(pid)) return null;
+  release();
+  return createLock(dir, now) ? release : null;
 }
 
 const sleep = (ms: number): Promise<void> => new Promise(done => setTimeout(done, ms));
