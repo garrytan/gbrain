@@ -62,8 +62,6 @@ writes_to:
   - guides/
   - research/
 filing_exempt: true
-# The auto-fire gate section below was merged from an upstream
-# deep-analysis auto-filing skill:
 distinct_from:
   - name: brain-taxonomist
     reason: "brain-taxonomist classifies individual pages at write time (the filing GATE). EIIRP orchestrates the full post-work LIFECYCLE — inventory + taxonomy + schema + skillify + verify."

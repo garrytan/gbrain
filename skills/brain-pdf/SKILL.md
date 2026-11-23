@@ -146,8 +146,9 @@ Debian/Ubuntu containers).
 
 ## Delivery
 
-After rendering, give the user the PDF path (the path the Rendered: line
-printed) and the brain page link. The PDF is a rendering; the source is the
+After rendering, give the user the PDF in this conversation (attach it if
+your host can, else the path the Rendered: line printed) and the brain page
+link. The PDF is a rendering; the source is the
 artifact.
 
 Send the file anywhere else only when the user asks. Before sending, confirm

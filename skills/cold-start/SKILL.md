@@ -63,7 +63,7 @@ sources to get you from zero to useful in one session.
   download).
 - Each phase is independently valuable — the user can stop after any phase and still
   have a useful brain.
-- Progress is tracked in `~/.gbrain/cold-start-state.json` so interrupted sessions
+- Progress is tracked in `cold-start-state.json` in the brain's config directory so interrupted sessions
   can resume.
 - Entity detection and cross-linking run on every import, not as a separate pass.
 
@@ -95,7 +95,9 @@ None of them puts a Google token in the agent's hands:
 
 1. **gbrain's Google connector (default).** `gbrain google setup` connects the
    user's own Google OAuth client for live sync of mail threads, calendar
-   events and contacts. Tokens live in gbrain's local credential vault (a 0600
+   events and contacts. Setup imports right away and keeps syncing, so before
+   running it ask which account and which services (`--services`) to connect,
+   and say that it starts syncing at once. Tokens live in gbrain's local credential vault (a 0600
    file, redacted in listings); the agent only runs CLI commands. See
    `docs/guides/google-connect.md` and `skills/google-loops/SKILL.md`.
 2. **Google Takeout (offline).** A [Google Takeout](https://takeout.google.com)
@@ -177,10 +179,10 @@ to the next one; add `SKIPPED=1` for a phase the user skipped):
 ```bash
 PHASE=1 NEXT=2 python3 - <<'PY'
 import datetime, json, os, pathlib
-p = pathlib.Path.home() / '.gbrain' / 'cold-start-state.json'
+p = pathlib.Path(os.environ.get('GBRAIN_HOME') or pathlib.Path.home()) / '.gbrain' / 'cold-start-state.json'
 s = json.loads(p.read_text()) if p.exists() else {
     'started': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')}
-key = 'phases_skipped' if os.environ.get('SKIPPED') else 'phases_completed'
+key = 'phases_skipped' if os.environ.get('SKIPPED') == '1' else 'phases_completed'
 s[key] = sorted(set(s.get(key, [])) | {int(os.environ['PHASE'])})
 s['next_phase'] = int(os.environ['NEXT'])
 p.parent.mkdir(parents=True, exist_ok=True)
@@ -446,8 +448,8 @@ After completing available phases:
      `gbrain sources refresh <id>; gbrain sync --source <id> --no-pull --hard-deadline 13m`
      every 15 minutes on the owner host.
 
-4. **Check the state file** (`~/.gbrain/cold-start-state.json`, written by
-   the snippet in Phase 1); it should look like:
+4. **Check the state file** (`cold-start-state.json` in the brain's config
+   directory, written by the snippet in Phase 1); it should look like:
    ```json
    {
      "started": "2026-01-15T10:00:00+00:00",
@@ -495,7 +497,7 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 
 If the session is interrupted:
 
-1. Read `~/.gbrain/cold-start-state.json`
+1. Read `cold-start-state.json` in the brain's config directory (`$GBRAIN_HOME/.gbrain/`, or `~/.gbrain/` when `GBRAIN_HOME` is unset)
 2. Skip completed phases
 3. Resume from `next_phase`
 4. The user doesn't have to repeat credential setup or re-import completed sources

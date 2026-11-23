@@ -128,6 +128,10 @@ PY
 
 If `bs4` is missing: `pip3 install beautifulsoup4 lxml`.
 
+Extract once per book. To resume or re-run a mirror, reuse the chapter files
+from the first extraction: completed chapters are matched by number, so
+re-extracting in a different order would pair old analyses with new text.
+
 Inspect the chapter files to identify which are real chapters vs front
 matter (TOC, copyright, acknowledgments). Often the EPUB ships one file
 per chapter; sometimes multiple chapters per file. Use
