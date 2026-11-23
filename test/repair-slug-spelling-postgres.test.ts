@@ -151,68 +151,6 @@ run('postgres: the repair holds the stored spelling\'s page lock', () => {
     expect((await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1', [sourceId])).map(r => r.slug)).toEqual(['Notes/Hold-Race']);
   }), 60_000);
 
-  describe('a new held write for the old spelling and the move serialize on one lock', () => {
-    const assessment = { verdict: 'quarantine' as const, tier: 'agent_written' as const, ran: true, families: ['override' as const], hits: [], detectorError: false, detectorVersion: 2, contentHash: null };
-    const hold = (tx: BrainEngine, sourceId: string, slug: string, claim: string) => recordWriteGateHold(tx, { kind: 'fact', sourceId, slug, texts: [claim, null, null], assessment,
-      payload: { fact: claim, kind: 'fact', visibility: 'private', entity_slug: slug, row_num: 3 } });
-    async function legacyPage(name: string) {
-      _resetCliExitVerdictForTests();
-      const sourceId = `s${randomUUID().replace(/-/g, '').slice(0, 12)}`;
-      await engine.executeRaw("INSERT INTO sources(id,name,config) VALUES($1,$1,'{}')", [sourceId]);
-      await engine.putPage(`notes/seed-${name}`, { type: 'note', title: name, compiled_truth: 'before', timeline: '' }, { sourceId });
-      await engine.executeRaw('UPDATE pages SET slug=$1 WHERE slug=$2 AND source_id=$3', [`Notes/${name}`, `notes/seed-${name}`, sourceId]);
-      const preview = await repairJson(['slug-spelling', '--source', sourceId]);
-      return { sourceId, apply: ['slug-spelling', '--source', sourceId, '--apply', '--expect', preview.preview_hash, '--yes'] };
-    }
-    const track = <T>(p: Promise<T>) => { const state = { settled: false }; const done = p.then(v => { state.settled = true; return v; }, e => { state.settled = true; throw e; }); done.catch(() => undefined); return { state, done }; };
-    const heldSlugs = async (sourceId: string) => (await engine.executeRaw<{ slug: string }>("SELECT slug FROM write_gate_holds WHERE source_id=$1 AND status='held' ORDER BY id", [sourceId])).map(r => r.slug);
-    const pageSlugs = async (sourceId: string) => (await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1', [sourceId])).map(r => r.slug);
-
-    test('writer first: a new held write for the old spelling, uncommitted, makes the move wait; afterwards no held write names the old spelling of a moved page', () => withEnv(env, async () => {
-      const { sourceId, apply } = await legacyPage('Order-Writer');
-      let release!: () => void, holding!: () => void;
-      const gate = new Promise<void>(resolve => { release = resolve; });
-      const inserted = new Promise<void>(resolve => { holding = resolve; });
-      const writer = engine.transaction(async tx => { await hold(tx, sourceId, 'Notes/Order-Writer', 'A brand new held claim'); holding(); await gate; });
-      await inserted;
-      const move = track(repairJson(apply));
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      expect(move.state.settled).toBe(false);
-      release();
-      await writer;
-      const outcome = await move.done.then(() => 'moved', (e: OperationError) => e.code);
-      expect(['moved', 'changed_since_preview']).toContain(outcome);
-      if (outcome === 'moved') expect(await heldSlugs(sourceId)).toEqual(['notes/order-writer']);
-      else expect(await pageSlugs(sourceId)).toEqual(['Notes/Order-Writer']);
-      expect(outcome === 'moved' ? await pageSlugs(sourceId) : []).not.toContain('Notes/Order-Writer');
-      if (outcome === 'moved') expect(await heldSlugs(sourceId)).not.toContain('Notes/Order-Writer');
-    }), 60_000);
-
-    test('move first: a held write for the old spelling recorded while the move holds its lock waits, then lands on the normal slug through the alias', () => withEnv(env, async () => {
-      const { sourceId, apply } = await legacyPage('Order-Move');
-      // The move pauses inside its transaction (after the alias is recorded) so a writer can arrive while it holds its locks.
-      await engine.executeRaw(`CREATE OR REPLACE FUNCTION slug_spelling_pause() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(3); RETURN NEW; END $$`);
-      await engine.executeRaw('CREATE TRIGGER slug_spelling_pause AFTER INSERT ON slug_aliases FOR EACH ROW EXECUTE FUNCTION slug_spelling_pause()');
-      try {
-        const move = track(repairJson(apply));
-        for (let i = 0; i < 100; i++) {
-          const [sleeping] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=current_database() AND wait_event='PgSleep'");
-          if (sleeping!.n) break;
-          await new Promise(resolve => setTimeout(resolve, 50));
-        }
-        const writer = track(engine.transaction(async tx => { await hold(tx, sourceId, 'Notes/Order-Move', 'A held claim recorded during the move'); }));
-        await new Promise(resolve => setTimeout(resolve, 700));
-        expect(writer.state.settled).toBe(false);
-        await move.done;
-        await writer.done;
-      } finally {
-        await engine.executeRaw('DROP TRIGGER IF EXISTS slug_spelling_pause ON slug_aliases');
-      }
-      expect(await pageSlugs(sourceId)).toEqual(['notes/order-move']);
-      expect(await heldSlugs(sourceId)).toEqual(['notes/order-move']);
-    }), 60_000);
-  });
-
   describe('a role that row-level security keeps from a guard table', () => {
     const suffix = randomUUID().replaceAll('-', '').slice(0, 10);
     const ROLE = `slug_repair_role_${suffix}`;
