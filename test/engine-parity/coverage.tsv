@@ -128,7 +128,7 @@ getPage	pages	yes	204	yes	yes	yes	serves
 readPageSnapshot	pages	yes	63	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
 lockPageKeys	pages	yes	14	no	yes	yes	serves
-putPage	pages	yes	1092	yes	yes	yes	serves
+putPage	pages	yes	1093	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	37	yes	yes	yes	serves
@@ -2101,8 +2101,8 @@ listInterimStoredObjectCounts	doctor_brain	yes	1	no	yes	yes	serves
 readOldestSourceCreatedAt	doctor_brain	yes	1	no	yes	yes	serves
 listVisibilityCandidatePages	doctor_brain	yes	2	no	yes	yes	serves
 countVisibilityNoncanonicalHolds	doctor_brain	yes	2	no	yes	yes	serves
-countReadersNoncanonicalHolds	doctor_brain	yes	2	no	yes	yes	serves
-listReaderCandidatePages	doctor_brain	yes	2	no	yes	yes	serves
+countReadersNoncanonicalHolds	doctor_brain	yes	3	no	yes	yes	serves
+listReaderCandidatePages	doctor_brain	yes	3	no	yes	yes	serves
 listContentBlockedReceipts	doctor_brain	yes	2	no	yes	yes	serves
 listPassAdmittedReceipts	doctor_brain	yes	1	no	yes	yes	serves
 readTerminalFailureGroups	doctor_terminal	yes	2	no	yes	yes	serves

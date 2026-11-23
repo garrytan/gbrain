@@ -269,10 +269,27 @@ describe('doctor persistence reads sort text keys by byte', () => {
     const sources = (await engine.listAtomBacklogSourceIds()).map(row => row.source_id).filter(id => (SRC as readonly string[]).includes(id));
     const pages = (await engine.listReaderCandidatePages([...SRC])).map(row => `${row.source_id}:${row.slug}`);
     expect(sources).toEqual(SRC_BYTES);
-    // The reader-candidate statement sorts by the database collation (no COLLATE "C"), so a non-C Postgres may list these
-    // in another order than PGLite and Rust; its rows are compared as a set, and the order goes in the swap report.
-    expect([...pages].sort()).toEqual(SRC.flatMap(id => ['ab', 'a/z', 'a-z'].map(slug => `${id}:${slug}`)).sort());
-    return { sources, count: pages.length };
+    // The reader-candidate statement sorts by byte (COLLATE "C") on both keys, as PGLite and the Rust store do.
+    expect(pages).toEqual(SRC_BYTES.flatMap(id => byteOrder(['ab', 'a/z', 'a-z']).map(slug => `${id}:${slug}`)));
+    return { sources, pages };
+  });
+
+  parityTest('git_held_files names the stored pages with a misspelled readers key, five at most, by byte source id then slug', {
+    methods: ['putPage', 'listReaderCandidatePages', 'countReadersNoncanonicalHolds'],
+  }, async (engine, backend) => {
+    const { gitHeldFilesCheck } = await import('../../src/commands/doctor/checks/git-holds.ts');
+    const slugs = ['ab', 'a/z', 'a-z'];
+    for (const id of SRC) {
+      await createSource(engine, backend, id);
+      for (const slug of slugs) await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'x', timeline: '', frontmatter: { 'Readable-By': ['member:x'] } }, { sourceId: id });
+    }
+    const pairs = SRC_BYTES.flatMap(id => byteOrder(slugs).map(slug => `${id}:${slug}`));
+    const check = await gitHeldFilesCheck(engine);
+    const out = { status: check.status, stored: detailsOf(check).readers_noncanonical?.stored,
+      first: /name their readers with a key page access does not read, so every member can read them \(first: ([^)]*)\)/.exec(check.message)?.[1] ?? null, fix: check.fix?.argv };
+    const [source, slug] = pairs[0]!.split(':') as [string, string];
+    expect(out).toEqual({ status: 'warn', stored: 9, first: pairs.slice(0, 5).join(', '), fix: ['gbrain', 'get', '--source', source, '--', slug] });
+    return out;
   });
 
   parityTest('contentBlockedSources lists the sources a failed content refusal stops by byte id', {

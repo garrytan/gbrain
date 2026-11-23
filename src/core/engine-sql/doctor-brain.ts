@@ -69,7 +69,7 @@ const LIST_READER_CANDIDATE_PAGES_SQL = `SELECT p.source_id, p.slug, p.frontmatt
     FROM pages p JOIN sources s ON s.id=p.source_id
     WHERE p.deleted_at IS NULL AND s.archived IS NOT TRUE AND ($1::text[] IS NULL OR p.source_id=ANY($1::text[])) AND jsonb_typeof(p.frontmatter)='object'
       AND EXISTS (SELECT 1 FROM jsonb_object_keys(p.frontmatter) k WHERE k<>'readable_by' AND regexp_replace(lower(k),'[-_[:space:]]+','','g')='readableby')
-    ORDER BY p.source_id, p.slug`;
+    ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C"`;
 
 const LIST_CONTENT_BLOCKED_RECEIPTS_SQL = `SELECT c.completed_keys->0->>'sourceId' AS source_id,
       r.error_code, r.error_message, r.error_detail FROM op_checkpoints c JOIN persistence_requests r ON r.request_id::text = c.completed_keys->0->'pending'->>'requestId'
