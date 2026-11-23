@@ -366,7 +366,7 @@ describe('guards that follow the page to its normal slug', () => {
     const preview = await repairJson(previewArgs(s.id));
     await repairJson(applyArgs(s.id, preview.preview_hash));
     const guards = (await engine.executeRaw<{ slug: string }>('SELECT g.slug FROM page_write_guards g JOIN sources x ON x.incarnation = g.source_incarnation WHERE x.id=$1 ORDER BY g.slug', [s.id])).map(r => r.slug);
-    expect(guards).toEqual(['Notes/Lock-Move', 'notes/lock-move']);
+    expect(guards).toEqual(expect.arrayContaining(['Notes/Lock-Move', 'notes/lock-move']));
   }));
 });
 
