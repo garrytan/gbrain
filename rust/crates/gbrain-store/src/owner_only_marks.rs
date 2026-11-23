@@ -47,6 +47,17 @@ pub(crate) fn is_marked(read: &dyn KvRead, page_id: u64) -> Result<bool> {
     Ok(read.get(&mark_key(page_id))?.is_some())
 }
 
+/// The shadow seed (`seed.rs`): stores the mark of page `page_id` as another engine holds it. `false` when the page is
+/// already marked. The page itself need not exist: a mark is left by a page's hard delete.
+pub(crate) fn seed_mark(tx: &mut dyn KvWrite, page_id: u64) -> Result<bool> {
+    let key = mark_key(page_id);
+    if tx.get(&key)?.is_some() {
+        return Ok(false);
+    }
+    tx.put(&key, b"1")?;
+    Ok(true)
+}
+
 /// Marks what the delete of `page` would leave unmarked, before it goes (`gbrain_owner_only_row_deleted`): when the page is
 /// owner-only by its own lineage, the page itself and every concept or question with a `concept-provenance`
 /// `synthesized_from` link to it (`gbrain_owner_only_mark_derived`). Call it before the page's links are deleted.
@@ -69,6 +80,17 @@ pub(crate) fn mark_before_delete(tx: &mut dyn KvWrite, page: &PageRecord) -> Res
         tx.put(&mark_key(id), b"1")?;
     }
     Ok(())
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the mark of page `page_id`. `false` when the page
+/// is not marked.
+pub(crate) fn remove_mark(tx: &mut dyn KvWrite, page_id: u64) -> Result<bool> {
+    let key = mark_key(page_id);
+    if tx.get(&key)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&key)?;
+    Ok(true)
 }
 
 #[cfg(test)]

@@ -71,6 +71,40 @@ pub(super) fn all_clients(read: &dyn KvRead) -> Result<Vec<ClientRecord>> {
     bad.map_or(Ok(rows), Err)
 }
 
+/// The shadow seed (`seed.rs`): stores a client's spend columns copied from another engine (`budget_usd_per_day` in
+/// dollars, as the column holds it). `false` when the client id is already stored.
+pub(crate) fn seed_client(
+    tx: &mut dyn KvWrite,
+    client: (&str, &str, Option<&str>),
+    bound_tools: Option<Vec<String>>,
+    budget_usd_per_day: Option<f64>,
+    deleted_at: Option<i64>,
+) -> Result<bool> {
+    let (client_id, client_name, scope) = client;
+    if client_id.contains('\0')
+        || client_name.contains('\0')
+        || scope.is_some_and(|s| s.contains('\0'))
+    {
+        return Err(StoreError::new(
+            INVALID_ARGUMENT,
+            "seed oauth_clients: invalid byte sequence for encoding \"UTF8\": 0x00",
+        ));
+    }
+    if load_client(&*tx, client_id)?.is_some() {
+        return Ok(false);
+    }
+    let record = ClientRecord {
+        client_id: client_id.to_string(),
+        client_name: client_name.to_string(),
+        scope: scope.map(str::to_string),
+        bound_tools,
+        budget: budget_usd_per_day.map(budget_hundredths).transpose()?,
+        deleted_at,
+    };
+    put_json(tx, &client_key(client_id), &record)?;
+    Ok(true)
+}
+
 /// `insertOauthClient(row)`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ClientInsert {
@@ -152,6 +186,15 @@ impl Store {
             .and_then(|c| c.budget)
             .map(budget_text))
     }
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the client `client_id`. `false` when there is none.
+pub(crate) fn remove_client(tx: &mut dyn KvWrite, client_id: &str) -> Result<bool> {
+    if client_id.contains('\0') || load_client(&*tx, client_id)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&client_key(client_id))?;
+    Ok(true)
 }
 
 #[cfg(test)]

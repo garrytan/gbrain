@@ -109,7 +109,9 @@ export async function getRecentSalience(exec: LegacyUnscopedRead, opts: Salience
     // Compute the boundary in JS so the SQL is identical across engines (eng review D5).
     const boundaryIso = new Date(Date.now() - days * 86400000).toISOString();
     // Escape LIKE meta for the optional prefix match.
-    const prefixCondition = slugPrefix
+    const prefixCondition = slugPrefix && opts.slugPrefixAlso?.length
+      ? sqlFragment`AND p.slug LIKE ANY(${[slugPrefix, ...opts.slugPrefixAlso].map(prefix => prefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%')}::text[])`
+      : slugPrefix
       ? sqlFragment`AND p.slug LIKE ${slugPrefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%'} ESCAPE '\\'`
       : sqlFragment``;
     // TIM-37: exclude briefing pages from their own Brain Pulse. The cron

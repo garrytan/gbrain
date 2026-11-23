@@ -29,7 +29,6 @@ src/commands/doctor/checks/graph-health.ts	runGraphCoverage	field	NONE	not the p
 src/commands/doctor/checks/graph-health.ts	runGraphCoverage	sql	NONE	not the page body: timeline coverage count alias
 src/commands/enrich.ts	enrichOneLocked	call:serializeMarkdown	SEGW	
 src/commands/enrich.ts	enrichOneLocked	field	SEGW	
-src/commands/export.ts	runExport	sql	STREAM	
 src/commands/extract-mentions-explain.ts	explainMention	field	STREAM	
 src/commands/extract-mentions-explain.ts	explainMention	sql	STREAM	
 src/commands/extract-mentions-explain.ts	pageNames	sql	STREAM	
@@ -193,6 +192,9 @@ src/core/engine-sql/chunks.ts	getChunkWindows	sql	STREAM	lane 1e file: ships who
 src/core/engine-sql/chunks.ts	listChunklessPagesWithContent	field	STREAM	lane 1e file
 src/core/engine-sql/chunks.ts	listChunklessPagesWithContent	sql	STREAM	lane 1e file
 src/core/engine-sql/chunks.ts	listEmbeddingStateRows	sql	META	lane 1e file: octet_length metadata
+src/core/engine-sql/export-reads.ts	listExportPageKeys	sql	STREAM	moved from commands/export.ts runExport unchanged: octet_length of the inline body columns for the batch size; a segmented page reads body_bytes
+src/core/engine-sql/export-reads.ts	normalizeFenceLines	sql	STREAM	moved from export-snapshot.ts readExportPages unchanged: lower-cases inline bodies already read for the fence check; a segmented page's body is blank here
+src/core/engine-sql/export-reads.ts	readExportPageRows	sql	STREAM	moved from export-snapshot.ts readExportPages unchanged: rowToPage blanks a segmented page's body, which streams through segmentedExportMarkdown (readBodyRange, trusted stored)
 src/core/engine-sql/field-usage.ts	readFieldUsageSamples	field	LEAD	moved from schema-pack/field-usage.ts runFieldUsage unchanged: whole inline bodies of the sampled pages; a segmented page samples a null body, read as empty (TODOS.md)
 src/core/engine-sql/field-usage.ts	readFieldUsageSamples	sql	LEAD	moved from schema-pack/field-usage.ts runFieldUsage unchanged: whole inline bodies of the sampled pages; a segmented page samples a null body, read as empty (TODOS.md)
 src/core/engine-sql/large-page.ts	PAGE_BODY_SIZES_SQL	sql	META	append_page's size read after the write, moved from persistence/page-append.ts prepareAppendMutation: body_bytes, else octet_length of an inline page's regions
@@ -212,6 +214,7 @@ src/core/engine-sql/pages.ts	revertToVersion	sql	SEGW	lane 1e: refuses a segment
 src/core/engine-sql/pages.ts	toDomainBankRow	field	LEAD	maps sampled rows; segmented pages are never sampled
 src/core/engine-sql/salience.ts	listEnrichCandidates	sql	META	
 src/core/engine-sql/search-reads.ts	generatedPagesIn	sql	LEAD	moved from search/provenance-demotion.ts readGeneratedPages (same statement, typed engine method)
+src/core/engine-sql/timeline-reads.ts	listTimelineOrphanPages	sql	STREAM	the orphan prune's page list, moved from timeline-extract.ts pruneTimelineOrphans: compiled_truth and timeline of inline pages
 src/core/engine-sql/timeline.ts	getTimeline	sql	NONE	not the page body: SELECT * FROM pages inside a LATERAL used for the page id only
 src/core/enrichment-service.ts	planEntity	call:putPage	INLINE	
 src/core/enrichment-service.ts	planEntity	call:serializeMarkdown	INLINE	
@@ -220,7 +223,6 @@ src/core/export-snapshot.ts	inlineExportMarkdown	call:serializeMarkdown	SEGW
 src/core/export-snapshot.ts	inlineExportMarkdown	field	STREAM	
 src/core/export-snapshot.ts	segmentedExportHead	call:serializeMarkdown	NONE	not the page body: the frontmatter head, rendered with an empty body
 src/core/export-snapshot.ts	readExportPages	field	STREAM	inline pages only: a segmented page skips the overlay here and streams through segmentedExportMarkdown (readBodyRange, trusted stored)
-src/core/export-snapshot.ts	readExportPages	sql	STREAM	
 src/core/extract-ner.ts	extractNerLinks	field	STREAM	
 src/core/extract-takes-from-pages.ts	extractTakesFromPages	call:serializePageToMarkdown	SEGW	
 src/core/extract-takes-from-pages.ts	extractTakesFromPages	field	STREAM	inline rows only (SQL filter)

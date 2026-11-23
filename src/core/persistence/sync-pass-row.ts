@@ -56,6 +56,8 @@ export interface PassConverged {
    * any an earlier stamp carried that has not committed). Until each effect commits the source is not idle; absent: none.
    */
   writeback?: string[];
+  /** LC-1: committed-mode paths a delete's uncommitted removal settled, with their disk stat; null overflowed (no idle). Absent: none. */
+  removal_pending?: Array<{ path: string; stat: string }> | null;
   parser_fp: string;
   pack: string | null;
   selection_fp: string;

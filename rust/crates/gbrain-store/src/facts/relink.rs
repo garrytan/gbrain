@@ -122,6 +122,21 @@ fn write_attempt(tx: &mut dyn KvWrite, source_id: &str, r: &AttemptRecord) -> Re
     Ok(())
 }
 
+/// The shadow seed (`seed.rs`): stores `r`, an attempt copied from another engine with its own
+/// `attempted_at`, with its memo index entry, where `upsert_fact_relink_attempt` stores one.
+/// `false` when the `(source_id, fact_id)` row is already stored.
+pub(crate) fn seed_attempt(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    r: &AttemptRecord,
+) -> Result<bool> {
+    if read_attempt(&*tx, source_id, r.fact_id)?.is_some() {
+        return Ok(false);
+    }
+    write_attempt(tx, source_id, r)?;
+    Ok(true)
+}
+
 /// Every attempt row of a source, by fact id.
 fn source_attempts(read: &dyn KvRead, source_id: &str) -> Result<Vec<AttemptRecord>> {
     let mut out = Vec::new();
@@ -394,6 +409,19 @@ impl Store {
             .map(|((outcome, _, tier), n)| json!({ "outcome": outcome, "tier": tier, "n": n }))
             .collect())
     }
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the attempt row `(source_id, fact_id)` with its
+/// memo index entry. `false` when there is none.
+pub(crate) fn remove_attempt(tx: &mut dyn KvWrite, source_id: &str, fact_id: i64) -> Result<bool> {
+    let Some(old) = read_attempt(&*tx, source_id, fact_id)? else {
+        return Ok(false);
+    };
+    if let Some(key) = target_key(source_id, &old) {
+        tx.delete(&key)?;
+    }
+    tx.delete(&row_key(source_id, fact_id))?;
+    Ok(true)
 }
 
 #[cfg(test)]

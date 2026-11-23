@@ -844,6 +844,16 @@ More: [docs/guides/bootstrap.md#cleanup-pending](../../docs/guides/bootstrap.md#
 |---|---|---|---|---|---|---|
 | The bootstrapped benchmark awaits human review. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### brain_missing
+
+<a id="brain_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The configured PGLite datastore (the host brain's, or the selected mount's) is not at its path, or its folder is empty (an unmounted drive or a moved folder?), so doctor refused before connecting and created nothing in the folder. | A health check never creates the thing it checks: connecting to a missing PGLite path would build a new empty brain there, migrate it and report it healthy while the real notes sit elsewhere. Creating a new empty datastore is the user's decision, since the old notes would not be in it: for the host brain it is `gbrain init --pglite --no-embedding --path <where>`; for a mount, `gbrain init` is not the way, because it rewrites the host brain's config. | Mount or reconnect the drive that holds the brain, move the folder back, or point `database_path` in the gbrain config at where the brain lives now; then run `gbrain doctor --only connection --json` again. | user | `gbrain doctor --json` | 1 | no |
+
+Reasons: `missing_brain`.
+
 ### bridge_ownership_conflict
 
 <a id="bridge_ownership_conflict"></a>
@@ -2086,6 +2096,42 @@ More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/
 
 More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
 
+### engine_swap_refused
+
+<a id="engine_swap_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The move to another engine (`gbrain engine swap`) was refused before anything changed; the current engine keeps authority. | A swap needs a settled, unmanaged brain and readiness evidence that cannot be waived: managed storage, unfinished worktree refreshes, failing readiness criteria, more than one writer host, a team brain, a lagging follower, differing digests or fingerprints, an engine-selecting override, or host access that would change. Each reason has one recovery row in docs/guides/engine-swap.md. | Correct the request using the message above, then retry. Run: gbrain engine swap --to rust --plan --json | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `refresh_unsettled`, `managed_storage`, `no_shadow`, `not_ready`, `multiple_writer_hosts`, `writer_coverage_unknown`, `team_brain`, `follower_behind`, `digest_mismatch`, `route_override`, `host_access_unbound`, `host_access_changed`, `fingerprint_semantics_differ`.
+
+Override: reason `refresh_unsettled`: retryable, exit 1, retryable.
+
+Override: reason `managed_storage`: consent, exit 3, not retryable.
+
+Override: reason `no_shadow`: consent, exit 3, not retryable.
+
+Override: reason `follower_behind`: retryable, exit 1, retryable.
+
+Override: reason `multiple_writer_hosts`: consent, exit 3, not retryable.
+
+Override: reason `writer_coverage_unknown`: consent, exit 3, not retryable.
+
+Override: reason `team_brain`: consent, exit 3, not retryable.
+
+Override: reason `route_override`: consent, exit 3, not retryable.
+
+Override: reason `host_access_unbound`: consent, exit 3, not retryable.
+
+Override: reason `host_access_changed`: consent, exit 3, not retryable.
+
+Override: reason `digest_mismatch`: unavailable, exit 1, not retryable.
+
+Override: reason `fingerprint_semantics_differ`: unavailable, exit 1, not retryable.
+
+More: [docs/guides/engine-swap.md#refusals](../../docs/guides/engine-swap.md#refusals)
+
 ### entity_types_unavailable
 
 <a id="entity_types_unavailable"></a>
@@ -2429,6 +2475,66 @@ More: [docs/guides/troubleshooting.md#foreign-table](../../docs/guides/troublesh
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The eval gate found retrieval regressions or correctness below its thresholds. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### gbrainio_account_mismatch
+
+<a id="gbrainio_account_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A gbrain.io answer named a different mailbox than the Google source reads, so nothing from it was written. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### gbrainio_command_failed
+
+<a id="gbrainio_command_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A gbrainio command line read failed or printed an answer gbrain could not read; the range it was reading stays open for the next sync. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### gbrainio_command_missing
+
+<a id="gbrainio_command_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The gbrainio command line a gbrain.io Google source runs is not installed or not on PATH. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### gbrainio_limit_reached
+
+<a id="gbrainio_limit_reached"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain.io refused a mail read because a usage limit was reached; the unread range stays open and the next sync resumes it. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### gbrainio_not_connected
+
+<a id="gbrainio_not_connected"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The gbrain.io terminal ended, was never approved, or cannot read this mailbox. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### gbrainio_unsupported
+
+<a id="gbrainio_unsupported"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A step that needs a Google token (attachment repair, the change feed) was asked of a source that reads mail through gbrain.io. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
 ### generation_fenced
 
@@ -4422,6 +4528,16 @@ More: [docs/guides/write-refusals.md#preparation_stalled](../../docs/guides/writ
 
 More: [docs/guides/repair.md#preview-changed](../../docs/guides/repair.md#preview-changed)
 
+### private_senders_unreadable
+
+<a id="private_senders_unreadable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Google source's private-senders file is missing, unreadable or empty, so the sync stopped before writing anything. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
 ### profile_incompatible
 
 <a id="profile_incompatible"></a>
@@ -5698,7 +5814,7 @@ More: [docs/guides/skill-resolver.md#skill_resolve_timeout](../../docs/guides/sk
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A skill resolver setting is out of range (skills.resolver.session_token_budget must be 0 or 100-50000; top_k, min_match, pinned and per_harness must be valid) or GBRAIN_HOME is not an absolute path. | The request itself was wrong or no longer matches the brain; nothing was changed. | Fix the value in config.json under skills.resolver (default budget 2000), or GBRAIN_HOME. | agent | `repeat the read that failed` | 1 | no |
+| A skill resolver setting is out of range (skills.resolver.session_token_budget must be 0 or 100-50000; top_k, min_match, pinned and per_harness must be valid) or GBRAIN_HOME is not an absolute path. | The request itself was wrong or no longer matches the brain; nothing was changed. | Fix the value in config.json under skills.resolver (default budget 8000), or GBRAIN_HOME. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/skill-resolver.md#skill_resolver_config_invalid](../../docs/guides/skill-resolver.md#skill_resolver_config_invalid)
 

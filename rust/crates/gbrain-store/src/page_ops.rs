@@ -15,8 +15,8 @@
 //! Text compares and sorts in byte order (Postgres `COLLATE "C"`). Dates cross the binding as ISO
 //! strings with microseconds.
 //!
-//! What the store does not hold answers as empty: no page has a `last_retrieved_at` (no retrieval
-//! records). A sampled page's `representative_chunk_id` is its lowest-index embedded chunk.
+//! `last_retrieved_at` is the page's retrieval record (`page_ops/retrievals.rs`, bumpPageRetrievals).
+//! A sampled page's `representative_chunk_id` is its lowest-index embedded chunk.
 //!
 //! Segmented pages (a NULL body, `pages::PageText`): `readPageSnapshotsBatch` sends the NULL body
 //! on and counts it as 0 bytes, as PGLite's `sum(octet_length(...))` skips it; the samplers leave
@@ -33,11 +33,15 @@ use crate::facts::{OwnerOnlyCache, PrivacyPolicy};
 use crate::kv::{KvRead, KvWrite};
 use crate::pages::{PageRecord, VersionRecord, all_pages, read_page, remove_page, write_page};
 use crate::sources::{SourceRecord, all_sources, read_source};
+use crate::trust::{TrustPolicy, TrustTier};
 use crate::{Store, get_json, keys};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+
+pub(crate) mod retrievals;
+pub(crate) use retrievals::remove_page_rows;
 
 /// The code `revertToVersion` refuses with when the page or the version is segmented. The
 /// TypeScript member turns it into PGLite's `segmentedRevertRefusal`.
@@ -64,8 +68,10 @@ pub struct PageRef {
 
 /// The `PageReadScope` of the id and ref reads. `live` is true when the caller passed a scope at
 /// all: PGLite then adds its live filter (not deleted, not quarantined, source not archived).
-/// `exclude_private` (`excludePrivate`) is the page policy `pageReadFilter` adds, as
-/// `facts/privacy.rs` `page_hidden` reads it; `None` hides nothing.
+/// `exclude_private` is the page policy of `excludePrivate` (`facts/privacy.rs` `page_hidden`; the
+/// owner-only sources are read once per read, `OwnerOnlyCache`);
+/// `min_trust` and `suppress_flagged` are `pageEligibleSql`'s trust floor and flagged-page filter
+/// over the page's stored tier and write-gate receipts (`trust::TrustPolicy`).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct PageReadScope {
@@ -73,6 +79,8 @@ pub struct PageReadScope {
     pub source_ids: Option<Vec<String>>,
     pub live: bool,
     pub exclude_private: Option<PrivacyPolicy>,
+    pub min_trust: Option<String>,
+    pub suppress_flagged: bool,
 }
 
 /// `readPageSnapshotsBatch` options. `absentIsNull` is the caller's: the store answers `null` for
@@ -110,7 +118,9 @@ pub struct FindPattern {
     pub like: String,
 }
 
-/// `FindPagesQuery` without `untrusted` (the TypeScript engine refuses it).
+/// `FindPagesQuery`. `untrusted` is a remote caller's read policy as a `PageReadScope` (`live`,
+/// `excludePrivate`, `minTrust`, `suppressFlagged`); when set, a found page must also pass it, as
+/// PGLite's `pageReadFilter(.., live)` does (so a quarantined page is hidden too).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct FindPagesQuery {
@@ -120,6 +130,7 @@ pub struct FindPagesQuery {
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
     pub exclude_slug_prefixes: Option<Vec<String>>,
+    pub untrusted: Option<PageReadScope>,
 }
 
 /// `PageCountQuery` without `untrusted`. `since` is an ISO string; `typeGroups` maps each type the
@@ -175,7 +186,7 @@ fn jsonb_text(value: &Value) -> String {
         }
         Value::Object(map) => {
             let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
+            keys.sort_by(|a, b| crate::jsonb::key_cmp(a, b));
             let parts: Vec<String> = keys
                 .iter()
                 .map(|k| format!("{}: {}", Value::String((*k).clone()), jsonb_text(&map[*k])))
@@ -203,11 +214,13 @@ fn sources_by_id(read: &dyn KvRead) -> Result<HashMap<String, SourceRecord>> {
         .collect())
 }
 
-/// `pageReadFilter(alias, scope, params, live)` for the scope fields the store has.
+/// `pageReadFilter(alias, scope, params, live)`: the source clause, the page policy, the trust
+/// policy and, with `live`, the live filter.
 fn passes_read_scope(
     read: &dyn KvRead,
     page: &PageRecord,
     scope: &PageReadScope,
+    trust: &TrustPolicy,
     sources: &HashMap<String, SourceRecord>,
     owner_only: &mut OwnerOnlyCache,
 ) -> Result<bool> {
@@ -220,11 +233,6 @@ fn passes_read_scope(
     {
         return Ok(false);
     }
-    if let Some(policy) = &scope.exclude_private
-        && owner_only.page_hidden(read, page, policy)?
-    {
-        return Ok(false);
-    }
     if scope.live {
         let unarchived = sources.get(&page.source_id).is_some_and(|s| !s.archived);
         if page.deleted_at_us.is_some()
@@ -234,7 +242,17 @@ fn passes_read_scope(
             return Ok(false);
         }
     }
-    Ok(true)
+    if let Some(policy) = &scope.exclude_private
+        && owner_only.page_hidden(read, page, policy)?
+    {
+        return Ok(false);
+    }
+    trust.admits(
+        read,
+        "pages",
+        page.id,
+        TrustTier::stored(page.trust_tier.as_deref()),
+    )
 }
 
 /// Live pages in unarchived sources, in the source scope (`visiblePages` of
@@ -637,6 +655,7 @@ fn find_duplicate_in(
 
 fn domain_bank_row(read: &dyn KvRead, page: &PageRecord) -> Result<Value> {
     let connections = crate::links::in_links(read, page.id)?.len();
+    let retrieved = retrievals::last_retrieved_us(read, page.id)?.map(iso);
     Ok(json!({
         "slug": page.slug,
         "source_id": page.source_id,
@@ -645,7 +664,7 @@ fn domain_bank_row(read: &dyn KvRead, page: &PageRecord) -> Result<Value> {
         "title": page.title,
         "compiled_truth": page.compiled_truth,
         "connection_count": connections,
-        "last_retrieved_at": Value::Null,
+        "last_retrieved_at": retrieved,
         "representative_chunk_id": representative_chunk(read, page.id)?,
     }))
 }
@@ -735,6 +754,7 @@ impl Store {
         }
         let read = self.read()?;
         let sources = sources_by_id(&*read)?;
+        let trust = TrustPolicy::parse(scope.min_trust.as_deref(), scope.suppress_flagged)?;
         let mut owner_only = OwnerOnlyCache::default();
         let mut seen = HashSet::new();
         let mut out = Vec::new();
@@ -743,7 +763,7 @@ impl Store {
                 continue;
             }
             if let Some(page) = read_page(&*read, &r.source_id, &r.slug)?
-                && passes_read_scope(&*read, &page, scope, &sources, &mut owner_only)?
+                && passes_read_scope(&*read, &page, scope, &trust, &sources, &mut owner_only)?
             {
                 out.push(json!({
                     "slug": page.slug,
@@ -758,6 +778,7 @@ impl Store {
     fn pages_by_ids(&self, ids: &[i64], scope: &PageReadScope) -> Result<Vec<PageRecord>> {
         let read = self.read()?;
         let sources = sources_by_id(&*read)?;
+        let trust = TrustPolicy::parse(scope.min_trust.as_deref(), scope.suppress_flagged)?;
         let mut owner_only = OwnerOnlyCache::default();
         let wanted: BTreeSet<u64> = ids
             .iter()
@@ -766,7 +787,7 @@ impl Store {
         let mut out = Vec::new();
         for id in wanted {
             if let Some(page) = crate::pages::read_page_by_id(&*read, id)?
-                && passes_read_scope(&*read, &page, scope, &sources, &mut owner_only)?
+                && passes_read_scope(&*read, &page, scope, &trust, &sources, &mut owner_only)?
             {
                 out.push(page);
             }
@@ -939,7 +960,7 @@ impl Store {
     /// keeps (`PurgeHolds`), ordered by `deleted_at`, then slug. Each purged page goes through
     /// `remove_page` and `scrub_purged_slugs`, as `deletePages` does. A dry run returns
     /// `{ slugs, count, pages: [{ slug, source_id, deleted_at }] }`; a real run removes them in one
-    /// transaction and returns `{ slugs, count }`.
+    /// transaction and returns the same three fields.
     pub fn purge_deleted_pages(
         &self,
         older_than_hours: f64,
@@ -972,15 +993,18 @@ impl Store {
             });
             Ok(pages)
         };
-        if options.dry_run {
-            let read = self.read()?;
-            let pages = select(&*read, self.env.now_micros())?;
+        // Both paths name the pages (slug, source, deleted_at): the destructive caller scrubs their journal text.
+        let answer = |pages: &[PageRecord]| {
             let rows: Vec<Value> = pages
                 .iter()
                 .map(|p| json!({ "slug": p.slug, "source_id": p.source_id, "deleted_at": p.deleted_at_us.map(iso) }))
                 .collect();
             let slugs: Vec<&str> = pages.iter().map(|p| p.slug.as_str()).collect();
-            return Ok(json!({ "slugs": slugs, "count": slugs.len(), "pages": rows }));
+            json!({ "slugs": slugs, "count": slugs.len(), "pages": rows })
+        };
+        if options.dry_run {
+            let read = self.read()?;
+            return Ok(answer(&select(&*read, self.env.now_micros())?));
         }
         let trust = &self.write_trust()?;
         self.write(|tx| {
@@ -1004,14 +1028,7 @@ impl Store {
                 scrub_purged_slugs(tx, source, slugs)?;
                 crate::facts::expire_gone_page_facts(tx, trust, source, slugs, now)?;
             }
-            // Like PGLite and Postgres, the destructive run also returns the deleted pages: the
-            // purge-deleted coordinator redacts their journal rows from this list.
-            let rows: Vec<Value> = pages
-                .iter()
-                .map(|p| json!({ "slug": p.slug, "source_id": p.source_id, "deleted_at": p.deleted_at_us.map(iso) }))
-                .collect();
-            let slugs: Vec<&str> = pages.iter().map(|p| p.slug.as_str()).collect();
-            Ok(json!({ "slugs": slugs, "count": slugs.len(), "pages": rows }))
+            Ok(answer(&pages))
         })
     }
 
@@ -1086,6 +1103,17 @@ impl Store {
             .filter(|p| types.is_none_or(|t| t.contains(&p.page_type)))
             .filter(|p| !hidden.iter().any(|h| p.slug.starts_with(h.as_str())))
             .collect();
+        if let Some(scope) = &query.untrusted {
+            let trust = TrustPolicy::parse(scope.min_trust.as_deref(), scope.suppress_flagged)?;
+            let mut kept = Vec::with_capacity(found.len());
+            let mut owner_only = OwnerOnlyCache::default();
+            for page in found {
+                if passes_read_scope(&*read, &page, scope, &trust, &sources, &mut owner_only)? {
+                    kept.push(page);
+                }
+            }
+            found = kept;
+        }
         found.sort_by(|a, b| {
             a.slug
                 .cmp(&b.slug)
@@ -1172,8 +1200,9 @@ impl Store {
     }
 
     /// `listPrefixSampledPages(opts)`: one live inline page per wanted slug prefix (the first two slug
-    /// segments), the one with the most inbound links, then the lowest slug; ordered by prefix.
-    /// No page has a retrieval date, so `staleBias` ranks every page the same.
+    /// segments), ordered by prefix. With `staleBias`, a page never retrieved comes first, then one
+    /// last retrieved over `staleThresholdDays` (default 90) ago; then the most inbound links, then
+    /// the lowest slug.
     pub fn list_prefix_sampled_pages(&self, options: &PrefixSampleOptions) -> Result<Vec<Value>> {
         if options.prefixes.is_empty() {
             return Ok(Vec::new());
@@ -1186,7 +1215,9 @@ impl Store {
             .map(String::as_str)
             .collect();
         let read = self.read()?;
-        let mut best: BTreeMap<String, (usize, PageRecord)> = BTreeMap::new();
+        let days = options.stale_threshold_days.unwrap_or(90.0).round();
+        let stale_before = self.env.now_micros() - (days * 86_400_000_000.0) as i64;
+        let mut best: BTreeMap<String, ((u8, usize), PageRecord)> = BTreeMap::new();
         for page in all_pages(&*read)? {
             if page.deleted_at_us.is_some()
                 || page.compiled_truth.is_null()
@@ -1199,7 +1230,16 @@ impl Store {
                 continue;
             };
             let prefix = prefix.to_string();
-            let links = crate::links::in_links(&*read, page.id)?.len();
+            let stale = if options.stale_bias {
+                match retrievals::last_retrieved_us(&*read, page.id)? {
+                    None => 2,
+                    Some(at) if at < stale_before => 1,
+                    Some(_) => 0,
+                }
+            } else {
+                0
+            };
+            let links = (stale, crate::links::in_links(&*read, page.id)?.len());
             let better = match best.get(&prefix) {
                 None => true,
                 Some((n, held)) => match links.cmp(n) {
@@ -1356,7 +1396,6 @@ mod tests {
 
     use crate::error::StoreError;
     use crate::pages::{PageInput, PageText, PutPageOptions};
-    use crate::put_json;
     use crate::sources::DEFAULT_SOURCE;
     use crate::test_support::store;
 
@@ -1453,6 +1492,32 @@ mod tests {
         assert_eq!(slugs, ["notes/a/2"]);
     }
 
+    fn refused(result: Result<()>) -> StoreError {
+        let error = result.unwrap_err();
+        assert_eq!(error.code, PAGE_BODY_SEGMENTED);
+        error
+    }
+
+    #[test]
+    fn revert_refuses_a_segmented_page_and_writes_nothing() {
+        let store = store();
+        put(&store, "notes/a", None);
+        let version = version_id(&store, "notes/a");
+        shell(&store, DEFAULT_SOURCE, "notes/a");
+        let before = page(&store, DEFAULT_SOURCE, "notes/a");
+        let error = refused(store.revert_to_version("notes/a", version, &SourceOption::default()));
+        assert_eq!(
+            error.message,
+            format!(
+                "Page notes/a or its version {version} is stored in segments, so revert_version cannot restore it yet; nothing was changed."
+            )
+        );
+        let after = page(&store, DEFAULT_SOURCE, "notes/a");
+        assert!(after.compiled_truth.is_null());
+        assert_eq!(after.updated_at_us, before.updated_at_us);
+        assert_eq!(after.knowledge_revision, before.knowledge_revision);
+    }
+
     #[test]
     fn the_samplers_name_the_first_embedded_chunk() {
         let store = store();
@@ -1533,53 +1598,25 @@ mod tests {
         assert_eq!(representatives(sample), want);
     }
 
-    fn refused(result: Result<()>) -> StoreError {
-        let error = result.unwrap_err();
-        assert_eq!(error.code, PAGE_BODY_SEGMENTED);
-        error
-    }
-
-    #[test]
-    fn revert_refuses_a_segmented_page_and_writes_nothing() {
-        let store = store();
-        put(&store, "notes/a", None);
-        let version = version_id(&store, "notes/a");
-        shell(&store, DEFAULT_SOURCE, "notes/a");
-        let before = page(&store, DEFAULT_SOURCE, "notes/a");
-        let error = refused(store.revert_to_version("notes/a", version, &SourceOption::default()));
-        assert_eq!(
-            error.message,
-            format!(
-                "Page notes/a or its version {version} is stored in segments, so revert_version cannot restore it yet; nothing was changed."
-            )
-        );
-        let after = page(&store, DEFAULT_SOURCE, "notes/a");
-        assert!(after.compiled_truth.is_null());
-        assert_eq!(after.updated_at_us, before.updated_at_us);
-        assert_eq!(after.knowledge_revision, before.knowledge_revision);
-    }
-
     #[test]
     fn revert_refuses_a_segmented_version_of_an_inline_page() {
         let store = store();
         put(&store, "notes/a", None);
+        shell(&store, DEFAULT_SOURCE, "notes/a");
         let version = version_id(&store, "notes/a");
-        // The page stays inline; only the stored version is segmented. `create_version` itself
-        // refuses a segmented page, so the version loses its body after it is taken.
-        let page_id = page(&store, DEFAULT_SOURCE, "notes/a").id;
+        // The page is inline again; only the version is segmented.
         store
             .write(|tx| {
-                let key = keys::version(page_id, version as u64);
-                let mut row = get_json::<VersionRecord>(&*tx, &key)?.unwrap();
-                row.compiled_truth = PageText::null();
-                row.timeline = PageText::null();
-                put_json(tx, &key, &row)
+                let mut page = read_page(&*tx, DEFAULT_SOURCE, "notes/a")?.unwrap();
+                page.compiled_truth = "inline".into();
+                page.timeline = "".into();
+                write_page(tx, &page)
             })
             .unwrap();
         let before = page(&store, DEFAULT_SOURCE, "notes/a");
         refused(store.revert_to_version("notes/a", version, &SourceOption::default()));
         let after = page(&store, DEFAULT_SOURCE, "notes/a");
-        assert_eq!(after.compiled_truth, before.compiled_truth);
+        assert_eq!(after.compiled_truth, "inline");
         assert_eq!(after.updated_at_us, before.updated_at_us);
     }
 

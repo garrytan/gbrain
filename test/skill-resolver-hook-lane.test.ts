@@ -19,10 +19,14 @@
  * and answers {"context"}, starts a session fresh on its first turn or when
  * its history shrinks (in-place compaction), and honours
  * per_harness.hermes.owner_sender_ids; with the lane off it prints and writes
- * nothing.
+ * nothing. Claude Code and Codex SessionStart (startup, resume, clear,
+ * compact) prints <harness>-user's pins and per_harness.<harness>.session_start,
+ * nothing when neither is set, the lane is off or the value is bad, under the
+ * harness's own output cap rather than lane_payload_chars; a pin added
+ * mid-session stays suggestible, and an outdated install is told to rerun setup.
  */
 import { afterAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -32,6 +36,7 @@ import { HOOK_FIELD_CAP, readHookFields, readJsonFields } from '../src/core/skil
 import { historyShrank, sessionKey } from '../src/core/skills/resolver/session.ts';
 import { MESSAGE_CAP_BYTES } from '../src/core/skills/resolver/resolve.ts';
 import { dailyLogFile, LANE_LOG } from '../src/core/skills/resolver/daily-log.ts';
+import { renderPinnedBlock } from '../src/core/skills/resolver/pinned-block.ts';
 
 setDefaultTimeout(60_000);
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
@@ -298,6 +303,42 @@ describe('skill-resolver lane: turn settings from config', () => {
     const invalid = await ask(claude, 'd5');
     expect([invalid.exitCode, invalid.stdout]).toEqual([0, '']);
     expect(laneLog(b).at(-1)).toMatchObject({ outcome: 'error', code: 'skill_resolver_config_invalid' });
+  });
+});
+
+describe('skill-resolver lane: the model picker', () => {
+  const NO_KEYS = { ANTHROPIC_API_KEY: undefined, OPENAI_API_KEY: undefined, GOOGLE_GENERATIVE_AI_API_KEY: undefined, GEMINI_API_KEY: undefined };
+  test('claude-code and codex with skills.resolver.router on: a turn the picker cannot answer delivers the words block and logs why', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    seedSkills(codexSkills(b));
+    await setup(b, 'claude-code');
+    await setup(b, 'codex');
+    const cfgPath = join(b.home, '.gbrain', 'config.json');
+    const cfg = readJson(cfgPath);
+    cfg.skills.resolver.router = true;
+    writeFileSync(cfgPath, JSON.stringify(cfg));
+    const ask = (cmd: string, s: string) => hook(b, cmd, { prompt: 'deploy the widget service', session_id: s, hook_event_name: 'UserPromptSubmit' }, { ...WIDE, ...NO_KEYS });
+    expect(contextOf(await ask(wired(b, 'claude-code'), 'r1'))).toContain('id: "deploy-widget"');
+    expect(contextOf(await ask(wired(b, 'codex'), 'r2'))).toContain('deploy-widget');
+    expect(laneLog(b).map((l) => [l.harness, l.outcome, l.router?.by, l.router?.code])).toEqual([['claude-code', 'delivered', 'words', 'missing_key'], ['codex', 'delivered', 'words', 'missing_key']]);
+    cfg.skills.resolver.router_timeout_ms = 5;
+    writeFileSync(cfgPath, JSON.stringify(cfg));
+    expect(contextOf(await ask(wired(b, 'claude-code'), 'r3'))).toContain('id: "deploy-widget"');
+    expect(laneLog(b).at(-1)).toMatchObject({ outcome: 'delivered', router: { by: 'words', code: 'config_invalid' } });
+  });
+
+  test('hermes never calls the picker, even with the setting on', async () => {
+    const b = box();
+    const dir = join(b.home, '.hermes', 'skills');
+    seedSkills(dir);
+    await buildCatalog(b, 'hermes-user', dir, 'hermes');
+    writeFileSync(join(b.home, '.gbrain', 'config.json'), JSON.stringify({ skills: { resolver: { enabled: true, harnesses: ['hermes'], router: true } } }));
+    const cmd = `env GBRAIN_HOOK_LANE=skill-resolver GBRAIN_HOME='${b.home}' '${b.bin}' hook user-prompt --harness hermes`;
+    const r = await hook(b, cmd, { session_id: 'h1', extra: { user_message: 'please deploy the widget to staging', conversation_history: [] } }, { ...WIDE, ...NO_KEYS });
+    expect(JSON.parse(r.stdout).context).toContain('id: "deploy-widget"');
+    expect(laneLog(b).at(-1)).toMatchObject({ harness: 'hermes', outcome: 'delivered' });
+    expect(laneLog(b).at(-1).router).toBeUndefined();
   });
 });
 
@@ -809,3 +850,166 @@ describe('readHookFields: counts and flags in the same streaming pass', () => {
     expect(await readHookFields(chunks('{"extra":{"conversation_history":"many","is_first_turn":1}}', 3), SPEC, 100)).toEqual({ strings: {}, counts: {}, flags: {} });
   });
 });
+
+describe('skill-resolver lane: pins and session_start at SessionStart', () => {
+  const cli = (b: Box, args: string[]) => runCli(args, { env: b.env, cwd: b.project });
+  const RULE = 'Team rule: run the tests before you push.';
+  const configFile = (b: Box) => join(b.home, '.gbrain', 'config.json');
+  const editConfig = (b: Box, edit: (resolver: any) => void) => { const doc = readJson(configFile(b)); edit(doc.skills.resolver); writeFileSync(configFile(b), JSON.stringify(doc)); };
+  const startContext = (r: Run) => { const out = JSON.parse(r.stdout).hookSpecificOutput; expect(out.hookEventName).toBe('SessionStart'); return out.additionalContext as string; };
+
+  for (const harness of ['claude-code', 'codex'] as const) {
+    test(`${harness}: startup, resume, clear and compact each carry the user catalog's pins and the session_start text; compact still resets the session`, async () => {
+      const b = box();
+      const dir = harness === 'codex' ? codexSkills(b) : claudeSkills(b);
+      seedSkills(dir);
+      await setup(b, harness);
+      const pin = await cli(b, ['skills', 'pin', 'add', 'deploy-widget', '--catalog', `${harness}-user`, '--line', 'Before any deploy']);
+      expect(pin.exitCode, pin.stderr).toBe(0);
+      expect(pin.stdout).toContain(`${harness === 'codex' ? 'Codex' : 'Claude Code'} gets these pins at its next session start`);
+      editConfig(b, (r) => { r.pins[`${harness}-user`].push({ name: 'gone-skill' }); });
+      const set = await cli(b, ['config', 'set', `skills.resolver.per_harness.${harness}.session_start`, RULE]);
+      expect(set.exitCode, set.stderr).toBe(0);
+      const cmd = wired(b, harness);
+      const start = wired(b, harness, 'SessionStart');
+      const turn = { prompt: 'triage this bug report', session_id: 'sess-p', hook_event_name: 'UserPromptSubmit' };
+      expect(contextOf(await hook(b, cmd, turn, WIDE))).toContain('triage-bug');
+      for (const source of ['startup', 'resume', 'clear', 'compact']) {
+        const r = await hook(b, start, { source, session_id: 'sess-p', hook_event_name: 'SessionStart' }, WIDE);
+        expect(r.exitCode).toBe(0);
+        const context = startContext(r);
+        expect(context).toContain('<pinned_skills>');
+        expect(context).toContain('id: "deploy-widget" when: "Before any deploy"');
+        expect(context).toContain(harness === 'codex' ? CODEX_LOAD : CLAUDE_LOAD);
+        if (harness === 'codex') expect(context).toContain(`path: ${JSON.stringify(join(dir, 'deploy-widget', 'SKILL.md'))}`);
+        else expect(context).not.toContain('path: ');
+        expect(context).not.toContain('gone-skill');
+        expect(context.endsWith(RULE)).toBe(true);
+      }
+      expect(contextOf(await hook(b, cmd, turn, WIDE))).toContain('triage-bug');
+      expect(laneLog(b).filter((l) => l.event === 'session-start').map((l) => l.outcome)).toEqual(['delivered', 'delivered', 'delivered', 'delivered']);
+    });
+  }
+
+  test('a Claude Code pin from a configured extra directory names its SKILL.md, since the Skill tool loads only the native folder', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    const extra = join(b.home, 'team-skills');
+    skill(extra, 'triage-extra', 'Triage an incoming bug report for the team.');
+    await setup(b, 'claude-code');
+    editConfig(b, (r) => { r.per_harness = { 'claude-code': { dirs: [extra] } }; });
+    await setup(b, 'claude-code');
+    expect((await cli(b, ['skills', 'pin', 'add', 'triage-extra', '--catalog', 'claude-code-user'])).exitCode).toBe(0);
+    expect((await cli(b, ['skills', 'pin', 'add', 'deploy-widget', '--catalog', 'claude-code-user'])).exitCode).toBe(0);
+    const context = startContext(await hook(b, wired(b, 'claude-code', 'SessionStart'), { source: 'startup', session_id: 's' }, WIDE));
+    expect(context).toContain(`id: "triage-extra" path: ${JSON.stringify(join(realpathSync(extra), 'triage-extra', 'SKILL.md'))}`);
+    expect(context).toContain('read the SKILL.md at its path instead');
+    expect(context).toMatch(/id: "deploy-widget"\n/);
+  });
+
+  test('a Claude Code skills folder reached through a symlink still loads its pins by name', async () => {
+    const b = box();
+    const real = join(b.home, 'dotfiles', 'claude-skills');
+    seedSkills(real);
+    mkdirSync(join(b.home, '.claude'), { recursive: true });
+    symlinkSync(real, claudeSkills(b));
+    await setup(b, 'claude-code');
+    expect((await cli(b, ['skills', 'pin', 'add', 'deploy-widget', '--catalog', 'claude-code-user'])).exitCode).toBe(0);
+    const context = startContext(await hook(b, wired(b, 'claude-code', 'SessionStart'), { source: 'startup', session_id: 's' }, WIDE));
+    expect(context).toMatch(/id: "deploy-widget"\n/);
+    expect(context).not.toContain('read the SKILL.md at its path instead');
+  });
+
+  test('a pin line too long for the cap is skipped and the pins after it still render', () => {
+    const r = renderPinnedBlock([{ name: 'long-path' }, { name: 'deploy-widget' }], { harness: 'codex', known: new Set(['long-path', 'deploy-widget']), paths: new Map([['long-path', `/${'a'.repeat(3000)}/SKILL.md`], ['deploy-widget', '/skills/deploy-widget/SKILL.md']]) });
+    expect(r.ids).toEqual(['deploy-widget']);
+    expect(r.cut).toEqual(['long-path']);
+    expect(r.block).toContain('id: "deploy-widget" path: "/skills/deploy-widget/SKILL.md"');
+  });
+
+  test('a pin added mid-session stays suggestible on the next turn, before any SessionStart shows it', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    await setup(b, 'claude-code');
+    expect((await cli(b, ['skills', 'pin', 'add', 'deploy-widget', '--catalog', 'claude-code-user'])).exitCode).toBe(0);
+    const after = await hook(b, wired(b, 'claude-code'), { prompt: 'please deploy the widget to staging', session_id: 'mid' }, WIDE);
+    expect(contextOf(after)).toContain('id: "deploy-widget"');
+  });
+
+  test('an install whose SessionStart entry is missing (outdated) is told to rerun setup, not promised delivery', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    await setup(b, 'claude-code');
+    const settings = join(b.home, '.claude', 'settings.json');
+    const doc = readJson(settings);
+    delete doc.hooks.SessionStart;
+    writeFileSync(settings, JSON.stringify(doc));
+    const pin = await cli(b, ['skills', 'pin', 'add', 'deploy-widget', '--catalog', 'claude-code-user']);
+    expect(pin.exitCode, pin.stderr).toBe(0);
+    expect(pin.stdout).not.toContain('gets these pins at its next session start (');
+    expect(pin.stdout).toContain('gbrain setup claude-code --skill-loading resolve');
+  });
+
+  test('session_start alone (no pins) is printed by itself', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    await setup(b, 'claude-code');
+    expect((await cli(b, ['config', 'set', 'skills.resolver.per_harness.claude-code.session_start', RULE])).exitCode).toBe(0);
+    expect(startContext(await hook(b, wired(b, 'claude-code', 'SessionStart'), { source: 'startup', session_id: 's' }, WIDE))).toBe(RULE);
+  });
+
+  test('nothing set for this harness prints nothing: pins and session_start of another harness stay there', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    seedSkills(codexSkills(b));
+    await setup(b, 'claude-code');
+    await setup(b, 'codex');
+    expect((await cli(b, ['skills', 'pin', 'add', 'deploy-widget', '--catalog', 'codex-user'])).exitCode).toBe(0);
+    expect((await cli(b, ['config', 'set', 'skills.resolver.per_harness.codex.session_start', RULE])).exitCode).toBe(0);
+    for (const source of ['startup', 'compact']) {
+      const r = await hook(b, wired(b, 'claude-code', 'SessionStart'), { source, session_id: 's' }, WIDE);
+      expect(r).toMatchObject({ exitCode: 0, stdout: '' });
+    }
+  });
+
+  test('a bad session_start (not text, or over the cap) prints nothing and logs skill_resolver_config_invalid', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    await setup(b, 'claude-code');
+    expect((await cli(b, ['skills', 'pin', 'add', 'deploy-widget', '--catalog', 'claude-code-user'])).exitCode).toBe(0);
+    for (const bad of [42, 'x'.repeat(4000)]) {
+      editConfig(b, (r) => { r.per_harness = { 'claude-code': { session_start: bad } }; });
+      const r = await hook(b, wired(b, 'claude-code', 'SessionStart'), { source: 'startup', session_id: 's' }, WIDE);
+      expect(r).toMatchObject({ exitCode: 0, stdout: '' });
+      expect(laneLog(b).at(-1)).toMatchObject({ event: 'session-start', outcome: 'error', code: 'skill_resolver_config_invalid' });
+    }
+  });
+
+  test('a lane that is off prints nothing at SessionStart, pins and session_start notwithstanding', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    await setup(b, 'claude-code');
+    expect((await cli(b, ['skills', 'pin', 'add', 'deploy-widget', '--catalog', 'claude-code-user'])).exitCode).toBe(0);
+    expect((await cli(b, ['config', 'set', 'skills.resolver.per_harness.claude-code.session_start', RULE])).exitCode).toBe(0);
+    const start = wired(b, 'claude-code', 'SessionStart');
+    editConfig(b, (r) => { r.enabled = false; });
+    expect(await hook(b, start, { source: 'startup', session_id: 's' }, WIDE)).toMatchObject({ exitCode: 0, stdout: '' });
+  });
+
+  test('lane_payload_chars does not drop a SessionStart block: pins plus a note at its cap, full of quotes, still arrive', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    await setup(b, 'claude-code');
+    expect((await cli(b, ['config', 'set', 'skills.resolver.lane_payload_chars', '500'])).exitCode).toBe(0);
+    expect((await cli(b, ['skills', 'pin', 'add', 'deploy-widget', '--catalog', 'claude-code-user'])).exitCode).toBe(0);
+    const note = `Quote ${'"\\'.repeat(1190)} end`;
+    expect((await cli(b, ['config', 'set', 'skills.resolver.per_harness.claude-code.session_start', note])).exitCode).toBe(0);
+    const r = await hook(b, wired(b, 'claude-code', 'SessionStart'), { source: 'startup', session_id: 's' }, WIDE);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout.length).toBeGreaterThan(4000);
+    const context = startContext(r);
+    expect(context).toContain('id: "deploy-widget"');
+    expect(context.endsWith(note)).toBe(true);
+  });
+});
+

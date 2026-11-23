@@ -255,6 +255,10 @@
       },
       {
         "category": "ops",
+        "name": "rust_engine_addon"
+      },
+      {
+        "category": "ops",
         "name": "ipc_socket_path"
       },
       {
@@ -464,6 +468,14 @@
       {
         "category": "brain",
         "name": "access_pages_read_by_nobody"
+      },
+      {
+        "category": "brain",
+        "name": "access_shared_source_unread"
+      },
+      {
+        "category": "brain",
+        "name": "access_disabled_member_credentials"
       },
       {
         "category": "brain",

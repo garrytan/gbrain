@@ -501,6 +501,15 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
+            "message": "Not applicable: Rust engine shadow mode is off for this brain.",
+            "name": "rust_engine_addon",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
             "message": "Connected, 20 pages",
             "name": "connection",
             "status": "ok"
@@ -1387,6 +1396,25 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
+            "message": "Not applicable: this brain serves one person, so no source has to be shared with members.",
+            "name": "access_shared_source_unread",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "count": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No live token or OAuth client is bound to a disabled or removed member.",
+            "name": "access_disabled_member_credentials",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
             "message": "Not applicable: no attest credential reads named sources as the person (--attest-read person).",
             "name": "attest_read_shared_scope",
             "readiness_state": "not_applicable",
@@ -1457,7 +1485,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 192 table(s) the applied migrations create exist.",
+            "message": "All 195 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -6066,6 +6094,15 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
+            "message": "Not applicable: Rust engine shadow mode is off for this brain.",
+            "name": "rust_engine_addon",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
             "message": "Connected, 20 pages",
             "name": "connection",
             "status": "ok"
@@ -6952,6 +6989,25 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
+            "message": "Not applicable: this brain serves one person, so no source has to be shared with members.",
+            "name": "access_shared_source_unread",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "count": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No live token or OAuth client is bound to a disabled or removed member.",
+            "name": "access_disabled_member_credentials",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
             "message": "Not applicable: no attest credential reads named sources as the person (--attest-read person).",
             "name": "attest_read_shared_scope",
             "readiness_state": "not_applicable",
@@ -7022,7 +7078,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 192 table(s) the applied migrations create exist.",
+            "message": "All 195 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },

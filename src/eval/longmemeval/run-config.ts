@@ -48,6 +48,8 @@ export interface RetrievalPins {
    * receipt's hash is unchanged.
    */
   search_pins?: Record<string, string>;
+  /** `--engine rust`: present only when not the default engine, so a PGLite run never resumes from a Rust run's rows and every PGLite receipt's hash is unchanged. */
+  engine?: 'rust';
   /** `--eval-pool-depth N` (recall experiment): present only when set, so every other receipt's hash is unchanged. */
   eval_pool_depth?: number;
   /** System One arm (`--decide`): slots, provider, calibrations, thresholds, force_on, split. Present only when a slot is on or shadow. */
@@ -191,6 +193,7 @@ export function buildRunConfig(input: RunConfigInput): Record<string, unknown> {
     topK: p.top_k,
     trajectory: p.trajectory,
     ...(p.search_pins && Object.keys(p.search_pins).length > 0 ? { search_pins: p.search_pins } : {}),
+    ...(p.engine ? { engine: p.engine } : {}),
     ...(p.eval_pool_depth ? { eval_pool_depth: p.eval_pool_depth } : {}),
     ...(p.decide ? { decide: p.decide } : {}),
     ...(p.contextual_synopsis ? { contextual_synopsis: p.contextual_synopsis } : {}),

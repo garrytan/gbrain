@@ -20,6 +20,14 @@ export type CredentialErrorCode =
   // non-vault access modes (--access command|env)
   | 'access_command_failed'
   | 'access_env_missing'
+  // gbrain.io terminal reads (--access gbrainio)
+  | 'gbrainio_not_connected'
+  | 'gbrainio_limit_reached'
+  | 'gbrainio_account_mismatch'
+  | 'gbrainio_command_missing'
+  | 'gbrainio_command_failed'
+  | 'gbrainio_unsupported'
+  | 'private_senders_unreadable'
   // consent flow
   | 'redirect_uri_mismatch'
   | 'access_denied_test_user'
@@ -198,6 +206,42 @@ const CATALOG: Record<CredentialErrorCode, CatalogEntry> = {
     cause:
       'This source uses `--access env`: gbrain reads a Google access token from the named env var, refreshed by something outside gbrain. The variable is unset or blank in this process.',
     fix: 'Export the variable with a live access token before running the sync (short-lived tokens: refresh them externally, e.g. via cron), or switch the source back to the vault flow: `gbrain google setup`.',
+  },
+  gbrainio_not_connected: {
+    problem: 'The gbrain.io terminal is not connected or may not read this mailbox%s.',
+    cause:
+      'This source uses `--access gbrainio`: gbrain reads mail through the `gbrainio` command line. Its terminal has ended, was never approved, or does not have mail at Read on this account.',
+    fix: 'Run `gbrainio terminal show` to see the terminal and its end date. Approve or extend it on gbrain.io and give it Read on this account, then retry the sync.',
+  },
+  gbrainio_limit_reached: {
+    problem: 'gbrain.io refused the read because a usage limit was reached%s.',
+    cause: 'gbrain.io meters reads per day; the allowance for this terminal or account is used up. Nothing was lost: the unread range stays open and the next run resumes it.',
+    fix: 'Wait for the limit to reset, or lower how often this source syncs. The Limits tab on gbrain.io shows the allowance.',
+  },
+  gbrainio_account_mismatch: {
+    problem: 'gbrain.io answered for a different mailbox than this source names%s.',
+    cause: 'The answer\'s account field did not match the source\'s account, so nothing from it was written.',
+    fix: 'Check that the source\'s --account and the mailbox the gbrain.io terminal reads are the same address.',
+  },
+  gbrainio_command_missing: {
+    problem: 'The gbrainio command line was not found%s.',
+    cause: 'This source uses `--access gbrainio`, which runs the `gbrainio` command; it is not installed or not on PATH for this process.',
+    fix: 'Install the gbrain.io terminal client, or re-add the source with --gbrainio-command set to its full path.',
+  },
+  gbrainio_command_failed: {
+    problem: 'A gbrain.io read failed%s.',
+    cause: 'The `gbrainio` command exited with an error or printed an answer gbrain could not read. The range it was reading stays open for the next run.',
+    fix: 'Run the same `gbrainio tool gmail ...` command by hand to see the error; retry the sync once it works.',
+  },
+  gbrainio_unsupported: {
+    problem: 'This step is not available when mail is read through gbrain.io%s.',
+    cause: 'gbrain.io gives search, thread reads and labels; it has no change feed, raw attachment download or delete scan.',
+    fix: 'Nothing to fix: sources on `--access gbrainio` read by date window instead. Use a vault-connected source for this step.',
+  },
+  private_senders_unreadable: {
+    problem: 'The private-senders file for this source is missing, unreadable or empty%s.',
+    cause: 'The source names a private-senders file, so it refuses to import anything it cannot check against that list.',
+    fix: 'Restore the file (one address or @domain per line), or re-add the source without --private-senders-file.',
   },
   upstream: {
     problem: 'Google returned an unexpected error%s.',

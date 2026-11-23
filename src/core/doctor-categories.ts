@@ -120,6 +120,9 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'access_labelled_only_members',
   // GBRA-582 item 9: pages no enabled member reads (doctor/checks/access-pages-read-by-nobody.ts).
   'access_pages_read_by_nobody',
+  // GBRA-585: shared sources no member key reads, live keys of disabled members (doctor/checks/access-reach.ts).
+  'access_shared_source_unread',
+  'access_disabled_member_credentials',
   // GST-1158 F3: attest credentials that read a shared-scope source as the person (doctor/checks/attest-read-access.ts).
   'attest_read_shared_scope',
   // GBRA-504: guest sources, their writers and the owner credentials that read them (doctor/checks/guest-source.ts).
@@ -460,6 +463,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'pglite_data_dir',
   // #6573: a local IPC socket path over the platform's AF_UNIX budget (doctor/checks/local-ipc.ts).
   'ipc_socket_path',
+  // Rust engine shadow mode's addon loads (doctor/checks/rust-engine-addon.ts); not_applicable unless shadow mode is on.
+  'rust_engine_addon',
   // db-availability loop: engine-fit + repair-recurrence signals.
   'pglite_scale',
   'db_repair_recurrence',

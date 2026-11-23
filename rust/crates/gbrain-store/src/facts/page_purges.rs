@@ -61,6 +61,40 @@ pub(crate) fn source_purges(
     }
 }
 
+/// The shadow seed (`seed.rs`): stores a tombstone copied from another engine, with its request id and time. `false`
+/// when the tombstone is already stored.
+pub(crate) fn seed_purge(
+    tx: &mut dyn crate::kv::KvWrite,
+    source_id: &str,
+    content_hash: &str,
+    record: (&str, Option<&str>, i64),
+) -> Result<bool> {
+    let (slug, request_id, purged_at_us) = record;
+    crate::links::no_nul(
+        "seed page_purges",
+        &[
+            ("source_id", source_id),
+            ("content_hash", content_hash),
+            ("slug", slug),
+        ],
+    )?;
+    let mut key = keys::text(keys::FACT, &[source_id, content_hash]);
+    key.insert(1, PURGE);
+    if tx.get(&key)?.is_some() {
+        return Ok(false);
+    }
+    crate::put_json(
+        tx,
+        &key,
+        &PurgeRecord {
+            slug: slug.to_string(),
+            request_id: request_id.map(str::to_string),
+            purged_at_us,
+        },
+    )?;
+    Ok(true)
+}
+
 /// Writes one tombstone. Only the unit tests call it: no member binds a writer yet (module doc).
 #[cfg(test)]
 pub(crate) fn put_purge(
@@ -81,4 +115,23 @@ pub(crate) fn put_purge(
             purged_at_us,
         },
     )
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the tombstone of `content_hash` in `source_id`.
+/// `false` when there is none.
+pub(crate) fn remove_purge(
+    tx: &mut dyn crate::kv::KvWrite,
+    source_id: &str,
+    content_hash: &str,
+) -> Result<bool> {
+    if source_id.contains('\0') || content_hash.contains('\0') {
+        return Ok(false);
+    }
+    let mut key = keys::text(keys::FACT, &[source_id, content_hash]);
+    key.insert(1, PURGE);
+    if tx.get(&key)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&key)?;
+    Ok(true)
 }
