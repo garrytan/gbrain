@@ -134,9 +134,9 @@ pub(super) struct ClientRecord {
     pub(super) private_facts: String,
 }
 
-/// The characters of the POSIX class `[[:space:]]`.
+/// The POSIX class `[[:space:]]` as PGLite reads it (non-ASCII spaces such as U+3000 included).
 fn is_posix_space(c: char) -> bool {
-    matches!(c, ' ' | '\t' | '\n' | '\x0B' | '\x0C' | '\r')
+    crate::cli_reads::pg_text::is_pg_space(c)
 }
 
 impl ClientRecord {
@@ -773,6 +773,37 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_agent_word_split_uses_pglite_space_class() {
+        // `(^|[[:space:]])agent([[:space:]]|$)` in the SQL (src/core/grants/schema.ts).
+        let mismatches = crate::fingerprint_fixture::space_mismatches(is_posix_space);
+        assert_eq!(mismatches, Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_scope_split_by_a_pglite_space_holds_the_agent_word() {
+        // The call site, not just the predicate: `read<U+3000>agent` holds the word `agent` (U+3000 is in PGLite's
+        // `[[:space:]]`), so an agent grant missing its bindings is refused; `read\u{3000}agents` is not the word.
+        let client = |scope: &str| -> ClientRecord {
+            serde_json::from_value(serde_json::json!({
+                "client_id": "c", "client_name": "n", "scope": scope, "created_at": 0
+            }))
+            .expect("a minimal client row")
+        };
+        for separator in ['\u{3000}', '\u{2003}', '\u{85}', ' ', '\t'] {
+            assert!(
+                client(&format!("read{separator}agent")).has_agent_word(),
+                "U+{:04X} splits the scope",
+                separator as u32
+            );
+        }
+        assert!(!client("read\u{3000}agents").has_agent_word());
+        assert!(
+            !client("read\u{A0}agent").has_agent_word(),
+            "U+00A0 is not a PGLite space"
+        );
+    }
 
     #[test]
     fn budget_text_prints_two_decimals_with_the_sign() {

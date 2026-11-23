@@ -429,7 +429,7 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
 - `searchKeywordChunks` lets image chunks match, as both SQL engines do; the paging members keep text chunks only.
 - `where` compares a JSON number with a number through f64, where Postgres compares `numeric` exactly; numbers past
   2^53 can match differently.
-- `message_id` is blank when it is only ASCII `[[:space:]]`, as the SQL trims it; other Unicode spaces count as text.
+- `message_id` is blank when it is only `[[:space:]]` as PGLite reads it (U+0085, U+2003 and U+3000 count; U+00A0 does not), as the SQL trims it.
 - Lexemes of 2047 bytes or more are dropped from the vector, as in PG (`MAXSTRLEN`).
 - `searchTitles` trigger form: PGLite's trigger reads the timeline entries that exist when the page row is written;
   the store approximates that with the entries created no later than `updated_at`. A NULL timeline reads the lead

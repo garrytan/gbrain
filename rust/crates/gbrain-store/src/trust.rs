@@ -56,6 +56,8 @@ pub mod belief_state;
 pub mod derivation;
 mod eligibility;
 pub(crate) mod fingerprint;
+#[cfg(test)]
+mod fingerprint_corpus;
 pub mod held_rows;
 pub mod label_guards;
 pub mod proposals;
