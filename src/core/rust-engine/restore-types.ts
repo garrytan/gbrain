@@ -57,6 +57,9 @@ export interface RestoreQuarantineReport {
   jobs_cancelled: number;
   /** Exactly what was revoked. */
   revoked: RestoreAuthority;
+  /** The restored store's brain id before the restore, and the fresh one it has now (a restore never keeps the old id). */
+  previous_brain_id: string;
+  brain_id: string;
   reconnect: string[];
   /** The config row that keeps what was replaced. */
   inventory_key: string;

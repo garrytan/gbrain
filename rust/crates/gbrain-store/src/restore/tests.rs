@@ -582,8 +582,18 @@ fn quarantine_detaches_rebases_disables_cancels_and_revokes_and_nothing_else_mov
             keys::PAGE,
             keys::PAGE_ORIGIN,
             keys::JOBS,
-            keys::WRITER
+            keys::WRITER,
+            keys::META
         ])
+    );
+    let meta: Vec<_> = after
+        .keys()
+        .filter(|k| k[0] == keys::META && before.get(*k) != after.get(*k))
+        .collect();
+    assert_eq!(
+        meta,
+        [&keys::meta("format")],
+        "only the format record changes under meta (the brain id)"
     );
     let (c1, c2) = (
         store.restore_census(&[]).unwrap(),
@@ -713,5 +723,128 @@ fn archived_access_tokens_are_refused_by_name_and_never_counted_as_nothing() {
         dump(&store),
         before,
         "the token row is left exactly as archived"
+    );
+}
+
+/// A brain on a real directory (`FORMAT` and `records.redb`), reopened by path.
+fn on_disk(name: &str) -> (Store, std::path::PathBuf) {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/test-tmp")
+        .join(format!("restore-{name}-{}", std::process::id()))
+        .join("brain");
+    let _ = std::fs::remove_dir_all(&dir);
+    (Store::open_dir(&dir, Default::default()).unwrap(), dir)
+}
+
+/// The code an open refused with.
+fn open_err(opened: Result<Store>) -> &'static str {
+    opened.err().expect("the open is refused").code
+}
+
+fn format_file(dir: &std::path::Path) -> crate::FormatRecord {
+    format::read(dir).unwrap().unwrap()
+}
+
+#[test]
+fn a_restore_gives_the_store_a_fresh_brain_id_that_open_accepts() {
+    let (store, dir) = on_disk("rotate");
+    let old = store.brain_id().to_string();
+    let report = store.restore_quarantine(&default_only()).unwrap();
+    assert_eq!(report.previous_brain_id, old);
+    assert_ne!(report.brain_id, old);
+    assert!(
+        report
+            .reconnect
+            .iter()
+            .any(|l| l.contains(&report.brain_id) && l.contains(&old))
+    );
+    assert_eq!(
+        format_file(&dir).brain_id,
+        report.brain_id,
+        "FORMAT follows the commit"
+    );
+    store.close();
+    let reopened = Store::open_dir(&dir, Default::default()).unwrap();
+    assert_eq!(reopened.brain_id(), report.brain_id);
+    assert_eq!(
+        reopened.restore_census(&[]).unwrap().store.brain_id,
+        report.brain_id
+    );
+    reopened.close();
+    Store::open_dir_read_only(&dir).unwrap().close();
+}
+
+#[test]
+fn a_crash_between_the_record_and_format_leaves_a_pair_open_repairs() {
+    let (store, dir) = on_disk("crash");
+    let old_format = format_file(&dir);
+    let report = store.restore_quarantine(&default_only()).unwrap();
+    store.close();
+    // The record committed with the new id; the process died before FORMAT was renamed.
+    format::write(&dir, &old_format).unwrap();
+    let stale = std::fs::read(dir.join(format::FORMAT_FILE)).unwrap();
+    // A read-only open accepts the pair and writes nothing.
+    assert_eq!(
+        Store::open_dir_read_only(&dir).unwrap().brain_id(),
+        report.brain_id
+    );
+    assert_eq!(std::fs::read(dir.join(format::FORMAT_FILE)).unwrap(), stale);
+    // A normal open rebuilds FORMAT from the record.
+    assert_eq!(
+        Store::open_dir(&dir, Default::default())
+            .unwrap()
+            .brain_id(),
+        report.brain_id
+    );
+    assert_eq!(format_file(&dir).brain_id, report.brain_id);
+}
+
+#[test]
+fn a_format_that_names_some_other_brain_is_still_refused() {
+    let (store, dir) = on_disk("other");
+    let mut other = format_file(&dir);
+    other.brain_id = "00000000-0000-4000-8000-000000000001".into();
+    store.close();
+    format::write(&dir, &other).unwrap();
+    assert_eq!(
+        open_err(Store::open_dir(&dir, Default::default())),
+        "store_corrupt"
+    );
+    // A rotated brain refuses a FORMAT that names neither its id nor the one it rotated from.
+    let (store, dir) = on_disk("other-rotated");
+    store.restore_quarantine(&default_only()).unwrap();
+    store.close();
+    format::write(&dir, &other).unwrap();
+    assert_eq!(
+        open_err(Store::open_dir(&dir, Default::default())),
+        "store_corrupt"
+    );
+    assert_eq!(open_err(Store::open_dir_read_only(&dir)), "store_corrupt");
+}
+
+#[test]
+fn a_refused_or_failed_restore_keeps_the_brain_id() {
+    let (store, dir) = on_disk("keep");
+    let (old, format_before) = (store.brain_id().to_string(), format_file(&dir));
+    let wrong = plan(
+        json!([{ "id": "default", "local_path": "/nope", "rebased_path": null }]),
+        json!([]),
+    );
+    assert_eq!(
+        store.restore_quarantine(&wrong).unwrap_err().code,
+        "invalid_argument"
+    );
+    admit_request(&store, "bbbbbbbb-0000-4000-8000-000000000002");
+    assert_eq!(
+        store.restore_quarantine(&default_only()).unwrap_err().code,
+        "restore_refused"
+    );
+    store.close();
+    assert_eq!(format_file(&dir), format_before);
+    assert_eq!(
+        Store::open_dir(&dir, Default::default())
+            .unwrap()
+            .brain_id(),
+        old
     );
 }
