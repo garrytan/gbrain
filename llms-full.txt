@@ -6000,10 +6000,12 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   arguments, and one hit records `privacy_diverged` and pauses mirroring (a plain `diff` can never hide it). A hit is a row with
   a source outside the call's scope, read the way the primary applies it: `sourceIds` first, else `sourceId`, else the
   positional source of `listFactsByEntity` (first argument), `resolveSlugWithAlias` (second) and `findByTitleFuzzy` (fourth); an
-  empty `sourceIds` with no `sourceId` allows nothing. The row's `source_id`, and on a link its `from_source_id`, `to_source_id`
+  empty `sourceIds` with no `sourceId` names no scope, so the read is unscoped, as in the primary. The row's `source_id`, and on a link its `from_source_id`, `to_source_id`
   and `origin_source_id`, must all be in a `sourceIds` scope; a one-source link read checks only the end the primary scopes
   (`getLinks` the from page, `getBacklinks` the to page). A hit is also a page row (one carrying `frontmatter`) that a call with
-  `excludePrivate` should hide: `visibility: private`, a pinned question, or an unmarked atom, question or synthesized concept.
+  `excludePrivate` should hide: `visibility: private`, a pinned question, an unmarked atom, question or synthesized concept, or (with `visibility` unset) an
+  `access` or `confidentiality` alias the primary reads as private; an alias row counts only when the primary's own answer left it out,
+  because a brain can turn the aliases off and the child cannot read that setting.
   Not checked, because the result carries nothing to check: `resolveSlugs`, `resolveSlugWithAlias`, `getTags`, `getTimeline`,
   `getChunks`, `findByTitleFuzzy`, `getStats`, `countKeywordPages` and `searchTakes` rows have no source column, search rows only
   when they carry `source_id`, and `excludePrivate` only on rows with `frontmatter` (so not facts, links, finds or search rows).
@@ -6026,20 +6028,23 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   behind, and the unseeded gap rows (tables the Rust store cannot serve yet; a swap is refused while any remain).
   It refuses while shadow mode is on. To seed again, `stop --delete` and seed into the new directory.
   Rust store layout: [rust/docs/store/seed.md](../rust/docs/store/seed.md).
-- **Managed storage is refused.** The Rust engine never holds managed storage, so a brain that uses it can never swap
-  to Rust and a seed of it copies data nothing can use. Brains made by a default `gbrain init` use managed storage and
-  cannot be shadowed or swapped yet. `seed` opens the brain database, reads its storage mode, and refuses a
-  managed-storage brain with `engine_shadow_refused` (`managed_storage`, exit 3; with `--json` the error envelope is
-  also printed on stdout), telling the agent to ask the user. The next step names the ways out that exist today. For a
-  new brain, `gbrain init --db-only` creates one without managed storage. For an existing managed brain, `gbrain
-  sources writer deactivate --dry-run` previews converting it back to classic mode; the real deactivate needs your
-  consent. It refuses before the Rust addon loads, so a refused seed creates no shadow directory, no store and no
-  `seed.json`. A brain whose mode cannot be read, or that cannot be opened (for example the database is down), is
-  refused the same way (exit 3, `managed_storage`) but says so honestly: "gbrain could not confirm that this brain
-  does not use managed storage", with the read or open error in the why. Only a mode read as managed says "this brain
-  uses managed storage". When another gbrain holds a PGLite brain (`pglite_busy`, usually `gbrain serve`), the next
-  step is to stop `gbrain serve` and anything else holding it, run the command again, then restart serve. It is never
-  a silent pass.
+- **Managed storage: seeded, not refused.** Shadow mode gathers evidence on managed brains too; only the swap
+  refuses them (`engine_swap_refused`, reason `managed_storage`, which `gbrain engine swap` still returns and shadow mode
+  never does). `seed` and `seed --json` run on a managed brain and copy it like any other. Right before its snapshot, in
+  a statement of its own so a failed read cannot abort the snapshot, `seed` reads one row, `persistence_brain.enabled`,
+  and records `storage: { managed, checked_at, reason? }` in `seed.json`. A managed brain prints `storage: this brain
+  cannot swap while it uses managed storage`; `managed` is `false` for an unmanaged brain (no line). A mode that cannot be
+  read (another process holds a PGLite brain, or the row is missing or malformed) does not stop the seed: it prints
+  `storage: could not read whether this brain uses managed storage; the swap will check it (<reason>)` and records
+  `managed: null` with the error's code (`pglite_busy`, `storage_error`) or `read_failed`, never free-form error text. A
+  brain that cannot be opened at all cannot be read, so that is an error, not a mode: `seed` exits 1 with `could not open
+  the brain (<code>)` before it loads the addon or creates anything, and a PGLite path that holds no brain is never
+  created. `status --json` carries the record as `seed.storage: { managed, checked_at, note, reason? }` (null before a
+  seed, or for a seed written before the field existed), where `note` is `this brain cannot swap while it uses managed
+  storage` for a managed brain, `could not read whether this brain uses managed storage; the swap will check it` when
+  `managed` is null, and null for an unmanaged brain. `status` and the report print the note; the report's `seed.storage`
+  has the same shape. `seed` never writes the primary database, its worktrees, write effects or locks, so every
+  `persistence_*` row and the content root are byte-identical across it.
 - **Follow.** A seeded brain is followed while shadow mode is on. Each committed write through the wrapped engine is
   read back from the brain, in its own short read-only `REPEATABLE READ` transaction (on Postgres, a dedicated
   one-connection pool, so the serving pool is never used), and applied to the Rust store, so stored ids and fact

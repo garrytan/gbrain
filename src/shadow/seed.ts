@@ -19,6 +19,7 @@ import {
 } from '../core/persistence/graduation-digest.ts';
 import type { SeedDigest, SeedImportResult, SeedPlan, SeedRow } from '../core/rust-engine/store.ts';
 import { rowDigest, sortKey, sortKeyUnsupported } from './follow-digest.ts';
+import type { ManagedStorageRecord } from './managed-gate.ts';
 import { countSeedGaps, primaryTables, type SeedQuery } from './seed-gaps.ts';
 
 export const SEED_RECORD_VERSION = 1;
@@ -49,6 +50,8 @@ export interface SeedRecord {
   started_at: string;
   finished_at: string;
   primary_engine: string;
+  /** Whether the brain used managed storage when the seed read it (right before the snapshot). Absent in a record written before this field existed. */
+  storage?: ManagedStorageRecord;
   relations: Record<string, SeedRelationRecord>;
   losses: {
     /** Values in copied rows the store could not keep, by kind (rust/docs/store/seed.md "Losses"). */
@@ -69,6 +72,8 @@ export interface SeedRecord {
 
 export interface SeedOptions {
   primaryEngine: string;
+  /** The storage mode the caller read before the snapshot; recorded in `seed.json` as is. */
+  storage?: ManagedStorageRecord;
   batchRows?: number;
   budgetMs?: number;
   now?: () => Date;
@@ -195,6 +200,7 @@ export async function runSeed(primary: BrainEngine, target: SeedTarget, opts: Se
       started_at: started.toISOString(),
       finished_at: now().toISOString(),
       primary_engine: opts.primaryEngine,
+      ...(opts.storage ? { storage: opts.storage } : {}),
       relations,
       losses: { values, not_copied: notCopied, gaps },
       unseeded_gap_rows: gaps,

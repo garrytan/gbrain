@@ -118,7 +118,7 @@ every other op are machine-local.
 | `wake_subscriptions` | open watches are not carried and never wake. A watch copied without its job or write request would wake on the first tick, so none is copied. (`wake_crons` is copied: a lost cron would make every `watch_cron` read `not_found`) |
 | `search_telemetry`, `mcp_request_log`, `chat_usage_log`, `ingest_log`, `page_retrievals`, `retrieval_events`, `retrieval_event_pages`, `retrieval_event_links`, `eval_*`, `migration_impact_log`, `think_ab_results`, `take_nudge_log` | logs and counters start at zero: `gbrain search stats`, per-client usage in `gbrain auth`, `get_usage`. Lifetime request totals carry in `mcp_request_log_rollup` |
 | `query_cache`, `code_traversal_cache`, `conversation_parser_llm_cache`, `dream_verdicts`, `take_grade_cache`, `extract_rollup_7d`, `page_view_digests`, `mention_gazetteer_entries`, `page_generation_clock` | caches the next read or run rebuilds; `dream_verdicts` means each transcript is triaged again (a paid call); cached query results recompute (`page_generation_clock` is the query cache's clock, and no store read uses it) |
-| `page_segment_texts`, `page_body_manifest`, `page_segment_derivations`, `page_segment_derivation_purges`, `page_segment_derivation_purge_pages`, `page_body_staging*` | a segmented page reads as its shell, without its text (`segmented_body`) |
+| `page_segment_texts`, `page_body_manifest`, `page_segment_derivations`, `page_segment_derivation_purges`, `page_segment_derivation_purge_pages`, `page_body_staging*` | a segmented page reads as its shell, without its text or its sealed keyword vector (`segmented_body`) |
 | `persistence_*`, `write_gate_holds`, `write_gate_receipts`, `op_checkpoints` (except the rows below), `op_checkpoint_paths`, `gbrain_cycle_locks`, `sync_notifier_*`, `sync_wanted_markers`, `session_context_state`, `extract_atoms_*_state`, `page_mention_state`, `mention_index_status`, `reason_purge_tombstones`, `planner_stats_*`, `trust_policy_state`, `file_migration_ledger` | the write path, locks, checkpoints and run state of the primary machine; an interrupted bulk operation starts again |
 
 ### Gaps: not served by the Rust store on master
@@ -211,7 +211,7 @@ ids, chunk `created_at`). `losses` counts, by reason, the rows dropped and the v
 | Reason | What was lost |
 | --- | --- |
 | `config_version_differs` | the primary's schema `version` |
-| `segmented_body` | the segments of a segmented body (the page and its body columns are kept) |
+| `segmented_body` | the segments of a segmented body (the page and its body columns are kept). The page's sealed keyword vector is not copied either, so its title search reads the title only until the page is written again |
 | `emotional_weight_without_touch` | a non-zero weight on a page with no `salience_touched_at` |
 | `corpus_generation_without_mode` | a corpus generation with no contextual-retrieval mode |
 | `retired_chunk`, `segment_chunk` | the dropped chunk rows |
