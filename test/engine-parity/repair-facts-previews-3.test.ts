@@ -233,8 +233,8 @@ describe('engine parity: repair kind previews of batch 4.3a', () => {
     return byOrder(out, ids);
   }));
 
-  parityTest('visibility stops on Rust before any read when its default preview would scan events, aliases or atom lineage', {
-    methods: ['putPage', 'insertFacts', 'listWorldFactsFromPrivateSources'], requires: 'raw_sql', timeout: 60_000,
+  parityTest('visibility previews its default classes (events, aliases, atom lineage) the same way on every arm', {
+    methods: ['putPage', 'insertFacts', 'listWorldFactsFromPrivateSources'], timeout: 60_000,
   }, async (engine, backend) => withHome(async () => {
     const ids = await seedWorldFacts(engine);
     const { shaped } = await previewOrStop(engine, backend, 'visibility', 'repair visibility privacy scan');
@@ -242,8 +242,8 @@ describe('engine parity: repair kind previews of batch 4.3a', () => {
     return byOrder(shaped, ids);
   }));
 
-  parityTest('visibility lists a synthesized concept of the lineage class on the SQL arms, and the Rust engine stops at the privacy scan', {
-    methods: ['putPage', 'listConceptLineageRows', 'listConceptInputRows'], requires: 'raw_sql', timeout: 60_000,
+  parityTest('visibility lists a synthesized concept of the lineage class the same way on every arm', {
+    methods: ['putPage', 'listConceptLineageRows', 'listConceptInputRows'], timeout: 60_000,
   }, async (engine, backend) => withHome(async () => {
     await engine.putPage('concepts/lineage-example', note('Lineage', { synthesized_by: 'dream' }, 'concept'), { sourceId: 'default' });
     const { shaped } = await previewOrStop(engine, backend, 'visibility', 'repair visibility privacy scan', { driftClass: 'lineage' });
@@ -253,8 +253,8 @@ describe('engine parity: repair kind previews of batch 4.3a', () => {
     return shaped;
   }));
 
-  parityTest('visibility lists a named page on the SQL arms, and the Rust engine stops at the privacy scan before the named read', {
-    methods: ['putPage', 'listNamedVisibilityRows'], requires: 'raw_sql', timeout: 60_000,
+  parityTest('visibility lists a named page the same way on every arm', {
+    methods: ['putPage', 'listNamedVisibilityRows'], timeout: 60_000,
   }, async (engine, backend) => withHome(async () => {
     await engine.putPage('notes/named-example', note('Named', { visibility: 'world' }), { sourceId: 'default' });
     const { shaped } = await previewOrStop(engine, backend, 'visibility', 'repair visibility privacy scan', { slugs: ['notes/named-example'] });

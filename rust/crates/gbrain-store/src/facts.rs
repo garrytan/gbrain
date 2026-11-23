@@ -88,6 +88,7 @@ pub mod text_repair;
 pub mod trust;
 pub mod trust_owner;
 pub mod trust_reads;
+pub mod visibility_scans;
 mod widen;
 pub mod withdrawal_discovery;
 pub mod withdrawal_fence;

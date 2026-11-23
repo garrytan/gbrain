@@ -1,0 +1,57 @@
+/**
+ * The preview reads of `gbrain repair visibility`, served from facts/visibility_scans.rs: listAtomLineageRows,
+ * listChronicleEventVisibilityRows and listAliasOnlyPrivatePages (engine-sql/visibility-scans.ts), and
+ * listConceptLineageRows, listConceptInputRows and listNamedVisibilityRows (engine-sql/facts-repair.ts), and the
+ * open-twins scan listOpenTwinRows (engine-sql/open-twins.ts). `timeoutMs`
+ * bounds a SQL statement; a store call is one in-process read, so it is not forwarded.
+ */
+import type { BrainEngine } from '../../engine.ts';
+import { privacyAliasSql, privateSnapshotFilterFragment } from '../../search/private-visibility.ts';
+import { validIdentity } from '../../access/principals.ts';
+import { validQualifiedRuleId } from '../../access/folder-rules.ts';
+import { refuseMember, storeCall, type StoreMember } from './common.ts';
+
+type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
+
+/** Page ids bind as `integer[]` on PGLite and Postgres: an id that is not an integer refuses rather than guess at its cast. */
+function pageIds(member: string, ids: readonly number[] | null): number[] | null {
+  for (const id of ids ?? []) if (!Number.isSafeInteger(id)) refuseMember(member, 'a page id that is not an integer');
+  return ids === null ? null : [...ids];
+}
+
+export const listAtomLineageRows: Member<'listAtomLineageRows'> = (brain, sourceIds, atomIds) =>
+  storeCall({ member: 'listAtomLineageRows' }, () => brain.listAtomLineageRows({ sourceIds: [...sourceIds], ids: pageIds('listAtomLineageRows', atomIds) }));
+
+export const listChronicleEventVisibilityRows: Member<'listChronicleEventVisibilityRows'> = (brain, sourceIds, ids) =>
+  storeCall({ member: 'listChronicleEventVisibilityRows' }, () =>
+    brain.listChronicleEventVisibilityRows({ sourceIds: [...sourceIds], ids: pageIds('listChronicleEventVisibilityRows', ids) }));
+
+export const listAliasOnlyPrivatePages: Member<'listAliasOnlyPrivatePages'> = (brain, sourceIds, ids) =>
+  storeCall({ member: 'listAliasOnlyPrivatePages' }, () =>
+    brain.listAliasOnlyPrivatePages({ sourceIds: [...sourceIds], ids: pageIds('listAliasOnlyPrivatePages', ids) }));
+
+export const listConceptLineageRows: Member<'listConceptLineageRows'> = (brain, sourceIds, conceptIds) =>
+  storeCall({ member: 'listConceptLineageRows' }, () =>
+    brain.listConceptLineageRows({ sourceIds: [...sourceIds], ids: pageIds('listConceptLineageRows', conceptIds) }));
+
+export const listConceptInputRows: Member<'listConceptInputRows'> = (brain, conceptIds) =>
+  storeCall({ member: 'listConceptInputRows' }, () => brain.listConceptInputRows({ ids: pageIds('listConceptInputRows', conceptIds) }));
+
+export const listNamedVisibilityRows: Member<'listNamedVisibilityRows'> = (brain, sourceIds, slugs) =>
+  storeCall({ member: 'listNamedVisibilityRows' }, () => brain.listNamedVisibilityRows({ sourceIds: [...sourceIds], slugs: [...slugs] }));
+
+/**
+ * `listOpenTwinRows`: each outside identity is rendered as readersAllowedSql and folderRulesAllowedSql render it (an
+ * identity that is not valid names no reader; a satisfied set with an id that is not valid satisfies none, else sorted
+ * and distinct), and `honorAliases` is read off the rendered snapshot filter. The folder coverage is read live, as the
+ * builders read it outside a caller access scope.
+ */
+export const listOpenTwinRows: Member<'listOpenTwinRows'> = (brain, pages, outside) => {
+  const honorAliases = privateSnapshotFilterFragment('t').includes(privacyAliasSql('t'));
+  const readers = outside.map(reader => ({
+    identity: reader.identity.length && validIdentity(reader.identity) ? [...reader.identity] : [],
+    satisfied: reader.satisfied.length && reader.satisfied.every(validQualifiedRuleId) ? [...new Set(reader.satisfied)].sort() : [],
+  }));
+  return storeCall({ member: 'listOpenTwinRows' }, () =>
+    brain.listOpenTwinRows({ pages: pages.map(({ source_id, slug }) => ({ source_id, slug })), outside: readers, honorAliases }));
+};

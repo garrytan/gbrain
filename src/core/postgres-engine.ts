@@ -228,6 +228,9 @@ import * as projectionRebuildImpl from './engine-sql/projection-rebuild.ts';
 import * as dreamCycleImpl from './engine-sql/dream-cycle.ts';
 import * as factsRepairImpl from './engine-sql/facts-repair.ts';
 import * as repairAppliesImpl from './engine-sql/repair-applies.ts';
+import * as visibilityScansImpl from './engine-sql/visibility-scans.ts';
+import * as openTwinsImpl from './engine-sql/open-twins.ts';
+import type * as OpenTwinsSql from './engine-sql/open-twins.ts';
 import type * as RepairAppliesSql from './engine-sql/repair-applies.ts';
 import * as labelRepairImpl from './engine-sql/label-repair-reads.ts';
 import * as factTextRepair from './engine-sql/fact-text-repair.ts';
@@ -1776,6 +1779,9 @@ export class PostgresEngine implements BrainEngine {
   listConceptLineageRows(sourceIds: string[], conceptIds: number[] | null, timeoutMs: number) { return factsRepairImpl.listConceptLineageRows(this.executeRaw.bind(this), sourceIds, conceptIds, timeoutMs); }
   listConceptInputRows(conceptIds: number[], timeoutMs: number) { return factsRepairImpl.listConceptInputRows(this.executeRaw.bind(this), conceptIds, timeoutMs); }
   listNamedVisibilityRows(sourceIds: string[], slugs: string[], timeoutMs: number) { return factsRepairImpl.listNamedVisibilityRows(this.executeRaw.bind(this), sourceIds, slugs, timeoutMs); }
+  listAtomLineageRows(sourceIds: string[], ids: number[] | null, timeoutMs: number) { return visibilityScansImpl.listAtomLineageRows(this.executeRaw.bind(this), sourceIds, ids, timeoutMs); }
+  listChronicleEventVisibilityRows(sourceIds: string[], ids: number[] | null, timeoutMs: number) { return visibilityScansImpl.listChronicleEventVisibilityRows(this.executeRaw.bind(this), sourceIds, ids, timeoutMs); }
+  listAliasOnlyPrivatePages(sourceIds: string[], ids: number[] | null, timeoutMs: number) { return visibilityScansImpl.listAliasOnlyPrivatePages(this.executeRaw.bind(this), sourceIds, ids, timeoutMs); }
   countPurgedPageFacts(sourceIds: string[], cap: number) { return factsRepairImpl.countPurgedPageFacts(this.executeRaw.bind(this), sourceIds, cap); }
   listUnwithdrawnFacts(sourceIds: string[], slug: string | null, fenceKind: string) { return factsRepairImpl.listUnwithdrawnFacts(this.executeRaw.bind(this), sourceIds, slug, fenceKind); }
   listWorldFactsFromPrivateSources(sourceIds: string[], ids: number[] | null) { return factsRepairImpl.listWorldFactsFromPrivateSources(this.executeRaw.bind(this), sourceIds, ids); }
@@ -1805,6 +1811,8 @@ export class PostgresEngine implements BrainEngine {
   expireApprovedFacts(sourceId: string, factIds: readonly number[]) { return repairAppliesImpl.expireApprovedFacts(this.executeRaw.bind(this), sourceId, factIds); }
   tightenDatabaseFactVisibility(sourceId: string, factIds: readonly number[]) { return repairAppliesImpl.tightenDatabaseFactVisibility(this.executeRaw.bind(this), sourceId, factIds); }
   listPageAccessKeys(pageIds: readonly number[]) { return repairAppliesImpl.listPageAccessKeys(this.executeRaw.bind(this), pageIds); }
+  listCheckoutFilePages(pageIds: readonly number[], timeoutMs: number) { return repairAppliesImpl.listCheckoutFilePages(this.executeRaw.bind(this), pageIds, timeoutMs); }
+  listOpenTwinRows(pages: ReadonlyArray<{ source_id: string; slug: string }>, outside: readonly OpenTwinsSql.OpenTwinReader[]) { return openTwinsImpl.listOpenTwinRows(this.executeRaw.bind(this), pages, outside); }
   detachFenceRowFacts(sourceId: string, slug: string, rowNum: number) { return repairAppliesImpl.detachFenceRowFacts(this.executeRaw.bind(this), sourceId, slug, rowNum); }
   hasDatabaseOnlyClaim(sourceId: string, entitySlug: string, fact: string) { return repairAppliesImpl.hasDatabaseOnlyClaim(this.executeRaw.bind(this), sourceId, entitySlug, fact); }
   readSourceCloneRow(sourceId: string) { return repairAppliesImpl.readSourceCloneRow(this.executeRaw.bind(this), sourceId); }

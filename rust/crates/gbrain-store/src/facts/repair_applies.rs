@@ -517,6 +517,27 @@ impl Store {
         Ok(out)
     }
 
+    /// `listCheckoutFilePages(ids)`: the named pages with a recorded `source_path`, as `{ id, source_id, source_path,
+    /// local_path }` (the source's checkout path, null without one), by id.
+    pub fn list_checkout_file_pages(&self, ids: &[f64]) -> Result<Vec<Value>> {
+        let ids = id_set("listCheckoutFilePages", ids)?;
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for id in ids {
+            let Some(page) = crate::pages::read_page_by_id(&*read, id)? else {
+                continue;
+            };
+            let (Some(path), Some(source)) = (
+                page.source_path.as_ref(),
+                read_source(&*read, &page.source_id)?,
+            ) else {
+                continue;
+            };
+            out.push(json!({ "id": page.id, "source_id": page.source_id, "source_path": path, "local_path": source.local_path }));
+        }
+        Ok(out)
+    }
+
     /// `readSourceCloneRow(sourceId)`: the source's `{ local_path, config }`, archived or not, or null.
     pub fn read_source_clone_row(&self, source_id: &str) -> Result<Value> {
         let read = self.read()?;

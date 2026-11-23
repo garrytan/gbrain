@@ -195,6 +195,16 @@ impl Brain {
         })
     }
 
+    /// `listCheckoutFilePages(ids)`: resolves `[{ id, source_id, source_path, local_path }]`.
+    #[napi]
+    pub fn list_checkout_file_pages<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_checkout_file_pages(&ids))
+    }
+
     /// `readSourceCloneRow(sourceId)`: resolves `{ local_path, config }` or null.
     #[napi]
     pub fn read_source_clone_row<'env>(

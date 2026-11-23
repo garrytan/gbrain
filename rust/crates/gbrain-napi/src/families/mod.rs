@@ -142,6 +142,7 @@ mod transactions;
 mod trust_scan;
 mod trust_tier_reads;
 mod vectors;
+mod visibility_scans;
 mod wanted_links;
 mod withdrawal_commit;
 mod withdrawal_discovery;

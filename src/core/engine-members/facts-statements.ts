@@ -15,6 +15,8 @@ import type * as FactsPurgeSql from '../engine-sql/facts-purge.ts';
 import type * as FactsRecallSql from '../engine-sql/facts-recall.ts';
 import type * as FactsRepairSql from '../engine-sql/facts-repair.ts';
 import type * as RepairAppliesSql from '../engine-sql/repair-applies.ts';
+import type * as VisibilityScansSql from '../engine-sql/visibility-scans.ts';
+import type * as OpenTwinsSql from '../engine-sql/open-twins.ts';
 import type * as FactsTrustSql from '../engine-sql/facts-trust.ts';
 import type { LocalWriterInsert, LocalWriterRow } from '../engine-sql/persistence-state.ts';
 import type { PageReadScope } from '../types.ts';
@@ -479,6 +481,12 @@ export interface FactsStatementMembers {
   listConceptInputRows(conceptIds: number[], timeoutMs: number): Promise<FactsRepairSql.ConceptInputRow[]>;
   /** The live pages of these sources named by slug with their stored visibility, size and whether a label guard is raised, by id. Reads page_label_guards. Backs `gbrain repair visibility --slug`. */
   listNamedVisibilityRows(sourceIds: string[], slugs: string[], timeoutMs: number): Promise<Array<FactsRepairSql.VisibilityPageRow & { guarded: boolean }>>;
+  /** visibility: the live atoms of these sources (only `atomIds` when given) with their origin page, by id. Reads pages and slug_aliases. */
+  listAtomLineageRows(sourceIds: string[], atomIds: number[] | null, timeoutMs: number): Promise<VisibilityScansSql.VisibilityAtomRow[]>;
+  /** visibility: the Life Chronicle events of these sources not already private, with their origin page, by id. Reads pages. */
+  listChronicleEventVisibilityRows(sourceIds: string[], ids: number[] | null, timeoutMs: number): Promise<VisibilityScansSql.VisibilityEventRow[]>;
+  /** visibility: the pages of these sources a privacy alias alone makes private, by id. Reads pages. */
+  listAliasOnlyPrivatePages(sourceIds: string[], ids: number[] | null, timeoutMs: number): Promise<VisibilityScansSql.VisibilityDerivedRow[]>;
   /** The bounded count of facts of a purged page, by class, capped at `cap`. Reads page_purges, fact_withdrawals and open_loops. */
   countPurgedPageFacts(sourceIds: string[], cap: number): Promise<{ evidenced: number; ambiguous: number; capped: boolean }>;
   /** Facts a facts-fence generation (`fenceKind`) retired that no withdrawal covers, in (source, page, id) order; `slug` null is every page. Reads derived_generations, derived_generation_items and fact_withdrawals. */
@@ -767,6 +775,10 @@ export interface FactsStatementMembers {
   tightenDatabaseFactVisibility(sourceId: string, factIds: readonly number[]): Promise<number[]>;
   /** moved-pages: each named page's access key (derived readers, folder rule ids, readable_by, world snapshot). Reads pages. */
   listPageAccessKeys(pageIds: readonly number[]): Promise<RepairAppliesSql.PageAccessKey[]>;
+  /** The label writes' checkout probe: the named pages with a recorded file and their source's checkout path. Reads pages and sources. */
+  listCheckoutFilePages(pageIds: readonly number[], timeoutMs: number): Promise<Array<{ id: number; source_id: string; source_path: string; local_path: string | null }>>;
+  /** The open-twins scan: the twins of the changed pages some outside identity can read, by (source, slug), at most 50. Reads pages. */
+  listOpenTwinRows(pages: ReadonlyArray<{ source_id: string; slug: string }>, outside: readonly OpenTwinsSql.OpenTwinReader[]): Promise<OpenTwinsSql.OpenTwinRow[]>;
   /** url-clone-fences: makes the fact at a fence row of the page database-only; the ids it changed. Writes facts. */
   detachFenceRowFacts(sourceId: string, slug: string, rowNum: number): Promise<number[]>;
   /** url-clone-fences: whether the entity already holds a database-only fact with this claim text. Reads facts. */

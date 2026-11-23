@@ -161,6 +161,17 @@ export async function listPageAccessKeys(raw: EngineRawRead, pageIds: readonly n
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
+// The label writes' checkout probe (src/core/repair/label-write.ts filesInCheckout)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** The named pages with a recorded file (`source_path`), with their source's checkout path (null without one). */
+export async function listCheckoutFilePages(raw: EngineRawRead, pageIds: readonly number[], timeoutMs: number):
+  Promise<Array<{ id: number; source_id: string; source_path: string; local_path: string | null }>> {
+  return raw<{ id: number; source_id: string; source_path: string; local_path: string | null }>(`SELECT p.id, p.source_id, p.source_path, s.local_path
+    FROM pages p JOIN sources s ON s.id = p.source_id WHERE p.id = ANY($1::integer[]) AND p.source_path IS NOT NULL`, [[...pageIds]], { timeoutMs });
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
 // url-clone-fences (src/core/repair/url-clone-fences.ts keepRowsDatabaseOnly)
 // ---------------------------------------------------------------------------------------------------------------------
 

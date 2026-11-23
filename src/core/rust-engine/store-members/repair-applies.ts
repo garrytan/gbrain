@@ -83,5 +83,8 @@ export const detachFenceRowFacts: Member<'detachFenceRowFacts'> = (brain, source
 export const hasDatabaseOnlyClaim: Member<'hasDatabaseOnlyClaim'> = (brain, sourceId, entitySlug, fact) =>
   storeCall({ member: 'hasDatabaseOnlyClaim' }, () => brain.hasDatabaseOnlyClaim({ sourceId, entitySlug, fact }));
 
+export const listCheckoutFilePages: Member<'listCheckoutFilePages'> = (brain, pageIds) =>
+  storeCall({ member: 'listCheckoutFilePages' }, () => brain.listCheckoutFilePages(wholeIds('listCheckoutFilePages', pageIds)));
+
 export const readSourceCloneRow: Member<'readSourceCloneRow'> = (brain, sourceId) =>
   storeCall({ member: 'readSourceCloneRow' }, () => brain.readSourceCloneRow(sourceId));

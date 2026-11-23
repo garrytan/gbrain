@@ -41,7 +41,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
-import { effectiveVisibility, folderRestrictedSql, privacyAliasSql, strictestVisibility, type Visibility } from '../search/private-visibility.ts';
+import { effectiveVisibility, strictestVisibility, type Visibility } from '../search/private-visibility.ts';
 import { strikeFenceRow } from '../facts/forget.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { authorizeWrite } from '../persistence/authority.ts';
@@ -53,7 +53,6 @@ import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { maintenancePreflight, publishMaintenancePages, submitDatabaseMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { CANONICAL_FILE_MISSING } from '../persistence/publication-failure.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
-import { atomMovedOriginPrivateSql, atomOriginSlugSql } from '../persistence/atom-origin.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope, type RepairSettlement, type RepairCursor } from './core.ts';
 import { openTwins, openTwinsLines, openTwinsWarning, type OpenTwins } from '../access/open-twins.ts';
 import { ownerMemberId } from '../access/owner.ts';
@@ -83,7 +82,6 @@ function tightened(current: string | null, target: Visibility): Visibility | nul
 
 /** Each plan statement's bound (Postgres; PGLite has no other session to wait on). */
 export const PLAN_STATEMENT_MS = 120_000;
-const bounded = { timeoutMs: PLAN_STATEMENT_MS };
 
 /** Extracted atoms and synthesized concepts: the only class that reads concept-provenance links. */
 async function planLineage(engine: BrainEngine, sourceIds: string[], only?: { id: number; type: string }) {
@@ -99,13 +97,7 @@ async function planLineage(engine: BrainEngine, sourceIds: string[], only?: { id
     if (list) list.push(row); else inputsByConcept.set(Number(row.concept_id), [row]);
   }
   const atomIds = only === undefined ? null : only.type === 'atom' ? [only.id] : inputs.map(row => Number(row.atom_id));
-  const atoms = atomIds?.length === 0 ? [] : await engine.executeRaw<AtomRow>(`SELECT a.id,a.source_id,a.slug,a.type,a.frontmatter->>'visibility' AS visibility,
-      length(a.compiled_truth) AS chars, a.frontmatter->>'source_slug' AS source_slug,
-      o.id AS origin_id,o.type AS origin_type,o.frontmatter AS origin_frontmatter,
-      (o.id IS NOT NULL AND ${folderRestrictedSql('o')}) AS origin_folder_restricted, ${atomMovedOriginPrivateSql('a')} AS origin_moved_private
-    FROM pages a LEFT JOIN pages o ON o.source_id=a.source_id AND o.slug=${atomOriginSlugSql('a')} AND o.deleted_at IS NULL
-    WHERE a.type='atom' AND a.deleted_at IS NULL AND a.source_id=ANY($1::text[])
-      AND ($2::integer[] IS NULL OR a.id=ANY($2::integer[])) ORDER BY a.id`, [sourceIds, atomIds], bounded);
+  const atoms: AtomRow[] = atomIds?.length === 0 ? [] : await engine.listAtomLineageRows(sourceIds, atomIds, PLAN_STATEMENT_MS);
 
   const changes: VisibilityChange[] = [];
   const atomVisibility = new Map<number, Visibility>();
@@ -134,13 +126,7 @@ async function planLineage(engine: BrainEngine, sourceIds: string[], only?: { id
 
 /** Life Chronicle events whose origin is private now. */
 async function planEvents(engine: BrainEngine, sourceIds: string[], only?: number) {
-  const events = await engine.executeRaw<EventRow>(`SELECT e.id,e.source_id,e.slug,e.type,e.frontmatter->>'visibility' AS visibility,
-      length(e.compiled_truth) AS chars,o.id AS origin_id,o.type AS origin_type,o.frontmatter AS origin_frontmatter,
-      (o.id IS NOT NULL AND ${folderRestrictedSql('o')}) AS origin_folder_restricted
-    FROM pages e LEFT JOIN pages o ON o.source_id=e.source_id AND o.slug=e.frontmatter->'event'->>'depth' AND o.deleted_at IS NULL
-    WHERE e.type='event' AND e.frontmatter->>'captured_via' LIKE 'life-chronicle:%' AND e.deleted_at IS NULL
-      AND COALESCE(e.frontmatter->>'visibility','world')<>'private'
-      AND e.source_id=ANY($1::text[]) AND ($2::integer[] IS NULL OR e.id=ANY($2::integer[])) ORDER BY e.id`, [sourceIds, only === undefined ? null : [only]], bounded);
+  const events: EventRow[] = await engine.listChronicleEventVisibilityRows(sourceIds, only === undefined ? null : [only], PLAN_STATEMENT_MS);
   const changes: VisibilityChange[] = [];
   let originGone = 0;
   for (const event of events) {
@@ -153,9 +139,7 @@ async function planEvents(engine: BrainEngine, sourceIds: string[], only?: numbe
 
 /** Pages marked private by a privacy alias alone. */
 async function planAliases(engine: BrainEngine, sourceIds: string[], only?: number) {
-  const rows = await engine.executeRaw<DerivedRow>(`SELECT p.id,p.source_id,p.slug,p.type,NULL::text AS visibility,length(p.compiled_truth) AS chars
-    FROM pages p WHERE ${aliasOnlyPagesSql('p')} AND p.source_id=ANY($1::text[]) AND ($2::integer[] IS NULL OR p.id=ANY($2::integer[])) ORDER BY p.id`,
-  [sourceIds, only === undefined ? null : [only]], bounded);
+  const rows: DerivedRow[] = await engine.listAliasOnlyPrivatePages(sourceIds, only === undefined ? null : [only], PLAN_STATEMENT_MS);
   return { changes: rows.map(page => ({ id: Number(page.id), source_id: page.source_id, slug: page.slug, phase: 3 as const, from: null, to: 'private' as const })), rows, residuals: {} };
 }
 
@@ -203,12 +187,8 @@ export async function worldFactsFromPrivateSources(engine: BrainEngine, sourceId
   return engine.listWorldFactsFromPrivateSources(sourceIds, ids ?? null);
 }
 
-/** Pages that carry a privacy alias but no `visibility` (derived atoms, concepts and chronicle events have their own phases). */
-export function aliasOnlyPagesSql(p: string): string {
-  return `(${p}.deleted_at IS NULL AND ${p}.frontmatter->>'visibility' IS NULL AND ${privacyAliasSql(p)}
-    AND ${p}.type <> 'atom' AND NOT (${p}.type = 'concept' AND ${p}.frontmatter->>'synthesized_by' IS NOT NULL)
-    AND NOT (${p}.type = 'event' AND ${p}.frontmatter->>'captured_via' LIKE 'life-chronicle:%'))`;
-}
+/** Pages that carry a privacy alias but no `visibility` (moved to engine-sql/visibility-scans.ts; re-exported for its callers). */
+export { aliasOnlyPagesSql } from '../engine-sql/visibility-scans.ts';
 
 export const FACT_VISIBILITY_INTENT = 'managed_maintenance_tighten_fact_visibility';
 
@@ -393,9 +373,6 @@ export const visibilityRepair: RepairHandler = {
       'Name pages with --slug to make exactly them private, or preview a class with --class.');
     const selection: Selection = { source_ids: scope.source_ids, class: selectedClass(opts), ...(named.length ? { slugs: named } : {}) };
     const classes: readonly VisibilityClass[] = named.length ? ['pages'] : selection.class ? [selection.class] : VISIBILITY_CLASSES;
-    // The events, alias and atom-lineage reads build a privacy predicate (folder rules, privacy aliases) and a named page's listing runs the open-twins scan
-    // (readers and folder rules); none is ported to the Rust store, so a Rust brain stops here by name, before any read. The facts class reads no predicate.
-    if (classes.some(cls => cls !== 'facts')) requireRawSql(engine, 'repair visibility privacy scan');
     const command = visibilityPreviewCommand(scope, selection, true);
     if (named.length && opts?.apply && !opts.expect) throw opError('invalid_params', 'gbrain repair visibility --slug applies only the set a preview printed.',
       `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`);
