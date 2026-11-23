@@ -107,6 +107,10 @@ export const CLAIM_BEFORE_ACTIVATION_NOTICE = 'Persistence is not activated. Aft
 
 /** #6650: `sources writer failures` options, validated with the usage each one takes. */
 function writerFailuresQuery(sourceId: string, params: Record<string, unknown>): import('./terminal-failures.ts').TerminalFailureQuery {
+  const timeoutMs = params.timeout_ms;
+  if (timeoutMs !== undefined && (typeof timeoutMs !== 'number' || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000)) {
+    throw invalid('Invalid --timeout-ms value.', 'Pass --timeout-ms as a whole number from 1 to 120000 (default 5000); it limits each statement, not the whole report.');
+  }
   const bad = (key: string, pattern: RegExp) => params[key] !== undefined && (typeof params[key] !== 'string' || !pattern.test(params[key] as string));
   if (bad('state', /^(all|unresolved)$/)) throw invalid('Invalid --state value.', 'Pass --state all to include resolved and historical receipts, or leave it out for the unresolved ones.');
   if (bad('group_by', /^category$/)) throw invalid('Invalid --group-by value.', 'Pass --group-by category (groups on code, origin and category, and a sync fault on its operation too), or leave it out to list receipts.');
@@ -122,7 +126,7 @@ function writerFailuresQuery(sourceId: string, params: Record<string, unknown>):
   const p = params as { state?: 'all' | 'unresolved'; group_by?: string; since?: string; limit?: number; before?: string; code?: string; origin?: string; category?: string; operation?: string };
   return { sourceId, ...(p.state ? { state: p.state } : {}), ...(p.group_by ? { groupBy: 'category' as const } : {}), ...(p.since ? { sinceDays: Number(p.since.slice(0, -1)) } : {}),
     ...(p.limit !== undefined ? { limit: p.limit } : {}), ...(p.before ? { before: p.before } : {}), ...(p.code ? { code: p.code } : {}), ...(p.origin ? { origin: p.origin } : {}),
-    ...(p.category ? { category: p.category } : {}), ...(p.operation ? { operation: p.operation } : {}) };
+    ...(p.category ? { category: p.category } : {}), ...(p.operation ? { operation: p.operation } : {}), ...(timeoutMs !== undefined ? { timeoutMs } : {}) };
 }
 
 /** GBRA-130 A-59: writer status's movement, or a `not_read` with its code and a read-only fix; a failed read never reads as no movement. */
@@ -292,7 +296,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     return exposed ? { ...result, pages_exposed: exposed } : result;
   }
   if (operation === 'writer_failures') {
-    keys(params, ['source_id', 'state', 'group_by', 'since', 'limit', 'before', 'code', 'origin', 'category', 'operation']);
+    keys(params, ['source_id', 'state', 'group_by', 'since', 'limit', 'before', 'code', 'origin', 'category', 'operation', 'timeout_ms']);
     const sourceId = source(params.source_id);
     const [known] = await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id=$1 AND archived IS NOT TRUE', [sourceId]);
     if (!known) throw invalid(`No active source ${sourceId}.`, 'Name an active source; archived sources are not inspected.', sourcesListFix('Lists the active source ids, read-only.'));

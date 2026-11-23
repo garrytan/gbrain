@@ -17,7 +17,7 @@ import { bigintToStringReplacer } from '../core/utils.ts';
 export const WRITER_HELP = `Usage:
   gbrain sources writer status [<source>] [--probe] [--json]
   gbrain sources writer failures <source> [--state all] [--group-by category] [--since 7d] [--limit 20] [--before <cursor>]
-    [--category <c>] [--code <c>] [--origin <o>|none] [--operation <op>] [--json]
+    [--category <c>] [--code <c>] [--origin <o>|none] [--operation <op>] [--timeout-ms <ms>] [--json]
   gbrain sources writer movement [<source>] [--wait <dur>] [--warn-only] [--json]
   gbrain sources writer retry-effects <source> --request-id <uuid> [--admin-intent writer_retry_effects --expected-state <admin_state>] [--dry-run] [--json]
   gbrain sources writer retry-effects <source> --parked-pushes [--dry-run] [--json]
@@ -41,6 +41,8 @@ groups them on code, origin and category (a sync_fault group also on its operati
 group with its exact drill-down filter; --operation <op> keeps one write operation.
 A full page prints truncated with the next command (--before <cursor>). Unresolved rows by
 default; --state all adds resolved and historical ones. Human table by default, JSON with --json.
+--timeout-ms sets the per-statement read budget (1..120000 ms, default 5000).
+For a resident owner, use global --timeout too if the report needs more than 30s overall.
 Inspect status first. movement proves that managed sync data moves over a window
 (committed pages and the head's step, never a lease or a lock): run it after
 restarting serve and the workers; see movement --help for its states and exits.
@@ -171,7 +173,7 @@ export function parsePersistenceAdminArgs(group: Group, args: string[]): {
   const values: Record<string, string> = {
     '--path': 'path', '--source': 'source_id', '--expected-epoch': 'expected_epoch', '--manifest': 'manifest',
     '--source-ids': 'source_ids', '--scopes': 'scopes', '--allowed-operations': 'allowed_operations',
-    '--slug-prefixes': 'slug_prefixes', '--limit': 'limit', '--before': 'before',
+    '--slug-prefixes': 'slug_prefixes', '--limit': 'limit', '--before': 'before', '--timeout-ms': 'timeout_ms',
     '--admin-intent': 'admin_intent', '--expected-state': 'expected_state', '--request-id': 'request_id', '--pat-file': 'pat_file', '--parked-code': 'parked_code',
     '--state': 'state', '--group-by': 'group_by', '--since': 'since', '--code': 'code', '--origin': 'origin', '--category': 'category', '--expect': 'expect', '--operation': 'operation',
   };
@@ -198,7 +200,7 @@ export function parsePersistenceAdminArgs(group: Group, args: string[]): {
     if (flag === '--brain') { brain = value; continue; }
     const key = values[flag];
     params[key] = arrays.has(key) ? value.split(',').map(part => part.trim()).filter(Boolean)
-      : key === 'limit' ? Number(value) : key === 'path' || key === 'pat_file' ? resolve(value) : value;
+      : key === 'limit' || key === 'timeout_ms' ? Number(value) : key === 'path' || key === 'pat_file' ? resolve(value) : value;
   }
   let operation: PersistenceAdminOperation;
   if (group === 'writer') {
