@@ -17,6 +17,8 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import { refusingEngine } from '../helpers/refusing-engine.ts';
+import { existsSync } from 'node:fs';
+import { openRustBrain, removeBrainDir, rustArmAddonPath } from '../engine-parity/rust-arm.ts';
 import { MinionQueue } from '../../src/core/minions/queue.ts';
 import { buildBrainTools } from '../../src/core/minions/tools/brain-allowlist.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
@@ -136,6 +138,15 @@ const FB_TOKENS = { in: 100, out: 50, cache_read: 0, cache_create: 0 };
 
 
 
+const VALID_RESPONSE = JSON.stringify({
+  pages: [
+    { slug: GOOD_SLUG_A, title: 'Topic', type: 'note', body: `A reflection. See [[${GOOD_SLUG_B}]] for the idea.` },
+    { slug: GOOD_SLUG_B, title: 'Idea', type: 'note', body: `An idea. Related: [[${GOOD_SLUG_A}]].` },
+  ],
+  skipped: false,
+  skip_reason: null,
+});
+
 describe('runSubagentOneshot existing-page reads', () => {
   test('S6 cold brain: an engine whose raw SQL refuses still accepts a syntactic wikilink, as PGLite does', async () => {
     const resp = JSON.stringify({ pages: [{ slug: GOOD_SLUG_A, body: 'first page ever, links [[concepts/future-page]]' }], skipped: false });
@@ -163,4 +174,50 @@ describe('runSubagentOneshot existing-page reads', () => {
         .rejects.toMatchObject({ code: 'engine_capability_missing' });
     }
   });
+
+  test('S6 bounded probe: the page sample stops after 5 live pages instead of counting the whole source', async () => {
+    const statements: string[] = [];
+    let counted = 0;
+    const spy = new Proxy(engine as unknown as Record<string, unknown>, {
+      get(target, property) {
+        if (property === 'executeRaw') return async (sql: string, ...rest: unknown[]) => { statements.push(sql); return (engine.executeRaw as (...a: unknown[]) => Promise<unknown>).call(engine, sql, ...rest); };
+        if (property === 'countSourcePages') return async () => { counted++; return 0; };
+        const value = Reflect.get(target, property);
+        return typeof value === 'function' ? (value as (...a: unknown[]) => unknown).bind(engine) : value;
+      },
+    }) as unknown as typeof engine;
+    const resp = JSON.stringify({ pages: [{ slug: GOOD_SLUG_A, body: 'first page ever, links [[concepts/future-page]]' }], skipped: false });
+    const ctx = await makeCtx(DATA);
+    const args = makeArgs(ctx, DATA, resp);
+    expect((await runSubagentOneshot({ ...args, engine: spy })).kind).toBe('done');
+    expect(counted).toBe(0);
+    expect(statements.filter((sql) => /FROM pages WHERE source_id = \$1 AND deleted_at IS NULL LIMIT 5/.test(sql))).toHaveLength(1);
+  });
+
+  test('S6 a capability refusal from the bounded page sample surfaces instead of becoming strict validation', async () => {
+    const resp = JSON.stringify({ pages: [{ slug: GOOD_SLUG_A, body: 'links [[concepts/future-page]]' }], skipped: false });
+    const data = { ...DATA, prompt: `${DATA.prompt} sample refusal` };
+    const ctx = await makeCtx(data);
+    const args = makeArgs(ctx, data, resp);
+    await expect(runSubagentOneshot({ ...args, engine: refusingEngine(engine, { needle: 'LIMIT 5' }) })).rejects.toMatchObject({ code: 'engine_capability_missing' });
+  });
+
+  const rustRun = existsSync(rustArmAddonPath()) || process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1' ? test : test.skip;
+  rustRun('S6 finding: a Rust brain never reaches the page validation; the rate-lease transaction (raw advisory-lock SQL) is refused first and the provider is not called', async () => {
+    const { engine: rust, dir } = await openRustBrain();
+    try {
+      let chatCalls = 0;
+      const ctx = await makeCtx(DATA);
+      const args = makeArgs(ctx, DATA, VALID_RESPONSE);
+      const inner = args._chat!;
+      const outcome = await runSubagentOneshot({ ...args, engine: rust as unknown as typeof engine, _chat: (async (o: Parameters<typeof inner>[0]) => { chatCalls++; return inner(o); }) as typeof inner })
+        .then(() => null, (e: unknown) => e);
+      expect(outcome).toMatchObject({ code: 'engine_capability_missing' });
+      expect(String((outcome as Error).message)).toContain('raw_sql');
+      expect(chatCalls).toBe(0);
+    } finally {
+      await rust.disconnect();
+      removeBrainDir(dir);
+    }
+  }, 30_000);
 });
