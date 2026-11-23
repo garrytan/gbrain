@@ -246,7 +246,7 @@ function status(brain: { key: string; dir: string }, json: boolean, out: (l: str
       schema_version: 1, brain: brain.key, enabled: state?.enabled === true, state, directory: brain.dir,
       totals, by_op: summary?.by_op ?? {}, serving: summary?.primary ?? null, child_shed: summary?.child_shed ?? 0,
       children: summary?.children ?? 0, recent_faults: faults,
-      ...buildFollowStatus(brain.dir, state),
+      ...buildFollowStatus(brain.dir, state), seed: seedStatus(readSeedRecord(brain.dir)), // the seed block carries the recorded storage mode
     }, null, 2));
     return 0;
   }

@@ -4,6 +4,8 @@
  * and reconciler (test/helpers/follow-rig.ts) and the real Rust addon.
  */
 import { describe, expect, test } from 'bun:test';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { RustAddon } from '../../src/core/rust-engine/addon-loader.ts';
 import { buildFollowStatus, readPasses } from '../../src/shadow/follow-status.ts';
@@ -12,6 +14,7 @@ import type { ShadowState } from '../../src/shadow/state.ts';
 import { openReadSource } from '../../src/shadow/read-pool.ts';
 import { Reconciler } from '../../src/shadow/reconcile.ts';
 import { openFollowRig, type FollowRig } from './follow-rig.ts';
+import { snapshotPersistence, snapshotTree } from './primary-snapshot.ts';
 import { fillSeedFixture } from './shadow-seed-fixture.ts';
 
 export interface FollowScenarioContext {
@@ -22,6 +25,7 @@ export interface FollowScenarioContext {
 }
 
 const STATE = { enabled: true, sample_rate: 0.1 } as unknown as ShadowState;
+type Snapshot = { tables: Record<string, string[]>; files: Record<string, string> };
 const PERSON = (title: string) => ({ type: 'person' as const, title, compiled_truth: `${title} works on widgets.`, timeline: '' });
 const tick = () => new Promise((resolve) => setTimeout(resolve, 5)); // a pass restores only what was invalidated before it started
 const status = (rig: FollowRig) => { rig.child.tick(); return buildFollowStatus(rig.dir, STATE); };
@@ -232,6 +236,67 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
         expect(pass.repaired_by_relation.pages).toBe(2);
         expect(await r.rust.getTags('people/alice-example')).toEqual([]);
         expect((await r.rust.getPage('people/carol-example'))?.title).toBe('Carol Example');
+      } finally { await r.close(); }
+    }, 90_000);
+  });
+
+  describe('managed brain', () => {
+    // The brain keeps its files in a checkout (persistence_brain.enabled); shadow mode must leave every persistence_* row and that checkout alone.
+    async function managedRig(): Promise<{ r: FollowRig; contentRoot: string; before: Snapshot; snap: () => Promise<Snapshot> }> {
+      const primary = ctx.primary();
+      await fillSeedFixture(primary);
+      await primary.executeRaw('INSERT INTO git_canonical_brain(singleton, strict_sources) VALUES (1, 0) ON CONFLICT (singleton) DO NOTHING'); // a fresh brain has this row; the PGLite test reset clears it
+      await primary.executeRaw('UPDATE persistence_brain SET enabled = true WHERE singleton = 1');
+      const contentRoot = join(ctx.tempDir(), 'content-root');
+      mkdirSync(join(contentRoot, 'people'), { recursive: true });
+      writeFileSync(join(contentRoot, 'people', 'alice-example.md'), '# Alice Example\n');
+      writeFileSync(join(contentRoot, 'index.md'), '# index\n');
+      const snap = async () => ({ tables: await snapshotPersistence(primary), files: snapshotTree(contentRoot) });
+      const before = await snap(); // taken before the seed, so the seed is covered too
+      const r = await openFollowRig(primary, ctx.addon(), ctx.tempDir(), ctx.kind);
+      return { r, contentRoot, before, snap };
+    }
+
+    test('seeding, following a batch of writes and a full reconcile pass change no persistence_* row and nothing in the content root', async () => {
+      const { r, before, snap } = await managedRig();
+      try {
+        expect(before.tables.persistence_brain!.some((row) => row.includes('"enabled":true'))).toBe(true);
+        expect(Object.keys(before.files)).toContain('people/alice-example.md');
+        const first = await r.reconciler.run('full');
+        expect(first.error).toBeUndefined();
+        // A managed brain accepts canonical writes only from a writer that names its source, as the persistence coordinator does.
+        await r.wrapped.transaction(async (tx) => {
+          await tx.executeRaw("SELECT set_config('gbrain.write_sources', '[\"default\"]', true)");
+          await tx.putPage('people/bob-example', PERSON('Bob Example'));
+          await tx.addLink('people/bob-example', 'companies/acme-example', 'works at', 'works_at');
+          await tx.deletePage('people/alice-example');
+        });
+        await r.settle();
+        await tick();
+        const pass = await r.reconciler.run('full');
+        expect(pass.error).toBeUndefined();
+        // The follower applied the writes, and the pass found nothing it had missed.
+        expect((await r.rust.getPage('people/bob-example'))?.title).toBe('Bob Example');
+        expect((await r.rust.getLinks('people/bob-example')).map((l) => l.to_slug)).toEqual(['companies/acme-example']);
+        expect(await r.rust.getPage('people/alice-example')).toBeNull();
+        expect(status(r).follower.applied_rows).toBeGreaterThan(0);
+        expect(pass.follower_misses).toBe(0);
+        // The writes changed pages and links on the brain; they and shadow mode left everything else alone.
+        const after = await snap();
+        expect(after.tables).toEqual(before.tables);
+        expect(after.files).toEqual(before.files);
+      } finally { await r.close(); }
+    }, 120_000);
+
+    test('the snapshot check catches a write to a persistence_* table and to the content root', async () => {
+      const { r, contentRoot, before, snap } = await managedRig();
+      try {
+        await ctx.primary().executeRaw("UPDATE persistence_brain SET activated_at = '2026-01-02T03:04:05Z' WHERE singleton = 1");
+        expect((await snap()).tables).not.toEqual(before.tables);
+        await ctx.primary().executeRaw('UPDATE persistence_brain SET activated_at = NULL WHERE singleton = 1');
+        expect((await snap()).tables).toEqual(before.tables);
+        writeFileSync(join(contentRoot, 'index.md'), '# index changed\n');
+        expect((await snap()).files).not.toEqual(before.files);
       } finally { await r.close(); }
     }, 90_000);
   });
