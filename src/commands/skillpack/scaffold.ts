@@ -16,6 +16,7 @@ import {
   BundleError,
 } from '../../core/skillpack/bundle.ts';
 import { runScaffold, ScaffoldError } from '../../core/skillpack/scaffold.ts';
+import { movedSkillNotices } from '../../core/skillpack/moved.ts';
 import { recordScaffoldBases } from '../../core/skillpack/safe-update.ts';
 import {
   RemoteSourceError,
@@ -147,6 +148,7 @@ export async function cmdScaffold(args: string[]): Promise<void> {
     });
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- targetWorkspace is the local operator's own workspace root, the same root runScaffold just wrote under.
     if (!dryRun) await recordScaffoldBases(join(targetWorkspace, 'skills'), result.files);
+    for (const notice of movedSkillNotices(all ? bundledSkillSlugs(loadBundleManifest(gbrainRoot)) : [name!])) console.error(notice);
     if (json) {
       console.log(JSON.stringify({ ok: true, dryRun: result.dryRun, summary: result.summary, files: result.files }, null, 2));
     } else {

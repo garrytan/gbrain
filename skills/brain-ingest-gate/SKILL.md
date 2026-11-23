@@ -24,7 +24,6 @@ writes_to:
   - companies/
   - concepts/
   - projects/
-upstream: brain-ingest-gate@fc834ee
 # Brain-first applies in its purest form here: the entire gate IS a
 # brain-first lookup performed at write time (entity card, alias-expanded
 # search, read the top hit) before anything external or new is written.
@@ -237,11 +236,9 @@ This skill guarantees:
 - Batches end with a `gbrain check-backlinks check` verification pass.
 - Routing matches the canonical triggers in the frontmatter.
 - Output written under the directories listed in `writes_to:`.
-- Privacy contract preserved: no real names, no fork-specific filesystem path
-  literals, no upstream-fork references.
+- Examples use placeholder names and paths.
 
-The full behavior contract is documented in the body sections above; this
-section exists for the conformance test.
+The full behavior contract is documented in the body sections above.
 
 ## Output Format
 

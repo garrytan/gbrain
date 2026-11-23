@@ -179,7 +179,8 @@ SELECT source_id, type FROM pairs`);
     test('the constants equal the composed statement, the connector lists bound instead of spliced', async () => {
       const enabled = await connectorAtomExclusionSql(engineWith(null));
       const optedOut = await connectorAtomExclusionSql(engineWith('false'));
-      expect(enabled).toBe('');
+      // A page whose frontmatter says `extract_atoms: false` is never extracted nor counted (#10032), opted out of connector pages or not.
+      expect(enabled).toBe("AND COALESCE(p.frontmatter->>'extract_atoms', '') <> 'false'");
       // The opted-out clause differs from the old one only in its two lists, which are now bound arrays.
       const bound = (scoped: boolean) => optedOut
         .replace(/p\.type IN \('email','meeting'\)/, `p.type = ANY($${scoped ? 5 : 4}::text[])`)

@@ -92,9 +92,8 @@ impl LogRecord {
     }
 }
 
-/// Append one ledger row, with its owner-index entries.
-fn append_log(tx: &mut dyn KvWrite, now: i64, mut row: LogRecord) -> Result<()> {
-    // A NUL byte is not valid text in Postgres, and the owner index uses it as the owner separator.
+/// A NUL byte is not valid text in Postgres, and the owner index uses it as the owner separator.
+fn check_owners(row: &LogRecord) -> Result<()> {
     for owner in [&row.client_id, &row.budget_key].into_iter().flatten() {
         if owner.contains('\0') {
             return Err(StoreError::new(
@@ -103,16 +102,64 @@ fn append_log(tx: &mut dyn KvWrite, now: i64, mut row: LogRecord) -> Result<()> 
             ));
         }
     }
-    row.id = next_seq(tx, "mcp_spend_log")?;
-    row.created_at = now;
+    Ok(())
+}
+
+/// Write one ledger row and its owner-index entries.
+fn put_log(tx: &mut dyn KvWrite, row: &LogRecord) -> Result<()> {
     let amount = row.spend.to_be_bytes();
     if let Some(client) = &row.client_id {
-        tx.put(&own_key(b'c', client, now, row.id), &amount)?;
+        tx.put(&own_key(b'c', client, row.created_at, row.id), &amount)?;
     }
     if let Some(budget) = &row.budget_key {
-        tx.put(&own_key(b'b', budget, now, row.id), &amount)?;
+        tx.put(&own_key(b'b', budget, row.created_at, row.id), &amount)?;
     }
-    put_json(tx, &log_key(row.id), &row)
+    put_json(tx, &log_key(row.id), row)
+}
+
+/// Append one ledger row, with its owner-index entries.
+fn append_log(tx: &mut dyn KvWrite, now: i64, mut row: LogRecord) -> Result<()> {
+    check_owners(&row)?;
+    row.id = next_seq(tx, "mcp_spend_log")?;
+    row.created_at = now;
+    put_log(tx, &row)
+}
+
+/// One `mcp_spend_log` row as the shadow seed copies it.
+pub(crate) struct SeedLog {
+    pub id: i64,
+    pub client_id: Option<String>,
+    pub budget_key: Option<String>,
+    pub token_name: Option<String>,
+    pub operation: String,
+    /// `NUMERIC(12,4)`.
+    pub spend_cents: f64,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub created_at: i64,
+}
+
+/// The shadow seed (`seed.rs`): stores a ledger row with its id and time, its owner-index entries, and raises the
+/// `mcp_spend_log` sequence past the id. `false` when the id is already stored.
+pub(crate) fn seed_log(tx: &mut dyn KvWrite, log: SeedLog) -> Result<bool> {
+    let row = LogRecord {
+        id: log.id,
+        client_id: log.client_id,
+        budget_key: log.budget_key,
+        token_name: log.token_name,
+        operation: log.operation,
+        spend: numeric_4(log.spend_cents, "spend_cents")?,
+        provider: log.provider,
+        model: log.model,
+        created_at: log.created_at,
+    };
+    check_owners(&row)?;
+    if get_json::<LogRecord>(&*tx, &log_key(row.id))?.is_some() {
+        return Ok(false);
+    }
+    put_log(tx, &row)?;
+    raise_seq(tx, "mcp_spend_log", row.id)?;
+    Ok(true)
 }
 
 /// The ledger sum of one owner from `since` on (all of it for None), scaled.
@@ -475,4 +522,20 @@ impl Store {
         }
         Ok(Value::Array(out))
     }
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the ledger row `id` and its owner-index entries.
+/// `false` when there is none.
+pub(crate) fn remove_log(tx: &mut dyn KvWrite, id: i64) -> Result<bool> {
+    let Some(row) = get_json::<LogRecord>(&*tx, &log_key(id))? else {
+        return Ok(false);
+    };
+    if let Some(client) = &row.client_id {
+        tx.delete(&own_key(b'c', client, row.created_at, row.id))?;
+    }
+    if let Some(budget) = &row.budget_key {
+        tx.delete(&own_key(b'b', budget, row.created_at, row.id))?;
+    }
+    tx.delete(&log_key(id))?;
+    Ok(true)
 }

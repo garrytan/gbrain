@@ -308,7 +308,8 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   typed metric claims in its `## Facts` fence (`metric: mrr`, `value: 50000`,
   `unit: USD`, `period: monthly` columns), run
   `gbrain eval trajectory <entity-slug>` for the chronological history
-  with regressions auto-flagged, or `gbrain founder scorecard <entity-slug>`
+  with regressions auto-flagged (a 10% drop, or a 10% rise for a
+  lower-is-better metric such as burn, churn or cost, but not cost_savings), or `gbrain founder scorecard <entity-slug>`
   for a four-signal JSON rollup (claim_accuracy / consistency /
   growth_trajectory / red_flags). MCP op `find_trajectory` exposes the
   same data — read scope, visibility-filtered for remote callers.

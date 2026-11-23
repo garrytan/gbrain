@@ -950,7 +950,7 @@ async function migrateConsent(engine: BrainEngine, args: string[], flags: Return
 
 /**
  * The status census, the plan and the apply read and rewrite vector columns with raw SQL. The Rust store fixes its
- * vector width when the brain is created (docs/designs/RUST_ENGINE.md loss row 45), so every mode refuses there before
+ * vector width when the brain is created (docs/designs/RUST_ENGINE.md loss row 47), so every mode refuses there before
  * it reads anything (after the flag checks, which touch no engine) instead of reporting a census with fields quietly
  * missing.
  */
