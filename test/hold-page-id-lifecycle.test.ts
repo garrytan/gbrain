@@ -187,6 +187,22 @@ for (const backend of backends) {
       expect((listed.details as { items: Array<{ hold_ref: string; candidate_pages: number }> }).items.find(i => i.hold_ref === `h${holdId}`)).toMatchObject({ candidate_pages: 2 });
     });
 
+    // Pins review finding 2 on both engines, deterministically: an unbound hold the first page's creation did not bind (its row is newer than the
+    // page's, as when it committed after the page did) still reaches the page through the rename record, however many times the page is renamed.
+    test('an unbound hold the page creation did not bind follows the page through the rename record', async () => {
+      const sourceId = await source();
+      const late = await holdFenceRow(engine(), { sourceId, slug: 'notes/early', claim: HELD, rowNum: 1 });
+      await engine().executeRaw("UPDATE write_gate_holds SET created_at = now() + interval '1 day' WHERE id=$1", [late]);
+      await putPage(sourceId, 'notes/early');
+      expect((await holds(sourceId)).map(h => h.page_id)).toEqual([null]);
+      await expectHeldHidden(engine(), sourceId, 'notes/early');
+
+      await rename(sourceId, 'notes/early', 'notes/middle');
+      await expectHeldHidden(engine(), sourceId, 'notes/middle');
+      await rename(sourceId, 'notes/middle', 'notes/final');
+      await expectHeldHidden(engine(), sourceId, 'notes/final');
+    });
+
     // Pins decision L for candidate-marked holds (review finding 1): a hold the upgrade marked with candidate pages is held for each of
     // them, so purging one candidate (hard delete, or a tombstone expiry) takes only that page out of the list; the hold goes when none is left.
     test('purging one candidate page keeps a candidate-marked hold for the surviving candidate, and the last purge removes it', async () => {

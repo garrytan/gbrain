@@ -132,4 +132,27 @@ describe.skipIf(SKIP)('holds follow a page across a rename under concurrent conn
     expect(await engine.deletePages(['notes/alpha'], { sourceId })).toEqual(['notes/alpha']);
     expect((await engine.executeRaw<{ id: number; status: string }>('SELECT id, status FROM write_gate_holds WHERE id=$1', [takeHold!.id])).map(h => h.status)).toEqual(['held']);
   });
+  // Pins review finding 2 (first-page creation can miss an uncommitted unbound hold; no lock may be added to the hold writer): the hold
+  // transaction finds no page and parks after its INSERT, the page is created and committed (its bind cannot see the uncommitted hold), the
+  // hold commits, and the page is renamed twice. The unbound hold must still reach the page through the rename record, at every name.
+  test('(e) an unbound hold committed after the first page was created still hides the row after the page is renamed', async () => {
+    const sourceId = await source();
+    let inserted!: () => void, finish!: () => void;
+    const parked = new Promise<void>(r => { inserted = r; });
+    const go = new Promise<void>(r => { finish = r; });
+    const holdTx = engine.transaction(async (t: BrainEngine) => {
+      await holdFenceRow(t, { sourceId, slug: 'notes/alpha', claim: HELD, rowNum: 1 });
+      inserted();
+      await go;
+    });
+    await bounded('the hold to park after its insert', Promise.race([parked, holdTx]));
+    try { await bounded('the first page to be created', putPage(sourceId, 'notes/alpha')); } finally { finish(); }
+    await bounded('the hold to commit', holdTx);
+    expect((await holds(sourceId)).map(h => h.status)).toEqual(['held']);
+
+    await renameWhile(sourceId, 'notes/alpha', 'notes/beta', async () => {});
+    await expectHeldHidden(engine, sourceId, 'notes/beta');
+    await renameWhile(sourceId, 'notes/beta', 'notes/gamma', async () => {});
+    await expectHeldHidden(engine, sourceId, 'notes/gamma');
+  });
 });
