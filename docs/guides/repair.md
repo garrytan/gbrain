@@ -2081,13 +2081,17 @@ Each page in the preview is one of:
 - **move**: the normal slug is free and the file evidence agrees. The apply moves it in its own transaction under both
   page locks: the page keeps its id, versions, tags, timeline, links and facts; the slug-keyed facts, withdrawals and
   search aliases follow; the attachments' page name follows (their ids, storage paths and bytes do not change); the old
-  spelling becomes an alias, so `gbrain get` by it still answers.
+  spelling becomes an alias, so `gbrain get` by it still answers. The guards that name the page by its slug follow it
+  too: the purge tombstones of its facts and takes are copied to the normal slug (so a purged claim stays refused and an
+  import still drops it), and every held write (a quarantined fence row) is re-keyed to it, so held text stays out of
+  what is delivered until its owner releases it. The apply takes the page lock of the stored spelling as well as the
+  normal one, so an edit under way waits for the move (or the move refuses, below).
 - **needs_human** ([`slug_spelling_collision`](error-codes.md#slug_spelling_collision)): another page (live or
   soft-deleted) already holds the normal slug, or two stored spellings share it. Nothing moves, because that would merge
   two pages. The listing names the pages to compare; keep the content you want in one, soft-delete the other with
   `gbrain delete`, and preview again.
 - **rename_file_first** ([`rename_file_first`](error-codes.md#rename_file_first)): the page's file in the source's
-  checkout is not at the path of the normal slug (or is missing, or a file sits at the old spelling's path). Moving only
+  checkout is not at the path of the normal slug (or the recorded file is not in the checkout, or a file sits at the old spelling's path). Moving only
   the row would split the page from its file. `git mv` the file to the normal path, commit and sync; sync carries the page
   identity. Then preview again.
 

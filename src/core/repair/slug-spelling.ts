@@ -19,10 +19,11 @@
  * The plan hash binds the brain, the source incarnation and, for every page, its id, revision, recorded origin
  * and source path, and the file evidence read from the checkout.
  *
- * Apply moves each approved page in its own `maintenanceTransaction`: both page keys are locked, every bound fact is read
+ * Apply moves each approved page in its own `maintenanceTransaction`: both page keys (the stored spelling and the normal slug) are locked, every bound fact is read
  * again (a change refuses `changed_since_preview` and nothing moves), the normal slug must still be free, then `updateSlug`
  * moves the page (version preimage, redirect alias, slug-keyed facts, withdrawals, search aliases) and the attachments'
- * `files.page_slug` follow. A fault in any step rolls the whole page back. Page ids, versions, tags, timeline, links,
+ * `files.page_slug` follow, and the page's purge tombstones and held writes are carried to the normal slug (slug-spelling-guards.ts).
+ * The transaction runs under `withStoredSlug`, so the lock on the stored spelling is taken like any writer's. A fault in any step rolls the whole page back. Page ids, versions, tags, timeline, links,
  * attachment ids, storage paths and bytes do not change. The page keeps its recorded origin only because the file
  * evidence proved the file is at the normal path (or the source has no checkout). Applying a set again moves nothing.
  *
