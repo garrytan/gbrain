@@ -10,6 +10,7 @@ import { accessAllowedSql, folderRulesAllowedSql, privatePagesFilterFragmentFast
 import { ownerOnlyPageSql, type OwnerOnlyForm } from '../access/owner-only.ts';
 import { chunkGenerationFilter } from '../search/safe-chunks.ts';
 import type { EngineRawRead } from './cli-reads-ops.ts';
+import { bindInList, bindParam } from '../sql-binds.ts';
 import { boundedBodyPrefixSql } from '../page-window/bounded-lead.ts';
 import { LIVE_STAGING_STATES } from './page-body.ts';
 
@@ -25,9 +26,9 @@ export interface ShelfPageRow { slug: string; title: string; type: string | null
 /** Filters on the card's frontmatter, appended to `where` with bound params. */
 export function cardFilterSql(alias: string, filters: CardFilters, params: unknown[]): string {
   const clauses: string[] = [];
-  if (filters.status) { params.push(filters.status); clauses.push(`${alias}.frontmatter->'storage'->>'status' = $${params.length}`); }
-  if (filters.store) { params.push(filters.store); clauses.push(`EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(${alias}.frontmatter->'storage'->'locations') = 'array' THEN ${alias}.frontmatter->'storage'->'locations' ELSE '[]'::jsonb END) loc WHERE loc->>'store' = $${params.length})`); }
-  if (filters.onSourceMachine !== undefined) { params.push(String(filters.onSourceMachine)); clauses.push(`${alias}.frontmatter->'storage'->>'on_source_machine' = $${params.length}`); }
+  if (filters.status) clauses.push(`${alias}.frontmatter->'storage'->>'status' = ${bindParam(params, filters.status)}`);
+  if (filters.store) clauses.push(`EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(${alias}.frontmatter->'storage'->'locations') = 'array' THEN ${alias}.frontmatter->'storage'->'locations' ELSE '[]'::jsonb END) loc WHERE loc->>'store' = ${bindParam(params, filters.store)})`);
+  if (filters.onSourceMachine !== undefined) clauses.push(`${alias}.frontmatter->'storage'->>'on_source_machine' = ${bindParam(params, String(filters.onSourceMachine))}`);
   return clauses.length ? ` AND ${clauses.join(' AND ')}` : '';
 }
 
@@ -76,10 +77,11 @@ export async function listLiveSlugSourceIds(raw: EngineRawRead, slug: string): P
 
 /** Every live copy of `slug` the read policy admits, by source id (search/relational-chain.ts resolveChainAnchors). */
 export async function resolveChainAnchorRows(raw: EngineRawRead, slug: string, policy: PageReadPolicy): Promise<PageSourceIdRow[]> {
-  const params: unknown[] = [slug];
+  const params: unknown[] = [];
+  const slugBind = bindParam(params, slug);
   const filter = pageReadFilter('p', policy, params, true);
   return raw<PageSourceIdRow>(
-    `SELECT p.id, p.source_id FROM pages p WHERE p.slug = $1 AND ${filter} ORDER BY p.source_id COLLATE "C"`, params);
+    `SELECT p.id, p.source_id FROM pages p WHERE p.slug = ${slugBind} AND ${filter} ORDER BY p.source_id COLLATE "C"`, params);
 }
 
 /**
@@ -87,7 +89,8 @@ export async function resolveChainAnchorRows(raw: EngineRawRead, slug: string, p
  * text projection is current, and its chunker version, by source id (search/explain-target.ts probeTarget).
  */
 export async function probeTargetRows(raw: EngineRawRead, slug: string, policy: PageReadPolicy, chunkManifest = true): Promise<TargetProbeSqlRow[]> {
-  const params: unknown[] = [slug];
+  const params: unknown[] = [];
+  const slugBind = bindParam(params, slug);
   const filter = pageReadFilter('p', policy, params, true);
   return raw<TargetProbeSqlRow>(
     `SELECT p.source_id,
@@ -95,7 +98,7 @@ export async function probeTargetRows(raw: EngineRawRead, slug: string, policy: 
        (SELECT COUNT(*)::int FROM content_chunks cc WHERE cc.page_id = p.id AND cc.embedding IS NOT NULL AND ${chunkGenerationFilter('p', 'cc', chunkManifest)}) AS embedded,
        ((p.text_projection_revision = p.knowledge_revision) IS TRUE) AS current,
        p.chunker_version
-     FROM pages p WHERE p.slug = $1 AND ${filter} ORDER BY p.source_id COLLATE "C"`, params);
+     FROM pages p WHERE p.slug = ${slugBind} AND ${filter} ORDER BY p.source_id COLLATE "C"`, params);
 }
 
 /**
@@ -125,11 +128,10 @@ export async function readCompanyBrainEvidenceRows(raw: EngineRawRead, sourceId:
 
 /** The shelf's card count and one page of its cards, by slug in byte order (storage-manifest/find.ts listCards). */
 export async function listCardRows(raw: EngineRawRead, query: CardListQuery): Promise<{ total: number; cards: CardRow[] }> {
-  const params: unknown[] = [query.sourceId, query.type];
-  const where = `p.source_id = $1 AND p.type = $2 AND ${pageReadFilter('p', query.policy, params, true)}${cardFilterSql('p', query.filters, params)}`;
-  const [{ n }] = await raw<{ n: number }>(`SELECT count(*)::int AS n FROM pages p WHERE ${where}`, params) as [{ n: number }];
-  params.push(query.limit, query.offset);
-  const cards = await raw<CardRow>(`SELECT ${CARD_COLUMNS} FROM pages p WHERE ${where} ORDER BY p.slug COLLATE "C" LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
+  const params: unknown[] = [];
+  const where = `p.source_id = ${bindParam(params, query.sourceId)} AND p.type = ${bindParam(params, query.type)} AND ${pageReadFilter('p', query.policy, params, true)}${cardFilterSql('p', query.filters, params)}`;
+  const [{ n }] = await raw<{ n: number }>(`SELECT count(*)::int AS n FROM pages p WHERE ${where}`, [...params]) as [{ n: number }];
+  const cards = await raw<CardRow>(`SELECT ${CARD_COLUMNS} FROM pages p WHERE ${where} ORDER BY p.slug COLLATE "C" LIMIT ${bindParam(params, query.limit)} OFFSET ${bindParam(params, query.offset)}`, params);
   return { total: Number(n), cards };
 }
 
@@ -157,13 +159,9 @@ export async function listPathTwinSlugs(raw: EngineRawRead, sourceId: string, pa
 
 /** Every live page at one of `slugs` (in the source when given) with its recorded file, by (source, slug) in byte order (sync-git.ts). */
 export async function listLiveSlugOrigins(raw: EngineRawRead, slugs: readonly string[], sourceId?: string): Promise<Array<{ slug: string; source_path: string | null }>> {
-  const params: unknown[] = [...slugs];
-  const placeholders = slugs.map((_, j) => `$${j + 1}`).join(', ');
-  let where = `slug IN (${placeholders}) AND deleted_at IS NULL`;
-  if (sourceId !== undefined) {
-    params.push(sourceId);
-    where += ` AND source_id = $${params.length}`;
-  }
+  const params: unknown[] = [];
+  let where = `${bindInList('slug', params, slugs)} AND deleted_at IS NULL`;
+  if (sourceId !== undefined) where += ` AND source_id = ${bindParam(params, sourceId)}`;
   return raw<{ slug: string; source_path: string | null }>(
     `SELECT slug, source_path FROM pages WHERE ${where} ORDER BY source_id COLLATE "C", slug COLLATE "C"`,
     params,
@@ -173,20 +171,11 @@ export async function listLiveSlugOrigins(raw: EngineRawRead, slugs: readonly st
 /** How many live pages a retype rule matches and its first ten slugs by byte, none when it matches nothing (schema-pack/retype.ts). */
 export async function probeRetypeRows(raw: EngineRawRead, query: RetypeProbeQuery): Promise<{ count: number; sample: string[] }> {
   const { fromType, pathFilter, slugFilter, sourceId } = query;
-  let where = `WHERE deleted_at IS NULL AND type = $1`;
-  const params: unknown[] = [fromType];
-  if (pathFilter) {
-    where += ` AND source_path LIKE $${params.length + 1}`;
-    params.push(pathFilter);
-  }
-  if (slugFilter) {
-    where += ` AND slug LIKE $${params.length + 1}`;
-    params.push(slugFilter);
-  }
-  if (sourceId) {
-    where += ` AND source_id = $${params.length + 1}`;
-    params.push(sourceId);
-  }
+  const params: unknown[] = [];
+  let where = `WHERE deleted_at IS NULL AND type = ${bindParam(params, fromType)}`;
+  if (pathFilter) where += ` AND source_path LIKE ${bindParam(params, pathFilter)}`;
+  if (slugFilter) where += ` AND slug LIKE ${bindParam(params, slugFilter)}`;
+  if (sourceId) where += ` AND source_id = ${bindParam(params, sourceId)}`;
   const cntRows = await raw<{ cnt: string }>(
     `SELECT COUNT(*)::text AS cnt FROM pages ${where}`,
     params,
@@ -231,13 +220,8 @@ function limitText(limit: number): number {
 /** The `WHERE` of the type-orphan reads (schema-pack/review.ts findTypeOrphans): live pages in the source scope. */
 function orphanWhere(scope: SourceIdScope, params: unknown[]): string {
   let where = 'deleted_at IS NULL';
-  if (scope.sourceIds && scope.sourceIds.length > 0) {
-    params.push(scope.sourceIds);
-    where += ` AND source_id = ANY($${params.length}::text[])`;
-  } else if (scope.sourceId) {
-    params.push(scope.sourceId);
-    where += ` AND source_id = $${params.length}`;
-  }
+  if (scope.sourceIds && scope.sourceIds.length > 0) where += ` AND source_id = ANY(${bindParam(params, scope.sourceIds)}::text[])`;
+  else if (scope.sourceId) where += ` AND source_id = ${bindParam(params, scope.sourceId)}`;
   return where;
 }
 
@@ -257,10 +241,10 @@ export async function listTypeOrphanRows(raw: EngineRawRead, scope: SourceIdScop
   const where = orphanWhere(scope, params);
   return raw<{ slug: string; source_id: string; type: string | null }>(
     `SELECT slug, COALESCE(source_id, 'default') AS source_id, type FROM pages
-      WHERE ${where} AND (type IS NULL OR type = '' OR type = ANY($${params.length + 1}::text[]))
+      WHERE ${where} AND (type IS NULL OR type = '' OR type = ANY(${bindParam(params, [...undeclared])}::text[]))
       ORDER BY source_id COLLATE "C", slug COLLATE "C"
       LIMIT ${limitText(limit)}`,
-    [...params, [...undeclared]],
+    params,
   );
 }
 
@@ -327,8 +311,9 @@ export const PAGE_PIN_SQL = 'id::text, slug, source_id, type, knowledge_revision
 
 /** The source's pages after `afterSlug` in byte order, soft-deleted ones marked, at most `limit` (attendance-repair.ts scan window). */
 export async function readAttendanceWindow(raw: EngineRawRead, sourceId: string, afterSlug: string, limit: number): Promise<AttendanceWindowRow[]> {
+  const params: unknown[] = [];
   return raw<AttendanceWindowRow>(`SELECT ${PAGE_PIN_SQL}, deleted_at IS NOT NULL AS deleted
-    FROM pages WHERE source_id=$1 AND slug COLLATE "C">$2 ORDER BY slug COLLATE "C" LIMIT $3`, [sourceId, afterSlug, limit]);
+    FROM pages WHERE source_id=${bindParam(params, sourceId)} AND slug COLLATE "C">${bindParam(params, afterSlug)} ORDER BY slug COLLATE "C" LIMIT ${bindParam(params, limit)}`, params);
 }
 
 /** Up to two distinct live pages in another source that carry `aliasNorm` as a page alias (google/counterparty.ts emailAliasElsewhere). */
@@ -363,8 +348,9 @@ export const UPLOAD_SELECT = `SELECT s.id::text AS id, s.principal_kind, s.princ
 
 /** The upload session a principal began under a client request id, as raw columns, or null (persistence/page-upload.ts). */
 export async function readUploadSessionByRequest(raw: EngineRawRead, principalKind: string, principalId: string, clientRequestId: string): Promise<Record<string, unknown> | null> {
+  const params: unknown[] = [];
   const [row] = await raw<Record<string, unknown>>(`${UPLOAD_SELECT}
-    WHERE s.principal_kind = $1 AND s.principal_id = $2 AND s.client_request_id = $3::uuid AND s.kind = 'upload'`, [principalKind, principalId, clientRequestId]);
+    WHERE s.principal_kind = ${bindParam(params, principalKind)} AND s.principal_id = ${bindParam(params, principalId)} AND s.client_request_id = ${bindParam(params, clientRequestId)}::uuid AND s.kind = 'upload'`, params);
   return row ?? null;
 }
 
@@ -389,16 +375,20 @@ export interface ChatCensusRow { source_id: string; chat_pages: number | string;
  * private-page rule admits when `hidePrivate`, and their distinct channels, by source id in byte order (chatChannelCensus).
  */
 export async function readChatCensusRows(raw: EngineRawRead, sourceIds: readonly string[], chatTypes: readonly string[], dmTypes: readonly string[], hidePrivate: boolean): Promise<ChatCensusRow[]> {
+  const params: unknown[] = [];
+  const chat = bindParam(params, [...chatTypes]);
+  const sources = bindParam(params, [...sourceIds]);
+  const dm = bindParam(params, [...dmTypes]);
   return raw<ChatCensusRow>(
     `SELECT p.source_id, count(*) AS chat_pages,
-            count(DISTINCT CASE WHEN p.type = ANY($3::text[]) THEN 'dm:' || p.slug
+            count(DISTINCT CASE WHEN p.type = ANY(${dm}::text[]) THEN 'dm:' || p.slug
               ELSE COALESCE(NULLIF(p.frontmatter->>'channel', ''), NULLIF(p.frontmatter->>'chat', ''), NULLIF(p.frontmatter->>'conversation', ''),
                 lower(substring(p.title from '^#([A-Za-z0-9._-]+)')), '') END) AS channels
        FROM pages p
-      WHERE p.deleted_at IS NULL AND p.type = ANY($1::text[]) AND p.source_id = ANY($2::text[])
+      WHERE p.deleted_at IS NULL AND p.type = ANY(${chat}::text[]) AND p.source_id = ANY(${sources}::text[])
         ${hidePrivate ? `AND ${privatePagesFilterFragmentFast('p')}` : ''}
       GROUP BY p.source_id ORDER BY p.source_id COLLATE "C"`,
-    [[...chatTypes], [...sourceIds], [...dmTypes]],
+    params,
   );
 }
 
@@ -410,23 +400,26 @@ export interface WhoCanReadRow { slug: string; source_id: string; type: string |
  * owner-only source by the owner-only test of `form` (commands/access.ts whoCanRead).
  */
 export async function readWhoCanReadRows(raw: EngineRawRead, slug: string, sourceId: string | undefined, form: OwnerOnlyForm): Promise<WhoCanReadRow[]> {
+  const params: unknown[] = [];
   return raw<WhoCanReadRow>(
     `SELECT p.slug, p.source_id, p.type, p.frontmatter, p.folder_rule_ids, ${ownerOnlyPageSql('p', form)} AS owner_only
-       FROM pages p WHERE p.slug = $1${sourceId ? ' AND p.source_id = $2' : ''} ORDER BY p.source_id COLLATE "C"`,
-    sourceId ? [slug, sourceId] : [slug]);
+       FROM pages p WHERE p.slug = ${bindParam(params, slug)}${sourceId ? ` AND p.source_id = ${bindParam(params, sourceId)}` : ''} ORDER BY p.source_id COLLATE "C"`,
+    params);
 }
 
 /** Whether the member-access rule for `identity` (`accessAllowedSql`, under the current caller record) admits the page (whoCanRead). */
 export async function readPageAccessAllowed(raw: EngineRawRead, sourceId: string, slug: string, identity: readonly string[]): Promise<boolean> {
+  const params: unknown[] = [];
   const admitted = await raw(
-    `SELECT 1 FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND ${accessAllowedSql('p', identity)}`, [sourceId, slug]);
+    `SELECT 1 FROM pages p WHERE p.source_id = ${bindParam(params, sourceId)} AND p.slug = ${bindParam(params, slug)} AND ${accessAllowedSql('p', identity)}`, params);
   return admitted.length > 0;
 }
 
 /** Whether the folder rules of the page are all in `satisfied` (`folderRulesAllowedSql`, under the current caller record) (whoCanRead). */
 export async function readPageFolderRulesAllowed(raw: EngineRawRead, sourceId: string, slug: string, satisfied: readonly string[]): Promise<boolean> {
+  const params: unknown[] = [];
   const admitted = await raw(
-    `SELECT 1 FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND ${folderRulesAllowedSql('p', satisfied)}`, [sourceId, slug]);
+    `SELECT 1 FROM pages p WHERE p.source_id = ${bindParam(params, sourceId)} AND p.slug = ${bindParam(params, slug)} AND ${folderRulesAllowedSql('p', satisfied)}`, params);
   return admitted.length > 0;
 }
 
@@ -514,21 +507,22 @@ export type CardHitRow = CardRow & { exact_id: boolean; exact_alias: boolean; ex
 
 /** The shelf cards ranked for a phrase, best first, at most 500 (storage-manifest/find.ts findCards). */
 export async function findCardRows(raw: EngineRawRead, q: CardFindQuery): Promise<CardHitRow[]> {
-  const params: unknown[] = [q.sourceId, q.type, q.query, q.aliasNorm, [...q.terms]];
+  const params: unknown[] = [];
+  const [source, type, phrase, alias, terms] = [q.sourceId, q.type, q.query, q.aliasNorm, [...q.terms]].map(v => bindParam(params, v));
   const policy = pageReadFilter('p', q.policy, params, true);
   const filters = cardFilterSql('p', q.filters, params);
   return raw<CardHitRow>(`
     SELECT ${CARD_COLUMNS},
-      p.slug = $3 AS exact_id,
-      EXISTS (SELECT 1 FROM page_aliases a WHERE a.source_id = p.source_id AND a.slug = p.slug AND a.alias_norm = $4) AS exact_alias,
-      lower(btrim(p.title)) = $3 AS exact_title,
-      (SELECT count(*) FROM unnest($5::text[]) t WHERE d.doc @@ plainto_tsquery('simple', t))::int AS matched,
-      GREATEST(word_similarity($3, lower(p.title)),
-        COALESCE((SELECT max(word_similarity($3, a.alias_norm)) FROM page_aliases a WHERE a.source_id = p.source_id AND a.slug = p.slug), 0))::float8 AS similarity
+      p.slug = ${phrase} AS exact_id,
+      EXISTS (SELECT 1 FROM page_aliases a WHERE a.source_id = p.source_id AND a.slug = p.slug AND a.alias_norm = ${alias}) AS exact_alias,
+      lower(btrim(p.title)) = ${phrase} AS exact_title,
+      (SELECT count(*) FROM unnest(${terms}::text[]) t WHERE d.doc @@ plainto_tsquery('simple', t))::int AS matched,
+      GREATEST(word_similarity(${phrase}, lower(p.title)),
+        COALESCE((SELECT max(word_similarity(${phrase}, a.alias_norm)) FROM page_aliases a WHERE a.source_id = p.source_id AND a.slug = p.slug), 0))::float8 AS similarity
     FROM pages p
     CROSS JOIN LATERAL (SELECT to_tsvector('simple', p.title || ' ' || COALESCE((SELECT string_agg(a.alias_norm, ' ') FROM page_aliases a WHERE a.source_id = p.source_id AND a.slug = p.slug), '')
       || ' ' || p.slug || ' ' || ${boundedBodyPrefixSql('p')}) AS doc) d
-    WHERE p.source_id = $1 AND p.type = $2 AND ${policy}${filters}
+    WHERE p.source_id = ${source} AND p.type = ${type} AND ${policy}${filters}
     ORDER BY exact_id DESC, exact_alias DESC, exact_title DESC, matched DESC, similarity DESC, p.slug COLLATE "C"
     LIMIT 500`, params);
 }

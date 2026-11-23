@@ -314,6 +314,7 @@ test/engine-parity/link-read-options.test.ts
 test/engine-parity/link-reads.test.ts
 test/engine-parity/link-temporal.test.ts
 test/engine-parity/links.test.ts
+test/engine-parity/list-reads.test.ts
 test/engine-parity/loop-mutes.test.ts
 test/engine-parity/memory-mutation-reads.test.ts
 test/engine-parity/memory-proposal-reads.test.ts

@@ -6,27 +6,29 @@
 //! Keys: none of its own. It reads the page and source records.
 
 use crate::Store;
-use crate::chunks::{keyed_chunks, segmented};
-use crate::cli_reads::pg_text::{fm_text, jsonb_value, timestamptz_text};
 use crate::aliases::all_alias_rows;
-use crate::error::Result;
+use crate::aliases::page_alias_rows;
+use crate::chunks::{keyed_chunks, segmented};
 use crate::cli_reads::entities::arrow_text;
+use crate::cli_reads::pg_text::{btrim, pg_lower};
+use crate::cli_reads::pg_text::{fm_text, jsonb_value, timestamptz_text};
 use crate::env::iso;
-use crate::takes::{all_takes, real_out};
-use crate::trust::belief_events::{EVENT, EVENTS, EventRecord, part_key};
-use crate::trust::belief_lifetimes::{LIFETIMES, LifetimeRecord, RECORD};
-use crate::kv::scan_prefix;
+use crate::error::Result;
 use crate::facts::PrivacyPolicy;
 use crate::facts::privacy::{page_access_allowed, page_folder_rules_allowed, stamped_rules};
-use crate::owner_only::{OwnerOnlyForm, OwnerOnlySources};
-use crate::keyword::{plainto_tsquery_simple, sql_like, to_tsvector_simple, trgm_word_similarity, ts_matches};
-use crate::cli_reads::pg_text::{btrim, pg_lower};
-use crate::aliases::page_alias_rows;
-use crate::page_body::truth_lead;
+use crate::keyword::{
+    plainto_tsquery_simple, sql_like, to_tsvector_simple, trgm_word_similarity, ts_matches,
+};
+use crate::kv::scan_prefix;
 use crate::link_queries::all_links;
+use crate::owner_only::{OwnerOnlyForm, OwnerOnlySources};
+use crate::page_body::truth_lead;
 use crate::page_ops::{PageReadScope, pages_in_read_scope};
 use crate::pages::{PageRecord, all_pages};
 use crate::sources::all_sources;
+use crate::takes::{all_takes, real_out};
+use crate::trust::belief_events::{EVENT, EVENTS, EventRecord, part_key};
+use crate::trust::belief_lifetimes::{LIFETIMES, LifetimeRecord, RECORD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -153,7 +155,8 @@ fn location_store(loc: &Value) -> Option<String> {
 /// Postgres both hand back as the text `NULL`; `[]` with no location.
 fn card_row(page: &PageRecord) -> CardRow {
     let fm = &page.frontmatter;
-    let mut stores: Vec<Option<String>> = storage_locations(fm).iter().map(location_store).collect();
+    let mut stores: Vec<Option<String>> =
+        storage_locations(fm).iter().map(location_store).collect();
     stores.sort_by(|a, b| match (a, b) {
         (Some(x), Some(y)) => x.cmp(y),
         (Some(_), None) => std::cmp::Ordering::Less,
@@ -197,7 +200,8 @@ fn card_passes(page: &PageRecord, filters: &CardFilters) -> bool {
         return false;
     }
     if let Some(on) = filters.on_source_machine
-        && storage_text(fm, "on_source_machine").as_deref() != Some(if on { "true" } else { "false" })
+        && storage_text(fm, "on_source_machine").as_deref()
+            != Some(if on { "true" } else { "false" })
     {
         return false;
     }
@@ -453,7 +457,9 @@ pub struct CardHitRow {
 
 /// `left(text, n)`: the first `n` characters.
 fn left_chars(text: &str, n: usize) -> &str {
-    text.char_indices().nth(n).map_or(text, |(at, _)| &text[..at])
+    text.char_indices()
+        .nth(n)
+        .map_or(text, |(at, _)| &text[..at])
 }
 
 /// The pages at `slug` that the read policy admits with its live filter on, by source id.
@@ -465,7 +471,10 @@ fn readable_copies(store: &Store, slug: &str, scope: &PageReadScope) -> Result<V
     };
     let mut pages = pages_in_read_scope(
         &*read,
-        all_pages(&*read)?.into_iter().filter(|p| p.slug == slug).collect(),
+        all_pages(&*read)?
+            .into_iter()
+            .filter(|p| p.slug == slug)
+            .collect(),
         &live,
     )?;
     pages.sort_by(|a, b| a.source_id.cmp(&b.source_id));
@@ -578,7 +587,12 @@ impl Store {
         let limit = query.limit.max(0.0) as usize;
         Ok(CardList {
             total,
-            cards: pages.iter().skip(offset).take(limit).map(card_row).collect(),
+            cards: pages
+                .iter()
+                .skip(offset)
+                .take(limit)
+                .map(card_row)
+                .collect(),
         })
     }
 
@@ -637,11 +651,12 @@ impl Store {
                 .map(|a| trgm_word_similarity(&query.query, a))
                 .fold(None, |m: Option<f32>, s| Some(m.map_or(s, |m| m.max(s))))
                 .unwrap_or(0.0);
-            let similarity = trgm_word_similarity(&query.query, &pg_lower(&page.title)).max(alias_best);
+            let similarity =
+                trgm_word_similarity(&query.query, &pg_lower(&page.title)).max(alias_best);
             rows.push(CardHitRow {
                 card: card_row(page),
                 exact_id: page.slug == query.query,
-                exact_alias: aliases.iter().any(|a| *a == query.alias_norm),
+                exact_alias: aliases.contains(&query.alias_norm),
                 exact_title: pg_lower(btrim(&page.title)) == query.query,
                 matched,
                 similarity: f64::from(similarity),
@@ -654,7 +669,11 @@ impl Store {
                 .then(b.exact_alias.cmp(&a.exact_alias))
                 .then(b.exact_title.cmp(&a.exact_title))
                 .then(b.matched.cmp(&a.matched))
-                .then(b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal))
+                .then(
+                    b.similarity
+                        .partial_cmp(&a.similarity)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                )
         });
         rows.truncate(500);
         Ok(rows)
@@ -694,7 +713,11 @@ impl Store {
     /// `listPathTwinSlugs(sourceId, paths)`: each of `paths` that more than one live page of the
     /// source records, with those pages' slugs in byte order. The order of the rows is not set (the
     /// SQL has no ORDER BY); this gives them by path.
-    pub fn list_path_twin_slugs(&self, source_id: &str, paths: &[String]) -> Result<Vec<PathTwins>> {
+    pub fn list_path_twin_slugs(
+        &self,
+        source_id: &str,
+        paths: &[String],
+    ) -> Result<Vec<PathTwins>> {
         let read = self.read()?;
         let mut by_path: std::collections::BTreeMap<String, Vec<String>> = Default::default();
         for p in all_pages(&*read)? {
@@ -751,10 +774,17 @@ impl Store {
             .filter(|p| p.deleted_at_us.is_none() && p.page_type == query.from_type)
             .filter(|p| {
                 query.path_filter.as_deref().is_none_or(|pattern| {
-                    p.source_path.as_deref().is_some_and(|path| sql_like(path, pattern))
+                    p.source_path
+                        .as_deref()
+                        .is_some_and(|path| sql_like(path, pattern))
                 })
             })
-            .filter(|p| query.slug_filter.as_deref().is_none_or(|pattern| sql_like(&p.slug, pattern)))
+            .filter(|p| {
+                query
+                    .slug_filter
+                    .as_deref()
+                    .is_none_or(|pattern| sql_like(&p.slug, pattern))
+            })
             .filter(|p| query.source_id.as_deref().is_none_or(|s| s == p.source_id))
             .map(|p| p.slug)
             .collect();
@@ -778,10 +808,16 @@ impl Store {
         let read = self.read()?;
         let mut pages: Vec<PageRecord> = all_pages(&*read)?
             .into_iter()
-            .filter(|p| p.deleted_at_us.is_none() && p.page_type == page_type && p.source_id == source_id)
+            .filter(|p| {
+                p.deleted_at_us.is_none() && p.page_type == page_type && p.source_id == source_id
+            })
             .collect();
         pages.sort_by(|a, b| a.slug.cmp(&b.slug));
-        Ok(pages.into_iter().take(limit as usize).map(body_row).collect())
+        Ok(pages
+            .into_iter()
+            .take(limit as usize)
+            .map(body_row)
+            .collect())
     }
 
     /// `listLinkCandidatePages(type, sourceId, limit)`: the live pages of `type`, in the source when
@@ -802,7 +838,11 @@ impl Store {
             })
             .collect();
         pages.sort_by(|a, b| (&a.slug, a.id).cmp(&(&b.slug, b.id)));
-        Ok(pages.into_iter().take(limit as usize).map(body_row).collect())
+        Ok(pages
+            .into_iter()
+            .take(limit as usize)
+            .map(body_row)
+            .collect())
     }
 
     /// `countLivePagesByType(scope)`: each stored type of the live pages in scope with its count as
@@ -863,8 +903,10 @@ impl Store {
             .into_iter()
             .filter(|l| l.link_source.as_deref() == Some("mentions"))
             .collect();
-        let from_ids: std::collections::HashSet<u64> = links.iter().map(|l| l.from_page_id).collect();
-        let all: HashMap<u64, PageRecord> = all_pages(&*read)?.into_iter().map(|p| (p.id, p)).collect();
+        let from_ids: std::collections::HashSet<u64> =
+            links.iter().map(|l| l.from_page_id).collect();
+        let all: HashMap<u64, PageRecord> =
+            all_pages(&*read)?.into_iter().map(|p| (p.id, p)).collect();
         let mut scanned: Vec<&PageRecord> = all
             .values()
             .filter(|p| p.deleted_at_us.is_none() && from_ids.contains(&p.id))
@@ -1022,8 +1064,10 @@ impl Store {
                 .collect(),
             &scope,
         )?;
-        let mut by_source: std::collections::BTreeMap<String, (u64, std::collections::BTreeSet<String>)> =
-            Default::default();
+        let mut by_source: std::collections::BTreeMap<
+            String,
+            (u64, std::collections::BTreeSet<String>),
+        > = Default::default();
         for p in pages {
             let channel = if query.dm_types.contains(&p.page_type) {
                 format!("dm:{}", p.slug)
@@ -1144,19 +1188,29 @@ impl Store {
             .collect();
         let mut rows: Vec<PredictionRow> = Vec::new();
         for t in all_takes(&*read)? {
-            let Some(p) = pages.get(&t.page_id) else { continue };
+            let Some(p) = pages.get(&t.page_id) else {
+                continue;
+            };
             if !t.active || t.kind == "fact" {
                 continue;
             }
-            if q.source_ids.as_ref().is_some_and(|ids| !ids.contains(&p.source_id))
+            if q.source_ids
+                .as_ref()
+                .is_some_and(|ids| !ids.contains(&p.source_id))
                 || q.holder.as_ref().is_some_and(|h| *h != t.holder)
-                || q.about.as_ref().is_some_and(|a| !p.slug.starts_with(a.as_str()))
+                || q.about
+                    .as_ref()
+                    .is_some_and(|a| !p.slug.starts_with(a.as_str()))
             {
                 continue;
             }
             let since = t.since_date.as_deref();
-            if q.since.as_deref().is_some_and(|s| !since.is_some_and(|d| d >= s))
-                || q.until.as_deref().is_some_and(|u| !since.is_some_and(|d| d <= u))
+            if q.since
+                .as_deref()
+                .is_some_and(|s| !since.is_some_and(|d| d >= s))
+                || q.until
+                    .as_deref()
+                    .is_some_and(|u| !since.is_some_and(|d| d <= u))
             {
                 continue;
             }
@@ -1196,7 +1250,9 @@ impl Store {
         let mut bad = None;
         scan_prefix(&*read, &prefix, false, &mut |k, v| {
             match serde_json::from_slice::<LifetimeRecord>(v) {
-                Ok(r) => lifetimes.push((String::from_utf8_lossy(&k[prefix.len()..]).into_owned(), r)),
+                Ok(r) => {
+                    lifetimes.push((String::from_utf8_lossy(&k[prefix.len()..]).into_owned(), r))
+                }
                 Err(e) => bad = Some(e),
             }
             bad.is_none()
@@ -1206,7 +1262,10 @@ impl Store {
         }
         let mut out: Vec<(u64, PredictionLedgerEvent)> = Vec::new();
         for (lifetime, l) in lifetimes {
-            if l.ended_at_us.is_some() || !source_ids.contains(&l.source_id) || !slugs.contains(&l.slug) {
+            if l.ended_at_us.is_some()
+                || !source_ids.contains(&l.source_id)
+                || !slugs.contains(&l.slug)
+            {
                 continue;
             }
             if !crate::sources::read_source(&*read, &l.source_id)?
@@ -1317,5 +1376,145 @@ impl Store {
             });
         }
         Ok(rows)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::import_members::PageOriginRefresh;
+    use crate::pages::{PageInput, PutPageOptions};
+    use crate::test_support::store;
+    use serde_json::{Map, json};
+
+    fn page(store: &Store, source: &str, slug: &str, page_type: &str, path: Option<&str>) {
+        let input: PageInput = serde_json::from_value(json!({
+            "type": page_type, "title": slug, "compiled_truth": "body", "timeline": "",
+        }))
+        .unwrap();
+        let opts = PutPageOptions {
+            source_id: Some(source.to_string()),
+            ..Default::default()
+        };
+        store.put_page(slug, &input, &opts).unwrap();
+        if let Some(path) = path {
+            let refresh = PageOriginRefresh {
+                source_id: source.to_string(),
+                source_path: path.to_string(),
+                source_uri: None,
+            };
+            store.refresh_page_origin(slug, &refresh).unwrap();
+        }
+    }
+
+    fn seeded() -> Store {
+        let store = store();
+        store
+            .insert_source("work", "work", None, &Map::new())
+            .unwrap();
+        page(&store, "default", "notes/a", "note", Some("notes/a.md"));
+        page(&store, "default", "notes/b", "note", Some("notes/b.md"));
+        page(&store, "default", "people/x", "person", Some("people/x.md"));
+        page(&store, "work", "notes/a", "note", Some("notes/a.md"));
+        page(&store, "work", "gone", "", None);
+        store.soft_delete_page("gone", Some("work")).unwrap();
+        store
+    }
+
+    #[test]
+    fn slug_sources_and_origins_read_live_pages_in_byte_order() {
+        let store = seeded();
+        assert_eq!(
+            store.list_live_slug_source_ids("notes/a").unwrap(),
+            vec!["default".to_string(), "work".to_string()]
+        );
+        assert!(store.list_live_slug_source_ids("gone").unwrap().is_empty());
+        let slugs = vec!["notes/a".to_string(), "gone".to_string()];
+        let all = store.list_live_slug_origins(&slugs, None).unwrap();
+        assert_eq!(all.len(), 2);
+        assert!(
+            all.iter()
+                .all(|o| o.slug == "notes/a" && o.source_path.as_deref() == Some("notes/a.md"))
+        );
+        assert_eq!(
+            store
+                .list_live_slug_origins(&slugs, Some("work"))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .read_first_live_slug_at_path("notes/a.md")
+                .unwrap()
+                .as_deref(),
+            Some("notes/a")
+        );
+        assert_eq!(store.read_first_live_slug_at_path("none.md").unwrap(), None);
+    }
+
+    #[test]
+    fn path_twins_are_empty_while_each_live_path_has_one_holder() {
+        // The live-origin key lets one live page hold a path, so a twin is a page the key never
+        // saw (an older brain); a store written through the members has none.
+        let store = seeded();
+        let paths = vec!["notes/a.md".to_string(), "notes/b.md".to_string()];
+        assert!(
+            store
+                .list_path_twin_slugs("default", &paths)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            store
+                .list_path_twin_slugs("work", &paths)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn type_counts_respect_the_scope_and_skip_deleted_pages() {
+        let store = seeded();
+        let every = store
+            .count_live_pages_by_type(&SourceScope::default())
+            .unwrap();
+        let pairs: Vec<(String, String)> = every.into_iter().map(|c| (c.page_type, c.n)).collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("note".to_string(), "3".to_string()),
+                ("person".to_string(), "1".to_string())
+            ]
+        );
+        let work = SourceScope {
+            source_id: Some("work".to_string()),
+            source_ids: None,
+        };
+        let counts = store.count_live_pages_by_type(&work).unwrap();
+        assert_eq!(counts.len(), 1);
+        assert_eq!(counts[0].n, "1");
+        // A non-empty list wins over the scalar.
+        let listed = SourceScope {
+            source_id: Some("work".to_string()),
+            source_ids: Some(vec!["default".to_string()]),
+        };
+        let counts = store.count_live_pages_by_type(&listed).unwrap();
+        assert_eq!(
+            counts.iter().map(|c| c.n.as_str()).collect::<Vec<_>>(),
+            vec!["2", "1"]
+        );
+    }
+
+    #[test]
+    fn live_incarnations_skip_unlisted_sources() {
+        let store = seeded();
+        let ids = vec!["work".to_string(), "missing".to_string()];
+        let rows = store.list_live_source_incarnations(&ids).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "work");
+        assert!(!rows[0].incarnation.is_empty());
+        let millis: i64 = store.read_clock_millis_text().unwrap().parse().unwrap();
+        assert!(millis > 0);
     }
 }

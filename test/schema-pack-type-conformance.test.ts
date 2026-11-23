@@ -100,6 +100,8 @@ describe('#5879 orphan review counts undeclared stored types', () => {
       engine: {
         getConfig: async () => 'gbrain-base-v2',
         executeRaw: async () => { throw new Error('permission denied for table pages'); },
+        countLivePagesByType: async () => { throw new Error('permission denied for table pages'); },
+        listTypeOrphanRows: async () => { throw new Error('permission denied for table pages'); },
       } as unknown as BrainEngine,
     } as OperationContext;
     await expect(env(() => operationsByName.schema_review_orphans!.handler(broken, {}))).rejects.toThrow('permission denied');

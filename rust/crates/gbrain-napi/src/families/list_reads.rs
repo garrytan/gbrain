@@ -118,13 +118,21 @@ impl Brain {
         slugs: Vec<String>,
         source_id: Option<String>,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.list_live_slug_origins(&slugs, source_id.as_deref()))
+        self.run(env, move |s| {
+            s.list_live_slug_origins(&slugs, source_id.as_deref())
+        })
     }
 
     /// `probeRetypeRows(query)`: `{ count, sample }`.
     #[napi]
-    pub fn probe_retype_rows<'env>(&self, env: &'env Env, query: Value) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.probe_retype_rows(&required(query, "query")?))
+    pub fn probe_retype_rows<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.probe_retype_rows(&required(query, "query")?)
+        })
     }
 
     /// `listAliasCandidatePages(type, sourceId, limit)`: `[{ slug, compiled_truth, frontmatter }]`.
@@ -136,7 +144,9 @@ impl Brain {
         source_id: String,
         limit: u32,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.list_alias_candidate_pages(&page_type, &source_id, limit))
+        self.run(env, move |s| {
+            s.list_alias_candidate_pages(&page_type, &source_id, limit)
+        })
     }
 
     /// `listLinkCandidatePages(type, sourceId, limit)`: `[{ slug, compiled_truth, frontmatter }]`.
@@ -160,7 +170,9 @@ impl Brain {
         env: &'env Env,
         scope: Option<Value>,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.count_live_pages_by_type(&arg(scope, "scope")?))
+        self.run(env, move |s| {
+            s.count_live_pages_by_type(&arg(scope, "scope")?)
+        })
     }
 
     /// `listTypeOrphanRows(scope, undeclared, limit)`: `[{ slug, source_id, type }]`.
@@ -179,7 +191,11 @@ impl Brain {
 
     /// `readStaleMentionScan(limit)`: `{ pages, links }`.
     #[napi]
-    pub fn read_stale_mention_scan<'env>(&self, env: &'env Env, limit: u32) -> napi::Result<Object<'env>> {
+    pub fn read_stale_mention_scan<'env>(
+        &self,
+        env: &'env Env,
+        limit: u32,
+    ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_stale_mention_scan(limit))
     }
 
@@ -208,7 +224,9 @@ impl Brain {
         after_slug: String,
         limit: u32,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.read_attendance_window(&source_id, &after_slug, limit))
+        self.run(env, move |s| {
+            s.read_attendance_window(&source_id, &after_slug, limit)
+        })
     }
 
     /// `listEmailAliasPages(aliasNorm, sourceId)`: `[{ slug, source_id }]`, at most two.
@@ -219,13 +237,21 @@ impl Brain {
         alias_norm: String,
         source_id: String,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.list_email_alias_pages(&alias_norm, &source_id))
+        self.run(env, move |s| {
+            s.list_email_alias_pages(&alias_norm, &source_id)
+        })
     }
 
     /// `readChatCensusRows(query)`: `[{ source_id, chat_pages, channels }]` by source.
     #[napi]
-    pub fn read_chat_census_rows<'env>(&self, env: &'env Env, query: Value) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.read_chat_census_rows(&required(query, "query")?))
+    pub fn read_chat_census_rows<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_chat_census_rows(&required(query, "query")?)
+        })
     }
 
     /// `readWhoCanReadRows(slug, sourceId, form)`: `[{ slug, source_id, type, frontmatter, folder_rule_ids, owner_only }]`.
@@ -269,7 +295,12 @@ impl Brain {
         policy: Value,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.read_page_folder_rules_allowed(&source_id, &slug, &satisfied, &required(policy, "policy")?)
+            s.read_page_folder_rules_allowed(
+                &source_id,
+                &slug,
+                &satisfied,
+                &required(policy, "policy")?,
+            )
         })
     }
 
@@ -281,13 +312,21 @@ impl Brain {
         rule_ids: Vec<String>,
         source_id: String,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.count_lineage_closing_rules(&rule_ids, &source_id))
+        self.run(env, move |s| {
+            s.count_lineage_closing_rules(&rule_ids, &source_id)
+        })
     }
 
     /// `readForecastPredictions(query)`: the journal's predictions by (source, slug, row).
     #[napi]
-    pub fn read_forecast_predictions<'env>(&self, env: &'env Env, query: Value) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.read_forecast_predictions(&required(query, "query")?))
+    pub fn read_forecast_predictions<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_forecast_predictions(&required(query, "query")?)
+        })
     }
 
     /// `readPredictionLedgerEvents(sourceIds, slugs)`: `[{ source_id, slug, event_type, subject_key, at }]` by id.
@@ -298,7 +337,9 @@ impl Brain {
         source_ids: Vec<String>,
         slugs: Vec<String>,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.read_prediction_ledger_events(&source_ids, &slugs))
+        self.run(env, move |s| {
+            s.read_prediction_ledger_events(&source_ids, &slugs)
+        })
     }
 
     /// `readBeliefCoverageEvents(sourceId)`: the coverage events of the current incarnation by id.

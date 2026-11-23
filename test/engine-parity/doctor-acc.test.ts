@@ -300,7 +300,7 @@ describe('doctor reads, second set', () => {
       live: view(await engine.listAccessMemberRows(false) as Array<Record<string, unknown>>),
     };
     expect(out.rawOnly.map(r => `${r.source_id}:${r.rule_id}`)).toEqual(['alpha:raw-a', 'alpha:raw-b', 'work:raw-a', 'work:raw-b']);
-    expect(out.live.map(r => r.id)).toEqual(['bob-example', 'carol-example']);
+    expect(out.live.map(r => (r as { id?: unknown }).id)).toEqual(['bob-example', 'carol-example']);
     return out;
   });
 });
