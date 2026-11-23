@@ -369,7 +369,7 @@ const nextAttempt = (reason: string, resetsAt?: string): string | null => reason
 /** Records the lane's verdict on the hold, stamped with this lane's version (#6865) and whether the named page has no file. */
 async function recordState(engine: BrainEngine, cand: Pick<Candidate, 'src' | 'path' | 'hold'>, state: Omit<ContentHoldRepairState, 'at'>): Promise<void> {
   if (!cand.hold) return;
-  const named = state.named ? await engine.getPage(state.named, { sourceId: cand.src.id }).catch(() => null) : null;
+  const named = state.named ? await engine.getPage(state.named, { sourceId: cand.src.id }) : null;
   await recordContentHoldRepair(engine, { sourceId: cand.src.id, incarnation: cand.src.incarnation, path: cand.path, upstreamVersion: cand.hold.upstream_version,
     state: { ...state, ...(named && named.source_path == null ? { named_db_only: true as const } : {}), lane_version: CONTENT_REPAIR_LANE_VERSION, at: new Date().toISOString() } }).catch(() => false);
 }
@@ -818,7 +818,7 @@ async function reportConflicts(ctx: OperationContext, scope: RepairScope, result
     const unattempted = result.affected - result.applied - result.skipped - result.failed.length;
     if (unattempted > 0 && result.stopped) remaining[result.stopped.reason] = (remaining[result.stopped.reason] ?? 0) + unattempted;
   } else if (result.affected) remaining.pending_repair = result.affected;
-  const oldest = { held_at: await ctx.engine.readOldestSyncHoldAt('frontmatter_slug_conflict', scope.source_ids).catch(() => null) };
+  const oldest = { held_at: await ctx.engine.readOldestSyncHoldAt('frontmatter_slug_conflict', scope.source_ids) };
   const verification: SlugConflictsVerification = { candidates: result.affected + Object.entries(result.residuals).filter(([reason]) => !skips.has(reason)).reduce((a, [, b]) => a + b, 0),
     repaired_by_tier: repairedByTier, held_by_reason: Object.fromEntries(Object.entries(remaining).filter(([reason]) => reason !== 'pending_repair')), oldest_hold_at: oldest?.held_at ?? null,
     llm_judgments: judgments, llm_usd: typeof result.cost.llm_usd === 'number' ? result.cost.llm_usd : 0 };

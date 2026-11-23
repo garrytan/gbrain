@@ -386,6 +386,7 @@ test/engine-parity/repair-fence-scans.test.ts
 test/engine-parity/repair-frontmatter-holds.test.ts
 test/engine-parity/repair-generation-kinds.test.ts
 test/engine-parity/repair-history-kinds.test.ts
+test/engine-parity/repair-hold-reads.test.ts
 test/engine-parity/repair-owner-kinds.test.ts
 test/engine-parity/repair-page-reads.test.ts
 test/engine-parity/repair-page-scans.test.ts

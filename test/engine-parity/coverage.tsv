@@ -124,11 +124,11 @@ transaction	lifecycle	yes	310	no	yes	yes	serves
 transactionDirect	lifecycle	yes	14	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	214	yes	yes	yes	serves
+getPage	pages	yes	215	yes	yes	yes	serves
 readPageSnapshot	pages	yes	75	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
 lockPageKeys	pages	yes	14	no	yes	yes	serves
-putPage	pages	yes	1111	yes	yes	yes	serves
+putPage	pages	yes	1112	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	37	yes	yes	yes	serves
@@ -785,7 +785,7 @@ listSourceCheckpointRecords	persistence_journal	yes	3	no	yes	yes	serves
 insertOpCheckpointIfAbsent	persistence_journal	yes	3	no	yes	yes	serves
 replaceOpCheckpointAtVersion	persistence_journal	yes	1	no	yes	yes	serves
 upsertFenceTrendRunRecord	persistence_journal	yes	1	no	yes	yes	serves
-readOldestSyncHoldAt	persistence_journal	yes	1	no	yes	yes	serves
+readOldestSyncHoldAt	persistence_journal	yes	2	no	yes	yes	serves
 reclaimBudgetReservations	persistence_journal	yes	1	no	yes	yes	serves
 reserveBudgetReservation	persistence_journal	yes	2	no	yes	yes	serves
 dispatchBudgetReservation	persistence_journal	yes	2	no	yes	yes	serves
@@ -1706,7 +1706,7 @@ readRevisionWriterRequest	write_misc	yes	2	no	yes	yes	serves
 writeSyncAdmissionStamp	write_misc	yes	5	no	yes	yes	serves
 readSyncAdmissionEffects	write_misc	yes	6	no	yes	yes	serves
 readOpCheckpointRecord	write_misc	yes	20	no	yes	yes	serves
-writeOpCheckpointRecord	write_misc	yes	36	no	yes	yes	serves
+writeOpCheckpointRecord	write_misc	yes	37	no	yes	yes	serves
 purgeStaleCheckpoints	write_misc	yes	1	no	yes	yes	serves
 readHealthMemoClock	write_misc	yes	1	no	yes	yes	serves
 listSynopsisSourceIds	write_misc	yes	4	no	yes	yes	serves

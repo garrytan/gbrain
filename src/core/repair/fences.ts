@@ -555,7 +555,7 @@ async function reportFences(ctx: OperationContext, scope: RepairScope, result: R
     // An --expect apply replays the approved set only; re-check the selection for what the preview listed as held.
     if (opts.expect) for (const [reason, count] of Object.entries(await heldInScope(ctx.engine, scope, opts, result))) remaining[reason] = (remaining[reason] ?? 0) + count;
   } else if (result.affected) remaining.pending_repair = result.affected;
-  const oldest = { held_at: await ctx.engine.readOldestSyncHoldAt('invalid_fence', scope.source_ids).catch(() => null) };
+  const oldest = { held_at: await ctx.engine.readOldestSyncHoldAt('invalid_fence', scope.source_ids) };
   const llmRepairs = repairedByTier.llm;
   const spent = typeof result.cost.llm_usd === 'number' ? result.cost.llm_usd : 0;
   const verification: FenceRepairVerification = { candidates: result.affected + Object.values(result.residuals).reduce((a, b) => a + b, 0) - (result.residuals.already_clean ?? 0),
