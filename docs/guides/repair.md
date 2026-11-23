@@ -2097,8 +2097,9 @@ Each page in the preview is one of:
   matches a held write already at the normal slug (same text) but the two would publish different fields (visibility,
   attribution, entity or row), so merging them would publish the kept one's fields at the owner's release. Nothing moves;
   release or drop one with `gbrain trust release` / `gbrain trust drop`, then preview again. Held writes that would publish
-  identically are merged. The apply locks both spellings' held-write rows while it compares and merges, so a held write
-  recorded meanwhile either waits for the move or makes it refuse `changed_since_preview`; a held write is never dropped
+  identically are merged. The apply takes the same lock a held write takes when it is recorded, then locks both spellings' held-write rows while it
+  compares and merges, so a held write recorded meanwhile waits for the move and lands on the normal slug, or the move
+  carries it, or refuses `changed_since_preview`; a held write is never dropped
   for a copy with other fields.
 - **rename_file_first** ([`rename_file_first`](error-codes.md#rename_file_first)): the page's file in the source's
   checkout is not at the path of the normal slug (or the recorded file is not in the checkout, or a file sits at the old spelling's path). Moving only

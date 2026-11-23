@@ -48,6 +48,7 @@ import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { slugSpellingPreviewArgv } from '../persistence/legacy-slug-put.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
+import { lockHoldSlug } from '../write-gate-store.ts';
 import { assertGuardTablesReadable, carryGuards, HoldConflictError, holdConflicts, lockHolds } from './slug-spelling-guards.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
 
@@ -429,6 +430,8 @@ async function movePageUnderStoredSlug(engine: BrainEngine, sourceId: string, pa
       throw changedSincePreview(sourceId, page.slug, 'the file evidence in the checkout changed');
     }
     await assertGuardTablesReadable(tx, sourceId);
+    // The hold writers' lock first (each spelling maps to one key), so a hold being recorded finishes before the rows are read.
+    await lockHoldSlug(tx, sourceId, page.slug); await lockHoldSlug(tx, sourceId, page.normal);
     await lockHolds(tx, sourceId, page.slug, page.normal);
     const [taken] = await tx.executeRaw('SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, page.normal]);
     if (taken) throw changedSincePreview(sourceId, page.slug, `another page now holds ${page.normal} (slug_spelling_collision)`);
