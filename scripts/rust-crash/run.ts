@@ -3,7 +3,7 @@
  * The Rust crash cell (scripts/rust-crash/README.md): real writer processes on real redb files, SIGKILLed at chosen
  * points, then reopened and checked against a PGLite oracle.
  *
- *   bun run rust:build
+ *   bun run rust:build --crash-points
  *   GBRAIN_RUST_ENGINE_ADDON=<the path it prints> bun scripts/rust-crash/run.ts [--seeds=101,202] [--ops=24]
  *       [--jobs=4] [--engine=pglite] [--plant=early-ack] [--expect-caught] [--keep]
  *
@@ -272,10 +272,23 @@ for (const seed of SEEDS) {
   jobs.push({ seed, label: `timer ${afterMs} ms`, kind: 'timer', kill: { afterMs }, ops, states });
 }
 
+/** How many times a timed kill is tried, each with half the delay, before a worker that always finished first fails it. */
+const TIMER_TRIES = 4;
+
 async function runJob(job: Job): Promise<void> {
-  const run = newRun(job.seed);
+  let run = newRun(job.seed);
   try {
-    const result = await runWorker(run, job.seed, job.kill);
+    let result = await runWorker(run, job.seed, job.kill);
+    // A timed kill whose worker finished the whole sequence before the delay ran out killed nothing: a kill run can be
+    // faster than the counting pass it was timed from (a cold first pass, a warm machine). Try again on a fresh brain
+    // with half the delay; only a run the driver really killed counts, and a worker that always finishes first fails.
+    for (let tries = 1, afterMs = job.kill.afterMs; job.kind === 'timer' && !result.killed && !result.log.error && result.exit === 0
+      && tries < TIMER_TRIES && afterMs !== undefined; tries++) {
+      afterMs = Math.max(1, Math.floor(afterMs / 2));
+      run = newRun(job.seed);
+      result = await runWorker(run, job.seed, { ...job.kill, afterMs });
+      job = { ...job, label: `${job.label.split(' (')[0]} (retried at ${afterMs} ms)` };
+    }
     if (result.log.error) throw new Error(`the worker failed before the kill: ${result.log.error}`);
     if (!result.log.freeze && job.kind !== 'timer') throw new Error(`the worker never reached ${job.label} (exit ${result.exit}) ${result.stderr.slice(-300)}`);
     // Only a real SIGKILL counts toward its class's minimum: a timer that fired after the worker had exited killed nothing.

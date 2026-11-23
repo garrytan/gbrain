@@ -44,7 +44,7 @@ three pages, then 24 seeded operations). Per seed:
 | `synced:<n>` | after the n-th fsync returned: the commit is durable and its caller has no answer |
 | `publication:before_commit`, `publication:after_commit`, `consumer:prepared` | the persistence fault points an unmanaged write reaches (`src/core/persistence/fault-points.ts`) |
 | after an acknowledgement | between two operations |
-| timer | at a seeded time, 10 to 80 percent of the way through the counting pass's run time (from the brain's open to the worker's exit) |
+| timer | at a seeded time, 10 to 80 percent of the way through the counting pass's run time (from the brain's open to the worker's exit); when the worker finishes first, it is tried again on a fresh brain with half the delay, up to 4 tries |
 
 The first three are the store's crash points
 (`rust/crates/gbrain-store/src/crash_points.rs`). They are compiled only with the
@@ -112,6 +112,7 @@ run on PGLite, without the store's own crash points), `--keep` (keep the scratch
 directory).
 
 Only a real SIGKILL counts toward a minimum. A worker that had already exited
-when its kill point came (a timer past the end of the sequence) fails the run.
+when its kill point came is no kill: a timed kill is then tried again with half
+the delay, and after 4 tries the run fails.
 
 Open note: `log.ts` `readLog` has no unit test.
